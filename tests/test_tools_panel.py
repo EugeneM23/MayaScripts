@@ -13,6 +13,7 @@ import maya_hub
 import maya_hubicons
 import maya_hubstyle as hubstyle
 from maya_tools import knotplan as plan
+from maya_tools import overlapplan
 from maya_tools import panel
 
 from tests.uifakes import FakeUiCmds
@@ -67,6 +68,7 @@ class _Knots(object):
         self.waiting_now = False
         self.count = 2
         self.pivot_count = 0
+        self.aim_count = 0
         self.fail = False
 
     def _say(self, *call):
@@ -98,6 +100,15 @@ class _Knots(object):
 
     def pivots(self):
         return ["p"] * self.pivot_count
+
+    def aims_waiting(self):
+        return ["a"] * self.aim_count
+
+    def begin_aim(self, order=None):
+        return self._say("begin_aim", order)
+
+    def finish_aim(self):
+        return self._say("finish_aim")
 
     def across(self, order=None):
         return self._say("across", order)
@@ -132,15 +143,25 @@ class _Reparent(object):
         return self.stub._say("swap")
 
 
+class _Overlapper(object):
+
+    def __init__(self, knots_stub):
+        self.stub = knots_stub
+
+    def run(self, settings=None):
+        return self.stub._say("overlap", settings)
+
+
 class _Base(unittest.TestCase):
 
     def setUp(self):
         self.fake = _Cmds()
         self.stub = _Knots()
-        self.saved = (panel.cmds, panel.knots, panel.reparent)
+        self.saved = (panel.cmds, panel.knots, panel.reparent, panel.overlapper)
         panel.cmds = self.fake
         panel.knots = self.stub
         panel.reparent = _Reparent(self.stub)
+        panel.overlapper = _Overlapper(self.stub)
         panel.JOB.clear()
         import sys
         self.lists = getattr(sys, "_skeldar_tools_lists", None)
@@ -150,7 +171,7 @@ class _Base(unittest.TestCase):
         hubstyle.take_marks()
 
     def tearDown(self):
-        panel.cmds, panel.knots, panel.reparent = self.saved
+        panel.cmds, panel.knots, panel.reparent, panel.overlapper = self.saved
         panel.JOB.clear()
         import sys
         if self.lists is None:
@@ -171,6 +192,10 @@ class Card(_Base):
             panel.PARENT_HEADING, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
             panel.ACROSS_BTN, panel.MULTI_HEADING, panel.OBJECTS_BTN, panel.TARGETS_BTN,
             panel.LISTSWAP_BTN, panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN,
+            panel.AIM_HEADING, panel.AIM_BTN, panel.OVERLAP_HEADING, panel.SOFT_LABEL,
+            panel.SOFT_FIELD, panel.LAG_LABEL, panel.LAG_FIELD, panel.EASE_LABEL,
+            panel.EASE_FIELD, panel.HIER_CHIP, panel.CYCLE_CHIP, panel.TOTAL_CHIP,
+            panel.EDGES_CHIP, panel.OVERLAP_BTN,
             panel.GAP, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
             panel.ORDER_SEG["xzy"], panel.ATTACH_LABEL, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
             panel.BAKE_BTN, panel.REMOVE_BTN, panel.STATUS])
@@ -183,14 +208,16 @@ class Card(_Base):
         marks = hubstyle.take_marks()
         roles = dict((m.name, m.role) for m in marks)
         for name in (panel.KNOTS_HEADING, panel.DOUBLE_HEADING, panel.PARENT_HEADING,
-                     panel.MULTI_HEADING):
+                     panel.MULTI_HEADING, panel.AIM_HEADING, panel.OVERLAP_HEADING):
             self.assertEqual(roles[name], "heading")
+        self.assertEqual(self.fake.labels[panel.AIM_HEADING], "Aim")
+        self.assertEqual(self.fake.labels[panel.OVERLAP_HEADING], "Overlap")
         self.assertEqual(self.fake.labels[panel.KNOTS_HEADING], "Knots")
         self.assertEqual(self.fake.labels[panel.DOUBLE_HEADING], "Double knot")
         self.assertEqual(self.fake.labels[panel.PARENT_HEADING], "Parent")
         self.assertEqual(self.fake.labels[panel.MULTI_HEADING], "Multiple across")
         fills = [m for m in marks if m.role == "fill"]
-        self.assertEqual(len(fills), 7)
+        self.assertEqual(len(fills), 11)
         self.assertTrue(all(m.layout for m in fills))
         made = [n for n in self.fake.children]
         rows = [made.index(m.name) for m in fills]
@@ -200,6 +227,8 @@ class Card(_Base):
             (panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN),
             (panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN),
             (panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN),
+            (panel.AIM_BTN,), (panel.HIER_CHIP, panel.CYCLE_CHIP),
+            (panel.TOTAL_CHIP, panel.EDGES_CHIP), (panel.OVERLAP_BTN,),
             (panel.ATTACH0_BTN, panel.ATTACH1_BTN), (panel.BAKE_BTN, panel.REMOVE_BTN))]
         ends = rows[1:] + [len(made)]
         for row, end, group in zip(rows, ends, buttons):
@@ -232,10 +261,11 @@ class Card(_Base):
                    panel.WORLD_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
                    panel.ACROSS_BTN, panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
                    panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN, panel.BAKE_BTN,
-                   panel.REMOVE_BTN)
+                   panel.REMOVE_BTN, panel.AIM_BTN, panel.OVERLAP_BTN)
         self.assertEqual(sorted(n for n, r in roles.items() if r == "primary"), sorted(buttons))
         self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
-                         sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP)))
+                         sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.HIER_CHIP,
+                                 panel.CYCLE_CHIP, panel.TOTAL_CHIP, panel.EDGES_CHIP)))
         self.assertNotIn("danger", roles.values())
         self.assertEqual(roles[panel.STATUS], "status")
         self.assertEqual(roles[panel.SUBTITLE], "subtitle")
@@ -380,6 +410,58 @@ class ParentTab(_Base):
                    and c[1] and c[1][0] == panel.TRANSLATE_CHIP][0][2]["changeCommand"]
         command(False)
         self.assertEqual(self.fake.optionvars[panel.TRANSLATE_VAR], 0)
+
+
+class AimOverlap(_Base):
+    """The aim tab (2026-10-13): Aim (two presses) and Overlap (its remembered settings)."""
+
+    def test_the_aim_press_begins_or_finishes(self):
+        panel.aim()
+        self.stub.aim_count = 1
+        panel.aim()
+        self.assertEqual(self.stub.calls, [("begin_aim", "object"), ("finish_aim",)])
+
+    def test_the_aim_button_reads_finish_while_an_aim_waits(self):
+        panel.build_panel()
+        self.assertEqual(self.fake.labels[panel.AIM_BTN], "Aim")
+        self.stub.aim_count = 1
+        panel.refresh()
+        self.assertEqual(self.fake.labels[panel.AIM_BTN], "Finish")
+        self.assertEqual(self.fake.labels[panel.SUBTITLE], "2 knots in the scene, 1 aim waiting")
+        self.assertEqual(self.fake.labels[panel.OFFSET_BTN], "Offset")
+
+    def test_the_overlap_defaults(self):
+        panel.overlap()
+        self.assertEqual(self.stub.calls, [("overlap", overlapplan.DEFAULTS)])
+
+    def test_the_overlap_reads_the_remembered_settings(self):
+        self.fake.optionvars.update({panel.SOFT_VAR: 3.0, panel.LAG_VAR: 2.5,
+                                     panel.EASE_VAR: 1.0, panel.HIER_VAR: 0,
+                                     panel.CYCLE_VAR: 1, panel.TOTAL_VAR: 1,
+                                     panel.EDGES_VAR: 1})
+        panel.overlap()
+        self.assertEqual(self.stub.calls[-1], ("overlap", overlapplan.Settings(
+            softness=3.0, lag=2.5, easing=1.0, hierarchy=False, cycled=True, total=True,
+            edges=True)))
+
+    def test_the_fields_and_chips_remember(self):
+        panel.build_panel()
+        field = [c for c in self.fake.calls if c[0] == "floatField"
+                 and c[1] and c[1][0] == panel.LAG_FIELD][0][2]
+        self.assertEqual(field["value"], 1.0)
+        field["changeCommand"](4.0)
+        self.assertEqual(self.fake.optionvars[panel.LAG_VAR], 4.0)
+        chips = dict((c[1][0], c[2]) for c in self.fake.calls if c[0] == "checkBox" and c[1])
+        self.assertTrue(chips[panel.HIER_CHIP]["value"])
+        self.assertFalse(chips[panel.CYCLE_CHIP]["value"])
+        chips[panel.EDGES_CHIP]["changeCommand"](True)
+        self.assertEqual(self.fake.optionvars[panel.EDGES_VAR], 1)
+
+    def test_the_short_words(self):
+        panel.build_panel()
+        self.assertEqual([self.fake.labels[n] for n in (
+            panel.SOFT_LABEL, panel.LAG_LABEL, panel.EASE_LABEL, panel.OVERLAP_BTN)],
+            ["Softness", "Lag, fr", "Easing", "Overlap"])
 
 
 class Registration(unittest.TestCase):

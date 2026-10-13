@@ -23,6 +23,7 @@ KEYED_MARKER = "skeldarKnotKeyed"               # ... "tz=3.0 rx=0.0": channels 
 OF_MARKER = "skeldarKnotOf"                     # the object's constraint: the knot's UUID
 PENDING_MARKER = "skeldarKnotPending"           # a waiting pivot: its object's UUID
 PENDING_SPACE_MARKER = "skeldarKnotPendingSpace"  # the space it rides in: the same
+PENDING_KIND_MARKER = "skeldarKnotPendingKind"  # ... and what waits in it: "aim" (none: offset)
 ORDER_MARKER = "skeldarKnotOrder"               # a waiting pivot: the rotate order choice
 INNER_MARKER = "skeldarKnotInner"               # a double knot's inner node: its top's UUID
 REGISTRY_MARKER = "skeldarKnotRegistry"         # the objectSet holding every across knot
@@ -48,12 +49,19 @@ KINDS = (
          (1.0, 0.85, 0.3), (1.0, 0.95, 0.65), "parent"),
     #  2026-10-12, the parent tab: a knot inside the parent (OverRig's across).
     Kind("across", "Across", "_across", "", (0.3, 0.85, 0.8), None, "parent"),
+    #  2026-10-13, the aim tab: a group holding a target and an up; the object's rotation aims
+    #  at the target, leaning to the up (OverRig's aim).
+    Kind("aim", "Aim", "_aim", "_aimUp", (1.0, 0.45, 0.65), (0.65, 0.9, 1.0), "aim"),
 )
 _KINDS = dict((k.key, k) for k in KINDS)
 
 PIVOT_SUFFIX = "_pivot"
 PIVOT_SPACE_SUFFIX = "_pivotSpace"
 PIVOT_COLOUR = (1.0, 0.35, 0.35)
+AIM_TARGET_SUFFIX = "_aimTarget"
+AIM_SPACE_SUFFIX = "_aimSpace"
+AIM_REACH = 4.0                 # the target and the up start this many knot sizes from the object
+AIM_UP_MIN_DEG = 3.0            # an up nearer the line to the target than this is refused
 
 
 def kind(key):
@@ -392,13 +400,87 @@ def offset_label(waiting):
     return "Finish" if waiting else "Offset"
 
 
-def subtitle(knot_count, pivot_count):
+def subtitle(knot_count, pivot_count, aim_count=0):
     parts = []
     if knot_count:
         parts.append("%s in the scene" % _plural(knot_count, "knot"))
     if pivot_count:
         parts.append("%s waiting" % _plural(pivot_count, "pivot"))
+    if aim_count:
+        parts.append("%s waiting" % _plural(aim_count, "aim"))
     return ", ".join(parts) if parts else "no knots in the scene"
+
+
+# ------------------------------------------------------------------ the aim tab
+
+AIM_NOTHING = "select the objects to aim"
+
+
+def aim_reach(size):
+    """How far from the object its target and up start: four knot sizes."""
+    return size * AIM_REACH
+
+
+def _length(vector):
+    return math.sqrt(sum(c * c for c in vector))
+
+
+def axes_of(matrix):
+    """The three axes (unit rows, made perpendicular) of a 16-value world matrix: its rotation
+    with scale and shear taken out."""
+    rows = [list(matrix[0:3]), list(matrix[4:7]), list(matrix[8:11])]
+    x = [c / _length(rows[0]) for c in rows[0]]
+    dot = sum(a * b for a, b in zip(rows[1], x))
+    y = [a - dot * b for a, b in zip(rows[1], x)]
+    y = [c / _length(y) for c in y]
+    z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
+    if sum(a * b for a, b in zip(z, rows[2])) < 0.0:       # a mirrored matrix keeps its Z
+        z = [-c for c in z]
+    return [tuple(x), tuple(y), tuple(z)]
+
+
+def aim_vectors(name, target, up):
+    """(aim vector, up vector, refusal) in the object's own axes, from where its target and up
+    stand off its pivot (in its axes): the aimConstraint's vectors, so it holds the object where
+    it stands. A target on the object, or an up on the line to the target, is refused."""
+    length = _length(target)
+    if length < 1e-4:
+        return None, None, "%s: the aim target stands on the object - move it away" % name
+    aim = tuple(c / length for c in target)
+    dot = sum(a * b for a, b in zip(up, aim))
+    across = tuple(a - dot * b for a, b in zip(up, aim))
+    reach = _length(up)
+    if reach < 1e-4 or _length(across) < math.sin(math.radians(AIM_UP_MIN_DEG)) * reach:
+        return None, None, ("%s: the aim's up stands on the line to its target - move it to the "
+                            "side" % name)
+    return aim, tuple(c / _length(across) for c in across), ""
+
+
+def choose_aims(named, waiting):
+    """(aims, refusal) a Finish takes: the waiting aims the selection names, else every one."""
+    if named:
+        return list(named), ""
+    if waiting:
+        return list(waiting), ""
+    return None, "no aim is waiting - press Aim first"
+
+
+def aim_label(waiting):
+    """The Aim button's word: Finish while an aim waits."""
+    return "Finish" if waiting else "Aim"
+
+
+def aim_begin_message(names):
+    who = names[0] if len(names) == 1 else "%d objects" % len(names)
+    return ("Aim: place the target (where %s points) and the up (where it leans) - they ride it "
+            "while you place them - then press Finish" % who)
+
+
+def aim_finish_message(pairs, span):
+    """`pairs` [(object leaf, target leaf)]."""
+    if len(pairs) == 1:
+        return "Aim: %s aims at %s %s" % (pairs[0][0], pairs[0][1], span_words(span))
+    return "Aim: %d objects aim at their targets %s" % (len(pairs), span_words(span))
 
 
 # ------------------------------------------------------------ the parent tab

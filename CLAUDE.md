@@ -8890,6 +8890,56 @@ its target's move; Attach at a frame, a highlight, selected keys; a cup riding M
 goes with Delete character's knot, the cup kept. `verify_knots.py` 90/90 again; 6032 unit tests.
 `verify_tools_card.py` gained an Across press (still not run - the live checks are the animator's).
 
+**The aim tab** (2026-10-13: «Теперь давай реализуем функционал AIM»; asked, all the
+recommendation: both tools, Aim in two presses, Overlap on an additive layer). Spec
+`docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md` (what OverRig's `make_aim_from_selected`
+and `execute_overlap_command` build, read from the MEL), plan beside it. Two subsections more in the
+card - **Aim** [Aim] (reads **Finish** while an aim waits) and **Overlap** (Softness 2 / Lag, fr 1 /
+Easing 0 as named float fields; chips Hierarchy (on), Cycled, Total lag, Keep edges; [Overlap]), all
+remembered (`skeldarOverlap*`); hotkey rows `tools.aim`, `tools.overlap`. OverRig's `desel` (its
+deselect-triggered build) is not copied: Finish is the second press.
+- **Aim** (`knots.begin_aim` / `finish_aim`, the `aim` kind): the first press puts, per selected
+  object, a space riding it (`<leaf>_aimSpace`, marked a waiting space of kind `aim`,
+  `skeldarKnotPendingKind`) holding `<leaf>_aimTarget` along its X and `<leaf>_aimUp` along its Y,
+  four knot sizes out, rotation locked; the second press (the aims the selection names, else every
+  one waiting) refuses a target on the object or an up on its line (3°), then builds a group
+  `<leaf>_aim` (the knot's top, at identity) holding the target and the up baked from their world
+  positions (translate only, marked inner) and `aimConstraint -mo` with the vectors read off the
+  placement in the object's own axes (so the offset is the identity), `worldUpType object` on the
+  up. Maya names the aim's pairBlend weight `blendAimCnstraint1`; the knots' attach wiring needed
+  nothing new. Bake, Remove, Attach as on every knot; Remove on a waiting aim drops its space.
+- **Overlap** (`maya_tools/overlapplan.py` numpy and pure, `overlap.py` the scene): OverRig's
+  construction (a joint chain, a locator ahead of each joint by softness x the next distance,
+  aimed at, its keys shifted later by the lag, top to bottom) COMPUTED from the members' sampled
+  world frames - no rig, constraint or bake: the member's track before its aim `P_i = l_i · C_{i-1}`,
+  its target and up read from `P_i(t - lag)` (Catmull-Rom; cycled wrapped), the root's smoothed by
+  a Gaussian of softness x easing frames, the new frame's `d` on the target and `u` leaning to the
+  up. Chains: Hierarchy - each selected root and, step by step, the one node of its kind below
+  (through FKX joints and offset groups; a branch ends it, said); off - the selection. One time walk
+  per chain (`timewalk.Walk`), the window widened by the chain's whole lag; the new frames turned
+  into `rotate = RA^-1 · local · JO^-1` deltas (nearest the base euler) and, for a member not
+  parented under the one above, translate deltas; Keep edges multiplies by a smoothstep ramp 0 at
+  the ends; written as `final - base` on the layer curves of a new additive layer `Overlap`
+  (marked `skeldarOverlap`, rotation accumulation by component), zero one frame outside a
+  highlight, cycled curves cycling; a second press takes the members out of our earlier layers
+  first (replaces). One undo chunk.
+Proof: `docs/superpowers/plans/verify_aim_overlap.py` **57/57 mayapy standalone** - Aim: the
+target rides the prop, nothing moves at creation (0.000002°), the target moved turns the prop onto
+it (0.00000° off, turned 80°), the up rolls it (90.7°) still aiming, attach 0 the original, Remove
+exact, Bake, undo of each press, a range only inside, refusals, a Manny head; Overlap on a keyed
+joint chain: the base curve untouched under the layer's blend, **the root delayed by exactly the
+lag (0.000000°)**, the tip peaking 13 frames after the root, lengths kept, refusals, keep edges
+exact at both ends, cycled curves and frame 0 looking back round the end, a second press replacing
+the first, one undo, a highlight only inside, the selection mode, a loose chain's positions
+following, a knotted member refused, Manny's FKIndexFinger1_R chain (through its FKX joints) moving
+the game finger 48°. 6145 unit tests (`test_tools_overlapplan.py`: the model, OpenMaya's euler
+convention, the root delayed exactly, cycled, easing). The live card is the animator's to try.
+
+235. **A channel on an animation layer is fed by the layer's `animBlendNode*`, not by its curve.**
+     The base curve hangs on the blend's input A, untouched; a gate reading "the curve connected to
+     the plug" after an Overlap read the blend node and called the base changed (verify gate 33's
+     first run). Read the base curve by name, or through the blend's inputs.
+
 ## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
 
 The animator, with a walk cycle in Maya (bones only, `Desktop/Walk_01.fbx`): «проанализировать эту

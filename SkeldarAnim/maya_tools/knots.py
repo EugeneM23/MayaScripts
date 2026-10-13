@@ -10,6 +10,11 @@ exactly, and Bake writes what the knot shows into them.
 Ours are known by our attributes (`knotplan`'s markers) and found by walking locators (trap 70).
 Every press is one undo chunk with autoKey off; a refusal changes nothing.
 The pure half is `knotplan`. Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md
+
+The aim tab (2026-10-13) adds the `aim` kind: two presses as Knot Offset (a target and an up
+riding the object while placed, then Finish), a group holding the baked target and up, the
+object's rotation following an `aimConstraint` through the same pairBlend and attach. Spec:
+docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md
 """
 
 import contextlib
@@ -126,15 +131,25 @@ def _register(top):
                  defaultValue=True)
 
 
-def pivots():
-    """Every waiting Knot Offset pivot."""
+def _space_kind(space):
+    """What waits in a waiting space: "aim", else Knot Offset's pivot ("offset")."""
+    return _get(space, plan.PENDING_KIND_MARKER) or "offset"
+
+
+def pivots(kind="offset"):
+    """Every waiting pivot of `kind`: Knot Offset's ("offset"), or an aim's target ("aim")."""
     return [child for group in _groups() for space in _children(group)
-            if _has(space, plan.PENDING_SPACE_MARKER)
+            if _has(space, plan.PENDING_SPACE_MARKER) and _space_kind(space) == kind
             for child in _children(space) if _has(child, plan.PENDING_MARKER)]
 
 
 def waiting():
     return bool(pivots())
+
+
+def aims_waiting():
+    """Every waiting aim's target (2026-10-13)."""
+    return pivots("aim")
 
 
 def top_of(node):
@@ -148,7 +163,8 @@ def top_of(node):
 
 
 def pending_of(node):
-    """The waiting pivot `node` is, or the space it rides in, or None."""
+    """The waiting pivot `node` is, or the space it rides in, or another node in that space (a
+    waiting aim's up), or None."""
     path = _long(node)
     if _has(path, plan.PENDING_MARKER):
         return path
@@ -157,7 +173,15 @@ def pending_of(node):
                                         fullPath=True) or []:
             if _has(child, plan.PENDING_MARKER):
                 return child
+        return None
+    parent = _parent(path)
+    if parent and _has(parent, plan.PENDING_SPACE_MARKER):
+        return pending_of(parent)
     return None
+
+
+def _pending_kind(pivot):
+    return _space_kind(_parent(pivot))
 
 
 def source_of(top):
@@ -181,9 +205,9 @@ def _knots_driving(obj):
     return out
 
 
-def _waiting_for(obj):
+def _waiting_for(obj, kind="offset"):
     uuid = _uuid(obj)
-    return [p for p in pivots() if _get(p, plan.PENDING_MARKER) == uuid]
+    return [p for p in pivots(kind) if _get(p, plan.PENDING_MARKER) == uuid]
 
 
 # --------------------------------------------------------------- the press
@@ -258,8 +282,9 @@ def _channels(obj, channels):
     return locked, drivers
 
 
-def _plan_object(obj, kind):
-    """((free, skipped, drivers), '') or (None, refusal) for knotting `obj` as `kind`."""
+def _plan_object(obj, kind, finishing=False):
+    """((free, skipped, drivers), '') or (None, refusal) for knotting `obj` as `kind` (an aim
+    takes the rotate channels, as Knot Orient; `finishing`: its own waiting aim is no refusal)."""
     name = obj.split("|")[-1]
     if constraints_of(obj):
         return None, plan.riding_refusal(name)
@@ -267,10 +292,12 @@ def _plan_object(obj, kind):
         return None, "%s is a waiting pivot - press Finish, or Remove it" % name
     if kind == "offset" and _waiting_for(obj):
         return None, "%s already has a pivot waiting - press Finish, or Remove it" % name
+    if kind == "aim" and not finishing and _waiting_for(obj, "aim"):
+        return None, "%s already has an aim waiting - press Finish, or Remove it" % name
     refusal = plan.uneven_parent(name, cmds.getAttr(obj + ".parentMatrix[0]"))
     if refusal:
         return None, refusal
-    channels = plan.ROTATE if kind == "orient" else plan.CHANNELS
+    channels = plan.ROTATE if kind in ("orient", "aim") else plan.CHANNELS
     locked, drivers = _channels(obj, channels)
     free, skipped, refusal = plan.channel_plan(name, locked, drivers, channels)
     if refusal:
@@ -391,10 +418,17 @@ def _mark(top, kind, obj, span, keyed):
                          inTangentType="flat", outTangentType="flat")
 
 
-def _follow(obj, driver, top, constraint, skipped):
+def _follow(obj, driver, top, constraint, skipped, aim=None):
     """The object follows `driver` (offset kept, its locked channels skipped), the constraint
-    marked with the knot; `attach` drives the constraint's weight and Maya's pairBlend."""
-    if constraint == "orient":
+    marked with the knot; `attach` drives the constraint's weight and Maya's pairBlend (an aim's:
+    `blendAimCnstraint1`, measured). `aim` (aim vector, up vector, up node) for an aim knot."""
+    if constraint == "aim":
+        skip = [_AXIS[ch] for ch in skipped if ch in plan.ROTATE] or "none"
+        con = _constrain(cmds.aimConstraint, driver, obj, maintainOffset=True,
+                         aimVector=aim[0], upVector=aim[1], worldUpType="object",
+                         worldUpObject=aim[2], skip=skip)
+        alias = cmds.aimConstraint(con, query=True, weightAliasList=True)[0]
+    elif constraint == "orient":
         skip = [_AXIS[ch] for ch in skipped if ch in plan.ROTATE] or "none"
         con = _constrain(cmds.orientConstraint, driver, obj, maintainOffset=True, skip=skip)
         alias = cmds.orientConstraint(con, query=True, weightAliasList=True)[0]
@@ -628,6 +662,147 @@ def finish_offset(selection=None):
     return plan.finish_message(plan.leaf(obj), top.split("|")[-1], span)
 
 
+# --------------------------------------------------------------------- Aim
+
+def _lock_rotation(node):
+    """A point locator: its rotation locked out of the channel box (an aim's target and up are
+    positions only - OverRig cut, zeroed and hid their rotation)."""
+    for ch in plan.ROTATE:
+        cmds.setAttr(node + "." + ch, lock=True, keyable=False, channelBox=False)
+
+
+def begin_aim(selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
+    """The first Aim press, every selected object: a space riding it (at its rotate pivot, in
+    its axes) holding a target along its X and an up along its Y, four knot sizes out - placed
+    while they ride it, then Finish (2026-10-13, «двухшаговая кнопка» as Knot Offset)."""
+    objs = _selection(selection)
+    if not objs:
+        return plan.AIM_NOTHING
+    for obj in objs:
+        _info, refusal = _plan_object(obj, "aim")
+        if refusal:
+            return refusal
+    highlight = _highlight(highlight)
+    k = plan.kind("aim")
+    targets = []
+    with _press("skeldarAimBegin"):
+        for obj in objs:
+            name = plan.leaf(obj)
+            size = _size(obj)
+            space = cmds.createNode("transform", name=name + plan.AIM_SPACE_SUFFIX,
+                                    parent=_group_for(obj), skipSelect=True)
+            space = _by_uuid(_uuid(space))
+            _set_string(space, plan.PENDING_SPACE_MARKER, _uuid(obj))
+            _set_string(space, plan.PENDING_KIND_MARKER, "aim")
+            _constrain(cmds.parentConstraint, obj, space, maintainOffset=False)
+            target = _locator(name + plan.AIM_TARGET_SUFFIX, space, size, k.colour, 0)
+            up = _locator(name + k.inner_suffix, space, size, k.inner_colour, 0)
+            reach = plan.aim_reach(size)
+            cmds.setAttr(target + ".translateX", reach)
+            cmds.setAttr(up + ".translateY", reach)
+            for node in (target, up):
+                _lock_rotation(node)
+            _set_string(target, plan.PENDING_MARKER, _uuid(obj))
+            _set_string(target, plan.SPAN_MARKER, plan.encode_span(_span(obj, highlight)))
+            _set_string(target, plan.ORDER_MARKER, order)
+            targets.append(target)
+        cmds.select(targets, replace=True)
+    try:
+        cmds.setToolTo("moveSuperContext")
+    except Exception:                                           # batch: no tools
+        pass
+    return plan.aim_begin_message([plan.leaf(o) for o in objs])
+
+
+def _pending_up(target):
+    """A waiting aim's up: the other locator in its space."""
+    for child in _children(_parent(target)):
+        if child != target and not cmds.objectType(child, isAType="constraint"):
+            return child
+    return None
+
+
+def _in_axes(obj, node):
+    """Where `node` stands off the object's rotate pivot, in the object's own axes."""
+    pivot = cmds.xform(obj, query=True, worldSpace=True, rotatePivot=True)
+    where = cmds.xform(node, query=True, worldSpace=True, translation=True)
+    offset = [where[i] - pivot[i] for i in range(3)]
+    return tuple(sum(offset[j] * row[j] for j in range(3))
+                 for row in plan.axes_of(cmds.getAttr(obj + ".worldMatrix[0]")))
+
+
+def _build_aim(target_pending, obj, info, up_pending, vectors):
+    """One aim knot: a group (the top, at identity) holding the target and the up, each baked
+    from the waiting one's world position over the span; the waiting space gone; the object's
+    rotation aiming at the target, leaning to the up."""
+    free, skipped, drivers = info
+    span = plan.decode_span(_get(target_pending, plan.SPAN_MARKER)) or _span(obj, None)
+    k = plan.kind("aim")
+    name = plan.leaf(obj)
+    size = _size(obj)
+    top = cmds.createNode("transform", name=name + k.suffix, parent=_group_for(obj),
+                          skipSelect=True)
+    top = _by_uuid(_uuid(top))
+    target = _locator(name + plan.AIM_TARGET_SUFFIX, top, size, k.colour, 0)
+    up = _locator(name + k.inner_suffix, top, size, k.inner_colour, 0)
+    temps = [_constrain(cmds.pointConstraint, target_pending, target, maintainOffset=False),
+             _constrain(cmds.pointConstraint, up_pending, up, maintainOffset=False)]
+    for node in (target, up):
+        _bake_node(node, plan.TRANSLATE, span)
+    cmds.delete(temps)
+    cmds.delete(_parent(target_pending))
+    for node in (target, up):
+        _set_string(node, plan.INNER_MARKER, _uuid(top))
+        _lock_rotation(node)
+    for attr in ("translate", "rotate", "scale"):
+        cmds.setAttr(top + "." + attr, lock=True)
+    keyed = _key_free(obj, free, drivers)
+    _mark(top, "aim", obj, span, keyed)
+    _follow(obj, target, top, k.constraint, skipped, aim=(vectors[0], vectors[1], up))
+    return obj, target, span
+
+
+def finish_aim(selection=None):
+    """The second Aim press: the waiting aims the selection names (a target, an up, the space,
+    or the object), else every aim waiting, built. A target standing on its object, or an up on
+    the line to the target, is refused before anything changes."""
+    named = []
+    for node in _selection(selection):
+        found = pending_of(node)
+        if found and _pending_kind(found) != "aim":
+            found = None
+        found = found or next(iter(_waiting_for(node, "aim")), None)
+        if found and found not in named:
+            named.append(found)
+    chosen, refusal = plan.choose_aims(named, aims_waiting())
+    if refusal:
+        return refusal
+    jobs = []
+    for pending in chosen:
+        label = pending.split("|")[-1]
+        obj = _by_uuid(_get(pending, plan.PENDING_MARKER))
+        if not obj:
+            return "the object of %s is gone - Remove it" % label
+        info, refusal = _plan_object(obj, "aim", finishing=True)
+        if refusal:
+            return refusal
+        up = _pending_up(pending)
+        if not up:
+            return "the up of %s is gone - Remove it and press Aim again" % label
+        aim, upv, refusal = plan.aim_vectors(plan.leaf(obj), _in_axes(obj, pending),
+                                             _in_axes(obj, up))
+        if refusal:
+            return refusal
+        jobs.append((pending, obj, info, up, (aim, upv)))
+    made = []
+    with _press("skeldarAim"):
+        for pending, obj, info, up, vectors in jobs:
+            made.append(_build_aim(pending, obj, info, up, vectors))
+        cmds.select([m[1] for m in made], replace=True)
+    return plan.aim_finish_message([(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made],
+                                   made[0][2])
+
+
 # --------------------------------------------------------- Bake and Remove
 
 def _picked(selection):
@@ -647,7 +822,7 @@ def _picked(selection):
         for found in _knots_driving(node):
             if found not in tops:
                 tops.append(found)
-        for found in _waiting_for(node):
+        for found in _waiting_for(node) + _waiting_for(node, "aim"):
             if found not in waiting_pivots:
                 waiting_pivots.append(found)
     return tops, waiting_pivots

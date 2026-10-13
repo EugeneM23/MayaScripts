@@ -9,7 +9,13 @@ row share the card's width (the skin's `fill`); under them the knots' rotate ord
 presses are module functions reading the remembered rotate order, so the hotkey rows work with the
 card closed. The scene half is `knots`, the pure half `knotplan`.
 
-Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md
+The parent tab (2026-10-12) added Parent, Multiple across and Attach; the aim tab (2026-10-13,
+«Теперь давай реализуем функционал AIM») adds Aim (two presses: it reads Finish while an aim
+waits) and Overlap (Softness, Lag, Easing, four chips, the press; the scene half `overlap`, the
+pure half `overlapplan`).
+
+Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md,
+docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md
 """
 
 import sys
@@ -21,6 +27,8 @@ import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_tools import knotplan as plan
 from maya_tools import knots
+from maya_tools import overlap as overlapper
+from maya_tools import overlapplan
 from maya_tools import reparent
 
 HUB_SECTION = "tools"
@@ -58,6 +66,28 @@ ATTACH0_BTN = "skeldarToolsAttach0"
 ATTACH1_BTN = "skeldarToolsAttach1"
 ROTATE_VAR = "skeldarAcrossRotate"
 TRANSLATE_VAR = "skeldarAcrossTranslate"
+#  The aim tab (2026-10-13).
+AIM_HEADING = "skeldarToolsAimHeading"
+AIM_BTN = "skeldarToolsAim"
+OVERLAP_HEADING = "skeldarToolsOverlapHeading"
+SOFT_LABEL = "skeldarToolsSoftnessLabel"
+SOFT_FIELD = "skeldarToolsSoftness"
+LAG_LABEL = "skeldarToolsLagLabel"
+LAG_FIELD = "skeldarToolsLag"
+EASE_LABEL = "skeldarToolsEasingLabel"
+EASE_FIELD = "skeldarToolsEasing"
+HIER_CHIP = "skeldarToolsHierarchy"
+CYCLE_CHIP = "skeldarToolsCycled"
+TOTAL_CHIP = "skeldarToolsTotalLag"
+EDGES_CHIP = "skeldarToolsKeepEdges"
+OVERLAP_BTN = "skeldarToolsOverlap"
+SOFT_VAR = "skeldarOverlapSoftness"
+LAG_VAR = "skeldarOverlapLag"
+EASE_VAR = "skeldarOverlapEasing"
+HIER_VAR = "skeldarOverlapHierarchy"
+CYCLE_VAR = "skeldarOverlapCycled"
+TOTAL_VAR = "skeldarOverlapTotal"
+EDGES_VAR = "skeldarOverlapEdges"
 #  The name column of the Rotate order and Attach rows, logical px (skin, classic): one width,
 #  so the segments and the 0 / 1 buttons start at one place.
 LABEL_W = (78, 90)
@@ -104,6 +134,25 @@ TIPS = {
                "the highlight's ends, the selected keys, or the current frame",
     "attach1": "Attach 1: key the selected knots on - at the highlight's ends, the selected "
                "keys, or the current frame",
+    "aim": "Aim - select objects: a target (along each object's X) and an up (along its Y) "
+           "appear, riding it - move them where it should point and lean, then press this "
+           "button again (it reads Finish): the object's rotation aims at the target from then "
+           "on (attach, a range, Bake / Remove like any knot)",
+    "softness": "Overlap: how far ahead each link looks, times its length - smaller gives more "
+                "overlap",
+    "lag": "Overlap: the frames each link trails the one above (Total lag: the whole chain's)",
+    "easing": "Overlap: smooths the root's motion before it travels down the chain - takes the "
+              "shake out (0: none)",
+    "hierarchy": "Overlap: each selected object is a chain's root - the chain follows its "
+                 "descendants of the same kind; off: the selection, top to bottom, is the chain",
+    "cycled": "Overlap: the take loops - the lag wraps round its end",
+    "total": "Overlap: Lag is the whole chain's, shared over its links",
+    "edges": "Overlap: the first and last poses stay as they are - the overlap fades in over "
+             "the first fifth and out over the last",
+    "overlap": "Overlap - select a chain's root (Hierarchy) or its members top to bottom: each "
+               "link trails its own motion, keyed on a new additive layer 'Overlap' (mute, "
+               "weight or delete it; pressing again replaces it). A highlighted range overlaps "
+               "only there",
 }
 ORDER_TIPS = {
     "object": "New knots take their object's own rotate order",
@@ -141,11 +190,14 @@ def refresh(*_):
         return
     try:
         count, waiting = len(knots.knots()), len(knots.pivots())
+        aims = len(knots.aims_waiting())
     except Exception:                                        # noqa: BLE001
         return
-    cmds.text(SUBTITLE, edit=True, label=plan.subtitle(count, waiting))
+    cmds.text(SUBTITLE, edit=True, label=plan.subtitle(count, waiting, aims))
     if cmds.button(OFFSET_BTN, exists=True):
         cmds.button(OFFSET_BTN, edit=True, label=plan.offset_label(bool(waiting)))
+    if cmds.button(AIM_BTN, exists=True):
+        cmds.button(AIM_BTN, edit=True, label=plan.aim_label(bool(aims)))
     _paint_lists()
 
 
@@ -200,12 +252,28 @@ def swap_lists():
     return status("Objects and Targets swapped")
 
 
-def _flag(var):
-    return bool(cmds.optionVar(query=var)) if cmds.optionVar(exists=var) else True
+def _flag(var, default=True):
+    return bool(cmds.optionVar(query=var)) if cmds.optionVar(exists=var) else default
 
 
 def _flag_changed(var):
     return lambda value, *_: cmds.optionVar(intValue=(var, int(bool(value))))
+
+
+def _number(field, var, default):
+    """A remembered number: the card's field while it stands (and remembered), else the
+    optionVar, else `default` - so the hotkey row works with the card closed."""
+    if field and cmds.floatField(field, exists=True):
+        value = float(cmds.floatField(field, query=True, value=True))
+        cmds.optionVar(floatValue=(var, value))
+        return value
+    if cmds.optionVar(exists=var):
+        return float(cmds.optionVar(query=var))
+    return default
+
+
+def _number_changed(var):
+    return lambda value, *_: cmds.optionVar(floatValue=(var, float(value)))
 
 
 def multiple_across():
@@ -282,6 +350,27 @@ def attach_1():
     return _press(lambda: knots.set_attach(1.0))
 
 
+def aim():
+    """Aim, or Finish while an aim waits."""
+    return _press(lambda: knots.finish_aim() if knots.aims_waiting()
+                  else knots.begin_aim(order=order()))
+
+
+def overlap_settings():
+    """The Overlap's settings as the card (or the memory) holds them."""
+    d = overlapplan.DEFAULTS
+    return overlapplan.Settings(
+        softness=_number(SOFT_FIELD, SOFT_VAR, d.softness),
+        lag=_number(LAG_FIELD, LAG_VAR, d.lag),
+        easing=_number(EASE_FIELD, EASE_VAR, d.easing),
+        hierarchy=_flag(HIER_VAR, d.hierarchy), cycled=_flag(CYCLE_VAR, d.cycled),
+        total=_flag(TOTAL_VAR, d.total), edges=_flag(EDGES_VAR, d.edges))
+
+
+def overlap():
+    return _press(lambda: overlapper.run(settings=overlap_settings()))
+
+
 def remove():
     return _press(knots.remove)
 
@@ -313,9 +402,21 @@ def _named_row():
                           columnAttach=[(1, "both", 0), (2, "both", 0)])
 
 
-def _chip(name, label, var, tip):
-    return hubstyle.mark(cmds.checkBox(name, label=label, value=_flag(var), annotation=tip,
-                                       changeCommand=_flag_changed(var)), "chip")
+def _chip(name, label, var, tip, default=True):
+    return hubstyle.mark(cmds.checkBox(name, label=label, value=_flag(var, default),
+                                       annotation=tip, changeCommand=_flag_changed(var)), "chip")
+
+
+def _number_row(label_name, label, field, var, default, tip, minimum=None):
+    """A named row holding one remembered number (the Overlap's Softness, Lag, Easing)."""
+    _named_row()
+    cmds.text(label_name, label=label, align="left", annotation=tip)
+    kwargs = dict(value=_number(None, var, default), precision=2, annotation=tip,
+                  changeCommand=_number_changed(var))
+    if minimum is not None:
+        kwargs["minValue"] = minimum
+    cmds.floatField(field, **kwargs)
+    cmds.setParent("..")
 
 
 def _fill_row(columns):
@@ -328,10 +429,10 @@ def _fill_row(columns):
 
 
 def build_panel():
-    """The card into the current layout: the subsections Knots, Double knot, Parent and
-    Multiple across, their buttons stretched over the card (2026-10-12, «два под раздела ...
-    растягивать вместе с интерфейсом», then «весь функционал из вкладки parent»); under them the
-    knots' rotate order, Attach 0 / 1, Bake and Remove; the line."""
+    """The card into the current layout: the subsections Knots, Double knot, Parent, Multiple
+    across, Aim and Overlap, their buttons stretched over the card (2026-10-12, «два под раздела
+    ... растягивать вместе с интерфейсом», then «весь функционал из вкладки parent»; 2026-10-13
+    the aim tab); under them the knots' rotate order, Attach 0 / 1, Bake and Remove; the line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
@@ -369,6 +470,29 @@ def build_panel():
     _chip(ROTATE_CHIP, "Rotate", ROTATE_VAR, TIPS["rotate"])
     _chip(TRANSLATE_CHIP, "Translate", TRANSLATE_VAR, TIPS["translate"])
     _button(MULTI_BTN, "Across", "hand-grab", TIPS["multi"], multiple_across)
+    cmds.setParent("..")
+
+    _heading(AIM_HEADING, "Aim")
+    _fill_row(1)
+    _button(AIM_BTN, plan.aim_label(False), "target", TIPS["aim"], aim)
+    cmds.setParent("..")
+
+    d = overlapplan.DEFAULTS
+    _heading(OVERLAP_HEADING, "Overlap")
+    _number_row(SOFT_LABEL, "Softness", SOFT_FIELD, SOFT_VAR, d.softness, TIPS["softness"],
+                0.01)
+    _number_row(LAG_LABEL, "Lag, fr", LAG_FIELD, LAG_VAR, d.lag, TIPS["lag"])
+    _number_row(EASE_LABEL, "Easing", EASE_FIELD, EASE_VAR, d.easing, TIPS["easing"], 0.0)
+    _fill_row(2)
+    _chip(HIER_CHIP, "Hierarchy", HIER_VAR, TIPS["hierarchy"], d.hierarchy)
+    _chip(CYCLE_CHIP, "Cycled", CYCLE_VAR, TIPS["cycled"], d.cycled)
+    cmds.setParent("..")
+    _fill_row(2)
+    _chip(TOTAL_CHIP, "Total lag", TOTAL_VAR, TIPS["total"], d.total)
+    _chip(EDGES_CHIP, "Keep edges", EDGES_VAR, TIPS["edges"], d.edges)
+    cmds.setParent("..")
+    _fill_row(1)
+    _button(OVERLAP_BTN, "Overlap", "wave-sine", TIPS["overlap"], overlap)
     cmds.setParent("..")
 
     cmds.separator(GAP, style="none", height=hubstyle.pick(4, 6))

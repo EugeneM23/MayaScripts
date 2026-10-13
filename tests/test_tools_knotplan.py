@@ -18,25 +18,32 @@ from maya_tools import knotplan as plan
 class Kinds(unittest.TestCase):
 
     def test_the_kinds_in_the_cards_order(self):
-        """+ across (2026-10-12, the parent tab): a knot inside the parent."""
+        """+ across (2026-10-12, the parent tab): a knot inside the parent; + aim (2026-10-13,
+        the aim tab): the object's rotation aims at a target."""
         self.assertEqual([k.key for k in plan.KINDS],
-                         ["knot", "offset", "orient", "double_local", "double_world", "across"])
+                         ["knot", "offset", "orient", "double_local", "double_world", "across",
+                          "aim"])
         self.assertEqual(plan.kind("across").constraint, "parent")
         self.assertEqual(plan.kind("across").suffix, "_across")
+        self.assertEqual(plan.kind("aim").constraint, "aim")
+        self.assertEqual((plan.kind("aim").suffix, plan.kind("aim").inner_suffix),
+                         ("_aim", "_aimUp"))
 
-    def test_the_double_knots_have_an_inner_node_the_others_do_not(self):
+    def test_the_double_knots_and_the_aim_have_an_inner_node_the_others_do_not(self):
         for kind in plan.KINDS:
-            self.assertEqual(bool(kind.inner_suffix), kind.key.startswith("double"), kind.key)
-            self.assertEqual(kind.inner_colour is not None, kind.key.startswith("double"))
+            inner = kind.key.startswith("double") or kind.key == "aim"
+            self.assertEqual(bool(kind.inner_suffix), inner, kind.key)
+            self.assertEqual(kind.inner_colour is not None, inner)
 
     def test_only_knot_orient_follows_by_orientation(self):
         self.assertEqual([k.key for k in plan.KINDS if k.constraint == "orient"], ["orient"])
-        self.assertTrue(all(k.constraint in ("parent", "orient") for k in plan.KINDS))
+        self.assertTrue(all(k.constraint in ("parent", "orient", "aim") for k in plan.KINDS))
 
     def test_suffixes_are_distinct_and_name_safe(self):
         suffixes = [k.suffix for k in plan.KINDS] + [k.inner_suffix for k in plan.KINDS
                                                      if k.inner_suffix]
-        suffixes += [plan.PIVOT_SUFFIX, plan.PIVOT_SPACE_SUFFIX]
+        suffixes += [plan.PIVOT_SUFFIX, plan.PIVOT_SPACE_SUFFIX, plan.AIM_TARGET_SUFFIX,
+                     plan.AIM_SPACE_SUFFIX]
         self.assertEqual(len(suffixes), len(set(suffixes)))
         for suffix in suffixes:
             self.assertRegex(suffix, r"^_[A-Za-z]+$")
@@ -57,7 +64,7 @@ class Kinds(unittest.TestCase):
         for name in (plan.KIND_MARKER, plan.SOURCE_MARKER, plan.SPAN_MARKER, plan.KEYED_MARKER,
                      plan.OF_MARKER, plan.PENDING_MARKER, plan.PENDING_SPACE_MARKER,
                      plan.GROUP_MARKER, plan.ORDER_MARKER, plan.INNER_MARKER,
-                     plan.REGISTRY_MARKER):
+                     plan.REGISTRY_MARKER, plan.PENDING_KIND_MARKER):
             self.assertTrue(name.startswith("skeldar"), name)
 
 
@@ -434,6 +441,62 @@ class ParentTab(unittest.TestCase):
                                                            (0.0, 40.0, False)))
         self.assertIn("attach 0", plan.attach_message(0.0, 2, (12.0,)))
         self.assertIn("10-29", plan.attach_message(1.0, 1, (10.0, 29.0)))
+
+
+class Aim(unittest.TestCase):
+    """The aim tab (2026-10-13): where the locators start, the vectors from the placement, which
+    waiting aims a Finish means, the button and the lines."""
+
+    def test_the_reach(self):
+        self.assertEqual(plan.aim_reach(5.0), 20.0)
+
+    def test_the_vectors_from_the_placement(self):
+        aim, up, refusal = plan.aim_vectors("prop", (20.0, 0.0, 0.0), (3.0, 20.0, 0.0))
+        self.assertEqual(refusal, "")
+        self.assertEqual(aim, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(up[1], 1.0)
+        self.assertAlmostEqual(up[0], 0.0)              # made perpendicular to the aim
+
+    def test_a_target_on_the_object_is_refused(self):
+        aim, _up, refusal = plan.aim_vectors("prop", (0.0, 0.0, 0.0), (0.0, 20.0, 0.0))
+        self.assertIsNone(aim)
+        self.assertIn("prop", refusal)
+        self.assertIn("target", refusal)
+
+    def test_an_up_on_the_line_to_the_target_is_refused(self):
+        _aim, up, refusal = plan.aim_vectors("prop", (20.0, 0.0, 0.0), (40.0, 0.5, 0.0))
+        self.assertIsNone(up)
+        self.assertIn("up", refusal)
+        self.assertEqual(plan.aim_vectors("prop", (20.0, 0.0, 0.0), (0.0, 0.0, 0.0))[2] != "",
+                         True)
+
+    def test_axes_take_the_scale_out(self):
+        m = [2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, -4.0, 0.0, 0.0, 5.0, 6.0, 7.0, 1.0]
+        rows = plan.axes_of(m)
+        self.assertEqual([tuple(round(c, 9) for c in row) for row in rows],
+                         [(1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)])
+
+    def test_which_aims_finish(self):
+        self.assertEqual(plan.choose_aims(["|a"], ["|a", "|b"]), (["|a"], ""))
+        self.assertEqual(plan.choose_aims([], ["|a", "|b"]), (["|a", "|b"], ""))
+        found, refusal = plan.choose_aims([], [])
+        self.assertIsNone(found)
+        self.assertIn("press Aim first", refusal)
+
+    def test_the_button_and_the_lines(self):
+        self.assertEqual(plan.aim_label(False), "Aim")
+        self.assertEqual(plan.aim_label(True), "Finish")
+        self.assertIn("Finish", plan.aim_begin_message(["prop"]))
+        self.assertIn("2 objects", plan.aim_begin_message(["a", "b"]))
+        line = plan.aim_finish_message([("prop", "prop_aimTarget")], (0.0, 40.0, False))
+        self.assertIn("prop aims at prop_aimTarget", line)
+        self.assertIn("2 objects aim", plan.aim_finish_message([("a", "x"), ("b", "y")],
+                                                               (9.0, 21.0, True)))
+
+    def test_the_subtitle_counts_waiting_aims(self):
+        self.assertEqual(plan.subtitle(2, 0, 1), "2 knots in the scene, 1 aim waiting")
+        self.assertEqual(plan.subtitle(0, 1, 2), "1 pivot waiting, 2 aims waiting")
+        self.assertEqual(plan.subtitle(0, 0), "no knots in the scene")
 
 
 class Purity(unittest.TestCase):

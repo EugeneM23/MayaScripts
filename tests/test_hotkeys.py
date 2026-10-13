@@ -481,16 +481,18 @@ class OurRows(unittest.TestCase):
         #  + window.tools and the seven tools.* rows (2026-10-12)
         #  + window.tailbuilder, tailbuilder.apply / .restore (2026-10-12)
         #  + tools.inside / world / swap / across / attach_0 / attach_1 (2026-10-12)
-        self.assertEqual(len(ours), 55)
+        #  + tools.aim / overlap (2026-10-13, the aim tab)
+        self.assertEqual(len(ours), 57)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
         which runs with the card closed and then reports in the viewport."""
         self.assertEqual(sorted(self._keys("tools.")),
-                         ["tools.across", "tools.attach_0", "tools.attach_1",
+                         ["tools.across", "tools.aim", "tools.attach_0", "tools.attach_1",
                           "tools.bake", "tools.double_local", "tools.double_world",
                           "tools.inside", "tools.knot", "tools.knot_offset",
-                          "tools.knot_orient", "tools.remove", "tools.swap", "tools.world"])
+                          "tools.knot_orient", "tools.overlap", "tools.remove", "tools.swap",
+                          "tools.world"])
         for key in self._keys("tools."):
             found = maya_hotkeys.row(key)
             self.assertEqual(found[1], "SkeldarAnim.Tools")
