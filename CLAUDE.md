@@ -8779,6 +8779,41 @@ button height, a 4 px gap) so they stretch with the card. The classic hub keeps 
 SelectionChanged job per card (hub and popup copies) refreshes the subtitle and the Offset button.
 Not seen live: the stretched rows in the animator's dock (unit-tested offscreen at 320 px).
 
+**Since 2026-10-13 the card is a LIST, and nothing is orange but a waiting Finish** (the animator:
+«сделать все более понятно, разложить по разделам. Все кнопки не должны быть такими оранжевыми»;
+four mockups shown - tabs, coloured blocks of tiles, a list with explanations, the old order
+restyled - they chose the list, C). Spec `docs/superpowers/specs/2026-10-13-tools-card-list-design.md`.
+This replaces the paragraph above and what the parent and aim tabs below say about rows and headings.
+- **Three subsections, each a head that opens and closes its body** (`panel.SECTIONS`, `HEAD`,
+  `BODY`; a head is the skin's new `subhead`: a chevron, the name bold, a muted hint on the right, a
+  hairline above). **Knots** «drive with a locator»: Knot, Offset, Orient, Local ×2, World ×2, **Aim**
+  (moved in: it is a knot kind) and the **Rotate order** of new knots (moved up from the bottom).
+  **Parent** «motion kept»: Inside, To world, Swap, Across, then the caption «Across, pair by pair»,
+  `Objects n | Targets n | ⇄` and `Rotate | Translate | Pairs` (Multiple across's press reads Pairs
+  now). **Overlap** «on a new layer»: the three numbers side by side (a row of their names over a row of
+  fields, the skin's new `columns`), the four chips, the press. Open / closed is remembered per
+  subsection (`skeldarToolsOpen_<key>`; Knots open, the others closed at first); a head's press flips
+  what ITS card shows (`toggle_section` asks its own body - the hub's card and a popup copy share the
+  memory, not their state).
+- **Every tool is a flat row** (the skin's new `toolrow`): its icon in the Animation group's blue
+  (`TOKENS["tool_icon"]`), its name, and its explanation (`panel.HINTS`, ≤ 28 characters) muted after
+  a name column (`hubstyle.ROW_NAME` 72 logical px), elided; the long OverRig story stays the tooltip.
+  **A row that reads Finish (Offset or Aim waiting) is filled with the accent** - the card's only
+  orange: `maya_hubqt.set_state(name, "wait")`, reached through the panel's one Qt seam `_light`.
+- **«Selected knots»** - an inset under the subsections, always shown: a caption and one row `0`
+  (Attach 0), `1` (Attach 1), Bake, Layer and Remove as a red trash icon; outlined buttons.
+- The skin's additions are generic: `hubstyle.mark(..., hint=)` (`Mark.hint`); roles `toolrow`,
+  `subhead`, `caption` (a small muted label that STAYS - a `note` becomes the header's tooltip,
+  trap 226), `columns` (`_spread_columns`: any widgets share a row); `set_state` sets `skState` even
+  before the marks are applied and `_apply_mark` paints what it finds. New icon `world`.
+- The classic hub shows the same controls plain: a row is a left-aligned button with its name.
+- Proof: unit tests (the card top down, roles, hints, the subsection memory, the waiting row; the skin
+  offscreen: a hint after the name column and elided, the wait state's icon, a head's chevron,
+  columns), 6318 in all; `docs/superpowers/plans/render_tools_card.py` draws the card offscreen from
+  the builder's own calls with the skin's code and stylesheet at 150 % in the 510 px viewport
+  (`tools_card.png`, both states). `verify_tools_card.py` gained the head click and the lit Finish -
+  not run (live checks are the animator's).
+
 **One set of rules for all five** (OverRig's double knots had no range or attach; ours do):
 - refusals first, for every selected object, by name: nothing selected; riding a knot already (a
   knot itself CAN be knotted); a waiting pivot; no free channel; a free channel driven by anything

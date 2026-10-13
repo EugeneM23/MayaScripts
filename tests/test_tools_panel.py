@@ -27,6 +27,7 @@ class _Cmds(FakeUiCmds):
         self.labels = {}
         self.commands = {}
         self.radio = {}
+        self.layouts = {}
 
     def _control(self, kind, args, kwargs):
         name = args[0] if args else None
@@ -58,6 +59,25 @@ class _Cmds(FakeUiCmds):
             return FakeUiCmds.__getattr__(self, "iconTextRadioButton")(*args, **kwargs)
         self.radio[name] = kwargs
         return FakeUiCmds.__getattr__(self, "iconTextRadioButton")(*args, **kwargs)
+
+    def columnLayout(self, *args, **kwargs):
+        """Named columns (the subsections' bodies, the footer) are remembered with their
+        `manage`; the card's own column stays FakeUiCmds'."""
+        name = args[0] if args else None
+        if name is None or (name not in self.layouts and not kwargs.get("exists")
+                            and (kwargs.get("query") or kwargs.get("edit"))):
+            return FakeUiCmds.columnLayout(self, *args, **kwargs)
+        if kwargs.get("exists"):
+            return name in self.layouts
+        if kwargs.get("query"):
+            return self.layouts[name].get("manage", True)
+        if kwargs.get("edit"):
+            self.layouts[name].update((k, v) for k, v in kwargs.items() if k != "edit")
+            return name
+        self.calls.append(("columnLayout", args, kwargs))
+        self.children.append(name)
+        self.layouts[name] = dict(kwargs)
+        return name
 
 
 class _Knots(object):
@@ -173,6 +193,9 @@ class _Base(unittest.TestCase):
         panel.reparent = _Reparent(self.stub)
         panel.overlapper = _Overlapper(self.stub)
         panel.layerbake = _LayerBake(self.stub)
+        self.saved_light = panel._light
+        self.lit = []
+        panel._light = lambda name, state: self.lit.append((name, state))
         panel.JOB.clear()
         import sys
         self.lists = getattr(sys, "_skeldar_tools_lists", None)
@@ -184,6 +207,7 @@ class _Base(unittest.TestCase):
     def tearDown(self):
         (panel.cmds, panel.knots, panel.reparent, panel.overlapper,
          panel.layerbake) = self.saved
+        panel._light = self.saved_light
         panel.JOB.clear()
         import sys
         if self.lists is None:
@@ -196,56 +220,75 @@ class _Base(unittest.TestCase):
 class Card(_Base):
 
     def test_the_controls_top_down(self):
+        """2026-10-13, mockup C: the subtitle; Knots, Parent and Overlap, each a head over its
+        body; «Selected knots»; the line."""
         panel.build_panel()
         names = [n for n in self.fake.children if n.startswith("skeldarTools")]
         self.assertEqual(names, [
-            panel.SUBTITLE, panel.KNOTS_HEADING, panel.KNOT_BTN, panel.OFFSET_BTN,
-            panel.ORIENT_BTN, panel.DOUBLE_HEADING, panel.LOCAL_BTN, panel.WORLD_BTN,
-            panel.PARENT_HEADING, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
-            panel.ACROSS_BTN, panel.MULTI_HEADING, panel.OBJECTS_BTN, panel.TARGETS_BTN,
-            panel.LISTSWAP_BTN, panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN,
-            panel.AIM_HEADING, panel.AIM_BTN, panel.OVERLAP_HEADING, panel.SOFT_LABEL,
-            panel.SOFT_FIELD, panel.LAG_LABEL, panel.LAG_FIELD, panel.EASE_LABEL,
-            panel.EASE_FIELD, panel.HIER_CHIP, panel.CYCLE_CHIP, panel.TOTAL_CHIP,
-            panel.EDGES_CHIP, panel.OVERLAP_BTN,
-            panel.GAP, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
-            panel.ORDER_SEG["xzy"], panel.ATTACH_LABEL, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
+            panel.SUBTITLE,
+            panel.HEAD["knots"], panel.BODY["knots"], panel.KNOT_BTN, panel.OFFSET_BTN,
+            panel.ORIENT_BTN, panel.LOCAL_BTN, panel.WORLD_BTN, panel.AIM_BTN,
+            panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
+            panel.ORDER_SEG["xzy"],
+            panel.HEAD["parent"], panel.BODY["parent"], panel.INSIDE_BTN, panel.TOWORLD_BTN,
+            panel.SWAP_BTN, panel.ACROSS_BTN, panel.PAIRS_CAPTION, panel.OBJECTS_BTN,
+            panel.TARGETS_BTN, panel.LISTSWAP_BTN, panel.ROTATE_CHIP, panel.TRANSLATE_CHIP,
+            panel.MULTI_BTN,
+            panel.HEAD["overlap"], panel.BODY["overlap"], panel.OVERLAP_NAMES, panel.SOFT_LABEL,
+            panel.LAG_LABEL, panel.EASE_LABEL, panel.OVERLAP_FIELDS, panel.SOFT_FIELD,
+            panel.LAG_FIELD, panel.EASE_FIELD, panel.HIER_CHIP, panel.CYCLE_CHIP,
+            panel.TOTAL_CHIP, panel.EDGES_CHIP, panel.OVERLAP_BTN,
+            panel.FOOTER, panel.FOOTER_CAPTION, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
             panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN, panel.STATUS])
 
-    def test_two_subsections_their_buttons_stretched(self):
-        """2026-10-12, «два под раздела Knots и Double knots ... кнопочки ... растягивать
-        вместе с интерфейсом»: two headings, and every row of buttons marked `fill` - the skin
-        spreads its buttons over the card's width and they stretch with it."""
+    def test_every_tool_is_a_row_with_its_explanation(self):
         panel.build_panel()
-        marks = hubstyle.take_marks()
-        roles = dict((m.name, m.role) for m in marks)
-        for name in (panel.KNOTS_HEADING, panel.DOUBLE_HEADING, panel.PARENT_HEADING,
-                     panel.MULTI_HEADING, panel.AIM_HEADING, panel.OVERLAP_HEADING):
-            self.assertEqual(roles[name], "heading")
-        self.assertEqual(self.fake.labels[panel.AIM_HEADING], "Aim")
-        self.assertEqual(self.fake.labels[panel.OVERLAP_HEADING], "Overlap")
-        self.assertEqual(self.fake.labels[panel.KNOTS_HEADING], "Knots")
-        self.assertEqual(self.fake.labels[panel.DOUBLE_HEADING], "Double knot")
-        self.assertEqual(self.fake.labels[panel.PARENT_HEADING], "Parent")
-        self.assertEqual(self.fake.labels[panel.MULTI_HEADING], "Multiple across")
-        fills = [m for m in marks if m.role == "fill"]
-        self.assertEqual(len(fills), 11)
-        self.assertTrue(all(m.layout for m in fills))
-        made = [n for n in self.fake.children]
-        rows = [made.index(m.name) for m in fills]
-        buttons = [[made.index(b) for b in group] for group in (
-            (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN),
-            (panel.LOCAL_BTN, panel.WORLD_BTN),
-            (panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN),
-            (panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN),
-            (panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN),
-            (panel.AIM_BTN,), (panel.HIER_CHIP, panel.CYCLE_CHIP),
-            (panel.TOTAL_CHIP, panel.EDGES_CHIP), (panel.OVERLAP_BTN,),
-            (panel.ATTACH0_BTN, panel.ATTACH1_BTN),
-            (panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN))]
-        ends = rows[1:] + [len(made)]
-        for row, end, group in zip(rows, ends, buttons):
-            self.assertTrue(all(row < b < end for b in group), "the buttons are in their row")
+        marks = dict((m.name, m) for m in hubstyle.take_marks())
+        rows = (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
+                panel.WORLD_BTN, panel.AIM_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN,
+                panel.SWAP_BTN, panel.ACROSS_BTN, panel.OVERLAP_BTN)
+        self.assertEqual(sorted(n for n, m in marks.items() if m.role == "toolrow"),
+                         sorted(rows))
+        for name in rows:
+            self.assertTrue(marks[name].hint, name)
+            self.assertEqual(marks[name].hint, panel.HINTS[name])
+            self.assertLessEqual(len(marks[name].hint), 28, name)    # ~290 px of card
+
+    def test_nothing_is_orange_but_a_waiting_row(self):
+        """«Все кнопки не должны быть такими оранжевыми»: no primary control at all - only a row
+        that reads Finish is lit (the skin's `wait`); the footer outlined, Remove the danger red."""
+        panel.build_panel()
+        roles = dict((m.name, m.role) for m in hubstyle.take_marks())
+        self.assertNotIn("primary", roles.values())
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "secondary"),
+                         sorted((panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
+                                 panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
+                                 panel.BAKE_BTN, panel.LAYER_BTN)))
+        self.assertEqual(roles[panel.REMOVE_BTN], "danger")
+        self.assertEqual(roles[panel.FOOTER], "inset")
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
+                         sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.HIER_CHIP,
+                                 panel.CYCLE_CHIP, panel.TOTAL_CHIP, panel.EDGES_CHIP)))
+        self.assertEqual(roles[panel.STATUS], "status")
+        self.assertEqual(roles[panel.SUBTITLE], "subtitle")
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "segment"),
+                         sorted(panel.ORDER_SEG.values()))
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "caption"),
+                         sorted((panel.PAIRS_CAPTION, panel.FOOTER_CAPTION, panel.SOFT_LABEL,
+                                 panel.LAG_LABEL, panel.EASE_LABEL)))
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "columns"),
+                         sorted((panel.OVERLAP_NAMES, panel.OVERLAP_FIELDS)))
+        self.assertNotIn("note", roles.values())        # the skin hides a note (trap 226)
+        self.assertNotIn("heading", roles.values())
+
+    def test_the_heads(self):
+        panel.build_panel()
+        marks = dict((m.name, m) for m in hubstyle.take_marks())
+        for key, label, hint in panel.SECTIONS:
+            self.assertEqual(marks[panel.HEAD[key]].role, "subhead")
+            self.assertEqual(marks[panel.HEAD[key]].hint, hint)
+            self.assertEqual(self.fake.labels[panel.HEAD[key]], label)
+        self.assertEqual([k for k, _, _ in panel.SECTIONS], ["knots", "parent", "overlap"])
 
     def test_the_rotate_order_label_is_shown(self):
         """The skin hides a `note` (it becomes the card header's tooltip) - the compact card's
@@ -253,37 +296,21 @@ class Card(_Base):
         panel.build_panel()
         roles = dict((m.name, m.role) for m in hubstyle.take_marks())
         self.assertNotIn(panel.ORDER_LABEL, roles)
-        self.assertNotIn("note", roles.values())
         self.assertEqual(self.fake.labels[panel.ORDER_LABEL], "Rotate order")
 
     def test_the_short_words(self):
         panel.build_panel()
         self.assertEqual([self.fake.labels[n] for n in (
             panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-            panel.WORLD_BTN, panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN)],
-            ["Knot", "Offset", "Orient", "Local", "World", "Bake", "Layer", "Remove"])
+            panel.WORLD_BTN, panel.AIM_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN,
+            panel.SWAP_BTN, panel.ACROSS_BTN, panel.MULTI_BTN, panel.ATTACH0_BTN,
+            panel.ATTACH1_BTN, panel.BAKE_BTN, panel.LAYER_BTN)],
+            ["Knot", "Offset", "Orient", "Local ×2", "World ×2", "Aim", "Inside",
+             "To world", "Swap", "Across", "Pairs", "0", "1", "Bake", "Layer"])
+        self.assertEqual(self.fake.labels[panel.FOOTER_CAPTION], "Selected knots")
+        self.assertEqual(self.fake.labels[panel.PAIRS_CAPTION], "Across, pair by pair")
         self.assertEqual([self.fake.radio[panel.ORDER_SEG[c]]["label"] for c in plan.ORDERS],
                          ["Object", "XYZ", "XZY"])
-
-    def test_the_roles(self):
-        """«все кнопочки одинаково важные ... сделаем выделение для всех одинаковое»: every
-        button orange, Remove too (it destroys nothing - it gives the animation back)."""
-        panel.build_panel()
-        roles = dict((m.name, m.role) for m in hubstyle.take_marks())
-        buttons = (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-                   panel.WORLD_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
-                   panel.ACROSS_BTN, panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
-                   panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN, panel.BAKE_BTN,
-                   panel.REMOVE_BTN, panel.AIM_BTN, panel.OVERLAP_BTN, panel.LAYER_BTN)
-        self.assertEqual(sorted(n for n, r in roles.items() if r == "primary"), sorted(buttons))
-        self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
-                         sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.HIER_CHIP,
-                                 panel.CYCLE_CHIP, panel.TOTAL_CHIP, panel.EDGES_CHIP)))
-        self.assertNotIn("danger", roles.values())
-        self.assertEqual(roles[panel.STATUS], "status")
-        self.assertEqual(roles[panel.SUBTITLE], "subtitle")
-        self.assertEqual(sorted(n for n, r in roles.items() if r == "segment"),
-                         sorted(panel.ORDER_SEG.values()))
 
     def test_every_icon_exists(self):
         panel.build_panel()
@@ -318,6 +345,70 @@ class Card(_Base):
         jobs = [c for c in self.fake.calls if c[0] == "scriptJob" and c[2].get("event")]
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0][2]["parent"], panel.STATUS)
+
+
+class Sections(_Base):
+    """2026-10-13: each subsection's head opens and closes its body, remembered - Knots open,
+    Parent and Overlap closed at first - and a row that reads Finish is lit."""
+
+    def test_the_defaults(self):
+        panel.build_panel()
+        self.assertTrue(self.fake.layouts[panel.BODY["knots"]]["manage"])
+        self.assertFalse(self.fake.layouts[panel.BODY["parent"]]["manage"])
+        self.assertFalse(self.fake.layouts[panel.BODY["overlap"]]["manage"])
+        self.assertIn((panel.HEAD["knots"], "open"), self.lit)
+        self.assertIn((panel.HEAD["parent"], "closed"), self.lit)
+
+    def test_a_head_s_press_flips_its_body_and_remembers(self):
+        panel.build_panel()
+        self.fake.commands[panel.HEAD["parent"]]()
+        self.assertTrue(self.fake.layouts[panel.BODY["parent"]]["manage"])
+        self.assertEqual(self.fake.optionvars[panel.OPEN_VAR % "parent"], 1)
+        self.assertEqual(self.lit[-1], (panel.HEAD["parent"], "open"))
+        self.fake.commands[panel.HEAD["parent"]]()
+        self.assertFalse(self.fake.layouts[panel.BODY["parent"]]["manage"])
+        self.assertEqual(self.fake.optionvars[panel.OPEN_VAR % "parent"], 0)
+        self.assertEqual(self.lit[-1], (panel.HEAD["parent"], "closed"))
+
+    def test_the_memory_builds_the_card(self):
+        self.fake.optionvars[panel.OPEN_VAR % "knots"] = 0
+        self.fake.optionvars[panel.OPEN_VAR % "overlap"] = 1
+        panel.build_panel()
+        self.assertFalse(self.fake.layouts[panel.BODY["knots"]]["manage"])
+        self.assertTrue(self.fake.layouts[panel.BODY["overlap"]]["manage"])
+        self.assertTrue(panel.is_section_open("overlap"))
+
+    def test_a_toggle_asks_its_own_body(self):
+        """The hub's card and a popup copy share the memory, not their state: a press flips what
+        THIS card shows, whatever the memory says."""
+        panel.build_panel()
+        self.fake.optionvars[panel.OPEN_VAR % "parent"] = 1   # another card opened it
+        self.assertTrue(panel.toggle_section("parent"))       # this one was closed: opens
+        self.assertTrue(self.fake.layouts[panel.BODY["parent"]]["manage"])
+
+    def test_with_the_card_closed_a_toggle_is_the_memory(self):
+        self.assertTrue(panel.toggle_section("overlap"))
+        self.assertEqual(self.fake.optionvars[panel.OPEN_VAR % "overlap"], 1)
+
+    def test_a_waiting_row_is_lit_and_put_out(self):
+        panel.build_panel()
+        self.assertIn((panel.OFFSET_BTN, ""), self.lit)
+        self.assertIn((panel.AIM_BTN, ""), self.lit)
+        self.stub.pivot_count = 1
+        panel.refresh()
+        self.assertIn((panel.OFFSET_BTN, "wait"), self.lit)
+        self.assertEqual(self.fake.labels[panel.OFFSET_BTN], "Finish")
+        self.stub.pivot_count = 0
+        self.stub.aim_count = 1
+        del self.lit[:]
+        panel.refresh()
+        self.assertEqual(sorted(self.lit), sorted([(panel.OFFSET_BTN, ""),
+                                                   (panel.AIM_BTN, "wait")]))
+
+    def test_the_seam_is_quiet_without_maya_s_ui(self):
+        """`_light` reaches Qt only where the skin can stand; here (no Maya UI) it does nothing
+        and raises nothing."""
+        self.saved_light(panel.OFFSET_BTN, "wait")
 
 
 class Presses(_Base):

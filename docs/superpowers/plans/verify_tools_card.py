@@ -75,6 +75,15 @@ def main():
         gate(all(cmds.control(n, exists=True) for n in (
             panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
             panel.WORLD_BTN, panel.BAKE_BTN, panel.REMOVE_BTN)), "every button stands")
+        #  2026-10-13, the card as a list: the subsections open and close by their heads; the
+        #  animator's memory of them is put back at the end
+        opened = dict((key, panel.is_section_open(key)) for key, _, _ in panel.SECTIONS)
+        panel.set_section_open("knots", True)
+        shown = bool(cmds.columnLayout(panel.BODY["parent"], query=True, manage=True))
+        gate(qt_click(panel.HEAD["parent"]), "the Parent head clicked through Qt")
+        gate(bool(cmds.columnLayout(panel.BODY["parent"], query=True, manage=True)) != shown,
+             "its body flipped")
+        panel.set_section_open("parent", True)
 
         cmds.select(cube, replace=True)
         gate(qt_click(panel.KNOT_BTN), "Knot clicked through Qt")
@@ -94,6 +103,9 @@ def main():
         qt_click(panel.OFFSET_BTN)
         gate(knots.waiting() and cmds.button(panel.OFFSET_BTN, query=True, label=True)
              == plan.offset_label(True), "Offset waits, the button reads Finish")
+        import maya_hubqt
+        gate(maya_hubqt.find(panel.OFFSET_BTN).property("skState") == "wait",
+             "the waiting row is lit (the only orange of the card)")
         qt_click(panel.OFFSET_BTN)
         mine = [k for k in knots.knots() if knots.source_of(k) == cube]
         gate(len(mine) == 1 and not knots.waiting()
@@ -120,6 +132,8 @@ def main():
         cmds.select(cube, replace=True)
         qt_click(panel.REMOVE_BTN)
         gate(not [k for k in knots.knots() if knots.source_of(k) == cube], "Remove took it")
+        for key, was in opened.items():
+            panel.set_section_open(key, was)
     finally:
         for uuid in made:
             found = cmds.ls(uuid, long=True)

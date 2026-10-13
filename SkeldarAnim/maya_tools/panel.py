@@ -16,9 +16,18 @@ pure half `overlapplan`). Layer (2026-10-13, «запекания на адит�
 Remove: everything that animates the selected objects baked onto a new additive layer, the base
 left on the first frame's pose (`layerbake`).
 
+The card as a list (2026-10-13, «сделать все более понятно, разложить по разделам ... кнопки не
+должны быть такими оранжевыми»; the animator chose mockup C of four): three subsections - Knots
+(Knot, Offset, Orient, Local ×2, World ×2, Aim and the rotate order of new knots), Parent (Inside,
+To world, Swap, Across and the pairs), Overlap - each a head that opens and closes its body
+(remembered), each tool a flat row with its explanation beside its name (the skin's `toolrow`);
+under them «Selected knots»: Attach 0 / 1, Bake, Layer, Remove. Nothing is orange but a row that
+reads Finish (a pivot or an aim waiting for you).
+
 Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md,
 docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md,
-docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md
+docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md,
+docs/superpowers/specs/2026-10-13-tools-card-list-design.md
 """
 
 import sys
@@ -38,8 +47,17 @@ from maya_tools import reparent
 HUB_SECTION = "tools"
 SUBTITLE = "skeldarToolsSubtitle"
 STATUS = "skeldarToolsStatus"
-KNOTS_HEADING = "skeldarToolsKnotsHeading"
-DOUBLE_HEADING = "skeldarToolsDoubleHeading"
+#  The subsections (2026-10-13): key, name, the hint beside the name. Each a head that opens and
+#  closes its body, remembered (`OPEN_VAR`); Knots open by default.
+SECTIONS = (
+    ("knots", "Knots", "drive with a locator"),
+    ("parent", "Parent", "motion kept"),
+    ("overlap", "Overlap", "on a new layer"),
+)
+HEAD = dict((key, "skeldarToolsHead_" + key) for key, _, _ in SECTIONS)
+BODY = dict((key, "skeldarToolsBody_" + key) for key, _, _ in SECTIONS)
+OPEN_VAR = "skeldarToolsOpen_%s"
+OPEN_DEFAULT = {"knots": True, "parent": False, "overlap": False}
 ORDER_LABEL = "skeldarToolsOrderLabel"
 KNOT_BTN = "skeldarToolsKnot"
 OFFSET_BTN = "skeldarToolsKnotOffset"
@@ -52,29 +70,28 @@ REMOVE_BTN = "skeldarToolsRemove"
 ORDER = "skeldarToolsOrder"
 ORDER_SEG = dict((choice, "skeldarToolsOrder_" + choice) for choice in plan.ORDERS)
 ORDER_VAR = "skeldarKnotRotateOrder"
-GAP = "skeldarToolsGap"
 #  The parent tab (2026-10-12, «весь функционал из вкладки parent»).
-PARENT_HEADING = "skeldarToolsParentHeading"
 INSIDE_BTN = "skeldarToolsInside"
 TOWORLD_BTN = "skeldarToolsToWorld"
 SWAP_BTN = "skeldarToolsSwap"
 ACROSS_BTN = "skeldarToolsAcross"
-MULTI_HEADING = "skeldarToolsMultiHeading"
+PAIRS_CAPTION = "skeldarToolsPairsCaption"
 OBJECTS_BTN = "skeldarToolsObjects"
 TARGETS_BTN = "skeldarToolsTargets"
 LISTSWAP_BTN = "skeldarToolsListSwap"
 ROTATE_CHIP = "skeldarToolsAcrossRotate"
 TRANSLATE_CHIP = "skeldarToolsAcrossTranslate"
 MULTI_BTN = "skeldarToolsMultiAcross"
-ATTACH_LABEL = "skeldarToolsAttachLabel"
+FOOTER = "skeldarToolsFooter"
+FOOTER_CAPTION = "skeldarToolsFooterCaption"
 ATTACH0_BTN = "skeldarToolsAttach0"
 ATTACH1_BTN = "skeldarToolsAttach1"
 ROTATE_VAR = "skeldarAcrossRotate"
 TRANSLATE_VAR = "skeldarAcrossTranslate"
 #  The aim tab (2026-10-13).
-AIM_HEADING = "skeldarToolsAimHeading"
 AIM_BTN = "skeldarToolsAim"
-OVERLAP_HEADING = "skeldarToolsOverlapHeading"
+OVERLAP_NAMES = "skeldarToolsOverlapNames"
+OVERLAP_FIELDS = "skeldarToolsOverlapFields"
 SOFT_LABEL = "skeldarToolsSoftnessLabel"
 SOFT_FIELD = "skeldarToolsSoftness"
 LAG_LABEL = "skeldarToolsLagLabel"
@@ -93,8 +110,7 @@ HIER_VAR = "skeldarOverlapHierarchy"
 CYCLE_VAR = "skeldarOverlapCycled"
 TOTAL_VAR = "skeldarOverlapTotal"
 EDGES_VAR = "skeldarOverlapEdges"
-#  The name column of the Rotate order and Attach rows, logical px (skin, classic): one width,
-#  so the segments and the 0 / 1 buttons start at one place.
+#  The name column of the Rotate order row, logical px (skin, classic).
 LABEL_W = (78, 90)
 #  The refresh job of each card standing: '' the hub's, a popup copy's tag its own (the
 #  2026-10-09 rule: closing a popup kills only its own job).
@@ -136,8 +152,8 @@ TIPS = {
     "objects": "Objects - remember the selection as the objects of Multiple across",
     "targets": "Targets - remember the selection as the targets: object 1 rides target 1, ...",
     "swap_lists": "Swap the Objects and the Targets",
-    "multi": "Across, pair by pair: each object rides a knot inside its target (Rotate / "
-             "Translate say which half follows)",
+    "multi": "Pairs - Across, pair by pair: each remembered object rides a knot inside its "
+             "target (Rotate / Translate say which half follows)",
     "rotate": "Multiple across: the objects follow their targets' rotation",
     "translate": "Multiple across: the objects follow their targets' translation",
     "attach0": "Attach 0: key the selected knots off (the object plays its own animation) - at "
@@ -169,6 +185,21 @@ ORDER_TIPS = {
     "xyz": "New knots rotate in XYZ order",
     "xzy": "New knots rotate in XZY order",
 }
+#  Each tool row's explanation, beside its name in the skin (2026-10-13, mockup C). Short: the
+#  card is ~290 logical px wide in the animator's dock; the tooltip keeps the whole story.
+HINTS = {
+    KNOT_BTN: "object follows a locator",
+    OFFSET_BTN: "knot at your own pivot",
+    ORIENT_BTN: "carries rotation only",
+    LOCAL_BTN: "double knot, own axes",
+    WORLD_BTN: "double knot, world axes",
+    AIM_BTN: "points at a target",
+    INSIDE_BTN: "under the last selected",
+    TOWORLD_BTN: "out to world level",
+    SWAP_BTN: "child takes parent's place",
+    ACROSS_BTN: "rides the last selected",
+    OVERLAP_BTN: "trail onto a new layer",
+}
 
 
 # ------------------------------------------------------------------ state
@@ -195,7 +226,7 @@ def status(message):
 
 
 def refresh(*_):
-    """Which knots stand, and the offset button's word."""
+    """Which knots stand, and the Offset and Aim rows' word - lit while they read Finish."""
     if not cmds.text(SUBTITLE, exists=True):
         return
     try:
@@ -204,11 +235,54 @@ def refresh(*_):
     except Exception:                                        # noqa: BLE001
         return
     cmds.text(SUBTITLE, edit=True, label=plan.subtitle(count, waiting, aims))
-    if cmds.button(OFFSET_BTN, exists=True):
-        cmds.button(OFFSET_BTN, edit=True, label=plan.offset_label(bool(waiting)))
-    if cmds.button(AIM_BTN, exists=True):
-        cmds.button(AIM_BTN, edit=True, label=plan.aim_label(bool(aims)))
+    for name, word, waits in ((OFFSET_BTN, plan.offset_label(bool(waiting)), bool(waiting)),
+                              (AIM_BTN, plan.aim_label(bool(aims)), bool(aims))):
+        if cmds.button(name, exists=True):
+            cmds.button(name, edit=True, label=word)
+            _light(name, "wait" if waits else "")
     _paint_lists()
+
+
+def _light(name, state):
+    """The skin's state of control `name` (maya_hubqt.set_state): a tool row "wait", a head
+    "open" / "closed". Nothing without Maya's UI - the one place this module reaches Qt."""
+    try:
+        import maya_hubqt
+        if maya_hubqt.available():
+            maya_hubqt.set_state(name, state)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+# ------------------------------------------------------------ subsections
+
+def is_section_open(key):
+    """Whether subsection `key` is open (remembered; Knots open, the others closed, at first)."""
+    var = OPEN_VAR % key
+    if cmds.optionVar(exists=var):
+        return bool(cmds.optionVar(query=var))
+    return OPEN_DEFAULT.get(key, True)
+
+
+def set_section_open(key, on):
+    """Open or close subsection `key` in this card - its body managed or not, its head's chevron
+    - and remember it. Answers `on`."""
+    on = bool(on)
+    cmds.optionVar(intValue=(OPEN_VAR % key, int(on)))
+    if cmds.columnLayout(BODY[key], exists=True):
+        cmds.columnLayout(BODY[key], edit=True, manage=on)
+    _light(HEAD[key], "open" if on else "closed")
+    return on
+
+
+def toggle_section(key):
+    """A head's press: this card's body flips (asked of the body itself - the hub's card and a
+    popup copy share the memory, not their state)."""
+    if cmds.columnLayout(BODY[key], exists=True):
+        shown = bool(cmds.columnLayout(BODY[key], query=True, manage=True))
+    else:
+        shown = is_section_open(key)
+    return set_section_open(key, not shown)
 
 
 # ------------------------------------------------------- multiple across
@@ -395,22 +469,47 @@ def _order_changed(choice):
 
 # ------------------------------------------------------------------- card
 
-def _heading(name, label):
-    """A subsection's title (the hub's `heading`: bold, a hairline under it)."""
-    return hubstyle.mark(cmds.text(name, label=label, align="left", font="boldLabelFont"),
-                         "heading")
+def _row(name, label, icon, tip, press):
+    """A tool: a flat row, its icon, its name and its explanation (the skin's `toolrow`; the
+    classic hub's plain button) - 2026-10-13, mockup C."""
+    return hubstyle.mark(cmds.button(name, label=label, annotation=tip, align="left",
+                                     height=hubstyle.height("button", 26),
+                                     command=lambda *_: press()),
+                         "toolrow", icon, hint=HINTS.get(name))
 
 
-def _button(name, label, icon, tip, press):
-    """Every button of the card alike - orange, the animator's ask («все кнопочки одинаково
-    важные ... сделаем выделение для всех одинаковое»)."""
+def _button(name, label, icon, tip, press, role="secondary"):
+    """An ordinary button of the card (the pairs, the footer): outlined, not orange."""
     return hubstyle.mark(cmds.button(name, label=label, annotation=tip,
-                                     height=hubstyle.height("button", 28),
-                                     command=lambda *_: press()), "primary", icon)
+                                     height=hubstyle.height("button", 26),
+                                     command=lambda *_: press()), role, icon)
+
+
+def _caption(name, label):
+    """A small muted line that stays visible (a `note` would become the header's tooltip)."""
+    return hubstyle.mark(cmds.text(name, label=label, align="left"), "caption")
+
+
+def _head(key, label, hint):
+    """A subsection's head: its chevron, its name, its hint; a press opens or closes it."""
+    name = hubstyle.mark(cmds.button(HEAD[key], label=label, align="left",
+                                     height=hubstyle.height("button", 26),
+                                     annotation="Open or close %s" % label,
+                                     command=lambda *_: toggle_section(key)),
+                         "subhead", hint=hint)
+    _light(name, "open" if is_section_open(key) else "closed")
+    return name
+
+
+def _body(key):
+    """A subsection's body: a column managed while it is open."""
+    return cmds.columnLayout(BODY[key], adjustableColumn=True,
+                             rowSpacing=hubstyle.row_spacing(4),
+                             manage=is_section_open(key))
 
 
 def _named_row():
-    """A row with its name in a column of one width (Rotate order, Attach)."""
+    """A row with its name in a column of one width (Rotate order)."""
     return cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
                           columnWidth=[(1, hubstyle.pick(LABEL_W[0], LABEL_W[1]))],
                           columnAttach=[(1, "both", 0), (2, "both", 0)])
@@ -419,18 +518,6 @@ def _named_row():
 def _chip(name, label, var, tip, default=True):
     return hubstyle.mark(cmds.checkBox(name, label=label, value=_flag(var, default),
                                        annotation=tip, changeCommand=_flag_changed(var)), "chip")
-
-
-def _number_row(label_name, label, field, var, default, tip, minimum=None):
-    """A named row holding one remembered number (the Overlap's Softness, Lag, Easing)."""
-    _named_row()
-    cmds.text(label_name, label=label, align="left", annotation=tip)
-    kwargs = dict(value=_number(None, var, default), precision=2, annotation=tip,
-                  changeCommand=_number_changed(var))
-    if minimum is not None:
-        kwargs["minValue"] = minimum
-    cmds.floatField(field, **kwargs)
-    cmds.setParent("..")
 
 
 def _fill_row(columns):
@@ -442,75 +529,21 @@ def _fill_row(columns):
     return hubstyle.mark(row, "fill", layout=True)
 
 
-def build_panel():
-    """The card into the current layout: the subsections Knots, Double knot, Parent, Multiple
-    across, Aim and Overlap, their buttons stretched over the card (2026-10-12, «два под раздела
-    ... растягивать вместе с интерфейсом», then «весь функционал из вкладки parent»; 2026-10-13
-    the aim tab); under them the knots' rotate order, Attach 0 / 1, Bake, Layer and Remove; the
-    line."""
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
-                               columnOffset=("both", hubstyle.pick(0, 8)))
-    hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
+def _columns_row(name, columns):
+    """A row whose widgets - names or fields - share the card's width (the skin's `columns`)."""
+    row = cmds.rowLayout(name, numberOfColumns=columns,
+                         columnAttach=[(1, "both", 0)]
+                         + [(i, "both", 4) for i in range(2, columns + 1)])
+    return hubstyle.mark(row, "columns", layout=True)
 
-    _heading(KNOTS_HEADING, "Knots")
-    _fill_row(3)
-    _button(KNOT_BTN, "Knot", "link", TIPS["knot"], knot)
-    _button(OFFSET_BTN, plan.offset_label(False), "focus-2", TIPS["offset"], knot_offset)
-    _button(ORIENT_BTN, "Orient", "rotate", TIPS["orient"], knot_orient)
-    cmds.setParent("..")
 
-    _heading(DOUBLE_HEADING, "Double knot")
-    _fill_row(2)
-    _button(LOCAL_BTN, "Local", "stack-2", TIPS["local"], double_local)
-    _button(WORLD_BTN, "World", "stack-2", TIPS["world"], double_world)
-    cmds.setParent("..")
-
-    _heading(PARENT_HEADING, "Parent")
-    _fill_row(4)
-    _button(INSIDE_BTN, "Inside", "transfer-in", TIPS["inside"], inside)
-    _button(TOWORLD_BTN, "World", "upload", TIPS["to_world"], to_world)
-    _button(SWAP_BTN, "Swap", "arrows-exchange", TIPS["swap"], swap)
-    _button(ACROSS_BTN, "Across", "hand-grab", TIPS["across"], across)
-    cmds.setParent("..")
-
-    _heading(MULTI_HEADING, "Multiple across")
-    _fill_row(3)
-    _button(OBJECTS_BTN, plan.list_label("Objects", len(_resolved("objects"))), "plus",
-            TIPS["objects"], remember_objects)
-    _button(TARGETS_BTN, plan.list_label("Targets", len(_resolved("targets"))), "target",
-            TIPS["targets"], remember_targets)
-    _button(LISTSWAP_BTN, "Swap", "arrows-exchange", TIPS["swap_lists"], swap_lists)
-    cmds.setParent("..")
-    _fill_row(3)
-    _chip(ROTATE_CHIP, "Rotate", ROTATE_VAR, TIPS["rotate"])
-    _chip(TRANSLATE_CHIP, "Translate", TRANSLATE_VAR, TIPS["translate"])
-    _button(MULTI_BTN, "Across", "hand-grab", TIPS["multi"], multiple_across)
-    cmds.setParent("..")
-
-    _heading(AIM_HEADING, "Aim")
-    _fill_row(1)
-    _button(AIM_BTN, plan.aim_label(False), "target", TIPS["aim"], aim)
-    cmds.setParent("..")
-
-    d = overlapplan.DEFAULTS
-    _heading(OVERLAP_HEADING, "Overlap")
-    _number_row(SOFT_LABEL, "Softness", SOFT_FIELD, SOFT_VAR, d.softness, TIPS["softness"],
-                0.01)
-    _number_row(LAG_LABEL, "Lag, fr", LAG_FIELD, LAG_VAR, d.lag, TIPS["lag"])
-    _number_row(EASE_LABEL, "Easing", EASE_FIELD, EASE_VAR, d.easing, TIPS["easing"], 0.0)
-    _fill_row(2)
-    _chip(HIER_CHIP, "Hierarchy", HIER_VAR, TIPS["hierarchy"], d.hierarchy)
-    _chip(CYCLE_CHIP, "Cycled", CYCLE_VAR, TIPS["cycled"], d.cycled)
-    cmds.setParent("..")
-    _fill_row(2)
-    _chip(TOTAL_CHIP, "Total lag", TOTAL_VAR, TIPS["total"], d.total)
-    _chip(EDGES_CHIP, "Keep edges", EDGES_VAR, TIPS["edges"], d.edges)
-    cmds.setParent("..")
-    _fill_row(1)
-    _button(OVERLAP_BTN, "Overlap", "wave-sine", TIPS["overlap"], overlap)
-    cmds.setParent("..")
-
-    cmds.separator(GAP, style="none", height=hubstyle.pick(4, 6))
+def _knots_body():
+    _row(KNOT_BTN, "Knot", "link", TIPS["knot"], knot)
+    _row(OFFSET_BTN, plan.offset_label(False), "focus-2", TIPS["offset"], knot_offset)
+    _row(ORIENT_BTN, "Orient", "rotate", TIPS["orient"], knot_orient)
+    _row(LOCAL_BTN, "Local ×2", "stack-2", TIPS["local"], double_local)
+    _row(WORLD_BTN, "World ×2", "world", TIPS["world"], double_world)
+    _row(AIM_BTN, plan.aim_label(False), "target", TIPS["aim"], aim)
     _named_row()
     cmds.text(ORDER_LABEL, label="Rotate order", align="left")
     segments = cmds.rowLayout(numberOfColumns=3, columnAttach=[(1, "both", 1),
@@ -527,20 +560,91 @@ def build_panel():
     cmds.setParent("..")
     cmds.setParent("..")
 
-    _named_row()
-    cmds.text(ATTACH_LABEL, label="Attach", align="left")
+
+def _parent_body():
+    _row(INSIDE_BTN, "Inside", "transfer-in", TIPS["inside"], inside)
+    _row(TOWORLD_BTN, "To world", "upload", TIPS["to_world"], to_world)
+    _row(SWAP_BTN, "Swap", "arrows-exchange", TIPS["swap"], swap)
+    _row(ACROSS_BTN, "Across", "hand-grab", TIPS["across"], across)
+    _caption(PAIRS_CAPTION, "Across, pair by pair")
+    _fill_row(3)
+    _button(OBJECTS_BTN, plan.list_label("Objects", len(_resolved("objects"))), "plus",
+            TIPS["objects"], remember_objects)
+    _button(TARGETS_BTN, plan.list_label("Targets", len(_resolved("targets"))), "target",
+            TIPS["targets"], remember_targets)
+    _button(LISTSWAP_BTN, hubstyle.tool_label("Swap"), "arrows-exchange", TIPS["swap_lists"],
+            swap_lists)
+    cmds.setParent("..")
+    _fill_row(3)
+    _chip(ROTATE_CHIP, "Rotate", ROTATE_VAR, TIPS["rotate"])
+    _chip(TRANSLATE_CHIP, "Translate", TRANSLATE_VAR, TIPS["translate"])
+    _button(MULTI_BTN, "Pairs", "hand-grab", TIPS["multi"], multiple_across)
+    cmds.setParent("..")
+
+
+def _overlap_body():
+    d = overlapplan.DEFAULTS
+    _columns_row(OVERLAP_NAMES, 3)
+    for label_name, label, key in ((SOFT_LABEL, "Softness", "softness"),
+                                   (LAG_LABEL, "Lag, fr", "lag"),
+                                   (EASE_LABEL, "Easing", "easing")):
+        hubstyle.mark(cmds.text(label_name, label=label, align="left", annotation=TIPS[key]),
+                      "caption")
+    cmds.setParent("..")
+    _columns_row(OVERLAP_FIELDS, 3)
+    for field, var, default, key, minimum in (
+            (SOFT_FIELD, SOFT_VAR, d.softness, "softness", 0.01),
+            (LAG_FIELD, LAG_VAR, d.lag, "lag", None),
+            (EASE_FIELD, EASE_VAR, d.easing, "easing", 0.0)):
+        kwargs = dict(value=_number(None, var, default), precision=2, annotation=TIPS[key],
+                      height=hubstyle.height("field", 20), changeCommand=_number_changed(var))
+        if minimum is not None:
+            kwargs["minValue"] = minimum
+        cmds.floatField(field, **kwargs)
+    cmds.setParent("..")
     _fill_row(2)
+    _chip(HIER_CHIP, "Hierarchy", HIER_VAR, TIPS["hierarchy"], d.hierarchy)
+    _chip(CYCLE_CHIP, "Cycled", CYCLE_VAR, TIPS["cycled"], d.cycled)
+    cmds.setParent("..")
+    _fill_row(2)
+    _chip(TOTAL_CHIP, "Total lag", TOTAL_VAR, TIPS["total"], d.total)
+    _chip(EDGES_CHIP, "Keep edges", EDGES_VAR, TIPS["edges"], d.edges)
+    cmds.setParent("..")
+    _row(OVERLAP_BTN, "Overlap", "wave-sine", TIPS["overlap"], overlap)
+
+
+_BODIES = {"knots": _knots_body, "parent": _parent_body, "overlap": _overlap_body}
+
+
+def _footer():
+    """«Selected knots»: what acts on knots already standing (and Layer, on any object) - an
+    inset block under the subsections, always shown."""
+    hubstyle.mark(cmds.columnLayout(FOOTER, adjustableColumn=True,
+                                    rowSpacing=hubstyle.row_spacing(4)), "inset", layout=True)
+    _caption(FOOTER_CAPTION, "Selected knots")
+    _fill_row(5)
     _button(ATTACH0_BTN, "0", "unlink", TIPS["attach0"], attach_0)
     _button(ATTACH1_BTN, "1", "link", TIPS["attach1"], attach_1)
-    cmds.setParent("..")
-    cmds.setParent("..")
-
-    _fill_row(3)
     _button(BAKE_BTN, "Bake", "check", TIPS["bake"], bake)
     _button(LAYER_BTN, "Layer", "stack-2", TIPS["layer"], bake_layer)
-    _button(REMOVE_BTN, "Remove", "trash", TIPS["remove"], remove)
+    _button(REMOVE_BTN, hubstyle.tool_label("Remove"), "trash", TIPS["remove"], remove,
+            role="danger")
+    cmds.setParent("..")
     cmds.setParent("..")
 
+
+def build_panel():
+    """The card into the current layout (2026-10-13, mockup C): the subtitle; the subsections
+    Knots, Parent and Overlap, each a head over its body; «Selected knots»; the line."""
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
+    for key, label, hint in SECTIONS:
+        _head(key, label, hint)
+        _body(key)
+        _BODIES[key]()
+        cmds.setParent("..")
+    _footer()
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=36),
                   "status")
     cmds.setParent("..")
