@@ -1,6 +1,7 @@
 """walkpose.py - a character pose (any skeleton's) carried onto a walk's skeleton and read the way the model
 takes it: the spine's and neck's local rotations, the head's and the pelvis's world rotations, the pelvis's
-height over the travel line, the knees' turn from the walk's mean heading.
+height over its feet (put over the walk's floor, as a height over the walk's travel line), the knees' turn from
+the walk's mean heading.
 
 The pose is posemath bones ({leaf: {parent, canonical, rest, world}}, `world` = the pose); the walk's
 skeleton stands at its rest on the walk's root frame at its first frame; the size is the legs' ratio (1 for
@@ -30,6 +31,19 @@ def _bend(hip, knee, ankle):
     b = (knee - hip) - np.dot(knee - hip, e) * e
     n = np.linalg.norm(b)
     return b / n if n > 1e-9 else None
+
+
+def walk_floor(walk):
+    """The walk's floor, up (cm): its feet's lowest - the lower ball over the cycle (else the lower ankle)."""
+    names = ["ball_" + s for s in SIDES] if all("ball_" + s in walk.index for s in SIDES) else ["foot_" + s for s in SIDES]
+    return float(min((walk.pos[walk.index[n]] @ walk.up).min() for n in names))
+
+
+def pose_floor_gap(out, walk):
+    """The pose's pelvis over its floor (cm up): over the lower of its two balls (else ankles)."""
+    names = ["ball_" + s for s in SIDES] if all("ball_" + s in out for s in SIDES) else ["foot_" + s for s in SIDES]
+    floor = min(float(np.dot(_np(out[n])[3, :3], walk.up)) for n in names)
+    return float(np.dot(_np(out["pelvis"])[3, :3], walk.up)) - floor
 
 
 def mean_knee_headings(walk):
@@ -88,7 +102,10 @@ def prepare(walk, statics, pose_bones, model, target_module):
         hip, knee, ankle = (_np(out["%s_%s" % (b, side)])[3, :3] for b in legs)
         bend = _bend(hip, knee, ankle)
         turn[side] = 0.0 if bend is None else _wrapped(_heading(bend, walk) - means[side])
-    height = float(np.dot(_np(out["pelvis"])[3, :3] - walk.origin, walk.up))
+    # the pelvis over its feet, not over a root: over the lower of the pose's balls (its floor; the ball's own
+    # height cancels - the pose stands on the walk's skeleton), put over the walk's floor (its lowest ball)
+    height = (pose_floor_gap(out, walk) + walk_floor(walk)
+              - float(np.dot(walk.origin, walk.up)))
     scale = 1.0 if same else legs_ratio
     arms = {}
     for j, name in enumerate(walk.names):
@@ -104,7 +121,7 @@ def prepare(walk, statics, pose_bones, model, target_module):
             held[3, :3] *= scale
             weapons[h] = held
     ankle = dict((side, _np(out["foot_" + side])[3, :3]) for side in SIDES)
-    width = float(np.dot(ankle["l"] - ankle["r"], walk.side)) - (walk.feet["l"].coords[1] - walk.feet["r"].coords[1])
+    width = float(np.dot(ankle["l"] - ankle["r"], walk.side)) - (walk.side_print("l") - walk.side_print("r"))
     toe = {}
     for side in SIDES:
         ball = "ball_" + side

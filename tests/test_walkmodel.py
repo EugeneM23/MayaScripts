@@ -173,7 +173,7 @@ class KnobTests(unittest.TestCase):
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
-                          "foot_flex", "bob", "sway", "root_sway", "pelvis_rot", "pelvis_twist", "pelvis_list",
+                          "foot_flex", "bob", "sway", "root_sway", "pelvis_height", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
@@ -280,26 +280,56 @@ def leg(hip, ankle):
     return knee, frame(knee - hip), frame(ankle - knee)
 
 
-def synthetic(P=24, travel=120.0, stance=0.6, lift=10.0, slip=0.0):
-    """A walker built the way the model reads one: feet planted in stance, legs by IK, the rest FK."""
+# two steps of each foot a cycle, uneven: (strike, lift-off) as shares of the cycle (a long and a short stance)
+TWO_STEPS = {"l": ((0.00, 0.30), (0.50, 0.65)), "r": ((0.25, 0.55), (0.62, 1.02))}
+
+
+def foot_world_steps(side, phi, travel, spans, lift=10.0, slip=0.0):
+    """A foot planted over each of its `spans` (sliding `slip` cm forward over each), its print under the body's
+    mean place at the span's middle; its swing between one print and the next."""
+    x = 10.0 if side == "l" else -10.0
+    best = None
+    for i, (on, off) in enumerate(spans):
+        k = math.floor(phi - on)
+        r = phi - on - k
+        if best is None or r < best[2]:
+            best = (i, k, r)
+    i, k, r = best
+    on, off = spans[i]
+    at = lambda j, kk: np.array([x, 8.0, travel * (0.5 * (spans[j][0] + spans[j][1]) + kk)])
+    if r <= off - on:
+        return np.eye(3), at(i, k) + FWD * slip * (r / (off - on) - 0.5)
+    j = (i + 1) % len(spans)
+    kj = k + (1 if j == 0 else 0)
+    u = (phi - (off + k)) / (spans[j][0] + kj - (off + k))
+    s = u * u * (3.0 - 2.0 * u)
+    start, end = at(i, k) + FWD * slip / 2.0, at(j, kj) - FWD * slip / 2.0
+    return rot_x(-20 * math.sin(math.pi * s)), start * (1 - s) + end * s + UP * lift * math.sin(math.pi * s)
+
+
+def synthetic(P=24, travel=120.0, stance=0.6, lift=10.0, slip=0.0, strides=1, spans=None):
+    """A walker built the way the model reads one: feet planted in stance, legs by IK, the rest FK; `strides`
+    strides a cycle (the body's motion that many times), its feet on `spans` ({side: ((strike, lift-off), ...)},
+    shares of the cycle) when given."""
     names = [b[0] for b in BONES]
     parents = [names.index(b[1]) if b[1] else -1 for b in BONES]
     local = dict((b[0], b[2]) for b in BONES)
     worlds = np.zeros((len(names), P + 1, 4, 4))
     for f in range(P + 1):
         phi = f / float(P)
-        w = 2.0 * math.pi * phi
+        w = 2.0 * math.pi * phi * strides
         W = {}
         W["root"] = mat(np.eye(3), [2 * math.sin(w), 0.0, travel * phi + 2 * math.sin(2 * w)])
         W["pelvis"] = mat(rot_y(5 * math.sin(w)) @ rot_x(2 * math.sin(2 * w)) @ rot_z(3 * math.sin(w)),
                           [2 * math.sin(w), 90 + 3 * math.cos(2 * w + 0.3), travel * phi + 2 * math.sin(2 * w)])
         for name in UPPER:
             parent = BONES[names.index(name)][1]
-            W[name] = mat(upper_rot(name, phi), local[name]) @ W[parent]
+            W[name] = mat(upper_rot(name, phi * strides), local[name]) @ W[parent]
         for side in "lr":
             pelvis = W["pelvis"]
             hip = np.array(local["thigh_" + side], float) @ pelvis[:3, :3] + pelvis[3, :3]
-            foot_rot, ankle = foot_world(side, phi, travel, stance, lift, slip)
+            foot_rot, ankle = (foot_world(side, phi, travel, stance, lift, slip) if spans is None
+                               else foot_world_steps(side, phi, travel, spans[side], lift, slip))
             knee, thigh_rot, calf_rot = leg(hip, ankle)
             W["thigh_" + side] = mat(thigh_rot, hip)
             W["calf_" + side] = mat(calf_rot, knee)
@@ -318,7 +348,7 @@ _CACHE = {}
 
 
 def clip(**kw):
-    key = tuple(sorted(kw.items()))
+    key = tuple(sorted((k, repr(v)) for k, v in kw.items()))
     if key not in _CACHE:
         _CACHE[key] = synthetic(**kw)
     names, parents, worlds = _CACHE[key]
@@ -734,8 +764,8 @@ class FootPlacementTests(unittest.TestCase):
     def test_the_clock_lands_on_the_new_contacts_and_never_runs_back(self):
         w = walk(stance=0.4, lift=40.0)
         for side in "lr":
-            hs, to = w.contact[side]
-            hs2, to2 = w.placed_contact(side, 1.0)
+            (hs, to), = w.contact[side]                # one step of each foot a cycle: one contact
+            (hs2, to2), = w.placed_contact(side, 1.0)
             self.assertLessEqual(hs2, hs)            # the trailing foot stays longer; the strike keeps its time
             self.assertGreater(to2, to)
             self.assertAlmostEqual(w.foot_time(side, hs2, 1.0), hs, places=9)
@@ -1231,12 +1261,119 @@ class RootTests(unittest.TestCase):
         self.assertLess(float(np.abs(own.worlds[pelvis] - straight.worlds[pelvis]).max()), 1e-9)
 
 
+TWO = dict(P=48, travel=200.0, strides=2, spans=TWO_STEPS)
+
+
+def still_point_slide(r, w, side):
+    """The planted foot's slide, cm a frame: the slower of its heel and ball points along the ground over every
+    frame it is planted (and the next)."""
+    n, up = r.frames, w.up
+    m = r.worlds
+    heel = m[w.index["foot_" + side], :n + 1, 3, :3] + np.einsum("i,fij->fj", w.heel_loc[side],
+                                                                 m[w.index["foot_" + side], :n + 1, :3, :3])
+    ball = m[w.index["ball_" + side], :n + 1, 3, :3]
+    flat = lambda v: v - np.outer(v @ up, up)
+    speed = np.minimum(np.linalg.norm(flat(np.diff(heel, axis=0)), axis=1),
+                       np.linalg.norm(flat(np.diff(ball, axis=0)), axis=1))
+    planted = np.array(r.info["placement"]["planted"][side])
+    held = planted & np.roll(planted, -1)
+    return float(speed[held].max()) if held.any() else 0.0
+
+
+class ManyStepsTests(unittest.TestCase):
+    """A cycle holding two steps of each foot, a long stance and a short one (dw, 2026-10-13): every per-foot
+    quantity is a list, one entry a step."""
+
+    def test_every_step_of_each_foot_is_found(self):
+        w = walk(**TWO)
+        self.assertEqual(w.strides, 2)
+        for side in "lr":
+            self.assertEqual(len(w.steps[side]), 2, side)
+            self.assertEqual(len(w.contact[side]), 2, side)
+            self.assertEqual(len(w.air[side]), 2, side)
+            for foot, (on, off) in zip(w.steps[side], TWO_STEPS[side]):
+                self.assertLessEqual(abs((foot.on - on * 48 + 24) % 48 - 24), 1.5, (side, foot.on))
+                # a stance's edge frames read a swing's speed (the speed is a central difference)
+                self.assertLessEqual(abs(foot.length - (off - on) * 48), 3.0, (side, foot.length))
+        self.assertEqual(w.feet["l"].length, max(f.length for f in w.steps["l"]))     # the longest
+        self.assertIn("2 steps of each foot a cycle", w.summary())
+
+    def test_its_own_knobs_give_it_back(self):
+        w, c = walk(**TWO), clip(**TWO)
+        r = w.evaluate(w.own_knobs())
+        self.assertLess(float(np.abs(r.worlds - c.worlds).max()), 1e-4)
+
+    def test_foot_placement_holds_every_stance(self):
+        """Its feet slide 6 cm over every stance: placed, each foot stands still over both of its contacts (one
+        step a cycle used to hold only the longest), and one foot is always on the ground."""
+        w = walk(slip=6.0, **TWO)
+        own = w.evaluate(dict(w.own_knobs(), balance=0.0))
+        r = w.evaluate({"balance": 0.0})
+        for side in "lr":
+            self.assertGreater(still_point_slide(own, w, side), 0.15, side)
+            self.assertLess(still_point_slide(r, w, side), 0.02, side)
+            planted = np.array(r.info["placement"]["planted"][side])
+            for hs, to in w.contact[side]:          # every contact planted
+                mid = int(round(0.5 * (hs + to))) % r.frames
+                self.assertTrue(planted[mid], (side, hs, to))
+        both_moving = ~np.array(r.info["placement"]["planted"]["l"]) & ~np.array(r.info["placement"]["planted"]["r"])
+        self.assertFalse(both_moving.any())
+
+    def test_a_step_not_a_cycle(self):
+        """The step's length is the travel over two steps a stride, the hip drop and the chest turn once a
+        stride: the standing hip highest LIST_PEAK of a stride after each left strike."""
+        w, one = walk(**TWO), walk()
+        self.assertAlmostEqual(w.twist_gain, 200.0 / 4.0 / (L1 + L2) / wm.STEP_REF, delta=0.02)
+        self.assertAlmostEqual(w.evaluate({"balance": 0.0}).info["stride_cm"], 50.0, places=6)
+        ons = [f.on for f in w.steps["l"]] + [w.steps["l"][0].on + 48]
+        for a, b in zip(ons, ons[1:]):
+            self.assertAlmostEqual(w.list_at(a + wm.LIST_PEAK * (b - a)), 1.0, places=9)
+            self.assertAlmostEqual(w.list_at(a + (wm.LIST_PEAK + 0.5) * (b - a)), -1.0, places=9)
+        self.assertAlmostEqual(w.stride_phase(ons[0] + 48.0) - w.stride_phase(ons[0]), 4.0 * math.pi, places=9)
+        self.assertAlmostEqual(one.stride_phase(one.feet["l"].on + 24.0) - one.stride_phase(one.feet["l"].on),
+                               2.0 * math.pi, places=9)
+
+    def test_the_feet_must_alternate(self):
+        spans = {"l": TWO_STEPS["l"], "r": ((0.25, 0.95),)}
+        with self.assertRaises(wm.Refusal) as caught:
+            wm.analyse(clip(P=48, travel=80.0, strides=2, spans=spans))
+        self.assertIn("the left foot steps 2 times a cycle and the right 1", str(caught.exception))
+
+
+class PelvisHeightTests(unittest.TestCase):
+    """Pelvis height: the pelvis this many cm over the feet, the legs following; never past their reach."""
+
+    def test_it_raises_and_lowers_the_pelvis_over_still_feet(self):
+        """(Foot placement off: with it a lower pelvis lets the trailing foot stay down longer - its timing
+        follows the reach.)"""
+        w = walk()
+        base = w.evaluate({"balance": 0.0, "foot_placement": 0.0})
+        pelvis = w.index["pelvis"]
+        for cm in (-12.0, -4.0):
+            r = w.evaluate({"balance": 0.0, "foot_placement": 0.0, "pelvis_height": cm})
+            lift = r.worlds[pelvis, :, 3, 1] - base.worlds[pelvis, :, 3, 1]
+            self.assertLess(float(np.abs(lift - cm).max()), 0.05 + float(max(base.info["drop"])), cm)
+            for side in "lr":          # the feet where they were
+                foot = w.index["foot_" + side]
+                self.assertLess(float(np.abs(r.worlds[foot, :, 3, :3] - base.worlds[foot, :, 3, :3]).max()), 1e-6)
+
+    def test_a_pelvis_raised_past_the_legs_reach_stays_on_them(self):
+        w = walk()
+        r = w.evaluate({"balance": 0.0, "pelvis_height": 40.0})
+        for side in "lr":
+            th, ca, fo = (w.index["%s_%s" % (b, side)] for b in ("thigh", "calf", "foot"))
+            length = np.linalg.norm(w.lt[ca], axis=1).mean() + np.linalg.norm(w.lt[fo], axis=1).mean()
+            reach = np.linalg.norm(r.worlds[fo, :, 3, :3] - r.worlds[th, :, 3, :3], axis=1) / length
+            self.assertLess(float(reach.max()), w.reach[side] + 1e-3, side)
+        self.assertGreater(max(r.info["drop"]), 30.0)            # the reach's drop takes most of it back
+
+
 class RollTests(unittest.TestCase):
 
     def roll_case(self, w, ctx, hip_shift):
         """The left foot planted at its source mid-contact, the hip moved back by `hip_shift` cm until the leg
         falls short: (the cost roll over the ball, the least reaching roll of before)."""
-        side, t = "l", 0.5 * sum(w.contact["l"])
+        side, t = "l", 0.5 * sum(w.contact["l"][0])
         rot, ankle = w.wrot(w.index["foot_l"], t), w.wpos(w.index["foot_l"], t)
         hip = w.wpos(w.index["thigh_l"], t) - hip_shift * w.fwd
         limit = w.reach[side] * (np.linalg.norm(w.lt_at(w.index["calf_l"], t)) +

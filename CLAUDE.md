@@ -9288,6 +9288,49 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
 - **Not built**: gravity on the arms, a held weapon swinging with the walk's arm swing, the clavicle under
   inertia, per-arm knobs.
 
+**…a cycle of several steps, and the pelvis over the feet** (2026-10-13, a second walk `dw` under the sword pose:
+«фут плейсмент не справился … в исходной анимации весь персонаж приподнят над землей, а в нашей позе он как бы
+стоит ниже … в присяде. Давай добавим параметр который просто будет контролировать расстояние между тазом и
+ногами»). Spec `docs/superpowers/specs/2026-10-13-walk-many-steps-and-height-design.md`.
+- **Read first** (the scene only read):
+  - `dw` is a 90-frame cycle holding TWO uneven steps of each foot: left 14-47 and 65-77, right 81-14 and 50-62;
+  - its first stances float 2-3 cm over the second ones;
+  - its root is 17 cm under its feet.
+- **The model assumed one stance a foot a cycle**:
+  - placement locked the lowest stance and its swing cubic ran across the other one, dragging that standing foot
+    1-7 cm a frame;
+  - the hip drop's and chest's harmonics and Twist's step assumed one stride a cycle.
+- **Every per-foot quantity is a list, one entry a step** (`walk.steps[side]`, `walk.strides`; `walk.feet[side]`
+  the longest). One step a foot gives exactly what it did: `asd` against the previous model to 1e-13.
+  - Steps are the slow runs merged across a gap that stays within `MERGE_HIGH` (4 cm) of the foot's lowest. The
+    feet must alternate (refused by name).
+  - **A local floor** (`walk.floor`): each step's own low, interpolated across the swings. A floating stance is
+    still down.
+  - Contacts, pivots, handoffs, growth and locks are per contact. `foot_time` is one monotone C1 Hermite through
+    every knot; `_contact_at` finds the contact a time is in. `foot_target` runs a swing between its step's print
+    and the next step's.
+  - **Per stride**: `stride_phase` (linear between the left strikes) for the hip drop and the chest; Twist's gain,
+    the stride readout, the arms' harmonics, the reach blur (the model's and `walktarget`'s), Weight's clock. Own
+    chest amplitudes are a least-squares fit (`chest_fit`). Pelvis twist now reaches 40 and Chest twist 60:
+    `dw`'s own are 17.8 and 40.8, and the old ranges clamped `own_knobs()` 7.7 cm off the source.
+- **A pose's pelvis height is read over its feet** (`walkpose.pose_floor_gap`: the pelvis over the pose's lower
+  ball, put over the walk's floor, `walk_floor`), not over the root line. Goblin on `asd` 68.3 → 70.7 cm, sword
+  85.3 → 88.0.
+- **Knob Pelvis height** (`pelvis_height`, cm, −40..40, first in Pelvis): added to the pelvis over the feet. The
+  reach still holds, so no leg straightens past the walk's straightest.
+- **Proof**:
+  - `tests/test_walkmodel.py` and `test_walktarget.py`, 137 tests: a synthetic walker of two uneven steps a foot,
+    its steps found, own knobs giving it back to 1e-4, every stance held at a 6 cm slip, per-stride gains, the
+    refusal, Pelvis height up / down / at the reach, the height over the feet;
+  - `verify_walk.py` **73/73 standalone**, gates 66-68 on `dw` (from `walks/dw.walk.gz`, skipped without it) under
+    the sword on Manny:
+    - each stance's still point slides 0.001-0.033 cm a frame (the walk's own 0.48-0.93; before this 1.5 / 7.1);
+    - no frame with both feet off the ground;
+    - the pelvis 84.90 cm over the feet (the pose over its own 84.91), the legs 0.74-0.99 of their length (before:
+      68.2 cm, 0.53-0.80, the crouch);
+    - Pelvis height +8 → 92.47, −10 → 75.15.
+  - Picture `walkparam/walk_dw.png` (both feet's slide, the pelvis over the floor, side on, before against now).
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses
@@ -9364,3 +9407,10 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      term goes as 1/L. Take a driving acceleration from a smooth fit of the path (the cycle's low harmonics),
      give a limb the lever of its whole mass, and gate the shake itself - a joint's motion above the cycle's
      low harmonics against its target's.
+235. **A walk model built on one clip took that clip's shape for the shape of a walk.** `asd` holds one step of
+     each foot a cycle, its stances on the floor, its root under its pelvis on the ground; every rule assumed
+     all three (one contact a foot, "down" against the foot's lowest of the cycle, a pose's height over the root
+     line). The second clip broke all three at once: the lock held the wrong one of two stances and dragged the
+     other 7 cm a frame, and the sword pose crouched the body 17 cm because the root stood under the feet.
+     Every gate passed: they all ran on `asd`. Test a model on a second source before calling it general, and
+     measure heights against the thing that stands on the ground.

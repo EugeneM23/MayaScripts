@@ -243,6 +243,18 @@ class PoseTests(unittest.TestCase):
         self.assertEqual(sorted(only), ["head", "scale", "spine", "toe", "width"])
         self.assertEqual(sorted(wp.filtered(pose, ())), ["scale"])
 
+    def test_the_pelvis_height_is_read_over_the_feet_not_the_root(self):
+        """A pose whose root stands 17 cm under its feet (dw's, 2026-10-13: the pose's pelvis read over the root
+        landed 17 cm low - the walk in a crouch) gives the walk the same height: the pelvis over its feet."""
+        w, c = walk(), clip()
+        plain = wp.prepare(w, statics_of(c), self.pose_of(c, 5), wm, wt)
+        low = self.pose_of(c, 5)
+        low["root"]["world"][13] -= 17.0
+        pose = wp.prepare(w, statics_of(c), low, wm, wt)
+        self.assertAlmostEqual(pose["height"], plain["height"], places=6)
+        gap = float(c.worlds[w.index["pelvis"], 5, 3, 1]) - min(float(c.worlds[w.index["ball_" + s], 5, 3, 1]) for s in "lr")
+        self.assertAlmostEqual(wp.pose_floor_gap(dict((n, b["world"]) for n, b in low.items()), w), gap, places=6)
+
     def test_a_pose_on_a_bigger_body_keeps_its_angles_and_scales_its_height(self):
         w, c = walk(), clip()
         big = self.pose_of(c, 5)

@@ -207,7 +207,7 @@ class Retarget(object):
             goals.append(dict((side, self._mapped(result.worlds[self.walk.index["foot_" + side], f, 3, :3],
                                                   source_root, root_world)) for side in SIDES))
         need = np.array([self._need(out, goal) for out, goal in zip(outs[:-1], goals[:-1])])
-        drop = model.smooth_cover(need, model.LOWER_BLUR * len(need))
+        drop = model.smooth_cover(need, model.LOWER_BLUR * len(need) / getattr(self.walk, "strides", 1))   # a stride
         drop = np.append(drop, drop[0])
         frames, short = [], 0.0
         for f, (out, goal, d) in enumerate(zip(outs, goals, drop)):

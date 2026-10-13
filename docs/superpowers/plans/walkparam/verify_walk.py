@@ -27,6 +27,7 @@ WALK_FBX = os.environ.get("WALK_FBX", "C:/Users/MY PC/Desktop/Walk_01.fbx")
 MIXAMO_FBX = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
 POSE_FILE = os.path.join(HERE, "walks", "goblin.wpose.gz")   # the animator's poses, saved by Save pose
 SWORD_FILE = os.path.join(HERE, "walks", "two_handed_sword.wpose.gz")
+DW_FILE = os.path.join(HERE, "walks", "dw.walk.gz")       # a walk of two uneven steps of each foot a cycle
 
 
 def load(name, path):
@@ -807,6 +808,93 @@ try:
         gate(held_gob < 0.25 and not both_gob and neither_gob == 0 and min(runs_gob) >= 1,
              "Foot placement under the goblin, every part: slides %.3f cm a frame at most, both feet down %s frames "
              "at the steps, never neither" % (held_gob, runs_gob))
+
+    # 7. a cycle of several steps (the animator's `dw`: two uneven steps of each foot, its stances floating 2-3 cm,
+    # its root 17 cm under the feet) under the two-handed sword, on Manny: every stance held, the pelvis over the feet
+    if os.path.exists(DW_FILE) and os.path.exists(SWORD_FILE):
+        shutil.copy(DW_FILE, sw.wf.path_for(sw.WALKS, "dw"))
+        dw, _, dw_start = sw.load_walk("dw")
+        dw_steps = dict((s, [(f.on, f.length) for f in dw.steps[s]]) for s in "lr")
+        gate(dw.strides == 2 and all(len(v) == 2 for v in dw_steps.values()),
+             "dw: %d steps of each foot a cycle (left %s, right %s; on, frames)" % (dw.strides, dw_steps["l"],
+                                                                                 dw_steps["r"]))
+        dw_scene = {"tempo": 90.0, "stance": 0.33, "leg_turn": 0.45, "arms": 1.92, "elbow": 1.63, "arm_drag": 4.07,
+                    "arm_bounce": 0.47, "knee_foot": 0.5, "pose": 1.0}     # the animator's sliders on |root
+
+        def dw_keys(given):
+            result, info, text = sw.apply(manny, "dw", given, "two_handed_sword")
+            print("        " + text)
+            bones = bones_of(manny)
+            n = result.frames
+            out = np.tile(np.eye(4), (len(dw.names), n + 1, 1, 1))
+            have = [(j, bones[leaf]["path"]) for j, leaf in enumerate(dw.names) if leaf in bones]
+            for (j, _), m in zip(have, worlds([p for _, p in have], range(dw_start, dw_start + n + 1))):
+                out[j] = m
+            return result, info, out
+
+        def dw_slides(m, n, planted):
+            """Per foot, the least of its heel point's and ball's slide along the ground a frame where the model
+            plants it on both frames."""
+            flat = lambda v: v - np.outer(v @ dw.up, dw.up)
+            out = {}
+            for side in "lr":
+                foot = m[dw.index["foot_" + side], :n + 1]
+                heel = foot[:, 3, :3] + np.einsum("i,fij->fj", dw.heel_loc[side], foot[:, :3, :3])
+                ball = m[dw.index["ball_" + side], :n + 1, 3, :3]
+                slide = np.minimum(np.linalg.norm(np.diff(flat(heel), axis=0), axis=1),
+                                   np.linalg.norm(np.diff(flat(ball), axis=0), axis=1))
+                p = np.array(planted[side][:n], bool)
+                out[side] = np.where(p & np.roll(p, -1), slide, 0.0)
+            return out
+
+        placed_r, placed_i, placed_m = dw_keys(dw_scene)
+        n_dw = placed_r.frames
+        planted = placed_r.info["placement"]["planted"]
+        own_r, own_i, own_m = dw_keys(dict(dw_scene, foot_placement=0.0))
+        held_dw, own_dw = dw_slides(placed_m, n_dw, planted), dw_slides(own_m, n_dw, planted)
+        per_step = []
+        for side in "lr":
+            for foot in dw.steps[side]:
+                frames = [int(round((foot.on + k) * n_dw / float(dw.P))) % n_dw for k in range(foot.length + 1)]
+                mid = int(round((foot.on + 0.5 * foot.length) * n_dw / float(dw.P))) % n_dw
+                per_step.append((side, foot.on, bool(planted[side][mid]), float(held_dw[side][frames].max()),
+                                 float(own_dw[side][frames].max())))
+        both_moving = [f for f in range(n_dw) if not planted["l"][f] and not planted["r"][f]]
+        gate(all(p and h < 0.2 for _, _, p, h, _ in per_step) and max(o for *_, o in per_step) > 0.5
+             and not both_moving,
+             "dw, every stance planted and still: %s (the stance at on: held / the walk's own feet, cm a frame); no "
+             "frame with both feet off the ground"
+             % ", ".join("%s %d %.3f / %.3f" % (s, on, h, o) for s, on, p, h, o in per_step))
+        held_pose = sw.prepared_pose("dw", "two_handed_sword")
+        scale_dw = placed_i["scale"]
+        pose_gap = (held_pose["height"] - (sw.wp.walk_floor(dw) - float(np.dot(dw.origin, dw.up)))) * scale_dw
+
+        def over_feet(m, info, n):
+            floor = min(float((m[dw.index[b], :n, 3, :3] @ dw.up).min()) for b in ("ball_l", "ball_r"))
+            return float(np.mean(m[dw.index["pelvis"], :n, 3, :3] @ dw.up - floor + np.array(info["drop"][:n])))
+
+        def legs_of(m, n):
+            ext = []
+            for side in "lr":
+                th, ca, fo = (dw.index["%s_%s" % (b, side)] for b in ("thigh", "calf", "foot"))
+                length = (np.linalg.norm(m[ca, 0, 3, :3] - m[th, 0, 3, :3]) +
+                          np.linalg.norm(m[fo, 0, 3, :3] - m[ca, 0, 3, :3]))
+                ext.append(np.linalg.norm(m[fo, :n, 3, :3] - m[th, :n, 3, :3], axis=1) / length)
+            return float(min(e.min() for e in ext)), float(max(e.max() for e in ext))
+
+        h_placed = over_feet(placed_m, placed_i, n_dw)
+        raised_r, raised_i, raised_m = dw_keys(dict(dw_scene, pelvis_height=8.0))
+        lowered_r, lowered_i, lowered_m = dw_keys(dict(dw_scene, pelvis_height=-10.0))
+        h_up = over_feet(raised_m, raised_i, raised_r.frames)
+        h_down = over_feet(lowered_m, lowered_i, lowered_r.frames)
+        gate(abs(h_placed - pose_gap) < 1.0 and abs(h_up - h_placed - 8.0 * scale_dw) < 0.5
+             and abs(h_down - h_placed + 10.0 * scale_dw) < 0.5,
+             "dw under the sword: the pelvis %.2f cm over the feet (the pose over its feet %.2f, size x%.3f), the legs "
+             "at %.2f..%.2f of their length; Pelvis height +8 -> %.2f, -10 -> %.2f (the legs %.2f..%.2f)"
+             % ((h_placed, pose_gap, scale_dw) + legs_of(placed_m, n_dw) + (h_up, h_down)
+                + legs_of(lowered_m, lowered_r.frames)))
+    else:
+        print("        (no %s or %s: the several-steps gates skipped)" % (DW_FILE, SWORD_FILE))
 
     balance_sheet = os.environ.get("WALK_BALANCE_SHEET")
     if balance_sheet:

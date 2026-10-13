@@ -512,7 +512,7 @@ GROUPS = (
     ("Pose", ("pose",)),
     ("Step", ("stride", "tempo", "lift")),
     ("Legs", ("foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
-    ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "root_sway")),
+    ("Pelvis", ("pelvis_height", "bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "root_sway")),
     ("Chest", ("spine", "chest_twist", "chest_sway", "head")),
     ("Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("Weight", ("weight", "balance", "exaggeration")),
@@ -537,6 +537,9 @@ LABELS = {
     "foot_lag": ("Foot lag (fr)", "frames the swinging foot trails its shin: it flicks through after it leaves the "
                                   "ground and catches up before it lands (the toes 1.5x)"),
     "foot_flex": ("Foot flex", "x how far the swinging foot turns in its ankle (and the toes in theirs)"),
+    "pelvis_height": ("Pelvis height (cm)", "raises (+) or lowers (-) the pelvis over the feet, the legs following "
+                                            "- a walk or a pose that crouches stands up; the legs never straighten "
+                                            "past the walk's straightest, so the feet stay on the ground"),
     "bob": ("Bob", "x the pelvis's up and down"),
     "sway": ("Sway", "x the pelvis's side to side"),
     "root_sway": ("Root sway", "0: the root runs straight down the walk's line (what a game's capsule wants); 1 "
