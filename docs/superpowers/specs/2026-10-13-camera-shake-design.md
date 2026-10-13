@@ -35,8 +35,10 @@ Fewer than 2 frames is refused by name.
 Time `s = (f - a) / fps` in seconds (the scene's own rate), so a shake reads the same at 24 and 30 fps.
 Every frequency is held below `0.42 x fps` (Nyquist would alias it into a slow wobble).
 
-**Smooth noise** `noise(seed, stream, hz)`: Gaussian values on knots `1/hz` seconds apart, a uniform cubic
-B-spline through them (C2, no overshoot), scaled to unit RMS by the spline's own mean variance. Knots come in
+**Smooth noise** `noise(seed, stream, hz)`: Gaussian values on knots, a uniform cubic B-spline through them
+(C2, no overshoot), scaled to unit RMS by the spline's own mean variance. The knots are `5.57 x hz` a second
+(built: knots `1/hz` apart crossed zero only 0.359 times a knot, so a "7 Hz" tremor swung at 1.3 Hz; 5.57 knots
+a cycle make `hz` the swings a second, as a sine's). Knots come in
 blocks of 64 from `default_rng([seed, stream, block])`, so **lengthening the range keeps the start the same**
 and a seed always gives the same shape. `fractal(..., octaves, gain)` sums octaves at `hz x 2^k` with
 amplitude `gain^k`, renormalised to unit RMS. An amplitude below is "about this much at the extremes": two
@@ -131,9 +133,10 @@ status (3 lines)
 - **Live**: with a shake picked, a released slider, a preset, a direction or New seed re-keys it on its own
   cameras and frames (one undo chunk). With `+ New shake` they only set up the next Apply. Switching Mode
   picks `+ New shake`.
-- One of ours selected in the Anim Layer Editor is picked (a scriptJob on `animLayerRefresh`); the list is
-  rebuilt on SelectionChanged.
-- Settings are remembered per mode in optionVars `skeldarCamShake_<mode>_<name>`; the picked shake lives on
+- One of ours NEWLY selected in the Anim Layer Editor is picked (a scriptJob on `animLayerRefresh`; the same
+  one still selected there does not take the window back from `+ New shake`); the list is rebuilt on
+  SelectionChanged; Undo / Redo show the picked shake's settings again.
+- Settings are remembered per mode in an optionVar `skeldarCamShake_<mode>` (JSON); the picked shake lives on
   `sys` (trap 111), by the layer's UUID.
 
 ## Proof

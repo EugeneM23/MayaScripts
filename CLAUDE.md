@@ -9550,3 +9550,69 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      other 7 cm a frame, and the sword pose crouched the body 17 cm because the root stood under the feet.
      Every gate passed: they all ran on `asd`. Test a model on a second source before calling it general, and
      measure heights against the thing that stands on the ground.
+
+## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
+
+The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).
+Скрипт нужен для создания процедурной анимации камеры … я выбираю участок на таймлайне, выставляю разные
+параметры а скрипт делает на дополнительном слое анимацию камеры … 1 - режим реальной съемки … покачивания и
+микро тряска. 2 - режим удара … Камеру тряхнуло, она вздрогнула и успокаивается». Asked, all four the
+recommendation: **the selected camera** (nothing selected: our `SceneSetup_camera` when there is exactly one),
+**one additive layer per press**, **an impact is a kick plus a rattle**, **live tuning**. Spec
+`docs/superpowers/specs/2026-10-13-camera-shake-design.md`, plan beside it. **Outside the plugin**, like the
+physical stop was: `docs/superpowers/plans/camshake/skeldar_camshake.py`, one file, dropped into a viewport it
+reloads itself and opens its window (trap 220); it imports nothing of the plugin.
+
+- **The model** (numpy): a smooth noise - Gaussian knots through a uniform cubic B-spline, unit RMS by the
+  spline's own mean variance, knots in seeded blocks of 64 so a longer range keeps its start; **5.57 knots a
+  cycle** (measured: such a spline crosses zero 0.359 times a knot), so "Hz" means swings a second as a sine's.
+  Every frequency below 0.42 x fps; an amplitude is two RMS.
+  - **Handheld**: Sway (a 3-octave fractal from 0.25 Hz x Speed; tilt 0.75, pan 1, roll x Roll), Jitter (7 Hz x
+    sqrt(Speed)), Drift (cm, a 2-octave fractal from 0.2 Hz; side 0.7, bob 1, push 0.4), Ease in and out.
+    Presets Calm / Handheld / Nervous.
+  - **Impact** over `[a, b]`: a spring's impulse response (1 at its first crest, `w = pi/Swing`, `zeta = 0.08 +
+    0.72 (1 - Bounce)`) turning the view toward where the hit throws it (Below / Above / Left / Right / Front /
+    Random), Push along it, roll for a side hit, a perpendicular wobble at 1.37 w, a rattle under `(1-u)^2`;
+    still at `a` (the jolt is `a+1`) and tapered to still at `b`. No highlight: the current frame + Length.
+    Presets Light / Hit / Heavy / Explosion / Recoil.
+- **Onto the camera, exact**: a rotation `S` about the camera's own axes and an offset along them; the new euler
+  is the one of `RA^-1 . S . RA . R(e)` nearest the base (both solutions, every 360; Maya's six orders by
+  permuting the axes onto xyz), the offset `d . (RA . R . JO)`. The layer adds by component
+  (`rotationAccumulationMode` 0), so the camera shows `S . M` on every keyed frame. The base is the camera's
+  rotate read through every layer (`getAttr(time=)` after dirtying the curves upstream, trap 236) minus this
+  layer's own share x its weight.
+- **The layer**: `CamShake_<Mode>_<a>_<b>` (`m5` for -5), additive, marked `skeldarCamShake` (JSON: mode,
+  settings, frames, the cameras' UUIDs), **locked** after writing (a later key of the animator's lands on the
+  base layer, gated); keys on every frame (spline), 0 a frame outside each end (flat) with `a`'s in and `b`'s
+  out tangent linear: nothing leaks, not between frames. Translate only when Drift / Push > 0. Refused, by name,
+  before any change: nothing to shake, a channel driven by anything but time curves and layers (a constraint
+  on a camera's target says which camera to select), a 1-frame range. One undo chunk a press.
+- **The window** (cmds): Shake (+ New and every shake of ours), Delete, Mode, Preset, the sliders, Seed / New
+  seed, Apply, a status line. A released slider, a preset, the direction or a new seed **re-keys the picked
+  shake** on its own cameras and frames; a shake newly selected in the Anim Layer Editor is picked
+  (`animLayerRefresh`); Undo / Redo show its settings again. Settings remembered per mode
+  (`skeldarCamShake_<mode>`, JSON); the picked shake on `sys` (trap 111).
+
+Proof: `tests/test_camshake.py` **55** (the noise, the envelopes, both modes, the algebra against OpenMaya on
+every order with rotate axes and joint orients, the window on a fake cmds); `verify_camshake.py` **28/28 mayapy
+standalone**: the shake in the camera's own axes on every frame to **2.8e-16 deg**, the translation exact, the
+camera's own keys untouched, nothing outside the range at quarter frames, a re-tune keeping the layer, its
+weight and lock (doubling the settings doubling the shake to 0.4 %), one undo each, an impact stacked on the
+handheld exactly (1.4e-16), a hit from below throwing the view up 4.2-4.3 deg, two cameras each their own shake,
+a joint (orient, yxz) exact, refusals changing nothing, a 300-frame shake applied in 0.07 s and re-tuned in
+0.08 s, and on the plugin's Manny with Camera Setup, nothing selected: the SceneSetup camera shaken and
+`camera_root` following it to 8e-16 - the shake reaches the export. Picture
+`docs/superpowers/plans/camshake/camshake_curves.png` (`render_camshake_curves.py`, offscreen Qt with Windows'
+Segoe UI loaded - offscreen Qt draws boxes otherwise). **The window in Maya is the animator's to try.**
+
+Not built: an operator walking (step bob), a pivot behind the lens, translation in the rattle, moving a shake's
+range after Apply, the hub card.
+
+236. **A DG context read keeps a stale value per time.** `getAttr(plug, time=t)` after a key at `t` was edited
+     answered the OLD value (measured in mayapy: 0.0 where the curve now said 20, then 30 after a second edit
+     to 40) - a different time (`t + 0.0001`) read fresh, and `dgdirty` on the PLUG did not help; `dgdirty` on
+     the edited CURVE did. A tool that reads a channel through animation layers at other times dirties every
+     curve upstream first (the layers' blend nodes, their curves, the layers' weight curves).
+237. **A layer's rotation blend node reads its channel's owner.** `animBlendNodeAdditiveRotation.rotateOrder`
+     is connected from the camera's own `rotateOrder`, so a walk upstream of `rotate` meets the camera itself
+     and calls it a driver - the first re-tune of every shake was refused. Leave the owner out of the walk.
