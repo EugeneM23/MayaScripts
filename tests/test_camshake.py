@@ -271,6 +271,113 @@ class ImpactTests(unittest.TestCase):
         self.assertTrue(np.all(rot[0] == 0.0))
 
 
+try:
+    import maya.api.OpenMaya as om
+except ImportError:
+    om = None
+
+VIEW = np.array([0.0, 0.0, -1.0])    # a camera looks down its own -Z
+
+
+def maya_matrix(degrees, order):
+    rotation = om.MEulerRotation([math.radians(v) for v in degrees], cs.ORDERS.index(order))
+    m = rotation.asMatrix()
+    return np.array([[m.getElement(r, c) for c in range(3)] for r in range(3)])
+
+
+class AlgebraTests(unittest.TestCase):
+
+    def angles(self, n=40, seed=0):
+        return np.random.default_rng(seed).uniform(-200.0, 200.0, size=(n, 3))
+
+    @unittest.skipIf(om is None, "OpenMaya is needed to compare")
+    def test_euler_matrix_is_mayas_on_every_order(self):
+        for order in cs.ORDERS:
+            for degrees in self.angles():
+                ours = cs.euler_matrix(np.radians(degrees), order)
+                self.assertTrue(np.allclose(ours, maya_matrix(degrees, order), atol=1e-12), order)
+
+    def test_both_solutions_give_the_matrix(self):
+        for order in cs.ORDERS:
+            for degrees in self.angles(seed=1):
+                m = cs.euler_matrix(np.radians(degrees), order)
+                for solution in cs.matrix_eulers(m, order):
+                    self.assertTrue(np.allclose(cs.euler_matrix(solution, order), m, atol=1e-10), order)
+
+    def test_gimbal_lock_still_gives_the_matrix(self):
+        for order in cs.ORDERS:
+            degrees = [0.0, 0.0, 0.0]
+            degrees["xyz".index(order[1])] = 90.0
+            degrees["xyz".index(order[0])] = 30.0
+            m = cs.euler_matrix(np.radians(degrees), order)
+            for solution in cs.matrix_eulers(m, order):
+                self.assertTrue(np.allclose(cs.euler_matrix(solution, order), m, atol=1e-9), order)
+
+    def test_closest_follows_the_base_across_the_seam(self):
+        base = np.radians([179.0, -10.0, 720.0 + 30.0])
+        m = cs.euler_matrix(base + np.radians([2.0, 0.5, -1.0]), "xyz")
+        got = np.degrees(cs.closest(cs.matrix_eulers(m, "xyz"), base))
+        self.assertTrue(np.allclose(got, [181.0, -9.5, 749.0], atol=1e-9))
+
+    def test_a_zero_shake_is_the_base(self):
+        for order in cs.ORDERS:
+            for degrees in self.angles(5, seed=2):
+                got = cs.shaken(degrees, order, (0.0, 0.0, 0.0), (10.0, -20.0, 5.0))
+                self.assertTrue(np.allclose(got, degrees, atol=1e-9))
+
+    def test_a_tilt_turns_the_view_up_in_the_cameras_own_axes(self):
+        rng = np.random.default_rng(3)
+        for order in cs.ORDERS:
+            base = rng.uniform(-90, 90, 3)
+            axis = (12.0, -7.0, 3.0)
+            got = cs.shaken(base, order, (5.0, 0.0, 0.0), axis)
+            frame = cs.euler_matrix(np.radians(axis), "xyz")
+            before = frame @ cs.euler_matrix(np.radians(base), order)
+            after = frame @ cs.euler_matrix(np.radians(got), order)
+            # In the camera's own frame before the shake, the new view points up by 5 degrees.
+            seen = VIEW @ after @ before.T
+            self.assertAlmostEqual(math.degrees(math.asin(seen[1])), 5.0, places=9)
+            self.assertAlmostEqual(seen[0], 0.0, places=9)
+
+    def test_a_turn_about_each_axis(self):
+        frame = np.eye(3)
+        pan = cs.euler_matrix(np.radians(cs.shaken((0, 0, 0), "xyz", (0.0, -10.0, 0.0))), "xyz")
+        self.assertGreater((VIEW @ pan)[0], 0.17)                  # about -Y: the view to +X
+        roll = cs.euler_matrix(np.radians(cs.shaken((0, 0, 0), "xyz", (0.0, 0.0, -10.0))), "xyz")
+        self.assertGreater((np.array([0.0, 1.0, 0.0]) @ roll)[0], 0.17)   # about -Z: the top to +X
+
+    def test_rotation_from_vector(self):
+        self.assertTrue(np.allclose(cs.rotation_from_vector(np.radians([30.0, 0, 0])),
+                                    cs.euler_matrix(np.radians([30.0, 0, 0]), "xyz")))
+        self.assertTrue(np.allclose(cs.rotation_from_vector((0, 0, 0)), np.eye(3)))
+
+    def test_along_axes(self):
+        moved = cs.along_axes((1.0, 0.0, 0.0), (0.0, 90.0, 0.0), "xyz")
+        self.assertTrue(np.allclose(moved, (0.0, 0.0, -1.0)))
+        with_orient = cs.along_axes((1.0, 0.0, 0.0), (0.0, 0.0, 0.0), "xyz", joint_orient_deg=(0.0, 90.0, 0.0))
+        self.assertTrue(np.allclose(with_orient, (0.0, 0.0, -1.0)))
+
+    def test_a_joint_orient_does_not_change_the_turn(self):
+        rot = np.array([[2.0, -3.0, 1.0]])
+        off = np.zeros((1, 3))
+        base = np.array([[10.0, 20.0, 30.0]])
+        plain, _ = cs.deltas(rot, off, base, "yzx")
+        oriented, _ = cs.deltas(rot, off, base, "yzx", joint_orient=(40.0, 0.0, -15.0))
+        self.assertTrue(np.allclose(plain, oriented))
+
+    def test_deltas_put_the_shake_on_top_of_the_base(self):
+        rng = np.random.default_rng(4)
+        base = rng.uniform(-170, 170, (20, 3))
+        rot = rng.uniform(-6, 6, (20, 3))
+        off = rng.uniform(-3, 3, (20, 3))
+        dr, dt = cs.deltas(rot, off, base, "zxy", (5.0, 0.0, -8.0))
+        for i in range(20):
+            expect = cs.shaken(base[i], "zxy", rot[i], (5.0, 0.0, -8.0))
+            self.assertTrue(np.allclose(base[i] + dr[i], expect))
+            self.assertLess(np.abs(dr[i]).max(), 30.0)
+            self.assertTrue(np.allclose(dt[i], cs.along_axes(off[i], base[i], "zxy", (5.0, 0.0, -8.0))))
+
+
 class RecordTests(unittest.TestCase):
 
     def test_layer_name(self):

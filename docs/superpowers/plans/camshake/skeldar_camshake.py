@@ -298,6 +298,113 @@ def shake(mode, frames, a, b, fps, s, index=0):
     return (handheld if mode == "handheld" else impact)(frames, a, b, fps, s, index)
 
 
+# ---------------------------------------------------------------------------------------------------------
+# 2. The rotation algebra (numpy, Maya's row vectors: a point is p . M, a node's world is local . parent)
+# ---------------------------------------------------------------------------------------------------------
+
+ORDERS = ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")   # Maya's rotateOrder enum
+
+
+def axis_matrix(axis, angle):
+    """A turn about one axis (0 x, 1 y, 2 z), radians, as Maya writes it for row vectors."""
+    c, s = math.cos(angle), math.sin(angle)
+    m = np.eye(3)
+    i1, i2 = (axis + 1) % 3, (axis + 2) % 3
+    m[i1, i1] = c
+    m[i1, i2] = s
+    m[i2, i1] = -s
+    m[i2, i2] = c
+    return m
+
+
+def euler_matrix(radians, order):
+    """Maya's rotation for eulers (x, y, z) in a rotate order, its first axis innermost."""
+    m = np.eye(3)
+    for letter in order:
+        axis = "xyz".index(letter)
+        m = m @ axis_matrix(axis, radians[axis])
+    return m
+
+
+def matrix_eulers(m, order):
+    """Both euler solutions (radians, (x, y, z)) of a rotation in a rotate order. The order's axes are
+    permuted onto x, y, z (an odd permutation turns every angle the other way) and read as xyz."""
+    axes = ["xyz".index(letter) for letter in order]
+    p = np.asarray(m, float)[np.ix_(axes, axes)]
+    sign = 1.0 if order in ("xyz", "yzx", "zxy") else -1.0
+    sb = max(-1.0, min(1.0, -p[0, 2]))
+    if abs(sb) < 1.0 - 1e-12:
+        first = (math.atan2(p[1, 2], p[2, 2]), math.asin(sb), math.atan2(p[0, 1], p[0, 0]))
+    else:   # gimbal: the outer angle is free, the inner carries the turn
+        first = (math.atan2(p[1, 0] * sb, p[1, 1]), math.copysign(math.pi / 2.0, sb), 0.0)
+    second = (first[0] + math.pi, math.pi - first[1], first[2] + math.pi)
+    out = []
+    for solution in (first, second):
+        e = [0.0, 0.0, 0.0]
+        for slot, axis in enumerate(axes):
+            e[axis] = sign * solution[slot]
+        out.append(tuple(e))
+    return out
+
+
+def closest(solutions, near):
+    """The solution, each angle moved by whole turns, nearest `near` (radians)."""
+    best, best_distance = None, None
+    for solution in solutions:
+        e = [v + 2.0 * math.pi * round((n - v) / (2.0 * math.pi)) for v, n in zip(solution, near)]
+        distance = sum(abs(v - n) for v, n in zip(e, near))
+        if best_distance is None or distance < best_distance:
+            best, best_distance = e, distance
+    return np.array(best)
+
+
+def rotation_from_vector(v):
+    """A turn about the vector's direction by its length (radians), right-handed, for row vectors."""
+    v = np.asarray(v, float)
+    angle = float(np.linalg.norm(v))
+    if angle < 1e-15:
+        return np.eye(3)
+    x, y, z = v / angle
+    k = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
+    column = np.eye(3) + math.sin(angle) * k + (1.0 - math.cos(angle)) * (k @ k)
+    return column.T
+
+
+def shaken(base_deg, order, rotvec_deg, rotate_axis_deg=(0.0, 0.0, 0.0)):
+    """The euler (deg) nearest the base that turns the node by `rotvec` about its OWN axes: its frame
+    RA . R(e) [. JO] becomes S . RA . R(e) [. JO], so R(e') = RA^-1 . S . RA . R(e) (a joint orient on the
+    right cancels)."""
+    base = np.radians(np.asarray(base_deg, float))
+    axis = euler_matrix(np.radians(np.asarray(rotate_axis_deg, float)), "xyz")
+    turn = rotation_from_vector(np.radians(np.asarray(rotvec_deg, float)))
+    m = axis.T @ turn @ axis @ euler_matrix(base, order)
+    return np.degrees(closest(matrix_eulers(m, order), base))
+
+
+def along_axes(offset, base_deg, order, rotate_axis_deg=(0.0, 0.0, 0.0), joint_orient_deg=(0.0, 0.0, 0.0)):
+    """An offset along the node's own axes, in its parent's space (where its translate lives)."""
+    frame = (euler_matrix(np.radians(np.asarray(rotate_axis_deg, float)), "xyz")
+             @ euler_matrix(np.radians(np.asarray(base_deg, float)), order)
+             @ euler_matrix(np.radians(np.asarray(joint_orient_deg, float)), "xyz"))
+    return np.asarray(offset, float) @ frame
+
+
+def deltas(rot, off, base, order, rotate_axis=(0.0, 0.0, 0.0), joint_orient=(0.0, 0.0, 0.0)):
+    """What an additive layer adds to the node's rotate (deg) and translate on each frame, so that it shows
+    the shake on top of `base` (deg)."""
+    rot = np.asarray(rot, float)
+    off = np.asarray(off, float)
+    base = np.asarray(base, float)
+    dr = np.zeros_like(rot)
+    dt = np.zeros_like(off)
+    for i in range(len(rot)):
+        if np.any(rot[i]):
+            dr[i] = shaken(base[i], order, rot[i], rotate_axis) - base[i]
+        if np.any(off[i]):
+            dt[i] = along_axes(off[i], base[i], order, rotate_axis, joint_orient)
+    return dr, dt
+
+
 def _frame_tag(frame):
     frame = int(frame)
     return "m%d" % -frame if frame < 0 else str(frame)
