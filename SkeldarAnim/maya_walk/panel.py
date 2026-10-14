@@ -38,15 +38,16 @@ NOTHING = "Select a skeleton - Apply puts the walk on it"
 
 #  The knobs but Pose (its share stands under the pose's dropdown), one group shown at a time.
 GROUPS = (
-    ("step", "Step", ("stride", "tempo", "lift")),
+    ("step", "Step", ("stride", "tempo", "lift", "in_place")),
     ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
                       "foot_lag", "foot_flex")),
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
-                          "pelvis_twist", "pelvis_list",
+                          "pelvis_twist", "pelvis_list", "pelvis_tilt",
                           "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "head",
-                        "head_drag")),
-    ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
+    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "torso_drag",
+                        "torso_bounce", "head", "head_drag", "head_nod")),
+    ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap", "shoulder_swing", "shoulder_bob",
+                      "arm_swing")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
 )
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
@@ -56,6 +57,9 @@ LABELS = {
     "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
     "tempo": ("Tempo, fr", "Frames a cycle of two steps; fewer is faster"),
     "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
+    "in_place": ("In place", "1: the walk on the spot - the root stays where the first frame has it (weaving "
+                             "aside only with Root sway), the body moves about it and the planted feet slide back; "
+                             "the stride and speed said are the walk's"),
     "foot_placement": ("Foot placement", "1: a planted foot never slides (it rolls heel to ball about a still "
                                          "point) and one foot is always on the ground - both are down a while "
                                          "at every step; 0 is the walk's own feet, slides and all"),
@@ -94,6 +98,10 @@ LABELS = {
                                    "People: about 5; the lower back takes it back"),
     "pelvis_list": ("Hip drop, deg", "The standing leg's hip this far up, the swinging leg's down, highest "
                                      "just after the foot lands. People: about 4"),
+    "pelvis_tilt": ("Pelvis tilt, deg", "Adds this much tilt to the pelvis twice a stride, its top forward (+) - "
+                                        "even where the walk has none; on the walk's own tilt where it tilts, "
+                                        "else peaking a fifth of a stride after each heel strike. The lower "
+                                        "back takes it back (x Pelvis motion)"),
     "root_sway": ("Root sway", "0: the root runs straight down the walk's line (what a game's capsule "
                                "wants); 1 weaves with the hips as the walk does"),
     "spine": ("Spine", "x the spine's and the neck's motion (Chest twist and sway included)"),
@@ -102,6 +110,9 @@ LABELS = {
                                    "People: about 7"),
     "chest_sway": ("Chest sway", "deg: the shoulder line tilts this far each way over the steps. People: "
                                  "about 5"),
+    "chest_pitch": ("Chest pitch, deg", "Adds this much forward (+) lean to the chest twice a stride, even where "
+                                        "the spine does not move in the walk; on the chest's own pitch where it "
+                                        "has one, else just after each heel strike (x Spine)"),
     "gait_lean": ("Gait lean", "Under a pose's torso, the walk's own forward lean (a run leans into it) is "
                                "kept on top of the pose - as much of it as the room the pose leaves to "
                                "horizontal: a bent pose leans further less. 0 is the pose's torso as it stands"),
@@ -114,6 +125,9 @@ LABELS = {
     "head_drag": ("Head drag, fr", "The head keeps its gaze through a spring on the neck that feels the "
                                    "body's motion - about this many frames late, the neck taking the "
                                    "difference. 0: the head exactly where the walk looks"),
+    "head_nod": ("Head nod, deg", "Adds a nod of this much to the head twice a stride, down (+), even where the "
+                                  "walk's head is still; on its own nod where it has one, else just after each "
+                                  "heel strike"),
     "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
                      "hands holding one thing together hold it"),
     "elbow": ("Elbow", "x the forearm's own swing in the elbow, on top of Arms"),
@@ -123,6 +137,17 @@ LABELS = {
     "arm_bounce": ("Arm bounce", "How far the arms overshoot as they catch up: 0 settles, 1 whips through"),
     "overlap": ("Overlap, fr", "Frames the arms' own motion runs late against the body (the shoulders less); "
                                "the trunk's and the head's overlap is Torso drag and Head drag"),
+    "shoulder_swing": ("Shoulder swing, deg", "Swings each shoulder forward (+) and back this far once a stride, "
+                                              "even where the walk's shoulders are still: the left forward as the "
+                                              "right foot lands (on the walk's own swing where it has one); the arm "
+                                              "hangs from it. Sided"),
+    "shoulder_bob": ("Shoulder bob, deg", "Lifts each shoulder (+) and drops it this far twice a stride, even "
+                                          "where the walk's shoulders are still; on their own bob where they have "
+                                          "one. Sided"),
+    "arm_swing": ("Arm swing, deg", "Swings each arm this far forward (+) and back once a stride on top of its own "
+                                    "swing - arms that hang still in the walk swing too: the left forward as the "
+                                    "right foot lands (on the walk's own swing where it has one). Hands holding "
+                                    "one thing together hold it. Sided"),
     "weight": ("Weight", "Heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
     "balance": ("Balance", "How far the centre of mass follows the feet like a pendulum: wider feet, a "
                            "slower step, a crouch sway it more; a leaning pose takes the hips back over the "

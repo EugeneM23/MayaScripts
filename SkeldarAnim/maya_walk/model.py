@@ -17,6 +17,7 @@ KNOBS = (
     ("stride", 1.0, 0.4, 1.8),
     ("tempo", 0.0, 0.0, 2000.0),
     ("lift", 1.0, 0.0, 3.0),
+    ("in_place", 0.0, 0.0, 1.0),
     ("foot_placement", 1.0, 0.0, 1.0),
     ("ground_time", 1.0, 0.7, 1.8),
     ("stance", 1.0, 0.0, 2.5),
@@ -35,9 +36,11 @@ KNOBS = (
     ("pelvis_rot", 1.0, 0.0, 3.0),
     ("pelvis_twist", 5.0, -5.0, 40.0),
     ("pelvis_list", 4.0, -5.0, 10.0),
+    ("pelvis_tilt", 0.0, -15.0, 15.0),
     ("spine", 1.0, 0.0, 3.0),
     ("chest_twist", 7.0, -5.0, 60.0),
     ("chest_sway", 5.0, -5.0, 15.0),
+    ("chest_pitch", 0.0, -15.0, 15.0),
     ("gait_lean", 1.0, 0.0, 1.0),
     ("torso_drag", 1.5, 0.0, 8.0),
     ("torso_bounce", 0.2, 0.0, 1.0),
@@ -45,8 +48,12 @@ KNOBS = (
     ("elbow", 1.0, 0.0, 3.0),
     ("arm_drag", 1.5, 0.0, 8.0),
     ("arm_bounce", 0.3, 0.0, 1.0),
+    ("shoulder_swing", 0.0, -25.0, 25.0),
+    ("shoulder_bob", 0.0, -15.0, 15.0),
+    ("arm_swing", 0.0, -60.0, 60.0),
     ("head", 1.0, 0.0, 3.0),
     ("head_drag", 2.0, 0.0, 8.0),
+    ("head_nod", 0.0, -20.0, 20.0),
     ("overlap", 0.0, 0.0, 6.0),
     ("weight", 0.0, -1.0, 2.0),
     ("balance", 1.0, 0.0, 1.0),
@@ -57,7 +64,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  The knobs of a body part that has two sides (2026-10-13: «режим в котором левая и правая сторона станут
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "ground_time",
-         "arms", "elbow", "arm_drag", "arm_bounce")
+         "arms", "elbow", "arm_drag", "arm_bounce", "shoulder_swing", "shoulder_bob", "arm_swing")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -84,6 +91,28 @@ GAIT_FROUDE = 1.0
 # Gait lean: under a pose's torso the walk's own forward lean over its rest is put back, in the room the pose leaves
 # to this lean of the trunk (degrees from up; the stop builder's rule, docs/superpowers/specs/2026-10-14-pose-on-clip)
 LEAN_LIMIT = 90.0
+# The levers (docs/superpowers/specs/2026-10-14-walk-clean-levers-overlap-design.md, Part 3): each ADDS degrees (x
+# Exaggeration) on a shape of the stride's phase, cos(h . stride_phase - its phase), whatever the clip holds there -
+# a spine that does not move in the clip still pitches. Its phase is the clip's own on its axis where the clip's h-th
+# harmonic there moves more than LEVER_STILL degrees (the lever reinforces the clip's motion), else where the table
+# says it peaks: a share of a stride after the left heel strike (a sided lever: (left, right)).
+# name, harmonics a stride, peak, sided - the joints and axes (+ as the knob's tooltip says):
+#   pelvis_tilt    the pelvis about the walk's side axis, its top forward; x Pelvis motion; the lumbar takes it back
+#   chest_pitch    the chest joints (CHEST_SHARES) about side, forward; x Spine
+#   head_nod       the head in the world about side, looking down
+#   shoulder_swing each clavicle about up, its lateral end (the shoulder) forward
+#   shoulder_bob   each clavicle about forward, the shoulder up
+#   arm_swing      each upper arm in the world about side, the hand forward
+# The arm and shoulder levers fade under a pose's grip as the arms' own swing does (hands holding one thing hold it).
+LEVERS = (
+    ("pelvis_tilt", 2, 0.20, False),
+    ("chest_pitch", 2, 0.05, False),
+    ("head_nod", 2, 0.075, False),
+    ("shoulder_swing", 1, (0.5, 0.0), True),        # the left forward at the right heel strike, the right at the left's
+    ("shoulder_bob", 2, (0.15, 0.15), True),
+    ("arm_swing", 1, (0.5, 0.0), True),
+)
+LEVER_STILL = 0.5         # degrees: a clip moving less than this on a lever's axis (at its harmonic) takes the table's phase
 
 # the arms follow the body with inertia (docs/superpowers/specs/2026-10-12-walk-upper-body-design.md)
 ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps a frame
@@ -661,6 +690,7 @@ class Walk(object):
         self._grounds()
         self._legs_and_pelvis()
         self._chest()
+        self._levers()
         self._placement()
         self._own_pendulum()
 
@@ -923,6 +953,14 @@ class Walk(object):
         and the top spine joints that take the chest's added turn (CHEST_SHARES)."""
         idx, P = self.index, self.P
         self.chest_shape, self.own_chest_twist, self.own_chest_sway, self.chest_share = None, 0.0, 0.0, {}
+        # the joints the chest's turns go on (Chest pitch's too, with or without arms): the top of the spine
+        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
+                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
+        top = [j for _, j in spine[-len(CHEST_SHARES):]]
+        shares = CHEST_SHARES[-len(top):] if top else ()
+        total = sum(shares)
+        self.chest_share = dict((j, share / total) for j, share in zip(top, shares))
+        self.chest_top = top[-1] if top else None
         if "upperarm_l" not in idx or "upperarm_r" not in idx:
             return
         d = self.pos[idx["upperarm_l"]] - self.pos[idx["upperarm_r"]]
@@ -946,12 +984,103 @@ class Walk(object):
         # uneven length the projection above is not that fit, and own_knobs() must give the walk back exactly
         fitted = self.chest_fit(self.clip.worlds)
         self.own_chest_twist, self.own_chest_sway = fitted[0] / self.twist_gain, fitted[1]
-        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
-                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
-        top = [j for _, j in spine[-len(CHEST_SHARES):]]
-        shares = CHEST_SHARES[-len(top):] if top else ()
-        total = sum(shares)
-        self.chest_share = dict((j, share / total) for j, share in zip(top, shares))
+
+    # -- the levers: degrees added on the gait's phase --
+
+    def _levers(self):
+        """What the levers read: each one's phase on the stride (lever_shape) - the clip's own on the lever's axis
+        where its harmonic there moves more than LEVER_STILL degrees (`lever_own`: that harmonic's amplitude), else
+        the table's - and the joints each acts on (`lever_on`: {joint: [(name, side, world axis)]}; the pelvis's
+        tilt is pelvis_extra's, the chest's pitch goes with the chest's turn)."""
+        idx, P = self.index, self.P
+        phase = np.array([self.stride_phase(float(f)) for f in range(P)])
+        readings = self._lever_readings()
+        self.lever_phase, self.lever_own, self.lever_sided, self.lever_h = {}, {}, {}, {}
+        for name, h, peak, sided in LEVERS:
+            self.lever_sided[name], self.lever_h[name] = sided, h
+            for i, side in enumerate(SIDES if sided else (None,)):
+                share = peak[i] if sided else peak
+                amp, own = 0.0, 0.0
+                x = readings.get((name, side))
+                if x is not None:
+                    x = x - x.mean()
+                    c = 2.0 / P * float(np.dot(x, np.cos(h * phase)))
+                    s = 2.0 / P * float(np.dot(x, np.sin(h * phase)))
+                    amp, own = math.hypot(c, s), math.atan2(s, c)
+                self.lever_own[(name, side)] = amp
+                self.lever_phase[(name, side)] = own if amp > LEVER_STILL else 2.0 * math.pi * h * share
+        self.lever_on = {}
+        if "head" in idx and self.kind[idx["head"]] == "head":
+            self.lever_on[idx["head"]] = [("head_nod", None, self.side)]
+        for side, s in (("l", 1.0), ("r", -1.0)):
+            if "clavicle_" + side in idx:
+                self.lever_on[idx["clavicle_" + side]] = [("shoulder_swing", side, -s * self.up),
+                                                         ("shoulder_bob", side, s * self.fwd)]
+            if "upperarm_" + side in idx:
+                self.lever_on[idx["upperarm_" + side]] = [("arm_swing", side, -self.side)]
+
+    def _lever_readings(self):
+        """{(lever, side): the clip's own motion on the lever's axis, degrees a frame} - what lever_shape's phase
+        follows: the pelvis's world turn about side (+ its top forward); the chest's (the top spine joint's) about
+        side against the pelvis's; the head's in the world about side (+ down); each shoulder's lateral end
+        (clavicle -> upper arm) - its heading toward forward and its lift; each upper arm's world turn about the
+        side axis (+ the hand forward). A part the skeleton lacks reads nothing."""
+        idx, out = self.index, {}
+
+        def turn(j, axis):
+            return np.degrees(log_rot(self.wmean[j].T @ self.rot[j])) @ axis
+        pelvis = idx["pelvis"]
+        out[("pelvis_tilt", None)] = turn(pelvis, self.side)
+        if self.chest_top is not None:
+            out[("chest_pitch", None)] = turn(self.chest_top, self.side) - out[("pelvis_tilt", None)]
+        if "head" in idx:
+            out[("head_nod", None)] = turn(idx["head"], self.side)
+        for side, s in (("l", 1.0), ("r", -1.0)):
+            if "clavicle_" + side in idx and "upperarm_" + side in idx:
+                d = self.pos[idx["upperarm_" + side]] - self.pos[idx["clavicle_" + side]]
+                across = s * (d @ self.side)
+                out[("shoulder_swing", side)] = np.degrees(np.arctan2(d @ self.fwd, across))
+                out[("shoulder_bob", side)] = np.degrees(np.arctan2(d @ self.up, across))
+            if "upperarm_" + side in idx:
+                out[("arm_swing", side)] = turn(idx["upperarm_" + side], -self.side)
+        return out
+
+    def lever_shape(self, name, tau, side=None):
+        """A lever's shape at source time tau: cos(h . stride_phase - its phase), 1 where it peaks. A sided lever
+        (shoulder_swing, shoulder_bob, arm_swing) needs its side ("l" / "r")."""
+        sided = self.lever_sided[name]
+        if sided and side not in SIDES:
+            raise ValueError("%s is a sided lever: say which side ('l' or 'r')" % name)
+        return math.cos(self.lever_h[name] * self.stride_phase(tau) - self.lever_phase[(name, side if sided else None)])
+
+    def _lever_turn(self, j, t, ctx):
+        """The world turn (a rotation vector; None when nothing) the levers add to joint j at its time t: each
+        lever's degrees (its side's own) x Exaggeration on its shape about its axis - faded under a pose's grip."""
+        if ctx.get("levers_off"):
+            return None
+        k, ks = ctx["k"], ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        pose = ctx.get("pose")
+        fade = 1.0 - ctx["alpha"] if pose is not None and pose.get("grip") else 1.0
+        out = None
+        for name, side, axis in self.lever_on[j]:
+            degrees = (ks[side] if side else k)[name] * ctx["ex"] * (fade if side else 1.0)
+            if not degrees:
+                continue
+            v = math.radians(degrees) * self.lever_shape(name, t, side) * axis
+            out = v if out is None else out + v
+        return out
+
+    def lever_info(self, k):
+        """{lever (sided: "<name>_l" / "_r"): {"degrees", "phase": "own" | "table"}} for every lever set off 0."""
+        ks = sided(k)
+        out = {}
+        for name, _, _, is_sided in LEVERS:
+            for side in (SIDES if is_sided else (None,)):
+                value = ks[side][name] if side else k[name]
+                if value:
+                    own = self.lever_own[(name, side)] > LEVER_STILL
+                    out[name + ("_" + side if side else "")] = {"degrees": value, "phase": "own" if own else "table"}
+        return out
 
     def chest_shapes(self, tau):
         """(twist, sway) shapes at source time tau: 1 at the walk's own peak, -1 half a stride on."""
@@ -983,7 +1112,8 @@ class Walk(object):
     def _chest_own(self, times, ctx):
         """(twist, sway): how far the shoulders turn each way under these knobs and pose with nothing added
         (a pose's bent spine turns them otherwise than the walk does), the spine and shoulders alone built
-        over the cycle; None without a chest."""
+        over the cycle; None without a chest. Without the levers: the shoulders' swing and bob move the very points
+        the twist and sway are read on, and the chest would turn them back - the levers go on top of the chest."""
         if self.chest_shape is None:
             return None
         only = set()
@@ -992,7 +1122,7 @@ class Walk(object):
             only.update([j] + self._ancestors(j))
         n = len(times) - 1
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
-        ctx["chest_own"] = "off"
+        ctx["chest_own"], ctx["levers_off"] = "off", True
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         own = self.chest_fit(worlds)
@@ -1002,7 +1132,7 @@ class Walk(object):
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         got, target = self.chest_fit(worlds), self.chest_targets(ctx["k"], ctx["ex"])
-        ctx["chest_own"] = None
+        ctx["chest_own"], ctx["levers_off"] = None, False
         return own[0] + got[0] - target[0], own[1] + got[1] - target[1]
 
     def chest_fit(self, worlds):
@@ -1022,14 +1152,19 @@ class Walk(object):
 
     def pelvis_extra(self, tau, k, ex):
         """The pelvis's added turn at source time tau (a world rotation vector, None when nothing is added):
-        Twist and Hip drop against this walk's own, on their shapes, x Pelvis motion x Exaggeration."""
+        Twist and Hip drop against this walk's own, on their shapes, and the Pelvis tilt lever on its, x Pelvis
+        motion x Exaggeration (the lumbar spine takes all of it back: self.counter)."""
         gain = k["pelvis_rot"] * ex
         twist = self.twist_gain * (k["pelvis_twist"] * k["stride"] - self.own_twist)
         drop = k["pelvis_list"] - self.own_list
-        if gain == 0.0 or (twist == 0.0 and drop == 0.0):
+        tilt = k["pelvis_tilt"]
+        if gain == 0.0 or (twist == 0.0 and drop == 0.0 and tilt == 0.0):
             return None
-        return gain * (math.radians(twist) * float(periodic_cr(self.split_shape, tau)) * -self.up
-                       + math.radians(drop) * self.list_at(tau) * self.fwd)
+        out = gain * (math.radians(twist) * float(periodic_cr(self.split_shape, tau)) * -self.up
+                      + math.radians(drop) * self.list_at(tau) * self.fwd)
+        if tilt:
+            out = out + gain * math.radians(tilt) * self.lever_shape("pelvis_tilt", tau) * self.side
+        return out
 
     def _spine_map(self, pose, alpha):
         """Under a pose that bends the spine: per spine joint the matrix taking its turn's axis (in its own
@@ -2012,6 +2147,8 @@ class Walk(object):
             balance["follow"] = [float(v) for v in self.follow]
             if ctx["balance"] > 0.0:
                 balance["residual"] = float(np.abs((self.com(worlds[:, :n]) - target) @ self.basis[:2].T).max())
+        if k["in_place"] > 0.0:          # after everything the walk itself measures: it walks, then stays
+            self._in_place(worlds, times, ctx)
         flat = ctx["travel2"] - np.dot(ctx["travel2"], self.up) * self.up
         info = {"frames": n, "stride_cm": float(np.linalg.norm(flat)) / (2.0 * self.strides),
                 "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
@@ -2027,8 +2164,19 @@ class Walk(object):
                            k["pelvis_rot"] * ctx["ex"] * k["pelvis_list"]),
                 "chest": self.chest_targets(k, ctx["ex"]) if self.chest_shape is not None else None,
                 "arms": arms, "body": body, "leg_match": ctx["leg_match"],
-                "balance": balance}
+                "balance": balance, "in_place": k["in_place"], "levers": self.lever_info(k)}
         return Result(worlds, n, info)
+
+    def _in_place(self, worlds, times, ctx):
+        """In place (on `worlds`, (J, n+1, 4, 4)): every joint moved back by the root's progress along the
+        walk - the travel line's and the root's own surge along it - and by the line's climb, x In place. The root
+        stays where frame 0 has it but for its weave aside (Root sway) and its own height; the body moves about it,
+        the planted feet slide back at the walk's speed, the last frame is the first."""
+        root = self.index["root"]
+        along = (worlds[root, :, 3, :3] - worlds[root, 0, 3, :3]) @ self.fwd
+        climb = float(np.dot(ctx["travel2"], self.up)) * np.array([phi for phi, _ in times])
+        shift = np.outer(along, self.fwd) + np.outer(climb, self.up)
+        worlds[:, :, 3, :3] -= ctx["k"]["in_place"] * shift[None]
 
     def foot_target(self, side, tau, stride, stance=1.0, spread=0.0, lift=1.0, swing_out=0.0):
         """The new foot at source time tau: (world rotation, ankle position). Stance: the source's foot
@@ -2178,6 +2326,12 @@ class Walk(object):
         rots, poss = [None] * len(self.names), [None] * len(self.names)
         body = self._body(phi, tau, ctx, drop, carry)
         chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
+        if k["chest_pitch"] and self.chest_share and not ctx.get("levers_off"):
+            # Chest pitch: about the side axis with the chest's own turn - one vector, so the top of the spine
+            # turns by exactly the sum (the shares add up to 1)
+            pitch = (math.radians(k["chest_pitch"]) * k["spine"] * ex * self.lever_shape("chest_pitch", tau)
+                     * self.side)
+            chest = pitch if chest is None else chest + pitch
         ks = ctx.get("ks") or {"l": k, "r": k}
         gains = {"spine": k["spine"] * ex}
         feet = dict((side, self._clock(side, tau, ctx)) for side in SIDES)
@@ -2248,6 +2402,10 @@ class Walk(object):
                         rots[j] = rots[j] @ exp_rot(-self.counter[j] * body["extra"])
                     if j in self.chest_share and chest is not None:
                         rots[j] = rots[j] @ exp_rot(self.chest_share[j] * chest)
+                if j in self.lever_on:             # the levers: a world turn on the gait's phase (head, shoulders, arms)
+                    turn = self._lever_turn(j, t, ctx)
+                    if turn is not None:
+                        rots[j] = rots[j] @ exp_rot(turn)
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
@@ -2701,6 +2859,8 @@ class Result(object):
 def describe(result):
     info = result.info
     text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
+    if info.get("in_place", 0.0) > 0.0:
+        text += " in place" if info["in_place"] >= 1.0 else " (%.0f %% in place)" % (100.0 * info["in_place"])
     if info["lowered"] > 0.05:
         text += " | pelvis lowered up to %.1f cm at the contacts for the reach" % info["lowered"]
     if info["short"] > 0.005:

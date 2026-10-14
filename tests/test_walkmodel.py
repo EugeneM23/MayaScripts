@@ -176,16 +176,26 @@ class KnobTests(unittest.TestCase):
 
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
-                         ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
+                         ["pose", "stride", "tempo", "lift", "in_place", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
-                          "spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
-                          "arm_drag", "arm_bounce", "head", "head_drag", "overlap", "weight", "balance", "exaggeration"])
+                          "pelvis_tilt", "spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
+                          "arm_drag", "arm_bounce", "shoulder_swing", "shoulder_bob", "arm_swing", "head", "head_drag", "head_nod",
+                          "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
         self.assertEqual((wm.DEFAULTS["stance"], wm.DEFAULTS["swing_out"], wm.DEFAULTS["knee_foot"]), (1.0, 0.0, 0.5))
         self.assertEqual((wm.DEFAULTS["foot_lag"], wm.DEFAULTS["foot_flex"]), (0.0, 1.0))
         self.assertEqual((wm.DEFAULTS["pelvis_twist"], wm.DEFAULTS["pelvis_list"]), (5.0, 4.0))
         self.assertEqual((wm.DEFAULTS["leg_match"], wm.RANGES["leg_match"]), (1.0, (0.0, 1.0)))
+        # In place and the levers (2026-10-14): nothing new at their defaults
+        for name, low, high in (("in_place", 0.0, 1.0), ("pelvis_tilt", -15.0, 15.0), ("chest_pitch", -15.0, 15.0),
+                                ("head_nod", -20.0, 20.0), ("shoulder_swing", -25.0, 25.0),
+                                ("shoulder_bob", -15.0, 15.0), ("arm_swing", -60.0, 60.0)):
+            self.assertEqual((wm.DEFAULTS[name], wm.RANGES[name]), (0.0, (low, high)), name)
+        for name in ("shoulder_swing", "shoulder_bob", "arm_swing"):
+            self.assertIn(name, wm.SIDED)
+        self.assertEqual([lever[0] for lever in wm.LEVERS],
+                         ["pelvis_tilt", "chest_pitch", "head_nod", "shoulder_swing", "shoulder_bob", "arm_swing"])
 
     def test_the_meeting_of_a_knee_and_its_foot(self):
         free = math.radians(wm.TWIST_FREE_DEG)
@@ -1987,6 +1997,221 @@ class BodyDynamicsTests(unittest.TestCase):
     def test_the_status_says_the_overlap(self):
         r = walk().evaluate({"torso_drag": 2.0, "head_drag": 2.5})
         self.assertIn("the trunk 2.0 and the head 2.5 frames behind", wm.describe(r))
+
+
+NEW_KNOBS = ("in_place", "pelvis_tilt", "chest_pitch", "head_nod", "shoulder_swing", "shoulder_bob", "arm_swing")
+#  the body as the frames put it: no spring, no carry - a lever's turn read alone
+STILL = {"balance": 0.0, "arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0}
+ARM_CHAIN = ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "index_01_l",
+             "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "index_01_r")
+
+
+def held_arms():
+    """The synthetic walker with its clavicles and arms held to the chest (spine_02) as at frame 0: no arm motion
+    of their own."""
+    c = clip()
+    worlds = c.worlds.copy()
+    chest = c.names.index("spine_02")
+    for name in ARM_CHAIN:
+        j = c.names.index(name)
+        rel = worlds[j, 0] @ np.linalg.inv(worlds[chest, 0])
+        worlds[j] = np.einsum("ij,fjk->fik", rel, worlds[chest])
+    return wm.Clip(c.names, c.parents, worlds, fps=30.0, up=(0, 1, 0), name="held arms")
+
+
+def stride_phases(r, w):
+    """The stride's phase (radians) at each of the result's frames."""
+    return np.array([w.stride_phase(f * w.P / float(r.frames)) for f in range(r.frames)])
+
+
+def wave(x, phases, h):
+    """(amplitude, phase) of x's h-th harmonic on the stride's phase, least squares: x ~ amp cos(h a - phase) + c."""
+    a = np.stack([np.cos(h * phases), np.sin(h * phases), np.ones_like(phases)], axis=1)
+    (c, s, _), _, _, _ = np.linalg.lstsq(a, np.asarray(x, float), rcond=None)
+    return math.hypot(c, s), math.atan2(s, c)
+
+
+def world_turn(a, b, w, name):
+    """(F, 3) degrees: the world turn (a rotation vector) taking joint `name` of result a to result b's (b = a . D)."""
+    j = w.index[name]
+    return np.degrees(wm.log_rot(np.swapaxes(a.worlds[j, :a.frames, :3, :3], -1, -2) @ b.worlds[j, :b.frames, :3, :3]))
+
+
+def shoulder_angles(r, w, side):
+    """(yaw, lift) degrees a frame of the clavicle's lateral end (clavicle -> upperarm): its heading from the
+    side toward forward, and its angle from the side up."""
+    s = 1.0 if side == "l" else -1.0
+    d = positions(r, "upperarm_" + side, w)[:r.frames] - positions(r, "clavicle_" + side, w)[:r.frames]
+    across = s * (d @ w.side)
+    return np.degrees(np.arctan2(d @ w.fwd, across)), np.degrees(np.arctan2(d @ w.up, across))
+
+
+def wrapped(a):
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+class InPlaceTests(unittest.TestCase):
+    """In place (2026-10-14): the root's progress along the walk taken off every joint - the root stays where frame
+    0 has it (weaving only with Root sway), the body moves about it."""
+
+    def test_the_root_stays_and_the_body_moves_about_it(self):
+        w = walk()
+        moving, still = w.evaluate({}), w.evaluate({"in_place": 1.0})
+        root = positions(still, "root", w)
+        self.assertLess(float(np.abs(root - root[0]).max()), 1e-9)       # the walker's root surges +-2 cm too
+        for name in w.names:
+            rel = positions(still, name, w) - root
+            self.assertLess(float(np.abs(rel - (positions(moving, name, w) - positions(moving, "root", w))).max()),
+                            1e-9, name)
+        self.assertTrue(np.array_equal(still.worlds[:, :, :3, :3], moving.worlds[:, :, :3, :3]))
+        self.assertLess(float(np.abs(still.worlds[:, -1] - still.worlds[:, 0]).max()), 1e-9)   # the loop, in place
+        for key in ("stride_cm", "speed"):                                  # the status says the walk's
+            self.assertEqual(still.info[key], moving.info[key])
+        self.assertEqual(still.info["balance"], moving.info["balance"])
+        left = w.feet["l"]
+        foot = positions(still, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
+        self.assertLess(float((foot[-1] - foot[0]) @ w.fwd), -40.0)        # a planted foot slides back
+        self.assertIn("in place", wm.describe(still))
+        self.assertNotIn("in place", wm.describe(moving))
+
+    def test_root_sway_still_weaves_it(self):
+        w = walk()
+        moving = w.evaluate({"root_sway": 1.0})
+        still = w.evaluate({"root_sway": 1.0, "in_place": 1.0})
+        root, root0 = positions(still, "root", w), positions(moving, "root", w)
+        self.assertLess(float(np.abs((root - root[0]) @ w.fwd).max()), 1e-9)
+        self.assertLess(float(np.abs((root - root0) @ w.side).max()), 1e-9)
+        self.assertGreater(float(np.ptp(root @ w.side)), 3.9)
+
+
+class LeverTests(unittest.TestCase):
+    """The levers (2026-10-14): each adds degrees on a shape of the stride's phase - the clip's own phase on its
+    axis where the clip moves there, else the table's."""
+
+    def test_the_new_knobs_at_zero_change_nothing(self):
+        w = walk()
+        zeros = dict((name, 0.0) for name in NEW_KNOBS)
+        zeros.update(("%s_%s" % (name, s), 0.0) for name in ("shoulder_swing", "shoulder_bob", "arm_swing") for s in "lr")
+        self.assertTrue(np.array_equal(w.evaluate({}).worlds, w.evaluate(zeros).worlds))
+        own = w.evaluate(w.own_knobs())
+        self.assertTrue(np.array_equal(own.worlds, w.evaluate(dict(w.own_knobs(), **zeros)).worlds))
+        self.assertLess(float(np.abs(own.worlds - clip().worlds).max()), 1e-6)
+        self.assertEqual(own.info["levers"], {})
+
+    def test_pelvis_tilt_tips_the_pelvis_and_the_lumbar_takes_it_back(self):
+        w = walk()
+        base, tilted = w.evaluate(STILL), w.evaluate(dict(STILL, pelvis_tilt=4.0))
+        phases = stride_phases(base, w)
+        pitch = world_turn(base, tilted, w, "pelvis") @ w.side
+        self.assertAlmostEqual(wave(pitch, phases, 2)[0], 4.0, delta=0.1)
+        shape = np.array([w.lever_shape("pelvis_tilt", f * w.P / float(base.frames)) for f in range(base.frames)])
+        self.assertLess(float(np.abs(pitch - 4.0 * shape).max()), 0.1)
+        top = world_turn(base, tilted, w, "spine_02") @ w.side             # the walker's top spine joint
+        self.assertLess(float(np.abs(top).max()), 0.5)
+        f = int(np.argmax(pitch))                                         # + tips its top forward
+        ahead = lambda r: float(np.dot(positions(r, "spine_01", w)[f] - positions(r, "pelvis", w)[f], w.fwd))
+        self.assertGreater(ahead(tilted), ahead(base) + 0.3)
+        self.assertEqual(tilted.info["levers"]["pelvis_tilt"]["degrees"], 4.0)
+
+    def test_a_lever_reinforces_the_clips_own_motion_on_its_axis(self):
+        """The walker's pelvis tips 2 deg forward and back twice a stride: the tilt lever's wave peaks with it."""
+        w, c = walk(), clip()
+        self.assertGreater(w.lever_own[("pelvis_tilt", None)], wm.LEVER_STILL)
+        j = w.index["pelvis"]
+        own = np.degrees(wm.log_rot(w.wmean[j].T @ c.worlds[j, :w.P, :3, :3])) @ w.side
+        shape = np.array([w.lever_shape("pelvis_tilt", float(f)) for f in range(w.P)])
+        self.assertGreater(float(np.corrcoef(own, shape)[0, 1]), 0.95)
+        self.assertEqual(walk().evaluate({"pelvis_tilt": 3.0}).info["levers"]["pelvis_tilt"]["phase"], "own")
+
+    def test_a_still_part_takes_the_tables_phase(self):
+        """Still arms swing the left forward at the right heel strike (half a stride) and the right at the left's."""
+        w = wm.analyse(held_arms())
+        for side, peak in (("l", math.pi), ("r", 0.0)):
+            self.assertLess(w.lever_own[("arm_swing", side)], wm.LEVER_STILL)
+            for tau in (0.0, 3.0, 7.5, 13.0, 21.25):
+                self.assertAlmostEqual(w.lever_shape("arm_swing", tau, side), math.cos(w.stride_phase(tau) - peak),
+                                       places=12)
+        self.assertEqual(w.evaluate({"arm_swing_l": 10.0}).info["levers"]["arm_swing_l"]["phase"], "table")
+        with self.assertRaises(ValueError):
+            w.lever_shape("arm_swing", 0.0)          # a sided lever needs its side
+
+    def test_chest_pitch_leans_the_chest(self):
+        w = walk()
+        base, leaned = w.evaluate(STILL), w.evaluate(dict(STILL, chest_pitch=3.0))
+        pitch = world_turn(base, leaned, w, "spine_02") @ w.side
+        self.assertAlmostEqual(wave(pitch, stride_phases(base, w), 2)[0], 3.0, delta=0.1)
+        self.assertTrue(np.array_equal(rotations(base, "pelvis", w), rotations(leaned, "pelvis", w)))
+        f = int(np.argmax(pitch))                                         # + leans it forward
+        ahead = lambda r: float(np.dot(positions(r, "neck_01", w)[f] - positions(r, "spine_01", w)[f], w.fwd))
+        self.assertGreater(ahead(leaned), ahead(base) + 0.5)
+
+    def test_head_nod_nods_the_head(self):
+        w = walk()
+        base, nodded = w.evaluate(STILL), w.evaluate(dict(STILL, head_nod=5.0))
+        turn = world_turn(base, nodded, w, "head")
+        self.assertAlmostEqual(wave(turn @ w.side, stride_phases(base, w), 2)[0], 5.0, delta=0.05)
+        self.assertLess(float(np.abs(turn - np.outer(turn @ w.side, w.side)).max()), 1e-9)   # about the side axis
+        self.assertTrue(np.array_equal(rotations(base, "neck_01", w), rotations(nodded, "neck_01", w)))
+        f = int(np.argmax(turn @ w.side))                                 # + looks down
+        d = wm.exp_rot(np.radians(turn[f]))
+        self.assertLess(float(np.dot(w.fwd @ d, w.up)), -0.05)
+
+    def test_shoulder_swing_swings_the_shoulders_opposite(self):
+        w = walk()
+        base, swung = w.evaluate(STILL), w.evaluate(dict(STILL, shoulder_swing=6.0))
+        phases = stride_phases(base, w)
+        peaks = {}
+        for side in "lr":
+            yaw = shoulder_angles(swung, w, side)[0] - shoulder_angles(base, w, side)[0]
+            amp, peaks[side] = wave(yaw, phases, 1)
+            self.assertAlmostEqual(amp, 6.0, delta=0.1, msg=side)
+            f = int(np.argmax(yaw))                                       # + the shoulder forward
+            self.assertGreater(float(np.dot(positions(swung, "upperarm_" + side, w)[f]
+                                            - positions(base, "upperarm_" + side, w)[f], w.fwd)), 0.5, side)
+            height = lambda r: [float(np.dot(d / np.linalg.norm(d), w.up)) for d in
+                                positions(r, "upperarm_" + side, w) - positions(r, "clavicle_" + side, w)]
+            self.assertLess(float(np.abs(np.subtract(height(swung), height(base))).max()), 1e-9, side)   # about up
+        self.assertGreater(abs(wrapped(peaks["l"] - peaks["r"])), math.pi - 0.3)    # left and right opposite
+
+    def test_shoulder_bob_lifts_the_shoulders(self):
+        w = walk()
+        base, bobbed = w.evaluate(STILL), w.evaluate(dict(STILL, shoulder_bob=3.0))
+        for side in "lr":
+            lift = shoulder_angles(bobbed, w, side)[1] - shoulder_angles(base, w, side)[1]
+            self.assertAlmostEqual(wave(lift, stride_phases(base, w), 2)[0], 3.0, delta=0.1, msg=side)
+            f = int(np.argmax(lift))                                      # + the shoulder up
+            self.assertGreater(float(np.dot(positions(bobbed, "upperarm_" + side, w)[f]
+                                            - positions(base, "upperarm_" + side, w)[f], w.up)), 0.3, side)
+
+    def test_arm_swing_swings_still_arms(self):
+        w = wm.analyse(held_arms())
+        base, swung = w.evaluate(STILL), w.evaluate(dict(STILL, arm_swing=20.0))
+        phases = stride_phases(base, w)
+        peaks = {}
+        for side in "lr":
+            turn = world_turn(base, swung, w, "upperarm_" + side) @ -w.side
+            amp, peaks[side] = wave(turn, phases, 1)
+            self.assertAlmostEqual(amp, 20.0, delta=0.1, msg=side)
+            f = int(np.argmax(turn))                                      # + the hand forward
+            reach = lambda r: float(np.dot(positions(r, "hand_" + side, w)[f] - positions(r, "upperarm_" + side, w)[f],
+                                           w.fwd))
+            self.assertGreater(reach(swung), reach(base) + 5.0, side)
+        self.assertAlmostEqual(abs(wrapped(peaks["l"] - peaks["r"])), math.pi, delta=0.05)   # left opposite right
+
+    def test_a_sided_arm_swing_moves_that_arm_alone(self):
+        w = wm.analyse(held_arms())
+        base, left = w.evaluate(STILL), w.evaluate(dict(STILL, arm_swing_l=20.0))
+        for name in ("upperarm_r", "lowerarm_r", "hand_r", "clavicle_r", "spine_02", "pelvis", "head"):
+            self.assertLess(float(np.abs(left.worlds[w.index[name]] - base.worlds[w.index[name]]).max()), 1e-9, name)
+        self.assertGreater(float(np.abs(positions(left, "hand_l", w) - positions(base, "hand_l", w)).max()), 5.0)
+
+    def test_a_held_grip_keeps_its_hold_under_the_arm_levers(self):
+        """Hands holding one thing together hold it: the arm and shoulder levers fade as the arms' own swing does."""
+        w = walk()
+        knobs = dict(STILL, pose=1.0, shoulder_swing=8.0, arm_swing=25.0, shoulder_bob_l=4.0)
+        r = w.evaluate(knobs, a_grip(w))
+        hold = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
+        self.assertLess(float(np.abs(np.array(hold) - hold[0]).max()), 1e-6)
 
 
 class SceneTests(unittest.TestCase):
