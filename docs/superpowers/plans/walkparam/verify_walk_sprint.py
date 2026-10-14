@@ -159,7 +159,7 @@ try:
     shutil.copy(SWORD_FILE, sw.wf.pose_path_for(sw.WALKS, "two_handed_sword"))
     cmds.file(new=True, force=True)
     cmds.currentUnit(time="ntsc")
-    walk, statics, start = sw.load_walk("AGS_Sprint")
+    walk, statics, start = sw.load_walk("AGS_Sprint")[:3]
     data = sw.wf.load(sw.wf.path_for(sw.WALKS, "AGS_Sprint"))
     gate(walk.P == 60 and walk.dropped == 1 and "1 repeated frame dropped" in walk.summary(),
          "the walk read without its repeated last frame: %s" % walk.summary())

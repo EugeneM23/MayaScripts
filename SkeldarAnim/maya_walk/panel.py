@@ -2,8 +2,10 @@
 
 The animator: «Давай встроим этот скрипт в наш плагин. Интерфейс рисуй компактным» - the standalone window
 of docs/superpowers/plans/walkparam/ becomes a card. Compact: the walk and the pose each one dropdown with a
-save icon beside it, the pose's share and its parts on two lines, Apply / Reset, and the knobs in groups of
-which ONE is shown at a time ([Step | Legs | Pelvis | Chest | Arms | Weight | Overlap]).
+save icon beside it, the pose's share and its parts on two lines, Apply / Reset / In place, and the knobs in
+groups of which ONE is shown at a time, on two rows of tabs ([Clean | Step | Legs | Pelvis] / [Chest | Arms |
+Overlap | Weight] since 2026-10-14: a raw clip is cleaned when it is read - maya_walk.clean - by the Clean tab's
+knobs against its Reference, what it found listed under them).
 
 Select a skeleton and press Apply: the walk is keyed onto it and it becomes the card's target - a released
 knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card (what
@@ -28,6 +30,11 @@ SAVE_WALK_BTN = "skeldarWalkSaveWalk"
 SAVE_POSE_BTN = "skeldarWalkSavePose"
 GROUP_TABS = "skeldarWalkGroups"
 SIDE_TABS = "skeldarWalkSides"
+REF_MENU = "skeldarWalkReferenceMenu"
+CLEAN_REPORT = "skeldarWalkCleanReport"
+IN_PLACE_BOX = "skeldarWalkInPlace"
+#  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Apply
+CHECKS = {"in_place": IN_PLACE_BOX}
 #  [Both | Left | Right] (2026-10-13, «режим в котором левая и правая сторона станут раздельными, по
 #  умолчанию коррекция двух сторон»): which side the leg and arm knobs (model.SIDED) show and set
 SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
@@ -36,23 +43,41 @@ OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
 NOTHING = "Select a skeleton - Apply puts the walk on it"
 
-#  The knobs but Pose (its share stands under the pose's dropdown), one group shown at a time.
+#  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
+#  at a time; Clean's are the clean's (maya_walk.clean - scene.ALL_DEFAULTS), the rest the model's
 GROUPS = (
-    ("step", "Step", ("stride", "tempo", "lift", "in_place")),
+    ("clean", "Clean", ("despike", "smooth", "fix_posture", "floor", "floor_offset", "seam")),
+    ("step", "Step", ("stride", "tempo", "lift")),
     ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
                       "foot_lag", "foot_flex")),
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
                           "pelvis_twist", "pelvis_list", "pelvis_tilt",
                           "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "torso_drag",
-                        "torso_bounce", "head", "head_drag", "head_nod")),
-    ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap", "shoulder_swing", "shoulder_bob",
-                      "arm_swing")),
+    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "head", "head_nod")),
+    ("arms", "Arms", ("arms", "elbow", "arm_swing", "shoulder_swing", "shoulder_bob")),
+    ("overlap", "Overlap", ("upper_offset", "spine_wave", "pelvis_drag", "torso_drag", "torso_bounce", "head_drag",
+                            "shoulder_drag", "arm_drag", "arm_bounce", "overlap")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
-    ("overlap", "Overlap", ("upper_offset", "spine_wave", "shoulder_drag", "pelvis_drag")),
 )
+#  The tabs on two rows (eight in a 360 px dock would not read)
+GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "overlap", "weight"))
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {
+    "despike": ("Despike", "Finds frames that jump out and come straight back - one to three frames: a bad key, a "
+                           "mocap pop - and bridges them from the frames around; higher finds smaller ones, 0 leaves "
+                           "them. The toes' flick at the push-off is left alone"),
+    "smooth": ("Smooth, fr", "Every joint through a soft periodic blur this many frames wide: quiets jitter that is "
+                             "not a spike; 0 leaves the motion as it is"),
+    "fix_posture": ("Fix posture", "Bones set right against the Reference: a bone moved off its joint goes back; a "
+                                   "clavicle or a foot outside a body's limits (a shoulder dropped, a foot turned "
+                                   "out) takes its other side's motion mirrored, or - both sides out - the "
+                                   "reference's pose with its own motion. 0 leaves them; what was found is listed "
+                                   "below. A walk whose style breaks the limits (a drunk shoulder) wants it at 0"),
+    "floor": ("Floor", "Puts the walk's planted feet on the floor - the reference's foot heights over the root; 0 "
+                       "leaves it where it stands. A walk within 8 cm of the floor is left"),
+    "floor_offset": ("Floor offset, cm", "Raises (+) or lowers (-) the whole body over the floor after that"),
+    "seam": ("Seam, fr", "A loop cut out of a longer clip - or a joint that does not loop - is closed over this "
+                         "many frames each side of its seam, in value and speed"),
     "pose": ("Pose", "How far the pose picked above replaces the walk's own (its parts below): 0 is the walk, "
                      "1 the pose"),
     "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
@@ -175,7 +200,12 @@ TIPS = {
              "proportions, from where it stands. It becomes the target: every released knob re-keys it. "
              "Selecting a walked skeleton reads its walk, pose and knobs back.",
     "reset": "Every knob back to its default (the tempo to the walk's own); the target is keyed again",
-    "save_walk": "Save walk: select a bone of a walk cycle (a closed loop with root motion) and press",
+    "save_walk": "Save walk: select a bone of a walk or a run and press - a cycle or not, in place or not: it is "
+                 "cleaned when it is read (the loop found and closed, spikes, posture, the floor - the Clean tab)",
+    "reference": "What the walk's posture and floor are judged against: the built-in UE5 idle, a saved pose "
+                 "(save one from an idle with the Pose's save icon), or none (the skeleton's rest)",
+    "in_place": "In place: the walk on the spot - the root stays where the first frame has it, the body moves "
+                "about it and the planted feet slide back (what a game moves by its capsule)",
     "save_pose": "Save pose: select a skeleton standing in a character pose and press; the walk takes its "
                  "parts at the Pose share",
     "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
@@ -241,9 +271,13 @@ def _remember(name, value):
 
 
 def _shown(name):
-    """The value a knob's slider shows, or None without one."""
+    """The value a knob's slider (or checkbox) shows, or None without one."""
     cmds = _cmds()
     control = _control(name)
+    if name in CHECKS:
+        box = CHECKS[name]
+        return (1.0 if cmds.checkBox(box, query=True, value=True) else 0.0) \
+            if cmds.checkBox(box, exists=True) else None
     if name == "tempo":
         return float(cmds.intSliderGrp(control, query=True, value=True)) \
             if cmds.intSliderGrp(control, exists=True) else None
@@ -256,7 +290,7 @@ def values():
     of a leg or arm knob as "<name>_l" / "<name>_r" where it has one (shown on the slider in Left / Right)."""
     mode = side_mode()
     out = {}
-    for name, default in scene.wm.DEFAULTS.items():
+    for name, default in scene.ALL_DEFAULTS.items():
         shown = _shown(name)
         if shown is not None and not (name in scene.wm.SIDED and mode != "both"):
             out[name] = shown
@@ -302,6 +336,15 @@ def chosen_pose():
     return None if not value or value == NO_POSE or value not in scene.pose_names() else value
 
 
+def chosen_reference():
+    """The reference the walk is cleaned against (the Clean tab's dropdown, else remembered, else the built-in)."""
+    cmds = _cmds()
+    value = cmds.optionMenu(REF_MENU, query=True, value=True) if cmds.optionMenu(REF_MENU, exists=True) \
+        else _stored("reference")
+    names = scene.reference_names()
+    return value if value in names else scene.BUILT_IN_REFERENCE
+
+
 def chosen_parts():
     cmds = _cmds()
     if cmds.checkBox(_part_control(PART_LABELS[0][0]), exists=True):
@@ -328,7 +371,7 @@ def _fill(menu, names, selected, first=None):
         cmds.optionMenu(menu, edit=True, value=selected)
 
 
-def _fill_menus(walk=None, pose=None):
+def _fill_menus(walk=None, pose=None, reference=None):
     cmds = _cmds()
     if not cmds.optionMenu(WALK_MENU, exists=True):
         return
@@ -336,8 +379,19 @@ def _fill_menus(walk=None, pose=None):
     try:
         _fill(WALK_MENU, scene.walk_names(), walk or _stored("walk"))
         _fill(POSE_MENU, scene.pose_names(), pose or _stored("pose") or NO_POSE, first=NO_POSE)
+        if cmds.optionMenu(REF_MENU, exists=True):
+            _fill(REF_MENU, scene.reference_names(),
+                  reference or _stored("reference") or scene.BUILT_IN_REFERENCE)
     finally:
         _QUIET[0] = quiet
+
+
+def show_report(report):
+    """The clean's findings into the Clean tab's text (a Report, or a line)."""
+    cmds = _cmds()
+    if cmds.text(CLEAN_REPORT, exists=True):
+        text = report if isinstance(report, str) else report.text()
+        cmds.text(CLEAN_REPORT, edit=True, label=text)
 
 
 def _set_knobs(knobs, frames):
@@ -351,10 +405,14 @@ def _set_knobs(knobs, frames):
         if key in scene.wm.SIDE_KNOBS:
             _remember("knob_" + key, value)
     for name, value in knobs.items():
-        if name not in scene.wm.DEFAULTS:
+        if name not in scene.ALL_DEFAULTS:
             continue
         control = _control(name)
-        if name == "tempo":
+        if name in CHECKS:
+            if cmds.checkBox(CHECKS[name], exists=True):
+                cmds.checkBox(CHECKS[name], edit=True, value=value >= 0.5)
+            _remember("knob_" + name, 1.0 if value >= 0.5 else 0.0)
+        elif name == "tempo":
             shown = int(round(value)) if value >= 1 else int(frames)
             if cmds.intSliderGrp(control, exists=True):
                 cmds.intSliderGrp(control, edit=True, minValue=max(4, frames // 2), maxValue=2 * frames,
@@ -444,13 +502,19 @@ def show_group(key):
 def _load(root):
     """A walked skeleton's walk, pose, parts and knobs into the card; it becomes the target."""
     name, knobs, pose, parts = scene.pick(root)
+    reference = scene.reference_of(root)
     quiet, _QUIET[0] = _QUIET[0], True
     try:
         _remember("walk", name)
         _remember("pose", pose or NO_POSE)
-        _fill_menus(name, pose or NO_POSE)
+        _remember("reference", reference)
+        _fill_menus(name, pose or NO_POSE, reference)
         _set_parts(parts)
-        frames = scene.load_walk(name)[0].P if name in scene.walk_names() else int(knobs.get("tempo") or 30)
+        frames = int(knobs.get("tempo") or 30)
+        if name in scene.walk_names():
+            walk, _, _, report = scene.load_walk(name, knobs, reference)
+            frames = walk.P
+            show_report(report)
         _set_knobs(knobs, frames)
     finally:
         _QUIET[0] = quiet
@@ -530,7 +594,12 @@ def _apply_to(root):
     _remember("walk", chosen_walk())
     _remember("pose", chosen_pose() or NO_POSE)
     _remember("parts", json.dumps(list(chosen_parts())))
-    return scene.apply(root, chosen_walk(), values(), chosen_pose(), chosen_parts())[2]
+    _remember("reference", chosen_reference())
+    result, info, text = scene.apply(root, chosen_walk(), values(), chosen_pose(), chosen_parts(),
+                                     chosen_reference())
+    if info.get("clean") is not None:
+        show_report(info["clean"])
+    return text
 
 
 def press_apply(*_):
@@ -553,16 +622,36 @@ def walk_changed(*_):
     def run():
         name = chosen_walk()
         _remember("walk", name)
-        walk = scene.load_walk(name)[0]
+        walk, _, _, report = scene.load_walk(name, values(), chosen_reference())
+        show_report(report)
         _set_knobs({"tempo": walk.P}, walk.P)
-        return walk.summary() + " - Apply puts it on the selected skeleton"
+        line = walk.summary() + " - Apply puts it on the selected skeleton"
+        return line + (" | " + report.short() if report.changed else "")
     return _press(run)
+
+
+def reference_changed(*_):
+    """Another reference picked: remembered, the walk read against it, the target keyed again."""
+    if _QUIET[0]:
+        return None
+    _remember("reference", chosen_reference())
+    return slider_changed()
+
+
+def in_place_changed(*_):
+    """The In place chip: remembered, the target keyed again."""
+    if _QUIET[0]:
+        return None
+    shown = _shown("in_place")
+    if shown is not None:
+        _remember("knob_in_place", shown)
+    return slider_changed()
 
 
 def press_reset(*_):
     def run():
-        walk = scene.load_walk(chosen_walk())[0]
-        knobs = dict(scene.wm.DEFAULTS)
+        knobs = dict(scene.ALL_DEFAULTS)
+        walk = scene.load_walk(chosen_walk(), knobs, chosen_reference())[0]
         knobs["tempo"] = walk.P
         _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
         try:
@@ -586,10 +675,11 @@ def press_save_walk(*_):
         name = _ask("Save walk", scene.read_clip(root)[0].name)
         if name is None:
             return "nothing saved"
-        name, line = scene.save_walk(root, name)
+        name, line = scene.save_walk(root, name, chosen_reference())
         _remember("walk", name)
         _fill_menus(walk=name)
-        walk = scene.load_walk(name)[0]
+        walk, _, _, report = scene.load_walk(name, values(), chosen_reference())
+        show_report(report)
         _set_knobs({"tempo": walk.P}, walk.P)
         return line
     return _press(run)
@@ -656,7 +746,7 @@ def _slider(name):
     import maya_hubstyle as hubstyle
     cmds = _cmds()
     label, tip = LABELS[name]
-    default = scene.wm.DEFAULTS[name]
+    default = scene.ALL_DEFAULTS[name]
     common = dict(label=label, field=True, columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
                   adjustableColumn=3, height=hubstyle.height("small", 22), annotation=tip,
                   changeCommand=knob_changed(name))
@@ -665,7 +755,7 @@ def _slider(name):
         cmds.intSliderGrp(_control(name), minValue=4, maxValue=120, fieldMinValue=4, fieldMaxValue=400,
                           value=stored if stored >= 4 else 30, **common)
         return
-    low, high = scene.wm.RANGES[name]
+    low, high = scene.ALL_RANGES[name]
     cmds.floatSliderGrp(_control(name), minValue=low, maxValue=high, fieldMinValue=low, fieldMaxValue=high,
                         step=0.05, precision=2, value=float(_stored("knob_" + name, default)), **common)
 
@@ -693,25 +783,31 @@ def build_panel():
     for part, label in PART_LABELS:
         chip(part, label)
     cmds.setParent("..")
-    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                                 columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                                 columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)]), "fill", layout=True)
     hubstyle.mark(cmds.button(APPLY_BTN, label="Apply", height=hubstyle.height("button", 28),
                               annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "walk")
     hubstyle.mark(cmds.button(RESET_BTN, label="Reset", height=hubstyle.height("button", 28),
                               annotation=TIPS["reset"], command=lambda *_: press_reset()), "secondary", "refresh")
+    hubstyle.mark(cmds.checkBox(IN_PLACE_BOX, label="In place", annotation=TIPS["in_place"],
+                                value=float(_stored("knob_in_place", 0.0) or 0.0) >= 0.5,
+                                changeCommand=in_place_changed), "chip")
     cmds.setParent("..")
     shown = _stored("group", GROUPS[0][0])
-    segments = cmds.rowLayout(numberOfColumns=len(GROUPS),
-                              columnAttach=[(i + 1, "both", 1) for i in range(len(GROUPS))])
-    hubstyle.mark(segments, "segments", layout=True)
+    labels = dict((key, (label, names)) for key, label, names in GROUPS)
     cmds.iconTextRadioCollection(GROUP_TABS)
-    for key, label, names in GROUPS:
-        hubstyle.mark(cmds.iconTextRadioButton(
-            _group_tab(key), style="textOnly", label=label, height=hubstyle.height("segment", 24),
-            select=key == shown, collection=GROUP_TABS,
-            annotation="The knobs of %s: %s" % (label.lower(), ", ".join(LABELS[n][0] for n in names)),
-            onCommand=group_changed(key)), "segment")
-    cmds.setParent("..")
+    for row in GROUP_ROWS:                # the tabs on two rows, one collection
+        segments = cmds.rowLayout(numberOfColumns=len(row),
+                                  columnAttach=[(i + 1, "both", 1) for i in range(len(row))])
+        hubstyle.mark(segments, "segments", layout=True)
+        for key in row:
+            label, names = labels[key]
+            hubstyle.mark(cmds.iconTextRadioButton(
+                _group_tab(key), style="textOnly", label=label, height=hubstyle.height("segment", 24),
+                select=key == shown, collection=GROUP_TABS,
+                annotation="The knobs of %s: %s" % (label.lower(), ", ".join(LABELS[n][0] for n in names)),
+                onCommand=group_changed(key)), "segment")
+        cmds.setParent("..")
     side = side_mode()
     sides = cmds.rowLayout(numberOfColumns=len(SIDE_MODES),
                            columnAttach=[(i + 1, "both", 1) for i in range(len(SIDE_MODES))])
@@ -729,15 +825,23 @@ def build_panel():
     for key, label, names in GROUPS:
         cmds.columnLayout(_group_column(key), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
                           manage=key == shown)
+        if key == "clean":                # what the walk is judged against, above the clean's knobs
+            cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "left", 0), (2, "both", 3)])
+            cmds.text(label="Reference", width=hubstyle.pick(64, 70), align="left")
+            cmds.optionMenu(REF_MENU, changeCommand=reference_changed, annotation=TIPS["reference"])
+            cmds.setParent("..")
         for name in names:
             _slider(name)
+        if key == "clean":                # what the clean found, as it last read the walk
+            hubstyle.mark(cmds.text(CLEAN_REPORT, label="", align="left", wordWrap=True, height=72), "caption")
         cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
     cmds.setParent("..")
     _fill_menus()
     try:
-        walk = scene.load_walk(chosen_walk())[0]
         tempo = float(_stored("knob_tempo", 0.0) or 0.0)
+        walk, _, _, report = scene.load_walk(chosen_walk(), values(), chosen_reference())
+        show_report(report)
         _set_knobs({"tempo": tempo if tempo >= 1 else walk.P}, walk.P)
     except Exception:                                        # noqa: BLE001 - no walk saved yet
         pass

@@ -561,6 +561,12 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, referenc
         text += " | no balance: " + balance["note"]
     elif balance.get("carry", 0.0) > 0.1:
         text += " | balance carries the pelvis %.1f cm" % balance["carry"]
+    used = result.info["knobs"]
+    if used.get("in_place", 0.0) >= 0.5:
+        text += " | in place"
+    if abs(used.get("upper_offset", 0.0)) > 1e-9:
+        text += " | the upper body %.1f fr %s" % (abs(used["upper_offset"]),
+                                                  "late" if used["upper_offset"] > 0 else "early")
     if report.changed:
         text += " | " + report.short()
     if note:

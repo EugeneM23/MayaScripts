@@ -168,6 +168,16 @@ class FakeWalk(object):
         return "dw: cycle 90 frames"
 
 
+class FakeReport(object):
+    changed = True
+
+    def text(self):
+        return "spikes: hand_l 23 (91 deg)"
+
+    def short(self):
+        return "cleaned: 1 spike"
+
+
 class CardTests(unittest.TestCase):
 
     def setUp(self):
@@ -186,13 +196,20 @@ class CardTests(unittest.TestCase):
         scene._cmds = lambda: self.fake
         scene.walk_names = lambda: ["asd", "dw"]
         scene.pose_names = lambda: ["goblin", "two_handed_sword"]
-        scene.load_walk = lambda name: (FakeWalk(), {}, 0)
-        scene._state = lambda: self.state
+        self.loaded = []
 
-        def apply(root, walk, given, pose, parts):
+        def load_walk(name, given=None, reference=None):
+            self.loaded.append((name, given, reference))
+            return FakeWalk(), {}, 0, FakeReport()
+        scene.load_walk = load_walk
+        scene._state = lambda: self.state
+        self.references = []
+
+        def apply(root, walk, given, pose, parts, reference=None):
             self.applied.append((root, walk, given, pose, parts))
+            self.references.append(reference)
             self.state["target"] = "uuid-" + root
-            return None, None, "%s on %s" % (walk, root)
+            return None, {"clean": FakeReport()}, "%s on %s" % (walk, root)
         scene.apply = apply
 
         def selected_root():
@@ -239,14 +256,21 @@ class CardTests(unittest.TestCase):
         self.assertEqual(self.fake.items[panel.POSE_MENU], [panel.NO_POSE, "goblin", "two_handed_sword"])
         self.assertEqual(len(self.made("popupMenu")), 2)          # the walks folder on a right click
         chips = [c[1] for c in self.made("checkBox")]
-        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS])
+        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX])
         self.assertTrue(all(marks[c][0] == "chip" for c in chips))
         tabs = [(c[1], c[2]["collection"]) for c in self.made("iconTextRadioButton")]
-        self.assertEqual(tabs, [(panel._group_tab(k), panel.GROUP_TABS) for k, _, _ in panel.GROUPS]
+        rows = [key for row in panel.GROUP_ROWS for key in row]
+        self.assertEqual(sorted(rows), sorted(k for k, _, _ in panel.GROUPS))
+        self.assertEqual(tabs, [(panel._group_tab(k), panel.GROUP_TABS) for k in rows]
                          + [(panel._side_tab(m), panel.SIDE_TABS) for m, _ in panel.SIDE_MODES])
         self.assertTrue(self.fake.values[panel._side_tab("both")])      # Both, the default
         sliders = [c[1] for c in self.made("floatSliderGrp") + self.made("intSliderGrp")]
-        self.assertEqual(sorted(sliders), sorted(panel._control(k) for k in wm.DEFAULTS))
+        self.assertEqual(sorted(sliders), sorted(panel._control(k) for k in scene.ALL_DEFAULTS
+                                                 if k not in panel.CHECKS))
+        self.assertEqual(self.fake.items[panel.REF_MENU][0], scene.BUILT_IN_REFERENCE)
+        self.assertEqual(self.fake.items[panel.REF_MENU][-1], scene.NO_REFERENCE)
+        self.assertEqual(marks[panel.CLEAN_REPORT][0], "caption")       # a note would hide (CLAUDE.md trap 226)
+        self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
         self.assertTrue(all(callable(c[2]["changeCommand"])
                             for c in self.made("floatSliderGrp") + self.made("intSliderGrp")))
         self.assertTrue(panel.is_open())
@@ -254,7 +278,7 @@ class CardTests(unittest.TestCase):
     def test_one_knob_group_at_a_time(self):
         panel.build_panel()
         shown = [k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]]
-        self.assertEqual(shown, ["step"])                        # the first, when none is remembered
+        self.assertEqual(shown, ["clean"])                       # the first, when none is remembered
         panel.group_changed("legs")()
         shown = [k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]]
         self.assertEqual(shown, ["legs"])
@@ -342,6 +366,32 @@ class CardTests(unittest.TestCase):
         self.assertEqual(self.fake.values[panel._control("bob")], wm.DEFAULTS["bob"])
         self.assertEqual(self.fake.values[panel._control("tempo")], 90)
         self.assertEqual(self.applied[-1][2]["bob"], wm.DEFAULTS["bob"])
+
+    def test_the_reference_and_the_clean_knobs_reach_apply(self):
+        panel.build_panel()
+        self.fake.values[panel.REF_MENU] = "goblin"
+        self.fake.values[panel._control("smooth")] = 2.0
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertEqual(self.references[-1], "goblin")
+        self.assertEqual(self.applied[-1][2]["smooth"], 2.0)
+        self.assertEqual(self.fake.vars[panel.OPTION + "reference"], "goblin")
+        self.fake.values[panel.REF_MENU] = scene.NO_REFERENCE
+        panel.reference_changed()                       # a new reference re-keys the target
+        self.assertEqual(self.references[-1], scene.NO_REFERENCE)
+        self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
+
+    def test_the_in_place_chip_rekeys_the_target(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertEqual(self.applied[-1][2]["in_place"], 0.0)
+        self.fake.values[panel.IN_PLACE_BOX] = True
+        panel.in_place_changed()
+        self.assertEqual(self.applied[-1][2]["in_place"], 1.0)
+        self.assertEqual(self.fake.vars[panel.OPTION + "knob_in_place"], 1.0)
+        panel._set_knobs({"in_place": 0.0}, 90)
+        self.assertFalse(self.fake.values[panel.IN_PLACE_BOX])
 
     def test_a_failing_press_says_why(self):
         panel.build_panel()

@@ -292,7 +292,7 @@ try:
     gate(source.endswith("|root"), "the walk imported: %s" % source)
     cmds.currentTime(0)
     name, line = sw.save_walk(source, "Walk_01")
-    walk, statics, start = sw.load_walk(name)
+    walk, statics, start = sw.load_walk(name)[:3]
     template = sw.wf.read_template(sw.TEMPLATE)
     gate(os.path.exists(sw.wf.path_for(sw.WALKS, name)) and statics["thigh_l"]["rest"] == template["thigh_l"]["world_matrix"]
          and "has no skin" not in line, "saved, resting on Manny's bind: " + line)
@@ -916,7 +916,7 @@ try:
     # its root 17 cm under the feet) under the two-handed sword, on Manny: every stance held, the pelvis over the feet
     if os.path.exists(DW_FILE) and os.path.exists(SWORD_FILE):
         shutil.copy(DW_FILE, sw.wf.path_for(sw.WALKS, "dw"))
-        dw, _, dw_start = sw.load_walk("dw")
+        dw, _, dw_start = sw.load_walk("dw")[:3]
         dw_steps = dict((s, [(f.on, f.length) for f in dw.steps[s]]) for s in "lr")
         gate(dw.strides == 2 and all(len(v) == 2 for v in dw_steps.values()),
              "dw: %d steps of each foot a cycle (left %s, right %s; on, frames)" % (dw.strides, dw_steps["l"],
@@ -1003,7 +1003,7 @@ try:
     # flight, plants the stances, sinks nothing
     if os.path.exists(RUN_FILE):
         shutil.copy(RUN_FILE, sw.wf.path_for(sw.WALKS, "HavyRun"))
-        run, _, run_start = sw.load_walk("HavyRun")
+        run, _, run_start = sw.load_walk("HavyRun")[:3]
         run_r, run_i, run_text = sw.apply(manny, "HavyRun")
         print("        " + run_text)
         bones = bones_of(manny)

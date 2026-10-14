@@ -61,7 +61,7 @@ CLAVICLE_RISE = (-22.0, 35.0)   # degrees against the reference: the clavicle's 
 CLAVICLE_FORWARD = 30.0         # degrees either way
 FOOT_PITCH = 35.0               # degrees: the toe down / up against the shin
 FOOT_OUT = 35.0                 # degrees: the toe out / in
-FLOOR_DEAD = 5.0           # cm: a walk this near the floor is left on it (asd 3.5, RunFast 4.5; six floating 17-20)
+FLOOR_DEAD = 8.0           # cm: a walk this near the floor is left on it (asd 3.5, RunFast 4.5, Walk_01 5.5; six float 17-20)
 FOLLOW_TOL = 1e-3          # matrix elements: a helper holding its relation to its bone this well follows it
 HELPER_BONES = (("ik_foot_root", "root"), ("ik_hand_root", "root"), ("interaction", "root"),
                 ("center_of_mass", "root"), ("camera_root", "root"), ("camera_bone", "camera_root"),
