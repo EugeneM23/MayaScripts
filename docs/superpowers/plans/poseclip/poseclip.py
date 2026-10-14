@@ -196,3 +196,305 @@ def align(u_src, n_src, u_new, n_new):
     """The rotation taking the frame (u_src, n_src) onto (u_new, n_new): v . align = v'.
     Each n must be perpendicular to its u."""
     return _frame3(u_src, n_src).T @ _frame3(u_new, n_new)
+
+
+# ---- the clip ----
+
+class Clip(object):
+    """A clip: every joint's world (J, F, 4, 4) on every frame, its names and parents (-1 for the top)."""
+
+    def __init__(self, names, parents, worlds, fps=30.0, name="clip"):
+        self.names = [str(n) for n in names]
+        self.parents = [int(p) for p in parents]
+        self.worlds = np.asarray(worlds, float)
+        self.J, self.F = self.worlds.shape[:2]
+        self.fps, self.name = float(fps), name
+        self.index = dict((n, i) for i, n in enumerate(self.names))
+        depth = [0] * self.J
+        for j in range(self.J):
+            k, d = j, 0
+            while self.parents[k] >= 0:
+                k = self.parents[k]
+                d += 1
+            depth[j] = d
+        self.order = sorted(range(self.J), key=lambda j: (depth[j], j))
+
+
+def _stem_side(name):
+    for side in SIDES:
+        if name.endswith("_" + side):
+            return name[:-2], side
+    return name, None
+
+
+def kinds(clip):
+    """Each joint's kind, by its UE leaf name: root, pelvis, torso, leg (thigh / calf / foot - by IK), toe
+    (ball), legtwist, arm (clavicle to hand and their twists), finger (under a hand), helper (everything
+    else: ik_, camera_, weapon_, interaction, ...)."""
+    out = []
+    for j, name in enumerate(clip.names):
+        stem, side = _stem_side(name)
+        if clip.parents[j] < 0:
+            kind = "root"
+        elif name == "pelvis":
+            kind = "pelvis"
+        elif name.startswith(HELPER_PREFIXES):
+            kind = "helper"
+        elif name.startswith(("spine_", "neck_")) or name == "head":
+            kind = "torso"
+        elif side and stem in ("thigh", "calf", "foot"):
+            kind = "leg"
+        elif side and stem == "ball":
+            kind = "toe"
+        elif side and stem.startswith(("thigh_twist", "calf_twist")):
+            kind = "legtwist"
+        elif side and (stem in ARM_STEMS or stem.startswith(("upperarm_twist", "lowerarm_twist"))):
+            kind = "arm"
+        else:
+            kind = None
+        out.append(kind)
+    for j in clip.order:                       # under a hand and nothing above: a finger
+        if out[j] is None:
+            p = clip.parents[j]
+            under_hand = p >= 0 and (clip.names[p].startswith("hand_") or out[p] == "finger")
+            out[j] = "finger" if under_hand else "helper"
+    return out
+
+
+def runs(mask):
+    """The runs of True in `mask`: inclusive (a, b)."""
+    out, start = [], None
+    for f, value in enumerate(np.asarray(mask, bool)):
+        if value and start is None:
+            start = f
+        elif not value and start is not None:
+            out.append((start, f - 1))
+            start = None
+    if start is not None:
+        out.append((start, len(mask) - 1))
+    return out
+
+
+def contacts(still, merge=1, least=2):
+    """A foot's contacts: the runs of `still`, two closer than `merge` frames apart merged, runs shorter than
+    `least` frames dropped."""
+    merged = []
+    for a, b in runs(still):
+        if merged and a - merged[-1][1] - 1 <= merge:
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    return [(a, b) for a, b in merged if b - a + 1 >= least]
+
+
+def still_run(speeds, threshold=STILL_SPEED, least=STILL_MIN):
+    """The longest run of frames slower than `threshold` (ties: the later), at least `least` long; else None."""
+    best = None
+    for a, b in runs(np.asarray(speeds) < threshold):
+        if b - a + 1 >= least and (best is None or b - a >= best[1] - best[0]):
+            best = (a, b)
+    return best
+
+
+def cover(need, sigma):
+    """A smooth curve lying over `need` (one value a frame) with its ends held: `need` widened by its largest
+    neighbour within `sigma` frames, blurred with a Gaussian of `sigma` frames (the ends padded with their own
+    values), then scaled by the least factor that covers every frame's need. Walk Builder's smooth_cover for a
+    clip that is not a cycle."""
+    need = np.asarray(need, float)
+    n = len(need)
+    if n == 0 or need.max() <= 0.0:
+        return np.zeros(n)
+    reach = int(round(sigma))
+    padded = np.concatenate([np.full(reach, need[0]), need, np.full(reach, need[-1])])
+    wide = np.max([padded[s:s + n] for s in range(2 * reach + 1)], axis=0)
+    half = max(int(math.ceil(3.0 * sigma)), 1)
+    kernel = np.exp(-0.5 * (np.arange(-half, half + 1) / max(sigma, 1e-6)) ** 2)
+    kernel /= kernel.sum()
+    blur = np.convolve(np.concatenate([np.full(half, wide[0]), wide, np.full(half, wide[-1])]), kernel, "valid")
+    wanted = need > 1e-9
+    return np.maximum(blur * float((need[wanted] / np.maximum(blur[wanted], 1e-12)).max()), 0.0)
+
+
+def foot_weights(down_l, down_r, settle=SETTLE):
+    """(F, 2) the share of the weight on the left and the right foot: a foot alone takes it all; while both are
+    down the weight goes over linearly from the foot that was alone before to the one that stays alone after,
+    and - with nobody lifting after (an idle) - to half each in `settle` frames (mirrored before a lift with
+    nobody alone before); with no foot down a row of NaN (the support is interpolated across it)."""
+    down = np.stack([np.asarray(down_l, bool), np.asarray(down_r, bool)], axis=1)
+    F = len(down)
+    w = np.full((F, 2), np.nan)
+    alone = {}
+    for f in range(F):
+        if down[f].sum() == 1:
+            w[f] = down[f].astype(float)
+            alone[f] = w[f].copy()
+    half = np.array([0.5, 0.5])
+    for a, b in runs(down.all(axis=1)):
+        before, after = alone.get(a - 1), alone.get(b + 1)
+        for f in range(a, b + 1):
+            if before is not None and after is not None:
+                u = (f - (a - 1)) / float(b + 1 - (a - 1))
+                w[f] = (1.0 - u) * before + u * after
+            elif before is not None:
+                u = min(1.0, (f - (a - 1)) / float(settle))
+                w[f] = (1.0 - u) * before + u * half
+            elif after is not None:
+                u = min(1.0, ((b + 1) - f) / float(settle))
+                w[f] = (1.0 - u) * after + u * half
+            else:
+                w[f] = half
+    return w
+
+
+def support_path(weights, pivots):
+    """(F, 3) the centre of the load on the floor: each foot's pivot by its weight, interpolated linearly
+    across the frames no foot is down (held before the first and after the last), y 0."""
+    F = len(weights)
+    out = np.full((F, 3), np.nan)
+    for f in range(F):
+        if not np.isnan(weights[f, 0]):
+            out[f] = weights[f, 0] * pivots["l"][f] + weights[f, 1] * pivots["r"][f]
+    known = np.nonzero(~np.isnan(out[:, 0]))[0]
+    if len(known) == 0:
+        return np.zeros((F, 3))
+    for axis in range(3):
+        out[:, axis] = np.interp(np.arange(F), known, out[known, axis])
+    out[:, 1] = 0.0
+    return out
+
+
+def _masses(clip, kind, pos):
+    """De Leva's table as one weight a joint (Walk Builder's `_masses`), summing to 1; the trunk spread along
+    pelvis..neck_01 at its thirds, read where the joints stand in `pos` (J, 3)."""
+    idx, mass = clip.index, np.zeros(clip.J)
+    if "neck_01" not in idx or "pelvis" not in idx:
+        raise Refusal("the clip's skeleton has no pelvis..neck_01 chain to weigh the trunk by")
+    chain = [idx["neck_01"]]
+    while chain[-1] != idx["pelvis"]:
+        if clip.parents[chain[-1]] < 0:
+            raise Refusal("neck_01 is not under the pelvis")
+        chain.append(clip.parents[chain[-1]])
+    chain.reverse()
+    lengths = np.linalg.norm(np.diff(pos[chain], axis=0), axis=1)
+    ends = np.concatenate([[0.0], np.cumsum(lengths)])
+    for share, part in zip(TRUNK_MASS, (1.0 / 6.0, 0.5, 5.0 / 6.0)):
+        at = part * ends[-1]
+        i = min(int(np.searchsorted(ends, at, side="right")) - 1, len(lengths) - 1)
+        t = (at - ends[i]) / lengths[i] if lengths[i] > 1e-9 else 0.0
+        mass[chain[i]] += share * (1.0 - t)
+        mass[chain[i + 1]] += share * t
+    mass[idx.get("head", chain[-1])] += HEAD_MASS
+    for side in SIDES:
+        for a, b, share, t in LIMB_MASS:
+            if a + "_" + side in idx and b + "_" + side in idx:
+                mass[idx[a + "_" + side]] += share * (1.0 - t)
+                mass[idx[b + "_" + side]] += share * t
+        hand = idx.get("hand_" + side)
+        if hand is not None:
+            share, t = HAND_MASS
+            if "middle_01_" + side in idx:
+                fingers = [idx["middle_01_" + side]]
+            else:
+                fingers = [j for j, p in enumerate(clip.parents) if p == hand and kind[j] == "finger"]
+            mass[hand] += share * (1.0 - t if fingers else 1.0)
+            for j in fingers:
+                mass[j] += share * t / len(fingers)
+    return mass / mass.sum()
+
+
+def _batch_orthonormal(m):
+    u, _, vt = np.linalg.svd(m)
+    r = u @ vt
+    bad = np.linalg.det(r) < 0.0
+    if np.any(bad):
+        u = u.copy()
+        u[bad, :, -1] *= -1.0
+        r = u @ vt
+    return r
+
+
+def _speeds(path):
+    """(F,) how far a point moves into each frame (the first frame: into the second)."""
+    step = np.linalg.norm(np.diff(path, axis=0), axis=1)
+    return np.concatenate([step[:1], step])
+
+
+class Analysis(object):
+    """A clip read once: its heading, each bone's relative world rotation, local rotation and offset in its
+    parent's rigid frame on every frame, the reference (its still stretch) and what stands there, the feet's
+    contacts, the masses, the centre of mass and the support under it."""
+
+    def __init__(self, clip, reference=None):
+        self.clip = clip
+        J, F = clip.J, clip.F
+        self.kind = kinds(clip)
+        idx = clip.index
+        for need in ("pelvis",) + tuple("%s_%s" % (b, s) for s in SIDES for b in ("thigh", "calf", "foot", "ball")):
+            if need not in idx:
+                raise Refusal("the clip's skeleton has no %s" % need)
+        self.pos = clip.worlds[:, :, 3, :3].copy()
+        self.rot = _batch_orthonormal(clip.worlds[:, :, :3, :3])
+        root = clip.order[0]
+        self.root = root
+        # the reference first (its heading is the zero of every heading below)
+        body = [j for j, k in enumerate(self.kind) if k not in ("helper", "finger")]
+        step = np.linalg.norm(np.diff(self.pos[body], axis=1), axis=2)            # (B, F-1)
+        self.speeds = np.concatenate([step[:, :1], step], axis=1).max(axis=0)     # (F,)
+        if reference is None:
+            reference = still_run(self.speeds) or (0, F - 1)
+        self.reference = (int(reference[0]), int(reference[1]))
+        a, b = self.reference
+        self.mid = (a + b) // 2
+        turn = self.rot[root, self.mid].T @ self.rot[root]                         # (F, 3, 3)
+        self.heading = np.array([yaw(yaw_of(t)) for t in turn])
+        self.rel = self.rot @ np.swapaxes(self.heading, -1, -2)[None]
+        self.local = np.empty_like(self.rot)
+        self.offset = np.empty_like(self.pos)
+        for j in range(J):
+            p = clip.parents[j]
+            if p < 0:
+                self.local[j], self.offset[j] = self.rot[j], self.pos[j]
+            else:
+                self.local[j] = self.rot[j] @ np.swapaxes(self.rot[p], -1, -2)
+                self.offset[j] = np.einsum("fi,fji->fj", self.pos[j] - self.pos[p], self.rot[p])
+        self.rel_ref = np.array([mean_rot(self.rel[j, a:b + 1]) for j in range(J)])
+        self.local_ref = np.array([mean_rot(self.local[j, a:b + 1]) for j in range(J)])
+        self.feet = {}
+        for side in SIDES:
+            ankle, ball = self.pos[idx["foot_" + side]], self.pos[idx["ball_" + side]]
+            lvl_ankle, lvl_ball = float(ankle[a:b + 1, 1].mean()), float(ball[a:b + 1, 1].mean())
+            speed = np.minimum(_speeds(ankle), _speeds(ball))
+            down = (ankle[:, 1] - lvl_ankle < FOOT_NEAR) | (ball[:, 1] - lvl_ball < FOOT_NEAR)
+            still = (speed < FOOT_STILL) & down
+            th, ca, fo = (idx["%s_%s" % (n, side)] for n in ("thigh", "calf", "foot"))
+            self.feet[side] = {
+                "ankle": ankle, "ball": ball, "level": (lvl_ankle, lvl_ball), "down": down, "still": still,
+                "contacts": contacts(still), "pivot": 0.5 * (ankle + ball),
+                "lengths": np.stack([np.linalg.norm(self.offset[ca], axis=1),
+                                     np.linalg.norm(self.offset[fo], axis=1)], axis=1),
+                "joints": (th, ca, fo),
+            }
+        self.floor = min(self.feet[s]["level"][1] for s in SIDES)
+        self.pelvis = idx["pelvis"]
+        self.h_ref = float(self.pos[self.pelvis, a:b + 1, 1].mean()) - self.floor
+        self.masses = _masses(clip, self.kind, self.pos[:, self.mid])
+        self.com = np.tensordot(self.masses, self.pos, axes=(0, 0))                # (F, 3)
+        self.weights = foot_weights(self.feet["l"]["down"], self.feet["r"]["down"])
+        self.support = support_path(self.weights, dict((s, self.feet[s]["pivot"]) for s in SIDES))
+        off = self.com - self.support
+        off[:, 1] = 0.0
+        self.ref_offset = off[a:b + 1].mean(axis=0) @ self.heading[self.mid].T    # in the reference's heading
+        # each helper follows the body bone whose relation to it holds best over the clip
+        self.follows = {}
+        bodies = [j for j, k in enumerate(self.kind) if k != "helper"]
+        for h, kind in enumerate(self.kind):
+            if kind != "helper":
+                continue
+            best = None
+            for j in bodies:
+                rel = clip.worlds[h] @ np.linalg.inv(clip.worlds[j])
+                err = float(np.abs(rel - rel[self.mid]).max())
+                if best is None or err < best[0] - 1e-9:
+                    best = (err, j)
+            self.follows[h] = best[1]
