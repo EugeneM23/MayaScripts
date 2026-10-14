@@ -103,14 +103,15 @@ def _wrapped(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def prepare(walk, statics, pose_bones, model, target_module):
-    """The pose as walkmodel.Walk.evaluate takes it (its docstring). `model` the walkmodel module,
-    `target_module` walktarget (its at_rest, leg lengths and twin rule)."""
+def _onto(names, first_worlds, statics, pose_bones, target_module):
+    """(the pose carried onto the walk's skeleton {leaf: matrix}, the pairs, a twin?, the legs' ratio): the walk's
+    skeleton at its rest stood on its root at the cycle's first frame, the pose transferred onto it (posemath),
+    at the legs' ratio (1 for a twin - walktarget's rule)."""
     walk_rest = target_module.at_rest(dict((leaf, dict(b)) for leaf, b in statics.items()))
     first = {}
-    for j, name in enumerate(walk.names):
+    for j, name in enumerate(names):
         bone = dict(statics[name])
-        bone["world"] = [float(v) for v in walk.clip.worlds[j, 0].reshape(16)]
+        bone["world"] = [float(v) for v in np.asarray(first_worlds[j], float).reshape(16)]
         first[name] = bone
     pairs = pm.pairs(pose_bones, walk_rest)
     members = set(s for t, s in pairs.items() if not pm.is_helper(t))
@@ -128,7 +129,22 @@ def prepare(walk, statics, pose_bones, model, target_module):
     legs_ratio = float(np.mean(ratios))
     same = pm.twin(pairs, pose_bones, walk_rest) and abs(legs_ratio - 1.0) <= target_module.LEG_TWIN
     transfer = pm.Transfer(pose_bones, walk_rest, pairs, members, scale=1.0 if same else legs_ratio)
-    out = transfer.frame(root_world=transfer.place(first))
+    return transfer.frame(root_world=transfer.place(first)), pairs, same, legs_ratio
+
+
+def carried(names, first_worlds, statics, pose_bones, target_module):
+    """{name: 4x4 world}: a reference pose on the walk's skeleton (its names, its worlds at the cycle's first
+    frame, its statics) - what clean() judges the walk's posture and floor against."""
+    out = _onto(names, first_worlds, statics, pose_bones, target_module)[0]
+    return dict((name, _np(out[name])) for name in names if name in out)
+
+
+def prepare(walk, statics, pose_bones, model, target_module):
+    """The pose as walkmodel.Walk.evaluate takes it (its docstring). `model` the walkmodel module,
+    `target_module` walktarget (its at_rest, leg lengths and twin rule)."""
+    walk_rest = target_module.at_rest(dict((leaf, dict(b)) for leaf, b in statics.items()))
+    out, pairs, same, legs_ratio = _onto(walk.names, walk.clip.worlds[:, 0], statics, pose_bones, target_module)
+    legs = ("thigh", "calf", "foot")
     rot = lambda name: model.orthonormal(_np(out[name])[:3, :3])
     spine = {}
     for j, name in enumerate(walk.names):
