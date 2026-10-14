@@ -180,7 +180,8 @@ class KnobTests(unittest.TestCase):
                           "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "pelvis_tilt", "spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
                           "arm_drag", "arm_bounce", "shoulder_swing", "shoulder_bob", "arm_swing", "head", "head_drag", "head_nod",
-                          "overlap", "weight", "balance", "exaggeration"])
+                          "overlap", "upper_offset", "spine_wave", "shoulder_drag", "pelvis_drag",
+                          "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
         self.assertEqual((wm.DEFAULTS["stance"], wm.DEFAULTS["swing_out"], wm.DEFAULTS["knee_foot"]), (1.0, 0.0, 0.5))
@@ -194,6 +195,10 @@ class KnobTests(unittest.TestCase):
             self.assertEqual((wm.DEFAULTS[name], wm.RANGES[name]), (0.0, (low, high)), name)
         for name in ("shoulder_swing", "shoulder_bob", "arm_swing"):
             self.assertIn(name, wm.SIDED)
+        # the Overlap knobs (2026-10-14), frames: nothing new at their defaults
+        for name, low, high in (("upper_offset", -10.0, 10.0), ("spine_wave", 0.0, 6.0), ("shoulder_drag", 0.0, 8.0),
+                                ("pelvis_drag", 0.0, 8.0)):
+            self.assertEqual((wm.DEFAULTS[name], wm.RANGES[name]), (0.0, (low, high)), name)
         self.assertEqual([lever[0] for lever in wm.LEVERS],
                          ["pelvis_tilt", "chest_pitch", "head_nod", "shoulder_swing", "shoulder_bob", "arm_swing"])
 
@@ -2000,6 +2005,7 @@ class BodyDynamicsTests(unittest.TestCase):
 
 
 NEW_KNOBS = ("in_place", "pelvis_tilt", "chest_pitch", "head_nod", "shoulder_swing", "shoulder_bob", "arm_swing")
+OVERLAP_KNOBS = ("upper_offset", "spine_wave", "shoulder_drag", "pelvis_drag")
 #  the body as the frames put it: no spring, no carry - a lever's turn read alone
 STILL = {"balance": 0.0, "arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0}
 ARM_CHAIN = ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "index_01_l",
@@ -2050,6 +2056,50 @@ def wrapped(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def shapes(r, w, name, side=None):
+    """A lever's shape at each of the result's frames."""
+    return np.array([w.lever_shape(name, f * w.P / float(r.frames), side) for f in range(r.frames)])
+
+
+def lag_of(x0, x1):
+    """The frames x1 runs behind x0 (periodic series): the shift of the cross-correlation's peak, in (-n/2, n/2]."""
+    x0, x1 = np.asarray(x0, float) - np.mean(x0), np.asarray(x1, float) - np.mean(x1)
+    n = len(x0)
+    k = int(np.argmax([float(np.dot(np.roll(x0, s), x1)) for s in range(n)]))
+    return k if k <= n // 2 else k - n
+
+
+def stride_band(series, strides):
+    """A periodic series (F, ...) cut to its stride's harmonic (once a stride)."""
+    n = len(series)
+    spectrum = np.fft.rfft(np.asarray(series, float), axis=0)
+    keep = (np.arange(n // 2 + 1) == strides).reshape((-1,) + (1,) * (spectrum.ndim - 1))
+    return np.fft.irfft(spectrum * keep, n, axis=0)
+
+
+def upper_joints(w):
+    """spine_01 and every joint under it."""
+    top = w.index["spine_01"]
+    return [j for j in range(len(w.names)) if j == top or top in w._ancestors(j)]
+
+
+def at_zero_patched(names):
+    """A context: the Walk methods `names` raise when called (the work a knob at 0 must not do)."""
+    class Patched(object):
+        def __enter__(self):
+            self.saved = dict((n, getattr(wm.Walk, n)) for n in names)
+
+            def boom(*args, **kwargs):
+                raise AssertionError("called with its knob at 0")
+            for n in names:
+                setattr(wm.Walk, n, boom)
+
+        def __exit__(self, *exc):
+            for n, f in self.saved.items():
+                setattr(wm.Walk, n, f)
+    return Patched()
+
+
 class InPlaceTests(unittest.TestCase):
     """In place (2026-10-14): the root's progress along the walk taken off every joint - the root stays where frame
     0 has it (weaving only with Root sway), the body moves about it."""
@@ -2088,15 +2138,21 @@ class LeverTests(unittest.TestCase):
     """The levers (2026-10-14): each adds degrees on a shape of the stride's phase - the clip's own phase on its
     axis where the clip moves there, else the table's."""
 
-    def test_the_new_knobs_at_zero_change_nothing(self):
+    def test_the_new_knobs_at_zero_do_no_work(self):
+        """At 0 the levers, In place and the overlaps run none of their code: with it patched to raise, evaluate()
+        and evaluate(own_knobs()) run as before - and the walk's own knobs still give the source back."""
         w = walk()
-        zeros = dict((name, 0.0) for name in NEW_KNOBS)
-        zeros.update(("%s_%s" % (name, s), 0.0) for name in ("shoulder_swing", "shoulder_bob", "arm_swing") for s in "lr")
-        self.assertTrue(np.array_equal(w.evaluate({}).worlds, w.evaluate(zeros).worlds))
-        own = w.evaluate(w.own_knobs())
-        self.assertTrue(np.array_equal(own.worlds, w.evaluate(dict(w.own_knobs(), **zeros)).worlds))
+        with at_zero_patched(("lever_shape", "_lever_turn", "_in_place", "_shoulder_dynamics", "_pelvis_drag",
+                              "_upper_turn")):
+            plain, own = w.evaluate(), w.evaluate(w.own_knobs())
         self.assertLess(float(np.abs(own.worlds - clip().worlds).max()), 1e-6)
         self.assertEqual(own.info["levers"], {})
+        zeros = dict((name, 0.0) for name in NEW_KNOBS + OVERLAP_KNOBS)
+        zeros.update(("%s_%s" % (name, s), 0.0) for name in ("shoulder_swing", "shoulder_bob", "arm_swing") for s in "lr")
+        self.assertTrue(np.array_equal(plain.worlds, w.evaluate(zeros).worlds))
+        with self.assertRaises(AssertionError):          # the patch bites: a lever set does that work
+            with at_zero_patched(("lever_shape",)):
+                w.evaluate({"head_nod": 1.0})
 
     def test_pelvis_tilt_tips_the_pelvis_and_the_lumbar_takes_it_back(self):
         w = walk()
@@ -2108,7 +2164,7 @@ class LeverTests(unittest.TestCase):
         self.assertLess(float(np.abs(pitch - 4.0 * shape).max()), 0.1)
         top = world_turn(base, tilted, w, "spine_02") @ w.side             # the walker's top spine joint
         self.assertLess(float(np.abs(top).max()), 0.5)
-        f = int(np.argmax(pitch))                                         # + tips its top forward
+        f = int(np.argmax(shape))                                         # + tips its top forward where it peaks
         ahead = lambda r: float(np.dot(positions(r, "spine_01", w)[f] - positions(r, "pelvis", w)[f], w.fwd))
         self.assertGreater(ahead(tilted), ahead(base) + 0.3)
         self.assertEqual(tilted.info["levers"]["pelvis_tilt"]["degrees"], 4.0)
@@ -2140,8 +2196,9 @@ class LeverTests(unittest.TestCase):
         base, leaned = w.evaluate(STILL), w.evaluate(dict(STILL, chest_pitch=3.0))
         pitch = world_turn(base, leaned, w, "spine_02") @ w.side
         self.assertAlmostEqual(wave(pitch, stride_phases(base, w), 2)[0], 3.0, delta=0.1)
+        self.assertLess(float(np.abs(pitch - 3.0 * shapes(base, w, "chest_pitch")).max()), 0.1)
         self.assertTrue(np.array_equal(rotations(base, "pelvis", w), rotations(leaned, "pelvis", w)))
-        f = int(np.argmax(pitch))                                         # + leans it forward
+        f = int(np.argmax(shapes(base, w, "chest_pitch")))               # + leans it forward
         ahead = lambda r: float(np.dot(positions(r, "neck_01", w)[f] - positions(r, "spine_01", w)[f], w.fwd))
         self.assertGreater(ahead(leaned), ahead(base) + 0.5)
 
@@ -2150,9 +2207,10 @@ class LeverTests(unittest.TestCase):
         base, nodded = w.evaluate(STILL), w.evaluate(dict(STILL, head_nod=5.0))
         turn = world_turn(base, nodded, w, "head")
         self.assertAlmostEqual(wave(turn @ w.side, stride_phases(base, w), 2)[0], 5.0, delta=0.05)
+        self.assertLess(float(np.abs(turn @ w.side - 5.0 * shapes(base, w, "head_nod")).max()), 1e-9)
         self.assertLess(float(np.abs(turn - np.outer(turn @ w.side, w.side)).max()), 1e-9)   # about the side axis
         self.assertTrue(np.array_equal(rotations(base, "neck_01", w), rotations(nodded, "neck_01", w)))
-        f = int(np.argmax(turn @ w.side))                                 # + looks down
+        f = int(np.argmax(shapes(base, w, "head_nod")))                  # + looks down
         d = wm.exp_rot(np.radians(turn[f]))
         self.assertLess(float(np.dot(w.fwd @ d, w.up)), -0.05)
 
@@ -2165,9 +2223,11 @@ class LeverTests(unittest.TestCase):
             yaw = shoulder_angles(swung, w, side)[0] - shoulder_angles(base, w, side)[0]
             amp, peaks[side] = wave(yaw, phases, 1)
             self.assertAlmostEqual(amp, 6.0, delta=0.1, msg=side)
-            f = int(np.argmax(yaw))                                       # + the shoulder forward
+            shape = shapes(base, w, "shoulder_swing", side)
+            self.assertLess(float(np.abs(yaw - 6.0 * shape).max()), 1e-9, side)    # +6 on the lever's own shape
+            f = int(np.argmax(shape))                                     # + the shoulder forward where it peaks
             self.assertGreater(float(np.dot(positions(swung, "upperarm_" + side, w)[f]
-                                            - positions(base, "upperarm_" + side, w)[f], w.fwd)), 0.5, side)
+                                            - positions(base, "upperarm_" + side, w)[f], w.fwd)), 1.0, side)
             height = lambda r: [float(np.dot(d / np.linalg.norm(d), w.up)) for d in
                                 positions(r, "upperarm_" + side, w) - positions(r, "clavicle_" + side, w)]
             self.assertLess(float(np.abs(np.subtract(height(swung), height(base))).max()), 1e-9, side)   # about up
@@ -2179,7 +2239,9 @@ class LeverTests(unittest.TestCase):
         for side in "lr":
             lift = shoulder_angles(bobbed, w, side)[1] - shoulder_angles(base, w, side)[1]
             self.assertAlmostEqual(wave(lift, stride_phases(base, w), 2)[0], 3.0, delta=0.1, msg=side)
-            f = int(np.argmax(lift))                                      # + the shoulder up
+            shape = shapes(base, w, "shoulder_bob", side)
+            self.assertLess(float(np.abs(lift - 3.0 * shape).max()), 1e-9, side)    # +3 on the lever's own shape
+            f = int(np.argmax(shape))                                     # + the shoulder up where it peaks
             self.assertGreater(float(np.dot(positions(bobbed, "upperarm_" + side, w)[f]
                                             - positions(base, "upperarm_" + side, w)[f], w.up)), 0.3, side)
 
@@ -2192,7 +2254,9 @@ class LeverTests(unittest.TestCase):
             turn = world_turn(base, swung, w, "upperarm_" + side) @ -w.side
             amp, peaks[side] = wave(turn, phases, 1)
             self.assertAlmostEqual(amp, 20.0, delta=0.1, msg=side)
-            f = int(np.argmax(turn))                                      # + the hand forward
+            shape = shapes(base, w, "arm_swing", side)
+            self.assertLess(float(np.abs(turn - 20.0 * shape).max()), 1e-9, side)   # +20 on the lever's own shape
+            f = int(np.argmax(shape))                                     # + the hand forward where it peaks
             reach = lambda r: float(np.dot(positions(r, "hand_" + side, w)[f] - positions(r, "upperarm_" + side, w)[f],
                                            w.fwd))
             self.assertGreater(reach(swung), reach(base) + 5.0, side)
@@ -2212,6 +2276,118 @@ class LeverTests(unittest.TestCase):
         r = w.evaluate(knobs, a_grip(w))
         hold = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
         self.assertLess(float(np.abs(np.array(hold) - hold[0]).max()), 1e-6)
+
+
+class OverlapTests(unittest.TestCase):
+    """The Overlap knobs (2026-10-14): the upper body offset against the legs, a wave up the spine, the shoulders and
+    the hips on springs."""
+
+    def own(self, w, **more):
+        """The walk's own knobs (no spring, no added turn), Balance 0: the walk exactly, every overlap read alone."""
+        return dict(w.own_knobs(), balance=0.0, **more)
+
+    def test_upper_offset_runs_the_upper_body_late_against_the_legs(self):
+        """Every joint from spine_01 up, in the pelvis's frame, at frame f is the walk's at f - N (earlier for a
+        negative N); the pelvis, the legs and the root do not move."""
+        w = walk()
+        base = w.evaluate(self.own(w))
+        n, pel = base.frames, w.index["pelvis"]
+        upper = upper_joints(w)
+        rel = lambda r, j, f: r.worlds[j, f] @ np.linalg.inv(r.worlds[pel, f])
+        for shift in (3.0, -3.0):
+            r = w.evaluate(self.own(w, upper_offset=shift))
+            for j in upper:
+                worst = max(float(np.abs(rel(r, j, f) - rel(base, j, int(f - shift) % n)).max()) for f in range(n + 1))
+                self.assertLess(worst, 1e-9, (shift, w.names[j]))
+            for j in range(len(w.names)):
+                if j not in upper:
+                    self.assertLess(float(np.abs(r.worlds[j] - base.worlds[j]).max()), 1e-12, w.names[j])
+            self.assertIn("the upper body %d frames %s" % (abs(shift), "behind" if shift > 0 else "ahead"),
+                          wm.describe(r))
+
+    def test_the_lumbar_takes_the_pelvis_turn_back_at_the_pelvis_time(self):
+        """The pelvis's added Twist stays with the pelvis: offset or not, the top of the spine does not carry it."""
+        w = walk()
+        plain = w.evaluate(self.own(w, upper_offset=3.0))
+        twisted = w.evaluate(self.own(w, upper_offset=3.0, pelvis_twist=14.0))
+        self.assertGreater(float(np.abs(rotations(twisted, "pelvis", w) - rotations(plain, "pelvis", w)).max()), 0.05)
+        self.assertLess(float(np.abs(rotations(twisted, "spine_02", w) - rotations(plain, "spine_02", w)).max()), 1e-9)
+
+    def test_spine_wave_runs_each_joint_late_by_its_share(self):
+        """spine_01, spine_02, neck_01 (N = 3) at Spine wave 3: each own motion 1, 2 and 3 frames late; the
+        world-held head as it was."""
+        w = walk()
+        base = w.evaluate(self.own(w))
+        waved = w.evaluate(self.own(w, spine_wave=3.0))
+        n = base.frames
+        for i, name in enumerate(("spine_01", "spine_02", "neck_01")):
+            worst = max(angle(local_rot(waved, name, w, f) @ local_rot(base, name, w, (f - i - 1) % n).T)
+                        for f in range(n + 1))
+            self.assertLess(worst, 1e-7, name)
+        self.assertLess(float(np.abs(rotations(waved, "head", w) - rotations(base, "head", w)).max()), 1e-12)
+        for name in ("pelvis", "thigh_l", "foot_r"):
+            self.assertLess(float(np.abs(waved.worlds[w.index[name]] - base.worlds[w.index[name]]).max()), 1e-12)
+        self.assertIn("a spine wave of 3.0 frames", wm.describe(waved))
+
+    def test_shoulder_drag_lags_the_clavicles_and_keeps_the_arms_on(self):
+        """Each clavicle's world turn follows its frames' (the spring's target) late: at the stride's harmonic
+        (its own motion and the chest's turns; the chest's bob at twice a stride shakes it besides) the
+        cross-correlation peaks about Shoulder drag frames late."""
+        w = walk()
+        base, dragged = w.evaluate(STILL), w.evaluate(dict(STILL, shoulder_drag=3.0))
+        n = base.frames
+        for side in "lr":
+            clav, up = w.index["clavicle_" + side], w.index["upperarm_" + side]
+            turns = lambda r: wm.log_rot(wm.mean_rot(r.worlds[clav, :n, :3, :3]).T @ r.worlds[clav, :n, :3, :3])
+            x0, x1 = (stride_band(turns(r), w.strides) for r in (base, dragged))
+            axis = np.linalg.svd(x0, full_matrices=False)[2][0]
+            self.assertTrue(1 <= lag_of(x0 @ axis, x1 @ axis) <= 4, (side, lag_of(x0 @ axis, x1 @ axis)))
+            tip = lambda r: np.einsum("fi,fij->fj", r.worlds[up, :, 3, :3] - r.worlds[clav, :, 3, :3],
+                                      np.swapaxes(r.worlds[clav, :, :3, :3], -1, -2))
+            self.assertLess(float(np.abs(tip(dragged) - tip(base)).max()), 1e-9, side)    # the arm on the tip
+            self.assertLess(float(np.abs(rotations(dragged, "upperarm_" + side, w)
+                                         - rotations(base, "upperarm_" + side, w)).max()), 1e-9, side)   # hangs
+            self.assertGreater(float(np.abs(rotations(dragged, "clavicle_" + side, w)
+                                            - rotations(base, "clavicle_" + side, w)).max()), 0.01, side)
+        for name in ("spine_02", "head", "pelvis"):
+            self.assertLess(float(np.abs(dragged.worlds[w.index[name]] - base.worlds[w.index[name]]).max()), 1e-12)
+        moved = dragged.worlds[:, -1] - dragged.worlds[:, 0]
+        self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-6)          # the loop closes
+        self.assertIn("the shoulders 3.0", wm.describe(dragged))
+
+    def test_shoulder_drag_runs_inside_the_balance(self):
+        w = walk()
+        r = w.evaluate({"shoulder_drag": 3.0, "arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0, "stance": 2.0})
+        self.assertLess(r.info["balance"]["residual"], 0.05)
+
+    def test_pelvis_drag_lags_the_hips_and_the_feet_stay_planted(self):
+        w = walk()
+        knobs = {"balance": 0.0, "chest_twist": w.own_chest_twist, "chest_sway": w.own_chest_sway,
+                 "torso_drag": 0.0, "head_drag": 0.0}         # (the trunk's spring feels the hips' new motion)
+        base, dragged = w.evaluate(knobs), w.evaluate(dict(knobs, pelvis_drag=3.0))
+        n = base.frames
+        twist = lambda r: [math.atan2(float(np.dot(d, w.fwd)), float(np.dot(d, w.side))) for d in
+                           positions(r, "thigh_l", w)[:n] - positions(r, "thigh_r", w)[:n]]
+        self.assertTrue(1 <= lag_of(twist(base), twist(dragged)) <= 4, lag_of(twist(base), twist(dragged)))
+        for side in "lr":
+            self.assertLess(still_point_slide(dragged, w, side), 0.2, side)
+        # the lumbar takes the pelvis's lag back: the top of the spine turns in the world as it did
+        self.assertLess(float(np.abs(rotations(dragged, "spine_02", w) - rotations(base, "spine_02", w)).max()), 1e-9)
+        moved = dragged.worlds[:, -1] - dragged.worlds[:, 0]
+        self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-6)
+        self.assertLess(float(np.abs(moved[:, 3, :3] - [0.0, 0.0, 120.0]).max()), 1e-6)
+        for b, a in (("calf_l", "thigh_l"), ("foot_r", "calf_r")):          # the legs reach from the late hips
+            d = np.linalg.norm(positions(dragged, b, w) - positions(dragged, a, w), axis=1)
+            self.assertLess(float(np.ptp(d)), 1e-9, b)
+        self.assertIn("the hips 3.0", wm.describe(dragged))
+
+    def test_pelvis_drag_with_the_defaults(self):
+        """Balance and Foot placement on: the feet still planted, the centre of mass on its target."""
+        w = walk()
+        r = w.evaluate({"pelvis_drag": 3.0})
+        for side in "lr":
+            self.assertLess(still_point_slide(r, w, side), 0.2, side)
+        self.assertLess(r.info["balance"]["residual"], 0.05)
 
 
 class SceneTests(unittest.TestCase):

@@ -2,8 +2,8 @@
 
 The animator: «Давай встроим этот скрипт в наш плагин. Интерфейс рисуй компактным» - the standalone window
 of docs/superpowers/plans/walkparam/ becomes a card. Compact: the walk and the pose each one dropdown with a
-save icon beside it, the pose's share and its parts on two lines, Apply / Reset, and the knobs in six groups
-of which ONE is shown at a time ([Step | Legs | Pelvis | Chest | Arms | Weight]).
+save icon beside it, the pose's share and its parts on two lines, Apply / Reset, and the knobs in groups of
+which ONE is shown at a time ([Step | Legs | Pelvis | Chest | Arms | Weight | Overlap]).
 
 Select a skeleton and press Apply: the walk is keyed onto it and it becomes the card's target - a released
 knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card (what
@@ -49,6 +49,7 @@ GROUPS = (
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap", "shoulder_swing", "shoulder_bob",
                       "arm_swing")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
+    ("overlap", "Overlap", ("upper_offset", "spine_wave", "shoulder_drag", "pelvis_drag")),
 )
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {
@@ -148,6 +149,21 @@ LABELS = {
                                     "swing - arms that hang still in the walk swing too: the left forward as the "
                                     "right foot lands (on the walk's own swing where it has one). Hands holding "
                                     "one thing together hold it. Sided"),
+    "upper_offset": ("Upper body offset, fr", "The upper body (from the first spine joint up: spine, neck, head, "
+                                              "arms) runs this many frames behind the legs and the pelvis - "
+                                              "negative: ahead of them. The pelvis's own twist stays with the "
+                                              "pelvis"),
+    "spine_wave": ("Spine wave, fr", "Each spine and neck joint's own motion runs late by its share of the chain - "
+                                     "the lowest a little, the top of the neck this many frames: a wave up the "
+                                     "back (the head keeps its gaze)"),
+    "shoulder_drag": ("Shoulder drag, fr", "The shoulders follow the chest with weight: each clavicle turns "
+                                           "through a spring that feels the chest's motion - about this many "
+                                           "frames late, overshooting as Arm bounce says; the arms hang from them. "
+                                           "0: the shoulders as the walk turns them"),
+    "pelvis_drag": ("Pelvis drag, fr", "The hips turn with weight: the pelvis's twist and tilts through a spring "
+                                       "about this many frames late (overshooting as Torso bounce says); the legs "
+                                       "reach from the late hips, the feet stay planted and the lower back keeps "
+                                       "the chest where it was"),
     "weight": ("Weight", "Heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
     "balance": ("Balance", "How far the centre of mass follows the feet like a pendulum: wider feet, a "
                            "slower step, a crouch sway it more; a leaning pose takes the hips back over the "
