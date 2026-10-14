@@ -456,6 +456,11 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
     if pose is not None:
         text += " | pose %s x%.2f%s" % (pose_name, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
+    matched = result.info.get("leg_match") or {}
+    if pose is not None and matched.get("on"):
+        text += " | legs matched x%.2f" % matched["keep"]
+        if abs(matched.get("hips_deg", 0.0)) >= 1.0:
+            text += ", hips %.0f deg to the spine" % abs(matched["hips_deg"])
     if max(info["drop"]) > 0.05:
         text += " | pelvis down %.1f cm where the legs fall short" % max(info["drop"])
     if result.info["lowered"] > 0.05:

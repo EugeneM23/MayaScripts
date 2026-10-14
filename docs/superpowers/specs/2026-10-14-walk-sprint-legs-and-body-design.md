@@ -68,7 +68,8 @@ Two bodies on top of the frames, before the arms (the arms then hang on the movi
 - **The head**: its world rotation follows what the frames give it - the walk keeps the head's world turn, its
   gaze - through its own spring, feeling the first neck joint's acceleration (the head's mass point a little
   above the head joint); the neck takes the difference (0.3, 0.55, the head 1). Knob **Head drag** (frames,
-  default 2.5), the bounce Torso bounce's.
+  default 2), the bounce Torso bounce's; its inertia x0.3 (a head is held: at 1 a sprint's steps bobbed it 12 deg
+  off its gaze).
 - Same machinery as the arms (`_limb_motion`): world-frame spring (`w0 = 2 zeta / drag`, `zeta = 1 - 0.75
   bounce`), integrated periodic, the seam spread. A spring is also a low-pass filter: the step's corners go.
 - Balance carries the pelvis with the bodies moving (they move the centre of mass).
@@ -93,3 +94,35 @@ Two bodies on top of the frames, before the arms (the arms then hang on the movi
 
 The sprint's forward lean under a pose (the pose's upright torso replaces the walk's mean spine, the lean with
 it); a pose's split stance; the trunk's translation (it bends, it does not slide); inertia on the legs.
+
+## Addendum: Gait lean, and the springs tuned on the sprint (the same day)
+
+**Gait lean** - the animator, mid-build: «у соседнего чата получился адекватный результат слияния позы и анимации,
+может ты можешь взять у него какие-то идеи?» (the stop builder, `2026-10-14-pose-on-clip-design.md`). Read off his
+three stop variants in the animator's scene (port 7001, getAttr only) and his code: his torso is `T . exp(motion .
+w)` with `w` the clip's motion over its STILL reference (the idle at the end), so a sprint's lean rides on the pose;
+here the pose replaced the walk's MEAN, and the sprint's 32 deg lean went with it - the sword ran upright (7 deg).
+A cycle has no idle; the skeleton's rest stands for it:
+- `pose.prepare` hands `gait_lean` - per torso bone (pelvis, spine, neck, head) the walk's mean world pitch about its
+  side axis over the rest stood on the walk's root - and `lean_room`, his rule: `(90 - the pose's trunk lean) / (90 -
+  the rest's)` (the sword 0.88, the goblin 0.38);
+- the model turns each torso bone the pose replaces forward by it (`leaned_pose`, after `matched_pose`): a forward
+  pitch x the room, a backward one as it is; a pose without its pelvis stands on the walk's (already leaning) and
+  its spine takes only its own lean over it. Knob **Gait lean** (0..1, default 1, Chest).
+- On the sprint the sword's trunk leans 38.5 deg (the clip 31.8). The 3D lean of a turned chest foreshortens its turn
+  seen from above (the shoulders 25 deg against the hips, the pose's 36).
+
+His legs needed nothing from here: his knee turn is read against the clip's own idle bends (-18 deg on the sword's
+knees), not against the run; he took the speed fade as a point to raise with the animator.
+
+**The springs on the sprint** (measured with `scratchpad` runs, the defaults then chosen):
+- the trunk's inertia barely matters (chest jitter 0.98 at 1, 1.02 at 0); its lag is the spring's - 2 frames kept 83 %
+  of the sprint chest's motion (95 % of a walk's) and trailed it 15.5 deg; **1.5 keeps 89 %**, jitter 1.53 -> 1.09;
+- the head at inertia 1 bobbed 12 deg off its gaze, noisier than the clip (1.23 against 0.96: the steps drive it near
+  its spring's frequency); a head is held - **HEAD_INERTIA 0.3**: 0.45 deg, 8 deg off its gaze at most;
+- **Head drag 2**.
+
+Proof: `verify_walk_sprint.py` **12/12** (the copy dropped, no frame still; the arms' worst jitter 3.3 deg against the
+old reading's 104.9; the knees 10.1 / 8.7 cm aside at most - the old 31.7; the hips 85.2 deg against the clip's
+85.3, the shoulders 25.4 deg turned against them; the lean 38.5; chest 1.09 against the frames' 1.53, head 0.45
+against the clip's 0.96; the chest trails up to 12.4 deg; bones and grip exact).

@@ -9804,6 +9804,63 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      (Balance's pendulum, the arms' drag in frames, Foot placement's frame all change with it), so 8x was
      another walk. Judge the keys the scene gets.
 
+**…on a sprint under a side-on pose: Leg match, Gait lean, the trunk and the head on springs** (2026-10-14, the
+animator in a second Maya on port 7002 with `AGS_Sprint` (Unreal's Game Animation Sample) under `two_handed_sword`:
+«ноги сопоставляются между анимацией и позой плохо ... волшебная палочка ... одну настройку», «шум в верхней части
+туловища ... красивый и аккуратный захлест», «захлесты головы строятся как-то странно ... более физичный»; asked: the
+hips face the run while the shoulders keep the pose's turn; the physics on by default, Overlap for the arms only).
+Spec `docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md` (read its addendum).
+- **Measured first** (the scene only read; the walk and the pose in mayapy):
+  - the saved `AGS_Sprint` had frame 61 a copy of 60 (trap 241): the cycle stood still a frame and every place
+    carried a 23 cm sawtooth, which the arms', the grip's and Balance's springs took as a jolt - the forearms flipped
+    105-128 deg at the seam, the arms straight at frame 0. This was most of the "noise";
+  - the pose stands side-on (its hips 36.5 deg right of the walk's); the knees and toes were read against the RUN
+    (the right knee -63 deg) and each bend plane turned about the hip-ankle line on every frame - in the sprint's
+    swing the bent knee went sideways (31.7 cm aside of the hip);
+  - `_smooth_accel`'s 6 harmonics a stride reached a 2.5-frame period on a 15-frame stride.
+- **`trimmed(clip)`** at analysis: a last frame equal to the one before (or a first to the one after) is dropped
+  (`Walk.dropped`, said in the summary).
+- **Leg match** (`leg_match`, 0..1, default 1, Legs, before Leg turn; `matched_pose`): the pose's turn about up
+  (`hips_yaw`, from `pose.prepare`: its hip line against the walk's) comes off the pelvis and the lumbar spine (the
+  counter joints) takes it back - the hips face the walk, the chest keeps the pose's facing; the knees' and toes'
+  turns re-read against the pose's own hips, outward, only their symmetric splay kept over the walk's own, x **keep
+  = 1 / (1 + Fr)**, `Fr = v^2 / (g L)` of the new cycle (`gait_keep`: a walk 0.75, the sprint 0.15); the width x
+  keep. 0 is the old reading. Status: «legs matched x0.15, hips 36 deg to the spine».
+- **Gait lean** (`gait_lean`, 0..1, default 1, Chest; `leaned_pose`) - the stop builder's idea (the peer session
+  "Билдер для стартов и стопов", whose `poseclip` runs the clip's motion over its still reference on the pose): a
+  pose's torso replaced the walk's mean and the sprint's 32 deg lean with it. `prepare` hands each torso bone's mean
+  forward pitch over the skeleton's rest (`gait_lean`) and `lean_room` = (90 - the pose's trunk lean) / (90 - the
+  rest's); the model turns the pose's bones forward by it. The sword now leans 38.5 deg.
+- **The trunk and the head on springs** (`_body_dynamics`, before `_arm_dynamics`, in Balance's rounds too; knobs
+  **Torso drag** 1.5, **Torso bounce** 0.2, **Head drag** 2.0, Chest): the chest's world turn follows the frames'
+  through `_limb_motion`'s spring (`_body_motion`), feeling the first spine joint's acceleration on the upper body's
+  centre of mass, spread up the spine (1/N ... 1); the head keeps its gaze through its own spring on the neck
+  (inertia `HEAD_INERTIA` 0.3, trap 242), the neck taking 0.3 / 0.55 of the difference; upper arms the frames hang in
+  the world keep hanging there (`_reattach(held=)`). `ACCEL_HZ` 8 caps every pivot acceleration (the arms' too).
+  Overlap's LAG shares: the arms only. `own_knobs()` give the walk back (both drags 0).
+- Proof: `verify_walk_sprint.py` **12/12 standalone** - the arms' worst jitter 3.3 deg (the old reading 104.9), the
+  knees 10.1 / 8.7 cm aside at most (31.7), the hips 85.2 deg (the clip 85.3, the old 48.7), the shoulders 25.4 deg
+  turned against them, the lean 38.5 (the clip 31.8, the old 6.9), chest jitter 1.09 (the frames 1.53), head 0.45
+  (the clip 0.96), bones and grip exact; picture `walkparam/walk_sprint.png`. 202 walk unit tests (Leg match, Gait
+  lean, BodyDynamics, Trim; tests of other features name the knobs they hold still), 6390 in the repo;
+  `verify_walk.py` **79/79** again (five gates now name `leg_match` 0 or the drags 0: they test the old reading of a
+  pose's legs and the chest knobs' exact degrees).
+
+241. **An exported clip can repeat its last frame, and a cycle reader takes it as a frame of motion.** AGS_Sprint
+     was saved 0..61 with 61 = 60 (an FBX's closing frame keyed again); the loop check passed (61 = 0 + travel), so
+     the model read a 61-frame cycle that stood still one frame, and every joint's place against the straight travel
+     line carried a sawtooth one frame of travel high (23 cm on a sprint). Nothing kinematic showed it; every spring
+     downstream (the arms, the grip, Balance's pendulum - all fed by FFTs and accelerations of those paths) rang
+     with it, and the animator saw "noise in the upper body". Drop a frame equal to its neighbour before reading a
+     cycle (the stop builder's clip had the same repeat).
+242. **A spring that feels its pivot's acceleration near the drive's own frequency bobs instead of calming.** The
+     head at inertia 1 on a sprint (steps at 4 Hz, the spring's own ~3 Hz) swung 12 deg off its gaze and came out
+     noisier than the clip; the trunk's inertia changed nothing (its lag is the spring's). A held body part (a head
+     stabilised by the neck) takes a fraction of the inertia; measure the result's jitter against the source's, not
+     only against the frames'.
+243. **A drag in FRAMES costs a fast motion more.** Torso drag 2 kept 95 % of a walk chest's motion and 83 % of the
+     sprint's, trailing it 15.5 deg. Pick a drag on the fastest gait it will meet.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

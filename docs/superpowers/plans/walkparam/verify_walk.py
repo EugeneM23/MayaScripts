@@ -391,7 +391,8 @@ try:
         cycle = range(start, start + P + 1)
 
         def posed(amount):
-            result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount, dict(OWN, pose=amount),
+            result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount,
+                                      dict(OWN, pose=amount, leg_match=0.0),
                                       expect_scale=1.0, pose="goblin", parts=("torso", "pelvis", "knees"))
             w = worlds([path(c) for c in ("pelvis", "neck_01", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
                                           "foot_r", "root")], cycle)
@@ -441,7 +442,7 @@ try:
         path = lambda c: mb[leaf_of(mb, c)]["path"]
         cycle = range(start, start + P + 1)
         held_result = check(manny, "Manny under the two-handed sword x1, every part (the walk's own feet)",
-                            {"pose": 1.0, "foot_placement": 0.0},
+                            {"pose": 1.0, "foot_placement": 0.0, "leg_match": 0.0},
                             expect_scale=1.0, pose="two_handed_sword")[0]
         names_ = ("hand_l", "hand_r", "weapon_r", "weapon_l", "pelvis", "neck_01", "foot_l", "foot_r", "ball_l",
                   "ball_r", "root")
@@ -678,7 +679,7 @@ try:
     runs = {}
     for label, given in (("own", OWN), ("defaults", None),     # "more" keeps the walk's own chest (Chest twist, sway)
                          ("more", {"pelvis_twist": 9.0, "pelvis_list": 7.0, "chest_twist": OWN["chest_twist"],
-                                   "chest_sway": OWN["chest_sway"]})):
+                                   "chest_sway": OWN["chest_sway"], "torso_drag": 0.0, "head_drag": 0.0})):
         result, info, got = check(manny, "Manny, the pelvis - %s" % label, given, expect_scale=1.0)
         runs[label] = keyed_model(manny, result.frames)
     fit = dict((label, walk.pelvis_fit(m)) for label, m in runs.items())
@@ -697,7 +698,8 @@ try:
     if os.path.exists(POSE_FILE):
         prepared = sw.prepared_pose(name, "goblin")
         result, info, got = check(manny, "Manny, the goblin x1 every part, Stance 0.35 (the walk's own feet)",
-                                  {"pose": 1.0, "stance": 0.35, "foot_placement": 0.0}, expect_scale=1.0,
+                                  {"pose": 1.0, "stance": 0.35, "foot_placement": 0.0, "leg_match": 0.0},
+                                  expect_scale=1.0,
                                   pose="goblin")
         gob = keyed_model(manny, result.frames)
         ml, mr = (int(round(walk.feet[x].mid)) % P for x in "lr")
@@ -1091,7 +1093,8 @@ try:
         c, s_ = 2.0 / n * float(np.dot(x, np.cos(2 * math.pi * t))), 2.0 / n * float(np.dot(x, np.sin(2 * math.pi * t)))
         return math.hypot(c, s_), math.atan2(s_, c) / (2.0 * math.pi) * n
 
-    chest_result = sw.apply(manny, name, {"chest_twist": 10.0, "chest_sway": 7.0, "arm_drag": 0.0})[0]
+    chest_result = sw.apply(manny, name, {"chest_twist": 10.0, "chest_sway": 7.0, "arm_drag": 0.0,
+                                          "torso_drag": 0.0, "head_drag": 0.0})[0]      # the frames' turn
     keyed = keyed_model(manny, chest_result.frames)
     got = walk.chest_fit(keyed)
     want = (10.0 * walk.twist_gain, 7.0)
