@@ -267,6 +267,55 @@ def main():
     gate("the window: Delete copy", not pcm.copies(cmds.ls(root, uuid=True)[0], tool=True) and
          len(copy_of(root)) == 2, "%s; the script's copies stay: %d" % (note, len(copy_of(root))))
 
+    # 6. two poses, overlap, the stop starting on a cycle (a Walk Builder run keyed onto a second skeleton)
+    import gzip
+    import json as _json
+    from maya_scenesetup import catalog, character
+    before_tops = set(cmds.ls(assemblies=True, long=True))
+    character.add_character(catalog.character_for("Manny", "skeleton"))
+    cycle_top = [t for t in cmds.ls(assemblies=True, long=True) if t not in before_tops][0]
+    cycle_root = [j for j in cmds.listRelatives(cycle_top, allDescendents=True, type="joint", fullPath=True)
+                  if not cmds.listRelatives(j, parent=True, type="joint")][0]
+    walk = _json.load(gzip.open(os.path.join(WALKS, "RunFast.walk.gz"), "rt"))
+    cw = np.array(walk["worlds"]).reshape(len(walk["names"]), -1, 4, 4)
+    targets = pcm._joints(cycle_root)
+    rows = [walk["names"].index(pcm._leaf(p)) for p in targets if pcm._leaf(p) in walk["names"]]
+    paths = [p for p in targets if pcm._leaf(p) in walk["names"]]
+    pcm.write_worlds(paths, cw[rows], 0)
+    cmds.select(clear=True)
+    tool.session(node=root, reload=True)
+    tool.use_cycle(cycle_root)
+    text = tool.run("goblin", model.knobs(), 150.0, start="two_handed_sword")
+    info = tool._state()["last"]
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    played = copy_clip(standing[0]).worlds.copy()
+    played[:, :, 3, :3] -= 150.0 * right
+    session = tool.session()
+    cyc = session.cycle
+    aligned = cyc.sample(info["cycle"]["phase"]) @ info["cycle"]["place"]
+    pairs = [(j, cyc.clip.index[n]) for j, n in enumerate(source.names) if n in cyc.clip.index]
+    first = max(float(np.abs(played[j, 0] - aligned[jc]).max()) for j, jc in pairs)
+    gate("the stop's first frame is the cycle's frame (placed)", first < 1e-3,
+         "%.2e at the cycle's frame %.2f" % (first, info["cycle"]["phase"]))
+    slide = 0.0
+    for s_ in model.SIDES:
+        j = ix["foot_" + s_]
+        for c0, c1 in a.feet[s_]["contacts"]:
+            for f in range(max(c0, 0) + 1, min(c1, 10) + 1):
+                moved = float(np.linalg.norm(played[j, f, 3, :3] - played[j, f - 1, 3, :3]))
+                own = float(np.linalg.norm(source.worlds[j, f, 3, :3] - source.worlds[j, f - 1, 3, :3]))
+                slide = max(slide, moved - own)
+    gate("into the stop from the cycle: no planted foot slides", slide < 0.2, "%.3f cm a frame over the clip's" % slide)
+    texts = [cliplabel.text_of(t) for t in cmds.listRelatives(standing[0], allDescendents=True, type="transform",
+                                                                fullPath=True) or []
+             if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True)]
+    springs = info.get("overlap") or {}
+    gate("two poses and overlap", info.get("two_poses") and springs.get("arms", 0.0) > 0.0 and
+         texts == ["M_Neutral_Sprint_Stop_F_Lfoot + two_handed_sword > goblin"],
+         "%s; overlap trunk %.1f, head %.1f deg, hands %.1f cm" % (texts, springs.get("torso", 0.0),
+                                                                  springs.get("head", 0.0), springs.get("arms", 0.0)))
+    print("   " + text)
+
     if OUT:
         np.savez(OUT, clip=source.worlds, goblin=results["goblin"], sword=results["two_handed_sword"],
                  names=np.array(source.names), parents=np.array(source.parents), reference=np.array(a.reference),

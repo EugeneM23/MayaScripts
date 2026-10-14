@@ -402,26 +402,121 @@ class Rules(unittest.TestCase):
         pose = pc.prepare(a, statics_of(clip), pose_from(bent, bent.F - 1))
         plan = pc._Plan(a, pose, pc.knobs())
         expect = (pc.LEAN_LIMIT - pose["lean"]) / (pc.LEAN_LIMIT - a.lean_ref)
-        self.assertAlmostEqual(plan.forward, expect, places=9)
-        self.assertLess(plan.forward, 1.0)
+        self.assertAlmostEqual(plan.forward(0), expect, places=9)
+        self.assertLess(plan.forward(0), 1.0)
         none = pc._Plan(a, pose, pc.knobs_from(0.0))
-        self.assertEqual(none.forward, 1.0)
+        self.assertEqual(none.forward(0), 1.0)
 
     def test_a_backward_lean_is_not_scaled(self):
         clip = synthetic_stop()
         a = pc.Analysis(clip)
         bent = synthetic_stop(lean_end=0.6)
         pose = pc.prepare(a, statics_of(clip), pose_from(bent, bent.F - 1))
-        result = pc.evaluate(a, pose, 1.0, 1.0)
+        result = pc.evaluate(a, pose, k=pc.knobs_from(1.0))
         j = clip.index["spine_01"]
         # the synthetic clip leans spine_01 forward (+ about its local X, which in Manny's bind is the world's -X):
         # whatever its sign, the posed spine's deviation from its target is the clip's, scaled by 1 or by `forward`
         plan = pc._Plan(a, pose, pc.knobs())
         for f in range(clip.F):
             w = pc.log_rot(a.rel_ref[j].T @ a.rel[j, f])
-            got = pc.log_rot(plan.target_rel[j].T @ (result.worlds[j, f, :3, :3] @ a.heading[f].T))
-            k = plan.forward if w[0] > 0.0 else 1.0
+            got = pc.log_rot(plan.final.rel[j].T @ (result.worlds[j, f, :3, :3] @ a.heading[f].T))
+            k = plan.forward(f) if w[0] > 0.0 else 1.0
             np.testing.assert_allclose(got, [w[0] * k, w[1], w[2]], atol=1e-6, err_msg="frame %d" % f)
+
+
+class TwoPoses(unittest.TestCase):
+    """A start pose on the run, the final as the body stops (spec addendum 3)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.clip = synthetic_stop()
+        cls.a = pc.Analysis(cls.clip)
+        statics = statics_of(cls.clip)
+        cls.low = pc.prepare(cls.a, statics, pose_from(synthetic_stop(drop_end=12.0, lean_end=0.4), 49))
+        cls.wide = pc.prepare(cls.a, statics, pose_from(synthetic_stop(wide=8.0), 49))
+
+    def test_the_same_pose_twice_is_one_pose(self):
+        k = pc.knobs(torso_drag=0, head_drag=0, arm_drag=0, from_cycle=0)
+        one = pc.evaluate(self.a, self.low, k=k)
+        two = pc.evaluate(self.a, self.low, k=k, start=self.low)
+        np.testing.assert_allclose(two.worlds, one.worlds, atol=1e-9)
+
+    def test_the_targets_go_from_the_start_to_the_final_as_the_body_stops(self):
+        k = pc.knobs(final_speed=60.0)
+        plan = pc._Plan(self.a, self.low, k, start=self.wide)
+        e = plan.e
+        self.assertEqual(float(e[-1]), 1.0)
+        moving = [f for f in range(self.clip.F) if 0.05 < e[f] < 0.95]
+        self.assertTrue(moving, "some frames between the two poses")
+        spine = self.clip.index["spine_03"]
+        for f in moving + [self.clip.F - 1]:
+            np.testing.assert_allclose(plan.rel(spine, f), pc.slerp(plan.start.rel[spine], plan.final.rel[spine], e[f]),
+                                       atol=1e-12)
+            self.assertAlmostEqual(plan.height(f), (1 - e[f]) * plan.start.height + e[f] * plan.final.height, places=9)
+
+    def test_with_no_start_pose_every_frame_is_the_final(self):
+        plan = pc._Plan(self.a, self.low, pc.knobs())
+        self.assertTrue(np.all(plan.e == 1.0))
+        self.assertIsNone(plan.start)
+
+
+class Overlap(unittest.TestCase):
+    """Walk Builder's springs, forward from the first frame at rest."""
+
+    def test_a_still_clip_stays_still(self):
+        clip = synthetic_stop()
+        still = pc.Clip(clip.names, clip.parents, clip.worlds[:, 32:], 30.0, "still")
+        a = pc.Analysis(still)
+        out, info = pc.overlap(a, still.worlds, pc.knobs())
+        np.testing.assert_allclose(out, still.worlds, atol=1e-4)
+
+    def test_the_springs_trail_keep_the_bones_and_start_on_the_frames(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        out, info = pc.overlap(a, clip.worlds, pc.knobs(torso_drag=3.0, arm_drag=3.0, head_drag=3.0))
+        np.testing.assert_allclose(out[:, 0], clip.worlds[:, 0], atol=1e-4)
+        self.assertGreater(info["arms"], 0.5)
+        self.assertGreater(info["torso"], 0.05)
+        ix = clip.index
+        for child, parent in (("lowerarm_l", "upperarm_l"), ("hand_l", "lowerarm_l"), ("spine_04", "spine_03"),
+                              ("head", "neck_02")):
+            new = np.linalg.norm(out[ix[child], :, 3, :3] - out[ix[parent], :, 3, :3], axis=1)
+            old = np.linalg.norm(clip.worlds[ix[child], :, 3, :3] - clip.worlds[ix[parent], :, 3, :3], axis=1)
+            np.testing.assert_allclose(new, old, atol=1e-4, err_msg=child)
+        # the legs are the frames' (the springs are the trunk's, the head's and the arms')
+        for name in ("thigh_l", "calf_r", "foot_l"):
+            np.testing.assert_allclose(out[ix[name]], clip.worlds[ix[name]], atol=1e-9)
+
+
+class CycleStart(unittest.TestCase):
+    """The stop starting exactly on a frame of a cycle."""
+
+    def test_a_cycle_that_is_the_stop_moved_aside_lands_on_the_stop(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        moved = clip.worlds[:, :20].copy()
+        moved[:, :, 3, :3] += np.array([40.0, 0.0, -25.0])
+        cycle = pc.Cycle(pc.Clip(clip.names, clip.parents, moved, 30.0, "cycle"))
+        out, info = pc.start_on_cycle(a, clip.worlds, cycle, pc.knobs(from_cycle=8))
+        self.assertAlmostEqual(info["phase"], 0.0)
+        np.testing.assert_allclose(out, clip.worlds, atol=1e-5)
+
+    def test_the_first_frame_is_the_cycles_and_the_rest_the_stops(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        other = synthetic_stop(lean_end=0.3, drop_end=5.0)
+        cycle = pc.Cycle(pc.Clip(other.names, other.parents, other.worlds[:, 30:50], 30.0, "cycle"))
+        out, info = pc.start_on_cycle(a, clip.worlds, cycle, pc.knobs(from_cycle=6))
+        aligned = cycle.sample(info["phase"]) @ info["place"]
+        np.testing.assert_allclose(out[:, 0], aligned, atol=1e-6)
+        np.testing.assert_allclose(out[:, 6:], clip.worlds[:, 6:], atol=1e-12)
+        self.assertEqual(info["frames"], 6)
+
+    def test_a_repeated_end_frame_is_dropped(self):
+        clip = synthetic_stop()
+        frames = np.concatenate([clip.worlds[:, :20], clip.worlds[:, 19:20]], axis=1)
+        cycle = pc.Cycle(pc.Clip(clip.names, clip.parents, frames, 30.0, "cycle"))
+        self.assertEqual(cycle.frames.shape[1], 20)
 
 
 if __name__ == "__main__":

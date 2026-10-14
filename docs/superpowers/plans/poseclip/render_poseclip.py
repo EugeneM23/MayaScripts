@@ -12,9 +12,10 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
-FRAMES = (0, 10, 18, 22, 26, 32, 42, 56, 120)
-ROWS = (("clip", "the clip", (150, 150, 160)), ("goblin", "goblin", (224, 122, 54)),
-        ("sword", "two-handed sword", (90, 160, 230)))
+FRAMES = tuple(int(f) for f in os.environ.get("POSECLIP_FRAMES", "0,10,18,22,26,32,42,56,120").split(","))
+LABELS = os.environ.get("POSECLIP_LABELS", "the clip,goblin,two-handed sword").split(",")
+ROWS = (("clip", LABELS[0], (150, 150, 160)), ("goblin", LABELS[1], (224, 122, 54)),
+        ("sword", LABELS[2], (90, 160, 230)))
 HELPERS = ("ik_", "camera_", "weapon_", "interaction", "center_of_mass", "attach", "poi", "props_")
 CELL, PAD, SCALE = 190, 26, 0.95
 

@@ -503,8 +503,33 @@ class Session(object):
             self.poses[name] = (pose_name, model.prepare(self.analysis, self.statics, bones))
         return self.poses[name]
 
-    def evaluate(self, pose, k):
-        return model.evaluate(self.analysis, self.pose(pose)[1], k=k)
+    def evaluate(self, pose, k, start=None):
+        """The final pose `pose` (and the start pose `start`, None: the final all along) with the knobs `k`, from
+        the cycle when one is set."""
+        begin = self.pose(start)[1] if start else None
+        return model.evaluate(self.analysis, self.pose(pose)[1], k=k, start=begin, cycle=self.cycle)
+
+    # -- the cycle the stop starts on --
+
+    cycle = None
+    cycle_name = ""
+    cycle_uuid = None
+
+    def use_cycle(self, node):
+        """The looping clip on the skeleton `node` belongs to (taken as it is - a copy of ours too) as the cycle
+        the stop starts on."""
+        root = top_joint(node)
+        if _cmds().ls(root, uuid=True)[0] == self.uuid:
+            raise Refusal("that is the stop's own character - select the character carrying the cycle")
+        clip, _start, _joints_ = read_clip(root)
+        self.cycle = model.Cycle(clip)
+        self.cycle_name = "%s on %s (%d frames a loop at %g fps)" % (
+            clip.name, _short(_top_node(root)), self.cycle.period, clip.fps)
+        self.cycle_uuid = _cmds().ls(root, uuid=True)[0]
+        return self.cycle_name
+
+    def clear_cycle(self):
+        self.cycle, self.cycle_name, self.cycle_uuid = None, "", None
 
     def describe(self):
         a = self.analysis
@@ -516,7 +541,7 @@ class Session(object):
         return "%s on %s: %d frames from %d | reference %s | contacts %s" % (
             self.clip.name, _short(_top_node(self.root)), self.clip.F, self.start, kind, contacts)
 
-    def key(self, result, pose_name, k, offset, tool=False):
+    def key(self, result, pose_name, k, offset, tool=False, start_name=None):
         """The result keyed onto a copy `offset` cm to the character's right: the window's own copy (re-keyed
         in place, its label naming the pose), or - from a script - this pose's copy (made afresh). One undo
         step. Returns (the copy, how many curves, whether an older copy was replaced)."""
@@ -550,22 +575,24 @@ class Session(object):
                     memo = json.loads(cmds.getAttr(copy + "." + MARK) or "{}")
                 except ValueError:
                     memo = {}
-            memo.update({"source": self.uuid, "pose": pose_name, "tool": bool(tool), "knobs": dict(k),
-                         "offset": offset, "reference": list(self.analysis.reference), "start": self.start})
+            memo.update({"source": self.uuid, "pose": pose_name, "start_pose": start_name or "", "tool": bool(tool),
+                         "knobs": dict(k), "offset": offset, "reference": list(self.analysis.reference),
+                         "start": self.start, "cycle": self.cycle_uuid or ""})
             if made is not None:
                 memo["nodes"] = cmds.ls(made, uuid=True) or []
             cmds.setAttr(copy + "." + MARK, json.dumps(memo), type="string")
-            _label(copy, "%s + %s" % (self.clip.name, pose_name))
+            _label(copy, "%s + %s" % (self.clip.name, ("%s > %s" % (start_name, pose_name)) if start_name else pose_name))
         return copy, curves, removed
 
 
-def status(session, result, pose_name, copy, removed, seconds):
+def status(session, result, pose_name, copy, removed, seconds, start_name=None):
     """The line a run leaves: the pose, the copy, what the rules did."""
     info = result.info
     a = session.analysis
     r0, r1 = a.reference
+    poses = ("%s > %s" % (start_name, pose_name)) if start_name else pose_name
     text = "%s on %s: %s | reference %d-%d%s | contacts moved L %d, R %d%s | pelvis carried up to %.1f cm" % (
-        pose_name, session.clip.name, _short(copy), session.start + r0, session.start + r1,
+        poses, session.clip.name, _short(copy), session.start + r0, session.start + r1,
         "" if a.still else " (a cycle)", info["moved"]["l"], info["moved"]["r"],
         ", the last onto the pose's stance" if any(v is not None for v in info["final"].values()) else "",
         info["carry"])
@@ -578,6 +605,14 @@ def status(session, result, pose_name, copy, removed, seconds):
         text += " | a planted foot falls %.1f cm short" % info["short"]
     if info["grip"]:
         text += " | two-handed grip held"
+    springs = info.get("overlap") or {}
+    if springs:
+        text += " | overlap: trunk %.0f, head %.0f deg off their frames, hands %.0f cm" % (
+            springs.get("torso", 0.0), springs.get("head", 0.0), springs.get("arms", 0.0))
+    cyc = info.get("cycle") or {}
+    if cyc:
+        text += " | starts on the cycle's frame %.2f (%s), into the stop over %d frames" % (
+            cyc["phase"], session.cycle_name.split(" (")[0], cyc["frames"])
     if removed:
         text += " | the previous copy replaced"
     if session.note:

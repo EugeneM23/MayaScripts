@@ -10010,6 +10010,17 @@ place when let go (one undo step each). The clip is read once a session (`posecl
 move it (0.3-0.8 s, 3-10x faster, the same result to 1e-13); a re-key 1.4 s standalone. `verify_poseclip.py`
 22/22. Opened in the animator's Maya over 7001.
 
+**…overlap, a start and a final pose, the stop starting on a cycle** (the same day: «такую же оверлеп систему как и
+walk builder ... стартовую позу и финальную ... начинал анимацию остановки в цикле а заканчивал уже в указанной позе»;
+spec addendum 3). Start pose on the run, the final as the body stops (`final_speed`, the stance's stillness);
+Walk Builder's trunk / head / arm springs (`torso_drag`/`_bounce`, `head_drag`, `arm_drag`/`_bounce`, its
+defaults) run forward from frame 0 at rest, the pivots' accelerations off paths blurred over 2 frames; **Use
+selected as cycle** reads a looping clip (a Walk Builder skeleton, any loop; period from the closing frame, a
+repeated end frame dropped, any frame rate): the phase whose first frames match the stop's best, placed by the
+stop's planted foot and its root's travel, frame 0 the cycle's (4e-10 cm), `from_cycle` frames into the stop with
+a foot the stop has planted held on its place. `knobs_from` (the script's `apply`) keeps the overlap off.
+`verify_poseclip.py` 25/25, `tests/test_poseclip.py` 36.
+
 240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.

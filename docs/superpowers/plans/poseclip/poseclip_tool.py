@@ -30,9 +30,14 @@ GROUPS = (
     ("Clip motion", (("motion_torso", "Torso"), ("motion_arms", "Arms"))),
     ("Pelvis, cm", (("pelvis_height", "Height"), ("pelvis_forward", "Forward"))),
     ("Stance and lean", (("width", "Width x"), ("stance_speed", "Stance at, cm/s"), ("lean_limit", "Lean limit, deg"))),
+    ("Start and final", (("final_speed", "Final pose at, cm/s"), ("from_cycle", "From the cycle, fr"))),
+    ("Overlap", (("torso_drag", "Torso drag, fr"), ("torso_bounce", "Torso bounce"), ("head_drag", "Head drag, fr"),
+                 ("arm_drag", "Arm drag, fr"), ("arm_bounce", "Arm bounce"))),
 )
 OFFSET, OFFSET_DEFAULT, OFFSET_RANGE = "offset", 150.0, (-400.0, 400.0)
 CLIP_TEXT, POSE_MENU, STATUS = PREFIX + "clip", PREFIX + "pose", PREFIX + "status"
+START_MENU, CYCLE_TEXT = PREFIX + "startPose", PREFIX + "cycle"
+SAME = "(same as final)"
 Refusal = model.Refusal
 
 
@@ -76,14 +81,34 @@ def session(node=None, reload=False):
     return current
 
 
-def run(pose, k, offset=OFFSET_DEFAULT, node=None):
-    """The pose `pose` with the knobs `k` onto the window's copy. Returns the status line."""
+def run(pose, k, offset=OFFSET_DEFAULT, node=None, start=None):
+    """The final pose `pose` (the start pose `start` on the run, None: the final all along) with the knobs `k`
+    onto the window's copy, from the session's cycle when one is set. Returns the status line."""
     started = time.time()
     current = session(node)
     pose_name = current.pose(pose)[0]
-    result = current.evaluate(pose, k)
-    copy, curves, removed = current.key(result, pose_name, k, offset, tool=True)
-    return scene.status(current, result, pose_name, copy, removed, time.time() - started)
+    start_name = current.pose(start)[0] if start else None
+    result = current.evaluate(pose, k, start)
+    copy, curves, removed = current.key(result, pose_name, k, offset, tool=True, start_name=start_name)
+    _state()["last"] = result.info
+    return scene.status(current, result, pose_name, copy, removed, time.time() - started, start_name)
+
+
+def use_cycle(node=None):
+    """The selected (or `node`'s) looping clip as the cycle the stop starts on."""
+    cmds = _cmds()
+    if node is None:
+        selection = cmds.ls(selection=True, long=True)
+        if not selection:
+            raise Refusal("select the character carrying the cycle (a bone, a mesh)")
+        node = selection[0]
+    return session().use_cycle(node)
+
+
+def clear_cycle():
+    current = _state().get("session")
+    if current is not None:
+        current.clear_cycle()
 
 
 def delete_copy():
@@ -169,13 +194,45 @@ def _guard(action):
     return call
 
 
+def _start():
+    cmds = _cmds()
+    value = cmds.optionMenu(START_MENU, query=True, value=True) if cmds.optionMenu(START_MENU, exists=True) else None
+    return None if not value or value.startswith("(") else value
+
+
+def _cycle_line():
+    cmds = _cmds()
+    current = _state().get("session")
+    text = ("Starts on " + current.cycle_name) if current is not None and current.cycle is not None else         "No cycle: the stop starts as the clip does. Select a looping clip and press Use selected as cycle."
+    if cmds.text(CYCLE_TEXT, exists=True):
+        cmds.text(CYCLE_TEXT, edit=True, label=text)
+
+
 def apply_now():
-    return run(_pose(), knobs_from_window(), _offset())
+    return run(_pose(), knobs_from_window(), _offset(), start=_start())
+
+
+def cycle_picked():
+    use_cycle()
+    _cycle_line()
+    return apply_now()
+
+
+def cycle_cleared():
+    clear_cycle()
+    _cycle_line()
+    return apply_now()
+
+
+def start_changed(*_):
+    _cmds().optionVar(stringValue=(PREFIX + "start", _cmds().optionMenu(START_MENU, query=True, value=True)))
+    return apply_now()
 
 
 def use_selected():
     session(reload=True)
     _header()
+    _cycle_line()
     return apply_now()
 
 
@@ -201,14 +258,16 @@ def reset():
 
 def refresh_poses():
     cmds = _cmds()
-    for item in cmds.optionMenu(POSE_MENU, query=True, itemListLong=True) or []:
-        cmds.deleteUI(item)
     names = scene.pose_names()
-    for name in names or ["(no poses)"]:
-        cmds.menuItem(label=name, parent=POSE_MENU)
-    wanted = cmds.optionVar(query=PREFIX + "pose") if cmds.optionVar(exists=PREFIX + "pose") else None
-    if wanted in names:
-        cmds.optionMenu(POSE_MENU, edit=True, value=wanted)
+    for menu, first, var in ((POSE_MENU, None, "pose"), (START_MENU, SAME, "start")):
+        for item in cmds.optionMenu(menu, query=True, itemListLong=True) or []:
+            cmds.deleteUI(item)
+        items = ([first] if first else []) + (names or ([] if first else ["(no poses)"]))
+        for name in items:
+            cmds.menuItem(label=name, parent=menu)
+        wanted = cmds.optionVar(query=PREFIX + var) if cmds.optionVar(exists=PREFIX + var) else None
+        if wanted in items:
+            cmds.optionMenu(menu, edit=True, value=wanted)
     return "%d poses in %s" % (len(names), scene.pose_folder())
 
 
@@ -226,10 +285,20 @@ def show():
     cmds.button(label="Use selected", height=28, annotation="Read the clip of the selected character "
                 "(a bone, a mesh, its label; nothing selected: the only keyed one)", command=_guard(use_selected))
     cmds.separator(height=6, style="none")
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnWidth3=(40, 260, 70))
-    cmds.text(label="Pose")
-    cmds.optionMenu(POSE_MENU, changeCommand=_guard(pose_changed))
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2, columnWidth3=(70, 230, 70))
+    cmds.text(label="Start pose", annotation="The pose on the run; the final comes in as the body stops")
+    cmds.optionMenu(START_MENU, changeCommand=_guard(start_changed))
     cmds.button(label="Refresh", command=_guard(refresh_poses), annotation="Read the poses folder again")
+    cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(70, 300))
+    cmds.text(label="Final pose")
+    cmds.optionMenu(POSE_MENU, changeCommand=_guard(pose_changed))
+    cmds.setParent("..")
+    cmds.text(CYCLE_TEXT, label="", align="left", wordWrap=True, height=36)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnWidth2=(200, 120))
+    cmds.button(label="Use selected as cycle", command=_guard(cycle_picked),
+                annotation="The stop starts exactly on a frame of the selected looping clip (Walk Builder's, any loop)")
+    cmds.button(label="Clear cycle", command=_guard(cycle_cleared))
     cmds.setParent("..")
     for title, rows in GROUPS:
         cmds.frameLayout(label=title, collapsable=True, marginWidth=4, marginHeight=4)
@@ -266,4 +335,5 @@ def show():
     except Refusal:
         pass
     _header()
+    _cycle_line()
     _say("Pick a pose and move a slider - the copy is re-keyed when you let go. Apply re-keys it now.")
