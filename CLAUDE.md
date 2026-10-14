@@ -9885,7 +9885,8 @@ the plugin module.
   - **Handheld**: Sway (a 3-octave fractal from 0.25 Hz x Speed; tilt 0.75, pan 1, roll x Roll), Jitter (deg)
     at **Jitter, Hz** (its own rate since the same evening, «как изменить его частоту?»; Speed is the body's),
     Drift (cm, a 2-octave fractal from 0.2 Hz; side 0.7, bob 1, push 0.4), Ease in and out. Presets Calm /
-    Handheld / Nervous (5.5 / 7 / 9.5 Hz).
+    Handheld / Nervous (2.71 / 7 / 9.5 Hz; Calm is the animator's own since 2026-10-14 - sway 2.57, speed
+    0.49, jitter 0.07, roll 0.38, drift 6.04 cm - and the one preset that sets Ease, to 0).
   - **The jitter and the rattle are a narrow-band `tremor`**: a sine at their Hz whose amplitude swells and
     fades (0.45 RMS) and whose phase wanders (0.6 rad), both at Hz/7 - a hand's tremor is a rhythm. Trap 238
     is why it is not the smooth noise: it shows 10 Hz as 10 swings a second at 30 fps (gated to 10 % up to

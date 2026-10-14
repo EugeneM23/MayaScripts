@@ -46,6 +46,12 @@ class SettingsTests(unittest.TestCase):
         s = cs.preset("impact", "Light", {"seed": 4, "length": 40.0, "direction": "Left"})
         self.assertEqual((s["strength"], s["seed"], s["length"], s["direction"]), (2.0, 4, 40.0, "Left"))
 
+    def test_calm_is_the_animators_own_and_names_its_ease(self):
+        s = cs.preset("handheld", "Calm", {"seed": 19520, "ease": 12.0, "pan_on": False})
+        got = tuple(s[k] for k in ("sway", "speed", "jitter", "jitter_hz", "roll", "drift", "ease"))
+        self.assertEqual(got, (2.57, 0.49, 0.07, 2.71, 0.38, 6.04, 0.0))
+        self.assertEqual((s["seed"], s["pan_on"]), (19520, False))
+
     def test_axes_and_decay(self):
         for mode in cs.MODES:
             s = cs.settings(mode)

@@ -56,7 +56,8 @@ DECAYS = ("Exponential", "Linear", "Smooth", "Sharp")
 AXES = (("tilt_on", "Tilt"), ("pan_on", "Pan"), ("roll_on", "Roll"))   # rotation about X, Y, Z
 PRESETS = {
     "handheld": (
-        ("Calm", {"sway": 0.4, "speed": 0.6, "jitter": 0.05, "jitter_hz": 5.5, "roll": 0.3, "drift": 0.6}),
+        ("Calm", {"sway": 2.57, "speed": 0.49, "jitter": 0.07, "jitter_hz": 2.71, "roll": 0.38, "drift": 6.04,
+                  "ease": 0.0}),
         ("Handheld", {"sway": 1.0, "speed": 1.0, "jitter": 0.12, "jitter_hz": 7.0, "roll": 0.4, "drift": 1.5}),
         ("Nervous", {"sway": 1.8, "speed": 1.8, "jitter": 0.3, "jitter_hz": 9.5, "roll": 0.5, "drift": 3.0}),
     ),
@@ -103,8 +104,8 @@ def settings(mode, given=None):
 
 
 def preset(mode, name, current=None):
-    """`current` with the preset's values on top: the seed, Ease, Length and the axes are kept, and an
-    impact's direction too unless the preset names one."""
+    """`current` with the preset's values on top: the seed, Length and the axes are kept, and Ease and an
+    impact's direction too unless the preset names them (Calm names Ease 0)."""
     values = dict(current or {})
     for label, table in PRESETS[mode]:
         if label == name:
