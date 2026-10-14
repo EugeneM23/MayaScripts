@@ -140,10 +140,8 @@ def run(pose, k, offset=OFFSET_DEFAULT, node=None, start=None):
     current = session(node)
     pose_name = current.pose(pose)[0]
     note = ""
-    if start == CYCLE and current.posture is None:      # no cycle read yet: the final pose all along, said so
-        start = None
-        note = " | NO CYCLE: the start pose is the final one until you select a looping clip and press Use " \
-               "selected as cycle"
+    if start == CYCLE and current.posture is None:      # no cycle read: the clip's own run, said so
+        note = " | no cycle loaded: the start is the clip's own run (Use selected as cycle takes a cycle's posture)"
     if start and start == pose:
         note += " | the start pose IS the final pose - pick another start to see one"
     start_name = current.start_label(start)
@@ -322,8 +320,9 @@ def _header():
 def _cycle_line():
     cmds = _cmds()
     current = _state().get("session")
-    text = ("Starts on " + current.cycle_name) if current is not None and current.cycle is not None else \
-        "No cycle: the stop starts as the clip does. Select a looping clip and press Use selected as cycle."
+    text = ("Starts on " + current.cycle_name) if current is not None and current.cycle is not None else (
+        "No cycle: the stop starts as the clip does, and (the cycle's posture) is the clip's own run. Select a "
+        "looping clip and press Use selected as cycle to take its posture.")
     if cmds.text(CYCLE_TEXT, exists=True):
         cmds.text(CYCLE_TEXT, edit=True, label=text)
 
@@ -390,8 +389,6 @@ def cycle_picked():
 def cycle_cleared():
     clear_cycle()
     _cycle_line()
-    if _start() == CYCLE:
-        _set_start(SAME)
     return apply_now()
 
 
@@ -407,11 +404,9 @@ def pose_changed(*_):
 
 
 def use_selected():
-    current = session(reload=True)
+    session(reload=True)
     _header()
     _cycle_line()
-    if _start() == CYCLE and current.cycle is None:
-        _set_start(SAME)
     return apply_now()
 
 
@@ -532,7 +527,7 @@ def show():
     cmds.separator(height=6, style="none")
     _pose_row("start", "Start pose", START_MENU, start_changed,
               "The pose on the run: (same as final) - the final all along; (the cycle's posture) - the posture "
-              "of the cycle the stop starts on; or a pose")
+              "of the cycle the stop starts on, or with no cycle loaded the clip's own run; or a pose")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(70, 300))
     cmds.text(label="")
     cmds.button(label="Refresh poses", height=22, command=_guard(refresh_poses),
@@ -544,7 +539,8 @@ def show():
     cmds.button(label="Use selected as cycle", command=_guard(cycle_picked),
                 annotation="The stop starts on a frame of the selected looping clip (Walk Builder's, any loop) - "
                            "and the start pose can be its posture")
-    cmds.button(label="Clear cycle", command=_guard(cycle_cleared))
+    cmds.button(label="Clear cycle", command=_guard(cycle_cleared),
+                annotation="The stop starts as the clip does again; (the cycle's posture) is then the clip's own run")
     cmds.setParent("..")
     cmds.separator(height=8, style="in")
     cmds.radioButtonGrp(SIDE_ROW, label="Sides", numberOfRadioButtons=3, labelArray3=SIDE_LABELS,
@@ -584,9 +580,7 @@ def show():
     _show_sides()
     # the character: the one already read, else - quietly - the only keyed one in the scene
     try:
-        current = session()
-        if _start() == CYCLE and current.cycle is None:
-            _set_start(SAME)
+        session()
     except Refusal:
         pass
     _header()

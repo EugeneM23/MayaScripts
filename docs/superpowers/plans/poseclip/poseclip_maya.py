@@ -513,11 +513,8 @@ class Session(object):
     def evaluate(self, pose, k, start=None):
         """The final pose `pose` (and the start pose `start`: a pose's name, CYCLE_START - the cycle's own
         posture -, or None: the final all along) with the knobs `k`, from the cycle when one is set."""
-        if start == CYCLE_START:
-            if self.posture is None:
-                raise Refusal("no cycle to take the posture from - select a looping clip and press Use selected "
-                              "as cycle, or pick a start pose")
-            begin = self.posture
+        if start == CYCLE_START:            # the cycle's posture; no cycle read: the clip's own run
+            begin = self.posture if self.posture is not None else model.OWN_RUN
         else:
             begin = self.pose(start)[1] if start else None
         return model.evaluate(self.analysis, self.pose(pose)[1], k=k, start=begin, cycle=self.cycle)
@@ -526,7 +523,9 @@ class Session(object):
         """How the status line and the copy's label name a start: None, "the cycle's posture", a pose's name."""
         if not start:
             return None
-        return "the cycle's posture" if start == CYCLE_START else self.pose(start)[0]
+        if start == CYCLE_START:
+            return "the cycle's posture" if self.posture is not None else model.OWN_RUN
+        return self.pose(start)[0]
 
     # -- the cycle the stop starts on --
 
@@ -604,7 +603,7 @@ class Session(object):
             if made is not None:
                 memo["nodes"] = cmds.ls(made, uuid=True) or []
             cmds.setAttr(copy + "." + MARK, json.dumps(memo), type="string")
-            first = "cycle" if start_name == "the cycle's posture" else start_name
+            first = {"the cycle's posture": "cycle", model.OWN_RUN: "own run"}.get(start_name, start_name)
             _label(copy, "%s + %s" % (self.clip.name, ("%s > %s" % (first, pose_name)) if start_name else pose_name))
         return copy, curves, removed
 

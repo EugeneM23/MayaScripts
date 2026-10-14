@@ -378,6 +378,29 @@ def main():
     gate("Leg match: the side-on sword start's hips turned to the run, none with it off", matched > 10.0 and
          unmatched < 1e-6, "the hips turned up to %.1f deg (Leg match 0: %.1f)" % (matched, unmatched))
 
+    # no cycle loaded: (the cycle's posture) is the clip's own run - the stop runs as it was animated, the final
+    # pose as it stops
+    tool.clear_cycle()
+    text = tool.run("goblin", model.knobs(**free), 150.0, start=tool.CYCLE)
+    info = tool._state()["last"]
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    played = copy_clip(standing[0]).worlds.copy()
+    k = model.knobs(**free)
+    e = sa.stillness_at(k["final_speed"])
+    run_frames = [f for f in range(source.F) if e[f] < 1e-9]
+    worst = 0.0
+    for f in run_frames:
+        for j in trunk:
+            got = model._batch_orthonormal(played[j, f, :3, :3])
+            worst = max(worst, math.degrees(float(np.linalg.norm(model._log3(got.T @ sa.rot[j, f])))))
+    texts = [cliplabel.text_of(t) for t in cmds.listRelatives(standing[0], allDescendents=True, type="transform",
+                                                                fullPath=True) or []
+             if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True)]
+    gate("no cycle: (the cycle's posture) runs the clip's own run, the final as it stops",
+         info.get("start_kind") == "own" and run_frames and worst < 1e-3 and "the clip's own run" in text and
+         texts == ["M_Neutral_Sprint_Stop_F_Lfoot + own run > goblin"],
+         "%d trunk bones on the clip's own over %d run frames to %.2e deg; %s" % (len(trunk), len(run_frames), worst, texts))
+
     # a weapon put in the copy's hand (its constraint drives weapon_r): a re-key leaves that bone to it
     standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
     bone = [j for j in cmds.listRelatives(standing[0], allDescendents=True, type="joint", fullPath=True)

@@ -459,6 +459,26 @@ class TwoPoses(unittest.TestCase):
         self.assertTrue(np.all(plan.e == 1.0))
         self.assertIsNone(plan.start)
 
+    def test_the_clips_own_run_as_the_start(self):
+        # no cycle loaded: the start is the clip's own run - while it runs the body is the clip's, the final pose
+        # comes in as it stops
+        a = pc.Analysis(self.clip)          # its own: the synthetic stop barely moves, so its run is set here
+        e = np.clip((np.arange(self.clip.F) - 20.0) / 10.0, 0.0, 1.0)          # running to 20, stood from 30
+        a._stillness[round(30.0, 6)] = e
+        k = pc.knobs(final_speed=30.0, leg_match=0.0, **STILL)
+        result = pc.evaluate(a, self.low, k=k, start=pc.OWN_RUN)
+        self.assertEqual(result.info["start_kind"], "own")
+        run = [f for f in range(self.clip.F) if e[f] < 1e-9]
+        self.assertEqual(len(run), 21)
+        ix = self.clip.index
+        for name in ("spine_03", "head", "upperarm_l", "hand_r"):
+            j = ix[name]
+            for f in run:
+                np.testing.assert_allclose(result.worlds[j, f, :3, :3], self.clip.worlds[j, f, :3, :3], atol=1e-6,
+                                           err_msg="%s at %d" % (name, f))
+        final = pc.evaluate(a, self.low, k=k)
+        np.testing.assert_allclose(result.worlds[:, -1], final.worlds[:, -1], atol=1e-6)    # stood: the final
+
     def test_the_frames_the_start_holds(self):
         self.assertEqual(pc._start_frames(np.array([0.0, 0.2, 0.49, 0.5, 0.9, 1.0])), (0, 2))
         self.assertIsNone(pc._start_frames(np.ones(5)))

@@ -10054,6 +10054,9 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
   - a weapon they put in the copy's hand killed the re-key (`weapon_r` constrained); a channel something else
     drives is now left to it and named.
 - **Proof**: `verify_poseclip.py` 30/30, 58 unit tests, `poseclip_cycle_posture.png`.
+- **With no cycle loaded, `(the cycle's posture)` is the clip's own run** (`poseclip.OWN_RUN`: no pose on the
+  run, the final as it stops; the copy's label «own run > <pose>»). It first fell back to the final pose, and the
+  animator read that as «the cycle posture does not work». The status line names the frames the start holds.
 - **The left arm exploded at frame 15** under the sword with Arm drag 2.74: trap 245, fixed in every IK of the
   model (legs, the grip, the grip's springs, the start on the cycle); measured in the animator's copy the left
   upper arm 98-171 deg a frame before, 7-29 after (the springs' own whip). 60 unit tests.

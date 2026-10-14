@@ -321,3 +321,9 @@ two-handed grip under Arm drag 2.74 carried the held hand 3-8 % past the left ar
 IK straightened the arm, the knee on the line, and the plane read back off it flipped the arm 98-171 deg a frame.
 Every IK reads the plane from the hint now (`bend_side`). A unit test holds a hand 10 cm past reach (the old rule:
 168 deg a frame; now under 30, the fixture's own straightening).
+
+**The cycle's posture with no cycle loaded is the clip's own run** (the animator: «the cycle posture не работает» -
+their scene held only the stop): `OWN_RUN`, no pose on the run (the clip's own reference as the start's targets),
+the final as it stops, Leg match left to the final. The window keeps the choice whether a cycle is loaded or not.
+The status line names the frames the start holds («the start pose holds frames 0-19, the final from 20 on»).
+Verify gate: the trunk on the clip's own over the 24 run frames to 2e-13 deg.

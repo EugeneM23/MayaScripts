@@ -1047,6 +1047,9 @@ def _subtree(clip, top):
     return out
 
 
+OWN_RUN = "the clip's own run"   # the start: no pose on the run - the clip as it runs, the final as it stops
+
+
 class _Targets(object):
     """What one pose (or none: the clip's own reference) asks of the body, at its parts' shares."""
 
@@ -1092,11 +1095,13 @@ class _Plan(object):
         self.shares = dict((p, k["share_" + p] if on else 0.0) for p in PARTS)
         # the start pose is all there is while the body runs; the final comes in as it stops
         self.e = a.stillness_at(k["final_speed"]) if start is not None else np.ones(F)
-        self.start_kind = None if start is None else ("cycle" if isinstance(start, CyclePosture) else "pose")
+        own = isinstance(start, str) and start == OWN_RUN
+        self.start_kind = None if start is None else ("cycle" if isinstance(start, CyclePosture) else
+                                                      "own" if own else "pose")
         if isinstance(start, CyclePosture):      # the cycle's posture against the stop's run (addendum 4)
             start = start.targets(a, k, 1.0 - self.e)
         self.final = _Targets(a, pose, self.shares)
-        self.start = _Targets(a, start, dict((p, k["start_" + p]) for p in PARTS)) if start is not None else None
+        self.start = _Targets(a, None if own else start, dict((p, k["start_" + p]) for p in PARTS))             if start is not None else None                    # own: no pose - the clip's own reference
         sf = self.shares["feet"]
         self.ball_target = dict((s, pose["ball"][s] if on and sf > 0.0 else None) for s in SIDES)
         self.share_feet = sf
@@ -1152,7 +1157,7 @@ class _Plan(object):
         # Leg match: running, a side-on pose's hips face the run and its splay is kept as the gait allows -
         # standing, the pose stands as it is (matched x (1 - the stillness the stance comes in by))
         self.match = (k["leg_match"] * (1.0 - self.stillness)) if posed else np.zeros(F)
-        if self.start_kind == "cycle":       # the cycle's posture already runs: only the final pose is matched
+        if self.start_kind in ("cycle", "own"):   # the start already runs: only the final pose is matched
             self.match = self.match * self.e
         froude = a.com_speed ** 2 / (GRAVITY * max(a.leg_length, 1e-6))
         self.keep = 1.0 / (1.0 + froude / GAIT_FROUDE)
@@ -2267,7 +2272,8 @@ def _start_frames(e):
 def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, start=None, cycle=None):
     """The clip with the pose: Result(worlds (J, F, 4, 4), info). The knobs `k` (`knobs()`), else the first
     version's share, motion and parts. `pose` is `prepare`'s final pose (None: the clip with its own motion
-    scaled), `start` the start pose's (None: the final all along; a `CyclePosture`: the cycle's posture), `cycle`
+    scaled), `start` the start pose's (None: the final all along; a `CyclePosture`: the cycle's posture; OWN_RUN:
+    the clip's own run), `cycle`
     a `Cycle` the stop starts on."""
     a = analysis
     k = k if k is not None else knobs_from(share, motion, parts)
