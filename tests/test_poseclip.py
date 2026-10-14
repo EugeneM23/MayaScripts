@@ -459,6 +459,15 @@ class TwoPoses(unittest.TestCase):
         self.assertTrue(np.all(plan.e == 1.0))
         self.assertIsNone(plan.start)
 
+    def test_the_frames_the_start_holds(self):
+        self.assertEqual(pc._start_frames(np.array([0.0, 0.2, 0.49, 0.5, 0.9, 1.0])), (0, 2))
+        self.assertIsNone(pc._start_frames(np.ones(5)))
+        result = pc.evaluate(self.a, self.low, k=pc.knobs(final_speed=30.0, **STILL), start=self.wide)
+        first, last = result.info["start_frames"]
+        e = self.a.stillness_at(30.0)
+        self.assertTrue(np.all(e[first:last + 1][[0, -1]] < 0.5) and e[last + 1] >= 0.5)
+        self.assertIsNone(pc.evaluate(self.a, self.low, k=pc.knobs(**STILL)).info["start_frames"])
+
 
 class Overlap(unittest.TestCase):
     """Walk Builder's springs, forward from the first frame at rest."""

@@ -627,6 +627,13 @@ def status(session, result, pose_name, copy, removed, seconds, start_name=None):
         text += " | sunk %.1f cm where a planted foot was out of reach" % info["drop"]
     if info["short"] > 0.05:
         text += " | a planted foot falls %.1f cm short" % info["short"]
+    if start_name:
+        held = info.get("start_frames")
+        if held is None:
+            text += " | the start pose holds no frame (the body never runs past Final pose at)"
+        else:
+            text += " | the start pose holds frames %d-%d, the final from %d on" % (
+                session.start + held[0], session.start + held[1], session.start + held[1] + 1)
     if info["grip"]:
         text += " | two-handed grip held"
     legs = info.get("legs") or {}

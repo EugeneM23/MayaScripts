@@ -2258,6 +2258,12 @@ def _blend_frame(a, stop, cyc, w, ankles=None):
 
 # ---- the whole ----
 
+def _start_frames(e):
+    """(first, last) frame the start pose holds more than half the body (e under 0.5), or None."""
+    held = np.nonzero(np.asarray(e) < 0.5)[0]
+    return (int(held[0]), int(held[-1])) if len(held) else None
+
+
 def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, start=None, cycle=None):
     """The clip with the pose: Result(worlds (J, F, 4, 4), info). The knobs `k` (`knobs()`), else the first
     version's share, motion and parts. `pose` is `prepare`'s final pose (None: the clip with its own motion
@@ -2302,6 +2308,7 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
             "scale": None if pose is None else pose["scale"],
             "forward": plan.forward(F - 1), "lean": (a.lean_ref, plan.final.lean),
             "two_poses": plan.start is not None, "start_kind": plan.start_kind, "overlap": springs,
+            "start_frames": _start_frames(plan.e) if plan.start is not None else None,
             "cycle": started,
             "legs": {"hips": float(np.degrees(np.abs(plan.hips_turn).max())) if len(plan.hips_turn) else 0.0,
                      "knee": dict((s, float(np.degrees(np.abs(plan.knee_turn[s]).max()))) for s in SIDES),

@@ -144,6 +144,8 @@ def run(pose, k, offset=OFFSET_DEFAULT, node=None, start=None):
         start = None
         note = " | NO CYCLE: the start pose is the final one until you select a looping clip and press Use " \
                "selected as cycle"
+    if start and start == pose:
+        note += " | the start pose IS the final pose - pick another start to see one"
     start_name = current.start_label(start)
     result = current.evaluate(pose, k, start)
     copy, curves, removed = current.key(result, pose_name, k, offset, tool=True, start_name=start_name)
