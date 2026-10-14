@@ -44,7 +44,8 @@ GROUPS = (
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
                           "pelvis_twist", "pelvis_list",
                           "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "head")),
+    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "head",
+                        "head_drag")),
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
 )
@@ -97,13 +98,22 @@ LABELS = {
                                "wants); 1 weaves with the hips as the walk does"),
     "spine": ("Spine", "x the spine's and the neck's motion (Chest twist and sway included)"),
     "chest_twist": ("Chest twist", "deg: the shoulders turn this far each way against the hips' turn, at a "
-                                   "normal step; it grows with the step. People: about 7"),
+                                   "normal step; it grows with the step (before Torso drag's overlap). "
+                                   "People: about 7"),
     "chest_sway": ("Chest sway", "deg: the shoulder line tilts this far each way over the steps. People: "
                                  "about 5"),
     "gait_lean": ("Gait lean", "Under a pose's torso, the walk's own forward lean (a run leans into it) is "
                                "kept on top of the pose - as much of it as the room the pose leaves to "
                                "horizontal: a bent pose leans further less. 0 is the pose's torso as it stands"),
-    "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
+    "torso_drag": ("Torso drag, fr", "The trunk follows the pelvis with weight: the chest turns through a "
+                                     "spring that feels the hips' motion - about this many frames late, the "
+                                     "step's jolts smoothed into an overlap. 0: the trunk as the walk turns it"),
+    "torso_bounce": ("Torso bounce", "How far the trunk (and the head) overshoot as they catch up: 0 settles, "
+                                     "1 whips through"),
+    "head": ("Head", "x the head's own motion in the world (0 holds its gaze steady)"),
+    "head_drag": ("Head drag, fr", "The head keeps its gaze through a spring on the neck that feels the "
+                                   "body's motion - about this many frames late, the neck taking the "
+                                   "difference. 0: the head exactly where the walk looks"),
     "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
                      "hands holding one thing together hold it"),
     "elbow": ("Elbow", "x the forearm's own swing in the elbow, on top of Arms"),
@@ -111,8 +121,8 @@ LABELS = {
                                  "that feels the shoulder's motion - about this many frames late. A held "
                                  "weapon trails the same way. 0: the arms exactly as the walk puts them"),
     "arm_bounce": ("Arm bounce", "How far the arms overshoot as they catch up: 0 settles, 1 whips through"),
-    "overlap": ("Overlap, fr", "Frames the hands' own motion runs late against the pelvis (the spine and "
-                               "the head less)"),
+    "overlap": ("Overlap, fr", "Frames the arms' own motion runs late against the body (the shoulders less); "
+                               "the trunk's and the head's overlap is Torso drag and Head drag"),
     "weight": ("Weight", "Heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
     "balance": ("Balance", "How far the centre of mass follows the feet like a pendulum: wider feet, a "
                            "slower step, a crouch sway it more; a leaning pose takes the hips back over the "

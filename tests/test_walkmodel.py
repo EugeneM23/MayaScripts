@@ -178,8 +178,8 @@ class KnobTests(unittest.TestCase):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
-                          "spine", "chest_twist", "chest_sway", "gait_lean", "arms", "elbow", "arm_drag", "arm_bounce",
-                          "head", "overlap", "weight", "balance", "exaggeration"])
+                          "spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
+                          "arm_drag", "arm_bounce", "head", "head_drag", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
         self.assertEqual((wm.DEFAULTS["stance"], wm.DEFAULTS["swing_out"], wm.DEFAULTS["knee_foot"]), (1.0, 0.0, 0.5))
@@ -404,7 +404,8 @@ class AnalysisTests(unittest.TestCase):
                                             "index_01_l", "ball_l", "thigh_twist_01_l", "ik_foot_l")],
                          ["root", "pelvis", "leg", "spine", "head", "arm", "finger", "local", "local", "helper"])
         lag = dict(zip(w.names, w.lag))
-        self.assertEqual((lag["spine_01"], lag["hand_l"], lag["index_01_l"], lag["thigh_l"]), (0.2, 1.0, 1.0, 0.0))
+        self.assertEqual((lag["spine_01"], lag["head"], lag["hand_l"], lag["index_01_l"], lag["thigh_l"]),
+                         (0.0, 0.0, 1.0, 1.0, 0.0))        # Overlap: the arms only (the trunk and the head: their drags)
         follows = dict((w.names[h], w.names[b]) for h, (b, rel) in w.follows.items())
         self.assertEqual(follows["ik_foot_l"], "foot_l")
         self.assertEqual(follows["camera_root"], "root")
@@ -492,8 +493,8 @@ class IdentityTests(unittest.TestCase):
         """The pelvis's twist and hip drop come from their degree knobs; the walk's own read differently."""
         w, c = walk(), clip()
         own = w.own_knobs()
-        self.assertEqual(sorted(own), ["arm_drag", "chest_sway", "chest_twist", "foot_placement", "pelvis_list",
-                                       "pelvis_twist", "root_sway"])
+        self.assertEqual(sorted(own), ["arm_drag", "chest_sway", "chest_twist", "foot_placement", "head_drag",
+                                       "pelvis_list", "pelvis_twist", "root_sway", "torso_drag"])
         self.assertNotAlmostEqual(own["pelvis_list"], wm.DEFAULTS["pelvis_list"], places=1)
         r = w.evaluate()
         self.assertGreater(float(np.abs(r.worlds - c.worlds).max()), 1e-3)
@@ -674,7 +675,7 @@ class BodyTests(unittest.TestCase):
 
     def test_head_zero_holds_the_head_steady_in_the_world(self):
         w = walk()
-        heads = rotations(w.evaluate({"head": 0.0}), "head", w)
+        heads = rotations(w.evaluate({"head": 0.0, "head_drag": 0.0}), "head", w)     # no motion, no overlap
         self.assertLess(float(np.abs(heads - heads[0]).max()), 1e-9)
 
     def test_overlap_delays_the_hand_by_its_share(self):
@@ -694,7 +695,7 @@ class BodyTests(unittest.TestCase):
     def test_exaggeration_zero_stills_the_body_but_not_the_feet(self):
         """(Without Foot placement: a planted foot may need the reach's drop, which is not the body's motion.)"""
         w = walk()
-        r = w.evaluate({"exaggeration": 0.0, "foot_placement": 0.0})
+        r = w.evaluate({"exaggeration": 0.0, "foot_placement": 0.0, "torso_drag": 0.0, "head_drag": 0.0})
         pel = r.worlds[w.index["pelvis"]]
         self.assertLess(float(np.abs(pel[:, :3, :3] - pel[0, :3, :3]).max()), 1e-9)
         self.assertLess(float(np.ptp(pel[:, 3, 1])), 1e-9)
@@ -737,6 +738,7 @@ class PelvisTests(unittest.TestCase):
         w = walk()
         own = w.evaluate(dict(w.own_knobs(), balance=0.0))
         more = w.evaluate({"pelvis_twist": 12.0, "pelvis_list": 9.0, "balance": 0.0, "arm_drag": 0.0,
+                           "torso_drag": 0.0, "head_drag": 0.0,
                            "chest_twist": w.own_chest_twist, "chest_sway": w.own_chest_sway})
         chest = w.index["spine_02"]
         self.assertLess(float(np.abs(more.worlds[chest, :, :3, :3] - own.worlds[chest, :, :3, :3]).max()), 1e-9)
@@ -906,7 +908,7 @@ class PoseTests(unittest.TestCase):
     def test_with_the_motion_off_the_body_stands_in_the_pose(self):
         w = walk()
         pose = a_pose(w)
-        r = w.evaluate({"pose": 1.0, "exaggeration": 0.0}, pose)
+        r = w.evaluate({"pose": 1.0, "exaggeration": 0.0, "torso_drag": 0.0, "head_drag": 0.0}, pose)
         for j, want in pose["spine"].items():
             name = w.names[j]
             for f in (0, 7, 18):
@@ -920,7 +922,7 @@ class PoseTests(unittest.TestCase):
     def test_half_a_pose_is_half_way(self):
         w = walk()
         pose = a_pose(w)
-        r = w.evaluate({"pose": 0.5, "exaggeration": 0.0}, pose)
+        r = w.evaluate({"pose": 0.5, "exaggeration": 0.0, "torso_drag": 0.0, "head_drag": 0.0}, pose)
         j = w.index["spine_01"]
         self.assertAlmostEqual(angle(local_rot(r, "spine_01", w, 4) @ w.lmean[j].T), 17.5, places=6)
         height = positions(r, "pelvis", w)[:, 1] + np.array(r.info["drop"])
@@ -1526,9 +1528,10 @@ class PelvisForwardTests(unittest.TestCase):
 
     def test_it_moves_the_pelvis_along_the_walk_over_still_feet(self):
         w = walk()
-        base = w.evaluate({"balance": 0.0, "foot_placement": 0.0})
+        off = {"balance": 0.0, "foot_placement": 0.0, "torso_drag": 0.0, "head_drag": 0.0}
+        base = w.evaluate(off)
         for cm in (-8.0, 6.0):
-            r = w.evaluate({"balance": 0.0, "foot_placement": 0.0, "pelvis_forward": cm})
+            r = w.evaluate(dict(off, pelvis_forward=cm))
             self.assertLess(float(np.abs(self.ahead(w, r) - self.ahead(w, base) - cm).max()), 1e-6, cm)
             head = w.index["head"]                       # the body over the hips goes with them
             moved = (r.worlds[head, :, 3, :3] - base.worlds[head, :, 3, :3]) @ w.fwd
@@ -1737,7 +1740,7 @@ class ChestTests(unittest.TestCase):
         for knobs, pose, tol in (({"chest_twist": 12.0, "chest_sway": 8.0}, None, 0.05),
                                  ({"chest_twist": 3.0, "chest_sway": 1.0}, None, 0.05),
                                  ({"chest_twist": 12.0, "chest_sway": 8.0, "pose": 1.0}, a_pose(w), 0.5)):
-            r = w.evaluate(dict(knobs, balance=0.0, arm_drag=0.0), pose)
+            r = w.evaluate(dict(knobs, balance=0.0, arm_drag=0.0, torso_drag=0.0, head_drag=0.0), pose)
             twist, sway = w.chest_fit(r.worlds)
             self.assertAlmostEqual(twist, knobs["chest_twist"] * w.twist_gain, delta=tol)
             self.assertAlmostEqual(sway, knobs["chest_sway"], delta=tol)
@@ -1753,8 +1756,9 @@ class ChestTests(unittest.TestCase):
     def test_the_chest_turns_alone(self):
         """Chest twist turns the chest, not the pelvis; the head keeps its own turn in the world."""
         w = walk()
-        a = w.evaluate({"chest_twist": 0.0, "balance": 0.0, "arm_drag": 0.0})
-        b = w.evaluate({"chest_twist": 15.0, "balance": 0.0, "arm_drag": 0.0})
+        off = {"balance": 0.0, "arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0}
+        a = w.evaluate(dict(off, chest_twist=0.0))
+        b = w.evaluate(dict(off, chest_twist=15.0))
         for name, same in (("pelvis", True), ("head", True), ("spine_02", False)):
             diff = float(np.abs(rotations(a, name, w) - rotations(b, name, w)).max())
             self.assertTrue(diff < 1e-9 if same else diff > 0.05, (name, diff))
@@ -1821,7 +1825,8 @@ class ArmTests(unittest.TestCase):
 
     def test_drag_zero_is_the_frames(self):
         w = walk()
-        a, b = w.evaluate({"arm_drag": 0.0}), w.evaluate(dict(w.own_knobs(), pelvis_twist=5.0, pelvis_list=4.0,
+        a = w.evaluate({"arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0})
+        b = w.evaluate(dict(w.own_knobs(), pelvis_twist=5.0, pelvis_list=4.0,
                                                             foot_placement=1.0, root_sway=0.0,
                                                             chest_twist=7.0, chest_sway=5.0))
         self.assertLess(float(np.abs(a.worlds - b.worlds).max()), 1e-9)
@@ -1875,15 +1880,113 @@ class ArmTests(unittest.TestCase):
         w = wm.analyse(wm.Clip(c.names, c.parents, jolted, fps=30.0, up=(0, 1, 0), name="synthetic"))
         knobs = {"arm_drag": 2.0, "arm_bounce": 0.3, "balance": 0.0}
         calm = shake(w.evaluate(knobs), w, "hand_l")
-        saved = wm.ARM_HARMONICS
-        wm.ARM_HARMONICS = 1000
+        saved = wm.ARM_HARMONICS, wm.ACCEL_HZ
+        wm.ARM_HARMONICS, wm.ACCEL_HZ = 1000, 1000.0
         try:
             shaken = shake(w.evaluate(knobs), w, "hand_l")
         finally:
-            wm.ARM_HARMONICS = saved
+            wm.ARM_HARMONICS, wm.ACCEL_HZ = saved
         smooth = shake(walk().evaluate(knobs), walk(), "hand_l")
         self.assertLess(calm, smooth + 0.01, (calm, smooth))
         self.assertGreater(shaken, 2.0 * calm, (shaken, calm))
+
+
+def jolted_clip(names, amp=1.5):
+    """The synthetic walker with `names` (each a joint and everything under it) turned amp deg about the walk's
+    side axis through the joint, on alternate frames one way and the other - a corner at every frame."""
+    c = clip()
+    worlds = c.worlds.copy()
+    for name in names:
+        top = c.names.index(name)
+        below = [top] + [j for j in range(len(c.names)) if top in _ancestors_of(c, j)]
+        for f in range(worlds.shape[1]):
+            turn = mat(rot_x(amp if f % 2 else -amp), [0.0, 0.0, 0.0])
+            pivot = worlds[top, f, 3, :3].copy()
+            for j in below:
+                m = worlds[j, f].copy()
+                m[3, :3] -= pivot
+                m = m @ turn
+                m[3, :3] += pivot
+                worlds[j, f] = m
+    worlds[:, -1] = worlds[:, 0]
+    worlds[:, -1, 3, :3] += c.worlds[:, -1, 3, :3] - c.worlds[:, 0, 3, :3]      # the loop: the first moved
+    return wm.Clip(c.names, c.parents, worlds, fps=30.0, up=(0, 1, 0), name="synthetic")
+
+
+def _ancestors_of(c, j):
+    out, p = [], c.parents[j]
+    while p >= 0:
+        out.append(p)
+        p = c.parents[p]
+    return out
+
+
+class BodyDynamicsTests(unittest.TestCase):
+    """The trunk and the head on springs (2026-10-14): each follows what the frames give it through a damped
+    spring that feels its pivot's acceleration - a lagging, overshooting overlap, the frames' corners filtered."""
+
+    still = {"balance": 0.0, "arm_drag": 0.0}
+
+    def test_the_drags_zero_are_the_frames(self):
+        w = walk()
+        own = w.own_knobs()
+        self.assertEqual((own["torso_drag"], own["head_drag"]), (0.0, 0.0))
+        r = w.evaluate(dict(self.still, torso_drag=0.0, head_drag=0.0))
+        self.assertEqual((r.info["body"]["torso"], r.info["body"]["head"]), (0.0, 0.0))
+
+    def test_a_jittering_spine_leaves_the_chest_smoother(self):
+        """spine_01 jolted 1.5 deg each way on alternate frames: the chest (and the head on it, its gaze its own)
+        shakes a fraction of what the frames give it."""
+        w = wm.analyse(jolted_clip(["spine_01"]))
+        frames = w.evaluate(dict(self.still, torso_drag=0.0, head_drag=0.0))
+        sprung = w.evaluate(dict(self.still, torso_drag=2.0, torso_bounce=0.2, head_drag=0.0))
+        a, b = shake(frames, w, "spine_02"), shake(sprung, w, "spine_02")
+        self.assertGreater(a, 1.0)
+        self.assertLess(b, 0.35 * a, (a, b))
+
+    def test_the_chest_lags_the_frames_by_about_its_drag(self):
+        """The chest's world turn about up over the cycle (the walk's twist) runs about Torso drag late."""
+        w = walk()
+        heading = lambda r: np.array([math.degrees(math.atan2(*(lambda v: (float(np.dot(v, w.side)),
+                                                                          float(np.dot(v, w.fwd))))(
+            r.worlds[w.index["spine_02"], f, 2, :3]))) for f in range(r.frames)])
+        frames = heading(w.evaluate(dict(self.still, torso_drag=0.0, head_drag=0.0)))
+        for drag in (2.0, 4.0):
+            sprung = heading(w.evaluate(dict(self.still, torso_drag=drag, torso_bounce=0.0, head_drag=0.0)))
+            fine = np.linspace(0.0, 8.0, 161)
+            spline = lambda x, s: np.interp((np.arange(len(x)) - s) % len(x), np.arange(len(x) + 1),
+                                            np.append(x, x[0]))
+            best = fine[int(np.argmin([np.abs(spline(frames, s) - sprung).max() for s in fine]))]
+            self.assertAlmostEqual(best, drag, delta=0.75)
+
+    def test_the_head_smooths_its_own_jitter_and_keeps_its_gaze(self):
+        w = wm.analyse(jolted_clip(["head"], amp=2.0))
+        frames = w.evaluate(dict(self.still, torso_drag=0.0, head_drag=0.0))
+        sprung = w.evaluate(dict(self.still, torso_drag=0.0, head_drag=2.5))
+        self.assertLess(shake(sprung, w, "head"), 0.35 * shake(frames, w, "head"))
+        mean = lambda r: wm.mean_rot(r.worlds[w.index["head"], :r.frames, :3, :3])
+        self.assertLess(angle(mean(sprung) @ mean(frames).T), 1.0)          # it looks where it looked
+        self.assertGreater(sprung.info["body"]["head"], 0.0)
+
+    def test_bones_keep_their_lengths_and_the_loop_closes(self):
+        w = walk()
+        r = w.evaluate({"torso_drag": 3.0, "torso_bounce": 0.5, "head_drag": 3.0})
+        for name in ("spine_02", "neck_01", "head", "clavicle_l", "hand_r"):
+            j, p = w.index[name], w.parents[w.index[name]]
+            d = np.linalg.norm(r.worlds[j, :, 3, :3] - r.worlds[p, :, 3, :3], axis=1)
+            self.assertLess(float(np.ptp(d)), 1e-6, name)
+        moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
+        self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
+        self.assertLess(float(np.abs(r.worlds[:, -1, :3, :3] - r.worlds[:, 0, :3, :3]).max()), 1e-6)
+
+    def test_balance_holds_the_centre_with_the_bodies_moving(self):
+        w = walk()
+        r = w.evaluate({"torso_drag": 3.0, "torso_bounce": 0.6, "head_drag": 3.0, "stance": 2.0})
+        self.assertLess(r.info["balance"]["residual"], 0.05)
+
+    def test_the_status_says_the_overlap(self):
+        r = walk().evaluate({"torso_drag": 2.0, "head_drag": 2.5})
+        self.assertIn("the trunk 2.0 and the head 2.5 frames behind", wm.describe(r))
 
 
 class SceneTests(unittest.TestCase):
