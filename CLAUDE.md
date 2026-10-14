@@ -9943,6 +9943,16 @@ the pose (0.0000 deg, 0.0000 cm), planted feet never move more than the clip's (
 of their stop, 15 s for both, measured read-only after: feet 0.0000 over the clip's, lengths 1e-13, grip 6e-13.
 Not built: rigs as targets, turning clips, the arms' inertia, a share that changes over the clip, non-UE clips.
 
+**…as one tool, a window** (the same day: «Собери все скрипты в один инструмент ... выделил нужный мне цикл бега и
+дальше мог работать применять позы и парамметры коррекции»; spec addendum 2). **`poseclip_tool.py`, dropped into a
+viewport**: Use selected (any part of the character; nothing - the only keyed one), the pose menu, twelve knobs
+(each part's share; the clip's motion in trunk and arms; pelvis height and forward in cm; stance width x, the
+speed a stance is gone at, the forward-lean limit) and the copy's offset, each re-keying the window's ONE copy in
+place when let go (one undo step each). The clip is read once a session (`poseclip_maya.Session` on
+`sys._skeldar_poseclip`); the synthesis builds the body above the legs once a frame and the balance and reach only
+move it (0.3-0.8 s, 3-10x faster, the same result to 1e-13); a re-key 1.4 s standalone. `verify_poseclip.py`
+22/22. Opened in the animator's Maya over 7001.
+
 240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.

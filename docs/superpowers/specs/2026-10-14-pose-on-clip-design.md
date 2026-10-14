@@ -162,3 +162,33 @@ mass 15 cm right of its feet) came out broken in three ways no unit test could s
 
 Measured after (`verify_poseclip.py` 17/17): the goblin's trunk at most 70 deg forward, the head at least
 45 cm up, the pelvis sunk 0.6 cm at most for reach (5.4 before the stillness rule, 39 before the width rule).
+
+## Addendum 2: one tool, a window (the same day)
+
+«Собери все скрипты в один инструмент что бы я его открыл потом выделил нужный мне цикл бега и дальше мог работать
+применять позы и парамметры коррекции.» Asked, all the recommendation: **dropped into a viewport**
+(`poseclip_tool.py`), **re-keyed when a slider is let go**, and four groups of correction knobs.
+
+- **The window** (plain `cmds`, `skeldarPoseClipTool`): the clip's line and **Use selected** (a bone, a mesh, the
+  label, nothing - the only keyed character), the pose menu (+ Refresh), **Pose share** (Torso, Pelvis, Knees,
+  Arms, Feet), **Clip motion** (Torso, Arms), **Pelvis, cm** (Height, Forward), **Stance and lean** (Width x,
+  Stance at cm/s, Lean limit deg), **Copy** (Offset), Apply / Reset knobs / Delete copy, the status. Every value
+  remembered (`skeldarPoseClipTool_*`). Errors land on the status line.
+- **One copy for the window** (`<base>_posed_Character`, memo `tool: true`), re-keyed IN PLACE and relabelled on
+  every change - the script's `apply()` keeps its one copy a pose.
+- **A session** (`poseclip_maya.Session`, on `sys._skeldar_poseclip`): the clip read, analysed and its skeleton's
+  rests read once; each pose prepared once. Use selected reads again.
+- **The model's knobs** (`poseclip.KNOBS`, `knobs()`, `knobs_from()` for the first version's three): each part's
+  share replaces the parts on/off; `motion_torso` (the trunk's leans and sways and the pelvis's bob) and
+  `motion_arms`; `pelvis_height` (cm over the rule); `pelvis_forward` (cm ahead of where the balance puts the
+  hips: the CoM target moves by what moving them there moves); `width` (the pose's stance x, its earlier width
+  `(pose spread x width) - clip spread`); `stance_speed`; `lean_limit`.
+- **Faster**: the body above the legs is built once a frame (`_upper`); the balance's carry and the reach's sink
+  only move it and solve the legs (`_assemble`); one-rotation exp/log in plain floats. 0.3-0.8 s an evaluate
+  against 2.4-7 s, the result the same to 1e-13. A re-key standalone 1.4 s; the first copy with the clip read 5.5 s.
+- **A cycle** (no still stretch): no final stance, the reach's cover wraps.
+
+Proof: `verify_poseclip.py` **22/22** (three new: a slider re-keys the one copy in place with the pelvis +8.00 cm
+in the idle for 8 asked; another pose relabels the same copy; Delete copy leaves the script's copies);
+`tests/test_poseclip.py` 28. Opened in the animator's Maya: the clip read on opening (3.7 s), the window
+photographed. Its live sliders are theirs to try.
