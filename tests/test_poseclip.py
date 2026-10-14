@@ -362,7 +362,7 @@ class Synthesis(unittest.TestCase):
                                   + self.full.worlds[self.clip.index["ball_" + s], :, 3, :3])) for s in pc.SIDES)
         support = pc.support_path(a.weights, pivots)
         new = com - support
-        old = a.com - a.support + plan_offset
+        old = a.com - a.support + a.stillness[:, None] * plan_offset
         for f in range(self.clip.F):
             if a.feet["l"]["down"][f] or a.feet["r"]["down"][f]:
                 self.assertLess(float(np.linalg.norm((new[f] - old[f])[[0, 2]])), 0.05, "frame %d" % f)
@@ -385,6 +385,43 @@ class Synthesis(unittest.TestCase):
         rel = result.worlds[j, :, :3, :3] @ np.swapaxes(self.a.heading, -1, -2)
         spread = max(float(np.abs(rel[f] - rel[0]).max()) for f in range(self.clip.F))
         self.assertLess(spread, 1e-6)
+
+class Rules(unittest.TestCase):
+    """The rules that came from the real stop (the spec's addendum)."""
+
+    def test_stillness_is_one_standing_and_falls_with_speed(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        self.assertTrue(np.all((a.stillness >= 0.0) & (a.stillness <= 1.0)))
+        self.assertAlmostEqual(float(a.stillness[-1]), 1.0, places=6)
+
+    def test_the_forward_lean_takes_the_room_the_pose_leaves(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        bent = synthetic_stop(lean_end=0.6)
+        pose = pc.prepare(a, statics_of(clip), pose_from(bent, bent.F - 1))
+        plan = pc._Plan(a, pose, 1.0, 1.0, pc.PARTS)
+        expect = (pc.LEAN_LIMIT - pose["lean"]) / (pc.LEAN_LIMIT - a.lean_ref)
+        self.assertAlmostEqual(plan.forward, expect, places=9)
+        self.assertLess(plan.forward, 1.0)
+        none = pc._Plan(a, pose, 0.0, 1.0, pc.PARTS)
+        self.assertEqual(none.forward, 1.0)
+
+    def test_a_backward_lean_is_not_scaled(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        bent = synthetic_stop(lean_end=0.6)
+        pose = pc.prepare(a, statics_of(clip), pose_from(bent, bent.F - 1))
+        result = pc.evaluate(a, pose, 1.0, 1.0)
+        j = clip.index["spine_01"]
+        # the synthetic clip leans spine_01 forward (+ about its local X, which in Manny's bind is the world's -X):
+        # whatever its sign, the posed spine's deviation from its target is the clip's, scaled by 1 or by `forward`
+        plan = pc._Plan(a, pose, 1.0, 1.0, pc.PARTS)
+        for f in range(clip.F):
+            w = pc.log_rot(a.rel_ref[j].T @ a.rel[j, f])
+            got = pc.log_rot(plan.target_rel[j].T @ (result.worlds[j, f, :3, :3] @ a.heading[f].T))
+            k = plan.forward if w[0] > 0.0 else 1.0
+            np.testing.assert_allclose(got, [w[0] * k, w[1], w[2]], atol=1e-6, err_msg="frame %d" % f)
 
 
 if __name__ == "__main__":

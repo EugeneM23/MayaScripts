@@ -27,6 +27,10 @@ SETTLE = 10            # frames: two feet that stay down hand the weight over to
 GRIP_DIST = 30.0       # cm: a pose's hands this near each other hold one thing together
 REACH = 0.995          # a planted leg never straighter than this share of its length (or the clip's own)
 REACH_SIGMA = 3.0      # frames: the reach's sink blurred over this
+REACH_ROUNDS = 4       # the sink found again this many times at most (the balance moves the hips after each)
+REACH_TOL = 0.02       # cm: a foot that is down this near its reach is reached
+STANCE_SPEED = 240.0   # cm/s: an earlier step takes none of the pose's extra width at this speed, all of it still
+LEAN_LIMIT = 90.0      # degrees: the trunk's forward lean (pelvis to neck_01 from up) never past this - horizontal
 CARRY_TOL = 0.005      # cm: the balance's carry stops this near the target
 CARRY_STEPS = 8
 
@@ -414,6 +418,21 @@ def _batch_orthonormal(m):
     return r
 
 
+def _blur(values, sigma):
+    """A Gaussian blur of `sigma` frames with the ends held."""
+    values = np.asarray(values, float)
+    half = max(int(math.ceil(3.0 * sigma)), 1)
+    kernel = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma) ** 2)
+    kernel /= kernel.sum()
+    padded = np.concatenate([np.full(half, values[0]), values, np.full(half, values[-1])])
+    return np.convolve(padded, kernel, "valid")
+
+
+def trunk_lean(v):
+    """A trunk line's forward lean from up (degrees; + forward, toward +Z in the heading's frame)."""
+    return math.degrees(math.atan2(float(v[2]), float(v[1])))
+
+
 def _speeds(path):
     """(F,) how far a point moves into each frame (the first frame: into the second)."""
     step = np.linalg.norm(np.diff(path, axis=0), axis=1)
@@ -481,10 +500,16 @@ class Analysis(object):
         self.masses = _masses(clip, self.kind, self.pos[:, self.mid])
         self.com = np.tensordot(self.masses, self.pos, axes=(0, 0))                # (F, 3)
         self.weights = foot_weights(self.feet["l"]["down"], self.feet["r"]["down"])
+        # how still the body is a frame (1 standing, 0 at STANCE_SPEED and over): the pose's stance - its width,
+        # its balance over its feet - is how it STANDS, and comes in as the body slows
+        speed = _speeds(self.com[:, [0, 2]]) * clip.fps
+        self.stillness = np.clip(_blur(1.0 - speed / STANCE_SPEED, 3.0), 0.0, 1.0)
         self.support = support_path(self.weights, dict((s, self.feet[s]["pivot"]) for s in SIDES))
         off = self.com - self.support
         off[:, 1] = 0.0
         self.ref_offset = off[a:b + 1].mean(axis=0) @ self.heading[self.mid].T    # in the reference's heading
+        trunk = self.pos[idx["neck_01"], a:b + 1] - self.pos[self.pelvis, a:b + 1] if "neck_01" in idx else None
+        self.lean_ref = trunk_lean(trunk.mean(axis=0) @ self.heading[self.mid].T) if trunk is not None else 0.0
         # each helper follows the body bone whose relation to it holds best over the clip
         self.follows = {}
         bodies = [j for j, k in enumerate(self.kind) if k != "helper"]
@@ -623,7 +648,8 @@ def prepare(analysis, statics, pose_bones):
     support = 0.5 * sum(0.5 * (pos[feet[s]] + pos[balls[s]]) for s in SIDES)
     offset = com - support
     offset[1] = 0.0
-    return {"rel": rel, "local": local, "height": height, "feet": targets, "ball": ball_local,
+    lean = trunk_lean(pos[idx["neck_01"]] - pos[a.pelvis]) if "neck_01" in idx else a.lean_ref
+    return {"rel": rel, "local": local, "height": height, "feet": targets, "ball": ball_local, "lean": lean,
             "knee_turn": knee_turn, "grip": grip, "grip_rel": grip_rel, "holds": holds, "offset": offset,
             "width": width, "scale": scale, "world": world}
 
@@ -653,6 +679,7 @@ class _Motions(object):
         self.final = dict((s, np.zeros(F)) for s in SIDES)
         self.final_contact = dict((s, None) for s in SIDES)
         self.moved = dict((s, 0) for s in SIDES)
+        self.stance = dict((s, []) for s in SIDES)      # each earlier contact's share of the pose's width
         if pose is None or share <= 0.0 or not feet_on:
             return
         ra, rb = a.reference
@@ -674,9 +701,14 @@ class _Motions(object):
                     q = power(wc.T @ target[:3, :3], share)
                     d = share * (target[3, :3] - ankle)
                 else:
+                    # the pose's extra width, as much of it as the body is still on this step: a step at a run
+                    # lies on the clip's line whatever the stance (a sprint 85 cm wide swung the goblin's
+                    # pelvis 43 cm a step and sat it on the floor)
+                    stance = float(a.stillness[c0:c1 + 1].mean())
                     side_axis = np.array([1.0, 0.0, 0.0]) @ a.heading[(c0 + c1) // 2]
                     q = np.eye(3)
-                    d = share * 0.5 * pose["width"] * sign * side_axis
+                    d = share * stance * 0.5 * pose["width"] * sign * side_axis
+                    self.stance[s].append(stance)
                 motions.append((q, ankle, d))
                 if np.linalg.norm(d) > 1e-6 or np.abs(q - np.eye(3)).max() > 1e-9:
                     self.moved[s] += 1
@@ -735,6 +767,12 @@ class _Plan(object):
         self.arm_gain = motion * ((1.0 - share) if self.grip else 1.0)
         self.h_target = a.h_ref + (share * (pose["height"] - a.h_ref) if on and "pelvis" in parts else 0.0)
         self.knee_turn = dict((s, share * pose["knee_turn"][s] if on and "knees" in parts else 0.0) for s in SIDES)
+        # the clip's forward lean in the room the pose leaves: a trunk already bent leans forward less (the
+        # goblin's 45 deg and a sprint's +29 made 80, the brake's fold 94 - past horizontal, the head at 37 cm)
+        lean = a.lean_ref + (share * (pose["lean"] - a.lean_ref) if on and "torso" in parts else 0.0)
+        room = LEAN_LIMIT - a.lean_ref
+        self.lean_target = lean
+        self.forward = min(max((LEAN_LIMIT - lean) / room, 0.0), 1.0) if room > 1e-6 else 1.0
         self.ball_target = dict((s, pose["ball"][s] if on and "feet" in parts else None) for s in SIDES)
         self.holds = pose["holds"] if on and "arms" in parts else {}
         self.motions = _Motions(a, pose, share, "feet" in parts)
@@ -744,7 +782,9 @@ class _Plan(object):
                           for s in SIDES)
         support_new = support_path(a.weights, new_pivots)
         shift = (pose["offset"] - a.ref_offset) * share if on else np.zeros(3)
-        self.com_target = a.com + (support_new - a.support) + np.einsum("i,fij->fj", shift, a.heading)
+        # the pose's own balance over its feet as the body stands still (a stance's, not a run's)
+        self.com_target = a.com + (support_new - a.support) + \
+            a.stillness[:, None] * np.einsum("i,fij->fj", shift, a.heading)
         self.com_target[:, 1] = np.nan
         self.support_new = support_new
         self.ball_index = dict((s, clip.index["ball_" + s]) for s in SIDES)
@@ -772,8 +812,10 @@ def _frame(plan, f, carry, drop):
         if kind == "root":
             rots[j], poss[j] = a.rot[j, f], a.pos[j, f]
         elif kind in ("pelvis", "torso"):
-            g = plan.a.rel_ref[j].T @ a.rel[j, f]
-            rots[j] = plan.target_rel[j] @ power(g, plan.motion) @ H
+            w = log_rot(plan.a.rel_ref[j].T @ a.rel[j, f])
+            if w[0] > 0.0:                                 # a forward lean, in the room the pose leaves
+                w = np.array([w[0] * plan.forward, w[1], w[2]])
+            rots[j] = plan.target_rel[j] @ exp_rot(plan.motion * w) @ H
             if kind == "pelvis":
                 h = a.pos[j, f, 1] - a.floor
                 height = plan.h_target * (1.0 + plan.motion * (h / a.h_ref - 1.0))
@@ -949,20 +991,30 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS):
     a = analysis
     plan = _Plan(a, pose, float(share), float(motion), parts)
     F = a.clip.F
-    needs = np.zeros(F)
-    for f in range(F):
-        worlds, carry, short = _balanced(plan, f, 0.0)
-        needs[f] = _need(plan, f, worlds)
-    drop = cover(needs, REACH_SIGMA) if needs.max() > 1e-4 else np.zeros(F)
+    # the reach: sink the pelvis where a foot that is down is out of reach, again until nothing is (the
+    # balance moves the hips after each sink)
+    drop = np.zeros(F)
+    frames = None
+    for _ in range(REACH_ROUNDS):
+        frames = [_balanced(plan, f, float(drop[f])) for f in range(F)]
+        needs = np.array([_need(plan, f, item[0]) for f, item in enumerate(frames)])
+        if needs.max() < REACH_TOL:
+            break
+        drop = drop + cover(needs, REACH_SIGMA)
+        frames = None
+    if frames is None:
+        frames = [_balanced(plan, f, float(drop[f])) for f in range(F)]
     out = np.zeros((a.clip.J, F, 4, 4))
     carries, shorts = np.zeros(F), np.zeros(F)
     for f in range(F):
-        worlds, carry, short = _balanced(plan, f, float(drop[f]))
+        worlds, carry, short = frames[f]
         out[:, f] = worlds
         carries[f] = float(np.linalg.norm(carry))
         shorts[f] = max([v for s, v in short.items() if a.feet[s]["down"][f]] or [0.0])
     info = {"carry": float(carries.max()), "drop": float(drop.max()), "short": float(shorts.max()),
             "moved": dict(plan.motions.moved), "final": dict(plan.motions.final_contact),
+            "stance": dict(plan.motions.stance),
             "reference": a.reference, "share": share, "motion": motion, "parts": tuple(parts),
-            "grip": bool(plan.grip), "scale": None if pose is None else pose["scale"]}
+            "grip": bool(plan.grip), "scale": None if pose is None else pose["scale"],
+            "forward": plan.forward, "lean": (a.lean_ref, plan.lean_target)}
     return Result(out, info)

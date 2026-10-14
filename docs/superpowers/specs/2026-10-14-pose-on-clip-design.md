@@ -139,3 +139,26 @@ the contacts' rigid motions and their blend, the height rule, `share 0` identiti
 Rigs as targets; turning clips beyond the heading; the arms' inertia (Walk Builder's springs); a pose share
 that changes over the clip; non-UE skeletons as the clip (the pose may be any skeleton); a pose's split
 stance on the earlier steps.
+
+## Addendum: three rules the real stop asked for (the same day)
+
+The first run on the stop with the goblin (pelvis 68 cm, trunk 54 deg forward, feet 85 cm apart, its centre of
+mass 15 cm right of its feet) came out broken in three ways no unit test could see:
+
+- **The width on a sprint.** The earlier steps took the pose's extra width (50 cm) at full speed: the pelvis
+  swung 43 cm a step to stay over the feet and sank to 7 cm over the floor at the brake. A stance is how a
+  body STANDS: each earlier contact now takes the width by the body's stillness on it (`Analysis.stillness`:
+  1 - the centre of mass's speed / 240 cm/s, blurred over 3 frames). On this stop the sprint's steps take 0,
+  the brake's 0.7, the last contact the pose's stance whole.
+- **The pose's balance on a sprint.** The pose's centre of mass against its feet (15 cm aside for the goblin)
+  is a stance's too: it comes in by the same stillness. Before, the goblin ran with its hips carried 14 cm
+  sideways for the whole sprint.
+- **A lean past horizontal.** The clip's forward lean added to the pose's: the sprint's +29 deg on the
+  goblin's 54 made 80, the brake's fold 94 - the trunk past horizontal, the head 37 cm over the floor. The
+  clip's FORWARD lean now takes the room the pose leaves to horizontal: `x (90 - pose lean) / (90 - the clip's
+  idle lean)` on the forward component (about the character's side axis) of every torso bone's motion -
+  x0.41 for the goblin, x0.95 for the sword; backward, the twist and the sway unscaled. The pelvis's height
+  already took its rule in proportion; this is the same idea for the trunk.
+
+Measured after (`verify_poseclip.py` 17/17): the goblin's trunk at most 70 deg forward, the head at least
+45 cm up, the pelvis sunk 0.6 cm at most for reach (5.4 before the stillness rule, 39 before the width rule).
