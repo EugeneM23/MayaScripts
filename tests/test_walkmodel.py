@@ -413,6 +413,30 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(set(order[-4:]), {"ik_foot_root", "ik_foot_l", "ik_foot_r", "camera_root"})
 
 
+class TrimTests(unittest.TestCase):
+    """A frame written twice (AGS_Sprint's last, 2026-10-14) is one frame: the cycle is read without the copy."""
+
+    def test_a_repeated_last_frame_is_dropped(self):
+        c = clip()
+        dup = wm.Clip(c.names, c.parents, np.concatenate([c.worlds, c.worlds[:, -1:]], axis=1), c.fps, c.up, c.name)
+        w = wm.analyse(dup)
+        self.assertEqual((w.P, w.dropped), (24, 1))
+        r = w.evaluate(w.own_knobs())
+        self.assertLess(float(np.abs(r.worlds - c.worlds).max()), 1e-6)
+        self.assertIn("1 repeated frame dropped", w.summary())
+
+    def test_a_repeated_first_frame_is_dropped(self):
+        c = clip()
+        dup = wm.Clip(c.names, c.parents, np.concatenate([c.worlds[:, :1], c.worlds], axis=1), c.fps, c.up, c.name)
+        w = wm.analyse(dup)
+        self.assertEqual((w.P, w.dropped), (24, 1))
+        self.assertLess(float(np.abs(w.evaluate(w.own_knobs()).worlds - c.worlds).max()), 1e-6)
+
+    def test_a_clean_cycle_drops_nothing(self):
+        self.assertEqual(walk().dropped, 0)
+        self.assertNotIn("repeated", walk().summary())
+
+
 class RefusalTests(unittest.TestCase):
 
     def test_open_loop(self):

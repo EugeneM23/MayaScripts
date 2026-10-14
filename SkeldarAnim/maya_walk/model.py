@@ -467,6 +467,7 @@ MERGE_HIGH = 4.0         # cm: two stances of a foot are one while its heel or b
 FOLLOW_TOL = 1e-3        # a helper follows a bone when helper . bone^-1 holds within this (matrix elements)
 LOOP_TOL = (0.1, 0.002)  # cm and rotation elements: the last frame against the first moved by the travel
 STRAIGHTEN_MAX = 15.0    # degrees: a cycle travelling this little off its root's facing is turned onto it
+DUP_TOL = (1e-3, 1e-5)   # cm, rotation elements: two frames this alike are one frame written twice
 
 
 def _stem(name):
@@ -493,6 +494,26 @@ class Foot(object):
 
     def __init__(self, side, on, length, mid, coords):
         self.side, self.on, self.length, self.mid, self.coords = side, on, length, mid, coords
+
+
+def trimmed(clip):
+    """(clip, how many frames dropped): a cycle whose last frame repeats the one before it - or whose first the
+    one after it - is one frame written twice (an export's closing frame keyed again). With the copy in, every
+    joint stood still a frame a cycle and every place carried a sawtooth of a frame's travel against the
+    travel line, which the arms' springs and Balance took as a jolt: AGS_Sprint's forearms flipped 128 deg at
+    the seam (2026-10-14). A walk's root travels, so two equal frames are never motion."""
+    worlds = clip.worlds
+    same = lambda a, b: (float(np.abs(worlds[:, a, 3, :3] - worlds[:, b, 3, :3]).max()) <= DUP_TOL[0] and
+                         float(np.abs(worlds[:, a, :3, :3] - worlds[:, b, :3, :3]).max()) <= DUP_TOL[1])
+    lo, hi = 0, worlds.shape[1] - 1
+    while hi - lo > 9 and same(hi, hi - 1):
+        hi -= 1
+    while hi - lo > 9 and same(lo, lo + 1):
+        lo += 1
+    dropped = lo + (worlds.shape[1] - 1 - hi)
+    if not dropped:
+        return clip, 0
+    return Clip(clip.names, clip.parents, worlds[:, lo:hi + 1], clip.fps, clip.up, clip.name), dropped
 
 
 def straightened(clip):
@@ -543,6 +564,7 @@ def analyse(clip):
 class Walk(object):
 
     def __init__(self, clip):
+        clip, self.dropped = trimmed(clip)
         clip, self.turned = straightened(clip)
         self.clip = clip
         self.names, self.parents = clip.names, clip.parents
@@ -638,6 +660,8 @@ class Walk(object):
             text += " | %d steps of each foot a cycle" % self.strides
         if abs(self.turned) >= 0.05:
             text += " | turned %.1f deg onto its root's facing" % self.turned
+        if self.dropped:
+            text += " | %d repeated frame%s dropped" % (self.dropped, "" if self.dropped == 1 else "s")
         return text
 
     # -- the analysis --
