@@ -65,6 +65,8 @@ def setup():
     paths = [p for p in targets if pcm._leaf(p) in clip.index]
     pcm.write_worlds(paths, clip.worlds[rows], start)
     cmds.namespace(removeNamespace="stopsrc", deleteNamespaceContent=True)
+    from maya_scenesetup import cliplabel             # the label the bridge puts under an imported clip (locked)
+    cliplabel.label_skeleton(root, "M_Neutral_Sprint_Stop_F_Lfoot")
     cmds.playbackOptions(minTime=start, maxTime=start + clip.F - 1, animationStartTime=start,
                          animationEndTime=start + clip.F - 1)
     cmds.currentTime(start)
@@ -195,6 +197,16 @@ def main():
             spread = float(np.abs(rel - rel[0]).max())
             gate("%s: the two-handed grip held" % pose_name, spread < 1e-3, "%.2e" % spread)
         print("   " + status)
+
+    from maya_scenesetup import cliplabel
+    copies = dict((pcm._short(t), t) for t in copy_of(root))
+    texts = sorted(cliplabel.text_of(t) for c in copies.values()
+                   for t in cmds.listRelatives(c, allDescendents=True, type="transform", fullPath=True) or []
+                   if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True))
+    original = [cliplabel.text_of(t) for t in cliplabel.labels_of(root)]
+    gate("the copies' labels read the clip + the pose, the original's the clip", texts == [
+        "M_Neutral_Sprint_Stop_F_Lfoot + goblin", "M_Neutral_Sprint_Stop_F_Lfoot + two_handed_sword"]
+        and original == ["M_Neutral_Sprint_Stop_F_Lfoot"], "%s / %s" % (texts, original))
 
     # 4. the copy: one undo removes it, a second run replaces it, the original untouched
     after = dict((c, cmds.keyframe(c, query=True, valueChange=True)) for c in before)

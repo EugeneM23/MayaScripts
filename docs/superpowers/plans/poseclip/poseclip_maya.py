@@ -381,14 +381,32 @@ def _right_of(analysis):
     return v / n if n > 1e-9 else np.array([-1.0, 0.0, 0.0])
 
 
+def _set_text(plug, text):
+    """A string attribute set through its lock (the plugin locks its label's), the lock put back; False when it
+    cannot be (driven)."""
+    cmds = _cmds()
+    locked = cmds.getAttr(plug, lock=True)
+    try:
+        if locked:
+            cmds.setAttr(plug, lock=False)
+        cmds.setAttr(plug, text, type="string")
+        return True
+    except RuntimeError:
+        return False
+    finally:
+        if locked:
+            cmds.setAttr(plug, lock=True)
+
+
 def _label(copy, text):
+    """The copy's clip label (the plugin's, when the character carries one) reads `text`."""
     cmds = _cmds()
     for t in cmds.listRelatives(copy, allDescendents=True, type="transform", fullPath=True) or []:
         if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True):
-            cmds.setAttr(t + ".skeldarClipLabel", text, type="string")
+            _set_text(t + ".skeldarClipLabel", text)
             for shape in cmds.listRelatives(t, shapes=True, fullPath=True) or []:
                 if cmds.nodeType(shape) == "annotationShape":
-                    cmds.setAttr(shape + ".text", text, type="string")
+                    _set_text(shape + ".text", text)
 
 
 def apply(pose, share=1.0, motion=1.0, parts=model.PARTS, offset=150.0, reference=None, node=None):

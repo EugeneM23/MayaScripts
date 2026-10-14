@@ -9904,3 +9904,45 @@ range after Apply.
      noise asked for 10 Hz showed 7.15, for 7 Hz 6.12 (measured), so a "Jitter, Hz" slider over it did almost
      nothing above 5. A rhythm (a sine whose amplitude and phase drift slowly) shows its own rate up to the
      frame rate's limit. Measure a rate on the keyed frames, not on the function.
+
+## Pose on clip: our poses onto a locomotion clip, a separate script (2026-10-14)
+
+The animator, after asking how a start/stop builder could work («наша главная задача - на одну базовую
+анимацию уметь накладывать любые аддитивные позы и добиваться хорошего результата»): «насаживать наши позы
+на локомоушен циклы такие как вот стоп ... отдельным скриптом и не трогать наш плагин ... не рисуй интерфейс».
+Asked, all three the recommendation: the result on **a copy of the character beside** the original; **the pose
+plus the clip's motion** (the sprint's lean and the brake's crouch ride on the pose); the stop **ends in the
+pose's stance**. Spec `docs/superpowers/specs/2026-10-14-pose-on-clip-design.md` (read its addendum), plan
+beside it. **Nothing in `SkeldarAnim/` changed.**
+
+- **Where**: `docs/superpowers/plans/poseclip/` - `poseclip.py` the model (numpy + `posemath`), `poseclip_maya.py`
+  the scene, `posemath.py` / `skeletonmap.py` / `manny_skeleton_template.json` COPIED from the plugin (one import
+  line changed), `verify_poseclip.py`, `render_poseclip.py`, `poseclip_stop.png`. From the Script Editor, the
+  character selected: `poseclip_maya.apply("goblin")`, `apply("two_handed_sword", share=0.7, motion=0.8,
+  parts=(...), offset=-150)`. Poses are Walk Builder's `.wpose.gz` (SkeldarWalks). One copy a pose per
+  character (a second apply of the pose replaces it), `offset` cm to its right (negative: left). One undo step.
+- **The model**: the clip's **reference** is its longest still run (every body bone under 1.5 cm a frame; the
+  stop's idle 69-142); the pose (posemath.Transfer onto the clip's skeleton placed at the reference) takes its
+  place. Torso, head and pelvis: `T . G(f)^motion` with `G` the clip's motion in WORLD axes about the
+  reference; arms and fingers: locals; pelvis height in proportion (`h' = T_h (1 + motion (h/h_ref - 1))`);
+  each foot's contact moved by ONE rigid motion of space (the last contact onto the pose's stance, about the
+  reference's ankle midpoint), blended between contacts, so a planted foot stays planted and the clip's own
+  skid stays; legs by IK with the clip's lengths; the pelvis sunk (non-periodic cover, iterated) where a down
+  foot is out of reach; the pelvis carried so `CoM - support` is the clip's (+ the pose's own, by stillness).
+- **Three rules the real stop asked for** (the goblin: 85 cm stance, 54 deg trunk, CoM 15 cm aside): a stance
+  (the pose's extra width on earlier steps, its balance over its feet) comes in with the body's **stillness**
+  (1 - CoM speed / 240 cm/s) - a sprint's steps take none; and the clip's **forward lean takes the room the pose
+  leaves** to horizontal (x0.41 goblin, x0.95 sword) - before, the trunk reached 94 deg and the head 37 cm.
+
+Proof: `verify_poseclip.py` **18/18 mayapy standalone** on `M_Neutral_Sprint_Stop_F_Lfoot` (Unreal's Game
+Animation Sample, from the bridge's temp folder - not in git) keyed onto the plugin's Manny UE5 skeleton by the
+tool's own writer: share 0 plays the clip (9e-12 cm), the copy's mesh on the copy's joints, motion 0 stands in
+the pose (0.0000 deg, 0.0000 cm), planted feet never move more than the clip's (0.0006 cm), bone lengths
+1.8e-13, the CoM rule 0.005 cm, the grip 5e-13, the labels, the original's curves, replace and one undo;
+`tests/test_poseclip.py` 28. Live in the animator's Maya (7001): the goblin to the right, the sword to the left
+of their stop, 15 s for both, measured read-only after: feet 0.0000 over the clip's, lengths 1e-13, grip 6e-13.
+Not built: rigs as targets, turning clips, the arms' inertia, a share that changes over the clip, non-UE clips.
+
+240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
+     writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
+     the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.
