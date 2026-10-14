@@ -192,3 +192,32 @@ Proof: `verify_poseclip.py` **22/22** (three new: a slider re-keys the one copy 
 in the idle for 8 asked; another pose relabels the same copy; Delete copy leaves the script's copies);
 `tests/test_poseclip.py` 28. Opened in the animator's Maya: the clip read on opening (3.7 s), the window
 photographed. Its live sliders are theirs to try.
+
+## Addendum 3: overlap, a start and a final pose, the stop starting on the cycle (the same day)
+
+«Давай сделаем такую же оверлеп систему как и walk builder. Так же нам нужна возможность определить стартовую позу
+и финальную. Нужна возможность делать так что бы персонаж начинал анимацию остановки в цикле а заканчивал уже в
+указанной позе.» Asked, all the recommendation: the stop starts **exactly on a frame of a cycle** the animator
+names (a Walk Builder skeleton or any looping clip in the scene); the start pose goes over to the final one **as
+the body stops** (the stillness the stance already uses); **the knees take the start pose's turn on the run**.
+
+- **Two poses.** `Start pose` (or "same as final") and `Final pose`. Per frame `e(f)` = the stillness at
+  `final_speed` (cm/s, default 240): the trunk's, pelvis's and arms' targets slerped start -> final by `e`, the
+  pelvis's height, the knees' turn, the lean's room, the grip (its relation and its weight) and the weapon holds
+  likewise. The stance (the last contacts onto the stance, the width before, the balance offset) is the final
+  pose's, as before.
+- **Overlap, Walk Builder's springs, not periodic.** The trunk (the chest's world turn through `torso_drag` /
+  `torso_bounce`, feeling spine_01's acceleration on the upper body's lever, spread up the spine), the head (its
+  gaze through `head_drag`, feeling neck_01's, the necks taking 0.3 / 0.55), the arms (each limb through
+  `arm_drag` / `arm_bounce`, feeling its pivot's acceleration on its lever, the hand's lever its farthest finger;
+  a grip: the right hand carries the held thing through the spring, both arms reach it by IK). Integrated from
+  the first frame at rest, ARM_SUBSTEPS a frame; the pivots' accelerations from their paths blurred over 2 frames
+  (a second difference of raw frames shakes a hand - trap 234). Defaults Walk Builder's. Drags at 0: no overlap.
+- **Start on the cycle.** `Use selected as cycle` reads a looping clip on a skeleton with the same bone names (its
+  period found: the last frame the first moved by the travel, or a repeated end frame dropped). Its frames are
+  sampled at the stop's frame rate. The phase is the one whose first `W` frames match the posed stop's first `W`
+  best (each bone's local turn, the pelvis's height, which foot is down). The cycle is placed by one turn about up
+  and one shift that put its planted foot (else its pelvis) on the stop's at frame 0, its facing on the stop's.
+  Over `from_cycle` frames (default 8) the stop goes from the cycle to itself: local turns slerped, the root and
+  pelvis blended in the world, the legs by IK to blended ankles (a foot planted in both stays where both have it).
+  Frame 0 is the cycle's frame. The status line names the phase.
