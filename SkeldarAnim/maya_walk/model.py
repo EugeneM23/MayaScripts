@@ -670,8 +670,8 @@ class Walk(object):
         if abs(climb) > 0.5:
             raise Refusal("the root climbs %.1f cm a cycle: a walk on flat ground only" % climb)
         if np.linalg.norm(flat) < 1.0:
-            raise Refusal("the root travels %.2f cm a cycle: an in-place walk is not read yet (the root must "
-                          "carry the travel)" % np.linalg.norm(flat))
+            raise Refusal("the root travels %.2f cm a cycle and its feet do not slide back: no walk in it (the clean "
+                          "gives an in-place walk its travel)" % np.linalg.norm(flat))
         moved = float(np.abs(pos[:, P] - pos[:, 0] - travel).max())
         turned = float(np.abs(rot[:, P] - rot[:, 0]).max())
         if moved > LOOP_TOL[0] or turned > LOOP_TOL[1]:

@@ -161,3 +161,24 @@ Smooth, Fix posture, Floor, Floor offset, Seam and the report. In place: a chip 
   (`walks/Walking_broken.walk.gz`, read from the scene, git-ignored) cleaned against the UE5 idle - every breakage
   found, the result against the original (asd); every saved walk unchanged by the clean at the defaults; Apply onto
   a Manny skeleton with In place and the levers.
+
+## Addendum: what the build and the final review changed
+
+- **The floor** is measured as the feet's lowest point over the cycle: the lowest ball (else ankle) over the root,
+  against the REST's lowest ball over its root (the reference only when there is no rest), left within
+  FLOOR_DEAD 5 cm. The first build's median at mid-stance against the reference left floating walks 3.5 cm under
+  the floor. Measured on every saved walk: grounded ones -3.7..+2.1 cm (left alone), the six floating ones
+  +15.1..+16.8 (put on the floor), the broken clip +54.
+- **The loop of a long take**: of the pairs within LOOP_TIE x the least distance + LOOP_SLACK (0.5 cm), the fewest
+  strides, the longest of those - the longest alone cut a take of 20 cycles into all 20. The pair search is
+  vectorised (20 cycles: under 3 s with the analysis and an evaluate). A cut cycle's root climb is taken off as a
+  ramp (one floor at both ends).
+- **A reference the walk cannot stand on** (a headless 1P walk; a pose missing legs) is not a refusal: the reference
+  is carried without asking for a head; if it still cannot be, the clean judges against the rest and the report
+  says so as a NOTE (not a change).
+- **A skeleton walked before the clean** (a marker with no `reference`) is picked with Floor 0 and Fix posture 0, so a
+  re-key keeps what was keyed.
+- **The mirror replaces the whole motion** of a clavicle or a foot out of its limits (half a stride on), not only its
+  mean; **the offset fix sets the rest**; **the seam runs before Despike**; **In place also takes the root's surge off**.
+- The report's height follows its text (a fixed height clipped it); a clean knob released with no target reads the
+  walk again into the report. A walk's readings are cached per file, at most six.

@@ -103,10 +103,10 @@ def _wrapped(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def _onto(names, first_worlds, statics, pose_bones, target_module):
+def _onto(names, first_worlds, statics, pose_bones, target_module, head=True):
     """(the pose carried onto the walk's skeleton {leaf: matrix}, the pairs, a twin?, the legs' ratio): the walk's
     skeleton at its rest stood on its root at the cycle's first frame, the pose transferred onto it (posemath),
-    at the legs' ratio (1 for a twin - walktarget's rule)."""
+    at the legs' ratio (1 for a twin - walktarget's rule). `head` False: a headless walk (a 1P clip) is carried."""
     walk_rest = target_module.at_rest(dict((leaf, dict(b)) for leaf, b in statics.items()))
     first = {}
     for j, name in enumerate(names):
@@ -116,7 +116,7 @@ def _onto(names, first_worlds, statics, pose_bones, target_module):
     pairs = pm.pairs(pose_bones, walk_rest)
     members = set(s for t, s in pairs.items() if not pm.is_helper(t))
     legs = ("thigh", "calf", "foot")
-    missing = [n for n in ("pelvis", "head") + tuple("%s_%s" % (b, s) for s in SIDES for b in legs)
+    missing = [n for n in ("pelvis",) + (("head",) if head else ()) + tuple("%s_%s" % (b, s) for s in SIDES for b in legs)
                if n not in pairs]
     if missing:
         raise target_module.Refusal("the pose's skeleton has nothing for the walk's %s" % ", ".join(missing))
@@ -135,7 +135,7 @@ def _onto(names, first_worlds, statics, pose_bones, target_module):
 def carried(names, first_worlds, statics, pose_bones, target_module):
     """{name: 4x4 world}: a reference pose on the walk's skeleton (its names, its worlds at the cycle's first
     frame, its statics) - what clean() judges the walk's posture and floor against."""
-    out = _onto(names, first_worlds, statics, pose_bones, target_module)[0]
+    out = _onto(names, first_worlds, statics, pose_bones, target_module, head=False)[0]
     return dict((name, _np(out[name])) for name in names if name in out)
 
 

@@ -8,16 +8,16 @@ read, by the knobs of the card's Clean tab (KNOBS):
 1. the root carries the travel (a root standing still while the pelvis travels takes the pelvis's line);
 2. the loop: a closed cycle as it is, one missing its closing frame given it, else the best loop cut out of
    the clip - the Kovar-Gleicher distance (the body's points in the root's ground frame, a few frames either
-   side) over whole strides;
+   side) over whole strides, the fewest strides near the best (a cut cycle's climb taken off);
 3. in place: a cycle whose root and pelvis stay while its planted feet slide back gets its travel back;
 4. the seam: a cut cycle's (or a joint's own) seam closed by Holden's two-sided cubics - value and slope;
 5. spikes: out-and-back runs of 1-3 frames replaced (Despike);
 6. posture: a bone moved off its joint put back on its rest; a clavicle or a foot outside its limits against
    the reference takes its opposite's mirrored motion half a stride on, else the reference's mean with its
    own motion (Fix posture);
-7. smooth (frames); 8. the floor (the planted feet on the reference's heights); 9. the derived bones - a
-   helper or a twist bone that does not loop (and was not merely keyed short: those are refilled at the seam)
-   put back on its bone / rebuilt by the UE twist rule.
+7. smooth (frames); 8. the floor (the feet's lowest point over the cycle on its rest height over the root);
+9. the derived bones - a helper or a twist bone that does not loop put back on its bone / rebuilt by the UE
+   twist rule (a body joint merely keyed short is refilled at the seam instead).
 
 Nothing found, nothing changed: a clean cycle comes back as it went in (the same worlds).
 numpy only (a test pins it). Maya's row vectors: world = local . parent, a position its row 3.
@@ -47,7 +47,8 @@ ROOT_STILL = 1.0           # cm a clip: a root that travels less stands still...
 PELVIS_TRAVELS = 10.0      # ...while a pelvis travelling more carries the walk
 MIN_CYCLE = 10             # frames: no shorter loop is cut
 LOOP_WINDOW = 2            # frames either side of a candidate pair in the loop distance
-LOOP_TIE = 1.2             # of the least distance: the longest loop within it is cut
+LOOP_TIE = 1.2             # of the least distance: the loops within it (+ LOOP_SLACK) are candidates...
+LOOP_SLACK = 0.5           # cm: ...the fewest strides among them, the longest of those, is cut
 LOW_TOL = 2.5              # cm: a foot point this near its own lowest is down
 IN_PLACE_TRAVEL = 1.0      # cm a cycle: a root and a pelvis travelling less are in place...
 IN_PLACE_SPEED = 0.2       # ...when the planted feet slide back faster than this (cm a frame)
@@ -61,7 +62,7 @@ CLAVICLE_RISE = (-22.0, 35.0)   # degrees against the reference: the clavicle's 
 CLAVICLE_FORWARD = 30.0         # degrees either way
 FOOT_PITCH = 35.0               # degrees: the toe down / up against the shin
 FOOT_OUT = 35.0                 # degrees: the toe out / in
-FLOOR_DEAD = 8.0           # cm: a walk this near the floor is left on it (asd 3.5, RunFast 4.5, Walk_01 5.5; six float 17-20)
+FLOOR_DEAD = 5.0           # cm: the lowest ball this near its rest height over the root is on the floor (grounded walks -3.7..+2.1; floating +15..17)
 FOLLOW_TOL = 1e-3          # matrix elements: a helper holding its relation to its bone this well follows it
 HELPER_BONES = (("ik_foot_root", "root"), ("ik_hand_root", "root"), ("interaction", "root"),
                 ("center_of_mass", "root"), ("camera_root", "root"), ("camera_bone", "camera_root"),
@@ -88,18 +89,21 @@ class Report(object):
 
     def __init__(self):
         self.lines = []
+        self.notes = []               # what the clean could not do (not a change)
 
     def add(self, step, text, tag):
         self.lines.append((step, text, tag))
+
+    def note(self, text):
+        self.notes.append(text)
 
     @property
     def changed(self):
         return bool(self.lines)
 
     def text(self):
-        if not self.lines:
-            return "clean: nothing to fix"
-        return "\n".join("%s: %s" % (step, text) for step, text, _ in self.lines)
+        lines = ["%s: %s" % (step, text) for step, text, _ in self.lines] or ["clean: nothing to fix"]
+        return "\n".join(lines + ["note: " + n for n in self.notes])
 
     def short(self):
         return "cleaned: " + ", ".join(tag for _, _, tag in self.lines) if self.lines else ""
@@ -295,36 +299,40 @@ def _missing_close(worlds, c):
 def loop_window(worlds, c):
     """(i, j, rms cm): the best loop in the clip - the least Kovar-Gleicher distance (the body's ground-frame
     points over LOOP_WINDOW frames either side, RMS a point) among pairs holding whole strides (each foot coming
-    down as often between them), the longest within LOOP_TIE of it."""
+    down as often between them); of the pairs within LOOP_TIE (+ LOOP_SLACK cm) of it, those of the fewest
+    strides, and of those the longest (a long take of many strides gives one stride, not all of them)."""
     q = _ground_points(worlds, c)
     frames, width = q.shape[0], q.shape[1] // 3
+    if frames <= MIN_CYCLE:
+        return None
     sq = np.sum(q * q, axis=1)
     d0 = np.maximum(sq[:, None] + sq[None, :] - 2.0 * (q @ q.T), 0.0)
     total, count = np.zeros((frames, frames)), np.zeros((frames, frames))
     for k in range(-LOOP_WINDOW, LOOP_WINDOW + 1):
         lo, hi = max(0, -k), frames - max(0, k)
-        idx = np.arange(lo, hi)
-        total[np.ix_(idx, idx)] += d0[np.ix_(idx + k, idx + k)]
-        count[np.ix_(idx, idx)] += 1.0
+        total[lo:hi, lo:hi] += d0[lo + k:hi + k, lo + k:hi + k]
+        count[lo:hi, lo:hi] += 1.0
     cost = np.sqrt(total / np.maximum(count, 1.0) / width)
+    i, j = np.meshgrid(np.arange(frames), np.arange(frames), indexing="ij")
+    valid = j >= i + MIN_CYCLE
+    strides = np.zeros((frames, frames), int)
     onsets = _onsets(worlds, c)
     if onsets is not None:
         left, right = np.concatenate([[0], np.cumsum(onsets["l"])]), np.concatenate([[0], np.cumsum(onsets["r"])])
-    pairs = []
-    for i in range(frames):
-        for j in range(i + MIN_CYCLE, frames):
-            whole = True
-            if onsets is not None:
-                nl, nr = left[j] - left[i], right[j] - right[i]
-                whole = nl == nr and nl >= 1
-            pairs.append((whole, float(cost[i, j]), i, j))
-    if not pairs:
+        nl = left[j] - left[i]
+        nr = right[j] - right[i]
+        whole = valid & (nl == nr) & (nl >= 1)
+        if whole.any():
+            valid, strides = whole, nl
+    if not valid.any():
         return None
-    usable = [p for p in pairs if p[0]] or pairs
-    least = min(p[1] for p in usable)
-    near = [p for p in usable if p[1] <= least * LOOP_TIE + 1e-6]
-    best = max(near, key=lambda p: (p[3] - p[2], -p[1]))
-    return best[2], best[3], best[1]
+    least = float(cost[valid].min())
+    near = valid & (cost <= least * LOOP_TIE + LOOP_SLACK + 1e-6)
+    near &= strides == strides[near].min()
+    span = np.where(near, j - i, -1)
+    longest = near & (span == span.max())
+    a, b = np.unravel_index(np.argmin(np.where(longest, cost, np.inf)), cost.shape)
+    return int(a), int(b), float(cost[a, b])
 
 
 def _cycle_travel(path, up, harmonics=6):
@@ -360,7 +368,12 @@ def loop(worlds, c, report):
     i, j, rms = found
     report.add("loop", "the loop cut out of frames %d-%d: %d-%d (%d frames), the seam %.2f cm off before closing"
                % (0, frames - 1, i, j, j - i, rms), "loop %d-%d" % (i, j))
-    return worlds[:, i:j + 1].copy(), True
+    cut = worlds[:, i:j + 1].copy()
+    climb = float(np.dot(cut[c.root, -1, 3, :3] - cut[c.root, 0, 3, :3], c.up))
+    if abs(climb) > 1e-6:                      # the root's height at the two ends is one floor: no climb a cycle
+        ramp = np.linspace(0.0, climb, cut.shape[1])
+        cut[..., 3, :3] -= ramp[None, :, None] * c.up
+    return cut, True
 
 
 # ---- 3. in place ----
@@ -904,39 +917,42 @@ def _helper_bones(c):
     return [(c.index[h], c.index[b]) for h, b in HELPER_BONES if c.has(h, b)]
 
 
+def _lowest(heights, names):
+    """The lowest of `names`' heights ({name: height or array}) that are there, else None."""
+    there = [float(np.min(heights[n])) for n in names if n in heights]
+    return min(there) if there else None
+
+
 def floor(worlds, c, statics, reference, share, offset, report):
-    """The body (the pelvis and below it, and the helpers on it) moved so the planted feet stand on the
-    reference's heights (else the rest's) over the root: the median at mid-stance of the lower of the ankle's
-    and the ball's difference; left alone within FLOOR_DEAD; `offset` cm on top."""
+    """The body (the pelvis and below it, and the helpers on it) moved so the feet's lowest point over the cycle
+    stands where it stands at rest over the root: the lowest ball (else ankle) over the root against the rest's
+    (else the reference's) lowest ball; left alone within FLOOR_DEAD; `offset` cm on top."""
     if not c.has("pelvis", "foot_l", "foot_r"):
         return worlds
-    standing = reference
-    if not standing and statics:
-        standing = dict((n, _rest(statics, n)) for n in c.names if _rest(statics, n) is not None)
     shift = 0.0
     measured = None
-    if standing and share > 0.0 and "root" in standing:
+    targets = []
+    if statics:
+        targets.append(dict((n, _rest(statics, n)) for n in c.names if _rest(statics, n) is not None))
+    if reference:
+        targets.append(reference)
+    if share > 0.0:
         pos = worlds[..., 3, :3]
-        base = standing["root"][3, :3] @ c.up
-        diffs = []
-        for side in ("l", "r"):
-            names = [n for n in ("foot_" + side, "ball_" + side) if n in c.index and n in standing]
-            if not names:
-                continue
-            down = np.ones(worlds.shape[1] - 1, bool)
-            for n in names:
-                h = pos[c.index[n], :-1] @ c.up
-                down &= h <= h.min() + LOW_TOL
-            if not down.any():
-                continue
-            for f in np.nonzero(down)[0]:
-                above = pos[c.root, f] @ c.up
-                diffs.append(min((pos[c.index[n], f] @ c.up - above) - (standing[n][3, :3] @ c.up - base)
-                                 for n in names))
-        if diffs:
-            measured = float(np.median(diffs))
-            if abs(measured) > FLOOR_DEAD:
-                shift = -share * measured
+        above = pos[c.root, :-1] @ c.up
+        for points in (("ball_l", "ball_r"), ("foot_l", "foot_r")):
+            for standing in targets:
+                if "root" not in standing or not all(n in c.index for n in points):
+                    continue
+                low = _lowest(dict((n, standing[n][3, :3] @ c.up) for n in points if n in standing), points)
+                if low is None or len([n for n in points if n in standing]) < len(points):
+                    continue
+                walk = min(float(((pos[c.index[n], :-1] @ c.up) - above).min()) for n in points)
+                measured = walk - (low - float(standing["root"][3, :3] @ c.up))
+                break
+            if measured is not None:
+                break
+        if measured is not None and abs(measured) > FLOOR_DEAD:
+            shift = -share * measured
     shift += offset
     if abs(shift) < 1e-9:
         return worlds
@@ -949,7 +965,7 @@ def floor(worlds, c, statics, reference, share, offset, report):
         out[h] = rel @ out[b]
     text = "the body %s %.1f cm" % ("lowered" if shift < 0 else "raised", abs(shift))
     if measured is not None and abs(measured) > FLOOR_DEAD:
-        text += " - its planted feet stood %.1f cm %s the floor" % (abs(measured), "over" if measured > 0 else "under")
+        text += " - its feet stood %.1f cm %s the floor" % (abs(measured), "over" if measured > 0 else "under")
     report.add("floor", text, "floor %+.1f cm" % shift)
     return out
 

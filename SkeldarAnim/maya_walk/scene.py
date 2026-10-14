@@ -233,11 +233,17 @@ def _reference_path(name):
 def _clean_data(data, knobs, ref_path):
     """(the clean clip, its Report) of a walk's data (files.load's dict) under the clean knobs and the reference
     pose file `ref_path` (None: none) carried onto the walk's skeleton."""
-    ref = None
+    ref, why = None, None
     if ref_path:
         bones = wf.load_pose(ref_path)[1]
-        ref = wp.carried(data["names"], np.asarray(data["worlds"])[:, 0], data["statics"], bones, wt)
-    return wc.clean(wf.clip_of(data, wm), data["statics"], ref, knobs)
+        try:
+            ref = wp.carried(data["names"], np.asarray(data["worlds"])[:, 0], data["statics"], bones, wt)
+        except wt.Refusal as error:          # a skeleton the reference cannot stand on: judged by its rest
+            why = "the reference was not used (%s) - judged against the rest" % error
+    clip, report = wc.clean(wf.clip_of(data, wm), data["statics"], ref, knobs)
+    if why:
+        report.note(why)
+    return clip, report
 
 
 def _cleaned(path, stamp, data, given, reference):
@@ -249,8 +255,20 @@ def _cleaned(path, stamp, data, given, reference):
     cached = _state()["loaded"].get(key)
     if cached is None:
         cached = _clean_data(data, knobs, ref_path)
-        _state()["loaded"][key] = cached
+        _cache(key, cached)
     return cached
+
+
+CACHED_READINGS = 6       # a walk's readings kept (each knob value released is one - the oldest goes)
+
+
+def _cache(key, value):
+    """A reading of a walk (`key` = (kind, path, ...)) kept, at most CACHED_READINGS of its kind and path."""
+    loaded = _state()["loaded"]
+    same = [k for k in loaded if isinstance(k, tuple) and k[:2] == key[:2]]
+    for old in same[:max(0, len(same) - CACHED_READINGS + 1)]:
+        del loaded[old]
+    loaded[key] = value
 
 
 def save_walk(root, name=None, reference=BUILT_IN_REFERENCE):
@@ -308,7 +326,7 @@ def load_walk(name, given=None, reference=BUILT_IN_REFERENCE):
     report = _cleaned(path, stamp, data, knobs, reference)[1]
     if walk is None:
         walk = wm.analyse(_cleaned(path, stamp, data, knobs, reference)[0])
-        _state()["loaded"][key] = walk
+        _cache(key, walk)
     return walk, data["statics"], int(data["start"]), report
 
 
@@ -343,13 +361,13 @@ def prepared_pose(walk_name, pose_name, given=None, reference=BUILT_IN_REFERENCE
     path = wf.pose_path_for(folder(), pose_name)
     if not os.path.exists(path):
         raise Refusal("no saved pose named %s" % pose_name)
-    key = (wf.path_for(folder(), walk_name), path, id(walk))
-    stamp = (os.path.getmtime(key[0]), os.path.getmtime(path))
+    key = ("pose", wf.path_for(folder(), walk_name), path, id(walk))
+    stamp = (os.path.getmtime(key[1]), os.path.getmtime(path))
     cached = _state()["loaded"].get(key)
-    if cached is None or cached[0] != stamp:
+    if cached is None or cached[0] != stamp or cached[2] is not walk:   # an id is reused once a walk is evicted
         bones = wf.load_pose(path)[1]
-        cached = (stamp, wp.prepare(walk, statics, bones, wm, wt))
-        _state()["loaded"][key] = cached
+        cached = (stamp, wp.prepare(walk, statics, bones, wm, wt), walk)
+        _cache(key, cached)
     return cached[1]
 
 
@@ -614,7 +632,10 @@ def pick(root):
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     stored = memo.get("knobs", {})
     knobs = wm.knobs(**model_knobs(stored))      # a side's own values too
-    knobs.update(wc.knobs(stored))               # the clean's
+    old = dict(stored)
+    if "reference" not in memo:                  # put on before the clean: kept as it was keyed (no floor, no posture)
+        old.update(floor=0.0, fix_posture=0.0)
+    knobs.update(wc.knobs(old))                  # the clean's
     return memo["walk"], knobs, memo.get("pose") or None, tuple(memo.get("parts", ALL_PARTS))
 
 

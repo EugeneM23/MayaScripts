@@ -391,7 +391,17 @@ def show_report(report):
     cmds = _cmds()
     if cmds.text(CLEAN_REPORT, exists=True):
         text = report if isinstance(report, str) else report.text()
-        cmds.text(CLEAN_REPORT, edit=True, label=text)
+        cmds.text(CLEAN_REPORT, edit=True, label=text, height=report_height(text))
+
+
+REPORT_CHARS = 44         # a caption line's characters in the 360 px dock (estimated: the skin's small font)
+REPORT_LINE = 15          # logical px a caption line
+
+
+def report_height(text):
+    """The report's height for its text wrapped at REPORT_CHARS (a fixed height clipped a long report)."""
+    lines = sum(max(1, -(-len(line) // REPORT_CHARS)) for line in text.splitlines())
+    return max(2, lines) * REPORT_LINE + 6
 
 
 def _set_knobs(knobs, frames):
@@ -611,7 +621,16 @@ def slider_changed(*_):
     """A released knob (a pose, a part): the target keyed again; none - say how to get one."""
     if _QUIET[0]:
         return None
-    return _press(lambda: _apply_to(scene.target_root()))
+
+    def run():
+        try:
+            root = scene.target_root()
+        except scene.Refusal as refusal:                 # no target: the Clean tab still reads the walk again
+            walk, _, _, report = scene.load_walk(chosen_walk(), values(), chosen_reference())
+            show_report(report)
+            return str(refusal)
+        return _apply_to(root)
+    return _press(run)
 
 
 def walk_changed(*_):

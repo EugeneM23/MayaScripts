@@ -73,7 +73,7 @@ gate("clavicle_l 8.3 cm" in text, "clavicle_l moved off its joint, put back")
 gate("clavicle_l" in text and "clavicle_r" in text and "reference" in text, "both clavicles set on the reference")
 gate("foot_l" in text and "mirrored" in text, "foot_l takes the right foot mirrored")
 floor_line = [t for s, t, _ in report.lines if s == "floor"]
-gate(bool(floor_line) and "lowered 5" in floor_line[0], "the floor: %s" % (floor_line[0] if floor_line else "-"))
+gate(bool(floor_line) and 45.0 < float(floor_line[0].split("lowered ")[-1].split(" cm")[0]) < 60.0, "the floor: %s" % (floor_line[0] if floor_line else "-"))
 gate(any(s == "helpers" for s, _, _ in report.lines) and any(s == "twists" for s, _, _ in report.lines),
      "short-keyed helpers and twists rebuilt")
 cleaned = sw._cleaned(wf.path_for(TEMP, "Walking_broken"), os.path.getmtime(wf.path_for(TEMP, "Walking_broken")),

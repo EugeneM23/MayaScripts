@@ -133,6 +133,17 @@ class LoopTests(unittest.TestCase):
         walk = wm.analyse(out)
         self.assertAlmostEqual(float(np.linalg.norm(walk.travel)), 120.0, delta=0.5)
 
+    def test_a_take_of_many_cycles_gives_one(self):
+        worlds = walker_worlds()
+        travel = worlds[IDX["root"], P, 3, :3] - worlds[IDX["root"], 0, 3, :3]
+        parts = [worlds]
+        for k in (1, 2, 3, 4):
+            more = worlds[:, 1:(16 if k == 4 else None)].copy()
+            more[:, :, 3, :3] += k * travel
+            parts.append(more)
+        out, report = run(np.concatenate(parts, axis=1))        # four cycles and a half: the loop is one
+        self.assertEqual(out.worlds.shape[1], P + 1, report.text())
+
     def test_a_cut_seam_is_closed_in_value_and_slope(self):
         worlds = walker_worlds()
         travel = worlds[IDX["root"], P, 3, :3] - worlds[IDX["root"], 0, 3, :3]
@@ -364,6 +375,15 @@ class FloorTests(unittest.TestCase):
         out, report = run(self.raised(3.0))
         self.assertNotIn("floor", steps(report))
 
+    def test_the_floor_is_the_rests_not_the_reference(self):
+        reference = dict((n, m.copy()) for n, m in REST.items())
+        for m in reference.values():
+            m[3, 1] += 20.0                              # a reference standing 20 cm higher does not move it
+        out, report = wc.clean(clip_of(walker_worlds()), STATICS, reference, {})
+        self.assertNotIn("floor", steps(report))
+        out, report = wc.clean(clip_of(self.raised(30.0)), None, REST, {})     # no rest: the reference
+        self.assertIn("floor", steps(report))
+
     def test_floor_zero_leaves_it_and_the_offset_raises_it(self):
         out, report = run(self.raised(30.0), floor=0.0)
         self.assertNotIn("floor", steps(report))
@@ -430,6 +450,33 @@ class SceneTests(unittest.TestCase):
                                         self.files.load_pose(self.files.pose_path_for(self.folder, pose))[1],
                                         self.scene.wt)
         self.assertLess(float(np.abs(carried["foot_l"][:3, :3] - REST["foot_l"][:3, :3]).max()), 1e-6)
+
+    def test_a_reference_the_walk_cannot_stand_on_is_noted_not_refused(self):
+        bones = dict((n, dict(STATICS[n], world=STATICS[n]["rest"])) for n in NAMES if not n.startswith("thigh"))
+        self.files.save_pose(self.files.pose_path_for(self.folder, "legless"), "legless", bones)
+        name = self.save(walker_worlds())
+        walk, statics, start, report = self.scene.load_walk(name, {}, "legless")
+        self.assertEqual(walk.P, P)
+        self.assertTrue(report.notes)
+        self.assertIn("note: the reference was not used", report.text())
+        self.assertFalse(report.changed)
+
+    def test_a_skeleton_walked_before_the_clean_is_picked_without_floor_or_posture(self):
+        class Cmds(object):
+            def ls(self, *args, **kw):
+                return ["uuid"]
+        old = (self.scene.memo_of, self.scene._long, self.scene._cmds)
+        try:
+            self.scene._long = lambda root: root
+            self.scene._cmds = lambda: Cmds()
+            self.scene.memo_of = lambda root: {"walk": "dw", "knobs": {"stride": 1.2}, "parts": []}
+            knobs = self.scene.pick("|walked")[1]
+            self.assertEqual((knobs["floor"], knobs["fix_posture"], knobs["stride"]), (0.0, 0.0, 1.2))
+            self.scene.memo_of = lambda root: {"walk": "dw", "knobs": {}, "parts": [], "reference": "(none)"}
+            knobs = self.scene.pick("|walked")[1]
+            self.assertEqual((knobs["floor"], knobs["fix_posture"]), (1.0, 1.0))
+        finally:
+            self.scene.memo_of, self.scene._long, self.scene._cmds = old
 
     def test_model_knobs_leave_the_clean_ones_out(self):
         got = self.scene.model_knobs({"stride": 1.2, "smooth": 2.0, "lift_l": 1.5})
