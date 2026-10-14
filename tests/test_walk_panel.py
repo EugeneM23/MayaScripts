@@ -189,7 +189,7 @@ class CardTests(unittest.TestCase):
         self.memos = {}
         self.state = {"loaded": {}, "target": None}
         names = ("_cmds", "walk_names", "pose_names", "load_walk", "apply", "selected_root", "selected_top",
-                 "memo_of", "pick", "target_root", "_state")
+                 "memo_of", "pick", "target_root", "_state", "fix_posture")
         self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB))
         panel.JOB.clear()
         panel._cmds = lambda: self.fake
@@ -198,16 +198,20 @@ class CardTests(unittest.TestCase):
         scene.pose_names = lambda: ["goblin", "two_handed_sword"]
         self.loaded = []
 
-        def load_walk(name, given=None, reference=None):
-            self.loaded.append((name, given, reference))
+        def load_walk(name, given=None):
+            self.loaded.append((name, given))
             return FakeWalk(), {}, 0, FakeReport()
         scene.load_walk = load_walk
         scene._state = lambda: self.state
-        self.references = []
+        self.fixed = []
 
-        def apply(root, walk, given, pose, parts, reference=None):
+        def fix_posture(name, given=None):
+            self.fixed.append((name, given))
+            return FakeReport(), "Fix posture: %s foot_l out: mirrored" % name
+        scene.fix_posture = fix_posture
+
+        def apply(root, walk, given, pose, parts):
             self.applied.append((root, walk, given, pose, parts))
-            self.references.append(reference)
             self.state["target"] = "uuid-" + root
             return None, {"clean": FakeReport()}, "%s on %s" % (walk, root)
         scene.apply = apply
@@ -267,8 +271,7 @@ class CardTests(unittest.TestCase):
         sliders = [c[1] for c in self.made("floatSliderGrp") + self.made("intSliderGrp")]
         self.assertEqual(sorted(sliders), sorted(panel._control(k) for k in scene.ALL_DEFAULTS
                                                  if k not in panel.CHECKS))
-        self.assertEqual(self.fake.items[panel.REF_MENU][0], scene.BUILT_IN_REFERENCE)
-        self.assertEqual(self.fake.items[panel.REF_MENU][-1], scene.NO_REFERENCE)
+        self.assertEqual(marks[panel.FIX_BTN][0], "secondary")
         self.assertEqual(marks[panel.CLEAN_REPORT][0], "caption")       # a note would hide (CLAUDE.md trap 226)
         self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
         self.assertTrue(all(callable(c[2]["changeCommand"])
@@ -367,19 +370,25 @@ class CardTests(unittest.TestCase):
         self.assertEqual(self.fake.values[panel._control("tempo")], 90)
         self.assertEqual(self.applied[-1][2]["bob"], wm.DEFAULTS["bob"])
 
-    def test_the_reference_and_the_clean_knobs_reach_apply(self):
+    def test_the_clean_knobs_reach_apply_and_fix_posture_rekeys(self):
         panel.build_panel()
-        self.fake.values[panel.REF_MENU] = "goblin"
         self.fake.values[panel._control("smooth")] = 2.0
         self.fake.selection = ["|root"]
         panel.press_apply()
-        self.assertEqual(self.references[-1], "goblin")
         self.assertEqual(self.applied[-1][2]["smooth"], 2.0)
-        self.assertEqual(self.fake.vars[panel.OPTION + "reference"], "goblin")
-        self.fake.values[panel.REF_MENU] = scene.NO_REFERENCE
-        panel.reference_changed()                       # a new reference re-keys the target
-        self.assertEqual(self.references[-1], scene.NO_REFERENCE)
+        count = len(self.applied)
+        self.fake.values[panel.WALK_MENU] = "dw"
+        line = panel.press_fix_posture()
+        self.assertEqual(self.fixed[-1][0], "dw")
+        self.assertIn("Fix posture: dw", line)
+        self.assertEqual(len(self.applied), count + 1)          # the target keyed again
         self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
+
+    def test_fix_posture_with_no_target_only_writes_the_walk(self):
+        panel.build_panel()
+        line = panel.press_fix_posture()
+        self.assertIn("Fix posture", line)
+        self.assertEqual(self.applied, [])
 
     def test_the_in_place_chip_rekeys_the_target(self):
         panel.build_panel()

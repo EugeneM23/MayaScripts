@@ -13,6 +13,7 @@ docs/superpowers/specs/2026-10-12-parametric-walk-design.md, 2026-10-12-walk-ont
 import json
 import math
 import os
+import shutil
 import sys
 import time
 
@@ -26,13 +27,11 @@ from . import clean as wc
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
-#  The reference a raw clip's posture and floor are judged against (2026-10-14): the UE5 idle M_Neutral_Stand_Idle_Loop's
-#  mean pose over its 302 frames, shipped; else a saved pose; else none (the skeleton's rest then)
-BUILT_IN_REFERENCE = "UE5 idle (built in)"
-NO_REFERENCE = "(none)"
+#  What Fix posture judges a walk's posture against (2026-10-14): the UE5 idle M_Neutral_Stand_Idle_Loop's mean pose
+#  over its 302 frames, shipped (without it: the skeleton's rest)
 REFERENCE_FILE = os.path.join(PLUGIN, "assets", "walk_reference_ue5.wpose.gz")
-#  Every knob the card holds and a walked skeleton remembers: the model's and the clean's (the model never sees the
-#  clean's - apply hands each its own)
+#  Every knob the card holds and a walked skeleton remembers: the model's and the clean's (Seam, Smooth - the model
+#  never sees them: apply hands each its own)
 ALL_DEFAULTS = dict(wm.DEFAULTS, **wc.DEFAULTS)
 ALL_RANGES = dict(wm.RANGES, **wc.RANGES)
 #  Where the walks and the poses live: this override (a verify's temporary folder), else the optionVar, else
@@ -213,48 +212,35 @@ def read_clip(root):
     return wm.Clip([_short(p).split(":")[-1] for p in joints], parents, worlds, _fps(), up, name), start
 
 
-def reference_names():
-    """The references a walk's posture and floor can be judged against: the built-in idle, the saved poses,
-    none."""
-    return [BUILT_IN_REFERENCE] + pose_names() + [NO_REFERENCE]
+def _reference():
+    """The UE5 idle's pose bones, or None without the shipped file."""
+    return wf.load_pose(REFERENCE_FILE)[1] if os.path.exists(REFERENCE_FILE) else None
 
 
-def _reference_path(name):
-    if not name or name == NO_REFERENCE:
-        return None
-    if name == BUILT_IN_REFERENCE:
-        return REFERENCE_FILE if os.path.exists(REFERENCE_FILE) else None
-    path = wf.pose_path_for(folder(), name)
-    if not os.path.exists(path):
-        raise Refusal("no saved pose named %s for the reference - pick another in Clean" % name)
-    return path
-
-
-def _clean_data(data, knobs, ref_path):
-    """(the clean clip, its Report) of a walk's data (files.load's dict) under the clean knobs and the reference
-    pose file `ref_path` (None: none) carried onto the walk's skeleton."""
+def _clean_data(data, knobs, posture_fix=False):
+    """(the clean clip, its Report) of a walk's data (files.load's dict) under the clean knobs; `posture_fix` sets
+    its posture right against the UE5 idle carried onto the walk's skeleton (Fix posture)."""
     ref, why = None, None
-    if ref_path:
-        bones = wf.load_pose(ref_path)[1]
-        try:
-            ref = wp.carried(data["names"], np.asarray(data["worlds"])[:, 0], data["statics"], bones, wt)
-        except wt.Refusal as error:          # a skeleton the reference cannot stand on: judged by its rest
-            why = "the reference was not used (%s) - judged against the rest" % error
-    clip, report = wc.clean(wf.clip_of(data, wm), data["statics"], ref, knobs)
+    if posture_fix:
+        bones = _reference()
+        if bones is not None:
+            try:
+                ref = wp.carried(data["names"], np.asarray(data["worlds"])[:, 0], data["statics"], bones, wt)
+            except wt.Refusal as error:          # a skeleton the idle cannot stand on: judged by its rest
+                why = "the UE5 idle was not used (%s) - judged against the rest" % error
+    clip, report = wc.clean(wf.clip_of(data, wm), data["statics"], ref, knobs, posture_fix=posture_fix)
     if why:
         report.note(why)
     return clip, report
 
 
-def _cleaned(path, stamp, data, given, reference):
-    """_clean_data of a loaded walk file, cached by the file's time, the knobs and the reference file's time."""
+def _cleaned(path, stamp, data, given):
+    """_clean_data of a loaded walk file, cached by the file's time and the knobs."""
     knobs = wc.knobs(given)
-    ref_path = _reference_path(reference)
-    key = ("clean", path, stamp, tuple(sorted(knobs.items())), ref_path,
-           os.path.getmtime(ref_path) if ref_path else None)
+    key = ("clean", path, stamp, tuple(sorted(knobs.items())))
     cached = _state()["loaded"].get(key)
     if cached is None:
-        cached = _clean_data(data, knobs, ref_path)
+        cached = _clean_data(data, knobs)
         _cache(key, cached)
     return cached
 
@@ -271,11 +257,10 @@ def _cache(key, value):
     loaded[key] = value
 
 
-def save_walk(root, name=None, reference=BUILT_IN_REFERENCE):
-    """The clip under `root` saved to the walks folder as <name>.walk.gz AS IT STANDS - a cycle or not, floating,
-    jittery: it is cleaned when it is read (maya_walk.clean) - after reading it the way it will be read (the
-    clean at its defaults against `reference`, then the model's refusals). Returns (the walk's name, the status
-    line)."""
+def save_walk(root, name=None):
+    """The clip under `root` saved to the walks folder as <name>.walk.gz AS IT STANDS - a cycle or not: it is
+    looped when it is read (maya_walk.clean) - after reading it the way it will be read (the clean at its
+    defaults, then the model's refusals). Returns (the walk's name, the status line)."""
     clip, start = read_clip(root)
     bones, note = read_bones(root)
     statics = dict((leaf, {"parent": b["parent"], "canonical": b["canonical"], "rest": b["rest"]})
@@ -285,7 +270,7 @@ def save_walk(root, name=None, reference=BUILT_IN_REFERENCE):
         raise Refusal("%d bones of the cycle read twice or unnamed: %s" % (len(missing), ", ".join(missing[:4])))
     data = {"names": clip.names, "parents": clip.parents, "worlds": clip.worlds, "fps": clip.fps, "up": clip.up,
             "name": clip.name, "statics": statics, "start": start}
-    cleaned, report = _clean_data(data, wc.knobs(), _reference_path(reference))
+    cleaned, report = _clean_data(data, wc.knobs())
     walk = wm.analyse(cleaned)
     name = wf.safe_name(name or clip.name)
     clip.name = name
@@ -306,9 +291,9 @@ def _forget(path):
             loaded.pop(key, None)
 
 
-def load_walk(name, given=None, reference=BUILT_IN_REFERENCE):
-    """(Walk, statics, first frame, clean Report) of a saved walk read under the clean knobs in `given` and the
-    reference named `reference`, cached by the file's time, the knobs and the reference."""
+def load_walk(name, given=None):
+    """(Walk, statics, first frame, clean Report) of a saved walk read under the clean knobs in `given`, cached by
+    the file's time and the knobs."""
     path = wf.path_for(folder(), name)
     if not os.path.exists(path):
         raise Refusal("no saved walk named %s" % name)
@@ -319,15 +304,41 @@ def load_walk(name, given=None, reference=BUILT_IN_REFERENCE):
         _state()["loaded"][path] = loaded
     data = loaded[1]
     knobs = wc.knobs(given)
-    ref_path = _reference_path(reference)
-    key = ("walk", path, stamp, tuple(sorted(knobs.items())), ref_path,
-           os.path.getmtime(ref_path) if ref_path else None)
+    key = ("walk", path, stamp, tuple(sorted(knobs.items())))
     walk = _state()["loaded"].get(key)
-    report = _cleaned(path, stamp, data, knobs, reference)[1]
+    report = _cleaned(path, stamp, data, knobs)[1]
     if walk is None:
-        walk = wm.analyse(_cleaned(path, stamp, data, knobs, reference)[0])
+        walk = wm.analyse(_cleaned(path, stamp, data, knobs)[0])
         _cache(key, walk)
     return walk, data["statics"], int(data["start"]), report
+
+
+BACKUP = ".orig"          # Fix posture keeps the walk's file as it was beside it: <name>.walk.gz.orig
+
+
+def fix_posture(name, given=None):
+    """Fix posture (the card's button): the saved walk `name` read as it will be read (looped, its seam closed at
+    the Seam in `given`, not smoothed), its posture set right against the UE5 idle, and written back into its
+    file - the file as it was kept once beside it (BACKUP). Nothing out of place: the file untouched. Returns
+    (the clean Report, the status line)."""
+    path = wf.path_for(folder(), name)
+    if not os.path.exists(path):
+        raise Refusal("no saved walk named %s" % name)
+    data = wf.load(path)
+    knobs = wc.knobs(dict(given or {}, smooth=0.0))
+    clip, report = _clean_data(data, knobs, posture_fix=True)
+    fixed = [text for step, text, _ in report.lines if step == "posture"]
+    if not fixed:
+        why = ("; " + report.notes[0]) if report.notes else ""
+        return report, "Fix posture: %s - nothing out of place%s" % (name, why)
+    backup = path + BACKUP
+    if not os.path.exists(backup):
+        shutil.copy2(path, backup)
+    clip.name = data.get("name") or name
+    wf.save(path, clip, data["statics"], int(data["start"]))
+    _forget(path)
+    return report, "Fix posture: %s %s | saved, the original in %s" % (name, "; ".join(fixed),
+                                                                       os.path.basename(backup))
 
 
 def walk_names():
@@ -353,11 +364,10 @@ def save_pose(root, name=None):
     return name, line + (" | " + note if note else "")
 
 
-def prepared_pose(walk_name, pose_name, given=None, reference=BUILT_IN_REFERENCE):
+def prepared_pose(walk_name, pose_name, given=None):
     """The pose `pose_name` carried onto the walk `walk_name`'s skeleton (walkpose.prepare) - the walk read under
-    the clean knobs in `given` and `reference` - cached by the two files' times and the walk's reading."""
-    walk = load_walk(walk_name, given, reference)[0]
-    statics = load_walk(walk_name, given, reference)[1]
+    the clean knobs in `given` - cached by the two files' times and the walk's reading."""
+    walk, statics = load_walk(walk_name, given)[:2]
     path = wf.pose_path_for(folder(), pose_name)
     if not os.path.exists(path):
         raise Refusal("no saved pose named %s" % pose_name)
@@ -525,21 +535,21 @@ def model_knobs(given):
     return dict((k, v) for k, v in (given or {}).items() if k in wm.DEFAULTS or k in wm.SIDE_KNOBS)
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, reference=BUILT_IN_REFERENCE):
-    """The saved walk `walk_name` - read under the clean knobs in `given` against `reference` - keyed onto the
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
+    """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
     skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
     - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
     stands). One undo step. Returns (Result, info, the status line)."""
     started = time.time()
     root = _long(root)
-    walk, statics, start, report = load_walk(walk_name, given, reference)
+    walk, statics, start, report = load_walk(walk_name, given)
     bones, note = read_bones(root)
     memo = memo_of(root)
     retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
     pose = None
     knobs = model_knobs(given)
     if pose_name and wm.knobs(**knobs)["pose"] > 0.0:
-        pose = wp.filtered(prepared_pose(walk_name, pose_name, given, reference), parts)
+        pose = wp.filtered(prepared_pose(walk_name, pose_name, given), parts)
     result = walk.evaluate(knobs, pose)
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
@@ -548,7 +558,6 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, referenc
         write_curves(values, static, start)
         _set_memo(root, {"walk": walk_name, "pose": pose_name or "", "parts": list(parts),
                          "knobs": dict(result.info["knobs"], **wc.knobs(given)),
-                         "reference": reference or NO_REFERENCE,
                          "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION})
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
@@ -582,9 +591,6 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, referenc
     used = result.info["knobs"]
     if used.get("in_place", 0.0) >= 0.5:
         text += " | in place"
-    if abs(used.get("upper_offset", 0.0)) > 1e-9:
-        text += " | the upper body %.1f fr %s" % (abs(used["upper_offset"]),
-                                                  "late" if used["upper_offset"] > 0 else "early")
     if report.changed:
         text += " | " + report.short()
     if note:
@@ -632,17 +638,8 @@ def pick(root):
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     stored = memo.get("knobs", {})
     knobs = wm.knobs(**model_knobs(stored))      # a side's own values too
-    old = dict(stored)
-    if "reference" not in memo:                  # put on before the clean: kept as it was keyed (no floor, no posture)
-        old.update(floor=0.0, fix_posture=0.0)
-    knobs.update(wc.knobs(old))                  # the clean's
+    knobs.update(wc.knobs(stored))               # the clean's
     return memo["walk"], knobs, memo.get("pose") or None, tuple(memo.get("parts", ALL_PARTS))
-
-
-def reference_of(root):
-    """The reference a walked skeleton's walk was read against (a walk put on before 2026-10-14: the built-in)."""
-    reference = memo_of(_long(root)).get("reference")
-    return reference if reference else BUILT_IN_REFERENCE
 
 
 def target_root():

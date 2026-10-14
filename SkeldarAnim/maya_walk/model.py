@@ -36,11 +36,9 @@ KNOBS = (
     ("pelvis_rot", 1.0, 0.0, 3.0),
     ("pelvis_twist", 5.0, -5.0, 40.0),
     ("pelvis_list", 4.0, -5.0, 10.0),
-    ("pelvis_tilt", 0.0, -15.0, 15.0),
     ("spine", 1.0, 0.0, 3.0),
     ("chest_twist", 7.0, -5.0, 60.0),
     ("chest_sway", 5.0, -5.0, 15.0),
-    ("chest_pitch", 0.0, -15.0, 15.0),
     ("gait_lean", 1.0, 0.0, 1.0),
     ("torso_drag", 1.5, 0.0, 8.0),
     ("torso_bounce", 0.2, 0.0, 1.0),
@@ -48,17 +46,9 @@ KNOBS = (
     ("elbow", 1.0, 0.0, 3.0),
     ("arm_drag", 1.5, 0.0, 8.0),
     ("arm_bounce", 0.3, 0.0, 1.0),
-    ("shoulder_swing", 0.0, -25.0, 25.0),
-    ("shoulder_bob", 0.0, -15.0, 15.0),
-    ("arm_swing", 0.0, -60.0, 60.0),
     ("head", 1.0, 0.0, 3.0),
     ("head_drag", 2.0, 0.0, 8.0),
-    ("head_nod", 0.0, -20.0, 20.0),
     ("overlap", 0.0, 0.0, 6.0),
-    ("upper_offset", 0.0, -10.0, 10.0),
-    ("spine_wave", 0.0, 0.0, 6.0),
-    ("shoulder_drag", 0.0, 0.0, 8.0),
-    ("pelvis_drag", 0.0, 0.0, 8.0),
     ("weight", 0.0, -1.0, 2.0),
     ("balance", 1.0, 0.0, 1.0),
     ("exaggeration", 1.0, 0.0, 2.0),
@@ -68,7 +58,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  The knobs of a body part that has two sides (2026-10-13: «режим в котором левая и правая сторона станут
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "ground_time",
-         "arms", "elbow", "arm_drag", "arm_bounce", "shoulder_swing", "shoulder_bob", "arm_swing")
+         "arms", "elbow", "arm_drag", "arm_bounce")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -95,48 +85,12 @@ GAIT_FROUDE = 1.0
 # Gait lean: under a pose's torso the walk's own forward lean over its rest is put back, in the room the pose leaves
 # to this lean of the trunk (degrees from up; the stop builder's rule, docs/superpowers/specs/2026-10-14-pose-on-clip)
 LEAN_LIMIT = 90.0
-# The levers (docs/superpowers/specs/2026-10-14-walk-clean-levers-overlap-design.md, Part 3): each ADDS degrees (x
-# Exaggeration) on a shape of the stride's phase, cos(h . stride_phase - its phase), whatever the clip holds there -
-# a spine that does not move in the clip still pitches. Its phase is the clip's own on its axis where the clip's h-th
-# harmonic there moves more than LEVER_STILL degrees (the lever reinforces the clip's motion), else where the table
-# says it peaks: a share of a stride after the left heel strike (a sided lever: (left, right)).
-# name, harmonics a stride, peak, sided - the joints and axes (+ as the knob's tooltip says):
-#   pelvis_tilt    the pelvis about the walk's side axis, its top forward; x Pelvis motion; the lumbar takes it back
-#   chest_pitch    the chest joints (CHEST_SHARES) about side, forward; x Spine
-#   head_nod       the head in the world about side, looking down
-#   shoulder_swing each clavicle about up, its lateral end (the shoulder) forward
-#   shoulder_bob   each clavicle about forward, the shoulder up
-#   arm_swing      each upper arm in the world about side, the hand forward
-# The arm and shoulder levers fade under a pose's grip as the arms' own swing does (hands holding one thing hold it).
-LEVERS = (
-    ("pelvis_tilt", 2, 0.20, False),
-    ("chest_pitch", 2, 0.05, False),
-    ("head_nod", 2, 0.075, False),
-    ("shoulder_swing", 1, (0.5, 0.0), True),        # the left forward at the right heel strike, the right at the left's
-    ("shoulder_bob", 2, (0.15, 0.15), True),
-    ("arm_swing", 1, (0.5, 0.0), True),
-)
-LEVER_STILL = 0.5         # degrees: a clip moving less than this on a lever's axis (at its harmonic) takes the table's phase
-# Overlap (the same spec, Part 4), all in frames of the new cycle:
-#   upper_offset   spine_01 and everything above it read the walk that many frames later than the legs and the pelvis
-#                  (negative: earlier) - in the pelvis's frame exactly the walk's upper body N frames before; the
-#                  chest's added turn and the levers on it at that time; the lumbar's counter-turn of the pelvis's
-#                  added turn stays at the pelvis's time
-#   spine_wave     each spine and neck joint's own motion later by its share of the chain: joint i of the N from
-#                  spine_01 to the last neck joint by w (i + 1) / N (the world-held head as it is)
-#   shoulder_drag  each clavicle's turn against the chest through the arms' spring (Arm bounce), feeling the chest's
-#                  acceleration at the shoulder; the arm hangs on from it
-#   pelvis_drag    the pelvis's world turn through the trunk's spring (Torso bounce), before the legs are solved: the
-#                  legs reach from the late hips; the lumbar takes the lag back (the chest keeps its turn)
 
 # the arms follow the body with inertia (docs/superpowers/specs/2026-10-12-walk-upper-body-design.md)
 ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps a frame
 ARM_CYCLES = 8            # at most this many cycles run to settle the arms' periodic motion
 ARM_SETTLED = 1e-5        # radians: settled when a cycle's start moves less than this from the last's
 ARM_INERTIA = 1.0         # x the shoulder's (elbow's, wrist's) acceleration felt by the limb below it
-SHOULDER_INERTIA = 0.3    # ...and by a clavicle (Shoulder drag): a shoulder is held - at 1 the chest's bob shook it at
-                          # twice a stride, 22 deg off its frames at drag 3 on the synthetic walker, a flap rather than a
-                          # drag; at 0.3 it trails the chest's turn (trap 242's remedy, as HEAD_INERTIA; 2026-10-14)
 ARM_HARMONICS = 6         # the shoulder's path the arms feel: its first this many harmonics a stride (the body's motion)
 ACCEL_HZ = 8.0            # ...and none faster than this many a second: a sprint's stride is 15 frames, and 6 harmonics of
                           # it reached a 2.5-frame period - the frames' own noise (AGS_Sprint, 2026-10-14)
@@ -670,8 +624,8 @@ class Walk(object):
         if abs(climb) > 0.5:
             raise Refusal("the root climbs %.1f cm a cycle: a walk on flat ground only" % climb)
         if np.linalg.norm(flat) < 1.0:
-            raise Refusal("the root travels %.2f cm a cycle and its feet do not slide back: no walk in it (the clean "
-                          "gives an in-place walk its travel)" % np.linalg.norm(flat))
+            raise Refusal("the root travels %.2f cm a cycle: an in-place walk is not read yet (the root must "
+                          "carry the travel)" % np.linalg.norm(flat))
         moved = float(np.abs(pos[:, P] - pos[:, 0] - travel).max())
         turned = float(np.abs(rot[:, P] - rot[:, 0]).max())
         if moved > LOOP_TOL[0] or turned > LOOP_TOL[1]:
@@ -708,8 +662,6 @@ class Walk(object):
         self._grounds()
         self._legs_and_pelvis()
         self._chest()
-        self._levers()
-        self._overlap_parts()
         self._placement()
         self._own_pendulum()
 
@@ -972,14 +924,6 @@ class Walk(object):
         and the top spine joints that take the chest's added turn (CHEST_SHARES)."""
         idx, P = self.index, self.P
         self.chest_shape, self.own_chest_twist, self.own_chest_sway, self.chest_share = None, 0.0, 0.0, {}
-        # the joints the chest's turns go on (Chest pitch's too, with or without arms): the top of the spine
-        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
-                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
-        top = [j for _, j in spine[-len(CHEST_SHARES):]]
-        shares = CHEST_SHARES[-len(top):] if top else ()
-        total = sum(shares)
-        self.chest_share = dict((j, share / total) for j, share in zip(top, shares))
-        self.chest_top = top[-1] if top else None
         if "upperarm_l" not in idx or "upperarm_r" not in idx:
             return
         d = self.pos[idx["upperarm_l"]] - self.pos[idx["upperarm_r"]]
@@ -1003,212 +947,12 @@ class Walk(object):
         # uneven length the projection above is not that fit, and own_knobs() must give the walk back exactly
         fitted = self.chest_fit(self.clip.worlds)
         self.own_chest_twist, self.own_chest_sway = fitted[0] / self.twist_gain, fitted[1]
-
-    # -- the levers: degrees added on the gait's phase --
-
-    def _levers(self):
-        """What the levers read: each one's phase on the stride (lever_shape) - the clip's own on the lever's axis
-        where its harmonic there moves more than LEVER_STILL degrees (`lever_own`: that harmonic's amplitude), else
-        the table's - and the joints each acts on (`lever_on`: {joint: [(name, side, world axis)]}; the pelvis's
-        tilt is pelvis_extra's, the chest's pitch goes with the chest's turn)."""
-        idx, P = self.index, self.P
-        phase = np.array([self.stride_phase(float(f)) for f in range(P)])
-        readings = self._lever_readings()
-        self.lever_phase, self.lever_own, self.lever_sided, self.lever_h = {}, {}, {}, {}
-        for name, h, peak, sided in LEVERS:
-            self.lever_sided[name], self.lever_h[name] = sided, h
-            for i, side in enumerate(SIDES if sided else (None,)):
-                share = peak[i] if sided else peak
-                amp, own = 0.0, 0.0
-                x = readings.get((name, side))
-                if x is not None:
-                    x = x - x.mean()
-                    c = 2.0 / P * float(np.dot(x, np.cos(h * phase)))
-                    s = 2.0 / P * float(np.dot(x, np.sin(h * phase)))
-                    amp, own = math.hypot(c, s), math.atan2(s, c)
-                self.lever_own[(name, side)] = amp
-                self.lever_phase[(name, side)] = own if amp > LEVER_STILL else 2.0 * math.pi * h * share
-        self.lever_on = {}
-        if "head" in idx and self.kind[idx["head"]] == "head":
-            self.lever_on[idx["head"]] = [("head_nod", None, self.side)]
-        for side, s in (("l", 1.0), ("r", -1.0)):
-            if "clavicle_" + side in idx:
-                self.lever_on[idx["clavicle_" + side]] = [("shoulder_swing", side, -s * self.up),
-                                                         ("shoulder_bob", side, s * self.fwd)]
-            if "upperarm_" + side in idx:
-                self.lever_on[idx["upperarm_" + side]] = [("arm_swing", side, -self.side)]
-
-    def _lever_readings(self):
-        """{(lever, side): the clip's own motion on the lever's axis, degrees a frame} - what lever_shape's phase
-        follows: the pelvis's world turn about side (+ its top forward); the chest's (the top spine joint's) about
-        side against the pelvis's; the head's in the world about side (+ down); each shoulder's lateral end
-        (clavicle -> upper arm) - its heading toward forward and its lift; each upper arm's world turn about the
-        side axis (+ the hand forward). A part the skeleton lacks reads nothing."""
-        idx, out = self.index, {}
-
-        def turn(j, axis):
-            return np.degrees(log_rot(self.wmean[j].T @ self.rot[j])) @ axis
-        pelvis = idx["pelvis"]
-        out[("pelvis_tilt", None)] = turn(pelvis, self.side)
-        if self.chest_top is not None:
-            out[("chest_pitch", None)] = turn(self.chest_top, self.side) - out[("pelvis_tilt", None)]
-        if "head" in idx:
-            out[("head_nod", None)] = turn(idx["head"], self.side)
-        for side, s in (("l", 1.0), ("r", -1.0)):
-            if "clavicle_" + side in idx and "upperarm_" + side in idx:
-                d = self.pos[idx["upperarm_" + side]] - self.pos[idx["clavicle_" + side]]
-                across = s * (d @ self.side)
-                out[("shoulder_swing", side)] = np.degrees(np.arctan2(d @ self.fwd, across))
-                out[("shoulder_bob", side)] = np.degrees(np.arctan2(d @ self.up, across))
-            if "upperarm_" + side in idx:
-                out[("arm_swing", side)] = turn(idx["upperarm_" + side], -self.side)
-        return out
-
-    def lever_shape(self, name, tau, side=None):
-        """A lever's shape at source time tau: cos(h . stride_phase - its phase), 1 where it peaks. A sided lever
-        (shoulder_swing, shoulder_bob, arm_swing) needs its side ("l" / "r")."""
-        sided = self.lever_sided[name]
-        if sided and side not in SIDES:
-            raise ValueError("%s is a sided lever: say which side ('l' or 'r')" % name)
-        return math.cos(self.lever_h[name] * self.stride_phase(tau) - self.lever_phase[(name, side if sided else None)])
-
-    def _lever_turn(self, j, t, ctx):
-        """The world turn (a rotation vector; None when nothing) the levers add to joint j at its time t: each
-        lever's degrees (its side's own) x Exaggeration on its shape about its axis - faded under a pose's grip."""
-        if ctx.get("levers_off"):
-            return None
-        k, ks = ctx["k"], ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
-        pose = ctx.get("pose")
-        fade = 1.0 - ctx["alpha"] if pose is not None and pose.get("grip") else 1.0
-        out = None
-        for name, side, axis in self.lever_on[j]:
-            degrees = (ks[side] if side else k)[name] * ctx["ex"] * (fade if side else 1.0)
-            if not degrees:
-                continue
-            v = math.radians(degrees) * self.lever_shape(name, t, side) * axis
-            out = v if out is None else out + v
-        return out
-
-    def lever_info(self, k):
-        """{lever (sided: "<name>_l" / "_r"): {"degrees", "phase": "own" | "table"}} for every lever set off 0."""
-        ks = sided(k)
-        out = {}
-        for name, _, _, is_sided in LEVERS:
-            for side in (SIDES if is_sided else (None,)):
-                value = ks[side][name] if side else k[name]
-                if value:
-                    own = self.lever_own[(name, side)] > LEVER_STILL
-                    out[name + ("_" + side if side else "")] = {"degrees": value, "phase": "own" if own else "table"}
-        return out
-
-    # -- Overlap: the upper body against the legs, a wave up the spine, the shoulders and the hips on springs --
-
-    def _overlap_parts(self):
-        """`upper`: spine_01 (the first spine joint over the pelvis) and every joint under it - what Upper body
-        offset runs late; `wave_chain`: the spine and neck joints from it up - what Spine wave runs late."""
-        chains = self._trunk_chains()
-        self.upper, self.wave_chain = set(), []
-        if chains is None:
-            return
-        top = chains[0][0]
-        self.upper = set(j for j in range(len(self.names)) if j == top or top in self._ancestors(j))
-        self.wave_chain = list(chains[0]) + list(chains[1])
-
-    def _overlap_setup(self, ctx, n):
-        """The overlaps' ctx at these knobs: the upper body's shift and each spine joint's (source frames)."""
-        k, P = ctx["k"], self.P
-        ctx["upper_shift"] = k["upper_offset"] * P / float(n) if self.upper else 0.0
-        ctx["wave"] = {}
-        if k["spine_wave"] > 0.0 and self.wave_chain:
-            count = len(self.wave_chain)
-            ctx["wave"] = dict((j, k["spine_wave"] * (i + 1) / float(count) * P / float(n))
-                               for i, j in enumerate(self.wave_chain))
-
-    def _pelvis_base(self, tau, ctx):
-        """The pelvis's world rotation at source time tau before its added turns (Twist, Hip drop, Pelvis tilt)
-        and its drag: the walk's own turn x Pelvis motion about its mean (or the pose's)."""
-        k, ex = ctx["k"], ctx["ex"]
-        j = self.index["pelvis"]
-        pose, a = ctx["pose"], ctx["alpha"]
-        centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)
-        turn = periodic_cr(self.wlog[j], tau)
-        if centre is not self.wmean[j]:     # a tilted pelvis turns about the walk's world axes
-            turn = turn @ self.wmean[j] @ centre.T
-        return exp_rot(k["pelvis_rot"] * ex * turn) @ centre
-
-    def _upper_turn(self, tau, late, ctx):
-        """Upper body offset's carry of a world-held joint (the head, a hanging upper arm) read at source time
-        `late`: the pelvis's own turn from then to tau (its base: the lumbar takes its added turns back) - so in the
-        pelvis's frame it stands as the walk's at `late`. A world turn (row vectors: post-multiplied)."""
-        return self._pelvis_base(late, ctx).T @ self._pelvis_base(tau, ctx)
-
-    def _chest_turn(self, tau, ctx):
-        """The chest's added turn at source time tau (a world rotation vector, None when nothing): Chest twist and
-        sway (chest_extra) with the Chest pitch lever about the side axis - one vector, so the top of the spine turns
-        by exactly the sum (the shares add up to 1)."""
-        k, ex = ctx["k"], ctx["ex"]
-        chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
-        if k["chest_pitch"] and self.chest_share and not ctx.get("levers_off"):
-            pitch = (math.radians(k["chest_pitch"]) * k["spine"] * ex * self.lever_shape("chest_pitch", tau)
-                     * self.side)
-            chest = pitch if chest is None else chest + pitch
-        return chest
-
-    def _pelvis_drag(self, times, ctx):
-        """Pelvis drag's lag a frame (n+1 world rotation vectors, post-multiplied on the pelvis): the pelvis's
-        world turn - as _body gives it at these knobs - followed through the trunk's spring (Pelvis drag frames
-        late, Torso bounce's overshoot), no pivot; the seam closed."""
-        k, n = ctx["k"], len(times) - 1
-        kin = np.array([self._body(phi, tau, ctx)["pelvis"][0] for phi, tau in times])
-        dyn = self._body_motion(kin, np.zeros((n, 3)), np.zeros(3), n, k["pelvis_drag"], k["torso_bounce"], 0.0)
-        return log_rot(np.swapaxes(kin, -1, -2) @ dyn)
-
-    def _drag_at(self, tau, ctx):
-        """Pelvis drag's lag at source time tau: its frames' (whole frames exact), periodic, straight between."""
-        lags = ctx["pelvis_drag"]
-        n = len(lags) - 1
-        u = tau * n / float(self.P)
-        i = int(math.floor(u))
-        frac = u - i
-        i %= n
-        return lags[i] if frac < 1e-12 else (1.0 - frac) * lags[i] + frac * lags[i + 1]
-
-    def _shoulder_dynamics(self, worlds, n, ctx, only=None):
-        """Shoulder drag, in place on `worlds` (J, n+1, 4, 4), after the trunk and before the arms (they hang on
-        the moving clavicle): each clavicle's world turn follows its frames' - its own motion on the chest as the
-        chest moves - through the arms' spring (Shoulder drag frames late, that side's Arm bounce) and feels the
-        acceleration of its root on the chest (the lever: the upper arm's place on it) x SHOULDER_INERTIA: held, so
-        it trails the chest's turn rather than flapping with its bob. The arm re-attached as the
-        frames had it on the clavicle - an upper arm hanging in the world keeps its world turn. Under a pose's grip
-        the drag fades as the arms' own swing does. Returns {"drag", "cycles"}."""
-        k = ctx["k"]
-        ks = ctx.get("ks") or {"l": k, "r": k}
-        drag = k["shoulder_drag"]
-        pose = ctx["pose"]
-        fade = ctx["alpha"] if pose is not None and pose.get("grip") else 0.0
-        kin = worlds.copy()
-        new, cycles = {}, 0
-        for side in SIDES:
-            clav = self.index.get("clavicle_" + side)
-            if clav is None or self.parents[clav] < 0 or (only is not None and clav not in only):
-                continue
-            arm = self.index.get("upperarm_" + side)
-            tip = self.lt[arm].mean(axis=0) if arm is not None and self.parents[arm] == clav else None
-            zeta = 1.0 - 0.75 * ks[side]["arm_bounce"]
-            w0 = 2.0 * zeta / drag
-            got, used = self._limb_motion(kin, n, [clav], w0, zeta, max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0))), tip,
-                                          SHOULDER_INERTIA)
-            if fade > 0.0:
-                m = got[clav]
-                for f in range(n + 1):
-                    m[f, :3, :3] = toward(m[f, :3, :3], orthonormal(kin[clav, f, :3, :3]), fade)
-            new.update(got)
-            cycles = max(cycles, used)
-        if not new:
-            return {"drag": 0.0, "cycles": 0}
-        held = self.world_arms if (pose is None or "arms" not in pose) else ()
-        self._reattach(worlds, kin, new, only, held)
-        return {"drag": drag, "cycles": cycles}
+        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
+                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
+        top = [j for _, j in spine[-len(CHEST_SHARES):]]
+        shares = CHEST_SHARES[-len(top):] if top else ()
+        total = sum(shares)
+        self.chest_share = dict((j, share / total) for j, share in zip(top, shares))
 
     def chest_shapes(self, tau):
         """(twist, sway) shapes at source time tau: 1 at the walk's own peak, -1 half a stride on."""
@@ -1240,11 +984,7 @@ class Walk(object):
     def _chest_own(self, times, ctx):
         """(twist, sway): how far the shoulders turn each way under these knobs and pose with nothing added
         (a pose's bent spine turns them otherwise than the walk does), the spine and shoulders alone built
-        over the cycle; None without a chest. Without the levers: the shoulders' swing and bob move the very points
-        the twist and sway are read on, and the chest would turn them back - the levers go on top of the chest. And
-        without the overlaps: the chest's added turn is the walk's own difference from the knobs on the gait's phase,
-        evaluated at the upper body's time (Upper body offset, Spine wave) - read on a late body it would turn the
-        offset back."""
+        over the cycle; None without a chest."""
         if self.chest_shape is None:
             return None
         only = set()
@@ -1253,7 +993,7 @@ class Walk(object):
             only.update([j] + self._ancestors(j))
         n = len(times) - 1
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
-        ctx["chest_own"], ctx["levers_off"], ctx["overlap_off"] = "off", True, True
+        ctx["chest_own"] = "off"
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         own = self.chest_fit(worlds)
@@ -1263,7 +1003,7 @@ class Walk(object):
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         got, target = self.chest_fit(worlds), self.chest_targets(ctx["k"], ctx["ex"])
-        ctx["chest_own"], ctx["levers_off"], ctx["overlap_off"] = None, False, False
+        ctx["chest_own"] = None
         return own[0] + got[0] - target[0], own[1] + got[1] - target[1]
 
     def chest_fit(self, worlds):
@@ -1283,19 +1023,14 @@ class Walk(object):
 
     def pelvis_extra(self, tau, k, ex):
         """The pelvis's added turn at source time tau (a world rotation vector, None when nothing is added):
-        Twist and Hip drop against this walk's own, on their shapes, and the Pelvis tilt lever on its, x Pelvis
-        motion x Exaggeration (the lumbar spine takes all of it back: self.counter)."""
+        Twist and Hip drop against this walk's own, on their shapes, x Pelvis motion x Exaggeration."""
         gain = k["pelvis_rot"] * ex
         twist = self.twist_gain * (k["pelvis_twist"] * k["stride"] - self.own_twist)
         drop = k["pelvis_list"] - self.own_list
-        tilt = k["pelvis_tilt"]
-        if gain == 0.0 or (twist == 0.0 and drop == 0.0 and tilt == 0.0):
+        if gain == 0.0 or (twist == 0.0 and drop == 0.0):
             return None
-        out = gain * (math.radians(twist) * float(periodic_cr(self.split_shape, tau)) * -self.up
-                      + math.radians(drop) * self.list_at(tau) * self.fwd)
-        if tilt:
-            out = out + gain * math.radians(tilt) * self.lever_shape("pelvis_tilt", tau) * self.side
-        return out
+        return gain * (math.radians(twist) * float(periodic_cr(self.split_shape, tau)) * -self.up
+                       + math.radians(drop) * self.list_at(tau) * self.fwd)
 
     def _spine_map(self, pose, alpha):
         """Under a pose that bends the spine: per spine joint the matrix taking its turn's axis (in its own
@@ -2217,25 +1952,20 @@ class Walk(object):
         # 2026-10-13)
         stretch = dict((s, min(1.0, max(0.0, ks[s]["ground_time"] - 1.0) / GROUND_STRETCH)) for s in SIDES)
         ctx["reach"] = dict((s, r + (min(r, STRETCH_REACH) - r) * stretch[s]) for s, r in self.reach.items())
-        times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
-        self._overlap_setup(ctx, n)
-        ctx["levers_on"] = bool(self.lever_info(k))
-        # Pelvis drag before anything reaches for the hips (the feet's timing, the reach, the legs)
-        ctx["pelvis_drag"] = self._pelvis_drag(times, ctx) if k["pelvis_drag"] > 0.0 else None
         ctx["frame"], ctx["grown"] = P / float(n), None
         ctx["locks"], held = self._locks(ctx) if ctx["placement"] > 0.0 else ({}, 0.0)
         ctx["ground"] = {}
         timed = any(ks[s]["ground_time"] != 1.0 for s in SIDES)
         if not self.placement_note and (ctx["placement"] > 0.0 or timed):
             ctx["grown"] = self._growth(ctx)        # Ground time retimes the feet with or without Foot placement
+        times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
         ctx["chest_own"] = self._chest_own(times, ctx)
         drop = self._lowering(times, ctx)
         balance = {"carry": 0.0, "residual": 0.0, "note": self.balance_note if k["balance"] > 0.0 else ""}
         if ctx["balance"] > 0.0:
             only = self._com_joints()
             bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
-            swinging = ((any(ks[s]["arm_drag"] > 0.0 for s in SIDES) and bool(self._arm_chains()))
-                        or self._bodies_on(k) or k["shoulder_drag"] > 0.0)
+            swinging = (any(ks[s]["arm_drag"] > 0.0 for s in SIDES) and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
 
             def armed(carry):
@@ -2247,8 +1977,6 @@ class Walk(object):
                 if carry is not None:
                     frames[rigid, :, 3, :3] += carry[None]
                 self._body_dynamics(frames, n, ctx, only)
-                if k["shoulder_drag"] > 0.0:
-                    self._shoulder_dynamics(frames, n, ctx, only)
                 self._arm_dynamics(frames, n, ctx, only)
                 if carry is not None:
                     frames[rigid, :, 3, :3] -= carry[None]
@@ -2276,8 +2004,6 @@ class Walk(object):
             worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f], carry)
             short = max(short, frame_short)
         body = self._body_dynamics(worlds, n, ctx)
-        shoulders = (self._shoulder_dynamics(worlds, n, ctx) if k["shoulder_drag"] > 0.0
-                     else {"drag": 0.0, "cycles": 0})
         arms = self._arm_dynamics(worlds, n, ctx)
         if not self.balance_note:
             line = np.array([self.origin + ctx["travel2"] * phi for phi, _ in times[:-1]])
@@ -2304,12 +2030,7 @@ class Walk(object):
                            k["pelvis_rot"] * ctx["ex"] * k["pelvis_list"]),
                 "chest": self.chest_targets(k, ctx["ex"]) if self.chest_shape is not None else None,
                 "arms": arms, "body": body, "leg_match": ctx["leg_match"],
-                "balance": balance, "in_place": k["in_place"], "levers": self.lever_info(k),
-                "shoulders": shoulders,
-                "overlap": {"upper_offset": k["upper_offset"] if self.upper else 0.0,
-                            "spine_wave": k["spine_wave"] if self.wave_chain else 0.0,
-                            "shoulder_drag": shoulders["drag"],
-                            "pelvis_drag": k["pelvis_drag"] if ctx["pelvis_drag"] is not None else 0.0}}
+                "balance": balance, "in_place": k["in_place"]}
         return Result(worlds, n, info)
 
     def _in_place(self, worlds, times, ctx):
@@ -2385,14 +2106,13 @@ class Walk(object):
                 base = mean[2] if pose is None or "height" not in pose else (1.0 - a) * mean[2] + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
                 height = base + k["pelvis_height"] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
-                rot = self._pelvis_base(tau, ctx)
+                centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)
+                turn = periodic_cr(self.wlog[j], tau)
+                if centre is not self.wmean[j]:     # a tilted pelvis turns about the walk's world axes
+                    turn = turn @ self.wmean[j] @ centre.T
+                rot = exp_rot(k["pelvis_rot"] * ex * turn) @ centre
                 if extra is not None:      # Twist and Hip drop: a turn in the world about the pelvis
                     rot = rot @ exp_rot(extra)
-                if ctx.get("pelvis_drag") is not None and not ctx.get("overlap_off"):
-                    # Pelvis drag: the hips' turn late; the lumbar takes all of it back with the added turn
-                    lag = self._drag_at(tau, ctx)
-                    rot = rot @ exp_rot(lag)
-                    out["extra"] = lag if extra is None else log_rot(exp_rot(extra) @ exp_rot(lag))
             else:
                 height, rot = dev[2], self.wrot(j, tau)
             out[name] = (rot, line2 + np.array([along, aside, height]) @ self.basis)
@@ -2471,14 +2191,7 @@ class Walk(object):
         k, ex = ctx["k"], ctx["ex"]
         rots, poss = [None] * len(self.names), [None] * len(self.names)
         body = self._body(phi, tau, ctx, drop, carry)
-        # Upper body offset and Spine wave (source frames; none while the chest measures its own turn)
-        quiet = ctx.get("overlap_off")
-        shift = 0.0 if quiet else ctx.get("upper_shift", 0.0)
-        wave = {} if quiet else ctx.get("wave", {})
-        late = tau - shift if shift else tau                # the upper body's time
-        chest = self._chest_turn(late, ctx)
-        held = self._upper_turn(tau, late, ctx) if shift else None     # a world-held joint carried by the pelvis
-        levers = ctx.get("levers_on", True)
+        chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
         ks = ctx.get("ks") or {"l": k, "r": k}
         gains = {"spine": k["spine"] * ex}
         feet = dict((side, self._clock(side, tau, ctx)) for side in SIDES)
@@ -2508,22 +2221,14 @@ class Walk(object):
             else:
                 clock = feet[self.leg_side[j]] if j in self.leg_side else tau     # below a thigh: its foot's
                 t = clock - self.lag[j] * ctx["lag"]
-                if shift and j in self.upper:
-                    t -= shift
-                if j in wave:
-                    t -= wave[j]
                 pose, a = ctx["pose"], ctx["alpha"]
                 if kind == "head":
                     centre = self.wmean[j] if pose is None or "head" not in pose else toward(self.wmean[j], pose["head"], a)
                     rots[j] = exp_rot(k["head"] * ex * periodic_cr(self.wlog[j], t)) @ centre
-                    if held is not None and j in self.upper:
-                        rots[j] = rots[j] @ held
                 elif j in self.world_arms and (pose is None or "arms" not in pose):
                     # the upper arm hangs and swings in the world
                     arms = ks[self._side(j)]["arms"]
                     rots[j] = exp_rot(arms * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
-                    if held is not None and j in self.upper:
-                        rots[j] = rots[j] @ held
                 else:
                     centre = self.lmean[j]
                     gain = ks[self._side(j)]["arms"] * ex if kind == "arm" else gains.get(kind, 1.0)
@@ -2553,16 +2258,10 @@ class Walk(object):
                     rots[j] = local @ rots[p]
                     if j in self.balls and self.balls[j] in rolls:       # the toes stay down as the foot rolls
                         rots[j] = rots[j] @ rolls[self.balls[j]].T
-                    if j in self.counter and body["extra"] is not None:      # at the pelvis's own time
+                    if j in self.counter and body["extra"] is not None:
                         rots[j] = rots[j] @ exp_rot(-self.counter[j] * body["extra"])
-                    if j in self.chest_share:     # at the upper body's time - and this joint's own on the wave
-                        turn = chest if j not in wave else self._chest_turn(late - wave[j], ctx)
-                        if turn is not None:
-                            rots[j] = rots[j] @ exp_rot(self.chest_share[j] * turn)
-                if levers and j in self.lever_on:  # the levers: a world turn on the gait's phase (head, shoulders, arms)
-                    turn = self._lever_turn(j, t, ctx)
-                    if turn is not None:
-                        rots[j] = rots[j] @ exp_rot(turn)
+                    if j in self.chest_share and chest is not None:
+                        rots[j] = rots[j] @ exp_rot(self.chest_share[j] * chest)
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
@@ -2798,10 +2497,8 @@ class Walk(object):
             out += 2.0 * np.real(np.outer(np.exp(1j * w * u), coeffs[k])) * -(w * w)
         return out
 
-    def _limb_motion(self, kin, n, chain, w0, zeta, S, tip=None, inertia=ARM_INERTIA):
-        """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took. `tip`: the last joint's
-        lever (in its frame) when it is not a hand (a clavicle's: its upper arm's place on it); `inertia`: x the
-        pivot's acceleration it feels (a clavicle: SHOULDER_INERTIA)."""
+    def _limb_motion(self, kin, n, chain, w0, zeta, S):
+        """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took."""
         dt = 1.0 / S
         top, base = chain[0], self.parents[chain[0]]
         rot = lambda j: np.array([orthonormal(kin[j, f, :3, :3]) for f in range(n + 1)])
@@ -2810,7 +2507,7 @@ class Walk(object):
         # the bones' offsets in their parents (the arm's lengths) and each limb's lever for its inertia
         offset = dict((j, self.lt[j].mean(axis=0)) for j in chain[1:])     # the walk's own: a pose turns
         lever = dict((chain[i], offset[chain[i + 1]]) for i in range(len(chain) - 1))   # bones, not lengthens
-        reach = self._hand_lever(chain[-1]) if tip is None else tip
+        reach = self._hand_lever(chain[-1])
         if reach is not None:
             lever[chain[-1]] = reach
         # the shoulder's acceleration per substep, the travel taken out (it does not accelerate): of the path's
@@ -2849,7 +2546,7 @@ class Walk(object):
                     if r is not None:
                         length2 = float(r @ r)
                         if length2 > 1e-12:
-                            alpha = alpha + 1.5 * inertia / length2 * _cross3(r, -a_pivot)
+                            alpha = alpha + 1.5 * ARM_INERTIA / length2 * _cross3(r, -a_pivot)
                     w = w + alpha * dt
                     Rj = Rj @ _exp3(w * dt)
                     state[i], spin[i] = Rj, w
@@ -3031,19 +2728,11 @@ def describe(result):
         text += " | pelvis twists %s deg, the hips %s" % tuple(turn(v) for v in info["pelvis"])
     if info.get("chest"):
         text += " | chest twists %s deg, sways %s" % tuple(turn(v) for v in info["chest"])
-    body, overlap = info.get("body") or {}, info.get("overlap") or {}
-    if overlap.get("upper_offset"):
-        shift = overlap["upper_offset"]
-        text += " | the upper body %.1f frames %s the legs" % (abs(shift), "behind" if shift > 0.0 else "ahead of")
-    if overlap.get("spine_wave"):
-        text += " | a spine wave of %.1f frames" % overlap["spine_wave"]
+    body = info.get("body") or {}
     drags = [(name, d) for name, d in (("the trunk", body.get("drag", (0.0, 0.0))[0]),
-                                       ("the head", body.get("drag", (0.0, 0.0))[1]),
-                                       ("the shoulders", overlap.get("shoulder_drag", 0.0)),
-                                       ("the hips", overlap.get("pelvis_drag", 0.0))) if d > 0.0]
+                                       ("the head", body.get("drag", (0.0, 0.0))[1])) if d > 0.0]
     if drags:
-        said = ["%s %.1f" % (name, d) for name, d in drags]
-        text += " | %s frames behind" % (said[0] if len(said) == 1 else ", ".join(said[:-1]) + " and " + said[-1])
+        text += " | %s frames behind" % " and ".join("%s %.1f" % (name, d) for name, d in drags)
     if info.get("arms") and info["arms"].get("drag"):
         a = info["arms"]
         text += " | %s %.1f frames behind the body%s" % (

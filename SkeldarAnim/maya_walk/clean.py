@@ -1,22 +1,19 @@
 """maya_walk.clean - a raw clip made the walk cycle the model reads (2026-10-14).
 
-The animator, with a walk they broke on purpose: «мы должны научить наш билдер исправлением такой анимации» -
-not looped, floating 54 cm up, jittery, the left foot turned 72 deg out, both shoulders dropped, twist bones
-keyed short, the spine still. Save walk keeps a clip as it stands; `clean()` makes the cycle when the walk is
-read, by the knobs of the card's Clean tab (KNOBS):
+The animator, with a walk they broke on purpose: «мы должны научить наш билдер исправлением такой анимации».
+Save walk keeps a clip as it stands; `clean()` makes the cycle when the walk is read, by the knobs of the card's
+Clean tab (KNOBS). Kept after a try (the same day: «полезным оказались функции inPlace, FixPosture, Seam ... Можно
+еще сглаживание оставить ... Fix pos давай сделаем кнопкой»):
 
-1. the root carries the travel (a root standing still while the pelvis travels takes the pelvis's line);
-2. the loop: a closed cycle as it is, one missing its closing frame given it, else the best loop cut out of
+1. the loop: a closed cycle as it is, one missing its closing frame given it, else the best loop cut out of
    the clip - the Kovar-Gleicher distance (the body's points in the root's ground frame, a few frames either
    side) over whole strides, the fewest strides near the best (a cut cycle's climb taken off);
-3. in place: a cycle whose root and pelvis stay while its planted feet slide back gets its travel back;
-4. the seam: a cut cycle's (or a joint's own) seam closed by Holden's two-sided cubics - value and slope;
-5. spikes: out-and-back runs of 1-3 frames replaced (Despike);
-6. posture: a bone moved off its joint put back on its rest; a clavicle or a foot outside its limits against
-   the reference takes its opposite's mirrored motion half a stride on, else the reference's mean with its
-   own motion (Fix posture);
-7. smooth (frames); 8. the floor (the feet's lowest point over the cycle on its rest height over the root);
-9. the derived bones - a helper or a twist bone that does not loop put back on its bone / rebuilt by the UE
+2. the seam (Seam): a cut cycle's (or a joint's own) seam closed by Holden's two-sided cubics - value and slope;
+3. posture, only when the Fix posture button asks (`posture_fix`): a bone moved off its joint put back on its
+   rest; a clavicle or a foot outside its limits against the reference takes its opposite's mirrored motion
+   half a stride on, else the reference's mean with its own motion;
+4. smooth (Smooth, frames);
+5. the derived bones - a helper or a twist bone that does not loop put back on its bone / rebuilt by the UE
    twist rule (a body joint merely keyed short is refilled at the seam instead).
 
 Nothing found, nothing changed: a clean cycle comes back as it went in (the same worlds).
@@ -31,11 +28,7 @@ import numpy as np
 from . import model as wm
 
 KNOBS = (
-    ("despike", 1.0, 0.0, 3.0),
     ("smooth", 0.0, 0.0, 4.0),
-    ("fix_posture", 1.0, 0.0, 1.0),
-    ("floor", 1.0, 0.0, 1.0),
-    ("floor_offset", 0.0, -30.0, 30.0),
     ("seam", 8.0, 0.0, 30.0),
 )
 DEFAULTS = dict((k[0], k[1]) for k in KNOBS)
@@ -43,26 +36,17 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 
 CLOSED_TOL = (0.1, 0.002)  # cm, rotation elements: the last frame against the first moved by the root's travel
 SEAM_TOL = (0.01, 0.05)    # cm, degrees: a joint's own seam this small is closed already
-ROOT_STILL = 1.0           # cm a clip: a root that travels less stands still...
-PELVIS_TRAVELS = 10.0      # ...while a pelvis travelling more carries the walk
 MIN_CYCLE = 10             # frames: no shorter loop is cut
 LOOP_WINDOW = 2            # frames either side of a candidate pair in the loop distance
 LOOP_TIE = 1.2             # of the least distance: the loops within it (+ LOOP_SLACK) are candidates...
 LOOP_SLACK = 0.5           # cm: ...the fewest strides among them, the longest of those, is cut
 LOW_TOL = 2.5              # cm: a foot point this near its own lowest is down
-IN_PLACE_TRAVEL = 1.0      # cm a cycle: a root and a pelvis travelling less are in place...
-IN_PLACE_SPEED = 0.2       # ...when the planted feet slide back faster than this (cm a frame)
-SPIKE_MIN = 6.0            # deg or cm: no smaller jump is a spike
-SPIKE_K = 6.0              # x the joint's median frame step: the jumps into and out of a spike
-SPIKE_RETURN = 0.5         # the frames around a spike nearer each other than this x its smaller jump
-SPIKE_RUN = 3              # frames: the longest spike
 MOVING = 0.05              # cm: a local translation moving less is still (its series left alone)
 OFFSET_TOL = (1.0, 0.1)    # cm, share of the bone: a bone this much longer or shorter than its opposite
 CLAVICLE_RISE = (-22.0, 35.0)   # degrees against the reference: the clavicle's lateral end down / up
 CLAVICLE_FORWARD = 30.0         # degrees either way
 FOOT_PITCH = 35.0               # degrees: the toe down / up against the shin
 FOOT_OUT = 35.0                 # degrees: the toe out / in
-FLOOR_DEAD = 5.0           # cm: the lowest ball this near its rest height over the root is on the floor (grounded walks -3.7..+2.1; floating +15..17)
 FOLLOW_TOL = 1e-3          # matrix elements: a helper holding its relation to its bone this well follows it
 HELPER_BONES = (("ik_foot_root", "root"), ("ik_hand_root", "root"), ("interaction", "root"),
                 ("center_of_mass", "root"), ("camera_root", "root"), ("camera_bone", "camera_root"),
@@ -214,28 +198,7 @@ class _Clip(object):
         return all(n in self.index for n in names)
 
 
-# ---- 1. the root ----
-
-def carry_root(worlds, c, report):
-    """A root standing still (under ROOT_STILL a clip) while the pelvis travels (over PELVIS_TRAVELS) takes the
-    pelvis's ground line, start to end; every other joint keeps its world."""
-    if not c.has("pelvis"):
-        return worlds
-    pos = worlds[..., 3, :3]
-    r, p = c.root, c.index["pelvis"]
-    root_travel = _flat(pos[r, -1] - pos[r, 0], c.up)
-    pelvis_travel = _flat(pos[p, -1] - pos[p, 0], c.up)
-    if np.linalg.norm(root_travel) >= ROOT_STILL or np.linalg.norm(pelvis_travel) <= PELVIS_TRAVELS:
-        return worlds
-    out = worlds.copy()
-    steps = np.arange(worlds.shape[1]) / float(worlds.shape[1] - 1)
-    out[r, :, 3, :3] += np.outer(steps, pelvis_travel)
-    report.add("root", "the root stood still while the pelvis travelled %.0f cm: the root carries the travel"
-               % np.linalg.norm(pelvis_travel), "root carries the travel")
-    return out
-
-
-# ---- 2. the loop ----
+# ---- 1. the loop ----
 
 def _travel(worlds, c):
     pos = worlds[..., 3, :3]
@@ -376,42 +339,6 @@ def loop(worlds, c, report):
     return cut, True
 
 
-# ---- 3. in place ----
-
-def restore_travel(worlds, c, report):
-    """A cycle whose root and pelvis travel under IN_PLACE_TRAVEL while its planted feet slide back: every joint
-    carried forward by the feet's median slide (both feet's frames down on their heel and toe)."""
-    if not c.has("pelvis", "foot_l", "foot_r"):
-        return worlds
-    pos = worlds[..., 3, :3]
-    frames = worlds.shape[1]
-    P = frames - 1
-    for j in (c.root, c.index["pelvis"]):
-        if np.linalg.norm(_flat(pos[j, P] - pos[j, 0], c.up)) >= IN_PLACE_TRAVEL:
-            return worlds
-    slides = []
-    for side in ("l", "r"):
-        flat_down = np.ones(frames, bool)
-        for name in ("foot_" + side, "ball_" + side):
-            if name in c.index:
-                h = pos[c.index[name]] @ c.up
-                flat_down &= h <= h.min() + LOW_TOL
-        ankle = pos[c.index["foot_" + side], :P]
-        for f in range(P):
-            if flat_down[f]:
-                slides.append(_flat((ankle[(f + 1) % P] - ankle[(f - 1) % P]) / 2.0, c.up))
-    if len(slides) < 2:
-        return worlds
-    slide = np.median(np.array(slides), axis=0)
-    if np.linalg.norm(slide) < IN_PLACE_SPEED:
-        return worlds
-    out = worlds.copy()
-    out[:, :, 3, :3] -= np.arange(frames)[None, :, None] * slide[None, None, :]
-    report.add("in place", "an in-place cycle: its travel restored from the planted feet, %.2f m/s"
-               % (np.linalg.norm(slide) * c.fps / 100.0), "travel restored")
-    return out
-
-
 # ---- the series a rig's joints move by ----
 
 def _rot_series(rig, j):
@@ -448,7 +375,7 @@ def _close_frames(rig, r):
     rig.trans[r, -1] = keep
 
 
-# ---- 4. the seam ----
+# ---- 2. the seam ----
 
 def _holden(frames, width, d, dv):
     """Two-sided cubic offsets (F, d) taking a seam's value step `d` (= x[P] - x[0]) and its slope step `dv`
@@ -582,100 +509,7 @@ def _names(names, most=6):
     return ", ".join(names[:most]) + (" and %d more" % (len(names) - most) if len(names) > most else "")
 
 
-# ---- 5. spikes ----
-
-def spike_runs(x, scale=1.0):
-    """[[frame, ...], ...]: the out-and-back runs of a periodic series `x` (P, d) - 1..SPIKE_RUN frames whose
-    jump in and jump out are both over max(SPIKE_MIN, SPIKE_K x the median frame step) / scale (a single frame's
-    two jumps opposite), the frames around nearer each other than SPIKE_RETURN x the smaller jump. Longest
-    first; the series is not changed."""
-    x = np.asarray(x, float)
-    P = x.shape[0]
-    if scale <= 0.0 or P < 2 * SPIKE_RUN + 3:
-        return []
-    steps = np.linalg.norm(x - np.roll(x, 1, axis=0), axis=1)
-    threshold = max(SPIKE_MIN, SPIKE_K * float(np.median(steps))) / scale
-    taken, runs = set(), []
-    for length in range(SPIKE_RUN, 0, -1):
-        for f in range(P):
-            run = [(f + i) % P for i in range(length)]
-            if taken.intersection(run):
-                continue
-            a, b = (f - 1) % P, (f + length) % P
-            j_in, j_out = x[run[0]] - x[a], x[b] - x[run[-1]]
-            n_in, n_out = float(np.linalg.norm(j_in)), float(np.linalg.norm(j_out))
-            if n_in < threshold or n_out < threshold:
-                continue
-            # one frame out must come straight back; a longer run's frames may scatter (lowerarm_r 17-19 of the
-            # animator's broken walk: three frames of garbage, each 70 deg from the next)
-            if length == 1 and float(np.dot(j_in, j_out)) >= 0.0:
-                continue
-            if float(np.linalg.norm(x[b] - x[a])) > SPIKE_RETURN * min(n_in, n_out):
-                continue
-            runs.append(run)
-            taken.update(run)
-    return runs
-
-
-def _bridge(x, run):
-    """A run's frames on the cubic Hermite from the frame before it to the frame after it (their slopes from
-    their own outer neighbours), in place on the periodic series x (P, d)."""
-    P = x.shape[0]
-    a, b = (run[0] - 1) % P, (run[-1] + 1) % P
-    span = len(run) + 1
-    p1, p2 = x[a], x[b]
-    m1 = (x[a] - x[(a - 1) % P]) * span
-    m2 = (x[(b + 1) % P] - x[b]) * span
-    for i, f in enumerate(run):
-        u = (i + 1) / float(span)
-        h00, h10, h01, h11 = 2 * u ** 3 - 3 * u ** 2 + 1, u ** 3 - 2 * u ** 2 + u, -2 * u ** 3 + 3 * u ** 2, u ** 3 - u ** 2
-        x[f] = h00 * p1 + h10 * m1 + h01 * p2 + h11 * m2
-
-
-def despike(rig, r, scale, report):
-    """Each joint's out-and-back runs (its turn, and its place where it moves) bridged; toes and helpers left
-    alone (a toe's flick at the push-off is out-and-back)."""
-    if scale <= 0.0:
-        return
-    found = []
-    P = rig.frames - 1
-    for j, name in enumerate(rig.names):
-        if is_helper(name) or name.startswith("ball_"):
-            continue
-        x, mean = _rot_series(rig, j)
-        deg = np.degrees(x[:P])
-        runs = spike_runs(deg, scale)
-        if runs:
-            before = deg.copy()
-            for run in runs:
-                _bridge(deg, run)
-            worst = max(float(np.linalg.norm(before[f] - deg[f])) for run in runs for f in run)
-            rig.rot[j, :P] = wm.exp_rot(np.radians(deg)) @ mean
-            found.append((name, runs, worst, "deg"))
-        tx, back = _trans_series(rig, j, r)
-        if tx is None:
-            continue
-        cycle = tx[:P].copy()
-        runs = spike_runs(cycle, scale)
-        if runs:
-            before = cycle.copy()
-            for run in runs:
-                _bridge(cycle, run)
-            worst = max(float(np.linalg.norm(before[f] - cycle[f])) for run in runs for f in run)
-            tx[:P] = cycle
-            rig.trans[j] = back(tx)
-            found.append((name, runs, worst, "cm"))
-    _close_frames(rig, r)
-    if found:
-        parts = []
-        for name, runs, worst, unit in found:
-            frames = ", ".join("%d" % run[0] if len(run) == 1 else "%d-%d" % (run[0], run[-1]) for run in runs)
-            parts.append("%s %s (%.0f %s)" % (name, frames, worst, unit))
-        report.add("spikes", "out-and-back spikes bridged: " + "; ".join(parts),
-                   "%d spike%s" % (len(found), "" if len(found) == 1 else "s"))
-
-
-# ---- 6. posture ----
+# ---- 3. posture ----
 
 def _body_axes(points, up, c):
     """(fwd, side, up): side the reference's left (upper arms, else thighs, right to left), fwd where its toes
@@ -874,7 +708,7 @@ def posture(rig, worlds, c, statics, reference, strength, report):
     return True
 
 
-# ---- 7. smooth ----
+# ---- 4. smooth ----
 
 def smooth(rig, r, sigma, report):
     """Every joint's turn and moving place (the root's off its travel line) through a periodic Gaussian of
@@ -900,77 +734,11 @@ def smooth(rig, r, sigma, report):
     report.add("smooth", "every joint through a Gaussian of %.1f frames" % sigma, "smoothed %.1f fr" % sigma)
 
 
-# ---- 8. the floor ----
-
-def _subtree(parents, top):
-    out, todo = {top}, [top]
-    while todo:
-        j = todo.pop()
-        for k, p in enumerate(parents):
-            if p == j and k not in out:
-                out.add(k)
-                todo.append(k)
-    return out
-
-
 def _helper_bones(c):
     return [(c.index[h], c.index[b]) for h, b in HELPER_BONES if c.has(h, b)]
 
 
-def _lowest(heights, names):
-    """The lowest of `names`' heights ({name: height or array}) that are there, else None."""
-    there = [float(np.min(heights[n])) for n in names if n in heights]
-    return min(there) if there else None
-
-
-def floor(worlds, c, statics, reference, share, offset, report):
-    """The body (the pelvis and below it, and the helpers on it) moved so the feet's lowest point over the cycle
-    stands where it stands at rest over the root: the lowest ball (else ankle) over the root against the rest's
-    (else the reference's) lowest ball; left alone within FLOOR_DEAD; `offset` cm on top."""
-    if not c.has("pelvis", "foot_l", "foot_r"):
-        return worlds
-    shift = 0.0
-    measured = None
-    targets = []
-    if statics:
-        targets.append(dict((n, _rest(statics, n)) for n in c.names if _rest(statics, n) is not None))
-    if reference:
-        targets.append(reference)
-    if share > 0.0:
-        pos = worlds[..., 3, :3]
-        above = pos[c.root, :-1] @ c.up
-        for points in (("ball_l", "ball_r"), ("foot_l", "foot_r")):
-            for standing in targets:
-                if "root" not in standing or not all(n in c.index for n in points):
-                    continue
-                low = _lowest(dict((n, standing[n][3, :3] @ c.up) for n in points if n in standing), points)
-                if low is None or len([n for n in points if n in standing]) < len(points):
-                    continue
-                walk = min(float(((pos[c.index[n], :-1] @ c.up) - above).min()) for n in points)
-                measured = walk - (low - float(standing["root"][3, :3] @ c.up))
-                break
-            if measured is not None:
-                break
-        if measured is not None and abs(measured) > FLOOR_DEAD:
-            shift = -share * measured
-    shift += offset
-    if abs(shift) < 1e-9:
-        return worlds
-    moved = _subtree(c.parents, c.index["pelvis"])
-    relations = [(h, b, worlds[h] @ np.linalg.inv(worlds[b])) for h, b in _helper_bones(c)
-                 if b in moved and h not in moved]
-    out = worlds.copy()
-    out[sorted(moved), :, 3, :3] += shift * c.up
-    for h, b, rel in relations:
-        out[h] = rel @ out[b]
-    text = "the body %s %.1f cm" % ("lowered" if shift < 0 else "raised", abs(shift))
-    if measured is not None and abs(measured) > FLOOR_DEAD:
-        text += " - its feet stood %.1f cm %s the floor" % (abs(measured), "over" if measured > 0 else "under")
-    report.add("floor", text, "floor %+.1f cm" % shift)
-    return out
-
-
-# ---- 9. the derived bones ----
+# ---- 5. the derived bones ----
 
 def derived(worlds, c, statics, rebuild, report):
     """The helpers and twist bones in `rebuild` (they did not loop and were not keyed short - close_seam): a
@@ -1052,28 +820,25 @@ def _twist_rule(rig, c, statics, name):
 
 # ---- the whole ----
 
-def clean(clip, statics=None, reference=None, given=None):
+def clean(clip, statics=None, reference=None, given=None, posture_fix=False):
     """(the clean cycle as a model.Clip, Report). `statics` {name: {"rest": 16 floats, ...}} (the saved walk's),
-    `reference` {name: 4x4 world} on the walk's skeleton (pose.carried) or None, `given` the knobs (clean's
-    picked out). A clip in which nothing is found comes back as it went in."""
+    `given` the knobs (clean's picked out). `posture_fix` (the card's Fix posture button) also puts bones off their
+    joints back and clavicles and feet outside their limits against `reference` {name: 4x4 world} on the walk's
+    skeleton (pose.carried; None: the rest). A clip in which nothing is found comes back as it went in."""
     k = knobs(given)
     c = _Clip(clip)
     report = Report()
     worlds = np.asarray(clip.worlds, float)
     if worlds.shape[1] < 3:
         return clip, report
-    worlds = carry_root(worlds, c, report)
     worlds, cut = loop(worlds, c, report)
-    worlds = restore_travel(worlds, c, report)
     rig = Rig(c.names, c.parents, worlds)
     lines = len(report.lines)
     rebuild = close_seam(rig, c.root, k["seam"], cut, statics, report)
-    despike(rig, c.root, k["despike"], report)
-    touched = posture(rig, rig.worlds(), c, statics, reference, k["fix_posture"], report)
+    touched = posture(rig, rig.worlds(), c, statics, reference, 1.0, report) if posture_fix else False
     smooth(rig, c.root, k["smooth"], report)
     if len(report.lines) > lines or touched:
         worlds = rig.worlds()
-    worlds = floor(worlds, c, statics, reference, k["floor"], k["floor_offset"], report)
     worlds = derived(worlds, c, statics, rebuild, report)
     if not report.changed:
         return clip, report

@@ -182,3 +182,18 @@ Smooth, Fix posture, Floor, Floor offset, Seam and the report. In place: a chip 
   mean; **the offset fix sets the rest**; **the seam runs before Despike**; **In place also takes the root's surge off**.
 - The report's height follows its text (a fixed height clipped it); a clean knob released with no target reads the
   walk again into the report. A walk's readings are cached per file, at most six.
+
+## Addendum 2: cut back after a try (2026-10-14, the same day)
+
+The animator, after using the build `fb2a343`: «полезным оказались функции inPlace, FixPosture, Seam fr (я так понимаю это
+он зацикливает анимацию). От всех остальных изменений давай избавимся. Можно еще сглаживание оставить. Fix pos давай сделаем
+кнопкой, нажал и поза поправилась. Остальной функционал алгоритмы, ручки, логику давай все откатим».
+
+- **Kept**: the loop (Part 1's closing frame and cut, the fewest strides), the seam (Holden; the non-looping helpers and
+  twists rebuilt) on **Seam, fr**, **Smooth, fr**, **In place** (the model knob and its chip).
+- **Fix posture is a button**: the walk read as it will be read (looped, seamed, not smoothed), its posture set right
+  against the shipped UE5 idle, and written into the walk's file - the file as it was kept once beside it as
+  `<name>.walk.gz.orig`. Reading never fixes posture; nothing out of place leaves the file untouched.
+- **Gone** (in git at `fb2a343`): the root's carry, the in-place-clip travel restore, Despike, the floor and Floor offset, the
+  Reference dropdown (Fix posture always uses the shipped idle), the six levers, the Overlap tab and its four knobs (the
+  drags it gathered are back in Chest and Arms), the marker's `reference`. `model.py` is `9b06363`'s plus In place.

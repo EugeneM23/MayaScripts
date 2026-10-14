@@ -4,8 +4,8 @@ The animator: «Давай встроим этот скрипт в наш пла
 of docs/superpowers/plans/walkparam/ becomes a card. Compact: the walk and the pose each one dropdown with a
 save icon beside it, the pose's share and its parts on two lines, Apply / Reset / In place, and the knobs in
 groups of which ONE is shown at a time, on two rows of tabs ([Clean | Step | Legs | Pelvis] / [Chest | Arms |
-Overlap | Weight] since 2026-10-14: a raw clip is cleaned when it is read - maya_walk.clean - by the Clean tab's
-knobs against its Reference, what it found listed under them).
+Weight] since 2026-10-14: a raw clip is looped when it is read - maya_walk.clean - by the Clean tab's Seam and
+Smooth, and its Fix posture button sets the walk's bones right once, in its file).
 
 Select a skeleton and press Apply: the walk is keyed onto it and it becomes the card's target - a released
 knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card (what
@@ -30,7 +30,7 @@ SAVE_WALK_BTN = "skeldarWalkSaveWalk"
 SAVE_POSE_BTN = "skeldarWalkSavePose"
 GROUP_TABS = "skeldarWalkGroups"
 SIDE_TABS = "skeldarWalkSides"
-REF_MENU = "skeldarWalkReferenceMenu"
+FIX_BTN = "skeldarWalkFixPosture"
 CLEAN_REPORT = "skeldarWalkCleanReport"
 IN_PLACE_BOX = "skeldarWalkInPlace"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Apply
@@ -46,36 +46,24 @@ NOTHING = "Select a skeleton - Apply puts the walk on it"
 #  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
 #  at a time; Clean's are the clean's (maya_walk.clean - scene.ALL_DEFAULTS), the rest the model's
 GROUPS = (
-    ("clean", "Clean", ("despike", "smooth", "fix_posture", "floor", "floor_offset", "seam")),
+    ("clean", "Clean", ("seam", "smooth")),
     ("step", "Step", ("stride", "tempo", "lift")),
     ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
                       "foot_lag", "foot_flex")),
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
-                          "pelvis_twist", "pelvis_list", "pelvis_tilt",
+                          "pelvis_twist", "pelvis_list",
                           "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "chest_pitch", "gait_lean", "head", "head_nod")),
-    ("arms", "Arms", ("arms", "elbow", "arm_swing", "shoulder_swing", "shoulder_bob")),
-    ("overlap", "Overlap", ("upper_offset", "spine_wave", "pelvis_drag", "torso_drag", "torso_bounce", "head_drag",
-                            "shoulder_drag", "arm_drag", "arm_bounce", "overlap")),
+    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "head",
+                        "head_drag")),
+    ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
 )
-#  The tabs on two rows (eight in a 360 px dock would not read)
-GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "overlap", "weight"))
+#  The tabs on two rows (seven in a 360 px dock would not read)
+GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "weight"))
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {
-    "despike": ("Despike", "Finds frames that jump out and come straight back - one to three frames: a bad key, a "
-                           "mocap pop - and bridges them from the frames around; higher finds smaller ones, 0 leaves "
-                           "them. The toes' flick at the push-off is left alone"),
     "smooth": ("Smooth, fr", "Every joint through a soft periodic blur this many frames wide: quiets jitter that is "
                              "not a spike; 0 leaves the motion as it is"),
-    "fix_posture": ("Fix posture", "Bones set right against the Reference: a bone moved off its joint goes back; a "
-                                   "clavicle or a foot outside a body's limits (a shoulder dropped, a foot turned "
-                                   "out) takes its other side's motion mirrored, or - both sides out - the "
-                                   "reference's pose with its own motion. 0 leaves them; what was found is listed "
-                                   "below. A walk whose style breaks the limits (a drunk shoulder) wants it at 0"),
-    "floor": ("Floor", "Puts the walk's planted feet on the floor - the reference's foot heights over the root; 0 "
-                       "leaves it where it stands. A walk within 8 cm of the floor is left"),
-    "floor_offset": ("Floor offset, cm", "Raises (+) or lowers (-) the whole body over the floor after that"),
     "seam": ("Seam, fr", "A loop cut out of a longer clip - or a joint that does not loop - is closed over this "
                          "many frames each side of its seam, in value and speed"),
     "pose": ("Pose", "How far the pose picked above replaces the walk's own (its parts below): 0 is the walk, "
@@ -124,10 +112,6 @@ LABELS = {
                                    "People: about 5; the lower back takes it back"),
     "pelvis_list": ("Hip drop, deg", "The standing leg's hip this far up, the swinging leg's down, highest "
                                      "just after the foot lands. People: about 4"),
-    "pelvis_tilt": ("Pelvis tilt, deg", "Adds this much tilt to the pelvis twice a stride, its top forward (+) - "
-                                        "even where the walk has none; on the walk's own tilt where it tilts, "
-                                        "else peaking a fifth of a stride after each heel strike. The lower "
-                                        "back takes it back (x Pelvis motion)"),
     "root_sway": ("Root sway", "0: the root runs straight down the walk's line (what a game's capsule "
                                "wants); 1 weaves with the hips as the walk does"),
     "spine": ("Spine", "x the spine's and the neck's motion (Chest twist and sway included)"),
@@ -136,9 +120,6 @@ LABELS = {
                                    "People: about 7"),
     "chest_sway": ("Chest sway", "deg: the shoulder line tilts this far each way over the steps. People: "
                                  "about 5"),
-    "chest_pitch": ("Chest pitch, deg", "Adds this much forward (+) lean to the chest twice a stride, even where "
-                                        "the spine does not move in the walk; on the chest's own pitch where it "
-                                        "has one, else just after each heel strike (x Spine)"),
     "gait_lean": ("Gait lean", "Under a pose's torso, the walk's own forward lean (a run leans into it) is "
                                "kept on top of the pose - as much of it as the room the pose leaves to "
                                "horizontal: a bent pose leans further less. 0 is the pose's torso as it stands"),
@@ -151,9 +132,6 @@ LABELS = {
     "head_drag": ("Head drag, fr", "The head keeps its gaze through a spring on the neck that feels the "
                                    "body's motion - about this many frames late, the neck taking the "
                                    "difference. 0: the head exactly where the walk looks"),
-    "head_nod": ("Head nod, deg", "Adds a nod of this much to the head twice a stride, down (+), even where the "
-                                  "walk's head is still; on its own nod where it has one, else just after each "
-                                  "heel strike"),
     "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
                      "hands holding one thing together hold it"),
     "elbow": ("Elbow", "x the forearm's own swing in the elbow, on top of Arms"),
@@ -163,32 +141,6 @@ LABELS = {
     "arm_bounce": ("Arm bounce", "How far the arms overshoot as they catch up: 0 settles, 1 whips through"),
     "overlap": ("Overlap, fr", "Frames the arms' own motion runs late against the body (the shoulders less); "
                                "the trunk's and the head's overlap is Torso drag and Head drag"),
-    "shoulder_swing": ("Shoulder swing, deg", "Swings each shoulder forward (+) and back this far once a stride, "
-                                              "even where the walk's shoulders are still: the left forward as the "
-                                              "right foot lands (on the walk's own swing where it has one); the arm "
-                                              "hangs from it. Sided"),
-    "shoulder_bob": ("Shoulder bob, deg", "Lifts each shoulder (+) and drops it this far twice a stride, even "
-                                          "where the walk's shoulders are still; on their own bob where they have "
-                                          "one. Sided"),
-    "arm_swing": ("Arm swing, deg", "Swings each arm this far forward (+) and back once a stride on top of its own "
-                                    "swing - arms that hang still in the walk swing too: the left forward as the "
-                                    "right foot lands (on the walk's own swing where it has one). Hands holding "
-                                    "one thing together hold it. Sided"),
-    "upper_offset": ("Upper body offset, fr", "The upper body (from the first spine joint up: spine, neck, head, "
-                                              "arms) runs this many frames behind the legs and the pelvis - "
-                                              "negative: ahead of them. The pelvis's own twist stays with the "
-                                              "pelvis"),
-    "spine_wave": ("Spine wave, fr", "Each spine and neck joint's own motion runs late by its share of the chain - "
-                                     "the lowest a little, the top of the neck this many frames: a wave up the "
-                                     "back (the head keeps its gaze)"),
-    "shoulder_drag": ("Shoulder drag, fr", "The shoulders follow the chest with weight: each clavicle trails the "
-                                           "chest's turn (and its own motion) by about this many frames, "
-                                           "overshooting as Arm bounce says; the arms hang from them. 0: the "
-                                           "shoulders as the walk turns them"),
-    "pelvis_drag": ("Pelvis drag, fr", "The hips turn with weight: the pelvis's twist and tilts through a spring "
-                                       "about this many frames late (overshooting as Torso bounce says); the legs "
-                                       "reach from the late hips, the feet stay planted and the lower back keeps "
-                                       "the chest where it was"),
     "weight": ("Weight", "Heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
     "balance": ("Balance", "How far the centre of mass follows the feet like a pendulum: wider feet, a "
                            "slower step, a crouch sway it more; a leaning pose takes the hips back over the "
@@ -200,10 +152,13 @@ TIPS = {
              "proportions, from where it stands. It becomes the target: every released knob re-keys it. "
              "Selecting a walked skeleton reads its walk, pose and knobs back.",
     "reset": "Every knob back to its default (the tempo to the walk's own); the target is keyed again",
-    "save_walk": "Save walk: select a bone of a walk or a run and press - a cycle or not, in place or not: it is "
-                 "cleaned when it is read (the loop found and closed, spikes, posture, the floor - the Clean tab)",
-    "reference": "What the walk's posture and floor are judged against: the built-in UE5 idle, a saved pose "
-                 "(save one from an idle with the Pose's save icon), or none (the skeleton's rest)",
+    "save_walk": "Save walk: select a bone of a walk or a run and press - a cycle or not: it is looped when it "
+                 "is read (the loop found and its seam closed - the Clean tab)",
+    "fix_posture": "Fix posture: the walk's bones set right against the UE5 idle - a bone moved off its joint goes "
+                   "back; a clavicle or a foot outside a body's limits (a shoulder dropped, a foot turned out) "
+                   "takes its other side's motion mirrored, or - both sides out - the idle's pose with its own "
+                   "motion. Written into the walk's file (the original kept beside it as .orig); the target is "
+                   "keyed again",
     "in_place": "In place: the walk on the spot - the root stays where the first frame has it, the body moves "
                 "about it and the planted feet slide back (what a game moves by its capsule)",
     "save_pose": "Save pose: select a skeleton standing in a character pose and press; the walk takes its "
@@ -336,15 +291,6 @@ def chosen_pose():
     return None if not value or value == NO_POSE or value not in scene.pose_names() else value
 
 
-def chosen_reference():
-    """The reference the walk is cleaned against (the Clean tab's dropdown, else remembered, else the built-in)."""
-    cmds = _cmds()
-    value = cmds.optionMenu(REF_MENU, query=True, value=True) if cmds.optionMenu(REF_MENU, exists=True) \
-        else _stored("reference")
-    names = scene.reference_names()
-    return value if value in names else scene.BUILT_IN_REFERENCE
-
-
 def chosen_parts():
     cmds = _cmds()
     if cmds.checkBox(_part_control(PART_LABELS[0][0]), exists=True):
@@ -371,7 +317,7 @@ def _fill(menu, names, selected, first=None):
         cmds.optionMenu(menu, edit=True, value=selected)
 
 
-def _fill_menus(walk=None, pose=None, reference=None):
+def _fill_menus(walk=None, pose=None):
     cmds = _cmds()
     if not cmds.optionMenu(WALK_MENU, exists=True):
         return
@@ -379,9 +325,6 @@ def _fill_menus(walk=None, pose=None, reference=None):
     try:
         _fill(WALK_MENU, scene.walk_names(), walk or _stored("walk"))
         _fill(POSE_MENU, scene.pose_names(), pose or _stored("pose") or NO_POSE, first=NO_POSE)
-        if cmds.optionMenu(REF_MENU, exists=True):
-            _fill(REF_MENU, scene.reference_names(),
-                  reference or _stored("reference") or scene.BUILT_IN_REFERENCE)
     finally:
         _QUIET[0] = quiet
 
@@ -512,17 +455,15 @@ def show_group(key):
 def _load(root):
     """A walked skeleton's walk, pose, parts and knobs into the card; it becomes the target."""
     name, knobs, pose, parts = scene.pick(root)
-    reference = scene.reference_of(root)
     quiet, _QUIET[0] = _QUIET[0], True
     try:
         _remember("walk", name)
         _remember("pose", pose or NO_POSE)
-        _remember("reference", reference)
-        _fill_menus(name, pose or NO_POSE, reference)
+        _fill_menus(name, pose or NO_POSE)
         _set_parts(parts)
         frames = int(knobs.get("tempo") or 30)
         if name in scene.walk_names():
-            walk, _, _, report = scene.load_walk(name, knobs, reference)
+            walk, _, _, report = scene.load_walk(name, knobs)
             frames = walk.P
             show_report(report)
         _set_knobs(knobs, frames)
@@ -604,9 +545,7 @@ def _apply_to(root):
     _remember("walk", chosen_walk())
     _remember("pose", chosen_pose() or NO_POSE)
     _remember("parts", json.dumps(list(chosen_parts())))
-    _remember("reference", chosen_reference())
-    result, info, text = scene.apply(root, chosen_walk(), values(), chosen_pose(), chosen_parts(),
-                                     chosen_reference())
+    result, info, text = scene.apply(root, chosen_walk(), values(), chosen_pose(), chosen_parts())
     if info.get("clean") is not None:
         show_report(info["clean"])
     return text
@@ -626,7 +565,7 @@ def slider_changed(*_):
         try:
             root = scene.target_root()
         except scene.Refusal as refusal:                 # no target: the Clean tab still reads the walk again
-            walk, _, _, report = scene.load_walk(chosen_walk(), values(), chosen_reference())
+            walk, _, _, report = scene.load_walk(chosen_walk(), values())
             show_report(report)
             return str(refusal)
         return _apply_to(root)
@@ -641,20 +580,12 @@ def walk_changed(*_):
     def run():
         name = chosen_walk()
         _remember("walk", name)
-        walk, _, _, report = scene.load_walk(name, values(), chosen_reference())
+        walk, _, _, report = scene.load_walk(name, values())
         show_report(report)
         _set_knobs({"tempo": walk.P}, walk.P)
         line = walk.summary() + " - Apply puts it on the selected skeleton"
         return line + (" | " + report.short() if report.changed else "")
     return _press(run)
-
-
-def reference_changed(*_):
-    """Another reference picked: remembered, the walk read against it, the target keyed again."""
-    if _QUIET[0]:
-        return None
-    _remember("reference", chosen_reference())
-    return slider_changed()
 
 
 def in_place_changed(*_):
@@ -670,7 +601,7 @@ def in_place_changed(*_):
 def press_reset(*_):
     def run():
         knobs = dict(scene.ALL_DEFAULTS)
-        walk = scene.load_walk(chosen_walk(), knobs, chosen_reference())[0]
+        walk = scene.load_walk(chosen_walk(), knobs)[0]
         knobs["tempo"] = walk.P
         _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
         try:
@@ -694,13 +625,27 @@ def press_save_walk(*_):
         name = _ask("Save walk", scene.read_clip(root)[0].name)
         if name is None:
             return "nothing saved"
-        name, line = scene.save_walk(root, name, chosen_reference())
+        name, line = scene.save_walk(root, name)
         _remember("walk", name)
         _fill_menus(walk=name)
-        walk, _, _, report = scene.load_walk(name, values(), chosen_reference())
+        walk, _, _, report = scene.load_walk(name, values())
         show_report(report)
         _set_knobs({"tempo": walk.P}, walk.P)
         return line
+    return _press(run)
+
+
+def press_fix_posture(*_):
+    """Fix posture: the picked walk's posture set right in its file (scene.fix_posture), the report shown, the
+    target keyed again."""
+    def run():
+        report, line = scene.fix_posture(chosen_walk(), values())
+        show_report(report)
+        try:
+            root = scene.target_root()
+        except scene.Refusal:
+            return line
+        return line + " | " + _apply_to(root)
     return _press(run)
 
 
@@ -844,14 +789,12 @@ def build_panel():
     for key, label, names in GROUPS:
         cmds.columnLayout(_group_column(key), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
                           manage=key == shown)
-        if key == "clean":                # what the walk is judged against, above the clean's knobs
-            cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "left", 0), (2, "both", 3)])
-            cmds.text(label="Reference", width=hubstyle.pick(64, 70), align="left")
-            cmds.optionMenu(REF_MENU, changeCommand=reference_changed, annotation=TIPS["reference"])
-            cmds.setParent("..")
         for name in names:
             _slider(name)
-        if key == "clean":                # what the clean found, as it last read the walk
+        if key == "clean":                # the posture set right once, then what the clean found
+            hubstyle.mark(cmds.button(FIX_BTN, label="Fix posture", height=hubstyle.height("button", 26),
+                                      annotation=TIPS["fix_posture"], command=lambda *_: press_fix_posture()),
+                          "secondary", "tool")
             hubstyle.mark(cmds.text(CLEAN_REPORT, label="", align="left", wordWrap=True, height=72), "caption")
         cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
@@ -859,7 +802,7 @@ def build_panel():
     _fill_menus()
     try:
         tempo = float(_stored("knob_tempo", 0.0) or 0.0)
-        walk, _, _, report = scene.load_walk(chosen_walk(), values(), chosen_reference())
+        walk, _, _, report = scene.load_walk(chosen_walk(), values())
         show_report(report)
         _set_knobs({"tempo": tempo if tempo >= 1 else walk.P}, walk.P)
     except Exception:                                        # noqa: BLE001 - no walk saved yet

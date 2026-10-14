@@ -9861,55 +9861,44 @@ Spec `docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md` (re
 243. **A drag in FRAMES costs a fast motion more.** Torso drag 2 kept 95 % of a walk chest's motion and 83 % of the
      sprint's, trailing it 15.5 deg. Pick a drag on the fastest gait it will meet.
 
-**…a raw clip read clean: Clean, In place, levers, Overlap** (2026-10-14, a walk broken on purpose beside a reference
-idle `M_Neutral_Stand_Idle_Loop`: «Давай улучшим алгоритмы работы нашего motionbuilder ... научить наш билдер
-исправлением такой анимации» - loop it, In place, jitter filters, broken bones fixed against the idle (the shoulders, the
-left foot), the floor, levers that move parts with no animation, overlaps, the upper body N frames off). Asked: fixed
-**when the walk is read, live knobs** (a Clean tab); the reference **a saved pose plus a built-in UE5 idle**; levers
-**pelvis tilt, chest pitch, head nod, shoulders, arm swing from nothing**; overlap **one tab: shoulder and pelvis drag, a
-spine wave**. Spec `docs/superpowers/specs/2026-10-14-walk-clean-levers-overlap-design.md` (read its addendum), plan
-beside it. The loop method from the animator's note (`Downloads/Перенос стиля движения для запекания.md`): Kovar-Gleicher
+**…a raw clip read clean: the loop, Smooth, In place, a Fix posture button** (2026-10-14, a walk broken on purpose beside
+a reference idle `M_Neutral_Stand_Idle_Loop`: «Давай улучшим алгоритмы работы нашего motionbuilder ... научить наш билдер
+исправлением такой анимации»). Spec `docs/superpowers/specs/2026-10-14-walk-clean-levers-overlap-design.md` (read both
+addenda). **Built whole first** - a Clean tab (Despike, Smooth, Fix posture, Floor, Seam, a Reference dropdown), In place,
+six levers (pelvis tilt, chest pitch, head nod, shoulder swing / bob, arm swing) and an Overlap tab (upper body offset, spine
+wave, shoulder and pelvis drag), pushed as `fb2a343` - **then cut back the same day after a try**: «полезным оказались функции
+inPlace, FixPosture, Seam fr ... Можно еще сглаживание оставить. Fix pos давай сделаем кнопкой ... Остальной функционал
+алгоритмы, ручки, логику давай все откатим». The levers, the Overlap tab and its knobs, Despike, the floor, the root's carry,
+the in-place-clip travel restore and the Reference dropdown are gone (`model.py` is 9b06363's plus In place; all in git at
+`fb2a343`). The loop method from the animator's note (`Downloads/Перенос стиля движения для запекания.md`): Kovar-Gleicher
 loop points, Holden's two-sided cubic offsets.
-- **The broken clip** (`Walking (1).fbx` on Manny, read only; it came from `asd`): twists and IK helpers keyed 0..22 only
-  (Save walk refused «not a closed loop: 56.7 cm»); the body 54 cm up; both clavicles 25-26 deg down, clavicle_l 2.4 cm
-  off its joint; foot_l 72 deg out; spikes (hand_l at 23, 91 deg; lowerarm_r 17-19, 73 deg); the spine one key a bone.
-- **Save walk stores the clip AS IT STANDS** (any clip, looped or not); **`maya_walk/clean.py`** (numpy) makes the cycle
-  when it is read: `scene.load_walk(name, knobs, reference)` returns (walk, statics, start, Report), cached per file,
-  knobs and reference (six readings a file). Steps:
-  1. a root standing still while the pelvis travels takes the pelvis's line;
-  2. the loop: closed as it is; a cycle missing its closing frame given it (travel = a line + 6 harmonics fit of the
-     root's path); else cut out: body points in the root's ground frame +-2 frames, whole strides, within 1.2x the least
-     + 0.5 cm the FEWEST strides, the longest of those (20 cycles -> one, under 3 s); the cut's climb taken off;
-  3. in place: root and pelvis staying while the planted feet slide back -> the travel restored;
-  4. the seam: a helper or twist that does not loop is REBUILT (the helper on its bone at its rest relation; the twist by
-     the UE rule, counter -(1-t) / follow t); a body joint keyed short refilled; else Holden, value and slope;
-  5. Despike: out-and-back runs of 1-3 frames over max(6, 6 x the median step) / Despike; toes left out;
-  6. Fix posture, against the reference carried onto the walk (`pose.carried`; a headless 1P walk too; a reference it
-     cannot stand on -> the rest, a report NOTE): a bone off its opposite's length by max(1 cm, 10 %) -> its rest;
-     clavicles (rise -22..+35, forward +-30) and feet (pitch +-35, out +-35) out of limits -> the opposite's motion
-     mirrored half a stride on, else the reference's mean with its own motion; a clavicle's upper arm keeps its world turn;
-  7. Smooth (periodic Gaussian, frames);
-  8. the floor: the lowest ball (else ankle) over the root over the cycle against the REST's (the reference without a
-     rest), left within 5 cm - the pelvis subtree and its helpers moved; Floor offset cm on top;
-  9. the derived bones of step 4. Nothing found = the clip as it went in.
-- **The built-in reference** `assets/walk_reference_ue5.wpose.gz`: the idle's mean over its 302 frames. The Clean tab:
-  Reference (it, the saved poses, «(none)»), Despike, Smooth, Fix posture, Floor, Floor offset, Seam, the report.
-- **In place** (a chip by Apply): the travel and the root's surge off every joint.
-- **Levers** (deg added on a stride-phase shape, default 0; the clip's own phase where it moves over 0.5 deg there):
-  pelvis_tilt (the lumbar takes it back), chest_pitch, head_nod, shoulder_swing / shoulder_bob, arm_swing (in the
-  world); the last three sided.
-- **Overlap tab**: upper_offset (frames: spine_01 up later than the pelvis and legs), spine_wave, shoulder_drag (the
-  arms' spring on the clavicles, SHOULDER_INERTIA 0.3), pelvis_drag, and the drags from Chest and Arms. Groups in two
-  rows: [Clean | Step | Legs | Pelvis] / [Chest | Arms | Overlap | Weight].
-- **On the saved walks**: AGS_Sprint, RunFast, asd unchanged; Creep_Drunk, HavyRun, Sword_Drunked, TestStrefe, dw, sadda
-  floated 15-17 cm and are put on the floor at the defaults (Floor 0 keeps them as they were); dw's posture flags one
-  joint. A skeleton walked before this (no `reference` in its marker) is picked with Floor 0 and Fix posture 0.
-- Proof: `verify_walk_clean.py` **30/30 standalone** (every breakage found; against `asd`: lowerarm_r 2.6 deg, hand_l
-  0.25, foot_l's mean 9.9 (was 72), the pelvis 93.7 cm (asd 93.2), untouched bones 5e-4 deg; the keyed lowest ball at
-  0.75 cm, the loop, In place 0.000 cm, the levers, Overlap bones whole); `verify_walk.py` 79/79, `verify_walk_sprint.py`
-  12/12; `tests/test_walkclean.py` 33. Not seen live: the card - the animator's to try after Check update.
-- Not built: thresholds relative to the skeleton's size (ROOT_STILL, PELVIS_TRAVELS, IN_PLACE_TRAVEL are cm - a
-  PlayerMale-sized walk would need them scaled), a reference other than a pose (a clip), posture limits for other bones.
+- **Save walk stores the clip AS IT STANDS** (looped or not); **`maya_walk/clean.py`** (numpy) makes the cycle when it is
+  read: `scene.load_walk(name, knobs)` returns (walk, statics, start, Report), cached per file and knobs (six readings a
+  file). At read:
+  1. the loop: closed as it is; a cycle missing its closing frame given it (travel = a line + 6 harmonics fit of the root's
+     path); else cut out - body points in the root's ground frame +-2 frames, whole strides, within 1.2x the least + 0.5 cm
+     the FEWEST strides, the longest of those (20 cycles -> one); the cut's climb taken off;
+  2. the seam (**Seam, fr**, default 8): a helper or twist that does not loop is REBUILT (the helper on its bone at its rest
+     relation; the twist by the UE rule, counter -(1-t) / follow t); a body joint keyed short refilled; else Holden, value
+     and slope;
+  3. **Smooth, fr** (default 0): a periodic Gaussian on every joint.
+- **Fix posture is a BUTTON** in the Clean tab (`scene.fix_posture(name, knobs)`, `panel.press_fix_posture`): the walk read
+  as it will be read (looped, its seam closed, not smoothed), its posture set right against the shipped UE5 idle
+  (`assets/walk_reference_ue5.wpose.gz`, its 302 frames' mean, carried onto the walk by `pose.carried` - a headless 1P walk
+  too; one it cannot stand on is judged against the rest, said as a report note): a bone off its opposite's length by
+  max(1 cm, 10 %) -> its rest; clavicles (rise -22..+35, forward +-30) and feet (pitch +-35, out +-35) out of limits -> the
+  opposite's motion mirrored half a stride on, else the idle's mean with its own motion; a clavicle's upper arm keeps its
+  world turn. **Written into the walk's file**, the file as it was kept once as `<name>.walk.gz.orig` (`scene.BACKUP`; a
+  listing never shows it); nothing out of place - the file untouched; then the target is keyed again. Reading never fixes
+  posture.
+- **In place** (a chip by Apply, model knob `in_place`): the travel and the root's surge off every joint.
+- The card's groups on two rows: [Clean | Step | Legs | Pelvis] / [Chest | Arms | Weight]; Clean holds Seam, Smooth, Fix
+  posture and the report of what the clean found.
+- Proof: `verify_walk_clean.py` **25/25 standalone** (the broken clip looped with its helpers and twists rebuilt, every joint
+  loops to 0.0004 cm; Fix posture sets both clavicles and the foot (its mean 9.9 deg off `asd`'s, was 72), keeps the
+  original, a second press finds nothing; every saved walk of the animator's read with only its loop touched; Apply loops
+  0.0000 cm, In place 0.000 cm); `verify_walk.py` 79/79, `verify_walk_sprint.py` 12/12; `tests/test_walkclean.py` 23.
+  Not seen live: the card - the animator's to try after Check update.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
