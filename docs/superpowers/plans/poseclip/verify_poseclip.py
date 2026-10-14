@@ -200,13 +200,17 @@ def main():
     after = dict((c, cmds.keyframe(c, query=True, valueChange=True)) for c in before)
     same = all(np.allclose(before[c], after[c], atol=1e-12) for c in before)
     gate("the original's curves untouched", same and len(before) > 0, "%d curves on the root" % len(before))
-    count = len(copy_of(root))
-    gate("a second run replaces the copy", count == 1, "%d copies" % count)
-    pcm.apply("goblin", node=root)
+    names = sorted(pcm._short(t) for t in copy_of(root))
+    gate("a second run of a pose replaces its copy (one a pose)", names == ["Manny_Skeleton_goblin_Character",
+         "Manny_Skeleton_two_handed_sword_Character"], str(names))
+    goblin = [t for t in copy_of(root) if "goblin" in t][0]
+    first = cmds.ls(goblin, uuid=True)[0]
+    pcm.apply("goblin", share=0.5, node=root)
     cmds.undo()
-    left = copy_of(root)
-    gate("one undo takes the run back (the previous copy back)", len(left) == 1 and
-         "two_handed_sword" in left[0], str([pcm._short(t) for t in left]))
+    names = sorted(pcm._short(t) for t in copy_of(root))
+    back = [t for t in copy_of(root) if "goblin" in t]
+    gate("one undo takes the run back (the previous copy back)", len(names) == 2 and back and
+         cmds.ls(back[0], uuid=True)[0] == first, str(names))
 
     if OUT:
         np.savez(OUT, clip=source.worlds, goblin=results["goblin"], sword=results["two_handed_sword"],

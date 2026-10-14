@@ -7,8 +7,8 @@ selected, from the Script Editor:
     pc.apply("two_handed_sword", share=0.7, motion=0.8, parts=("torso", "pelvis", "arms", "feet"))
 
 A copy of the character (its group duplicated with everything upstream of it - the skins follow the copy's
-joints) stands `offset` cm to its right with the pose on the clip; the original is never written. The next
-apply for the same character replaces its copy. One undo step.
+joints) stands `offset` cm to its right (a negative offset: to its left) with the pose on the clip; the original
+is never written. The next apply of the same pose to the same character replaces that copy. One undo step.
 
 Poses: Walk Builder's (`<userAppDir>/SkeldarWalks/<name>.wpose.gz`, or the folder in the optionVar
 `skeldarWalkFolder`) or a path to one. Spec: docs/superpowers/specs/2026-10-14-pose-on-clip-design.md
@@ -241,8 +241,9 @@ def _uuids(nodes):
     return set(cmds.ls(nodes, uuid=True) or []) if nodes else set()
 
 
-def remove_copies(source_uuid):
-    """Every copy this tool made of the character whose root is `source_uuid`, and the nodes made with it."""
+def remove_copies(source_uuid, pose=None):
+    """Every copy this tool made of the character whose root is `source_uuid` (with the pose `pose`, or any),
+    and the nodes made with it."""
     cmds = _cmds()
     removed = 0
     for t in cmds.ls("*.%s" % MARK, objectsOnly=True, long=True, recursive=True) or []:
@@ -250,7 +251,7 @@ def remove_copies(source_uuid):
             memo = json.loads(cmds.getAttr(t + "." + MARK) or "{}")
         except ValueError:
             continue
-        if memo.get("source") != source_uuid:
+        if memo.get("source") != source_uuid or (pose is not None and memo.get("pose") != pose):
             continue
         nodes = [n for n in (cmds.ls(memo.get("nodes", []), long=True) or [])]
         for node in [t] + nodes:
@@ -416,7 +417,7 @@ def apply(pose, share=1.0, motion=1.0, parts=model.PARTS, offset=150.0, referenc
     base = _short(top)
     base = base[:-len("_Character")] if base.endswith("_Character") else base
     with _Chunk("skeldarPoseClip"):
-        removed = remove_copies(source)
+        removed = remove_copies(source, pose_name)
         copy, mapping, made = make_copy(root, "%s_%s_Character" % (base, pose_name))
         paths = [mapping[p] for p in joints if p in mapping]
         rows = [i for i, p in enumerate(joints) if p in mapping]
