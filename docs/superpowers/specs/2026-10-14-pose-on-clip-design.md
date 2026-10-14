@@ -221,3 +221,66 @@ the body stops** (the stillness the stance already uses); **the knees take the s
   Over `from_cycle` frames (default 8) the stop goes from the cycle to itself: local turns slerped, the root and
   pelvis blended in the world, the legs by IK to blended ankles (a foot planted in both stays where both have it).
   Frame 0 is the cycle's frame. The status line names the phase.
+
+Proof: `verify_poseclip.py` 25/25 (the stop's first frame on RunFast's frame 26.50 to 4e-10, no planted foot
+sliding into the stop, the copy labelled «two_handed_sword > goblin»); `tests/test_poseclip.py` 36.
+
+## Addendum 4: Walk Builder's tools, and the cycle's posture as the start (the same day)
+
+«Проанализируй walk builder он сейчас работает хорошо! Мне бы хотелось тут иметь такие же инструменты которые бы
+контролировали веса позы и все остальное. Так же нужно добавить опцию которая будет за основу для старта брать
+позу исходного цикла.» Asked, all three the recommendation: **everything of Walk Builder that a stop has a use
+for**; the cycle's pose is **its posture read off its frames** (whatever made it - Walk Builder's pose and knobs, or
+hands); each pose's weight is **a share and its parts' chips**, as Walk Builder's.
+
+**The window** is Walk Builder's card in a window: the clip; Start pose (menu, Share, chips Torso / Pelvis /
+Knees / Arms / Feet), Final pose (the same); the cycle; Apply / Reset knobs / Delete copy; the knobs in six
+groups, one shown at a time, `[Stop | Legs | Pelvis | Chest | Arms | Weight]`; `[Both | Left | Right]` for the
+knobs a side has; the copy's offset; the status. A part whose chip is lit takes the pose's share, the others 0
+(the model keeps a knob a part: the final's `share_<part>`, the start's `start_<part>`). The start's Feet chip is
+its toes' turn on the run's steps (the stance is the final's).
+
+**The knobs** (Walk Builder's names and meanings; defaults keep the stop as it was but where Walk Builder's own
+default says otherwise):
+
+| group | knob | the stop |
+|---|---|---|
+| Stop | Final pose at, Stance at (cm/s), From the cycle (fr) | as before |
+| Legs | Stance x (sided, was Width) | each foot's offset from the stance's middle x |
+| | Foot lift x (sided) | between two contacts, the ankle's height over the line from takeoff to landing x |
+| | Swing out cm (sided) | the same stretch bowed `sin(pi u)` out along the heading's side |
+| | Leg match 0..1 | running, a side-on pose's turn about up (`hips_yaw`) goes from the pelvis to the lumbar spine (0.4 / 0.35 / 0.25) and the knees' and toes' turns keep their symmetric splay x `1 / (1 + Fr)`, Fr = v^2 / (g L) of the centre of mass; matched x (1 - the stillness at Stance at): standing, the pose stands as it is |
+| | Leg turn x (sided) | the poses' knee turns and toe turns x |
+| | Knee <-> foot 0..1 (sided) | Walk Builder's `meet`: past 15 deg of knee against toe the two meet |
+| | Foot lag fr, Foot flex x (sided) | between contacts the foot hangs in its new calf as the clip's foot did `lag` frames earlier, its turn there x flex, eased in over the first quarter and out over the last (the toes 1.5 x the lag) |
+| Pelvis | Pelvis height, Pelvis forward | as before |
+| | Bob x | the height rule's motion (was in the trunk's motion) |
+| | Pelvis motion x | the pelvis's turns over the reference |
+| Chest | Spine x | the spine's and the necks' motion (was Torso motion) |
+| | Gait lean 0..1 | x the forward lean the clip's motion keeps (in the room the pose leaves) |
+| | Lean limit, Torso drag, Torso bounce, Head drag | as before |
+| | Head x | the head's own motion in the world (0 keeps the pose's gaze) |
+| Arms | Arms x (sided, was Arms motion), Elbow x (sided), Arm drag, Arm bounce (sided) | the forearm's own motion x Elbow on top of Arms; each arm its own spring (a grip: the two sides' mean) |
+| Weight | Balance 0..1 | how far the pelvis is carried to put the centre of mass on its target |
+| | Exaggeration x | every motion above x |
+
+`knobs_from` (the script's `apply`) keeps the first version: the motions its `motion`, Leg match and the springs 0.
+
+**The cycle's posture as the start** - the Start pose menu's `(the cycle's)`, chosen by itself when a cycle is
+picked with the start on `(same as final)` (and given back when the cycle is cleared). The cycle's frames carry
+a posture (a goblin's crouch and lean, a sword held, Walk Builder's pelvis height and stance), and the stop's
+run frames carry the sprint's own; the start takes the DIFFERENCE, so the stop runs in the cycle's posture with
+its own motion over it and no lean twice:
+- the run's weights `r(f) = 1 - e(f)` (e the stillness at Final pose at); a clip that never runs is refused;
+- `mean_posture(clip, weights, statics)`: each joint's weighted chordal mean local turn and mean offset in its
+  parent, the root at the origin - a pose (Walk Builder's pose file's bones);
+- `C = prepare(cycle's mean posture over a period)`, `M = prepare(the stop's mean posture over r)` - both read the
+  same way against the stop's reference;
+- the start's targets: torso and pelvis `C.rel . M.rel^T . rel_ref` (the posed run's mean is then C's: `T .
+  exp(w-bar) = C`); arms and fingers `(M.local . local_ref^T)^-g . C.local` (g the arms' gain on the run);
+  height `h_ref . C.height / M.height`; knee and toe turns `C - M`; `hips_yaw` `C - M`; the lean the
+  reference's (the room rule then leaves the run's lean alone); the grip and the weapon holds C's.
+A cycle that is the stop's own run gives the reference back (the start is the clip as it is).
+
+Not built: Stride, Tempo, Ground time, Twist, Hip drop, Chest twist / sway, Surge, Sway, Weight (Walk Builder's
+cycle knobs: a stop's timing and its pelvis's place are the clip's and the balance's).
