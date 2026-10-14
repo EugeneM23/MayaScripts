@@ -284,3 +284,34 @@ A cycle that is the stop's own run gives the reference back (the start is the cl
 
 Not built: Stride, Tempo, Ground time, Twist, Hip drop, Chest twist / sway, Surge, Sway, Weight (Walk Builder's
 cycle knobs: a stop's timing and its pelvis's place are the clip's and the balance's).
+
+**What the build changed** (each measured on the real stop, a goblin run from Walk Builder's RunFast as the cycle):
+- **The trunk's mean is taken in the world** (`mean_posture(..., world=trunk)`): each pelvis, spine and neck
+  bone's mean world turn - what the eye averages - for C and M alike; the arms keep their mean local turns
+  (they are carried in their parents). With the springs off, each trunk bone's mean over the run sits off C
+  exactly as the clip's sits off its own run mean (pelvis 4.7 / 4.7, neck_01 9.0 / 9.0 deg).
+- **The knees, toes, hips and height come from the GAIT, not the mean posture** (`gait`): a running foot is
+  kicked up behind half the time, so the mean posture's foot pointed back (-150 deg). Each foot's knee line and
+  toe line are read over the frames it is down, the hip line over every frame, each against the clip's travel
+  heading (the cycle's loop travel; the stop's own heading); the height is the pelvis over the gait's own floor
+  (the cycle's at the stop's size). The stop's gait is read where it runs at speed (at least `RUN_SHARE` 0.75 of
+  its top speed, the start more than half shown): its brake plants the right foot turned 105-133 deg across.
+- **Leg match leaves the cycle's start alone** (x e): the cycle already runs; matching it turned its hips 22 deg.
+- **The toes' turn is a rigid motion of the whole foot** (all toe turns, not only the cycle's): the turn over the
+  contact motion's own is held still through a contact (`spread` of the EXTRA, not the total) and turns the
+  foot about the contact's point (its load's mean place), so a planted foot rolling onto its ball does not
+  slide (the goblin's ball moved 0.55 cm a frame); in the air about the foot itself (`pivot_weight`: 0 on a
+  contact, `sin(pi u)` through a stretch), or a foot a metre from its next contact swings wide.
+- `knobs_from` sets Knee <-> foot 0: the first version's feet are the pose's (the knee meets the foot).
+- **The window**: the start menu's `(the cycle's posture)` with no cycle read falls back to the final pose and
+  says so (it refused every Apply - the animator's «после применения не меняется поза»); a reload of the code
+  keeps the character the window had; a channel something else drives (a weapon put in the copy's hand
+  constrains `weapon_r`) is left to it and named on the status line (the re-key died on it).
+
+Proof: `verify_poseclip.py` **30/30 mayapy standalone** - the earlier 25 plus the cycle's posture with the
+clip's motion off (the trunk on C to 3e-10 deg) and on (each trunk bone off C as the clip off its run mean, worst
+0.00 deg), Foot lift L 2.5 (the left foot up to 84 cm higher, the right 2e-13), Leg match (the sword start's hips
+25 deg to the run, 0 with it off), a weapon-driven bone left to its constraint; 58 unit tests (a foot rolling onto
+its ball under a toe turn, a foot in the air turning about itself, the gait read on the ground against the
+travel). Picture `poseclip_cycle_posture.png`. The window reopened in the animator's Maya and photographed; no
+cycle character in their scene, so the cycle's posture was not seen there.

@@ -10022,6 +10022,46 @@ stop's planted foot and its root's travel, frame 0 the cycle's (4e-10 cm), `from
 a foot the stop has planted held on its place. `knobs_from` (the script's `apply`) keeps the overlap off.
 `verify_poseclip.py` 25/25, `tests/test_poseclip.py` 36.
 
+**…Walk Builder's tools, and the cycle's posture as the start** (the same day: «такие же инструменты которые бы
+контролировали веса позы и все остальное ... опцию которая будет за основу для старта брать позу исходного цикла»;
+asked, all three the recommendation: everything of Walk Builder a stop has a use for, the cycle's posture read off
+its frames, each pose a share plus part chips; spec addendum 4 and its "What the build changed").
+- **The window** is Walk Builder's card:
+  - Final pose and Start pose, each a menu, a Share and the chips Torso / Pelvis / Knees / Arms / Feet (knobs
+    `share_<part>`, `start_<part>`); the start menu offers `(same as final)` and `(the cycle's posture)`;
+  - `[Both | Left | Right]` for the sided knobs (`<name>_l` / `_r`, `model.sided`; Both links them again, a knob
+    whose sides differ is marked *);
+  - a tabLayout `[Stop | Legs | Pelvis | Chest | Arms | Weight]`.
+  - The optionVars are the truth (`knobs_from_memory`), since a sided slider shows one side.
+- **New knobs**: Stance (was Width), Foot lift, Swing out, Leg match, Leg turn, Knee <-> foot, Foot lag / flex,
+  Bob, Pelvis motion, Spine (was Torso motion), Gait lean, Head, Arms (was Arms motion), Elbow, Balance,
+  Exaggeration.
+  - **Leg match**: running, a side-on pose's hips face the run (the pelvis's turn given to the lumbar spine), the
+    knees and toes keep their splay x `1/(1+Fr)`; standing, the pose as it is.
+- **The cycle's posture**:
+  - the trunk is the cycle's mean WORLD turns over the stop's run mean (exact: each trunk bone sits off it as
+    the clip sits off its own run mean);
+  - the arms are local means;
+  - the knees, toes, hips and height come from the GAIT (`gait`: on the frames each foot is down, against the
+    travel). The mean posture's running foot points backwards, and the stop's brake plants a foot across, so
+    the stop is read only at speed (`RUN_SHARE`);
+  - Leg match leaves it alone.
+- **The toes' turn turns the whole foot rigidly**: about the contact's point on the ground, about itself in the
+  air. A rolling foot no longer slides (the goblin's ball 0.55 cm a frame before).
+- **Live, the animator** («после применения не меняется поза»):
+  - the start on the cycle's posture with no cycle refused every Apply; it now falls back to the final pose
+    and says so;
+  - a weapon they put in the copy's hand killed the re-key (`weapon_r` constrained); a channel something else
+    drives is now left to it and named.
+- **Proof**: `verify_poseclip.py` 30/30, 58 unit tests, `poseclip_cycle_posture.png`.
+
+244. **A mean posture of a gait is no stance.** The cycle's mean local turns put the running foot pointing
+     backwards (-150 deg - half a run it is kicked up behind), and a stop's "run" read by its stillness includes
+     the brake, where a foot plants turned 105-133 deg across. Read a gait's knee and toe lines on the frames the
+     foot is down, and a stop's at speed. And a correction held still on a contact must be the EXTRA over the
+     contact's own motion, applied about the contact's point - a total held still, or a turn about the ankle,
+     slides a foot that rolls onto its ball.
+
 240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.

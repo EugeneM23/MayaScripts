@@ -33,6 +33,13 @@ STANCE_SPEED = 240.0   # cm/s: an earlier step takes none of the pose's extra wi
 LEAN_LIMIT = 90.0      # degrees: the trunk's forward lean (pelvis to neck_01 from up) never past this - horizontal
 CARRY_TOL = 0.005      # cm: the balance's carry stops this near the target
 CARRY_STEPS = 8
+# Walk Builder's (maya_walk/model.py) for its knobs here (spec addendum 4)
+GRAVITY = 981.0        # cm / s^2
+GAIT_FROUDE = 1.0      # Leg match: a gait of Froude number Fr keeps 1 / (1 + Fr / this) of a pose's splay
+COUNTER_SHARES = (0.4, 0.35, 0.25)   # spine_01..03 take the pelvis's turn Leg match gives back, these shares
+TWIST_FREE_DEG = 15.0  # Knee <-> foot: the shin's own twist a knee may keep against its foot; past it they meet
+SWING_EASE = 0.25      # the swinging foot hangs off its shin from this share of the swing to this share before it
+BALL_LAG = 1.5         # the toes lag the shin this many times the foot's lag
 
 PARTS = ("torso", "pelvis", "knees", "arms", "feet")
 
@@ -553,6 +560,19 @@ class Analysis(object):
         self.ref_offset = off[a:b + 1].mean(axis=0) @ self.heading[self.mid].T    # in the reference's heading
         trunk = self.pos[idx["neck_01"], a:b + 1] - self.pos[self.pelvis, a:b + 1] if "neck_01" in idx else None
         self.lean_ref = trunk_lean(trunk.mean(axis=0) @ self.heading[self.mid].T) if trunk is not None else 0.0
+        # what a pose's knees, toes and hips are read against (prepare; Leg match): the reference's own headings
+        # about up - the knees' bend, the toes' line (ankle to ball), the hip line (right thigh to left)
+        self.knee_heading, self.toe_heading = {}, {}
+        for side in SIDES:
+            th, ca, fo = self.feet[side]["joints"]
+            bends = [v for v in (_bend(self.pos[th, f], self.pos[ca, f], self.pos[fo, f]) for f in range(a, b + 1))
+                     if v is not None]
+            self.knee_heading[side] = _flat_heading(np.mean(bends, axis=0)) if bends else 0.0
+            toe = (self.feet[side]["ball"][a:b + 1] - self.feet[side]["ankle"][a:b + 1]).mean(axis=0)
+            self.toe_heading[side] = _flat_heading(toe)
+        self.hip_heading = _flat_heading((self.pos[idx["thigh_l"], a:b + 1] - self.pos[idx["thigh_r"], a:b + 1])
+                                         .mean(axis=0))
+        self.leg_length = float(np.mean([self.feet[s]["lengths"][a:b + 1].sum(axis=1).mean() for s in SIDES]))
         # each helper follows the body bone whose relation to it holds best over the clip
         self.follows = {}
         bodies = [j for j, k in enumerate(self.kind) if k != "helper"]
@@ -673,6 +693,9 @@ def prepare(analysis, statics, pose_bones):
             knee_turn[s] = 0.0
         else:
             knee_turn[s] = _wrapped(_flat_heading(pose_bend) - _flat_heading(np.mean(bends, axis=0)))
+    # the toes' line and the hip line about up against the reference's (Leg match, Leg turn, Knee <-> foot)
+    toe = dict((s, _wrapped(_flat_heading(pos[balls[s]] - pos[feet[s]]) - a.toe_heading[s])) for s in SIDES)
+    hips_yaw = _wrapped(_flat_heading(pos[idx["thigh_l"]] - pos[idx["thigh_r"]]) - a.hip_heading)
     side_axis = np.array([1.0, 0.0, 0.0])
     ref_spread = float(np.dot(
         a.feet["l"]["ankle"][ra:rb + 1].mean(axis=0) - a.feet["r"]["ankle"][ra:rb + 1].mean(axis=0), side_axis))
@@ -702,54 +725,102 @@ def prepare(analysis, statics, pose_bones):
     lean = trunk_lean(pos[idx["neck_01"]] - pos[a.pelvis]) if "neck_01" in idx else a.lean_ref
     return {"rel": rel, "local": local, "height": height, "feet": targets, "ball": ball_local, "lean": lean,
             "knee_turn": knee_turn, "grip": grip, "grip_rel": grip_rel, "holds": holds, "offset": offset,
-            "width": width, "ref_spread": ref_spread, "mid": mid_ref, "scale": scale, "world": world}
+            "width": width, "ref_spread": ref_spread, "mid": mid_ref, "scale": scale, "world": world,
+            "toe": toe, "hips_yaw": hips_yaw}
 
 
 # ---- the knobs ----
 
 KNOBS = (
-    # name, default, low, high - the tool's sliders
+    # name, default, low, high - Walk Builder's names and meanings where a stop has a use for them (spec addendum 4)
+    # the final pose's share of each part, and the start pose's (the window: the pose's Share where the part's
+    # chip is lit, else 0)
     ("share_torso", 1.0, 0.0, 1.0),        # the pose's spine, neck and head
     ("share_pelvis", 1.0, 0.0, 1.0),       # the pose's pelvis: its turn and its height
     ("share_knees", 1.0, 0.0, 1.0),        # the pose's knee turn
     ("share_arms", 1.0, 0.0, 1.0),         # the pose's arms, fingers, weapon bones and grip
     ("share_feet", 1.0, 0.0, 1.0),         # the pose's stance: the last steps onto it, its width before
-    ("motion_torso", 1.0, 0.0, 2.0),       # the clip's motion in the trunk: its leans, sways, the pelvis's bob
-    ("motion_arms", 1.0, 0.0, 2.0),        # the clip's motion in the arms and fingers
+    ("start_torso", 1.0, 0.0, 1.0),
+    ("start_pelvis", 1.0, 0.0, 1.0),
+    ("start_knees", 1.0, 0.0, 1.0),
+    ("start_arms", 1.0, 0.0, 1.0),
+    ("start_feet", 1.0, 0.0, 1.0),         # the start's toes' turn on the run's steps (the stance is the final's)
+    # Stop
+    ("final_speed", STANCE_SPEED, 30.0, 1000.0),    # cm/s: the start pose is all there is at this speed
+    ("stance_speed", STANCE_SPEED, 30.0, 1000.0),   # cm/s: the pose's stance is gone at this speed
+    ("from_cycle", 8.0, 0.0, 30.0),        # frames: the stop goes from the cycle's frames to its own over these
+    # Legs
+    ("stance", 1.0, 0.0, 2.5),             # x each foot's offset from the stance's middle (was Width)
+    ("lift", 1.0, 0.0, 3.0),               # x the swinging foot's height over its line from takeoff to landing
+    ("swing_out", 0.0, -30.0, 40.0),       # cm: the swing bowed out (+) or in along the heading's side
+    ("leg_match", 1.0, 0.0, 1.0),          # a side-on pose's hips face the run, its splay kept as the gait allows
+    ("leg_turn", 1.0, 0.0, 2.0),           # x the poses' knee and toe turns
+    ("knee_foot", 0.5, 0.0, 1.0),          # a knee and its foot past TWIST_FREE_DEG meet: 0 the knee, 1 the foot
+    ("foot_lag", 0.0, 0.0, 6.0),           # frames the swinging foot trails its shin
+    ("foot_flex", 1.0, 0.0, 3.0),          # x the swinging foot's turn in its ankle (and the toes')
+    # Pelvis
     ("pelvis_height", 0.0, -40.0, 40.0),   # cm over the height rule (the legs follow by IK)
     ("pelvis_forward", 0.0, -40.0, 40.0),  # cm ahead of (+) or behind (-) where the balance puts the hips
-    ("width", 1.0, 0.0, 2.0),              # the pose's stance width x
-    ("stance_speed", STANCE_SPEED, 30.0, 1000.0),   # cm/s: the pose's stance is gone at this speed
+    ("bob", 1.0, 0.0, 3.0),                # x the pelvis's up and down (the height rule's motion)
+    ("pelvis_rot", 1.0, 0.0, 3.0),         # x the pelvis's turns over the reference
+    # Chest
+    ("spine", 1.0, 0.0, 3.0),              # x the spine's and the necks' motion
+    ("gait_lean", 1.0, 0.0, 1.0),          # x the forward lean the clip's motion keeps (in the room the pose leaves)
     ("lean_limit", LEAN_LIMIT, 30.0, 150.0),        # degrees: the trunk's forward lean never past this
-    ("final_speed", STANCE_SPEED, 30.0, 1000.0),    # cm/s: the start pose is all there is at this speed
-    ("from_cycle", 8.0, 0.0, 30.0),        # frames: the stop goes from the cycle's frames to its own over these
     ("torso_drag", 2.0, 0.0, 8.0),         # overlap: frames the trunk trails its motion by (Walk Builder's)
     ("torso_bounce", 0.2, 0.0, 1.0),       # how far the trunk and head overshoot
+    ("head", 1.0, 0.0, 3.0),               # x the head's own motion in the world (0 keeps the pose's gaze)
     ("head_drag", 2.5, 0.0, 8.0),          # frames the head trails its gaze by
+    # Arms
+    ("arms", 1.0, 0.0, 3.0),               # x the clip's motion in the arms and fingers
+    ("elbow", 1.0, 0.0, 3.0),              # x the forearm's own motion in the elbow, on top of Arms
     ("arm_drag", 1.5, 0.0, 8.0),           # frames the arms trail by
     ("arm_bounce", 0.3, 0.0, 1.0),         # how far the arms overshoot
+    # Weight
+    ("balance", 1.0, 0.0, 1.0),            # how far the pelvis is carried to put the centre of mass on its target
+    ("exaggeration", 1.0, 0.0, 2.0),       # x every motion of the clip (spine, pelvis, bob, head, arms)
 )
 DEFAULTS = dict((n, d) for n, d, lo, hi in KNOBS)
 RANGES = dict((n, (lo, hi)) for n, d, lo, hi in KNOBS)
 OVERLAP = ("torso_drag", "head_drag", "arm_drag")
+#  The knobs a body part with two sides has (Walk Builder's): "<name>_l" / "<name>_r" set that side alone,
+#  without them both sides take "<name>".
+SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "arms", "elbow",
+         "arm_drag", "arm_bounce")
+SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in SIDES)
 
 
 def knobs(**given):
-    """Every knob: the given ones clamped to their range, the rest at their defaults."""
+    """Every knob: the given ones clamped to their range, the rest at their defaults; a side's own value
+    ("arms_l") kept beside its knob's."""
     out = dict(DEFAULTS)
     for name, value in given.items():
-        if name not in out:
+        base = SIDE_KNOBS.get(name, name)
+        if base not in DEFAULTS:
             raise Refusal("no knob %s (the knobs: %s)" % (name, ", ".join(n for n, d, lo, hi in KNOBS)))
-        lo, hi = RANGES[name]
+        lo, hi = RANGES[base]
         out[name] = min(max(float(value), lo), hi)
+    return out
+
+
+def sided(k):
+    """{side: the knobs as that side reads them} - "<name>_<side>" where given, else "<name>"."""
+    out = {}
+    for side in SIDES:
+        mine = dict(k)
+        for name in SIDED:
+            mine[name] = float(k.get("%s_%s" % (name, side), k[name]))
+        out[side] = mine
     return out
 
 
 def knobs_from(share=1.0, motion=1.0, parts=PARTS):
     """The first version's three (share, motion, parts) as knobs: a named part's share `share`, the others 0;
-    both motions `motion`; no overlap (the first version had none)."""
+    every motion `motion`; no Leg match and no overlap (the first version had neither), and the feet the pose's
+    (Knee <-> foot 0: a knee turned far from its foot meets the foot)."""
     given = dict(("share_" + p, share if p in parts else 0.0) for p in PARTS)
-    given.update(motion_torso=motion, motion_arms=motion)
+    given.update(spine=motion, pelvis_rot=motion, bob=motion, head=motion, arms=motion, leg_match=0.0,
+                 knee_foot=0.0)
     given.update((n, 0.0) for n in OVERLAP)
     return knobs(**given)
 
@@ -759,6 +830,115 @@ def knobs_from(share=1.0, motion=1.0, parts=PARTS):
 def _smooth(u):
     u = min(max(u, 0.0), 1.0)
     return u * u * (3.0 - 2.0 * u)
+
+
+def swing_weight(u):
+    """How far a swinging foot hangs off its shin at `u` of the stretch between two contacts (Walk Builder's):
+    0 on the ground, eased in over SWING_EASE of it and out over the last SWING_EASE."""
+    return _smooth(u / SWING_EASE) * _smooth((1.0 - u) / SWING_EASE)
+
+
+def meet(knee, foot, lead):
+    """A knee's and its foot's turns about up (radians) after they meet (Walk Builder's): the knee may stand
+    TWIST_FREE_DEG against the foot; past it the excess is shared - `lead` 0 turns the knee to the foot, 1 the foot
+    to the knee. Works on arrays."""
+    free = math.radians(TWIST_FREE_DEG)
+    d = np.asarray(knee, float) - np.asarray(foot, float)
+    excess = d - np.clip(d, -free, free)
+    return knee - (1.0 - lead) * excess, foot + lead * excess
+
+
+def spread(values, cts):
+    """A per-frame quantity held still through each contact (its mean there) and eased between two contacts
+    the way a foot's motion is: a planted foot turned by it does not slide. Without contacts as it is."""
+    values = np.asarray(values, float)
+    if not cts:
+        return values.copy()
+    means = [float(values[c0:c1 + 1].mean()) for c0, c1 in cts]
+    out = np.empty_like(values)
+    for f in range(len(values)):
+        inside = [i for i, (c0, c1) in enumerate(cts) if c0 <= f <= c1]
+        if inside:
+            out[f] = means[inside[0]]
+            continue
+        before = [i for i, (c0, c1) in enumerate(cts) if c1 < f]
+        after = [i for i, (c0, c1) in enumerate(cts) if c0 > f]
+        if not before:
+            out[f] = means[after[0]]
+        elif not after:
+            out[f] = means[before[-1]]
+        else:
+            i, k2 = before[-1], after[0]
+            w = _smooth((f - cts[i][1]) / float(cts[k2][0] - cts[i][1]))
+            out[f] = (1.0 - w) * means[i] + w * means[k2]
+    return out
+
+
+def gaps(cts, F):
+    """(F,) how far each frame is through the stretch between two contacts (0..1, NaN outside one), and
+    (F, 2) the two contacts' ends - the takeoff's last frame and the landing's first (-1 outside)."""
+    u = np.full(F, np.nan)
+    ends = np.full((F, 2), -1, int)
+    for i in range(len(cts) - 1):
+        off, on = cts[i][1], cts[i + 1][0]
+        for f in range(off + 1, on):
+            u[f] = (f - off) / float(on - off)
+            ends[f] = (off, on)
+    return u, ends
+
+
+def pivot_weight(cts, F, ramp=6.0):
+    """(F,) how far a foot's turn moves its pivot off the contact's point onto the foot itself (0 on a contact,
+    sin(pi u) through a stretch between two, ramping to 1 over `ramp` frames before the first and after the last):
+    a planted foot turns about where it stands, a foot in the air about itself."""
+    out = np.ones(F)
+    if not cts:
+        return out
+    u, _ends = gaps(cts, F)
+    for f in range(F):
+        if any(c0 <= f <= c1 for c0, c1 in cts):
+            out[f] = 0.0
+        elif not np.isnan(u[f]):
+            out[f] = math.sin(math.pi * u[f])
+        elif f < cts[0][0]:
+            out[f] = min(1.0, (cts[0][0] - f) / ramp)
+        else:
+            out[f] = min(1.0, (f - cts[-1][1]) / ramp)
+    return out
+
+
+def flights(u, down):
+    """(F,) how far each frame is through the foot's flight (0..1, NaN on the ground): in each stretch between two
+    contacts, the frames the foot is off the ground (Walk Builder's air progress) - a foot rolling off its toes or
+    landing on its heel is on the ground and hangs in nothing."""
+    F = len(u)
+    out = np.full(F, np.nan)
+    air = (~np.asarray(down, bool)) & ~np.isnan(u)
+    for f0, f1 in runs(air):
+        for f in range(f0, f1 + 1):
+            out[f] = (f - f0 + 1) / float(f1 - f0 + 2)
+    return out
+
+
+def _motion_gain(a, j, k):
+    """x the clip's motion a torso joint (or the pelvis) takes: Pelvis motion, Head, Spine - x Exaggeration."""
+    if a.kind[j] == "pelvis":
+        g = k["pelvis_rot"]
+    elif a.clip.names[j] == "head":
+        g = k["head"]
+    else:
+        g = k["spine"]
+    return g * k["exaggeration"]
+
+
+def _arm_gain(a, j, ks, k, grip_weight, share_arms):
+    """x the clip's motion an arm or finger joint takes: its side's Arms (and Elbow on a forearm) x
+    Exaggeration, less what a grip holds."""
+    side = _stem_side(a.clip.names[j])[1] or "l"
+    g = ks[side]["arms"] * k["exaggeration"] * (1.0 - share_arms * grip_weight)
+    if _stem_side(a.clip.names[j])[0] == "lowerarm":
+        g *= ks[side]["elbow"]
+    return g
 
 
 class Result(object):
@@ -773,6 +953,7 @@ class _Motions(object):
     def __init__(self, analysis, pose, k):
         a = analysis
         F = a.clip.F
+        ks = sided(k)
         share = k["share_feet"] if pose is not None else 0.0
         self.Q = dict((s, np.tile(np.eye(3), (F, 1, 1))) for s in SIDES)
         self.c = dict((s, np.zeros((F, 3))) for s in SIDES)
@@ -785,14 +966,14 @@ class _Motions(object):
             return
         ra, rb = a.reference
         stillness = a.stillness_at(k["stance_speed"])
-        width = k["width"]
-        extra = (pose["width"] + pose["ref_spread"]) * width - pose["ref_spread"]
         mid = pose["mid"]
         for s in SIDES:
             foot = a.feet[s]
             cts = foot["contacts"]
             if not cts:
                 continue
+            stance_s = ks[s]["stance"]
+            extra = (pose["width"] + pose["ref_spread"]) * stance_s - pose["ref_spread"]
             fo = foot["joints"][2]
             sign = 1.0 if s == "l" else -1.0
             # a stop ends in the pose's stance; a clip with no still stretch (a cycle) has none to end in
@@ -805,7 +986,7 @@ class _Motions(object):
                     wc = mean_rot(a.rot[fo, c0:c1 + 1])
                     target = pose["feet"][s]
                     place = target[3, :3].copy()
-                    place[0] = mid[0] + (place[0] - mid[0]) * width       # the stance's width x
+                    place[0] = mid[0] + (place[0] - mid[0]) * stance_s       # Stance: this foot's offset x
                     q = power(wc.T @ target[:3, :3], share)
                     d = share * (place - ankle)
                 else:
@@ -860,12 +1041,11 @@ def _subtree(clip, top):
 
 
 class _Targets(object):
-    """What one pose (or none: the clip's own reference) asks of the body, at the knobs' shares."""
+    """What one pose (or none: the clip's own reference) asks of the body, at its parts' shares."""
 
-    def __init__(self, a, pose, k):
+    def __init__(self, a, pose, shares):
         on = pose is not None
-        shares = dict((p, k["share_" + p] if on else 0.0) for p in PARTS)
-        st, sp, sk, sa = shares["torso"], shares["pelvis"], shares["knees"], shares["arms"]
+        st, sp, sk, sa, sf = ((shares.get(p, 0.0) if on else 0.0) for p in PARTS)
         self.rel = a.rel_ref.copy()
         self.local = a.local_ref.copy()
         for j, kind in enumerate(a.kind):
@@ -879,6 +1059,9 @@ class _Targets(object):
                 self.local[j] = toward(a.local_ref[j], pose["local"][j], sa)
         self.height = a.h_ref + (sp * (pose["height"] - a.h_ref) if on else 0.0)
         self.knee = dict((s, sk * pose["knee_turn"][s] if on else 0.0) for s in SIDES)
+        toes = (pose.get("toe") or {}) if on else {}
+        self.toe = dict((s, sf * float(toes.get(s, 0.0))) for s in SIDES)
+        self.hips_yaw = sp * float(pose.get("hips_yaw", 0.0)) if on else 0.0
         self.lean = a.lean_ref + (st * (pose["lean"] - a.lean_ref) if on else 0.0)
         self.grip = 1.0 if (on and sa > 0.0 and pose.get("grip")) else 0.0
         self.grip_rel = pose["grip_rel"] if self.grip else None
@@ -888,37 +1071,32 @@ class _Targets(object):
 
 class _Plan(object):
     """Everything a frame's synthesis takes that does not depend on the frame - and, with a start pose, the
-    start's and the final's targets and how far each frame is from the one to the other (`e`)."""
+    start's and the final's targets and how far each frame is from the one to the other (`e`). The legs' turns,
+    lift and swing are worked out for every frame here (Leg match, Leg turn and Knee <-> foot read both sides)."""
 
     def __init__(self, analysis, pose, k, start=None):
         a = analysis
         clip = a.clip
         F = clip.F
         self.a, self.pose, self.k = a, pose, k
+        self.ks = sided(k)
+        self.ex = k["exaggeration"]
         on = pose is not None
         self.shares = dict((p, k["share_" + p] if on else 0.0) for p in PARTS)
-        self.motion = k["motion_torso"]
-        self.final = _Targets(a, pose, k)
-        self.start = _Targets(a, start, k) if start is not None else None
         # the start pose is all there is while the body runs; the final comes in as it stops
-        self.e = a.stillness_at(k["final_speed"]) if self.start is not None else np.ones(F)
+        self.e = a.stillness_at(k["final_speed"]) if start is not None else np.ones(F)
+        self.start_kind = None if start is None else ("cycle" if isinstance(start, CyclePosture) else "pose")
+        if isinstance(start, CyclePosture):      # the cycle's posture against the stop's run (addendum 4)
+            start = start.targets(a, k, 1.0 - self.e)
+        self.final = _Targets(a, pose, self.shares)
+        self.start = _Targets(a, start, dict((p, k["start_" + p]) for p in PARTS)) if start is not None else None
         sf = self.shares["feet"]
         self.ball_target = dict((s, pose["ball"][s] if on and sf > 0.0 else None) for s in SIDES)
         self.share_feet = sf
         self.share_arms = max(self.final.share_arms, self.start.share_arms if self.start else 0.0)
         self.motions = _Motions(a, pose, k)
         self.limit = k["lean_limit"]
-        # the balance's target: the clip's centre of mass moved with the support, and by the pose's own over its
-        # feet as the body stands still (a stance's, not a run's)
-        new_pivots = dict((s, np.array([self.motions.apply(s, f, a.feet[s]["pivot"][f]) for f in range(F)]))
-                          for s in SIDES)
-        support_new = support_path(a.weights, new_pivots)
-        overall = float(np.mean([self.shares[p] for p in PARTS]))
-        shift = (pose["offset"] - a.ref_offset) * overall if on else np.zeros(3)
         self.stillness = a.stillness_at(k["stance_speed"])
-        self.com_target = a.com + (support_new - a.support) + \
-            self.stillness[:, None] * np.einsum("i,fij->fj", shift, a.heading)
-        self.com_target[:, 1] = np.nan
         # which joints a carry or a sink moves with the pelvis, and which the legs' IK sets
         self.legs = dict((s, a.feet[s]["joints"]) for s in SIDES)
         under_legs = set()
@@ -932,6 +1110,133 @@ class _Plan(object):
         self.upperarm_l = clip.index.get("upperarm_l")
         self.lowerarm_l = clip.index.get("lowerarm_l")
         self.fwd_axis = np.array([0.0, 0.0, 1.0])
+        self.gain = dict((j, _motion_gain(a, j, k)) for j, kind in enumerate(a.kind) if kind in ("pelvis", "torso"))
+        # Leg match gives the pelvis's turn back: the pelvis all of it, the lumbar spine the rest by its shares
+        self.give_back = {a.pelvis: 1.0}
+        done, j = 0.0, a.pelvis
+        lumbar = []
+        for _ in range(len(COUNTER_SHARES)):
+            kids = [c for c, p in enumerate(clip.parents) if p == j and clip.names[c].startswith("spine_")]
+            if not kids:
+                break
+            j = kids[0]
+            lumbar.append(j)
+        total = sum(COUNTER_SHARES[:len(lumbar)]) or 1.0
+        for j, share in zip(lumbar, COUNTER_SHARES):
+            done += share / total
+            self.give_back[j] = max(1.0 - done, 0.0)
+        self._legs()
+        # the balance's target: the clip's centre of mass moved with the support, and by the pose's own over its
+        # feet as the body stands still (a stance's, not a run's)
+        new_pivots = dict((s, np.array([self.pivot(s, f) for f in range(F)])) for s in SIDES)
+        support_new = support_path(a.weights, new_pivots)
+        overall = float(np.mean([self.shares[p] for p in PARTS]))
+        shift = (pose["offset"] - a.ref_offset) * overall if on else np.zeros(3)
+        self.com_target = a.com + (support_new - a.support) + \
+            self.stillness[:, None] * np.einsum("i,fij->fj", shift, a.heading)
+        self.com_target[:, 1] = np.nan
+
+    # -- the legs a frame: Leg match, Leg turn, Knee <-> foot, Foot lift, Swing out --
+
+    def _legs(self):
+        a, k, ks = self.a, self.k, self.ks
+        F = a.clip.F
+        posed = self.pose is not None or self.start is not None
+        # Leg match: running, a side-on pose's hips face the run and its splay is kept as the gait allows -
+        # standing, the pose stands as it is (matched x (1 - the stillness the stance comes in by))
+        self.match = (k["leg_match"] * (1.0 - self.stillness)) if posed else np.zeros(F)
+        if self.start_kind == "cycle":       # the cycle's posture already runs: only the final pose is matched
+            self.match = self.match * self.e
+        froude = a.com_speed ** 2 / (GRAVITY * max(a.leg_length, 1e-6))
+        self.keep = 1.0 / (1.0 + froude / GAIT_FROUDE)
+        yaw = np.array([self._lerp(f, "hips_yaw") for f in range(F)])
+        self.hips_turn = self.match * yaw
+        sign = {"l": 1.0, "r": -1.0}
+        raw_k, raw_t, self.toe_raw = {}, {}, {}
+        for s in SIDES:
+            v = a.feet[s]["ball"] - a.feet[s]["ankle"]
+            t0 = np.array([_wrapped(_flat_heading(v[f] @ self.motions.Q[s][f]) - _flat_heading(v[f]))
+                           for f in range(F)])
+            self.toe_raw[s] = t0
+            start_toe = self.start.toe[s] if self.start is not None else 0.0
+            raw_t[s] = t0 + (1.0 - self.e) * start_toe
+            raw_k[s] = np.array([self._knee_raw(s, f) for f in range(F)])
+
+        def matched(turns, own):
+            outward = sum(sign[s] * _wrapped(turns[s] + own[s] - yaw) for s in SIDES) / 2.0
+            splay = outward - sum(sign[s] * own[s] for s in SIDES) / 2.0
+            return dict((s, (1.0 - self.match) * turns[s] + self.match * sign[s] * self.keep * splay) for s in SIDES)
+        k_m, t_m = matched(raw_k, a.knee_heading), matched(raw_t, a.toe_heading)
+        self.knee_turn, self.toe_extra, self.toe_turn, self.toe_pivot, self.pivot_w = {}, {}, {}, {}, {}
+        self.gap_u, self.lift_off, self.air_u = {}, {}, {}
+        for s in SIDES:
+            turn = ks[s]["leg_turn"]
+            knee, toe = meet(turn * k_m[s], turn * t_m[s], ks[s]["knee_foot"])
+            cts = a.feet[s]["contacts"]
+            self.knee_turn[s] = knee
+            # the turn over the contact motion's own: still through a contact, and about the contact's own point
+            # (its load's mean place) - a planted foot moved rigidly, its heel rising or not, does not slide; in the
+            # air about the foot itself (`pivot_weight`), or a foot a metre from its next contact swings wide
+            self.toe_extra[s] = spread(toe - self.toe_raw[s], cts)
+            self.toe_turn[s] = self.toe_raw[s] + self.toe_extra[s]
+            mid = np.array([self.motions.apply(s, f, 0.5 * (a.feet[s]["ankle"][f] + a.feet[s]["ball"][f]))
+                            for f in range(F)])
+            self.toe_pivot[s] = np.stack([spread(mid[:, i], cts) for i in range(3)], axis=1)
+            self.pivot_w[s] = pivot_weight(cts, F)
+            # Foot lift and Swing out: between two contacts, the ankle's height over its line from takeoff to
+            # landing x Lift, and the stretch bowed sin(pi u) out along the heading's side
+            u, ends = gaps(cts, F)
+            ankle = a.feet[s]["ankle"]
+            off = np.zeros((F, 3))
+            for f in range(F):
+                if np.isnan(u[f]):
+                    continue
+                t_off, t_on = ends[f]
+                chord = (1.0 - u[f]) * ankle[t_off] + u[f] * ankle[t_on]
+                up = float(ankle[f, 1] - chord[1])
+                side_axis = np.array([1.0, 0.0, 0.0]) @ a.heading[f]
+                off[f] = (ks[s]["lift"] - 1.0) * up * UP + sign[s] * ks[s]["swing_out"] * math.sin(math.pi * u[f]) * side_axis
+            self.gap_u[s], self.lift_off[s] = u, off
+            self.air_u[s] = flights(u, a.feet[s]["down"])
+
+    def ankle(self, s, f):
+        """Where the foot's contact motion, its toes' turn (about the contact's point), Foot lift and Swing out
+        put the ankle at frame f."""
+        point = self.motions.apply(s, f, self.a.pos[self.a.feet[s]["joints"][2], f])
+        extra = float(self.toe_extra[s][f])
+        if abs(extra) > 1e-12:
+            b = float(self.pivot_w[s][f])
+            c = (1.0 - b) * self.toe_pivot[s][f] + b * point          # in the air: about the foot itself
+            point = (point - c) @ yaw(extra) + c
+        return point + self.lift_off[s][f]
+
+    def foot_turn(self, s, f):
+        """The foot's world turn from its motion and the toes' turn (Leg turn, Leg match, Knee <-> foot) about the
+        ankle - before it hangs in its shin in a swing."""
+        fo = self.a.feet[s]["joints"][2]
+        rot = self.a.rot[fo, f] @ self.motions.Q[s][f]
+        extra = float(self.toe_extra[s][f])
+        return rot @ yaw(extra) if abs(extra) > 1e-12 else rot
+
+    def pivot(self, s, f):
+        """The point the foot's load stands on (half way ankle to ball), as this plan puts the foot."""
+        a = self.a
+        ankle = self.ankle(s, f)
+        toe = (a.feet[s]["ball"][f] - a.feet[s]["ankle"][f]) @ self.motions.Q[s][f]
+        extra = float(self.toe_extra[s][f])
+        if abs(extra) > 1e-12:
+            toe = toe @ yaw(extra)
+        return ankle + 0.5 * toe
+
+    def local_at(self, j, t):
+        """A joint's clip local turn at a fractional frame (held at the clip's ends)."""
+        a = self.a
+        t = min(max(float(t), 0.0), a.clip.F - 1.0)
+        i = int(math.floor(t))
+        frac = t - i
+        if frac < 1e-9 or i >= a.clip.F - 1:
+            return a.local[j, i]
+        return slerp(a.local[j, i], a.local[j, i + 1], frac)
 
     # -- the targets at a frame: the final's, or between the start's and the final's --
 
@@ -941,27 +1246,37 @@ class _Plan(object):
         e = float(self.e[f])
         return (self.start, e) if e < 1.0 else (None, 1.0)
 
+    def _lerp(self, f, name):
+        start, e = self._between(f)
+        fin = getattr(self.final, name)
+        return fin if start is None else (1.0 - e) * getattr(start, name) + e * fin
+
+    def _knee_raw(self, side, f):
+        start, e = self._between(f)
+        return self.final.knee[side] if start is None else (1.0 - e) * start.knee[side] + e * self.final.knee[side]
+
     def rel(self, j, f):
         start, e = self._between(f)
-        return self.final.rel[j] if start is None else slerp(start.rel[j], self.final.rel[j], e)
+        target = self.final.rel[j] if start is None else slerp(start.rel[j], self.final.rel[j], e)
+        back = self.give_back.get(j, 0.0)
+        if back and self.hips_turn[f]:
+            target = target @ yaw(-float(self.hips_turn[f]) * back)
+        return target
 
     def local(self, j, f):
         start, e = self._between(f)
         return self.final.local[j] if start is None else slerp(start.local[j], self.final.local[j], e)
 
     def height(self, f):
-        start, e = self._between(f)
-        return self.final.height if start is None else (1.0 - e) * start.height + e * self.final.height
+        return self._lerp(f, "height")
 
     def knee(self, side, f):
-        start, e = self._between(f)
-        return self.final.knee[side] if start is None else (1.0 - e) * start.knee[side] + e * self.final.knee[side]
+        return float(self.knee_turn[side][f])
 
     def forward(self, f):
         """The clip's forward lean in the room the pose leaves: a trunk already bent leans forward less (the
         goblin's 45 deg and a sprint's +29 made 80, the brake's fold 94 - past horizontal, the head at 37 cm)."""
-        start, e = self._between(f)
-        lean = self.final.lean if start is None else (1.0 - e) * start.lean + e * self.final.lean
+        lean = self._lerp(f, "lean")
         room = self.limit - self.a.lean_ref
         return min(max((self.limit - lean) / room, 0.0), 1.0) if room > 1e-6 else 0.0
 
@@ -975,9 +1290,12 @@ class _Plan(object):
             return weight, blend_matrix(start.grip_rel, self.final.grip_rel, e)
         return weight, start.grip_rel if start.grip_rel is not None else self.final.grip_rel
 
-    def arm_gain(self, f):
+    def arm_gains(self, f):
+        """{joint: x the clip's motion} for the arms and fingers at frame f."""
         weight, _ = self.grip(f)
-        return self.k["motion_arms"] * (1.0 - self.share_arms * weight)
+        a = self.a
+        return dict((j, _arm_gain(a, j, self.ks, self.k, weight, self.share_arms))
+                    for j, kind in enumerate(a.kind) if kind in ("arm", "finger"))
 
     def hold(self, h, f):
         """(the weapon bone's relation to its body bone the poses ask, how much of it) or (None, 0)."""
@@ -1003,8 +1321,9 @@ def _upper(plan, f):
     rots, poss = np.zeros((J, 3, 3)), np.zeros((J, 3))
     H = a.heading[f]
     skip = set(j for s in SIDES for j in plan.legs[s]) | set(plan.leg_children)
-    forward = plan.forward(f)
-    gain = plan.arm_gain(f)
+    forward = plan.forward(f) * plan.k["gait_lean"]
+    gains = plan.arm_gains(f)
+    bob = plan.k["bob"] * plan.ex
     for j in clip.order:
         kind, p = a.kind[j], clip.parents[j]
         if kind == "helper" or j in skip:
@@ -1015,10 +1334,10 @@ def _upper(plan, f):
             w = _log3(a.rel_ref[j].T @ a.rel[j, f])
             if w[0] > 0.0:                                 # a forward lean, in the room the pose leaves
                 w = np.array([w[0] * forward, w[1], w[2]])
-            rots[j] = plan.rel(j, f) @ _exp3(plan.motion * w) @ H
+            rots[j] = plan.rel(j, f) @ _exp3(plan.gain[j] * w) @ H
             if kind == "pelvis":
                 h = a.pos[j, f, 1] - a.floor
-                height = plan.height(f) * (1.0 + plan.motion * (h / a.h_ref - 1.0)) + plan.k["pelvis_height"]
+                height = plan.height(f) * (1.0 + bob * (h / a.h_ref - 1.0)) + plan.k["pelvis_height"]
                 base = a.pos[j, f].copy()
                 base[1] = a.floor + height
                 poss[j] = base
@@ -1026,14 +1345,14 @@ def _upper(plan, f):
                 poss[j] = a.offset[j, f] @ rots[p] + poss[p]
         elif kind in ("arm", "finger"):
             d = a.local[j, f] @ a.local_ref[j].T
-            rots[j] = power(d, gain) @ plan.local(j, f) @ rots[p]
+            rots[j] = power(d, gains[j]) @ plan.local(j, f) @ rots[p]
             poss[j] = a.offset[j, f] @ rots[p] + poss[p]
         else:                                             # anything else above the legs: the clip's local
             rots[j] = a.local[j, f] @ rots[p]
             poss[j] = a.offset[j, f] @ rots[p] + poss[p]
     weight, relation = plan.grip(f)
     if weight > 0.0 and relation is not None and plan.upperarm_l is not None:
-        _hold(plan, f, rots, poss, relation, plan.share_arms * weight, gain)
+        _hold(plan, f, rots, poss, relation, plan.share_arms * weight, gains)
     return rots, poss
 
 
@@ -1051,6 +1370,13 @@ def _assemble(plan, f, upper, delta):
         if a.kind[j] == "toe":
             side = clip.names[j][-1]
             d = a.local[j, f] @ a.local_ref[j].T
+            u = plan.air_u[side][f]
+            if not np.isnan(u):              # the toes in a swing: Foot lag x BALL_LAG, Foot flex
+                sw = swing_weight(u)
+                if sw > 0.0:
+                    lag, flex = plan.ks[side]["foot_lag"], plan.ks[side]["foot_flex"]
+                    late = power(plan.local_at(j, f - BALL_LAG * lag) @ a.local_ref[j].T, flex)
+                    d = slerp(d, late, sw)
             target = a.local_ref[j]
             if plan.ball_target[side] is not None:
                 target = toward(a.local_ref[j], plan.ball_target[side], plan.share_feet * plan.motions.final[side][f])
@@ -1078,17 +1404,17 @@ def _finish(plan, f, rots, poss):
 
 
 def _leg(plan, side, f, rots, poss):
-    """Thigh, calf and foot by IK from the new hip to the foot the contact's rigid motion puts there; each bone
-    turned by the rotation taking its clip (direction, leg plane) onto the new one. Returns how far the foot
-    fell short."""
+    """Thigh, calf and foot by IK from the new hip to the foot the contact's rigid motion (and Foot lift, Swing
+    out) puts there; each bone turned by the rotation taking its clip (direction, leg plane) onto the new one; in
+    a swing the foot hangs in its new shin (Foot lag, Foot flex). Returns how far the foot fell short."""
     a = plan.a
     th, ca, fo = a.feet[side]["joints"]
     pelvis = a.clip.parents[th]
     l1, l2 = a.feet[side]["lengths"][f]
     h0, k0, a0 = a.pos[th, f], a.pos[ca, f], a.pos[fo, f]
     hip = a.offset[th, f] @ rots[pelvis] + poss[pelvis]
-    ankle = plan.motions.apply(side, f, a0)
-    foot_rot = a.rot[fo, f] @ plan.motions.Q[side][f]
+    ankle = plan.ankle(side, f)
+    foot_rot = plan.foot_turn(side, f)
     e0 = _unit(a0 - h0)
     bend0 = _bend(h0, k0, a0)
     if bend0 is None:
@@ -1105,12 +1431,19 @@ def _leg(plan, side, f, rots, poss):
     n_src, n_new = _unit(np.cross(e0, bend0)), _unit(np.cross(e2, b2))
     rots[th] = a.rot[th, f] @ align(_unit(k0 - h0), n_src, _unit(knee - hip), n_new)
     rots[ca] = a.rot[ca, f] @ align(_unit(a0 - k0), n_src, _unit(reached - knee), n_new)
+    u = plan.air_u[side][f]
+    if not np.isnan(u):
+        sw = swing_weight(u)
+        if sw > 0.0:              # the swinging foot hangs in its new shin, `lag` frames late, its turn x flex
+            lag, flex = plan.ks[side]["foot_lag"], plan.ks[side]["foot_flex"]
+            hang = power(plan.local_at(fo, f - lag) @ a.local_ref[fo].T, flex) @ a.local_ref[fo] @ rots[ca]
+            foot_rot = slerp(foot_rot, hang, sw)
     rots[fo] = foot_rot
     poss[th], poss[ca], poss[fo] = hip, knee, reached
     return short
 
 
-def _hold(plan, f, rots, poss, relation, weight, gain):
+def _hold(plan, f, rots, poss, relation, weight, gains):
     """Hands that hold one thing together: the left hand put `weight` of the way back on `relation` to the right
     one by two-bone IK of the left arm (the elbow on its own plane), then everything under the left upper arm."""
     a, clip = plan.a, plan.a.clip
@@ -1138,7 +1471,7 @@ def _hold(plan, f, rots, poss, relation, weight, gain):
         if j in (up, low, hand) or a.kind[j] == "helper" or not _under(clip, j, up):
             continue
         d = a.local[j, f] @ a.local_ref[j].T
-        rots[j] = power(d, gain) @ plan.local(j, f) @ rots[p]
+        rots[j] = power(d, gains.get(j, 1.0)) @ plan.local(j, f) @ rots[p]
         poss[j] = a.offset[j, f] @ rots[p] + poss[p]
 
 
@@ -1157,8 +1490,9 @@ def _com(plan, poss):
 
 def _balanced(plan, f, upper, drop):
     """The frame with the body carried horizontally until the centre of mass stands on its target (secant
-    steps; the legs follow by IK) - and, with Pelvis forward, the hips that far ahead of where the balance puts
-    them (the target moved by what moving them there moves). Returns (rots, poss, carry, short)."""
+    steps; the legs follow by IK) - Balance of the way from where it stands uncarried - and, with Pelvis forward,
+    the hips that far ahead of where the balance puts them (the target moved by what moving them there moves).
+    Returns (rots, poss, carry, short)."""
     sink = np.array([0.0, -drop, 0.0])
     target = plan.com_target[f].copy()
     carry = np.zeros(3)
@@ -1170,6 +1504,10 @@ def _balanced(plan, f, upper, drop):
         target = target + (c1 - c0)
         carry = step
     rots, poss, short = _assemble(plan, f, upper, sink + carry)
+    balance = plan.k["balance"]
+    if balance < 1.0:
+        here = _com(plan, poss)
+        target = here + balance * (target - here)
     err = target - _com(plan, poss)
     err[1] = 0.0
     gain = 0.85
@@ -1201,13 +1539,166 @@ def _need(plan, f, poss):
         own = float(np.linalg.norm(a.pos[fo, f] - a.pos[th, f])) / (l1 + l2)
         limit = min(max(REACH, own), 1.0) * (l1 + l2)
         hip = poss[th]
-        ankle = plan.motions.apply(s, f, a.pos[fo, f])
+        ankle = plan.ankle(s, f)
         v = hip - ankle
         flat = float(np.hypot(v[0], v[2]))
         if float(np.linalg.norm(v)) <= limit:
             continue
         need = max(need, float(v[1]) - math.sqrt(max(limit * limit - flat * flat, 0.0)))
     return need
+
+
+# ---- the cycle's posture as the start pose (spec addendum 4) ----
+
+def _weighted_mean_rot(rots, weights):
+    u, _, vt = np.linalg.svd(np.tensordot(weights, rots, axes=(0, 0)))
+    return _proper(u, vt)
+
+
+def mean_posture(clip, weights, statics, world=()):
+    """A clip's posture as a pose (Walk Builder's pose file's bones, `prepare`'s input): each joint's weighted
+    chordal mean local turn - or, for the names in `world` (the trunk), its mean WORLD turn, what the eye
+    averages - and its weighted mean offset in its parent, the top joint at the origin on its mean turn.
+    `statics` {leaf: {"parent", "canonical", "rest"}} - the clip's skeleton."""
+    w = np.asarray(weights, float)
+    w = w / max(float(w.sum()), 1e-12)
+    rot = _batch_orthonormal(clip.worlds[:, :, :3, :3])
+    pos = clip.worlds[:, :, 3, :3]
+    world_r, world_t = {}, {}
+    for j in clip.order:
+        p = clip.parents[j]
+        if p < 0:
+            world_r[j], world_t[j] = _weighted_mean_rot(rot[j], w), np.zeros(3)
+            continue
+        local = rot[j] @ np.swapaxes(rot[p], -1, -2)
+        offset = np.einsum("fi,fji->fj", pos[j] - pos[p], rot[p])
+        if clip.names[j] in world:
+            world_r[j] = _weighted_mean_rot(rot[j], w)
+        else:
+            world_r[j] = _weighted_mean_rot(local, w) @ world_r[p]
+        world_t[j] = (w[:, None] * offset).sum(axis=0) @ world_r[p] + world_t[p]
+    bones = {}
+    for j, name in enumerate(clip.names):
+        if name not in statics:
+            continue
+        bone = dict(statics[name])
+        bone["world"] = [float(v) for v in matrix(world_r[j], world_t[j]).reshape(16)]
+        bones[name] = bone
+    return bones
+
+
+def _circular_mean(angles, weights):
+    angles, weights = np.asarray(angles, float), np.asarray(weights, float)
+    return math.atan2(float((weights * np.sin(angles)).sum()), float((weights * np.cos(angles)).sum()))
+
+
+def gait(clip, weights, travel=0.0):
+    """A gait's own stance on the ground: each foot's knee line (its bend's heading) and toe line (ankle to ball)
+    over the frames that foot is down, the hip line over every weighted frame - each about up against the clip's
+    travel heading `travel` (radians) - and the pelvis's mean height over the gait's own floor (cm). A running
+    foot spends half its time kicked up behind, so a mean posture's feet say nothing of the stance; the ground
+    does. {"knee_turn": {side}, "toe": {side}, "hips_yaw", "height"}."""
+    idx = clip.index
+    pos = clip.worlds[:, :, 3, :3]
+    w = np.asarray(weights, float)
+    used = np.nonzero(w > 0.0)[0]
+    if len(used) == 0:
+        raise Refusal("no frame to read the gait on")
+    pelvis = idx["pelvis"]
+    floor = float(min(np.percentile(pos[idx["ball_" + s], used, 1], 5) for s in SIDES))
+    out = {"knee_turn": {}, "toe": {}}
+    for side in SIDES:
+        th, ca, fo, ba = (idx["%s_%s" % (n, side)] for n in ("thigh", "calf", "foot", "ball"))
+        ankle, ball = pos[fo], pos[ba]
+        lvl_a, lvl_b = np.percentile(ankle[used, 1], 5), np.percentile(ball[used, 1], 5)
+        down = ((ankle[:, 1] - lvl_a < FOOT_NEAR) | (ball[:, 1] - lvl_b < FOOT_NEAR)) & (w > 0.0)
+        frames = np.nonzero(down)[0] if down.any() else used
+        knees, kw, toes, tw = [], [], [], []
+        for f in frames:
+            b = _bend(pos[th, f], pos[ca, f], pos[fo, f])
+            if b is not None and math.hypot(float(b[0]), float(b[2])) > 0.2:
+                knees.append(_flat_heading(b) - travel)
+                kw.append(w[f])
+            v = ball[f] - ankle[f]
+            if math.hypot(float(v[0]), float(v[2])) > 0.2 * float(np.linalg.norm(v)):
+                toes.append(_flat_heading(v) - travel)
+                tw.append(w[f])
+        out["knee_turn"][side] = _circular_mean(knees, kw) if knees else 0.0
+        out["toe"][side] = _circular_mean(toes, tw) if toes else 0.0
+    hips = [_flat_heading(pos[idx["thigh_l"], f] - pos[idx["thigh_r"], f]) - travel for f in used]
+    out["hips_yaw"] = _circular_mean(hips, w[used])
+    out["height"] = float((w[used] * (pos[pelvis, used, 1] - floor)).sum() / w[used].sum())
+    return out
+
+
+RUN_SHARE = 0.75          # the stop's gait is read on frames at least this share of its top speed
+
+
+class CyclePosture(object):
+    """The cycle's posture as the start pose: its mean posture over a period read against the stop's reference
+    once (C); on each evaluate the stop's own mean posture over its run (M, the frames weighted by how little of
+    the final pose they take) read the same way, and the start's targets the difference - so the stop runs in
+    the cycle's posture with its own motion over it and no lean twice."""
+
+    def __init__(self, analysis, statics, cycle, cycle_statics, name="cycle"):
+        cc = cycle.clip
+        period = Clip(cc.names, cc.parents, cycle.frames[:, :cycle.period], cc.fps, cc.name)
+        self.trunk = set(analysis.clip.names[j] for j, kind in enumerate(analysis.kind) if kind in ("pelvis", "torso"))
+        self.C = prepare(analysis, statics, mean_posture(period, np.ones(cycle.period), cycle_statics, self.trunk))
+        move = float(math.hypot(float(cycle.travel[0]), float(cycle.travel[2])))
+        self.ground = gait(period, np.ones(cycle.period),          # the cycle's stance, read on the ground
+                           _flat_heading(cycle.travel) if move > 1.0 else 0.0)
+        self.statics, self.name = statics, name
+        self._run = None
+
+    def run(self, a, weights):
+        key = tuple(np.round(np.asarray(weights, float), 6))
+        if self._run is None or self._run[0] != key:
+            # the gait where it runs at speed - its steps, not its brake (a stop plants a foot turned across)
+            on = weights > 0.5
+            top = float(a.com_speed[on].max()) if on.any() else 0.0
+            running = np.where(on & (a.com_speed >= RUN_SHARE * top), weights, 0.0)
+            running = running if running.any() else weights
+            used = np.nonzero(running > 0.0)[0]
+            heading = _circular_mean([yaw_of(a.heading[f]) for f in used], running[used]) if len(used) else 0.0
+            self._run = (key, prepare(a, self.statics, mean_posture(a.clip, weights, self.statics, self.trunk)),
+                         gait(a.clip, running, heading))
+        return self._run[1]
+
+    def run_gait(self, a, weights):
+        self.run(a, weights)
+        return self._run[2]
+
+    def targets(self, a, k, weights):
+        """The start pose's targets in `prepare`'s form (spec addendum 4): torso and pelvis C . M^-1 . reference
+        (through the run's own gain), arms and fingers (M . ref^-1)^-g . C, the height the cycle's over its floor
+        (at the stop's size), the knees', toes' and hips' turns the cycle's gait less the stop's (both read on the
+        ground, `gait`), the lean the reference's, the grip and holds C's."""
+        weights = np.asarray(weights, float)
+        if float(weights.sum()) < 1.0:
+            raise Refusal("the clip never runs (no frame faster than Final pose at) - the cycle's posture has "
+                          "no run to go on; lower Final pose at, or pick a start pose")
+        C, M = self.C, self.run(a, weights)
+        G, R = self.ground, self.run_gait(a, weights)
+        ks = sided(k)
+        rel, local = {}, {}
+        for j, kind in enumerate(a.kind):
+            if kind in ("pelvis", "torso") and j in C["rel"] and j in M["rel"]:
+                w = _log3(a.rel_ref[j].T @ M["rel"][j])
+                if w[0] > 0.0:
+                    w = np.array([w[0] * k["gait_lean"], w[1], w[2]])
+                rel[j] = C["rel"][j] @ _exp3(_motion_gain(a, j, k) * w).T
+            elif kind in ("arm", "finger") and j in C["local"] and j in M["local"]:
+                g = _arm_gain(a, j, ks, k, 1.0 if C["grip"] else 0.0, k["start_arms"])
+                local[j] = power(M["local"][j] @ a.local_ref[j].T, -g) @ C["local"][j]
+        h = float((weights * (a.pos[a.pelvis, :, 1] - a.floor)).sum() / weights.sum())
+        bob = k["bob"] * k["exaggeration"]
+        height = G["height"] * C["scale"] / max(1.0 + bob * (h / a.h_ref - 1.0), 1e-6)
+        return {"rel": rel, "local": local, "height": height,
+                "knee_turn": dict((s, _wrapped(G["knee_turn"][s] - R["knee_turn"][s])) for s in SIDES),
+                "toe": dict((s, _wrapped(G["toe"][s] - R["toe"][s])) for s in SIDES),
+                "hips_yaw": _wrapped(G["hips_yaw"] - R["hips_yaw"]), "lean": a.lean_ref,
+                "grip": C["grip"], "grip_rel": C["grip_rel"], "holds": dict(C["holds"])}
 
 
 # ---- overlap: Walk Builder's springs, run forward over a clip from its first frame ----
@@ -1369,15 +1860,20 @@ def overlap(a, worlds, k, grip=None):
         shares = [NECK_SHARES[min(i, len(NECK_SHARES) - 1)] for i in range(len(necks))] + [1.0]
         body.turn(necks + [head], shares, turn)
         info["head"] = math.degrees(float(np.linalg.norm(turn, axis=1).max()))
-    if k["arm_drag"] > 0.0:
+    ks = sided(k)
+    if any(ks[s]["arm_drag"] > 0.0 for s in SIDES):
         chains = dict((s, [clip.index["%s_%s" % (b, s)] for b in ("upperarm", "lowerarm", "hand")])
                       for s in SIDES if all("%s_%s" % (b, s) in clip.index for b in ("upperarm", "lowerarm", "hand")))
         new = {}
         if grip is not None and grip.any() and len(chains) == 2:
-            new = _grip_motion(a, body.kin, chains, k)
+            both = dict(k)               # hands holding one thing move as one: the two sides' mean spring
+            both["arm_drag"] = sum(ks[s]["arm_drag"] for s in SIDES) / 2.0
+            both["arm_bounce"] = sum(ks[s]["arm_bounce"] for s in SIDES) / 2.0
+            new = _grip_motion(a, body.kin, chains, both)
         else:
             for side, chain in chains.items():
-                new.update(_limb_motion(a, body.kin, chain, k))
+                if ks[side]["arm_drag"] > 0.0:        # each arm its own side's spring
+                    new.update(_limb_motion(a, body.kin, chain, ks[side]))
         if new:
             before = body.kin.copy()
             body.set(new)
@@ -1758,7 +2254,8 @@ def _blend_frame(a, stop, cyc, w, ankles=None):
 def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, start=None, cycle=None):
     """The clip with the pose: Result(worlds (J, F, 4, 4), info). The knobs `k` (`knobs()`), else the first
     version's share, motion and parts. `pose` is `prepare`'s final pose (None: the clip with its own motion
-    scaled), `start` the start pose's (None: the final all along), `cycle` a `Cycle` the stop starts on."""
+    scaled), `start` the start pose's (None: the final all along; a `CyclePosture`: the cycle's posture), `cycle`
+    a `Cycle` the stop starts on."""
     a = analysis
     k = k if k is not None else knobs_from(share, motion, parts)
     plan = _Plan(a, pose, k, start)
@@ -1785,7 +2282,7 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
         carries[f] = float(np.linalg.norm(carry[[0, 2]]))
         shorts[f] = max([v for s, v in short.items() if a.feet[s]["down"][f]] or [0.0])
     springs = {}
-    if any(k[n] > 0.0 for n in OVERLAP):
+    if k["torso_drag"] > 0.0 or k["head_drag"] > 0.0 or any(plan.ks[s]["arm_drag"] > 0.0 for s in SIDES):
         grip = np.array([plan.grip(f)[0] * plan.share_arms for f in range(F)])
         out, springs = overlap(a, out, k, grip if grip.any() else None)
     started = {}
@@ -1797,5 +2294,9 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
             "grip": bool(plan.final.grip or (plan.start is not None and plan.start.grip)),
             "scale": None if pose is None else pose["scale"],
             "forward": plan.forward(F - 1), "lean": (a.lean_ref, plan.final.lean),
-            "two_poses": plan.start is not None, "overlap": springs, "cycle": started}
+            "two_poses": plan.start is not None, "start_kind": plan.start_kind, "overlap": springs,
+            "cycle": started,
+            "legs": {"hips": float(np.degrees(np.abs(plan.hips_turn).max())) if len(plan.hips_turn) else 0.0,
+                     "knee": dict((s, float(np.degrees(np.abs(plan.knee_turn[s]).max()))) for s in SIDES),
+                     "toe": dict((s, float(np.degrees(np.abs(plan.toe_turn[s]).max()))) for s in SIDES)}}
     return Result(out, info)

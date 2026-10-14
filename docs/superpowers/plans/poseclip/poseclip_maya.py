@@ -33,6 +33,7 @@ MARK = "skeldarPoseClip"
 POSE_FORMAT = "skeldar.walkpose"
 POSE_SUFFIX = ".wpose.gz"
 CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ")
+CYCLE_START = "(the cycle's posture)"   # the start pose that is the cycle's own mean posture (addendum 4)
 FPS = {"game": 15, "film": 24, "pal": 25, "ntsc": 30, "show": 48, "palf": 50, "ntscf": 60}
 Refusal = model.Refusal
 
@@ -373,10 +374,12 @@ def joint_channels(local, joint_orient, rotate_axis, rotate_order, current):
     return (math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z))
 
 
-def write_worlds(paths, worlds, start):
+def write_worlds(paths, worlds, start, kept=None):
     """Key the joints `paths` (parents first; each one's parent either among them or above the skeleton) on
     worlds (J, F, 4, 4) from frame `start`: translate and rotate on every frame (their old curves deleted, scale
-    set to 1). Keys through MFnAnimCurve.addKeys (trap 224). Returns the curves made."""
+    set to 1). Keys through MFnAnimCurve.addKeys (trap 224). A channel something else drives (a weapon's
+    constraint on weapon_r, the animator's own) is left to it, its joint added to `kept`. Returns the curves
+    made."""
     import maya.api.OpenMayaAnim as oma
     cmds, om = _cmds(), _om()
     J, F = worlds.shape[:2]
@@ -407,6 +410,10 @@ def write_worlds(paths, worlds, start):
             for old in cmds.listConnections(plug, source=True, destination=False) or []:
                 if cmds.nodeType(old).startswith("animCurve"):
                     cmds.delete(old)
+            if cmds.listConnections(plug, source=True, destination=False):
+                if kept is not None and _leaf(path) not in kept:
+                    kept.append(_leaf(path))
+                continue
             if cmds.getAttr(plug, lock=True):
                 cmds.setAttr(plug, lock=False)
             curve = cmds.createNode("animCurveTL" if ch.startswith("translate") else "animCurveTA",
@@ -504,16 +511,29 @@ class Session(object):
         return self.poses[name]
 
     def evaluate(self, pose, k, start=None):
-        """The final pose `pose` (and the start pose `start`, None: the final all along) with the knobs `k`, from
-        the cycle when one is set."""
-        begin = self.pose(start)[1] if start else None
+        """The final pose `pose` (and the start pose `start`: a pose's name, CYCLE_START - the cycle's own
+        posture -, or None: the final all along) with the knobs `k`, from the cycle when one is set."""
+        if start == CYCLE_START:
+            if self.posture is None:
+                raise Refusal("no cycle to take the posture from - select a looping clip and press Use selected "
+                              "as cycle, or pick a start pose")
+            begin = self.posture
+        else:
+            begin = self.pose(start)[1] if start else None
         return model.evaluate(self.analysis, self.pose(pose)[1], k=k, start=begin, cycle=self.cycle)
+
+    def start_label(self, start):
+        """How the status line and the copy's label name a start: None, "the cycle's posture", a pose's name."""
+        if not start:
+            return None
+        return "the cycle's posture" if start == CYCLE_START else self.pose(start)[0]
 
     # -- the cycle the stop starts on --
 
     cycle = None
     cycle_name = ""
     cycle_uuid = None
+    posture = None        # model.CyclePosture: the cycle's mean posture as a start pose
 
     def use_cycle(self, node):
         """The looping clip on the skeleton `node` belongs to (taken as it is - a copy of ours too) as the cycle
@@ -521,15 +541,17 @@ class Session(object):
         root = top_joint(node)
         if _cmds().ls(root, uuid=True)[0] == self.uuid:
             raise Refusal("that is the stop's own character - select the character carrying the cycle")
-        clip, _start, _joints_ = read_clip(root)
+        clip, _start, joints = read_clip(root)
         self.cycle = model.Cycle(clip)
+        statics, _note = read_statics(joints, clip, 0)
+        self.posture = model.CyclePosture(self.analysis, self.statics, self.cycle, statics, clip.name)
         self.cycle_name = "%s on %s (%d frames a loop at %g fps)" % (
             clip.name, _short(_top_node(root)), self.cycle.period, clip.fps)
         self.cycle_uuid = _cmds().ls(root, uuid=True)[0]
         return self.cycle_name
 
     def clear_cycle(self):
-        self.cycle, self.cycle_name, self.cycle_uuid = None, "", None
+        self.cycle, self.cycle_name, self.cycle_uuid, self.posture = None, "", None, None
 
     def describe(self):
         a = self.analysis
@@ -566,7 +588,8 @@ class Session(object):
                 if cmds.objExists(twin):
                     paths.append(twin)
                     rows.append(i)
-            curves = write_worlds(paths, worlds[rows], self.start)
+            self.kept = []
+            curves = write_worlds(paths, worlds[rows], self.start, self.kept)
             if not cmds.attributeQuery(MARK, node=copy, exists=True):
                 cmds.addAttr(copy, longName=MARK, dataType="string")
             memo = {}
@@ -581,7 +604,8 @@ class Session(object):
             if made is not None:
                 memo["nodes"] = cmds.ls(made, uuid=True) or []
             cmds.setAttr(copy + "." + MARK, json.dumps(memo), type="string")
-            _label(copy, "%s + %s" % (self.clip.name, ("%s > %s" % (start_name, pose_name)) if start_name else pose_name))
+            first = "cycle" if start_name == "the cycle's posture" else start_name
+            _label(copy, "%s + %s" % (self.clip.name, ("%s > %s" % (first, pose_name)) if start_name else pose_name))
         return copy, curves, removed
 
 
@@ -605,6 +629,9 @@ def status(session, result, pose_name, copy, removed, seconds, start_name=None):
         text += " | a planted foot falls %.1f cm short" % info["short"]
     if info["grip"]:
         text += " | two-handed grip held"
+    legs = info.get("legs") or {}
+    if legs.get("hips", 0.0) > 0.5:
+        text += " | legs matched: the hips %.0f deg to the run (the spine takes it back)" % legs["hips"]
     springs = info.get("overlap") or {}
     if springs:
         text += " | overlap: trunk %.0f, head %.0f deg off their frames, hands %.0f cm" % (
@@ -613,6 +640,9 @@ def status(session, result, pose_name, copy, removed, seconds, start_name=None):
     if cyc:
         text += " | starts on the cycle's frame %.2f (%s), into the stop over %d frames" % (
             cyc["phase"], session.cycle_name.split(" (")[0], cyc["frames"])
+    kept = getattr(session, "kept", None)
+    if kept:
+        text += " | left to what drives them: %s" % ", ".join(kept)
     if removed:
         text += " | the previous copy replaced"
     if session.note:

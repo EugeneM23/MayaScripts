@@ -316,6 +316,82 @@ def main():
                                                                   springs.get("head", 0.0), springs.get("arms", 0.0)))
     print("   " + text)
 
+    # 7. Walk Builder's tools (spec addendum 4): the cycle's posture as the start, a side's knob, Leg match
+    still = dict(torso_drag=0.0, head_drag=0.0, arm_drag=0.0, spine=0.0, pelvis_rot=0.0, head=0.0, bob=0.0,
+                 balance=0.0, leg_match=0.0)
+    tool.run("goblin", model.knobs(**still), 150.0, start=tool.CYCLE)
+    info = tool._state()["last"]
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    played = copy_clip(standing[0]).worlds.copy()
+    C = session.posture.C
+    k = model.knobs(**still)
+    e = a.stillness_at(k["final_speed"])
+    run_frames = [f for f in range(int(k["from_cycle"]) + 1, source.F) if e[f] < 1e-9]
+    trunk = [j for j, kind in enumerate(a.kind) if kind in ("pelvis", "torso") and j in C["rel"]]
+    worst = 0.0
+    for f in run_frames:
+        for j in trunk:
+            got = model._batch_orthonormal(played[j, f, :3, :3]) @ a.heading[f].T
+            worst = max(worst, math.degrees(float(np.linalg.norm(model._log3(got.T @ C["rel"][j])))))
+    gate("the cycle's posture as the start: the run stands in it (the clip's motion off)",
+         info.get("start_kind") == "cycle" and run_frames and worst < 1e-3,
+         "%d trunk bones over %d run frames %.2e deg off the cycle's mean posture" % (len(trunk), len(run_frames), worst))
+    # the clip's motion on (the springs off, so the turns are the formula's): each trunk bone sits off the cycle's
+    # posture over the run as the clip sits off its own run mean - the cycle's posture, the stop's motion over it
+    free = dict(torso_drag=0.0, head_drag=0.0, arm_drag=0.0)
+    tool.run("goblin", model.knobs(**free), 150.0, start=tool.CYCLE)
+    played = copy_clip(standing[0]).worlds.copy()
+    k = model.knobs(**free)
+    sa = session.analysis
+    e = sa.stillness_at(k["final_speed"])
+    run_frames = [f for f in range(int(k["from_cycle"]) + 1, source.F) if e[f] < 1e-9]
+    M = session.posture.run(sa, 1.0 - e)
+    flat = np.ones(len(run_frames)) / len(run_frames)
+    off, worst = [], 0.0
+    for j in trunk:
+        got = model._weighted_mean_rot(np.array([model._batch_orthonormal(played[j, f, :3, :3]) @ sa.heading[f].T
+                                                 for f in run_frames]), flat)
+        own = model._weighted_mean_rot(np.array([sa.rel[j, f] for f in run_frames]), flat)
+        d_got = math.degrees(float(np.linalg.norm(model._log3(C["rel"][j].T @ got))))
+        d_own = math.degrees(float(np.linalg.norm(model._log3(M["rel"][j].T @ own))))
+        worst = max(worst, abs(d_got - d_own))
+        off.append("%s %.1f/%.1f" % (source.names[j], d_got, d_own))
+    texts = [cliplabel.text_of(t) for t in cmds.listRelatives(standing[0], allDescendents=True, type="transform",
+                                                                fullPath=True) or []
+             if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True)]
+    gate("the cycle's posture, the clip's motion on: each trunk bone off it as the clip off its run",
+         worst < 0.3 and texts == ["M_Neutral_Sprint_Stop_F_Lfoot + cycle > goblin"],
+         "the run's mean turn off the cycle's posture / the clip's off its own run mean: %s; worst %.2f deg; %s"
+         % (", ".join(off), worst, texts))
+    tool.run("goblin", model.knobs(), 150.0, start=tool.CYCLE)
+    base = copy_clip(standing[0]).worlds.copy()
+    tool.run("goblin", model.knobs(lift_l=2.5), 150.0, start=tool.CYCLE)
+    lifted = copy_clip(standing[0]).worlds.copy()
+    up = dict((s_, float((lifted[ix["foot_" + s_], :, 3, 1] - base[ix["foot_" + s_], :, 3, 1]).max())) for s_ in model.SIDES)
+    right_same = float(np.abs(lifted[ix["foot_r"], :, 3, :3] - base[ix["foot_r"], :, 3, :3]).max())
+    gate("a side's knob: Foot lift L 2.5 lifts the left foot only", up["l"] > 3.0 and right_same < 1e-4,
+         "the left foot up to %.1f cm higher, the right moved %.2e cm" % (up["l"], right_same))
+    tool.run("goblin", model.knobs(), 150.0, start="two_handed_sword")
+    matched = tool._state()["last"]["legs"]["hips"]
+    tool.run("goblin", model.knobs(leg_match=0.0), 150.0, start="two_handed_sword")
+    unmatched = tool._state()["last"]["legs"]["hips"]
+    gate("Leg match: the side-on sword start's hips turned to the run, none with it off", matched > 10.0 and
+         unmatched < 1e-6, "the hips turned up to %.1f deg (Leg match 0: %.1f)" % (matched, unmatched))
+
+    # a weapon put in the copy's hand (its constraint drives weapon_r): a re-key leaves that bone to it
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    bone = [j for j in cmds.listRelatives(standing[0], allDescendents=True, type="joint", fullPath=True)
+            if j.endswith("|weapon_r")][0]
+    holder = cmds.spaceLocator(name="verifyWeaponHolder")[0]
+    cmds.cutKey(bone, attribute=list(pcm.CHANNELS), clear=True)    # as the weapon link does: keys off first
+    held = cmds.parentConstraint(holder, bone)[0]
+    text = tool.run("goblin", model.knobs(pelvis_height=3.0), 150.0)
+    gate("a bone something else drives is left to it, and named", cmds.objExists(held) and
+         "left to what drives them: weapon_r" in text and
+         cmds.listConnections(bone + ".translateX", source=True, destination=False) == [held],
+         text.split(" | ")[-2] if " | " in text else text)
+    cmds.delete(holder)
+
     if OUT:
         np.savez(OUT, clip=source.worlds, goblin=results["goblin"], sword=results["two_handed_sword"],
                  names=np.array(source.names), parents=np.array(source.parents), reference=np.array(a.reference),
