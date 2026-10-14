@@ -236,6 +236,37 @@ def main():
     gate("one undo takes the run back (the previous copy back)", len(names) == 2 and back and
          cmds.ls(back[0], uuid=True)[0] == first, str(names))
 
+    # 5. the window's core: one copy re-keyed in place, live
+    import poseclip_tool as tool
+    cmds.select(clear=True)
+    started = time.time()
+    first = tool.run("goblin", model.knobs(), 150.0)
+    made = time.time() - started
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    uuid = cmds.ls(standing[0], uuid=True)[0] if standing else None
+    before_y = copy_clip(standing[0]).worlds[ix["pelvis"], :, 3, 1] if standing else None
+    started = time.time()
+    tool.run("goblin", model.knobs(pelvis_height=8.0), 150.0)
+    rekey = time.time() - started
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    after_y = copy_clip(standing[0]).worlds[ix["pelvis"], :, 3, 1]
+    ra, rb = a.reference
+    raised = float(np.median(after_y[ra:rb + 1] - before_y[ra:rb + 1]))
+    gate("the window: a slider re-keys its one copy in place", len(standing) == 1 and
+         cmds.ls(standing[0], uuid=True)[0] == uuid and abs(raised - 8.0) < 0.05,
+         "made in %.1f s, re-keyed in %.1f s, the pelvis +%.2f cm in the idle (asked 8)" % (made, rekey, raised))
+    tool.run("two_handed_sword", model.knobs(), -150.0)
+    standing = list(pcm.copies(cmds.ls(root, uuid=True)[0], tool=True))
+    texts = [cliplabel.text_of(t) for t in cmds.listRelatives(standing[0], allDescendents=True, type="transform",
+                                                                fullPath=True) or []
+             if cmds.attributeQuery("skeldarClipLabel", node=t, exists=True)]
+    gate("the window: another pose re-keys and relabels the same copy", len(standing) == 1 and
+         cmds.ls(standing[0], uuid=True)[0] == uuid and texts == ["M_Neutral_Sprint_Stop_F_Lfoot + two_handed_sword"],
+         str(texts))
+    note = tool.delete_copy()
+    gate("the window: Delete copy", not pcm.copies(cmds.ls(root, uuid=True)[0], tool=True) and
+         len(copy_of(root)) == 2, "%s; the script's copies stay: %d" % (note, len(copy_of(root))))
+
     if OUT:
         np.savez(OUT, clip=source.worlds, goblin=results["goblin"], sword=results["two_handed_sword"],
                  names=np.array(source.names), parents=np.array(source.parents), reference=np.array(a.reference),

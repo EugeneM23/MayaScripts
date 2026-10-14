@@ -296,11 +296,11 @@ def _uuids(nodes):
     return set(cmds.ls(nodes, uuid=True) or []) if nodes else set()
 
 
-def remove_copies(source_uuid, pose=None):
-    """Every copy this tool made of the character whose root is `source_uuid` (with the pose `pose`, or any),
-    and the nodes made with it."""
+def copies(source_uuid, pose=None, tool=None):
+    """{copy top: its memo} of the copies made of the character whose root is `source_uuid`: with the pose
+    `pose` (None: any), the window's own (`tool` True), the script's (False) or either (None)."""
     cmds = _cmds()
-    removed = 0
+    out = {}
     for t in cmds.ls("*.%s" % MARK, objectsOnly=True, long=True, recursive=True) or []:
         try:
             memo = json.loads(cmds.getAttr(t + "." + MARK) or "{}")
@@ -308,6 +308,17 @@ def remove_copies(source_uuid, pose=None):
             continue
         if memo.get("source") != source_uuid or (pose is not None and memo.get("pose") != pose):
             continue
+        if tool is not None and bool(memo.get("tool")) != tool:
+            continue
+        out[t] = memo
+    return out
+
+
+def remove_copies(source_uuid, pose=None, tool=None):
+    """Every copy `copies` names, and the nodes made with it."""
+    cmds = _cmds()
+    removed = 0
+    for t, memo in copies(source_uuid, pose, tool).items():
         nodes = [n for n in (cmds.ls(memo.get("nodes", []), long=True) or [])]
         for node in [t] + nodes:
             if cmds.objExists(node):
@@ -464,59 +475,130 @@ def _label(copy, text):
                     _set_text(shape + ".text", text)
 
 
-def apply(pose, share=1.0, motion=1.0, parts=model.PARTS, offset=150.0, reference=None, node=None):
-    """The pose `pose` onto the clip carried by the selected character (or `node`'s), on a copy of it `offset`
-    cm to its right. Returns the status line (also printed)."""
-    cmds = _cmds()
-    started = time.time()
-    root = character_root(node)
-    joints = _joints(root)
-    _refuse_a_rig(joints)
-    clip, start, joints = read_clip(root)
-    analysis = model.Analysis(clip, reference)
-    statics, note = read_statics(joints, clip, analysis.mid)
-    pose_name, bones = load_pose(pose)
-    prepared = model.prepare(analysis, statics, bones)
-    result = model.evaluate(analysis, prepared, share, motion, parts)
-    worlds = result.worlds.copy()
-    worlds[:, :, 3, :3] += float(offset) * _right_of(analysis)
-    source = cmds.ls(root, uuid=True)[0]
-    top = _top_node(root)
-    base = _short(top)
-    base = base[:-len("_Character")] if base.endswith("_Character") else base
-    with _Chunk("skeldarPoseClip"):
-        removed = remove_copies(source, pose_name)
-        copy, mapping, made = make_copy(root, "%s_%s_Character" % (base, pose_name))
-        paths = [mapping[p] for p in joints if p in mapping]
-        rows = [i for i, p in enumerate(joints) if p in mapping]
-        curves = write_worlds(paths, worlds[rows], start)
-        if not cmds.attributeQuery(MARK, node=copy, exists=True):
-            cmds.addAttr(copy, longName=MARK, dataType="string")
-        memo = {"source": source, "pose": pose_name, "share": share, "motion": motion, "parts": list(parts),
-                "offset": offset, "reference": list(analysis.reference), "start": start,
-                "nodes": cmds.ls(made, uuid=True) or []}
-        cmds.setAttr(copy + "." + MARK, json.dumps(memo), type="string")
-        _label(copy, "%s + %s" % (clip.name, pose_name))
+class Session(object):
+    """One character's clip read once - the window keeps it between slider moves: the clip, its analysis, its
+    skeleton's statics, the poses prepared against it."""
+
+    def __init__(self, root, reference=None):
+        cmds = _cmds()
+        self.root = _long(root)
+        self.uuid = cmds.ls(self.root, uuid=True)[0]
+        _refuse_a_rig(_joints(self.root))
+        self.clip, self.start, self.joints = read_clip(self.root)
+        self.analysis = model.Analysis(self.clip, reference)
+        self.statics, self.note = read_statics(self.joints, self.clip, self.analysis.mid)
+        self.right = _right_of(self.analysis)
+        self.poses = {}
+
+    def alive(self):
+        found = _cmds().ls(self.uuid, long=True)
+        if found:
+            self.root = found[0]
+        return bool(found)
+
+    def pose(self, name):
+        """(the pose's name, `model.prepare`'s) - prepared once."""
+        if name not in self.poses:
+            pose_name, bones = load_pose(name)
+            self.poses[name] = (pose_name, model.prepare(self.analysis, self.statics, bones))
+        return self.poses[name]
+
+    def evaluate(self, pose, k):
+        return model.evaluate(self.analysis, self.pose(pose)[1], k=k)
+
+    def describe(self):
+        a = self.analysis
+        r0, r1 = a.reference
+        contacts = ", ".join("%s %s" % (s.upper(), " ".join("%d-%d" % (self.start + c0, self.start + c1)
+                                                           for c0, c1 in a.feet[s]["contacts"])) for s in model.SIDES)
+        kind = "still %d-%d (its stance)" % (self.start + r0, self.start + r1) if a.still else \
+            "no still stretch - a cycle: its mean"
+        return "%s on %s: %d frames from %d | reference %s | contacts %s" % (
+            self.clip.name, _short(_top_node(self.root)), self.clip.F, self.start, kind, contacts)
+
+    def key(self, result, pose_name, k, offset, tool=False):
+        """The result keyed onto a copy `offset` cm to the character's right: the window's own copy (re-keyed
+        in place, its label naming the pose), or - from a script - this pose's copy (made afresh). One undo
+        step. Returns (the copy, how many curves, whether an older copy was replaced)."""
+        cmds = _cmds()
+        worlds = result.worlds.copy()
+        worlds[:, :, 3, :3] += float(offset) * self.right
+        top = _top_node(self.root)
+        base = _short(top)
+        base = base[:-len("_Character")] if base.endswith("_Character") else base
+        removed = 0
+        with _Chunk("skeldarPoseClip"):
+            standing = list(copies(self.uuid, tool=True)) if tool else []
+            if standing:
+                copy, made = standing[0], None
+            else:
+                removed = remove_copies(self.uuid, None if tool else pose_name, tool=tool)
+                name = "%s_posed_Character" % base if tool else "%s_%s_Character" % (base, pose_name)
+                copy, _mapping, made = make_copy(self.root, name)
+            paths, rows = [], []
+            for i, path in enumerate(self.joints):
+                twin = copy + path[len(top):]
+                if cmds.objExists(twin):
+                    paths.append(twin)
+                    rows.append(i)
+            curves = write_worlds(paths, worlds[rows], self.start)
+            if not cmds.attributeQuery(MARK, node=copy, exists=True):
+                cmds.addAttr(copy, longName=MARK, dataType="string")
+            memo = {}
+            if made is None:
+                try:
+                    memo = json.loads(cmds.getAttr(copy + "." + MARK) or "{}")
+                except ValueError:
+                    memo = {}
+            memo.update({"source": self.uuid, "pose": pose_name, "tool": bool(tool), "knobs": dict(k),
+                         "offset": offset, "reference": list(self.analysis.reference), "start": self.start})
+            if made is not None:
+                memo["nodes"] = cmds.ls(made, uuid=True) or []
+            cmds.setAttr(copy + "." + MARK, json.dumps(memo), type="string")
+            _label(copy, "%s + %s" % (self.clip.name, pose_name))
+        return copy, curves, removed
+
+
+def status(session, result, pose_name, copy, removed, seconds):
+    """The line a run leaves: the pose, the copy, what the rules did."""
     info = result.info
-    a0, b0 = analysis.reference
-    text = ("%s on %s: %s | share %.2f, motion %.2f%s | reference %d-%d (still) | contacts moved L %d, R %d, "
-            "the last onto the pose's stance | pelvis carried up to %.1f cm for the balance"
-            % (pose_name, clip.name, _short(copy), share, motion,
-               "" if tuple(parts) == model.PARTS else " (%s)" % ", ".join(parts),
-               start + a0, start + b0, info["moved"]["l"], info["moved"]["r"], info["carry"]))
+    a = session.analysis
+    r0, r1 = a.reference
+    text = "%s on %s: %s | reference %d-%d%s | contacts moved L %d, R %d%s | pelvis carried up to %.1f cm" % (
+        pose_name, session.clip.name, _short(copy), session.start + r0, session.start + r1,
+        "" if a.still else " (a cycle)", info["moved"]["l"], info["moved"]["r"],
+        ", the last onto the pose's stance" if any(v is not None for v in info["final"].values()) else "",
+        info["carry"])
     if info["forward"] < 0.99:
         text += " | the clip's forward lean x%.2f (the pose leans %.0f deg, the clip's idle %.0f)" % (
             info["forward"], info["lean"][1], info["lean"][0])
     if info["drop"] > 0.05:
-        text += ", sunk %.1f cm where a planted foot was out of reach" % info["drop"]
+        text += " | sunk %.1f cm where a planted foot was out of reach" % info["drop"]
     if info["short"] > 0.05:
         text += " | a planted foot falls %.1f cm short" % info["short"]
     if info["grip"]:
         text += " | two-handed grip held"
     if removed:
         text += " | the previous copy replaced"
-    if note:
-        text += " | " + note
-    text += " | %d curves, %.1f s" % (curves, time.time() - started)
+    if session.note:
+        text += " | " + session.note
+    return text + " | %.1f s" % seconds
+
+
+def apply(pose, share=1.0, motion=1.0, parts=model.PARTS, offset=150.0, reference=None, node=None, **given):
+    """The pose `pose` onto the clip carried by the selected character (or `node`'s, or the only keyed one), on
+    a copy of it `offset` cm to its right - this pose's copy, made afresh. `share`, `motion` and `parts` are the
+    first version's knobs; any knob of `poseclip.KNOBS` by name overrides them. Returns the status line (also
+    printed)."""
+    started = time.time()
+    session = Session(character_root(node), reference)
+    k = model.knobs_from(share, motion, parts)
+    if given:
+        clamped = model.knobs(**given)
+        k.update((n, clamped[n]) for n in given)
+    pose_name = session.pose(pose)[0]
+    result = session.evaluate(pose, k)
+    copy, curves, removed = session.key(result, pose_name, k, offset, tool=False)
+    text = status(session, result, pose_name, copy, removed, time.time() - started)
     print(text)
     return text

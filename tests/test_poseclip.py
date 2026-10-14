@@ -400,11 +400,11 @@ class Rules(unittest.TestCase):
         a = pc.Analysis(clip)
         bent = synthetic_stop(lean_end=0.6)
         pose = pc.prepare(a, statics_of(clip), pose_from(bent, bent.F - 1))
-        plan = pc._Plan(a, pose, 1.0, 1.0, pc.PARTS)
+        plan = pc._Plan(a, pose, pc.knobs())
         expect = (pc.LEAN_LIMIT - pose["lean"]) / (pc.LEAN_LIMIT - a.lean_ref)
         self.assertAlmostEqual(plan.forward, expect, places=9)
         self.assertLess(plan.forward, 1.0)
-        none = pc._Plan(a, pose, 0.0, 1.0, pc.PARTS)
+        none = pc._Plan(a, pose, pc.knobs_from(0.0))
         self.assertEqual(none.forward, 1.0)
 
     def test_a_backward_lean_is_not_scaled(self):
@@ -416,7 +416,7 @@ class Rules(unittest.TestCase):
         j = clip.index["spine_01"]
         # the synthetic clip leans spine_01 forward (+ about its local X, which in Manny's bind is the world's -X):
         # whatever its sign, the posed spine's deviation from its target is the clip's, scaled by 1 or by `forward`
-        plan = pc._Plan(a, pose, 1.0, 1.0, pc.PARTS)
+        plan = pc._Plan(a, pose, pc.knobs())
         for f in range(clip.F):
             w = pc.log_rot(a.rel_ref[j].T @ a.rel[j, f])
             got = pc.log_rot(plan.target_rel[j].T @ (result.worlds[j, f, :3, :3] @ a.heading[f].T))
