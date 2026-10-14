@@ -134,6 +134,9 @@ ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps
 ARM_CYCLES = 8            # at most this many cycles run to settle the arms' periodic motion
 ARM_SETTLED = 1e-5        # radians: settled when a cycle's start moves less than this from the last's
 ARM_INERTIA = 1.0         # x the shoulder's (elbow's, wrist's) acceleration felt by the limb below it
+SHOULDER_INERTIA = 0.3    # ...and by a clavicle (Shoulder drag): a shoulder is held - at 1 the chest's bob shook it at
+                          # twice a stride, 22 deg off its frames at drag 3 on the synthetic walker, a flap rather than a
+                          # drag; at 0.3 it trails the chest's turn (trap 242's remedy, as HEAD_INERTIA; 2026-10-14)
 ARM_HARMONICS = 6         # the shoulder's path the arms feel: its first this many harmonics a stride (the body's motion)
 ACCEL_HZ = 8.0            # ...and none faster than this many a second: a sprint's stride is 15 frames, and 6 harmonics of
                           # it reached a 2.5-frame period - the frames' own noise (AGS_Sprint, 2026-10-14)
@@ -1174,7 +1177,8 @@ class Walk(object):
         """Shoulder drag, in place on `worlds` (J, n+1, 4, 4), after the trunk and before the arms (they hang on
         the moving clavicle): each clavicle's world turn follows its frames' - its own motion on the chest as the
         chest moves - through the arms' spring (Shoulder drag frames late, that side's Arm bounce) and feels the
-        acceleration of its root on the chest (the lever: the upper arm's place on it). The arm re-attached as the
+        acceleration of its root on the chest (the lever: the upper arm's place on it) x SHOULDER_INERTIA: held, so
+        it trails the chest's turn rather than flapping with its bob. The arm re-attached as the
         frames had it on the clavicle - an upper arm hanging in the world keeps its world turn. Under a pose's grip
         the drag fades as the arms' own swing does. Returns {"drag", "cycles"}."""
         k = ctx["k"]
@@ -1192,7 +1196,8 @@ class Walk(object):
             tip = self.lt[arm].mean(axis=0) if arm is not None and self.parents[arm] == clav else None
             zeta = 1.0 - 0.75 * ks[side]["arm_bounce"]
             w0 = 2.0 * zeta / drag
-            got, used = self._limb_motion(kin, n, [clav], w0, zeta, max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0))), tip)
+            got, used = self._limb_motion(kin, n, [clav], w0, zeta, max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0))), tip,
+                                          SHOULDER_INERTIA)
             if fade > 0.0:
                 m = got[clav]
                 for f in range(n + 1):
@@ -2793,9 +2798,10 @@ class Walk(object):
             out += 2.0 * np.real(np.outer(np.exp(1j * w * u), coeffs[k])) * -(w * w)
         return out
 
-    def _limb_motion(self, kin, n, chain, w0, zeta, S, tip=None):
+    def _limb_motion(self, kin, n, chain, w0, zeta, S, tip=None, inertia=ARM_INERTIA):
         """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took. `tip`: the last joint's
-        lever (in its frame) when it is not a hand (a clavicle's: its upper arm's place on it)."""
+        lever (in its frame) when it is not a hand (a clavicle's: its upper arm's place on it); `inertia`: x the
+        pivot's acceleration it feels (a clavicle: SHOULDER_INERTIA)."""
         dt = 1.0 / S
         top, base = chain[0], self.parents[chain[0]]
         rot = lambda j: np.array([orthonormal(kin[j, f, :3, :3]) for f in range(n + 1)])
@@ -2843,7 +2849,7 @@ class Walk(object):
                     if r is not None:
                         length2 = float(r @ r)
                         if length2 > 1e-12:
-                            alpha = alpha + 1.5 * ARM_INERTIA / length2 * _cross3(r, -a_pivot)
+                            alpha = alpha + 1.5 * inertia / length2 * _cross3(r, -a_pivot)
                     w = w + alpha * dt
                     Rj = Rj @ _exp3(w * dt)
                     state[i], spin[i] = Rj, w
@@ -3028,7 +3034,7 @@ def describe(result):
     body, overlap = info.get("body") or {}, info.get("overlap") or {}
     if overlap.get("upper_offset"):
         shift = overlap["upper_offset"]
-        text += " | the upper body %g frames %s the legs" % (abs(shift), "behind" if shift > 0.0 else "ahead of")
+        text += " | the upper body %.1f frames %s the legs" % (abs(shift), "behind" if shift > 0.0 else "ahead of")
     if overlap.get("spine_wave"):
         text += " | a spine wave of %.1f frames" % overlap["spine_wave"]
     drags = [(name, d) for name, d in (("the trunk", body.get("drag", (0.0, 0.0))[0]),

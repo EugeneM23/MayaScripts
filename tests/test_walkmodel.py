@@ -2069,6 +2069,14 @@ def lag_of(x0, x1):
     return k if k <= n // 2 else k - n
 
 
+def above_stride(series, strides):
+    """A periodic series (F, ...) cut to its harmonics at twice a stride and above."""
+    n = len(series)
+    spectrum = np.fft.rfft(np.asarray(series, float), axis=0)
+    spectrum[:2 * strides] = 0.0
+    return np.fft.irfft(spectrum, n, axis=0)
+
+
 def stride_band(series, strides):
     """A periodic series (F, ...) cut to its stride's harmonic (once a stride)."""
     n = len(series)
@@ -2302,8 +2310,53 @@ class OverlapTests(unittest.TestCase):
             for j in range(len(w.names)):
                 if j not in upper:
                     self.assertLess(float(np.abs(r.worlds[j] - base.worlds[j]).max()), 1e-12, w.names[j])
-            self.assertIn("the upper body %d frames %s" % (abs(shift), "behind" if shift > 0 else "ahead"),
+            self.assertIn("the upper body %.1f frames %s" % (abs(shift), "behind" if shift > 0 else "ahead"),
                           wm.describe(r))
+
+    def test_upper_offset_with_the_added_turns(self):
+        """With the default added turns on (Twist, Hip drop, Chest twist and sway) what the offset guarantees: the
+        pelvis, the legs and the root as they were; every upper joint's place in its parent's frame the walk's at
+        f - N; the joints that carry no added turn of their own (the neck, the clavicles, the forearms, the hands,
+        the fingers) the walk's turn in their parent's frame too; the world-held head and upper arms in the pelvis's
+        base frame (before its added turns) - exactly. A lumbar joint's turn on its parent differs from the walk's
+        at f - N by its counter share of how far the pelvis's added turn moves over the offset (the counter-turn
+        stays at the pelvis's time): measured 2.61 = 0.533 x 4.88 deg on spine_01, 2.29 = 0.467 x 4.88 on
+        spine_02."""
+        w = walk()
+        base = w.evaluate(STILL)
+        shift = 3
+        r = w.evaluate(dict(STILL, upper_offset=float(shift)))
+        n = base.frames
+        k = wm.knobs(**STILL)
+        ctx = {"k": k, "ex": k["exaggeration"], "pose": None, "alpha": 0.0}
+        rb = [w._pelvis_base(f * w.P / float(n), ctx) for f in range(n + 1)]
+        moved = max(angle(wm.exp_rot(w.pelvis_extra((f - shift) * w.P / float(n), k, 1.0)).T
+                          @ wm.exp_rot(w.pelvis_extra(f * w.P / float(n), k, 1.0))) for f in range(n))
+        self.assertGreater(moved, 1.0)                         # the pelvis's added turn really moves
+        upper = set(upper_joints(w))
+        turned = (set(w.counter) | set(w.chest_share)) & upper
+        held = set(w.index[name] for name in ("head", "upperarm_l", "upperarm_r"))
+        self.assertTrue(turned and base.info["pelvis"][0] and base.info["chest"][0])      # the turns are on
+        for j in range(len(w.names)):
+            if j not in upper:
+                self.assertLess(float(np.abs(r.worlds[j] - base.worlds[j]).max()), 1e-12, w.names[j])
+        for j in upper:
+            p, worst, spread = w.parents[j], 0.0, 0.0
+            for f in range(n + 1):
+                g = (f - shift) % n
+                rel = lambda res, i: res.worlds[j, i] @ np.linalg.inv(res.worlds[p, i])
+                worst = max(worst, float(np.abs(rel(r, f)[3, :3] - rel(base, g)[3, :3]).max()))      # its place
+                if j in held:
+                    turn = (r.worlds[j, f, :3, :3] @ rb[f].T) @ (base.worlds[j, g, :3, :3] @ rb[g].T).T
+                else:
+                    turn = rel(r, f)[:3, :3] @ rel(base, g)[:3, :3].T
+                if j in turned:
+                    spread = max(spread, angle(turn))
+                else:
+                    worst = max(worst, float(np.abs(turn - np.eye(3)).max()))
+            self.assertLess(worst, 1e-9, w.names[j])
+            if j in turned:
+                self.assertAlmostEqual(spread, w.counter.get(j, 0.0) * moved, delta=0.1, msg=w.names[j])
 
     def test_the_lumbar_takes_the_pelvis_turn_back_at_the_pelvis_time(self):
         """The pelvis's added Twist stays with the pelvis: offset or not, the top of the spine does not carry it."""
@@ -2354,6 +2407,30 @@ class OverlapTests(unittest.TestCase):
         moved = dragged.worlds[:, -1] - dragged.worlds[:, 0]
         self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-6)          # the loop closes
         self.assertIn("the shoulders 3.0", wm.describe(dragged))
+
+    def test_shoulder_drag_trails_rather_than_flaps(self):
+        """The chest's bob at twice a stride does not shake the clavicle (trap 242): at drag 3 its turn off its
+        frames at twice a stride and above stays under 8 deg and within 1.6x of a clavicle that feels no
+        acceleration at all. With the arms' full inertia (1.0) it read 18.8 deg here, 4x - a flap, not a drag."""
+        w = walk()
+        base = w.evaluate(STILL)
+        dragged = w.evaluate(dict(STILL, shoulder_drag=3.0))
+        saved = wm.SHOULDER_INERTIA
+        wm.SHOULDER_INERTIA = 0.0
+        try:
+            free = w.evaluate(dict(STILL, shoulder_drag=3.0))
+        finally:
+            wm.SHOULDER_INERTIA = saved
+        n = base.frames
+        for side in "lr":
+            j = w.index["clavicle_" + side]
+
+            def flap(r):
+                off = np.degrees(wm.log_rot(np.swapaxes(base.worlds[j, :n, :3, :3], -1, -2) @ r.worlds[j, :n, :3, :3]))
+                return float(np.linalg.norm(above_stride(off, w.strides), axis=1).max())
+            self.assertLess(flap(dragged), 8.0, side)
+            self.assertLess(flap(dragged), 1.6 * flap(free), (side, flap(dragged), flap(free)))
+            self.assertGreater(flap(free), 1.0, side)          # the gate measures something: the spring lags the bob
 
     def test_shoulder_drag_runs_inside_the_balance(self):
         w = walk()

@@ -156,10 +156,10 @@ LABELS = {
     "spine_wave": ("Spine wave, fr", "Each spine and neck joint's own motion runs late by its share of the chain - "
                                      "the lowest a little, the top of the neck this many frames: a wave up the "
                                      "back (the head keeps its gaze)"),
-    "shoulder_drag": ("Shoulder drag, fr", "The shoulders follow the chest with weight: each clavicle turns "
-                                           "through a spring that feels the chest's motion - about this many "
-                                           "frames late, overshooting as Arm bounce says; the arms hang from them. "
-                                           "0: the shoulders as the walk turns them"),
+    "shoulder_drag": ("Shoulder drag, fr", "The shoulders follow the chest with weight: each clavicle trails the "
+                                           "chest's turn (and its own motion) by about this many frames, "
+                                           "overshooting as Arm bounce says; the arms hang from them. 0: the "
+                                           "shoulders as the walk turns them"),
     "pelvis_drag": ("Pelvis drag, fr", "The hips turn with weight: the pelvis's twist and tilts through a spring "
                                        "about this many frames late (overshooting as Torso bounce says); the legs "
                                        "reach from the late hips, the feet stay planted and the lower back keeps "
