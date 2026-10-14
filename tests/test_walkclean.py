@@ -372,5 +372,71 @@ class FloorTests(unittest.TestCase):
         self.assertLess(float(np.abs(rise - 5.0).max()), 1e-9)
 
 
+class SceneTests(unittest.TestCase):
+    """The walks folder read through maya_walk.scene with no Maya: a raw clip saved, read under clean knobs."""
+
+    def setUp(self):
+        import tempfile
+        self.scene = tw.load("scene")
+        self.files = tw.load("walkfile")
+        self.folder = tempfile.mkdtemp()
+        self.old = self.scene.WALKS
+        self.scene.WALKS = self.folder
+        self.scene._state()["loaded"] = {}
+
+    def tearDown(self):
+        import shutil
+        self.scene.WALKS = self.old
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def save(self, worlds, name="raw"):
+        clip = clip_of(worlds)
+        clip.name = name
+        self.files.save(self.files.path_for(self.folder, name), clip, STATICS, 0)
+        return name
+
+    def save_standing_pose(self, name="standing"):
+        bones = dict((n, dict(STATICS[n], world=STATICS[n]["rest"])) for n in NAMES)
+        self.files.save_pose(self.files.pose_path_for(self.folder, name), name, bones)
+        return name
+
+    def test_a_raw_clip_is_read_cleaned(self):
+        name = self.save(walker_worlds()[:, :P])            # no closing frame: Save walk refused this before
+        walk, statics, start, report = self.scene.load_walk(name, {}, self.scene.NO_REFERENCE)
+        self.assertEqual(walk.P, P)
+        self.assertIn("loop", steps(report))
+
+    def test_the_reading_is_cached_per_knobs_and_reference(self):
+        name = self.save(walker_worlds())
+        a = self.scene.load_walk(name, {}, self.scene.NO_REFERENCE)[0]
+        self.assertIs(self.scene.load_walk(name, {"stride": 1.3}, self.scene.NO_REFERENCE)[0], a)
+        b = self.scene.load_walk(name, {"floor_offset": 4.0}, self.scene.NO_REFERENCE)[0]
+        self.assertIsNot(b, a)
+        rise = b.pos[b.index["pelvis"]] - a.pos[a.index["pelvis"]]
+        self.assertLess(float(np.abs(rise[:, 1] - 4.0).max()), 1e-6)
+
+    def test_the_references_and_a_saved_pose_carried(self):
+        self.assertTrue(os.path.exists(self.scene.REFERENCE_FILE))
+        names, bones = self.files.load_pose(self.scene.REFERENCE_FILE)
+        self.assertGreater(len(bones), 80)
+        pose = self.save_standing_pose()
+        refs = self.scene.reference_names()
+        self.assertEqual((refs[0], refs[-1]), (self.scene.BUILT_IN_REFERENCE, self.scene.NO_REFERENCE))
+        self.assertIn(pose, refs)
+        name = self.save(turned(walker_worlds(), "foot_l", [0, 1, 0], 70.0))
+        report = self.scene.load_walk(name, {}, pose)[3]
+        self.assertIn("foot_l", report.text())
+        carried = self.scene.wp.carried(NAMES, walker_worlds()[:, 0], STATICS,
+                                        self.files.load_pose(self.files.pose_path_for(self.folder, pose))[1],
+                                        self.scene.wt)
+        self.assertLess(float(np.abs(carried["foot_l"][:3, :3] - REST["foot_l"][:3, :3]).max()), 1e-6)
+
+    def test_model_knobs_leave_the_clean_ones_out(self):
+        got = self.scene.model_knobs({"stride": 1.2, "smooth": 2.0, "lift_l": 1.5})
+        self.assertEqual(got, {"stride": 1.2, "lift_l": 1.5})
+        self.assertIn("smooth", self.scene.ALL_DEFAULTS)
+        self.assertIn("stride", self.scene.ALL_DEFAULTS)
+
+
 if __name__ == "__main__":
     unittest.main()
