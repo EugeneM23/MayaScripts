@@ -214,6 +214,14 @@ def yaw_of(r):
     return math.atan2(float(fwd[0]), float(fwd[2]))
 
 
+def bend_side(bend, e):
+    """The unit direction a knee stands off the line `e` toward: the hint `bend` without its part along `e` (any
+    perpendicular when it has none). What two_bone bends toward - read the limb's plane from here, never back
+    off the knee it returns: a limb stretched to its length puts the knee ON the line and that plane is noise."""
+    p = bend - np.dot(bend, e) * e
+    return _unit(p) if np.linalg.norm(p) > 1e-9 else _any_perpendicular(e)
+
+
 def two_bone(hip, ankle, l1, l2, bend, reach):
     """The knee of a hip-knee-ankle chain bending toward `bend`, the leg never straighter than
     reach . (l1 + l2). Returns (knee, the ankle it reaches, how far it falls short)."""
@@ -221,8 +229,7 @@ def two_bone(hip, ankle, l1, l2, bend, reach):
     d = float(np.linalg.norm(v))
     e = v / d if d > 1e-9 else np.array([0.0, -1.0, 0.0])
     d_eff = max(min(d, reach * (l1 + l2)), abs(l1 - l2) + 1e-6)
-    p = bend - np.dot(bend, e) * e
-    p = _unit(p) if np.linalg.norm(p) > 1e-9 else _any_perpendicular(e)
+    p = bend_side(bend, e)
     along = (l1 * l1 - l2 * l2 + d_eff * d_eff) / (2.0 * d_eff)
     height = math.sqrt(max(0.0, l1 * l1 - along * along))
     return hip + along * e + height * p, hip + d_eff * e, max(0.0, d - d_eff)
@@ -1427,7 +1434,7 @@ def _leg(plan, side, f, rots, poss):
     reach = min(max(REACH, own), 1.0)
     knee, reached, short = two_bone(hip, ankle, l1, l2, bend, reach)
     e2 = _unit(reached - hip)
-    b2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+    b2 = bend_side(bend, e2)
     n_src, n_new = _unit(np.cross(e0, bend0)), _unit(np.cross(e2, b2))
     rots[th] = a.rot[th, f] @ align(_unit(k0 - h0), n_src, _unit(knee - hip), n_new)
     rots[ca] = a.rot[ca, f] @ align(_unit(a0 - k0), n_src, _unit(reached - knee), n_new)
@@ -1460,7 +1467,7 @@ def _hold(plan, f, rots, poss, relation, weight, gains):
     e0 = _unit(wrist - shoulder)
     knee, reached, _ = two_bone(shoulder, goal[3, :3], l1, l2, bend, 1.0)
     e2 = _unit(reached - shoulder)
-    b2 = _unit((knee - shoulder) - np.dot(knee - shoulder, e2) * e2)
+    b2 = bend_side(bend, e2)
     n_src, n_new = _unit(np.cross(e0, bend)), _unit(np.cross(e2, b2))
     rots[up] = rots[up] @ align(_unit(elbow - shoulder), n_src, _unit(knee - shoulder), n_new)
     rots[low] = rots[low] @ align(_unit(wrist - elbow), n_src, _unit(reached - knee), n_new)
@@ -2007,7 +2014,7 @@ def _grip_motion(a, kin, chains, k):
             bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
             knee, reached, _ = two_bone(sh, hand[3, :3], lengths[0], lengths[1], bend, 1.0)
             e2 = _unit(reached - sh)
-            bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
+            bend2 = bend_side(bend, e2)
             normal, normal2 = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
             mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal, _unit(knee - sh), normal2)
             ml[f, :3, :3] = orthonormal(kin[low_j, f, :3, :3]) @ align(_unit(wr - el), normal, _unit(reached - knee),
@@ -2224,7 +2231,7 @@ def _blend_frame(a, stop, cyc, w, ankles=None):
         e0 = _unit(ankle0 - hip)
         knee, reached, _ = two_bone(hip, ankle, l1, l2, bend, 1.0)
         e2 = _unit(reached - hip)
-        b2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+        b2 = bend_side(bend, e2)
         n_src, n_new = _unit(np.cross(e0, bend)), _unit(np.cross(e2, b2))
         rots[th] = rots[th] @ align(_unit(knee0 - hip), n_src, _unit(knee - hip), n_new)
         rots[ca] = rots[ca] @ align(_unit(ankle0 - knee0), n_src, _unit(reached - knee), n_new)

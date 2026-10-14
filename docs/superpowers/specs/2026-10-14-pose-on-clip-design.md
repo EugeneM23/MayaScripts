@@ -315,3 +315,9 @@ clip's motion off (the trunk on C to 3e-10 deg) and on (each trunk bone off C as
 its ball under a toe turn, a foot in the air turning about itself, the gait read on the ground against the
 travel). Picture `poseclip_cycle_posture.png`. The window reopened in the animator's Maya and photographed; no
 cycle character in their scene, so the cycle's posture was not seen there.
+
+**The left arm's flip** (the animator, minutes after: «на 15 кадре происходит взрыв левой руки»): the sword's
+two-handed grip under Arm drag 2.74 carried the held hand 3-8 % past the left arm's reach on frames 15-17; the
+IK straightened the arm, the knee on the line, and the plane read back off it flipped the arm 98-171 deg a frame.
+Every IK reads the plane from the hint now (`bend_side`). A unit test holds a hand 10 cm past reach (the old rule:
+168 deg a frame; now under 30, the fixture's own straightening).

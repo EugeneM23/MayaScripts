@@ -10054,6 +10054,9 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
   - a weapon they put in the copy's hand killed the re-key (`weapon_r` constrained); a channel something else
     drives is now left to it and named.
 - **Proof**: `verify_poseclip.py` 30/30, 58 unit tests, `poseclip_cycle_posture.png`.
+- **The left arm exploded at frame 15** under the sword with Arm drag 2.74: trap 245, fixed in every IK of the
+  model (legs, the grip, the grip's springs, the start on the cycle); measured in the animator's copy the left
+  upper arm 98-171 deg a frame before, 7-29 after (the springs' own whip). 60 unit tests.
 
 244. **A mean posture of a gait is no stance.** The cycle's mean local turns put the running foot pointing
      backwards (-150 deg - half a run it is kicked up behind), and a stop's "run" read by its stillness includes
@@ -10061,6 +10064,12 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
      foot is down, and a stop's at speed. And a correction held still on a contact must be the EXTRA over the
      contact's own motion, applied about the contact's point - a total held still, or a turn about the ankle,
      slides a foot that rolls onto its ball.
+245. **A two-bone IK's plane read back off its knee is noise when the limb is straight.** `two_bone` puts the
+     knee off the hip-ankle line toward the hint; stretched to its length (a goal past reach) the knee lies ON the
+     line, and every caller that re-read the plane as `unit(knee - its projection on the line)` got a zero vector's
+     direction: the animator's two-handed grip, its held hand carried 8 % past the left arm's reach by the arm
+     springs, flipped the left arm 98-171 deg a frame («на 15 кадре происходит взрыв левой руки»). Read the plane
+     from the hint (`poseclip.bend_side`, what `two_bone` itself bends toward), in every caller.
 
 240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;

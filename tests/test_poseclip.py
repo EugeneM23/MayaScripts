@@ -752,6 +752,38 @@ class WalkBuilderTools(unittest.TestCase):
             self.assertAlmostEqual(got, was * factor, places=3, msg=side)
 
 
+class StraightLimb(unittest.TestCase):
+    def test_a_limb_stretched_past_its_reach_keeps_its_plane(self):
+        # the left hand held 10 cm past the left arm's reach about frames 20..30 (the grip's spring can carry the held
+        # hand there): the arm straightens on the reach line, its plane still the elbow's - no frame-to-frame flip
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        ix = clip.index
+        kin = clip.worlds.copy()
+        below = sorted(pc._subtree(clip, ix["hand_l"]))
+        for f in range(16, 35):                   # eased in over 16..20 and out over 30..34 (no jump of its own)
+            amount = 10.0 * _smoothstep(min((f - 16) / 4.0, (34 - f) / 4.0, 1.0))
+            push = amount * pc._unit(kin[ix["hand_l"], f, 3, :3] - kin[ix["upperarm_l"], f, 3, :3])
+            kin[below, f, 3, :3] += push
+        chains = dict((s, [ix["%s_%s" % (b, s)] for b in ("upperarm", "lowerarm", "hand")]) for s in pc.SIDES)
+        out = pc._grip_motion(a, kin, chains, pc.knobs(arm_drag=0.5, arm_bounce=0.0))
+        up = pc._batch_orthonormal(out[ix["upperarm_l"]][:, :3, :3])
+        turns = [math.degrees(float(np.linalg.norm(pc._log3(up[f - 1].T @ up[f])))) for f in range(19, 33)]
+        self.assertLess(max(turns), 30.0, [round(t, 1) for t in turns])    # the old plane rule: 155-177 deg
+        for f in range(21, 30):                   # straight: the elbow on the line, the arm's plane the hint's
+            sh, el = out[ix["upperarm_l"]][f, 3, :3], out[ix["lowerarm_l"]][f, 3, :3]
+            hand = out[ix["hand_l"]][f, 3, :3]
+            line = pc._unit(hand - sh)
+            self.assertLess(float(np.linalg.norm((el - sh) - np.dot(el - sh, line) * line)), 1e-6)
+
+    def test_the_bend_side_is_the_hints_off_the_line(self):
+        e = np.array([0.0, -1.0, 0.0])
+        np.testing.assert_allclose(pc.bend_side(np.array([0.3, -0.5, 1.0]), e), pc._unit(np.array([0.3, 0.0, 1.0])))
+        side = pc.bend_side(e * 2.0, e)                         # a hint along the line: any perpendicular
+        self.assertAlmostEqual(float(np.dot(side, e)), 0.0, places=12)
+        self.assertAlmostEqual(float(np.linalg.norm(side)), 1.0, places=12)
+
+
 class LegMatch(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
