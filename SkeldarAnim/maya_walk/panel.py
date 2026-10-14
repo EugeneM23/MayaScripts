@@ -39,8 +39,8 @@ NOTHING = "Select a skeleton - Apply puts the walk on it"
 #  The knobs but Pose (its share stands under the pose's dropdown), one group shown at a time.
 GROUPS = (
     ("step", "Step", ("stride", "tempo", "lift")),
-    ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
-                      "foot_flex")),
+    ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
+                      "foot_lag", "foot_flex")),
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
                           "pelvis_twist", "pelvis_list",
                           "root_sway")),
@@ -66,6 +66,11 @@ LABELS = {
                          "them on one line, 1 is the walk with the pose"),
     "swing_out": ("Swing out, cm", "The swinging foot's path bowed this far out to its side between the "
                                    "steps (negative: in, toward the other leg), in the walk's size"),
+    "leg_match": ("Leg match", "Fits a pose's legs to the gait: a pose standing side-on gives its hips' turn to "
+                               "the spine (the hips face the walk, the shoulders keep the pose), and its knees' "
+                               "and toes' splay and its width are read against its own hips and kept as much as "
+                               "the gait allows - most at a walk, little at a sprint, where a leg swings in the "
+                               "line of travel. 0 takes the pose's legs as they stand"),
     "leg_turn": ("Leg turn", "x how far the pose turns the knees and the toes out (or in); 0 walks on the "
                              "walk's own knees and feet"),
     "knee_foot": ("Knee <-> foot", "A knee turned against its foot past 15 deg (a shin twists that far) "

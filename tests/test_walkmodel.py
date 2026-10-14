@@ -176,7 +176,7 @@ class KnobTests(unittest.TestCase):
 
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
-                         ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
+                         ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
@@ -185,6 +185,7 @@ class KnobTests(unittest.TestCase):
         self.assertEqual((wm.DEFAULTS["stance"], wm.DEFAULTS["swing_out"], wm.DEFAULTS["knee_foot"]), (1.0, 0.0, 0.5))
         self.assertEqual((wm.DEFAULTS["foot_lag"], wm.DEFAULTS["foot_flex"]), (0.0, 1.0))
         self.assertEqual((wm.DEFAULTS["pelvis_twist"], wm.DEFAULTS["pelvis_list"]), (5.0, 4.0))
+        self.assertEqual((wm.DEFAULTS["leg_match"], wm.RANGES["leg_match"]), (1.0, (0.0, 1.0)))
 
     def test_the_meeting_of_a_knee_and_its_foot(self):
         free = math.radians(wm.TWIST_FREE_DEG)
@@ -930,7 +931,8 @@ class PoseTests(unittest.TestCase):
         Knee <-> foot 1 the foot turns to the knee, so the knee keeps the pose's whole turn."""
         w = walk()
         pose = a_pose(w)
-        plain, posed = w.evaluate({"balance": 0.0}), w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0}, pose)
+        plain = w.evaluate({"balance": 0.0})
+        posed = w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0, "leg_match": 0.0}, pose)
         for side, turn in (("l", 30.0), ("r", -20.0)):
             f = int(round(w.feet[side].mid)) % 24
             self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), turn, delta=1.0)
@@ -941,7 +943,7 @@ class PoseTests(unittest.TestCase):
         """A knee turned 30 deg in against an unturned foot: 15 deg of it stays in the shin, the rest is shared -
         the knee 22.5, the foot 7.5 (the right: -20 -> -17.5 and -2.5)."""
         w, c = walk(), clip()
-        plain, posed = w.evaluate({"balance": 0.0}), w.evaluate({"pose": 1.0, "balance": 0.0}, a_pose(w))
+        plain, posed = w.evaluate({"balance": 0.0}), w.evaluate({"pose": 1.0, "balance": 0.0, "leg_match": 0.0}, a_pose(w))
         for side, knee_turn, foot_turn in (("l", 22.5, 7.5), ("r", -17.5, -2.5)):
             f = int(round(w.feet[side].mid)) % 24
             self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), knee_turn,
@@ -957,7 +959,7 @@ class PoseTests(unittest.TestCase):
                 "toe": {"l": math.radians(6.0), "r": math.radians(-4.0)}}
         plain = w.evaluate({"balance": 0.0})
         for turn in (0.0, 0.5):
-            r = w.evaluate({"pose": 1.0, "balance": 0.0, "leg_turn": turn}, pose)
+            r = w.evaluate({"pose": 1.0, "balance": 0.0, "leg_turn": turn, "leg_match": 0.0}, pose)
             for side, knee_deg, toe_deg in (("l", 10.0, 6.0), ("r", -8.0, -4.0)):
                 f = int(round(w.feet[side].mid)) % 24
                 self.assertAlmostEqual(knee_heading(r, w, side, f) - knee_heading(plain, w, side, f), turn * knee_deg,
@@ -1019,6 +1021,86 @@ class PoseTests(unittest.TestCase):
         self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
 
 
+def turned_pose(w, yaw=30.0):
+    """A pose standing side-on: the whole body turned `yaw` deg about up (the pelvis, the spine as the walk's
+    mean on it), as prepare hands it."""
+    j = w.index
+    return {"pelvis": w.wmean[j["pelvis"]] @ rot_y(yaw),
+            "spine": dict((j[n], w.lmean[j[n]]) for n in ("spine_01", "spine_02", "neck_01")),
+            "hips_yaw": math.radians(yaw)}
+
+
+class LegMatchTests(unittest.TestCase):
+    """Leg match (2026-10-14): a pose's stance read against its own hips and faded by the gait - the hips face
+    the walk, the shoulders keep the pose's facing, the knees and toes the symmetric splay x keep."""
+
+    def test_the_gait_keeps_less_of_a_stance_the_faster_it_goes(self):
+        w = walk()
+        v = 120.0 / (24 / 30.0)
+        self.assertAlmostEqual(w.leg_length, L1 + L2, places=6)
+        keep, froude = w.gait_keep(wm.knobs(), 24)
+        self.assertAlmostEqual(froude, v * v / (981.0 * (L1 + L2)), places=9)
+        self.assertAlmostEqual(keep, 1.0 / (1.0 + froude), places=12)
+        self.assertAlmostEqual(w.gait_keep(wm.knobs(stride=1.5), 24)[1], 2.25 * froude, places=9)
+        self.assertAlmostEqual(w.gait_keep(wm.knobs(), 12)[1], 4.0 * froude, places=9)
+
+    def test_the_hips_face_the_walk_and_the_shoulders_keep_the_pose(self):
+        w = walk()
+        pel, top = w.index["pelvis"], w.index["spine_02"]
+        still = {"pose": 1.0, "exaggeration": 0.0, "balance": 0.0}
+        matched = w.evaluate(dict(still, leg_match=1.0), turned_pose(w))
+        raw = w.evaluate(dict(still, leg_match=0.0), turned_pose(w))
+        chest = w.lmean[top] @ w.lmean[w.index["spine_01"]] @ w.wmean[pel] @ rot_y(30.0)
+        for f in (0, 9, 17):
+            self.assertLess(angle(rotations(matched, "pelvis", w)[f] @ w.wmean[pel].T), 1e-6)
+            self.assertLess(angle(rotations(matched, "spine_02", w)[f] @ chest.T), 1e-6)
+            self.assertLess(angle(rotations(raw, "pelvis", w)[f] @ (w.wmean[pel] @ rot_y(30.0)).T), 1e-6)
+
+    def test_the_knees_and_toes_keep_the_symmetric_splay_faded(self):
+        """A stance 20 deg side-on, its knees 15 deg out against its own hips (the right more: one foot back) -
+        the left read 35 against the walk, the right -10: matched, each side the mean splay over the walk's own
+        x keep, outward."""
+        w = walk()
+        knees, toes = w.knee_headings(), w.toe_headings()
+        d = math.radians(20.0)
+        out = {"l": math.radians(5.0), "r": math.radians(25.0)}      # outward against the pose's hips
+        sign = {"l": 1.0, "r": -1.0}
+        pose = {"hips_yaw": d,
+                "knee_turn": dict((s, d + sign[s] * out[s] - knees[s]) for s in "lr"),
+                "toe": dict((s, d + sign[s] * out[s] - toes[s]) for s in "lr"), "width": 12.0}
+        keep = 0.4
+        got = w.matched_pose(pose, 1.0, keep)
+        for key, own in (("knee_turn", knees), ("toe", toes)):
+            splay = math.radians(15.0) - 0.5 * (own["l"] - own["r"])
+            for s in "lr":
+                self.assertAlmostEqual(got[key][s], sign[s] * keep * splay, places=12, msg=(key, s))
+        self.assertAlmostEqual(got["width"], 12.0 * keep, places=12)
+        half = w.matched_pose(pose, 0.5, keep)
+        self.assertAlmostEqual(half["knee_turn"]["l"], 0.5 * (pose["knee_turn"]["l"] + got["knee_turn"]["l"]), places=12)
+        self.assertIs(w.matched_pose(pose, 0.0, keep), pose)
+
+    def test_leg_match_zero_is_the_pose_as_it_was_read(self):
+        w = walk()
+        pose = dict(a_pose(w), hips_yaw=math.radians(25.0), width=10.0,
+                    toe={"l": math.radians(12.0), "r": math.radians(-30.0)})
+        legacy = dict(pose)
+        legacy.pop("hips_yaw")
+        a = w.evaluate({"pose": 1.0, "leg_match": 0.0}, pose).worlds
+        b = w.evaluate({"pose": 1.0, "leg_match": 0.0}, legacy).worlds
+        self.assertLess(float(np.abs(a - b).max()), 1e-12)
+
+    def test_a_fast_gait_runs_on_its_own_legs(self):
+        """The same splayed stance on the walker sped up four times: matched, the knees turn a quarter as far
+        (Froude x16 against x1) - the leg swings in the line of travel."""
+        w = walk()
+        pose = {"hips_yaw": 0.0, "knee_turn": dict((s, s == "l" and math.radians(30.0) or math.radians(-30.0))
+                                                   for s in "lr")}
+        slow = w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0}, pose)
+        fast = w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0, "tempo": 6.0}, pose)
+        self.assertGreater(slow.info["leg_match"]["keep"], 3.0 * fast.info["leg_match"]["keep"])
+        self.assertTrue(slow.info["leg_match"]["on"])
+
+
 def a_grip(w):
     """Arms held: both upper arms forward and the forearms bent in, the walker's own fingers."""
     j = w.index
@@ -1057,11 +1139,11 @@ class PosePartsTests(unittest.TestCase):
         """Knee <-> foot 0: the knees turn to the feet, the feet keep the pose's turn on the ground."""
         w, c = walk(), clip()
         pose = {"width": 12.0, "toe": {"l": math.radians(20.0), "r": math.radians(-30.0)}}
-        r = w.evaluate({"pose": 1.0, "knee_foot": 0.0, "foot_placement": 0.0}, pose)     # the walk's own feet
+        r = w.evaluate({"pose": 1.0, "knee_foot": 0.0, "foot_placement": 0.0, "leg_match": 0.0}, pose)   # the walk's own feet
         ml, mr = int(round(w.feet["l"].mid)) % 24, int(round(w.feet["r"].mid)) % 24
         gap = lambda m, a, b: float(np.dot(m[w.index["foot_l"], a, 3, :3] - m[w.index["foot_r"], b, 3, :3], w.side))
         self.assertAlmostEqual(gap(r.worlds, ml, mr) - gap(c.worlds, ml, mr), 12.0, places=6)
-        narrow = w.evaluate({"pose": 1.0, "stance": 0.5, "foot_placement": 0.0}, pose)
+        narrow = w.evaluate({"pose": 1.0, "stance": 0.5, "foot_placement": 0.0, "leg_match": 0.0}, pose)
         self.assertAlmostEqual(gap(narrow.worlds, ml, mr), 0.5 * (gap(c.worlds, ml, mr) + 12.0), places=6)
         for side, deg in (("l", 20.0), ("r", -30.0)):
             j = w.index["foot_" + side]

@@ -21,6 +21,7 @@ KNOBS = (
     ("ground_time", 1.0, 0.7, 1.8),
     ("stance", 1.0, 0.0, 2.5),
     ("swing_out", 0.0, -30.0, 40.0),
+    ("leg_match", 1.0, 0.0, 1.0),
     ("leg_turn", 1.0, 0.0, 2.0),
     ("knee_foot", 0.5, 0.0, 1.0),
     ("foot_lag", 0.0, 0.0, 6.0),
@@ -72,6 +73,10 @@ AIR_STEPS = 64            # a foot's flight found to 1/this of a frame
 COUNTER_SHARES = (0.4, 0.35, 0.25)   # spine_01..03 take the pelvis's added twist and drop back, these shares
 CHEST_SHARES = (0.25, 0.35, 0.4)     # the top three spine joints take the chest's added twist and sway, these shares
 CHEST_STILL = 0.5                    # degrees: a walk's own chest turn below this has no shape of its own
+# Leg match (docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md): a pose's stance (its splay and
+# width) kept 1 / (1 + Fr / GAIT_FROUDE) by a gait of Froude number Fr = v^2 / (g L) - a walk keeps most of it,
+# a sprint little: a fast leg swings in the line of travel
+GAIT_FROUDE = 1.0
 
 # the arms follow the body with inertia (docs/superpowers/specs/2026-10-12-walk-upper-body-design.md)
 ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps a frame
@@ -475,6 +480,11 @@ def _stem(name):
     return m.group(1) if m else None
 
 
+def _wrapped(angle):
+    """An angle (radians) brought into [-pi, pi)."""
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
 class Clip(object):
     """A walk cycle as data: joint names, parent indices (-1: none), world matrices (J, P+1, 4, 4) on the
     clip's whole frames (the last the first moved by the travel), frames a second, the world's up."""
@@ -815,6 +825,7 @@ class Walk(object):
         flat = self.travel - np.dot(self.travel, self.up) * self.up
         leg = np.mean([np.linalg.norm(self.lt[idx["calf_" + s]], axis=1).mean() +
                        np.linalg.norm(self.lt[idx["foot_" + s]], axis=1).mean() for s in SIDES])
+        self.leg_length = float(leg)          # thigh + calf, both sides' mean (Leg match's Froude number)
         self.twist_gain = float(np.linalg.norm(flat)) / (2.0 * self.strides) / float(leg) / STEP_REF
         self.own_twist = self.own_list = 0.0
         twist, drop = self.pelvis_fit(self.clip.worlds)
@@ -1014,6 +1025,92 @@ class Walk(object):
             src[j], new[j] = self.lmean[j] @ src[p], centre @ new[p]
             out[j] = src[j] @ new[j].T
         return out
+
+    # -- Leg match: a pose's stance against the gait --
+
+    def _heading(self, v):
+        """A direction's heading about up (radians): from the walk's forward toward its side axis (its left)."""
+        return math.atan2(float(np.dot(v, self.side)), float(np.dot(v, self.fwd)))
+
+    def knee_headings(self):
+        """{side: the walk's mean knee heading (radians)} - each frame's knee bend off the hip-ankle line,
+        averaged over the cycle."""
+        out = {}
+        for side in SIDES:
+            bends = []
+            for f in range(self.P):
+                hip, knee, ankle = (self.pos[self.index["%s_%s" % (b, side)]][f] for b in LEG)
+                e = _unit(ankle - hip)
+                bend = (knee - hip) - np.dot(knee - hip, e) * e
+                if np.linalg.norm(bend) > 1e-9:
+                    bends.append(_unit(bend))
+            out[side] = self._heading(np.mean(bends, axis=0)) if bends else 0.0
+        return out
+
+    def toe_headings(self):
+        """{side: the walk's toe heading (radians)} - ankle to ball at the foot's longest stance's middle."""
+        out = {}
+        for side in SIDES:
+            mid = self.feet[side].mid
+            out[side] = self._heading(self.wpos(self.index["ball_" + side], mid) -
+                                      self.wpos(self.index["foot_" + side], mid))
+        return out
+
+    def gait_keep(self, k, n):
+        """(keep, Fr): how much of a pose's stance a gait at these knobs keeps, 1 / (1 + Fr / GAIT_FROUDE) -
+        Fr = v^2 / (g L), the Froude number of the new cycle (its speed after Stride and Tempo, `n` frames; L
+        the legs' thigh + calf)."""
+        flat = self.travel * k["stride"]
+        flat = flat - np.dot(flat, self.up) * self.up
+        speed = float(np.linalg.norm(flat)) / (n / self.fps)
+        froude = speed * speed / (GRAVITY * self.leg_length)
+        return 1.0 / (1.0 + froude / GAIT_FROUDE), froude
+
+    def matched_pose(self, pose, m, keep):
+        """The pose (as prepare hands it) with its legs matched to the gait at Leg match `m` (0: as it is, 1:
+        matched) - the spec's section 2. A pose standing side-on gives its turn about up (`hips_yaw`) back from
+        the pelvis and the lumbar spine takes it (the chest keeps the pose's facing); the knees' and the toes'
+        turns are re-read against the pose's own hips, outward, and only their symmetric part (a front and a
+        back foot are a stance) is kept, over the walk's own, x `keep`; the width x `keep`."""
+        if pose is None or m <= 0.0:
+            return pose
+        out = dict(pose)
+        yaw = float(pose.get("hips_yaw", 0.0))
+        if yaw and "pelvis" in pose:
+            out["pelvis"] = pose["pelvis"] @ exp_rot(self.up * (-m * yaw))
+            if pose.get("spine"):
+                out["spine"] = self._spine_takes(pose, out["pelvis"], m * yaw)
+        sign = {"l": 1.0, "r": -1.0}
+        for key, own in (("knee_turn", self.knee_headings()), ("toe", self.toe_headings())):
+            turns = pose.get(key)
+            if not turns or any(s not in turns for s in SIDES):
+                continue
+            outward = sum(sign[s] * _wrapped(turns[s] + own[s] - yaw) for s in SIDES) / 2.0
+            splay = outward - sum(sign[s] * own[s] for s in SIDES) / 2.0
+            out[key] = dict((s, (1.0 - m) * turns[s] + m * sign[s] * keep * splay) for s in SIDES)
+        if "width" in pose:
+            out["width"] = pose["width"] * ((1.0 - m) + m * keep)
+        return out
+
+    def _spine_takes(self, pose, pelvis, yaw):
+        """The pose's spine locals once its pelvis (now `pelvis`) has given `yaw` (radians, about up) back: the
+        lumbar joints (Twist's counter joints) turn it back in their shares, so every joint above them keeps the
+        pose's world turn."""
+        pel = self.index["pelvis"]
+        cum, done = {}, 0.0
+        for j in sorted(self.counter, key=lambda j: len(self._ancestors(j))):
+            done += self.counter[j]
+            cum[j] = done
+        old, new, spine = {pel: pose["pelvis"]}, {pel: pelvis}, dict(pose["spine"])
+        for j in self.order:
+            p = self.parents[j]
+            if self.kind[j] != "spine" or p not in old:
+                continue
+            old[j] = pose["spine"].get(j, self.lmean[j]) @ old[p]
+            new[j] = old[j] @ exp_rot(self.up * (-yaw * (1.0 - min(cum.get(j, 1.0), 1.0))))
+            if j in pose["spine"] or j in cum:
+                spine[j] = new[j] @ new[p].T
+        return spine
 
     def _placement(self):
         """What Foot placement reads, per foot a list - one contact a step (in source time, hs in [0, P), to = hs
@@ -1766,6 +1863,13 @@ class Walk(object):
                "phi0": self.low_phase + (WEIGHT_WARP_AFTER - 0.25) / self.strides,
                "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"],
                "balance": 0.0 if self.balance_note else k["balance"], "carry": None}
+        # Leg match: the pose's stance read against its own hips and the gait (matched_pose)
+        keep, froude = self.gait_keep(k, n)
+        match = k["leg_match"] if ctx["pose"] is not None else 0.0
+        yaw = float(ctx["pose"].get("hips_yaw", 0.0)) if ctx["pose"] is not None else 0.0
+        ctx["leg_match"] = {"on": match > 0.0, "keep": keep, "froude": froude,
+                            "hips_deg": math.degrees(match * yaw) if "pelvis" in (ctx["pose"] or {}) else 0.0}
+        ctx["pose"] = self.matched_pose(ctx["pose"], match, keep)
         ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0
         ctx["ks"] = ks = sided(k)
         ctx["foot_lag"] = dict((side, ks[side]["foot_lag"] * P / float(n)) for side in SIDES)
@@ -1859,7 +1963,7 @@ class Walk(object):
                 "pelvis": (k["pelvis_rot"] * ctx["ex"] * k["pelvis_twist"] * k["stride"] * self.twist_gain,
                            k["pelvis_rot"] * ctx["ex"] * k["pelvis_list"]),
                 "chest": self.chest_targets(k, ctx["ex"]) if self.chest_shape is not None else None,
-                "arms": arms,
+                "arms": arms, "leg_match": ctx["leg_match"],
                 "balance": balance}
         return Result(worlds, n, info)
 

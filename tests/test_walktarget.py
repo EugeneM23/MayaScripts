@@ -240,8 +240,28 @@ class PoseTests(unittest.TestCase):
         self.assertAlmostEqual(pose["toe"]["l"], 0.0, places=9)     # the walker's feet never turn
         self.assertEqual(pose["weapons"], {})
         only = wp.filtered(pose, ("torso", "feet"))
-        self.assertEqual(sorted(only), ["head", "scale", "spine", "toe", "width"])
-        self.assertEqual(sorted(wp.filtered(pose, ())), ["scale"])
+        self.assertEqual(sorted(only), ["head", "hips_yaw", "scale", "spine", "toe", "width"])
+        self.assertEqual(sorted(wp.filtered(pose, ())), ["hips_yaw", "scale"])
+
+    def test_the_hips_turn_of_a_pose_standing_side_on(self):
+        """The pose's hip line against the walk's mean one, about up (+ toward the walk's side axis): Leg match
+        gives it back from the pelvis. A frame of the walk turns by its own hip line's sway; the same frame
+        with the body turned 30 deg about up on its root reads 30 deg more."""
+        w, c = walk(), clip()
+        heading = lambda d: math.atan2(float(np.dot(d, w.side)), float(np.dot(d, w.fwd)))
+        line = lambda worlds, f: worlds[w.index["thigh_l"], f, 3, :3] - worlds[w.index["thigh_r"], f, 3, :3]
+        mean = (w.pos[w.index["thigh_l"]] - w.pos[w.index["thigh_r"]]).mean(axis=0)
+        pose = wp.prepare(w, statics_of(c), self.pose_of(c, 5), wm, wt)
+        self.assertAlmostEqual(pose["hips_yaw"], heading(line(c.worlds, 5)) - heading(mean), places=9)
+        turned = self.pose_of(c, 5)
+        turn = np.eye(4)
+        turn[:3, :3] = wm.exp_rot(w.up * math.radians(30.0))
+        for name, bone in turned.items():
+            if name == "root":
+                continue
+            bone["world"] =[float(v) for v in (np.array(bone["world"]).reshape(4, 4) @ turn).reshape(16)]
+        self.assertAlmostEqual(wp.prepare(w, statics_of(c), turned, wm, wt)["hips_yaw"],
+                               pose["hips_yaw"] + math.radians(30.0), places=6)
 
     def test_the_pelvis_height_is_read_over_the_feet_not_the_root(self):
         """A pose whose root stands 17 cm under its feet (dw's, 2026-10-13: the pose's pelvis read over the root

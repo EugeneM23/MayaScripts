@@ -47,17 +47,17 @@ def pose_floor_gap(out, walk):
 
 
 def mean_knee_headings(walk):
-    """{side: the walk's mean knee heading} - its bend directions over the cycle, averaged."""
-    out = {}
-    for side in SIDES:
-        bends = []
-        for f in range(walk.P):
-            hip, knee, ankle = (walk.pos[walk.index["%s_%s" % (b, side)]][f] for b in ("thigh", "calf", "foot"))
-            bend = _bend(hip, knee, ankle)
-            if bend is not None:
-                bends.append(bend)
-        out[side] = _heading(np.mean(bends, axis=0), walk)
-    return out
+    """{side: the walk's mean knee heading} - its bend directions over the cycle, averaged (the model's own)."""
+    return walk.knee_headings()
+
+
+def hips_yaw(out, walk):
+    """The pose's turn about up (radians, + toward the walk's side axis): its hip line against the walk's mean
+    hip line - a pose standing side-on (a two-handed sword's stance) reads tens of degrees, which Leg match
+    gives back from the pelvis on the run."""
+    line = _np(out["thigh_l"])[3, :3] - _np(out["thigh_r"])[3, :3]
+    mean = (walk.pos[walk.index["thigh_l"]] - walk.pos[walk.index["thigh_r"]]).mean(axis=0)
+    return _wrapped(_heading(line, walk) - _heading(mean, walk))
 
 
 def _wrapped(angle):
@@ -136,7 +136,7 @@ def prepare(walk, statics, pose_bones, model, target_module):
     grip = len(hands) == 2 and float(np.linalg.norm(hands[0] - hands[1])) < model.GRIP_DIST
     return {"spine": spine, "head": rot("head"), "pelvis": rot("pelvis"), "height": height, "knee_turn": turn,
             "arms": arms, "weapons": weapons, "grip": grip, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
-            "scale": scale}
+            "scale": scale, "hips_yaw": hips_yaw(out, walk)}
 
 
 # what each of the window's checkboxes takes from a pose
@@ -147,4 +147,4 @@ PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees
 def filtered(pose, parts):
     """The prepared pose with only the parts named in `parts` (PARTS' names)."""
     keep = set(key for part, keys in PARTS if part in parts for key in keys)
-    return dict((key, value) for key, value in pose.items() if key in keep or key == "scale")
+    return dict((key, value) for key, value in pose.items() if key in keep or key in ("scale", "hips_yaw"))
