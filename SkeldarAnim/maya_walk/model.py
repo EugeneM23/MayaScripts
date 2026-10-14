@@ -38,6 +38,7 @@ KNOBS = (
     ("spine", 1.0, 0.0, 3.0),
     ("chest_twist", 7.0, -5.0, 60.0),
     ("chest_sway", 5.0, -5.0, 15.0),
+    ("gait_lean", 1.0, 0.0, 1.0),
     ("arms", 1.0, 0.0, 3.0),
     ("elbow", 1.0, 0.0, 3.0),
     ("arm_drag", 1.5, 0.0, 8.0),
@@ -77,6 +78,9 @@ CHEST_STILL = 0.5                    # degrees: a walk's own chest turn below th
 # width) kept 1 / (1 + Fr / GAIT_FROUDE) by a gait of Froude number Fr = v^2 / (g L) - a walk keeps most of it,
 # a sprint little: a fast leg swings in the line of travel
 GAIT_FROUDE = 1.0
+# Gait lean: under a pose's torso the walk's own forward lean over its rest is put back, in the room the pose leaves
+# to this lean of the trunk (degrees from up; the stop builder's rule, docs/superpowers/specs/2026-10-14-pose-on-clip)
+LEAN_LIMIT = 90.0
 
 # the arms follow the body with inertia (docs/superpowers/specs/2026-10-12-walk-upper-body-design.md)
 ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps a frame
@@ -1079,7 +1083,7 @@ class Walk(object):
         if yaw and "pelvis" in pose:
             out["pelvis"] = pose["pelvis"] @ exp_rot(self.up * (-m * yaw))
             if pose.get("spine"):
-                out["spine"] = self._spine_takes(pose, out["pelvis"], m * yaw)
+                out["spine"] = self._spine_takes(pose, m * yaw)
         sign = {"l": 1.0, "r": -1.0}
         for key, own in (("knee_turn", self.knee_headings()), ("toe", self.toe_headings())):
             turns = pose.get(key)
@@ -1092,25 +1096,61 @@ class Walk(object):
             out["width"] = pose["width"] * ((1.0 - m) + m * keep)
         return out
 
-    def _spine_takes(self, pose, pelvis, yaw):
-        """The pose's spine locals once its pelvis (now `pelvis`) has given `yaw` (radians, about up) back: the
+    def _spine_takes(self, pose, yaw):
+        """The pose's spine locals once its pelvis has given `yaw` (radians, about up) back: the
         lumbar joints (Twist's counter joints) turn it back in their shares, so every joint above them keeps the
         pose's world turn."""
-        pel = self.index["pelvis"]
         cum, done = {}, 0.0
         for j in sorted(self.counter, key=lambda j: len(self._ancestors(j))):
             done += self.counter[j]
             cum[j] = done
-        old, new, spine = {pel: pose["pelvis"]}, {pel: pelvis}, dict(pose["spine"])
+        pel = self.index["pelvis"]
+        turn = lambda j: exp_rot(self.up * (-yaw * (1.0 - min(cum.get(j, 0.0 if j == pel else 1.0), 1.0))))
+        return self._torso_turned(pose, turn)[1]
+
+    def _torso_turned(self, pose, turn):
+        """(pelvis, spine locals) of the pose with each of its torso bones' WORLD rotation turned by `turn(j)` (a
+        world rotation post-multiplied) - the pelvis (the walk's mean when the pose has none) and every spine
+        joint; a joint the pose gives no local for stands on the walk's mean local."""
+        pel = self.index["pelvis"]
+        given = pose.get("spine") or {}
+        base = pose["pelvis"] if "pelvis" in pose else self.wmean[pel]
+        old, new, spine = {pel: base}, {pel: base @ turn(pel)}, dict(given)
         for j in self.order:
             p = self.parents[j]
             if self.kind[j] != "spine" or p not in old:
                 continue
-            old[j] = pose["spine"].get(j, self.lmean[j]) @ old[p]
-            new[j] = old[j] @ exp_rot(self.up * (-yaw * (1.0 - min(cum.get(j, 1.0), 1.0))))
-            if j in pose["spine"] or j in cum:
-                spine[j] = new[j] @ new[p].T
-        return spine
+            old[j] = given.get(j, self.lmean[j]) @ old[p]
+            new[j] = old[j] @ turn(j)
+            local = new[j] @ new[p].T
+            if j in given or float(np.abs(local - old[j] @ old[p].T).max()) > 1e-12:
+                spine[j] = local
+        return new[pel], spine
+
+    def leaned_pose(self, pose, gain):
+        """The pose with the walk's own forward lean put back on its torso (Gait lean `gain`): each torso bone the
+        pose replaces turned forward about the walk's side axis by the walk's mean pitch over its rest
+        (`gait_lean`, from prepare) - a forward one x `lean_room` (the room the pose leaves to LEAN_LIMIT), a
+        backward one as it is. A pose without its pelvis stands on the walk's, which leans already: its spine
+        takes only its own lean over the pelvis's."""
+        if pose is None or gain <= 0.0 or not pose.get("gait_lean"):
+            return pose
+        thetas, room = pose["gait_lean"], float(pose.get("lean_room", 1.0))
+        lean = lambda j: gain * (thetas.get(j, 0.0) * (room if thetas.get(j, 0.0) > 0.0 else 1.0))
+        pel, head = self.index["pelvis"], self.index.get("head")
+        out = dict(pose)
+        if "pelvis" in pose or pose.get("spine"):
+            own = "pelvis" in pose
+            under = 0.0 if own else lean(pel)
+            turn = lambda j: exp_rot(self.side * ((lean(pel) if own else 0.0) if j == pel else lean(j) - under))
+            pelvis, spine = self._torso_turned(pose, turn)
+            if own:
+                out["pelvis"] = pelvis
+            if pose.get("spine"):
+                out["spine"] = spine
+        if "head" in pose and head is not None:
+            out["head"] = pose["head"] @ exp_rot(self.side * lean(head))
+        return out
 
     def _placement(self):
         """What Foot placement reads, per foot a list - one contact a step (in source time, hs in [0, P), to = hs
@@ -1869,7 +1909,7 @@ class Walk(object):
         yaw = float(ctx["pose"].get("hips_yaw", 0.0)) if ctx["pose"] is not None else 0.0
         ctx["leg_match"] = {"on": match > 0.0, "keep": keep, "froude": froude,
                             "hips_deg": math.degrees(match * yaw) if "pelvis" in (ctx["pose"] or {}) else 0.0}
-        ctx["pose"] = self.matched_pose(ctx["pose"], match, keep)
+        ctx["pose"] = self.leaned_pose(self.matched_pose(ctx["pose"], match, keep), k["gait_lean"])
         ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0
         ctx["ks"] = ks = sided(k)
         ctx["foot_lag"] = dict((side, ks[side]["foot_lag"] * P / float(n)) for side in SIDES)

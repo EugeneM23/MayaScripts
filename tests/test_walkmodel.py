@@ -178,7 +178,7 @@ class KnobTests(unittest.TestCase):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
-                          "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
+                          "spine", "chest_twist", "chest_sway", "gait_lean", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
@@ -1099,6 +1099,41 @@ class LegMatchTests(unittest.TestCase):
         fast = w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0, "tempo": 6.0}, pose)
         self.assertGreater(slow.info["leg_match"]["keep"], 3.0 * fast.info["leg_match"]["keep"])
         self.assertTrue(slow.info["leg_match"]["on"])
+
+
+class GaitLeanTests(unittest.TestCase):
+    """Gait lean (2026-10-14, the stop builder's idea): a pose's torso replaces the walk's mean, and the walk's
+    own forward lean over its rest (a run leans into it) went with it - it is put back on the pose's bones, a
+    forward lean in the room the pose leaves to horizontal."""
+
+    def leaned(self, w):
+        pose = a_pose(w)
+        j = w.index
+        pose["gait_lean"] = {j["pelvis"]: math.radians(10.0), j["spine_01"]: math.radians(14.0),
+                             j["spine_02"]: math.radians(20.0), j["neck_01"]: math.radians(-6.0),
+                             j["head"]: math.radians(8.0)}
+        pose["lean_room"] = 0.5
+        return pose
+
+    def test_each_bone_takes_its_lean_on_the_pose_forward_in_the_room(self):
+        w = walk()
+        pose = self.leaned(w)
+        still = {"pose": 1.0, "exaggeration": 0.0, "balance": 0.0}
+        r = w.evaluate(dict(still, gait_lean=1.0), pose)
+        plain = w.evaluate(dict(still, gait_lean=0.0), pose)
+        for name, deg in (("pelvis", 5.0), ("spine_01", 7.0), ("spine_02", 10.0), ("neck_01", -6.0)):
+            for f in (0, 13):
+                want = rotations(plain, name, w)[f] @ wm.exp_rot(w.side * math.radians(deg))
+                self.assertLess(angle(rotations(r, name, w)[f] @ want.T), 1e-6, (name, f))
+        want = rotations(plain, "head", w)[0] @ wm.exp_rot(w.side * math.radians(4.0))
+        self.assertLess(angle(rotations(r, "head", w)[0] @ want.T), 1e-6)
+
+    def test_zero_or_no_lean_is_the_pose_as_it_stood(self):
+        w = walk()
+        a = w.evaluate({"pose": 1.0, "gait_lean": 0.0}, self.leaned(w)).worlds
+        b = w.evaluate({"pose": 1.0}, a_pose(w)).worlds
+        self.assertLess(float(np.abs(a - b).max()), 1e-12)
+        self.assertEqual(wm.DEFAULTS["gait_lean"], 1.0)
 
 
 def a_grip(w):

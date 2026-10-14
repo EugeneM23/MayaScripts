@@ -240,8 +240,36 @@ class PoseTests(unittest.TestCase):
         self.assertAlmostEqual(pose["toe"]["l"], 0.0, places=9)     # the walker's feet never turn
         self.assertEqual(pose["weapons"], {})
         only = wp.filtered(pose, ("torso", "feet"))
-        self.assertEqual(sorted(only), ["head", "hips_yaw", "scale", "spine", "toe", "width"])
-        self.assertEqual(sorted(wp.filtered(pose, ())), ["hips_yaw", "scale"])
+        self.assertEqual(sorted(only), ["gait_lean", "head", "hips_yaw", "lean_room", "scale", "spine", "toe", "width"])
+        self.assertEqual(sorted(wp.filtered(pose, ())), ["gait_lean", "hips_yaw", "lean_room", "scale"])
+
+    def test_the_gait_s_lean_against_its_rest(self):
+        """Each torso bone's forward pitch (about the walk's side axis) of the walk's mean over the skeleton's rest
+        - what a pose's torso would take away and Gait lean gives back - and the room the pose leaves to
+        horizontal: the rest itself as the pose leaves all of it (1)."""
+        w, c = walk(), clip()
+        pose = wp.prepare(w, statics_of(c), self.pose_of(c, 0), wm, wt)        # the rest (frame 0) as the pose
+        self.assertAlmostEqual(pose["lean_room"], 1.0, places=9)
+        for name in ("pelvis", "spine_01", "spine_02", "neck_01", "head"):
+            j = w.index[name]
+            want = float(np.dot(wm.log_rot(c.worlds[j, 0, :3, :3].T @ w.wmean[j]), w.side))
+            self.assertAlmostEqual(pose["gait_lean"][j], want, places=9, msg=name)
+        self.assertNotIn(w.index["thigh_l"], pose["gait_lean"])
+        bent = self.pose_of(c, 0)
+        turn = np.eye(4)
+        turn[:3, :3] = wm.exp_rot(w.side * math.radians(45.0))      # the pose 45 deg further forward from the hips
+        hips = np.array(bent["pelvis"]["world"]).reshape(4, 4)
+        for name in ("pelvis", "spine_01", "spine_02", "neck_01", "head"):
+            m = np.array(bent[name]["world"]).reshape(4, 4)
+            m[3, :3] -= hips[3, :3]
+            m = m @ turn
+            m[3, :3] += hips[3, :3]
+            bent[name]["world"] = [float(v) for v in m.reshape(16)]
+        leaned = wp.prepare(w, statics_of(c), bent, wm, wt)
+        line = lambda worlds: worlds[w.index["neck_01"], 0, 3, :3] - worlds[w.index["pelvis"], 0, 3, :3]
+        rest_lean = math.degrees(math.atan2(float(np.dot(line(c.worlds), w.fwd)), float(np.dot(line(c.worlds), w.up))))
+        self.assertAlmostEqual(leaned["lean_room"], (90.0 - rest_lean - 45.0) / (90.0 - rest_lean), places=4)
+        self.assertEqual(sorted(k for k in wp.filtered(pose, ()) if k != "scale"), ["gait_lean", "hips_yaw", "lean_room"])
 
     def test_the_hips_turn_of_a_pose_standing_side_on(self):
         """The pose's hip line against the walk's mean one, about up (+ toward the walk's side axis): Leg match

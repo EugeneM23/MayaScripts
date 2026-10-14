@@ -60,6 +60,45 @@ def hips_yaw(out, walk):
     return _wrapped(_heading(line, walk) - _heading(mean, walk))
 
 
+def _rest_on_walk(walk, walk_rest):
+    """{name: world 4x4} of the walk's skeleton at its rest, stood on the walk's root at its first frame."""
+    on = np.linalg.inv(_np(walk_rest["root"]["world"])) @ walk.clip.worlds[walk.index["root"], 0]
+    return dict((name, _np(walk_rest[name]["world"]) @ on) for name in walk.names if name in walk_rest)
+
+
+def _trunk_lean(pelvis, neck, walk):
+    """The trunk line's (pelvis to neck_01, two points) forward lean from up, degrees."""
+    line = np.asarray(neck, float) - np.asarray(pelvis, float)
+    return math.degrees(math.atan2(float(np.dot(line, walk.fwd)), float(np.dot(line, walk.up))))
+
+
+def gait_lean(walk, walk_rest, model):
+    """{joint: radians} - each torso bone's (pelvis, spine, neck, head) forward pitch about the walk's side axis of
+    the walk's mean over the skeleton's rest: a run's lean into it, which a pose's torso replaces and Gait lean puts
+    back (the stop builder's rule: the clip's motion over its standing reference rides on the pose)."""
+    rest = _rest_on_walk(walk, walk_rest)
+    out = {}
+    for j, name in enumerate(walk.names):
+        if walk.kind[j] in ("pelvis", "spine", "head") and name in rest:
+            delta = model.orthonormal(rest[name][:3, :3]).T @ walk.wmean[j]
+            out[j] = float(np.dot(model.log_rot(delta), walk.side))
+    return out
+
+
+def lean_room(out, walk, walk_rest, model):
+    """How much of the walk's forward lean a pose's torso takes on top of its own (0..1): the room it leaves to
+    model.LEAN_LIMIT against the rest's (a trunk already bent leans forward less - the goblin 0.38, the
+    two-handed sword 0.88 on a sprint); 1 without a neck_01."""
+    rest = _rest_on_walk(walk, walk_rest)
+    if not all(n in out and n in rest for n in ("pelvis", "neck_01")):
+        return 1.0
+    mine = _trunk_lean(_np(out["pelvis"])[3, :3], _np(out["neck_01"])[3, :3], walk)
+    standing = _trunk_lean(rest["pelvis"][3, :3], rest["neck_01"][3, :3], walk)
+    if model.LEAN_LIMIT - standing <= 1e-6:
+        return 1.0
+    return min(max((model.LEAN_LIMIT - mine) / (model.LEAN_LIMIT - standing), 0.0), 1.0)
+
+
 def _wrapped(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
@@ -136,9 +175,12 @@ def prepare(walk, statics, pose_bones, model, target_module):
     grip = len(hands) == 2 and float(np.linalg.norm(hands[0] - hands[1])) < model.GRIP_DIST
     return {"spine": spine, "head": rot("head"), "pelvis": rot("pelvis"), "height": height, "knee_turn": turn,
             "arms": arms, "weapons": weapons, "grip": grip, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
-            "scale": scale, "hips_yaw": hips_yaw(out, walk)}
+            "scale": scale, "hips_yaw": hips_yaw(out, walk), "gait_lean": gait_lean(walk, walk_rest, model),
+            "lean_room": lean_room(out, walk, walk_rest, model)}
 
 
+# what the model reads off every pose, whatever its parts: its size, its hips' turn, the walk's lean under it
+ALWAYS = ("scale", "hips_yaw", "gait_lean", "lean_room")
 # what each of the window's checkboxes takes from a pose
 PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees", ("knee_turn",)),
          ("arms", ("arms", "weapons", "grip")), ("feet", ("width", "toe")))
@@ -147,4 +189,4 @@ PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees
 def filtered(pose, parts):
     """The prepared pose with only the parts named in `parts` (PARTS' names)."""
     keep = set(key for part, keys in PARTS if part in parts for key in keys)
-    return dict((key, value) for key, value in pose.items() if key in keep or key in ("scale", "hips_yaw"))
+    return dict((key, value) for key, value in pose.items() if key in keep or key in ALWAYS)

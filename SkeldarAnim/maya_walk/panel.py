@@ -44,7 +44,7 @@ GROUPS = (
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
                           "pelvis_twist", "pelvis_list",
                           "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "head")),
+    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "head")),
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
 )
@@ -100,6 +100,9 @@ LABELS = {
                                    "normal step; it grows with the step. People: about 7"),
     "chest_sway": ("Chest sway", "deg: the shoulder line tilts this far each way over the steps. People: "
                                  "about 5"),
+    "gait_lean": ("Gait lean", "Under a pose's torso, the walk's own forward lean (a run leans into it) is "
+                               "kept on top of the pose - as much of it as the room the pose leaves to "
+                               "horizontal: a bent pose leans further less. 0 is the pose's torso as it stands"),
     "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
     "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
                      "hands holding one thing together hold it"),
