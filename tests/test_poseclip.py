@@ -89,11 +89,12 @@ def _smoothstep(u):
     return u * u * (3.0 - 2.0 * u)
 
 
-def synthetic_stop(frames=50, wide=0.0):
+def synthetic_stop(frames=50, wide=0.0, lean_end=0.0, drop_end=0.0):
     """Manny's skeleton doing a small stop in place: the pelvis low, swaying and dipping, the spine
     leaning and the left arm swinging until frame ~29, then standing still at its bind (30..). The right
     foot planted throughout; the left planted 10 cm behind (0..9), stepping to its bind (9..15) and planted
-    there (15..). Legs by IK. `wide` cm moves both feet outward (a wider stance throughout)."""
+    there (15..). Legs by IK. `wide` cm moves both feet outward (a wider stance throughout); `lean_end` (radians)
+    and `drop_end` (cm) lean the spine and lower the pelvis in the still part (a pose)."""
     names, parents, rest = _template()
     J = len(names)
     ix = dict((n, i) for i, n in enumerate(names))
@@ -103,8 +104,9 @@ def synthetic_stop(frames=50, wide=0.0):
     for f in range(frames):
         s = _smoothstep((f - 22) / 8.0)
         bump = math.sin(math.pi * min(f, 29) / 29.0) if f <= 29 else 0.0
-        offset = np.array([2.0 * math.sin(2 * math.pi * f / 29.0) * (1 - s), -6.0 * (1 - s) - 4.0 * bump, 3.0 * bump])
-        lean = 0.35 * bump
+        offset = np.array([2.0 * math.sin(2 * math.pi * f / 29.0) * (1 - s),
+                           -6.0 * (1 - s) - 4.0 * bump - drop_end * s, 3.0 * bump])
+        lean = 0.35 * bump + lean_end * s
         swing = 0.5 * math.sin(2 * math.pi * f / 14.0) * (1 - s)
         ankles = {"r": rest[ix["foot_r"], 3, :3] + np.array([-wide, 0.0, 0.0]),
                   "l": rest[ix["foot_l"], 3, :3] + np.array([wide, 0.0, 0.0])}
@@ -244,6 +246,145 @@ class Analysis(unittest.TestCase):
         self.assertAlmostEqual(float(a.masses.sum()), 1.0, places=9)
         # the reference stands with both feet down, half the weight on each
         np.testing.assert_allclose(a.weights[b], [0.5, 0.5])
+
+
+def statics_of(clip):
+    names, parents, rest = _template()
+    out = {}
+    for j, name in enumerate(names):
+        p = parents[j]
+        out[name] = {"parent": names[p] if p >= 0 else None, "canonical": name,
+                     "rest": [float(v) for v in rest[j].reshape(16)]}
+    return out
+
+
+def pose_from(clip, frame):
+    """A pose: the clip's skeleton standing as at `frame` (the template's rest as its rest)."""
+    statics = statics_of(clip)
+    bones = {}
+    for leaf, bone in statics.items():
+        b = dict(bone)
+        b["world"] = [float(v) for v in clip.worlds[clip.index[leaf], frame].reshape(16)]
+        bones[leaf] = b
+    return bones
+
+
+def _length(worlds, a, b):
+    return np.linalg.norm(worlds[a, :, 3, :3] - worlds[b, :, 3, :3], axis=1)
+
+
+class Pose(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.clip = synthetic_stop()
+        cls.a = pc.Analysis(cls.clip)
+        cls.statics = statics_of(cls.clip)
+
+    def test_the_reference_as_a_pose_reads_as_the_reference(self):
+        pose = pc.prepare(self.a, self.statics, pose_from(self.clip, self.clip.F - 1))
+        pelvis = self.clip.index["pelvis"]
+        np.testing.assert_allclose(pose["rel"][pelvis], self.a.rel_ref[pelvis], atol=1e-6)
+        spine = self.clip.index["spine_03"]
+        np.testing.assert_allclose(pose["rel"][spine], self.a.rel_ref[spine], atol=1e-6)
+        self.assertAlmostEqual(pose["height"], self.a.h_ref, places=4)
+        self.assertAlmostEqual(pose["width"], 0.0, places=4)
+        for side in pc.SIDES:
+            self.assertAlmostEqual(pose["knee_turn"][side], 0.0, places=4)
+            ankle = self.a.feet[side]["ankle"][self.clip.F - 1]
+            np.testing.assert_allclose(pose["feet"][side][3, :3], ankle, atol=1e-4)
+        np.testing.assert_allclose(pose["offset"], self.a.ref_offset, atol=1e-4)
+        self.assertEqual(pose["scale"], 1.0)
+        self.assertFalse(pose["grip"])
+
+    def test_a_lower_wider_pose(self):
+        other = synthetic_stop(wide=8.0, drop_end=12.0, lean_end=0.4)
+        pose = pc.prepare(self.a, self.statics, pose_from(other, other.F - 1))
+        self.assertAlmostEqual(pose["height"], self.a.h_ref - 12.0, places=3)
+        self.assertAlmostEqual(pose["width"], 16.0, places=3)
+
+
+class Synthesis(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.clip = synthetic_stop()
+        cls.a = pc.Analysis(cls.clip)
+        cls.statics = statics_of(cls.clip)
+        cls.other = synthetic_stop(wide=8.0, drop_end=12.0, lean_end=0.4)
+        cls.pose = pc.prepare(cls.a, cls.statics, pose_from(cls.other, cls.other.F - 1))
+        cls.full = pc.evaluate(cls.a, cls.pose, share=1.0, motion=1.0)
+
+    def test_share_zero_is_the_clip(self):
+        result = pc.evaluate(self.a, self.pose, share=0.0, motion=1.0)
+        np.testing.assert_allclose(result.worlds, self.clip.worlds, atol=1e-4)
+        self.assertLess(result.info["carry"], 1e-3)
+        self.assertEqual(result.info["drop"], 0.0)
+
+    def test_share_one_motion_zero_stands_in_the_pose_in_the_reference(self):
+        result = pc.evaluate(self.a, self.pose, share=1.0, motion=0.0)
+        f = self.clip.F - 1
+        ix = self.clip.index
+        for name in ("pelvis", "spine_01", "spine_03", "neck_01", "head", "upperarm_l", "hand_r"):
+            j = ix[name]
+            np.testing.assert_allclose(result.worlds[j, f, :3, :3], self.other.worlds[j, f, :3, :3], atol=1e-5,
+                                       err_msg=name)
+        pelvis = ix["pelvis"]
+        self.assertAlmostEqual(float(result.worlds[pelvis, f, 3, 1]), float(self.other.worlds[pelvis, f, 3, 1]), places=4)
+        for side in pc.SIDES:
+            j = ix["foot_" + side]
+            np.testing.assert_allclose(result.worlds[j, f, 3, :3], self.other.worlds[j, f, 3, :3], atol=1e-4)
+        # the balance puts the pelvis where the pose has it over its feet
+        np.testing.assert_allclose(result.worlds[pelvis, f, 3, [0, 2]], self.other.worlds[pelvis, f, 3, [0, 2]],
+                                   atol=0.05)
+
+    def test_planted_feet_stay_planted(self):
+        for side in pc.SIDES:
+            j = self.clip.index["foot_" + side]
+            new = self.full.worlds[j, :, 3, :3]
+            old = self.clip.worlds[j, :, 3, :3]
+            for c0, c1 in self.a.feet[side]["contacts"]:
+                for f in range(c0 + 1, c1 + 1):
+                    moved = float(np.linalg.norm(new[f] - new[f - 1]))
+                    own = float(np.linalg.norm(old[f] - old[f - 1]))
+                    self.assertLessEqual(moved, own + 1e-4, "%s frame %d" % (side, f))
+
+    def test_bone_lengths_are_the_clips(self):
+        ix = self.clip.index
+        for a, b in (("thigh_l", "calf_l"), ("calf_r", "foot_r"), ("spine_03", "spine_04"), ("upperarm_l", "lowerarm_l"),
+                     ("foot_l", "ball_l")):
+            np.testing.assert_allclose(_length(self.full.worlds, ix[a], ix[b]), _length(self.clip.worlds, ix[a], ix[b]),
+                                       atol=1e-6, err_msg=a + "-" + b)
+
+    def test_the_balance(self):
+        a = self.a
+        plan_offset = (self.pose["offset"] - a.ref_offset)
+        com = np.tensordot(a.masses, self.full.worlds[:, :, 3, :3], axes=(0, 0))
+        pivots = dict((s, 0.5 * (self.full.worlds[self.clip.index["foot_" + s], :, 3, :3]
+                                  + self.full.worlds[self.clip.index["ball_" + s], :, 3, :3])) for s in pc.SIDES)
+        support = pc.support_path(a.weights, pivots)
+        new = com - support
+        old = a.com - a.support + plan_offset
+        for f in range(self.clip.F):
+            if a.feet["l"]["down"][f] or a.feet["r"]["down"][f]:
+                self.assertLess(float(np.linalg.norm((new[f] - old[f])[[0, 2]])), 0.05, "frame %d" % f)
+
+    def test_the_final_stance_and_the_height_rule(self):
+        f = self.clip.F - 1
+        ix = self.clip.index
+        for side in pc.SIDES:
+            j = ix["foot_" + side]
+            np.testing.assert_allclose(self.full.worlds[j, f, 3, :3], self.pose["feet"][side][3, :3], atol=1e-4)
+        pelvis = ix["pelvis"]
+        height = self.full.worlds[pelvis, :, 3, 1] - self.a.floor
+        expect = self.pose["height"] * (self.a.pos[pelvis, :, 1] - self.a.floor) / self.a.h_ref
+        self.assertTrue(np.all(height <= expect + 1e-4))
+        np.testing.assert_allclose(height[self.a.reference[0]:], expect[self.a.reference[0]:], atol=1e-3)
+
+    def test_motion_zero_stills_the_torso(self):
+        result = pc.evaluate(self.a, self.pose, share=1.0, motion=0.0)
+        j = self.clip.index["spine_02"]
+        rel = result.worlds[j, :, :3, :3] @ np.swapaxes(self.a.heading, -1, -2)
+        spread = max(float(np.abs(rel[f] - rel[0]).max()) for f in range(self.clip.F))
+        self.assertLess(spread, 1e-6)
 
 
 if __name__ == "__main__":

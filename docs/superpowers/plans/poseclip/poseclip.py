@@ -498,3 +498,471 @@ class Analysis(object):
                 if best is None or err < best[0] - 1e-9:
                     best = (err, j)
             self.follows[h] = best[1]
+
+
+# ---- the pose against the reference ----
+
+def _np4(m):
+    return np.array([float(v) for v in m]).reshape(4, 4) if len(m) == 16 else np.array(m, float).reshape(4, 4)
+
+
+def _bend(hip, knee, ankle):
+    e = _unit(ankle - hip)
+    b = (knee - hip) - np.dot(knee - hip, e) * e
+    return _unit(b) if np.linalg.norm(b) > 1e-6 else None
+
+
+def _wrapped(angle):
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _flat_heading(v):
+    """A floor direction's heading about up in the reference frame (0 = +Z, + toward +X)."""
+    return math.atan2(float(v[0]), float(v[2]))
+
+
+def _leg_lengths(bones, leaves):
+    th, ca, fo = (_np4(bones[leaf]["rest"])[3, :3] for leaf in leaves)
+    return float(np.linalg.norm(ca - th)), float(np.linalg.norm(fo - ca))
+
+
+def prepare(analysis, statics, pose_bones):
+    """The pose read against the clip's reference (the spec's "The pose"): `statics` the clip's skeleton
+    {leaf: {"parent", "canonical", "rest"}}, `pose_bones` the pose's {leaf: {"parent", "canonical", "rest",
+    "world"}} (16 floats each). Carried by posemath.Transfer onto the clip's skeleton placed on the root at the
+    reference's middle frame - the legs' ratio for the size, 1 for a twin."""
+    import posemath as pm
+    clip, a = analysis.clip, analysis
+    target_rest = {}
+    first = {}
+    for leaf, bone in statics.items():
+        if leaf not in clip.index:
+            continue
+        rest = dict(bone)
+        rest["world"] = list(bone["rest"])
+        target_rest[leaf] = rest
+        now = dict(bone)
+        now["world"] = [float(v) for v in clip.worlds[clip.index[leaf], a.mid].reshape(16)]
+        first[leaf] = now
+    pairs = pm.pairs(pose_bones, target_rest)
+    members = set(s for t, s in pairs.items() if not pm.is_helper(t))
+    legs = ("thigh", "calf", "foot")
+    missing = [n for n in ("pelvis",) + tuple("%s_%s" % (b, s) for s in SIDES for b in legs) if n not in pairs]
+    if missing:
+        raise Refusal("the pose's skeleton has nothing for the clip's %s" % ", ".join(missing))
+    ratios = []
+    for side in SIDES:
+        mine = tuple("%s_%s" % (b, side) for b in legs)
+        theirs = tuple(pairs[leaf] for leaf in mine)
+        ratios.append(sum(_leg_lengths(target_rest, mine)) / max(sum(_leg_lengths(pose_bones, theirs)), 1e-9))
+    ratio = float(np.mean(ratios))
+    scale = 1.0 if (pm.twin(pairs, pose_bones, target_rest) and abs(ratio - 1.0) <= 0.01) else ratio
+    transfer = pm.Transfer(pose_bones, target_rest, pairs, members, scale=scale)
+    out = transfer.frame(root_world=transfer.place(first))
+    world = {}
+    for leaf, m in out.items():
+        if leaf in clip.index:
+            world[clip.index[leaf]] = np.array(pm.flat(m)).reshape(4, 4)
+    rot = dict((j, orthonormal(m[:3, :3])) for j, m in world.items())
+    pos = dict((j, m[3, :3].copy()) for j, m in world.items())
+    heading = a.heading[a.mid]                       # the identity: the reference's heading is the zero
+    rel = dict((j, r @ heading.T) for j, r in rot.items())
+    local = {}
+    for j, r in rot.items():
+        p = clip.parents[j]
+        if p >= 0 and p in rot:
+            local[j] = r @ rot[p].T
+    idx = clip.index
+    feet = dict((s, idx["foot_" + s]) for s in SIDES)
+    balls = dict((s, idx["ball_" + s]) for s in SIDES)
+    floor = min(float(pos[balls[s]][1]) for s in SIDES)
+    height = float(pos[a.pelvis][1]) - floor
+    # the stance about the reference's midpoint between its ankles
+    ra, rb = a.reference
+    mid_ref = 0.5 * (a.feet["l"]["ankle"][ra:rb + 1].mean(axis=0) + a.feet["r"]["ankle"][ra:rb + 1].mean(axis=0))
+    mid_pose = 0.5 * (pos[feet["l"]] + pos[feet["r"]])
+    targets = {}
+    for s in SIDES:
+        place = pos[feet[s]] - mid_pose + mid_ref
+        place[1] = float(pos[feet[s]][1]) - floor + a.floor
+        targets[s] = matrix(rot[feet[s]], place)
+    ball_local = dict((s, rot[balls[s]] @ rot[feet[s]].T) for s in SIDES)
+    # the knees' bend: the pose's heading against the reference's
+    knee_turn = {}
+    for s in SIDES:
+        th, ca, fo = a.feet[s]["joints"]
+        pose_bend = _bend(pos[th], pos[ca], pos[fo])
+        bends = [b for b in (_bend(a.pos[th, f], a.pos[ca, f], a.pos[fo, f]) for f in range(ra, rb + 1))
+                 if b is not None]
+        if pose_bend is None or not bends:
+            knee_turn[s] = 0.0
+        else:
+            knee_turn[s] = _wrapped(_flat_heading(pose_bend) - _flat_heading(np.mean(bends, axis=0)))
+    side_axis = np.array([1.0, 0.0, 0.0])
+    width = float(np.dot(pos[feet["l"]] - pos[feet["r"]], side_axis)) - float(np.dot(
+        a.feet["l"]["ankle"][ra:rb + 1].mean(axis=0) - a.feet["r"]["ankle"][ra:rb + 1].mean(axis=0), side_axis))
+    # the hands and the weapon bones, read off the pose's own bones (their translations at the clip's size)
+    grip, grip_rel, holds = False, None, {}
+    hands = [pairs.get("hand_" + s) for s in SIDES]
+    if all(h in pose_bones for h in hands):
+        wl, wr = (_np4(pose_bones[h]["world"]) for h in hands)
+        if float(np.linalg.norm(wl[3, :3] - wr[3, :3])) * scale < GRIP_DIST * scale:
+            grip = True
+            grip_rel = wl @ np.linalg.inv(wr)
+            grip_rel[:3, :3] = orthonormal(grip_rel[:3, :3])
+            grip_rel[3, :3] *= scale
+    for h, body in a.follows.items():
+        name, body_name = clip.names[h], clip.names[body]
+        if name.startswith("weapon_") and pairs.get(name) in pose_bones and pairs.get(body_name) in pose_bones:
+            held = _np4(pose_bones[pairs[name]]["world"]) @ np.linalg.inv(_np4(pose_bones[pairs[body_name]]["world"]))
+            held[:3, :3] = orthonormal(held[:3, :3])
+            held[3, :3] *= scale
+            holds[h] = held
+    # the balance: the pose's centre of mass against the centre of its two feet
+    com = sum(a.masses[j] * pos[j] for j in pos)
+    support = 0.5 * sum(0.5 * (pos[feet[s]] + pos[balls[s]]) for s in SIDES)
+    offset = com - support
+    offset[1] = 0.0
+    return {"rel": rel, "local": local, "height": height, "feet": targets, "ball": ball_local,
+            "knee_turn": knee_turn, "grip": grip, "grip_rel": grip_rel, "holds": holds, "offset": offset,
+            "width": width, "scale": scale, "world": world}
+
+
+# ---- the synthesis ----
+
+def _smooth(u):
+    u = min(max(u, 0.0), 1.0)
+    return u * u * (3.0 - 2.0 * u)
+
+
+class Result(object):
+    def __init__(self, worlds, info):
+        self.worlds, self.info = worlds, info
+
+
+class _Motions(object):
+    """Each foot's rigid motion of space a frame: (Q, c, d) - x' = (x - c) . Q + c + d - and how far it is on its
+    way to the final stance (0..1)."""
+
+    def __init__(self, analysis, pose, share, feet_on):
+        a = analysis
+        F = a.clip.F
+        self.Q = dict((s, np.tile(np.eye(3), (F, 1, 1))) for s in SIDES)
+        self.c = dict((s, np.zeros((F, 3))) for s in SIDES)
+        self.d = dict((s, np.zeros((F, 3))) for s in SIDES)
+        self.final = dict((s, np.zeros(F)) for s in SIDES)
+        self.final_contact = dict((s, None) for s in SIDES)
+        self.moved = dict((s, 0) for s in SIDES)
+        if pose is None or share <= 0.0 or not feet_on:
+            return
+        ra, rb = a.reference
+        for s in SIDES:
+            foot = a.feet[s]
+            cts = foot["contacts"]
+            if not cts:
+                continue
+            fo = foot["joints"][2]
+            sign = 1.0 if s == "l" else -1.0
+            last = len(cts) - 1 if cts[-1][1] >= ra else None
+            self.final_contact[s] = last
+            motions = []
+            for k, (c0, c1) in enumerate(cts):
+                ankle = foot["ankle"][c0:c1 + 1].mean(axis=0)
+                if k == last:
+                    wc = mean_rot(a.rot[fo, c0:c1 + 1])
+                    target = pose["feet"][s]
+                    q = power(wc.T @ target[:3, :3], share)
+                    d = share * (target[3, :3] - ankle)
+                else:
+                    side_axis = np.array([1.0, 0.0, 0.0]) @ a.heading[(c0 + c1) // 2]
+                    q = np.eye(3)
+                    d = share * 0.5 * pose["width"] * sign * side_axis
+                motions.append((q, ankle, d))
+                if np.linalg.norm(d) > 1e-6 or np.abs(q - np.eye(3)).max() > 1e-9:
+                    self.moved[s] += 1
+            for f in range(F):
+                k = None
+                for i, (c0, c1) in enumerate(cts):
+                    if c0 <= f <= c1:
+                        k = i
+                        break
+                if k is not None:
+                    q, c, d = motions[k]
+                    w_final = 1.0 if k == last else 0.0
+                else:
+                    before = [i for i, (c0, c1) in enumerate(cts) if c1 < f]
+                    after = [i for i, (c0, c1) in enumerate(cts) if c0 > f]
+                    if not before:
+                        q, c, d = motions[after[0]]
+                        w_final = 1.0 if after[0] == last else 0.0
+                    elif not after:
+                        q, c, d = motions[before[-1]]
+                        w_final = 1.0 if before[-1] == last else 0.0
+                    else:
+                        i, k2 = before[-1], after[0]
+                        w = _smooth((f - cts[i][1]) / float(cts[k2][0] - cts[i][1]))
+                        q = slerp(motions[i][0], motions[k2][0], w)
+                        c = (1.0 - w) * motions[i][1] + w * motions[k2][1]
+                        d = (1.0 - w) * motions[i][2] + w * motions[k2][2]
+                        w_final = (w if k2 == last else 0.0) + ((1.0 - w) if i == last else 0.0)
+                self.Q[s][f], self.c[s][f], self.d[s][f], self.final[s][f] = q, c, d, w_final
+
+    def apply(self, s, f, point):
+        return (point - self.c[s][f]) @ self.Q[s][f] + self.c[s][f] + self.d[s][f]
+
+
+class _Plan(object):
+    """Everything a frame's synthesis takes that does not depend on the frame."""
+
+    def __init__(self, analysis, pose, share, motion, parts):
+        a = analysis
+        clip = a.clip
+        self.a, self.pose, self.share, self.motion = a, pose, share, motion
+        parts = set(parts)
+        on = pose is not None and share > 0.0
+        self.parts = parts
+        self.target_rel = a.rel_ref.copy()
+        self.target_local = a.local_ref.copy()
+        for j, kind in enumerate(a.kind):
+            if not on:
+                continue
+            if (kind == "torso" and "torso" in parts) or (kind == "pelvis" and "pelvis" in parts):
+                if j in pose["rel"]:
+                    self.target_rel[j] = toward(a.rel_ref[j], pose["rel"][j], share)
+            if kind in ("arm", "finger") and "arms" in parts and j in pose["local"]:
+                self.target_local[j] = toward(a.local_ref[j], pose["local"][j], share)
+        self.grip = on and "arms" in parts and pose.get("grip")
+        self.arm_gain = motion * ((1.0 - share) if self.grip else 1.0)
+        self.h_target = a.h_ref + (share * (pose["height"] - a.h_ref) if on and "pelvis" in parts else 0.0)
+        self.knee_turn = dict((s, share * pose["knee_turn"][s] if on and "knees" in parts else 0.0) for s in SIDES)
+        self.ball_target = dict((s, pose["ball"][s] if on and "feet" in parts else None) for s in SIDES)
+        self.holds = pose["holds"] if on and "arms" in parts else {}
+        self.motions = _Motions(a, pose, share, "feet" in parts)
+        # the balance's target: the clip's centre of mass moved with the support, and by the pose's own
+        F = clip.F
+        new_pivots = dict((s, np.array([self.motions.apply(s, f, a.feet[s]["pivot"][f]) for f in range(F)]))
+                          for s in SIDES)
+        support_new = support_path(a.weights, new_pivots)
+        shift = (pose["offset"] - a.ref_offset) * share if on else np.zeros(3)
+        self.com_target = a.com + (support_new - a.support) + np.einsum("i,fij->fj", shift, a.heading)
+        self.com_target[:, 1] = np.nan
+        self.support_new = support_new
+        self.ball_index = dict((s, clip.index["ball_" + s]) for s in SIDES)
+        self.legs = set(j for s in SIDES for j in a.feet[s]["joints"])
+        self.helpers = [j for j in clip.order if a.kind[j] == "helper"]
+        self.hand = dict((s, clip.index.get("hand_" + s)) for s in SIDES)
+        self.upperarm_l = clip.index.get("upperarm_l")
+        self.lowerarm_l = clip.index.get("lowerarm_l")
+
+
+def _frame(plan, f, carry, drop):
+    """One frame's worlds (J, 4, 4) and how far each planted foot fell short {side: cm}."""
+    a, clip = plan.a, plan.a.clip
+    J = clip.J
+    rots, poss = np.zeros((J, 3, 3)), np.zeros((J, 3))
+    done = np.zeros(J, bool)
+    H = a.heading[f]
+    short = {}
+    for j in clip.order:
+        if done[j]:
+            continue
+        kind, p = a.kind[j], clip.parents[j]
+        if kind == "helper":
+            continue
+        if kind == "root":
+            rots[j], poss[j] = a.rot[j, f], a.pos[j, f]
+        elif kind in ("pelvis", "torso"):
+            g = plan.a.rel_ref[j].T @ a.rel[j, f]
+            rots[j] = plan.target_rel[j] @ power(g, plan.motion) @ H
+            if kind == "pelvis":
+                h = a.pos[j, f, 1] - a.floor
+                height = plan.h_target * (1.0 + plan.motion * (h / a.h_ref - 1.0))
+                base = a.pos[j, f].copy()
+                base[1] = a.floor + height - drop
+                poss[j] = base + carry
+            else:
+                poss[j] = a.offset[j, f] @ rots[p] + poss[p]
+        elif kind in ("arm", "finger"):
+            d = a.local[j, f] @ a.local_ref[j].T
+            gain = plan.arm_gain if kind == "arm" or plan.grip else plan.motion
+            rots[j] = power(d, gain) @ plan.target_local[j] @ rots[p]
+            poss[j] = a.offset[j, f] @ rots[p] + poss[p]
+        elif kind == "leg":
+            side = clip.names[j][-1]
+            if j == a.feet[side]["joints"][0]:
+                short[side] = _leg(plan, side, f, rots, poss)
+                for k in a.feet[side]["joints"]:
+                    done[k] = True
+        elif kind == "toe":
+            side = clip.names[j][-1]
+            d = a.local[j, f] @ a.local_ref[j].T
+            target = a.local_ref[j]
+            if plan.ball_target[side] is not None:
+                target = toward(a.local_ref[j], plan.ball_target[side], plan.share * plan.motions.final[side][f])
+            rots[j] = d @ target @ rots[p]
+            poss[j] = a.offset[j, f] @ rots[p] + poss[p]
+        else:                                             # legtwist and anything else: the clip's local
+            rots[j] = a.local[j, f] @ rots[p]
+            poss[j] = a.offset[j, f] @ rots[p] + poss[p]
+        done[j] = True
+    if plan.grip and plan.upperarm_l is not None:
+        _hold(plan, f, rots, poss)
+    for h in plan.helpers:
+        body = a.follows[h]
+        rel = clip.worlds[h, f] @ np.linalg.inv(clip.worlds[body, f])
+        if h in plan.holds:
+            rel = blend_matrix(rel, plan.holds[h], plan.share)
+        m = rel @ matrix(rots[body], poss[body])
+        rots[h], poss[h] = orthonormal(m[:3, :3]), m[3, :3]
+    out = np.tile(np.eye(4), (J, 1, 1))
+    out[:, :3, :3], out[:, 3, :3] = rots, poss
+    return out, short
+
+
+def _leg(plan, side, f, rots, poss):
+    """Thigh, calf and foot by IK from the new hip to the foot the contact's rigid motion puts there; each bone
+    turned by the rotation taking its clip (direction, leg plane) onto the new one. Returns how far the foot
+    fell short."""
+    a = plan.a
+    th, ca, fo = a.feet[side]["joints"]
+    pelvis = a.clip.parents[th]
+    l1, l2 = a.feet[side]["lengths"][f]
+    h0, k0, a0 = a.pos[th, f], a.pos[ca, f], a.pos[fo, f]
+    hip = a.offset[th, f] @ rots[pelvis] + poss[pelvis]
+    ankle = plan.motions.apply(side, f, a0)
+    foot_rot = a.rot[fo, f] @ plan.motions.Q[side][f]
+    e0 = _unit(a0 - h0)
+    bend0 = _bend(h0, k0, a0)
+    if bend0 is None:
+        fwd = np.array([0.0, 0.0, 1.0]) @ a.heading[f]
+        bend0 = _unit(fwd - np.dot(fwd, e0) * e0)
+    e1 = _unit(ankle - hip)
+    bend = bend0 if not plan.knee_turn[side] else turned_about(bend0, -e1, plan.knee_turn[side])
+    own = float(np.linalg.norm(a0 - h0)) / (l1 + l2)
+    reach = min(max(REACH, own), 1.0)
+    knee, reached, short = two_bone(hip, ankle, l1, l2, bend, reach)
+    e2 = _unit(reached - hip)
+    b2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+    n_src, n_new = _unit(np.cross(e0, bend0)), _unit(np.cross(e2, b2))
+    rots[th] = a.rot[th, f] @ align(_unit(k0 - h0), n_src, _unit(knee - hip), n_new)
+    rots[ca] = a.rot[ca, f] @ align(_unit(a0 - k0), n_src, _unit(reached - knee), n_new)
+    rots[fo] = foot_rot
+    poss[th], poss[ca], poss[fo] = hip, knee, reached
+    return short
+
+
+def _hold(plan, f, rots, poss):
+    """Hands that hold one thing together: the left hand put back on its relation to the right one by
+    two-bone IK of the left arm (the elbow on its own plane), then everything under the left upper arm again."""
+    a, clip = plan.a, plan.a.clip
+    up, low, hand = plan.upperarm_l, plan.lowerarm_l, plan.hand["l"]
+    if low is None or hand is None or plan.hand["r"] is None:
+        return
+    goal = plan.pose["grip_rel"] @ matrix(rots[plan.hand["r"]], poss[plan.hand["r"]])
+    goal = blend_matrix(matrix(rots[hand], poss[hand]), goal, plan.share)
+    shoulder, elbow, wrist = poss[up], poss[low], poss[hand]
+    l1, l2 = float(np.linalg.norm(a.offset[low, f])), float(np.linalg.norm(a.offset[hand, f]))
+    bend = _bend(shoulder, elbow, wrist)
+    if bend is None:
+        bend = np.array([0.0, -1.0, 0.0])
+    e0 = _unit(wrist - shoulder)
+    knee, reached, _ = two_bone(shoulder, goal[3, :3], l1, l2, bend, 1.0)
+    e2 = _unit(reached - shoulder)
+    b2 = _unit((knee - shoulder) - np.dot(knee - shoulder, e2) * e2)
+    n_src, n_new = _unit(np.cross(e0, bend)), _unit(np.cross(e2, b2))
+    rots[up] = rots[up] @ align(_unit(elbow - shoulder), n_src, _unit(knee - shoulder), n_new)
+    rots[low] = rots[low] @ align(_unit(wrist - elbow), n_src, _unit(reached - knee), n_new)
+    rots[hand] = orthonormal(goal[:3, :3])
+    poss[low], poss[hand] = knee, reached
+    # everything else under the upper arm (its twists, the fingers) again on its new parents
+    for j in clip.order:
+        p = clip.parents[j]
+        if j in (up, low, hand) or a.kind[j] == "helper" or not _under(clip, j, up):
+            continue
+        d = a.local[j, f] @ a.local_ref[j].T
+        rots[j] = power(d, plan.arm_gain) @ plan.target_local[j] @ rots[p]
+        poss[j] = a.offset[j, f] @ rots[p] + poss[p]
+
+
+def _under(clip, j, top):
+    p = clip.parents[j]
+    while p >= 0:
+        if p == top:
+            return True
+        p = clip.parents[p]
+    return False
+
+
+def _com(plan, worlds):
+    return np.tensordot(plan.a.masses, worlds[:, 3, :3], axes=(0, 0))
+
+
+def _balanced(plan, f, drop):
+    """The frame with the pelvis carried horizontally until the centre of mass stands on its target (secant
+    steps; the legs follow by IK). Returns (worlds, carry, short)."""
+    target = plan.com_target[f]
+    carry = np.zeros(3)
+    worlds, short = _frame(plan, f, carry, drop)
+    err = target - _com(plan, worlds)
+    err[1] = 0.0
+    gain = 0.85
+    for _ in range(CARRY_STEPS):
+        if np.linalg.norm(err) < CARRY_TOL:
+            break
+        step = err / gain
+        carry = carry + step
+        worlds, short = _frame(plan, f, carry, drop)
+        new = target - _com(plan, worlds)
+        new[1] = 0.0
+        moved = err - new
+        denominator = float(np.dot(step, step))
+        if denominator > 1e-12:
+            gain = min(max(float(np.dot(moved, step)) / denominator, 0.3), 1.2)
+        err = new
+    return worlds, carry, short
+
+
+def _need(plan, f, worlds):
+    """How far the pelvis must sink this frame for every foot that is down to be reached (cm)."""
+    a = plan.a
+    need = 0.0
+    for s in SIDES:
+        if not a.feet[s]["down"][f]:
+            continue
+        th, ca, fo = a.feet[s]["joints"]
+        l1, l2 = a.feet[s]["lengths"][f]
+        own = float(np.linalg.norm(a.pos[fo, f] - a.pos[th, f])) / (l1 + l2)
+        limit = min(max(REACH, own), 1.0) * (l1 + l2)
+        hip = worlds[th, 3, :3]
+        ankle = plan.motions.apply(s, f, a.pos[fo, f])
+        v = hip - ankle
+        flat = float(np.hypot(v[0], v[2]))
+        if float(np.linalg.norm(v)) <= limit:
+            continue
+        need = max(need, float(v[1]) - math.sqrt(max(limit * limit - flat * flat, 0.0)))
+    return need
+
+
+def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS):
+    """The clip with the pose: Result(worlds (J, F, 4, 4), info). `pose` is `prepare`'s (None: the clip with
+    its own motion scaled by `motion`)."""
+    a = analysis
+    plan = _Plan(a, pose, float(share), float(motion), parts)
+    F = a.clip.F
+    needs = np.zeros(F)
+    for f in range(F):
+        worlds, carry, short = _balanced(plan, f, 0.0)
+        needs[f] = _need(plan, f, worlds)
+    drop = cover(needs, REACH_SIGMA) if needs.max() > 1e-4 else np.zeros(F)
+    out = np.zeros((a.clip.J, F, 4, 4))
+    carries, shorts = np.zeros(F), np.zeros(F)
+    for f in range(F):
+        worlds, carry, short = _balanced(plan, f, float(drop[f]))
+        out[:, f] = worlds
+        carries[f] = float(np.linalg.norm(carry))
+        shorts[f] = max([v for s, v in short.items() if a.feet[s]["down"][f]] or [0.0])
+    info = {"carry": float(carries.max()), "drop": float(drop.max()), "short": float(shorts.max()),
+            "moved": dict(plan.motions.moved), "final": dict(plan.motions.final_contact),
+            "reference": a.reference, "share": share, "motion": motion, "parts": tuple(parts),
+            "grip": bool(plan.grip), "scale": None if pose is None else pose["scale"]}
+    return Result(out, info)
