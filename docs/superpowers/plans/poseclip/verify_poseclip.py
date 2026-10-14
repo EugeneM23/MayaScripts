@@ -208,6 +208,18 @@ def main():
         "M_Neutral_Sprint_Stop_F_Lfoot + goblin", "M_Neutral_Sprint_Stop_F_Lfoot + two_handed_sword"]
         and original == ["M_Neutral_Sprint_Stop_F_Lfoot"], "%s / %s" % (texts, original))
 
+    cmds.select(clear=True)
+    found = pcm.character_root()
+    copy_root = [j for j in cmds.listRelatives(copy_of(root)[0], children=True, type="joint", fullPath=True)][0]
+    cmds.select(copy_root)
+    via_copy = pcm.character_root()
+    label = cliplabel.labels_of(root)[0]
+    cmds.select(label)
+    via_label = pcm.character_root()
+    cmds.select(clear=True)
+    gate("which character: nothing selected, a copy, the clip label all name the original",
+         found == root and via_copy == root and via_label == root, "%s / %s / %s" % (found, via_copy, via_label))
+
     # 4. the copy: one undo removes it, a second run replaces it, the original untouched
     after = dict((c, cmds.keyframe(c, query=True, valueChange=True)) for c in before)
     same = all(np.allclose(before[c], after[c], atol=1e-12) for c in before)

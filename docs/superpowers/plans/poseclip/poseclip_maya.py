@@ -74,7 +74,8 @@ def _fps():
 # ---- which skeleton ----
 
 def top_joint(node):
-    """The topmost joint of the skeleton `node` belongs to: a joint, a mesh skinned to it, a group above it."""
+    """The topmost joint of the skeleton `node` belongs to: a joint, a mesh skinned to it, anything else in the
+    character's group (its clip label, the group itself) - the shallowest joint under the top node above it."""
     cmds = _cmds()
     path = _long(node)
     if cmds.nodeType(path) != "joint":
@@ -86,13 +87,67 @@ def top_joint(node):
         else:
             below = cmds.listRelatives(path, allDescendents=True, type="joint", fullPath=True) or []
             if not below:
+                below = cmds.listRelatives(_top_node(path), allDescendents=True, type="joint", fullPath=True) or []
+            if not below:
                 raise Refusal("%s holds no skeleton - select a bone or a mesh of the character" % _short(path))
-            path = min(below, key=lambda p: p.count("|"))
+            path = min(below, key=lambda p: (p.count("|"), p))
     while True:
         above = cmds.listRelatives(path, parent=True, fullPath=True)
         if not above or cmds.nodeType(above[0]) != "joint":
             return path
         path = above[0]
+
+
+def _source_of_copy(root):
+    """A root inside one of this tool's copies answers the original's root (the copy's memo names it by UUID);
+    any other root answers itself."""
+    cmds = _cmds()
+    top = _top_node(root)
+    if cmds.attributeQuery(MARK, node=top, exists=True):
+        try:
+            source = json.loads(cmds.getAttr(top + "." + MARK) or "{}").get("source")
+        except ValueError:
+            source = None
+        found = cmds.ls(source, long=True) if source else []
+        if found:
+            return found[0]
+    return root
+
+
+def clip_roots():
+    """The roots of the skeletons in the scene that carry keys, this tool's copies left out."""
+    cmds = _cmds()
+    out = []
+    for path in cmds.ls(type="joint", long=True) or []:
+        above = cmds.listRelatives(path, parent=True, fullPath=True)
+        if above and cmds.nodeType(above[0]) == "joint":
+            continue
+        if cmds.attributeQuery(MARK, node=_top_node(path), exists=True):
+            continue
+        joints = _joints(path)
+        if any(cmds.keyframe(j, attribute=ch, query=True, keyframeCount=True) for j in joints[:20]
+               for ch in ("translateX", "rotateX")):
+            out.append(path)
+    return out
+
+
+def character_root(node=None):
+    """The root of the skeleton carrying the clip: `node`'s, else the selection's, else the only keyed
+    skeleton in the scene. A copy this tool made answers its original."""
+    cmds = _cmds()
+    if node is None:
+        selection = cmds.ls(selection=True, long=True)
+        if selection:
+            node = selection[0]
+    if node is not None:
+        return _source_of_copy(top_joint(node))
+    roots = clip_roots()
+    if len(roots) == 1:
+        return roots[0]
+    if not roots:
+        raise Refusal("no skeleton in the scene carries keys - import a clip first")
+    raise Refusal("%d skeletons carry keys (%s) - select a bone or a mesh of the one you mean"
+                  % (len(roots), ", ".join(_short(_top_node(r)) for r in roots)))
 
 
 def _joints(root):
@@ -414,12 +469,7 @@ def apply(pose, share=1.0, motion=1.0, parts=model.PARTS, offset=150.0, referenc
     cm to its right. Returns the status line (also printed)."""
     cmds = _cmds()
     started = time.time()
-    if node is None:
-        selection = cmds.ls(selection=True, long=True)
-        if not selection:
-            raise Refusal("select a bone or a mesh of the character carrying the clip")
-        node = selection[0]
-    root = top_joint(node)
+    root = character_root(node)
     joints = _joints(root)
     _refuse_a_rig(joints)
     clip, start, joints = read_clip(root)
