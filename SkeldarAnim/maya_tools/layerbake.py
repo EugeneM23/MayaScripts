@@ -54,12 +54,13 @@ _BLEND_INPUT2 = {"tx": "inTranslateX2", "ty": "inTranslateY2", "tz": "inTranslat
 
 # ------------------------------------------------------------------- writer
 
-def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None):
+def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None,
+                 source=None):
     """`tracks` {(node, channel): (times, values[, {time: (in, out)}])} keyed on a new additive
     layer `name` (marked `marker` = `value`, rotation by component) - a tangent type None is
     Maya's default; zero one frame outside when `ranged`; cycled curves cycle. `moves`
     {(node, channel): (curve, value)}: the base curve itself moved onto the layer (`_move`), the
-    base left on `value`. The layer's name."""
+    base left on `value` - or `source`'s curve, a layer the press bakes from. The layer's name."""
     moves = moves or {}
     layer = cmds.animLayer(name)
     knots._set_string(layer, marker, value)
@@ -93,17 +94,17 @@ def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=
             cmds.setAttr(curve + ".preInfinity", _CYCLE)
             cmds.setAttr(curve + ".postInfinity", _CYCLE)
     for (node, ch), (curve, held) in moves.items():
-        _move(node, ch, curve, held)
+        _move(node, ch, curve, held, source)
     return layer
 
 
-def _move(node, ch, curve, held):
+def _move(node, ch, curve, held, source=None):
     """The base curve of `node.ch` moved onto the layer just added on top of it: off the base
     (the plug it feeds under every layer's blend), onto that layer's blend input B, its values
     shifted by `held`, which the base then holds - every key, tangent, weight and infinity
     kept (measured: the layer finds it as its own curve)."""
     plug = "%s.%s" % (node, plan.LONG[ch])
-    base_plug, _curve, _word, _layered = _base(plug, ch)
+    base_plug, _curve, _word, _layered = _base(plug, ch, source)
     real = cmds.listConnections(base_plug, source=True, destination=False, plugs=True) or []
     if real:
         cmds.disconnectAttr(real[0], base_plug)
@@ -190,31 +191,19 @@ def _source_plug(plug):
     return found[0] if found else None
 
 
-def _base(plug, ch):
-    """(base plug, base curve or None, word, layered) for one channel: the plug the BASE value
-    lives on - through Maya's pairBlend (input 1, the object's own) and any animation layer's
-    blend node (input A, trap 235) - the time curve feeding it, what else drives it in words
-    ('' for nothing or a constraint), and whether a layer stands on it."""
-    target, layered = plug, False
-    for _ in range(32):
-        src = _source_plug(target)
-        if not src:
-            return target, None, "", layered
-        node, attr = src.split(".", 1)
-        kind = cmds.nodeType(node)
-        if kind.startswith("animBlendNode"):
-            layered = True
-            target = "%s.inputA%s" % (node, attr[len("output"):])
-            continue
-        if kind == "pairBlend":
-            target = "%s.%s" % (node, knots._BLEND_INPUT[ch])
-            continue
-        if kind in plan.TIME_CURVES:
-            return target, node, "", layered
-        if cmds.objectType(node, isAType="constraint"):
-            return target, None, "", layered
-        return target, None, plan.driver_word(kind, False), layered
-    return target, None, "", layered
+def _base(plug, ch, source=None):
+    """(plug, curve or None, word, layered) for one channel: the plug the SOURCE layer's value
+    lives on - the base (None, the default: through Maya's pairBlend, input 1, and every layer's
+    blend node, input A, trap 235), or a layer's own input B (`layered.walk`) - the time curve
+    feeding it, what else drives it in words ('' for nothing or a constraint), and whether a layer
+    stands on it. A layer that does not hold the channel falls back to the base's plug (a
+    channel a driver held needs a value somewhere) with no curve."""
+    from maya_tools import layered
+    found = layered.walk(plug, ch, source)
+    if found[0] is None:
+        base = layered.walk(plug, ch, None)
+        return base[0], None, base[2], base[3]
+    return found
 
 
 def _moves(curve):
@@ -282,7 +271,7 @@ def _rigs_own(constraint, obj, targets, rigs):
     return False
 
 
-def _plan(obj, rigs):
+def _plan(obj, rigs, source=None):
     """(plan, refusal) for one object. The plan: the knots and the foreign constraints on it,
     the channels they drive (`held`: those a foreign constraint drives - an unkeyed one keeps
     nothing of its old value, trap 238; a knot gives its back), the free channels whose own (base)
@@ -311,7 +300,7 @@ def _plan(obj, rigs):
         driven.update(channels)
     moving, words, layered, curves = [], {}, False, {}
     for ch in free:
-        _plug, curve, word, on_layer = _base(obj + "." + ch, ch)
+        _plug, curve, word, on_layer = _base(obj + "." + ch, ch, source)
         layered = layered or on_layer
         if curve:
             curves[ch] = curve
@@ -323,6 +312,9 @@ def _plan(obj, rigs):
                               "them" % (name, ch, curve))
             moving.append(ch)
     if not tops and not foreign and not moving:
+        if source and not words:
+            return None, ("nothing of %s moves on the layer %s - select the layer its animation "
+                          "is on" % (name, source))
         return None, plan.undriven_refusal(name, list(words.values()), layered)
     return dict(obj=obj, tops=tops, foreign=foreign, driven=driven, held=held, moving=moving,
                 words=words, curves=curves), ""
@@ -452,9 +444,9 @@ def _bridge(curve, first, last):
             for t, v, si, so in plan.bridge_keys(original, bridge)]
 
 
-def _shift(path, ch, amount):
+def _shift(path, ch, amount, source=None):
     """The base of one channel moved by `amount` (its curve's keys, else its static value)."""
-    base_plug, curve, word, _layered = _base(path + "." + ch, ch)
+    base_plug, curve, word, _layered = _base(path + "." + ch, ch, source)
     if word:
         return False
     if curve:
@@ -470,7 +462,7 @@ def _shared(curve):
                                     plugs=True) or []) > 1
 
 
-def _sorting(info, span):
+def _sorting(info, span, whole=True):
     """(moved, sampled): the channels whose base curve moves onto the layer whole - over the whole
     take, a channel only its own keys move (not driven, its curve feeding nothing else) - and the
     rest, read off the scene: a driven channel on every frame (it has no keys of its own: a knot
@@ -479,14 +471,14 @@ def _sorting(info, span):
     exact, on every frame too."""
     free = set(_free(info["obj"]))
     wanted = (set(info["moving"]) | info["driven"]) & free
-    if span[2]:
+    if span[2] or not whole:
         return set(), wanted
     moved = set(ch for ch in info["moving"] if ch not in info["driven"] and ch in free
                 and not _shared(info["curves"][ch]))
     return moved, wanted - moved
 
 
-def _clear_base(info, path, span, shown, now, moved=(), exact=None):
+def _clear_base(info, path, span, shown, now, moved=(), exact=None, source=None):
     """The base's own animation off one object, inside the press: whole take - each curve that
     moves deleted, the channel (and each channel a driver held) left on its first-frame value;
     a highlight - each such curve bridged (the exact layer keys of a channel nothing drives kept in
@@ -497,7 +489,7 @@ def _clear_base(info, path, span, shown, now, moved=(), exact=None):
     for ch in sorted(set(info["moving"]) | (info["driven"] & set(_free(path)))):
         if ch in moved:
             continue                       # the curve itself goes onto the layer, after the walk
-        base_plug, curve, word, _layered = _base(path + "." + ch, ch)
+        base_plug, curve, word, _layered = _base(path + "." + ch, ch, source)
         if word:
             continue
         index = plan.CHANNELS.index(ch)
@@ -526,6 +518,81 @@ def _clear_base(info, path, span, shown, now, moved=(), exact=None):
     return held
 
 
+def _plans(objs, rigs, source):
+    plans = []
+    for obj in objs:
+        info, refusal = _plan(obj, rigs, source)
+        if refusal:
+            return None, refusal
+        plans.append(info)
+    return plans, ""
+
+
+def _root():
+    try:
+        return cmds.animLayer(query=True, root=True)
+    except RuntimeError:
+        return None
+
+
+def _chosen_source():
+    """(the layer the press takes the animation from, refusal): the selected non-base layer
+    (the topmost of several), else None - the base (2026-10-15, «перекидывать туда анимацию с
+    текущего выбранного слоя»)."""
+    from maya_poselib import keys
+    layer, refusal = keys.active_layer()
+    if layer is None or layer.base:
+        return None, ""
+    return layer.name, refusal
+
+
+def _only_layer(objs):
+    """(layer, refusal) when the base has nothing to take: the one layer whose curves move the
+    objects (not one a Layer press made - a second press stays refused) - else a refusal naming
+    them (several: select one)."""
+    root = _root()
+    found = []
+    for layer in cmds.ls(type="animLayer") or []:
+        if layer == root or knots._has(layer, plan.LAYER_MARKER):
+            continue                   # a layer this card baked: selected only, never guessed
+        for obj in objs:
+            if any(curve and _moves(curve) for curve in
+                   (_base(obj + "." + ch, ch, layer)[1] for ch in _free(obj))):
+                found.append(layer)
+                break
+    if len(found) == 1:
+        return found[0], ""
+    if found:
+        return None, ("the animation is on the layers %s - select the one to bake from in the "
+                      "Anim Layer Editor" % ", ".join(sorted(found)))
+    return None, ""
+
+
+def _source_refusal(source):
+    """'' or why the press cannot take the animation off `source`: locked, muted or at weight
+    0 (its keys would be cleared and nothing of them shows to carry)."""
+    if not source:
+        return ""
+    if cmds.animLayer(source, query=True, lock=True):
+        return "the animation layer %s is locked - unlock it to bake from it" % source
+    if cmds.animLayer(source, query=True, mute=True):
+        return "the animation layer %s is muted - unmute it to bake from it" % source
+    weight = cmds.getAttr(source + ".weight")
+    if abs(weight) < 1e-9 and not cmds.listConnections(source + ".weight", source=True,
+                                                       destination=False):
+        return "the animation layer %s is at weight 0 - raise it to bake from it" % source
+    return ""
+
+
+def _whole_curves_ok(source):
+    """True when the source's curves may move onto the new layer as they are: the base, or a
+    layer at weight 1 whose weight nothing animates (else its share is sampled on every frame)."""
+    if not source:
+        return True
+    return (abs(cmds.getAttr(source + ".weight") - 1.0) < 1e-9
+            and not cmds.listConnections(source + ".weight", source=True, destination=False))
+
+
 def bake(selection=None, highlight=SLIDER):
     """The Layer press. The line."""
     import maya_rigs
@@ -533,19 +600,30 @@ def bake(selection=None, highlight=SLIDER):
     if not objs:
         return plan.LAYER_NOTHING
     rigs = maya_rigs.rigs()
-    plans = []
-    for obj in objs:
-        info, refusal = _plan(obj, rigs)
-        if refusal:
-            return refusal
-        plans.append(info)
+    source, refusal = _chosen_source()
+    if refusal:
+        return refusal
+    plans, refusal = _plans(objs, rigs, source)
+    if refusal and source is None:
+        found, why = _only_layer(objs)
+        if why:
+            return why
+        if found:
+            source = found
+            plans, refusal = _plans(objs, rigs, source)
+    if refusal:
+        return refusal
+    refusal = _source_refusal(source)
+    if refusal:
+        return refusal
+    whole = _whole_curves_ok(source)
     window = knots._highlight(highlight)
     spans, sorts = {}, {}
     for info in plans:
         obj = info["obj"]
         targets = [t for con in info["foreign"] for t in _targets(con)]
         spans[obj] = _span(obj, info["tops"], targets, window)
-        sorts[obj] = _sorting(info, spans[obj])
+        sorts[obj] = _sorting(info, spans[obj], whole)
     now = cmds.currentTime(query=True)
     frames = sorted(set(f for o in objs if sorts[o][1]
                         for f in range(spans[o][0], spans[o][1] + 1))
@@ -567,7 +645,7 @@ def bake(selection=None, highlight=SLIDER):
             path = live[info["obj"]]
             exact = exacts.setdefault(info["obj"], {})
             held = _clear_base(info, path, spans[info["obj"]], shown[info["obj"]], now,
-                               sorts[info["obj"]][0], exact)
+                               sorts[info["obj"]][0], exact, source)
             statics += [plan.leaf(path) + "." + ch for ch in held]
         own = _read([live[o] for o in objs], frames)
         tracks, moves, first, last, ranged = {}, {}, None, None, False
@@ -599,7 +677,7 @@ def bake(selection=None, highlight=SLIDER):
                     deltas, shifts = plan.anchored(deltas)
                     for ch, amount in shifts.items():
                         if abs(amount) > 1e-9:
-                            _shift(path, ch, amount)
+                            _shift(path, ch, amount, source)
                 for ch, values in deltas.items():
                     tracks[(path, ch)] = (times, values)
             first = start if first is None else min(first, start)
@@ -613,11 +691,15 @@ def bake(selection=None, highlight=SLIDER):
                 ", ".join(statics), "its" if len(statics) == 1 else "their", "%g" % now))
         if pivots:
             notes.append("a waiting pivot is not baked - press Finish or Remove it")
+        if source:
+            notes.append("taken from the layer %s, which now holds the pose of frame %s" % (
+                source, "%g" % min(spans[o][0] for o in objs)) if not ranged else
+                "taken from the layer %s" % source)
         layer = ""
         if tracks or moves:
             leaves = [plan.leaf(live[o]) for o in objs]
             layer = write_deltas(plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
-                                 tracks, ranged=ranged, moves=moves)
+                                 tracks, ranged=ranged, moves=moves, source=source)
         cmds.select([live[o] for o in objs if live[o]], replace=True)
     starts = set(spans[o][0] for o in objs)
     keyed = sum(1 for info in plans if info["moving"])

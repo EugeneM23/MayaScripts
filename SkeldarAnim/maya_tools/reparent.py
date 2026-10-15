@@ -68,7 +68,7 @@ def _refusal(node, new_parent, rigs):
         return plan.rig_part_line(name, what)
     if knots.constraints_of(node):
         return plan.riding_refusal(name)
-    locked, drivers = knots._channels(node, plan.CHANNELS)
+    locked, drivers = knots._channels(node, plan.CHANNELS, layers=True)
     if any(locked.values()):
         return plan.locked_line(name)
     _free, _skipped, refusal = plan.channel_plan(name, locked, drivers)
@@ -186,9 +186,11 @@ def _take(nodes, parents):
     return plan.span_for(take, keys, None)
 
 
-def _rebake(nodes, span, operate, scales):
+def _rebake(nodes, span, operate, scales, layer=None):
     """Keep `nodes`' world motion across `operate(uuids)` (the DAG move) - their world scale
-    too (`scales`, `_scale_plans`); the nodes after."""
+    too (`scales`, `_scale_plans`); the nodes after. A node on animation layers (2026-10-15)
+    is not baked (`bakeResults` would land in the layers' blend node): what it shows in its new
+    space is read on every frame and keyed on `layer` as final values, the other layers kept."""
     uuids = [knots._uuid(n) for n in nodes]
     locators, temps = [], []
     for node in nodes:
@@ -206,15 +208,35 @@ def _rebake(nodes, span, operate, scales):
         _carry_scale(node, scales[uuid], span)
     cons = [knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False)
             for loc, node in zip(locators, nodes)]
-    cmds.bakeResults(nodes, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
-                     simulation=True, sampleBy=1, preserveOutsideKeys=True,
-                     disableImplicitControl=True)
+    from maya_tools import layered
+    stacked = [n for n in nodes if layered.is_layered(n)]
+    plain = [n for n in nodes if n not in stacked]
+    first, last = int(round(span[0])), int(round(span[1]))
+    shown = layered.read(stacked, plan.CHANNELS, range(first, last + 1)) if stacked else {}
+    if plain:
+        cmds.bakeResults(plain, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+                         simulation=True, sampleBy=1, preserveOutsideKeys=True,
+                         disableImplicitControl=True)
     cmds.delete([c for c in cons if cmds.objExists(c)])
+    for node in stacked:          # a layered node: its new local motion keyed on `layer`
+        layered.key_shown(node, plan.CHANNELS, first, last, shown[node], layer)
+    plain_ids = set(knots._uuid(n) for n in plain)
     nodes = [knots._by_uuid(u) for u in uuids]
     for node in nodes:
-        knots._continuous(node, plan.CHANNELS, span[0], span[1])
+        if knots._uuid(node) in plain_ids:
+            knots._continuous(node, plan.CHANNELS, span[0], span[1])
     cmds.delete([loc for loc in locators if cmds.objExists(loc)])
     return nodes
+
+
+def _layer_for(nodes):
+    """(the layer a layered node's new motion is keyed on, refusal) - None when no node is on
+    layers: the active layer (`layered.target`)."""
+    from maya_tools import layered
+    if not any(layered.is_layered(n) for n in nodes):
+        return None, ""
+    layer, refusal = layered.target()
+    return layer, refusal or layered.check_target(layer, plan.CHANNELS)
 
 
 def _to_world(path):
@@ -241,6 +263,9 @@ def inside(selection=None):
     scales, refusal = _scale_plans([(child, parent) for child in children], span)
     if refusal:
         return refusal
+    layer, refusal = _layer_for(children)
+    if refusal:
+        return refusal
     parent_uuid = knots._uuid(parent)
 
     def operate(uuids):
@@ -248,7 +273,7 @@ def inside(selection=None):
             cmds.parent(knots._by_uuid(uuid), knots._by_uuid(parent_uuid))
 
     with knots._press("skeldarInside"):
-        moved = _rebake(children, span, operate, scales)
+        moved = _rebake(children, span, operate, scales, layer)
         cmds.select(moved, replace=True)
     return plan.reparent_message("Inside", [plan.leaf(c) for c in children], plan.leaf(parent),
                                  span)
@@ -272,13 +297,16 @@ def to_world(selection=None):
     scales, refusal = _scale_plans([(node, None) for node in nodes], span)
     if refusal:
         return refusal
+    layer, refusal = _layer_for(nodes)
+    if refusal:
+        return refusal
 
     def operate(uuids):
         for uuid in uuids:
             _to_world(knots._by_uuid(uuid))
 
     with knots._press("skeldarWorld"):
-        moved = _rebake(nodes, span, operate, scales)
+        moved = _rebake(nodes, span, operate, scales, layer)
         cmds.select(moved, replace=True)
     return plan.reparent_message("World", [plan.leaf(n) for n in nodes], None, span)
 
@@ -300,6 +328,9 @@ def swap(selection=None):
     scales, refusal = _scale_plans(moves, span)
     if refusal:
         return refusal
+    layer, refusal = _layer_for(nodes)
+    if refusal:
+        return refusal
     ids = dict((n, knots._uuid(n)) for n in nodes)
     plan_ids = [(ids[n], knots._uuid(p) if p else None) for n, p in moves]
 
@@ -311,7 +342,7 @@ def swap(selection=None):
                 cmds.parent(knots._by_uuid(node_id), knots._by_uuid(parent_id))
 
     with knots._press("skeldarSwap"):
-        moved = _rebake(nodes, span, operate, scales)
+        moved = _rebake(nodes, span, operate, scales, layer)
         cmds.select(moved, replace=True)
     return plan.reparent_message("Swap", [plan.leaf(n) for n in nodes], plan.leaf(nodes[-1]),
                                  span)

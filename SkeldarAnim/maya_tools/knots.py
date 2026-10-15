@@ -287,9 +287,10 @@ def _span(obj, highlight, extra=(), rule=plan.span_for):
     return rule(take, keys, highlight)
 
 
-def _channels(obj, channels):
+def _channels(obj, channels, layers=False):
     """(locked, drivers) for `knotplan.channel_plan`: drivers None for no input, '' for a time
-    curve, else what drives the channel in words."""
+    curve - and, with `layers`, for animation layers whose inputs are all time curves or values
+    (`layered.stack_word`) - else what drives the channel in words."""
     locked, drivers = {}, {}
     for ch in channels:
         plug = obj + "." + ch
@@ -298,6 +299,10 @@ def _channels(obj, channels):
                                      skipConversionNodes=True) or []
         if not found:
             drivers[ch] = None
+            continue
+        if layers and cmds.nodeType(found[0]).startswith("animBlendNode"):
+            from maya_tools import layered
+            drivers[ch] = layered.stack_word(plug)
             continue
         drivers[ch] = plan.driver_word(cmds.nodeType(found[0]),
                                        cmds.objectType(found[0], isAType="constraint"))
@@ -320,7 +325,7 @@ def _plan_object(obj, kind, finishing=False):
     if refusal:
         return None, refusal
     channels = plan.ROTATE if kind in ("orient", "aim") else plan.CHANNELS
-    locked, drivers = _channels(obj, channels)
+    locked, drivers = _channels(obj, channels, layers=True)
     free, skipped, refusal = plan.channel_plan(name, locked, drivers, channels)
     if refusal:
         return None, refusal
@@ -1018,11 +1023,23 @@ def _continuous(obj, channels, first, last):
         _set_key_values(curves[ch], times, values[ch], made)
 
 
-def _bake_one(top, obj, mine):
-    """One knot's motion written into its object's curves, the constraint deleted."""
+def _bake_one(top, obj, mine, layer=None):
+    """One knot's motion written into its object's curves, the constraint deleted. A layered
+    object (2026-10-15): what it shows over the knot's region read on every frame and keyed on
+    `layer` (the active one) as final values - `bakeResults` would bake into the pairBlend's
+    input 1, the layers' blend node, and land wrong."""
     region = _influence(top, obj)
     channels = _driven(obj)
     baked = region is not None and bool(channels)
+    from maya_tools import layered
+    if baked and layered.is_layered(obj, channels):
+        first, last = int(round(region[0])), int(round(region[1]))
+        shown = layered.read([obj], channels, range(first - 1, last + 2))[obj]
+        cmds.delete(mine)
+        layered.key_shown(obj, channels, first, last, shown, layer, ranged=region[2])
+        for ch, value in plan.decode_keyed(_get(top, plan.KEYED_MARKER)).items():
+            _unkey(obj, ch, value)
+        return
     if baked:
         if region[2]:
             _protect(obj, channels, region[0], region[1])
@@ -1076,6 +1093,13 @@ def bake(selection=None):
     tops = [t for t in tops if not is_snapshot(t)]
     if not tops:
         return plan.snapshot_skipped(skipped)
+    from maya_tools import layered
+    layer = None
+    if any(o and layered.is_layered(o) for o in (source_of(t) for t in tops)):
+        layer, refusal = layered.target()
+        refusal = refusal or layered.check_target(layer, plan.CHANNELS)
+        if refusal:
+            return refusal
     names, objs = [], []
     with _press("skeldarKnotBake"):
         for uuid in _ordered(_with_riders(tops)):
@@ -1086,7 +1110,7 @@ def bake(selection=None):
             mine = [c for c in constraints_of(obj) if _get(c, plan.OF_MARKER) == uuid] \
                 if obj else []
             if mine:
-                _bake_one(top, obj, mine)
+                _bake_one(top, obj, mine, layer)
                 names.append(plan.leaf(obj))
                 objs.append(_uuid(obj))
             elif obj:                                   # its constraint deleted by hand
@@ -1106,14 +1130,24 @@ def _unkey(obj, ch, value):
     written back (cutKey leaves whatever was last evaluated, trap 58)."""
     plug = obj + "." + ch
     found = cmds.listConnections(plug, source=True, destination=False, type="animCurve") or []
+    target = plug
     if not found:
-        return
+        #  the channel went onto an animation layer since (a bake keyed it there): our key is the
+        #  base's, under the layers' blend nodes
+        from maya_tools import layered
+        target, curve, _word, _layered = layered.walk(plug, ch)
+        found = [curve] if curve else []
+        if not found:
+            return
     values = cmds.keyframe(found[0], query=True, valueChange=True) or []
     if not plan.still_static(values, value):
         return
-    cmds.cutKey(plug, clear=True)
+    if target == plug:
+        cmds.cutKey(plug, clear=True)
+    else:
+        cmds.delete(found[0])
     if not cmds.getAttr(plug, lock=True):
-        cmds.setAttr(plug, value)
+        cmds.setAttr(target, value)
 
 
 def remove(selection=None):

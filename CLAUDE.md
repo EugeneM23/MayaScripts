@@ -9130,6 +9130,48 @@ Proof: `docs/superpowers/plans/verify_snapshot.py` **42/42 mayapy standalone**:
 verify_knots 90/90, verify_bake_layer 66/66 and verify_parent 42/42 again; 6330 unit tests;
 `render_tools_card.py` shows the row in the 360 px dock.
 
+**Every Tools press on an object with animation layers** (2026-10-15, the animator: «Bake to layer
+должна создавать новый слой и перекидывать туда анимацию с текущего выбранного слоя ... опция смены
+парента не работает если на объекте уже есть слой ... To world тоже ... Давай проверим все
+инструменты»). Reproduced first: every knot kind, Aim, Across, Inside, World and Swap refused a
+layered channel as «driven by an animation layer»; Layer took only the base. Module
+`SkeldarAnim/maya_tools/layered.py`. Measured in mayapy before writing it:
+- a constraint on a layered channel splices Maya's pairBlend in AFTER the top layer's blend (input 1 =
+  the layers' result); deleting it gives the channel back to the blend. So a knot rides a layered
+  object as it rides a keyed one; Remove gives the layers back exactly;
+- `bakeResults` on such a channel bakes into pairBlend input 1, a blend node, and lands wrong (9.9 cm
+  on a two-layer cube). So Bake (knots) and Inside / World / Swap, on a layered object only, read what
+  it shows on every frame (`layered.read`) and key FINAL values on one layer (`layered.key_shown`:
+  `setKeyframe -animLayer L -value v`, exact on the base under an additive layer and on an additive
+  layer, at any time; rotations made continuous; the layer's keys in the span replaced, a ranged knot's
+  outside kept by inserted, pinned edge keys or flat edge keys);
+- that layer is the ACTIVE one (`layered.target` = `maya_poselib.keys.active_layer`: the selected
+  non-base layer, else BaseAnimation); the other layers keep their curves. An additive layer in
+  quaternion accumulation is refused for rotations;
+- a layer's blend node belongs to its layer by `.message -> layer.blendNodes[]`; its own value is
+  `inputB` (`inputBX`.. on a rotation blend).
+- `knots._channels(..., layers=True)` accepts a layered channel whose layers' inputs are all time
+  curves or values (`layered.stack_word`); an expression or driven key inside a layer still refuses.
+  Scale keeps refusing a layer when the parents' scales differ.
+- `knots._unkey` finds the static key a knot set on the base under a layer the bake keyed the
+  channel into.
+- **Layer bakes FROM the selected layer** (`layerbake._chosen_source`; `_base(..., source)` walks to
+  that layer's `inputB`): its keys go onto the new layer (moved as curves when its weight is 1 and
+  unanimated, else sampled), the source layer then holds the first frame's pose. Nothing selected:
+  the base, as before - and when the base moves nothing but exactly one layer does (not one a Layer
+  press made), that layer (`_only_layer`, said on the line); several - refused, naming them. A
+  locked, muted or weight-0 source is refused.
+Proof: `docs/superpowers/plans/verify_tools_layers.py` **32/32 mayapy standalone** (a prop keyed on
+the base and on an additive Anim1): every knot kind, Offset, Aim, Across made with nothing moving
+(0.000000 cm); a knot edited moves it 10 cm, Remove exact with Anim1's curves untouched; Bake into the
+base (nothing selected) and into Anim1 (selected; the base untouched, Anim1 taking tz) as shown;
+a ranged knot unbent outside at half frames; Inside / World / Swap kept to 0.000000 cm with Anim1
+untouched, or into Anim1 with the base untouched; one undo each; Layer from the only layer, from a
+selected Anim1 with its keys moved as keys, under a highlight, from Anim2 over Anim1, on a knot of the
+layered prop; muted source and a second press refused; Overlap, Snapshot, Attach on layered objects.
+verify_knots 90/90, verify_parent 49/49, verify_bake_layer 66/66, verify_aim_overlap 57/57,
+verify_snapshot 42/42 again; 6460 unit tests. Not seen live (the animator's checks).
+
 235. **A channel on an animation layer is fed by the layer's `animBlendNode*`, not by its curve.**
      The base curve hangs on the blend's input A, untouched; a gate reading "the curve connected to
      the plug" after an Overlap read the blend node and called the base changed (verify gate 33's

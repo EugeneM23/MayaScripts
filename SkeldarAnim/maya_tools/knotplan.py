@@ -716,7 +716,8 @@ def undriven_refusal(name, words, layered=False):
         return "%s is driven by %s - Layer bakes keys, knots and constraints" % (
             name, " and ".join(seen))
     if layered:
-        return "%s: its animation is on layers already - nothing left on its base to bake" % name
+        return ("%s: its animation is on layers already - select the layer to bake from in the "
+                "Anim Layer Editor" % name)
     return "nothing animates %s - no keys of its own, no knot, no constraint" % name
 
 
