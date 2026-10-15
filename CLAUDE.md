@@ -782,7 +782,12 @@ the animator's rig over the port — «SceneSetup_camera sits on camera_root
 and drives it - 101 frames baked», the camera in the bone's transform to
 **0.000000**, a 7 cm move of the camera moving `camera_root` **7.000**,
 the second press «camera removed - camera_root baked back and free» with
-the bone back to 0.000000. `verify_many_rigs.py`'s camera gates were
+the bone back to 0.000000. **The game's lens since 2026-10-15**: read from
+the open Atone editor, `BP_Character`'s `PlayerCamera` is FieldOfView 100,
+16:9, MaintainXFOV (100 is horizontal), and the project's NearClipPlane 0.5;
+`camera.lens` sets a 16:9 gate fitted horizontally, focal 15.100 mm
+(`focal_for`), near clip 0.5 - Maya reads 100.0001 deg across (was camera1's
+16.494 mm, 95 deg). `verify_many_rigs.py`'s camera gates were
 pointed at `camera_root` too and not re-run. 2175 unit tests.
 
 ## Two buttons on the shelf: SkeldarAnim and OverRig (2026-09-19)

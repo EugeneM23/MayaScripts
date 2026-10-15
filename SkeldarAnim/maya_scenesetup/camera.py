@@ -40,8 +40,24 @@ AXIS_OFFSET = (-1.0, 0.0, 0.0, 0.0,
                0.0, 1.0, 0.0, 0.0,
                0.0, 0.0, 0.0, 1.0)
 
-# camera1's lens, which was a framing choice rather than a Maya default.
-FOCAL = 16.493949366848657
+# The game's lens (2026-10-15, the animator: «максимально правильный фов такой
+# же как и у нас в игре atone»), read from the open Atone editor: the player's
+# camera, `BP_Character`'s `PlayerCamera`, has FieldOfView 100, aspect 16:9,
+# AspectRatio_MaintainXFOV (the project overrides neither) -- so 100 degrees is
+# the HORIZONTAL angle -- and DefaultEngine.ini's NearClipPlane is 0.5 cm.
+# Until then FOCAL was camera1's 16.494 mm: 95.0 degrees across the gate.
+GAME_FOV = 100.0
+GAME_ASPECT = 16.0 / 9.0
+GAME_NEAR_CLIP = 0.5
+APERTURE = 1.417  # inches, Maya's default 36 mm across
+
+
+def focal_for(fov, aperture=APERTURE):
+    """The focal length (mm) giving `fov` degrees across `aperture` inches."""
+    return (aperture * 25.4 / 2.0) / math.tan(math.radians(fov) / 2.0)
+
+
+FOCAL = focal_for(GAME_FOV)
 
 CHANNELS = tuple(channel + axis
                  for channel in ("translate", "rotate") for axis in "XYZ")
@@ -212,6 +228,16 @@ def teardown(bone, start, end):
     return True
 
 
+def lens(shape):
+    """The game's lens on a camera shape: a 16:9 gate fitted horizontally, so
+    the viewport shows the game's 100 degrees across whatever its own shape."""
+    cmds.setAttr(shape + ".horizontalFilmAperture", APERTURE)
+    cmds.setAttr(shape + ".verticalFilmAperture", APERTURE / GAME_ASPECT)
+    cmds.setAttr(shape + ".filmFit", 1)  # horizontal: UE's MaintainXFOV
+    cmds.setAttr(shape + ".focalLength", FOCAL)
+    cmds.setAttr(shape + ".nearClipPlane", GAME_NEAR_CLIP)
+
+
 def setup(bone, start, end):
     """Bake the bone onto a fresh camera, then drive the bone from it."""
     autokey = cmds.autoKeyframe(query=True, state=True)
@@ -228,7 +254,7 @@ def setup(bone, start, end):
         transform = cmds.ls(cmds.rename(transform, name), long=True)[0]
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
         shape = cmds.rename(shape, name + "Shape")
-        cmds.setAttr(shape + ".focalLength", FOCAL)
+        lens(shape)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)
         # In the bone's character group (2026-10-02), not loose at world level; an identity

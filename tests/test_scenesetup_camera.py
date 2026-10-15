@@ -85,8 +85,16 @@ class TheAxisOffset(unittest.TestCase):
             worst(camera.offset_matrix((90.0, 0.0, 180.0)),
                   camera.AXIS_OFFSET), 1e-9)
 
-    def test_the_focal_length_is_the_framing_the_animator_chose(self):
-        self.assertAlmostEqual(camera.FOCAL, 16.493949366848657)
+    def test_the_lens_is_the_games_100_degrees_across(self):
+        """Atone's PlayerCamera: FieldOfView 100, MaintainXFOV."""
+        import math
+        across = 2.0 * math.degrees(
+            math.atan(camera.APERTURE * 25.4 / 2.0 / camera.FOCAL))
+        self.assertAlmostEqual(across, 100.0, places=9)
+        self.assertAlmostEqual(camera.FOCAL, 15.10035, places=4)
+
+    def test_the_old_focal_was_95_degrees(self):
+        self.assertAlmostEqual(camera.focal_for(95.0), 16.4939, places=2)
 
 
 class RotationOnly(unittest.TestCase):
