@@ -247,6 +247,12 @@ def _camshake_module():
     return maya_camshake
 
 
+def _tabs(step):
+    """The next / previous scene tab (2026-10-15)."""
+    from maya_scenetabs import switching
+    return _report(switching.cycle(step))
+
+
 def _camshake(func):
     """Press a Camera Shake button (2026-10-13). Its presses read the remembered settings when the card is
     closed, and then say their line in the viewport."""
@@ -986,6 +992,15 @@ _OURS = (
     ("camshake.apply", "Camera Shake", "Apply camera shake",
      "A shake in the card's mode on the selected camera over the highlighted frames",
      partial(_camshake, "press_apply")),
+    ("window.tabs", "Windows", "Scene Tabs",
+     "Show the scene tabs bar above the viewport: several scenes in one Maya",
+     partial(_show, "maya_scenetabs.bar", "show")),
+    ("tabs.next", "Scene Tabs", "Next tab",
+     "Switch to the next scene tab",
+     partial(_tabs, 1)),
+    ("tabs.previous", "Scene Tabs", "Previous tab",
+     "Switch to the previous scene tab",
+     partial(_tabs, -1)),
     ("radial.press", "Radial Menu", "Radial menu (press)",
      "Hold to show the radial menu under the cursor; release over a slot to choose",
      partial(_radial, "press")),

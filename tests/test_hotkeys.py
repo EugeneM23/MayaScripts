@@ -490,7 +490,17 @@ class OurRows(unittest.TestCase):
         #  + tools.bake_layer (2026-10-13, Bake to a layer)
         #  + window.camshake, camshake.apply (2026-10-13, Camera Shake)
         #  + tools.snapshot (2026-10-13, Snapshot)
-        self.assertEqual(len(ours), 66)                 # + radial.press / .release, window.radial (2026-10-15)
+        #  + window.tabs, tabs.next / .previous (2026-10-15, Scene Tabs)
+        self.assertEqual(len(ours), 69)                 # + radial.press / .release, window.radial (2026-10-15)
+
+    def test_the_scene_tabs_rows(self):
+        """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
+        self.assertEqual(maya_hotkeys.row("window.tabs")[4].args, ("maya_scenetabs.bar", "show"))
+        found = maya_hotkeys.row("tabs.next")
+        self.assertEqual(found[1], "SkeldarAnim.Scene Tabs")
+        self.assertIs(found[4].func, maya_hotkeys._tabs)
+        self.assertEqual(found[4].args, (1,))
+        self.assertEqual(maya_hotkeys.row("tabs.previous")[4].args, (-1,))
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
@@ -544,7 +554,7 @@ class OurRows(unittest.TestCase):
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
                           "window.poses", "window.radial", "window.scenesetup", "window.shared",
-                          "window.stash", "window.tailbuilder", "window.tools",
+                          "window.stash", "window.tabs", "window.tailbuilder", "window.tools",
                           "window.uebridge", "window.walk",
                           "window.weapons"])
 
@@ -678,7 +688,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 19)                 # + maya_walk.panel, maya_camshake (2026-10-13), maya_radial (2026-10-15)
+        self.assertEqual(len(names), 20)                 # + maya_walk.panel, maya_camshake (2026-10-13), maya_radial, maya_scenetabs.bar (2026-10-15)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)

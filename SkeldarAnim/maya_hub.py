@@ -543,6 +543,7 @@ def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
     _register_pending_startup()
+    _tabs_bar_soon()
     if not _BUILT_HERE:
         #  A fresh module object (Maya's start, an install): the popups an
         #  older one opened are destroyed, the remembered ones come back
@@ -574,6 +575,28 @@ def build():
         _build_classic()
     _BUILT_HERE = True
     return CONTROL
+
+
+TABS_BAR_VAR = "skeldarSceneTabsBar"
+
+
+def _tabs_bar_soon():
+    """The scene tabs bar above the viewport (2026-10-15), shown with the hub
+    unless hidden from its own menu (optionVar skeldarSceneTabsBar 0). Deferred and guarded: a bar
+    that cannot be built never costs the hub."""
+    if cmds.about(batch=True):
+        return
+    if cmds.optionVar(exists=TABS_BAR_VAR) and not cmds.optionVar(q=TABS_BAR_VAR):
+        return
+
+    def show_bar():
+        try:
+            from maya_scenetabs import bar
+            bar.ensure_docked()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the scene tabs bar could not be shown")
+            print(traceback.format_exc())
+    cmds.evalDeferred(show_bar, lowestPriority=True)
 
 
 def is_skinned():

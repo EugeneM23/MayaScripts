@@ -150,6 +150,10 @@ class FakeUiCmds(object):
         self.existing.add(name)
         return name
 
+    def about(self, **kwargs):
+        #  A fake has no GUI: batch, so the hub's scene tabs bar is not queued (2026-10-15).
+        return True
+
     def evalDeferred(self, fn, **kwargs):
         self.deferred.append(fn)
         return None

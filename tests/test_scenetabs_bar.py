@@ -90,5 +90,17 @@ class TabBar(unittest.TestCase):
         self.assertIn("skeldarSceneTabsTabs", sheet)
 
 
+class HubShowsTheBar(unittest.TestCase):
+
+    def test_the_hub_build_shows_the_bar_once_per_session(self):
+        import inspect
+        import maya_hub
+        source = inspect.getsource(maya_hub.build)
+        self.assertIn("_tabs_bar_soon()", source)
+        helper = inspect.getsource(maya_hub._tabs_bar_soon)
+        self.assertIn("skeldarSceneTabsBar", helper)
+        self.assertIn("ensure_docked", helper)
+
+
 if __name__ == "__main__":
     unittest.main()
