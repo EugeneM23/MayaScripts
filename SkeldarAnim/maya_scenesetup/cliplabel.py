@@ -445,11 +445,11 @@ def clear_rig(rig):
 def clip_name_of(source_root):
     """`clip_name_from` over the scene: the source's top node and the scene's
     own file."""
-    path = _long(source_root) or ""
+    path = scope.local(_long(source_root) or "", cmds)
     parts = [p for p in path.split("|") if p]
     top_is_joint = True
     if parts:
-        top_is_joint = cmds.objectType("|" + parts[0]) == "joint"
+        top_is_joint = cmds.objectType(_long(source_root).split("|")[1]) == "joint"
     scene = scope.scene_name(cmds)
     return clip_name_from(path, top_is_joint, scene)
 

@@ -544,7 +544,8 @@ def group_character(entry, new, namespace, root):
                                   long=True) or [])
     if not tops:
         return None, None
-    return chargroup.make(group_base(entry, namespace), getattr(entry, "label", ""), root, tops)
+    return chargroup.make(group_base(entry, scope.relative(namespace, cmds)),
+                          getattr(entry, "label", ""), root, tops)
 
 
 def character_group(root_or_rig):

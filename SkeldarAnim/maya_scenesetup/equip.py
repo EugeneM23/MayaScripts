@@ -15,6 +15,8 @@ from collections import namedtuple
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_rigs
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
@@ -47,8 +49,8 @@ def floor_side(taken):
 
 
 def character_name(root):
-    """A rig's namespace, else the root's leaf. Pure."""
-    leaf = (root or "").split("|")[-1]
+    """A rig's namespace, else the root's leaf - as the active scene tab shows it."""
+    leaf = scope.local(root or "", cmds).split("|")[-1]
     return leaf.split(":")[0] if ":" in leaf else leaf
 
 
