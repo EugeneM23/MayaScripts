@@ -48,6 +48,8 @@ import time
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_poselib import keys
 from maya_poselib import objects
 from maya_poselib import scene
@@ -143,7 +145,7 @@ def author():
 
 
 def _common(kind):
-    path = cmds.file(query=True, sceneName=True) or ""
+    path = scope.scene_name(cmds)
     return {"format": store.FORMAT, "version": store.VERSION, "kind": kind, "name": "Pose",
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "author": author(),
             "scene": os.path.basename(path), "frame": float(cmds.currentTime(query=True)),

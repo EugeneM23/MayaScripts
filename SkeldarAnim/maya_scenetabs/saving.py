@@ -50,7 +50,7 @@ def _config(namespace, ranges):
                            sourceType="mel")
 
 
-def export_uuids(namespace):
+def export_uuids(namespace, references=True):
     """Every node the tab's file holds: its own nodes at every level (not
     referenced, not furniture, not a reference node) and its top references'
     nodes - found by their namespace, since a saved reference's node sits in
@@ -72,10 +72,17 @@ def export_uuids(namespace):
             #  the rig tab reopened at 1-120 for 0-50)
             continue
         out.append(cmds.ls(path, uuid=True)[0])
+    if not references:
+        #  the references written in (stage 2, a copy for a colleague): their nodes, never
+        #  their reference nodes, go into the file as plain nodes
+        refs = [cmds.referenceQuery(cmds.ls(uid)[0], filename=True)
+                for uid, _ in session.top_references(namespace)]
+        return out + (cmds.ls([n for f in refs for n in cmds.referenceQuery(f, nodes=True, dagPath=True) or []],
+                              uuid=True) or [])
     return out + [uid for uid, _ in session.top_references(namespace)]
 
 
-def save_tab(namespace=None, path=None, adopt=True):
+def save_tab(namespace=None, path=None, adopt=True, preserve_references=True):
     """The tab (the active one by default) into `path` (its own file by
     default). `adopt`: the tab takes the path and is clean after."""
     state = session.state()
@@ -124,7 +131,7 @@ def save_tab(namespace=None, path=None, adopt=True):
         try:
             _config(namespace, ranges)
             layers.home_blends(namespace)
-            uuids = export_uuids(namespace)
+            uuids = export_uuids(namespace, preserve_references)
             renames = {}
             tab_root = layers.tab_root(namespace)
             if tab_root:
@@ -133,7 +140,7 @@ def save_tab(namespace=None, path=None, adopt=True):
             cmds.namespace(setNamespace=":")
             moved = session.lift(namespace, renames)
             cmds.select(cmds.ls(uuids) or [], noExpand=True, replace=True)
-            cmds.file(temporary, exportSelected=True, preserveReferences=True,
+            cmds.file(temporary, exportSelected=True, preserveReferences=preserve_references,
                       type=records.FILE_TYPES[ext], force=True)
         except Exception:
             if os.path.exists(temporary):

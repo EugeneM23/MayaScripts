@@ -33,6 +33,8 @@ Spec: docs/superpowers/specs/2026-09-30-open-scene-menu-design.md
 import os
 
 import maya.cmds as cmds
+
+from maya_scenetabs import scope
 import maya.mel as mel
 
 from maya_scenesetup import catalog, character, colour, fbximport
@@ -133,6 +135,11 @@ def open_path(path):
     comes in as an import into a new scene, which Maya reads as a change
     (measured 2026-09-30 on every catalog weapon) - the next Open scene would
     ask to save an untouched file."""
+    if scope.tabs_on(cmds):
+        #  scene tabs on (2026-10-15): the file opens in a tab of its own - nothing is replaced,
+        #  so nothing asks to be saved; the shipped images still go on the plugin's copy
+        scope.open_scene(path, cmds)
+        return True, _clean()
     if not save_changes():
         return False, ""
     note = ""

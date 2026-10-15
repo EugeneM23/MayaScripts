@@ -450,7 +450,7 @@ def clip_name_of(source_root):
     top_is_joint = True
     if parts:
         top_is_joint = cmds.objectType("|" + parts[0]) == "joint"
-    scene = cmds.file(query=True, sceneName=True) or ""
+    scene = scope.scene_name(cmds)
     return clip_name_from(path, top_is_joint, scene)
 
 

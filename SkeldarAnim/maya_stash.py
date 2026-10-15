@@ -152,7 +152,7 @@ def _clear_name():
 
 
 def _open_scene_path():
-    scene = cmds.file(query=True, sceneName=True) or ""
+    scene = scope.scene_name(cmds)
     return os.path.normcase(os.path.abspath(scene)) if scene else ""
 
 
@@ -187,7 +187,7 @@ def _one_picked(verb):
 def stash_scene(name=None):
     """The press: a copy of the open scene into the stash. `name` (else the
     Name field's text, else the scene's own stem with the time) names it."""
-    scene = cmds.file(query=True, sceneName=True) or ""
+    scene = scope.scene_name(cmds)
     fallback = store.draft_name(scene, time.time())
     typed = _typed_name() if name is None else name
     base = records.upload_name(typed, fallback)
@@ -196,8 +196,7 @@ def stash_scene(name=None):
     path = _path(target)
     _own, file_type = records.scene_file_name(scene, time.time())
     #  a copy: the working file, its name and its modified flag stay
-    cmds.file(path, exportAll=True, type=file_type, force=True,
-              preserveReferences=False)
+    scope.export_scene(path, file_type, cmds)
     _clear_name()
     refresh()
     size = os.path.getsize(path)

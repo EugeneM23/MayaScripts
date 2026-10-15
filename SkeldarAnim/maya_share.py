@@ -277,15 +277,14 @@ def send_scene(name=None):
     the Name field's text, else the scene's own name)."""
     from maya_uebridge import animimport
     own, file_type = records.scene_file_name(
-        cmds.file(query=True, sceneName=True), time.time())
+        scope.scene_name(cmds), time.time())
     record = _new_record(records.upload_name(_typed_name(name), own))
     path = inbox_path(record)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     #  A copy, not a save: the working file, its name and its modified flag
     #  stay as they are. References are written into the copy (a colleague
     #  has none of the files they point at).
-    cmds.file(path, exportAll=True, type=file_type, force=True,
-              preserveReferences=False)
+    scope.export_scene(path, file_type, cmds)
     record["bytes"] = os.path.getsize(path)
     fps = animimport.fps_from_unit(cmds.currentUnit(query=True, time=True))
     if fps:
@@ -554,7 +553,7 @@ def _inside_share_dir(path):
 
 
 def _is_open_scene(path):
-    scene = cmds.file(query=True, sceneName=True) or ""
+    scene = scope.scene_name(cmds)
     return bool(scene) and (os.path.normcase(os.path.abspath(scene))
                             == os.path.normcase(os.path.abspath(path)))
 
@@ -806,6 +805,11 @@ def open_entry(rid):
     record = state()["entries"][rid]["record"]
     if not _save_changes():
         return _status("Open cancelled - nothing changed.")
+    if record["kind"] == "scene" and scope.tabs_on(cmds):
+        #  scene tabs on (2026-10-15): a tab of its own, with its ranges, its vaccine swept
+        scope.open_scene(path, cmds)
+        return _status("Opened {0} from {1} in a tab".format(
+            record["name"], record.get("from") or "someone"))
     if record["kind"] == "scene":
         cmds.file(path, open=True, force=True, executeScriptNodes=False,
                   ignoreVersion=True, prompt=False)
@@ -813,7 +817,7 @@ def open_entry(rid):
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
         return _status("Opened {0} from {1}{2}".format(
             record["name"], record.get("from") or "someone", note))
-    cmds.file(new=True, force=True)
+    scope.new_scene(cmds)
     return _status(_import_fbx(path, record, "Opened"))
 
 

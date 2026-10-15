@@ -207,7 +207,8 @@ def read_clip(root):
     worlds = np.array([[cmds.getAttr(p + ".worldMatrix[0]", time=t) for t in range(start, end + 1)]
                        for p in joints]).reshape(len(joints), end - start + 1, 4, 4)
     up = (0.0, 1.0, 0.0) if cmds.upAxis(query=True, axis=True) == "y" else (0.0, 0.0, 1.0)
-    scene = os.path.splitext(os.path.basename(cmds.file(query=True, sceneName=True) or ""))[0]
+    from maya_scenetabs import scope
+    scene = os.path.splitext(os.path.basename(scope.scene_name(cmds)))[0]
     above = cmds.listRelatives(root, parent=True, fullPath=True)
     name = scene or _short(above[0] if above else root)
     return wm.Clip([_short(p).split(":")[-1] for p in joints], parents, worlds, _fps(), up, name), start
