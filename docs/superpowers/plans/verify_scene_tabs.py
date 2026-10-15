@@ -1068,11 +1068,57 @@ def phase_untitled():
         hooks.remove()
 
 
+def phase_duplicates():
+    """2026-10-15, found live (AS_TechLimb_Shoot_1P_01): a file holding two DAG nodes of one short
+    name (OverRig's fin_jnt11 in every rig) did not open as a tab - nodeType on a short name.
+    Open, switch away and back, save, reopen, close."""
+    from maya_scenetabs import opening, saving, switching
+    os.makedirs(RUN, exist_ok=True)
+    dup = RUN + "/duplicates.ma"
+    fresh()
+    for group in ("rigA", "rigB"):
+        top = cmds.group(empty=True, name=group)
+        cmds.select(top)
+        cmds.joint(name="fin_jnt11")
+        cmds.joint(name="fin_jnt12")
+    _save(dup)
+    fresh()
+    cmds.polyCube(name="mainCube")
+    opening.ASK = lambda message, buttons: "Don't Save"
+    try:
+        message = opening.open_tab(dup)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        message, error = "", str(exc)
+    ns = "tab_duplicates"
+    gate("duplicates: a file with two nodes of one name opens as a tab",
+         not error and session.state()["active"] == ns, error or message)
+    gate("duplicates: both fin_jnt11 are in the tab",
+         len(cmds.ls(ns + ":fin_jnt11", long=True) or []) == 2, cmds.ls(ns + ":fin_jnt11", long=True))
+    first = session.state()["tabs"][0]["ns"]
+    switching.switch(first)
+    switching.switch(ns)
+    gate("duplicates: switched away and back", session.state()["active"] == ns
+         and cmds.getAttr("|%s:rigA.lodVisibility" % ns) == 1)
+    cmds.setAttr("|%s:rigA.translateX" % ns, 7)
+    try:
+        saving.save_tab(ns)
+        saved = ""
+    except Exception as exc:                                    # noqa: BLE001
+        saved = str(exc)
+    text = open(dup).read()
+    gate("duplicates: saved into its plain file with both joints, no tab prefix",
+         not saved and text.count('"fin_jnt11"') == 2 and "tab_" not in text, saved)
+    gate("duplicates: the tab's names are back after the save",
+         len(cmds.ls(ns + ":fin_jnt11", long=True) or []) == 2)
+    gate("duplicates: closed", "Closed" in opening.close_tab(ns, ask=False) or not session.exists())
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
-          "untitled": guarded(phase_untitled)}
+          "untitled": guarded(phase_untitled), "duplicates": phase_duplicates}
 
 
 def main(names):

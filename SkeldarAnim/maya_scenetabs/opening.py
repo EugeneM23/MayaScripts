@@ -123,8 +123,11 @@ def _sweep(namespace):
     """The imported file's ui configuration node and any vaccine malware node
     deleted (never run: the import did not execute script nodes)."""
     from maya_scenesetup import character
-    scripts = [s for s in cmds.namespaceInfo(":" + namespace, listOnlyDependencyNodes=True, recurse=True) or []
-               if cmds.nodeType(s) == "script" and not cmds.referenceQuery(s, isNodeReferenced=True)]
+    #  by type, never every node by its short name: a file holding two DAG nodes of one
+    #  name (OverRig's `fin_jnt11` in every rig) lists a short name that matches no
+    #  single node, and nodeType raised - the tab did not open (2026-10-15, live)
+    scripts = [s for s in cmds.ls(":%s:*" % namespace, type="script", recursive=True) or []
+               if not cmds.referenceQuery(s, isNodeReferenced=True)]
     doomed = character.malware_nodes(scripts) + [
         s for s in scripts if s.split(":")[-1] == "uiConfigurationScriptNode"]
     for node in doomed:
