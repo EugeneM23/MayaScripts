@@ -1019,6 +1019,8 @@ def _rebuild(data, point):
             deletion.record_import(_long(root_uuid), made, label)
         except Exception as exc:                             # noqa: BLE001
             print("Pose Library: no record for Delete (%s)" % exc)
+        from maya_scenetabs import scope
+        scope.home_namespace(namespace, cmds)      # a tab's, while tabs are on (2026-10-15)
         root = _long(root_uuid)
     return root, " - ".join([REBUILT % (namespace, x, z)] + notes)
 

@@ -38,6 +38,8 @@ import re
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_scenesetup import catalog
 from maya_scenesetup import colour
 
@@ -82,8 +84,15 @@ def free_namespace(base, taken):
 
 
 def existing_namespaces():
-    """Every namespace in the scene, nested ones as `a:b`."""
-    return cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True) or []
+    """Every namespace in the scene, nested ones as `a:b` - and, while scene tabs are on
+    (2026-10-15), the active tab's own as if they stood at the root: a new character's
+    namespace goes into the tab, a clip's to the root, and either must be free."""
+    found = list(cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True) or [])
+    active = scope.active_namespace(cmds)
+    if active:
+        prefix = active + ":"
+        found += [n[len(prefix):] for n in found if n.startswith(prefix)]
+    return found
 
 
 # ------------------------------------------------------------------ policy
@@ -615,6 +624,8 @@ def _add(entry, path, rgb, at, builder):
 
     before_roots = builder.character_roots()
     new = import_asset(path, namespace or None)
+    if namespace:
+        namespace = scope.qualified(namespace, cmds)   # the import went into the active tab
     with _unrecorded():
         return _after_import(entry, new, namespace, before_roots, rgb, at,
                              textured, builder)
@@ -682,5 +693,5 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
                if textured or painted else "")
     return added_message(joints, meshes, removed, note, connected,
                          label=entry.label, colour_name=wearing,
-                         namespace=namespace, selected=selected,
+                         namespace=scope.relative(namespace, cmds), selected=selected,
                          placed=placed)

@@ -29,6 +29,8 @@ namespace with whatever of the piece is left in it (its skin, its bind pose, its
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_scenesetup import attach
 from maya_scenesetup import catalog
 from maya_scenesetup import colour as colouring
@@ -155,8 +157,12 @@ def _take_off(node):
     cmds.delete(node)
     if space:
         weaponspace.prune_marked(space, SPACE_MARKER, GROUP_MARKER)
-    if namespace and cmds.namespace(exists=":" + namespace):
-        cmds.namespace(removeNamespace=":" + namespace, deleteNamespaceContent=True)
+    #  the piece's namespace as it stood when worn: in a scene tab's while tabs are on
+    #  (2026-10-15), else at the root
+    for name in ([scope.absolute(namespace, cmds), ":" + namespace] if namespace else []):
+        if cmds.namespace(exists=name):
+            cmds.namespace(removeNamespace=name, deleteNamespaceContent=True)
+            break
 
 
 def has_skeleton(roots):

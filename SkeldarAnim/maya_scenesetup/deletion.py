@@ -32,6 +32,8 @@ import collections
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_rigs
 
 # `strangers`: children of the character's outliner group (2026-10-02) that are none of its -- the
@@ -871,7 +873,7 @@ def _remove_namespace(namespace, notes):
         return
     current = (cmds.namespaceInfo(currentNamespace=True, absoluteName=True) or ":").lstrip(":")
     if current == namespace or current.startswith(namespace + ":"):
-        cmds.namespace(setNamespace=":")
+        scope.enter_active(cmds)
     nested = cmds.namespaceInfo(":" + namespace, listOnlyNamespaces=True, recurse=True) or []
     for child in sorted(nested, key=lambda ns: -ns.count(":")) + [":" + namespace]:
         name = child if child.startswith(":") else ":" + child

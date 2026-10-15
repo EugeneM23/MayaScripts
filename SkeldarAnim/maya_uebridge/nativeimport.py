@@ -29,6 +29,8 @@ import traceback
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 LABEL = "{0} [own skeleton]"
 AXES = ("X", "Y", "Z")
 
@@ -207,17 +209,22 @@ def move_root(root, delta, frame=None):
 def merge_into_root(namespace):
     """The clip's namespace merged into the root namespace - with every one nested in it, deepest
     first, when they form one chain (Mixamo's `mixamorig:`); siblings (a scene holding two
-    namespaced characters) keep namespaces of their own. Returns a note ("" when every one went)."""
+    namespaced characters) keep namespaces of their own. Returns a note ("" when every one went).
+    While scene tabs are on (2026-10-15) the clip first moves under the active tab and merges
+    into IT: the root is no tab's."""
+    full = scope.home_namespace(namespace, cmds)
+    merge = ({"mergeNamespaceWithParent": True} if full != namespace.lstrip(":")
+             else {"mergeNamespaceWithRoot": True})
     nested = [n.lstrip(":") for n in
-              cmds.namespaceInfo(namespace, listOnlyNamespaces=True, recurse=True) or []]
-    flatten = nested if single_chain(namespace, nested) else []
+              cmds.namespaceInfo(":" + full, listOnlyNamespaces=True, recurse=True) or []]
+    flatten = nested if single_chain(full, nested) else []
     left = []
-    for each in depth_first(flatten + [namespace]):
+    for each in depth_first(flatten + [full]):
         each = each.lstrip(":")
         if not cmds.namespace(exists=":" + each):
             continue
         try:
-            cmds.namespace(removeNamespace=":" + each, mergeNamespaceWithRoot=True)
+            cmds.namespace(removeNamespace=":" + each, **merge)
         except Exception:                                    # noqa: BLE001
             traceback.print_exc()
             left.append(each)

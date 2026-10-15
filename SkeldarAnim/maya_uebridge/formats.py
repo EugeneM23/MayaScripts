@@ -37,6 +37,8 @@ import math
 import os
 
 import maya.cmds as cmds
+
+from maya_scenetabs import scope
 import maya.mel as mel
 
 from maya_uebridge import animimport
@@ -164,7 +166,7 @@ def _range_of(namespace):
 
 def _in_namespace(namespace):
     if not cmds.namespace(exists=":" + namespace):
-        cmds.namespace(addNamespace=namespace)
+        cmds.namespace(addNamespace=":" + namespace)
     cmds.namespace(setNamespace=":" + namespace)
 
 
@@ -302,7 +304,7 @@ def remove_namespace(namespace):
     name = ":" + namespace.lstrip(":")
     if not cmds.namespace(exists=name):
         return True
-    cmds.namespace(setNamespace=":")
+    scope.enter_active(cmds)
     for node in cmds.namespaceInfo(name, listOnlyDependencyNodes=True,
                                    recurse=True, dagPath=True) or []:
         try:
@@ -335,7 +337,7 @@ def _import_usd(path, namespace, set_timeline):
         cmds.mayaUSDImport(file=path.replace("\\", "/"), readAnimData=True,
                            primPath="/")
     finally:
-        cmds.namespace(setNamespace=":")
+        scope.enter_active(cmds)
     start, end = _range_of(namespace)
     return _info(namespace, start, end, None, "", set_timeline)
 
@@ -444,7 +446,7 @@ def build(namespace, joints, tracks, times, set_timeline=True, fps=None,
                 cmds.setAttr(path + ".jointOrient", *[math.degrees(v) for v in
                                                        (euler.x, euler.y, euler.z)])
     finally:
-        cmds.namespace(setNamespace=":")
+        scope.enter_active(cmds)
     mtimes = om.MTimeArray([om.MTime(t, om.MTime.kSeconds) for t in times])
     for joint, path, track in zip(joints, paths, tracks):
         if not track or not times:
@@ -675,7 +677,7 @@ def import_model_rest(model, namespace):
     try:
         mel.eval(animimport.import_command(sources.staged(model)))
     finally:
-        cmds.namespace(setNamespace=":")
+        scope.enter_active(cmds)
         mel.eval('FBXProperty "{0}" -v {1}'.format(
             ANIMATION_PROPERTY, "true" if previous else "false"))
 

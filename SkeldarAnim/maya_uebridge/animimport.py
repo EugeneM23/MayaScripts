@@ -81,7 +81,9 @@ def clip_range(times):
 
 
 def existing_namespaces():
-    found = cmds.namespaceInfo(listOnlyNamespaces=True, recurse=True) or []
+    #  from the root (2026-10-15): a clip goes into a root-level namespace whatever namespace
+    #  is current, and the current one is a scene tab's while tabs are on
+    found = cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True) or []
     return set(name.lstrip(":").split(":")[-1] for name in found)
 
 
@@ -791,8 +793,9 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
         try:
             mel.eval(import_command(fbx_path, take))
         finally:
-            cmds.namespace(setNamespace=":")
+            scope.enter_active(cmds)
 
+    scope.enter_active(cmds)          # the merge ran at the root too
     new_nodes = set(cmds.ls(long=True)) - before_nodes
     new_curves = list(set(cmds.ls(type="animCurve") or []) - before_curves)
 

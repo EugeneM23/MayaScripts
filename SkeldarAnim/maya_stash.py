@@ -42,6 +42,8 @@ import time
 import traceback
 
 import maya.cmds as cmds
+
+from maya_scenetabs import scope
 import maya.mel as mel
 
 import maya_hubcopy as hubcopy
@@ -336,6 +338,7 @@ def _import_fbx(path, name):
                                     set_timeline=True)
     if not result.get("nodes"):
         return "{0} brought nothing into the scene.".format(name)
+    scope.home_namespace(namespace, cmds)          # a tab's, while tabs are on
     return "Imported {0} as {1} - {2} joints, {3} curves.".format(
         name, namespace, result.get("joints", 0), result.get("curves", 0))
 
