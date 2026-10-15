@@ -216,6 +216,15 @@ class RootInTheFit(unittest.TestCase):
         self.assertEqual(out[6:], [2.0] * 12)
         self.assertEqual(len(out), 18)
 
+    def test_the_top_joint_counts_the_weight_too(self):
+        # the top of the spine carries the chest, the head and the arms: the fit may
+        # not trade it for the middle (2026-10-15, a chest moved 12 cm and turned 140 deg)
+        residual = [1.0] * 6 + [2.0] * 12 + [3.0] * 6  # the root, two middles, the top
+        out = fkikspine.weighted(residual, weight=100.0, top=100.0)
+        self.assertEqual(out[:6], [100.0] * 6)
+        self.assertEqual(out[6:18], [2.0] * 12)
+        self.assertEqual(out[18:], [300.0] * 6)
+
     def test_the_root_outweighs_a_spine_joint(self):
         self.assertGreaterEqual(fkikspine.ROOT_WEIGHT, 10.0)
 

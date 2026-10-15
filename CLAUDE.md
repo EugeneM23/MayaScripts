@@ -6463,6 +6463,17 @@ Connections, the game skeleton and the skin's vertices on every frame, Manny / C
      `IKSpine1_M`'s turn carries the root 1:1. The mid control twists the middle and leaves the root
      alone (rotateY +10 turns IKX1..3 by 5, 10, 5°). Fitting without it, the Orc D's strongly bent spine
      rolled 2.6° off; with it 0.41°. Probe which control moves what before choosing a fit's unknowns.
+258. **A fit seeded only from the frame before walks into a wrong basin and stays there.** The animator's
+     `AS_Dagger_Attack_Sprint_1p_SpineBug_` (2026-10-15, «при переключении IK FK из вкладки connection
+     у нас ломается спина, AS-овское работает»): `FKSpine4_M` moved 12 cm and turned −140°, a chest no
+     spline can follow. The LM fit, started from the previous frame, traded the top for the middle and
+     drifted: chest, head, arms 29 cm / 167° off, still off on 25 frames of a held pose that, fitted
+     alone, came within 2 cm. AdvancedSkeleton's own switch puts `IKSpine1_M` / `IKSpine3_M` on their
+     `AlignIKTo` nodes - both ends exact, the middle approximate. Now every frame is fitted from both
+     starts (the frame before, and AS's placement, `_as_seed`), the better kept, the top joint weighted
+     as the root (`TOP_WEIGHT`): top 0.004 cm / 0.009°, root 0.002 cm, the middle 10 cm / 45° at worst
+     on that take (AS's own: 12 cm / 165°). A seed that sets a channel the fit does not own (the mid
+     control's translate) leaves it moved under every later frame: 1 cm lost on every normal take.
 
 ## Shared: scenes and FBX between colleagues, one press (2026-09-30)
 

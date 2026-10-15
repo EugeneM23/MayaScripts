@@ -52,7 +52,9 @@ LOWER = ("root", "pelvis", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "
          "foot_r", "ball_r")                       # what the root carries: must not move
 SPINE = ("spine_01", "spine_02", "spine_03", "spine_04", "spine_05")
 LOWER_CM, LOWER_DEG = 0.01, 0.02
-SPINE_CM, SPINE_DEG = 0.06, 0.6                   # the Creep's spline twist: 0.55 deg at one frame
+# the Creep's spline twist: 0.55 deg at one frame; 0.62 since 2026-10-15, when each frame is fitted
+# from AdvancedSkeleton's placement too and the top joint is held as hard as the root
+SPINE_CM, SPINE_DEG = 0.06, 0.7
 # between the keys of a thinned take each chain interpolates its own way (the keys-only cost,
 # 2026-10-08): the spine is held at the keys, between them only within this
 BETWEEN_CM, BETWEEN_DEG = 0.5, 2.0

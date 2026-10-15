@@ -38,10 +38,16 @@ spine's start twist; without it the Orc D's spine rolled 2.6 deg off on a strong
 bend, with it 0.4); the residual
 is `fkik.joint_residual` of IKXRoot, IKX1..4 against the shown ones, read from the
 rig's own evaluation, the root's part counted `ROOT_WEIGHT` times - where the spline
-cannot reach the FK spine, the spine gives, never the root. AdvancedSkeleton's own
-switch puts `IKSpine1_M` on the root exactly and the rest of the spine approximately
-("Target might not fully Align"); the fit holds the root as exactly and the spine
-better. A Levenberg-Marquardt step per frame (`gauss_newton_step`, the damping
+cannot reach the FK spine, the spine gives, never the root - nor the top joint, counted
+as the root (`TOP_WEIGHT`). AdvancedSkeleton's own switch puts `IKSpine1_M` on the root
+and `IKSpine3_M` on the top exactly and the middle approximately ("Target might not
+fully Align"); the fit holds both ends as exactly and the middle better. Every frame is
+fitted twice, from the frame before and from AdvancedSkeleton's own placement, and the
+better kept: started only from the frame before, a chest the spline cannot follow (the
+animator's FKSpine4_M moved 12 cm and turned 140 deg) dragged the fit into a worse twist
+frame after frame, the top 29 cm and 167 deg off (2026-10-15, «при использовании
+переключения FK IK из вкладки connection у нас ломается спина»). A Levenberg-Marquardt
+step per frame (`gauss_newton_step`, the damping
 raised and the step retried when it does not help), the sensitivities measured by
 small probes (`FIT_STEP`), the controls' keys cut first (a keyed channel takes no
 setAttr) and written back as keys on the frames the switch keys.
@@ -95,11 +101,18 @@ ROOT_TOLERANCE_CM, ROOT_TOLERANCE_DEG = 0.005, 0.01    # roots this close need n
 # both legs, so the fit may not trade it for the spine (2026-10-10: on the Creep a spine the
 # spline cannot reach pulled the root 0.017 cm, 0.094 deg - the feet a lever of a metre away)
 ROOT_WEIGHT = 100.0
+# AdvancedSkeleton's own FK2IK switch turns the spline's end controls as these (children of
+# FKXRoot_M and FKXSpine4_M): the fit starts there on every frame (`_as_seed`)
+ALIGN_ROOT, ALIGN_TOP = "AlignIKToRoot_M", "AlignIKToSpine4_M"
+# the top joint (Spine4) counts as much as the root: it carries Spine5, the neck, the head and
+# both arms - a chest the spline cannot follow gives in the middle, never at the top (2026-10-15)
+TOP_WEIGHT = ROOT_WEIGHT
 FIT_STEP, FIT_TOLERANCE, FIT_TRIES = fkik.FIT_STEP, fkik.FIT_TOLERANCE, fkik.FIT_TRIES
 LM_ATTEMPTS = 6                      # damping raises tried before a frame's fit gives up
 
 Spine = namedtuple("Spine", "blend deform fk fkx ikx cv side kind root_fk root_ik root_ctl "
-                            "root_deform mid", defaults=(None, None, None, None, None))
+                            "root_deform mid align_root align_top",
+                   defaults=(None, None, None, None, None, None, None))
 
 _TRANSLATE = fkik.TRANSLATE
 _ROTATE = fkik.ROTATE
@@ -142,7 +155,8 @@ def spine(rig):
                                      maya_rigs.label(rig))
     return Spine(blend + "." + BLEND_ATTR, found["deform"], found["fk"], found["fkx"],
                  found["ikx"], found["cv"], SIDE, fkik.SPINE, root_fk, root_ik, root_ctl,
-                 _one(rig, ROOT_DEFORM), _one(rig, MID_CONTROL)), ""
+                 _one(rig, ROOT_DEFORM), _one(rig, MID_CONTROL), _one(rig, ALIGN_ROOT),
+                 _one(rig, ALIGN_TOP)), ""
 
 
 def _ik_controls(sp):
@@ -304,16 +318,62 @@ def _cv_plugs(sp):
             [(sp.cv[0], ch) for ch in _ROTATE] + [(sp.cv[-1], ch) for ch in _ROTATE] + mid)
 
 
-def weighted(residual, weight=ROOT_WEIGHT):
+def weighted(residual, weight=ROOT_WEIGHT, top=1.0):
     """The fit's residual with the root's six entries (place, turn) counted `weight`
-    times. Pure."""
-    return [v * weight for v in residual[:6]] + list(residual[6:])
+    times, and the last joint's six `top` times. Pure."""
+    out = [v * weight for v in residual[:6]] + list(residual[6:])
+    if top != 1.0 and len(out) > 6:
+        out[-6:] = [v * top for v in out[-6:]]
+    return out
+
+
+def _align_offsets(sp):
+    """The AlignIKTo nodes' places in their FKX joints (AdvancedSkeleton's own switch
+    puts the spline's end controls on them): {control: local matrix}, read now."""
+    out = {}
+    for control, align in ((sp.cv[0], sp.align_root), (sp.cv[-1], sp.align_top)):
+        if align:
+            out[control] = _world(align) * _world(fkik._parent(align)).inverse()
+    return out
+
+
+def _as_seed(sp, plugs, offsets, root, top, previous):
+    """The fit's start on one frame, as AdvancedSkeleton's own FK2IK switch places the
+    spline (`asAlignFKIK`): the hip control on the root, the top control on the top
+    joint - both turned as their AlignIKTo nodes - the mid control unturned, the CV
+    controls at rest. Set on the controls, read back as the
+    fit's values, every turn the euler nearest `previous` (the frame before)."""
+    for node in sp.cv[1:-1]:
+        cmds.setAttr(node + ".translate", 0.0, 0.0, 0.0)
+    for control, target in ((sp.cv[0], root), (sp.cv[-1], top)):
+        world = offsets[control] * target
+        rot = om.MTransformationMatrix(world).rotation().reorder(
+            cmds.getAttr(control + ".rotateOrder"))    # xform -ro reads the control's order
+        cmds.xform(control, worldSpace=True, translation=list(_pos(target))[:3],
+                   rotation=[math.degrees(a) for a in (rot.x, rot.y, rot.z)])
+    if sp.mid:
+        # its turn only: its translate is not the fit's and is not keyed - moved here it
+        # stayed moved under every later frame's fit
+        cmds.xform(sp.mid, objectSpace=True, rotation=(0.0, 0.0, 0.0))
+    x = [cmds.getAttr(node + "." + ch) for node, ch in plugs]
+    if previous is not None:
+        for node in set(node for node, ch in plugs if ch in _ROTATE):
+            idx = [i for i, (n, ch) in enumerate(plugs) if n == node and ch in _ROTATE]
+            order = cmds.getAttr(node + ".rotateOrder")
+            now = om.MEulerRotation(*[math.radians(x[i]) for i in idx] + [order])
+            before = om.MEulerRotation(*[math.radians(previous[i]) for i in idx] + [order])
+            near = now.closestSolution(before)
+            for i, a in zip(idx, (near.x, near.y, near.z)):
+                x[i] = math.degrees(a)
+    return x
 
 
 def _fit_ik(sp, frames, samples, span):
     """The spline's controls, frame by frame, that put the IK root and the blended
     IK joints Spine1..4 on the shown root and joints - their places AND their turns,
-    the root held hardest (`ROOT_WEIGHT`: it carries the pelvis and both legs).
+    the root and the top held hardest (`ROOT_WEIGHT`, `TOP_WEIGHT`: they carry the legs,
+    and the neck, the head and the arms). Each frame is fitted from two starts - the frame
+    before, and AdvancedSkeleton's own placement (`_as_seed`) - and the better kept.
     Returns ({(control, channel): [values]}, the spine's worst place error in cm and
     turn in deg, the root's) over the frames. A Levenberg-Marquardt step per frame
     (`gauss_newton_step`)."""
@@ -328,13 +388,14 @@ def _fit_ik(sp, frames, samples, span):
         for (node, ch), v in zip(plugs, values):
             cmds.setAttr(node + "." + ch, v)
 
+    offsets = _align_offsets(sp) if sp.align_root and sp.align_top else None
+
     def residual(values, targets):
         place(values)
-        return weighted(fkik.joint_residual([_world(node) for node in joints], targets))
+        return weighted(fkik.joint_residual([_world(node) for node in joints], targets),
+                        top=TOP_WEIGHT if offsets is not None else 1.0)
 
-    for frame in frames:
-        fkik._goto(frame)
-        targets = [samples["root"][frame]] + list(samples["shown"][frame][:BLENDED])
+    def fit(x, targets):
         r = residual(x, targets)
         damp = fkik.FIT_DAMP
         for _try in range(FIT_TRIES):
@@ -364,6 +425,21 @@ def _fit_ik(sp, frames, samples, span):
                 damp *= 10.0
             if not accepted:
                 break
+        return x, sum(v * v for v in r)
+
+    for frame in frames:
+        fkik._goto(frame)
+        targets = [samples["root"][frame]] + list(samples["shown"][frame][:BLENDED])
+        x, cost = fit(x, targets)
+        if offsets is not None:
+            # a second start, where AdvancedSkeleton's own switch puts the spline - the root
+            # and the top exact - and the better fit kept: started only from the frame
+            # before, a chest the spline cannot follow (moved 12 cm, turned 140 deg) dragged
+            # the fit frame after frame 29 cm and 167 deg off its top (2026-10-15)
+            other, other_cost = fit(_as_seed(sp, plugs, offsets, targets[0], targets[-1], x),
+                                    targets)
+            if other_cost < cost:
+                x = other
         place(x)
         matrices = [_world(node) for node in joints]
         for i, (current, goal) in enumerate(zip(matrices, targets)):
