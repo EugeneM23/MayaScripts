@@ -19,6 +19,41 @@ from . import layers, records, session, switching
 ASK = None          # seam: callable(message, buttons) -> the button picked
 
 
+def _quiet(fn):
+    """`fn` run outside the undo queue, the queue flushed after (an import
+    flushes it anyway): a Ctrl+Z could otherwise walk into a half-made tab -
+    a session node that no longer matches the namespaces, a `file -rename` or
+    a removed reference that undo does not take back. Never inside an open
+    chunk (trap 145): these run from the bar, the hooks, the hub. A cancel
+    (`session.Cancelled`) changed nothing and keeps the animator's queue.
+    Busy meanwhile: the bar ignores its clicks."""
+    def run(*args, **kwargs):
+        recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
+        cmds.undoInfo(stateWithoutFlush=False)
+        result = None
+        try:
+            with session.busy():
+                result = fn(*args, **kwargs)
+            return result
+        finally:
+            cmds.undoInfo(stateWithoutFlush=recording)
+            if recording and not isinstance(result, session.Cancelled):
+                cmds.flushUndo()
+    run.__name__ = fn.__name__
+    run.__doc__ = fn.__doc__
+    return run
+
+
+def _busy(fn):
+    """`fn` run with the bar's clicks ignored (it may ask a question)."""
+    def run(*args, **kwargs):
+        with session.busy():
+            return fn(*args, **kwargs)
+    run.__name__ = fn.__name__
+    run.__doc__ = fn.__doc__
+    return run
+
+
 def _ask(message, buttons, default):
     if ASK is not None:
         return ASK(message, buttons)
@@ -44,10 +79,13 @@ def _mtime(path):
     return os.path.getmtime(path) if path and os.path.isfile(path) else 0.0
 
 
+@_quiet
 def start():
     """The open scene becomes tab 1: its layer root to the session, its content
     into its own namespace, the scene renamed to the session's file. Returns
-    the state (unchanged when tabs are on already)."""
+    the state (unchanged when tabs are on already). A failure half way puts
+    the scene back as it was (its content in the root, its layer root's name)
+    and re-raises."""
     state = session.state()
     if state["tabs"]:
         return state
@@ -57,9 +95,19 @@ def start():
                             session.current_ranges(), _mtime(scene))
     first["frame"] = cmds.currentTime(q=True)
     first["modified"] = bool(cmds.file(q=True, modified=True))
-    children = layers.take_root()
-    session.move_into(namespace)
-    layers.give_children(namespace, children)
+    root_name = layers.root().split(":")[-1]
+    try:
+        children = layers.take_root()
+        session.move_into(namespace)
+        layers.give_children(namespace, children)
+    except Exception:
+        try:
+            layers.give_back(namespace, root_name)
+        finally:
+            if cmds.namespace(exists=":" + namespace):
+                session.move_out(namespace)
+            cmds.namespace(setNamespace=":")
+        raise
     state = records.empty_state()
     state["tabs"], state["active"] = [first], namespace
     state["session"] = records.session_name(folder(), time.strftime("%Y%m%d_%H%M%S"))
@@ -114,20 +162,59 @@ def _check(path):
     return path
 
 
+def _back_to(before, namespace):
+    """A new tab that failed half way: what it made removed, the tab that was
+    active entered again with its own modified flag, the session written; a
+    session `start` made only now goes back to one scene."""
+    try:
+        _delete_namespace(namespace)
+    except Exception:                                           # noqa: BLE001
+        print("Scene Tabs: the failed tab %s could not be removed whole" % namespace)
+    previous = records.tab(before, before["active"]) or {}
+    for item in before["tabs"]:
+        if item["ns"] != before["active"]:
+            switching.hide(item["ns"])
+    try:
+        switching.enter(before, before["active"])
+    finally:
+        session.write(before)
+        cmds.file(modified=bool(previous.get("modified")))
+    if len(before["tabs"]) < 2:
+        finish()
+
+
+def _new(state, namespace, make, index=None):
+    """Leave the active tab, `make()` the new tab's content (returns its
+    record), enter it. A failure goes back (`_back_to`) and re-raises."""
+    before = switching.leave(state)
+    try:
+        state = records.with_tab(before, make(), index)
+        state = switching.enter(state, namespace, fresh=True)
+        session.write(state)
+    except Exception:
+        _back_to(before, namespace)
+        raise
+    return state
+
+
+@_quiet
 def open_tab(path, index=None):
     """`path` into a new tab (the open scene becomes tab 1 first)."""
     path = _check(path)
     state = start()
     namespace = records.namespace_for(path, _taken())
-    state = switching.leave(state)
-    unit, ranges = _import(path, namespace)
-    state = records.with_tab(state, records.new_tab(namespace, path, unit, ranges, _mtime(path)), index)
-    state = switching.enter(state, namespace, fresh=True)
-    session.write(state)
+    done = {}
+
+    def make():
+        done["unit"], done["ranges"] = _import(path, namespace)
+        return records.new_tab(namespace, path, done["unit"], done["ranges"], _mtime(path))
+    _new(state, namespace, make, index)
     cmds.file(modified=False)
-    return "Opened %s in a tab (%s, %s)" % (os.path.basename(path), unit, records.range_text(ranges))
+    return "Opened %s in a tab (%s, %s)" % (os.path.basename(path), done["unit"],
+                                            records.range_text(done["ranges"]))
 
 
+@_busy
 def open_any(path):
     """Maya's own Open while tabs are on: a saved session replaces the tabs
     (after asking about unsaved ones), any other scene opens in a new tab."""
@@ -145,16 +232,16 @@ def open_any(path):
     return message
 
 
+@_quiet
 def new_tab():
     """An empty tab (its first Save asks for a path)."""
     state = start()
     namespace = records.namespace_for(records.UNTITLED, _taken())
-    state = switching.leave(state)
-    cmds.namespace(add=namespace, parent=":")
-    state = records.with_tab(state, records.new_tab(namespace, "", cmds.currentUnit(q=True, time=True),
-                                                    session.current_ranges()))
-    state = switching.enter(state, namespace, fresh=True)
-    session.write(state)
+
+    def make():
+        cmds.namespace(add=namespace, parent=":")
+        return records.new_tab(namespace, "", cmds.currentUnit(q=True, time=True), session.current_ranges())
+    _new(state, namespace, make)
     return "New empty tab"
 
 
@@ -201,9 +288,11 @@ def _is_modified(state, item):
     return bool(item["modified"] or (item["ns"] == state["active"] and cmds.file(q=True, modified=True)))
 
 
+@_quiet
 def close_tab(namespace=None, ask=True):
     """A tab closed (asking about unsaved changes); down to one tab, the last
-    one becomes an ordinary scene again."""
+    one becomes an ordinary scene again. A save that was cancelled (no path
+    picked, an overwrite refused) keeps the tab: `session.Cancelled`."""
     state = session.state()
     namespace = namespace or state["active"]
     item = records.tab(state, namespace)
@@ -213,10 +302,12 @@ def close_tab(namespace=None, ask=True):
     if ask and _is_modified(state, item):
         answer = _ask("%s has unsaved changes." % name, ("Save", "Don't Save", "Cancel"), "Don't Save")
         if answer == "Cancel":
-            return "Close cancelled - %s is still open" % name
+            return session.Cancelled("Close cancelled - %s is still open" % name)
         if answer == "Save":
             from . import saving
-            saving.save_tab(namespace)
+            saved = saving.save_tab(namespace)
+            if isinstance(saved, session.Cancelled):
+                return session.Cancelled("Close cancelled - %s is still open (%s)" % (name, saved))
             state = session.state()
     if namespace == state["active"] and len(state["tabs"]) > 1:
         state = switching.switch(records.neighbour(state, namespace))
@@ -233,21 +324,23 @@ def close_tab(namespace=None, ask=True):
     state = records.removed(state, namespace)
     session.write(state)
     if len(state["tabs"]) == 1:
-        return finish()
+        return str(finish())        # the tab is closed whatever finish says: not a cancel
     return "Closed %s" % name
 
 
+@_busy
 def close_others(namespace=None):
     state = session.state()
     keep = namespace or state["active"]
     message = ""
     for item in [t for t in state["tabs"] if t["ns"] != keep]:
         message = close_tab(item["ns"])
-        if "cancelled" in message:
+        if isinstance(message, session.Cancelled):
             return message
     return message or "No other tab"
 
 
+@_quiet
 def reload_tab(namespace=None, ask=True):
     """The tab read again from its file, its unsaved changes dropped."""
     state = session.state()
@@ -258,7 +351,7 @@ def reload_tab(namespace=None, ask=True):
     name = records.title(dict(item, modified=False))
     if ask and _is_modified(state, item):
         if _ask("Drop the changes to %s and read it from disk?" % name, ("Reload", "Cancel"), "Cancel") != "Reload":
-            return "Reload cancelled - %s is as it was" % name
+            return session.Cancelled("Reload cancelled - %s is as it was" % name)
     active = namespace == state["active"]
     keep_unit = cmds.currentUnit(q=True, time=True)
     _delete_namespace(namespace)
@@ -277,9 +370,12 @@ def reload_tab(namespace=None, ask=True):
     return "Reloaded %s from disk" % name
 
 
+@_quiet
 def finish():
-    """The last tab becomes an ordinary scene: its layers flattened, its nodes
-    into the root namespace, the session gone, the scene named for its file."""
+    """The last tab becomes an ordinary scene: its nodes into the root
+    namespace, its layers flattened, the session gone, the scene named for its
+    file. The lift goes first: a name the root already uses refuses it with
+    everything back in the tab, and the session stays a tab - said so."""
     state = session.state()
     if len(state["tabs"]) != 1:
         return ""
@@ -287,9 +383,16 @@ def finish():
     namespace = last["ns"]
     modified = _is_modified(state, last)
     switching.show(namespace)
+    made = layers.tab_root(namespace)
+    made_uid = (cmds.ls(made, uuid=True) or [None])[0] if made else None
     cmds.namespace(setNamespace=":")
-    layers.flatten(namespace)
-    moved = session.lift(namespace)
+    try:
+        moved = session.lift(namespace)
+    except session.TabError as exc:
+        cmds.namespace(setNamespace=":" + namespace)
+        return session.Cancelled("Not back to one scene - %s; %s stays a tab (Tabs off when it is free)"
+                                 % (exc, records.title(dict(last, modified=False))))
+    layers.flatten(namespace, made=(cmds.ls(made_uid) or [""])[0] if made_uid else "")
     session.drop_held(moved)
     _remove_namespace(namespace)            # what is left in it is the import's furniture
     session.delete()
@@ -300,6 +403,7 @@ def finish():
     return "Back to one scene: %s" % records.title(dict(last, modified=False))
 
 
+@_quiet
 def restore():
     """A session file opened (autosave, a crash's recovery file): its tabs
     back, only the active one shown, the scene named for the session."""
@@ -319,6 +423,7 @@ def restore():
     return "Restored %d tabs" % len(state["tabs"])
 
 
+@_busy
 def tabs_off():
     """Every tab but the active one closed (asking), the active one an
     ordinary scene again."""
@@ -326,8 +431,8 @@ def tabs_off():
     if not state["tabs"]:
         return "Tabs are off already"
     message = close_others(state["active"])
-    if "cancelled" in message:
-        return "Tabs off cancelled - " + message
+    if isinstance(message, session.Cancelled):
+        return session.Cancelled("Tabs off cancelled - " + message)
     return finish() or message
 
 
@@ -336,9 +441,11 @@ def unsaved():
     return [item for item in state["tabs"] if _is_modified(state, item)]
 
 
+@_busy
 def quit_ok():
     """Maya may quit (or replace the tabs): nothing unsaved, or the animator
-    saved or dropped it."""
+    saved or dropped it. A save cancelled under Save all (no path picked, an
+    overwrite refused) cancels the quit: False, every flag kept."""
     if not session.is_on():
         return True
     pending = unsaved()
@@ -349,8 +456,12 @@ def quit_ok():
             return False
         if answer == "Save all":
             from . import saving
+            active = session.state()["active"]
             for item in pending:
-                saving.save_tab(item["ns"])
+                if isinstance(saving.save_tab(item["ns"]), session.Cancelled):
+                    if session.state()["active"] != active:
+                        switching.switch(active)        # back where the animator was
+                    return False
     cmds.file(modified=False)
     return True
 

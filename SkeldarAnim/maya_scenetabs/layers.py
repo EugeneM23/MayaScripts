@@ -171,14 +171,32 @@ def adopt(layer, namespace):
     return True
 
 
-def flatten(namespace):
-    """Back to one scene: the tab root's layers under the session root, the
-    tab root gone, the root named BaseAnimation again - or no root at all when
-    no layer is left (a fresh scene's state, safe)."""
+def give_back(namespace, name):
+    """`take_root` + `give_children` undone (a conversion that failed half
+    way): the tab root's layers back on the root, the tab root gone, the root
+    named `name` again."""
     session_root = root()
     if not session_root:
         return
     made = tab_root(namespace)
+    if made:
+        for layer in _children(made):
+            cmds.animLayer(layer, e=True, parent=session_root)
+        cmds.delete(made)
+        session_root = root()
+    if name and session_root.split(":")[-1] != name:
+        cmds.rename(session_root, ":" + name, ignoreShape=True)
+
+
+def flatten(namespace, made=None):
+    """Back to one scene: the tab root's layers under the session root, the
+    tab root gone, the root named BaseAnimation again - or no root at all when
+    no layer is left (a fresh scene's state, safe). `made`: the tab root when
+    the caller found it before the tab's names left its namespace."""
+    session_root = root()
+    if not session_root:
+        return
+    made = made if made is not None else tab_root(namespace)
     if made:
         for layer in _children(made):
             cmds.animLayer(layer, e=True, parent=session_root)

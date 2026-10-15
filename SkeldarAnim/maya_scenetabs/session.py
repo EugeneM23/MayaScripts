@@ -9,6 +9,9 @@ with `-preserveReferences` (measured 2026-10-15). The same pair converts the
 open scene into tab 1 (`move_into`) and back.
 """
 
+import contextlib
+import sys
+
 import maya.cmds as cmds
 
 from . import records
@@ -18,6 +21,38 @@ HELD_PREFIX = "skeldarHeld_"
 
 class TabError(RuntimeError):
     """A tab operation refused; the message says why."""
+
+
+class Cancelled(str):
+    """The message of an operation the animator cancelled: nothing changed.
+    A plain string to every caller that only shows it; `isinstance` is the
+    flag for one that must stop (closing a tab whose save was cancelled)."""
+
+
+# ------------------------------------------------------------------ busy
+
+def _busy_state():
+    state = getattr(sys, "_skeldar_scenetabs_busy", None)
+    if state is None:
+        state = {"depth": 0}
+        sys._skeldar_scenetabs_busy = state
+    return state
+
+
+@contextlib.contextmanager
+def busy():
+    """A tab operation running: the bar ignores clicks meanwhile (a dialog it
+    asks runs Maya's event loop, and the bar stays clickable under it)."""
+    state = _busy_state()
+    state["depth"] += 1
+    try:
+        yield
+    finally:
+        state["depth"] -= 1
+
+
+def is_busy():
+    return _busy_state()["depth"] > 0
 
 
 # ------------------------------------------------------------------ the node
@@ -244,10 +279,35 @@ def move_into(namespace, skip_namespaces=()):
         moved.nodes.append((uid, _leaf(path), bool(cmds.lockNode(path, q=True, lock=True)[0])))
     moved.references = top_references("")
     moved.children = child_namespaces("", skip=tuple(skip_namespaces) + (namespace,))
+    unlocked = []
+    try:
+        for uid, _, locked in moved.nodes:
+            if locked:
+                cmds.lockNode(_name(uid), lock=False)
+                unlocked.append(uid)
+        lower(moved)
+    except Exception:
+        for uid in unlocked:                     # what was unlocked locked again
+            path = _name(uid)
+            if path:
+                try:
+                    cmds.lockNode(path, lock=True)
+                except RuntimeError:
+                    pass
+        raise
+    return moved
+
+
+def move_out(namespace):
+    """`move_into` undone: the namespace's content back into the root
+    namespace, the locks as they were, the emptied namespace removed."""
+    moved = lift(namespace)
     for uid, _, locked in moved.nodes:
-        if locked:
-            cmds.lockNode(_name(uid), lock=False)
-    lower(moved)
+        if locked and _name(uid):
+            cmds.lockNode(_name(uid), lock=True)
+    drop_held(moved)
+    if cmds.namespace(exists=":" + namespace) and not cmds.namespaceInfo(":" + namespace, listNamespace=True):
+        cmds.namespace(removeNamespace=":" + namespace)
     return moved
 
 

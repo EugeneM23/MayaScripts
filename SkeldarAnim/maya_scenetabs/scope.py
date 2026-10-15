@@ -206,9 +206,19 @@ def open_scene(path, cmds_=None, **flags):
         return ""
     from . import opening
     if path.lower().endswith(".fbx"):
+        previous = active_namespace(cmds)
         message = opening.new_tab()
+        made = active_namespace(cmds)
         from maya_scenesetup import fbximport
-        fbximport.import_nodes(path)
+        try:
+            fbximport.import_nodes(path)
+        except Exception:
+            #  the tab that was active entered again, the empty one closed
+            if previous:
+                from . import switching
+                switching.switch(previous)
+            opening.close_tab(made, ask=False)
+            raise
         return message
     return opening.open_tab(path)
 

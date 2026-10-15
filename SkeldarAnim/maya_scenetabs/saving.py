@@ -84,7 +84,14 @@ def export_uuids(namespace, references=True):
 
 def save_tab(namespace=None, path=None, adopt=True, preserve_references=True):
     """The tab (the active one by default) into `path` (its own file by
-    default). `adopt`: the tab takes the path and is clean after."""
+    default). `adopt`: the tab takes the path and is clean after. A save
+    the animator cancels (no path picked, an overwrite refused) returns
+    `session.Cancelled` with everything as it was - the active tab too."""
+    with session.busy():
+        return _save_tab(namespace, path, adopt, preserve_references)
+
+
+def _save_tab(namespace, path, adopt, preserve_references):
     state = session.state()
     namespace = namespace or state["active"]
     item = records.tab(state, namespace)
@@ -94,17 +101,21 @@ def save_tab(namespace=None, path=None, adopt=True, preserve_references=True):
     if not target:
         target = _pick()
         if not target:
-            return "Save cancelled - %s has no file yet" % records.title(dict(item, modified=False))
+            return session.Cancelled("Save cancelled - %s has no file yet"
+                                     % records.title(dict(item, modified=False)))
         path = target
     ext = os.path.splitext(target)[1].lower()
     if ext not in records.FILE_TYPES:
         raise session.TabError("a tab saves as .ma or .mb: %s" % os.path.basename(target))
-    if namespace != state["active"]:
+    was_active = state["active"]
+    if namespace != was_active:
         state = switching.switch(namespace)
         item = records.tab(state, namespace)
     if not path and records.changed_on_disk(target, item["mtime"]):
         if not _confirm("%s changed on disk since you opened it. Overwrite it?" % os.path.basename(target)):
-            return "Save cancelled - %s left as it is on disk" % os.path.basename(target)
+            if was_active != namespace:
+                switching.switch(was_active)
+            return session.Cancelled("Save cancelled - %s left as it is on disk" % os.path.basename(target))
     ranges = session.current_ranges()
     temporary = target + ".skeldartmp"
     recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
@@ -171,5 +182,5 @@ def save_tab(namespace=None, path=None, adopt=True, preserve_references=True):
 def save_as(namespace=None):
     target = _pick()
     if not target:
-        return "Save As cancelled"
+        return session.Cancelled("Save As cancelled")
     return save_tab(namespace, path=target)
