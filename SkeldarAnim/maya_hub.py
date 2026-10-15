@@ -582,15 +582,19 @@ TABS_BAR_VAR = "skeldarSceneTabsBar"
 
 def _tabs_bar_soon():
     """The scene tabs bar above the viewport (2026-10-15), shown with the hub
-    unless hidden from its own menu (optionVar skeldarSceneTabsBar 0). Deferred and guarded: a bar
+    unless hidden from its own menu (optionVar skeldarSceneTabsBar 0); the hooks are installed either way. Deferred and guarded: a bar
     that cannot be built never costs the hub."""
     if cmds.about(batch=True):
-        return
-    if cmds.optionVar(exists=TABS_BAR_VAR) and not cmds.optionVar(q=TABS_BAR_VAR):
         return
 
     def show_bar():
         try:
+            #  the hooks (Save / Open / New, a session file restored) whether
+            #  the bar shows or not: hiding the bar must not turn them off
+            from maya_scenetabs import hooks
+            hooks.install()
+            if cmds.optionVar(exists=TABS_BAR_VAR) and not cmds.optionVar(q=TABS_BAR_VAR):
+                return
             from maya_scenetabs import bar
             bar.ensure_docked()
         except Exception:                                    # noqa: BLE001

@@ -67,6 +67,34 @@ class TabBar(unittest.TestCase):
         self.bar.tabs.setCurrentIndex(0)
         self.assertIn(("switch", "tab_a"), self.actions.log)
 
+    def test_a_click_while_an_operation_runs_is_ignored(self):
+        from maya_scenetabs import session
+        with session.busy():
+            self.bar.tabs.setCurrentIndex(0)
+            self.bar.tabs.tabCloseRequested.emit(0)
+        self.assertEqual(self.actions.log, [])
+        self.assertFalse(session.is_busy())
+
+    def test_a_press_while_an_operation_runs_does_nothing(self):
+        from maya_scenetabs import bar, session
+        ran = []
+        with session.busy():
+            self.assertEqual(bar._run(lambda: ran.append(1) or "done"), "")
+        self.assertEqual(ran, [])
+
+    def test_a_failing_tick_does_not_raise(self):
+        def broken():
+            raise RuntimeError("no session")
+        self.actions.items = broken
+        self.bar.tick()
+        self.bar.tick()
+
+    def test_a_failing_switch_does_not_raise(self):
+        def broken(namespace):
+            raise RuntimeError("boom")
+        self.actions.switch = broken
+        self.bar.tabs.setCurrentIndex(0)
+
     def test_the_close_button_closes_that_tab(self):
         self.bar.tabs.tabCloseRequested.emit(0)
         self.assertIn(("close", "tab_a"), self.actions.log)
@@ -100,6 +128,17 @@ class HubShowsTheBar(unittest.TestCase):
         helper = inspect.getsource(maya_hub._tabs_bar_soon)
         self.assertIn("skeldarSceneTabsBar", helper)
         self.assertIn("ensure_docked", helper)
+
+    def test_the_hooks_go_on_before_the_bar_question(self):
+        """Hiding the bar must not turn off Save / Open / New and the session
+        restore: the hub installs the hooks first, whatever the optionVar says."""
+        import inspect
+        import maya_hub
+        from maya_scenetabs import bar
+        helper = inspect.getsource(maya_hub._tabs_bar_soon)
+        self.assertLess(helper.index("hooks.install()"), helper.index("TABS_BAR_VAR) and not"))
+        docked = inspect.getsource(bar.ensure_docked)
+        self.assertLess(docked.index("hooks.install()"), docked.index("workspaceControl("))
 
 
 if __name__ == "__main__":

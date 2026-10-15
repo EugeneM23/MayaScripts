@@ -3,7 +3,7 @@
 Run from the repo root (PowerShell):
   $env:MAYA_APP_DIR = "$env:TEMP\\skeldar_tabs_appdir"
   & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' docs/superpowers/plans/verify_scene_tabs.py all
-Phases: convert layers open_close switch save hooks restore, or "all".
+Phases: session layers_alone convert layers open_close switch save hooks restore hook_failures review, or "all".
 Every gate prints PASS / FAIL; the last line is "N of M gates failed".
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 """
@@ -811,6 +811,220 @@ def phase_hook_failures():
     gate("hooks: the next genuine SceneOpened restores after a synchronous one", len(count) == 1, count)
 
 
+def _undo_is_empty():
+    """Ctrl+Z has nothing to walk into (a tab made or closed is not a step)."""
+    try:
+        cmds.undo()
+    except RuntimeError as exc:
+        return "no more commands" in str(exc)
+    return False
+
+
+def _tabs_match_namespaces():
+    names = [t["ns"] for t in session.state()["tabs"]]
+    found = [n for n in cmds.namespaceInfo(":", listOnlyNamespaces=True) or [] if n.startswith(records.TAB_PREFIX)]
+    return sorted(names) == sorted(found) if len(names) >= 2 else not found
+
+
+def _plain_names():
+    """The scene's names but the layer blend nodes and curves Maya rebuilds."""
+    rebuilt = set(cmds.ls(type=("animCurve", "animBlendNodeBase")) or [])
+    return sorted(n for n in cmds.ls() if n not in rebuilt)
+
+
+def phase_review():
+    """The final review's fixes (2026-10-15): a cancelled save keeps the tab and
+    stops a quit; a failed open puts the tabs back; tabs made and closed are not
+    undo steps; a conversion and a finish are all or nothing; the emergency
+    save let through; the hooks re-installed after a reload."""
+    import importlib
+    from maya_scenetabs import hooks, layers, opening, saving, scope, switching
+    plain, film = copy("plain.mb"), copy("film.ma")
+    bad = RUN + "/corrupt.mb"
+    with open(bad, "wb") as handle:
+        handle.write(b"\x00not a maya binary\x00" * 64)
+
+    # 1 - a cancelled save keeps the tab, stops close_others and the quit
+    fresh()
+    cmds.file(plain, open=True, force=True)
+    opening.new_tab()
+    cmds.createNode("transform", name="madeInUntitled")
+    cmds.file(modified=True)
+    saving.PICK = lambda: ""
+    opening.ASK = lambda message, buttons: "Save"
+    try:
+        message = opening.close_tab("tab_untitled")
+    finally:
+        saving.PICK, opening.ASK = None, None
+    gate("review 1: Close > Save with no path picked keeps the untitled tab",
+         isinstance(message, session.Cancelled) and cmds.namespace(exists=":tab_untitled")
+         and records.tab(session.state(), "tab_untitled") is not None
+         and cmds.objExists("tab_untitled:madeInUntitled"), message)
+    saving.PICK = lambda: ""
+    opening.ASK = lambda message, buttons: "Save all"
+    try:
+        allowed = opening.quit_ok()
+    finally:
+        saving.PICK, opening.ASK = None, None
+    state = session.state()
+    gate("review 1: Quit > Save all with a cancelled pick does not quit, the flags kept",
+         allowed is False and state["active"] == "tab_untitled"
+         and opening._is_modified(state, records.tab(state, "tab_untitled")), (allowed, state["active"]))
+    switching.switch("tab_plain")
+    saving.PICK = lambda: ""
+    opening.ASK = lambda message, buttons: "Save"
+    try:
+        message = opening.close_others("tab_plain")
+    finally:
+        saving.PICK, opening.ASK = None, None
+    gate("review 1: close_others stops on the cancel (a flag, not a word)",
+         isinstance(message, session.Cancelled) and cmds.namespace(exists=":tab_untitled"), message)
+    opening.open_tab(film)
+    cmds.setAttr("tab_film:hero.translateZ", 2)
+    switching.switch("tab_plain")
+    stamp = os.path.getmtime(film) + 20
+    os.utime(film, (stamp, stamp))
+    stamp = os.path.getmtime(film)
+    saving.CONFIRM = lambda question: False
+    opening.ASK = lambda message, buttons: "Save"
+    try:
+        message = opening.close_tab("tab_film")
+    finally:
+        saving.CONFIRM, opening.ASK = None, None
+    gate("review 1: Close > Save > overwrite refused keeps the tab, the active tab as it was",
+         isinstance(message, session.Cancelled) and cmds.namespace(exists=":tab_film")
+         and session.state()["active"] == "tab_plain" and abs(os.path.getmtime(film) - stamp) < 1e-3, message)
+
+    # 2 - a failed open puts the tabs back
+    cmds.file(modified=True)
+    tabs_before = [t["ns"] for t in session.state()["tabs"]]
+    try:
+        opening.open_tab(bad)
+        raised = ""
+    except Exception as exc:                                     # noqa: BLE001
+        raised = str(exc) or type(exc).__name__
+    state = session.state()
+    gate("review 2: a corrupt file raises and the previous tab is active, shown, still modified",
+         raised and state["active"] == "tab_plain" and all(tops_visible("tab_plain"))
+         and not any(tops_visible("tab_film")) and cmds.file(q=True, modified=True)
+         and current_ns() == "tab_plain", (raised, state["active"]))
+    gate("review 2: no stray namespace, the tab list as before",
+         not cmds.namespace(exists=":tab_corrupt") and [t["ns"] for t in state["tabs"]] == tabs_before,
+         [t["ns"] for t in state["tabs"]])
+    import maya_scenesetup.fbximport as fbximport
+    real_import = fbximport.import_nodes
+
+    def failing_fbx(path, *args, **kwargs):
+        raise RuntimeError("injected FBX failure")
+    fbximport.import_nodes = failing_fbx
+    try:
+        scope.open_scene(RUN + "/clip.fbx")
+        raised = ""
+    except RuntimeError as exc:
+        raised = str(exc)
+    finally:
+        fbximport.import_nodes = real_import
+    state = session.state()
+    gate("review 2: a failed FBX open closes its new tab again, back on the previous one",
+         "injected" in raised and [t["ns"] for t in state["tabs"]] == tabs_before
+         and state["active"] == "tab_plain" and _tabs_match_namespaces(), [t["ns"] for t in state["tabs"]])
+
+    # 3 - a tab made or closed is not a step Ctrl+Z walks into
+    cmds.createNode("transform", name="stepBefore")
+    opening.new_tab()
+    gate("review 3: after New tab there is nothing to undo", _undo_is_empty() and _tabs_match_namespaces())
+    cmds.createNode("transform", name="stepInTab")
+    opening.close_tab(session.state()["active"], ask=False)
+    gate("review 3: after Close there is nothing to undo", _undo_is_empty() and _tabs_match_namespaces())
+
+    # 2b - a failed open from one scene goes back to that scene
+    fresh()
+    cmds.file(plain, open=True, force=True)
+    cmds.file(modified=True)
+    try:
+        opening.open_tab(bad)
+        raised = False
+    except Exception:                                            # noqa: BLE001
+        raised = True
+    gate("review 2: from one scene, a failed open leaves the ordinary scene, still modified",
+         raised and not session.exists() and scene_is(plain) and cmds.objExists("|ball")
+         and cmds.file(q=True, modified=True)
+         and not [n for n in cmds.namespaceInfo(":", listOnlyNamespaces=True) or [] if n.startswith("tab_")])
+
+    # 4 - start and finish all or nothing
+    for label, patch in (("give_children", "layers"), ("lower", "session")):
+        fresh()
+        cmds.file(film, open=True, force=True)
+        cmds.lockNode("hero", lock=True)
+        before = _plain_names()
+        module = layers if patch == "layers" else session
+        real = getattr(module, label)
+
+        def failing(*args, **kwargs):
+            if patch == "layers":
+                real(*args, **kwargs)              # half done, then the failure
+            raise RuntimeError("injected %s failure" % label)
+        setattr(module, label, failing)
+        try:
+            opening.start()
+            raised = ""
+        except RuntimeError as exc:
+            raised = str(exc)
+        finally:
+            setattr(module, label, real)
+        gate("review 4: start failing in %s puts the scene back" % label,
+             "injected" in raised and not session.exists() and _plain_names() == before
+             and layers.root() == "BaseAnimation" and layer_parent("Layer1") == "BaseAnimation"
+             and bool(cmds.lockNode("hero", q=True, lock=True)[0])
+             and cmds.referenceQuery("refRN", namespace=True) == ":ref"
+             and not cmds.namespace(exists=":tab_film") and current_ns() == "",
+             (raised, sorted(set(_plain_names()) ^ set(before))[:8], layers.root()))
+        gate("review 4: ... and its layer still plays (%s)" % label, value_at("hero.rotateY", 20) == 45.0)
+    fresh()
+    cmds.file(film, open=True, force=True)
+    opening.open_tab(plain)
+    cmds.createNode("transform", name=":hero")
+    message = opening.close_tab("tab_plain", ask=False)
+    gate("review 4: finish refused by a clash leaves the tab whole, its layers not flattened, and says so",
+         "Not back to one scene" in message and session.exists() and len(session.state()["tabs"]) == 1
+         and cmds.objExists("tab_film:hero") and layers.root() == records.LAYER_ROOT
+         and layers.tab_root("tab_film") and value_at("tab_film:hero.rotateY", 20) == 45.0, message)
+    cmds.delete("|hero")
+    message = opening.finish()
+    gate("review 4: with the clash gone, finish goes back to one scene",
+         not session.exists() and layers.root() == "BaseAnimation" and layer_parent("Layer1") == "BaseAnimation"
+         and value_at("hero.rotateY", 20) == 45.0 and scene_is(film), message)
+
+    # 5 - Maya's emergency save let through
+    opening.open_tab(plain)
+    hooks_on()
+    session_file = session.state()["session"]
+    emergency = (tempfile.gettempdir().replace("\\", "/") + "/skeldar_emergency.ma")
+    cmds.file(rename=emergency)
+    let_temp = hooks.on_save()
+    cmds.file(rename=RUN + "/film[Recovered-ME.2026-10-15-10.00].ma")
+    let_recovered = hooks.on_save()
+    cmds.file(rename=session_file)
+    gate("review 5: an emergency save (temp folder, [Recovered) is let through, nothing deferred",
+         let_temp is True and let_recovered is True and not QUEUE, (let_temp, let_recovered))
+
+    # 8 - a reloaded hooks module re-installs its own callbacks
+    #  Maya reuses a removed callback's id, so the proof is who owns them and
+    #  that remove() ran (it clears the verify's defer seam)
+    old_owner = hooks._st()["owner"]
+    fresh_hooks = importlib.reload(hooks)
+    fresh_hooks.install(force=True)
+    state = fresh_hooks._st()
+    gate("review 8: after a reload install replaces the old module's callbacks",
+         len(state["callbacks"]) == 4 and old_owner is not None and state["owner"] is not old_owner
+         and state["owner"] is fresh_hooks.on_save and state["defer"] is None, state["callbacks"])
+    state["defer"] = QUEUE.append
+    fresh_hooks.install(force=True)
+    gate("review 8: a second install of the same module keeps what stands",
+         state["defer"] is not None and state["owner"] is fresh_hooks.on_save)
+    fresh_hooks.remove()
+
+
 def guarded(phase):
     def run():
         try:
@@ -827,7 +1041,7 @@ def guarded(phase):
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
-          "hook_failures": guarded(phase_hook_failures)}
+          "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review)}
 
 
 def main(names):

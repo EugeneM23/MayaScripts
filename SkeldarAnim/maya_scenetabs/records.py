@@ -267,6 +267,24 @@ def is_autosave(target, folder):
     return norm(target).startswith(norm(folder).rstrip("\\/") + os.sep)
 
 
+def is_emergency(target, temp):
+    """Maya's own emergency / crash save: straight into the temp folder (not
+    a folder inside it - a tool's working files live there), or a name with
+    `[Recovered` / `Recovered-` in it (trap 148:
+    `%TEMP%/Manny_Rig[Recovered-MY PC.2026-10-01-11.55].ma`). Let through
+    like an autosave."""
+    if not target:
+        return False
+    target = target.replace("\\", "/")
+    name = os.path.basename(target)
+    if "[Recovered" in name or "Recovered-" in name:
+        return True
+    if not temp:
+        return False
+    norm = lambda p: os.path.normcase(os.path.normpath(p))          # noqa: E731
+    return norm(os.path.dirname(target)) == norm(temp)
+
+
 def changed_on_disk(path, mtime):
     """The file was written by somebody else since the tab read or saved it."""
     if not mtime or not path or not os.path.isfile(path):

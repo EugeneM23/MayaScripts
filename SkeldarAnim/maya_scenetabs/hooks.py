@@ -13,6 +13,7 @@ Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 """
 
 import sys
+import tempfile
 import traceback
 
 import maya.cmds as cmds
@@ -104,8 +105,8 @@ def on_save(client_data=None):
         autosave = cmds.autoSave(q=True, destinationFolder=True) or ""
     except RuntimeError:
         autosave = ""
-    if records.is_autosave(target, autosave):
-        return True
+    if records.is_autosave(target, autosave) or records.is_emergency(target, tempfile.gettempdir()):
+        return True                 # an autosave, or Maya's emergency save on a crash
     state = session.state()
     action, path = records.save_plan(target, state.get("session", ""))
     if state.get("session"):
@@ -224,12 +225,17 @@ def _install_quit_filter():
 
 
 def install(force=False):
-    """The callbacks (and in a GUI the jobs and the quit filter), once."""
+    """The callbacks (and in a GUI the jobs and the quit filter), once. After
+    an update reloaded this module the registered ones are the OLD module's
+    functions (the state lives on `sys`): they are removed and these installed."""
     if cmds.about(batch=True) and not force:
         return False
     state = _st()
-    if state["callbacks"]:
+    if state["callbacks"] and state.get("owner") is on_save:
         return True
+    if state["callbacks"] or state["jobs"] or state["quit_filter"]:
+        remove()
+    state["owner"] = on_save
     import maya.api.OpenMaya as om
     try:
         state["callbacks"].append(om.MSceneMessage.addCheckCallback(om.MSceneMessage.kBeforeSaveCheck, on_save))
@@ -272,4 +278,4 @@ def remove():
             window.removeEventFilter(keeper)
         except RuntimeError:
             pass
-    state.update(callbacks=[], jobs=[], quit_filter=None, defer=None)
+    state.update(callbacks=[], jobs=[], quit_filter=None, defer=None, owner=None)

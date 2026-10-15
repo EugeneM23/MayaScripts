@@ -186,6 +186,15 @@ class Saves(unittest.TestCase):
         self.assertFalse(records.is_autosave("C:/p/scenes/a.ma", "C:/p/autosave/"))
         self.assertFalse(records.is_autosave("C:/p/a.ma", ""))
 
+    def test_an_emergency_save_is_maya_crash_save(self):
+        temp = "C:/Users/me/AppData/Local/Temp"
+        self.assertTrue(records.is_emergency(temp + "/untitled.ma", temp))
+        self.assertTrue(records.is_emergency("D:/x/Manny_Rig[Recovered-MY PC.2026-10-01-11.55].ma", temp))
+        self.assertTrue(records.is_emergency("D:/x/scene_Recovered-2.ma", temp))
+        self.assertFalse(records.is_emergency(temp + "/tool/work.ma", temp))     # a folder inside temp
+        self.assertFalse(records.is_emergency("C:/p/scenes/a.ma", temp))
+        self.assertFalse(records.is_emergency("", temp))
+
     def test_changed_on_disk(self):
         path = os.path.join(tempfile.mkdtemp(), "a.ma")
         with open(path, "w") as fh:

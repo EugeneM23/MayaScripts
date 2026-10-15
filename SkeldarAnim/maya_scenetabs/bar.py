@@ -50,17 +50,18 @@ def say(message):
 
 
 def ensure_docked():
-    """The bar shown (made the first time, docked above the viewport) and the hooks on."""
+    """The hooks on, then the bar shown (made the first time, docked above
+    the viewport)."""
     if cmds.about(batch=True):
         return ""
+    from . import hooks
+    hooks.install()
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
     else:
         cmds.workspaceControl(CONTROL, label=LABEL, retain=False, floating=False,
                               dockToMainWindow=("top", False), heightProperty="fixed",
                               initialHeight=HEIGHT, uiScript=uiscript(plugin_root()))
-    from . import hooks
-    hooks.install()
     return CONTROL
 
 
@@ -158,7 +159,17 @@ def bar_class():
                 self._filling = False
 
         def tick(self):
-            """The stars kept current without repopulating (no flicker)."""
+            """The stars kept current without repopulating (no flicker). Never
+            raises (twice a second) and waits while a tab operation runs."""
+            try:
+                if not session.is_busy():
+                    self._tick()
+            except Exception:                                   # noqa: BLE001
+                if not getattr(self, "_tick_failed", False):
+                    print(traceback.format_exc())
+                self._tick_failed = True
+
+        def _tick(self):
             fresh = self.actions.items()
             if [i["ns"] for i in fresh] != [i["ns"] for i in self.items]:
                 self.populate(fresh)
@@ -172,11 +183,20 @@ def bar_class():
             return self.items[index]["ns"] if 0 <= index < len(self.items) else ""
 
         def _current(self, index):
-            if not self._filling and self._ns(index):
+            if self._filling or not self._ns(index):
+                return
+            try:
+                if session.is_busy():
+                    #  a click under a running operation's dialog: ignored, the
+                    #  bar shows the tab that is active again
+                    QtCore.QTimer.singleShot(0, lambda: self.populate(self.actions.items()))
+                    return
                 self.actions.switch(self._ns(index))
+            except Exception:                                   # noqa: BLE001
+                print(traceback.format_exc())
 
         def _close(self, index):
-            if self._ns(index):
+            if self._ns(index) and not session.is_busy():
                 self.actions.close(self._ns(index))
 
         def eventFilter(self, obj, event):
@@ -184,7 +204,7 @@ def bar_class():
                     and event.button() == QtCore.Qt.MiddleButton:
                 point = event.position().toPoint() if hasattr(event, "position") else event.pos()
                 namespace = self._ns(self.tabs.tabAt(point))
-                if namespace:
+                if namespace and not session.is_busy():
                     self.actions.close(namespace)
                     return True
             return False
@@ -219,6 +239,8 @@ def bar_class():
 
 
 def _run(fn):
+    if session.is_busy():
+        return ""             # a press under a running operation's dialog: ignored
     try:
         message = fn()
     except Exception as exc:                                    # noqa: BLE001
