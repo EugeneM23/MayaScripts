@@ -288,8 +288,11 @@ class FakeCmds(object):
         if "completeFilename" in kw:
             targets = [(kw["frame"][0], kw["completeFilename"])]
         else:
-            targets = [(f, "%s.%04d.jpg" % (kw["filename"], f)) for f in kw["frame"]
-                       if f not in self.skip_frames]
+            # Maya names a `frame` list's images by their PLACE in the list, not by frame
+            # (measured 2026-10-15, Maya 2027: frames 5..39 came out frame.0000..0034)
+            kept = [f for f in kw["frame"] if f not in self.skip_frames]
+            targets = [(f, "%s.%04d.jpg" % (kw["filename"], index))
+                       for index, f in enumerate(kept)]
         for frame, path in targets:
             image = qt.QtGui.QImage(width, height, qt.QtGui.QImage.Format_RGB32)
             image.fill(qt.QtGui.QColor(*self.colours.get(frame, (90, 90, 90))))
@@ -1335,6 +1338,20 @@ class PreviewSteps(QtCase):
                                 "size": look.PREVIEW_SIZE, "step": 2})
         self.assertEqual(tuple(self.cmds.blasted[-1]["frame"]), tuple(frames))
         self.assertIn("every 2 frames", note)
+        columns = look.sheet_columns(len(frames))
+        for index in (0, 1, 7, len(frames) - 1):
+            x, y, _size, _ = look.sheet_cell(index, columns, 320)
+            self.near(self.colour_at(self.target, x + 160, y + 160),
+                      COLOURS[frames[index] % len(COLOURS)])
+
+    def test_a_clip_that_does_not_start_at_frame_zero(self):
+        ok, note, info = ac.preview(self.target, 5, 9)
+        self.assertTrue(ok, note)
+        self.assertEqual(info["frames"], 5)
+        for index, frame in enumerate(range(5, 10)):
+            x, y, _size, _ = look.sheet_cell(index, 3, 320)
+            self.near(self.colour_at(self.target, x + 160, y + 160),
+                      COLOURS[frame % len(COLOURS)])
 
     def test_a_frame_the_playblast_did_not_write(self):
         self.cmds.skip_frames = set([3])

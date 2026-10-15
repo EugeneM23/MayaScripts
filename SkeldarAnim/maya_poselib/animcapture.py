@@ -586,9 +586,10 @@ def _blast(qt, panel, width, height, frames, folder):
 
 
 def blasted(folder, base=BLAST_BASE):
-    """[(frame, path)] of the image sequence a playblast wrote into `folder` as
-    `<base>.<frame>.jpg` (any padding, a negative frame included: `frame.-001.jpg`), sorted by
-    frame; [] for a folder that is not there."""
+    """[(number, path)] of the image sequence a playblast wrote into `folder` as
+    `<base>.<number>.png/jpg` (any padding, a negative number included: `frame.-001.jpg`),
+    sorted by number; [] for a folder that is not there. For a `frame` list the number is the
+    image's place in the list, not its frame (`preview`)."""
     pattern = re.compile(r"^%s\.(-?\d+)\.(?:png|jpe?g)$" % re.escape(base), re.IGNORECASE)
     try:
         names = os.listdir(folder)
@@ -695,12 +696,15 @@ def preview(sheet_path, start, end, progress=None):
             return False, CANCELLED, None
         if failed is not None:
             return False, "no preview - " + _first_line(failed), None
-        found = dict(blasted(folder))
-        missing = [frame for frame in frames if frame not in found]
-        if missing:
+        #  a playblast of a `frame` LIST numbers its images by their place in the list, not by
+        #  frame (measured 2026-10-15, Maya 2027: frames 5..39 wrote frame.0000..0034) - read
+        #  by frame, every clip not starting at 0 with every frame kept was saved without a
+        #  preview. Paired with the frames asked, in order.
+        written = blasted(folder)
+        if len(written) != len(frames):
             return False, "the playblast wrote %d of %d frames" % (
-                len(frames) - len(missing), len(frames)), None
-        ok, note = paint_sheet(qt, [found[frame] for frame in frames], sheet_path,
+                min(len(written), len(frames)), len(frames)), None
+        ok, note = paint_sheet(qt, [path for _number, path in written], sheet_path,
                                look.PREVIEW_SIZE, progress)
     finally:
         shutil.rmtree(folder, ignore_errors=True)

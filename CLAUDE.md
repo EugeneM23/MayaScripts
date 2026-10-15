@@ -8628,6 +8628,14 @@ sub-frame keys, the IK spine, bone translations below the pelvis.
      only the ground turned a twin's whole body by the difference (180° at frame 12, measured). Whatever
      a frame's heading is replaced by, it must be replaced by on both sides of the transfer.
 
+253. **`cmds.playblast(frame=[list], filename=base)` numbers its images by their PLACE in the list, not
+     by frame** (measured 2026-10-15, Maya 2027: frames 5..39 wrote `base.0000..0034`). The animation
+     card's preview read them by frame, so every clip not starting at 0 with every frame kept (a range
+     from 5, anything over 60 frames) was saved «without a preview: the playblast wrote 30 of 35
+     frames» and never played on hover - the animator's «previews don't always play». The test fake
+     had encoded the same wrong naming. `animcapture.preview` pairs the images with the frames in
+     order. A card saved before keeps no preview: right-click → Replace thumbnail and preview.
+
 ## The Pose Library: compact, Selected only, toned cards, a blend that holds (2026-10-15)
 
 The animator: «1 - более компактный интерфейс. 2 - опция применить наложение только на выделенные
