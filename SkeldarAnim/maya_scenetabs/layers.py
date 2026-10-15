@@ -8,6 +8,8 @@ layers lose theirs, and the next new layer crashed mayapy (measured
 tab's file gets its tree back with that root named BaseAnimation.
 """
 
+import json
+
 import maya.cmds as cmds
 
 from . import records
@@ -205,3 +207,90 @@ def flatten(namespace, made=None):
         cmds.rename(session_root, ":" + records.FILE_LAYER_ROOT, ignoreShape=True)
     else:
         cmds.delete(session_root)
+
+
+# ------------------------------------------------------------------ a hidden tab's layers
+#  2026-10-15, found live: the Layer Editor showed every tab's layers. Its Anim tab walks
+#  down from the root layer and its Display tab lists every display layer whose
+#  `identification` is not 0 (0 is Maya's default layer) - layerEditor.mel's
+#  buildAnimLayerArray and updateLayersByType. A hidden tab's anim layers are cut off the
+#  session root and its display layers taken off layerManager (identification 0); what was
+#  cut is kept on the layer itself (OUT_ATTR), so a session file saved meanwhile carries it.
+
+OUT_ATTR = "skeldarTabOut"
+
+
+def _store(node, value):
+    if not cmds.attributeQuery(OUT_ATTR, node=node, exists=True):
+        cmds.addAttr(node, longName=OUT_ATTR, dataType="string")
+    cmds.setAttr(node + "." + OUT_ATTR, json.dumps(value), type="string")
+
+
+def _take(node):
+    if not cmds.attributeQuery(OUT_ATTR, node=node, exists=True):
+        return None
+    value = json.loads(cmds.getAttr(node + "." + OUT_ATTR) or "null")
+    cmds.deleteAttr(node + "." + OUT_ATTR)
+    return value
+
+
+def _manager_index_free(plug):
+    return not (cmds.listConnections(plug, source=False, destination=True) or [])
+
+
+def hide_layers(namespace):
+    """The tab's layers out of the Layer Editor: its layers on the session root cut off it
+    (`detach`), its display layers off layerManager with identification 0. Again on a
+    hidden tab: nothing."""
+    session_root = root()
+    for layer in cmds.ls(":%s:*" % namespace, type="animLayer", recursive=True) or []:
+        if session_root and (cmds.animLayer(layer, q=True, parent=True) or "") == session_root:
+            if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
+                continue
+            _store(layer, detach(layer))
+    for layer in cmds.ls(":%s:*" % namespace, type="displayLayer", recursive=True) or []:
+        if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
+            continue
+        sources = cmds.listConnections(layer + ".identification", source=True, destination=False,
+                                       plugs=True) or []
+        if not sources:
+            continue
+        cmds.disconnectAttr(sources[0], layer + ".identification")
+        cmds.setAttr(layer + ".identification", 0)
+        _store(layer, sources[0])
+
+
+def show_layers(namespace):
+    """`hide_layers` undone: the cut links back, each display layer on its manager slot again
+    (a free one when its old slot was taken meanwhile)."""
+    for layer in cmds.ls(":%s:*" % namespace, type="animLayer", recursive=True) or []:
+        links = _take(layer)
+        if links:
+            attach([tuple(link) for link in links])
+    for layer in cmds.ls(":%s:*" % namespace, type="displayLayer", recursive=True) or []:
+        source = _take(layer)
+        if not source:
+            continue
+        if not _manager_index_free(source):
+            manager = source.split(".")[0]
+            used = cmds.getAttr(manager + ".displayLayerId", multiIndices=True) or [0]
+            source = "%s.displayLayerId[%d]" % (manager, max(used) + 1)
+        cmds.connectAttr(source, layer + ".identification", force=True)
+
+
+def refresh_editors():
+    """The Layer Editor's Anim and Display tabs rebuilt (GUI only, deferred, never raises)."""
+    if cmds.about(batch=True):
+        return
+    cmds.evalDeferred(_rebuild_editors, lowestPriority=True)
+
+
+def _rebuild_editors():
+    import maya.mel as mel
+    for command in ('if (`treeView -exists AnimLayerTabanimLayerEditor` && `exists rebuildAnimLayerEditor`) '
+                    'rebuildAnimLayerEditor("AnimLayerTab");',
+                    'if (`exists updateLayersByType`) updateLayersByType("Display");'):
+        try:
+            mel.eval(command)
+        except Exception:                                       # noqa: BLE001 - a UI refresh only
+            pass

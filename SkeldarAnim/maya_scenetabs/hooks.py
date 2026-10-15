@@ -199,6 +199,17 @@ def _refresh_bar():
         pass
 
 
+def _undone():
+    """Undo / Redo: the bar and the Layer Editor (a switch undone brings the other
+    tab's layers back in; the editors do not notice by themselves)."""
+    _refresh_bar()
+    try:
+        from . import layers
+        layers.refresh_editors()
+    except Exception:                                           # noqa: BLE001
+        pass
+
+
 def _scene_opened():
     """A scene opened by any road: a session file brings its tabs back."""
     state = _st()
@@ -267,8 +278,8 @@ def install(force=False):
         remove()
         raise
     if not cmds.about(batch=True):
-        state["jobs"] = [cmds.scriptJob(event=("Undo", _refresh_bar)),
-                         cmds.scriptJob(event=("Redo", _refresh_bar)),
+        state["jobs"] = [cmds.scriptJob(event=("Undo", _undone)),
+                         cmds.scriptJob(event=("Redo", _undone)),
                          cmds.scriptJob(event=("SceneOpened", _scene_opened))]
         try:
             _install_quit_filter()

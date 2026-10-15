@@ -283,9 +283,15 @@ def phase_layers():
     opening.open_tab(film_b)
     opening.open_tab(film_c)
     gate("layers: the session owns the root", layers.root() == records.LAYER_ROOT, layers.root())
-    roots = [layers.tab_root(ns) for ns in ("tab_film", "tab_film_b", "tab_film_c")]
-    gate("layers: each tab has its own root under the session's",
-         all(r and layer_parent(r) == records.LAYER_ROOT for r in roots), roots)
+    names = ("tab_film", "tab_film_b", "tab_film_c")
+    roots = [ns + ":" + records.TAB_LAYER_ROOT for ns in names]
+    active = session.state()["active"]
+    #  2026-10-15: a hidden tab's root is cut off the session's (out of the Layer Editor)
+    gate("layers: each tab has its own root - the active one under the session's, the hidden ones cut off",
+         all(cmds.objExists(r) for r in roots)
+         and all((layer_parent(r) == records.LAYER_ROOT) == (ns == active)
+                 and (ns == active or cmds.attributeQuery(layers.OUT_ATTR, node=r, exists=True))
+                 for ns, r in zip(names, roots)), [(r, layer_parent(r)) for r in roots])
     gate("layers: each tab's layer under its own root",
          all(layer_parent(ns + ":Layer1") == r for ns, r in zip(("tab_film", "tab_film_b", "tab_film_c"), roots)))
     gate("layers: every tab plays its layer",
@@ -293,7 +299,7 @@ def phase_layers():
     opening.close_tab("tab_film", ask=False)
     gate("layers: closing tab 1 keeps the root", layers.root() == records.LAYER_ROOT)
     gate("layers: closing tab 1 keeps the others' layers",
-         layer_parent("tab_film_b:Layer1") == layers.tab_root("tab_film_b")
+         layer_parent("tab_film_b:Layer1") == "tab_film_b:" + records.TAB_LAYER_ROOT
          and value_at("tab_film_b:hero.rotateY", 20) == 45.0)
     switching.switch("tab_film_b")
     cmds.select("tab_film_b:hero")
@@ -1114,11 +1120,93 @@ def phase_duplicates():
     gate("duplicates: closed", "Closed" in opening.close_tab(ns, ask=False) or not session.exists())
 
 
+def phase_layer_editor():
+    """2026-10-15, found live: the Layer Editor showed every tab's layers. A hidden tab's anim
+    layers are cut off the session root and its display layers taken off layerManager
+    (identification 0, which the editor skips as Maya's default); shown again, all back.
+    The editor's own listing was proven in a GUI Maya; here the data it is built from."""
+    from maya_scenetabs import layers, opening, saving, switching
+    os.makedirs(RUN, exist_ok=True)
+    made = {}
+    for tag in ("A", "B"):
+        fresh()
+        cube = cmds.polyCube(name="cube" + tag)[0]
+        cmds.setKeyframe(cube, attribute="translateX", time=0, value=0)
+        cmds.setKeyframe(cube, attribute="translateX", time=10, value=5)
+        cmds.createDisplayLayer([cube], name="display" + tag, noRecurse=True)
+        cmds.select(cube)
+        cmds.animLayer("anim" + tag, addSelectedObjects=True)
+        cmds.setKeyframe(cube, attribute="translateY", time=0, value=0, animLayer="anim" + tag)
+        cmds.setKeyframe(cube, attribute="translateY", time=10, value=3, animLayer="anim" + tag)
+        made[tag] = RUN + "/layers%s.ma" % tag
+        _save(made[tag])
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(made["B"])
+    a, b = "tab_layersA", "tab_layersB"
+    root = layers.root()
+
+    def on_root(ns):
+        return [l for l in cmds.ls(":%s:*" % ns, type="animLayer") or []
+                if (cmds.animLayer(l, q=True, parent=True) or "") == root]
+
+    def shown_id(ns, tag):
+        layer = "%s:display%s" % (ns, tag)
+        return cmds.getAttr(layer + ".identification"), bool(
+            cmds.listConnections(layer + ".identification", source=True, destination=False))
+
+    def track(ns, tag):
+        return [round(cmds.getAttr("%s:cube%s.%s" % (ns, tag, attr), time=f), 4)
+                for attr in ("translateX", "translateY") for f in (0, 5, 10)]
+
+    expected = [0.0, 2.5, 5.0, 0.0, 1.5, 3.0]
+    gate("layer editor: the hidden tab's anim layers are off the session root", on_root(a) == [],
+         on_root(a))
+    gate("layer editor: the active tab's are on it", on_root(b) == [b + ":AnimLayerRoot"], on_root(b))
+    gate("layer editor: the hidden tab's display layer off layerManager, id 0", shown_id(a, "A") == (0, False),
+         shown_id(a, "A"))
+    gate("layer editor: the active tab's display layer on it", shown_id(b, "B")[1] and shown_id(b, "B")[0] > 0,
+         shown_id(b, "B"))
+    gate("layer editor: both tabs' animation as keyed, layers included",
+         track(a, "A") == expected and track(b, "B") == expected, (track(a, "A"), track(b, "B")))
+    switching.switch(a)
+    gate("layer editor: switched - A's layers back, B's out",
+         on_root(a) == [a + ":AnimLayerRoot"] and on_root(b) == [] and shown_id(a, "A")[1]
+         and shown_id(b, "B") == (0, False), (on_root(a), on_root(b), shown_id(a, "A"), shown_id(b, "B")))
+    gate("layer editor: animation unchanged after the switch",
+         track(a, "A") == expected and track(b, "B") == expected, (track(a, "A"), track(b, "B")))
+    cmds.undo()
+    gate("layer editor: undo of the switch brings B's layers back and takes A's out",
+         session.state()["active"] == b and on_root(b) == [b + ":AnimLayerRoot"] and on_root(a) == []
+         and shown_id(b, "B")[1] and shown_id(a, "A") == (0, False))
+    cmds.redo()
+    gate("layer editor: redo too", session.state()["active"] == a and on_root(a) == [a + ":AnimLayerRoot"]
+         and on_root(b) == [])
+    cmds.setAttr(b + ":cubeB.translateZ", 1)
+    saving.save_tab(b)
+    text = open(made["B"]).read()
+    gate("layer editor: a hidden tab saved - its file carries no marker and a real display layer id",
+         layers.OUT_ATTR not in text and 'connectAttr "layerManager.dli[' in text
+         and '"displayB.id"' in text, text.count(layers.OUT_ATTR))
+    switching.switch(a)             # a save of another tab switches to it (stage 1's rule)
+    gate("layer editor: back on A, the saved tab's layers are out again",
+         on_root(b) == [] and shown_id(b, "B") == (0, False) and on_root(a) == [a + ":AnimLayerRoot"])
+    opening.close_tab(b, ask=False)
+    plain_ok = (not session.exists() and cmds.objExists("displayA") and cmds.objExists("animA")
+                and cmds.getAttr("displayA.identification") > 0
+                and (cmds.animLayer("animA", q=True, parent=True) or "") == layers.root()
+                and not cmds.attributeQuery(layers.OUT_ATTR, node="displayA", exists=True))
+    gate("layer editor: back to one scene, its layers on the root and its display layer in", plain_ok,
+         (session.exists(), cmds.ls(type="displayLayer"), cmds.ls(type="animLayer")))
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
-          "untitled": guarded(phase_untitled), "duplicates": phase_duplicates}
+          "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
+          "layer_editor": phase_layer_editor}
 
 
 def main(names):

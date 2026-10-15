@@ -11,7 +11,7 @@ Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 
 import maya.cmds as cmds
 
-from . import records, session
+from . import layers, records, session
 
 VIEW_FLAGS = ("displayAppearance", "displayTextures", "displayLights", "shadows", "joints",
               "nurbsCurves", "polymeshes", "locators", "cameras", "grid")
@@ -37,12 +37,16 @@ def hide(namespace):
     for top in tops(namespace):
         _set(top, "lodVisibility", 0)
         _set(top, "hiddenInOutliner", 1)
+    layers.hide_layers(namespace)       # out of the Layer Editor too (2026-10-15)
+    layers.refresh_editors()
 
 
 def show(namespace):
     for top in tops(namespace):
         _set(top, "lodVisibility", 1)
         _set(top, "hiddenInOutliner", 0)
+    layers.show_layers(namespace)
+    layers.refresh_editors()
     if _gui():
         cmds.evalDeferred("import maya.mel; maya.mel.eval('AEdagNodeCommonRefreshOutliners')",
                           lowestPriority=True)
