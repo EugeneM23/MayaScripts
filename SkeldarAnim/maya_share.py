@@ -54,7 +54,7 @@ import zipfile
 
 import maya.cmds as cmds
 
-from maya_scenetabs import scope
+from maya_scenetabs import scope as tabscope
 import maya.mel as mel
 import maya.utils
 
@@ -277,14 +277,14 @@ def send_scene(name=None):
     the Name field's text, else the scene's own name)."""
     from maya_uebridge import animimport
     own, file_type = records.scene_file_name(
-        scope.scene_name(cmds), time.time())
+        tabscope.scene_name(cmds), time.time())
     record = _new_record(records.upload_name(_typed_name(name), own))
     path = inbox_path(record)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     #  A copy, not a save: the working file, its name and its modified flag
     #  stay as they are. References are written into the copy (a colleague
     #  has none of the files they point at).
-    scope.export_scene(path, file_type, cmds)
+    tabscope.export_scene(path, file_type, cmds)
     record["bytes"] = os.path.getsize(path)
     fps = animimport.fps_from_unit(cmds.currentUnit(query=True, time=True))
     if fps:
@@ -553,7 +553,7 @@ def _inside_share_dir(path):
 
 
 def _is_open_scene(path):
-    scene = scope.scene_name(cmds)
+    scene = tabscope.scene_name(cmds)
     return bool(scene) and (os.path.normcase(os.path.abspath(scene))
                             == os.path.normcase(os.path.abspath(path)))
 
@@ -789,7 +789,7 @@ def _import_fbx(path, record, verb):
     if not result.get("nodes"):
         return "{0} brought nothing into the scene.".format(record["name"])
     try:                    # a tab's, while tabs are on; a failed move leaves it at the root
-        namespace = scope.relative(scope.home_namespace(namespace, cmds), cmds)
+        namespace = tabscope.relative(tabscope.home_namespace(namespace, cmds), cmds)
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
     return "{0} {1} from {2} as {3} - {4} joints, {5} curves.".format(
@@ -803,11 +803,11 @@ def open_entry(rid):
     if not path:
         return _status(why)
     record = state()["entries"][rid]["record"]
-    if not scope.tabs_on(cmds) and not _save_changes():
+    if not tabscope.tabs_on(cmds) and not _save_changes():
         return _status("Open cancelled - nothing changed.")
-    if record["kind"] == "scene" and scope.tabs_on(cmds):
+    if record["kind"] == "scene" and tabscope.tabs_on(cmds):
         #  scene tabs on (2026-10-15): a tab of its own, with its ranges, its vaccine swept
-        scope.open_scene(path, cmds)
+        tabscope.open_scene(path, cmds)
         return _status("Opened {0} from {1} in a tab".format(
             record["name"], record.get("from") or "someone"))
     if record["kind"] == "scene":
@@ -817,7 +817,7 @@ def open_entry(rid):
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
         return _status("Opened {0} from {1}{2}".format(
             record["name"], record.get("from") or "someone", note))
-    scope.new_scene(cmds)
+    tabscope.new_scene(cmds)
     return _status(_import_fbx(path, record, "Opened"))
 
 

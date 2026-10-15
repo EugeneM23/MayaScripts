@@ -2,6 +2,7 @@
 
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-plugin-scope-design.md
 """
+import os
 import unittest
 
 from maya_scenetabs import records, scope
@@ -193,6 +194,23 @@ class OpenNew(unittest.TestCase):
         self.assertEqual(scope.new_scene(cmds), "")
         self.assertEqual(cmds.calls, [("file", ("C:/w/a.ma",), {"open": True, "force": True}),
                                       ("file", (), {"new": True, "force": True})])
+
+
+class ShareNamesTheTabScope(unittest.TestCase):
+
+    def test_maya_share_imports_the_tab_scope_under_its_own_name(self):
+        """maya_share binds a local `scope = hubcopy.current()` in its functions:
+        the tab scope is `tabscope` there, never shadowed."""
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "SkeldarAnim", "maya_share.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("from maya_scenetabs import scope as tabscope", text)
+        self.assertNotIn("from maya_scenetabs import scope\n", text)
+        for name in ("scene_name", "export_scene", "relative", "home_namespace", "tabs_on",
+                     "open_scene", "new_scene"):
+            self.assertNotIn(" scope.%s(" % name, text)
+            self.assertNotIn("(scope.%s(" % name, text)
 
 
 if __name__ == "__main__":
