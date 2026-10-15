@@ -549,14 +549,25 @@ def write_curves(values, static, start, in_place=False):
     the layers above it - an animator's corrections - stay. A static translate: its curves deleted, the value
     set. `in_place` (an unrecorded re-key, the Mean pose rig's): a standing curve keeps its node and only its
     keys are written again - no node made or deleted behind the undo queue's back, so an older undo step still
-    finds the nodes it made."""
+    finds the nodes it made. A channel something else drives (a weapon's link on weapon_r, the animator's
+    constraint) is left to its driver: answers (channels written, {bone: what drives it} left alone)."""
     cmds, om, oma = _cmds(), _om(), _oma()
     written = 0
-    plans = dict(((path, ch), base_input(path + "." + ch)) for path, channels in values.items() for ch in channels)
-    plans.update(((path, ch), base_input(path + "." + ch)) for path in static for ch in TRANSLATE)
+    plans, held = {}, {}
+    keys = [(path, ch) for path, channels in values.items() for ch in channels]
+    keys += [(path, ch) for path in static for ch in TRANSLATE]
+    for path, ch in keys:
+        try:
+            plans[(path, ch)] = base_input(path + "." + ch)
+        except Refusal:
+            source = cmds.listConnections(path + "." + ch, source=True, destination=False,
+                                          skipConversionNodes=True) or ["?"]
+            held.setdefault(_short(path), source[0])
     for path, channels in values.items():
         for ch, vals in channels.items():
             plug = path + "." + ch
+            if (path, ch) not in plans:
+                continue
             dest, old = plans[(path, ch)]
             kind = "animCurveTL" if ch in TRANSLATE else "animCurveTA"
             if old and in_place and _rekey(old, kind):
@@ -577,13 +588,15 @@ def write_curves(values, static, start, in_place=False):
     for path, value in static.items():
         for ch, v in zip(TRANSLATE, value):
             plug = path + "." + ch
+            if (path, ch) not in plans:
+                continue
             dest, old = plans[(path, ch)]
             if old:
                 cmds.delete(old)
             if dest == plug and cmds.getAttr(plug, lock=True):
                 cmds.setAttr(plug, lock=False)
             cmds.setAttr(dest, v)
-    return written
+    return written, held
 
 
 class _Chunk(object):
@@ -657,7 +670,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
     with (_Chunk("skeldarWalkApply") if record else Unrecorded()):
-        write_curves(values, static, start, in_place=not record)
+        _, driven = write_curves(values, static, start, in_place=not record)
         if packed is not None and packed != pose_copy(root):
             if not _cmds().attributeQuery(POSE_COPY, node=root, exists=True):
                 _cmds().addAttr(root, longName=POSE_COPY, dataType="string")
@@ -705,6 +718,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         text += " | " + report.short()
     if pose_note:
         text += " | " + pose_note
+    if driven:
+        text += " | left to their drivers: " + ", ".join("%s (%s)" % item for item in sorted(driven.items()))
     if note:
         text += " | " + note
     info["clean"] = report

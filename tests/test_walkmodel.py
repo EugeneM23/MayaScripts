@@ -2112,6 +2112,10 @@ class SceneTests(unittest.TestCase):
         with self.assertRaises(self.sw.Refusal) as said:
             self.sw.base_input("j.translateX")
         self.assertIn("parentConstraint", str(said.exception))
+        # a weapon's link on weapon_r (2026-10-15): the re-key leaves that channel to its driver, not the walk
+        written, held = self.sw.write_curves({"j": {"translateX": [0.0, 1.0]}}, {}, 0)
+        self.assertEqual(written, 0)
+        self.assertEqual(list(held), ["j"])
 
 
 if __name__ == "__main__":
