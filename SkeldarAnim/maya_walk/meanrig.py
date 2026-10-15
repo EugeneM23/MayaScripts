@@ -358,10 +358,21 @@ def _gone(*_):
     _state()["bones"] = None
 
 
+def watched(plug):
+    """Is a set of `plug` an animator's edit? A keyable channel, or a compound holding one: the manipulators set
+    `rotate` / `translate` WHOLE, and a compound is never keyable itself - only its children are (the first build
+    read keyable plugs only, and a drag in the viewport changed nothing while the Channel Box did)."""
+    if plug.isKeyable:
+        return True
+    if plug.isCompound:
+        return any(plug.child(i).isKeyable for i in range(plug.numChildren()))
+    return False
+
+
 def _changed(message, plug, other, data):
     try:
         import maya.api.OpenMaya as om
-        if message & om.MNodeMessage.kAttributeSet and plug.isKeyable and not _state()["busy"]:
+        if message & om.MNodeMessage.kAttributeSet and not _state()["busy"] and watched(plug):
             _schedule()
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()

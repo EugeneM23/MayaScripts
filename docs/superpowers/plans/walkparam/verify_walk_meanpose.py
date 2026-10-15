@@ -108,8 +108,24 @@ gate(not keyed, "no control is keyed (%d of %d)" % (len(keyed), len(controls)))
 gate(meanrig.update() is None and not os.path.exists(FIX), "an untouched rig reads no change, writes nothing")
 print("press %.1f s" % (time.time() - started))
 
-# ---- an arm turned on the rig: the walk's mean for the whole cycle ----
+# ---- the watch: a manipulator's set (the compound, whole) reaches the timer ----
 ns = rig.namespace + ":"
+fired = []
+real_schedule = meanrig._schedule
+meanrig._schedule = lambda *_: fired.append(1)
+meanrig.start(rig)
+try:
+    cmds.setAttr(ns + "FKShoulder_R.rotate", *cmds.getAttr(ns + "FKShoulder_R.rotate")[0])
+    whole = len(fired)
+    cmds.setAttr(ns + "FKShoulder_R.rotateZ", cmds.getAttr(ns + "FKShoulder_R.rotateZ"))
+    single = len(fired) - whole
+finally:
+    meanrig.stop()
+    meanrig._schedule = real_schedule
+gate(whole >= 1 and single >= 1, "a set of the whole rotate (a manipulator's) and of rotateZ (the Channel Box's) "
+     "both reach the timer (%d, %d)" % (whole, single))
+
+# ---- an arm turned on the rig: the walk's mean for the whole cycle ----
 cmds.setAttr(ns + "FKShoulder_L.rotateZ", cmds.getAttr(ns + "FKShoulder_L.rotateZ") + 20.0)
 started = time.time()
 text = meanrig.update()

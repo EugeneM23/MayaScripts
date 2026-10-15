@@ -9944,7 +9944,7 @@ by itself after the mouse is let go, it belongs to the walk, the upper body's re
     its nodes;
   - callbacks and timer live on `sys._skeldar_walk_mean`, dropped on a new or opened scene.
   - The Apply line adds «mean pose corrected (1 bone turned, pelvis -5.0 cm)».
-- Proof: `docs/superpowers/plans/walkparam/verify_walk_meanpose.py` **25/25 standalone** (asd, the plugin's Manny
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_meanpose.py` **26/26 standalone** (asd, the plugin's Manny
   skeleton the target; the update called by hand - the timer needs a GUI):
   - the rig's game skeleton on the walk's mean pose to 0.0001 deg, 187 controls unkeyed, an untouched rig writing
     nothing;
@@ -9964,6 +9964,12 @@ by itself after the mouse is let go, it belongs to the walk, the upper body's re
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
      forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE
      (`rigsolve.drive_matrices`, which `poselib.scene.skeleton` hands as `bone["drive"]`): 0.0001 deg.
+247. **A manipulator sets the COMPOUND `rotate` / `translate`, and a compound is never keyable** - only its children
+     are. The mean pose rig's watch took keyable plugs only, so a drag in the viewport reached nothing while an edit in
+     the Channel Box (which sets `rotateZ`) did: «работает не стабильно». Read live over port 7002 by logging every
+     attribute-changed message (msg 2056 `FKSpine4_M.rotate keyable=False`). `meanrig.watched`: a keyable plug, or a
+     compound with a keyable child. A verify that edits a channel by `setAttr(ctrl.rotateZ)` cannot see this - set the
+     compound as a manipulator does.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
