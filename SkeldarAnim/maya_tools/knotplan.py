@@ -79,7 +79,11 @@ TRANSLATE = ("tx", "ty", "tz")
 ROTATE = ("rx", "ry", "rz")
 CHANNELS = TRANSLATE + ROTATE
 LONG = {"tx": "translateX", "ty": "translateY", "tz": "translateZ",
-        "rx": "rotateX", "ry": "rotateY", "rz": "rotateZ"}
+        "rx": "rotateX", "ry": "rotateY", "rz": "rotateZ",
+        "sx": "scaleX", "sy": "scaleY", "sz": "scaleZ"}
+#  Layer's channels: translate, rotate and scale (2026-10-15, «запекание на слой не работает со
+#  скейлом»); a knot and a re-parent take translate and rotate only.
+LAYER_CHANNELS = ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz")
 TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT")
 
 TOLERANCE = 1e-6
@@ -725,9 +729,10 @@ def layer_name(leaves):
     return LAYER_PREFIX + leaf(leaves[0])
 
 
-def layer_deltas(shown, own, order, free, minimum=LAYER_MIN):
-    """{channel: [difference per frame]}: what an additive layer (by component) adds to `own` for
-    the object to show `shown` - rows of (tx, ty, tz, rx, ry, rz) per frame. The shown rotation is
+def layer_deltas(shown, own, order, free, minimum=LAYER_MIN, channels=CHANNELS):
+    """{channel: [difference per frame]}: what an additive layer (by component, scale added too)
+    adds to `own` for the object to show `shown` - rows of `channels` per frame (translate and
+    rotate first: (tx, ty, tz, rx, ry, rz[, sx, sy, sz])). The shown rotation is
     made continuous from the own one first and then from the frame before it (all three rotates
     free: the other euler solution too; else whole turns), so the layer holds the real turn and
     never a 360 step. Only `free` channels; one whose difference stays under `minimum` is left
@@ -749,7 +754,7 @@ def layer_deltas(shown, own, order, free, minimum=LAYER_MIN):
             for row in rows:
                 row[c] = unwrapped(previous, row[c])
                 previous = row[c]
-    for c, ch in enumerate(CHANNELS):
+    for c, ch in enumerate(channels):
         if ch not in free:
             continue
         values = [row[c] - o[c] for row, o in zip(rows, own)]

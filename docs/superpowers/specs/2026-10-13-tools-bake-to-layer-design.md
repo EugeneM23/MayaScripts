@@ -139,3 +139,21 @@ The animator: «Давай сделаем так что бы анимация н
   themselves (the same nodes, key times, tangent types, a step, a cycle), the prop as it was at every
   half frame; under a highlight a smooth curve with a broken tangent and fractional key and a stepped
   curve exact to 3.4e-9 at half frames, the stepped keys as they are, a weighted curve on every frame.
+
+## Addendum 4 (2026-10-15): scale
+
+The animator: «Наше запекание на слой сейчас не работает со скейлом». Layer read and moved translate
+and rotate only: an object keyed only on scale was refused («nothing animates»), scale keys beside
+others stayed on the base (muted, it still scaled), a scaleConstraint stayed.
+
+- Layer's channels are `knotplan.LAYER_CHANNELS` (translate, rotate, scale); a knot and a re-parent
+  still take translate and rotate.
+- **The layer ADDS scale**: Maya's animLayer multiplies by default (`scaleAccumulationMode` 1, its
+  identity key 1.0 - measured); `write_deltas` sets it to 0 before the first key, so a scale
+  difference is shown minus own, a moved curve shifted by its first value, a ranged layer 0 outside,
+  exactly as for translate.
+- A scaleConstraint drives scale directly (no pairBlend) and is baked and deleted as any foreign
+  constraint.
+- Proof: `verify_bake_layer.py` **95/95** (L12: scale keys alone moved as themselves, the world
+  matrix to 4.4e-16 at frames and half frames, the base frame 0's scale, muted it stands; a
+  highlight exact to 3.7e-9; a scaleConstraint 0.0; scale beside a knot; one undo).

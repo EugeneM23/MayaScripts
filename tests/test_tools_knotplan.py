@@ -635,6 +635,19 @@ class Layer(unittest.TestCase):
         self.assertEqual(out["tx"], [0.0, 0.5])
         self.assertEqual(out["ty"], [2.0, 2.0])
 
+    def test_scale_differences(self):
+        """Layer's rows carry scale after translate and rotate; the layer ADDS scale, so a
+        difference is shown minus own, never a ratio."""
+        own = [(0.0,) * 6 + (1.0, 1.0, 1.0), (0.0,) * 6 + (1.0, 1.0, 1.0)]
+        shown = [(0.0,) * 6 + (1.0, 1.0, 1.0), (0.0,) * 6 + (2.0, 1.0, 0.5)]
+        out = plan.layer_deltas(shown, own, 0, plan.LAYER_CHANNELS,
+                                channels=plan.LAYER_CHANNELS)
+        self.assertEqual(sorted(out), ["sx", "sz"])
+        self.assertEqual(out["sx"], [0.0, 1.0])
+        self.assertEqual(out["sz"], [0.0, -0.5])
+        self.assertEqual(plan.LAYER_CHANNELS, plan.CHANNELS + plan.SCALE)
+        self.assertEqual(plan.LONG["sy"], "scaleY")
+
     def test_a_difference_under_the_minimum_is_left_out(self):
         own = [(0.0,) * 6] * 3
         shown = [(0.00005, 0.0, 0.0, 0.0, 0.0, 0.00009)] * 3

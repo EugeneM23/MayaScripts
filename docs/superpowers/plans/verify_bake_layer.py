@@ -35,6 +35,10 @@ L10 a knot as an object (2026-10-15): Layer on the knot puts its own curves on B
    stands; Remove leaves its layer empty; one undo.
 L11 a layer selected in the Anim Layer Editor is not the source: the base's keys still move, the
    selected layer untouched; a knot with a layer selected baked onto its own layer.
+L12 scale (2026-10-15, «запекание на слой не работает со скейлом»): scale keys alone move onto the
+   layer as themselves (scale ADDED on it, not multiplied), the prop's world matrix as it was at
+   every frame and half frame, the base holds frame 0's scale, muted it stands; a highlight over
+   scale keys exact; a scaleConstraint baked and deleted; scale beside a knot.
 """
 import math
 import os
@@ -754,9 +758,118 @@ def case_l11():
          % (line, text))
 
 
+def mats(node, frames):
+    """{frame: world matrix} by a real time walk - scale included."""
+    out = {}
+    now = cmds.currentTime(query=True)
+    for f in frames:
+        cmds.currentTime(f, update=True)
+        out[f] = wm(node)
+    cmds.currentTime(now, update=True)
+    return out
+
+
+def mat_gap(a, b):
+    return max(abs(a[f].getElement(i, j) - b[f].getElement(i, j))
+               for f in a for i in range(4) for j in range(4))
+
+
+def scales(node, frames):
+    out = {}
+    now = cmds.currentTime(query=True)
+    for f in frames:
+        cmds.currentTime(f, update=True)
+        out[f] = tuple(cmds.getAttr(node + ".scale")[0])
+    cmds.currentTime(now, update=True)
+    return out
+
+
+def scale_prop(keys=True):
+    prop = make_prop()
+    if keys:
+        for t, v in ((0, 1.0), (15, 2.0), (40, 0.5)):
+            cmds.setKeyframe(prop, attribute="scaleX", time=t, value=v)
+        for t, v in ((5, 1.5), (25, 0.75)):
+            cmds.setKeyframe(prop, attribute="scaleY", time=t, value=v)
+    return prop
+
+
+def case_l12():
+    case("L12 scale")
+    prop = make_prop()
+    for ch in ("tx", "rx", "ry"):
+        cmds.delete(curve_of(prop, ch))
+    for t, v in ((0, 1.0), (15, 2.0), (40, 0.5)):
+        cmds.setKeyframe(prop, attribute="scaleX", time=t, value=v)
+    for t, v in ((5, 1.5), (25, 0.75)):
+        cmds.setKeyframe(prop, attribute="scaleY", time=t, value=v)
+    kept = dict((ch, (curve_of(prop, ch), keys_of(curve_of(prop, ch)))) for ch in ("sx", "sy"))
+    shown, first = mats(prop, FRAMES + HALVES), scales(prop, [0])[0]
+    line = layerbake.bake([prop], highlight=None)
+    found = layers()
+    gate(len(found) == 1 and "its keys moved onto it" in line, "scale keys alone: " + line)
+    gap = mat_gap(shown, mats(prop, FRAMES + HALVES))
+    gate(gap < 1e-6, "the prop's world matrix as it was, frames and half frames: %.2e" % gap)
+    gate(found and cmds.getAttr(found[0] + ".scaleAccumulationMode") == 0,
+         "the layer adds scale")
+    got = base(prop, plan.SCALE)
+    gate(all(not isinstance(got[ch], tuple) and abs(got[ch] - first[i]) < 1e-6
+             for i, ch in enumerate(plan.SCALE)), "the base holds frame 0's scale: %s" % (got,))
+    for ch, (name, was) in kept.items():
+        curve = layer_curve(found[0], prop, ch) if found else None
+        now = keys_of(curve) if curve else {}
+        gate(curve and curve.split("|")[-1] == name and now["times"] == was["times"],
+             "%s: its own curve on the layer, keys %s" % (ch, now.get("times")))
+    if found:
+        cmds.animLayer(found[0], edit=True, mute=True)
+        got = scales(prop, FRAMES)
+        gap = max(abs(got[f][i] - first[i]) for f in FRAMES for i in range(3))
+        gate(gap < 1e-6, "muted: frame 0's scale on every frame: %.2e" % gap)
+        cmds.animLayer(found[0], edit=True, mute=False)
+
+    prop = scale_prop()
+    shown = mats(prop, FRAMES + HALVES)
+    line = layerbake.bake([prop], highlight=(10, 21))
+    gap = mat_gap(shown, mats(prop, FRAMES + HALVES))
+    gate(gap < 1e-6 and "outside the highlight" in line,
+         "a highlight 10-20 over scale keys: exact at frames and half frames: %.2e - %s"
+         % (gap, line))
+    times = base(prop, ("sx",))["sx"][0]
+    gate(9.0 in times and 21.0 in times, "  the base's scaleX bridged on 9 and 21: %s" % (times,))
+
+    prop = make_prop()
+    loc = mover("sizer")
+    for t, v in ((0, 1.0), (20, 3.0), (40, 0.5)):
+        cmds.setKeyframe(loc, attribute="scaleZ", time=t, value=v)
+        cmds.setKeyframe(loc, attribute="scaleX", time=t, value=2.0 - v * 0.3)
+    cmds.scaleConstraint(loc, prop)
+    shown = mats(prop, FRAMES)                  # a constraint is keyed on every frame
+    line = layerbake.bake([prop], highlight=None)
+    gap = mat_gap(shown, mats(prop, FRAMES))
+    left = cmds.ls(type="scaleConstraint")
+    gate(gap < 1e-6 and not left and "1 constraint" in line,
+         "a scaleConstraint baked and deleted: %.2e - %s" % (gap, line))
+
+    prop = scale_prop()
+    knots.create("knot", [prop], highlight=None)
+    nudge(knot_of(prop), "tz", 4.0)
+    shown = mats(prop, FRAMES)                  # the knot's channels are keyed on every frame
+    line = layerbake.bake([prop], highlight=None)
+    cmds.undo()                                 # straight after the press (trap 222)
+    sx = base(prop, ("sx",))["sx"]
+    gate(not layers() and isinstance(sx, tuple) and sx[0] == (0.0, 15.0, 40.0),
+         "one undo: no layer, the scale keys back on the base: %s" % (sx,))
+    cmds.redo()
+    gap = mat_gap(shown, mats(prop, FRAMES))
+    sx = layer_curve(layers()[0], prop, "sx") if layers() else None
+    gate(gap < 1e-6 and knot_of(prop) is None and sx,
+         "a knot and scale keys: the knot off, scale on the layer, the matrix kept: %.2e - %s"
+         % (gap, line))
+
+
 def main():
     for run in (case_l0, case_l9, case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8,
-                case_l10, case_l11):
+                case_l10, case_l11, case_l12):
         try:
             run()
         except Exception:

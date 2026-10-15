@@ -69,6 +69,9 @@ def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=
     layer = cmds.animLayer(name)
     knots._set_string(layer, marker, value)
     cmds.setAttr(layer + ".rotationAccumulationMode", 0)          # by component
+    #  scale ADDED, not multiplied (Maya's default, 1): the layer holds the difference, 0 its
+    #  identity - set before the first key, or the identity key is 1
+    cmds.setAttr(layer + ".scaleAccumulationMode", 0)
     plugs = ["%s.%s" % (node, plan.LONG[ch]) for node, ch in list(tracks) + list(moves)]
     cmds.animLayer(layer, edit=True, attribute=plugs)
     for (node, ch), track in tracks.items():
@@ -159,8 +162,8 @@ def _objects(selection):
 
 
 def _drivers(obj):
-    """{constraint: [channels]}: the constraints driving the object's free translate and rotate
-    channels, directly or through Maya's pairBlend. A locked channel is left alone: Knot Orient's
+    """{constraint: [channels]}: the constraints driving the object's free translate, rotate and
+    scale channels, directly or through Maya's pairBlend (never on scale). A locked channel is left alone: Knot Orient's
     kept point constraint rides its locked translate and is the knot's own."""
     constraints = {}
     for ch in _free(obj):
@@ -168,7 +171,7 @@ def _drivers(obj):
         if not found:
             continue
         node = found[0]
-        if cmds.nodeType(node) == "pairBlend":
+        if cmds.nodeType(node) == "pairBlend" and ch in _BLEND_INPUT2:
             upstream = _sources(node + "." + _BLEND_INPUT2[ch])
             if upstream and cmds.objectType(upstream[0], isAType="constraint"):
                 constraints.setdefault(_long(upstream[0]), []).append(ch)
@@ -333,7 +336,7 @@ def _span(obj, tops, targets, highlight):
 # ------------------------------------------------------------------ reading
 
 def _read(objs, frames):
-    """{obj: {frame: (tx, ty, tz, rx, ry, rz)}} - one time walk, unrecorded."""
+    """{obj: {frame: (tx, ty, tz, rx, ry, rz, sx, sy, sz)}} - one time walk, unrecorded."""
     from maya_poselib import timewalk
     out = dict((obj, {}) for obj in objs)
     with timewalk.Walk(fresh=False) as walk:
@@ -341,12 +344,13 @@ def _read(objs, frames):
             walk.go(frame)
             for obj in objs:
                 out[obj][frame] = (tuple(cmds.getAttr(obj + ".translate")[0])
-                                   + tuple(cmds.getAttr(obj + ".rotate")[0]))
+                                   + tuple(cmds.getAttr(obj + ".rotate")[0])
+                                   + tuple(cmds.getAttr(obj + ".scale")[0]))
     return out
 
 
 def _free(obj):
-    return [ch for ch in plan.CHANNELS if not cmds.getAttr(obj + "." + ch, lock=True)]
+    return [ch for ch in plan.LAYER_CHANNELS if not cmds.getAttr(obj + "." + ch, lock=True)]
 
 
 # -------------------------------------------------------------------- press
@@ -476,7 +480,7 @@ def _clear_base(info, path, span, shown, now, moved=(), exact=None):
         base_plug, curve, word, _layered = _base(path + "." + ch, ch)
         if word:
             continue
-        index = plan.CHANNELS.index(ch)
+        index = plan.LAYER_CHANNELS.index(ch)
         if ranged:
             if curve and ch in info["moving"]:
                 keys = _bridge(curve, first, last)
@@ -575,8 +579,8 @@ def bake(selection=None, highlight=SLIDER):
                 deltas = plan.layer_deltas([shown[obj][f] for f in times],
                                            [own[path][f] for f in times],
                                            cmds.getAttr(path + ".rotateOrder"),
-                                           [ch for ch in plan.CHANNELS if ch in sampled],
-                                           minimum=minimum)
+                                           [ch for ch in plan.LAYER_CHANNELS if ch in sampled],
+                                           minimum=minimum, channels=plan.LAYER_CHANNELS)
                 if not ranged:
                     deltas, shifts = plan.anchored(deltas)
                     for ch, amount in shifts.items():
