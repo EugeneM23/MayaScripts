@@ -569,11 +569,12 @@ def _blast(qt, panel, width, height, frames, folder):
         here = oma.MAnimControl.currentTime()
         try:
             capture.set_flags(panel, dict((flag, False) for flag in shown))
-            _picture, count, settled = capture.settle(
-                lambda: capture.blast_file(options, frames[0], first),
-                lambda: capture.pump(qt))
-            cmds.playblast(frame=list(frames), filename=folder + "/" + BLAST_BASE,
-                           framePadding=FRAME_PADDING, **options)
+            with capture.backdrop("anim"):           # an animation's preview: on blue
+                _picture, count, settled = capture.settle(
+                    lambda: capture.blast_file(options, frames[0], first),
+                    lambda: capture.pump(qt))
+                cmds.playblast(frame=list(frames), filename=folder + "/" + BLAST_BASE,
+                               framePadding=FRAME_PADDING, **options)
         finally:
             capture.set_flags(panel, shown)
             try:

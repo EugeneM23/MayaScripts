@@ -62,6 +62,12 @@ BLAST_QUALITY = 95                # the raw blast it is cut from
 LEAST_BLASTS, MOST_BLASTS = 3, 5
 SMALLEST_PORT = 16                # px: a port smaller than this is a hidden window (trap 105)
 NO_VIEWPORT = "no viewport for a thumbnail"
+#  The backdrop a card's picture is shot on (2026-10-15, the animator: «Мы должны делать превью с
+#  разным фоном для поз оранжевый для анимаций голубой а не закрашивать всю карточку каким-то
+#  оверлеем»): the viewport's background colours set for the blast and put back after - the
+#  character shot as it is, on its card type's colour
+BACKDROPS = {"pose": (0.86, 0.47, 0.19), "anim": (0.33, 0.60, 0.83)}
+BACKDROP_COLOURS = ("background", "backgroundTop", "backgroundBottom")
 NO_BONE = "no bone of %s in the pose of %s"
 
 
@@ -316,11 +322,55 @@ def save_jpg(image, path, quality):
     return True, ""
 
 
+@contextlib.contextmanager
+def backdrop(kind):
+    """The viewport's background the `kind` card's colour (`BACKDROPS`: "pose" orange, "anim"
+    blue; anything else the pose's) for the length of a blast: the flat colour AND the gradient's
+    two (a playblast takes the flat one, the viewport the gradient while it is on), the gradient
+    off; each read first and put back after, whatever happened. A colour Maya refuses is left
+    as it was."""
+    colour = BACKDROPS.get(kind) or BACKDROPS["pose"]
+    saved = {}
+    for name in BACKDROP_COLOURS:
+        try:
+            saved[name] = list(cmds.displayRGBColor(name, query=True))[:3]
+        except Exception:                                    # noqa: BLE001
+            continue
+    try:
+        gradient = cmds.displayPref(query=True, displayGradient=True)
+    except Exception:                                        # noqa: BLE001
+        gradient = None
+    try:
+        for name in saved:
+            try:
+                cmds.displayRGBColor(name, *colour)
+            except Exception:                                # noqa: BLE001
+                pass
+        if gradient:
+            try:
+                cmds.displayPref(displayGradient=False)
+            except Exception:                                # noqa: BLE001
+                pass
+        yield
+    finally:
+        for name, value in saved.items():
+            try:
+                cmds.displayRGBColor(name, *value)
+            except Exception:                                # noqa: BLE001
+                pass
+        if gradient:
+            try:
+                cmds.displayPref(displayGradient=True)
+            except Exception:                                # noqa: BLE001
+                pass
+
+
 # ------------------------------------------------------------------ the thumbnail
 
-def thumbnail(path, size=THUMB_SIZE):
+def thumbnail(path, size=THUMB_SIZE, kind="pose"):
     """(ok, note): the active model panel blasted at the current frame into a `size` px square
-    JPG at `path` (written atomically). Batch mode, no panel, a hidden port: (False, why)."""
+    JPG at `path` (written atomically), on the `kind` card's backdrop (`backdrop`). Batch mode,
+    no panel, a hidden port: (False, why)."""
     if cmds.about(batch=True):
         return False, NO_VIEWPORT
     import maya_vpstudio
@@ -347,8 +397,10 @@ def thumbnail(path, size=THUMB_SIZE):
     tweaks = keys.Tweaks()
     try:
         set_flags(panel, dict((flag, False) for flag in shown))
-        _picture, count, settled = settle(
-            lambda: blast_file(options, cmds.currentTime(query=True), raw), lambda: pump(qt))
+        with backdrop(kind):
+            _picture, count, settled = settle(
+                lambda: blast_file(options, cmds.currentTime(query=True), raw),
+                lambda: pump(qt))
     finally:
         set_flags(panel, shown)
         tweaks.restore()

@@ -8629,8 +8629,7 @@ The animator: «1 - более компактный интерфейс. 2 - оп
 объекты ... 3 - Превью поз должно быть оранжевым, а превью анимаций приятно холодно голубым. 4 -
 ручка blend должна оставаться на своем месте ... ключ должен ставиться только по нажатию apply.
 Если мы изменили таймлайн или куда-то переключились то пусть бленд сбросится на 0». Asked, all the
-recommendation: the picture recoloured in the tone; Selected only keys only the selected nodes; Apply
-at blend 0 keys the whole card. Spec
+recommendation: Selected only keys only the selected nodes; Apply at blend 0 keys the whole card. Spec
 `docs/superpowers/specs/2026-10-15-pose-library-compact-selected-blend-design.md`. **This replaces
 what the sections above say about the blend keying on release and about the window's header row.**
 - **Compact**: one top row (search, type, sort, size, + Save, ⋮ - the folder is ⋮'s tooltip and
@@ -8643,9 +8642,13 @@ what the sections above say about the blend keying on release and about the wind
   `keep_selected` pure, `only_selected` says «Selected only: 1 of 73 controls keyed»); nothing
   measured when the cut left members part-keyed; none of them in the card is refused before any
   chunk. Drops ignore it (they name their character).
-- **Tones**: `look.TONES` / `tone_table(kind)`; `cardgrid.toned` (grey levels as an Indexed8 image,
-  the tone its colour table). Thumbnails (`thumb(image, side, kind)`), the playing sheet and the
-  details picture; nothing on disk changes. `canvas.tones = False` is the tests' seam.
+- **The backdrop**: a pose's picture is SHOT on orange, an animation's on blue -
+  `capture.backdrop(kind)` sets `displayRGBColor background/backgroundTop/backgroundBottom`
+  (`BACKDROPS`) and the gradient off for the blast, everything put back; `thumbnail(kind=)`, the
+  preview sheet (`animcapture._blast`) on blue, the save panel shooting again when its type
+  switches. The first push (bf7d386) recoloured the cards at paint time instead - «не закрашивать
+  всю карточку каким-то оверлеем» - and that overlay is gone. Old cards stay grey until Replace
+  thumbnail.
 - **The blend holds**: let go (slider or middle drag), the preview stays («Blend 40 % - Apply keys
   it», Apply reads «Apply 40 %»); Apply keys it (`blend_key`) and the slider goes to 0; back to 0
   with every value back (`blend_reset(why)`): a `timeChanged` job made only while a blend stands

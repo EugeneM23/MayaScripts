@@ -166,8 +166,8 @@ class FakeScene(object):
                                thumbnail=snapshot_path, frames=FRAMES)
         return path, "saved " + name
 
-    def snapshot(self, path):
-        self.log.append(("snapshot", path))
+    def snapshot(self, path, kind="pose"):
+        self.log.append(("snapshot", path) + (("anim",) if kind == "anim" else ()))
         write_jpg(path, "#aa3322")
         return True, "thumbnail from modelPanel4"
 
@@ -521,7 +521,6 @@ class WindowCase(unittest.TestCase):
         pw.defer = self.deferred.append
         self.addCleanup(setattr, pw, "defer", saved)
         self.win = pw.make_window(self.scene)
-        self.win.canvas.tones = False                # the pictures' own colours (Tones apart)
         self.win.resize(1000, 640)
         self.win.move(3000, 3000)
         self.win.show()
@@ -2126,8 +2125,8 @@ class FakeModules(object):
 
     # --- capture
 
-    def thumbnail(self, path):
-        self.log.append(("thumbnail",))
+    def thumbnail(self, path, kind="pose"):
+        self.log.append(("thumbnail", kind))
         write_jpg(path, self.colour)
         return True, "thumbnail from modelPanel4"
 
@@ -2580,6 +2579,33 @@ class Compact(WindowCase):
         self.assertEqual(self.win.thumb_side(), 150)
         self.assertEqual(self.win.select_button.text(), "")
         self.assertTrue(self.win.select_button.toolTip().startswith("Select objects"))
+
+
+class Backdrop(WindowCase):
+    """2026-10-15, «делать превью с разным фоном для поз оранжевый для анимаций голубой»: the
+    still is shot on its card type's backdrop."""
+
+    def test_a_pose_save_shoots_on_the_pose_backdrop(self):
+        self.scene.options[pw.SAVE_TYPE_VAR] = "pose"
+        self.win.open_save()
+        self.assertEqual(self.scene.calls("snapshot")[-1][2:], ())
+
+    def test_an_animation_save_shoots_on_the_animation_backdrop(self):
+        self.scene.options[pw.SAVE_TYPE_VAR] = "anim"
+        self.win.open_save()
+        self.assertEqual(self.scene.calls("snapshot")[-1][2:], ("anim",))
+
+    def test_switching_the_save_type_shoots_it_again(self):
+        self.scene.options[pw.SAVE_TYPE_VAR] = "pose"
+        self.win.open_save()
+        self.win.save_types["anim"].click()
+        self.assertEqual(len(self.scene.calls("snapshot")), 2)
+        self.assertEqual(self.scene.calls("snapshot")[-1][2:], ("anim",))
+        self.win.save_types["anim"].click()          # the same type: not again
+        self.assertEqual(len(self.scene.calls("snapshot")), 2)
+
+
+
 
 
 if __name__ == "__main__":

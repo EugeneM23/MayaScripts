@@ -663,9 +663,11 @@ class Scene(object):
         text = "saved %s in %s - %s" % (_name_of(path), folder_text(folder), note)
         return path, text + " | " + (said if made else NO_PREVIEW % said)
 
-    def snapshot(self, path):
+    def snapshot(self, path, kind="pose"):
+        """The viewport blasted into `path` on the `kind` card's backdrop (orange for a pose,
+        blue for an animation - `capture.BACKDROPS`)."""
         from maya_poselib import capture
-        return capture.thumbnail(path)
+        return capture.thumbnail(path, kind=kind)
 
     def update(self, path):
         """(ok, text): the card at `path` re-made from the selection, its name and thumbnail
@@ -708,7 +710,7 @@ class Scene(object):
         _remove(image)
         _remove(sheet)
         try:
-            shot, shot_text = self.snapshot(image)
+            shot, shot_text = self.snapshot(image, "anim" if store.is_anim(path) else "pose")
             shot = shot and os.path.isfile(image)
             if not store.is_anim(path):
                 if not shot:
@@ -1787,7 +1789,7 @@ def _classes():
             self.name_label.setText(card.name)
             self.folder_label.setText("in " + folder_text(card.folder))
             self.info.setText("\n".join(look.details(card, self.picked_data)))
-            picture = self.canvas.thumb(card.thumbnail, self.thumb_side(), card.type)
+            picture = self.canvas.thumb(card.thumbnail, self.thumb_side())
             if picture is not None and not picture.isNull():
                 self.thumb.setPixmap(picture)
             else:
@@ -2391,6 +2393,8 @@ def _classes():
             """A click on Pose or Animation: remembered, and the panel follows."""
             self._remember(SAVE_TYPE_VAR, kind)
             self._light_save_type(kind)
+            if self._save is not None and self._save.get("shot") != self.save_type():
+                self.take_snapshot()                 # the still on the new type's backdrop
             return self.status.text()
 
         def _light_save_type(self, kind):
@@ -2448,7 +2452,9 @@ def _classes():
                 os.remove(path)
             except OSError:
                 pass
-            ok, text = self.scene.snapshot(path)
+            kind = self.save_type()
+            self._save["shot"] = kind
+            ok, text = self.scene.snapshot(path, kind)
             if ok and os.path.isfile(path):
                 picture = QtGui.QPixmap(path)
                 self.save_thumb.setPixmap(scaled(picture, self.thumb_side()) or picture)
@@ -2587,7 +2593,7 @@ def _classes():
 
         def replace_thumbnail(self, path):
             image = self._snapshot_path()
-            ok, text = self.scene.snapshot(image)
+            ok, text = self.scene.snapshot(image, "anim" if store.is_anim(path) else "pose")
             if not ok or not os.path.isfile(image):
                 return self.say(text)
             try:

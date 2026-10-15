@@ -46,15 +46,21 @@ A checkbox beside Mirror (`skeldarPoseLibrarySelectedOnly`, off by default, reme
 - A drop onto a character or the floor names its character, so it takes the whole card. An objects
   card keys the selected objects anyway.
 
-## 3. Toned cards
+## 3. The backdrop a card is shot on
 
-`look.TONES` / `tone_table(kind)` (pure): three stops, a pose orange (22,10,3) → (214,112,44) at
-`TONE_MID` 0.42 → (255,238,218), an animation icy blue (5,14,24) → (70,146,196) → (232,246,255).
-`cardgrid.toned(pixmap, kind)`: the grey levels read as an Indexed8 image whose colour table is the
-tone (one Qt pass). The thumbnails (`thumb(image, side, kind)`, cached per tone), the playing
-preview sheet (toned once when decoded) and the details picture all wear it. Nothing on disk
-changes; every saved card is toned. `canvas.tones = False` draws the pictures as saved (the tests of
-the pictures' own colours).
+**First built wrong and pushed (bf7d386)**: the pictures recoloured at paint time, an orange /
+blue overlay over the whole card. The animator: «Мы должны делать превью с разным фоном для поз
+оранжевый для анимаций голубой а не закрашивать всю карточку каким-то оверлеем». The overlay is
+gone (`look.TONES`, `cardgrid.toned`, `canvas.tones`).
+
+What stands: `capture.backdrop(kind)` sets the viewport's background for the length of a blast -
+`displayRGBColor background / backgroundTop / backgroundBottom` to `capture.BACKDROPS[kind]`
+(pose (0.86, 0.47, 0.19) orange, anim (0.33, 0.60, 0.83) blue) and the gradient off (a playblast
+takes the flat colour) - each read first and put back, whatever happened. `capture.thumbnail(path,
+kind=)` shoots the still in it; `animcapture._blast` shoots the preview sheet on blue. The save
+panel shoots on its type's colour and again when Pose / Animation is switched; Replace thumbnail
+(and preview) by the card's type. The character is shot as it stands. Cards saved before keep
+their grey picture until Replace thumbnail.
 
 ## 4. The blend holds; Apply keys it
 
@@ -75,7 +81,7 @@ the pictures' own colours).
 ## Proof
 
 - Unit tests (offscreen Qt and fakes): 1123+ Pose Library tests, among them `BlendHolds`,
-  `SelectedOnlyOption`, `Compact`, `Tones`, `ToneTable`, `SelectedOnly`, `SelectedOnlyPress`.
+  `SelectedOnlyOption`, `Compact`, `Backdrop`, `test_poselib_backdrop`, `SelectedOnly`, `SelectedOnlyPress`.
 - `docs/superpowers/plans/verify_poselib_selected_only.py` — **13/13 mayapy standalone**:
   - a Manny_Rig card onto another: FKWrist_R alone keyed, at the whole solve's value to 0.0;
   - FKShoulder_L + FKElbow_L alone;
@@ -87,4 +93,5 @@ the pictures' own colours).
   - the Manny skeleton's hand_r alone.
 - Picture: `docs/superpowers/plans/poselib_compact.png` (offscreen, the window over a temp library
   of the animator's own thumbnails, a blend held at 35 %).
-- Not seen live (the animator's checks): the window in Maya, the time job's reset on scrubbing.
+- Not seen live (the animator's checks): the window in Maya, the time job's reset on scrubbing,
+  a real playblast on the backdrop (mayapy standalone has no viewport).

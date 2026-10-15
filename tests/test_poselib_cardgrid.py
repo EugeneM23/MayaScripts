@@ -111,9 +111,6 @@ class CanvasCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.panel = FakePanel()
         self.canvas = cardgrid.make_canvas(self.panel)
-        #  the pictures as saved: these tests read their own colours back (`Tones` tests the
-        #  cards' orange / blue tones)
-        self.canvas.tones = False
         self.canvas.move(3000, 3000)
         self.addCleanup(self.canvas.deleteLater)
 
@@ -432,7 +429,7 @@ class HoverZoom(CanvasCase):
         self.hover(self.centre(1))
         self.render()
         side = cardgrid.cache_side(int(round(self.canvas.rects()[1][2] * look.ZOOM)))
-        self.assertIn((self.cards[1].thumbnail, side, None), self.canvas.pixmaps)
+        self.assertIn((self.cards[1].thumbnail, side), self.canvas.pixmaps)
         self.canvas.fit(500, 600)               # the layout keeps that size in the cache
         self.assertIn(side, set(key[1] for key in self.canvas.pixmaps))
 
@@ -855,52 +852,6 @@ class AnimCards(CanvasCase):
         self.assertGreater(self.square_colour(1).blue(), 150)       # still cell 1, not cell 0
         self.canvas.set_cards([self.fist])
         self.assertFalse(self.canvas.play_timer.isActive())
-
-
-
-@unittest.skipIf(QT is None, "no Qt")
-class Tones(AnimCards):
-    """2026-10-15, «Превью поз должно быть оранжевым, а превью анимаций приятно холодно
-    голубым»: whatever colours a picture was saved in, a pose card shows it warm and an
-    animation card cool - the still, the playing sheet, at every size."""
-
-    def setUp(self):
-        AnimCards.setUp(self)
-        self.canvas.tones = True
-
-    def warm(self, colour):
-        return colour.red() > colour.blue() + 40
-
-    def cool(self, colour):
-        return colour.blue() > colour.red() + 40
-
-    def test_a_pose_card_is_orange_and_an_animation_card_blue(self):
-        self.show(self.walk, self.fist)                 # both stills saved GREEN
-        self.assertTrue(self.cool(self.square_colour(0)), self.square_colour(0).name())
-        self.assertTrue(self.warm(self.square_colour(1)), self.square_colour(1).name())
-
-    def test_the_playing_sheet_is_blue_whatever_its_cells(self):
-        self.show(self.walk, self.fist)                 # its cells RED then BLUE
-        self.hover(0)
-        self.assertTrue(self.cool(self.square_colour(0)), self.square_colour(0).name())
-
-    def test_the_picture_is_toned_by_its_lightness(self):
-        dark = self.canvas.thumb(self.image("dark.jpg", "#101010"), 32, "pose")
-        light = self.canvas.thumb(self.image("light.jpg", "#f0f0f0"), 32, "pose")
-        self.assertLess(dark.toImage().pixelColor(16, 16).lightness(),
-                        light.toImage().pixelColor(16, 16).lightness())
-
-    def test_a_tone_is_cached_apart_from_the_picture_as_saved(self):
-        path = self.image("one.jpg", "#808080")
-        self.canvas.thumb(path, 32, "pose")
-        self.canvas.thumb(path, 32, "anim")
-        self.assertIn((path, 32, "pose"), self.canvas.pixmaps)
-        self.assertIn((path, 32, "anim"), self.canvas.pixmaps)
-
-
-#  Tones borrows AnimCards' fixture, not its tests (those read the saved colours back)
-for _name in [n for n in vars(AnimCards) if n.startswith("test")]:
-    setattr(Tones, _name, None)
 
 if __name__ == "__main__":
     unittest.main()
