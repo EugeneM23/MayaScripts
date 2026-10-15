@@ -803,7 +803,7 @@ def open_entry(rid):
     if not path:
         return _status(why)
     record = state()["entries"][rid]["record"]
-    if not _save_changes():
+    if not scope.tabs_on(cmds) and not _save_changes():
         return _status("Open cancelled - nothing changed.")
     if record["kind"] == "scene" and scope.tabs_on(cmds):
         #  scene tabs on (2026-10-15): a tab of its own, with its ranges, its vaccine swept
