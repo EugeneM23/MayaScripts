@@ -10312,3 +10312,37 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
 240. **The plugin LOCKS its clip label's marker** (`cliplabel._write` unlocks around its own write), so a tool
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.
+
+## The radial menu: hold alt+q, point, let go (2026-10-15)
+
+The animator: «я зажимаю какую-то клавишу появляется радиальное меню ... можно поместить как и раздел так
+и отдельную функцию раздела ... раздел -> попап раздела (если он уже был открыт где-то то он должен
+открыться в новом месте возле курсора мышки) ... двухэтапная кнопка например AIM - попап финиша действия».
+Asked, all four the recommendation: hold-and-release (a tap keeps it up for a click), **alt+q** in the
+SkeldarAnim hotkey set, an editor card, 8 slots and no submenus. Spec
+`docs/superpowers/specs/2026-10-15-radial-menu-design.md`.
+- **`maya_radial_rules.py`** (stdlib): slots clockwise from north (`slot_at`, `slot_position`,
+  `pill_anchor` - east labels grow right, west left), items `"section:<key>"` / `"cmd:<hotkey row>"` in the
+  optionVar `skeldarRadialSlots` (JSON of 8, broken -> `DEFAULTS`), `TWO_STEP` (`tools.knot_offset`,
+  `tools.aim` and the knots function asking whether each waits), `release_action`.
+- **`maya_radial.py`**: `press()` / `release()` are the hotkey rows `radial.press` / `radial.release`.
+  - The press reads which ordinary keys are down (Win32 `GetAsyncKeyState`) and a 16 ms timer calls the
+    moment they are all up the release. Maya's release command acts only then too: it may come early
+    (auto-repeat) or never (focus elsewhere).
+  - The overlay: a frameless translucent `Qt.Tool` over the cursor's whole screen (alpha 1, so a click
+    anywhere lands on it), never taking focus.
+  - A section opens its popup by the cursor (**`maya_hubpop.open_at`**: the viewport under the point;
+    one already open is closed and reopened there, unrolled). A header-only section opens the hub.
+  - A function runs through `maya_hotkeys.run`. A two-step one left waiting gets the **Finish popup**
+    (Finish runs the row again; X leaves the tool waiting; it closes itself when nothing waits); its slot
+    reads «Finish Aim» meanwhile.
+  - Esc, the right button or a click off the slots closes the menu.
+- **The card** «Radial Menu» (Settings, Tabler `aperture`): the 8 slots as a compass around the key (left
+  click: Empty / Sections / one submenu per hotkey category; right click: Clear), Reset to defaults,
+  **Bind alt+q** (into the current set, only when it is ours).
+- `maya_hotkeys`: `RELEASE_ROWS` gives a key its release nameCommand (`bind_row`, which `bind_defaults`
+  now calls per row); `DEFAULT_KEYS` + alt+q, version 7 (the next switch of the hotkey map binds it).
+- Proof: `tests/test_radial_rules.py`, `tests/test_radial.py`, the hotkeys' release binding;
+  `docs/superpowers/plans/render_radial_menu.py` draws the menu (hold and click) and the Finish popup
+  offscreen (`radial_menu.png`). **Not seen in a live Maya**: the key's hold and release, the overlay's
+  focus and clicks, a popup opening by the cursor - the animator's to try after Check update.

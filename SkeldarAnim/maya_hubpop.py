@@ -1118,7 +1118,7 @@ def open_keys():
             if popup.alive()]
 
 
-def open_popup(key, offset=None, animate=False):
+def open_popup(key, offset=None, animate=False, panel=None):
     """Open section `key`'s popup in the ACTIVE viewport (the focused model
     panel, else the first visible one). The popup it returns, or None when
     there is no viewport to put it in (said on the hub's line). `animate`: it
@@ -1131,7 +1131,7 @@ def open_popup(key, offset=None, animate=False):
     sec = hub.section(key)
     if sec is None or sec.key in hub.HEADER_ONLY:
         raise KeyError("no popup for section '{0}'".format(key))
-    panel = active_panel()
+    panel = panel or active_panel()
     rect = _rect_of(panel)
     if rect is None:
         _say("{0}: no 3D view to open it in - open a viewport".format(
@@ -1154,6 +1154,43 @@ def open_popup(key, offset=None, animate=False):
     if not st["restoring"]:
         _save_open()
     _notify(key, True)
+    return popup
+
+
+def panel_at(point):
+    """The visible model panel whose GL surface holds the global `point`
+    (x, y), else None."""
+    for panel in model_panels():
+        rect = _gl_rect(panel)
+        if rect and rect[0] <= point[0] < rect[0] + rect[2]                 and rect[1] <= point[1] < rect[1] + rect[3]:
+            return panel
+    return None
+
+
+AT_CURSOR = (18, 14)        # logical px: the popup's top-left left of and above the cursor
+
+
+def open_at(key, point, animate=True):
+    """Section `key`'s popup by the global `point` (the radial menu,
+    2026-10-15: «если он уже был открыт где-то то он должен открыться в новом
+    месте возле курсора мышки»): in the viewport under the point, else the
+    active one; a popup already open anywhere is closed and opened here,
+    unrolled. The popup, or None with no viewport."""
+    if is_open(key):
+        close_popup(key, forget=False)
+    panel = panel_at(point) or active_panel()
+    rect = _rect_of(panel)
+    if rect is None:
+        return open_popup(key, animate=animate)
+    scale = _scale()
+    x = point[0] - hubstyle.px(AT_CURSOR[0], scale)
+    y = point[1] - hubstyle.px(AT_CURSOR[1], scale)
+    offset = rules.offset_of(x, y, rect, scale)
+    if stored_collapsed(key):
+        _save_collapsed(key, False)
+    popup = open_popup(key, offset=offset, animate=animate, panel=panel)
+    if popup is not None:
+        _save_offset(key, offset)
     return popup
 
 

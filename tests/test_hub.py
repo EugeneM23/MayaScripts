@@ -97,7 +97,7 @@ class TheTable(unittest.TestCase):
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
-                          "Walk Builder", "Camera Shake", "Studio", "Colour", "Hotkeys",
+                          "Walk Builder", "Camera Shake", "Studio", "Colour", "Radial Menu", "Hotkeys",
                           "Update"])
 
     def test_the_pose_library_card(self):
@@ -139,7 +139,7 @@ class TheTable(unittest.TestCase):
             ("tailbuilder", "animation"), ("walk", "animation"),
             ("camshake", "animation"),
             ("studio", "look"),
-            ("colour", "look"), ("hotkeys", "settings"),
+            ("colour", "look"), ("radial", "settings"), ("hotkeys", "settings"),
             ("update", "settings")])
         for sec in hub.SECTIONS:
             self.assertIn(sec.icon, maya_hubicons.ICONS, sec.key)
@@ -159,7 +159,7 @@ class TheTable(unittest.TestCase):
                          ["characters", "weapons", "connections", "shared",
                           "stash", "retarget", "graphoverlay", "com", "poses",
                           "tools", "tailbuilder", "walk", "camshake", "studio", "colour",
-                          "update"])
+                          "radial", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -176,6 +176,7 @@ class TheTable(unittest.TestCase):
             "tailbuilder": ("maya_tailbuilder", "build_panel"),
             "walk": ("maya_walk.panel", "build_panel"),
             "camshake": ("maya_camshake", "build_panel"),
+            "radial": ("maya_radial", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -705,7 +706,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
             ("card", "walk"), ("card", "camshake"), ("card", "studio"),
-            ("card", "colour"), ("card", "update")])
+            ("card", "colour"), ("card", "radial"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
 

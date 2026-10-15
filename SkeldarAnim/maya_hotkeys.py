@@ -75,7 +75,13 @@ DEFAULT_KEYS = (
     ("g", {"altModifier": True}, "editor.graph"),
     ("o", {"altModifier": True}, "editor.outliner"),
     ("c", {"altModifier": True}, "graph.overlay"),
+    ("q", {"altModifier": True}, "radial.press"),
 )
+
+# A row whose key does something on RELEASE as well (2026-10-15, the radial
+# menu: hold alt+q, release over a slot). `bind_defaults` gives the key the
+# release row's nameCommand as its releaseName.
+RELEASE_ROWS = {"radial.press": "radial.release"}
 
 # Keys DEFAULT_KEYS used to hold and does not any more. They are given back
 # on the version bump -- unbound, and only while they still hold the very
@@ -92,7 +98,7 @@ RELEASED_KEYS = (
 # how alt+g and alt+o reached a set that already existed, and how the
 # number keys are handed back -- and alt+c, given back on 2026-09-08 (5)
 # and taken again for the Graph Overlay on 2026-09-30 (6).
-DEFAULT_KEYS_VERSION = 6
+DEFAULT_KEYS_VERSION = 7
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -214,6 +220,13 @@ def _tailbuilder(func):
     module = _tailbuilder_module()
     message = getattr(module, func)()
     return message if module.is_open() else _report(message)
+
+
+def _radial(func):
+    """The radial menu's key (2026-10-15): the press puts it up under the
+    cursor, the release chooses."""
+    import maya_radial
+    return getattr(maya_radial, func)()
 
 
 def _walk_module():
@@ -554,23 +567,38 @@ def bind_defaults():
     """
     displaced = []
     for key, modifiers, row_key in DEFAULT_KEYS:
-        found = row(row_key)
-        if found is None:                      # a table edit went wrong
-            continue
-        # `cmds.hotkey` reverses itself between reading and writing, and
-        # getting it the wrong way round raises rather than misbehaving:
-        # READING takes the key POSITIONALLY (`keyShortcut=` under query
-        # answers "must be passed a boolean argument"), WRITING takes it as
-        # the `keyShortcut` FLAG ("Please specify a key" otherwise). Both
-        # measured live 2026-09-02; the second cost a live run.
-        held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
-        wrapper = name_command(row_key)
-        if held and held != wrapper:
+        held = bind_row(key, modifiers, row_key)
+        if held:
             displaced.append((_key_label(key, modifiers), held))
-        cmds.nameCommand(wrapper, annotation=found[3],
-                         command=command_name(row_key), sourceType="mel")
-        cmds.hotkey(keyShortcut=key, name=wrapper, **modifiers)
     return displaced
+
+
+def bind_row(key, modifiers, row_key):
+    """Bind one row on `key` in the CURRENT set (its release row too, see
+    RELEASE_ROWS). The nameCommand it displaced, or ""."""
+    found = row(row_key)
+    if found is None:                      # a table edit went wrong
+        return ""
+    # `cmds.hotkey` reverses itself between reading and writing, and
+    # getting it the wrong way round raises rather than misbehaving:
+    # READING takes the key POSITIONALLY (`keyShortcut=` under query
+    # answers "must be passed a boolean argument"), WRITING takes it as
+    # the `keyShortcut` FLAG ("Please specify a key" otherwise). Both
+    # measured live 2026-09-02; the second cost a live run.
+    held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+    wrapper = name_command(row_key)
+    cmds.nameCommand(wrapper, annotation=found[3],
+                     command=command_name(row_key), sourceType="mel")
+    extra = {}
+    released = row(RELEASE_ROWS.get(row_key, ""))
+    if released is not None:
+        release_wrapper = name_command(released[0])
+        cmds.nameCommand(release_wrapper, annotation=released[3],
+                         command=command_name(released[0]),
+                         sourceType="mel")
+        extra["releaseName"] = release_wrapper
+    cmds.hotkey(keyShortcut=key, name=wrapper, **dict(modifiers, **extra))
+    return held if held and held != wrapper else ""
 
 
 def release_keys():
@@ -958,6 +986,15 @@ _OURS = (
     ("camshake.apply", "Camera Shake", "Apply camera shake",
      "A shake in the card's mode on the selected camera over the highlighted frames",
      partial(_camshake, "press_apply")),
+    ("radial.press", "Radial Menu", "Radial menu (press)",
+     "Hold to show the radial menu under the cursor; release over a slot to choose",
+     partial(_radial, "press")),
+    ("radial.release", "Radial Menu", "Radial menu (release)",
+     "The radial menu's key let go: the slot pointed at runs",
+     partial(_radial, "release")),
+    ("window.radial", "Windows", "Radial Menu",
+     "Open the Radial Menu section: what the eight slots hold",
+     partial(_show, "maya_radial", "show_window")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

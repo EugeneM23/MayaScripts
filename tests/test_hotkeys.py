@@ -324,6 +324,10 @@ class FakeCmds(object):
         if keyShortcut is None:
             raise RuntimeError("Please specify a key")
         self.bindings[(keyShortcut, bool(altModifier))] = name
+        if "releaseName" in kwargs:
+            if not hasattr(self, "releases"):
+                self.releases = {}
+            self.releases[(keyShortcut, bool(altModifier))] = kwargs["releaseName"]
         return None
 
 
@@ -486,7 +490,7 @@ class OurRows(unittest.TestCase):
         #  + tools.bake_layer (2026-10-13, Bake to a layer)
         #  + window.camshake, camshake.apply (2026-10-13, Camera Shake)
         #  + tools.snapshot (2026-10-13, Snapshot)
-        self.assertEqual(len(ours), 63)
+        self.assertEqual(len(ours), 66)                 # + radial.press / .release, window.radial (2026-10-15)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
@@ -539,7 +543,7 @@ class OurRows(unittest.TestCase):
                          ["window.armor", "window.camshake", "window.com", "window.connections",
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
-                          "window.poses", "window.scenesetup", "window.shared",
+                          "window.poses", "window.radial", "window.scenesetup", "window.shared",
                           "window.stash", "window.tailbuilder", "window.tools",
                           "window.uebridge", "window.walk",
                           "window.weapons"])
@@ -674,7 +678,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 18)                 # + maya_walk.panel, maya_camshake (2026-10-13)
+        self.assertEqual(len(names), 19)                 # + maya_walk.panel, maya_camshake (2026-10-13), maya_radial (2026-10-15)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)
@@ -1406,10 +1410,24 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
                           ("g", "editor.graph"), ("o", "editor.outliner"),
-                          ("c", "graph.overlay")])
+                          ("c", "graph.overlay"), ("q", "radial.press")])
 
     def test_the_version_went_up_again(self):
         self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 6)
+
+    def test_the_radial_key_binds_its_release_too(self):
+        """alt+q holds the radial menu (2026-10-15): the press row on the
+        key, the release row as its releaseName."""
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 7)
+        maya_hotkeys.bind_row("q", {"altModifier": True}, "radial.press")
+        self.assertEqual(self.fake.bindings[("q", True)],
+                         maya_hotkeys.name_command("radial.press"))
+        self.assertEqual(self.fake.releases[("q", True)],
+                         maya_hotkeys.name_command("radial.release"))
+
+    def test_a_plain_row_gets_no_release(self):
+        maya_hotkeys.bind_row("a", {"altModifier": True}, "time.prev")
+        self.assertNotIn(("a", True), getattr(self.fake, "releases", {}))
 
     def test_both_spellings_reach_the_same_command(self):
         maya_hotkeys.bind_defaults()

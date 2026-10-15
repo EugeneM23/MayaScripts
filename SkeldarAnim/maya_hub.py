@@ -163,6 +163,10 @@ SECTIONS = (
     Section("colour", "Colour", "maya_colour",
             "build_panel", "skeldarHubFrameColour",
             "look", "palette"),
+    #  2026-10-15: the radial menu - eight slots under alt+q, edited here.
+    Section("radial", "Radial Menu", "maya_radial",
+            "build_panel", "skeldarHubFrameRadial",
+            "settings", "aperture"),
     Section("hotkeys", "Hotkeys", "maya_hotkeys",
             "build_panel", "skeldarHubFrameHotkeys",
             "settings", "keyboard"),
