@@ -115,11 +115,14 @@ class Snapshot(unittest.TestCase):
         self.assertIn("2 snapshots deleted", line)
         self.assertEqual(plan.removed_message(["a"], 1), plan.removed_message(["a"], 1, 0))
 
-    def test_bake_skips_a_snapshot_and_says_so(self):
-        self.assertEqual(plan.snapshot_skipped(["cube_snapshot"]),
-                         "cube_snapshot is a snapshot - it drives nothing (Remove deletes it)")
-        self.assertEqual(plan.snapshot_skipped(["a", "b"]),
-                         "2 snapshots skipped - they drive nothing (Remove deletes them)")
+    def test_bake_deletes_a_snapshot_and_says_so(self):
+        #  2026-10-15: «После нажатия бейк если были выделены какие-то наши knot то они должны
+        #  удалиться» - a snapshot too (it drives nothing: nothing to bake, it just goes)
+        self.assertEqual(plan.baked_message([], 1), "1 snapshot deleted")
+        self.assertEqual(plan.baked_message(["box"], 2),
+                         "Baked 1 knot onto box; 2 snapshots deleted")
+        self.assertEqual(plan.baked_message(["box"]), "Baked 1 knot onto box")
+        self.assertFalse(hasattr(plan, "snapshot_skipped"))
 
 
 class Leaf(unittest.TestCase):

@@ -19,8 +19,8 @@ docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md
 The snapshot (2026-10-13, «Давай реализуем создание снапшотов»): OverRig's object snapshot - a
 locator per object repeating its world motion, keyed on every frame of the highlight (else the
 whole take), in the object's Knots group. A knot that drives nothing: the object is never touched,
-the snapshot rides nothing (it carries `skeldarSnapshotOf`, never `skeldarKnotSource`), Bake skips
-it, Remove deletes it. Spec: docs/superpowers/specs/2026-10-13-tools-snapshot-design.md
+the snapshot rides nothing (it carries `skeldarSnapshotOf`, never `skeldarKnotSource`), Bake and
+Remove delete it (Bake skipped it until 2026-10-15). Spec: docs/superpowers/specs/2026-10-13-tools-snapshot-design.md
 """
 
 import contextlib
@@ -1085,14 +1085,11 @@ def _delete_knot(top):
 
 def bake(selection=None):
     """The objects baked where their knots carry them; the knots gone. A snapshot drives nothing:
-    skipped, and said. The line."""
+    nothing to bake, it is deleted too (2026-10-15, «После нажатия бейк если были выделены
+    какие-то наши knot то они должны удалиться»). The line."""
     tops, _waiting = _picked(selection)
     if not tops:
         return plan.BAKE_NOTHING
-    skipped = [t.split("|")[-1] for t in tops if is_snapshot(t)]
-    tops = [t for t in tops if not is_snapshot(t)]
-    if not tops:
-        return plan.snapshot_skipped(skipped)
     from maya_tools import layered
     layer = None
     if any(o and layered.is_layered(o) for o in (source_of(t) for t in tops)):
@@ -1100,12 +1097,13 @@ def bake(selection=None):
         refusal = refusal or layered.check_target(layer, plan.CHANNELS)
         if refusal:
             return refusal
-    names, objs = [], []
+    names, objs, snaps = [], [], 0
     with _press("skeldarKnotBake"):
         for uuid in _ordered(_with_riders(tops)):
             top = _by_uuid(uuid)
             if not top:
                 continue
+            snaps += int(is_snapshot(top))
             obj = source_of(top)
             mine = [c for c in constraints_of(obj) if _get(c, plan.OF_MARKER) == uuid] \
                 if obj else []
@@ -1121,8 +1119,7 @@ def bake(selection=None):
         live = [p for p in (_by_uuid(u) for u in objs) if p]
         if live:
             cmds.select(live, replace=True)
-    line = plan.baked_message(names)
-    return "%s; %s" % (line, plan.snapshot_skipped(skipped)) if skipped else line
+    return plan.baked_message(names, snaps)
 
 
 def _unkey(obj, ch, value):

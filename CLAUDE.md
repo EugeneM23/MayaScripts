@@ -9151,7 +9151,8 @@ the `knotplan` kind `snapshot` (OverRig's colour 0.8 0.5 0.5, constraint None):
   - Remove of the object's knot leaves it, and a knot made ON a snapshot goes with it.
 - **The other presses**:
   - Remove deletes it («1 snapshot deleted»);
-  - Bake skips it and says so;
+  - Bake deletes it too (it skipped it until 2026-10-15: «После нажатия бейк если были выделены
+    какие-то наши knot то они должны удалиться»), the line «1 snapshot deleted»;
   - Attach finds no `attach` on it;
   - Layer bakes the snapshot itself (`layerbake._object_of` stops at a snapshot);
   - the subtitle counts snapshots apart («2 knots, 1 snapshot in the scene»);

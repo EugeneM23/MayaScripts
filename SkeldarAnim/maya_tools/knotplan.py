@@ -405,15 +405,15 @@ def snapshot_message(pairs, span):
     return "Snapshot: %d objects %s" % (len(pairs), words)
 
 
-def snapshot_skipped(names):
-    """Bake has nothing to write for a snapshot (it drives nothing)."""
-    if len(names) == 1:
-        return "%s is a snapshot - it drives nothing (Remove deletes it)" % names[0]
-    return "%d snapshots skipped - they drive nothing (Remove deletes them)" % len(names)
-
-
-def baked_message(names):
-    return "Baked %s onto %s" % (_plural(len(names), "knot"), ", ".join(names))
+def baked_message(names, snapshots=0):
+    """Bake's line: the knots baked, and the snapshots it deleted (a snapshot drives nothing, so
+    Bake has nothing to write for it - it just goes, 2026-10-15)."""
+    parts = []
+    if names:
+        parts.append("Baked %s onto %s" % (_plural(len(names), "knot"), ", ".join(names)))
+    if snapshots:
+        parts.append("%s deleted" % _plural(snapshots, "snapshot"))
+    return "; ".join(parts)
 
 
 def removed_message(names, pivots, snapshots=0):

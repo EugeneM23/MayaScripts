@@ -23,7 +23,8 @@ D  On an object riding a knot:
    - Remove of the object's knot leaves the snapshot;
    - Remove of the snapshot deletes it.
 E  Remove of a snapshot takes a knot riding it along.
-F  Bake skips a snapshot and says so; beside a knot it bakes the knot alone.
+F  Bake deletes a snapshot (2026-10-15: nothing to bake, it just goes); beside a knot it bakes
+   the knot and deletes the snapshot.
 G  Attach finds nothing on it. Layer treats it as itself.
 H  Refusals change nothing.
 I  On Manny's rig, a bone and a control:
@@ -315,8 +316,10 @@ def case_f():
     knots.snapshot([prop], highlight=None)
     snap = snapshots_of(prop)[0]
     line = knots.bake([snap])
-    gate(line == "prop_snapshot is a snapshot - it drives nothing (Remove deletes it)"
-         and cmds.objExists(snap), "Bake skips it: " + line)
+    gate(line == "1 snapshot deleted" and not cmds.objExists(snap) and not groups(),
+         "Bake deletes it (2026-10-15): " + line)
+    knots.snapshot([prop], highlight=None)
+    snap = snapshots_of(prop)[0]
     other = cmds.polyCube(name="other")[0]
     other = cmds.ls(other, long=True)[0]
     cmds.setKeyframe(other, attribute="tx", time=0, value=0.0)
@@ -324,8 +327,9 @@ def case_f():
     knots.create("knot", [other], highlight=None)
     knot = knot_of(other)
     line = knots.bake([snap, knot])
-    gate(cmds.objExists(snap) and knot_of(other) is None and "Baked 1 knot" in line
-         and "snapshot" in line, "beside a knot: the knot baked, the snapshot kept: " + line)
+    gate(not cmds.objExists(snap) and knot_of(other) is None
+         and "Baked 1 knot onto other; 1 snapshot deleted" in line,
+         "beside a knot: the knot baked, the snapshot deleted: " + line)
 
 
 def case_g():
