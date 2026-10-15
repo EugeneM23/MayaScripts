@@ -614,7 +614,11 @@ class Layer(unittest.TestCase):
         self.assertIn("nothing animates prop", plan.undriven_refusal("prop", []))
         line = plan.undriven_refusal("prop", ["an expression", "a driven key", "an expression"])
         self.assertIn("an expression and a driven key", line)
-        self.assertIn("on layers already", plan.undriven_refusal("prop", [], layered=True))
+        line = plan.undriven_refusal("prop", [], layered=True)
+        self.assertIn("on layers already", line)
+        #  Layer always takes the base (2026-10-15): no "select the layer" advice
+        self.assertNotIn("select the layer", line)
+        self.assertIn("base", line)
 
     def test_the_layer_name(self):
         self.assertEqual(plan.layer_name(["prop"]), "Baked_prop")

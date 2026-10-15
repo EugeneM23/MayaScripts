@@ -9068,8 +9068,8 @@ the object stands, weight it to blend, delete it to drop the motion. `maya_tools
 (`bake(selection, highlight)`; the pure half in `knotplan`: `driver_kind`, `driver_refusal`,
 `undriven_refusal`, `layer_deltas`, `anchored`, `bridged`, `layer_message`); hotkey row
 `tools.bake_layer`.
-- **What the selection names**: an object, a knot (climbing a knot on a knot to the object), or a
-  constraint (its object); a waiting pivot is skipped and said.
+- **What the selection names**: an object, a constraint (its object), or since 2026-10-15 a knot
+  ITSELF (below); a waiting pivot is skipped and said.
 - **Its drivers, classified before anything changes** - the constraints feeding its t/r directly
   or through Maya's pairBlend (input 2):
   - our knot (`skeldarKnotOf`): off as Remove takes it, riders first;
@@ -9197,12 +9197,8 @@ layered channel as «driven by an animation layer»; Layer took only the base. M
   Scale keeps refusing a layer when the parents' scales differ.
 - `knots._unkey` finds the static key a knot set on the base under a layer the bake keyed the
   channel into.
-- **Layer bakes FROM the selected layer** (`layerbake._chosen_source`; `_base(..., source)` walks to
-  that layer's `inputB`): its keys go onto the new layer (moved as curves when its weight is 1 and
-  unanimated, else sampled), the source layer then holds the first frame's pose. Nothing selected:
-  the base, as before - and when the base moves nothing but exactly one layer does (not one a Layer
-  press made), that layer (`_only_layer`, said on the line); several - refused, naming them. A
-  locked, muted or weight-0 source is refused.
+- ~~Layer bakes FROM the selected layer~~ - reversed the same afternoon (below): Layer always
+  takes the base.
 Proof: `docs/superpowers/plans/verify_tools_layers.py` **32/32 mayapy standalone** (a prop keyed on
 the base and on an additive Anim1): every knot kind, Offset, Aim, Across made with nothing moving
 (0.000000 cm); a knot edited moves it 10 cm, Remove exact with Anim1's curves untouched; Bake into the
@@ -9213,6 +9209,37 @@ selected Anim1 with its keys moved as keys, under a highlight, from Anim2 over A
 layered prop; muted source and a second press refused; Overlap, Snapshot, Attach on layered objects.
 verify_knots 90/90, verify_parent 49/49, verify_bake_layer 66/66, verify_aim_overlap 57/57,
 verify_snapshot 42/42 again; 6460 unit tests. Not seen live (the animator's checks).
+
+**…Layer: a knot bakes as itself, always from the base** (the same afternoon: «При запекании
+анимации knot на слой сам knot не должен удаляться анимация должна запечься на для него точно так же
+как и для любого другого объекта ... Когда запекаем анимацию на слой то давай будем анимацию с
+базового слоя удалять»; asked, both the recommendation). Spec
+`docs/superpowers/specs/2026-10-15-layer-knot-and-base-design.md`. **This replaces the "bakes FROM the
+selected layer" bullet above and "a knot names its object" in the Layer section.**
+- Measured first: with ANY layer selected in the Anim Layer Editor (an empty one too) the press took
+  the animation from that layer - the knot was deleted, the base kept every curve, and no layer was
+  made («nothing changed»). Both complaints were that one rule.
+- **A selected knot node names itself** (`layerbake._object_of`: its top, a double knot's inner, an
+  aim's target or up, a snapshot): planned as any object, its own base curves move onto
+  `Baked_<knot>` as themselves, it keeps its constraint and goes on driving; muted, the knot stands
+  in its first frame. A knot riding the selected knot comes off, as on any object. **A selected
+  object riding a knot keeps the old rule**: the knot comes off, its motion onto the object's layer.
+- **Drivers on free channels only** (`_drivers`): Knot Orient's kept point constraint rides its LOCKED
+  translate and is the knot's own - left alone.
+- **Always the base**: `_chosen_source`, `_only_layer`, `_source_refusal`, `_whole_curves_ok` and every
+  `source` parameter in `layerbake` gone. An object whose animation lives only on layers is refused
+  («its animation is on layers already - Layer bakes what the base layer holds»); every other layer,
+  selected, muted or not, stays as it is.
+- Not built: Remove of a knot leaves its `Baked_<knot>` layer behind, empty.
+Proof: `verify_bake_layer.py` **83/83** (L10: Layer on the knot - one layer `Baked_prop_knot`, the knot
+kept and driving, the prop and the knot as they were at every half frame, its curves on the layer as
+themselves, muted the knot and the prop at frame 0's pose, a key edit still moving the prop, one undo;
+L11: an empty layer and the animator's own layer selected - the base's keys taken, the base without a
+curve under both layers, their layer untouched; a knot with a layer selected baked onto its own);
+`verify_tools_layers.py` **31/31** (its L rewritten: the prop only on Anim1 refused; Anim1, a muted
+Anim1 or Anim2 selected - taken from the base; a highlight; a knot then its prop); verify_knots 90/90,
+verify_snapshot 42/42, verify_aim_overlap 57/57; Layer on every knot kind's nodes (orient, double local
+and world, an aim's target and up) with the object unmoved.
 
 235. **A channel on an animation layer is fed by the layer's `animBlendNode*`, not by its curve.**
      The base curve hangs on the blend's input A, untouched; a gate reading "the curve connected to

@@ -30,6 +30,11 @@ L7 a Manny rig: a game bone refused (the rig's own); a knot on a control and the
    constraint on another baked onto a layer, the game bones showing what they showed.
 L8 the Overlap still writes its layer through the shared writer.
 L9 an object under the animator's own layer: only the base's motion moves, their layer untouched.
+L10 a knot as an object (2026-10-15): Layer on the knot puts its own curves on Baked_prop_knot as
+   themselves, the knot kept and driving, the prop as it was at every half frame, muted the knot
+   stands; Remove leaves its layer empty; one undo.
+L11 a layer selected in the Anim Layer Editor is not the source: the base's keys still move, the
+   selected layer untouched; a knot with a layer selected baked onto its own layer.
 """
 import math
 import os
@@ -337,7 +342,7 @@ def case_l0():
 
 
 def case_l1():
-    case("L1 knot")
+    case("L1 knot, Layer on the prop riding it")
     prop = make_prop()
     original = track(prop)
     knots.create("knot", [prop], highlight=None)
@@ -347,7 +352,7 @@ def case_l1():
     shown, first = track(prop), channels(prop, [0])[0]
     gate(diff(original, shown)[0] > 1.0, "the knot edit moves the prop: %.3f cm"
          % diff(original, shown)[0])
-    line = layerbake.bake([top], highlight=None)
+    line = layerbake.bake([prop], highlight=None)
     found = layers()
     gate(len(found) == 1 and found[0].startswith("Baked_prop"), "one layer, ours: %s - %s"
          % (found, line))
@@ -394,7 +399,7 @@ def case_l2():
     top = knot_of(prop)
     nudge(top, "tz", 7.0)
     shown = track(prop)
-    line = layerbake.bake([top], highlight=(10, 21))
+    line = layerbake.bake([prop], highlight=(10, 21))
     after = track(prop)
     ok, text = same(shown, after, list(range(10, 21)))
     gate(ok, "a highlight 10-20: as shown inside: " + text)
@@ -561,7 +566,7 @@ def case_l6():
     top = knot_of(prop)
     nudge(top, "tx", 4.0)
     shown, own = track(prop), base(prop)
-    layerbake.bake([top], highlight=None)
+    layerbake.bake([prop], highlight=None)
     cmds.undo()
     gate(knot_of(prop) is not None and not layers() and base(prop) == own,
          "one undo: the knot and the base keys back, no layer")
@@ -649,8 +654,109 @@ def case_l9():
     gate(gap < 1e-6, "both muted: the base holds frame 0's pose: %.2e" % gap)
 
 
+def case_l10():
+    case("L10 a knot as an object")
+    prop = make_prop()
+    knots.create("knot", [prop], highlight=None)
+    top = knot_of(prop)
+    nudge(top, "tx", 6.0)
+    nudge(top, "ry", 25.0)
+    shown = track(prop, FRAMES + HALVES)
+    knot_shown, knot_first = track(top, FRAMES + HALVES), channels(top, [0])[0]
+    own = dict((ch, curve_of(top, ch)) for ch in plan.CHANNELS)
+    line = layerbake.bake([top], highlight=None)
+    found = layers()
+    gate(len(found) == 1 and found[0] == "Baked_prop_knot" and "prop_knot baked onto" in line,
+         "one layer, the knot's: %s - %s" % (found, line))
+    gate(knot_of(prop) == top and knots.constraints_of(prop),
+         "the knot kept, its constraint still on the prop")
+    ok, text = same(shown, track(prop, FRAMES + HALVES))
+    gate(ok, "the prop as it was, frames and half frames: " + text)
+    ok, text = same(knot_shown, track(top, FRAMES + HALVES))
+    gate(ok, "the knot as it was: " + text)
+    ok, got = static_base(top, knot_first)
+    gate(ok, "the knot's base holds its frame 0 pose: %s" % (got,))
+    layer = found[0]
+    moved = all(layer_curve(layer, top, ch) == own[ch] for ch in plan.CHANNELS if own[ch])
+    gate(moved, "its curves on its layer as themselves: %s" % (
+        dict((ch, layer_curve(layer, top, ch)) for ch in plan.CHANNELS),))
+    cmds.animLayer(layer, edit=True, mute=True)
+    gap = still_at(top, knot_first)
+    rest = track(prop)
+    drift = max((rest[f][0] - shown[0][0]).length() for f in FRAMES)
+    gate(gap < 1e-6 and drift < 1e-3,
+         "muted: the knot stands in its frame 0 pose (%.2e), the prop with it (%.2e cm)"
+         % (gap, drift))
+    cmds.animLayer(layer, edit=True, mute=False)
+    nudge(top, "tz", 3.0)
+    gate(diff(track(prop), shown)[0] > 1.0, "the knot still drives: a key edit moves the prop")
+    nudge(top, "tz", -3.0)
+    line = knots.remove([top])
+    gate(knot_of(prop) is None and not cmds.animLayer(layer, query=True, attribute=True),
+         "Remove: the knot gone, its layer holds nothing: %s" % line)
+
+    prop = make_prop()
+    knots.create("knot", [prop], highlight=None)
+    top = knot_of(prop)
+    nudge(top, "tz", 7.0)
+    shown = track(prop)
+    layerbake.bake([top], highlight=None)
+    cmds.undo()
+    gate(knot_of(prop) == top and not layers() and curve_of(top, "tz"),
+         "one undo: no layer, the knot's curves back on its base")
+    ok, text = same(shown, track(prop))
+    gate(ok, "  and the prop as the knot shows it: " + text)
+
+
+def case_l11():
+    case("L11 a layer selected is not the source")
+    prop = make_prop()
+    empty = cmds.animLayer("Other")
+    cmds.animLayer(empty, edit=True, selected=True)
+    shown, first = track(prop, FRAMES + HALVES), channels(prop, [0])[0]
+    line = layerbake.bake([prop], highlight=None)
+    ok, text = same(shown, track(prop, FRAMES + HALVES))
+    gate(ok and "Baked_prop" in line, "an empty layer selected: taken from the base: %s; %s"
+         % (line, text))
+    ok, got = static_base(prop, first)
+    gate(ok, "  the base without a curve, frame 0's pose: %s" % (got,))
+
+    prop = make_prop()
+    mine = cmds.animLayer("Mine")
+    cmds.animLayer(mine, edit=True, attribute=[prop + ".translateX"])
+    for t, v in ((0, 0.0), (20, 4.0), (40, 0.0)):
+        cmds.setKeyframe(prop, attribute="translateX", animLayer=mine, time=t, value=v)
+    cmds.animLayer(mine, edit=True, selected=True)
+    curve = layer_curve(mine, prop, "tx")
+    keys = (cmds.keyframe(curve, query=True, timeChange=True),
+            cmds.keyframe(curve, query=True, valueChange=True))
+    shown, first = track(prop, FRAMES + HALVES), channels(prop, [0])[0]
+    line = layerbake.bake([prop], highlight=None)
+    ok, text = same(shown, track(prop, FRAMES + HALVES))
+    gate(ok, "the animator's layer selected: taken from the base: %s; %s" % (line, text))
+    gate((cmds.keyframe(curve, query=True, timeChange=True),
+          cmds.keyframe(curve, query=True, valueChange=True)) == keys,
+         "  their layer untouched")
+    from maya_tools import layered
+    got = dict((ch, layered.walk(prop + "." + ch, ch)[1]) for ch in plan.CHANNELS)
+    gate(not any(got.values()), "  the base without a curve (under both layers): %s" % (got,))
+
+    prop = make_prop()
+    knots.create("knot", [prop], highlight=None)
+    top = knot_of(prop)
+    nudge(top, "ty", 2.0)
+    cmds.animLayer(cmds.animLayer("Other"), edit=True, selected=True)
+    shown = track(prop)
+    line = layerbake.bake([top], highlight=None)
+    ok, text = same(shown, track(prop))
+    gate(ok and knot_of(prop) == top and layers() == ["Baked_prop_knot"],
+         "a knot with a layer selected: baked onto its own layer and kept: %s; %s"
+         % (line, text))
+
+
 def main():
-    for run in (case_l0, case_l9, case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8):
+    for run in (case_l0, case_l9, case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8,
+                case_l10, case_l11):
         try:
             run()
         except Exception:

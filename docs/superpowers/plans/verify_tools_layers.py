@@ -14,9 +14,10 @@ K  every knot kind on the layered prop: made, nothing moves; a knot edited moves
    into Anim1 when it is selected (the base untouched); a ranged knot's bake unbent outside.
 P  Inside / World / Swap on the layered prop: the world track kept on every frame, Anim1's curves
    untouched (keyed into the base), or keyed into Anim1 when it is selected; one undo.
-L  Layer: the prop only on Anim1 - taken from Anim1 (the one layer), shown kept at half frames;
-   Anim1 selected with base keys too - the base untouched, Anim1's curves moved; a highlight;
-   a muted source refused; a second press refused.
+L  Layer always takes the base (2026-10-15): the prop only on Anim1 refused; Anim1 (or Anim2, or
+   a muted Anim1) selected - the base's keys moved as keys, the base without a curve, the other
+   layers untouched, shown kept at half frames; a highlight bridging the base; Layer on a knot
+   keeps the knot driving, Layer on the prop then takes it off.
 O  Overlap, Attach and Snapshot on layered objects.
 """
 import math
@@ -289,74 +290,71 @@ gate(ok and curves("BaseAnimation", moved) == base_before,
 # ------------------------------------------------------------------- L
 
 case("L layer")
+#  Layer always takes the base (2026-10-15): a layer selected in the Anim Layer Editor is not the
+#  source, and every other layer stays as it is.
 prop, b, lay = scene(base_keys=False)
-shown = track(prop, FRAMES + HALVES)
+before = (curves(lay, prop), sorted(cmds.ls(type="animLayer")))
 line = layerbake.bake([prop], highlight=None)
-new = layerbake.bake_layers()
-ok, how = same(shown, track(prop, FRAMES + HALVES))
-a1 = curves(lay, prop)
-gate(len(new) == 1 and ok and all(len(set(v[1])) <= 1 for v in a1.values()),
-     "only on Anim1, nothing selected: %s; shown %s; Anim1 now %s" % (line, how, a1))
-cmds.animLayer(new[0], edit=True, mute=True)
-still = track(prop)
-gate(max((still[f][0] - still[0][0]).length() for f in FRAMES) < 1e-6,
-     "  the new layer muted: the prop stands")
-cmds.animLayer(new[0], edit=True, mute=False)
-line2 = layerbake.bake([prop], highlight=None)
-gate(len(layerbake.bake_layers()) == 1 and "layer" in line2, "  a second press: " + line2)
+gate("on layers already" in line and not layerbake.bake_layers()
+     and (curves(lay, prop), sorted(cmds.ls(type="animLayer"))) == before,
+     "only on Anim1: refused, nothing changed: " + line)
 
-prop, b, lay = scene()
-select_layer(lay)
-base_before = curves("BaseAnimation", prop)
-a1_keys = curves(lay, prop)
-shown = track(prop, FRAMES + HALVES)
-line = layerbake.bake([prop], highlight=None)
-new = layerbake.bake_layers()
-ok, how = same(shown, track(prop, FRAMES + HALVES))
-moved_keys = curves(new[0], prop) if new else {}
-same_times = all(moved_keys.get(ch, ((),))[0] == a1_keys[ch][0] for ch in a1_keys)
-gate(ok and curves("BaseAnimation", prop) == base_before and same_times,
-     "Anim1 selected, base keyed too: %s; shown %s, base untouched, Anim1's keys moved as "
-     "keys %s" % (line, how, same_times))
 
-prop, b, lay = scene()
-select_layer(lay)
-base_before = curves("BaseAnimation", prop)
-shown = track(prop, FRAMES + HALVES)
-line = layerbake.bake([prop], highlight=(10, 21))
-ok, how = same(shown, track(prop, FRAMES + HALVES))
-gate(ok and curves("BaseAnimation", prop) == base_before, "a highlight: %s; %s" % (line, how))
+def taken_from_base(label, select=None, highlight=None, mute=None):
+    prop, b, lay = scene()
+    extra = None
+    if select == "Anim2":
+        extra = cmds.animLayer("Anim2")
+        cmds.animLayer(extra, edit=True, attribute=["prop.tz"])
+        cmds.setKeyframe(prop, attribute="tz", animLayer=extra, time=0, value=0)
+        cmds.setKeyframe(prop, attribute="tz", animLayer=extra, time=30, value=4)
+    if mute:
+        cmds.animLayer(lay, edit=True, mute=True)
+    select_layer(extra or (lay if select else None))
+    base_keys = curves("BaseAnimation", prop)
+    others = dict((n, curves(n, prop)) for n in (lay, extra) if n)
+    shown = track(prop, FRAMES + HALVES)
+    line = layerbake.bake([prop], highlight=highlight)
+    new = layerbake.bake_layers()
+    ok, how = same(shown, track(prop, FRAMES + HALVES))
+    untouched = all(curves(n, prop) == c for n, c in others.items())
+    if highlight:
+        cleared = curves("BaseAnimation", prop) != base_keys
+    else:
+        cleared = not curves("BaseAnimation", prop)
+        moved = curves(new[0], prop) if new else {}
+        cleared = cleared and all(moved.get(ch, ((),))[0] == base_keys[ch][0]
+                                  for ch in base_keys)
+    gate(ok and len(new) == 1 and untouched and cleared,
+         "%s: %s; shown %s, the other layers untouched %s, the base's keys %s" % (
+             label, line, how, untouched,
+             "bridged" if highlight else "moved as keys, the base without a curve"))
 
-prop, b, lay = scene()
-select_layer(lay)
-cmds.animLayer(lay, edit=True, mute=True)
-before = (curves(lay, prop), curves("BaseAnimation", prop))
-line = layerbake.bake([prop], highlight=None)
-gate("muted" in line and (curves(lay, prop), curves("BaseAnimation", prop)) == before,
-     "a muted source refused: " + line)
 
-prop, b, lay = scene()
-lay2 = cmds.animLayer("Anim2")
-cmds.animLayer(lay2, edit=True, attribute=["prop.tz"])
-cmds.setKeyframe(prop, attribute="tz", animLayer=lay2, time=0, value=0)
-cmds.setKeyframe(prop, attribute="tz", animLayer=lay2, time=30, value=4)
-select_layer(lay2)
-shown = track(prop, FRAMES + HALVES)
-a1 = curves(lay, prop)
-line = layerbake.bake([prop], highlight=None)
-ok, how = same(shown, track(prop, FRAMES + HALVES))
-gate(ok and curves(lay, prop) == a1, "from Anim2 over Anim1: %s; %s, Anim1 untouched" % (line,
-                                                                                       how))
+taken_from_base("Anim1 selected, base keyed too: taken from the base", select=True)
+taken_from_base("Anim1 selected, a highlight", select=True, highlight=(10, 21))
+taken_from_base("a muted Anim1 selected: not refused, taken from the base", select=True,
+                mute=True)
+taken_from_base("Anim2 selected over Anim1", select="Anim2")
 
-# a knot on a layered prop, Layer on the knot
+# a knot on a layered prop: Layer on the knot bakes the knot as an object and keeps it
 prop, b, lay = scene()
 knots.create("knot", [prop], highlight=None)
 top = knots.knots()[0]
 cmds.setKeyframe(top, attribute="ty", time=20, value=cmds.getAttr(top + ".ty", time=20) + 5)
+select_layer(lay)
 shown = track(prop, FRAMES + HALVES)
+a1 = curves(lay, prop)
 line = layerbake.bake([top], highlight=None)
 ok, how = same(shown, track(prop, FRAMES + HALVES), FRAMES)    # keyed on every frame
-gate(ok and not knots.knots(), "Layer on a knot of the layered prop: %s; %s" % (line, how))
+gate(ok and knots.knots() == [top] and knots.constraints_of(prop) and curves(lay, prop) == a1
+     and not curves("BaseAnimation", top),
+     "Layer on a knot of the layered prop: %s; %s, the knot kept and driving, its base "
+     "without a curve" % (line, how))
+# ... and Layer on the prop takes the knot off
+line = layerbake.bake([prop], highlight=None)
+ok, how = same(shown, track(prop, FRAMES + HALVES), FRAMES)
+gate(ok and not knots.knots(), "then Layer on the prop: %s; %s, the knot off" % (line, how))
 
 # ------------------------------------------------------------------- O
 
