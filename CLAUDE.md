@@ -9908,13 +9908,17 @@ by itself after the mouse is let go, it belongs to the walk, the upper body's re
 - **The walk's mean pose** (`maya_walk/meanpose.py`, numpy): every bone by FK of its local means (`lmean`, the mean local
   translation; the root at `wmean` on the origin) - abstract, each bone's mean taken alone (before this the model kept
   these means only as the centres its deviations scale about).
-- **The button `Mean...`** (icon `user`) beside the Walk dropdown (`panel.MEAN_BTN`; right click: Reset mean pose) →
-  `maya_walk/meanrig.py`:
-  - one Manny [rig] in a scene (Add Character), 150 cm beside the target, marked `skeldarWalkMean` on its Main
-    ({walk, clean knobs, base});
-  - posed through the Pose Library's solve (`apply.plan_for`), its controls set with NO keys (their time curves
-    deleted), unrecorded; its legs come out in FK;
-  - labelled «asd - mean pose».
+- **The Rig pose tab** (the eighth knob tab, `rigpose`, second row; since the same day - «отдельную вкладку где
+  будут кнопки, создать риг позу, удалить риг позу, и сделать Update ... по нажатию кнопки» - the first build's
+  Mean... button and its automatic watch are gone) → `maya_walk/meanrig.py`:
+  - **Create** (`press`): one Manny [rig] in a scene (Add Character), 150 cm beside the target, marked
+    `skeldarWalkMean` on its Main ({walk, clean knobs, base}); posed through the Pose Library's solve
+    (`apply.plan_for`), its controls set with NO keys (their time curves deleted), unrecorded; its legs come out in
+    FK; labelled «asd - mean pose». Pressed again: the same rig posed again;
+  - **Update** (`update`, primary): reads the rig, writes the correction, re-keys the target; «nothing moved on the
+    rig pose since the last Update» when nothing did; refuses with no rig;
+  - **Delete** (`delete`, danger): Animation Setup's Delete on the rig, no question; the walk keeps its correction;
+  - **Reset** (`reset`): the correction dropped, the rig back in the plain mean pose, the target keyed again.
 - **Read back as a difference** from the last reading (`base`, kept on the marker), both carried onto the walk's
   skeleton as a pose is (`pose._onto`):
   - the upper body's locals: pelvis, spine, neck, head, clavicles, arms, fingers (no twist, helper or leg);
@@ -9935,17 +9939,13 @@ by itself after the mouse is let go, it belongs to the walk, the upper body's re
   - a helper that followed a bone rigidly follows it again.
   The legs' share goes on `Walk.fix` (zeros by default): `evaluate` adds the height to the pelvis's mean height, the
   width to the feet's spread, the knee and toe turns to the turns - each giving way to a pose's own at the Pose share.
-- **The watch**:
-  - `MNodeMessage.addAttributeChangedCallback` on the ControlSet's controls (keyable plugs only) and Undo / Redo
-    scriptJobs restart a 400 ms single-shot QTimer, which waits while a mouse button is down;
-  - the update writes the file and re-keys the card's target, when it walks this walk, UNRECORDED:
-    `scene.apply(record=False)` → `write_curves(in_place=True)`, a standing curve emptied and re-keyed through the
-    API, no node made or deleted behind the undo queue - so Ctrl+Z is the rig's and an older Apply's undo still finds
-    its nodes;
-  - callbacks and timer live on `sys._skeldar_walk_mean`, dropped on a new or opened scene.
+- **Update re-keys the target UNRECORDED** (`scene.apply(record=False)` → `write_curves(in_place=True)`: a standing
+  curve emptied and re-keyed through the API, no node made or deleted behind the undo queue) - Ctrl+Z is the rig's,
+  then Update again; an older Apply's undo still finds its nodes. `stop()` takes down a watch the first build left on
+  `sys._skeldar_walk_mean` (Create, Update and Delete call it).
   - The Apply line adds «mean pose corrected (1 bone turned, pelvis -5.0 cm)».
-- Proof: `docs/superpowers/plans/walkparam/verify_walk_meanpose.py` **26/26 standalone** (asd, the plugin's Manny
-  skeleton the target; the update called by hand - the timer needs a GUI):
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_meanpose.py` **27/27 standalone** (asd, the plugin's Manny
+  skeleton the target; Update pressed by hand):
   - the rig's game skeleton on the walk's mean pose to 0.0001 deg, 187 controls unkeyed, an untouched rig writing
     nothing;
   - FKShoulder_L +20 → upperarm_l's correction 20.00 deg, the target's upperarm_l mean over the cycle 20.01 deg

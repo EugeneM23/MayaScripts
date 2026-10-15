@@ -33,7 +33,12 @@ SIDE_TABS = "skeldarWalkSides"
 FIX_BTN = "skeldarWalkFixPosture"
 CLEAN_REPORT = "skeldarWalkCleanReport"
 IN_PLACE_BOX = "skeldarWalkInPlace"
-MEAN_BTN = "skeldarWalkMeanPose"
+#  The Rig pose tab (2026-10-15): the walk's mean pose on a Manny rig, its edit taken by Update
+MEAN_CREATE_BTN = "skeldarWalkMeanCreate"
+MEAN_UPDATE_BTN = "skeldarWalkMeanUpdate"
+MEAN_DELETE_BTN = "skeldarWalkMeanDelete"
+MEAN_RESET_BTN = "skeldarWalkMeanReset"
+MEAN_NOTE = "skeldarWalkMeanNote"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Apply
 CHECKS = {"in_place": IN_PLACE_BOX}
 #  [Both | Left | Right] (2026-10-13, «режим в котором левая и правая сторона станут раздельными, по
@@ -58,9 +63,10 @@ GROUPS = (
                         "head_drag")),
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("weight", "Weight", ("weight", "balance", "exaggeration")),
+    ("rigpose", "Rig pose", ()),           # buttons, not knobs: the walk's mean pose on a Manny rig
 )
-#  The tabs on two rows (seven in a 360 px dock would not read)
-GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "weight"))
+#  The tabs on two rows (eight in a 360 px dock would not read)
+GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "weight", "rigpose"))
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {
     "smooth": ("Smooth, fr", "Every joint through a soft periodic blur this many frames wide: quiets jitter that is "
@@ -162,11 +168,15 @@ TIPS = {
                    "keyed again",
     "in_place": "In place: the walk on the spot - the root stays where the first frame has it, the body moves "
                 "about it and the planted feet slide back (what a game moves by its capsule)",
-    "mean_pose": "Mean pose: a Manny rig beside the target, standing in the walk's mean pose (each bone's mean - "
-                 "an abstract pose). Move its controls: once you let go the walk's mean pose takes the change for "
-                 "the whole cycle - the spine, the arms, the head and the pelvis's turn, its height, the feet's "
-                 "width, the knees' and the feet's turn - and the target is keyed again; Ctrl+Z on the rig too. "
-                 "Kept beside the walk's file. Right click: Reset mean pose",
+    "mean_create": "Create: a Manny rig beside the target, standing in the walk's mean pose (each bone's mean - an "
+                   "abstract pose) with every correction made so far; pressed again, the same rig posed again",
+    "mean_update": "Update: what you changed on the rig pose goes into the walk for the whole cycle - the spine, the "
+                   "arms, the head and the pelvis's turn, its height, the feet's width, the knees' and the feet's "
+                   "turn - kept beside the walk's file; the target is keyed again. Undo on the rig, then Update, "
+                   "takes a change back",
+    "mean_delete": "Delete: the rig pose out of the scene; the walk keeps its correction",
+    "mean_reset": "Reset: the walk's correction dropped - the rig pose back in the plain mean pose, the target "
+                  "keyed again",
     "save_pose": "Save pose: select a skeleton standing in a character pose and press; the walk takes its "
                  "parts at the Pose share",
     "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
@@ -655,8 +665,8 @@ def press_fix_posture(*_):
     return _press(run)
 
 
-def press_mean_pose(*_):
-    """Mean pose: the walk's mean pose on a Manny rig, watched (maya_walk.meanrig)."""
+def press_mean_create(*_):
+    """Rig pose > Create: the walk's mean pose on a Manny rig (maya_walk.meanrig)."""
     from . import meanrig
 
     def run():
@@ -666,8 +676,20 @@ def press_mean_pose(*_):
     return _press(run)
 
 
+def press_mean_update(*_):
+    """Rig pose > Update: the rig's change into the walk, the target keyed again."""
+    from . import meanrig
+    return _press(meanrig.update)
+
+
+def press_mean_delete(*_):
+    """Rig pose > Delete: the rig out of the scene."""
+    from . import meanrig
+    return _press(meanrig.delete)
+
+
 def press_mean_reset(*_):
-    """Reset mean pose: the walk's correction dropped, the rig and the target with it."""
+    """Rig pose > Reset: the walk's correction dropped, the rig and the target with it."""
     from . import meanrig
     return _press(lambda: meanrig.reset(chosen_walk(), values()))
 
@@ -707,14 +729,13 @@ def group_changed(key):
 
 # ---- the card ----
 
-def _menu_row(menu, label, command, button, icon_tip, press, extra=None):
+def _menu_row(menu, label, command, button, icon_tip, press):
     import maya_hubstyle as hubstyle
     cmds = _cmds()
     #  the word in a column of its own: no other card gives an optionMenu a label, and the skin styles the
     #  bare dropdown (a QComboBox)
-    count = 4 if extra else 3
-    cmds.rowLayout(numberOfColumns=count, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 3)] + [(i, "left", 3) for i in range(3, count + 1)])
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
     cmds.text(label=label, width=hubstyle.pick(32, 36), align="left")
     cmds.optionMenu(menu, changeCommand=command,
                     annotation=("The walk Apply puts on a skeleton" if menu == WALK_MENU else
@@ -727,14 +748,6 @@ def _menu_row(menu, label, command, button, icon_tip, press, extra=None):
     hubstyle.mark(cmds.button(button, label=hubstyle.tool_label("Save..."), width=hubstyle.tool_width(56),
                               height=hubstyle.height("field", 24), annotation=icon_tip,
                               command=lambda *_: press()), "tool", "device-floppy")
-    if extra:                       # the walk's Mean pose: a Manny rig standing in it, edited for the whole cycle
-        name, word, icon, tip, action, menu_items = extra
-        hubstyle.mark(cmds.button(name, label=hubstyle.tool_label(word), width=hubstyle.tool_width(56),
-                                  height=hubstyle.height("field", 24), annotation=tip,
-                                  command=lambda *_: action()), "tool", icon)
-        cmds.popupMenu(parent=name, button=3)
-        for item_label, item_command in menu_items:
-            cmds.menuItem(label=item_label, command=item_command)
     cmds.setParent("..")
 
 
@@ -756,6 +769,25 @@ def _slider(name):
                         step=0.05, precision=2, value=float(_stored("knob_" + name, default)), **common)
 
 
+def _rig_pose_buttons():
+    """The Rig pose tab: Create / Delete, Update / Reset, a line on what it does."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    rows = (((MEAN_CREATE_BTN, "Create", "secondary", "user", "mean_create", press_mean_create),
+             (MEAN_DELETE_BTN, "Delete", "danger", "trash", "mean_delete", press_mean_delete)),
+            ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),
+             (MEAN_RESET_BTN, "Reset", "secondary", "arrow-back-up", "mean_reset", press_mean_reset)))
+    for row in rows:
+        hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                                     columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+        for name, label, role, icon, tip, action in row:
+            hubstyle.mark(cmds.button(name, label=label, height=hubstyle.height("button", 28), annotation=TIPS[tip],
+                                      command=(lambda act: lambda *_: act())(action)), role, icon)
+        cmds.setParent("..")
+    hubstyle.mark(cmds.text(MEAN_NOTE, label="Create a Manny rig in the walk's mean pose, pose its controls, then "
+                            "Update: the whole cycle takes it.", align="left", wordWrap=True, height=36), "caption")
+
+
 def build_panel():
     """The card into the current layout: the target line; the walk and the pose with their save icons; the
     pose's share and parts; Apply / Reset; the knob groups' tabs and the shown group; the status line."""
@@ -764,9 +796,7 @@ def build_panel():
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label=NOTHING, align="left"), "subtitle")
-    _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk,
-              extra=(MEAN_BTN, "Mean...", "user", TIPS["mean_pose"], press_mean_pose,
-                     [("Reset mean pose", lambda *_: press_mean_reset())]))
+    _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk)
     _menu_row(POSE_MENU, "Pose", slider_changed, SAVE_POSE_BTN, TIPS["save_pose"], press_save_pose)
     _slider("pose")
     stored_parts = chosen_parts()
@@ -825,6 +855,8 @@ def build_panel():
                           manage=key == shown)
         for name in names:
             _slider(name)
+        if key == "rigpose":              # the walk's mean pose on a Manny rig: create, pose it, Update
+            _rig_pose_buttons()
         if key == "clean":                # the posture set right once, then what the clean found
             hubstyle.mark(cmds.button(FIX_BTN, label="Fix posture", height=hubstyle.height("button", 26),
                                       annotation=TIPS["fix_posture"], command=lambda *_: press_fix_posture()),

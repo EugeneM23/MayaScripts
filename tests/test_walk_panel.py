@@ -258,9 +258,13 @@ class CardTests(unittest.TestCase):
             self.assertEqual(marks[button], ("tool", "device-floppy"))
         self.assertEqual(self.fake.items[panel.WALK_MENU], ["asd", "dw"])
         self.assertEqual(self.fake.items[panel.POSE_MENU], [panel.NO_POSE, "goblin", "two_handed_sword"])
-        # the walks folder on a right click of each dropdown, Reset mean pose on the Mean pose button's
-        self.assertEqual(len(self.made("popupMenu")), 3)
-        self.assertEqual(marks[panel.MEAN_BTN], ("tool", "user"))
+        self.assertEqual(len(self.made("popupMenu")), 2)          # the walks folder on a right click
+        # the Rig pose tab: Create / Delete, Update (the press that takes the rig's edit) / Reset
+        self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
+        self.assertEqual(marks[panel.MEAN_DELETE_BTN], ("danger", "trash"))
+        self.assertEqual(marks[panel.MEAN_UPDATE_BTN], ("primary", "refresh"))
+        self.assertEqual(marks[panel.MEAN_RESET_BTN], ("secondary", "arrow-back-up"))
+        self.assertIn("rigpose", [key for row in panel.GROUP_ROWS for key in row])
         chips = [c[1] for c in self.made("checkBox")]
         self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX])
         self.assertTrue(all(marks[c][0] == "chip" for c in chips))

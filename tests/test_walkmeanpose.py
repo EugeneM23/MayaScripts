@@ -209,31 +209,5 @@ class ModelFixTests(unittest.TestCase):
         self.assertLess(float(np.abs(fixed.worlds - posed.worlds).max()), 1e-9)
 
 
-class _Plug(object):
-    def __init__(self, keyable, children=()):
-        self.isKeyable = keyable
-        self.isCompound = bool(children)
-        self._children = list(children)
-
-    def numChildren(self):
-        return len(self._children)
-
-    def child(self, i):
-        return self._children[i]
-
-
-class WatchTests(unittest.TestCase):
-
-    def test_a_manipulators_compound_set_is_an_edit_a_marker_is_not(self):
-        """The viewport's manipulators set `rotate` / `translate` whole, a compound that is never keyable itself
-        (2026-10-15: a drag changed nothing while the Channel Box did)."""
-        mr = base.load("meanrig")
-        rotate = _Plug(False, [_Plug(True), _Plug(True), _Plug(True)])
-        self.assertTrue(mr.watched(rotate))
-        self.assertTrue(mr.watched(_Plug(True)))                       # rotateZ from the Channel Box
-        self.assertFalse(mr.watched(_Plug(False)))                     # the marker string
-        self.assertFalse(mr.watched(_Plug(False, [_Plug(False)])))     # parentMatrix and its like
-
-
 if __name__ == "__main__":
     unittest.main()

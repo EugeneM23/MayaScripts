@@ -84,3 +84,13 @@ dropdown stays on top), several mean rigs at once, a rig other than Manny's.
 - **The rig's legs come out in FK** (the Pose Library's solve sets both and the blend stays FK); a knee is turned on
   the rig by its FK controls, or the leg switched to IK (its IK was solved to match: no change read) and its pole moved.
 - **The label** «<walk> - mean pose» under the rig (`cliplabel.label_rig`).
+
+## Addendum 2 - a tab and a press, not a watch (the same day)
+
+The animator, after trying it: «Давай сделаем для конекта с ригом и изменения позы отдельную вкладку где будут кнопки,
+создать риг позу, удалить риг позу, и сделать Update изменений ... применялись по нажатию кнопки сейчас не удобно ждать
+по 2 секунды после каждого поворота контрола». The Mean... button and the automatic watch (callbacks, timer) are gone;
+Walk Builder has an eighth tab, **Rig pose**: Create / Delete, Update (primary) / Reset. Update is the only road from
+the rig into the walk; it re-keys the target unrecorded as before. `meanrig.stop()` stays to take down a watch an older
+build left in the session. Proof: verify_walk_meanpose.py 27/27 (Delete takes the rig whole, Update with no rig
+refuses).

@@ -105,25 +105,10 @@ gate(abs(shown["height"] - want["height"]) < 0.05, "the pelvis's height to %.4f 
 controls = meanrig._controls(rig)
 keyed = [c for c in controls if cmds.listConnections(c, source=True, destination=False, type="animCurveTA")]
 gate(not keyed, "no control is keyed (%d of %d)" % (len(keyed), len(controls)))
-gate(meanrig.update() is None and not os.path.exists(FIX), "an untouched rig reads no change, writes nothing")
+gate(meanrig.update() == meanrig.NOTHING_MOVED and not os.path.exists(FIX), "an untouched rig reads no change, writes nothing")
 print("press %.1f s" % (time.time() - started))
 
-# ---- the watch: a manipulator's set (the compound, whole) reaches the timer ----
 ns = rig.namespace + ":"
-fired = []
-real_schedule = meanrig._schedule
-meanrig._schedule = lambda *_: fired.append(1)
-meanrig.start(rig)
-try:
-    cmds.setAttr(ns + "FKShoulder_R.rotate", *cmds.getAttr(ns + "FKShoulder_R.rotate")[0])
-    whole = len(fired)
-    cmds.setAttr(ns + "FKShoulder_R.rotateZ", cmds.getAttr(ns + "FKShoulder_R.rotateZ"))
-    single = len(fired) - whole
-finally:
-    meanrig.stop()
-    meanrig._schedule = real_schedule
-gate(whole >= 1 and single >= 1, "a set of the whole rotate (a manipulator's) and of rotateZ (the Channel Box's) "
-     "both reach the timer (%d, %d)" % (whole, single))
 
 # ---- an arm turned on the rig: the walk's mean for the whole cycle ----
 cmds.setAttr(ns + "FKShoulder_L.rotateZ", cmds.getAttr(ns + "FKShoulder_L.rotateZ") + 20.0)
@@ -138,7 +123,7 @@ gate(text is not None and "keyed again" in text, "the target is keyed again")
 after_arm = mean_local("upperarm_l")
 gate(abs(deg(after_arm @ before_arm.T) - turned) < 0.5,
      "the target's upperarm_l mean over the cycle turned %.2f deg" % deg(after_arm @ before_arm.T))
-gate(meanrig.update() is None, "read again with nothing moved: no change")
+gate(meanrig.update() == meanrig.NOTHING_MOVED, "read again with nothing moved: no change")
 
 # ---- the pelvis lowered: the walk's pelvis for the whole cycle ----
 cmds.setAttr(ns + "RootX_M.translateY", cmds.getAttr(ns + "RootX_M.translateY") - 5.0)
@@ -219,10 +204,18 @@ r = walk2.evaluate(walk2.own_knobs())
 gate(np.isfinite(r.worlds).all(), "the corrected walk evaluates")
 text = meanrig.reset("asd")
 print(text)
-gate(not os.path.exists(FIX) and meanrig.update() is None, "Reset drops the file; the rig back in the mean pose reads none")
+gate(not os.path.exists(FIX) and meanrig.update() == meanrig.NOTHING_MOVED, "Reset drops the file; the rig back in the mean pose reads none")
 back_arm = mean_local("upperarm_l")
 gate(deg(back_arm @ before_arm.T) < 0.05, "the target walks the plain walk again (%.4f deg)" % deg(back_arm @ before_arm.T))
 
-meanrig.stop()
+text = meanrig.delete()
+print(text)
+gate(meanrig.find() is None and not cmds.namespace(exists=":" + rig.namespace) and not os.path.exists(FIX),
+     "Delete takes the rig pose out of the scene, whole (the walk's correction was already dropped)")
+try:
+    meanrig.update()
+    gate(False, "Update with no rig pose refuses")
+except meanrig.Refusal as refusal:
+    gate(str(refusal) == meanrig.NO_RIG, "Update with no rig pose refuses: %s" % refusal)
 shutil.rmtree(TEMP, ignore_errors=True)
 print("FAILED gates: %s" % FAILED if FAILED else "every gate passed (%d)" % COUNT[0])

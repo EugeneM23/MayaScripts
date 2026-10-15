@@ -9,13 +9,14 @@ correction (maya_walk.meanpose.mean_pose) through the Pose Library's solve - its
 keys. What the rig shows is read back (`_read`: its game skeleton carried onto the walk's skeleton the way a pose
 is, maya_walk.pose._onto) and kept on the marker as the BASE.
 
-`update()`: the rig read again; what changed against the base (meanpose.combine) moves the walk's correction,
-written beside the walk's file; the card's target, when it walks this walk, is keyed again UNRECORDED (Ctrl+Z is
-the rig's); the base becomes what the rig shows. Nothing changed: nothing written.
+`update()` - the card's Update: the rig read again; what changed against the base (meanpose.combine) moves the walk's
+correction, written beside the walk's file; the card's target, when it walks this walk, is keyed again UNRECORDED
+(Ctrl+Z is the rig's: undo there, Update again); the base becomes what the rig shows. Nothing changed: nothing
+written. `delete()`: the rig out of the scene (Animation Setup's Delete); the walk's correction stays.
 
-The watch (`start` / `stop`): an attribute-changed callback on every control of the rig's ControlSet and the
-Undo / Redo events restart a DELAY_MS single-shot timer, which waits while a mouse button is down - so the update
-runs once the animator lets go. The callbacks and the timer live on `sys` (an install purges the module).
+A press, not a watch (the same day: «изменения применялись по нажатию кнопки сейчас не удобно ждать по 2 секунды
+после каждого поворота контрола»): the first build re-keyed the target a pause after every control let go; `stop()`
+only takes down a watch an older build left in the session.
 The design: docs/superpowers/specs/2026-10-15-walk-mean-pose-rig-design.md.
 """
 import json
@@ -31,7 +32,6 @@ from . import target as wt
 
 MARKER = "skeldarWalkMean"         # on the rig's Main: {"walk", "clean", "base": {bone: 16 floats}}
 OFFSET = 150.0                     # cm beside the target (along X)
-DELAY_MS = 400
 LABEL = "%s - mean pose"
 
 
@@ -204,8 +204,8 @@ def _add():
 
 
 def press(walk_name, clean=None):
-    """The mean pose rig (added, or the one standing) stood in the walk `walk_name`'s mean pose with its
-    correction; the watch started. Returns the status line."""
+    """Create rig pose: the mean pose rig (added, or the one standing) stood in the walk `walk_name`'s mean pose
+    with its correction. Returns the status line."""
     stop()
     clean = dict(scene.wc.knobs(clean))
     walk, statics = scene.load_walk(walk_name, clean)[:2]
@@ -227,24 +227,27 @@ def press(walk_name, clean=None):
             cliplabel.label_rig(rig, LABEL % walk_name)
         except Exception:                                    # noqa: BLE001
             traceback.print_exc()
-    start(rig)
     line = "%s %s in the mean pose of %s (%s)" % ("added" if added else "posed", rig.namespace, walk_name,
                                                   mp.summary(fix))
     notes = [n for n in plan.notes if n]
-    return line + " - move its controls: the walk follows" + (" | " + notes[0] if notes else "")
+    return line + " - pose its controls, then Update" + (" | " + notes[0] if notes else "")
+
+
+NO_RIG = "no rig pose in the scene - press Create first"
+NOTHING_MOVED = "nothing moved on the rig pose since the last Update"
 
 
 def update():
-    """The rig's change into the walk's correction (the module docstring). Returns the status line, or None when
-    nothing changed or there is no rig."""
+    """Update: the rig's change into the walk's correction (the module docstring). Returns the status line;
+    refuses with no rig."""
+    stop()                           # an older build's watch, left in the session by an update, goes now
     rig = find()
     if rig is None:
-        stop()
-        return None
+        raise Refusal(NO_RIG)
     memo = memo_of(rig)
     name = memo.get("walk")
     if not name or name not in scene.walk_names():
-        return None
+        raise Refusal("the rig pose stands for %s, which is not a saved walk" % (name or "no walk"))
     walk, statics = scene.load_walk(name, memo.get("clean"))[:2]
     fix, path = scene.walk_fix(name)
     now = _read(rig, walk, statics)
@@ -252,10 +255,10 @@ def update():
     if not base:
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
-        return None
+        return NOTHING_MOVED
     new, moved = mp.combine(fix, mp.measure(base, walk), mp.measure(now, walk))
     if not moved:
-        return None
+        return NOTHING_MOVED
     mp.save(path, new)
     with scene.Unrecorded():
         _set_memo(rig, dict(memo, base=_flat(now)))
@@ -278,7 +281,7 @@ def rekey_target(name):
 
 
 def reset(walk_name, clean=None):
-    """The walk's correction dropped; the rig (when standing) back in the plain mean pose; the target keyed
+    """Reset: the walk's correction dropped; the rig (when standing) back in the plain mean pose; the target keyed
     again. Returns the status line."""
     fix, path = scene.walk_fix(walk_name)
     had = not mp.is_empty(fix)
@@ -286,46 +289,30 @@ def reset(walk_name, clean=None):
     line = ("%s: the mean pose correction dropped" % walk_name) if had else "%s has no correction" % walk_name
     if find() is not None:
         press(walk_name, clean)
-        line += ", the rig back in the mean pose"
+        line += ", the rig pose back in the mean pose"
     return line + rekey_target(walk_name)
 
 
-# ---- the watch ----
-
-def start(rig):
-    """The rig's controls watched (the module docstring)."""
+def delete():
+    """Delete rig pose: the rig out of the scene, whole (Animation Setup's Delete, no question asked - it is this
+    tool's); the walk's correction stays. Returns the status line."""
+    from maya_scenesetup import deletion
+    rig = find()
+    if rig is None:
+        raise Refusal("no rig pose in the scene")
+    name = memo_of(rig).get("walk") or "-"
     stop()
-    try:
-        import maya.api.OpenMaya as om
-    except ImportError:
-        return
-    cmds = _cmds()
-    state = _state()
-    for control in _controls(rig):
-        try:
-            selection = om.MSelectionList()
-            selection.add(control)
-            state["callbacks"].append(om.MNodeMessage.addAttributeChangedCallback(
-                selection.getDependNode(0), _changed))
-        except RuntimeError:
-            continue
-    try:
-        state["callbacks"].append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeNew, _gone))
-        state["callbacks"].append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeOpen, _gone))
-    except RuntimeError:
-        pass
-    if cmds.about(batch=True):
-        return
-    for event in ("Undo", "Redo"):
-        state["jobs"].append(cmds.scriptJob(event=[event, _schedule]))
+    _state()["bones"] = None
+    text = deletion.delete_selected([rig.main], confirm=lambda _text: True)
+    return "rig pose of %s deleted (%s) - the walk keeps its correction" % (name, text)
 
 
 def stop():
-    """No more watching."""
+    """Takes down a watch an older build left in the session (its callbacks, jobs and timer on `sys`)."""
     state = _state()
     try:
         import maya.api.OpenMaya as om
-        for cid in state["callbacks"]:
+        for cid in state.get("callbacks") or []:
             try:
                 om.MMessage.removeCallback(cid)
             except RuntimeError:
@@ -334,7 +321,7 @@ def stop():
         pass
     state["callbacks"] = []
     cmds = _cmds()
-    for job in state["jobs"]:
+    for job in state.get("jobs") or []:
         try:
             if cmds.scriptJob(exists=job):
                 cmds.scriptJob(kill=job, force=True)
@@ -346,81 +333,5 @@ def stop():
         try:
             timer.stop()
         except RuntimeError:
-            state["timer"] = None
-
-
-def watching():
-    return bool(_state()["callbacks"])
-
-
-def _gone(*_):
-    stop()
-    _state()["bones"] = None
-
-
-def watched(plug):
-    """Is a set of `plug` an animator's edit? A keyable channel, or a compound holding one: the manipulators set
-    `rotate` / `translate` WHOLE, and a compound is never keyable itself - only its children are (the first build
-    read keyable plugs only, and a drag in the viewport changed nothing while the Channel Box did)."""
-    if plug.isKeyable:
-        return True
-    if plug.isCompound:
-        return any(plug.child(i).isKeyable for i in range(plug.numChildren()))
-    return False
-
-
-def _changed(message, plug, other, data):
-    try:
-        import maya.api.OpenMaya as om
-        if message & om.MNodeMessage.kAttributeSet and not _state()["busy"] and watched(plug):
-            _schedule()
-    except Exception:                                        # noqa: BLE001
-        traceback.print_exc()
-
-
-def _schedule(*_):
-    """The update DELAY_MS after the last change (and after the mouse is let go)."""
-    try:
-        from PySide6 import QtCore
-    except ImportError:
-        return
-    state = _state()
-    timer = state.get("timer")
-    if timer is None:
-        timer = QtCore.QTimer()
-        timer.setSingleShot(True)
-        timer.timeout.connect(_tick)
-        state["timer"] = timer
-    timer.start(DELAY_MS)
-
-
-def _tick():
-    from PySide6 import QtCore, QtWidgets
-    state = _state()
-    if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
-        state["timer"].start(DELAY_MS // 2)
-        return
-    state["busy"] = True
-    try:
-        line = update()
-    except scene.REFUSALS as refusal:
-        line = "mean pose: %s" % refusal
-    except Exception as exc:                                 # noqa: BLE001
-        traceback.print_exc()
-        line = "mean pose failed: %s" % exc
-    finally:
-        state["busy"] = False
-    if line:
-        _tell(line)
-
-
-def _tell(line):
-    try:
-        from . import panel
-        if panel.is_open():
-            panel.status(line)
-            panel.refresh()
-            return
-    except Exception:                                        # noqa: BLE001
-        pass
-    print("Walk Builder: " + line)
+            pass
+        state["timer"] = None
