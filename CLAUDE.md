@@ -10410,9 +10410,26 @@ The animator: «Возможно ли в maya сделать вкладки ка
 новые». Asked: tabs are for all three of working on several scenes, carrying things between them and looking
 at a scene beside the work; approach A (imports, not references); one shared undo history; the bar above the
 viewport; each tab its own whole layout. Spec `docs/superpowers/specs/2026-10-15-scene-tabs-design.md` (read
-its planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage1.md`. Stage 2 (the plugin
-seeing only the active tab) is `2026-10-15-scene-tabs-plugin-scope-design.md` and is NOT built yet: until it
-is, the plugin's tools see every tab's characters.
+its planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage1.md`. Stage 2, the plugin seeing only the active tab, is `2026-10-15-scene-tabs-plugin-scope-design.md` (its
+planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage2.md` - built with stage 1: stage 1
+alone doubles the tab's prefix on everything the plugin creates.
+
+- **`maya_scenetabs/scope.py`** holds the three rules; with tabs off every function is the identity. **A reader**
+  keeps the active tab's paths (`active_only`): `maya_rigs.rigs()`, `builder.character_roots()`,
+  `animimport.skeleton_roots()`, the colour scan, the studio, the retargets' joint scans, the CoM groups - and
+  everything built on them. **The current namespace is the active tab's**: a reset after an import is
+  `enter_active`; a clip is imported into a root-level namespace and, when kept, moved under the tab
+  (`home_namespace`; a namespace whose move fails stays at the root and the line names it). **A name that
+  carries a namespace is made absolute** where a node is created or renamed with it (`as_created`), a name
+  given back after a hold is `root_name`; a leaf needs nothing.
+- **What the animator reads** is named as the tab shows it (`local`, `relative`): «Manny_Rig's right hand», a
+  character group `Manny_Rig_Character`, never `tab_x_...`.
+- **The scene is the active tab** for Shared and Stash (a copy of that tab alone, references written in; a
+  received scene opens as a tab, without asking to save the current one), Open scene, and the scene's name.
+- **A new plugin feature** that lists the scene, creates a node with a namespaced name or names a character in
+  a message goes through `scope` - `tests/test_scenetabs_scope.py` and `verify_tabs_scope.py` are the
+  reference. Proof 2026-10-15: `verify_scene_tabs.py all` 0 of 138 gates, `verify_tabs_scope.py` 0 of 42, 6638
+  unit tests OK.
 
 - **A tab** is a `.ma` / `.mb` imported with `preserveReferences=True, executeScriptNodes=False` into
   `tab_<stem>`; the session is a `network` node `skeldarSceneTabs` (JSON) and the scene is named
@@ -10460,3 +10477,18 @@ for `tabs.next`.
 252. **Maya imports a file's configuration node only when the root namespace holds none.** In a tab (whose
      configuration node sits in the tab) every import brings one, and in the saved file it runs after the tab's
      and wins. Export exactly one.
+
+254. **Maya resolves a creation or rename name relative to the CURRENT namespace, even when the name carries
+     one.** With a tab's namespace current, `createNode(name="tab_x:Rig:Holder")` made
+     `tab_x:tab_x:Rig:Holder` and created the missing namespaces silently - the retarget then set an attribute
+     on a node that did not exist. Lookups (`ls`, `objExists`) go from the root, so the code read and wrote two
+     different nodes. Make a namespaced creation name absolute (`":" + name`); `namespace -add x` adds under the
+     current namespace, `-add :x` at the root.
+255. **A node made by an absolute name is answered without the leading colon** (`":A:x"` -> `"A:x"`). A fake
+     `cmds` that echoes the name it was given answers `":A:x"`, and a test then compares paths Maya never makes.
+256. **"The outermost namespace" names the tab.** A message's character (`split(":")[0]`) read «tab_plain's
+     right hand» and a clip label «tab_plain» once every node carried the tab's prefix. Read a path the animator
+     sees through `scope.local`.
+257. **A save renames nodes, not strings.** A camera's `imageName` (`tab_plain:camera2`, the name it was
+     created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
+     names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
