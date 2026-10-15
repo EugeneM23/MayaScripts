@@ -10141,6 +10141,25 @@ Walk Builder's Save pose gone), and **follow the card, with a copy**. Spec
     library's `Drops.test_over_a_walk_builder_well_the_well_takes_the_card`.
   - **The live drag is the animator's.**
 
+**…a column of cards, one active** (the same day: «давай сделаем массив в столбик так что бы я мог закинуть
+несколько карточек а работала та поза которая активна тоесть выбрана»):
+- **The well is a column** (`posewell`): one row a card (48 logical px, its thumbnail, its name, «active -
+  the walk takes this pose» / «click to use this pose» / a note for a card gone), the active row lit (accent
+  outline, `card_active`), and a dashed drop row under them («Drop another pose card here»); with no card the
+  old empty strip. The well sets its placeholder as tall as the column on every refresh (`well_height`,
+  `row_index` pure).
+- **A drop** adds the card at the bottom and makes it active (a card already there is made active, not
+  doubled); **a click** on a row makes it active and re-keys the target (`panel.pick_card`); a double click
+  shows it in the library; the right button: Use this pose, Show in Pose Library, Remove from the well, Use no
+  pose (the list kept, the walk's own posture), Remove all.
+- **Storage**: the list is the optionVar `skeldarWalk_poseCards` (JSON, relative to the library, top down);
+  `skeldarWalk_poseCard` stays the active one, and an active card not in the list heads it (`card_list`), so
+  an older memo and a walked skeleton's `pose_card` join the column. The skeleton's marker still keeps only
+  the active card and its copy. `panel.well_rows`, `remove_card`, `remove_all_cards`; `clear_card` is now
+  «no card active».
+- Proof: unit tests (`test_walk_cards.Well` / `WellLayout`, `test_walk_panel.PoseCardTests`), 6672 in all; an
+  offscreen render of three rows. **Not seen live.**
+
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
      forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE

@@ -139,8 +139,24 @@ class Migrate(Base):
         self.assertEqual(broken, [])
 
 
+class WellLayout(unittest.TestCase):
+
+    def test_the_height_follows_the_column(self):
+        from maya_walk import posewell as pw
+        self.assertEqual(pw.well_height(0), pw.HEIGHT)
+        self.assertEqual(pw.well_height(3), 3 * (pw.ROW + pw.GAP) + pw.DROP)
+
+    def test_a_point_names_the_card_under_it_not_the_gaps_or_the_drop_row(self):
+        from maya_walk import posewell as pw
+        self.assertEqual(pw.row_index(1, 2), 0)
+        self.assertIsNone(pw.row_index(pw.ROW + 1, 2))                  # the gap
+        self.assertEqual(pw.row_index(pw.ROW + pw.GAP + 1, 2), 1)
+        self.assertIsNone(pw.row_index(2 * (pw.ROW + pw.GAP) + 2, 2))   # the drop row
+        self.assertIsNone(pw.row_index(-1, 2))
+
+
 class Well(Base):
-    """The Qt well, offscreen, over a fake Scene."""
+    """The Qt well, offscreen, over a fake Scene holding a column of cards."""
 
     def setUp(self):
         Base.setUp(self)
@@ -155,21 +171,34 @@ class Well(Base):
         test = self
 
         class FakeScene(object):
-            path = ""
+            def __init__(self):
+                self.paths, self.active = [], ""
 
             def scale(self):
                 return 1.0
 
-            def card(self):
-                return (self.path, "sword" if self.path else "", "", "")
+            def cards(self):
+                return [(p, p.rsplit("/", 1)[-1][:-5], "", "", p == self.active) for p in self.paths]
 
             def take(self, path):
-                self.path = path
+                if path not in self.paths:
+                    self.paths.append(path)
+                self.active = path
                 test.taken.append(path)
-                return "pose card sword"
+                return "pose card " + path
+
+            pick = take
+
+            def remove(self, path):
+                self.paths.remove(path)
+                if self.active == path:
+                    self.active = ""
+
+            def remove_all(self):
+                self.paths, self.active = [], ""
 
             def clear(self):
-                self.path = ""
+                self.active = ""
 
             def show(self, path):
                 test.shown.append(path)
@@ -182,21 +211,56 @@ class Well(Base):
         self.well.deleteLater()
         Base.tearDown(self)
 
-    def test_a_card_taken_shows_and_clears(self):
-        self.assertEqual(self.well.path, "")
-        self.assertEqual(self.well.context_actions(), [])
-        self.assertEqual(self.well.take("C:/lib/sword.pose"), "pose card sword")
-        self.assertEqual((self.well.path, self.well.name), ("C:/lib/sword.pose", "sword"))
-        labels = [row[0] for row in self.well.context_actions() if row]
-        self.assertEqual(labels, [self.posewell.SHOW, self.posewell.CLEAR])
-        dict(row for row in self.well.context_actions() if row)[self.posewell.CLEAR]()
-        self.assertEqual(self.well.path, "")
+    def labels(self, index=None):
+        return [row[0] for row in self.well.context_actions(index) if row]
+
+    def act(self, label, index=None):
+        dict(row for row in self.well.context_actions(index) if row)[label]()
+
+    def test_cards_stack_in_a_column_and_the_last_dropped_is_active(self):
+        pw = self.posewell
+        self.assertEqual((self.well.path, self.well.context_actions()), ("", []))
+        self.well.take("C:/lib/sword.pose")
+        self.well.take("C:/lib/goblin.pose")
+        self.assertEqual([r[0] for r in self.well.rows], ["C:/lib/sword.pose", "C:/lib/goblin.pose"])
+        self.assertEqual((self.well.path, self.well.name), ("C:/lib/goblin.pose", "goblin"))
+        self.assertEqual(self.well.height_for(300), pw.well_height(2))
+        self.well.take("C:/lib/sword.pose")                       # already in it: made active, not doubled
+        self.assertEqual(len(self.well.rows), 2)
+        self.assertEqual(self.well.path, "C:/lib/sword.pose")
+
+    def test_a_click_picks_the_card_and_the_active_one_again_does_nothing(self):
+        self.well.take("C:/lib/sword.pose")
+        self.well.take("C:/lib/goblin.pose")
+        self.assertEqual(self.well.pick(0), "pose card C:/lib/sword.pose")
+        self.assertEqual(self.well.path, "C:/lib/sword.pose")
+        self.assertIsNone(self.well.pick(0))
+        self.assertIsNone(self.well.pick(5))
+
+    def test_the_menu_uses_shows_removes_and_empties(self):
+        pw = self.posewell
+        self.well.take("C:/lib/sword.pose")
+        self.well.take("C:/lib/goblin.pose")
+        self.assertEqual(self.labels(0), [pw.USE, pw.SHOW, pw.REMOVE, pw.NONE, pw.REMOVE_ALL])
+        self.assertEqual(self.labels(), [pw.NONE, pw.REMOVE_ALL])
+        menu = dict(row for row in self.well.context_actions(1) if row)
+        self.assertIsNone(menu[pw.USE])                           # the active card
+        self.act(pw.SHOW, 0)
+        self.assertEqual(self.shown, ["C:/lib/sword.pose"])
+        self.act(pw.REMOVE, 1)                                    # the active one: none active
+        self.assertEqual(([r[0] for r in self.well.rows], self.well.path), (["C:/lib/sword.pose"], ""))
+        self.act(pw.USE, 0)
+        self.act(pw.NONE)
+        self.assertEqual((len(self.well.rows), self.well.path), (1, ""))
+        self.act(pw.REMOVE_ALL)
+        self.assertEqual(self.well.rows, [])
 
     def test_it_paints_empty_lit_and_filled(self):
-        image = self.well.grab().toImage()                       # empty
-        self.assertFalse(image.isNull())
+        self.assertFalse(self.well.grab().toImage().isNull())    # empty
         self.well.set_hot(True)
         self.assertTrue(self.well.hot)
         self.well.take("C:/lib/sword.pose")
+        self.well.take("C:/lib/goblin.pose")
         self.assertFalse(self.well.hot)                           # a release unlights it
+        self.well.resize(300, self.well.height_for(300))
         self.assertFalse(self.well.grab().toImage().isNull())

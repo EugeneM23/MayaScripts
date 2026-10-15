@@ -618,3 +618,45 @@ class PoseCardTests(unittest.TestCase):
         self.assertEqual(panel.chosen_card(), "Walk poses/goblin.pose")
         self.fake.vars[panel.OPTION + "pose"] = "missing"
         self.assertIsNone(panel.chosen_card())
+
+    def test_several_cards_one_active_the_target_keyed_with_it(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        sword = write_card(self.library, "Swords", "sword")
+        goblin = write_card(self.library, "", "goblin")
+        panel.take_card(sword)
+        panel.take_card(goblin)
+        self.assertEqual(panel.card_list(), ["Swords/sword.pose", "goblin.pose"])
+        self.assertEqual([row[1] for row in panel.well_rows()], ["sword", "goblin"])
+        self.assertEqual([row[4] for row in panel.well_rows()], [False, True])
+        self.assertEqual(self.applied[-1][3], "goblin.pose")
+        panel.pick_card(sword)
+        self.assertEqual(self.applied[-1][3], "Swords/sword.pose")
+        self.assertEqual(panel.card_list(), ["Swords/sword.pose", "goblin.pose"])   # the order kept
+        self.assertIn("2 cards in the well", self.fake.values[panel.POSE_WELL_TEXT])
+
+    def test_removing_cards_and_no_pose_active(self):
+        panel.build_panel()
+        sword = write_card(self.library, "", "sword")
+        goblin = write_card(self.library, "", "goblin")
+        panel.take_card(sword)
+        panel.take_card(goblin)
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertIn("taken out of the well", panel.remove_card(sword))
+        self.assertEqual((panel.card_list(), panel.chosen_card()), (["goblin.pose"], "goblin.pose"))
+        panel.clear_card()                                        # none active, the card stays
+        self.assertEqual((panel.card_list(), panel.chosen_card()), (["goblin.pose"], None))
+        self.assertIsNone(self.applied[-1][3])
+        panel.take_card(goblin)
+        panel.remove_card(goblin)                                 # the active one: the walk's own posture
+        self.assertEqual((panel.card_list(), panel.chosen_card()), ([], None))
+        self.assertIsNone(self.applied[-1][3])
+        panel.take_card(sword)
+        panel.remove_all_cards()
+        self.assertEqual(panel.card_list(), [])
+
+    def test_a_card_picked_before_the_list_heads_it(self):
+        self.fake.vars[panel.OPTION + "poseCard"] = "old.pose"
+        self.assertEqual(panel.card_list(), ["old.pose"])

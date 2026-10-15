@@ -322,17 +322,50 @@ def chosen_card():
     return None
 
 
-def well_state():
-    """(the card's absolute path, its name, its thumbnail, a note) for the well; four "" with no card."""
-    rel = chosen_card()
-    if not rel:
-        return "", "", "", ""
+def card_list():
+    """The cards dropped into the well, top down (paths relative to the library; 2026-10-15: «массив в
+    столбик ... работала та поза которая активна»). The active card is always among them - a card picked
+    before the list (one optionVar) heads it."""
+    try:
+        rels = [rel for rel in json.loads(_stored("poseCards") or "[]") if isinstance(rel, str) and rel]
+    except ValueError:
+        rels = []
+    active = chosen_card()
+    if active and active not in rels:
+        rels.insert(0, active)
+    return rels
+
+
+def _remember_list(rels):
+    seen = []
+    for rel in rels:
+        if rel and rel not in seen:
+            seen.append(rel)
+    _remember("poseCards", json.dumps(seen))
+
+
+def _card_row(rel, active):
+    """(the card's absolute path, its name, its thumbnail or "", a note or "", whether it is the active one)."""
     path = scene.wcards.absolute(rel, _library())
     name = scene.wcards.card_name(rel)
     if not os.path.isdir(path):
-        return path, name, "", "the card is gone from the library"
+        return path, name, "", "the card is gone from the library", rel == active
     thumbnail = os.path.join(path, "thumbnail.jpg")
-    return path, name, thumbnail if os.path.isfile(thumbnail) else "", ""
+    return path, name, thumbnail if os.path.isfile(thumbnail) else "", "", rel == active
+
+
+def well_rows():
+    """Every card in the well, top down, as `_card_row`s; the active one says so."""
+    active = chosen_card()
+    return [_card_row(rel, active) for rel in card_list()]
+
+
+def well_state():
+    """(the active card's absolute path, its name, its thumbnail, a note); four "" with none active."""
+    rel = chosen_card()
+    if not rel:
+        return "", "", "", ""
+    return _card_row(rel, rel)[:4]
 
 
 def _show_card_line():
@@ -340,9 +373,11 @@ def _show_card_line():
     cmds = _cmds()
     if cmds.text(POSE_WELL_TEXT, exists=True):
         rel = chosen_card()
+        count = len(card_list())
+        more = " (%d cards in the well)" % count if count > 1 else ""
         cmds.text(POSE_WELL_TEXT, edit=True,
-                  label=("Pose: %s" % scene.wcards.card_name(rel)) if rel else
-                  "Pose: none - Pose Library card > Use in Walk Builder")
+                  label=("Pose: %s%s" % (scene.wcards.card_name(rel), more)) if rel else
+                  "Pose: none%s - Pose Library card > Use in Walk Builder" % more)
     try:
         from . import posewell
         posewell.refresh_all()
@@ -351,6 +386,12 @@ def _show_card_line():
 
 
 def _set_card(rel):
+    """`rel` the active card (added to the well's list when new); "" none active, the list kept."""
+    if rel:
+        rels = card_list()
+        if rel not in rels:
+            rels.append(rel)
+        _remember_list(rels)
     _remember("poseCard", rel or "")
     _remember("pose", "")                    # the old name: the card stands for it now
     _show_card_line()
@@ -378,15 +419,49 @@ def take_card(path):
     return _press(run)
 
 
+def _rekey(line):
+    try:
+        root = scene.target_root()
+    except scene.Refusal:
+        return line
+    return line + " | " + _apply_to(root)
+
+
+def pick_card(path):
+    """A card in the well clicked: the active pose (as a drop of it). A card gone from the library is refused."""
+    return take_card(path)
+
+
 def clear_card():
-    """The well emptied: the walk's own posture; a target standing is keyed again."""
+    """No card active: the walk's own posture (the well keeps its cards); a target standing is keyed again."""
     def run():
         _set_card("")
-        try:
-            root = scene.target_root()
-        except scene.Refusal:
-            return "no pose card - the walk's own posture"
-        return "no pose card | " + _apply_to(root)
+        return _rekey("no pose card - the walk's own posture")
+    return _press(run)
+
+
+def remove_card(path):
+    """A card taken out of the well; the active one leaves the walk on its own posture."""
+    def run():
+        rel = scene.wcards.relative(path, _library())
+        _remember_list([each for each in card_list() if each != rel])
+        name = scene.wcards.card_name(rel)
+        if rel != chosen_card():
+            _show_card_line()
+            return "%s taken out of the well" % name
+        _set_card("")
+        return _rekey("%s taken out of the well - the walk's own posture" % name)
+    return _press(run)
+
+
+def remove_all_cards():
+    """The well emptied."""
+    def run():
+        active = chosen_card()
+        _remember_list([])
+        _set_card("")
+        line = "the well emptied"
+        return _rekey(line + " - the walk's own posture") if active else line
     return _press(run)
 
 
