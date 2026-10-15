@@ -217,7 +217,15 @@ def close_tab(namespace=None, ask=True):
             state = session.state()
     if namespace == state["active"] and len(state["tabs"]) > 1:
         state = switching.switch(records.neighbour(state, namespace))
-    _delete_namespace(namespace)
+    try:
+        _delete_namespace(namespace)
+    except Exception:
+        # keep the session true to the scene: the tab stays listed while its
+        # namespace is still there (already switched away from), else it goes
+        if not cmds.namespace(exists=":" + namespace):
+            state = records.removed(state, namespace)
+        session.write(state)
+        raise
     switching.forget_layout(item)
     state = records.removed(state, namespace)
     session.write(state)

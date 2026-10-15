@@ -314,6 +314,12 @@ def phase_open_close():
     import maya_rigs
     rig, film, plain = copy("rig.ma"), copy("film.ma"), copy("plain.mb")
     fresh()
+    cmds.file(new=True, force=True)
+    cmds.polyCube(name="infected")
+    cmds.scriptNode(name="vaccine_gene", scriptType=1, sourceType="python", beforeScript="pass")
+    vaccine = RUN + "/vaccine.ma"
+    _save(vaccine)
+    fresh()
     cmds.file(rig, open=True, force=True)
     builtins.SKELDAR_TABS_RAN = False
     opening.open_tab(film)
@@ -348,6 +354,23 @@ def phase_open_close():
     gate("reload: still in its own unit, its layer playing", cmds.currentUnit(q=True, time=True) == "film"
          and value_at("tab_film:hero.rotateY", 20) == 45.0)
     switching.switch("tab_plain")
+    real_delete = opening._delete_namespace
+
+    def failing(namespace):
+        raise RuntimeError("boom")
+    opening._delete_namespace = failing
+    try:
+        opening.close_tab("tab_plain")
+        raised = False
+    except RuntimeError:
+        raised = True
+    finally:
+        opening._delete_namespace = real_delete
+    after = session.state()
+    gate("close: a failed delete re-raises and the session matches the scene",
+         raised and after["active"] == "tab_film" and records.tab(after, "tab_plain") is not None
+         and cmds.namespace(exists=":tab_plain") and not any(tops_visible("tab_plain")),
+         (raised, after["active"]))
     opening.close_tab("tab_plain")
     gate("close: the tab's namespace is gone", not cmds.namespace(exists=":tab_plain"))
     gate("close: the right-hand neighbour - none - so the left one is active",
@@ -363,6 +386,29 @@ def phase_open_close():
     gate("close: its names are plain again", [r.namespace for r in maya_rigs.rigs()] == ["Manny_Rig"])
     gate("close: no tab namespace left", not [n for n in cmds.namespaceInfo(":", listOnlyNamespaces=True) or []
                                               if n.startswith(records.TAB_PREFIX)])
+    # two tabs: rig (tab 1), film (active)
+    opening.open_tab(film)
+    opening.open_tab(vaccine)
+    gate("open: the vaccine script node was swept, not just not run",
+         not [s for s in cmds.ls(type="script") if "vaccine" in s.split(":")[-1].lower()]
+         and cmds.objExists("tab_vaccine:infected"), (cmds.ls(type="script"), cmds.namespaceInfo(":", listOnlyNamespaces=True)))
+    opening.close_tab("tab_vaccine", ask=False)
+    gate("close: back to the film tab", session.state()["active"] == "tab_film")
+    def film_keys():
+        return [(c, cmds.keyframe(c, q=True, timeChange=True), cmds.keyframe(c, q=True, valueChange=True))
+                for c in sorted(cmds.ls("tab_film:*", type="animCurve"))]
+    keys_before = film_keys()
+    opening.reload_tab("tab_rig", ask=False)
+    keys_after = film_keys()
+    gate("reload: a non-active tab in another unit leaves the active tab's keys and the unit alone",
+         keys_before and keys_before == keys_after and cmds.currentUnit(q=True, time=True) == "film"
+         and session.state()["active"] == "tab_film", (keys_before, keys_after))
+    opening.close_tab("tab_rig", ask=False)
+    gate("close: closing the non-active one leaves the survivor an ordinary shown scene",
+         not session.exists() and cmds.getAttr("hero.lodVisibility") == 1
+         and cmds.currentUnit(q=True, time=True) == "film"
+         and cmds.playbackOptions(q=True, minTime=True) == 5.0
+         and cmds.playbackOptions(q=True, maxTime=True) == 40.0)
 
 
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
