@@ -74,6 +74,28 @@ def _reported(fn):
     return run
 
 
+def _refused(what, exc):
+    """A check callback that failed refuses the operation: nothing is written,
+    the tabs are not replaced; the reason reaches the bar."""
+    print(traceback.format_exc())
+    _say("Scene Tabs: %s refused - %s (Tabs off in the bar's menu turns the tabs off)" % (what, exc))
+    return False
+
+
+def _checked(what):
+    def wrap(fn):
+        def check(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:                            # noqa: BLE001
+                return _refused(what, exc)
+        check.__name__ = fn.__name__
+        check.__doc__ = fn.__doc__
+        return check
+    return wrap
+
+
+@_checked("Save")
 def on_save(client_data=None):
     if _bypassed() or not session.is_on():
         return True
@@ -96,6 +118,7 @@ def on_save(client_data=None):
     return False
 
 
+@_checked("Open")
 def on_open(file_obj, client_data=None):
     if _bypassed() or not session.is_on():
         return True
@@ -105,12 +128,22 @@ def on_open(file_obj, client_data=None):
     return False
 
 
+@_checked("New")
 def on_new(client_data=None):
     if _bypassed() or not session.is_on():
         return True
     from . import opening
     defer(_reported(opening.new_tab))
     return False
+
+
+def restored_here():
+    """opening.open_any restored the session itself; the SceneOpened job that
+    follows (possibly after bypass is gone) must not restore it again. The
+    flag is only set where a job exists to consume it."""
+    state = _st()
+    if state["jobs"]:
+        state["restored"] = True
 
 
 def on_layer(node, client_data=None):
@@ -139,9 +172,19 @@ def _refresh_bar():
 
 def _scene_opened():
     """A scene opened by any road: a session file brings its tabs back."""
+    state = _st()
+    if _bypassed():
+        return
+    if state.pop("restored", False):
+        return
     if session.exists():
         from . import opening
-        defer(_reported(opening.restore))
+
+        def later():
+            if state.pop("restored", False):
+                return
+            return opening.restore()
+        defer(_reported(later))
     else:
         _refresh_bar()
 
@@ -179,12 +222,15 @@ def install(force=False):
     if state["callbacks"]:
         return True
     import maya.api.OpenMaya as om
-    state["callbacks"] = [
-        om.MSceneMessage.addCheckCallback(om.MSceneMessage.kBeforeSaveCheck, on_save),
-        om.MSceneMessage.addCheckFileCallback(om.MSceneMessage.kBeforeOpenCheck, on_open),
-        om.MSceneMessage.addCheckCallback(om.MSceneMessage.kBeforeNewCheck, on_new),
-        om.MDGMessage.addNodeAddedCallback(on_layer, "animLayer"),
-    ]
+    try:
+        state["callbacks"].append(om.MSceneMessage.addCheckCallback(om.MSceneMessage.kBeforeSaveCheck, on_save))
+        state["callbacks"].append(
+            om.MSceneMessage.addCheckFileCallback(om.MSceneMessage.kBeforeOpenCheck, on_open))
+        state["callbacks"].append(om.MSceneMessage.addCheckCallback(om.MSceneMessage.kBeforeNewCheck, on_new))
+        state["callbacks"].append(om.MDGMessage.addNodeAddedCallback(on_layer, "animLayer"))
+    except Exception:
+        remove()
+        raise
     if not cmds.about(batch=True):
         state["jobs"] = [cmds.scriptJob(event=("Undo", _refresh_bar)),
                          cmds.scriptJob(event=("Redo", _refresh_bar)),

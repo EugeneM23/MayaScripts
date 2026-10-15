@@ -725,9 +725,80 @@ def phase_restore():
          and layer_parent("Layer1") == "BaseAnimation")
 
 
+def phase_hook_failures():
+    """A failing check callback refuses (False, nothing written); open_any restores once."""
+    from maya_scenetabs import opening, saving
+    rig, film, plain = copy("rig.ma"), copy("film.ma"), copy("plain.mb")
+    fresh()
+    cmds.file(rig, open=True, force=True)
+    opening.open_tab(film)
+    hooks = hooks_on()
+    stamp = os.path.getmtime(film)
+    real = session.state
+    calls = []
+    def boom():
+        calls.append(1)
+        raise RuntimeError("injected")
+    session.state = boom
+    try:
+        result = hooks.on_save()
+    finally:
+        session.state = real
+    flush()
+    gate("hooks: a failing Save check refuses and writes nothing",
+         result is False and calls and os.path.getmtime(film) == stamp and not QUEUE)
+    recovered = RUN + "/open_any_session.ma"
+    with hooks.bypass():
+        cmds.file(rename=recovered)
+        cmds.file(save=True, force=True, type="mayaAscii")
+    fresh()
+    cmds.file(recovered, open=True, force=True)
+    opening.restore()
+    hooks._st()["jobs"] = [0]                   # as in a GUI: a job exists to consume the flag
+    count = []
+    hooks._st()["defer"] = QUEUE.append
+    real_restore = opening.restore
+    def counted():
+        count.append(1)
+        return real_restore()
+    opening.restore = counted
+    opening.ASK = lambda message, buttons: "Don't Save"
+    try:
+        opening.open_any(recovered)
+        hooks._scene_opened()                 # the SceneOpened job, after bypass is gone
+        flush()
+    finally:
+        opening.restore = real_restore
+        opening.ASK = None
+    gate("hooks: open_any on a session file restores exactly once", len(count) == 1, count)
+    count[:] = []
+    hooks._st()["defer"] = QUEUE.append
+    opening.restore = counted
+    try:
+        hooks._scene_opened()                   # a later, genuine open of a session file
+        flush()
+    finally:
+        opening.restore = real_restore
+    gate("hooks: a genuine SceneOpened still restores", len(count) == 1, count)
+
+
+def guarded(phase):
+    def run():
+        try:
+            phase()
+        finally:
+            try:
+                from maya_scenetabs import hooks
+                hooks.remove()
+            except Exception:                                   # noqa: BLE001
+                pass
+    return run
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
-          "save": phase_save, "hooks": phase_hooks, "restore": phase_restore}
+          "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
+          "hook_failures": guarded(phase_hook_failures)}
 
 
 def main(names):

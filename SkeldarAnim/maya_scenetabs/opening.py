@@ -139,7 +139,9 @@ def open_any(path):
     from . import hooks
     with hooks.bypass():
         cmds.file(path, open=True, force=True)
-    return restore()
+    message = restore()
+    hooks.restored_here()
+    return message
 
 
 def new_tab():
