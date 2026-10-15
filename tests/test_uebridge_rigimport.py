@@ -287,9 +287,10 @@ class ThePress(unittest.TestCase):
             ungroup=lambda node: self.calls.append(("ungroup", node)),
             ls=lambda node, uuid=False, long=False: (
                 ["UUID-" + node] if uuid else [self.paths.get(node, node)]),
+            # Maya answers a node made by an absolute name without the leading ":" (measured)
             group=lambda node, name=None: self.calls.append(("group", node, name)) or (
-                self.paths.update({"UUID-" + node: "|%s|%s" % (name, node.lstrip("|"))})
-                or name),
+                self.paths.update({"UUID-" + node: "|%s|%s" % (name.lstrip(":"), node.lstrip("|"))})
+                or name.lstrip(":")),
             move=lambda x, y, z, node, relative=False, worldSpace=False: self.calls.append(
                 ("move", (x, y, z), node, relative, worldSpace)),
             objExists=lambda name: name in self.holder,
@@ -419,7 +420,7 @@ class ThePress(unittest.TestCase):
         self.assertEqual(self._steps(), ["add", "import", "group", "connect", "move",
                                          "bake", "delete_ns"])
         self.assertEqual([c for c in self.calls if c[0] == "group"],
-                         [("group", "|A:root", "A:" + rigimport.SHIFT_NODE)])
+                         [("group", "|A:root", ":A:" + rigimport.SHIFT_NODE)])
         self.assertEqual([c for c in self.calls if c[0] == "connect"][0][1],
                          "|A:%s|A:root" % rigimport.SHIFT_NODE)
         self.assertEqual([c for c in self.calls if c[0] == "move"],
@@ -578,7 +579,7 @@ class ThePress(unittest.TestCase):
         self.assertEqual(moved, (246.0, 12.0))
         self.assertIn(("read", "|A:root.worldMatrix[0]", 3.0), self.calls)
         self.assertEqual([c for c in self.calls if c[0] == "group"],
-                         [("group", "|A:root", "A:" + rigimport.SHIFT_NODE)])
+                         [("group", "|A:root", ":A:" + rigimport.SHIFT_NODE)])
         self.assertEqual([c for c in self.calls if c[0] == "move"],
                          [("move", (246.0, 0.0, 12.0), "A:" + rigimport.SHIFT_NODE, True, True)])
 

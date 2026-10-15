@@ -72,6 +72,11 @@ def name_in(namespace, leaf):
     return namespace + ":" + leaf if namespace else leaf
 
 
+def _made(namespace, leaf):
+    """`name_in` for a node about to be CREATED: absolute (a scene tab may be current)."""
+    return scope.as_created(name_in(namespace, leaf))
+
+
 # ----------------------------------------------------------- the character
 
 def _root_of_handle(path):
@@ -301,7 +306,7 @@ def _circle_points(radius, plane, segments=24):
 
 
 def _handle(namespace, parent, radius):
-    handle = cmds.createNode("transform", name=name_in(namespace, "COM_handle"),
+    handle = cmds.createNode("transform", name=_made(namespace, "COM_handle"),
                              parent=parent)
     for plane in ("xy", "yz", "xz"):
         _curve_shape(handle, _circle_points(radius, plane), HANDLE_COLOUR)
@@ -317,7 +322,7 @@ def _handle(namespace, parent, radius):
 
 
 def _floor_marker(namespace, parent, radius):
-    floor = cmds.createNode("transform", name=name_in(namespace, "COM_floor"),
+    floor = cmds.createNode("transform", name=_made(namespace, "COM_floor"),
                             parent=parent)
     _curve_shape(floor, _circle_points(radius * 1.4, "xz"), FLOOR_COLOUR)
     r = radius * 2.0
@@ -331,10 +336,10 @@ def _floor_marker(namespace, parent, radius):
 
 
 def _trail(namespace, parent, leaf, colour, part):
-    xform = cmds.createNode("transform", name=name_in(namespace, leaf),
+    xform = cmds.createNode("transform", name=_made(namespace, leaf),
                             parent=parent)
     cmds.setAttr(xform + ".inheritsTransform", 0)
-    shape = cmds.createNode("motionTrailShape", name=name_in(namespace, leaf + "Shape"),
+    shape = cmds.createNode("motionTrailShape", name=_made(namespace, leaf + "Shape"),
                             parent=xform)
     past, future = colour
     cmds.setAttr(shape + ".trailDrawMode", 2)          # Past / Future
@@ -360,11 +365,11 @@ def create(char, model, info):
     made = []
 
     def node(kind, leaf, **kw):
-        n = cmds.createNode(kind, name=name_in(namespace, leaf), **kw)
+        n = cmds.createNode(kind, name=_made(namespace, leaf), **kw)
         made.append(n)
         return n
 
-    group = cmds.createNode("transform", name=name_in(namespace, "CenterOfMass"),
+    group = cmds.createNode("transform", name=_made(namespace, "CenterOfMass"),
                             **({"parent": parent} if parent else {}))
     made.append(group)
     cmds.addAttr(group, longName=MARKER, dataType="string")

@@ -411,7 +411,7 @@ def _rename_back(uuid, short):
     if not paths:
         return                # the animator deleted it mid-import
     try:
-        cmds.rename(paths[0], short)
+        cmds.rename(paths[0], scope.root_name(short))
     except RuntimeError:
         pass                  # nothing better to do; the name is cosmetic
 
@@ -454,7 +454,7 @@ def target_root_plain(target_root, joints):
         if not uuid or uuid == root_uuid:
             continue
         try:
-            cmds.rename(node, hold_name(wanted))
+            cmds.rename(node, scope.root_name(hold_name(wanted)))
         except RuntimeError:
             blocked = True    # locked, referenced, read-only
             break
@@ -464,7 +464,7 @@ def target_root_plain(target_root, joints):
     path = (cmds.ls(root_uuid, long=True) or [None])[0]
     if not blocked and path:
         try:
-            if _short(cmds.rename(path, wanted)) == wanted:
+            if _short(cmds.rename(path, scope.root_name(wanted))) == wanted:
                 took = wanted
             else:
                 _rename_back(root_uuid, leaf)
@@ -604,7 +604,7 @@ def other_skeletons_held(target_root, roots=None):
             if not paths:
                 continue          # the animator deleted it mid-import
             try:
-                cmds.rename(paths[0], short)
+                cmds.rename(paths[0], scope.root_name(short))
             except RuntimeError:
                 pass              # nothing better to do; the name is cosmetic
 

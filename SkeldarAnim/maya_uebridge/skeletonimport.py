@@ -28,6 +28,8 @@ import os
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_uebridge import rigimport
 
 TWIN_TOLERANCE = 0.01     # the median bone within 1 % of the clip's makes a twin
@@ -827,7 +829,8 @@ def transfer_foreign(source_root, target_root, start, end, mode=None):
     if scale != 1.0:
         namespace = source_root.split("|")[-1].rpartition(":")[0]
         wrapper = cmds.createNode("transform", skipSelect=True,
-                                  name=(namespace + ":" if namespace else "") + "skeldarUnitScale",
+                                  name=scope.as_created((namespace + ":" if namespace else "")
+                                                        + "skeldarUnitScale"),
                                   parent=above[0] if above else None)
         cmds.parent(source_root, wrapper, relative=True)
         local = pivot

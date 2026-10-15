@@ -178,6 +178,12 @@ def _n(rig, leaf_name):
     return maya_rigs.node(rig, leaf_name)
 
 
+def _made(rig, leaf_name):
+    """`_n` for a node about to be CREATED: absolute, so it lands in the rig's
+    namespace whatever namespace is current (a scene tab's, 2026-10-15)."""
+    return scope.as_created(_n(rig, leaf_name))
+
+
 def _rig(rig):
     """The rig to act on: the one given, else the selection's, else the sole
     rig. Returns (rig, refusal)."""
@@ -729,7 +735,7 @@ def _holder(rig):
     rig's namespace, so two connected rigs each have their own."""
     holder = holder_of(rig)
     if not cmds.objExists(holder):
-        cmds.createNode("transform", name=holder, skipSelect=True)
+        cmds.createNode("transform", name=scope.as_created(holder), skipSelect=True)
         for attr in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
             cmds.setAttr(holder + "." + attr, lock=True)
     if not cmds.attributeQuery(SWITCH, node=holder, exists=True):
@@ -769,7 +775,8 @@ def _scale_group(factor, rig):
     namespace: a plain `pmrtScale` would find the OTHER rig's on the second connect."""
     group = _n(rig, SCALE_GROUP)
     if not cmds.objExists(group):
-        grp = cmds.createNode("transform", name=group, parent=holder_of(rig), skipSelect=True)
+        grp = cmds.createNode("transform", name=scope.as_created(group), parent=holder_of(rig),
+                              skipSelect=True)
         cmds.setAttr(grp + ".scale", factor, factor, factor)
     return group
 
@@ -786,13 +793,13 @@ def _scaled_follower(source_path, name, factor, offset, rig):
     space -- RootX_M's parent follows Main, so a yaw of Main turned the offset with it
     (measured: 0.115 off after a 25 deg root turn).  All three die with the holder.
     """
-    follower = cmds.createNode("transform", name=_n(rig, FOLLOW_PREFIX + name), parent=holder_of(rig),
+    follower = cmds.createNode("transform", name=_made(rig, FOLLOW_PREFIX + name), parent=holder_of(rig),
                                skipSelect=True)
     con = cmds.pointConstraint(source_path, follower)[0]
-    scaled = cmds.createNode("transform", name=_n(rig, SCALED_PREFIX + name), parent=_scale_group(factor, rig),
+    scaled = cmds.createNode("transform", name=_made(rig, SCALED_PREFIX + name), parent=_scale_group(factor, rig),
                              skipSelect=True)
     cmds.connectAttr(follower + ".translate", scaled + ".translate")
-    shifted = cmds.createNode("transform", name=_n(rig, OFFSET_PREFIX + name), parent=scaled, skipSelect=True)
+    shifted = cmds.createNode("transform", name=_made(rig, OFFSET_PREFIX + name), parent=scaled, skipSelect=True)
     cmds.setAttr(shifted + ".translate", *[o / factor for o in offset])
     return shifted, [con]
 
@@ -827,19 +834,19 @@ def _pole_rig(control, upper, mid, lower, rig):
         raise RuntimeError("%s rests on the limb's line and the limb is straight: no pole side" % control)
     mid_rot = om.MTransformationMatrix(om.MMatrix(cmds.getAttr(mid + ".worldMatrix[0]"))).rotation(asQuaternion=True).asMatrix()
     local = (side.normal() * -NUDGE * length) * mid_rot.inverse()        # row vectors: local = world * R^-1
-    base = cmds.createNode("transform", name=_n(rig, POLE_BASE_PREFIX + control), parent=holder_of(rig),
+    base = cmds.createNode("transform", name=_made(rig, POLE_BASE_PREFIX + control), parent=holder_of(rig),
                            skipSelect=True)
     con = cmds.pointConstraint(upper, lower, base)[0]
     w = cmds.pointConstraint(con, query=True, weightAliasList=True)
     cmds.setAttr("%s.%s" % (con, w[0]), d_lower)
     cmds.setAttr("%s.%s" % (con, w[1]), d_upper)
-    frame = cmds.createNode("transform", name=_n(rig, POLE_FRAME_PREFIX + control), parent=base, skipSelect=True)
+    frame = cmds.createNode("transform", name=_made(rig, POLE_FRAME_PREFIX + control), parent=base, skipSelect=True)
     made = [con, cmds.orientConstraint(mid, frame)[0]]
-    nudge = cmds.createNode("transform", name=_n(rig, POLE_NUDGE_PREFIX + control), parent=frame, skipSelect=True)
+    nudge = cmds.createNode("transform", name=_made(rig, POLE_NUDGE_PREFIX + control), parent=frame, skipSelect=True)
     cmds.setAttr(nudge + ".translate", local.x, local.y, local.z)
     made.append(cmds.aimConstraint(mid, nudge, aimVector=(1, 0, 0), upVector=(0, 1, 0),
                                    worldUpType="vector", worldUpVector=(0, 1, 0))[0])
-    pole = cmds.createNode("transform", name=_n(rig, POLE_PREFIX + control), parent=nudge, skipSelect=True)
+    pole = cmds.createNode("transform", name=_made(rig, POLE_PREFIX + control), parent=nudge, skipSelect=True)
     cmds.setAttr(pole + ".translateX", length)
     return pole, made
 

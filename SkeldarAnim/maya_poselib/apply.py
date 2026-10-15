@@ -996,9 +996,9 @@ def _rebuild(data, point):
         if not built:
             return None, NOT_ADDED % (data.get("name") or "the pose's skeleton", "no joint built")
         root_uuid = cmds.ls(built[0], uuid=True)[0]
-        proxy = cmds.polyCube(name=namespace + ":" + REST_PROXY, constructionHistory=False)[0]
+        proxy = cmds.polyCube(name=":" + namespace + ":" + REST_PROXY, constructionHistory=False)[0]
         proxy_uuid = cmds.ls(proxy, uuid=True)[0]
-        cmds.skinCluster(built + [proxy], toSelectedBones=True, name=namespace + ":restSkin")
+        cmds.skinCluster(built + [proxy], toSelectedBones=True, name=":" + namespace + ":restSkin")
         cmds.addAttr(proxy, longName=REST_MARK, attributeType="bool", defaultValue=True)
         cmds.setAttr(proxy + ".visibility", False)
         root = _long(root_uuid)

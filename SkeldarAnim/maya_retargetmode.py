@@ -602,14 +602,16 @@ def scale_space(source_root, factor, parent, name, start=None):
     kwargs = dict(skipSelect=True)
     if parent:
         kwargs["parent"] = parent
-    space = cmds.createNode("transform", name=name + "Space", **kwargs)
+    from maya_scenetabs import scope
+    space = cmds.createNode("transform", name=scope.as_created(name + "Space"), **kwargs)
     made = []
     up = cmds.listRelatives(source_root, parent=True, fullPath=True)
     if up:
         cmds.xform(space, worldSpace=True,
                    matrix=cmds.xform(up[0], query=True, worldSpace=True, matrix=True))
         made.append(cmds.parentConstraint(up[0], space, maintainOffset=True)[0])
-    scaled = cmds.createNode("transform", name=name + "Scaled", parent=space, skipSelect=True)
+    scaled = cmds.createNode("transform", name=scope.as_created(name + "Scaled"), parent=space,
+                             skipSelect=True)
     pivot = to_local(floor_pivot(root_start(source_root, start)),
                      cmds.xform(space, query=True, worldSpace=True, matrix=True))
     cmds.setAttr(scaled + ".scalePivot", *pivot)
@@ -621,12 +623,16 @@ def scaled_follower(joint, space, scaled, factor, name):
     """A transform at the joint scaled by `factor` in the space (see above).
     Returns (follower, made constraints)."""
     import maya.cmds as cmds
-    follow = cmds.createNode("transform", name=name + "Follow", parent=space, skipSelect=True)
+    from maya_scenetabs import scope
+    follow = cmds.createNode("transform", name=scope.as_created(name + "Follow"), parent=space,
+                             skipSelect=True)
     made = [cmds.pointConstraint(joint, follow)[0], cmds.orientConstraint(joint, follow)[0]]
-    body = cmds.createNode("transform", name=name + "Body", parent=scaled, skipSelect=True)
+    body = cmds.createNode("transform", name=scope.as_created(name + "Body"), parent=scaled,
+                           skipSelect=True)
     cmds.connectAttr(follow + ".translate", body + ".translate")
     cmds.connectAttr(follow + ".rotate", body + ".rotate")
-    unit = cmds.createNode("transform", name=name, parent=body, skipSelect=True)
+    unit = cmds.createNode("transform", name=scope.as_created(name), parent=body,
+                           skipSelect=True)
     # scale 1 in WORLD: the body carries `factor` AND whatever scale the clip's top node
     # has (a scaled wrapper is copied into the space at creation, and a parentConstraint
     # never drives scale, so it stays what it was) - a follower left at that scale would

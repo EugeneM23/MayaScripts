@@ -26,6 +26,8 @@ import math
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 # camera_root since 2026-09-18 (the animator: «не camera bone привязывать к
 # камере, а camera root»). At rest the two coincide on the rig (world
 # matrices equal to 0.000000, measured), camera_bone being camera_root's
@@ -251,9 +253,9 @@ def setup(bone, start, end):
         # transform, and the animator picks this camera out of a menu by name.
         transform, _shape = cmds.camera()
         name = camera_name_for(bone)
-        transform = cmds.ls(cmds.rename(transform, name), long=True)[0]
+        transform = cmds.ls(cmds.rename(transform, scope.as_created(name)), long=True)[0]
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
-        shape = cmds.rename(shape, name + "Shape")
+        shape = cmds.rename(shape, scope.as_created(name + "Shape"))
         lens(shape)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)

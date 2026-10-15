@@ -57,6 +57,8 @@ import os
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_uebridge import animimport
 from maya_uebridge import records
 
@@ -209,7 +211,7 @@ def _wrap(source, namespace):
     """The clip's root inside a group of its namespace (it dies with the
     namespace), standing where it stood: (group, the root's new path)."""
     uuid = cmds.ls(source, uuid=True)[0]
-    group = cmds.group(source, name="{0}:{1}".format(namespace, SHIFT_NODE))
+    group = cmds.group(source, name=scope.as_created("{0}:{1}".format(namespace, SHIFT_NODE)))
     return group, cmds.ls(uuid, long=True)[0]
 
 

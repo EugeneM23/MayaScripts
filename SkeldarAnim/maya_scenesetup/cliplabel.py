@@ -57,6 +57,8 @@ import traceback
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 MARKER = "skeldarClipLabel"          # string, on the label transform: the clip's name
 ROOT_LINK = "skeldarClipLabelRoot"   # message, fed by the character root's .message
 PART_LINK = "skeldarClipLabelOf"     # message on each follow node, fed by the label's .message
@@ -276,12 +278,13 @@ def _dress(label, shape):
 
 def _make(root, namespace, home, name, text):
     """A new label for `root`, on the floor under it, following it."""
-    label = cmds.createNode("transform", name=node_name(namespace, root),
+    label = cmds.createNode("transform", name=scope.as_created(node_name(namespace, root)),
                             skipSelect=True)
     if home and cmds.objExists(home):
         label = cmds.parent(label, home)[0]
     label = _long(label)
-    shape = cmds.createNode("annotationShape", name=label.split("|")[-1] + "Shape",
+    shape = cmds.createNode("annotationShape",
+                            name=scope.as_created(label.split("|")[-1] + "Shape"),
                             parent=label, skipSelect=True)
     shape = _long(shape)
     _dress(label, shape)
@@ -319,7 +322,7 @@ def _follow(label, root):
     made = []
 
     def part(kind, suffix):
-        node = cmds.createNode(kind, name="{0}_{1}".format(base, suffix),
+        node = cmds.createNode(kind, name=scope.as_created("{0}_{1}".format(base, suffix)),
                                skipSelect=True)
         cmds.addAttr(node, longName=PART_LINK, attributeType="message")
         cmds.connectAttr(label + ".message", node + "." + PART_LINK)

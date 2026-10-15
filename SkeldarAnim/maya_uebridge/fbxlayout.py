@@ -23,6 +23,8 @@ import math
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 WRAP_ROTATE = (-90.0, 0.0, 0.0)     # Cascadeur's Null: Z-up content in a Y-up file
 WRAPPER_NAME = "Armature"           # the Null's name, one for every character (2026-09-25 evening)
 # the catalog key Add Character wrote on a root on 2026-09-25 alone (the morning's per-character
@@ -263,7 +265,7 @@ def _named(node, name):
         if original != name:
             for other in cmds.ls(":" + name, long=True) or []:
                 held.append(cmds.ls(other, uuid=True)[0])
-                cmds.rename(other, HOLD_PREFIX + name)
+                cmds.rename(other, ":" + HOLD_PREFIX + name)
             got = cmds.rename(cmds.ls(uuid, long=True)[0], ":" + name)
             renamed = True
             if got.split("|")[-1] != name:
@@ -274,10 +276,10 @@ def _named(node, name):
     finally:
         if renamed:
             for path in cmds.ls(uuid, long=True) or []:
-                cmds.rename(path, ":" + original if ":" not in original else original)
+                cmds.rename(path, scope.root_name(original))
         for other in held:
             for path in cmds.ls(other, long=True) or []:
-                cmds.rename(path, name)
+                cmds.rename(path, ":" + name)
 
 
 @contextlib.contextmanager
@@ -355,7 +357,7 @@ def wrapped(root, name):
     try:
         for node in cmds.ls(":" + name, long=True) or []:
             held.append(cmds.ls(node, uuid=True)[0])
-            cmds.rename(node, HOLD_PREFIX + name)
+            cmds.rename(node, ":" + HOLD_PREFIX + name)
         wrapper = cmds.createNode("transform", name=":" + name)
         wrapper_uuid = cmds.ls(wrapper, uuid=True)[0]
         if wrapper.split("|")[-1] != name:
@@ -383,4 +385,4 @@ def wrapped(root, name):
             cmds.delete(path)
         for uuid in held:
             for path in cmds.ls(uuid, long=True) or []:
-                cmds.rename(path, name)
+                cmds.rename(path, ":" + name)

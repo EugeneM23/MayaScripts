@@ -42,6 +42,8 @@ import re
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_rigs
 
 MARKER = maya_rigs.CHARACTER_MARKER
@@ -130,8 +132,15 @@ def layer_of(group):
 
 
 def taken_names():
-    """Root-namespace node names in the scene (what a new group or layer must not collide with)."""
-    return set(n for n in (cmds.ls() or []) if ":" not in n and "|" not in n)
+    """Node names in the namespace a new group or layer goes into - the active scene tab's while
+    tabs are on (2026-10-15), else the root - with that namespace taken off."""
+    active = scope.active_namespace(cmds)
+    prefix = active + ":" if active else ""
+    names = [n for n in (cmds.ls() or []) if "|" not in n]
+    if not prefix:
+        return set(n for n in names if ":" not in n)
+    return set(n[len(prefix):] for n in names
+               if n.startswith(prefix) and ":" not in n[len(prefix):])
 
 
 def make(base, label, root, tops):
@@ -142,7 +151,8 @@ def make(base, label, root, tops):
     base = free_base(base, taken_names())
     uuid, layer, moved = None, None, []
     try:
-        group = cmds.createNode("transform", name=":" + group_name(base), skipSelect=True)
+        group = cmds.createNode("transform", name=scope.absolute(group_name(base), cmds),
+                                skipSelect=True)
         uuid = _uuid(group)
         group = _long(group)
         cmds.addAttr(group, longName=MARKER, dataType="string")
@@ -158,7 +168,8 @@ def make(base, label, root, tops):
         group = _long(uuid)
         for attr in LOCKED:
             cmds.setAttr(group + "." + attr, lock=True)
-        layer = cmds.createDisplayLayer(name=":" + layer_name(base), empty=True, noRecurse=True)
+        layer = cmds.createDisplayLayer(name=scope.absolute(layer_name(base), cmds), empty=True,
+                                        noRecurse=True)
         cmds.editDisplayLayerMembers(layer, group, noRecurse=True)
     except Exception:
         # All or nothing (2026-10-02, the review): a group half made -- some tops in it, no
@@ -238,6 +249,6 @@ def lifted(node):
             now = _long(top_uuid)
             if now and now.split("|")[-1] != name:
                 try:
-                    cmds.rename(now, name)
+                    cmds.rename(now, scope.root_name(name))
                 except RuntimeError:
                     pass
