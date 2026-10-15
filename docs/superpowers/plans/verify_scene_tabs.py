@@ -269,7 +269,104 @@ def phase_layers_alone():
     gate("layers: flatten - the layer still plays", value_at("tab_film:hero.rotateY", 20) == 45.0)
 
 
-PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert}
+def tops_visible(namespace):
+    from maya_scenetabs import switching
+    return [cmds.getAttr(t + ".lodVisibility") for t in switching.tops(namespace)]
+
+
+def phase_layers():
+    """Three tabs with layers: the session owns the root; closing tab 1 leaves the others; back to one scene."""
+    from maya_scenetabs import layers, opening, switching
+    film, film_b, film_c = copy("film.ma"), copy("film.ma", "film_b.ma"), copy("film.ma", "film_c.ma")
+    fresh()
+    cmds.file(film, open=True, force=True)
+    opening.open_tab(film_b)
+    opening.open_tab(film_c)
+    gate("layers: the session owns the root", layers.root() == records.LAYER_ROOT, layers.root())
+    roots = [layers.tab_root(ns) for ns in ("tab_film", "tab_film_b", "tab_film_c")]
+    gate("layers: each tab has its own root under the session's",
+         all(r and layer_parent(r) == records.LAYER_ROOT for r in roots), roots)
+    gate("layers: each tab's layer under its own root",
+         all(layer_parent(ns + ":Layer1") == r for ns, r in zip(("tab_film", "tab_film_b", "tab_film_c"), roots)))
+    gate("layers: every tab plays its layer",
+         [value_at(ns + ":hero.rotateY", 20) for ns in ("tab_film", "tab_film_b", "tab_film_c")] == [45.0] * 3)
+    opening.close_tab("tab_film", ask=False)
+    gate("layers: closing tab 1 keeps the root", layers.root() == records.LAYER_ROOT)
+    gate("layers: closing tab 1 keeps the others' layers",
+         layer_parent("tab_film_b:Layer1") == layers.tab_root("tab_film_b")
+         and value_at("tab_film_b:hero.rotateY", 20) == 45.0)
+    switching.switch("tab_film_b")
+    cmds.select("tab_film_b:hero")
+    made = cmds.animLayer("Fresh", addSelectedObjects=True)
+    gate("layers: a new layer after closing tab 1, no crash", cmds.objExists(made), made)
+    layers.adopt(made, "tab_film_b")
+    gate("layers: adopted under the active tab's root", layer_parent(made) == layers.tab_root("tab_film_b"))
+    opening.close_tab("tab_film_c", ask=False)
+    gate("layers: back to one scene - BaseAnimation is the root", layers.root() == "BaseAnimation", layers.root())
+    gate("layers: back to one scene - both layers under it",
+         layer_parent("Layer1") == "BaseAnimation" and layer_parent("Fresh") == "BaseAnimation")
+    gate("layers: back to one scene - the layer plays", value_at("hero.rotateY", 20) == 45.0)
+
+
+def phase_open_close():
+    """Three tabs from three kinds of file; a reload; closing; back to one scene."""
+    from maya_scenetabs import opening, switching
+    import maya_rigs
+    rig, film, plain = copy("rig.ma"), copy("film.ma"), copy("plain.mb")
+    fresh()
+    cmds.file(rig, open=True, force=True)
+    builtins.SKELDAR_TABS_RAN = False
+    opening.open_tab(film)
+    opening.open_tab(plain)
+    state = session.state()
+    gate("open: three tabs in order", [t["ns"] for t in state["tabs"]] == ["tab_rig", "tab_film", "tab_plain"],
+         [t["ns"] for t in state["tabs"]])
+    gate("open: units read from the files", [t["unit"] for t in state["tabs"]] == ["ntsc", "film", "ntscf"],
+         [t["unit"] for t in state["tabs"]])
+    gate("open: the film's ranges read from its file", records.tab(state, "tab_film")["ranges"] ==
+         {"minTime": 5.0, "maxTime": 40.0, "animationStartTime": 0.0, "animationEndTime": 45.0},
+         records.tab(state, "tab_film")["ranges"])
+    gate("open: the nested reference stays a reference",
+         cmds.referenceQuery("tab_film:refRN", namespace=True) == ":tab_film:ref")
+    gate("open: the file's script node did not run", not builtins.SKELDAR_TABS_RAN)
+    gate("open: only the active tab shows",
+         tops_visible("tab_plain") and all(tops_visible("tab_plain")) and not any(tops_visible("tab_rig"))
+         and not any(tops_visible("tab_film")))
+    gate("open: hidden tabs are out of the outliner",
+         all(cmds.getAttr(t + ".hiddenInOutliner") for t in switching.tops("tab_rig")))
+    gate("open: the active tab's unit is the scene's", cmds.currentUnit(q=True, time=True) == "ntscf")
+    gate("open: keys on whole frames in their own unit",
+         cmds.keyframe("tab_plain:ball.translateX", q=True, timeChange=True) == [0.0, 24.0])
+    gate("open: the rig is still found", [r.namespace for r in maya_rigs.rigs()] == ["tab_rig:Manny_Rig"])
+    switching.switch("tab_film")
+    cmds.setAttr("tab_film:hero.translateZ", 5)
+    opening.ASK = lambda message, buttons: "Reload"
+    message = opening.reload_tab()
+    opening.ASK = None
+    gate("reload: the tab's changes dropped, read from disk", cmds.getAttr("tab_film:hero.translateZ") == 0.0
+         and session.state()["active"] == "tab_film", message)
+    gate("reload: still in its own unit, its layer playing", cmds.currentUnit(q=True, time=True) == "film"
+         and value_at("tab_film:hero.rotateY", 20) == 45.0)
+    switching.switch("tab_plain")
+    opening.close_tab("tab_plain")
+    gate("close: the tab's namespace is gone", not cmds.namespace(exists=":tab_plain"))
+    gate("close: the right-hand neighbour - none - so the left one is active",
+         session.state()["active"] == "tab_film")
+    cmds.setAttr("tab_film:hero.translateX", 3)
+    opening.ASK = lambda message, buttons: "Cancel"
+    message = opening.close_tab("tab_film")
+    gate("close: Cancel keeps a modified tab", cmds.namespace(exists=":tab_film") and "cancelled" in message, message)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    message = opening.close_tab("tab_film")
+    opening.ASK = None
+    gate("close: down to one tab is one ordinary scene", not session.exists() and scene_is(rig), message)
+    gate("close: its names are plain again", [r.namespace for r in maya_rigs.rigs()] == ["Manny_Rig"])
+    gate("close: no tab namespace left", not [n for n in cmds.namespaceInfo(":", listOnlyNamespaces=True) or []
+                                              if n.startswith(records.TAB_PREFIX)])
+
+
+PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
+          "layers": phase_layers, "open_close": phase_open_close}
 
 
 def main(names):
