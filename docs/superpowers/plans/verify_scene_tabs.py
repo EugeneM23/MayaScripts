@@ -231,7 +231,45 @@ def phase_session():
          cmds.objExists("tab_rig:Manny_Rig_Character") and cmds.namespace(exists=":tab_rig:Manny_Rig"))
 
 
-PHASES = {"session": phase_session, "convert": phase_convert}
+def layer_parent(layer):
+    return cmds.animLayer(layer, q=True, parent=True) or ""
+
+
+def phase_layers_alone():
+    """layers without tabs: the film scene's root handed to the session and back."""
+    from maya_scenetabs import layers
+    path = copy("film.ma")
+    fresh()
+    cmds.file(path, open=True, force=True)
+    children = layers.take_root()
+    gate("layers: the session takes the root", layers.root() == records.LAYER_ROOT, layers.root())
+    session.move_into("tab_film")
+    made = layers.give_children("tab_film", children)
+    gate("layers: the tab's root under the session's", made == "tab_film:AnimLayerRoot"
+         and layer_parent(made) == records.LAYER_ROOT, made)
+    gate("layers: the tab's layer under the tab's root", layer_parent("tab_film:Layer1") == made)
+    gate("layers: the layer still plays", value_at("tab_film:hero.rotateY", 20) == 45.0)
+    blends = sorted(cmds.ls(type="animBlendNodeBase") or [])
+    links = layers.detach(made)
+    gate("layers: detach cuts the tab root free", len(links) == 5 and layer_parent(made) == "", links)
+    layers.attach(links)
+    gate("layers: attach puts it back, no blend node rebuilt",
+         layer_parent(made) == records.LAYER_ROOT and sorted(cmds.ls(type="animBlendNodeBase") or []) == blends)
+    cmds.select("tab_film:hero")
+    cmds.namespace(setNamespace=":tab_film")
+    fresh_layer = cmds.animLayer("Fresh", addSelectedObjects=True)
+    cmds.namespace(setNamespace=":")
+    gate("layers: Maya parents a new layer to the session root", layer_parent(fresh_layer) == records.LAYER_ROOT)
+    gate("layers: adopt moves it under the tab's root", layers.adopt(fresh_layer, "tab_film")
+         and layer_parent(fresh_layer) == made)
+    layers.flatten("tab_film")
+    gate("layers: flatten - BaseAnimation is the root again", layers.root() == "BaseAnimation")
+    gate("layers: flatten - the layers under it, the tab root gone",
+         layer_parent("tab_film:Layer1") == "BaseAnimation" and not cmds.objExists(made))
+    gate("layers: flatten - the layer still plays", value_at("tab_film:hero.rotateY", 20) == 45.0)
+
+
+PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert}
 
 
 def main(names):
