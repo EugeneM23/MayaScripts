@@ -68,6 +68,17 @@ NO_VIEWPORT = "no viewport for a thumbnail"
 #  character shot as it is, on its card type's colour
 BACKDROPS = {"pose": (0.86, 0.47, 0.19), "anim": (0.33, 0.60, 0.83)}
 BACKDROP_COLOURS = ("background", "backgroundTop", "backgroundBottom")
+#  ... and painted as a studio backdrop (the same day: «Добавь красивый градиент на фон или
+#  студийный свет»): a playblast cannot draw a gradient (it takes the flat colour - Viewport
+#  Studio's lesson), but its PNG keeps the background TRANSPARENT, so the blast is a PNG and the
+#  character is laid over a radial light painted here (`studio`): a pool of light a little above
+#  the middle, the colour, and the corners falling to dark. A blast with no alpha (a renderer
+#  that fills it) shows the flat backdrop colour as before.
+STUDIO_CENTRE = (0.5, 0.40)       # where the pool of light stands, fractions of the picture
+STUDIO_RADIUS = 0.78              # its reach, a fraction of the picture's side
+STUDIO_LIGHT = 0.42               # the centre: the colour this far toward white
+STUDIO_DARK = 0.38                # the corners: the colour times this
+STUDIO_FLOOR = 0.18               # a soft floor glow under the character (its strength)
 NO_BONE = "no bone of %s in the pose of %s"
 
 
@@ -282,7 +293,7 @@ def blast_options(panel, width, height):
     """The playblast flags every blast of the library takes: JPG images at BLAST_QUALITY, the
     port's own size at 100 % (WYSIWYG for the animator's camera), offscreen, no viewer and no
     ornaments, overwriting, the cache cleared, from `panel`."""
-    return dict(format="image", compression="jpg", quality=BLAST_QUALITY,
+    return dict(format="image", compression="png", quality=BLAST_QUALITY,
                 widthHeight=(width, height), percent=100, viewer=False, showOrnaments=False,
                 offScreen=True, forceOverwrite=True, clearCache=True, editorPanelName=panel)
 
@@ -386,7 +397,7 @@ def thumbnail(path, size=THUMB_SIZE, kind="pose"):
     if qt is None:
         return False, "no Qt for a thumbnail"
     raw = os.path.join(tempfile.gettempdir(),
-                       "skeldar_pose_thumbnail_%d.jpg" % os.getpid()).replace("\\", "/")
+                       "skeldar_pose_thumbnail_%d.png" % os.getpid()).replace("\\", "/")
     options = blast_options(panel, width, height)
     shown = shown_flags(panel)
 
@@ -405,7 +416,7 @@ def thumbnail(path, size=THUMB_SIZE, kind="pose"):
         set_flags(panel, shown)
         tweaks.restore()
     try:
-        ok, note = square_jpg(qt, raw, path, size)
+        ok, note = square_jpg(qt, raw, path, size, kind)
     finally:
         try:
             os.remove(raw)
@@ -418,7 +429,47 @@ def thumbnail(path, size=THUMB_SIZE, kind="pose"):
         "" if settled else ", textures still loading")
 
 
-def square_jpg(qt, source, path, size=THUMB_SIZE):
+def studio_stops(kind):
+    """[(position 0..1, (r, g, b) 0..255)]: the radial light of the `kind` card's backdrop -
+    the centre light (the colour STUDIO_LIGHT toward white), the colour itself, the corners dark
+    (the colour times STUDIO_DARK). Pure."""
+    base = BACKDROPS.get(kind) or BACKDROPS["pose"]
+
+    def byte(value):
+        return int(round(max(0.0, min(1.0, value)) * 255))
+    light = tuple(byte(c + (1.0 - c) * STUDIO_LIGHT) for c in base)
+    mid = tuple(byte(c) for c in base)
+    dark = tuple(byte(c * STUDIO_DARK) for c in base)
+    return [(0.0, light), (0.5, mid), (1.0, dark)]
+
+
+def studio(qt, image, kind):
+    """`image` (a QImage, a blast with a transparent background) laid over the `kind` card's
+    studio backdrop (`studio_stops`: a radial light, a soft floor glow) - a new opaque QImage of
+    its size. An image with no alpha comes back as it is drawn: opaque over the light."""
+    core, gui = qt.QtCore, qt.QtGui
+    w, h = image.width(), image.height()
+    out = gui.QImage(w, h, gui.QImage.Format_RGB32)
+    painter = gui.QPainter(out)
+    try:
+        painter.setRenderHint(gui.QPainter.Antialiasing)
+        side = float(max(w, h))
+        centre = core.QPointF(w * STUDIO_CENTRE[0], h * STUDIO_CENTRE[1])
+        light = gui.QRadialGradient(centre, side * STUDIO_RADIUS)
+        for at, rgb in studio_stops(kind):
+            light.setColorAt(at, gui.QColor(*rgb))
+        painter.fillRect(0, 0, w, h, gui.QBrush(light))
+        glow = gui.QRadialGradient(core.QPointF(w * 0.5, h * 0.92), side * 0.45)
+        glow.setColorAt(0.0, gui.QColor(255, 255, 255, int(255 * STUDIO_FLOOR)))
+        glow.setColorAt(1.0, gui.QColor(255, 255, 255, 0))
+        painter.fillRect(0, 0, w, h, gui.QBrush(glow))
+        painter.drawImage(0, 0, image)
+    finally:
+        painter.end()
+    return out
+
+
+def square_jpg(qt, source, path, size=THUMB_SIZE, kind="pose"):
     """(ok, note): the picture at `source` centre-cropped square and scaled to `size` px with
     smooth filtering (`square_scaled`), written as a JPG at `path` (`save_jpg`: through `path +
     ".part"` and `os.replace`, so a reader never sees half a file). `qt` is `maya_hubqt.qt()` (a
@@ -426,4 +477,4 @@ def square_jpg(qt, source, path, size=THUMB_SIZE):
     image = qt.QtGui.QImage(source)
     if image.isNull():
         return False, "the playblast wrote nothing readable"
-    return save_jpg(square_scaled(qt, image, size), path, JPG_QUALITY)
+    return save_jpg(studio(qt, square_scaled(qt, image, size), kind), path, JPG_QUALITY)

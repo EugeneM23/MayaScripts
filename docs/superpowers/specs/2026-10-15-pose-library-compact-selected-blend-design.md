@@ -62,6 +62,15 @@ panel shoots on its type's colour and again when Pose / Animation is switched; R
 (and preview) by the card's type. The character is shot as it stands. Cards saved before keep
 their grey picture until Replace thumbnail.
 
+**The studio light** (the same day: «Добавь красивый градиент на фон или студийный свет»): a
+playblast takes only the flat background colour, but a PNG playblast keeps the background
+transparent (Viewport Studio's measurement). So `capture.blast_options` writes PNGs and each still
+and preview cell is laid over `capture.studio(qt, image, kind)`: a radial light centred a little
+above the middle (the colour 42 % toward white), the colour at half its reach, the corners at
+38 % of it, a faint floor glow. A blast with no alpha shows the flat backdrop colour as before.
+Picture `docs/superpowers/plans/poselib_studio_backdrop.png` (a still keyed by hand to stand in
+for a PNG blast).
+
 ## 4. The blend holds; Apply keys it
 
 - The slider, or a middle drag across a card (which picks it, the slider showing the share),

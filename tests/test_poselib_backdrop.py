@@ -76,5 +76,51 @@ class Backdrop(unittest.TestCase):
             self.assertEqual(self.fake.colours["background"], list(capture.BACKDROPS["pose"]))
 
 
+try:
+    import maya_hubqt
+    QT = maya_hubqt.qt()
+except Exception:                                            # noqa: BLE001
+    QT = None
+
+
+class StudioStops(unittest.TestCase):
+
+    def test_light_in_the_middle_dark_at_the_corners(self):
+        for kind in ("pose", "anim"):
+            (_a, light), (_b, mid), (_c, dark) = capture.studio_stops(kind)
+            self.assertGreater(sum(light), sum(mid))
+            self.assertGreater(sum(mid), sum(dark))
+        self.assertGreater(capture.studio_stops("pose")[1][1][0],
+                           capture.studio_stops("pose")[1][1][2])      # orange
+        self.assertGreater(capture.studio_stops("anim")[1][1][2],
+                           capture.studio_stops("anim")[1][1][0])      # blue
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class Studio(unittest.TestCase):
+
+    def image(self, alpha):
+        gui = QT.QtGui
+        image = gui.QImage(100, 100, gui.QImage.Format_ARGB32)
+        image.fill(gui.QColor(0, 0, 0, 0) if alpha else gui.QColor(40, 40, 40))
+        painter = gui.QPainter(image)
+        painter.fillRect(45, 30, 10, 50, gui.QColor(240, 240, 240))     # the character
+        painter.end()
+        return image
+
+    def test_a_transparent_background_becomes_the_studio_light(self):
+        out = capture.studio(QT, self.image(True), "pose")
+        centre, corner = out.pixelColor(30, 40), out.pixelColor(1, 1)
+        self.assertGreater(centre.lightness(), corner.lightness())
+        self.assertGreater(centre.red(), centre.blue())
+        self.assertEqual(out.pixelColor(50, 50).name(), "#f0f0f0")     # the character as shot
+        blue = capture.studio(QT, self.image(True), "anim").pixelColor(30, 40)
+        self.assertGreater(blue.blue(), blue.red())
+
+    def test_an_opaque_blast_is_drawn_as_it_is(self):
+        out = capture.studio(QT, self.image(False), "pose")
+        self.assertEqual(out.pixelColor(1, 1).name(), "#282828")
+
+
 if __name__ == "__main__":
     unittest.main()

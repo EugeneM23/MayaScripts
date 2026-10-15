@@ -8648,7 +8648,11 @@ what the sections above say about the blend keying on release and about the wind
   preview sheet (`animcapture._blast`) on blue, the save panel shooting again when its type
   switches. The first push (bf7d386) recoloured the cards at paint time instead - «не закрашивать
   всю карточку каким-то оверлеем» - and that overlay is gone. Old cards stay grey until Replace
-  thumbnail.
+  thumbnail. **And a studio light** («Добавь красивый градиент на фон или студийный свет»): a
+  playblast cannot draw a gradient, but its PNG keeps the background transparent - the blasts are
+  PNGs now and each is laid over `capture.studio(qt, image, kind)` (a radial light above the
+  middle, the colour, dark corners, a faint floor glow; `studio_stops` pure); an opaque blast
+  shows the flat colour as before. Not seen in a live playblast.
 - **The blend holds**: let go (slider or middle drag), the preview stays («Blend 40 % - Apply keys
   it», Apply reads «Apply 40 %»); Apply keys it (`blend_key`) and the slider goes to 0; back to 0
   with every value back (`blend_reset(why)`): a `timeChanged` job made only while a blend stands

@@ -1220,7 +1220,7 @@ class Sheet(QtCase):
 
     def test_the_blasted_frames_read_back_in_frame_order(self):
         for name in ("frame.0002.jpg", "frame.-001.jpg", "frame.0000.jpg", "first.jpg",
-                     "frame.0001.png", "other.0003.jpg"):
+                     "frame.0001.tif", "other.0003.jpg"):
             with open(os.path.join(self.dir, name), "wb") as handle:
                 handle.write(b"x")
         found = ac.blasted(self.dir)
@@ -1425,7 +1425,7 @@ class PreviewSteps(QtCase):
 
 # ------------------------------------------------------------------ capture's pieces, shared
 
-BLAST_OPTIONS = dict(format="image", compression="jpg", quality=95, widthHeight=(96, 54),
+BLAST_OPTIONS = dict(format="image", compression="png", quality=95, widthHeight=(96, 54),
                      percent=100, viewer=False, showOrnaments=False, offScreen=True,
                      forceOverwrite=True, clearCache=True, editorPanelName="modelPanel4")
 
@@ -1526,7 +1526,7 @@ class ThumbnailThroughThePieces(QtCase):
         import maya.utils
         self.rebind(maya.utils, "processIdleEvents", lambda: self.log.append(("idle",)))
         self.raw = os.path.join(tempfile.gettempdir(),
-                                "skeldar_pose_thumbnail_%d.jpg" % os.getpid()).replace("\\", "/")
+                                "skeldar_pose_thumbnail_%d.png" % os.getpid()).replace("\\", "/")
 
     def test_the_still(self):
         target = os.path.join(self.dir, "thumbnail.jpg")

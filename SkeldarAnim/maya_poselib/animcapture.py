@@ -102,7 +102,7 @@ from maya_poselib import timewalk
 
 NAME = "Anim"                      # a new animation card's name before the animator types one
 SHEET_QUALITY = 85                 # the preview sheet's JPG quality (the spec's)
-BLAST_BASE = "frame"               # the preview's playblast writes <BLAST_BASE>.<frame>.jpg
+BLAST_BASE = "frame"               # the preview's playblast writes <BLAST_BASE>.<frame>.png
 FRAME_PADDING = 4
 SAMPLED = "spline"                 # the tangents of a channel sampled on every frame
 
@@ -562,7 +562,7 @@ def _blast(qt, panel, width, height, frames, folder):
     through `setAttr`, both recorded otherwise (autoKey is switched through the API, no step).
     A playblast that fails raises, after all of that."""
     options = capture.blast_options(panel, width, height)
-    first = folder + "/first.jpg"
+    first = folder + "/first.png"
     with _unrecorded():
         shown = capture.shown_flags(panel)
         tweaks = keys.Tweaks()
@@ -588,7 +588,7 @@ def blasted(folder, base=BLAST_BASE):
     """[(frame, path)] of the image sequence a playblast wrote into `folder` as
     `<base>.<frame>.jpg` (any padding, a negative frame included: `frame.-001.jpg`), sorted by
     frame; [] for a folder that is not there."""
-    pattern = re.compile(r"^%s\.(-?\d+)\.jpe?g$" % re.escape(base), re.IGNORECASE)
+    pattern = re.compile(r"^%s\.(-?\d+)\.(?:png|jpe?g)$" % re.escape(base), re.IGNORECASE)
     try:
         names = os.listdir(folder)
     except OSError:
@@ -625,7 +625,8 @@ def paint_sheet(qt, pictures, path, size=look.PREVIEW_SIZE, progress=None):
             if image.isNull():
                 return False, "the playblast wrote nothing readable for cell %d" % index
             x, y, _w, _h = look.sheet_cell(index, columns, size)
-            painter.drawImage(qt.QtCore.QPoint(x, y), capture.square_scaled(qt, image, size))
+            painter.drawImage(qt.QtCore.QPoint(x, y), capture.studio(
+                qt, capture.square_scaled(qt, image, size), "anim"))
             if progress is not None and not progress.step(
                     "preview %d of %d" % (index + 1, len(pictures))):
                 return False, CANCELLED
