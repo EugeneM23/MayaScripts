@@ -33,6 +33,7 @@ SIDE_TABS = "skeldarWalkSides"
 FIX_BTN = "skeldarWalkFixPosture"
 CLEAN_REPORT = "skeldarWalkCleanReport"
 IN_PLACE_BOX = "skeldarWalkInPlace"
+MEAN_BTN = "skeldarWalkMeanPose"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Apply
 CHECKS = {"in_place": IN_PLACE_BOX}
 #  [Both | Left | Right] (2026-10-13, «режим в котором левая и правая сторона станут раздельными, по
@@ -161,6 +162,11 @@ TIPS = {
                    "keyed again",
     "in_place": "In place: the walk on the spot - the root stays where the first frame has it, the body moves "
                 "about it and the planted feet slide back (what a game moves by its capsule)",
+    "mean_pose": "Mean pose: a Manny rig beside the target, standing in the walk's mean pose (each bone's mean - "
+                 "an abstract pose). Move its controls: once you let go the walk's mean pose takes the change for "
+                 "the whole cycle - the spine, the arms, the head and the pelvis's turn, its height, the feet's "
+                 "width, the knees' and the feet's turn - and the target is keyed again; Ctrl+Z on the rig too. "
+                 "Kept beside the walk's file. Right click: Reset mean pose",
     "save_pose": "Save pose: select a skeleton standing in a character pose and press; the walk takes its "
                  "parts at the Pose share",
     "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
@@ -649,6 +655,23 @@ def press_fix_posture(*_):
     return _press(run)
 
 
+def press_mean_pose(*_):
+    """Mean pose: the walk's mean pose on a Manny rig, watched (maya_walk.meanrig)."""
+    from . import meanrig
+
+    def run():
+        name = chosen_walk()
+        _remember("walk", name)
+        return meanrig.press(name, values())
+    return _press(run)
+
+
+def press_mean_reset(*_):
+    """Reset mean pose: the walk's correction dropped, the rig and the target with it."""
+    from . import meanrig
+    return _press(lambda: meanrig.reset(chosen_walk(), values()))
+
+
 def press_save_pose(*_):
     def run():
         root = scene.selected_root()
@@ -684,13 +707,14 @@ def group_changed(key):
 
 # ---- the card ----
 
-def _menu_row(menu, label, command, button, icon_tip, press):
+def _menu_row(menu, label, command, button, icon_tip, press, extra=None):
     import maya_hubstyle as hubstyle
     cmds = _cmds()
     #  the word in a column of its own: no other card gives an optionMenu a label, and the skin styles the
     #  bare dropdown (a QComboBox)
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
+    count = 4 if extra else 3
+    cmds.rowLayout(numberOfColumns=count, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)] + [(i, "left", 3) for i in range(3, count + 1)])
     cmds.text(label=label, width=hubstyle.pick(32, 36), align="left")
     cmds.optionMenu(menu, changeCommand=command,
                     annotation=("The walk Apply puts on a skeleton" if menu == WALK_MENU else
@@ -703,6 +727,14 @@ def _menu_row(menu, label, command, button, icon_tip, press):
     hubstyle.mark(cmds.button(button, label=hubstyle.tool_label("Save..."), width=hubstyle.tool_width(56),
                               height=hubstyle.height("field", 24), annotation=icon_tip,
                               command=lambda *_: press()), "tool", "device-floppy")
+    if extra:                       # the walk's Mean pose: a Manny rig standing in it, edited for the whole cycle
+        name, word, icon, tip, action, menu_items = extra
+        hubstyle.mark(cmds.button(name, label=hubstyle.tool_label(word), width=hubstyle.tool_width(56),
+                                  height=hubstyle.height("field", 24), annotation=tip,
+                                  command=lambda *_: action()), "tool", icon)
+        cmds.popupMenu(parent=name, button=3)
+        for item_label, item_command in menu_items:
+            cmds.menuItem(label=item_label, command=item_command)
     cmds.setParent("..")
 
 
@@ -732,7 +764,9 @@ def build_panel():
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label=NOTHING, align="left"), "subtitle")
-    _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk)
+    _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk,
+              extra=(MEAN_BTN, "Mean...", "user", TIPS["mean_pose"], press_mean_pose,
+                     [("Reset mean pose", lambda *_: press_mean_reset())]))
     _menu_row(POSE_MENU, "Pose", slider_changed, SAVE_POSE_BTN, TIPS["save_pose"], press_save_pose)
     _slider("pose")
     stored_parts = chosen_parts()

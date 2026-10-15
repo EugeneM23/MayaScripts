@@ -1,0 +1,415 @@
+"""maya_walk.meanrig - the walk's mean pose on a Manny rig, edited for the whole cycle (2026-10-15).
+
+The animator: «кнопочку которая рядом с нашей походкой будет создавать manny rig на котором будет наша средняя
+поза и меняя анимацию на этом риге мы будем менять нашу позу для всего цикла».
+
+`press(walk)`: a Manny [rig] added (Add Character; one in a scene - a second press, or another walk, poses the same
+rig again) 150 cm beside the card's target, marked `MARKER` on its Main, and stood in the walk's mean pose with its
+correction (maya_walk.meanpose.mean_pose) through the Pose Library's solve - its controls hold plain values, no
+keys. What the rig shows is read back (`_read`: its game skeleton carried onto the walk's skeleton the way a pose
+is, maya_walk.pose._onto) and kept on the marker as the BASE.
+
+`update()`: the rig read again; what changed against the base (meanpose.combine) moves the walk's correction,
+written beside the walk's file; the card's target, when it walks this walk, is keyed again UNRECORDED (Ctrl+Z is
+the rig's); the base becomes what the rig shows. Nothing changed: nothing written.
+
+The watch (`start` / `stop`): an attribute-changed callback on every control of the rig's ControlSet and the
+Undo / Redo events restart a DELAY_MS single-shot timer, which waits while a mouse button is down - so the update
+runs once the animator lets go. The callbacks and the timer live on `sys` (an install purges the module).
+The design: docs/superpowers/specs/2026-10-15-walk-mean-pose-rig-design.md.
+"""
+import json
+import sys
+import traceback
+
+import numpy as np
+
+from . import meanpose as mp
+from . import pose as wp
+from . import scene
+from . import target as wt
+
+MARKER = "skeldarWalkMean"         # on the rig's Main: {"walk", "clean", "base": {bone: 16 floats}}
+OFFSET = 150.0                     # cm beside the target (along X)
+DELAY_MS = 400
+LABEL = "%s - mean pose"
+
+
+class Refusal(scene.Refusal):
+    """What the mean pose rig does not do, and why."""
+
+
+def _cmds():
+    import maya.cmds as cmds
+    return cmds
+
+
+def _state():
+    state = getattr(sys, "_skeldar_walk_mean", None)
+    if state is None:
+        state = {"callbacks": [], "jobs": [], "timer": None, "bones": None, "busy": False}
+        sys._skeldar_walk_mean = state
+    return state
+
+
+# ---- which rig ----
+
+def find():
+    """The scene's mean pose rig (a maya_rigs.Rig whose Main carries MARKER), or None."""
+    import maya_rigs
+    cmds = _cmds()
+    for rig in maya_rigs.rigs():
+        if rig.main and cmds.objExists(rig.main) and cmds.attributeQuery(MARKER, node=rig.main, exists=True):
+            return rig
+    return None
+
+
+def memo_of(rig):
+    cmds = _cmds()
+    try:
+        return json.loads(cmds.getAttr(rig.main + "." + MARKER) or "{}")
+    except (ValueError, RuntimeError):
+        return {}
+
+
+def _set_memo(rig, memo):
+    cmds = _cmds()
+    if not cmds.attributeQuery(MARKER, node=rig.main, exists=True):
+        cmds.addAttr(rig.main, longName=MARKER, dataType="string")
+    cmds.setAttr(rig.main + "." + MARKER, json.dumps(memo), type="string")
+
+
+# ---- the rig as data ----
+
+def _ref(rig):
+    from maya_poselib import scene as pscene
+    ref = pscene.rig_ref(rig)
+    if ref is None:
+        raise Refusal("%s drives no game skeleton" % rig.namespace)
+    return ref
+
+
+def _bones(rig, ref):
+    """The rig's game skeleton (the Pose Library's reading), its static half read once a rig."""
+    from maya_poselib import scene as pscene
+    state = _state()
+    cached = state.get("bones")
+    if cached is None or cached[0] != rig.main:
+        bones = pscene.skeleton(ref)[0]
+        state["bones"] = (rig.main, bones)
+        return bones
+    return pscene.refresh_world(ref, cached[1])
+
+
+def _read(rig, walk, statics):
+    """{bone of the walk's skeleton: 4x4 world} - the rig's game skeleton as it stands carried onto the walk's
+    skeleton (as a pose is: pose._onto). The four limb bones a side are read in their DRIVE: AdvancedSkeleton's
+    shoulder, elbow, hip and knee never roll - the roll lives in the twist joints - and the drive puts it back on
+    the bone, where the walk keeps it (read bare, a rolled arm came back 8-14 deg off)."""
+    bones = {}
+    for leaf, bone in _bones(rig, _ref(rig)).items():
+        bone = dict(bone)
+        if bone.get("drive"):
+            bone["world"] = bone["drive"]
+        bones[leaf] = bone
+    out = wp._onto(walk.names, walk.clip.worlds[:, 0], statics, bones, wt)[0]
+    return dict((name, wp._np(out[name])) for name in walk.names if name in out)
+
+
+def _flat(worlds):
+    return dict((n, [float(v) for v in np.asarray(m, float).reshape(16)]) for n, m in worlds.items())
+
+
+def _unflat(flat):
+    return dict((n, np.array(v, float).reshape(4, 4)) for n, v in flat.items())
+
+
+def card_data(walk, statics, worlds, name):
+    """The mean pose as a Pose Library card: the walk's bones with their rests, standing in `worlds`."""
+    from maya_poselib import posemath as pm
+    bones = {}
+    for leaf in walk.names:
+        if leaf not in statics or leaf not in worlds:
+            continue
+        b = statics[leaf]
+        bones[leaf] = {"parent": b.get("parent"), "canonical": b.get("canonical"), "rest": list(b["rest"]),
+                       "world": [float(v) for v in np.asarray(worlds[leaf], float).reshape(16)]}
+    members = [leaf for leaf in bones if not pm.is_helper(leaf)]
+    return {"name": LABEL % name, "bones": bones, "members": members}
+
+
+def _controls(rig):
+    cmds = _cmds()
+    found = cmds.sets(rig.control_set, query=True) or []
+    return [p for p in (cmds.ls(found, long=True) or []) if cmds.objectType(p, isAType="transform")]
+
+
+def _pose(rig, data):
+    """The rig's controls set to the card `data` (the Pose Library's solve), no keys: their time curves go, the
+    values are set - unrecorded, autoKey off."""
+    from maya_poselib import apply as papply
+    cmds = _cmds()
+    plan = papply.plan_for(data, _ref(rig))
+    auto = cmds.autoKeyframe(query=True, state=True)
+    with scene.Unrecorded():
+        cmds.autoKeyframe(state=False)
+        try:
+            curves = set()
+            for control in _controls(rig):
+                for curve in cmds.listConnections(control, source=True, destination=False,
+                                                  type="animCurve") or []:
+                    if cmds.nodeType(curve) in ("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT"):
+                        curves.add(curve)
+            if curves:
+                cmds.delete(sorted(curves))
+            for plug, value in plan.values.items():
+                try:
+                    cmds.setAttr(plug, value)
+                except RuntimeError:
+                    pass
+        finally:
+            cmds.autoKeyframe(state=auto)
+    return plan
+
+
+# ---- the presses ----
+
+def _point():
+    """Beside the card's target, else at the origin."""
+    cmds = _cmds()
+    try:
+        root = scene.target_root()
+        x, _, z = cmds.xform(root, query=True, worldSpace=True, translation=True)
+        return (x + OFFSET, 0.0, z)
+    except scene.Refusal:
+        return (0.0, 0.0, 0.0)
+
+
+def _add():
+    import maya_rigs
+    from maya_scenesetup import catalog, character
+    from maya_uebridge import rigimport
+    cmds = _cmds()
+    selection = cmds.ls(selection=True, long=True) or []
+    before = maya_rigs.rigs()
+    text = character.add_character(catalog.default_rig(), at=_point())
+    rig = rigimport.fresh_rig(before, maya_rigs.rigs())
+    if rig is None:
+        raise Refusal("no Manny rig was added: %s" % text)
+    with scene.Unrecorded():
+        kept = [s for s in selection if cmds.objExists(s)]
+        if kept:
+            cmds.select(kept, replace=True)
+    return rig
+
+
+def press(walk_name, clean=None):
+    """The mean pose rig (added, or the one standing) stood in the walk `walk_name`'s mean pose with its
+    correction; the watch started. Returns the status line."""
+    stop()
+    clean = dict(scene.wc.knobs(clean))
+    walk, statics = scene.load_walk(walk_name, clean)[:2]
+    fix = scene.walk_fix(walk_name)[0]
+    worlds = mp.mean_pose(walk, fix)
+    rig = find()
+    added = rig is None
+    if added:
+        rig = _add()
+    with scene.Unrecorded():
+        _set_memo(rig, {"walk": walk_name, "clean": clean, "base": {}})
+    _state()["bones"] = None
+    plan = _pose(rig, card_data(walk, statics, worlds, walk_name))
+    base = _read(rig, walk, statics)
+    with scene.Unrecorded():
+        _set_memo(rig, {"walk": walk_name, "clean": clean, "base": _flat(base)})
+        try:
+            from maya_scenesetup import cliplabel
+            cliplabel.label_rig(rig, LABEL % walk_name)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+    start(rig)
+    line = "%s %s in the mean pose of %s (%s)" % ("added" if added else "posed", rig.namespace, walk_name,
+                                                  mp.summary(fix))
+    notes = [n for n in plan.notes if n]
+    return line + " - move its controls: the walk follows" + (" | " + notes[0] if notes else "")
+
+
+def update():
+    """The rig's change into the walk's correction (the module docstring). Returns the status line, or None when
+    nothing changed or there is no rig."""
+    rig = find()
+    if rig is None:
+        stop()
+        return None
+    memo = memo_of(rig)
+    name = memo.get("walk")
+    if not name or name not in scene.walk_names():
+        return None
+    walk, statics = scene.load_walk(name, memo.get("clean"))[:2]
+    fix, path = scene.walk_fix(name)
+    now = _read(rig, walk, statics)
+    base = _unflat(memo.get("base") or {})
+    if not base:
+        with scene.Unrecorded():
+            _set_memo(rig, dict(memo, base=_flat(now)))
+        return None
+    new, moved = mp.combine(fix, mp.measure(base, walk), mp.measure(now, walk))
+    if not moved:
+        return None
+    mp.save(path, new)
+    with scene.Unrecorded():
+        _set_memo(rig, dict(memo, base=_flat(now)))
+    line = "mean pose of %s: %s" % (name, mp.describe(moved))
+    return line + rekey_target(name)
+
+
+def rekey_target(name):
+    """The card's target keyed again, unrecorded, when it walks the walk `name`: « -> root keyed again»."""
+    try:
+        root = scene.target_root()
+    except scene.Refusal:
+        return " (no target walks it - Apply puts it on a skeleton)"
+    memo = scene.memo_of(root)
+    if memo.get("walk") != name:
+        return " (the target walks %s)" % (memo.get("walk") or "nothing")
+    scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
+                tuple(memo.get("parts", scene.ALL_PARTS)), record=False)
+    return " -> %s keyed again" % root.rsplit("|", 1)[-1]
+
+
+def reset(walk_name, clean=None):
+    """The walk's correction dropped; the rig (when standing) back in the plain mean pose; the target keyed
+    again. Returns the status line."""
+    fix, path = scene.walk_fix(walk_name)
+    had = not mp.is_empty(fix)
+    mp.save(path, mp.empty())
+    line = ("%s: the mean pose correction dropped" % walk_name) if had else "%s has no correction" % walk_name
+    if find() is not None:
+        press(walk_name, clean)
+        line += ", the rig back in the mean pose"
+    return line + rekey_target(walk_name)
+
+
+# ---- the watch ----
+
+def start(rig):
+    """The rig's controls watched (the module docstring)."""
+    stop()
+    try:
+        import maya.api.OpenMaya as om
+    except ImportError:
+        return
+    cmds = _cmds()
+    state = _state()
+    for control in _controls(rig):
+        try:
+            selection = om.MSelectionList()
+            selection.add(control)
+            state["callbacks"].append(om.MNodeMessage.addAttributeChangedCallback(
+                selection.getDependNode(0), _changed))
+        except RuntimeError:
+            continue
+    try:
+        state["callbacks"].append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeNew, _gone))
+        state["callbacks"].append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeOpen, _gone))
+    except RuntimeError:
+        pass
+    if cmds.about(batch=True):
+        return
+    for event in ("Undo", "Redo"):
+        state["jobs"].append(cmds.scriptJob(event=[event, _schedule]))
+
+
+def stop():
+    """No more watching."""
+    state = _state()
+    try:
+        import maya.api.OpenMaya as om
+        for cid in state["callbacks"]:
+            try:
+                om.MMessage.removeCallback(cid)
+            except RuntimeError:
+                pass
+    except ImportError:
+        pass
+    state["callbacks"] = []
+    cmds = _cmds()
+    for job in state["jobs"]:
+        try:
+            if cmds.scriptJob(exists=job):
+                cmds.scriptJob(kill=job, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
+    state["jobs"] = []
+    timer = state.get("timer")
+    if timer is not None:
+        try:
+            timer.stop()
+        except RuntimeError:
+            state["timer"] = None
+
+
+def watching():
+    return bool(_state()["callbacks"])
+
+
+def _gone(*_):
+    stop()
+    _state()["bones"] = None
+
+
+def _changed(message, plug, other, data):
+    try:
+        import maya.api.OpenMaya as om
+        if message & om.MNodeMessage.kAttributeSet and plug.isKeyable and not _state()["busy"]:
+            _schedule()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def _schedule(*_):
+    """The update DELAY_MS after the last change (and after the mouse is let go)."""
+    try:
+        from PySide6 import QtCore
+    except ImportError:
+        return
+    state = _state()
+    timer = state.get("timer")
+    if timer is None:
+        timer = QtCore.QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(_tick)
+        state["timer"] = timer
+    timer.start(DELAY_MS)
+
+
+def _tick():
+    from PySide6 import QtCore, QtWidgets
+    state = _state()
+    if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
+        state["timer"].start(DELAY_MS // 2)
+        return
+    state["busy"] = True
+    try:
+        line = update()
+    except scene.REFUSALS as refusal:
+        line = "mean pose: %s" % refusal
+    except Exception as exc:                                 # noqa: BLE001
+        traceback.print_exc()
+        line = "mean pose failed: %s" % exc
+    finally:
+        state["busy"] = False
+    if line:
+        _tell(line)
+
+
+def _tell(line):
+    try:
+        from . import panel
+        if panel.is_open():
+            panel.status(line)
+            panel.refresh()
+            return
+    except Exception:                                        # noqa: BLE001
+        pass
+    print("Walk Builder: " + line)

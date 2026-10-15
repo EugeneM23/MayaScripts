@@ -24,6 +24,7 @@ from . import files as wf
 from . import target as wt
 from . import pose as wp
 from . import clean as wc
+from . import meanpose as mp
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
@@ -57,7 +58,7 @@ class Refusal(Exception):
     """What a press does not do, and why (the status line shows it)."""
 
 
-REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal)
+REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal)
 NO_POSE = "(none)"
 ALL_PARTS = tuple(part for part, keys in wp.PARTS)
 MARKER = "skeldarWalk"
@@ -304,13 +305,25 @@ def load_walk(name, given=None):
         _state()["loaded"][path] = loaded
     data = loaded[1]
     knobs = wc.knobs(given)
-    key = ("walk", path, stamp, tuple(sorted(knobs.items())))
+    fix_path = mp.path_for(path)
+    fix_stamp = os.path.getmtime(fix_path) if os.path.exists(fix_path) else None
+    key = ("walk", path, stamp, tuple(sorted(knobs.items())), fix_stamp)
     walk = _state()["loaded"].get(key)
     report = _cleaned(path, stamp, data, knobs)[1]
     if walk is None:
-        walk = wm.analyse(_cleaned(path, stamp, data, knobs)[0])
+        # the animator's correction of the mean pose (the Mean pose rig, maya_walk.meanrig): the upper body's in
+        # the frames before the analysis, the legs' on the walk
+        fix = mp.load(fix_path)
+        walk = wm.analyse(mp.correct(_cleaned(path, stamp, data, knobs)[0], fix))
+        walk.fix = mp.model_fix(fix)
         _cache(key, walk)
     return walk, data["statics"], int(data["start"]), report
+
+
+def walk_fix(name):
+    """(the correction of the saved walk `name`, its file's path)."""
+    path = mp.path_for(wf.path_for(folder(), name))
+    return mp.load(path), path
 
 
 BACKUP = ".orig"          # Fix posture keeps the walk's file as it was beside it: <name>.walk.gz.orig
@@ -475,12 +488,28 @@ def base_input(plug):
     raise Refusal("%s: an animation layer chain this tool cannot follow" % _short(plug))
 
 
-def write_curves(values, static, start):
+def _rekey(curve, kind):
+    """The curve `curve` emptied of its keys through the API (a cmds cut that empties a curve deletes it, trap
+    210) - when it is a plain unreferenced curve of `kind`; answers whether it was."""
+    cmds, om, oma = _cmds(), _om(), _oma()
+    if cmds.nodeType(curve) != kind or cmds.referenceQuery(curve, isNodeReferenced=True):
+        return False
+    selection = om.MSelectionList()
+    selection.add(curve)
+    fn = oma.MFnAnimCurve(selection.getDependNode(0))
+    for i in range(fn.numKeys - 1, -1, -1):
+        fn.remove(i)
+    return True
+
+
+def write_curves(values, static, start, in_place=False):
     """Each written channel's old curve deleted and a new one keyed on frames start..start+N (auto
     tangents): nodes through cmds (Ctrl+Z removes them and puts deleted ones back), keys through
     MFnAnimCurve.addKeys (trap 224). Under animation layers the base layer is what is re-keyed (base_input):
     the layers above it - an animator's corrections - stay. A static translate: its curves deleted, the value
-    set."""
+    set. `in_place` (an unrecorded re-key, the Mean pose rig's): a standing curve keeps its node and only its
+    keys are written again - no node made or deleted behind the undo queue's back, so an older undo step still
+    finds the nodes it made."""
     cmds, om, oma = _cmds(), _om(), _oma()
     written = 0
     plans = dict(((path, ch), base_input(path + "." + ch)) for path, channels in values.items() for ch in channels)
@@ -489,13 +518,16 @@ def write_curves(values, static, start):
         for ch, vals in channels.items():
             plug = path + "." + ch
             dest, old = plans[(path, ch)]
-            if old:
-                cmds.delete(old)
-            if dest == plug and cmds.getAttr(plug, lock=True):
-                cmds.setAttr(plug, lock=False)
-            curve = cmds.createNode("animCurveTL" if ch in TRANSLATE else "animCurveTA",
-                                    name="%s_%s" % (_short(path).split(":")[-1], ch))
-            cmds.connectAttr(curve + ".output", dest)
+            kind = "animCurveTL" if ch in TRANSLATE else "animCurveTA"
+            if old and in_place and _rekey(old, kind):
+                curve = old
+            else:
+                if old:
+                    cmds.delete(old)
+                if dest == plug and cmds.getAttr(plug, lock=True):
+                    cmds.setAttr(plug, lock=False)
+                curve = cmds.createNode(kind, name="%s_%s" % (_short(path).split(":")[-1], ch))
+                cmds.connectAttr(curve + ".output", dest)
             times = om.MTimeArray([om.MTime(float(start + f), om.MTime.uiUnit()) for f in range(len(vals))])
             selection = om.MSelectionList()
             selection.add(curve)
@@ -528,6 +560,22 @@ class _Chunk(object):
         return False
 
 
+class Unrecorded(object):
+    """Undo recording off for the block, without the flush `undoInfo(state=False)` does, and back as it was (the
+    Pose Library's rule). Only outside a chunk: toggled inside one it breaks that chunk (trap 145)."""
+
+    def __enter__(self):
+        cmds = _cmds()
+        self.was = bool(cmds.undoInfo(query=True, state=True))
+        if self.was:
+            cmds.undoInfo(stateWithoutFlush=False)
+
+    def __exit__(self, *exc):
+        if self.was:
+            _cmds().undoInfo(stateWithoutFlush=True)
+        return False
+
+
 # ---- apply, pick ----
 
 def model_knobs(given):
@@ -535,11 +583,12 @@ def model_knobs(given):
     return dict((k, v) for k, v in (given or {}).items() if k in wm.DEFAULTS or k in wm.SIDE_KNOBS)
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True):
     """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
     skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
     - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
-    stands). One undo step. Returns (Result, info, the status line)."""
+    stands). One undo step; `record` False (the Mean pose rig's live update): no undo step at all, the curves
+    re-keyed in place - Ctrl+Z belongs to the rig. Returns (Result, info, the status line)."""
     started = time.time()
     root = _long(root)
     walk, statics, start, report = load_walk(walk_name, given)
@@ -554,8 +603,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
-    with _Chunk("skeldarWalkApply"):
-        write_curves(values, static, start)
+    with (_Chunk("skeldarWalkApply") if record else Unrecorded()):
+        write_curves(values, static, start, in_place=not record)
         _set_memo(root, {"walk": walk_name, "pose": pose_name or "", "parts": list(parts),
                          "knobs": dict(result.info["knobs"], **wc.knobs(given)),
                          "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION})
@@ -591,6 +640,9 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
     used = result.info["knobs"]
     if used.get("in_place", 0.0) >= 0.5:
         text += " | in place"
+    fix = walk_fix(walk_name)[0]
+    if not mp.is_empty(fix):
+        text += " | mean pose corrected (%s)" % mp.summary(fix)
     if report.changed:
         text += " | " + report.short()
     if note:

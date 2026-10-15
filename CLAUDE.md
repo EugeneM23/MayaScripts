@@ -9900,6 +9900,71 @@ loop points, Holden's two-sided cubic offsets.
   0.0000 cm, In place 0.000 cm); `verify_walk.py` 79/79, `verify_walk_sprint.py` 12/12; `tests/test_walkclean.py` 23.
   Not seen live: the card - the animator's to try after Check update.
 
+**…the walk's mean pose on a Manny rig, edited for the whole cycle** (2026-10-15: «кнопочку которая рядом с нашей походкой
+будет создавать manny rig на котором будет наша средняя поза и меняя анимацию на этом риге мы будем менять нашу позу для
+всего цикла»; asked: the pose may be abstract, the edit corrects the WALK itself and Pose stays on top, it reaches the walk
+by itself after the mouse is let go, it belongs to the walk, the upper body's rewrites the frames). Spec
+`docs/superpowers/specs/2026-10-15-walk-mean-pose-rig-design.md` (its addendum).
+- **The walk's mean pose** (`maya_walk/meanpose.py`, numpy): every bone by FK of its local means (`lmean`, the mean local
+  translation; the root at `wmean` on the origin) - abstract, each bone's mean taken alone (before this the model kept
+  these means only as the centres its deviations scale about).
+- **The button `Mean...`** (icon `user`) beside the Walk dropdown (`panel.MEAN_BTN`; right click: Reset mean pose) →
+  `maya_walk/meanrig.py`:
+  - one Manny [rig] in a scene (Add Character), 150 cm beside the target, marked `skeldarWalkMean` on its Main
+    ({walk, clean knobs, base});
+  - posed through the Pose Library's solve (`apply.plan_for`), its controls set with NO keys (their time curves
+    deleted), unrecorded; its legs come out in FK;
+  - labelled «asd - mean pose».
+- **Read back as a difference** from the last reading (`base`, kept on the marker), both carried onto the walk's
+  skeleton as a pose is (`pose._onto`):
+  - the upper body's locals: pelvis, spine, neck, head, clavicles, arms, fingers (no twist, helper or leg);
+  - the pelvis over the root, along up;
+  - the ankles apart along the walk's side axis;
+  - each knee's turn about the leg's line (`knee_turn`: the old bend laid across the new line, so a leg that only moved
+    reads none - an absolute heading read 16 deg for a 20 deg turn once the width and height had moved the line);
+  - each foot's heading.
+  An untouched rig reads nothing, whatever the walk's skeleton.
+- **The correction, beside the walk**: `<walk>.walkfix.json`, `{"rot": {bone: C}, "height", "width", "knee", "toe"}`;
+  `combine` turns a bone's correction by `now . base^T`, adds the rest; an empty one removes the file.
+  `scene.load_walk` reads it (cached by its time):
+  - `mp.correct` rewrites the cleaned clip's frames before the analysis: a corrected bone's local
+    `L . lmean^T . C . lmean`, the body by FK;
+  - each leg solved again from its new hip onto its OLD ankle on every frame (its plane turned the least; out of reach
+    the leg stands straight at the ankle, the shin stretched - the target's reach takes the pelvis down), the foot and
+    what is under it kept in the world;
+  - a helper that followed a bone rigidly follows it again.
+  The legs' share goes on `Walk.fix` (zeros by default): `evaluate` adds the height to the pelvis's mean height, the
+  width to the feet's spread, the knee and toe turns to the turns - each giving way to a pose's own at the Pose share.
+- **The watch**:
+  - `MNodeMessage.addAttributeChangedCallback` on the ControlSet's controls (keyable plugs only) and Undo / Redo
+    scriptJobs restart a 400 ms single-shot QTimer, which waits while a mouse button is down;
+  - the update writes the file and re-keys the card's target, when it walks this walk, UNRECORDED:
+    `scene.apply(record=False)` → `write_curves(in_place=True)`, a standing curve emptied and re-keyed through the
+    API, no node made or deleted behind the undo queue - so Ctrl+Z is the rig's and an older Apply's undo still finds
+    its nodes;
+  - callbacks and timer live on `sys._skeldar_walk_mean`, dropped on a new or opened scene.
+  - The Apply line adds «mean pose corrected (1 bone turned, pelvis -5.0 cm)».
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_meanpose.py` **25/25 standalone** (asd, the plugin's Manny
+  skeleton the target; the update called by hand - the timer needs a GUI):
+  - the rig's game skeleton on the walk's mean pose to 0.0001 deg, 187 controls unkeyed, an untouched rig writing
+    nothing;
+  - FKShoulder_L +20 → upperarm_l's correction 20.00 deg, the target's upperarm_l mean over the cycle 20.01 deg
+    (1.2 s an update);
+  - RootX_M -5 cm → -5.00, the target's pelvis 4.65 lower;
+  - Ctrl+Z on the rig back to 0;
+  - the left leg switched to IK reading no change, its pole → knee 15.2 deg;
+  - IKLeg_L 15 deg about world up → the foot 15.0;
+  - RootX_M 8 deg → the pelvis 8.00, the corrected cycle's ankles where the walk plants them to 0.000000 cm;
+  - Reset dropping the file, the target on the plain walk to 0.0000 deg.
+  `tests/test_walkmeanpose.py` 12 (the file, the mean pose, the legs' corrections reading back as themselves, combine,
+  correct keeping the feet and the loop, the model's fix, a pose taking the knees over); `verify_walk.py` 79/79 again.
+  **Not seen live**: the button, the watch's timer and the label in a GUI Maya - the animator's to try after Check update.
+
+246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
+     roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
+     forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE
+     (`rigsolve.drive_matrices`, which `poselib.scene.skeleton` hands as `bone["drive"]`): 0.0001 deg.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

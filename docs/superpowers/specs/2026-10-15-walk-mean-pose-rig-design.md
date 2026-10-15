@@ -68,3 +68,19 @@ callbacks die with the rig (and are dropped on a new scene).
 
 Reading the legs' own angles (IK builds them), a mean pose of a pose (the rig shows the walk's mean, the Pose
 dropdown stays on top), several mean rigs at once, a rig other than Manny's.
+
+## Addendum - what the build changed
+
+- **The rig's limb bones are read in their drive.** AdvancedSkeleton's shoulder, elbow, hip and knee do not roll - the
+  roll lives in the twist joints - so the game upperarm / lowerarm / thigh / calf read bare came back 8-14 deg off the
+  mean pose on the arms. `meanrig._read` reads each in its `drive` (`rigsolve.drive_matrices`): 0.0001 deg.
+- **A knee is read as a turn, not as a heading.** An absolute heading of the bend about up read 16 deg for a 20 deg
+  turn once the width and the height had moved the leg's line; `knee_turn(base, now)` lays the old bend across the
+  new line and measures the turn about it - the axis the model turns a knee about - so a leg that only moved reads
+  none.
+- **Out of reach, the shin stretches.** A hip the correction raises over a straight leg cannot reach its old ankle;
+  lifting the foot would break the stance, so the leg stands straight at the ankle with its shin stretched, and the
+  target's own reach takes the pelvis down where it falls short.
+- **The rig's legs come out in FK** (the Pose Library's solve sets both and the blend stays FK); a knee is turned on
+  the rig by its FK controls, or the leg switched to IK (its IK was solved to match: no change read) and its pole moved.
+- **The label** «<walk> - mean pose» under the rig (`cliplabel.label_rig`).

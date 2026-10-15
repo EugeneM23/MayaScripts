@@ -658,6 +658,10 @@ class Walk(object):
         bob = self.pdev[self.index["pelvis"]] @ self.up - self.pelvis_mean[2]
         self.low_phase = float(np.argmin(bob)) / P
         self.balance_note = ""
+        # the legs' share of the animator's correction of the walk's mean pose (maya_walk.meanpose: the upper
+        # body's is in the clip's frames already): the pelvis raised, the feet's spread, each knee's and foot's
+        # turn about up - added where a pose's are, giving way to a pose's own at the Pose share
+        self.fix = {"height": 0.0, "width": 0.0, "knee": {"l": 0.0, "r": 0.0}, "toe": {"l": 0.0, "r": 0.0}}
         self._masses()
         self._grounds()
         self._legs_and_pelvis()
@@ -1932,7 +1936,11 @@ class Walk(object):
         ctx["leg_match"] = {"on": match > 0.0, "keep": keep, "froude": froude,
                             "hips_deg": math.degrees(match * yaw) if "pelvis" in (ctx["pose"] or {}) else 0.0}
         ctx["pose"] = self.leaned_pose(self.matched_pose(ctx["pose"], match, keep), k["gait_lean"])
-        ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0
+        fix = self.fix
+        if ctx["pose"] and "width" in ctx["pose"]:      # a pose's width replaces the corrected walk's at its share
+            ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] + (1.0 - ctx["alpha"]) * fix["width"]
+        else:
+            ctx["spread"] = fix["width"]
         ctx["ks"] = ks = sided(k)
         ctx["foot_lag"] = dict((side, ks[side]["foot_lag"] * P / float(n)) for side in SIDES)
         ctx["spine_map"] = self._spine_map(ctx["pose"], ctx["alpha"])
@@ -1944,7 +1952,10 @@ class Walk(object):
                 knee_turn = turn * pose["knee_turn"][side] if "knee_turn" in pose else 0.0
                 toe = turn * pose["toe"][side] if "toe" in pose else 0.0
                 knee_turn, toe = meet(knee_turn, toe, ks[side]["knee_foot"])
-            ctx["turns"][side] = (knee_turn, toe)
+            # the correction's turns, giving way to a pose's own at its share (Pose over the corrected walk)
+            own_k = (1.0 - ctx["alpha"]) if pose is not None and "knee_turn" in pose else 1.0
+            own_t = (1.0 - ctx["alpha"]) if pose is not None and "toe" in pose else 1.0
+            ctx["turns"][side] = (knee_turn + own_k * fix["knee"][side], toe + own_t * fix["toe"][side])
         ctx["placement"] = 0.0 if self.placement_note else k["foot_placement"]
         # Ground time past 1 holds the trailing leg longer: it ends its stance straight on its toes, and a
         # knee near straight turns tens of degrees for millimetres of reach - so it is kept STRETCH_REACH of
@@ -2103,7 +2114,8 @@ class Walk(object):
             if name == "pelvis":
                 pose, a = ctx["pose"], ctx["alpha"]
                 v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"], self.strides) * self.P) @ self.up) - mean[2]
-                base = mean[2] if pose is None or "height" not in pose else (1.0 - a) * mean[2] + a * pose["height"]
+                own = mean[2] + self.fix["height"]          # the corrected walk's mean height
+                base = own if pose is None or "height" not in pose else (1.0 - a) * own + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
                 height = base + k["pelvis_height"] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
                 centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)
