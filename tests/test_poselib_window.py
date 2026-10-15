@@ -2202,6 +2202,48 @@ class FakeModules(object):
 
 
 @unittest.skipIf(QT is None, "no Qt")
+class TimeWatch(unittest.TestCase):
+    """The real `Scene.watch_time`: a timeChanged that leaves the frame where the blend began
+    is no time change (2026-10-15, the animator: the blend on a RIG went back to 0 - the rig's
+    solve switches the evaluation manager, and a GUI Maya fires timeChanged for it)."""
+
+    class Cmds(object):
+        def __init__(self):
+            self.jobs = []
+
+        def workspaceControl(self, name, exists=False):
+            return False
+
+        def scriptJob(self, event=None, **_kw):
+            self.jobs.append(event)
+            return 41
+
+    def setUp(self):
+        self.cmds = self.Cmds()
+        self.frame = 12.0
+        saved = pw._cmds, pw._current_time
+        pw._cmds = lambda: self.cmds
+        pw._current_time = lambda: self.frame
+        self.addCleanup(lambda: (setattr(pw, "_cmds", saved[0]),
+                                 setattr(pw, "_current_time", saved[1])))
+        self.calls = []
+        self.jobs = pw.Scene().watch_time(lambda *a: self.calls.append(a))
+        self.fire = self.cmds.jobs[0][1]
+
+    def test_the_job_stands(self):
+        self.assertEqual(self.jobs, [41])
+        self.assertEqual(self.cmds.jobs[0][0], "timeChanged")
+
+    def test_an_event_on_the_same_frame_is_not_a_time_change(self):
+        self.fire()
+        self.assertEqual(self.calls, [])
+
+    def test_a_new_frame_is(self):
+        self.frame = 13.0
+        self.fire()
+        self.assertEqual(len(self.calls), 1)
+
+
 class RealScene(unittest.TestCase):
     """The real `Scene`'s animation half over a temp library, its late imports standing in."""
 

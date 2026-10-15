@@ -564,14 +564,28 @@ class Scene(object):
 
     def watch_time(self, callback):
         """[job id]: a timeChanged job calling `callback` - made while a blend previews (and
-        killed when it ends: nothing of ours runs per frame of playback otherwise)."""
+        killed when it ends: nothing of ours runs per frame of playback otherwise).
+
+        `callback` runs only when the frame is no longer the one the job was made on: a GUI
+        Maya fires timeChanged when the evaluation manager is switched, and a rig's solve
+        switches it (`rigsolve._fresh`) - the blend on a rig went back to 0 on its first step
+        (2026-10-15). A real change of frame still puts it back (trap 146's rule)."""
         cmds = _cmds()
+        start = _current_time()
+
+        def moved(*args):
+            try:
+                if abs(_current_time() - start) <= 1e-6:
+                    return
+            except Exception:                                # noqa: BLE001
+                pass
+            callback(*args)
         try:
             parent = {"parent": CONTROL} if cmds.workspaceControl(CONTROL, exists=True) else {}
         except Exception:                                    # noqa: BLE001
             parent = {}
         try:
-            job = cmds.scriptJob(event=["timeChanged", callback], **parent)
+            job = cmds.scriptJob(event=["timeChanged", moved], **parent)
         except Exception:                                    # noqa: BLE001
             job = None
         return [job] if isinstance(job, int) else []
