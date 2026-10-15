@@ -10098,8 +10098,21 @@ a joint (orient, yxz) exact, refusals changing nothing, a 300-frame shake applie
 Segoe UI loaded - offscreen Qt draws boxes otherwise). **The card in Maya is the animator's to try** (no GUI
 Maya of ours): not seen live yet, nor a popup copy of it.
 
+**Apply replaces the shake of its own mode** (2026-10-15, «при нажатии apply должен сам удалить существующий
+слой и наложить новый ... определять с каким слоем ему работать, с слоем импактов или слоем ручной камеры»):
+a camera keeps ONE handheld layer and ONE impact layer. Apply in the card's mode takes off every shake of
+that mode holding any of the cameras it shakes (`replaced`, `_take_off`) and lays a new layer (weight 1,
+locked) - at whatever frames, so a second impact moves the impact rather than adding one; the other mode's
+layer is never touched. A layer shared with cameras not being shaken keeps them: only these cameras'
+channels leave it (`animLayer -removeAttribute`, its curves with them) and its record names the rest. Nothing
+selected, Apply takes the picked shake's cameras when it is of the card's mode (`apply_targets`). The
+subtitle says «... - replaces CamShake_Impact_40_60», the line «| replaced ...». One undo puts the old layer
+back. A new layer whose name is still taken gets `_v2` (Maya would bump the last frame: `0_60` -> `0_101`).
+Before this, Apply reused a layer only with the same mode, frames AND cameras, else stacked a new one.
+`verify_camshake.py` **33/33** (gates 15, 17-19, 21, 25 new); 75 unit tests.
+
 Not built: an operator walking (step bob), a pivot behind the lens, translation in the rattle, moving a shake's
-range after Apply.
+range after Apply, several impacts on one camera (a second Apply replaces the first).
 
 236. **A DG context read keeps a stale value per time.** `getAttr(plug, time=t)` after a key at `t` was edited
      answered the OLD value (measured in mayapy: 0.0 where the curve now said 20, then 30 after a second edit

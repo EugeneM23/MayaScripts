@@ -4,7 +4,8 @@ Select a camera (nothing selected: our SceneSetup_camera when there is exactly o
 the time slider, set the controls and press Apply:
 - Handheld: an operator holding the camera - a slow sway, the hands' tremor, a little drift.
 - Impact: a jolt from a chosen side whose waves die by the end of the range, a fine rattle on top.
-Every press is an additive layer of its own (its weight is a strength dial, Mute turns it off); after Apply
+Every press is an additive layer (its weight is a strength dial, Mute turns it off) and it REPLACES the
+shake of the same mode those cameras had: a camera keeps one handheld layer and one impact layer. After Apply
 a released slider re-keys that shake. docs/superpowers/specs/2026-10-13-camera-shake-design.md.
 
 Built as a standalone script (docs/superpowers/plans/camshake/, 2026-10-13) and moved into the plugin the
@@ -802,7 +803,11 @@ def _key(curve, frames, values):
 
 
 def _new_layer(mode, a, b):
-    layer = cmds.animLayer(layer_name(mode, a, b))
+    name, count = layer_name(mode, a, b), 1
+    while cmds.objExists(name):      # Maya would bump the last frame's digits: 0_60 -> 0_101
+        count += 1
+        name = "%s_v%d" % (layer_name(mode, a, b), count)
+    layer = cmds.animLayer(name)
     cmds.setAttr(layer + ".rotationAccumulationMode", 0)      # by component: the eulers add up
     cmds.addAttr(layer, longName=LAYER_MARKER, dataType="string")
     return layer
@@ -844,13 +849,60 @@ def _chunk(work):
                 pass
 
 
-def _existing(mode, a, b, uuids):
+def replaced(mode, uuids):
+    """The shakes an Apply in `mode` on these cameras replaces: every shake of that mode holding any of
+    them - a camera has one handheld layer and one impact layer. [(layer, its record)]."""
+    found = []
     for layer in shakes():
-        found = record(layer)
-        if (found and found["mode"] == mode and found["frames"] == [a, b]
-                and sorted(found["targets"]) == sorted(uuids)):
-            return layer
-    return None
+        data = record(layer)
+        if data and data["mode"] == mode and set(data["targets"]) & set(uuids):
+            found.append((layer, data))
+    return found
+
+
+def apply_targets(mode, selection=None):
+    """What an Apply shakes: the selection; nothing selected, the cameras of the picked shake when it is
+    of this mode, else what `targets` takes."""
+    if selection is None and not (cmds.ls(selection=True) or []):
+        layer = picked()
+        data = record(layer)
+        if data and data["mode"] == mode:
+            nodes = [_node(uuid) for uuid in data["targets"]]
+            if None not in nodes:
+                return nodes
+    return targets(selection)
+
+
+def _take_off(old, uuids):
+    """The replaced shakes go: a layer holding only these cameras is deleted, one holding others too
+    loses these cameras' channels and keeps shaking the rest. Answers the names, for the line."""
+    names = []
+    for layer, data in old:
+        rest = [uuid for uuid in data["targets"] if uuid not in uuids]
+        if not rest:
+            if picked() == layer:
+                pick(None)
+            cmds.delete(layer)
+            names.append(layer)
+            continue
+        plugs = []
+        for uuid in data["targets"]:
+            node = _node(uuid)
+            if uuid in uuids and node:
+                plugs += ["%s.%s" % (node, attr) for attr in ROTATE + TRANSLATE
+                          if _find_curve(layer, "%s.%s" % (node, attr))]
+        was = cmds.animLayer(layer, query=True, lock=True)
+        cmds.animLayer(layer, edit=True, lock=False)
+        try:
+            if plugs:
+                cmds.animLayer(layer, edit=True, removeAttribute=plugs)
+        finally:
+            cmds.animLayer(layer, edit=True, lock=bool(was))
+        a, b = data["frames"]
+        cmds.setAttr(layer + "." + LAYER_MARKER, record_text(data["mode"], data["settings"], a, b, rest),
+                     type="string")
+        names.append("%s (other cameras kept)" % layer)
+    return names
 
 
 def describe(mode, s, a, b, nodes, layer, where="", locked=()):
@@ -874,25 +926,30 @@ def describe(mode, s, a, b, nodes, layer, where="", locked=()):
 
 
 def apply(mode, given=None, selection=None, frames=None):
-    """A new shake on the selection over the highlight (or the one with the same mode, frames and cameras
-    rewritten); picked. (layer, message)."""
+    """A new shake on the selection over the highlight, in a new layer; the shake of the same mode those
+    cameras had is taken off first (a camera keeps one handheld layer and one impact layer, each its own).
+    Picked. (layer, message)."""
     s = settings(mode, given)
-    nodes = targets(selection)
+    nodes = apply_targets(mode, selection)
     a, b, where = frames_for(mode, s, frames)
     uuids = [_uuid(node) for node in nodes]
-    layer = _existing(mode, a, b, uuids)
-    plans = [_channels(node, mode, s, layer) for node in nodes]
+    old = replaced(mode, uuids)
+    plans = [_channels(node, mode, s, None) for node in nodes]
+    gone = []
 
     def work():
-        target = layer or _new_layer(mode, a, b)
-        _write(target, mode, s, a, b, nodes, [plan[0] for plan in plans],
-               lock=True if layer is None else None)
+        gone.extend(_take_off(old, uuids))
+        target = _new_layer(mode, a, b)
+        _write(target, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=True)
         cmds.setAttr(target + "." + LAYER_MARKER, record_text(mode, s, a, b, uuids), type="string")
         return target
 
     made = _chunk(work)
     pick(made)
-    return made, describe(mode, s, a, b, nodes, made, where, [plan[1] for plan in plans])
+    text = describe(mode, s, a, b, nodes, made, where, [plan[1] for plan in plans])
+    if gone:
+        text += " | replaced " + ", ".join(gone)
+    return made, text
 
 
 def retune(layer, given):
@@ -987,7 +1044,7 @@ TIPS = {
     "rattle": "A fast fine vibration on top, degrees - it dies before the swings do",
     "rattle_hz": "The rattle's rate, up to 0.42 of the frame rate",
     "length": "Frames the hit takes to settle when no range is highlighted",
-    "shake": "+ New shake: Apply makes one. A shake of ours: the controls re-key it as they change",
+    "shake": "+ New shake: Apply makes one, replacing the shake of the same mode on those cameras. A shake of ours: the controls re-key it as they change",
     "delete": "Delete the picked shake's layer (one undo)",
     "preset": "Fill the controls with a preset (the seed, ease, length and axes are kept)",
     "direction": "Where the hit comes from: the camera is knocked the other way",
@@ -1154,11 +1211,15 @@ def selection_line():
                                                  found["frames"][1])
     mode = current_mode()
     try:
-        nodes = targets()
+        nodes = apply_targets(mode)
         a, b, where = frames_for(mode, _read(mode))
     except Refused as refusal:
         return NOTHING if "select a camera" in str(refusal) else str(refusal)
-    return "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b, where)
+    text = "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b, where)
+    old = replaced(mode, [_uuid(node) for node in nodes])
+    if old:
+        text += " - replaces " + ", ".join(layer for layer, _ in old)
+    return text
 
 
 def refresh(*_):

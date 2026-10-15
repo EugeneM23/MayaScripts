@@ -212,8 +212,15 @@ def phase_impact(camera, base):
     gate("a hit from below throws the view up", min(tilt) > 3.0, "%.2f, %.2f deg" % tuple(tilt))
 
     own = {f: shown(camera, f) for f in range(102, 119)}
-    tilted, _ = cs.apply("impact", {"direction": "Left", "strength": 6.0, "rattle": 2.0, "decay": "Smooth",
+    hand_layer = [l for l in cs.shakes() if cs.record(l)["mode"] == "handheld"]
+    tilted, message = cs.apply("impact", {"direction": "Left", "strength": 6.0, "rattle": 2.0, "decay": "Smooth",
                                     "pan_on": False, "roll_on": False}, selection=[camera], frames=(102, 118))
+    print("   ", message)
+    r50, _ = shown(camera, 50)
+    gate("a second impact Apply replaces the first, the handheld layer stays",
+         not cmds.objExists(layer) and len(cs.shakes()) == 2 and hand_layer and cmds.objExists(hand_layer[0])
+         and np.abs(r50 - hand[50][0]).max() < 1e-9 and ("replaced " + layer) in message,
+         "frame 50 back to the handheld alone %.1e" % float(np.abs(r50 - hand[50][0]).max()))
     sideways, turned = 0.0, 0.0
     for f in range(102, 119):
         r, _ = shown(camera, f)
@@ -222,19 +229,20 @@ def phase_impact(camera, base):
         turned = max(turned, math.degrees(math.acos(min(1.0, turn[1, 1]))))
     gate("Pan and Roll off: the camera turns about its own X only", sideways < 1e-9 and turned > 0.3,
          "off the X axis %.1e, tilt up to %.2f deg" % (sideways, turned))
-    cs.delete(tilted)
-    return layer
+    return tilted
 
 
 def phase_undo_delete(camera, impact_layer):
     layers = set(cmds.ls(type="animLayer"))
     names = node_names()
-    cs.apply("impact", {"direction": "Left"}, selection=[camera], frames=(70, 90))
+    new, _ = cs.apply("impact", {"direction": "Left"}, selection=[camera], frames=(70, 90))
+    gate("Apply in the same mode at other frames replaces that shake",
+         not cmds.objExists(impact_layer) and cmds.objExists(new) and len(cs.shakes()) == 2)
     cmds.undo()
-    gate("one undo takes a whole new shake away", set(cmds.ls(type="animLayer")) == layers
-         and node_names() == names)
+    gate("one undo takes the new shake away and puts the replaced one back",
+         set(cmds.ls(type="animLayer")) == layers and node_names() == names)
     cmds.redo()
-    gate("redo brings it back", len(cs.shakes()) == 3)
+    gate("redo replaces it again", len(cs.shakes()) == 2 and not cmds.objExists(impact_layer))
     cmds.undo()
     keys = len(cmds.keyframe(our_curve(impact_layer, camera, "rotateX"), query=True, timeChange=True))
     cs.delete(impact_layer)
@@ -242,6 +250,14 @@ def phase_undo_delete(camera, impact_layer):
     cmds.undo()
     gate("Delete removes the shake, undo brings it back", gone and cmds.objExists(impact_layer)
          and len(cmds.keyframe(our_curve(impact_layer, camera, "rotateX"), query=True, timeChange=True)) == keys)
+    hand_layer = [l for l in cs.shakes() if cs.record(l)["mode"] == "handheld"][0]
+    cmds.select(clear=True)
+    cs.pick(hand_layer)
+    again, _ = cs.apply("handheld", {"sway": 0.8}, frames=(0, 100))
+    gate("nothing selected: Apply replaces the picked handheld shake on its own camera, the impact stays",
+         not cmds.objExists(hand_layer) and cmds.objExists(impact_layer)
+         and cs.record(again)["targets"] == [cmds.ls(camera, uuid=True)[0]]
+         and sorted(cs.record(l)["mode"] for l in cs.shakes()) == ["handheld", "impact"])
 
 
 def phase_cameras():
@@ -265,6 +281,16 @@ def phase_cameras():
     gate("a plain key after it lands on the base layer, not the shake",
          curve_values(our_curve(layer, camB, "rotateY")) == before and base_curve is not None
          and 30.0 in (cmds.keyframe(base_curve, query=True, timeChange=True) or []))
+
+    c_before = curve_values(our_curve(layer, camC, "rotateY"))
+    alone, message = cs.apply("handheld", {"sway": 0.5, "drift": 0.0}, selection=[camB], frames=(0, 60))
+    print("   ", message)
+    gate("a camera taken out of a shared layer: the layer keeps shaking the other one",
+         cmds.objExists(layer) and cs.record(layer)["targets"] == [cmds.ls(camC, uuid=True)[0]]
+         and our_curve(layer, camB, "rotateY") is None
+         and curve_values(our_curve(layer, camC, "rotateY")) == c_before
+         and cs.record(alone)["targets"] == [cmds.ls(camB, uuid=True)[0]]
+         and cmds.animLayer(layer, query=True, lock=True))
 
     cmds.select(clear=True)
     joint = cmds.ls(cmds.joint(name="shakeJoint", orientation=(0.0, 45.0, 0.0)), long=True)[0]

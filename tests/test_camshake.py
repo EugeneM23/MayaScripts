@@ -613,7 +613,7 @@ class CardTests(unittest.TestCase):
         self.fake = FakeCmds()
         self.saved = {name: getattr(cs, name) for name in
                       ("cmds", "apply", "retune", "delete", "picked", "pick", "record", "shakes", "targets",
-                       "frames_for", "editor_pick", "_node_names")}
+                       "apply_targets", "replaced", "_uuid", "frames_for", "editor_pick", "_node_names")}
         cs.cmds = self.fake
         self.calls = []
         self.current = None
@@ -625,6 +625,10 @@ class CardTests(unittest.TestCase):
             if layer else None
         cs.shakes = lambda: [LAYER]
         cs.targets = lambda selection=None: ["|cam"]
+        cs.apply_targets = lambda mode, selection=None: ["|cam"]
+        self.old = []
+        cs.replaced = lambda mode, uuids: [(name, None) for name in self.old]
+        cs._uuid = lambda node: "U"
         cs.frames_for = lambda mode, s, given=None: (0, 50, "the playback range")
         cs.editor_pick = lambda: None
         cs.apply = lambda mode, given=None, selection=None, frames=None: (
@@ -709,6 +713,14 @@ class CardTests(unittest.TestCase):
         verb, mode, given = self.calls[-1]
         self.assertEqual((verb, mode, given["sway"], given["roll_on"]), ("apply", "handheld", 2.5, False))
         self.assertEqual(self.control(cs.STATUS)["label"], "applied")
+
+    def test_the_subtitle_names_the_shake_an_apply_replaces(self):
+        cs.refresh()
+        self.assertNotIn("replaces", self.control(cs.SUBTITLE)["label"])
+        self.old = ["CamShake_Handheld_0_50"]
+        cs.refresh()
+        self.assertTrue(self.control(cs.SUBTITLE)["label"].endswith("- replaces CamShake_Handheld_0_50"),
+                        self.control(cs.SUBTITLE)["label"])
 
     def test_switching_mode_unpicks(self):
         self.current = LAYER
