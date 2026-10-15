@@ -90,6 +90,8 @@ def start():
     if state["tabs"]:
         return state
     scene = (cmds.file(q=True, sceneName=True) or "").replace("\\", "/")
+    if records.is_session_file(scene, folder()):
+        scene = ""          # an untitled scene back from tabs keeps the session's name: untitled
     namespace = records.namespace_for(scene or records.UNTITLED, _taken())
     first = records.new_tab(namespace, scene, cmds.currentUnit(q=True, time=True),
                             session.current_ranges(), _mtime(scene))

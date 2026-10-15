@@ -730,6 +730,10 @@ def _ensure_edge():
         he.state()["edge"] = current
         _SKIN = _build_skin(host=current.slot)
         _SKIN.set_edge_mode(True, edge_side())
+        #  the scene tabs bar and its hooks (2026-10-15): build() shows them, and
+        #  with the hub at the edge build() is not what builds the hub - an
+        #  update rebuilt it here and the bar never came
+        _tabs_bar_soon()
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")

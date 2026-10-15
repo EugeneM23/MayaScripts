@@ -311,3 +311,18 @@ def holds_session(path, chunk=1 << 22):
 
 def session_name(folder, stamp):
     return "%s/session_%s.ma" % (folder.replace("\\", "/").rstrip("/"), stamp)
+
+
+_SESSION_FILE = re.compile(r"^session_\d{8}_\d{6}\.ma$", re.IGNORECASE)
+
+
+def is_session_file(path, folder):
+    """`path` is a session file of ours (`<folder>/session_<stamp>.ma`). Maya
+    cannot make a scene untitled again (`file -rename ""` names it `scenes/`),
+    so an untitled scene that went into tabs and came back to one keeps the
+    session's name - the scene is untitled all the same (2026-10-15). Pure."""
+    if not path or not folder:
+        return False
+    norm = lambda p: os.path.normcase(os.path.normpath(p))          # noqa: E731
+    return (norm(os.path.dirname(path)) == norm(folder)
+            and bool(_SESSION_FILE.match(os.path.basename(path))))

@@ -220,6 +220,22 @@ class Saves(unittest.TestCase):
                          "C:/u/SkeldarTabs/session_20261015_120000.ma")
 
 
+class SessionFiles(unittest.TestCase):
+
+    def test_a_session_file_of_ours_is_one(self):
+        name = records.session_name("C:/m/SkeldarTabs", "20261015_181801")
+        self.assertTrue(records.is_session_file(name, "C:/m/SkeldarTabs"))
+        self.assertTrue(records.is_session_file(name.replace("/", "\\"), "C:/m/SkeldarTabs/"))
+
+    def test_anything_else_is_not(self):
+        self.assertFalse(records.is_session_file("C:/m/scenes/session_20261015_181801.ma", "C:/m/SkeldarTabs"))
+        self.assertFalse(records.is_session_file("C:/m/SkeldarTabs/attack.ma", "C:/m/SkeldarTabs"))
+        self.assertFalse(records.is_session_file("C:/m/SkeldarTabs/sub/session_20261015_181801.ma",
+                                                 "C:/m/SkeldarTabs"))
+        self.assertFalse(records.is_session_file("", "C:/m/SkeldarTabs"))
+        self.assertFalse(records.is_session_file("C:/m/SkeldarTabs/session_20261015_181801.ma", ""))
+
+
 class Purity(unittest.TestCase):
 
     def test_records_imports_no_maya_and_no_qt(self):

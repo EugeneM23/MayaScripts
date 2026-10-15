@@ -96,10 +96,30 @@ def _checked(what):
     return wrap
 
 
+def _untitled_save():
+    """Tabs off: a scene still named as one of our session files is untitled
+    (Maya cannot rename a scene back to untitled), so Save asks for a name
+    instead of writing into SkeldarTabs (2026-10-15)."""
+    if session.exists():
+        return True
+    target = (cmds.file(q=True, sceneName=True) or "").replace("\\", "/")
+    from . import opening
+    if not records.is_session_file(target, opening.folder()):
+        return True
+
+    def save_as():
+        import maya.mel as mel
+        mel.eval("SaveSceneAs")
+    defer(_reported(save_as))
+    return False
+
+
 @_checked("Save")
 def on_save(client_data=None):
-    if _bypassed() or not session.is_on():
+    if _bypassed():
         return True
+    if not session.is_on():
+        return _untitled_save()
     target = (cmds.file(q=True, sceneName=True) or "").replace("\\", "/")
     try:
         autosave = cmds.autoSave(q=True, destinationFolder=True) or ""

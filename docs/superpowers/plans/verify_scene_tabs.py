@@ -1038,10 +1038,41 @@ def guarded(phase):
     return run
 
 
+def phase_untitled():
+    """2026-10-15, found live: an untitled scene into tabs and back keeps the session file's name
+    (Maya cannot untitle a scene). The next tab 1 is untitled again, and Save asks for a name."""
+    from maya_scenetabs import opening
+    fresh()
+    cmds.polyCube(name="untitledCube")
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.new_tab()
+    first = session.state()["tabs"][0]
+    gate("untitled: tab 1 of an untitled scene is untitled", first["path"] == "", first)
+    opening.close_tab(session.state()["tabs"][1]["ns"], ask=False)
+    left = (cmds.file(q=True, sceneName=True) or "").replace("\\", "/")
+    gate("untitled: back to one scene, the scene still wears the session's name",
+         records.is_session_file(left, opening.folder()) and not session.exists(), left)
+    hooks = hooks_on()
+    try:
+        del QUEUE[:]
+        answer = hooks.on_save()
+        gate("untitled: Save with tabs off refuses and queues Save As", answer is False and len(QUEUE) == 1,
+             (answer, len(QUEUE)))
+        del QUEUE[:]
+        opening.new_tab()
+        again = session.state()["tabs"][0]
+        gate("untitled: the next tab 1 is untitled, not the session file", again["path"] == ""
+             and not again["ns"].startswith("tab_session"), again)
+        gate("untitled: its cube came along", cmds.objExists(again["ns"] + ":untitledCube"))
+    finally:
+        hooks.remove()
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
-          "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review)}
+          "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
+          "untitled": guarded(phase_untitled)}
 
 
 def main(names):

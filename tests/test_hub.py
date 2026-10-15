@@ -1316,6 +1316,19 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
             self.assertEqual(self.built(sec.key), 1, sec.key)
         self.assertNotIn(hub.CONTROL, self.fake.workspace)
 
+    def test_the_edge_shows_the_scene_tabs_bar(self):
+        """2026-10-15: with the hub at the edge, build() never runs - the edge
+        build must ask for the scene tabs bar and its hooks itself."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        asked = []
+        original = hub._tabs_bar_soon
+        hub._tabs_bar_soon = lambda: asked.append(True)
+        try:
+            hub.start()
+        finally:
+            hub._tabs_bar_soon = original
+        self.assertEqual(asked, [True])
+
     def test_start_twice_is_one_edge(self):
         self.fake.optionvars[hub.EDGE_VAR] = 1
         first = hub.start()
