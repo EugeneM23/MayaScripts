@@ -460,8 +460,148 @@ def phase_switch():
     gate("cycle: wraps round", switching.cycle(1) and session.state()["active"] == "tab_rig")
 
 
+PROBES = {
+    "rig.ma": [("Manny_Rig:FKShoulder_L.rotateZ", 10), ("Manny_Rig:FKShoulder_R.rotateZ", 20)],
+    "film.ma": [("hero.rotateY", 20), ("hero.translateX", 20), ("ref:box.translateZ", 0), ("ref:box.translateX", 20)],
+    "plain.mb": [("ball.translateY", 12)],
+}
+
+
+def edit_rig(prefix, tab=None):
+    control = prefix + "Manny_Rig:FKShoulder_L"
+    cmds.setKeyframe(control, attribute="rotateZ", time=0, value=0)
+    cmds.setKeyframe(control, attribute="rotateZ", time=10, value=30)
+    cmds.spaceLocator(name="madeHere")
+    cmds.file(WORK + "/ref.ma", i=True, namespace="Extra", preserveReferences=True, executeScriptNodes=False)
+
+
+def edit_film(prefix, tab=None):
+    from maya_scenetabs import layers
+    hero = prefix + "hero"
+    cmds.select(hero)
+    layer = cmds.animLayer("Layer2", addSelectedObjects=True)
+    if tab:
+        layers.adopt(layer, tab)
+    cmds.setKeyframe(hero + ".translateX", time=20, value=7, animLayer=layer)
+    cmds.setAttr(prefix + "ref:box.translateZ", 3)
+    cmds.select(clear=True)
+
+
+def edit_plain(prefix, tab=None):
+    cmds.setKeyframe(prefix + "ball", attribute="translateY", time=12, value=5)
+
+
+EDITS = (("rig.ma", "tab_rig", edit_rig), ("film.ma", "tab_film", edit_film), ("plain.mb", "tab_plain", edit_plain))
+
+
+def direct(name, edit):
+    """The same edits made in the file opened on its own, saved: the expectation."""
+    path = copy(name, "direct_" + name)
+    fresh()
+    cmds.file(path, open=True, force=True)
+    edit("")
+    cmds.file(save=True, force=True, type=records.FILE_TYPES[os.path.splitext(name)[1]])
+    return summary(path, PROBES[name])
+
+
+def phase_save():
+    """Each tab saved back equals its file edited directly; refusals write nothing."""
+    from maya_scenetabs import layers, opening, saving, switching
+    expected = {name: direct(name, edit) for name, _, edit in EDITS}
+    paths = {name: copy(name) for name, _, _ in EDITS}
+    fresh()
+    cmds.file(paths["rig.ma"], open=True, force=True)
+    opening.open_tab(paths["film.ma"])
+    opening.open_tab(paths["plain.mb"])
+    for name, namespace, edit in EDITS:
+        switching.switch(namespace)
+        edit(namespace + ":", namespace)
+    def names():
+        """The session's names. Left out: a reference node - after a save it
+        legitimately sits in the root (session._ref_file) - checked by its
+        namespace in references(); and the layers' curves and blend nodes,
+        which Maya rebuilds under names of its own during a save (measured:
+        `hero_rotate_Layer2` came back `Layer10`) - checked by playing them."""
+        rebuilt = set(cmds.ls(type=("animCurve", "animBlendNodeBase")) or [])
+        return sorted(n for n in cmds.ls() if cmds.nodeType(n) != "reference" and n not in rebuilt)
+
+    def references():
+        return sorted(cmds.referenceQuery(r, namespace=True) for r in cmds.ls(type="reference") or []
+                      if not r.endswith("sharedReferenceNode"))
+
+    for _, namespace, _ in EDITS:
+        layers.home_blends(namespace)           # what every save does first
+    before, refs_before = names(), references()
+    for name, namespace, _ in EDITS:
+        switching.switch(namespace)
+        message = saving.save_tab()
+        gate("save %s: written" % namespace, message.startswith("Saved"), message)
+        gate("save %s: the tab is clean" % namespace,
+             not records.tab(session.state(), namespace)["modified"] and not cmds.file(q=True, modified=True))
+    gate("save: the session is exactly as before the saves", names() == before,
+         sorted(set(names()) ^ set(before))[:10])
+    gate("save: every reference back under its tab", references() == refs_before, references())
+    switching.switch("tab_film")
+    gate("save: the film tab still plays both its layers in the session",
+         value_at("tab_film:hero.rotateY", 20) == 45.0 and value_at("tab_film:hero.translateX", 20) == 7.0,
+         (value_at("tab_film:hero.rotateY", 20), value_at("tab_film:hero.translateX", 20)))
+    switching.switch("tab_rig")
+    cmds.createNode("transform", name=":madeHere")
+    with open(paths["rig.ma"], "rb") as handle:
+        saved_rig = handle.read()
+    try:
+        saving.save_tab()
+        refused = ""
+    except session.TabError as exc:
+        refused = str(exc)
+    gate("save: a name the root namespace holds refuses by name", "madeHere" in refused, refused)
+    with open(paths["rig.ma"], "rb") as handle:
+        gate("save: the refused save wrote nothing", handle.read() == saved_rig)
+    gate("save: the refused save put every name back",
+         cmds.objExists("tab_rig:madeHere") and cmds.objExists("|madeHere")
+         and names() == sorted(before + ["madeHere"]),
+         sorted(set(names()) ^ set(before + ["madeHere"]))[:10])
+    cmds.delete("|madeHere")
+    switching.switch("tab_plain")
+    stamp = os.path.getmtime(paths["plain.mb"]) + 20
+    os.utime(paths["plain.mb"], (stamp, stamp))
+    stamp = os.path.getmtime(paths["plain.mb"])                 # what NTFS kept (100 ns)
+    cmds.setAttr("tab_plain:ball.translateZ", 1)
+    saving.CONFIRM = lambda question: False
+    message = saving.save_tab()
+    saving.CONFIRM = None
+    gate("save: a file changed on disk asks first; No writes nothing",
+         "cancelled" in message and abs(os.path.getmtime(paths["plain.mb"]) - stamp) < 1e-3, message)
+    cmds.setAttr("tab_plain:ball.translateZ", 0)
+    switching.switch("tab_film")
+    target = RUN + "/film_saved_as.ma"
+    saving.save_tab(path=target)
+    gate("save as: the tab takes the new path",
+         records.tab(session.state(), "tab_film")["path"] == target and os.path.isfile(target))
+    copy_path = RUN + "/film_copy.ma"
+    saving.save_tab(path=copy_path, adopt=False)
+    gate("save a copy: written, the tab keeps its path",
+         os.path.isfile(copy_path) and records.tab(session.state(), "tab_film")["path"] == target)
+    actual = {"rig.ma": summary(paths["rig.ma"], PROBES["rig.ma"]),
+              "film.ma": summary(target, PROBES["film.ma"]),
+              "plain.mb": summary(paths["plain.mb"], PROBES["plain.mb"])}
+    for name in expected:
+        for key in ("names", "keys", "layers", "refs", "displays", "ik_solved", "values", "unit", "ranges"):
+            mine, theirs = actual[name][key], expected[name][key]
+            same = mine == theirs
+            if same:
+                detail = ""
+            elif key == "names":
+                detail = "only the tab's: %s | only the direct: %s" % (sorted(set(mine) - set(theirs))[:15],
+                                                                       sorted(set(theirs) - set(mine))[:15])
+            else:
+                detail = "tab %r / direct %r" % (mine, theirs)
+            gate("save %s: %s as the same edits made directly" % (name, key), same, detail[:900])
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
-          "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch}
+          "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
+          "save": phase_save}
 
 
 def main(names):
