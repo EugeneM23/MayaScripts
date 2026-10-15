@@ -26,6 +26,8 @@ finds only its own -- a weapon space is never an armor space.
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_rigs
 
 SPACE_MARKER = "mayaWeaponSpace"
@@ -119,7 +121,7 @@ def hand_for(path):
 def _group_under(parent, group_marker=GROUP_MARKER, group_name=GROUP_NAME):
     """Our group carrying `group_marker` under `parent` (None: world level), made on demand."""
     children = (cmds.listRelatives(parent, children=True, type="transform", fullPath=True) or []) \
-        if parent else (cmds.ls(assemblies=True, long=True) or [])
+        if parent else scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
     for child in children:
         if cmds.attributeQuery(group_marker, node=child, exists=True):
             return child

@@ -21,6 +21,8 @@ a getter and one derivation.
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 from maya_overrig import naming, overrig
 
 _ROOT_UUID = None
@@ -74,7 +76,7 @@ def armor_groups():
     piece (2026-10-01, the Tech Limb's shield) hangs its joints there, and its Root has no joint
     parent -- without this it would count as one more character in the scene. Three levels deep
     since the character groups (2026-10-02): `|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`."""
-    found, level = [], cmds.ls(assemblies=True, long=True) or []
+    found, level = [], scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
     for _ in range(3):
         nxt = []
         for node in level:

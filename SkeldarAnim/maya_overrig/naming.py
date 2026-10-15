@@ -13,6 +13,8 @@ make `hand_l` match the export helper `ik_hand_l`, and `foot_l` match
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 
 def leaf(dag_path):
     """Strip DAG path and namespace: '|a|ns:hand_l' -> 'hand_l'."""
@@ -118,7 +120,7 @@ def find_skeleton_roots(exclude_under=()):
     inside = tuple(path + "|" for path in excluded)
 
     roots = []
-    for joint in cmds.ls(type="joint", long=True) or []:
+    for joint in scope.active_only(cmds.ls(type="joint", long=True) or [], cmds):
         if joint in excluded or (inside and joint.startswith(inside)):
             continue
         if not cmds.listRelatives(joint, parent=True, type="joint",

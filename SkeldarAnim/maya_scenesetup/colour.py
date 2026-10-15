@@ -33,6 +33,8 @@ import os
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 Colour = collections.namedtuple("Colour", "name rgb")
 
 # The attribute that says a material is ours. Same schema as `mayaWeapon` on
@@ -175,7 +177,7 @@ def is_ours(material):
 
 def our_materials():
     """Every material in the scene that this module made."""
-    return [material for material in (cmds.ls(materials=True) or [])
+    return [material for material in scope.active_only(cmds.ls(materials=True) or [], cmds)
             if is_ours(material)]
 
 
@@ -447,7 +449,7 @@ def _same_path(first, second):
 def textured_material(image):
     """Our textured material already dressed in `image` and still wired, or
     None -- so re-adding a weapon does not pile up file nodes."""
-    for material in cmds.ls(materials=True) or []:
+    for material in scope.active_only(cmds.ls(materials=True) or [], cmds):
         try:
             if not cmds.attributeQuery(TEXTURE_MARKER, node=material,
                                        exists=True):

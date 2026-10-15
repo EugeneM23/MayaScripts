@@ -19,6 +19,8 @@ import time
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_rigs
 from maya_com import massmodel
 
@@ -444,7 +446,7 @@ def create(char, model, info):
 def find_all():
     """Every CoM group in the scene (long paths)."""
     out = []
-    for node in cmds.ls(type="transform", long=True) or []:
+    for node in scope.active_only(cmds.ls(type="transform", long=True) or [], cmds):
         if cmds.attributeQuery(MARKER, node=node, exists=True):
             out.append(node)
     return out

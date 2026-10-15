@@ -35,6 +35,8 @@ import collections
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 # namespace: "" for the root namespace. control_set / main: scene names.
 # group: AdvancedSkeleton's top DAG node (long path) -- below the character group when there is
 # one. skeleton_root: the game skeleton the rig drives (long path), or "" when it drives none.
@@ -175,7 +177,8 @@ def is_character_group(node):
 
 def character_groups():
     """Every character group in the scene (they stand at world level), long paths."""
-    return [top for top in cmds.ls(assemblies=True, long=True) or [] if is_character_group(top)]
+    return [top for top in scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
+            if is_character_group(top)]
 
 
 def group_of(path):
@@ -193,7 +196,7 @@ def marked_near_top(marker, depth=3):
     weapon / armor spaces groups stand at world level (a skeleton added before 2026-10-02), in a
     character group (a bare skeleton's), or in a rig's AdvancedSkeleton group -- which is one
     level deeper since the character groups (`|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`)."""
-    found, level = [], cmds.ls(assemblies=True, long=True) or []
+    found, level = [], scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
     for _ in range(depth):
         nxt = []
         for node in level:
@@ -215,7 +218,8 @@ def group_root(group):
 
 def control_sets():
     """Every `ControlSet` in the scene, whatever its namespace."""
-    return [s for s in (cmds.ls(type="objectSet") or []) if leaf(s) == CONTROL_SET]
+    return [s for s in scope.active_only(cmds.ls(type="objectSet") or [], cmds)
+            if leaf(s) == CONTROL_SET]
 
 
 def _constrained_joints(namespace):

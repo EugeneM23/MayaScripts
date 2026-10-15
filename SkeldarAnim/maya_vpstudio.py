@@ -41,6 +41,8 @@ import math
 
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 
@@ -771,8 +773,8 @@ def pick_rig(candidates):
 
 def find_rig():
     """Our group, by its marker attribute. None when the scene has none."""
-    found = cmds.ls("*." + MARKER, objectsOnly=True, long=True,
-                    recursive=True) or []
+    found = scope.active_only(cmds.ls("*." + MARKER, objectsOnly=True, long=True,
+                                      recursive=True) or [], cmds)
     return pick_rig([n for n in found if cmds.objExists(n)])
 
 
@@ -1014,7 +1016,7 @@ def subject_bbox(rig=None):
     last time would double the studio's size every time it ran.
     """
     rig = find_rig() if rig is None else rig
-    wanted = cmds.ls(type="mesh", long=True, noIntermediate=True) or []
+    wanted = scope.active_only(cmds.ls(type="mesh", long=True, noIntermediate=True) or [], cmds)
     if rig:
         wanted = [m for m in wanted if not _under(m, rig)]
     wanted = [m for m in wanted
@@ -1032,7 +1034,7 @@ def subject_bbox(rig=None):
 
     #  No geometry at all: a rigged scene mid-build, or a skeleton on its
     #  own. Joints are a subject too.
-    joints = cmds.ls(type="joint", long=True) or []
+    joints = scope.active_only(cmds.ls(type="joint", long=True) or [], cmds)
     if rig:
         joints = [j for j in joints if not _under(j, rig)]
     if joints:

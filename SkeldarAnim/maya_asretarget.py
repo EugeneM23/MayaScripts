@@ -50,6 +50,8 @@ import math
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+from maya_scenetabs import scope
+
 import maya_ikmatch as ikmatch
 import maya_retargetmode as retargetmode
 import maya_rigs
@@ -1395,7 +1397,7 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     if rig is None:
         return empty._replace(refusal=refusal)
     empty = empty._replace(rig=rig)
-    joints = cmds.ls(type="joint", long=True) or []
+    joints = scope.active_only(cmds.ls(type="joint", long=True) or [], cmds)
     if source_root is None:
         # the selection names the SOURCE; a rig control in it named the rig
         # already (`_rig`) and is not a source bone

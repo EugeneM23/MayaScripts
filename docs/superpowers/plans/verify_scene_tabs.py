@@ -343,7 +343,8 @@ def phase_open_close():
     gate("open: the active tab's unit is the scene's", cmds.currentUnit(q=True, time=True) == "ntscf")
     gate("open: keys on whole frames in their own unit",
          cmds.keyframe("tab_plain:ball.translateX", q=True, timeChange=True) == [0.0, 24.0])
-    gate("open: the rig is still found", [r.namespace for r in maya_rigs.rigs()] == ["tab_rig:Manny_Rig"])
+    gate("open: a hidden tab's rig is not the active tab's (stage 2)", maya_rigs.rigs() == [],
+         [r.namespace for r in maya_rigs.rigs()])
     switching.switch("tab_film")
     cmds.setAttr("tab_film:hero.translateZ", 5)
     opening.ASK = lambda message, buttons: "Reload"

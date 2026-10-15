@@ -11,6 +11,8 @@ import os
 import re
 
 import maya.cmds as cmds
+
+from maya_scenetabs import scope
 import maya.mel as mel
 
 FBX_PLUGIN = "fbxmaya"
@@ -230,7 +232,7 @@ def _short(node):
     return (node or "").split("|")[-1]
 
 
-def choose_target_root(roots, selected_roots=(), bound_root=None):
+def choose_target_root(roots, selected_roots=(), bound_root=None, home=""):
     """The skeleton a merge should land on, or None when it is not decidable.
 
     The order the animator asked for (2026-09-01): "Import and Export
@@ -256,10 +258,18 @@ def choose_target_root(roots, selected_roots=(), bound_root=None):
 
     Guessing between two plausible skeletons would animate the wrong
     character without saying so, which is worse than asking.
+
+    `home` is the active scene tab's namespace (2026-10-15): inside a tab
+    every node carries it, and a skeleton is plain when it carries nothing
+    more (`tab_x:root`).
     """
+    def local(path):
+        short = _short(path)
+        return short[len(home) + 1:] if home and short.startswith(home + ":") else short
+
     def plain_only(paths):
         return [root for root in (paths or [])
-                if root and ":" not in _short(root)]
+                if root and ":" not in local(root)]
 
     plain = plain_only(roots)
 
@@ -273,7 +283,7 @@ def choose_target_root(roots, selected_roots=(), bound_root=None):
     if len(plain) == 1:
         return plain[0]
 
-    named = [root for root in plain if _short(root) == "root"]
+    named = [root for root in plain if local(root) == "root"]
     if len(named) == 1:
         return named[0]
     return None
@@ -304,7 +314,7 @@ def resolve_target():
     Weapon can never name different characters.
     """
     return choose_target_root(skeleton_roots(), selected_roots(),
-                              connected_root())
+                              connected_root(), home=scope.active_namespace(cmds))
 
 
 def skeletons_to_hold(roots, target):
@@ -602,7 +612,7 @@ def other_skeletons_held(target_root, roots=None):
 def skeleton_roots():
     """Every joint in the scene that has no joint above it."""
     roots = []
-    for joint in (cmds.ls(type="joint", long=True) or []):
+    for joint in scope.active_only(cmds.ls(type="joint", long=True) or [], cmds):
         if not cmds.listRelatives(joint, parent=True, fullPath=True,
                                   type="joint"):
             roots.append(joint)
