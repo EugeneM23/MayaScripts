@@ -11,6 +11,7 @@ Spec: docs/superpowers/specs/2026-09-18-connections-design.md
 
 import ast
 import os
+import types
 import unittest
 
 import maya_hub
@@ -904,6 +905,33 @@ class Boundaries(unittest.TestCase):
         path = os.path.join(PLUGIN, "maya_scenesetup", "connections.py")
         with open(path, encoding="utf-8") as handle:
             return handle.read()
+
+    def test_no_module_function_is_defined_twice(self):
+        """A second `def` of a name silently replaces the first. On
+        2026-10-13 the card's selection handler was named `_follow`, the
+        name of the step that puts a hand on its proxy, and every Apply of
+        a following hand ran a refresh instead - 'Applied: right hand
+        follows' over a hand that followed nothing."""
+        tree = ast.parse(self._source())
+        names = [node.name for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
+        twice = sorted(set(n for n in names if names.count(n) > 1))
+        self.assertEqual(twice, [])
+
+    def test_the_follow_step_puts_the_hand_on_a_proxy(self):
+        """`apply`'s follow step reaches `attach_to_proxy`."""
+        calls = []
+        saved = (cx.attach_to_proxy, cx._not_ik, cx._control, cx.maya_rigs.node)
+        cx.attach_to_proxy = lambda *a: calls.append(a) or ("p", "c")
+        cx._not_ik = lambda rig, side: None
+        cx._control = lambda rig, side: "IKArm_" + side
+        cx.maya_rigs.node = lambda rig, leaf: leaf
+        try:
+            rig = types.SimpleNamespace(namespace="ns")
+            cx._follow(rig, "R", "|Sword", (0, 10))
+        finally:
+            (cx.attach_to_proxy, cx._not_ik, cx._control, cx.maya_rigs.node) = saved
+        self.assertEqual([c[0] for c in calls], ["IKArm_R"])
 
     def test_the_hands_are_never_reparented(self):
         """`cmds.parent(` appears in ONE function, `_make_proxy`, and what

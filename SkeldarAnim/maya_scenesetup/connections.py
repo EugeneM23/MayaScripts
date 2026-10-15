@@ -1327,7 +1327,7 @@ def _card_key():
     return "" if scope is None else scope.tag
 
 
-def _follow(*_args):
+def _on_scene_event(*_args):
     """A selection change, an undo or a redo: the card re-read. A failure goes
     on the status line, not into the Script Editor on every click."""
     try:
@@ -1349,7 +1349,7 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:                                    # noqa: BLE001
             pass
-    JOB[_card_key()] = [cmds.scriptJob(event=[event, _follow], parent=STATUS)
+    JOB[_card_key()] = [cmds.scriptJob(event=[event, _on_scene_event], parent=STATUS)
                         for event in EVENTS]
 
 
