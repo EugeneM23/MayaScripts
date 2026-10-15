@@ -49,6 +49,7 @@ import time
 import maya.cmds as cmds
 
 from maya_poselib import keys
+from maya_poselib import objects
 from maya_poselib import scene
 from maya_poselib import store
 
@@ -196,54 +197,50 @@ def character_pose(ref, nodes, regions=None):
     return data, " | ".join([line] + notes)
 
 
-def objects_pose(nodes):
+def objects_pose(nodes, own=()):
     """The objects pose of `nodes` (transforms; a shape or component names its transform): per
-    object its leaf name without the namespace, its long path, and the value of every keyable,
-    scalar, unlocked attribute. An attribute that cannot be read is left out."""
-    objects, seen = [], set()
+    object a record (`objects.pose_record`: its leaf name without the namespace, its long path, the
+    value of every keyable, scalar, unlocked attribute of the transform and of its shape); `own`
+    the paths that are the card's character's own objects."""
+    data = _common("objects")
+    data["objects"] = object_records(nodes, own)
+    return data
+
+
+def object_records(nodes, own=()):
+    """[record] of the transforms `nodes` name, each once, in order (`objects.pose_record`)."""
+    records, seen, own = [], set(), set(own or ())
     for node in nodes or ():
         path = scene.dag_object(node)
         if path is None or path in seen:
             continue
         seen.add(path)
-        attrs = {}
-        for attr in cmds.listAttr(path, keyable=True, scalar=True, unlocked=True) or []:
-            try:
-                value = cmds.getAttr(path + "." + attr)
-            except (RuntimeError, ValueError):
-                continue
-            if isinstance(value, (bool, int, float)):
-                attrs[attr] = float(value)
-        objects.append({"name": scene.leaf(path), "path": path, "attrs": attrs})
-    data = _common("objects")
-    data["objects"] = objects
-    return data
+        records.append(objects.pose_record(path, path in own, cmds))
+    return records
 
 
 def build_pose(selection=None, regions=None, frame=None):
     """(data, note): the pose the selection makes at `frame` (the current frame when None) - a
-    character pose when it touches exactly one character, else an objects pose of its
-    transforms, else (None, "select a character or objects"). Two characters: (None, "pick one
-    character for a pose")."""
+    character pose when its BODY parts touch exactly one character (`scene.split`), holding
+    the objects selected beside it (a camera, a prop, the rig's own SceneSetup camera) in its
+    `objects`; else an objects pose of its transforms, else (None, "select a character or
+    objects"). Two characters: (None, "pick one character for a pose")."""
     with _at(frame):
-        resolved = scene.resolve(selection)
-        refs, loose = [], []
-        for path, ref in resolved:
-            if ref is None:
-                loose.append(path)
-            elif all(r.root != ref.root for r in refs):
-                refs.append(ref)
+        refs, body, loose = scene.split(selection)
         if len(refs) > 1:
             return None, scene.MANY
+        paths = [path for path, _owner in loose]
         if refs:
-            nodes = [path for path, ref in resolved if ref is not None]
-            data, note = character_pose(refs[0], nodes, regions)
-            if data is not None and loose:
-                note += " | %s outside %s left out" % (scene.describe([], loose), refs[0].label)
+            ref = refs[0]
+            data, note = character_pose(ref, body, regions)
+            if data is not None and paths:
+                own = [path for path, owner in loose if scene.owned(ref, owner)]
+                data["objects"] = object_records(paths, own)
+                note += " | + %s" % scene.describe([], paths)
             return data, note
-        if loose:
-            data = objects_pose(loose)
-            return data, scene.describe([], loose)
+        if paths:
+            data = objects_pose(paths)
+            return data, scene.describe([], paths)
         return None, scene.NOTHING
 
 

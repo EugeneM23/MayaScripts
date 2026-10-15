@@ -158,6 +158,9 @@ class FakeCmds(object):
     def objectType(self, node):
         return self.nodeType(node)
 
+    def listRelatives(self, node, shapes=False, fullPath=False, parent=False, type=None):
+        return list(getattr(self, "shapes", {}).get(node, []))
+
     def listAttr(self, node, keyable=False, scalar=False, unlocked=False):
         if node not in self.keyable:
             raise ValueError("No object matches name: " + node)
@@ -371,6 +374,26 @@ class FakeScene(object):
 
     def dag_object(self, item):
         return item
+
+    def split(self, selection=None):
+        """`scene.split` on the fake: a node with a character is its body, any other an object -
+        but for the paths named in `objects` ({path: owner ref}), a character's own objects."""
+        refs, body, loose = [], [], []
+        owned = getattr(self, "objects", {})
+        for path, ref in self.resolve(selection):
+            if path in owned:
+                loose.append((path, owned[path]))
+            elif ref is not None:
+                body.append(path)
+                if all(r.root != ref.root for r in refs):
+                    refs.append(ref)
+            else:
+                loose.append((path, None))
+        return refs, body, loose
+
+    @staticmethod
+    def owned(ref, owner):
+        return scene.owned(ref, owner)
 
 
 class FakeProgress(object):
@@ -808,14 +831,20 @@ class CharacterCard(Rebound):
                          (None, None, "select a character or objects"))
         self.assertEqual(self.timewalk.walks, [])
 
-    def test_objects_beside_the_character_are_left_out_and_said(self):
+    def test_objects_beside_the_character_ride_in_its_card(self):
+        """2026-10-15: an object selected beside the character is no longer left out - its
+        curves ride in the character card's `objects`, `own` when it is the character's."""
         self.character()
-        ac.scene.resolved = [(PATHS["pelvis"], SKELETON), ("|grp|pCube1", None)]
+        self.cmds.keyable["|grp|pCube1"] = []
+        self.cmds.keyable[TOP + "|cam"] = []
+        ac.scene.resolved = [(PATHS["pelvis"], SKELETON), ("|grp|pCube1", None),
+                             (TOP + "|cam", SKELETON)]
+        ac.scene.objects = {TOP + "|cam": SKELETON}
         header, _frames, note = ac.build_animation(start=0, end=2)
         self.assertEqual(header["kind"], "character")
-        self.assertEqual(header["objects"], [])
-        self.assertTrue(note.endswith(" | 1 object outside Manny UE5 [skeleton] left out"),
-                        note)
+        self.assertEqual([(o["path"], o["own"]) for o in header["objects"]],
+                         [("|grp|pCube1", False), (TOP + "|cam", True)])
+        self.assertTrue(note.endswith(" | + 2 objects"), note)
 
 
 class SaveIsNoUndoStep(Rebound):

@@ -139,6 +139,7 @@ import maya.cmds as cmds
 
 import maya_rigs
 from maya_poselib import keys
+from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
 from maya_poselib import scene
@@ -199,6 +200,9 @@ NOTHING = "nothing to key: %s"
 NONE_SELECTED = "Selected only: the card poses none of the selected %s"
 SOME_SELECTED = "Selected only: %d of %d %s keyed"
 SELECTED = "Selected %d %s on %s"
+OBJECTS_UNFOUND = "not in the scene: %s"
+OBJECTS_ALONE = "no character selected - only the objects posed"
+OBJECTS_UNMIRRORED = "objects not mirrored"
 
 # the rig's twist (and helper) bones are DRIVEN by its own network from the limbs the pose turns
 # (rigsolve.DRIVEN): saying so on every full pose onto a rig is no news to the animator
@@ -565,9 +569,21 @@ def _targets(selection, prefer=None):
     """(the characters a press acts on, refusal) - `choose_targets` on the scene."""
     if selection is None:
         selection = cmds.ls(selection=True, long=True) or []
-    refs, _loose = scene.characters(selection)
+    refs, _body, _loose = scene.split(selection)
     every = [] if (refs or selection) else scene.all_characters()
     return choose_targets(refs, bool(selection), every, prefer)
+
+
+def _body_refs(selection):
+    """The characters whose BODY the selection touches (`scene.split`)."""
+    return scene.split(selection)[0]
+
+
+def _loose(selection):
+    """The selected OBJECTS (`scene.split`: no part of a character's body), long paths."""
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
+    return [path for path, _owner in scene.split(selection)[2]]
 
 
 # ------------------------------------------------------------------ Selected only
@@ -767,7 +783,8 @@ def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
         worst = measured.get(index)
         # the nodes that TOOK a key: a plug the layer refused, a locked or driven one, is named
         # in the notes and not counted
-        nodes = len(set(plug.rsplit(".", 1)[0] for plug in plugs))
+        nodes = len(set(_owner(plug.rsplit(".", 1)[0]) if plan.ref is None
+                        else plug.rsplit(".", 1)[0] for plug in plugs))
         label = target_label(plan.ref) if plan.ref is not None else extra.label
         lines = shown_notes(list(plan.notes) + _skipped_note(plan.skipped) + notes)
         if hidden and index == 0:
@@ -778,8 +795,23 @@ def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
     return results
 
 
-def _apply_refs(data, refs, mirror=False, alpha=1.0, only=None):
-    """The press onto `refs` - the module's steps 2-5. `only`: Selected only (`_plan`); a
+def _with_objects(entries, data, loose, refs, only, mirror):
+    """`entries` with the card's objects' entry after them (`card_objects`); the notes of objects
+    neither selected nor found go on the first entry."""
+    entry, notes = card_objects(data, loose, refs, only is not None)
+    out = list(entries)
+    if entry is not None:
+        if mirror:
+            entry[0].notes.insert(0, OBJECTS_UNMIRRORED)
+        out.append(entry)
+    if notes and out:
+        out[0][0].notes.extend(notes)
+    return out
+
+
+def _apply_refs(data, refs, mirror=False, alpha=1.0, only=None, loose=()):
+    """The press onto `refs` - the module's steps 2-5 - and the card's objects (`card_objects`:
+    the selected `loose` objects paired, the rest found). `only`: Selected only (`_plan`); a
     selection naming nothing the card keys is refused before the press."""
     layer, refusal = keys.active_layer()
     if refusal:
@@ -790,15 +822,37 @@ def _apply_refs(data, refs, mirror=False, alpha=1.0, only=None):
     frame = _frame()
     if only is not None:
         with _unrecorded():
-            entries = [_plan(data, ref, mirror, **_only(only)) for ref in refs]
+            entries = _with_objects([_plan(data, ref, mirror, **_only(only)) for ref in refs],
+                                    data, loose, refs, only, mirror)
         if not any(plan.values for plan, _extra in entries):
             return False, _nothing(entries)
         with _press():
             results = _key_entries(entries, data.get("name"), frame, layer, alpha, mirror)
         return any(r.count for r in results), summary(results)
     with _press():
-        entries = [_plan(data, ref, mirror) for ref in refs]
+        entries = _with_objects([_plan(data, ref, mirror) for ref in refs], data, loose, refs,
+                                None, mirror)
         results = _key_entries(entries, data.get("name"), frame, layer, alpha, mirror)
+    return any(r.count for r in results), summary(results)
+
+
+def _objects_alone(data, loose, alpha=1.0):
+    """A character card onto the selected OBJECTS alone (no character selected): its objects
+    paired with them as an objects card's are, the character untouched, said."""
+    layer, refusal = keys.active_layer()
+    if refusal:
+        return False, refusal
+    entry, notes = card_objects(data, loose, [], True)
+    if entry is None:
+        stored = (data or {}).get("objects") or []
+        return False, SELECTION_UNMATCHED % (len(stored), "" if len(stored) == 1 else "s",
+                                             len(stored))
+    note = keys.quaternion_note(layer)
+    if note and _has_rotate(entry[0].values):
+        return False, note
+    entry[0].notes.insert(0, OBJECTS_ALONE)
+    with _press():
+        results = _key_entries([entry], data.get("name"), _frame(), layer, alpha)
     return any(r.count for r in results), summary(results)
 
 
@@ -831,11 +885,14 @@ def apply(data, selection=None, mirror=False, alpha=1.0, only=False):
         return False, refusal
     if selection is None:
         selection = cmds.ls(selection=True, long=True) or []
-    refs, refusal = _targets(selection)          # reads the scene, writes nothing
+    loose = _loose(selection) if data.get("objects") else []   # reads, writes nothing
+    if loose and not _body_refs(selection):
+        return _objects_alone(data, loose, alpha)
+    refs, refusal = _targets(selection)
     if refusal:
         return False, refusal
     return _apply_refs(data, refs, mirror, alpha,
-                       **_only(selected_nodes(selection) if only else None))
+                       **dict(_only(selected_nodes(selection) if only else None), loose=loose))
 
 
 def apply_onto(data, root, mirror=False):
@@ -1016,16 +1073,17 @@ def _find_object(record):
 
 
 def _not_characters(paths):
-    """(the paths that are no part of a character, the note naming the ones that are, or "").
-    An objects pose is for anything that is NOT a character (the spec): a rig's Main, a control,
-    a skeleton's root, a weapon in a hand are left out of it - selected beside a prop, or alone
-    (the final review: a one-object card applied right after Add Character, which selects the
-    new rig's Main, keyed Main's translate, rotate and scale by selection order)."""
+    """(the paths that are no part of a character's BODY, the note naming the ones that are, or
+    ""). An objects pose is for anything that is not a character's body (`scene.split`): a
+    rig's Main, a control, a joint, a weapon in a hand are left out of it - selected beside a
+    prop, or alone (the final review: a one-object card applied right after Add Character, which
+    selects the new rig's Main, keyed Main's translate, rotate and scale by selection order). A
+    camera or a knot standing in a character's group is an object."""
     if not paths:
         return [], ""
     loose, parts = [], OrderedDict()
     for path, ref in scene.resolve(paths):
-        if ref is None:
+        if ref is None or not scene.is_body(path, ref):
             loose.append(path)
         else:
             parts.setdefault(target_label(ref), []).append(scene.leaf(path))
@@ -1036,6 +1094,47 @@ def _not_characters(paths):
     if len(names) == 1:
         return loose, CHARACTER_PART % (names[0], whose)
     return loose, CHARACTER_PARTS % (len(names), whose)
+
+
+def _values_entry(matched, label_nodes=None):
+    """(Plan, Extra, notes) keying `matched` [(record, scene path)]: each record's channels on
+    its object (`objects.plugs_of`: the transform's and its shape's), the missing named."""
+    values, missing = OrderedDict(), []
+    for record, path in matched:
+        plugs, lost = objs.plugs_of(record, path, cmds)
+        for plug, value in plugs.items():
+            values[plug] = float(value)
+        missing.extend(lost)
+    notes = []
+    if missing:
+        notes.append(NOT_POSED % (len(missing), "no such attribute", _named(missing)))
+    nodes = len(set(path for _record, path in matched))
+    label = _counted(nodes, "objects")
+    return Plan(None, values, keys.current(values), notes, {}), Extra(None, None, None, label)
+
+
+def card_objects(data, loose, refs, only=False):
+    """(entry or None, notes) for a CHARACTER card's objects onto the targets `refs`: the
+    selected objects `loose` paired first (`pair_objects`), the card's objects left over found
+    (`objects.found_for`: a character's own one in each target, any other by its exact path;
+    none with Selected only); what neither answers is said, never searched for by name."""
+    stored = (data or {}).get("objects") or []
+    if not stored:
+        return None, []
+    found = objs.found_for(stored, refs, only)
+    free = set(_not_characters([p for hits in found.values() for p in hits])[0])
+    found = dict((i, [p for p in hits if p in free]) for i, hits in found.items())
+    matched, how, unfound = objs.pair_card(stored, list(loose or ()), found, pair_objects)
+    notes = []
+    if unfound and not only:            # Selected only, or the objects alone: the selection's
+        notes.append(OBJECTS_UNFOUND % _named(objs.names(unfound)))
+    if not matched:
+        return None, notes
+    plan, extra = _values_entry(matched)
+    if "order" in how:
+        plan.notes.insert(0, BY_ORDER)
+    plan.notes.extend(notes)
+    return (plan, extra), []
 
 
 def _objects_entry(data, selection):
@@ -1060,24 +1159,14 @@ def _objects_entry(data, selection):
         if selected:
             return None, SELECTION_UNMATCHED % (len(objects), plural, len(objects))
         return None, OBJECTS_MISSING % (len(objects), plural)
-    values, missing = OrderedDict(), []
-    for record, path in matched:
-        for attr, value in (record.get("attrs") or {}).items():
-            if cmds.attributeQuery(attr, node=path, exists=True):
-                values[path + "." + attr] = float(value)
-            else:
-                missing.append("%s.%s" % (scene.leaf(path), attr))
+    plan, extra = _values_entry(matched)
     notes = ([parts + LEFT_OUT] if parts else []) + ([BY_ORDER] if "order" in how else [])
     taken = set(path for _record, path in matched)
     idle = [path for path in selected if path not in taken]
     if idle:
         notes.append(NOT_MATCHED % (len(idle), _named(scene.leaf(p) for p in idle)))
-    if missing:
-        notes.append(NOT_POSED % (len(missing), "no such attribute", _named(missing)))
-    nodes = len(set(path for _record, path in matched))
-    label = _counted(nodes, "objects")
-    plan = Plan(None, values, keys.current(values), notes, {})
-    return (plan, Extra(None, None, None, label)), ""
+    plan.notes[:0] = notes
+    return (plan, extra), ""
 
 
 def apply_objects(data, selection=None, alpha=1.0):
@@ -1101,6 +1190,22 @@ def apply_objects(data, selection=None, alpha=1.0):
 
 # ------------------------------------------------------------------ select objects
 
+def _owner(node):
+    """An object's transform for a count - a camera's shape counts as its camera."""
+    try:
+        return _transform_of(node)
+    except Exception:                                    # noqa: BLE001 - a count never raises
+        return node
+
+
+def _transform_of(node):
+    """A shape's transform (a camera's focal length is keyed on its shape), else the node."""
+    if cmds.objectType(node, isAType="shape"):
+        parent = cmds.listRelatives(node, parent=True, fullPath=True) or []
+        return parent[0] if parent else node
+    return node
+
+
 def select_objects(data, selection=None):
     """(ok, text): what a press would key, selected - on a rig its controls
     (`rigsolve.controls_for`), on a skeleton the member joints, for an objects pose its objects.
@@ -1113,7 +1218,7 @@ def select_objects(data, selection=None):
             return False, refusal
         nodes = []
         for plug in entry[0].values:
-            node = plug.rsplit(".", 1)[0]
+            node = _transform_of(plug.rsplit(".", 1)[0])
             if node not in nodes:
                 nodes.append(node)
         if not nodes:
@@ -1140,6 +1245,12 @@ def select_objects(data, selection=None):
             found = [bones[leaf]["path"] for leaf in members_t if leaf != root]
         nodes.extend(n for n in found if n not in nodes)
         labels.append(target_label(ref))
+    entry, _notes = card_objects(data, _loose(selection) if data.get("objects") else [], refs)
+    if entry is not None:
+        for plug in entry[0].values:
+            node = _transform_of(plug.rsplit(".", 1)[0])
+            if node not in nodes:
+                nodes.append(node)
     if not nodes:
         return False, "nothing of the pose on %s" % ", ".join(labels)
     cmds.select(nodes, replace=True)
@@ -1198,12 +1309,22 @@ class Blend(object):
                 return refusal
             if selection is None:
                 selection = cmds.ls(selection=True, long=True) or []
-            refs, refusal = _targets(selection)
-            if refusal:
-                return refusal
-            nodes = selected_nodes(selection) if only else None
-            with _unrecorded():
-                entries = [_plan(data, ref, mirror, **_only(nodes)) for ref in refs]
+            loose = _loose(selection) if data.get("objects") else []
+            if loose and not _body_refs(selection):
+                with _unrecorded():
+                    entry, _notes = card_objects(data, loose, [], True)
+                if entry is None:
+                    return NOTHING % "the selection matches none of the card's objects"
+                entries = [entry]
+            else:
+                refs, refusal = _targets(selection)
+                if refusal:
+                    return refusal
+                nodes = selected_nodes(selection) if only else None
+                with _unrecorded():
+                    entries = _with_objects(
+                        [_plan(data, ref, mirror, **_only(nodes)) for ref in refs],
+                        data, loose, refs, nodes, mirror)
         if not any(plan.values for plan, _extra in entries):
             notes = [n for plan, _e in entries for n in shown_notes(plan.notes)]
             return NOTHING % ("; ".join(notes) or "no channel the pose can turn")

@@ -10313,6 +10313,37 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.
 
+## The Pose Library: any object beside the character, found again on load (2026-10-15)
+
+The animator: «объекты которые не относятся к ригу мы не сохраняем ... мы сохранили наш риг и камеру ...
+поиск камеры с учетом того что в другой сцене на ней уже может быть немспейс (... только для тех объектов
+которые находятся в выделении)». Asked, all three the recommendation: an unselected saved object is still
+posed when found by its exact path; the transform's AND its shape's channels (a camera's focal length);
+poses and animation cards alike. Spec `docs/superpowers/specs/2026-10-15-pose-library-any-objects-design.md`.
+**This replaces "objects selected beside one character are left out" above.**
+- **Body or object** (`scene.is_body` / `scene.split`): the body is a joint, anything under a rig's AS
+  `Group`, a skinned mesh, a group holding the skeleton or the rig, a weapon or armour piece. Everything
+  else is an OBJECT - a camera (Camera Setup's `Manny_Rig:SceneSetup_camera` too, which used to count as
+  the rig and name the whole body), a knot, a locator, a prop - whoever's group it stands in.
+- **A character card holds its objects** (`objects`, records from `maya_poselib/objects.py`:
+  `name` without namespace, `path`, `attrs`, `shape` {attr: value / curve}, `own` = the card's
+  character's). Objects alone selected: an objects card, as before, now with `shape`.
+- **Load** (`objects.pair_card`, pure; `found_for`): the selected objects pair as an objects card always
+  did (path, name with the namespace ignored, order); the card's objects left over are found - an `own`
+  one in each TARGET character (its namespace + name, or by name under its character group), so a pose
+  saved on `Manny_Rig` keys `Manny_Rig1`'s own camera; any other by its exact path only; what is not
+  found is said («not in the scene: shotCam»), never searched for by name. Selected only: the
+  selection alone. A character card with only objects selected poses them alone and says so. Mirror
+  leaves objects unmirrored (said). An animation card's object curves go in the character press's one
+  undo chunk (`animapply._key_objects`).
+- Every new function that touches the scene takes the caller's `cmds` (`objects.plugs_of(record, path,
+  cmds)`) or lives on `scene`, so the tests' fake `cmds` / `FakeScene` reach it.
+Proof: `docs/superpowers/plans/verify_poselib_objects.py` **25/25 mayapy standalone** (two Manny rigs with
+Camera Setup, a free camera moved into a `shot:` namespace after saving, a locator): B's own camera
+takes A's camera's values, `shot:shotCam` its values and focal length by name, the prop by path, A's
+camera untouched, one undo each; B alone - the shot camera not searched for, said; the camera alone -
+B untouched; the animation's curves and focal length on all three, one undo); `tests/test_poselib_objects.py`.
+
 ## The radial menu: hold alt+q, point, let go (2026-10-15)
 
 The animator: «я зажимаю какую-то клавишу появляется радиальное меню ... можно поместить как и раздел так

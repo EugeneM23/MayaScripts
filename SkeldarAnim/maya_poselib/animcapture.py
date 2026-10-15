@@ -95,6 +95,7 @@ import maya.cmds as cmds
 from maya_poselib import animdata
 from maya_poselib import capture
 from maya_poselib import keys
+from maya_poselib import objects as objs
 from maya_poselib import look
 from maya_poselib import scene
 from maya_poselib import store
@@ -444,7 +445,7 @@ def _channel(plug, start, end):
     return SAMPLE
 
 
-def object_curves(nodes, start, end):
+def object_curves(nodes, start, end, own=()):
     """[{name, path, attrs: {attr: CURVE}}] of the transforms `nodes` name (a shape or a
     component names its transform; each once, in selection order): per object its leaf name
     without the namespace, its long path, and the CURVE of each keyable scalar unlocked
@@ -455,30 +456,33 @@ def object_curves(nodes, start, end):
     (the apply pairs objects by order too). The duplicates are made, read and deleted, and the
     walk walked, with the undo queue off (`_unrecorded`)."""
     start, end = _whole(start), _whole(end)
-    objects, seen, fed = [], set(), []
+    objects, seen, fed, own = [], set(), [], set(own or ())
+
+    def read(node, attrs):
+        for attr in objs.channel_names(node, cmds):
+            plug = node + "." + attr
+            try:
+                curve = _channel(plug, start, end)
+            except (RuntimeError, ValueError, TypeError):
+                continue
+            if curve is SAMPLE:
+                fed.append((attrs, attr, plug))
+                attrs[attr] = None             # its place kept, filled after the walk
+            elif curve is not None:
+                attrs[attr] = curve
     with _unrecorded():
         for node in nodes or ():
             path = scene.dag_object(node)
             if path is None or path in seen:
                 continue
             seen.add(path)
-            attrs = OrderedDict()
-            try:
-                names = cmds.listAttr(path, keyable=True, scalar=True, unlocked=True) or []
-            except (RuntimeError, ValueError):
-                names = []
-            for attr in names:
-                plug = path + "." + attr
-                try:
-                    curve = _channel(plug, start, end)
-                except (RuntimeError, ValueError, TypeError):
-                    continue
-                if curve is SAMPLE:
-                    fed.append((attrs, attr, plug))
-                    attrs[attr] = None             # its place kept, filled after the walk
-                elif curve is not None:
-                    attrs[attr] = curve
-            objects.append({"name": scene.leaf(path), "path": path, "attrs": attrs})
+            attrs, shape_attrs = OrderedDict(), OrderedDict()
+            read(path, attrs)
+            shape = objs.shape_of(path, cmds)
+            if shape:
+                read(shape, shape_attrs)          # a camera's focal length, keyed on its shape
+            objects.append({"name": scene.leaf(path), "path": path, "attrs": attrs,
+                            "shape": shape_attrs, "own": path in own})
         found = _sampled([plug for _attrs, _attr, plug in fed], start, end)
     for attrs, attr, plug in fed:
         if plug in found:
@@ -487,6 +491,7 @@ def object_curves(nodes, start, end):
             del attrs[attr]
     for record in objects:
         record["attrs"] = dict(record["attrs"])
+        record["shape"] = dict(record["shape"])
     return objects
 
 
@@ -508,21 +513,17 @@ def build_animation(selection=None, regions=None, start=None, end=None, progress
     start, end = _whole(start), _whole(end)
     if end < start:
         return None, None, EMPTY % (start, end)
-    resolved = scene.resolve(selection)
-    refs, loose = [], []
-    for path, ref in resolved:
-        if ref is None:
-            loose.append(path)
-        elif all(r.root != ref.root for r in refs):
-            refs.append(ref)
+    refs, nodes, loose_owned = scene.split(selection)
+    loose = [path for path, _owner in loose_owned]
     if len(refs) > 1:
         return None, None, MANY
     if refs:
-        nodes = [path for path, ref in resolved if ref is not None]
         header, frames, note = character_animation(refs[0], nodes, regions, start, end,
                                                    progress)
         if header is not None and loose:
-            note += " | %s outside %s left out" % (scene.describe([], loose), refs[0].label)
+            own = [path for path, owner in loose_owned if scene.owned(refs[0], owner)]
+            header["objects"] = object_curves(loose, start, end, own)
+            note += " | + %s" % scene.describe([], loose)
         return header, frames, note
     if loose:
         header = _common("objects")

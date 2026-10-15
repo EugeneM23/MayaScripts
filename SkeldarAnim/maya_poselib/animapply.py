@@ -156,6 +156,7 @@ from maya_poselib import animdata
 from maya_poselib import apply as ap
 from maya_poselib import keys
 from maya_poselib import look
+from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
 from maya_poselib import scene
@@ -741,9 +742,10 @@ class _Target(object):
                 "alpha": alpha, "mirror": bool(mirror)}
 
 
-def _result(targets, header, plan, options, layer, alpha, mirror):
+def _result(targets, header, plan, options, layer, alpha, mirror, objects_row=None):
     """(ok, the line): every target's `look.anim_status`, the first carrying what concerns the
-    press as a whole - a muted layer, a card at another rate than the scene's."""
+    press as a whole - a muted layer, a card at another rate than the scene's; the card's objects'
+    row last (`_objects_row`)."""
     extra = []
     if any(target.nodes for target in targets):
         hidden = keys.layer_note(layer)
@@ -754,13 +756,16 @@ def _result(targets, header, plan, options, layer, alpha, mirror):
         extra.append(FPS_NOTE % (fps, unit))
     rows = [target.status(header, plan, options, layer, alpha, mirror,
                           extra if n == 0 else ()) for n, target in enumerate(targets)]
+    if objects_row is not None:
+        rows.append(objects_row)
     return any(row["count"] for row in rows), look.anim_status(rows)
 
 
 def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, progress=None,
-                only=None):
+                only=None, loose=()):
     """The character press onto `refs` (the module's steps 1-7); `only` - Selected only's long
-    paths (`apply.only_selected`), else None."""
+    paths (`apply.only_selected`), else None. The card's objects (`_card_matched`: the selected
+    `loose` objects first, the rest found) are pasted in the same chunk, after the frames."""
     options = _options(options)
     layer, refusal = keys.active_layer()
     if refusal:
@@ -791,6 +796,17 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
                                first_root, only) for ref in refs]
+        # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
+        matched, onotes = _card_matched(header, loose, refs, only is not None)
+        channels, missing, opaths = _object_channels(matched)
+        onotes = list(onotes) + list(missing)
+        if mirror and channels:
+            onotes.insert(0, ap.OBJECTS_UNMIRRORED)
+        oplanned, obreaks = _plan_objects(channels, plan, options, alpha) if channels \
+            else (OrderedDict(), {})
+        onodes = set()
+        if not any(target.plugs for target in targets) and oplanned:
+            return _press_objects(header, None, alpha, options, progress, matched, onotes)
         if not any(target.plugs for target in targets):
             if only is not None:
                 notes = [n for t in targets for n in ap.shown_notes(list(t.notes.values()))]
@@ -844,6 +860,11 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                     if progress is not None and not progress.step(STEP % (name, "%g" % time)):
                         cancelled = True
                         break
+                if oplanned and not cancelled:
+                    onodes, osaid, _done, _reached, _c, ostate = _key_objects(
+                        oplanned, obreaks, plan, layer)
+                    states.append(ostate)
+                    onotes.extend(osaid)
                 # with undo off a cancel keeps its keys: their curves get their state back too
                 if not cancelled or not recording:
                     for state in states:
@@ -858,7 +879,9 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 return False, CANCELLED
             # undo off: what was keyed stays - and so do the walk's `keyed` (never set back)
             return False, _kept(_span(keyed), plan, "pasted channels", reached)
-    return _result(targets, header, plan, options, layer, alpha, mirror)
+    orow = _objects_row(header, plan, options, layer, alpha, opaths, onodes, onotes) \
+        if (oplanned or onotes) else None
+    return _result(targets, header, plan, options, layer, alpha, mirror, orow)
 
 
 # ------------------------------------------------------------------ objects
@@ -998,46 +1021,38 @@ def _as_pose(header, time=None):
     the plugs)."""
     objects = []
     for record in header.get("objects") or []:
-        attrs = OrderedDict()
-        for attr, curve in (record.get("attrs") or {}).items():
-            value = 0.0 if time is None else _value_at(curve, time)
-            if value is not None:
-                attrs[attr] = value
-        objects.append(dict(record, attrs=attrs))
+        values = []
+        for field in ("attrs", "shape"):
+            out = OrderedDict()
+            for attr, curve in (record.get(field) or {}).items():
+                value = 0.0 if time is None else _value_at(curve, time)
+                if value is not None:
+                    out[attr] = value
+            values.append(out)
+        objects.append(dict(record, attrs=values[0], shape=values[1]))
     return dict(header, objects=objects)
 
 
-def _press_objects(header, selection=None, alpha=1.0, options=None, progress=None):
-    """An objects card's press (the module's "Objects"): (ok, the line)."""
-    options = _options(options)
-    layer, refusal = keys.active_layer()
-    if refusal:
-        return False, refusal
-    matched, notes, refusal = _objects_pairs(header, selection)
-    if refusal:
-        return False, refusal
-    try:
-        plan = _plan(header, options)
-    except ValueError as error:
-        return False, str(error)
-    alpha = ap._clamp(alpha)
-    if alpha <= 0.0:
-        return False, ap.BLEND_ZERO
-    notes = list(notes)
+def _object_channels(matched):
+    """(OrderedDict {plug: CURVE}, notes, object paths) of `matched` [(record, path)] - each
+    record's channels on its object (`objects.plugs_of`: the transform's and its shape's), the
+    channels the object lacks named."""
     channels, missing, paths = OrderedDict(), [], []
     for record, path in matched:
         if path not in paths:
             paths.append(path)
-        for attr, curve in (record.get("attrs") or {}).items():
-            if cmds.attributeQuery(attr, node=path, exists=True):
-                channels[path + "." + attr] = curve
-            else:
-                missing.append("%s.%s" % (scene.leaf(path), attr))
-    if missing:
-        notes.append(ap.NOT_POSED % (len(missing), "no such attribute", ap._named(missing)))
-    note = keys.quaternion_note(layer)
-    if note and any(plug.rsplit(".", 1)[-1] in ROTATE for plug in channels):
-        return False, note
+        plugs, lost = objs.plugs_of(record, path, cmds)
+        channels.update(plugs)
+        missing.extend(lost)
+    notes = [ap.NOT_POSED % (len(missing), "no such attribute", ap._named(missing))] \
+        if missing else []
+    return channels, notes, paths
+
+
+def _plan_objects(channels, plan, options, alpha):
+    """(planned {plug: (keys, weighted)}, breakdowns {plug: [times]}) of the objects' `channels`
+    for the paste `plan`: the stored keys clipped and shifted (`_object_keys`); Connect and Blend
+    read the take as it stands - so call it BEFORE the paste mode cuts or moves anything."""
     lo, hi = plan.frames[0][0], plan.frames[-1][0]
     planned, breakdowns = OrderedDict(), {}
     for plug, curve in channels.items():
@@ -1045,7 +1060,6 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
         if stored:
             planned[plug] = (stored, weighted)
             breakdowns[plug] = _breakdown_times(curve, lo, hi, plan, stored)
-    # Connect and Blend read the take as it stands, BEFORE the paste mode cuts or moves it
     if options.connect:
         for plug, (stored, weighted) in list(planned.items()):
             offset = float(cmds.getAttr(plug, time=plan.a)) - float(stored[0][1])
@@ -1058,36 +1072,90 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                 was = float(cmds.getAttr(plug, time=key[0]))
                 mixed.append([key[0], was + (float(key[1]) - was) * alpha] + list(key[2:]))
             planned[plug] = (mixed, weighted)
-    nodes, said = set(), OrderedDict()
-    cancelled, done = False, []
+    return planned, breakdowns
+
+
+def _key_objects(planned, breakdowns, plan, layer, step=None):
+    """Inside a press's chunk: the objects' curves' state read, the paste mode's ops on them, the
+    keys written with their tangents and breakdowns. `step(plug)` after each channel - False
+    cancels. (nodes keyed, notes said, plugs done, ops reached, cancelled, the curves' state - the
+    caller gives it back with `keys.put_curve_state`)."""
+    plugs = list(planned)
+    nodes, said, done = set(), OrderedDict(), []
+    state = keys.curve_state(plugs, layer)
+    if layer is None:
+        # keyed with its tangents, a weighted card curve keeps its weights: the target curve's
+        # infinity given back, never its weighting over the card's
+        for plug, saved in state.items():
+            if plug in planned and planned[plug][1]:
+                state[plug] = dict(saved, weighted=True)
+    reached = _ops(plan.ops, plugs, layer)
+    cancelled = False
+    for plug, (stored, weighted) in planned.items():
+        written = keys.write_keys(plug, stored, layer, weighted, tangents=layer is None)
+        nodes.update(ap._owner(p.rsplit(".", 1)[0]) for p in written.plugs)
+        for text in written.notes:
+            said.setdefault(text, text)
+        if written.plugs and breakdowns.get(plug):
+            for text in _breakdowns(plug, layer, breakdowns[plug]):
+                said.setdefault(text, text)
+        done.append(plug)
+        if step is not None and not step(plug):
+            cancelled = True
+            break
+    return nodes, list(said.values()), done, reached, cancelled, state
+
+
+def _objects_row(header, plan, options, layer, alpha, paths, nodes, notes):
+    """`look.anim_status`'s row for the objects a press keyed."""
+    return {"name": header.get("name"), "target": ap._counted(len(paths), "objects"),
+            "count": len(nodes), "noun": "objects",
+            "layer": layer.name if layer is not None else None, "a": plan.a, "b": plan.b,
+            "frames": plan.b - plan.a + 1, "mode": options.mode, "worst": None,
+            "worst_frame": None, "notes": list(notes), "alpha": alpha, "mirror": False}
+
+
+def _press_objects(header, selection=None, alpha=1.0, options=None, progress=None,
+                   matched=None, lead=()):
+    """An objects card's press (the module's "Objects"): (ok, the line). `matched` [(record,
+    path)] in place of the pairing - a character card's objects onto the selection alone;
+    `lead` notes go first on the line."""
+    options = _options(options)
+    layer, refusal = keys.active_layer()
+    if refusal:
+        return False, refusal
+    if matched is None:
+        matched, notes, refusal = _objects_pairs(header, selection)
+        if refusal:
+            return False, refusal
+    else:
+        notes = []
+    try:
+        plan = _plan(header, options)
+    except ValueError as error:
+        return False, str(error)
+    alpha = ap._clamp(alpha)
+    if alpha <= 0.0:
+        return False, ap.BLEND_ZERO
+    notes = list(lead) + list(notes)
+    channels, missing, paths = _object_channels(matched)
+    notes.extend(missing)
+    note = keys.quaternion_note(layer)
+    if note and any(plug.rsplit(".", 1)[-1] in ROTATE for plug in channels):
+        return False, note
+    planned, breakdowns = _plan_objects(channels, plan, options, alpha)
+    nodes, said = set(), []
     if planned:
         recording = bool(cmds.undoInfo(query=True, state=True))
-        plugs = list(planned)
-        steps, reached = _Steps(), []
+        steps = _Steps()
+        name = header.get("name") or "Animation"
+
+        def step(plug):
+            return progress is None or progress.step(STEP % (name, scene.leaf(plug)))
         try:
             with _chunk(steps):
-                state = keys.curve_state(plugs, layer)
-                if layer is None:
-                    # keyed with its tangents, a weighted card curve keeps its weights: the
-                    # target curve's infinity given back, never its weighting over the card's
-                    for plug, saved in state.items():
-                        if plug in planned and planned[plug][1]:
-                            state[plug] = dict(saved, weighted=True)
-                reached = _ops(plan.ops, plugs, layer)
-                for plug, (stored, weighted) in planned.items():
-                    written = keys.write_keys(plug, stored, layer, weighted,
-                                              tangents=layer is None)
-                    nodes.update(p.rsplit(".", 1)[0] for p in written.plugs)
-                    for text in written.notes:
-                        said.setdefault(text, text)
-                    if written.plugs and breakdowns.get(plug):
-                        for text in _breakdowns(plug, layer, breakdowns[plug]):
-                            said.setdefault(text, text)
-                    done.append(plug)
-                    if progress is not None and not progress.step(
-                            STEP % (header.get("name") or "Animation", scene.leaf(plug))):
-                        cancelled = True
-                        break
+                nodes, said, done, reached, cancelled, state = _key_objects(
+                    planned, breakdowns, plan, layer, step)
                 # with undo off a cancel keeps its keys: their curves get their state back too
                 if not cancelled or not recording:
                     keys.put_curve_state(state, layer)
@@ -1103,13 +1171,24 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
         hidden = keys.layer_note(layer)
         if hidden:
             notes.insert(0, hidden)
-    row = {"name": header.get("name"), "target": ap._counted(len(paths), "objects"),
-           "count": len(nodes), "noun": "objects",
-           "layer": layer.name if layer is not None else None, "a": plan.a, "b": plan.b,
-           "frames": plan.b - plan.a + 1, "mode": options.mode, "worst": None,
-           "worst_frame": None, "notes": notes + list(said.values()), "alpha": alpha,
-           "mirror": False}
+    row = _objects_row(header, plan, options, layer, alpha, paths, nodes, notes + list(said))
     return bool(nodes), look.anim_status(row)
+
+
+def _card_matched(header, loose, refs, only=False):
+    """([(record, path)], notes) - a CHARACTER card's objects onto `refs` (`apply.card_objects`'s
+    pairing, for curves): the selected `loose` objects first, the rest found."""
+    stored = (header or {}).get("objects") or []
+    if not stored:
+        return [], []
+    found = objs.found_for(stored, refs, only)
+    free = set(ap._not_characters([p for hits in found.values() for p in hits])[0])
+    found = dict((i, [p for p in hits if p in free]) for i, hits in found.items())
+    matched, how, unfound = objs.pair_card(stored, list(loose or ()), found, ap.pair_objects)
+    notes = [ap.BY_ORDER] if "order" in how else []
+    if unfound and not only:
+        notes.append(ap.OBJECTS_UNFOUND % ap._named(objs.names(unfound)))
+    return matched, notes
 
 
 # ------------------------------------------------------------------ the presses
@@ -1130,13 +1209,23 @@ def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
         return False, refusal
     if selection is None:
         selection = cmds.ls(selection=True, long=True) or []
-    refs, refusal = _targets(selection)              # reads the scene, writes nothing
+    loose = ap._loose(selection) if header.get("objects") else []   # reads, writes nothing
+    if loose and not ap._body_refs(selection):
+        # a character card onto the selected objects alone: the character untouched, said
+        matched, notes = _card_matched(header, loose, [], True)
+        if not matched:
+            stored = header.get("objects") or []
+            return False, ap.SELECTION_UNMATCHED % (
+                len(stored), "" if len(stored) == 1 else "s", len(stored))
+        return _press_objects(header, None, alpha, options, progress, matched,
+                              [ap.OBJECTS_ALONE] + notes)
+    refs, refusal = _targets(selection)
     if refusal:
         return False, refusal
     if only:
         return _press_refs(header, frames, refs, mirror, alpha, options, progress,
-                           only=ap.selected_nodes(selection))
-    return _press_refs(header, frames, refs, mirror, alpha, options, progress)
+                           only=ap.selected_nodes(selection), loose=loose)
+    return _press_refs(header, frames, refs, mirror, alpha, options, progress, loose=loose)
 
 
 def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, progress=None):
@@ -1190,7 +1279,7 @@ def select_objects(header, selection=None, options=None):
         selection = cmds.ls(selection=True, long=True) or []
     prefer = (header.get("character") or {}).get("namespace") or None
     refs, refusal = _targets(selection, prefer)
-    ok, text = ap.select_objects(header, selection)
+    ok, text = ap.select_objects(_as_pose(header), selection)
     if not ok or refusal or not _travels(header, header.get("members"), options):
         return ok, text
     carried = []
@@ -1259,7 +1348,7 @@ class Blend(object):
         if objects:
             data = _as_pose(header, source)
         else:
-            data = dict(header, bones=animdata.bones_at(header, frames, index))
+            data = dict(_as_pose(header, source), bones=animdata.bones_at(header, frames, index))
         if selection is None:
             selection = cmds.ls(selection=True, long=True) or []
         inner = ap.Blend()

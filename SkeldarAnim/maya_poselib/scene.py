@@ -542,6 +542,56 @@ def selection_label(selection=None):
     return describe(*characters(selection))
 
 
+# ------------------------------------------------------------------ body or object (2026-10-15)
+
+def _skinned(path):
+    for shape in cmds.listRelatives(path, shapes=True, type="mesh", fullPath=True) or []:
+        history = cmds.listHistory(shape, pruneDagObjects=True) or []
+        if cmds.ls(history, type="skinCluster"):
+            return True
+    return False
+
+
+def is_body(path, ref):
+    """Is `path` (a long DAG path) part of the character `ref`'s BODY rather than an object beside
+    it? The body: a joint, anything under a rig's AdvancedSkeleton `Group` (its controls, meshes,
+    weapon spaces), a group holding the skeleton or the rig, a skinned mesh, a weapon or an armour
+    piece. Anything else - a camera (Camera Setup's, in the rig's namespace), a knot, a prop - is
+    an OBJECT beside it (`maya_poselib.objects`). A node of no character is an object."""
+    if ref is None:
+        return False
+    if cmds.nodeType(path) == "joint":
+        return True
+    group = ref.rig.group if ref.kind == "rig" and ref.rig is not None else None
+    if group and maya_rigs.under(path, group):
+        return True
+    if maya_rigs.under(ref.root, path) or (group and maya_rigs.under(group, path)):
+        return True                                  # a group holding the body
+    if _skinned(path):
+        return True
+    return _kind(path, ref) == ACCESSORY
+
+
+def split(selection=None):
+    """(refs, body, loose) of the selection: `refs` every character whose BODY it touches, in
+    order, each once; `body` the body nodes; `loose` [(path, owner ref or None)] the objects -
+    the nodes of no character and a character's own objects (`is_body`)."""
+    refs, body, loose = [], [], []
+    for path, ref in resolve(selection):
+        if ref is not None and is_body(path, ref):
+            body.append(path)
+            if all(r.root != ref.root for r in refs):
+                refs.append(ref)
+        else:
+            loose.append((path, ref))
+    return refs, body, loose
+
+
+def owned(ref, owner):
+    """Is an object's `owner` (its character, or None) the character `ref`?"""
+    return ref is not None and owner is not None and owner.root == ref.root
+
+
 # ------------------------------------------------------------------ scene: the skeleton
 
 def _joints(root):
