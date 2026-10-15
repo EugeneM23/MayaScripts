@@ -574,6 +574,24 @@ def phase_save():
          "cancelled" in message and abs(os.path.getmtime(paths["plain.mb"]) - stamp) < 1e-3, message)
     cmds.setAttr("tab_plain:ball.translateZ", 0)
     switching.switch("tab_film")
+    real_attach = layers.attach
+
+    def failing_attach(links):
+        real_attach(links)
+        raise RuntimeError("injected cleanup failure")
+    layers.attach = failing_attach
+    try:
+        saving.save_tab(path=RUN + "/film_failed_cleanup.ma", adopt=False)
+        cleanup_error = ""
+    except RuntimeError as exc:
+        cleanup_error = str(exc)
+    finally:
+        layers.attach = real_attach
+    gate("save: a failing cleanup step raises, and the undo state and the names are restored",
+         "injected" in cleanup_error and cmds.undoInfo(q=True, stateWithoutFlush=True)
+         and cmds.objExists("tab_film:hero") and not cmds.objExists("|hero")
+         and not os.path.exists(RUN + "/film_failed_cleanup.ma.skeldartmp"),
+         (cleanup_error, cmds.undoInfo(q=True, stateWithoutFlush=True)))
     target = RUN + "/film_saved_as.ma"
     saving.save_tab(path=target)
     gate("save as: the tab takes the new path",

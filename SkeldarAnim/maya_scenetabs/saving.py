@@ -105,36 +105,53 @@ def save_tab(namespace=None, path=None, adopt=True):
     current = cmds.namespaceInfo(currentNamespace=True) or ":"
     moved, links = None, []
     cmds.undoInfo(stateWithoutFlush=False)
-    try:
-        _config(namespace, ranges)
-        layers.home_blends(namespace)
-        uuids = export_uuids(namespace)
-        renames = {}
-        tab_root = layers.tab_root(namespace)
-        if tab_root:
-            links = layers.detach(tab_root)
-            renames[cmds.ls(tab_root, uuid=True)[0]] = records.FILE_LAYER_ROOT
-        cmds.namespace(setNamespace=":")
-        moved = session.lift(namespace, renames)
-        cmds.select(cmds.ls(uuids) or [], noExpand=True, replace=True)
-        cmds.file(temporary, exportSelected=True, preserveReferences=True, type=records.FILE_TYPES[ext],
-                  force=True)
-    except Exception:
-        if os.path.exists(temporary):
-            os.remove(temporary)
-        raise
-    finally:
-        if moved is not None:
-            session.lower(moved)
-        cmds.namespace(setNamespace=current if current.startswith(":") else ":" + current)
-        layers.attach(links)
-        layers.home_blends(namespace)       # Maya rebuilt some in the root on the way (measured)
+    failures = []           # cleanup steps that raised; the export's own error wins
+
+    def step(action):
+        try:
+            action()
+        except Exception as exc:        # noqa: BLE001 - every other restore still runs
+            failures.append(exc)
+
+    def reselect():
         found = cmds.ls(selection) or []
         if found:
             cmds.select(found, replace=True)
         else:
             cmds.select(clear=True)
+
+    try:
+        try:
+            _config(namespace, ranges)
+            layers.home_blends(namespace)
+            uuids = export_uuids(namespace)
+            renames = {}
+            tab_root = layers.tab_root(namespace)
+            if tab_root:
+                links = layers.detach(tab_root)
+                renames[cmds.ls(tab_root, uuid=True)[0]] = records.FILE_LAYER_ROOT
+            cmds.namespace(setNamespace=":")
+            moved = session.lift(namespace, renames)
+            cmds.select(cmds.ls(uuids) or [], noExpand=True, replace=True)
+            cmds.file(temporary, exportSelected=True, preserveReferences=True,
+                      type=records.FILE_TYPES[ext], force=True)
+        except Exception:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+            raise
+        finally:
+            if moved is not None:
+                step(lambda: session.lower(moved))
+            step(lambda: cmds.namespace(setNamespace=current if current.startswith(":") else ":" + current))
+            step(lambda: layers.attach(links))
+            step(lambda: layers.home_blends(namespace))   # Maya rebuilt some in the root (measured)
+            step(reselect)
+    finally:
         cmds.undoInfo(stateWithoutFlush=recording)
+    if failures:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+        raise failures[0]
     os.replace(temporary, target)
     if adopt:
         item = dict(item, path=target, mtime=os.path.getmtime(target), modified=False)
