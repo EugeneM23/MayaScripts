@@ -983,7 +983,7 @@ _OURS = (
     ("window.walk", "Windows", "Walk Builder",
      "Open the Walk Builder section: a walk cycle put on any skeleton and tuned by knobs",
      partial(_show, "maya_walk.panel", "show_window")),
-    ("walk.apply", "Walk Builder", "Apply walk",
+    ("walk.apply", "Walk Builder", "Pick walk",
      "The card's walk, pose and knobs onto the selected skeleton",
      partial(_walk, "press_apply")),
     ("window.camshake", "Windows", "Camera Shake",

@@ -873,7 +873,7 @@ class Drops(WindowCase):
         pw.walk_well = lambda gx, gy: well
         try:
             aim = self.win.aim(-2000, 40, self.fist)
-            self.assertEqual(aim, {"kind": "walk", "well": well})
+            self.assertEqual(aim, {"kind": "walk", "well": well, "well_kind": "pose"})
             self.assertEqual(look.drop_caption("Fist", aim), ("Fist \u00b7 Walk Builder pose", True))
             self.win.drop_at(-2000, 40, self.fist)
             cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
@@ -884,6 +884,30 @@ class Drops(WindowCase):
         self.assertEqual(took, [self.fist])
         self.assertEqual(self.win.status.text(), "pose card Fist")
         self.assertEqual(self.scene.calls("apply_onto"), [])
+
+    def test_the_walk_well_takes_an_animation_card_and_refuses_a_pose_card(self):
+        took = []
+
+        class Well(object):
+            kind = "walk"
+
+            def take(self, path):
+                took.append(path)
+                return "walk Run"
+        well = Well()
+        run = store.write(self.root, "", "Run", anim_data("Run"), frames={"bones": [], "world": [], "drive": {}})
+        self.win.refresh()
+        saved = pw.walk_well
+        pw.walk_well = lambda gx, gy: well
+        try:
+            aim = self.win.aim(-2000, 40, run)
+            self.assertEqual(aim, {"kind": "walk", "well": well, "well_kind": "walk"})
+            self.assertEqual(look.drop_caption("Run", aim), ("Run · Walk Builder walk cycle", True))
+            self.win.drop_at(-2000, 40, run)
+            self.assertEqual(self.win.aim(-2000, 40, self.fist), {"kind": "none", "text": look.WALK_NOT_POSE})
+        finally:
+            pw.walk_well = saved
+        self.assertEqual(took, [run])
 
     def test_an_objects_card_names_no_character(self):
         cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
@@ -1819,7 +1843,7 @@ class AnimMenus(AnimCase):
 
     def test_the_right_button_rows_of_an_animation_card(self):
         labels = [row[0] for row in self.win.context_actions(self.walk) if row]
-        self.assertEqual(labels, ["Apply", "Apply mirrored", "Select objects", "Rename...",
+        self.assertEqual(labels, ["Apply", "Apply mirrored", "Select objects", "Use in Walk Builder", "Rename...",
                                   "Move to...", "Replace thumbnail and preview",
                                   "Update from selection", "Show in Explorer", "Delete"])
 

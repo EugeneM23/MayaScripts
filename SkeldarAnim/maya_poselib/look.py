@@ -308,8 +308,9 @@ def badge_text(frames):
     return "%s %d" % (BADGE, frames) if frames >= 2 else ""
 
 
-WALK_NOT_ANIM = "an animation card - Walk Builder takes a pose card"
-WALK_NOT_OBJECTS = "a card of objects - Walk Builder takes a pose card of a character"
+WALK_NOT_ANIM = "an animation card - the pose well takes a pose card (the walk well above takes this)"
+WALK_NOT_POSE = "a pose card - the walk well takes an animation card of a walk cycle (the pose well below)"
+WALK_NOT_OBJECTS = "a card of objects - Walk Builder takes a card of a character"
 
 
 def drop_caption(name, aim):
@@ -322,7 +323,8 @@ def drop_caption(name, aim):
                                                there (`label` its catalog row, `point` the
                                                world point, x and z shown)
         {"kind": "folder", "folder"}           a folder of the tree: the card moves
-        {"kind": "walk"}                       Walk Builder's pose well: the card is the walk's pose
+        {"kind": "walk", "well_kind"}          a Walk Builder well: the card is the walk's pose
+                                               ("pose") or its walk cycle ("walk")
         {"kind": "window"}                     over the window itself: nothing
         {"kind": "none", "text"}               nothing to apply to, and why
 
@@ -341,7 +343,8 @@ def drop_caption(name, aim):
     if kind == "folder":
         return "%s %s move to %s" % (name, DOT, aim.get("folder") or "Library"), True
     if kind == "walk":
-        return "%s %s Walk Builder pose" % (name, DOT), True
+        what = "walk cycle" if aim.get("well_kind") == "walk" else "pose"
+        return "%s %s Walk Builder %s" % (name, DOT, what), True
     if kind == "window":
         return OFF_WINDOW, False
     if kind == "none":

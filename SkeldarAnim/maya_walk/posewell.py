@@ -13,6 +13,8 @@ Laid over the `cmds` placeholder the card makes (the portraits' `attach` + Keepe
 (`maya_hubcopy`): the hub's card and every popup copy each have their own, and a release goes to the one under
 it. The well keeps its placeholder as tall as its column. Qt is imported lazily (`maya_hubqt.qt()`); everything
 the well does to the scene goes through `Scene`, which the tests replace.
+Walk Builder has two wells since the same evening: the pose (kind "pose") and the walk cycle (kind "walk":
+animation cards, `WalkScene`); one class, its texts by kind (`TEXTS`).
 The design: docs/superpowers/specs/2026-10-15-walk-pose-card-well-design.md (its addendum: the column).
 """
 import os
@@ -21,6 +23,7 @@ import traceback
 import maya_hubcopy as hubcopy
 
 OBJECT_NAME = "skeldarWalkPoseWell"
+WALK_OBJECT_NAME = "skeldarWalkCycleWell"
 HEIGHT = 64              # logical px: the empty well
 ROW = 48                 # logical px: a card in the column
 GAP = 4                  # logical px: under each card
@@ -35,6 +38,16 @@ SHOW = "Show in Pose Library"
 REMOVE = "Remove from the well"
 NONE = "Use no pose"
 REMOVE_ALL = "Remove all"
+
+#  What a well says, by its kind (2026-10-15: the walk cycles are animation cards in a well of their own)
+TEXTS = {
+    "pose": {"object": OBJECT_NAME, "empty": EMPTY, "hint": EMPTY_HINT, "more": MORE, "active": ACTIVE_LINE,
+             "idle": IDLE_LINE, "use": USE, "none": NONE},
+    "walk": {"object": WALK_OBJECT_NAME, "empty": "Drop a walk cycle card here",
+             "hint": "an animation card from the Pose Library, or Save", "more": "Drop another walk cycle card here",
+             "active": "active - the cycle Pick puts on a skeleton", "idle": "click to use this cycle",
+             "use": "Use this cycle", "none": None},
+}
 
 #  The wells standing, by the placeholder they are laid over (in the scope that laid them).
 _WELLS = {}
@@ -118,6 +131,33 @@ class Scene(object):
         return panel.show_card(path)
 
 
+class WalkScene(Scene):
+    """The walk well's: the walk cycles' cards (panel.walk_rows ...)."""
+
+    def cards(self):
+        from . import panel
+        return panel.walk_rows()
+
+    def take(self, path):
+        from . import panel
+        return panel.take_walk_card(path)
+
+    def pick(self, path):
+        from . import panel
+        return panel.take_walk_card(path)
+
+    def remove(self, path):
+        from . import panel
+        return panel.remove_walk_card(path)
+
+    def remove_all(self):
+        from . import panel
+        return panel.remove_all_walk_cards()
+
+    def clear(self):
+        return None
+
+
 _CLASSES = {}
 
 
@@ -146,9 +186,11 @@ def _classes():
     class PoseWell(QtWidgets.QWidget):
         """The column. `scene` is `Scene()` in Maya, a fake in the tests."""
 
-        def __init__(self, scene, parent=None):
+        def __init__(self, scene, parent=None, kind="pose"):
             QtWidgets.QWidget.__init__(self, parent)
-            self.setObjectName(scoped_name(OBJECT_NAME))
+            self.kind = kind if kind in TEXTS else "pose"
+            self.texts = TEXTS[self.kind]
+            self.setObjectName(scoped_name(self.texts["object"]))
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.rows = []           # (path, name, pixmap or None, note, active)
@@ -247,12 +289,13 @@ def _classes():
             rows = []
             if index is not None and 0 <= index < len(self.rows):
                 path, active = self.rows[index][0], self.rows[index][4]
-                rows += [(USE, None if active else (lambda: self.pick(index))),
+                rows += [(self.texts["use"], None if active else (lambda: self.pick(index))),
                          (SHOW, lambda: self.scene.show(path)),
                          (REMOVE, lambda: self._do(self.scene.remove, path)), None]
             if self.rows:
-                rows += [(NONE, (lambda: self._do(self.scene.clear)) if self.path else None),
-                         (REMOVE_ALL, lambda: self._do(self.scene.remove_all))]
+                if self.texts["none"]:
+                    rows.append((self.texts["none"], (lambda: self._do(self.scene.clear)) if self.path else None))
+                rows.append((REMOVE_ALL, lambda: self._do(self.scene.remove_all)))
             return rows
 
         def _do(self, action, *args):
@@ -330,7 +373,7 @@ def _classes():
             p.drawRoundedRect(box, 6 * k, 6 * k)
             text, side = self._square(p, box, 5 * k, pixmap)
             self._two_lines(p, text, side, name, "text" if active else "text2", 13, active,
-                            note or (ACTIVE_LINE if active else IDLE_LINE),
+                            note or (self.texts["active"] if active else self.texts["idle"]),
                             "danger" if note else ("accent_text" if active else "muted"))
 
         def paintEvent(self, _event):                        # noqa: N802
@@ -349,11 +392,11 @@ def _classes():
             if self.rows:                                    # the drop row: one line, centred
                 p.setPen(colour("accent_text" if self.hot else "muted"))
                 p.setFont(font(11 * k, bold=self.hot))
-                p.drawText(box, Qt.AlignCenter, MORE)
+                p.drawText(box, Qt.AlignCenter, self.texts["more"])
             else:
                 text, side = self._square(p, box, 6 * k, None)
-                self._two_lines(p, text, side, EMPTY, "accent_text" if self.hot else "text2", 12, True,
-                                EMPTY_HINT, "muted")
+                self._two_lines(p, text, side, self.texts["empty"], "accent_text" if self.hot else "text2", 12,
+                                True, self.texts["hint"], "muted")
             p.end()
 
     import maya_chargrid
@@ -361,12 +404,12 @@ def _classes():
     return _CLASSES
 
 
-def make_well(scene, parent=None):
+def make_well(scene, parent=None, kind="pose"):
     """A well over `scene` - the tests' seam."""
-    return _classes()["PoseWell"](scene, parent)
+    return _classes()["PoseWell"](scene, parent, kind)
 
 
-def attach(placeholder, scene=None):
+def attach(placeholder, scene=None, kind="pose"):
     """Lay the well over the `cmds` layout `placeholder`, or None where it cannot stand (no Qt, no such
     layout)."""
     import maya_hubqt
@@ -377,8 +420,8 @@ def attach(placeholder, scene=None):
         return None
     _prune()
     classes = _classes()
-    scene = hubcopy.bind(scene or Scene())   # a release comes from the library, outside the copy's scope
-    well = classes["PoseWell"](scene, host)
+    scene = hubcopy.bind(scene or (WalkScene() if kind == "walk" else Scene()))   # a release comes from the
+    well = classes["PoseWell"](scene, host, kind)                                  # library, outside the scope
     well._host = host
     well._keeper = classes["Keeper"](well, well)
     host.installEventFilter(well._keeper)

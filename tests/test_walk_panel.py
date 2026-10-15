@@ -201,7 +201,7 @@ class CardTests(unittest.TestCase):
         self.applied = []
         self.memos = {}
         self.state = {"loaded": {}, "target": None}
-        names = ("_cmds", "walk_names", "load_walk", "apply", "selected_root", "selected_top",
+        names = ("_cmds", "walk_names", "walk_exists", "load_walk", "apply", "selected_root", "selected_top",
                  "memo_of", "pick", "target_root", "_state", "fix_posture", "folder")
         self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
         self.temp = tempfile.mkdtemp()
@@ -213,6 +213,7 @@ class CardTests(unittest.TestCase):
         panel._cmds = lambda: self.fake
         scene._cmds = lambda: self.fake
         scene.walk_names = lambda: ["asd", "dw"]
+        scene.walk_exists = lambda name: name in ("asd", "dw") or scene.is_card(name)
         self.loaded = []
 
         def load_walk(name, given=None):
@@ -249,7 +250,7 @@ class CardTests(unittest.TestCase):
 
         def target_root():
             if not self.state["target"]:
-                raise scene.Refusal("select a skeleton and press Apply first")
+                raise scene.Refusal("select a skeleton and press Pick first")
             return self.state["target"][len("uuid-"):]
         scene.target_root = target_root
 
@@ -275,7 +276,9 @@ class CardTests(unittest.TestCase):
         self.assertEqual(marks[panel.SAVE_WALK_BTN], ("tool", "device-floppy"))
         self.assertFalse(hasattr(panel, "SAVE_POSE_BTN"))          # a pose is saved by the Pose Library
         self.assertFalse(hasattr(panel, "POSE_MENU"))
-        self.assertEqual(self.fake.items[panel.WALK_MENU], ["asd", "dw"])
+        self.assertFalse(hasattr(panel, "WALK_MENU"))           # the walk is a card in the walk well
+        self.assertIn(panel.WALK_WELL, [c[1] for c in self.made("columnLayout")])
+        self.assertIn("Walk: asd", self.fake.values[panel.WALK_WELL_TEXT])        # no Qt here: its line
         self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
         self.assertIn("none", self.fake.values[panel.POSE_WELL_TEXT])             # no Qt here: its line
         self.assertEqual(len(self.made("popupMenu")), 1)          # the walks folder on a right click
@@ -320,7 +323,7 @@ class CardTests(unittest.TestCase):
 
     def test_apply_puts_the_card_on_the_selection_and_remembers_it(self):
         panel.build_panel()
-        self.fake.values[panel.WALK_MENU] = "dw"
+        self.fake.vars[panel.OPTION + "walk"] = "dw"
         card = write_card(self.library, "Walk poses", "goblin")
         self.fake.vars[panel.OPTION + "poseCard"] = "Walk poses/goblin.pose"
         self.fake.values[panel._control("pelvis_height")] = 8.0
@@ -344,7 +347,7 @@ class CardTests(unittest.TestCase):
 
     def test_a_knob_rekeys_the_target_and_none_says_so(self):
         panel.build_panel()
-        self.assertIn("Apply", panel.slider_changed())
+        self.assertIn("Pick", panel.slider_changed())
         self.assertEqual(self.applied, [])
         self.fake.selection = ["|root"]
         panel.press_apply()
@@ -363,7 +366,7 @@ class CardTests(unittest.TestCase):
         self.fake.selection = ["|walked"]
         panel.refresh()
         self.assertEqual(self.applied, [])                       # reading it keys nothing
-        self.assertEqual(self.fake.values[panel.WALK_MENU], "dw")
+        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], "dw")
         self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/sword.pose")
         self.assertEqual(self.fake.values[panel._control("stance")], 0.33)
         self.assertFalse(self.fake.values[panel._part_control("knees")])
@@ -377,7 +380,7 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.fake.selection = ["|a|root"]
         panel.refresh()
-        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Apply puts asd on it")
+        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Pick puts asd on it")
 
     def test_a_press_with_the_card_closed_reads_the_memory(self):
         self.fake.vars[panel.OPTION + "knob_stride"] = 1.4
@@ -406,7 +409,7 @@ class CardTests(unittest.TestCase):
         panel.press_apply()
         self.assertEqual(self.applied[-1][2]["smooth"], 2.0)
         count = len(self.applied)
-        self.fake.values[panel.WALK_MENU] = "dw"
+        self.fake.vars[panel.OPTION + "walk"] = "dw"
         line = panel.press_fix_posture()
         self.assertEqual(self.fixed[-1][0], "dw")
         self.assertIn("Fix posture: dw", line)

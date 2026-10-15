@@ -224,10 +224,11 @@ def press(walk_name, clean=None):
         _set_memo(rig, {"walk": walk_name, "clean": clean, "base": _flat(base)})
         try:
             from maya_scenesetup import cliplabel
-            cliplabel.label_rig(rig, LABEL % walk_name)
+            cliplabel.label_rig(rig, LABEL % scene.walk_label(walk_name))
         except Exception:                                    # noqa: BLE001
             traceback.print_exc()
-    line = "%s %s in the mean pose of %s (%s)" % ("added" if added else "posed", rig.namespace, walk_name,
+    line = "%s %s in the mean pose of %s (%s)" % ("added" if added else "posed", rig.namespace,
+                                                  scene.walk_label(walk_name),
                                                   mp.summary(fix))
     notes = [n for n in plan.notes if n]
     return line + " - pose its controls, then Update" + (" | " + notes[0] if notes else "")
@@ -246,8 +247,8 @@ def update():
         raise Refusal(NO_RIG)
     memo = memo_of(rig)
     name = memo.get("walk")
-    if not name or name not in scene.walk_names():
-        raise Refusal("the rig pose stands for %s, which is not a saved walk" % (name or "no walk"))
+    if not name or not scene.walk_exists(name):
+        raise Refusal("the rig pose stands for %s, which is not a saved walk" % (scene.walk_label(name) or "no walk"))
     walk, statics = scene.load_walk(name, memo.get("clean"))[:2]
     fix, path = scene.walk_fix(name)
     now = _read(rig, walk, statics)
@@ -262,7 +263,7 @@ def update():
     mp.save(path, new)
     with scene.Unrecorded():
         _set_memo(rig, dict(memo, base=_flat(now)))
-    line = "mean pose of %s: %s" % (name, mp.describe(moved))
+    line = "mean pose of %s: %s" % (scene.walk_label(name), mp.describe(moved))
     return line + rekey_target(name)
 
 
@@ -271,10 +272,10 @@ def rekey_target(name):
     try:
         root = scene.target_root()
     except scene.Refusal:
-        return " (no target walks it - Apply puts it on a skeleton)"
+        return " (no target walks it - Pick puts it on a skeleton)"
     memo = scene.memo_of(root)
     if memo.get("walk") != name:
-        return " (the target walks %s)" % (memo.get("walk") or "nothing")
+        return " (the target walks %s)" % (scene.walk_label(memo.get("walk")) or "nothing")
     scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
                 tuple(memo.get("parts", scene.ALL_PARTS)), record=False, pose_card=memo.get("pose_card") or None)
     return " -> %s keyed again" % root.rsplit("|", 1)[-1]
@@ -286,7 +287,8 @@ def reset(walk_name, clean=None):
     fix, path = scene.walk_fix(walk_name)
     had = not mp.is_empty(fix)
     mp.save(path, mp.empty())
-    line = ("%s: the mean pose correction dropped" % walk_name) if had else "%s has no correction" % walk_name
+    label = scene.walk_label(walk_name)
+    line = ("%s: the mean pose correction dropped" % label) if had else "%s has no correction" % label
     if find() is not None:
         press(walk_name, clean)
         line += ", the rig pose back in the mean pose"
@@ -304,7 +306,7 @@ def delete():
     stop()
     _state()["bones"] = None
     text = deletion.delete_selected([rig.main], confirm=lambda _text: True)
-    return "rig pose of %s deleted (%s) - the walk keeps its correction" % (name, text)
+    return "rig pose of %s deleted (%s) - the walk keeps its correction" % (scene.walk_label(name), text)
 
 
 def stop():

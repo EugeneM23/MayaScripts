@@ -2133,12 +2133,15 @@ def _classes():
             well = walk_well(gx, gy)
             light_well(well)
             if well is not None:
-                if store.is_anim(path):
+                well_kind = getattr(well, "kind", "pose")
+                if well_kind == "walk" and not store.is_anim(path):
+                    return {"kind": "none", "text": look.WALK_NOT_POSE}
+                if well_kind != "walk" and store.is_anim(path):
                     return {"kind": "none", "text": look.WALK_NOT_ANIM}
                 card = self._card(path)
                 if card is not None and card.kind == "objects":
                     return {"kind": "none", "text": look.WALK_NOT_OBJECTS}
-                return {"kind": "walk", "well": well}
+                return {"kind": "walk", "well": well, "well_kind": well_kind}
             if self._inside(gx, gy) or self.scene.over_window(gx, gy):
                 return {"kind": "window"}
             card = self._card(path)
@@ -2600,7 +2603,7 @@ def _classes():
                 ("Apply", lambda: self.apply_card(path, mirror=False)),
                 ("Apply mirrored", lambda: self.apply_card(path, mirror=True)),
                 ("Select objects", lambda: self.select_card(path)),
-            ] + ([] if store.is_anim(path) or (self._card(path).kind == "objects") else [
+            ] + ([] if (self._card(path).kind == "objects") else [
                 ("Use in Walk Builder", lambda: self._run(lambda: self.use_in_walk(path))),
             ]) + [
                 None,
@@ -2614,8 +2617,11 @@ def _classes():
             ]
 
         def use_in_walk(self, path):
-            """The card as Walk Builder's pose (maya_walk.panel.take_card) - the well's drop, by the menu."""
+            """The card in Walk Builder - a pose card as its pose (maya_walk.panel.take_card), an animation
+            card as its walk cycle (take_walk_card): a well's drop, by the menu."""
             from maya_walk import panel as walk
+            if store.is_anim(path):
+                return self.say(walk.take_walk_card(path))
             return self.say(walk.take_card(path))
 
         def drag_over(self, well=None):

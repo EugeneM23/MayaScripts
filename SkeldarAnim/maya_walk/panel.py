@@ -7,9 +7,13 @@ groups of which ONE is shown at a time, on two rows of tabs ([Clean | Step | Leg
 Weight] since 2026-10-14: a raw clip is looped when it is read - maya_walk.clean - by the Clean tab's Seam and
 Smooth, and its Fix posture button sets the walk's bones right once, in its file).
 
-Select a skeleton and press Apply: the walk is keyed onto it and it becomes the card's target - a released
-knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card (what
-the window's Pick did), and it becomes the target. Every value is remembered (optionVars), so the card comes
+Since 2026-10-15 the walk and the pose are both Pose Library cards in wells (columns, one card active): an
+animation card of a walk cycle in the walk well, a pose card in the pose well; the old walk files and poses
+were moved into the library once. Apply is called Pick («мне кажется так понятнее что эта кнопка делает»).
+
+Select a skeleton and press Pick: the walk is keyed onto it and it becomes the card's target - a released
+knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card, and it
+becomes the target. Every value is remembered (optionVars), so the card comes
 back as it was and a hotkey row presses with the card closed.
 The design: docs/superpowers/specs/2026-10-13-walk-builder-card-design.md.
 """
@@ -22,11 +26,13 @@ from . import scene
 HUB_SECTION = "walk"
 SUBTITLE = "skeldarWalkSubtitle"
 STATUS = "skeldarWalkStatus"
-WALK_MENU = "skeldarWalkMenu"
 #  The pose is a Pose Library card dropped into a well (2026-10-15, maya_walk.posewell): the placeholder the well
 #  is laid over, and the line that stands in for it where Qt cannot
 POSE_WELL = "skeldarWalkPoseWell"
 POSE_WELL_TEXT = "skeldarWalkPoseWellText"
+#  ...and the walk cycles too, animation cards in a well of their own (2026-10-15)
+WALK_WELL = "skeldarWalkCycleWell"
+WALK_WELL_TEXT = "skeldarWalkCycleWellText"
 APPLY_BTN = "skeldarWalkApply"
 RESET_BTN = "skeldarWalkReset"
 SAVE_WALK_BTN = "skeldarWalkSaveWalk"
@@ -49,7 +55,7 @@ SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
 SIDE_MARK = {"l": " L", "r": " R"}
 OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
-NOTHING = "Select a skeleton - Apply puts the walk on it"
+NOTHING = "Select a skeleton - Pick puts the walk on it"
 
 #  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
 #  at a time; Clean's are the clean's (maya_walk.clean - scene.ALL_DEFAULTS), the rest the model's
@@ -157,12 +163,16 @@ LABELS = {
     "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
 }
 TIPS = {
-    "apply": "Put the walk on the selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, Biped ...), in its own "
+    "apply": "Pick: put the walk on the selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, Biped ...), in its own "
              "proportions, from where it stands. It becomes the target: every released knob re-keys it. "
              "Selecting a walked skeleton reads its walk, pose and knobs back.",
     "reset": "Every knob back to its default (the tempo to the walk's own); the target is keyed again",
-    "save_walk": "Save walk: select a bone of a walk or a run and press - a cycle or not: it is looped when it "
+    "save_walk": "Save: select a bone of a walk or a run and press - it goes to the Pose Library as an "
+                 "animation card (folder Walk cycles) and into the walk well; a cycle or not: it is looped when it "
                  "is read (the loop found and its seam closed - the Clean tab)",
+    "walk_well": "The walk cycle Pick puts on a skeleton: drag an animation card of a walk or a run from the Pose "
+                 "Library here (or its right button: Use in Walk Builder), or Save one. Several cards stack; the "
+                 "one clicked (lit) is the walk. Double click: the card in the library; right click: remove",
     "fix_posture": "Fix posture: the walk's bones set right against the UE5 idle - a bone moved off its joint goes "
                    "back; a clavicle or a foot outside a body's limits (a shoulder dropped, a foot turned out) "
                    "takes its other side's motion mirrored, or - both sides out - the idle's pose with its own "
@@ -294,14 +304,166 @@ def _forget_sides(name=None):
                 cmds.optionVar(remove=key)
 
 
+NO_WALK = "no walk cycle yet - drop an animation card of a walk into the walk well, or select a bone of a " \
+          "walk cycle and press Save"
+
+
 def chosen_walk():
-    cmds = _cmds()
+    """The walk Pick puts on a skeleton: the walk well's active card (scene.card_walk); a walk remembered before
+    the cards (a file's name) means the card it was moved into, else the file; else the well's first card,
+    else the first saved file."""
+    stored = _stored("walk") or ""
+    if scene.is_card(stored):
+        if scene.walk_exists(stored):
+            return stored
+    elif stored:
+        migrated = scene.card_walk(scene.wcards.walk_card(stored))
+        if os.path.isdir(scene.wcards.absolute(scene.wcards.walk_card(stored), _library())):
+            return migrated
+        if stored in scene.walk_names():
+            return stored
+    for rel in walk_list():
+        name = scene.card_walk(rel)
+        if scene.walk_exists(name):
+            return name
     names = scene.walk_names()
-    if not names:
-        raise scene.Refusal("no walk saved yet - select a bone of a walk cycle and press Save walk")
-    value = cmds.optionMenu(WALK_MENU, query=True, value=True) if cmds.optionMenu(WALK_MENU, exists=True) \
-        else _stored("walk")
-    return value if value in names else names[0]
+    if names:
+        return names[0]
+    raise scene.Refusal(NO_WALK)
+
+
+def walk_list():
+    """The walk cycles' cards in the walk well, top down (paths relative to the library)."""
+    try:
+        rels = [rel for rel in json.loads(_stored("walkCards") or "[]") if isinstance(rel, str) and rel]
+    except ValueError:
+        rels = []
+    stored = _stored("walk") or ""
+    if scene.is_card(stored) and stored[len(scene.CARD):] not in rels:
+        rels.insert(0, stored[len(scene.CARD):])
+    return rels
+
+
+def _remember_walks(rels):
+    seen = []
+    for rel in rels:
+        if rel and rel not in seen:
+            seen.append(rel)
+    _remember("walkCards", json.dumps(seen))
+
+
+def _active_walk_rel():
+    try:
+        name = chosen_walk()
+    except scene.Refusal:
+        return None
+    return name[len(scene.CARD):] if scene.is_card(name) else None
+
+
+def walk_rows():
+    """Every walk card in the well, top down: (absolute path, name, thumbnail or "", note or "", active)."""
+    active = _active_walk_rel()
+    rows = []
+    for rel in walk_list():
+        path = scene.wcards.absolute(rel, _library())
+        name = scene.wcards.card_name(rel)
+        if not os.path.isdir(path):
+            note = "gone from the library - its walk is kept" if scene.walk_exists(scene.card_walk(rel)) \
+                else "the card is gone from the library"
+            rows.append((path, name, "", note, rel == active))
+            continue
+        thumbnail = os.path.join(path, "thumbnail.jpg")
+        rows.append((path, name, thumbnail if os.path.isfile(thumbnail) else "", "", rel == active))
+    return rows
+
+
+def _set_walk(name):
+    """`name` the walk Pick puts on a skeleton; a card's added to the walk well when new."""
+    if scene.is_card(name):
+        rels = walk_list()
+        rel = name[len(scene.CARD):]
+        if rel not in rels:
+            rels.append(rel)
+        _remember_walks(rels)
+    _remember("walk", name or "")
+    _show_walk_line()
+
+
+def _show_walk_line():
+    """The walk well's stand-in line (no Qt) and every well, read again."""
+    cmds = _cmds()
+    if cmds.text(WALK_WELL_TEXT, exists=True):
+        try:
+            label = "Walk: %s" % scene.walk_label(chosen_walk())
+        except scene.Refusal:
+            label = "Walk: none - Pose Library animation card > Use in Walk Builder"
+        count = len(walk_list())
+        cmds.text(WALK_WELL_TEXT, edit=True, label=label + (" (%d cards in the well)" % count if count > 1 else ""))
+    try:
+        from . import posewell
+        posewell.refresh_all()
+    except Exception:                                        # noqa: BLE001 - no Qt
+        pass
+
+
+def _walk_taken(name):
+    """The walk `name` made the one Pick puts on: its own tempo in the card, the target keyed again. The line."""
+    walk, _, _, report = scene.load_walk(name, values())      # refused here: nothing remembered
+    _set_walk(name)
+    show_report(report)
+    quiet, _QUIET[0] = _QUIET[0], True
+    try:
+        _set_knobs({"tempo": walk.P}, walk.P)
+    finally:
+        _QUIET[0] = quiet
+    line = "walk %s | %s" % (scene.walk_label(name), walk.summary())
+    if report.changed:
+        line += " | " + report.short()
+    try:
+        root = scene.target_root()
+    except scene.Refusal:
+        return line + " - Pick puts it on the selected skeleton"
+    return line + " | " + _apply_to(root)
+
+
+def take_walk_card(path):
+    """An animation card dropped into the walk well (or clicked there, or Use in Walk Builder): the walk Pick puts
+    on a skeleton, the target keyed again. Refused: a pose card, a card of objects, one that is no cycle."""
+    def run():
+        from maya_poselib import store
+        if not store.is_anim(path):
+            raise scene.wcards.Refusal("%s is a pose card - drop it into the pose well; the walk takes an "
+                                       "animation card" % scene.wcards.card_name(path))
+        return _walk_taken(scene.card_walk(scene.wcards.relative(path, _library())))
+    return _press(run)
+
+
+def remove_walk_card(path):
+    """A card taken out of the walk well; the walk it was moves on to the next card."""
+    def run():
+        rel = scene.wcards.relative(path, _library())
+        active = _active_walk_rel() == rel
+        _remember_walks([each for each in walk_list() if each != rel])
+        name = scene.wcards.card_name(rel)
+        if not active:
+            _show_walk_line()
+            return "%s taken out of the walk well" % name
+        _remember("walk", "")
+        rest = walk_list()
+        if rest:
+            return "%s taken out of the walk well | %s" % (name, _walk_taken(scene.card_walk(rest[0])))
+        _show_walk_line()
+        return "%s taken out of the walk well - no walk card left" % name
+    return _press(run)
+
+
+def remove_all_walk_cards():
+    def run():
+        _remember_walks([])
+        _remember("walk", "")
+        _show_walk_line()
+        return "the walk well emptied"
+    return _press(run)
 
 
 def _library():
@@ -414,7 +576,7 @@ def take_card(path):
         try:
             root = scene.target_root()
         except scene.Refusal:
-            return "pose card %s%s - select a skeleton and press Apply" % (name, note)
+            return "pose card %s%s - select a skeleton and press Pick" % (name, note)
         return "pose card %s%s | %s" % (name, note, _apply_to(root))
     return _press(run)
 
@@ -500,28 +662,6 @@ def chosen_parts():
 
 
 # ---- filling the card ----
-
-def _fill(menu, names, selected, first=None):
-    cmds = _cmds()
-    for item in cmds.optionMenu(menu, query=True, itemListLong=True) or []:
-        cmds.deleteUI(item)
-    items = ([first] if first else []) + list(names)
-    for name in items:
-        cmds.menuItem(label=name, parent=menu)
-    if selected in items:
-        cmds.optionMenu(menu, edit=True, value=selected)
-
-
-def _fill_menus(walk=None):
-    cmds = _cmds()
-    if not cmds.optionMenu(WALK_MENU, exists=True):
-        return
-    quiet, _QUIET[0] = _QUIET[0], True
-    try:
-        _fill(WALK_MENU, scene.walk_names(), walk or _stored("walk"))
-    finally:
-        _QUIET[0] = quiet
-
 
 def show_report(report):
     """The clean's findings into the Clean tab's text (a Report, or a line)."""
@@ -653,12 +793,11 @@ def _load(root):
     card = memo.get("pose_card") or (scene.wcards.legacy_card(pose) if pose else "")
     quiet, _QUIET[0] = _QUIET[0], True
     try:
-        _remember("walk", name)
+        _set_walk(name)
         _set_card(card)
-        _fill_menus(name)
         _set_parts(parts)
         frames = int(knobs.get("tempo") or 30)
-        if name in scene.walk_names():
+        if scene.walk_exists(name):
             walk, _, _, report = scene.load_walk(name, knobs)
             frames = walk.P
             show_report(report)
@@ -685,14 +824,15 @@ def selection_line(root):
         if memo.get("walk"):
             pose = memo.get("pose")
             share = memo.get("knobs", {}).get("pose", 0.0)
-            return "%s walks %s%s" % (_short(root), memo["walk"],
+            return "%s walks %s%s" % (_short(root), scene.walk_label(memo["walk"]),
                                       " under %s x%.2f" % (pose, share) if pose and share > 0 else "")
-        return "%s: Apply puts %s on it" % (_short(root), walk) if walk else "%s: save a walk first" % _short(root)
+        return ("%s: Pick puts %s on it" % (_short(root), scene.walk_label(walk)) if walk else
+                "%s: drop a walk cycle card first" % _short(root))
     try:
         target = scene.target_root()
     except scene.Refusal:
         return NOTHING
-    return "Target: %s (%s)" % (_short(target), scene.memo_of(target).get("walk", "-"))
+    return "Target: %s (%s)" % (_short(target), scene.walk_label(scene.memo_of(target).get("walk")) or "-")
 
 
 def status(text):
@@ -768,19 +908,10 @@ def slider_changed(*_):
 
 
 def walk_changed(*_):
-    """Another walk picked: its own tempo in the card; the target waits for Apply."""
+    """The walk read again (a hotkey row's, the old dropdown's): its own tempo in the card."""
     if _QUIET[0]:
         return None
-
-    def run():
-        name = chosen_walk()
-        _remember("walk", name)
-        walk, _, _, report = scene.load_walk(name, values())
-        show_report(report)
-        _set_knobs({"tempo": walk.P}, walk.P)
-        line = walk.summary() + " - Apply puts it on the selected skeleton"
-        return line + (" | " + report.short() if report.changed else "")
-    return _press(run)
+    return _press(lambda: _walk_taken(chosen_walk()))
 
 
 def in_place_changed(*_):
@@ -802,7 +933,7 @@ def press_reset(*_):
         try:
             root = scene.target_root()
         except scene.Refusal:
-            return "the knobs are back at their defaults - select a skeleton and press Apply"
+            return "the knobs are back at their defaults - select a skeleton and press Pick"
         return _apply_to(root)
     return _press(run)
 
@@ -820,12 +951,15 @@ def press_save_walk(*_):
         name = _ask("Save walk", scene.read_clip(root)[0].name)
         if name is None:
             return "nothing saved"
-        name, line = scene.save_walk(root, name)
-        _remember("walk", name)
-        _fill_menus(walk=name)
+        name, line = scene.save_walk_card(root, name)
+        _set_walk(name)
         walk, _, _, report = scene.load_walk(name, values())
         show_report(report)
-        _set_knobs({"tempo": walk.P}, walk.P)
+        quiet, _QUIET[0] = _QUIET[0], True
+        try:
+            _set_knobs({"tempo": walk.P}, walk.P)
+        finally:
+            _QUIET[0] = quiet
         return line
     return _press(run)
 
@@ -882,9 +1016,10 @@ def show_folder(*_):
 
 
 def refresh_lists(*_):
-    _fill_menus()
+    _show_walk_line()
     _show_card_line()
-    return status("%d walks in %s" % (len(scene.walk_names()), scene.folder()))
+    return status("%d walk cards in the well, %d walk files in %s" % (len(walk_list()), len(scene.walk_names()),
+                                                                        scene.folder()))
 
 
 def group_changed(key):
@@ -895,26 +1030,43 @@ def group_changed(key):
 
 # ---- the card ----
 
-def _menu_row(menu, label, command, button, icon_tip, press):
+def _walk_row():
+    """The word Walk and Save..., then the walk well: a placeholder the Qt well is laid over (posewell, kind
+    "walk"); without Qt a line naming the walk. The old .walk.gz walks are moved into the library first (once a
+    session; maya_walk.cards.migrate_walks)."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
-    #  the word in a column of its own: no other card gives an optionMenu a label, and the skin styles the
-    #  bare dropdown (a QComboBox)
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
-    cmds.text(label=label, width=hubstyle.pick(32, 36), align="left")
-    cmds.optionMenu(menu, changeCommand=command,
-                    annotation=("The walk Apply puts on a skeleton" if menu == WALK_MENU else
-                                "The character pose the walk takes at the Pose share (none: the walk's own)")
-                    + " - right click: the walks folder")
-    cmds.popupMenu(parent=menu, button=3)
+    state = scene._state()
+    if not state.get("walks_migrated"):
+        state["walks_migrated"] = True
+        try:
+            made = scene.wcards.migrate_walks(scene.folder(), _library())
+            if made:
+                print("Walk Builder: %d walk(s) moved into the Pose Library, folder %s: %s"
+                      % (len(made), scene.wcards.WALK_FOLDER, ", ".join(made)))
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "left", 0), (2, "left", 3)])
+    cmds.text(label="Walk cycle", align="left", annotation=TIPS["walk_well"])
+    cmds.popupMenu(button=3)
     cmds.menuItem(label="Show the walks folder", command=show_folder)
     cmds.menuItem(label="Read the lists again", command=refresh_lists)
     cmds.setParent("..", menu=True)
-    hubstyle.mark(cmds.button(button, label=hubstyle.tool_label("Save..."), width=hubstyle.tool_width(56),
-                              height=hubstyle.height("field", 24), annotation=icon_tip,
-                              command=lambda *_: press()), "tool", "device-floppy")
+    hubstyle.mark(cmds.button(SAVE_WALK_BTN, label=hubstyle.tool_label("Save..."), width=hubstyle.tool_width(56),
+                              height=hubstyle.height("field", 24), annotation=TIPS["save_walk"],
+                              command=lambda *_: press_save_walk()), "tool", "device-floppy")
     cmds.setParent("..")
+    cmds.columnLayout(WALK_WELL, adjustableColumn=True, annotation=TIPS["walk_well"])
+    cmds.setParent("..")
+    well = None
+    try:
+        from . import posewell
+        well = posewell.attach(WALK_WELL, kind="walk")
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+    if well is None:
+        cmds.text(WALK_WELL_TEXT, label="", align="left", annotation=TIPS["walk_well"])
+        _show_walk_line()
 
 
 def _pose_well():
@@ -989,7 +1141,8 @@ def build_panel():
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label=NOTHING, align="left"), "subtitle")
-    _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk)
+    _walk_row()
+    cmds.text(label="Pose", align="left", annotation=TIPS["pose_well"])
     _pose_well()
     _slider("pose")
     stored_parts = chosen_parts()
@@ -1006,7 +1159,7 @@ def build_panel():
     cmds.setParent("..")
     hubstyle.mark(cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
                                  columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)]), "fill", layout=True)
-    hubstyle.mark(cmds.button(APPLY_BTN, label="Apply", height=hubstyle.height("button", 28),
+    hubstyle.mark(cmds.button(APPLY_BTN, label="Pick", height=hubstyle.height("button", 28),
                               annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "walk")
     hubstyle.mark(cmds.button(RESET_BTN, label="Reset", height=hubstyle.height("button", 28),
                               annotation=TIPS["reset"], command=lambda *_: press_reset()), "secondary", "refresh")
@@ -1058,7 +1211,6 @@ def build_panel():
         cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
     cmds.setParent("..")
-    _fill_menus()
     try:
         tempo = float(_stored("knob_tempo", 0.0) or 0.0)
         walk, _, _, report = scene.load_walk(chosen_walk(), values())

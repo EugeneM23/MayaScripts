@@ -297,10 +297,125 @@ def _forget(path):
             loaded.pop(key, None)
 
 
+#  A walk is named two ways (2026-10-15): a file of the walks folder by its name, or a Pose Library animation card
+#  by CARD + its path relative to the library. A card is read into a walk file of its own under CARD_CACHE
+#  (`walk_path`), read again when the card changes; Fix posture and the mean pose's correction live beside that
+#  file as beside any walk's.
+CARD = "card:"
+CARD_CACHE = "cards"
+CARD_SOURCE = ".source"          # beside a card's walk file: which card, at what time
+
+
+def is_card(name):
+    return bool(name) and name.startswith(CARD)
+
+
+def walk_label(name):
+    """A walk's name as the animator reads it: a card's name, a file's name."""
+    return wcards.card_name(name[len(CARD):]) if is_card(name) else (name or "")
+
+
+def card_walk(rel):
+    """The walk name of the animation card `rel` (relative to the library)."""
+    return CARD + rel
+
+
+def _card_cache(rel):
+    return os.path.join(folder(), CARD_CACHE, wf.safe_name(rel.replace("/", "__")) + wf.SUFFIX)
+
+
+def walk_path(name):
+    """The walk file a walk `name` reads: a saved walk's, or the one an animation card is read into - written
+    when it is missing or the card changed (a card gone keeps the walk it gave). Refused: no such walk."""
+    if not is_card(name):
+        return wf.path_for(folder(), name)
+    rel = name[len(CARD):]
+    card = wcards.absolute(rel, wcards.library_root(_cmds()))
+    cache = _card_cache(rel)
+    source = cache + CARD_SOURCE
+    stamp = wcards.walk_stamp(card) if os.path.isdir(card) else None
+    if stamp is None:
+        if os.path.exists(cache):
+            return cache
+        raise Refusal("the walk card %s is gone from the library" % walk_label(name))
+    try:
+        with open(source, encoding="utf-8") as handle:
+            known = json.load(handle).get("stamp")
+    except (OSError, ValueError, AttributeError):
+        known = None
+    if known == stamp and os.path.exists(cache):
+        return cache
+    template = wf.read_template(TEMPLATE) if os.path.exists(TEMPLATE) else None
+    data = wcards.walk_data(card, template)
+    clip = wf.clip_of(data, wm)
+    wf.save(cache, clip, data["statics"], data["start"])
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump({"card": rel, "stamp": stamp}, handle)
+    #  a walk moved into the library (cards.migrate_walks) keeps the mean pose correction its file had
+    legacy = wcards.card_name(rel)
+    old_fix = mp.path_for(wf.path_for(folder(), legacy))
+    if rel == wcards.walk_card(legacy) and os.path.exists(old_fix) and not os.path.exists(mp.path_for(cache)):
+        shutil.copy2(old_fix, mp.path_for(cache))
+    _forget(cache)
+    return cache
+
+
+def walk_exists(name):
+    """Whether the walk `name` can be read (a saved file, or a card that reads or once read)."""
+    if not name:
+        return False
+    if not is_card(name):
+        return os.path.exists(wf.path_for(folder(), name))
+    try:
+        return os.path.exists(walk_path(name))
+    except REFUSALS:
+        return False
+
+
+def save_walk_card(root, name=None):
+    """The clip under `root` saved as an animation card of the library's `Walk cycles` folder (Walk Builder's
+    Save), after reading it the way it will be read; a still taken where a viewport stands. Returns (the walk's
+    name - CARD + the card's path - and the status line)."""
+    clip, start = read_clip(root)
+    bones, note = read_bones(root)
+    statics = dict((leaf, {"parent": b["parent"], "canonical": b["canonical"], "rest": b["rest"]})
+                   for leaf, b in bones.items() if leaf in clip.names)
+    missing = [n for n in clip.names if n not in statics]
+    if missing:
+        raise Refusal("%d bones of the cycle read twice or unnamed: %s" % (len(missing), ", ".join(missing[:4])))
+    data = {"names": clip.names, "parents": clip.parents, "worlds": clip.worlds, "fps": clip.fps, "up": clip.up,
+            "name": wf.safe_name(name or clip.name), "statics": statics, "start": start}
+    cleaned, report = _clean_data(data, wc.knobs())
+    walk = wm.analyse(cleaned)
+    from maya_poselib import store
+    library = wcards.library_root(_cmds())
+    title = store.unique_name(library, wcards.WALK_FOLDER, data["name"])
+    data["name"] = title
+    header, frames = wcards.card_of_walk(data)
+    thumbnail = os.path.join(folder(), CARD_CACHE, "still.part.jpg")
+    try:
+        from maya_poselib import capture
+        if not os.path.isdir(os.path.dirname(thumbnail)):
+            os.makedirs(os.path.dirname(thumbnail))
+        ok = capture.thumbnail(thumbnail, kind="anim")[0]
+    except Exception:                                        # noqa: BLE001 - no viewport: a card with no still
+        ok = False
+    try:
+        path = store.write(library, wcards.WALK_FOLDER, title, header, frames=frames,
+                           thumbnail=thumbnail if ok and os.path.exists(thumbnail) else None)
+    finally:
+        if os.path.exists(thumbnail):
+            os.remove(thumbnail)
+    line = "saved the walk card %s/%s | %s" % (wcards.WALK_FOLDER, title, walk.summary())
+    if report.changed:
+        line += " | " + report.short()
+    return card_walk(wcards.relative(path, library)), line + (" | " + note if note else "")
+
+
 def load_walk(name, given=None):
-    """(Walk, statics, first frame, clean Report) of a saved walk read under the clean knobs in `given`, cached by
-    the file's time and the knobs."""
-    path = wf.path_for(folder(), name)
+    """(Walk, statics, first frame, clean Report) of a saved walk (or an animation card, `walk_path`) read under
+    the clean knobs in `given`, cached by the file's time and the knobs."""
+    path = walk_path(name)
     if not os.path.exists(path):
         raise Refusal("no saved walk named %s" % name)
     stamp = os.path.getmtime(path)
@@ -327,7 +442,7 @@ def load_walk(name, given=None):
 
 def walk_fix(name):
     """(the correction of the saved walk `name`, its file's path)."""
-    path = mp.path_for(wf.path_for(folder(), name))
+    path = mp.path_for(walk_path(name))
     return mp.load(path), path
 
 
@@ -339,7 +454,7 @@ def fix_posture(name, given=None):
     the Seam in `given`, not smoothed), its posture set right against the UE5 idle, and written back into its
     file - the file as it was kept once beside it (BACKUP). Nothing out of place: the file untouched. Returns
     (the clean Report, the status line)."""
-    path = wf.path_for(folder(), name)
+    path = walk_path(name)
     if not os.path.exists(path):
         raise Refusal("no saved walk named %s" % name)
     data = wf.load(path)
@@ -348,14 +463,14 @@ def fix_posture(name, given=None):
     fixed = [text for step, text, _ in report.lines if step == "posture"]
     if not fixed:
         why = ("; " + report.notes[0]) if report.notes else ""
-        return report, "Fix posture: %s - nothing out of place%s" % (name, why)
+        return report, "Fix posture: %s - nothing out of place%s" % (walk_label(name), why)
     backup = path + BACKUP
     if not os.path.exists(backup):
         shutil.copy2(path, backup)
     clip.name = data.get("name") or name
     wf.save(path, clip, data["statics"], int(data["start"]))
     _forget(path)
-    return report, "Fix posture: %s %s | saved, the original in %s" % (name, "; ".join(fixed),
+    return report, "Fix posture: %s %s | saved, the original in %s" % (walk_label(name), "; ".join(fixed),
                                                                        os.path.basename(backup))
 
 
@@ -388,14 +503,14 @@ def prepared_pose(walk_name, pose_name, given=None, bones=None, ident=None):
     (a Pose Library card's, or the copy on a skeleton - `ident` names it for the cache, with its time), else the
     saved `.wpose` pose `pose_name`."""
     walk, statics = load_walk(walk_name, given)[:2]
-    walk_path = wf.path_for(folder(), walk_name)
+    walk_file = walk_path(walk_name)
     if bones is None:
         path = wf.pose_path_for(folder(), pose_name)
         if not os.path.exists(path):
             raise Refusal("no saved pose named %s" % pose_name)
         ident = (path, os.path.getmtime(path))
-    key = ("pose", walk_path, ident[0], id(walk))
-    stamp = (os.path.getmtime(walk_path), ident[1])
+    key = ("pose", walk_file, ident[0], id(walk))
+    stamp = (os.path.getmtime(walk_file), ident[1])
     cached = _state()["loaded"].get(key)
     if cached is None or cached[0] != stamp or cached[2] is not walk:   # an id is reused once a walk is evicted
         if bones is None:
@@ -683,7 +798,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     target_stride = result.info["stride_cm"] * info["scale"]
     #  short: the card's status line holds three lines (2026-10-13, «интерфейс рисуй компактным»)
     text = ("%s on %s, %d bones x%.2f | %d fr (%d-%d), stride %.0f cm, %.2f m/s"
-            % (walk_name, _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
+            % (walk_label(walk_name), _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
                target_stride, result.info["speed"] * info["scale"]))
     if pose is not None:
         text += " | pose %s x%.2f%s" % (pose_label, result.info["knobs"]["pose"],
@@ -761,7 +876,7 @@ def pick(root):
     root = _long(root)
     memo = memo_of(root)
     if not memo.get("walk"):
-        raise Refusal("%s carries no walk of this tool - Apply one first" % _short(root))
+        raise Refusal("%s carries no walk of this tool - Pick one first" % _short(root))
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     stored = memo.get("knobs", {})
     knobs = wm.knobs(**model_knobs(stored))      # a side's own values too
@@ -773,7 +888,7 @@ def target_root():
     uuid = _state().get("target")
     found = _cmds().ls(uuid, long=True) if uuid else []
     if not found:
-        raise Refusal("select a skeleton and press Apply first")
+        raise Refusal("select a skeleton and press Pick first")
     return found[0]
 
 

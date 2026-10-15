@@ -10160,6 +10160,40 @@ Walk Builder's Save pose gone), and **follow the card, with a copy**. Spec
 - Proof: unit tests (`test_walk_cards.Well` / `WellLayout`, `test_walk_panel.PoseCardTests`), 6672 in all; an
   offscreen render of three rows. **Not seen live.**
 
+**…Apply is Pick, and the walk cycle is an animation card too** (the same evening: «Давай Applay заменим на
+Pick (мне кажется так понятнее что эта кнопка делает) и для циклов походок тоже добавим возможность применять
+карточки»; asked: Walk Builder's main button; the walk cycles as Pose Library ANIMATION cards, in place of the
+Walk dropdown).
+- **Pick**: the button's label and every line that named it («press Pick», «Pick puts asd on it»); the control
+  is still `skeldarWalkApply` and the hotkey row `walk.apply` («Pick walk»).
+- **The walk well** (`posewell`, kind `"walk"`: one class, its texts by kind in `TEXTS`; `WalkScene`) above the
+  pose well, under «Walk cycle» + Save...: a column of animation cards, the active one is the walk Pick puts on.
+  A drop, a click or the library's Use in Walk Builder (now on animation cards too) makes a card active, sets
+  the walk's tempo and re-keys the target (`panel.take_walk_card`); removing the active one moves on to the next
+  (`remove_walk_card`, `remove_all_walk_cards`). The library's drag: the walk well takes an animation card and
+  refuses a pose card, the pose well the other way round (`look.WALK_NOT_POSE` / `WALK_NOT_ANIM`; the aim carries
+  `well_kind`). The Walk dropdown is gone (`WALK_MENU`, `_menu_row`, `_fill_menus`).
+- **A walk's name** is a file's name, or `scene.CARD` + the card's path in the library (`card:Walk cycles/asd.anim`,
+  `scene.card_walk`, `is_card`, `walk_label` for every line). `scene.walk_path` is the one resolver: a card is read
+  (`cards.walk_data`: the header's statics, every frame decoded, Manny's template bind for Manny's bones, the
+  frames' order kept) into a walk file of its own under `<walks>/cards/`, written again when the card's files
+  change (`<file>.source` holds the card and its times); a card gone keeps the walk it gave. Fix posture and the
+  mean pose's correction live beside that file, so everything downstream (load_walk, Fix posture, meanrig,
+  prepared_pose) reads cards unchanged. `walk_exists` replaces `name in walk_names()`.
+- **Save...** writes an animation card into the library's `Walk cycles` (`scene.save_walk_card`: the clip read as
+  before, `cards.card_of_walk`, a still where a viewport stands) and puts it in the well.
+- **The old walks move into the library once** (`cards.migrate_walks` on the card's build, listed in
+  `<walks>/library_walks.json`, a deleted card never made again; the files stay). A walk remembered by its file
+  name means its migrated card (`chosen_walk`), and the first read of a migrated card copies the file's mean pose
+  correction (`*.walkfix.json`) beside its cache. A skeleton walked before keeps its file name in its marker and
+  keys from the file.
+- Proof: `tests/test_walk_cycle_cards.py` (12: the round trip, refusals, migration, the cache and its re-read, the
+  correction carried, the panel's presses), `test_poselib_window` (the walk well's aim and drop, the menu on an
+  animation card), 6685 in all; `docs/superpowers/plans/walkparam/verify_walk_cycle_card.py` **6/6 mayapy
+  standalone** on copies of `asd` and `dw` (asd from its file and its card 2.8e-4; Save as a card and as a file of
+  one skeleton under the sword 2.0e-2 - a pose amplifies the card's 9-decimal rounding, asd reads 1.3e-2 there
+  too; the card edited re-keyed, deleted keyed on). **Not seen live.**
+
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
      forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE
