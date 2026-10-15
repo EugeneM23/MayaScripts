@@ -80,3 +80,42 @@ outliner filter beyond stage 1's `hiddenInOutliner`.
   refusal and choice the same as the same verify run with no decoy.
 - Live only (the animator's): drags onto the viewport with a hidden tab behind the
   active one.
+
+## Addendum: measured while planning (2026-10-15)
+
+- **Maya resolves a creation or rename name relative to the CURRENT namespace, even when the name carries
+  a namespace**, and creates the missing namespaces silently: with `tabx` current, `createNode(name=
+  "tabx:Rig:a")` made `tabx:tabx:Rig:a`. Lookups (`ls`, `objExists`) go from the root. So "made relative so
+  it lands in the active tab" is two rules, not one: the current namespace is the active tab's (stage 1
+  sets it on a switch; every reset to `":"` after an import becomes `scope.enter_active`), and every name that
+  carries a namespace is made absolute where a node is created or renamed with it (`scope.as_created`; a
+  name given back after a hold, `scope.root_name`). A leaf (`hand_r_weaponSpace`, `<leaf>_knot`) stays
+  relative and lands in the tab. A node made with `":A:x"` is answered as `"A:x"`.
+- **Stage 1 alone breaks the plugin inside a tab** (Task 1's measurement): the retarget's holder
+  `tab_plain:Manny_Rig:MoCapConstraints` was created as `tab_plain:tab_plain:Manny_Rig:MoCapConstraints` and
+  the next `setAttr` found nothing. The two stages ship together.
+- **Sites the main text did not list**, each with an edit: the namespace resets after an import
+  (`animimport`, `formats`, `deletion`); a clip's namespace made at the root whatever is current
+  (`animimport` already set `":"` first; `formats._in_namespace` adds `":" + name`); `character.
+  existing_namespaces` (a new character's namespace is taken in the tab, a clip's at the root: both must be
+  free); `choose_target_root(home=)` (inside a tab every node carries its namespace: `tab_x:root` is plain);
+  Add Character qualifying the namespace its import made; the armor piece's namespace taken off in the tab;
+  the Pose Library's rebuilt skeleton moved under the tab; Shared and Stash - a scene received opens as a tab,
+  an FBX imports into one (`home_namespace`), a copy sent is the active tab alone with its references written
+  in (`saving.save_tab(preserve_references=False)` through `scope.export_scene`); Open scene (a portrait's or
+  a weapon's file) opens a tab; the scene's name (Shared, Stash, the Pose Library's capture, the clip label,
+  Walk Builder) is the active tab's file; and the names a message or a label shows (`equip` / `armor`'s
+  character, the clip label's clip, a character group's base) are read with the tab's prefix taken off
+  (`scope.local`, `scope.relative`) - "the outermost namespace" was the tab.
+- **Viewport Studio**: each tab has its own studio (built in the tab by its plain names, found there).
+- **The proof** is one script with independent sections, not the seven verifies re-run inside a tab (each of
+  them opens or news scenes itself): a decoy tab holding a keyed Manny rig, a Manny UE5 skeleton and a UE4
+  Mannequin skeleton (untextured, so it wears the palette's red - Manny and the Creep are textured since
+  2026-09-30 and wear none), the work in another tab (questions, Add Character, a retarget with its camera,
+  an export read back, a weapon, Delete, a clip kept, a save, Shared's copy), the decoy checked untouched
+  and no stray or doubled namespace left, and last Open scene on a weapon's FBX opening a tab of its own.
+  Not proven headless (the animator's): the drags onto the viewport with a hidden tab behind the active one.
+- **Known and stated**: an FBX export from a tab carries the name of a display layer its bones are in with
+  the tab's prefix (`tab_plain:DeformationJoints`, the Manny skeleton asset's leftover AdvancedSkeleton
+  layer) - a collection, not a bone; read back, every bone is plain. A saved tab file keeps strings that
+  once held a node's name (a camera's `imageName` `tab_plain:camera2`): a save renames nodes, not strings.
