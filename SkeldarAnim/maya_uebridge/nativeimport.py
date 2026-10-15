@@ -212,7 +212,13 @@ def merge_into_root(namespace):
     namespaced characters) keep namespaces of their own. Returns a note ("" when every one went).
     While scene tabs are on (2026-10-15) the clip first moves under the active tab and merges
     into IT: the root is no tab's."""
-    full = scope.home_namespace(namespace, cmds)
+    moved = ""
+    try:
+        full = scope.home_namespace(namespace, cmds)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        full = namespace.lstrip(":")
+        moved = "{0} not moved into the scene tab".format(full)
     merge = ({"mergeNamespaceWithParent": True} if full != namespace.lstrip(":")
              else {"mergeNamespaceWithRoot": True})
     nested = [n.lstrip(":") for n in
@@ -229,8 +235,9 @@ def merge_into_root(namespace):
             traceback.print_exc()
             left.append(each)
     if left:
-        return "names kept in {0}".format(", ".join(left))
-    return ""
+        note = "names kept in {0}".format(", ".join(left))
+        return "{0}; {1}".format(moved, note) if moved else note
+    return moved
 
 
 def keep(namespace, info, source, name, point=None, why=""):

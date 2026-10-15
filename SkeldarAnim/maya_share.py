@@ -789,7 +789,10 @@ def _import_fbx(path, record, verb):
                                     set_timeline=True)
     if not result.get("nodes"):
         return "{0} brought nothing into the scene.".format(record["name"])
-    scope.home_namespace(namespace, cmds)          # a tab's, while tabs are on
+    try:                    # a tab's, while tabs are on; a failed move leaves it at the root
+        namespace = scope.relative(scope.home_namespace(namespace, cmds), cmds)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
     return "{0} {1} from {2} as {3} - {4} joints, {5} curves.".format(
         verb, record["name"], record.get("from") or "someone", namespace,
         result.get("joints", 0), result.get("curves", 0))

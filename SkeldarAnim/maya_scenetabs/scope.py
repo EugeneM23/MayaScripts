@@ -75,6 +75,8 @@ def active_only(paths, cmds_=None):
 
 def qualified(name, cmds_=None):
     """`name` placed in the active tab (`tab_x:name`), or `name` with tabs off."""
+    if not name:
+        return name
     active = active_namespace(cmds_)
     return "%s:%s" % (active, name) if active else name
 
@@ -85,6 +87,8 @@ def absolute(name, cmds_=None):
 
 def relative(name, cmds_=None):
     """A full name with the active tab's prefix taken off; anything else as it is."""
+    if not name:
+        return name
     active = active_namespace(cmds_)
     prefix = active + ":" if active else ""
     return name[len(prefix):] if prefix and name.startswith(prefix) else name

@@ -116,6 +116,11 @@ class Names(unittest.TestCase):
                          ":tab_a:Manny_Rig:MoCapConstraints")
         self.assertEqual(scope.as_created(":A:x"), ":A:x")
 
+    def test_qualified_and_relative_tolerate_an_empty_name(self):
+        for empty in ("", None):
+            self.assertEqual(scope.qualified(empty, self.on), empty)
+            self.assertEqual(scope.relative(empty, self.on), empty)
+
     def test_a_created_leaf_stays_relative(self):
         self.assertEqual(scope.as_created("hand_r_weaponSpace"), "hand_r_weaponSpace")
         self.assertEqual(scope.as_created(""), "")

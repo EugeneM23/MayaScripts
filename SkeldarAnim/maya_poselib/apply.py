@@ -1020,7 +1020,10 @@ def _rebuild(data, point):
         except Exception as exc:                             # noqa: BLE001
             print("Pose Library: no record for Delete (%s)" % exc)
         from maya_scenetabs import scope
-        scope.home_namespace(namespace, cmds)      # a tab's, while tabs are on (2026-10-15)
+        try:                      # a tab's, while tabs are on (2026-10-15); a failed move stays put
+            namespace = scope.relative(scope.home_namespace(namespace, cmds), cmds)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
         root = _long(root_uuid)
     return root, " - ".join([REBUILT % (namespace, x, z)] + notes)
 
