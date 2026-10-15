@@ -127,6 +127,7 @@ _PAYLOAD = (
     "maya_tools",               # the Tools card: OverRig's knots, native (2026-10-12)
     "maya_tailbuilder.py",      # the Tail Builder card: a physical stop through three poses (2026-10-12)
     "maya_walk",                # the Walk Builder card: a walk cycle rebuilt from knobs (2026-10-13)
+    "maya_scenetabs",           # scene tabs: several scenes in one Maya (2026-10-15)
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)

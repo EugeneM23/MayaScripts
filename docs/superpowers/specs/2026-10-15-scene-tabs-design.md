@@ -232,3 +232,42 @@ the plugin seeing only the active tab (stage 2).
   - closing tabs down to one converts the last back to an ordinary scene.
 - Live only (the animator's): the bar docked above the viewport, per-tab workspaces and how
   long a switch takes with them, the hidden tabs' cost in the viewport, the quit dialog.
+
+## Addendum: measured while planning (2026-10-15)
+
+- **Tab namespaces are `tab_<stem>`**, not the bare stem: a tab opened from `assets/Manny_Rig.ma` would
+  otherwise BE the namespace `Manny_Rig`, the child namespace a saved tab's rig moves into for its export.
+- **The session owns the animation-layer root `skeldarTabsLayerRoot`.** Maya remembers its root layer
+  internally: with the root deleted (the tab holding it closed) the other tabs' layers lost theirs and the next
+  new layer crashed mayapy. Measured working: the root made once (a temporary layer, deleted), each import's
+  root hung under it as `<tab>:AnimLayerRoot`, a scene that already had layers handing its root over (renamed)
+  with its layers moved under a tab root, closing any tab leaving the others' layers alone, and back to one
+  scene the tab root's layers under the root renamed `BaseAnimation` (or no root when no layer is left). A
+  layer made while a tab is active is parented to the session root by Maya and re-parented to the tab's.
+- **Import with `executeScriptNodes=False`**: an import otherwise RUNS a file's open-type script nodes.
+- **Furniture** an import brings into a tab's namespace and a save never moves: Maya's managers and the
+  file's own `defaultRenderLayer`, `renderLayerManager`, `defaultLayer` copies (they clashed with the root's).
+- **An `.mb` file's fps** is the header's TUNI chunk (an 8-byte big-endian size at +8, the name at +16).
+- **The Open check's callback is `(MFileObject, clientData) -> bool`**; the Save check has no file variant
+  (`kInvalidParameter`), so it reads the target from `file -q -sceneName`, which Save As has already set.
+- **`maya.utils.executeDeferred` never runs in mayapy standalone**: the hooks defer through a seam the verify
+  replaces with a queue it runs itself.
+- **Ctrl+Tab / Ctrl+Shift+Tab are not bound by default** in stage 1 (what Maya holds there needs a GUI to
+  check); the rows `tabs.next` / `tabs.previous` are in the plugin's map for the animator to bind.
+- **Maya's own Save, refused by the callback, prints «File operation cancelled by user supplied callback»**;
+  the tab's save then says «Saved ...» in the viewport.
+- **Found by running the plan's own code** (its verify, 127 gates, in a scratch copy):
+  - re-parenting a layer (`animLayer -e -parent`) REBUILDS its blend nodes in the ROOT namespace whatever is
+    current, and a save rebuilds some under names of Maya's own: a tab's blend nodes are brought back into its
+    namespace (`layers.home_blends`) after every re-parent, before and after a save and before a close; the
+    tab root is cut from and put back on the session's root by its five exact connections, never by re-parenting;
+  - renaming a reference node by hand breaks its link to its namespace («Cannot find the associated
+    namespace»), and moving a reference's namespace back does not bring its node back: a reference is always
+    found by its namespace, and after a save its node may sit in the root as `refRN`;
+  - removing a reference by its file path is ambiguous between two tabs of one file (`file{1}`): by its node;
+  - an import made INSIDE a tab brings its file's configuration node (Maya skips it only when the ROOT holds
+    one); in the tab's file it ran after the tab's and won (1-120 for 0-50): only the tab's own is exported;
+  - the managers the first import into an empty scene makes inside the namespace cannot be deleted (trap 158):
+    closing a tab deletes what can be deleted and merges the rest into the root, deepest namespace first;
+  - a tab root is known by its NAME (`AnimLayerRoot`): right after tab 1's conversion its own layers hang on
+    the session root too.

@@ -110,6 +110,7 @@ class Payload(unittest.TestCase):
         """2026-10-02: the package and its library folder - a package is purged on an update,
         the library is data."""
         self.assertIn("maya_poselib", install.payload())
+        self.assertIn("maya_scenetabs", install.payload())
         self.assertIn("poses", install.payload())
         self.assertIn("maya_poselib", install.module_names())
         self.assertNotIn("poses", install.module_names())
