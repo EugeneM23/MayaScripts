@@ -132,6 +132,7 @@ AT_CURRENT_VAR = "skeldarPoseLibraryAtCurrent"
 CONNECT_VAR = "skeldarPoseLibraryConnect"
 KEYS_VAR = "skeldarPoseLibraryKeys"
 IN_PLACE_VAR = "skeldarPoseLibraryInPlace"
+ONLY_VAR = "skeldarPoseLibrarySelectedOnly"     # Selected only: just the selected nodes keyed
 KEY_LABELS = (("every", "Every frame"), ("source", "Source keys"))
 FRAME_LIMIT = 1000000                # a Start / End spin box's reach, either way
 
@@ -148,6 +149,19 @@ EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
 NO_PICK = "pick a card first"
 CANCELLED = cardgrid.CANCELLED
 BLEND_CANCELLED = "blend cancelled - every value back"
+#  The blend previews and stays; Apply keys it (2026-10-15, the animator: «ручка blend должна
+#  оставаться на своем месте и переводить позу в нужное состояние но ключ должен ставиться только
+#  по нажатию apply. Если мы изменили таймлайн или куда-то переключились то пусть бленд сбросится
+#  на 0»)
+BLEND_HELD = "Blend %d %% - Apply keys it"
+BLEND_RESET = "blend back to 0 - %s"
+RESET_TIME = "the time changed"
+RESET_SELECTION = "the selection changed"
+RESET_CARD = "another card"
+RESET_OPTION = "an option changed"
+RESET_HIDDEN = "the library was hidden"
+ONLY_TIP = ("Only the selected controls or joints take keys, each at its value in the whole "
+            "card - the rest of the character stays as it is")
 OBJECTS_DRAG = "an objects card: select its objects and press Apply"
 OBJECTS_TARGET = "onto the selected objects, else the ones it was saved from"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
@@ -422,14 +436,23 @@ def uiscript(root):
             "w.build()\n").format(root)
 
 
-def _closing(scene, jobs):
+def _only(only):
+    """`only=True` for a press under Selected only, nothing otherwise (a press without it keeps
+    the call it always made)."""
+    return {"only": True} if only else {}
+
+
+def _closing(scene, jobs, timed=()):
     """What a window's death does to the scene: a blend previewed but never keyed is put back
-    (its values would otherwise sit unkeyed until the next time change), the jobs killed."""
+    (its values would otherwise sit unkeyed until the next time change), the jobs killed - the
+    blend's time job (`timed`) too."""
     try:
         scene.blend_cancel()
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
     scene.unwatch(jobs)
+    if timed:
+        scene.unwatch(list(timed))
 
 
 def _regions():
@@ -538,6 +561,20 @@ class Scene(object):
             if isinstance(job, int):
                 jobs.append(job)
         return jobs
+
+    def watch_time(self, callback):
+        """[job id]: a timeChanged job calling `callback` - made while a blend previews (and
+        killed when it ends: nothing of ours runs per frame of playback otherwise)."""
+        cmds = _cmds()
+        try:
+            parent = {"parent": CONTROL} if cmds.workspaceControl(CONTROL, exists=True) else {}
+        except Exception:                                    # noqa: BLE001
+            parent = {}
+        try:
+            job = cmds.scriptJob(event=["timeChanged", callback], **parent)
+        except Exception:                                    # noqa: BLE001
+            job = None
+        return [job] if isinstance(job, int) else []
 
     def unwatch(self, jobs):
         cmds = _cmds()
@@ -727,16 +764,16 @@ class Scene(object):
         with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
             return press(header, frames, progress)
 
-    def apply(self, path, mirror, options=None):
+    def apply(self, path, mirror, options=None, only=False):
         """The card at `path` onto the selection: a pose (`apply.apply`), or an animation
-        pasted with `options` (`animapply.apply`)."""
+        pasted with `options` (`animapply.apply`); `only` - Selected only."""
         if store.is_anim(path):
             from maya_poselib import animapply
             return self._paste(lambda header, frames, progress: animapply.apply(
-                header, frames, mirror=mirror, options=options, progress=progress),
-                path, options)
+                header, frames, mirror=mirror, options=options, progress=progress,
+                **_only(only)), path, options)
         from maya_poselib import apply
-        return apply.apply(store.read(path), mirror=mirror)
+        return apply.apply(store.read(path), mirror=mirror, **_only(only))
 
     def apply_onto(self, path, root, mirror, options=None):
         """The card at `path` onto the character of `root` (a drop on it in a viewport)."""
@@ -767,7 +804,7 @@ class Scene(object):
         from maya_poselib import apply
         return apply.select_objects(store.read(path))
 
-    def blend_start(self, path, mirror, options=None):
+    def blend_start(self, path, mirror, options=None, only=False):
         """'' when a blend session stands for the card at `path`, else why not. An animation
         card's session (`animapply.Blend`) previews one frame and pastes the whole range on
         release (`blend_finish`)."""
@@ -777,12 +814,12 @@ class Scene(object):
             header = store.read(path)
             session = animapply.Blend()
             refusal = session.start(header, self._frames(path, header), mirror=mirror,
-                                    options=options)
+                                    options=options, **_only(only))
             card = (path, header, options)
         else:
             from maya_poselib import apply
             session = apply.Blend()
-            refusal = session.start(store.read(path), mirror=mirror)
+            refusal = session.start(store.read(path), mirror=mirror, **_only(only))
             card = None
         if refusal:
             return refusal
@@ -1028,6 +1065,7 @@ def _classes():
             self.picked = None
             self.picked_data = None
             self._blend = None              # dict(path) while a blend session stands
+            self._time_jobs = []            # the timeChanged job while a blend previews
             self._save = None               # dict(initial, snapshot, touched) while saving
             self._building_tree = False
             self.scroll = None
@@ -1050,6 +1088,7 @@ def _classes():
             self._build()
             self._load_options()
             self.setStyleSheet(sheet(self.k))
+            self._fit_side()
             try:
                 jobs = scene.watch(self._queue_follow)
             except Exception:                                # noqa: BLE001
@@ -1057,8 +1096,8 @@ def _classes():
                 jobs = []
             #  the window going (closed, rebuilt by an install): the jobs die and a blend left
             #  half way is put back - the closure holds the scene and the job ids, never self
-            watcher = scene
-            self.destroyed.connect(lambda *_a: _closing(watcher, jobs))
+            watcher, timed = scene, self._time_jobs
+            self.destroyed.connect(lambda *_a: _closing(watcher, jobs, timed))
             self.set_library(root or scene.library())
             self.follow()
 
@@ -1127,21 +1166,24 @@ def _classes():
             box = QtWidgets.QCheckBox(text)
             box.setObjectName(name)
             box.setToolTip(tip)
-            box.clicked.connect(lambda checked=False, v=var: self._remember(v, int(bool(checked))))
+            box.clicked.connect(
+                lambda checked=False, v=var: self._option_changed(v, int(bool(checked))))
             return box
 
         def _build(self):
             s = self.px
+            #  compact (2026-10-15, «давай сделаем более компактный интерфейс»): one row on top
+            #  (the title is the control's tab, the library's folder the ⋮ button's tooltip),
+            #  thin margins, a narrower tree and side panel, a smaller details picture
             top = QtWidgets.QVBoxLayout(self)
-            top.setContentsMargins(s(8), s(8), s(8), s(8))
-            top.setSpacing(s(6))
-            top.addLayout(self._build_header())
+            top.setContentsMargins(s(4), s(4), s(4), s(4))
+            top.setSpacing(s(4))
             top.addLayout(self._build_toolbar())
 
             self.splitter = QtWidgets.QSplitter(Qt.Horizontal)
             self.splitter.setObjectName("skeldarPoseSplitter")
             self.splitter.setChildrenCollapsible(False)
-            self.splitter.setHandleWidth(s(6))
+            self.splitter.setHandleWidth(s(4))
             self.splitter.addWidget(self._build_tree())
             self.canvas = cardgrid.make_canvas(self)
             self.scroll = cardgrid.make_scroll(self.canvas)
@@ -1151,23 +1193,19 @@ def _classes():
             self.splitter.setStretchFactor(0, 0)
             self.splitter.setStretchFactor(1, 1)
             self.splitter.setStretchFactor(2, 0)
-            self.splitter.setSizes([s(190), s(520), s(280)])
+            self.splitter.setSizes([s(140), s(580), s(260)])
             top.addWidget(self.splitter, 1)
 
             self.status = self._label("", "status", "skeldarPoseStatus", wrap=True)
             self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
             top.addWidget(self.status)
 
-        def _build_header(self):
+        def _build_menu_button(self):
+            """The ⋮ button: the library's folder, Explorer, Refresh. The folder is its tooltip
+            and the menu's first row (`path_label` holds it; no title row - compact)."""
             s = self.px
-            row = QtWidgets.QHBoxLayout()
-            row.setSpacing(s(8))
-            title = self._label(LABEL, "hubtitle", "skeldarPoseTitle")
-            row.addWidget(title)
             self.path_label = self._label("", "note", "skeldarPosePath")
-            self.path_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
-                                          QtWidgets.QSizePolicy.Preferred)
-            row.addWidget(self.path_label, 1)
+            self.path_label.setVisible(False)
             self.menu_button = QtWidgets.QToolButton()
             self.menu_button.setObjectName("skeldarPoseMenu")
             self.menu_button.setProperty("skRole", "headbtn")
@@ -1180,6 +1218,8 @@ def _classes():
                 self.menu_button.setText("...")
             self.menu_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             menu = QtWidgets.QMenu(self.menu_button)
+            self.path_action = menu.addAction("")
+            self.path_action.setEnabled(False)
             for item in (("Library folder...", self.choose_library),
                          ("Open in Explorer", lambda: self.scene.open_path(self.root)),
                          None,
@@ -1193,13 +1233,12 @@ def _classes():
                 entry.triggered.connect(lambda _checked=False, fn=action: self._run(fn))
                 menu.addAction(entry)
             self.menu_button.setMenu(menu)
-            row.addWidget(self.menu_button)
-            return row
+            return self.menu_button
 
         def _build_toolbar(self):
             s = self.px
             row = QtWidgets.QHBoxLayout()
-            row.setSpacing(s(8))
+            row.setSpacing(s(4))
             self.search = QtWidgets.QLineEdit()
             self.search.setObjectName("skeldarPoseSearch")
             self.search.setPlaceholderText(SEARCH_HINT)
@@ -1233,7 +1272,7 @@ def _classes():
             self.size.setObjectName("skeldarPoseCardSize")
             self.size.setRange(look.CELL_MIN, look.CELL_MAX)
             self.size.setToolTip("Card size")
-            self.size.setFixedWidth(s(110))
+            self.size.setFixedWidth(s(70))
             try:
                 cell = int(self.scene.option(SIZE_VAR, look.CELL_DEFAULT))
             except (TypeError, ValueError):
@@ -1247,13 +1286,14 @@ def _classes():
                                         "the folder picked in the tree")
             self.save_button.clicked.connect(lambda: self._run(self.open_save))
             row.addWidget(self.save_button)
+            row.addWidget(self._build_menu_button())
             return row
 
         def _build_tree(self):
             self.tree = QtWidgets.QTreeWidget()
             self.tree.setObjectName(TREE_NAME)
             self.tree.setHeaderHidden(True)
-            self.tree.setMinimumWidth(self.px(120))
+            self.tree.setMinimumWidth(self.px(100))
             self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
             self.tree.customContextMenuRequested.connect(self._tree_menu)
             self.tree.currentItemChanged.connect(self._tree_picked)
@@ -1277,11 +1317,26 @@ def _classes():
             holder.setMinimumWidth(s(250))
             holder.setWidget(self.side)
             holder.viewport().setObjectName("skeldarPoseSideViewport")
+            self.side_scroll = holder
             return holder
+
+        def _fit_side(self):
+            """The side panel never narrower than what it holds needs (the options' rows, the
+            Apply row) - read once the stylesheet sized them, its scroll bar's width beside."""
+            try:
+                self.anim_options.setVisible(True)
+                self.side.ensurePolished()
+                need = max(self.details_page.minimumSizeHint().width(),
+                           self.save_page.minimumSizeHint().width())
+                bar = self.side_scroll.verticalScrollBar().sizeHint().width()
+                self.side_scroll.setMinimumWidth(max(self.side_scroll.minimumWidth(),
+                                                     need + bar))
+            finally:
+                self.anim_options.setVisible(False)
 
         def thumb_side(self):
             """The details' and save panel's thumbnail side, physical px."""
-            return self.px(220)
+            return self.px(150)
 
         def _thumb_label(self, name):
             label = self._label("", "thumb", name)
@@ -1294,30 +1349,51 @@ def _classes():
             page = QtWidgets.QFrame()
             page.setObjectName("skeldarPoseDetails")
             column = QtWidgets.QVBoxLayout(page)
-            column.setContentsMargins(s(10), s(10), s(10), s(10))
-            column.setSpacing(s(6))
+            column.setContentsMargins(s(8), s(8), s(8), s(8))
+            column.setSpacing(s(4))
             self.thumb = self._thumb_label("skeldarPoseThumb")
             column.addWidget(self.thumb, 0, Qt.AlignHCenter)
             self.name_label = self._label("", "cardtitle", "skeldarPoseName", wrap=True)
             column.addWidget(self.name_label)
             self.folder_label = self._label("", "note", "skeldarPoseFolder", wrap=True)
             column.addWidget(self.folder_label)
-            self.info = self._label("pick a card", "context", "skeldarPoseInfo", wrap=True)
+            self.info = self._label("pick a card", "note", "skeldarPoseInfo", wrap=True)
             column.addWidget(self.info)
             self.target_line = self._label("", "note", "skeldarPoseTarget", wrap=True)
             column.addWidget(self.target_line)
 
             #  Apply first, the options block BELOW what it configures (the final review, M5:
             #  above Apply it pushed Apply below the fold of the default window for every
-            #  animation card - 602 px down a 541 px side panel at a scale of 1.0)
+            #  animation card - 602 px down a 541 px side panel at a scale of 1.0); Select
+            #  objects an icon beside it (compact)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(4))
             self.apply_button = self._button("Apply", "primary", "check", "skeldarPoseApply")
             self.apply_button.setToolTip(APPLY_TIPS[False])
             self.apply_button.clicked.connect(lambda: self._press_apply())
-            column.addWidget(self.apply_button)
+            row.addWidget(self.apply_button, 1)
+            self.select_button = self._button("", "secondary", "target", "skeldarPoseSelect")
+            self.select_button.setToolTip("Select objects: what the card would key on the "
+                                          "target")
+            self.select_button.clicked.connect(lambda: self._press_select())
+            row.addWidget(self.select_button)
+            column.addLayout(row)
+
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(10))
             self.mirror = QtWidgets.QCheckBox("Mirror")
             self.mirror.setObjectName("skeldarPoseMirror")
             self.mirror.setToolTip("Left and right swapped - Apply, the blend and the drags")
-            column.addWidget(self.mirror)
+            self.mirror.clicked.connect(lambda _checked=False: self.blend_reset(RESET_OPTION))
+            row.addWidget(self.mirror)
+            self.only = QtWidgets.QCheckBox("Selected only")
+            self.only.setObjectName("skeldarPoseOnly")
+            self.only.setToolTip(ONLY_TIP)
+            self.only.clicked.connect(
+                lambda checked=False: self._option_changed(ONLY_VAR, int(bool(checked))))
+            row.addWidget(self.only)
+            row.addStretch(1)
+            column.addLayout(row)
 
             blend_row = QtWidgets.QHBoxLayout()
             blend_row.setSpacing(s(6))
@@ -1326,9 +1402,10 @@ def _classes():
             self.blend.setObjectName("skeldarPoseBlend")
             self.blend.setRange(0, 100)
             self.blend.setFocusPolicy(Qt.NoFocus)
-            self.blend.setToolTip("Drag: the current pose mixed toward the card, keyed on "
-                                  "release (Esc: everything back). A middle drag across a "
-                                  "card does the same.")
+            self.blend.setToolTip("Drag: the pose mixed toward the card and held there - Apply "
+                                  "keys it. Back to 0 when the time, the selection or the card "
+                                  "changes (Esc too). A middle drag across a card does the "
+                                  "same.")
             self.blend.sliderPressed.connect(self._slider_pressed)
             self.blend.sliderMoved.connect(self._slider_moved)
             self.blend.sliderReleased.connect(self._slider_released)
@@ -1336,15 +1413,10 @@ def _classes():
             self.blend.on_lost = self.lost_release
             blend_row.addWidget(self.blend, 1)
             self.blend_label = self._label("0 %", "context", "skeldarPoseBlendValue")
-            self.blend_label.setMinimumWidth(s(36))
+            self.blend_label.setMinimumWidth(s(34))
             blend_row.addWidget(self.blend_label)
             column.addLayout(blend_row)
 
-            self.select_button = self._button("Select objects", "secondary", "target",
-                                              "skeldarPoseSelect")
-            self.select_button.setToolTip("Select what the card would key on the target")
-            self.select_button.clicked.connect(lambda: self._press_select())
-            column.addWidget(self.select_button)
             self.anim_options = self._build_options()
             self.anim_options.setVisible(False)
             column.addWidget(self.anim_options)
@@ -1361,14 +1433,14 @@ def _classes():
             frame.setProperty("skRole", "inset")
             frame.setAttribute(Qt.WA_StyledBackground, True)
             column = QtWidgets.QVBoxLayout(frame)
-            column.setContentsMargins(s(8), s(8), s(8), s(8))
-            column.setSpacing(s(4))
+            column.setContentsMargins(s(6), s(6), s(6), s(6))
+            column.setSpacing(s(3))
             column.addWidget(self._label("Paste", "context"))
             #  two to a row: «Replace all» beside three more does not fit a 250 px side panel
             track, self.paste_buttons = self._segments(
                 "skeldarPosePaste_", [(mode, animdata.MODE_LABELS[mode])
                                       for mode in animdata.MODES],
-                lambda mode: self._remember(PASTE_VAR, mode), columns=2)
+                lambda mode: self._option_changed(PASTE_VAR, mode), columns=2)
             for mode, tip in PASTE_TIPS.items():
                 self.paste_buttons[mode].setToolTip(tip)
             column.addWidget(track)
@@ -1383,10 +1455,15 @@ def _classes():
                 "Connect", "skeldarPoseConnect",
                 "Every pasted channel moved so its first pasted value is the value it shows "
                 "at the paste frame", CONNECT_VAR)
+            self.in_place = self._check(
+                "In place", "skeldarPoseInPlace",
+                "Root / Main untouched: the clip's travel is not carried", IN_PLACE_VAR)
+            #  the three checks on one row, Keys beside its segments (compact)
             row = QtWidgets.QHBoxLayout()
-            row.setSpacing(s(8))
+            row.setSpacing(s(6))
             row.addWidget(self.at_current)
             row.addWidget(self.connect_box)
+            row.addWidget(self.in_place)
             row.addStretch(1)
             column.addLayout(row)
             row = QtWidgets.QHBoxLayout()
@@ -1400,19 +1477,15 @@ def _classes():
             row.addWidget(self._label("-", "context"))
             row.addWidget(self.range_end, 1)
             column.addLayout(row)
-            column.addWidget(self._label("Keys", "context"))
             track, self.keys_buttons = self._segments(
-                "skeldarPoseKeys_", KEY_LABELS, lambda key: self._remember(KEYS_VAR, key))
+                "skeldarPoseKeys_", KEY_LABELS, lambda key: self._option_changed(KEYS_VAR, key))
             self.keys_buttons["every"].setToolTip("A key on every frame - exact")
             self.keys_buttons["source"].setToolTip(
                 "Keys only where the source had keys - the curves interpolate between them")
-            self.in_place = self._check(
-                "In place", "skeldarPoseInPlace",
-                "Root / Main untouched: the clip's travel is not carried", IN_PLACE_VAR)
             row = QtWidgets.QHBoxLayout()
-            row.setSpacing(s(8))
+            row.setSpacing(s(6))
+            row.addWidget(self._label("Keys", "context"))
             row.addWidget(track, 1)
-            row.addWidget(self.in_place)
             column.addLayout(row)
             return frame
 
@@ -1553,6 +1626,8 @@ def _classes():
             self.root = (root or "").replace("\\", "/").rstrip("/")
             self.path_label.setText(self.root)
             self.path_label.setToolTip(self.root)
+            self.menu_button.setToolTip("The library: %s" % self.root)
+            self.path_action.setText(self.root)
             self.refresh()
 
         def choose_library(self):
@@ -1700,6 +1775,8 @@ def _classes():
             card = self._card(path)
             if card is None:
                 return False
+            if path != self.picked:
+                self.blend_reset(RESET_CARD)
             self.picked = path
             self.canvas.set_picked(path)
             try:
@@ -1710,7 +1787,7 @@ def _classes():
             self.name_label.setText(card.name)
             self.folder_label.setText("in " + folder_text(card.folder))
             self.info.setText("\n".join(look.details(card, self.picked_data)))
-            picture = self.canvas.thumb(card.thumbnail, self.thumb_side())
+            picture = self.canvas.thumb(card.thumbnail, self.thumb_side(), card.type)
             if picture is not None and not picture.isNull():
                 self.thumb.setPixmap(picture)
             else:
@@ -1725,6 +1802,7 @@ def _classes():
             return True
 
         def unpick(self):
+            self.blend_reset(RESET_CARD)
             self.picked = self.picked_data = None
             self.canvas.set_picked(None)
             self.name_label.setText("")
@@ -1759,6 +1837,10 @@ def _classes():
             self.at_current.setChecked(opts.at_current)
             self.connect_box.setChecked(opts.connect)
             self.in_place.setChecked(opts.in_place)
+            try:
+                self.only.setChecked(bool(int(self.scene.option(ONLY_VAR, 0) or 0)))
+            except (TypeError, ValueError):
+                self.only.setChecked(False)
 
         def _lit(self, buttons, default):
             return next((key for key, button in buttons.items() if button.isChecked()),
@@ -1783,10 +1865,21 @@ def _classes():
 
         def _extra(self, path):
             """What a press of the card at `path` hands the scene beyond a pose's arguments:
-            an animation card's `options`; nothing for a pose card - its road unchanged."""
+            an animation card's `options`; `only` while Selected only is on for a character
+            card (an objects card keys the selected objects anyway)."""
+            extra = {}
             if path and store.is_anim(path):
-                return {"options": self.options(path)}
-            return {}
+                extra["options"] = self.options(path)
+            card = self._card(path) if path else None
+            if self.only.isChecked() and (card is None or card.kind != "objects"):
+                extra["only"] = True
+            return extra
+
+        def _option_changed(self, var, value):
+            """An option the animator changed: remembered, and a standing blend - previewed
+            under the old option - put back."""
+            self._remember(var, value)
+            self.blend_reset(RESET_OPTION)
 
         def _reset_range(self, card):
             """The Range boxes on `card`'s own frames, both held inside them - when ANOTHER
@@ -1877,6 +1970,7 @@ def _classes():
 
         def hideEvent(self, event):                          # noqa: N802
             QtWidgets.QWidget.hideEvent(self, event)
+            self.blend_reset(RESET_HIDDEN)
             self.play_timer.stop()
             self._play_path = None
 
@@ -1931,6 +2025,7 @@ def _classes():
             stalled before a drag could start): who Apply would pose, when a card is picked -
             none is, nothing reads it until one is - and the save panel's character line (and
             its chips, until the animator touched one)."""
+            self.blend_reset(RESET_SELECTION)
             card = self._card(self.picked) if self.picked else None
             self._targets = None
             if card is not None and card.kind != "objects":
@@ -1953,7 +2048,13 @@ def _classes():
 
         def apply_card(self, path, mirror=None):
             """Apply the card at `path` to the selection (`mirror` None: the checkbox) - an
-            animation with the options block's options."""
+            animation with the options block's options. A blend standing on that card above 0
+            is what Apply keys (`blend_key`); any other is put back first and the whole card
+            keyed."""
+            if self._blend is not None:
+                if self._blend["path"] == path and self.blend.value() > 0 and mirror is None:
+                    return self.blend_key()
+                self._blend_drop()
             mirror = self.mirror.isChecked() if mirror is None else bool(mirror)
             extra = self._extra(path)
             return self._act(lambda: self.scene.apply(path, mirror, **extra))
@@ -2007,8 +2108,11 @@ def _classes():
             a verify can drive it without a mouse. Answers the status line."""
             aim = self.aim(gx, gy, path, snap)
             kind = aim.get("kind")
+            if kind in ("character", "floor"):
+                self._blend_drop()               # the whole card goes onto who it is dropped on
             mirror = self.mirror.isChecked()
             extra = self._extra(path)            # an animation's options, read at the release
+            extra.pop("only", None)              # a drop names its character, not the selection
             if kind == "folder":
                 return self._run(lambda: self.move_card(path, aim["folder"]))
             if kind == "character":
@@ -2045,16 +2149,30 @@ def _classes():
             return self.say(aim.get("text") or look.NO_TARGET)
 
         # ------------------------------------------------------ the blend
+        #
+        #  The blend PREVIEWS and stays where it was let go - the slider, or a middle drag across
+        #  a card - and Apply keys it at that share (at 0 the whole card, as ever). Anything
+        #  that makes the preview a lie puts it back and the slider to 0 (`blend_reset`): the
+        #  time changed (a job while a blend stands), the selection changed (or an undo, a redo,
+        #  a scene opened - `follow`), another card picked, Mirror / Selected only / a paste
+        #  option changed, the library hidden. Esc puts it back too. The preview is unrecorded,
+        #  so a blend left standing costs no undo step.
 
         def blending(self):
             return self._blend is not None
+
+        def blend_share(self):
+            """The share the blend previews, 0..1 - 0 when none stands."""
+            if self._blend is None:
+                return 0.0
+            return self.blend.value() / 100.0
 
         def _blend_begin(self, path):
             """A blend session for `path`: True when one stands (started now or before)."""
             if self._blend is not None:
                 if self._blend["path"] == path:
                     return True
-                self.blend_cancel()
+                self.blend_reset(RESET_CARD)
             try:
                 refusal = self.scene.blend_start(path, self.mirror.isChecked(),
                                                  **self._extra(path))
@@ -2065,11 +2183,36 @@ def _classes():
                 self.say(refusal)
                 return False
             self._blend = dict(path=path)
+            self._watch_time()
+            return True
+
+        def _watch_time(self):
+            self._unwatch_time()
             try:
-                self.grabKeyboard()
+                self._time_jobs.extend(self.scene.watch_time(self._time_moved) or [])
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+
+        def _unwatch_time(self):
+            #  the list is kept, emptied in place: the window's death kills what it holds
+            jobs = list(self._time_jobs)
+            del self._time_jobs[:]
+            if jobs:
+                try:
+                    self.scene.unwatch(jobs)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+
+        def _time_moved(self, *_args):
+            """The timeChanged job: the reset one idle later - never inside Maya's own time
+            change (the reset evaluates the scene at the new frame)."""
+            try:
+                if not q.shiboken.isValid(self) or self._blend is None:
+                    return
+                QtCore.QTimer.singleShot(0, lambda: self._run(
+                    lambda: self.blend_reset(RESET_TIME)))
             except Exception:                                # noqa: BLE001
                 pass
-            return True
 
         def _blend_set(self, alpha):
             try:
@@ -2077,34 +2220,67 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 self.say(_last_line(traceback.format_exc()))
-            self.blend_label.setText("%d %%" % int(round(alpha * 100)))
+            self._show_share(int(round(alpha * 100)))
+
+        def _show_share(self, percent):
+            """The label and the Apply button follow the share: «Apply 40 %» while a blend
+            stands above 0, «Apply» otherwise."""
+            self.blend_label.setText("%d %%" % percent)
+            self.apply_button.setText("Apply %d %%" % percent
+                                      if self._blend is not None and percent > 0 else "Apply")
 
         def _blend_end(self):
             self._blend = None
+            self._unwatch_time()
             self.canvas.end_blend()
-            try:
-                self.releaseKeyboard()
-            except Exception:                                # noqa: BLE001
-                pass
             self._reset_slider()
+
+        def _blend_drop(self):
+            """The standing blend put back quietly (a press that keys the whole card next)."""
+            if self._blend is None:
+                return
+            try:
+                self.scene.blend_cancel()
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+            self._blend_end()
 
         def blend_drag(self, path, dx):
             """One step of the middle drag across the card at `path`, `dx` px from the press:
-            the session started on the first step, the blend previewed at `blend_alpha(dx)`.
-            The alpha, or None when the blend is refused (the line says why). Public, so the
-            gesture can be driven without a mouse."""
+            the card picked, the session started on the first step, the blend previewed at
+            `blend_alpha(dx)` - the slider showing it. The alpha, or None when the blend is
+            refused (the line says why). Public, so the gesture can be driven without a
+            mouse."""
+            if path != self.picked:
+                self.pick(path)
             if not self._blend_begin(path):
                 return None
             alpha = blend_alpha(dx, self.k)
+            self.blend.blockSignals(True)
+            try:
+                self.blend.setValue(int(round(alpha * 100)))
+            finally:
+                self.blend.blockSignals(False)
             self._blend_set(alpha)
             return alpha
 
         def blend_release(self):
-            """The blend keyed where it stands (the middle button or the slider let go). The
+            """The gesture let go (the middle button, the slider): the preview STAYS - Apply
+            keys it. Let go at 0 the blend ends, every value back."""
+            if self._blend is None:
+                self._reset_slider()
+                return ""
+            percent = self.blend.value()
+            if percent <= 0:
+                self._blend_drop()
+                return self.say("")
+            return self.say(BLEND_HELD % percent)
+
+        def blend_key(self):
+            """Apply with a blend standing: the blend keyed at its share, the slider to 0. The
             session ends HERE, before the press: an animation's blend pastes its whole range
-            for seconds under a progress window, and the window losing the focus to it read
-            the session still standing - cancelled it and said «let go elsewhere» over a paste
-            that went on (the final review, S10)."""
+            for seconds under a progress window, and its time walk would read as the time
+            moving (the final review, S10)."""
             if self._blend is None:
                 return ""
             self._blend_end()
@@ -2116,16 +2292,21 @@ def _classes():
             return self.say(text or "")
 
         def blend_cancel(self):
-            """Esc: every value back as it was before the blend."""
+            """Esc: every value back as it was before the blend, the slider to 0."""
             if self._blend is None:
                 self.canvas.end_blend()
+                self._reset_slider()
                 return ""
-            try:
-                self.scene.blend_cancel()
-            except Exception:                                # noqa: BLE001
-                traceback.print_exc()
-            self._blend_end()
+            self._blend_drop()
             return self.say(BLEND_CANCELLED)
+
+        def blend_reset(self, why):
+            """The blend back to 0, every value back - `why` said (`RESET_*`). Nothing when no
+            blend stands."""
+            if self._blend is None:
+                return ""
+            self._blend_drop()
+            return self.say(BLEND_RESET % why)
 
         def _reset_slider(self):
             try:
@@ -2133,11 +2314,11 @@ def _classes():
                 self.blend.setValue(0)
             finally:
                 self.blend.blockSignals(False)
-            self.blend_label.setText("0 %")
+            self._show_share(0)
 
-        #  The slider's three drag signals are the whole blend: pressed starts the session,
-        #  moved previews, released keys. BlendSlider moves only under a left drag (a groove
-        #  press included), so nothing else can key.
+        #  The slider's three drag signals: pressed starts the session, moved previews,
+        #  released leaves the preview standing. BlendSlider moves only under a left drag (a
+        #  groove press included), so nothing else previews; nothing of it keys - Apply does.
 
         def _slider_pressed(self):
             if self.picked and self._blend_begin(self.picked):
@@ -2150,10 +2331,7 @@ def _classes():
                 self._blend_set(value / 100.0)
 
         def _slider_released(self):
-            if self._blend is not None:
-                self.blend_release()
-            else:
-                self._reset_slider()
+            self.blend_release()
 
         def _slider_value(self, value):
             """The label follows the handle. It never keys: review finding 1 (2026-10-03)
@@ -2167,26 +2345,22 @@ def _classes():
             QtWidgets.QWidget.keyPressEvent(self, event)
 
         def lost_release(self):
-            """A drag, a middle-drag blend or a slider blend whose button release never came
-            (Alt+Tab or a modal dialog mid-drag, a release outside Qt): the drag ended and the
-            blend cancelled - every value back, the keyboard given back, nothing keyed - and
-            said (`cardgrid.LOST_*`). The slider's own lost release and the window losing the
-            focus land here (the final review: left standing, the session swallowed every press
-            on the grid, held the keyboard and kept its previews unrecorded)."""
+            """A drag, a middle-drag blend or a slider drag whose button release never came
+            (Alt+Tab or a modal dialog mid-drag, a release outside Qt): the drag ended (said,
+            `cardgrid.LOST_*`), the blend's gesture let go where it stood - its preview kept,
+            as a release keeps it. True when anything was ended."""
             ended = self.canvas.lost_release()
-            if self._blend is not None:
-                self.blend_cancel()
-                self.say(cardgrid.LOST_BLEND)
-                ended = True
             self.blend.drop()
-            self._reset_slider()
+            if self._blend is not None:
+                self.blend_release()
+                ended = True
             return ended
 
         def changeEvent(self, event):                        # noqa: N802
             QtWidgets.QWidget.changeEvent(self, event)
             if event.type() == QtCore.QEvent.ActivationChange and not self.isActiveWindow() \
-                    and (self._blend is not None or self.canvas._drag
-                         or self.canvas._mid is not None or self.blend.isSliderDown()):
+                    and (self.canvas._drag or self.canvas._mid is not None
+                         or self.blend.isSliderDown()):
                 self.lost_release()
 
         # ------------------------------------------------------ save

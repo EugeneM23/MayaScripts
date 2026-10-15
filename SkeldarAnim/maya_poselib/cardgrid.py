@@ -113,6 +113,11 @@ def sheet_info(raw):
     return info
 
 
+def _type(card):
+    """A card's type for its tone: "anim" or "pose"."""
+    return "anim" if getattr(card, "type", "pose") == "anim" else "pose"
+
+
 def _animations():
     """The hub menu's Interface animations (maya_hubmotion): the zoom eases only with them on.
     A seam the tests replace."""
@@ -183,6 +188,23 @@ def _classes():
         big = source.scaled(side, side, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
         return big.copy((big.width() - side) // 2, (big.height() - side) // 2, side, side)
 
+    tables = {}
+
+    def toned(source, kind):
+        """`source` (a QPixmap) recoloured in the `kind` card's tone (`look.tone_table`) by its
+        lightness; None for nothing. Its grey levels are read as an Indexed8 image whose colour
+        table is the tone - one pass in Qt, no pixel loop."""
+        if source is None or source.isNull():
+            return None
+        table = tables.get(kind)
+        if table is None:
+            table = tables[kind] = [QtGui.qRgb(r, g, b) for r, g, b in look.tone_table(kind)]
+        grey = source.toImage().convertToFormat(QtGui.QImage.Format_Grayscale8)
+        indexed = QtGui.QImage(grey.constBits(), grey.width(), grey.height(),
+                               grey.bytesPerLine(), QtGui.QImage.Format_Indexed8).copy()
+        indexed.setColorTable(table)
+        return QtGui.QPixmap.fromImage(indexed.convertToFormat(QtGui.QImage.Format_RGB32))
+
     # ---------------------------------------------------------- the cards
 
     class CardCanvas(QtWidgets.QWidget):
@@ -207,6 +229,9 @@ def _classes():
             #  times the pixels), and hundreds of them held whole would
             #  cost ~0.4 MB each for nothing.
             self.pixmaps = {}
+            #  the pictures drawn in their card's tone (`toned`); False draws them as saved
+            #  (a seam the tests of the pictures' own colours turn off)
+            self.tones = True
             self._clock = QtCore.QElapsedTimer()
             self._clock.start()
             #  card path -> look.Zoom while the card grows, stands grown or shrinks; `_where`
@@ -347,6 +372,8 @@ def _classes():
             picture = QtGui.QPixmap(image)
             if picture.isNull():
                 return None
+            if self.tones:
+                picture = toned(picture, "anim")
             rows = -(-info["frames"] // info["columns"])
             if picture.width() < info["columns"] * info["size"] or \
                     picture.height() < rows * info["size"]:
@@ -445,14 +472,19 @@ def _classes():
             p.drawPixmap(box, picture, QtCore.QRectF(x, y, w, h))
             return True
 
-        def thumb(self, image, side):
-            """The thumbnail at `image` as a `side` px square, read and scaled once and cached;
-            None when there is none (or it cannot be read)."""
+        def thumb(self, image, side, kind="pose"):
+            """The thumbnail at `image` as a `side` px square in the `kind` card's tone
+            ("pose" orange, "anim" icy blue - `look.TONES`), read, scaled and toned once and
+            cached; None when there is none (or it cannot be read)."""
             if not image:
                 return None
-            key = (image, int(side))
+            tone = kind if self.tones else None
+            key = (image, int(side), tone)
             if key not in self.pixmaps:
-                self.pixmaps[key] = scaled(QtGui.QPixmap(image), int(side))
+                picture = scaled(QtGui.QPixmap(image), int(side))
+                if tone and picture is not None:
+                    picture = toned(picture, tone)
+                self.pixmaps[key] = picture
             return self.pixmaps[key]
 
         def index_at(self, x, y):
@@ -585,7 +617,7 @@ def _classes():
         def _start_drag(self, card, point):
             self._set_hover(None)                    # the ghost takes over from the grown card
             size = int(look.GHOST * self.k)
-            picture = self.thumb(card.thumbnail, size) or QtGui.QPixmap()
+            picture = self.thumb(card.thumbnail, size, _type(card)) or QtGui.QPixmap()
             ghost = Ghost(picture, size, size, self.k, anchor=(0.5, 0.5), name=GHOST_NAME,
                           backdrop="field")
             snap = None
@@ -638,19 +670,20 @@ def _classes():
         def lost_release(self):
             """A drag or a middle-drag blend whose button release never reached us (Alt+Tab or
             a modal dialog mid-drag, a release outside Qt): the drag ended - the ghost hidden,
-            the keyboard given back - and the blend cancelled, every value back, both said. Left
-            standing, the session swallowed every press on the grid, held the keyboard (Maya's
-            hotkeys went to the window) and kept its previews unrecorded on the free channels (the
-            final review). True when anything was ended."""
+            the keyboard given back - and said; a middle-drag blend let go where it stood, as its
+            release lets it go (its preview kept: Apply keys it). Left standing, the drag
+            swallowed every press on the grid (the final review). True when anything was
+            ended."""
             ended = False
             if self._drag:
                 self._end_drag()
                 self.panel.say(LOST_DRAG)
                 ended = True
-            if self.panel.blending():
+            if self._mid is not None:
+                #  a middle-drag blend let go where it stood: its preview kept, as a release
+                #  keeps it (2026-10-15: the blend holds, Apply keys it)
                 self._mid = None
-                self.panel.blend_cancel()
-                self.panel.say(LOST_BLEND)
+                self.panel.blend_release()
                 ended = True
             self._mid = self._press = None
             return ended
@@ -847,7 +880,7 @@ def _classes():
             p.setClipPath(shape)
             if not self._draw_playing(p, card, box):
                 picture = self.thumb(card.thumbnail, cache_side(
-                    zoom_side(rect[2]) if lifted > 0 else rect[2]))
+                    zoom_side(rect[2]) if lifted > 0 else rect[2]), _type(card))
                 if picture is not None and not picture.isNull():
                     p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
                 else:
@@ -937,7 +970,8 @@ def _classes():
             QtWidgets.QScrollArea.resizeEvent(self, event)
             self.canvas.fit(self.viewport().width(), self.viewport().height())
 
-    _CLASSES.update(CardCanvas=CardCanvas, CardScroll=CardScroll, scaled=scaled, qt=q)
+    _CLASSES.update(CardCanvas=CardCanvas, CardScroll=CardScroll, scaled=scaled, toned=toned,
+                    qt=q)
     return _CLASSES
 
 
@@ -954,3 +988,8 @@ def make_scroll(canvas):
 def scaled(source, side):
     """A QPixmap scaled smooth to fill a `side` px square, centre-cropped (None for nothing)."""
     return _classes()["scaled"](source, side)
+
+
+def toned(source, kind):
+    """A QPixmap recoloured in the `kind` card's tone (`look.tone_table`); None for nothing."""
+    return _classes()["toned"](source, kind)

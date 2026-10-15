@@ -194,6 +194,10 @@ NO_BLEND = "no blend to finish"
 BLEND_ZERO = "Blend at 0 % - nothing keyed"
 TIME_MOVED = "the time changed during the blend - every value put back, nothing keyed"
 NOTHING = "nothing to key: %s"
+#  Selected only (2026-10-15, the animator: «опция применить наложение только на выделенные
+#  объекты ... найти информацию только о том что имеет отношение к нашему текущему выделению»)
+NONE_SELECTED = "Selected only: the card poses none of the selected %s"
+SOME_SELECTED = "Selected only: %d of %d %s keyed"
 SELECTED = "Selected %d %s on %s"
 
 # the rig's twist (and helper) bones are DRIVEN by its own network from the limbs the pose turns
@@ -566,10 +570,73 @@ def _targets(selection, prefer=None):
     return choose_targets(refs, bool(selection), every, prefer)
 
 
+# ------------------------------------------------------------------ Selected only
+
+def node_of(plug):
+    """The node a plug names (`node.attr`)."""
+    return plug.rsplit(".", 1)[0]
+
+
+def keep_selected(values, nodes, long_of):
+    """`values` ({plug: value}) with only the plugs whose node - as `long_of(node)` resolves it
+    to a long path - is one of `nodes` (long paths), in order. Pure: `long_of` is the seam."""
+    resolved = {}
+    out = OrderedDict()
+    for plug, value in values.items():
+        node = node_of(plug)
+        if node not in resolved:
+            resolved[node] = long_of(node)
+        if resolved[node] in nodes:
+            out[plug] = value
+    return out
+
+
+def _only(nodes):
+    """The `only=` keyword for Selected only's `nodes`, nothing when it is off."""
+    return {"only": nodes} if nodes is not None else {}
+
+
+def _long_node(node):
+    found = cmds.ls(node, long=True) or []
+    return found[0] if found else node
+
+
+def selected_nodes(selection=None):
+    """The long paths of the DAG transforms the selection names (a shape's transform, a
+    component's object) - what Selected only keys."""
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
+    out = set()
+    for item in selection:
+        path = scene.dag_object(item)
+        if path is not None:
+            out.add(path)
+    return frozenset(out)
+
+
+def only_selected(values, only, noun):
+    """(values kept, note or "") for Selected only: `values` cut to the plugs of the nodes in
+    `only` (`keep_selected`); the note says how many nodes stayed of the ones the card would have
+    keyed, or that none did. `only` None keeps everything."""
+    if only is None:
+        return values, ""
+    kept = keep_selected(values, only, _long_node)
+    every = set(node_of(plug) for plug in values)
+    left = set(node_of(plug) for plug in kept)
+    if not kept:
+        return kept, NONE_SELECTED % noun
+    if len(left) < len(every):
+        return kept, SOME_SELECTED % (len(left), len(every), noun)
+    return kept, ""
+
+
 # ------------------------------------------------------------------ the plan
 
-def _plan(data, ref, mirror=False):
-    """(Plan, Extra) for one target - the module's step 3. Writes nothing."""
+def _plan(data, ref, mirror=False, only=None):
+    """(Plan, Extra) for one target - the module's step 3. Writes nothing. `only` (long paths,
+    or None): Selected only - the solve is the whole card's, so each selected control takes the
+    value it has in the full pose; then only the selected nodes' plugs are kept (and nothing is
+    measured when that cut any: the members are then only part keyed)."""
     notes = []
     bones, _convention = scene.skeleton(ref, notes)
     source = data.get("bones") or {}
@@ -589,6 +656,12 @@ def _plan(data, ref, mirror=False):
     else:
         solution = skelsolve.solve(ref, bones, wanted, members_t)
     values = OrderedDict(solution.values)
+    full = len(values)
+    values, note = only_selected(values, only, _noun(ref))
+    if note:
+        notes.insert(0, note)
+    if len(values) < full:
+        members_t = []                      # partly keyed members: nothing to measure
     plan = Plan(ref, values, keys.current(values), notes + list(solution.notes),
                 dict(solution.skipped))
     return plan, Extra(wanted, members_t, bones, None)
@@ -705,8 +778,9 @@ def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
     return results
 
 
-def _apply_refs(data, refs, mirror=False, alpha=1.0):
-    """The press onto `refs` - the module's steps 2-5."""
+def _apply_refs(data, refs, mirror=False, alpha=1.0, only=None):
+    """The press onto `refs` - the module's steps 2-5. `only`: Selected only (`_plan`); a
+    selection naming nothing the card keys is refused before the press."""
     layer, refusal = keys.active_layer()
     if refusal:
         return False, refusal
@@ -714,10 +788,24 @@ def _apply_refs(data, refs, mirror=False, alpha=1.0):
     if note:
         return False, note                  # a character pose always turns its bones
     frame = _frame()
+    if only is not None:
+        with _unrecorded():
+            entries = [_plan(data, ref, mirror, **_only(only)) for ref in refs]
+        if not any(plan.values for plan, _extra in entries):
+            return False, _nothing(entries)
+        with _press():
+            results = _key_entries(entries, data.get("name"), frame, layer, alpha, mirror)
+        return any(r.count for r in results), summary(results)
     with _press():
         entries = [_plan(data, ref, mirror) for ref in refs]
         results = _key_entries(entries, data.get("name"), frame, layer, alpha, mirror)
     return any(r.count for r in results), summary(results)
+
+
+def _nothing(entries):
+    """NOTHING with the entries' notes - why no channel is left to key."""
+    notes = [n for plan, _e in entries for n in shown_notes(plan.notes)]
+    return NOTHING % ("; ".join(notes) or "no channel the pose can turn")
 
 
 def _card_refusal(data):
@@ -730,20 +818,24 @@ def _card_refusal(data):
 
 # ------------------------------------------------------------------ the presses
 
-def apply(data, selection=None, mirror=False, alpha=1.0):
+def apply(data, selection=None, mirror=False, alpha=1.0, only=False):
     """(ok, text): the card `data` (a pose dict) onto every character the selection touches -
     `selection` a list of nodes, Maya's when None - keyed on the active layer at the current
-    frame, mirrored when asked, `alpha` < 1 blending from the current values. An objects pose goes
-    to `apply_objects`. One undo chunk."""
+    frame, mirrored when asked, `alpha` < 1 blending from the current values; `only` (Selected
+    only): just the selected controls / joints keyed, each at its value in the whole pose. An
+    objects pose goes to `apply_objects` (it keys the selected objects anyway). One undo chunk."""
     if data and data.get("kind") == "objects":
         return apply_objects(data, selection, alpha)
     refusal = _card_refusal(data)
     if refusal:
         return False, refusal
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
     refs, refusal = _targets(selection)          # reads the scene, writes nothing
     if refusal:
         return False, refusal
-    return _apply_refs(data, refs, mirror, alpha)
+    return _apply_refs(data, refs, mirror, alpha,
+                       **_only(selected_nodes(selection) if only else None))
 
 
 def apply_onto(data, root, mirror=False):
@@ -1081,9 +1173,9 @@ class Blend(object):
         """Is a session running?"""
         return bool(self.entries)
 
-    def start(self, data, mirror=False, selection=None):
+    def start(self, data, mirror=False, selection=None, only=False):
         """"" when a session started, else the refusal (nothing changed). A session already
-        running is cancelled first."""
+        running is cancelled first. `only`: Selected only, as `apply`'s."""
         if self.active():
             self.cancel()
         if not data:
@@ -1104,11 +1196,14 @@ class Blend(object):
             refusal = _card_refusal(data) or keys.quaternion_note(layer)
             if refusal:
                 return refusal
+            if selection is None:
+                selection = cmds.ls(selection=True, long=True) or []
             refs, refusal = _targets(selection)
             if refusal:
                 return refusal
+            nodes = selected_nodes(selection) if only else None
             with _unrecorded():
-                entries = [_plan(data, ref, mirror) for ref in refs]
+                entries = [_plan(data, ref, mirror, **_only(nodes)) for ref in refs]
         if not any(plan.values for plan, _extra in entries):
             notes = [n for plan, _e in entries for n in shown_notes(plan.notes)]
             return NOTHING % ("; ".join(notes) or "no channel the pose can turn")

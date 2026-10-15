@@ -969,5 +969,95 @@ class Press(unittest.TestCase):
                          (None, ap.OBJECTS_MISSING % (2, "s")))
 
 
+class SelectedOnly(unittest.TestCase):
+    """Selected only (2026-10-15, «применить наложение только на выделенные объекты»): the
+    whole card is solved, then only the selected nodes' plugs are kept."""
+
+    LONG = {"FKWrist_L": "|g|Manny_Rig1:FKWrist_L", "Manny_Rig1:FKWrist_L": "|g|Manny_Rig1:FKWrist_L",
+            "Manny_Rig1:FKElbow_L": "|g|Manny_Rig1:FKElbow_L"}
+
+    def values(self):
+        return OrderedDict([("Manny_Rig1:FKWrist_L.rotateX", 30.0),
+                            ("Manny_Rig1:FKWrist_L.rotateY", 5.0),
+                            ("Manny_Rig1:FKElbow_L.rotateZ", 40.0)])
+
+    def test_keep_selected_keeps_the_plugs_of_the_selected_nodes_in_order(self):
+        kept = ap.keep_selected(self.values(), {"|g|Manny_Rig1:FKWrist_L"},
+                                lambda node: self.LONG.get(node, node))
+        self.assertEqual(list(kept), ["Manny_Rig1:FKWrist_L.rotateX",
+                                      "Manny_Rig1:FKWrist_L.rotateY"])
+        self.assertEqual(kept["Manny_Rig1:FKWrist_L.rotateX"], 30.0)
+
+    def test_each_node_is_resolved_once(self):
+        seen = []
+
+        def long_of(node):
+            seen.append(node)
+            return self.LONG.get(node, node)
+        ap.keep_selected(self.values(), {"|g|Manny_Rig1:FKElbow_L"}, long_of)
+        self.assertEqual(seen, ["Manny_Rig1:FKWrist_L", "Manny_Rig1:FKElbow_L"])
+
+    def test_only_selected_says_what_it_cut(self):
+        saved = ap._long_node
+        ap._long_node = lambda node: self.LONG.get(node, node)
+        try:
+            kept, note = ap.only_selected(self.values(), {"|g|Manny_Rig1:FKWrist_L"}, "controls")
+            self.assertEqual(len(kept), 2)
+            self.assertEqual(note, ap.SOME_SELECTED % (1, 2, "controls"))
+            kept, note = ap.only_selected(self.values(), {"|other"}, "controls")
+            self.assertEqual(kept, OrderedDict())
+            self.assertEqual(note, ap.NONE_SELECTED % "controls")
+            kept, note = ap.only_selected(self.values(), None, "controls")
+            self.assertEqual(kept, self.values())
+            self.assertEqual(note, "")
+        finally:
+            ap._long_node = saved
+
+
+class SelectedOnlyPress(Press):
+    """The press under Selected only: `_plan` asked with the selection's nodes; nothing left to
+    key is refused before any chunk opens."""
+
+    def setUp(self):
+        Press.setUp(self)
+        self.asked = []
+        self.kept = OrderedDict([("Manny_Rig1:FKWrist_L.rotateX", 30.0)])
+
+        def plan(data, target, mirror=False, only=None):
+            self.asked.append(only)
+            self.log.append(("plan", self.log_recording()))
+            notes = [] if self.kept else [ap.NONE_SELECTED % "controls"]
+            current = dict((plug, 10.0) for plug in self.kept)
+            return (ap.Plan(target, OrderedDict(self.kept), current, notes, {}), None)
+        ap._plan = plan
+        self.saved["selected_nodes"] = ap.selected_nodes
+        ap.selected_nodes = lambda selection: frozenset(selection)
+
+    def test_the_plan_is_asked_with_the_selected_nodes(self):
+        ok, text = ap.apply(self.card, selection=["|g|Manny_Rig1:FKWrist_L"], only=True)
+        self.assertTrue(ok, text)
+        self.assertEqual(self.asked, [frozenset(["|g|Manny_Rig1:FKWrist_L"])])
+
+    def test_without_it_the_plan_is_asked_as_ever(self):
+        ap.apply(self.card, selection=["|g|Manny_Rig1:FKWrist_L"])
+        self.assertEqual(self.asked, [None])
+
+    def test_nothing_selected_in_the_card_is_refused_with_no_chunk(self):
+        self.kept = OrderedDict()
+        ok, text = ap.apply(self.card, selection=["|g|cube"], only=True)
+        self.assertFalse(ok)
+        self.assertIn(ap.NONE_SELECTED % "controls", text)
+        self.assertNotIn("open", [entry[0] for entry in self.log])
+
+    def test_a_blend_previews_only_the_selected_too(self):
+        blend = ap.Blend()
+        self.assertEqual(blend.start(self.card, selection=["|g|Manny_Rig1:FKWrist_L"],
+                                     only=True), "")
+        self.assertEqual(self.asked, [frozenset(["|g|Manny_Rig1:FKWrist_L"])])
+        blend.cancel()
+
+    # the inherited Press tests run with the plan above too (`only` None: the old road)
+
+
 if __name__ == "__main__":
     unittest.main()

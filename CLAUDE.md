@@ -8623,6 +8623,41 @@ sub-frame keys, the IK spine, bone translations below the pelvis.
      only the ground turned a twin's whole body by the difference (180° at frame 12, measured). Whatever
      a frame's heading is replaced by, it must be replaced by on both sides of the transfer.
 
+## The Pose Library: compact, Selected only, toned cards, a blend that holds (2026-10-15)
+
+The animator: «1 - более компактный интерфейс. 2 - опция применить наложение только на выделенные
+объекты ... 3 - Превью поз должно быть оранжевым, а превью анимаций приятно холодно голубым. 4 -
+ручка blend должна оставаться на своем месте ... ключ должен ставиться только по нажатию apply.
+Если мы изменили таймлайн или куда-то переключились то пусть бленд сбросится на 0». Asked, all the
+recommendation: the picture recoloured in the tone; Selected only keys only the selected nodes; Apply
+at blend 0 keys the whole card. Spec
+`docs/superpowers/specs/2026-10-15-pose-library-compact-selected-blend-design.md`. **This replaces
+what the sections above say about the blend keying on release and about the window's header row.**
+- **Compact**: one top row (search, type, sort, size, + Save, ⋮ - the folder is ⋮'s tooltip and
+  first menu row, `path_label` hidden, no title); margins 4; the details picture 150 px; Select
+  objects an icon beside Apply; Mirror + Selected only one row; the paste options' three checks on
+  one row, Keys beside its segments; the side panel at least what its content needs (`_fit_side`).
+- **Selected only** (`skeldarPoseLibrarySelectedOnly`, off): `apply.apply` / `Blend.start` /
+  `animapply.apply` / `animapply.Blend.start` take `only=True` (off: the call they always made).
+  The WHOLE card is solved, then only the selected transforms' plugs kept (`selected_nodes`,
+  `keep_selected` pure, `only_selected` says «Selected only: 1 of 73 controls keyed»); nothing
+  measured when the cut left members part-keyed; none of them in the card is refused before any
+  chunk. Drops ignore it (they name their character).
+- **Tones**: `look.TONES` / `tone_table(kind)`; `cardgrid.toned` (grey levels as an Indexed8 image,
+  the tone its colour table). Thumbnails (`thumb(image, side, kind)`), the playing sheet and the
+  details picture; nothing on disk changes. `canvas.tones = False` is the tests' seam.
+- **The blend holds**: let go (slider or middle drag), the preview stays («Blend 40 % - Apply keys
+  it», Apply reads «Apply 40 %»); Apply keys it (`blend_key`) and the slider goes to 0; back to 0
+  with every value back (`blend_reset(why)`): a `timeChanged` job made only while a blend stands
+  (reset one idle later), `follow` (selection, undo, redo, scene opened), another card, Mirror /
+  Selected only / a paste option, the window hidden, Esc, a drop. A lost release keeps the
+  preview. No keyboard grab.
+
+Proof: `verify_poselib_selected_only.py` **13/13 mayapy standalone** (FKWrist_R alone at the whole
+solve's value to 0.0, two controls alone, a refusal keying nothing, a 50 % blend on one control
+exact, an animation onto FKElbow_R alone equal to the whole paste's to 1.6e-5, a skeleton's hand_r
+alone); 6526 unit tests; picture `poselib_compact.png` (offscreen). Not seen in a live Maya.
+
 ## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10) - the Tail Builder card
 
 The animator, with a cube animated by hand in their open scene: «нужно изучить анимацию кубика и сделать

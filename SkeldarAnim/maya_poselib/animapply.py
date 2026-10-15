@@ -584,13 +584,17 @@ class _Target(object):
     """One character of a press, prepared ONCE at the paste frame (the module's step 2), then
     keyed frame by frame (`key`)."""
 
-    def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None):
+    def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None,
+                 only=None):
         """`first` is the clip's first pasted frame UNMIRRORED (the transfer's alignment),
         `source` the same frame as the press hands it over (mirrored when asked), `members` the
         card's members as the press uses them (mirrored when asked); `travel` - the card would
         carry the travel (`_travels`); `first_root` the source's root frame at that frame when
-        the press steadied it (`_clip_roots`), else None."""
+        the press steadied it (`_clip_roots`), else None; `only` the long paths Selected only
+        keeps (`apply.only_selected`), else None."""
         self.ref = ref
+        self.only = only
+        self.partial = False                   # Selected only cut some plugs: nothing measured
         self.rig = ref.kind == "rig"
         self.notes = OrderedDict()             # note key -> note, the first seen kept
         self.skipped = OrderedDict()
@@ -620,6 +624,11 @@ class _Target(object):
         solution = self._solve(self.bones, wanted, None)
         self._take(solution)
         self.dry = OrderedDict(solution.values)
+        if only is not None:
+            full = len(self.dry)
+            self.dry, note = ap.only_selected(self.dry, only, ap._noun(ref))
+            self.partial = len(self.dry) < full
+            self._note([note])
         self.plugs = list(self.dry)
         # a ROOTLESS target that carries no travel stands on the ground its top joint makes -
         # a planned member: Replace cuts its curve and every frame keys it, so frame i read its
@@ -695,6 +704,9 @@ class _Target(object):
         self._take(solution)
         values = OrderedDict(solution.values)
         self.seed = values                       # the next frame's eulers nearest these
+        if self.only is not None:
+            values = OrderedDict((plug, value) for plug, value in values.items()
+                                 if plug in self.dry)
         if self.offsets:
             values = animdata.apply_offsets(values, self.offsets)
         if alpha < 1.0:
@@ -714,7 +726,7 @@ class _Target(object):
         # and the clip by design, and Connect moves its channels off the transfer on purpose
         # (each starts where it stood) - against `wanted` either reads as the transfer's error
         # («worst 20 deg» for a wrist that stood 20 deg off the clip's first frame)
-        if alpha >= 1.0 and not self.connected and written.plugs:
+        if alpha >= 1.0 and not self.connected and not self.partial and written.plugs:
             self._worse(self._measure(wanted, values, solution.skipped, bones), time)
 
     def status(self, header, plan, options, layer, alpha, mirror, notes=()):
@@ -745,8 +757,10 @@ def _result(targets, header, plan, options, layer, alpha, mirror):
     return any(row["count"] for row in rows), look.anim_status(rows)
 
 
-def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, progress=None):
-    """The character press onto `refs` (the module's steps 1-7)."""
+def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, progress=None,
+                only=None):
+    """The character press onto `refs` (the module's steps 1-7); `only` - Selected only's long
+    paths (`apply.only_selected`), else None."""
     options = _options(options)
     layer, refusal = keys.active_layer()
     if refusal:
@@ -776,8 +790,11 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root) for ref in refs]
+                               first_root, only) for ref in refs]
         if not any(target.plugs for target in targets):
+            if only is not None:
+                notes = [n for t in targets for n in ap.shown_notes(list(t.notes.values()))]
+                return False, ap.NOTHING % ("; ".join(notes) or "no channel the card turns")
             return _result(targets, header, plan, options, layer, alpha, mirror)
         # BEFORE anything is cut or keyed: the take each frame mixes with (Blend), the ground a
         # rootless target stands on (M4) - read at every pasted frame, the ground under Insert
@@ -1098,7 +1115,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
 # ------------------------------------------------------------------ the presses
 
 def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
-          progress=None):
+          progress=None, only=False):
     """(ok, text): the animation card - `header` its `anim.json`, `frames` its decoded
     `frames.json.gz` (the window reads it: `store.read_frames`) - onto every character the
     selection touches (`selection` a list of nodes, Maya's when None; nothing selected: the only
@@ -1111,9 +1128,14 @@ def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
     refusal = _card_refusal(header)
     if refusal:
         return False, refusal
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
     refs, refusal = _targets(selection)              # reads the scene, writes nothing
     if refusal:
         return False, refusal
+    if only:
+        return _press_refs(header, frames, refs, mirror, alpha, options, progress,
+                           only=ap.selected_nodes(selection))
     return _press_refs(header, frames, refs, mirror, alpha, options, progress)
 
 
@@ -1204,15 +1226,16 @@ class Blend(object):
         self.header = self.frames = self.options = None
         self.mirror = False
         self.selection = None
+        self.only = False
         self.time = None
 
     def active(self):
         """Is a session running?"""
         return self.inner is not None and self.inner.active()
 
-    def start(self, header, frames, mirror=False, options=None, selection=None):
+    def start(self, header, frames, mirror=False, options=None, selection=None, only=False):
         """"" when a session started, else the refusal (nothing changed). A session already
-        running is cancelled first."""
+        running is cancelled first. `only`: Selected only, the preview's and the paste's."""
         if self.inner is not None:
             self.cancel()
         if not header:
@@ -1240,12 +1263,14 @@ class Blend(object):
         if selection is None:
             selection = cmds.ls(selection=True, long=True) or []
         inner = ap.Blend()
-        refusal = inner.start(data, mirror, selection)
+        refusal = inner.start(data, mirror, selection,
+                              **({"only": True} if only and not objects else {}))
         if refusal:
             return refusal
         self.inner, self.header, self.frames, self.options = inner, header, frames, options
         self.mirror = bool(mirror) and not objects
         self.selection, self.time = list(selection), now
+        self.only = bool(only)
         return ""
 
     def set(self, alpha):
@@ -1261,6 +1286,7 @@ class Blend(object):
             return ap.NO_BLEND
         inner, header, frames = self.inner, self.header, self.frames
         mirror, options, selection, time = self.mirror, self.options, self.selection, self.time
+        only = self.only
         alpha = inner.alpha
         inner.cancel()                           # every value back, unrecorded
         self._clear()
@@ -1268,7 +1294,8 @@ class Blend(object):
             return ap.BLEND_ZERO
         if abs(float(cmds.currentTime(query=True)) - time) > 1e-9:
             return ap.TIME_MOVED
-        return apply(header, frames, selection, mirror, alpha, options, progress)[1]
+        return apply(header, frames, selection, mirror, alpha, options, progress,
+                     **({"only": True} if only else {}))[1]
 
     def cancel(self):
         """Every value back as it was at `start`; the session ends. Unrecorded."""

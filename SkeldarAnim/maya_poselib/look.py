@@ -68,10 +68,34 @@ _ANIM_FORMAT = "skeldar.anim"   # store.ANIM_FORMAT: an animation card's header,
 OFF_WINDOW = "release off the window to apply"
 NO_TARGET = "no target"
 
+#  A card's picture in its TONE (2026-10-15, the animator: «Превью поз должно быть оранжевым, а
+#  превью анимаций приятно холодно голубым»): the still, the playing preview and the details
+#  picture are recoloured at paint time by their lightness - dark to the first colour, TONE_MID
+#  grey (about where a viewport's background stands) to the second, white to the third - so a
+#  pose reads orange and an animation icy blue at a glance, on every card already saved
+TONES = {"pose": ((22, 10, 3), (214, 112, 44), (255, 238, 218)),
+         "anim": ((5, 14, 24), (70, 146, 196), (232, 246, 255))}
+TONE_MID = 0.42
+
 
 def _px(value, scale):
     """A logical size in physical px. The one rounding every function uses."""
     return int(round(value * float(scale or 1.0)))
+
+
+def tone_table(kind):
+    """256 (r, g, b): the colour a grey level 0..255 takes in the `kind` card's tone (`TONES`:
+    "pose", "anim"; anything else the pose's), piecewise linear through the three stops."""
+    dark, mid, light = TONES.get(kind) or TONES["pose"]
+    out = []
+    for level in range(256):
+        t = level / 255.0
+        if t <= TONE_MID:
+            a, b, u = dark, mid, t / TONE_MID
+        else:
+            a, b, u = mid, light, (t - TONE_MID) / (1.0 - TONE_MID)
+        out.append(tuple(int(round(a[i] + (b[i] - a[i]) * u)) for i in range(3)))
+    return out
 
 
 def grid(width, count, cell, scale=1.0):

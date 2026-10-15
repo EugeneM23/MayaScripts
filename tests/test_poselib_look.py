@@ -903,5 +903,32 @@ class Boundary(unittest.TestCase):
             r"^\s*(?:import|from)\s+(?:maya_poselib|\.)", source, re.MULTILINE), [])
 
 
+
+class ToneTable(unittest.TestCase):
+    """The cards' tones (2026-10-15): a pose orange, an animation icy blue."""
+
+    def test_it_runs_through_the_three_stops(self):
+        for kind in ("pose", "anim"):
+            table = look.tone_table(kind)
+            self.assertEqual(len(table), 256)
+            dark, _mid, light = look.TONES[kind]
+            self.assertEqual(table[0], dark)
+            self.assertEqual(table[255], light)
+
+    def test_a_pose_is_warm_and_an_animation_cool(self):
+        for level in (60, 107, 160, 220):
+            r, _g, b = look.tone_table("pose")[level]
+            self.assertGreater(r, b)
+            r, _g, b = look.tone_table("anim")[level]
+            self.assertGreater(b, r)
+
+    def test_lighter_in_lighter_out(self):
+        for kind in ("pose", "anim"):
+            sums = [sum(c) for c in look.tone_table(kind)]
+            self.assertEqual(sums, sorted(sums))
+
+    def test_an_unknown_kind_is_the_pose_tone(self):
+        self.assertEqual(look.tone_table("objects"), look.tone_table("pose"))
+
 if __name__ == "__main__":
     unittest.main()

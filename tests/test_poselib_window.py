@@ -179,8 +179,8 @@ class FakeScene(object):
         self.log.append(("replace_preview", path))
         return self.preview_text
 
-    def apply(self, path, mirror, options=None):
-        self.log.append(("apply", path, mirror, options))
+    def apply(self, path, mirror, options=None, only=False):
+        self.log.append(("apply", path, mirror, options) + (("only",) if only else ()))
         return True, "applied"
 
     def apply_onto(self, path, root, mirror, options=None):
@@ -195,8 +195,8 @@ class FakeScene(object):
         self.log.append(("select_objects", path, options))
         return True, "selected"
 
-    def blend_start(self, path, mirror, options=None):
-        self.log.append(("blend_start", path, mirror, options))
+    def blend_start(self, path, mirror, options=None, only=False):
+        self.log.append(("blend_start", path, mirror, options) + (("only",) if only else ()))
         return self.refusal
 
     def blend_set(self, alpha):
@@ -226,6 +226,11 @@ class FakeScene(object):
     def watch(self, callback):
         self.callback = callback
         return [7, 8]
+
+    def watch_time(self, callback):
+        self.log.append(("watch_time",))
+        self.time_callback = callback
+        return [9]
 
     def unwatch(self, jobs):
         self.log.append(("unwatch", list(jobs)))
@@ -516,6 +521,7 @@ class WindowCase(unittest.TestCase):
         pw.defer = self.deferred.append
         self.addCleanup(setattr, pw, "defer", saved)
         self.win = pw.make_window(self.scene)
+        self.win.canvas.tones = False                # the pictures' own colours (Tones apart)
         self.win.resize(1000, 640)
         self.win.move(3000, 3000)
         self.win.show()
@@ -760,7 +766,8 @@ class Details(WindowCase):
         del self.scene.log[:]
         win.deleteLater()
         QT.QtCore.QCoreApplication.sendPostedEvents(None, QT.QtCore.QEvent.DeferredDelete)
-        self.assertEqual(self.scene.log, [("blend_cancel",), ("unwatch", [7, 8])])
+        self.assertEqual(self.scene.log, [("blend_cancel",), ("unwatch", [7, 8]),
+                                          ("unwatch", [9])])
 
     def test_an_objects_card_blends_too(self):
         cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
@@ -961,7 +968,7 @@ class Blend(WindowCase):
         self.mouse(self.win.canvas, kind, local, button,
                    Qt.MiddleButton if buttons is None else buttons)
 
-    def test_a_middle_drag_blends_live_and_keys_on_release(self):
+    def test_a_middle_drag_blends_live_holds_and_apply_keys_it(self):
         start = self.card_point(self.fist, local=True)
         self.middle("press", start)
         self.assertEqual(self.scene.calls("blend_start"), [])
@@ -971,14 +978,25 @@ class Blend(WindowCase):
                          [("blend_start", self.fist, False, None)])
         self.assertEqual(self.scene.calls("blend_set"), [("blend_set", 0.5), ("blend_set", 1.0)])
         self.middle("release", start + QT.QtCore.QPoint(300, 0), QT.QtCore.Qt.NoButton)
+        self.assertEqual(self.scene.calls("blend_finish"), [])          # the release keys nothing
+        self.assertTrue(self.win.blending())
+        self.assertEqual(self.win.blend.value(), 100)                  # the slider shows it
+        self.assertEqual(self.win.status.text(), pw.BLEND_HELD % 100)
+        self.win.apply_button.click()
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
+        self.assertEqual(self.scene.calls("apply"), [])
         self.assertEqual(self.win.status.text(), "blended")
+        self.assertEqual(self.win.blend.value(), 0)
+        self.assertFalse(self.win.blending())
 
     def test_blend_drag_is_the_gesture_without_a_mouse(self):
         self.assertEqual(self.win.blend_drag(self.fist, 50), 0.25)
         self.assertEqual(self.win.blend_drag(self.fist, 150), 0.75)
         self.assertEqual(len(self.scene.calls("blend_start")), 1)
+        self.assertEqual(self.win.picked, self.fist)                   # the card picked
         self.win.blend_release()
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.win.apply_card(self.fist)
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
 
     def test_escape_puts_every_value_back(self):
@@ -995,17 +1013,18 @@ class Blend(WindowCase):
     # the final review (2026-10-03): a release lost to Alt+Tab or a modal dialog left the session
     # open - every press on the grid swallowed, the keyboard grabbed, the previews unrecorded
 
-    def test_a_lost_middle_release_cancels_the_blend_and_says_so(self):
+    def test_a_lost_middle_release_lets_the_gesture_go_and_keeps_the_preview(self):
         start = self.card_point(self.fist, local=True)
         self.middle("press", start)
         self.middle("move", start + QT.QtCore.QPoint(100, 0))
         self.assertTrue(self.win.blending())
         self.middle("move", start + QT.QtCore.QPoint(140, 0), QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
         self.assertEqual(self.scene.calls("blend_finish"), [])
-        self.assertFalse(self.win.blending())
+        self.assertTrue(self.win.blending())
+        self.assertIsNone(self.win.canvas._mid)                         # the gesture is over
         self.assertIsNone(QT.QtWidgets.QWidget.keyboardGrabber())
-        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
+        self.assertEqual(self.win.status.text(), pw.BLEND_HELD % 50)
         # and the grid takes presses again: a click picks
         self.mouse(self.win.canvas, "press", self.card_point(self.idle, local=True),
                    QT.QtCore.Qt.LeftButton)
@@ -1026,28 +1045,29 @@ class Blend(WindowCase):
         self.assertIsNone(QT.QtWidgets.QWidget.keyboardGrabber())
         self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_DRAG)
 
-    def test_a_lost_slider_release_cancels_and_keys_nothing(self):
+    def test_a_lost_slider_release_keeps_the_preview_and_keys_nothing(self):
         self.win.pick(self.fist)
         slider = self.win.blend
         self.slider_mouse("press", slider.width() * 0.5)
         self.assertTrue(self.win.blending())
+        value = slider.value()
         self.slider_mouse("move", slider.width() * 0.7, held=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
         self.assertEqual(self.scene.calls("blend_finish"), [])
         self.assertFalse(slider.isSliderDown())
-        self.assertEqual(slider.value(), 0)
-        self.assertFalse(self.win.blending())
-        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
-
-    def test_losing_the_focus_mid_blend_cancels_it(self):
-        self.win.blend_drag(self.fist, 40)
+        self.assertEqual(slider.value(), value)
         self.assertTrue(self.win.blending())
-        self.win.isActiveWindow = lambda: False                 # Alt+Tab
+        self.assertEqual(self.win.status.text(), pw.BLEND_HELD % value)
+
+    def test_losing_the_focus_keeps_a_standing_blend(self):
+        self.win.blend_drag(self.fist, 40)
+        self.win.blend_release()
+        self.assertTrue(self.win.blending())
+        self.win.isActiveWindow = lambda: False                 # a click in the viewport
         QT.QtWidgets.QApplication.sendEvent(self.win,
                                             QT.QtCore.QEvent(QT.QtCore.QEvent.ActivationChange))
-        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
-        self.assertFalse(self.win.blending())
-        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
+        self.assertTrue(self.win.blending())
 
     def test_losing_the_focus_with_nothing_going_on_does_nothing(self):
         self.win.isActiveWindow = lambda: False
@@ -1072,7 +1092,7 @@ class Blend(WindowCase):
         self.middle("release", start, QT.QtCore.Qt.NoButton)
         self.assertEqual(self.scene.calls("blend_start") + self.scene.calls("blend_finish"), [])
 
-    def test_the_slider_previews_while_dragged_and_keys_on_release(self):
+    def test_the_slider_previews_while_dragged_holds_and_apply_keys(self):
         self.win.pick(self.fist)
         slider = self.win.blend
         slider.setSliderDown(True)                   # sliderPressed
@@ -1082,8 +1102,13 @@ class Blend(WindowCase):
         self.assertEqual(self.scene.calls("blend_start"),
                          [("blend_start", self.fist, False, None)])
         self.assertEqual(self.scene.calls("blend_set"), [("blend_set", 0.4), ("blend_set", 0.7)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertEqual(slider.value(), 70)          # the handle stays where it was let go
+        self.assertEqual(self.win.apply_button.text(), "Apply 70 %")
+        self.win.apply_button.click()
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
         self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.win.apply_button.text(), "Apply")
 
     # -- the slider under a real mouse. Review finding 1 (2026-10-03): every value change that
     #    was not a handle drag keyed a blend at once - a wheel notch (3 notches: 3 blends of 3 %)
@@ -1165,10 +1190,10 @@ class Blend(WindowCase):
         self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", value / 100.0)])
         self.slider_mouse("release", x)
-        self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
+        self.assertEqual(self.blend_calls()[2:], [])
         self.assertFalse(slider.isSliderDown())
-        self.assertEqual(slider.value(), 0)
-        self.assertEqual(self.win.status.text(), "blended")
+        self.assertEqual(slider.value(), value)
+        self.assertEqual(self.win.status.text(), pw.BLEND_HELD % value)
 
     def test_a_press_held_on_the_groove_keys_once_and_only_after_the_release(self):
         self.win.pick(self.fist)
@@ -1184,8 +1209,8 @@ class Blend(WindowCase):
         self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", value / 100.0)])
         self.slider_mouse("release", x)
-        self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
-        self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.blend_calls()[2:], [])
+        self.assertEqual(slider.value(), value)
 
     def test_a_press_on_the_groove_starts_a_drag(self):
         self.win.pick(self.fist)
@@ -1202,8 +1227,8 @@ class Blend(WindowCase):
         self.assertEqual(alphas, sorted(alphas))
         self.assertEqual(alphas[-1], last / 100.0)
         self.assertEqual(len(self.scene.calls("blend_start")), 1)
-        self.assertEqual(self.blend_calls()[-1], ("blend_finish",))
-        self.assertEqual(len(self.scene.calls("blend_finish")), 1)
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertEqual(slider.value(), last)
 
     def test_a_drag_of_the_handle_previews_and_keys_on_release(self):
         self.win.pick(self.fist)
@@ -1216,8 +1241,8 @@ class Blend(WindowCase):
         self.assertEqual(self.scene.calls("blend_finish"), [])
         self.slider_mouse("release", slider.width() * 0.6)
         self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
-                                              ("blend_set", moved / 100.0), ("blend_finish",)])
-        self.assertEqual(slider.value(), 0)
+                                              ("blend_set", moved / 100.0)])
+        self.assertEqual(slider.value(), moved)
 
     def test_escape_mid_slider_drag_puts_every_value_back(self):
         self.win.pick(self.fist)
@@ -1261,8 +1286,8 @@ class Blend(WindowCase):
         self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", 0.2)])
         slider.setSliderDown(False)                  # sliderReleased
-        self.assertEqual(self.blend_calls()[-1], ("blend_finish",))
-        self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.blend_calls()[-1], ("blend_set", 0.2))
+        self.assertEqual(slider.value(), 20)
 
     def test_a_value_set_by_code_keys_nothing(self):
         self.win.pick(self.fist)
@@ -1745,19 +1770,16 @@ class AnimOptions(AnimCase):
                                 win.anim_options.mapTo(win, QT.QtCore.QPoint(0, 0)).y(),
                                 widget.objectName())
 
-    def test_two_options_to_a_row(self):
+    def test_the_checks_share_a_row(self):
+        """Compact (2026-10-15): At current time, Connect and In place on one row."""
         self.win.pick(self.walk)
         self.pump()
 
         def top(widget):
             return widget.mapTo(self.win, QT.QtCore.QPoint(0, 0)).y()
 
-        def middle(widget):
-            return widget.mapTo(self.win, QT.QtCore.QPoint(0, widget.height() // 2)).y()
-
         self.assertEqual(top(self.win.at_current), top(self.win.connect_box))
-        keys_track = self.win.keys_buttons["every"].parentWidget()
-        self.assertLessEqual(abs(middle(keys_track) - middle(self.win.in_place)), 2)
+        self.assertEqual(top(self.win.at_current), top(self.win.in_place))
 
     def test_a_card_not_picked_is_pasted_whole_with_the_options_shown(self):
         self.win.pick(self.walk)
@@ -1855,6 +1877,7 @@ class LongPress(AnimCase):
         self.win.pick(self.walk)
         self.assertEqual(self.win.blend_drag(self.walk, 100), 0.5)
         self.win.blend_release()
+        self.win.apply_button.click()
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
         self.assertEqual(self.scene.calls("blend_cancel"), [])
         self.assertNotIn(cardgrid.LOST_BLEND, seen)
@@ -2410,6 +2433,153 @@ class RealScene(unittest.TestCase):
         self.assertEqual(len(store.read_frames(walk)["world"]), 48)        # the update's
         self.assertColour(walk + "/" + store.PREVIEW_FILE, self.fakes.colour)  # the replace's
         self.assertEqual(store.read(fist)["name"], "Fist. ")
+
+
+class BlendHolds(WindowCase):
+    """2026-10-15, «ручка blend должна оставаться на своем месте и переводить позу в нужное
+    состояние но ключ должен ставиться только по нажатию apply. Если мы изменили таймлайн или
+    куда-то переключились то пусть бленд сбросится на 0»."""
+
+    def held(self, percent=40):
+        self.win.pick(self.fist)
+        self.win.blend_drag(self.fist, percent * 2)
+        self.win.blend_release()
+        self.assertTrue(self.win.blending())
+        self.assertEqual(self.win.blend.value(), percent)
+
+    def assert_reset(self, why):
+        self.assertFalse(self.win.blending())
+        self.assertEqual(self.win.blend.value(), 0)
+        self.assertEqual(self.win.apply_button.text(), "Apply")
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertEqual(self.win.status.text(), pw.BLEND_RESET % why)
+
+    def test_a_time_job_stands_only_while_a_blend_does(self):
+        self.assertEqual(self.scene.calls("watch_time"), [])
+        self.held()
+        self.assertEqual(self.scene.calls("watch_time"), [("watch_time",)])
+        self.win.apply_button.click()
+        self.assertIn(("unwatch", [9]), self.scene.log)
+
+    def test_the_time_changing_puts_it_back(self):
+        self.held()
+        self.scene.time_callback()
+        self.assertTrue(self.win.blending())             # one idle later, never inside Maya's
+        self.pump()
+        self.assert_reset(pw.RESET_TIME)
+
+    def test_the_selection_changing_puts_it_back(self):
+        self.held()
+        self.win.follow()
+        self.assert_reset(pw.RESET_SELECTION)
+
+    def test_another_card_puts_it_back(self):
+        self.held()
+        self.win.pick(self.idle)
+        self.assert_reset(pw.RESET_CARD)
+
+    def test_the_same_card_picked_again_keeps_it(self):
+        self.held()
+        self.win.pick(self.fist)
+        self.assertTrue(self.win.blending())
+
+    def test_mirror_and_selected_only_put_it_back(self):
+        for box in (self.win.mirror, self.win.only):
+            del self.scene.log[:]
+            self.held()
+            box.click()
+            self.assert_reset(pw.RESET_OPTION)
+
+    def test_the_library_hidden_puts_it_back(self):
+        self.held()
+        self.win.hide()
+        self.assert_reset(pw.RESET_HIDDEN)
+
+    def test_escape_puts_it_back(self):
+        self.held()
+        self.escape(self.win)
+        self.assertFalse(self.win.blending())
+        self.assertEqual(self.win.blend.value(), 0)
+
+    def test_let_go_at_zero_is_no_blend(self):
+        self.win.pick(self.fist)
+        self.win.blend_drag(self.fist, 60)
+        self.win.blend_drag(self.fist, 0)
+        self.win.blend_release()
+        self.assertFalse(self.win.blending())
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+
+    def test_apply_at_zero_keys_the_whole_card(self):
+        self.win.pick(self.fist)
+        self.win.apply_button.click()
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, False, None)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+
+    def test_apply_shows_and_keys_the_share(self):
+        self.held(25)
+        self.assertEqual(self.win.apply_button.text(), "Apply 25 %")
+        self.win.apply_button.click()
+        self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
+        self.assertEqual(self.scene.calls("apply"), [])
+        self.assertEqual(self.win.blend.value(), 0)
+
+    def test_a_mirrored_apply_from_the_menu_keys_the_whole_card(self):
+        self.held()
+        self.win.apply_card(self.fist, mirror=True)
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, True, None)])
+
+    def test_a_drop_puts_it_back_and_drops_the_whole_card(self):
+        self.held()
+        self.win.drop_at(100, 100, self.fist, snap=["snap"])
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(len(self.scene.calls("apply_onto")), 1)
+
+
+class SelectedOnlyOption(WindowCase):
+    """The «Selected only» box: remembered, handed to Apply and the blend, never to a drop."""
+
+    def test_it_is_off_by_default_and_remembered(self):
+        self.assertFalse(self.win.only.isChecked())
+        self.win.only.click()
+        self.assertEqual(self.scene.options[pw.ONLY_VAR], 1)
+        win = pw.make_window(self.scene)
+        self.addCleanup(win.deleteLater)
+        self.assertTrue(win.only.isChecked())
+
+    def test_apply_and_the_blend_take_it(self):
+        self.win.only.click()
+        self.win.pick(self.fist)
+        self.win.apply_button.click()
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, False, None, "only")])
+        self.win.blend_drag(self.fist, 40)
+        self.assertEqual(self.scene.calls("blend_start"),
+                         [("blend_start", self.fist, False, None, "only")])
+
+    def test_a_drop_names_its_character_and_takes_the_whole_card(self):
+        self.win.only.click()
+        self.win.drop_at(100, 100, self.fist, snap=["snap"])
+        self.assertEqual(self.scene.calls("apply_onto"),
+                         [("apply_onto", self.fist, "|Manny_Rig1:root", False, None)])
+
+
+class Compact(WindowCase):
+    """2026-10-15, «давай сделаем более компактный интерфейс»: one row on top, no title row,
+    the library's folder on the ⋮ button, a smaller details picture, Select objects an icon."""
+
+    def test_one_row_on_top_and_the_folder_on_the_menu_button(self):
+        self.assertIsNone(self.win.findChild(QT.QtWidgets.QLabel, "skeldarPoseTitle"))
+        self.assertFalse(self.win.path_label.isVisible())
+        self.assertIn(self.root, self.win.menu_button.toolTip())
+        top = self.win.search.mapTo(self.win, QT.QtCore.QPoint(0, 0)).y()
+        menu = self.win.menu_button.mapTo(self.win, QT.QtCore.QPoint(0, 0)).y()
+        self.assertLess(abs(top - menu), self.win.search.height())
+
+    def test_the_picture_is_smaller_and_select_is_an_icon(self):
+        self.assertEqual(self.win.thumb_side(), 150)
+        self.assertEqual(self.win.select_button.text(), "")
+        self.assertTrue(self.win.select_button.toolTip().startswith("Select objects"))
 
 
 if __name__ == "__main__":
