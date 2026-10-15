@@ -10401,3 +10401,62 @@ SkeldarAnim hotkey set, an editor card, 8 slots and no submenus. Spec
   `docs/superpowers/plans/render_radial_menu.py` draws the menu (hold and click) and the Finish popup
   offscreen (`radial_menu.png`). **Not seen in a live Maya**: the key's hold and release, the overlay's
   focus and clicks, a popup opening by the cursor - the animator's to try after Check update.
+
+## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
+
+The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать
+сразу несколько программ?» - then the references route: «мы нажимаем на вкладку и все объекты которые она
+референсит скрываются и деактивируются, изменяется найтройки вюпорта, открываются старые окна и показываются
+новые». Asked: tabs are for all three of working on several scenes, carrying things between them and looking
+at a scene beside the work; approach A (imports, not references); one shared undo history; the bar above the
+viewport; each tab its own whole layout. Spec `docs/superpowers/specs/2026-10-15-scene-tabs-design.md` (read
+its planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage1.md`. Stage 2 (the plugin
+seeing only the active tab) is `2026-10-15-scene-tabs-plugin-scope-design.md` and is NOT built yet: until it
+is, the plugin's tools see every tab's characters.
+
+- **A tab** is a `.ma` / `.mb` imported with `preserveReferences=True, executeScriptNodes=False` into
+  `tab_<stem>`; the session is a `network` node `skeldarSceneTabs` (JSON) and the scene is named
+  `<userAppDir>/SkeldarTabs/session_<stamp>.ma` (never written by a Save; autosave writes it, and opening it
+  restores the tabs - once, even when a SceneOpened job fires inside the open). One scene open is ordinary
+  Maya; the second converts it into tab 1 (1 ms, by UUID).
+- **Switching** records the tab being left (modified flag, unit, ranges, frame, selection, views, layout) and
+  hides it (`lodVisibility`, `hiddenInOutliner`), then shows the new one - ONE undo chunk, so Ctrl+Z past a
+  switch brings the tab back before undoing its step.
+- **Saving** lifts the tab into the root namespace by UUID, cuts its layer root free (written as
+  `BaseAnimation`), writes its ranges into its configuration node, exports to a temp file and replaces the
+  tab's file; refuses by name on a root-namespace clash; asks when the file changed on disk. A save puts back
+  every step and the undo state even when one step fails.
+- **Layers**: the session owns the root `skeldarTabsLayerRoot` (trap 248).
+- **Maya's own Save / Open / New** are redirected while two or more tabs are open (the check callbacks), an
+  autosave passes; Save prints Maya's «File operation cancelled by user supplied callback» and then «Saved ...».
+  A check that fails on an internal error REFUSES (a bar message naming Tabs off) rather than failing open.
+- **The bar** (`maya_scenetabs/bar.py`) is a QTabBar in a workspaceControl docked at the top, shown by the
+  hub's build (optionVar `skeldarSceneTabsBar`); hotkey rows `window.tabs`, `tabs.next`, `tabs.previous`
+  (unbound).
+
+Proof: `docs/superpowers/plans/verify_scene_tabs.py` **0 of 138 gates failed** in mayapy standalone (phases
+session, layers_alone, convert, layers, open_close, switch, save, hooks, hook_failures, restore); 6612 unit
+tests OK. **The animator's live checks** (none of these can be proven headless): the bar docked above the
+viewport; per-tab workspaces and how long a switch takes with them; whether a hidden tab still costs the
+viewport anything (if it does, the plan's fallback is the `frozen` evaluator); the quit dialog; Ctrl+Tab free
+for `tabs.next`.
+
+248. **Maya remembers its root animation layer internally, and does not promote another.** Closing the tab
+     whose `BaseAnimation` was the scene's root deleted every other tab's layers with it; with the root gone
+     and layers left, `animLayer -q -root` answered None and the next new layer crashed mayapy (measured
+     2026-10-15). A layer's name and connections do not make it the root. Keep one root that never goes while
+     anything else hangs below it.
+249. **An import runs the file's open-type script nodes** unless `executeScriptNodes=False` (measured) - the
+     vaccine malware's road into a scene that only imported a file.
+250. **`animLayer -e -parent` rebuilds the layer's blend nodes in the ROOT namespace**, whatever namespace is
+     current, and a save's rename of a layer rebuilds some under names of Maya's own (`hero_rotate_Layer2` came
+     back `Layer10`). Anything that groups nodes by namespace must bring a layer's blend nodes home after it
+     re-parents a layer (`animLayer -q -blendNodes` finds them), and never re-parent to restore a connection it
+     cut - put back the exact connections.
+251. **Renaming a reference node by hand breaks it**: `referenceQuery -namespace` then raises «Cannot find the
+     associated namespace», and a reference's namespace moved and moved back leaves its node renamed in the
+     root. Find a reference by its namespace, remove it by its node (`file -removeReference -referenceNode`): a
+     path is ambiguous between two copies of one file (`file.ma{1}`).
+252. **Maya imports a file's configuration node only when the root namespace holds none.** In a tab (whose
+     configuration node sits in the tab) every import brings one, and in the saved file it runs after the tab's
+     and wins. Export exactly one.
