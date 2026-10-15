@@ -780,6 +780,34 @@ def phase_hook_failures():
     finally:
         opening.restore = real_restore
     gate("hooks: a genuine SceneOpened still restores", len(count) == 1, count)
+    # the synchronous ordering: the job fires inside open_any's bypass block
+    count[:] = []
+    real_open = cmds.file
+    def file_then_job(*args, **kwargs):
+        result = real_open(*args, **kwargs)
+        if kwargs.get("open"):
+            hooks._scene_opened()               # inside the bypass: synchronous with the open
+        return result
+    cmds.file = file_then_job
+    opening.restore = counted
+    opening.ASK = lambda message, buttons: "Don't Save"
+    try:
+        opening.open_any(recovered)
+        flush()
+    finally:
+        cmds.file = real_open
+        opening.restore = real_restore
+        opening.ASK = None
+    gate("hooks: a job firing inside the open restores once, leaving no flag",
+         len(count) == 1 and not hooks._st().get("restored"), (count, hooks._st().get("restored")))
+    count[:] = []
+    opening.restore = counted
+    try:
+        hooks._scene_opened()
+        flush()
+    finally:
+        opening.restore = real_restore
+    gate("hooks: the next genuine SceneOpened restores after a synchronous one", len(count) == 1, count)
 
 
 def guarded(phase):

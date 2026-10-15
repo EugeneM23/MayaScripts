@@ -137,6 +137,7 @@ def open_any(path):
     if not quit_ok():
         return "Open cancelled - the tabs are as they were"
     from . import hooks
+    hooks.opening_session()
     with hooks.bypass():
         cmds.file(path, open=True, force=True)
     message = restore()

@@ -139,11 +139,19 @@ def on_new(client_data=None):
 
 def restored_here():
     """opening.open_any restored the session itself; the SceneOpened job that
-    follows (possibly after bypass is gone) must not restore it again. The
-    flag is only set where a job exists to consume it."""
+    follows (possibly after bypass is gone) must not restore it again. A job
+    that already fired inside the bypass (`seen`, synchronous) needs no flag;
+    otherwise it is set, and only where a job exists to consume it."""
     state = _st()
+    if state.pop("seen", False):
+        return
     if state["jobs"]:
         state["restored"] = True
+
+
+def opening_session():
+    """open_any is about to open a session file: forget a job seen before."""
+    _st().pop("seen", None)
 
 
 def on_layer(node, client_data=None):
@@ -174,6 +182,7 @@ def _scene_opened():
     """A scene opened by any road: a session file brings its tabs back."""
     state = _st()
     if _bypassed():
+        state["seen"] = True
         return
     if state.pop("restored", False):
         return
@@ -252,8 +261,11 @@ def remove():
             except RuntimeError:
                 pass
     for job in state["jobs"]:
-        if cmds.scriptJob(exists=job):
-            cmds.scriptJob(kill=job, force=True)
+        try:
+            if cmds.scriptJob(exists=job):
+                cmds.scriptJob(kill=job, force=True)
+        except RuntimeError:
+            pass
     if state["quit_filter"]:
         keeper, window = state["quit_filter"]
         try:
