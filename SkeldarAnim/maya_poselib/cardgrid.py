@@ -611,6 +611,10 @@ def _classes():
                 ghost = self._drag["ghost"]
                 ghost.hide()
                 ghost.deleteLater()
+                try:
+                    self.panel.drag_over(None)       # Walk Builder's pose wells unlit
+                except Exception:                    # noqa: BLE001 - a panel without it (the tests' fakes)
+                    pass
             self._drag = None
             self._press = None
             try:

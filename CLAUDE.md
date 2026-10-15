@@ -10096,6 +10096,51 @@ by itself after the mouse is let go, it belongs to the walk, the upper body's re
   correct keeping the feet and the loop, the model's fix, a pose taking the knees over); `verify_walk.py` 79/79 again.
   **Not seen live**: the button, the watch's timer and the label in a GUI Maya - the animator's to try after Check update.
 
+**…the pose is a Pose Library card dropped into a well** (2026-10-15). The animator asked why a pose put on the mean
+pose rig walks worse than a saved pose. It is not the same road: the Pose knob takes a pose part by part (the grip
+held, the height over the feet, Leg match, Gait lean, Balance), while the rig's Update writes a plain local correction
+into the walk's frames. Then: «вместо строчки pose окошко для карточек которые будем перекидывать драгом прямо из
+библиотеки поз». Asked, both the recommendation: **only the library** (the old `.wpose` poses moved in as cards,
+Walk Builder's Save pose gone), and **follow the card, with a copy**. Spec
+`docs/superpowers/specs/2026-10-15-walk-pose-card-well-design.md`.
+- **A card's bones ARE a `.wpose`'s**, plus `rotateOrder` and, from a rig, `drive`. `walkpose.prepare` hands them
+  to `posemath.Transfer`, which already reads a drive where the target cannot carry the roll. Nothing to convert.
+- **The well** (`maya_walk/posewell.py`, Qt) is a strip laid over the `cmds` placeholder `skeldarWalkPoseWell` (the
+  portraits' `attach` + Keeper), one per scope (the hub's card and every popup copy).
+  - It shows the card's thumbnail, name and a note («the card is gone from the library»); empty: «Drop a pose card
+    here».
+  - Click: the card in the library. Right button: Show in Pose Library, Clear.
+  - Without Qt: a line `skeldarWalkPoseWellText`.
+  - The Pose share and the part chips stay under it.
+- **The drop**: `maya_poselib.window.aim` asks `walk_well(gx, gy)` before «over the hub: nothing».
+  - It answers kind `walk` (ghost «Name · Walk Builder pose») and lights the well while the card is over it.
+  - An animation or objects card reads `none`.
+  - The release is the well's scope-bound `take` → `panel.take_card`: refused for an animation or objects card;
+    else the card remembered (`skeldarWalk_poseCard`, relative to the library), a Pose share of 0 set to 1 (said),
+    and a standing target re-keyed.
+  - The card's right button **Use in Walk Builder** does the same (the classic hub, the card closed).
+- **Storage** (`maya_walk/cards.py`): the marker `skeldarWalk` gains `pose_card`; the bones last used go into a
+  second string attribute `skeldarWalkPose` (gzip + base64).
+  - `scene.apply(..., pose_card=)` reads the card (cached by `pose.json`'s time), so the card's Update from
+    selection is taken on the next re-key.
+  - A card renamed or deleted: the copy, and the line «pose card X is gone - using the copy on the skeleton».
+  - An old memo's `pose` name: its migrated card, else its `.wpose`.
+- **The old poses**: `cards.migrate` on the card's build (once a session) writes every `.wpose` of the walks folder
+  as `Walk poses/<name>.pose` (every bone a member, no thumbnail), listed in `<walks>/library_poses.json`, so a card
+  deleted later is not made again. A taken name is left. The `.wpose` files stay.
+- **The mean pose rig's way into the Pose knob**: pose the rig, save it in the library with + Save, drop the card.
+- Proof:
+  - `docs/superpowers/plans/walkparam/verify_walk_pose_card.py`, **6/6 mayapy standalone** (copies of `asd` and
+    `two_handed_sword` in a temp walks folder, a temp library, Manny UE5 skeletons):
+    - the `.wpose` and its migrated card key the same curves, worst 0.0;
+    - the card edited (spine_03 turned 20 deg) moves the keys 20.0 deg on the next re-key;
+    - the card deleted re-keys from the copy exactly, said;
+    - an old memo's name keys through its card.
+    A pelvis moved alone in a card changes nothing: the pose is carried by rotations, so the feet go with it.
+  - Unit tests `tests/test_walk_cards.py` (11, the well offscreen) and `test_walk_panel.PoseCardTests`; the
+    library's `Drops.test_over_a_walk_builder_well_the_well_takes_the_card`.
+  - **The live drag is the animator's.**
+
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
      forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE

@@ -308,6 +308,10 @@ def badge_text(frames):
     return "%s %d" % (BADGE, frames) if frames >= 2 else ""
 
 
+WALK_NOT_ANIM = "an animation card - Walk Builder takes a pose card"
+WALK_NOT_OBJECTS = "a card of objects - Walk Builder takes a pose card of a character"
+
+
 def drop_caption(name, aim):
     """(text, good): what the ghost says over `aim` while the card `name` is dragged. `good`
     is whether a release there does something. The aim is the window's own reading of the
@@ -318,6 +322,7 @@ def drop_caption(name, aim):
                                                there (`label` its catalog row, `point` the
                                                world point, x and z shown)
         {"kind": "folder", "folder"}           a folder of the tree: the card moves
+        {"kind": "walk"}                       Walk Builder's pose well: the card is the walk's pose
         {"kind": "window"}                     over the window itself: nothing
         {"kind": "none", "text"}               nothing to apply to, and why
 
@@ -335,6 +340,8 @@ def drop_caption(name, aim):
         return text, True
     if kind == "folder":
         return "%s %s move to %s" % (name, DOT, aim.get("folder") or "Library"), True
+    if kind == "walk":
+        return "%s %s Walk Builder pose" % (name, DOT), True
     if kind == "window":
         return OFF_WINDOW, False
     if kind == "none":

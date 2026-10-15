@@ -861,6 +861,30 @@ class Drops(WindowCase):
         self.mouse(canvas, "double", point, QT.QtCore.Qt.LeftButton)
         self.assertEqual(self.scene.calls("apply"), [("apply", self.wave, False, None)])
 
+    def test_over_a_walk_builder_well_the_well_takes_the_card(self):
+        took = []
+
+        class Well(object):
+            def take(self, path):
+                took.append(path)
+                return "pose card Fist"
+        well = Well()
+        saved = pw.walk_well
+        pw.walk_well = lambda gx, gy: well
+        try:
+            aim = self.win.aim(-2000, 40, self.fist)
+            self.assertEqual(aim, {"kind": "walk", "well": well})
+            self.assertEqual(look.drop_caption("Fist", aim), ("Fist \u00b7 Walk Builder pose", True))
+            self.win.drop_at(-2000, 40, self.fist)
+            cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
+            self.win.refresh()
+            self.assertEqual(self.win.aim(-2000, 40, cubes)["kind"], "none")
+        finally:
+            pw.walk_well = saved
+        self.assertEqual(took, [self.fist])
+        self.assertEqual(self.win.status.text(), "pose card Fist")
+        self.assertEqual(self.scene.calls("apply_onto"), [])
+
     def test_an_objects_card_names_no_character(self):
         cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
         self.win.refresh()
@@ -874,8 +898,8 @@ class Menus(WindowCase):
 
     def test_the_right_button_rows_of_a_card(self):
         labels = [row[0] for row in self.win.context_actions(self.fist) if row]
-        self.assertEqual(labels, ["Apply", "Apply mirrored", "Select objects", "Rename...",
-                                  "Move to...", "Replace thumbnail", "Update from selection",
+        self.assertEqual(labels, ["Apply", "Apply mirrored", "Select objects", "Use in Walk Builder",
+                                  "Rename...", "Move to...", "Replace thumbnail", "Update from selection",
                                   "Show in Explorer", "Delete"])
 
     def test_nothing_off_every_card(self):

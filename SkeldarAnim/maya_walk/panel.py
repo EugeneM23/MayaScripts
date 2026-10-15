@@ -23,11 +23,13 @@ HUB_SECTION = "walk"
 SUBTITLE = "skeldarWalkSubtitle"
 STATUS = "skeldarWalkStatus"
 WALK_MENU = "skeldarWalkMenu"
-POSE_MENU = "skeldarWalkPoseMenu"
+#  The pose is a Pose Library card dropped into a well (2026-10-15, maya_walk.posewell): the placeholder the well
+#  is laid over, and the line that stands in for it where Qt cannot
+POSE_WELL = "skeldarWalkPoseWell"
+POSE_WELL_TEXT = "skeldarWalkPoseWellText"
 APPLY_BTN = "skeldarWalkApply"
 RESET_BTN = "skeldarWalkReset"
 SAVE_WALK_BTN = "skeldarWalkSaveWalk"
-SAVE_POSE_BTN = "skeldarWalkSavePose"
 GROUP_TABS = "skeldarWalkGroups"
 SIDE_TABS = "skeldarWalkSides"
 FIX_BTN = "skeldarWalkFixPosture"
@@ -177,8 +179,10 @@ TIPS = {
     "mean_delete": "Delete: the rig pose out of the scene; the walk keeps its correction",
     "mean_reset": "Reset: the walk's correction dropped - the rig pose back in the plain mean pose, the target "
                   "keyed again",
-    "save_pose": "Save pose: select a skeleton standing in a character pose and press; the walk takes its "
-                 "parts at the Pose share",
+    "pose_well": "The pose the walk takes at the Pose share: drag a pose card from the Pose Library here (or its "
+                 "right button: Use in Walk Builder). The walk follows the card - its Update from selection is taken "
+                 "on the next re-key; a copy kept on the walked skeleton walks on when the card is gone. Click: the "
+                 "card in the library; right click: Clear",
     "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
              "holding one thing together hold it; Feet: the width and the toes' turn)",
 }
@@ -300,11 +304,111 @@ def chosen_walk():
     return value if value in names else names[0]
 
 
-def chosen_pose():
+def _library():
+    return scene.wcards.library_root(_cmds())
+
+
+def chosen_card():
+    """The pose card picked (its path relative to the library), else None - a name remembered before the cards
+    (an old .wpose pose) meaning the card it was moved into."""
+    rel = _stored("poseCard")
+    if rel:
+        return rel
+    old = _stored("pose")
+    if old and old != NO_POSE:
+        migrated = scene.wcards.legacy_card(old)
+        if os.path.isdir(scene.wcards.absolute(migrated, _library())):
+            return migrated
+    return None
+
+
+def well_state():
+    """(the card's absolute path, its name, its thumbnail, a note) for the well; four "" with no card."""
+    rel = chosen_card()
+    if not rel:
+        return "", "", "", ""
+    path = scene.wcards.absolute(rel, _library())
+    name = scene.wcards.card_name(rel)
+    if not os.path.isdir(path):
+        return path, name, "", "the card is gone from the library"
+    thumbnail = os.path.join(path, "thumbnail.jpg")
+    return path, name, thumbnail if os.path.isfile(thumbnail) else "", ""
+
+
+def _show_card_line():
+    """The well's stand-in line (no Qt) and every well, read again."""
     cmds = _cmds()
-    value = cmds.optionMenu(POSE_MENU, query=True, value=True) if cmds.optionMenu(POSE_MENU, exists=True) \
-        else _stored("pose")
-    return None if not value or value == NO_POSE or value not in scene.pose_names() else value
+    if cmds.text(POSE_WELL_TEXT, exists=True):
+        rel = chosen_card()
+        cmds.text(POSE_WELL_TEXT, edit=True,
+                  label=("Pose: %s" % scene.wcards.card_name(rel)) if rel else
+                  "Pose: none - Pose Library card > Use in Walk Builder")
+    try:
+        from . import posewell
+        posewell.refresh_all()
+    except Exception:                                        # noqa: BLE001 - no Qt
+        pass
+
+
+def _set_card(rel):
+    _remember("poseCard", rel or "")
+    _remember("pose", "")                    # the old name: the card stands for it now
+    _show_card_line()
+
+
+def take_card(path):
+    """A Pose Library card dropped into the well (or Use in Walk Builder): the walk's pose. A share of 0 is set
+    to 1 (a pose dropped to do nothing reads as broken); a target standing is keyed again. Answers the line."""
+    def run():
+        name, _bones = scene.wcards.read_card(path)          # refused: an animation or an objects card
+        _set_card(scene.wcards.relative(path, _library()))
+        note = ""
+        if float(values().get("pose", 0.0)) <= 0.0:
+            quiet, _QUIET[0] = _QUIET[0], True
+            try:
+                _set_knobs({"pose": 1.0}, 30)
+            finally:
+                _QUIET[0] = quiet
+            note = " (Pose share set to 1)"
+        try:
+            root = scene.target_root()
+        except scene.Refusal:
+            return "pose card %s%s - select a skeleton and press Apply" % (name, note)
+        return "pose card %s%s | %s" % (name, note, _apply_to(root))
+    return _press(run)
+
+
+def clear_card():
+    """The well emptied: the walk's own posture; a target standing is keyed again."""
+    def run():
+        _set_card("")
+        try:
+            root = scene.target_root()
+        except scene.Refusal:
+            return "no pose card - the walk's own posture"
+        return "no pose card | " + _apply_to(root)
+    return _press(run)
+
+
+def show_card(path):
+    """The Pose Library opened, the card picked."""
+    from maya_poselib import window as library
+    library.show_window()
+
+    def pick():
+        window = library.live()
+        if window is not None:
+            try:
+                window.refresh()
+                window.pick(path)
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+    try:
+        import maya.utils
+        maya.utils.executeDeferred(pick)
+    except ImportError:
+        pick()
+    return status("%s in the Pose Library" % scene.wcards.card_name(path))
 
 
 def chosen_parts():
@@ -333,14 +437,13 @@ def _fill(menu, names, selected, first=None):
         cmds.optionMenu(menu, edit=True, value=selected)
 
 
-def _fill_menus(walk=None, pose=None):
+def _fill_menus(walk=None):
     cmds = _cmds()
     if not cmds.optionMenu(WALK_MENU, exists=True):
         return
     quiet, _QUIET[0] = _QUIET[0], True
     try:
         _fill(WALK_MENU, scene.walk_names(), walk or _stored("walk"))
-        _fill(POSE_MENU, scene.pose_names(), pose or _stored("pose") or NO_POSE, first=NO_POSE)
     finally:
         _QUIET[0] = quiet
 
@@ -471,11 +574,13 @@ def show_group(key):
 def _load(root):
     """A walked skeleton's walk, pose, parts and knobs into the card; it becomes the target."""
     name, knobs, pose, parts = scene.pick(root)
+    memo = scene.memo_of(root)
+    card = memo.get("pose_card") or (scene.wcards.legacy_card(pose) if pose else "")
     quiet, _QUIET[0] = _QUIET[0], True
     try:
         _remember("walk", name)
-        _remember("pose", pose or NO_POSE)
-        _fill_menus(name, pose or NO_POSE)
+        _set_card(card)
+        _fill_menus(name)
         _set_parts(parts)
         frames = int(knobs.get("tempo") or 30)
         if name in scene.walk_names():
@@ -559,9 +664,8 @@ def _press(action):
 
 def _apply_to(root):
     _remember("walk", chosen_walk())
-    _remember("pose", chosen_pose() or NO_POSE)
     _remember("parts", json.dumps(list(chosen_parts())))
-    result, info, text = scene.apply(root, chosen_walk(), values(), chosen_pose(), chosen_parts())
+    result, info, text = scene.apply(root, chosen_walk(), values(), None, chosen_parts(), pose_card=chosen_card())
     if info.get("clean") is not None:
         show_report(info["clean"])
     return text
@@ -694,19 +798,6 @@ def press_mean_reset(*_):
     return _press(lambda: meanrig.reset(chosen_walk(), values()))
 
 
-def press_save_pose(*_):
-    def run():
-        root = scene.selected_root()
-        name = _ask("Save pose", _short(root).split(":")[-1] + "_pose")
-        if name is None:
-            return "nothing saved"
-        name, line = scene.save_pose(root, name)
-        _remember("pose", name)
-        _fill_menus(pose=name)
-        return line + " - raise Pose to walk in it"
-    return _press(run)
-
-
 def show_folder(*_):
     folder = scene.folder()
     if not os.path.isdir(folder):
@@ -717,8 +808,8 @@ def show_folder(*_):
 
 def refresh_lists(*_):
     _fill_menus()
-    return status("%d walks, %d poses in %s" % (len(scene.walk_names()), len(scene.pose_names()),
-                                                 scene.folder()))
+    _show_card_line()
+    return status("%d walks in %s" % (len(scene.walk_names()), scene.folder()))
 
 
 def group_changed(key):
@@ -749,6 +840,33 @@ def _menu_row(menu, label, command, button, icon_tip, press):
                               height=hubstyle.height("field", 24), annotation=icon_tip,
                               command=lambda *_: press()), "tool", "device-floppy")
     cmds.setParent("..")
+
+
+def _pose_well():
+    """The pose well: a placeholder the Qt well is laid over (maya_walk.posewell); without Qt a line naming the
+    card. The old .wpose poses are moved into the library first (once a session; maya_walk.cards.migrate)."""
+    cmds = _cmds()
+    state = scene._state()
+    if not state.get("migrated"):
+        state["migrated"] = True
+        try:
+            made = scene.wcards.migrate(scene.folder(), _library())
+            if made:
+                print("Walk Builder: %d old pose(s) moved into the Pose Library, folder %s: %s"
+                      % (len(made), scene.wcards.MIGRATED_FOLDER, ", ".join(made)))
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    cmds.columnLayout(POSE_WELL, adjustableColumn=True, annotation=TIPS["pose_well"])
+    cmds.setParent("..")
+    well = None
+    try:
+        from . import posewell
+        well = posewell.attach(POSE_WELL)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+    if well is None:
+        cmds.text(POSE_WELL_TEXT, label="", align="left", annotation=TIPS["pose_well"])
+        _show_card_line()
 
 
 def _slider(name):
@@ -797,7 +915,7 @@ def build_panel():
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label=NOTHING, align="left"), "subtitle")
     _menu_row(WALK_MENU, "Walk", walk_changed, SAVE_WALK_BTN, TIPS["save_walk"], press_save_walk)
-    _menu_row(POSE_MENU, "Pose", slider_changed, SAVE_POSE_BTN, TIPS["save_pose"], press_save_pose)
+    _pose_well()
     _slider("pose")
     stored_parts = chosen_parts()
 

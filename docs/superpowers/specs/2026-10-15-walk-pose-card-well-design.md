@@ -25,9 +25,10 @@ plain correction.
 
 ## The well
 
-The card's `Pose` row (a dropdown and Save...) is replaced by a well: a square cell (the hub's `field` well, the
-card's thumbnail, its name under it; empty: «Drop a pose card here» and a muted figure). Beside it, on the right:
-the Pose share slider and the part chips, as before. Right button: «Show in Pose Library» (the library opened, the
+The card's `Pose` row (a dropdown and Save...) is replaced by a well: a strip as wide as the card (the hub's `field`
+well, the card's thumbnail in a square on the left, its name and a note beside it; empty: «Drop a pose card here»
+and a muted figure). Under it, as before: the Pose share slider and the part chips (built: a strip, not a cell with
+the controls beside it - a `cmds` slider cannot stand beside a Qt widget laid over a placeholder). Right button: «Show in Pose Library» (the library opened, the
 card picked) and «Clear». A click on a filled well shows the library too.
 
 `maya_walk/posewell.py` (Qt, lazily): a widget laid over the `cmds` placeholder `skeldarWalkPoseWell` (the

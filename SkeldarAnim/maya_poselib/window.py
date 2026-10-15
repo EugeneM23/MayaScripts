@@ -387,6 +387,28 @@ def regions_arg(initial, checked):
     return list(checked)
 
 
+def walk_well(gx, gy):
+    """Walk Builder's pose well under the global point (maya_walk.posewell), or None - asked before a release
+    over the hub is called nothing (2026-10-15: a pose card dropped into it is the walk's pose)."""
+    try:
+        from maya_walk import posewell
+    except Exception:                                        # noqa: BLE001
+        return None
+    try:
+        return posewell.well_at(gx, gy)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def light_well(well):
+    """Only `well` lit (None: none) while a card is dragged."""
+    try:
+        from maya_walk import posewell
+        posewell.light(well)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def scene_aim(kind, label, target):
     """The caption's aim (`look.drop_caption`) for a card of `kind` from `label` (its source's
     catalog label) over the scene's `target` (`Scene.target`: kind "character" with root and
@@ -2106,7 +2128,17 @@ def _classes():
             aim): a folder of the tree, the window (or the hub) itself, else the scene."""
             folder = self.folder_at(gx, gy)
             if folder is not None:
+                light_well(None)
                 return {"kind": "folder", "folder": folder}
+            well = walk_well(gx, gy)
+            light_well(well)
+            if well is not None:
+                if store.is_anim(path):
+                    return {"kind": "none", "text": look.WALK_NOT_ANIM}
+                card = self._card(path)
+                if card is not None and card.kind == "objects":
+                    return {"kind": "none", "text": look.WALK_NOT_OBJECTS}
+                return {"kind": "walk", "well": well}
             if self._inside(gx, gy) or self.scene.over_window(gx, gy):
                 return {"kind": "window"}
             card = self._card(path)
@@ -2123,7 +2155,11 @@ def _classes():
             character, onto the floor (one idle later), into a folder, or nothing. Public, so
             a verify can drive it without a mouse. Answers the status line."""
             aim = self.aim(gx, gy, path, snap)
+            light_well(None)
             kind = aim.get("kind")
+            if kind == "walk":
+                well = aim["well"]
+                return self._run(lambda: self.say(well.take(path)))
             if kind in ("character", "floor"):
                 self._blend_drop()               # the whole card goes onto who it is dropped on
             mirror = self.mirror.isChecked()
@@ -2564,6 +2600,9 @@ def _classes():
                 ("Apply", lambda: self.apply_card(path, mirror=False)),
                 ("Apply mirrored", lambda: self.apply_card(path, mirror=True)),
                 ("Select objects", lambda: self.select_card(path)),
+            ] + ([] if store.is_anim(path) or (self._card(path).kind == "objects") else [
+                ("Use in Walk Builder", lambda: self._run(lambda: self.use_in_walk(path))),
+            ]) + [
                 None,
                 ("Rename...", lambda: self._run(lambda: self.rename_card(path))),
                 ("Move to...", lambda: self._run(lambda: self.move_card(path))),
@@ -2573,6 +2612,15 @@ def _classes():
                 None,
                 ("Delete", lambda: self._run(lambda: self.delete_card(path))),
             ]
+
+        def use_in_walk(self, path):
+            """The card as Walk Builder's pose (maya_walk.panel.take_card) - the well's drop, by the menu."""
+            from maya_walk import panel as walk
+            return self.say(walk.take_card(path))
+
+        def drag_over(self, well=None):
+            """A drag ended (or left the wells): the walk wells unlit."""
+            light_well(well)
 
         def rename_card(self, path):
             card = self._card(path)

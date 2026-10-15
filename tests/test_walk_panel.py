@@ -3,7 +3,9 @@ knob group shown, the presses, a walked skeleton read back by selecting it, the 
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +15,17 @@ if PLUGIN not in sys.path:
 
 from maya_walk import panel, scene             # noqa: E402
 from maya_walk import model as wm              # noqa: E402
+from maya_poselib import store                 # noqa: E402
+
+
+def write_card(library, folder, name, kind="character", anim=False):
+    """A pose card in `library` (two bones), its path."""
+    eye = [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+    bones = {"root": {"parent": None, "canonical": "root", "rest": eye, "world": eye},
+             "pelvis": {"parent": "root", "canonical": "pelvis", "rest": eye, "world": eye}}
+    data = {"format": store.ANIM_FORMAT if anim else store.FORMAT, "kind": kind, "bones": bones,
+            "character": {"label": name}, "members": sorted(bones), "objects": []}
+    return store.write(library, folder, name, data)
 
 
 class FakeCmds(object):
@@ -188,14 +201,18 @@ class CardTests(unittest.TestCase):
         self.applied = []
         self.memos = {}
         self.state = {"loaded": {}, "target": None}
-        names = ("_cmds", "walk_names", "pose_names", "load_walk", "apply", "selected_root", "selected_top",
-                 "memo_of", "pick", "target_root", "_state", "fix_posture")
-        self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB))
+        names = ("_cmds", "walk_names", "load_walk", "apply", "selected_root", "selected_top",
+                 "memo_of", "pick", "target_root", "_state", "fix_posture", "folder")
+        self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
+        self.temp = tempfile.mkdtemp()
+        self.library = os.path.join(self.temp, "library").replace("\\", "/")
+        os.makedirs(self.library)
+        panel._library = lambda: self.library
+        scene.folder = lambda: os.path.join(self.temp, "walks")
         panel.JOB.clear()
         panel._cmds = lambda: self.fake
         scene._cmds = lambda: self.fake
         scene.walk_names = lambda: ["asd", "dw"]
-        scene.pose_names = lambda: ["goblin", "two_handed_sword"]
         self.loaded = []
 
         def load_walk(name, given=None):
@@ -210,8 +227,8 @@ class CardTests(unittest.TestCase):
             return FakeReport(), "Fix posture: %s foot_l out: mirrored" % name
         scene.fix_posture = fix_posture
 
-        def apply(root, walk, given, pose, parts):
-            self.applied.append((root, walk, given, pose, parts))
+        def apply(root, walk, given, pose, parts, pose_card=None):
+            self.applied.append((root, walk, given, pose_card, parts))
             self.state["target"] = "uuid-" + root
             return None, {"clean": FakeReport()}, "%s on %s" % (walk, root)
         scene.apply = apply
@@ -237,7 +254,8 @@ class CardTests(unittest.TestCase):
         scene.target_root = target_root
 
     def tearDown(self):
-        panel._cmds, functions, job = self.saved
+        panel._cmds, functions, job, panel._library = self.saved
+        shutil.rmtree(self.temp, ignore_errors=True)
         for name, value in functions.items():
             setattr(scene, name, value)
         panel.JOB.clear()
@@ -254,11 +272,13 @@ class CardTests(unittest.TestCase):
         self.assertEqual(marks[panel.STATUS][0], "status")
         self.assertEqual(marks[panel.APPLY_BTN], ("primary", "walk"))
         self.assertEqual(marks[panel.RESET_BTN], ("secondary", "refresh"))
-        for button in (panel.SAVE_WALK_BTN, panel.SAVE_POSE_BTN):
-            self.assertEqual(marks[button], ("tool", "device-floppy"))
+        self.assertEqual(marks[panel.SAVE_WALK_BTN], ("tool", "device-floppy"))
+        self.assertFalse(hasattr(panel, "SAVE_POSE_BTN"))          # a pose is saved by the Pose Library
+        self.assertFalse(hasattr(panel, "POSE_MENU"))
         self.assertEqual(self.fake.items[panel.WALK_MENU], ["asd", "dw"])
-        self.assertEqual(self.fake.items[panel.POSE_MENU], [panel.NO_POSE, "goblin", "two_handed_sword"])
-        self.assertEqual(len(self.made("popupMenu")), 2)          # the walks folder on a right click
+        self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
+        self.assertIn("none", self.fake.values[panel.POSE_WELL_TEXT])             # no Qt here: its line
+        self.assertEqual(len(self.made("popupMenu")), 1)          # the walks folder on a right click
         # the Rig pose tab: Create / Delete, Update (the press that takes the rig's edit) / Reset
         self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
         self.assertEqual(marks[panel.MEAN_DELETE_BTN], ("danger", "trash"))
@@ -301,13 +321,15 @@ class CardTests(unittest.TestCase):
     def test_apply_puts_the_card_on_the_selection_and_remembers_it(self):
         panel.build_panel()
         self.fake.values[panel.WALK_MENU] = "dw"
-        self.fake.values[panel.POSE_MENU] = "goblin"
+        card = write_card(self.library, "Walk poses", "goblin")
+        self.fake.vars[panel.OPTION + "poseCard"] = "Walk poses/goblin.pose"
         self.fake.values[panel._control("pelvis_height")] = 8.0
         self.fake.values[panel._part_control("arms")] = False
         self.fake.selection = ["|root"]
         self.assertEqual(panel.press_apply(), "dw on |root")
         root, walk, given, pose, parts = self.applied[-1]
-        self.assertEqual((root, walk, pose), ("|root", "dw", "goblin"))
+        self.assertEqual((root, walk, pose), ("|root", "dw", "Walk poses/goblin.pose"))
+        self.assertTrue(os.path.isdir(card))
         self.assertEqual(given["pelvis_height"], 8.0)
         self.assertEqual(given["tempo"], 90.0)                  # the walk's own, shown in the card
         self.assertNotIn("arms", parts)
@@ -334,14 +356,15 @@ class CardTests(unittest.TestCase):
 
     def test_selecting_a_walked_skeleton_reads_it_into_the_card(self):
         knobs = dict(wm.DEFAULTS, stance=0.33, tempo=90.0, pose=1.0)
-        self.memos["|walked"] = {"walk": "dw", "pose": "two_handed_sword", "parts": ["torso", "feet"],
+        self.memos["|walked"] = {"walk": "dw", "pose": "two_handed_sword", "pose_card": "Swords/sword.pose",
+                                 "parts": ["torso", "feet"],
                                  "knobs": knobs}
         panel.build_panel()
         self.fake.selection = ["|walked"]
         panel.refresh()
         self.assertEqual(self.applied, [])                       # reading it keys nothing
         self.assertEqual(self.fake.values[panel.WALK_MENU], "dw")
-        self.assertEqual(self.fake.values[panel.POSE_MENU], "two_handed_sword")
+        self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/sword.pose")
         self.assertEqual(self.fake.values[panel._control("stance")], 0.33)
         self.assertFalse(self.fake.values[panel._part_control("knees")])
         self.assertEqual(self.state["target"], "uuid-|walked")
@@ -412,7 +435,7 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.fake.selection = ["|root"]
 
-        def broken(*a):
+        def broken(*a, **kw):
             raise RuntimeError("boom")
         scene.apply = broken
         self.assertEqual(panel.press_apply(), "Walk Builder failed: boom")
@@ -538,3 +561,60 @@ class HubTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PoseCardTests(unittest.TestCase):
+    """The pose is a Pose Library card dropped into the well (2026-10-15)."""
+
+    setUp = CardTests.setUp
+    tearDown = CardTests.tearDown
+
+    def test_a_dropped_card_is_the_pose_and_rekeys_the_target(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        card = write_card(self.library, "Swords", "two_handed_sword")
+        self.fake.values[panel._control("pose")] = 0.0
+        line = panel.take_card(card)
+        self.assertIn("pose card two_handed_sword (Pose share set to 1)", line)
+        self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/two_handed_sword.pose")
+        self.assertEqual(self.applied[-1][3], "Swords/two_handed_sword.pose")
+        self.assertEqual(self.applied[-1][2]["pose"], 1.0)
+        self.assertIn("two_handed_sword", self.fake.values[panel.POSE_WELL_TEXT])
+        path, name, thumbnail, note = panel.well_state()
+        self.assertEqual((name, thumbnail, note), ("two_handed_sword", "", ""))
+
+    def test_an_animation_or_objects_card_is_refused_and_changes_nothing(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        count = len(self.applied)
+        anim = write_card(self.library, "", "Run", anim=True)
+        self.assertIn("animation card", panel.take_card(anim))
+        objects = write_card(self.library, "", "Cam", kind="objects")
+        self.assertIn("card of objects", panel.take_card(objects))
+        self.assertEqual(len(self.applied), count)
+        self.assertNotIn(panel.OPTION + "poseCard", self.fake.vars)
+
+    def test_clear_takes_the_pose_away(self):
+        panel.build_panel()
+        card = write_card(self.library, "", "goblin")
+        panel.take_card(card)
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.clear_card()
+        self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "")
+        self.assertIsNone(self.applied[-1][3])
+
+    def test_a_card_gone_is_said_in_the_well(self):
+        card = write_card(self.library, "", "goblin")
+        panel.take_card(card)
+        shutil.rmtree(card)
+        self.assertEqual(panel.well_state()[3], "the card is gone from the library")
+
+    def test_an_old_pose_name_means_its_migrated_card(self):
+        write_card(self.library, "Walk poses", "goblin")
+        self.fake.vars[panel.OPTION + "pose"] = "goblin"
+        self.assertEqual(panel.chosen_card(), "Walk poses/goblin.pose")
+        self.fake.vars[panel.OPTION + "pose"] = "missing"
+        self.assertIsNone(panel.chosen_card())

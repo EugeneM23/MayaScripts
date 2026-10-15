@@ -276,7 +276,7 @@ def rekey_target(name):
     if memo.get("walk") != name:
         return " (the target walks %s)" % (memo.get("walk") or "nothing")
     scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
-                tuple(memo.get("parts", scene.ALL_PARTS)), record=False)
+                tuple(memo.get("parts", scene.ALL_PARTS)), record=False, pose_card=memo.get("pose_card") or None)
     return " -> %s keyed again" % root.rsplit("|", 1)[-1]
 
 

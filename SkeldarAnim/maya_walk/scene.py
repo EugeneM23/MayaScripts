@@ -25,6 +25,7 @@ from . import target as wt
 from . import pose as wp
 from . import clean as wc
 from . import meanpose as mp
+from . import cards as wcards
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
@@ -58,7 +59,10 @@ class Refusal(Exception):
     """What a press does not do, and why (the status line shows it)."""
 
 
-REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal)
+REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, wcards.Refusal)
+#  The pose's bones as a walked skeleton last used them (packed, maya_walk.cards): the walk keeps walking when
+#  its Pose Library card is renamed or deleted (2026-10-15)
+POSE_COPY = "skeldarWalkPose"
 NO_POSE = "(none)"
 ALL_PARTS = tuple(part for part, keys in wp.PARTS)
 MARKER = "skeldarWalk"
@@ -378,21 +382,56 @@ def save_pose(root, name=None):
     return name, line + (" | " + note if note else "")
 
 
-def prepared_pose(walk_name, pose_name, given=None):
-    """The pose `pose_name` carried onto the walk `walk_name`'s skeleton (walkpose.prepare) - the walk read under
-    the clean knobs in `given` - cached by the two files' times and the walk's reading."""
+def prepared_pose(walk_name, pose_name, given=None, bones=None, ident=None):
+    """The pose carried onto the walk `walk_name`'s skeleton (walkpose.prepare) - the walk read under the clean
+    knobs in `given` - cached by the walk's file time, the pose's and the walk's reading. The pose: `bones`
+    (a Pose Library card's, or the copy on a skeleton - `ident` names it for the cache, with its time), else the
+    saved `.wpose` pose `pose_name`."""
     walk, statics = load_walk(walk_name, given)[:2]
-    path = wf.pose_path_for(folder(), pose_name)
-    if not os.path.exists(path):
-        raise Refusal("no saved pose named %s" % pose_name)
-    key = ("pose", wf.path_for(folder(), walk_name), path, id(walk))
-    stamp = (os.path.getmtime(key[1]), os.path.getmtime(path))
+    walk_path = wf.path_for(folder(), walk_name)
+    if bones is None:
+        path = wf.pose_path_for(folder(), pose_name)
+        if not os.path.exists(path):
+            raise Refusal("no saved pose named %s" % pose_name)
+        ident = (path, os.path.getmtime(path))
+    key = ("pose", walk_path, ident[0], id(walk))
+    stamp = (os.path.getmtime(walk_path), ident[1])
     cached = _state()["loaded"].get(key)
     if cached is None or cached[0] != stamp or cached[2] is not walk:   # an id is reused once a walk is evicted
-        bones = wf.load_pose(path)[1]
+        if bones is None:
+            bones = wf.load_pose(ident[0])[1]
         cached = (stamp, wp.prepare(walk, statics, bones, wm, wt), walk)
         _cache(key, cached)
     return cached[1]
+
+
+def pose_copy(root):
+    """The packed pose copy a walked skeleton keeps (POSE_COPY), or ""."""
+    cmds = _cmds()
+    if root and cmds.attributeQuery(POSE_COPY, node=root, exists=True):
+        return cmds.getAttr(root + "." + POSE_COPY) or ""
+    return ""
+
+
+def card_pose(pose_card=None, pose_name=None, root=None):
+    """(name, bones, note, ident) of the pose a press means: the Pose Library card `pose_card` (relative to the
+    library), else the copy on `root`'s skeleton; or an old `.wpose` pose `pose_name` (a skeleton walked before
+    the cards: its migrated card first). (None, None, note, None) with none."""
+    library = wcards.library_root(_cmds())
+    copy = pose_copy(root)
+    name, bones, note = wcards.resolve(pose_card, copy, pose_name, library, folder())
+    if bones is None:
+        return None, None, note, None
+    if pose_card and not note:
+        path = wcards.absolute(pose_card, library)
+        return name, bones, note, (path, wcards.stamp(path))
+    if not pose_card and pose_name and not note:
+        migrated = wcards.absolute(wcards.legacy_card(pose_name), library)
+        if os.path.isdir(migrated):
+            return name, bones, note, (migrated, wcards.stamp(migrated))
+        path = wf.pose_path_for(folder(), pose_name)
+        return name, bones, note, (path, os.path.getmtime(path))
+    return name, bones, note, ("copy:" + (pose_card or pose_name or ""), hash(copy))
 
 
 # ---- the marker on a walked skeleton ----
@@ -584,12 +623,14 @@ def model_knobs(given):
     return dict((k, v) for k, v in (given or {}).items() if k in wm.DEFAULTS or k in wm.SIDE_KNOBS)
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True):
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None):
     """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
     skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
     - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
     stands). One undo step; `record` False (the Mean pose rig's live update): no undo step at all, the curves
-    re-keyed in place - Ctrl+Z belongs to the rig. Returns (Result, info, the status line)."""
+    re-keyed in place - Ctrl+Z belongs to the rig. The pose: the Pose Library card `pose_card` (relative to the
+    library; the copy kept on the skeleton when the card is gone), else an old saved pose `pose_name`. Returns
+    (Result, info, the status line)."""
     started = time.time()
     root = _long(root)
     walk, statics, start, report = load_walk(walk_name, given)
@@ -598,15 +639,31 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
     pose = None
     knobs = model_knobs(given)
-    if pose_name and wm.knobs(**knobs)["pose"] > 0.0:
-        pose = wp.filtered(prepared_pose(walk_name, pose_name, given), parts)
+    pose_label, pose_note, packed = pose_name or "", "", None
+    if not pose_card and pose_name:         # an old pose name: its card when it was moved into the library
+        migrated = wcards.legacy_card(pose_name)
+        if os.path.isdir(wcards.absolute(migrated, wcards.library_root(_cmds()))):
+            pose_card = migrated
+    if pose_card:
+        pose_label = wcards.card_name(pose_card)
+    if (pose_card or pose_name) and wm.knobs(**knobs)["pose"] > 0.0:
+        pose_label, pose_bones, pose_note, ident = card_pose(pose_card, pose_name, root)
+        if pose_bones is None:
+            raise Refusal(pose_note or "no pose to walk in")
+        pose = wp.filtered(prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident), parts)
+        packed = wcards.pack(pose_bones)
     result = walk.evaluate(knobs, pose)
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
     with (_Chunk("skeldarWalkApply") if record else Unrecorded()):
         write_curves(values, static, start, in_place=not record)
-        _set_memo(root, {"walk": walk_name, "pose": pose_name or "", "parts": list(parts),
+        if packed is not None and packed != pose_copy(root):
+            if not _cmds().attributeQuery(POSE_COPY, node=root, exists=True):
+                _cmds().addAttr(root, longName=POSE_COPY, dataType="string")
+            _cmds().setAttr(root + "." + POSE_COPY, packed, type="string")
+        _set_memo(root, {"walk": walk_name, "pose": pose_label or "", "pose_card": pose_card or "",
+                         "parts": list(parts),
                          "knobs": dict(result.info["knobs"], **wc.knobs(given)),
                          "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION})
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
@@ -616,7 +673,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
             % (walk_name, _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
                target_stride, result.info["speed"] * info["scale"]))
     if pose is not None:
-        text += " | pose %s x%.2f%s" % (pose_name, result.info["knobs"]["pose"],
+        text += " | pose %s x%.2f%s" % (pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
     matched = result.info.get("leg_match") or {}
     if pose is not None and matched.get("on"):
@@ -646,6 +703,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         text += " | mean pose corrected (%s)" % mp.summary(fix)
     if report.changed:
         text += " | " + report.short()
+    if pose_note:
+        text += " | " + pose_note
     if note:
         text += " | " + note
     info["clean"] = report
