@@ -411,8 +411,57 @@ def phase_open_close():
          and cmds.playbackOptions(q=True, maxTime=True) == 40.0)
 
 
+def phase_switch():
+    """Each tab keeps its own time, view and selection; Ctrl+Z past a switch brings the tab back first."""
+    from maya_scenetabs import opening, switching
+    rig, film = copy("rig.ma"), copy("film.ma")
+    fresh()
+    cmds.file(rig, open=True, force=True)
+    opening.open_tab(film)
+    cmds.undoInfo(state=True, infinity=True)
+    rig_frame = records.tab(session.state(), "tab_rig")["frame"]
+    cmds.currentTime(12)
+    cmds.select("tab_film:hero")
+    switching.switch("tab_rig")
+    gate("switch: the rig shows, the film hides", all(tops_visible("tab_rig")) and not any(tops_visible("tab_film")))
+    gate("switch: the rig's unit", cmds.currentUnit(q=True, time=True) == "ntsc")
+    gate("switch: the rig's ranges", [cmds.playbackOptions(q=True, minTime=True),
+                                      cmds.playbackOptions(q=True, maxTime=True),
+                                      cmds.playbackOptions(q=True, animationEndTime=True)] == [0.0, 50.0, 60.0])
+    gate("switch: the rig's frame", cmds.currentTime(q=True) == rig_frame, (cmds.currentTime(q=True), rig_frame))
+    gate("switch: the rig's namespace is current", current_ns() == "tab_rig")
+    gate("switch: the rig's keys on their ntsc frames",
+         cmds.keyframe("tab_rig:Manny_Rig:FKShoulder_R.rotateZ", q=True, timeChange=True) == [0.0, 20.0])
+    switching.switch("tab_film")
+    gate("switch: the film's frame comes back", cmds.currentTime(q=True) == 12.0)
+    gate("switch: the film's selection comes back", cmds.ls(selection=True) == ["tab_film:hero"],
+         cmds.ls(selection=True))
+    gate("switch: the film's keys on their film frames (its base curve: the channel is in a layer)",
+         cmds.keyframe("tab_film:hero_translateY", q=True, timeChange=True) == [5.0, 40.0],
+         cmds.keyframe("tab_film:hero_translateY", q=True, timeChange=True))
+    cmds.setAttr("tab_film:hero.translateX", 2)
+    switching.switch("tab_rig")
+    cmds.setAttr("tab_rig:Manny_Rig:FKShoulder_L.rotateY", 10)
+    cmds.undo()
+    gate("undo: the rig's step undone, still on the rig",
+         cmds.getAttr("tab_rig:Manny_Rig:FKShoulder_L.rotateY") == 0.0 and session.state()["active"] == "tab_rig")
+    cmds.undo()
+    gate("undo: the next Ctrl+Z brings the film back",
+         session.state()["active"] == "tab_film" and cmds.currentUnit(q=True, time=True) == "film"
+         and all(tops_visible("tab_film")) and not any(tops_visible("tab_rig")))
+    cmds.undo()
+    gate("undo: and then undoes the film's step", cmds.getAttr("tab_film:hero.translateX") == 0.0)
+    cmds.redo()
+    cmds.redo()
+    gate("redo: forward to the rig again",
+         session.state()["active"] == "tab_rig" and cmds.currentUnit(q=True, time=True) == "ntsc")
+    message = switching.cycle(1)
+    gate("cycle: the next tab", session.state()["active"] == "tab_film", message)
+    gate("cycle: wraps round", switching.cycle(1) and session.state()["active"] == "tab_rig")
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
-          "layers": phase_layers, "open_close": phase_open_close}
+          "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch}
 
 
 def main(names):
