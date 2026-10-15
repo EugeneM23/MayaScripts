@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-15-scene-tabs-design.md` (Task 1 adds the addendum of what was measured while planning).
 
+**Ships with stage 2, never alone** (`docs/superpowers/plans/2026-10-15-scene-tabs-stage2.md`): with a tab active the current namespace is the tab's, and the plugin's own creations then double the tab's prefix - measured while planning stage 2, Retarget inside a tab fails with «setAttr: No object matches name: tab_plain:Manny_Rig:MoCapConstraints.tx» and Add Character leaves a `tab_plain:tab_plain:Manny_Rig` namespace behind.
+
 ## Global Constraints
 
 - Every `maya_scenetabs` module but `bar` imports no Qt; `records` imports only the stdlib and `maya_sharerecords` (a subprocess test pins it).
@@ -3816,4 +3818,4 @@ git commit -F "$TEMP/scenetabs_msg.txt"
 
 - [ ] **Step 4: Hand over**
 
-Do not push, do not build, do not install into the animator's Maya. Report to the animator: the commits, the verify and unit-test numbers, and the live checklist from the CLAUDE.md section - the bar, layouts, hidden-tab cost, quit dialog, Ctrl+Tab.
+Do not push, do not build, do not install into the animator's Maya. Go on to stage 2 (`docs/superpowers/plans/2026-10-15-scene-tabs-stage2.md`) before anything ships: stage 1 alone breaks the plugin's own creations inside a tab (see the note under the plan's header). Report to the animator when stage 2 is done too: the commits, the verify and unit-test numbers, and the live checklist from the CLAUDE.md section - the bar, layouts, hidden-tab cost, quit dialog, Ctrl+Tab.
