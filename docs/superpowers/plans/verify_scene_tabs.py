@@ -617,9 +617,117 @@ def phase_save():
             gate("save %s: %s as the same edits made directly" % (name, key), same, detail[:900])
 
 
+def hooks_on():
+    from maya_scenetabs import hooks
+    hooks.install(force=True)
+    hooks._st()["defer"] = QUEUE.append
+    return hooks
+
+
+def phase_hooks():
+    """Maya's own Save, Save As, New and Open redirected; an autosave let through; a new layer adopted."""
+    from maya_scenetabs import layers, switching
+    rig, film, plain = copy("rig.ma"), copy("film.ma"), copy("plain.mb")
+    fresh()
+    cmds.file(rig, open=True, force=True)
+    from maya_scenetabs import opening
+    opening.open_tab(film)
+    hooks = hooks_on()
+    session_file = session.state()["session"]
+    cmds.setAttr("tab_film:hero.translateX", 2)
+    stamp = os.path.getmtime(film)
+    try:
+        cmds.file(save=True, force=True)
+    except RuntimeError:
+        pass                                    # «cancelled by user supplied callback»
+    flush()
+    gate("hooks: Maya's Save saves the active tab", os.path.getmtime(film) != stamp
+         and not os.path.exists(session_file))
+    gate("hooks: the scene keeps the session's name", scene_is(session_file))
+    target = RUN + "/film_hook_as.ma"
+    cmds.file(rename=target)
+    try:
+        cmds.file(save=True, force=True)
+    except RuntimeError:
+        pass
+    flush()
+    gate("hooks: Save As saves the active tab under the new name",
+         os.path.isfile(target) and records.tab(session.state(), "tab_film")["path"] == target
+         and scene_is(session_file))
+    autosave = (cmds.autoSave(q=True, destinationFolder=True) or (RUN + "/autosave/")).replace("\\", "/")
+    os.makedirs(autosave, exist_ok=True)
+    auto = autosave.rstrip("/") + "/tabs_auto.ma"
+    cmds.file(rename=auto)
+    cmds.file(save=True, force=True, type="mayaAscii")
+    cmds.file(rename=session_file)
+    gate("hooks: an autosave is let through", os.path.isfile(auto) and records.holds_session(auto))
+    try:
+        cmds.file(new=True, force=True)
+    except RuntimeError:
+        pass
+    flush()
+    names = [t["ns"] for t in session.state()["tabs"]]
+    gate("hooks: File > New opens an empty tab", names == ["tab_rig", "tab_film", "tab_untitled"]
+         and cmds.namespace(exists=":tab_rig"), names)
+    try:
+        cmds.file(plain, open=True, force=True)
+    except RuntimeError:
+        pass
+    flush()
+    names = [t["ns"] for t in session.state()["tabs"]]
+    gate("hooks: File > Open opens the file in a tab", "tab_plain" in names and cmds.objExists("tab_plain:ball"),
+         names)
+    switching.switch("tab_film")
+    cmds.select("tab_film:hero")
+    made = cmds.animLayer("ByHook", addSelectedObjects=True)
+    flush()
+    gate("hooks: a new layer goes under the active tab's root",
+         layer_parent(made) == layers.tab_root("tab_film"), layer_parent(made))
+    hooks.remove()
+    gate("hooks: removed", not hooks._st()["callbacks"])
+
+
+def phase_restore():
+    """A session file (autosave, a crash's recovery) brings its tabs back; tabs off ends them."""
+    from maya_scenetabs import hooks, layers, opening, switching
+    rig, film, plain = copy("rig.ma"), copy("film.ma"), copy("plain.mb")
+    fresh()
+    cmds.file(rig, open=True, force=True)
+    opening.open_tab(film)
+    opening.open_tab(plain)
+    switching.switch("tab_film")
+    cmds.currentTime(15)
+    switching.switch("tab_plain")
+    switching.switch("tab_film")
+    recovered = RUN + "/recovered_session.ma"
+    with hooks.bypass():
+        cmds.file(rename=recovered)
+        cmds.file(save=True, force=True, type="mayaAscii")
+    gate("restore: the file holds the session", records.holds_session(recovered))
+    fresh()
+    cmds.file(recovered, open=True, force=True)
+    message = opening.restore()
+    state = session.state()
+    gate("restore: three tabs back", [t["ns"] for t in state["tabs"]] == ["tab_rig", "tab_film", "tab_plain"],
+         message)
+    gate("restore: only the active tab shows",
+         all(tops_visible("tab_film")) and not any(tops_visible("tab_rig")) and not any(tops_visible("tab_plain")))
+    gate("restore: the active tab's unit and frame",
+         cmds.currentUnit(q=True, time=True) == "film" and cmds.currentTime(q=True) == 15.0)
+    gate("restore: the scene takes the session's name", scene_is(state["session"]))
+    hooks.remove()
+    opening.ASK = lambda message, buttons: "Don't Save"
+    message = opening.tabs_off()
+    opening.ASK = None
+    gate("tabs off: one ordinary scene, the active one", not session.exists() and scene_is(film)
+         and cmds.objExists("hero") and not cmds.namespace(exists=":tab_film"), message)
+    gate("tabs off: its layers are plain again", layers.root() == "BaseAnimation"
+         and layer_parent("Layer1") == "BaseAnimation")
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
-          "save": phase_save}
+          "save": phase_save, "hooks": phase_hooks, "restore": phase_restore}
 
 
 def main(names):
