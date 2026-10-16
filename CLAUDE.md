@@ -9305,6 +9305,63 @@ constrained FKShoulder_R baked with the game bones exact; an object under the an
 (only the base moved, their layer untouched); the Overlap through the shared writer.
 `verify_aim_overlap.py` 57/57. The live card is the animator's to try.
 
+**…and it no longer freezes Maya** (2026-10-16, a colleague: «bake to layer иногда вызывает зависание
+маи»). No loop ran forever: the press grew with the selection times the frames and with the keys times
+the calls, with the viewport suspended and nothing on screen. Spec addendum 5 of
+`2026-10-13-tools-bake-to-layer-design.md`. Measured in mayapy, a Manny rig, a UE clip retargeted over
+692 frames, the parallel EM:
+- **Before**: one constrained control among 65 selected read all 65 on every frame of both walks (273 129
+  getAttr, 28-38 s); the 65 under a highlight walked the scene twice and bridged key by key (1.69 million
+  Maya calls, 76-92 s).
+- **Each walk reads only what it samples** (`knotplan.layer_reads`).
+- **Under a highlight, a channel whose own curve bridges exactly needs no walk**: it is known before the
+  walk (`_bridge_kind` → `knotplan.bridge_plan` / `bridge_outs`), and `_bridge` goes by the same answer.
+- **What is left once the drivers are off is read off its own curves** when nothing else stands on the
+  channel (`_plain_left`): a second walk only under a layer, a conversion or another driver.
+- **A bridge reads its curve in a few queries whatever its key count** (`_keys_in`; `_evs`: `keyframe
+  -eval` takes many times at once), and the writer sets a key's tangent types and angles in one call.
+- **Side by side** (HEAD and after alternating in one process, best of 2):
+  - one constrained control 10.9 → 5.4 s, a knot 12.7 → 5.2 s;
+  - 65 and one constrained 27.9 → 7.9 s (283k → 14k calls);
+  - the 65 under a highlight 76.2 → 18.8 s (1.69M → 297k calls): the rest is the writer, two calls a key.
+- **A press of 60 steps or more shows Maya's progress window** (`timewalk.Progress`; steps are frames
+  walked, curves bridged, channels keyed).
+  - Esc in the first walk changes nothing; later the chunk is undone («Layer: cancelled - nothing
+    changed»). The chunk's first step is a select, so the undo never takes the animator's step before it.
+  - A press that fails is undone the same way before its error goes on.
+  - With undo off, Esc is heard in the first walk only.
+  - 1P Setup calls it with `cancellable=False`: it runs inside 1P Setup's own chunk.
+- On the way, trap 267: an edge past a curve's keys is read on every frame now, and a stepped key beside
+  an inserted edge keeps its hold (`_insert`).
+
+Proof: `verify_bake_layer.py` **107/107 standalone**. Its L13:
+- a highlight over 12 props' dense keys walks no frame, exact at half frames;
+- one constrained prop among 12 keyed is the only one read;
+- a bridge's calls do not grow with its keys;
+- 80 curves under five highlight placements show what they showed;
+- Esc at every stage leaves the scene and the animator's last undo step as they were;
+- a writer that raises is undone.
+
+The neighbours: `verify_tools_layers` 31/31, `verify_aim_overlap` 57/57, `verify_snapshot` 42/42,
+`verify_1p_setup` 13/13, `verify_knots` 90/90; 6888 unit tests. **Not seen in a GUI Maya**: mayapy has no
+progress window, and the verify fakes its Esc.
+
+267. **Maya's `setKeyframe -insert` past a curve's keys re-types the key beside it.** Surveyed in 2027 on
+     1296 curves: 108 changed shape, every one past the keys; inside a segment the shape holds.
+     - Before the first key, it turns that key's out tangent `fixed`: a `step` becomes a smooth segment.
+     - After the last key, it turns the last key's in tangent `fixed`: a spline 0.0625 off on a whole
+       frame.
+     - Layer's bridge inserts a key one frame outside the highlight. A highlight from a blocking curve's
+       first key to before its next took the base's hold OUTSIDE the highlight (2.98 off at 4.75), in
+       HEAD as well.
+     - After an insert, give a stepped neighbour its type back, and never rebuild a curve from its keys
+       past their range.
+268. **A walk with the viewport suspended and no window reads as a hang.** Layer read every selected
+     object on every frame either walk visited, and bridged key by key. None of it showed on the
+     41-frame verify props; a colleague's long takes froze Maya for minutes. Measure a press on a long
+     take and a big selection, give a walk or a per-key loop a progress window, and read the scene only
+     for what needs it.
+
 **Snapshot: a free copy of an object's motion** (2026-10-13, «Давай реализуем создание снапшотов»;
 asked: **Object only** - OverRig's component and particle snapshots declined - and **a key on every
 frame**). Spec `docs/superpowers/specs/2026-10-13-tools-snapshot-design.md`. OverRig's

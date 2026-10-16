@@ -734,6 +734,94 @@ class Layer(unittest.TestCase):
         self.assertEqual(plan.bridged([0.0, 40.0], 10.0, 20.0), [])
 
 
+class LayerSpeed(unittest.TestCase):
+    """Layer froze Maya for minutes on a long take (2026-10-16, a colleague: «bake to layer иногда
+    вызывает зависание маи»). Measured on a 692-frame retargeted take: one constrained control among
+    65 selected read all 65 on every frame of both walks (273 129 getAttr, 38 s), and a highlight
+    over 65 keyed controls walked the scene twice and bridged key by key (1.6 million cmds calls,
+    92 s) - with the viewport suspended and no progress. What each walk reads and which out types
+    a bridge will meet are decided before anything moves."""
+
+    def test_only_the_objects_with_channels_to_sample_are_read(self):
+        spans = {"a": (0, 4, False), "b": (2, 3, False), "c": (0, 600, False)}
+        first, second = plan.layer_reads(spans, {"a", "b"}, 7.0)
+        self.assertEqual(sorted(first), ["a", "b"])
+        self.assertEqual(first["a"], [0, 1, 2, 3, 4, 7.0])
+        self.assertEqual(first["b"], [2, 3, 7.0])
+        self.assertEqual(second, {"a": [0, 1, 2, 3, 4], "b": [2, 3]})
+
+    def test_the_current_frame_inside_the_span_is_read_once(self):
+        first, second = plan.layer_reads({"a": (10, 12, True)}, {"a"}, 11.0)
+        self.assertEqual(first["a"], [10, 11, 12])
+        self.assertEqual(second["a"], [10, 11, 12])
+
+    def test_nothing_to_sample_nothing_to_read(self):
+        self.assertEqual(plan.layer_reads({"a": (0, 40, False)}, set(), 3.0), ({}, {}))
+
+    def test_a_key_at_the_edge_keeps_its_own_out_type(self):
+        times, outs = [0.0, 9.0, 15.0, 30.0], ["auto", "step", "auto", "auto"]
+        self.assertEqual(plan.bridge_outs(times, outs, 10.0, 20.0, "auto"), ["step", "auto"])
+
+    def test_an_edge_inserted_in_a_segment(self):
+        """Maya's insert, measured (Maya 2027): `fixed` in a smooth segment, the segment's own
+        `step` / `stepnext` in a stepped one."""
+        times = [0.0, 5.0, 15.0, 30.0]
+        self.assertEqual(plan.bridge_outs(times, ["auto", "spline", "auto", "auto"], 10.0, 20.0,
+                                          "auto"), ["fixed", "auto"])
+        self.assertEqual(plan.bridge_outs(times, ["auto", "linear", "auto", "auto"], 10.0, 20.0,
+                                          "auto"), ["fixed", "auto"])
+        self.assertEqual(plan.bridge_outs(times, ["auto", "step", "step", "step"], 10.0, 20.0,
+                                          "auto"), ["step", "step"])
+        self.assertEqual(plan.bridge_outs(times, ["auto", "stepnext", "auto", "auto"], 10.0,
+                                          20.0, "auto"), ["stepnext", "auto"])
+
+    def test_an_edge_inserted_off_the_keys_takes_the_default(self):
+        """Before the first key or after the last Maya inserts the default out type - the
+        animator's preference, a stepped default included."""
+        times = [12.0, 14.0, 30.0]
+        self.assertEqual(plan.bridge_outs(times, ["auto", "auto", "auto"], 10.0, 20.0, "step"),
+                         ["step", "auto", "auto"])
+        self.assertEqual(plan.bridge_outs([0.0, 2.0], ["auto", "auto"], 10.0, 20.0, "spline"),
+                         ["spline"])
+
+    def test_the_far_edge_is_not_among_them(self):
+        times = [0.0, 9.0, 12.0, 21.0, 25.0]
+        outs = ["auto", "flat", "linear", "step", "auto"]
+        self.assertEqual(plan.bridge_outs(times, outs, 10.0, 20.0, "auto"), ["flat", "linear"])
+
+    def test_the_prediction_is_what_bridge_kind_reads(self):
+        times = [0.0, 5.0, 15.0, 30.0]
+        smooth = plan.bridge_outs(times, ["auto", "spline", "auto", "auto"], 10.0, 20.0, "auto")
+        self.assertEqual(plan.bridge_kind(smooth, False), "smooth")
+        stepped = plan.bridge_outs(times, ["step"] * 4, 10.0, 20.0, "auto")
+        self.assertEqual(plan.bridge_kind(stepped, False), "stepped")
+        mixed = plan.bridge_outs(times, ["auto", "auto", "step", "auto"], 10.0, 20.0, "auto")
+        self.assertIsNone(plan.bridge_kind(mixed, False))
+
+    def test_a_bridge_inside_the_keys(self):
+        times = [0.0, 5.0, 15.0, 30.0]
+        self.assertEqual(plan.bridge_plan(times, ["auto"] * 4, False, 10.0, 20.0, "auto"),
+                         "smooth")
+        self.assertEqual(plan.bridge_plan(times, ["step"] * 4, False, 10.0, 20.0, "auto"),
+                         "stepped")
+        self.assertIsNone(plan.bridge_plan(times, ["auto"] * 4, True, 10.0, 20.0, "auto"))
+        #  an edge on the first or the last key is inside them
+        self.assertEqual(plan.bridge_plan([9.0, 15.0, 21.0], ["auto"] * 3, False, 10.0, 20.0,
+                                          "auto"), "smooth")
+
+    def test_an_edge_beyond_the_keys_is_read_on_every_frame(self):
+        """Maya's insert past the keys re-types the key beside it (a stepped first key turned
+        smooth, measured): such a channel is sampled, never bridged from its keys."""
+        times = [0.0, 5.0, 15.0, 30.0]
+        self.assertIsNone(plan.bridge_plan(times, ["step"] * 4, False, 0.0, 20.0, "step"))
+        self.assertIsNone(plan.bridge_plan(times, ["auto"] * 4, False, 10.0, 30.0, "auto"))
+        self.assertIsNone(plan.bridge_plan([], [], False, 10.0, 20.0, "auto"))
+
+    def test_a_cancelled_press_says_nothing_changed(self):
+        self.assertIn("cancelled", plan.LAYER_CANCELLED)
+        self.assertIn("nothing changed", plan.LAYER_CANCELLED)
+
+
 class Purity(unittest.TestCase):
 
     def test_stdlib_only(self):

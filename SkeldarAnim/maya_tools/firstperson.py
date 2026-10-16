@@ -226,13 +226,14 @@ def setup(selection=None):
         knots.create("knot", [control], highlight=None)
         knot = knots._knots_driving(control)[0]
         before = set(cmds.ls(type="animLayer") or [])
-        line = layerbake.bake(lower + [knot], highlight=None, name=LOWER)
+        #  inside this press's chunk: Layer neither shows its window nor undoes anything itself
+        line = layerbake.bake(lower + [knot], highlight=None, name=LOWER, cancellable=False)
         lower_layer = _new_layer(before)
         if not lower_layer:
             raise RuntimeError("the lower body did not bake: %s" % line)
         before = set(cmds.ls(type="animLayer") or [])
         if upper:
-            line = layerbake.bake(upper, highlight=None, name=UPPER)
+            line = layerbake.bake(upper, highlight=None, name=UPPER, cancellable=False)
             upper_layer = _new_layer(before)
             if not upper_layer:
                 raise RuntimeError("the upper body did not bake: %s" % line)

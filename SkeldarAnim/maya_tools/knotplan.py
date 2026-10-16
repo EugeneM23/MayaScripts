@@ -807,6 +807,66 @@ def bridged(times, first, last):
     return [t for t in times if first - 1.0 + 1e-6 < t < last + 1.0 - 1e-6]
 
 
+_STEPPED = ("step", "stepnext")
+
+
+def bridge_outs(times, outs, first, last, default):
+    """The out tangent types the bridge of a highlight `first..last` meets, told before the
+    curve changes: the edge key's one frame before it - a key already there its own; one Maya
+    inserts inside a segment the segment's `step` / `stepnext`, else `fixed`; one inserted before
+    the first key or after the last `default`, the animator's default out type (Maya's insert,
+    measured in 2027) - then those of the keys strictly inside the edges. `times` and `outs` the
+    curve's keys in order. What `bridge_kind` reads, so a channel that bridges exactly is known
+    before any walk. Pure."""
+    lo, hi = first - 1.0, last + 1.0
+    at = [kind for t, kind in zip(times, outs) if abs(t - lo) < 1e-6]
+    if at:
+        edge = at[0]
+    else:
+        before = [kind for t, kind in zip(times, outs) if t < lo]
+        if before and any(t > lo for t in times):
+            edge = before[-1] if before[-1] in _STEPPED else "fixed"
+        else:
+            edge = default
+    return [edge] + [kind for t, kind in zip(times, outs) if lo + 1e-6 < t < hi - 1e-6]
+
+
+def bridge_plan(times, outs, weighted, first, last, default):
+    """How a base curve bridges a highlight `first..last` - "smooth", "stepped" or None (keyed
+    on every frame instead) - told before the curve changes: `bridge_kind` of `bridge_outs`. None
+    too when an edge one frame outside the highlight falls beyond the curve's keys: Maya's insert
+    there re-types the key beside it (measured in 2027 on 1296 curves: a first key's `step` turned
+    `fixed`, the stepped segment after it smooth - 3 units off on a 0..5 curve; a last `spline`
+    key's in tangent moved, 0.14 off) and a key's tangents say nothing of the infinity past it.
+    Pure."""
+    lo, hi = first - 1.0, last + 1.0
+    if not times or lo < times[0] - 1e-6 or hi > times[-1] + 1e-6:
+        return None
+    return bridge_kind(bridge_outs(times, outs, first, last, default), weighted)
+
+
+def layer_reads(spans, sampled, now):
+    """({object: frames} the first walk reads, {object: frames} the second): an object with
+    channels to sample (`sampled`) read on every frame of its span (`spans` {object: (first,
+    last, ranged)}) - the first walk at the current frame `now` too, where a channel a constraint
+    drove is held under a highlight; an object with none is not read at all (its keys move onto
+    the layer as they are, or bridge exactly). Pure.
+
+    Layer read every selected object on every frame either walk visited (2026-10-16: one
+    constrained control among 65 on a 692-frame take, 273 129 getAttr)."""
+    first, second = {}, {}
+    for obj, (start, end, _ranged) in spans.items():
+        if obj not in sampled:
+            continue
+        frames = list(range(int(start), int(end) + 1))
+        second[obj] = frames
+        first[obj] = sorted(set(frames) | {now})
+    return first, second
+
+
+LAYER_CANCELLED = "Layer: cancelled - nothing changed"
+
+
 def layer_message(names, keyed, knots_off, constraints_off, first, last, ranged, layer,
                   notes=(), pose_frame=None):
     """The Layer press's line. `keyed`: how many objects had their own keys moved; `pose_frame`:

@@ -31,6 +31,19 @@ stay as they are.
 
 `write_deltas` is the layer writer the Overlap uses too.
 
+What it costs (2026-10-16, a colleague: «bake to layer иногда вызывает зависание маи»): a press
+froze Maya for minutes on a long take - measured in mayapy on a 692-frame retargeted take, one
+constrained control among 65 selected 38 s (all 65 read on every frame of both walks), a highlight
+over the 65 92 s (two walks and 1.6 million cmds calls, a bridge read key by key), with the
+viewport suspended and nothing on screen. Now each walk reads only the objects it samples
+(`knotplan.layer_reads`), a channel that bridges exactly is known before the walk
+(`knotplan.bridge_plan`) and needs none, what is left once the drivers are off is read off its
+own curves unless a layer stands on it (no second walk), a bridge reads its curve in a few
+queries whatever its key count, and a press that walks or bridges much shows Maya's progress
+window: Esc undoes it, and so is a press that fails. On the way: Maya's insert past a curve's
+keys re-types the key beside it - an edge there is read on every frame and a stepped key keeps
+its hold (a blocking curve's base outside the highlight went smooth, 2.98 off).
+
 Spec: docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md (read its addenda) and
 2026-10-15-layer-knot-and-base-design.md
 """
@@ -59,12 +72,13 @@ _BLEND_INPUT2 = {"tx": "inTranslateX2", "ty": "inTranslateY2", "tz": "inTranslat
 
 # ------------------------------------------------------------------- writer
 
-def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None):
+def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None, step=None):
     """`tracks` {(node, channel): (times, values[, {time: (in, out)}])} keyed on a new additive
     layer `name` (marked `marker` = `value`, rotation by component) - a tangent type None is
     Maya's default; zero one frame outside when `ranged`; cycled curves cycle. `moves`
     {(node, channel): (curve, value)}: the base curve itself moved onto the layer (`_move`), the
-    base left on `value`. The layer's name."""
+    base left on `value`. `step(text)` after each channel (the press's progress). The layer's
+    name."""
     moves = moves or {}
     layer = cmds.animLayer(name)
     knots._set_string(layer, marker, value)
@@ -83,16 +97,16 @@ def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=
         curve = (cmds.animLayer(layer, query=True, findCurveForPlug=plug) or [None])[0]
         for time, number in zip(times, values):
             kind = tangents.get(time, (None, None))
-            types = dict((flag, k) for flag, k in zip(
+            edit = dict((flag, k) for flag, k in zip(
                 ("inTangentType", "outTangentType"), kind[:2]) if k)
-            #  the types through keyTangent: setKeyframe takes no "fixed", and on a key already
-            #  there (the identity key at the first time) it leaves the types as they were
-            cmds.setKeyframe(curve, time=time, value=float(number))
-            if types:
-                cmds.keyTangent(curve, time=(time, time), lock=False, **types)
             if len(kind) > 2:                  # an exact key: its slopes, as angles a frame
-                cmds.keyTangent(curve, time=(time, time), lock=False, inAngle=kind[2],
-                                outAngle=kind[3])
+                edit.update(inAngle=kind[2], outAngle=kind[3])
+            #  the types through keyTangent: setKeyframe takes no "fixed", and on a key already
+            #  there (the identity key at the first time) it leaves the types as they were. One
+            #  edit sets the types and the angles together, exactly as two did (measured)
+            cmds.setKeyframe(curve, time=time, value=float(number))
+            if edit:
+                cmds.keyTangent(curve, time=(time, time), lock=False, **edit)
         if ranged:
             for edge in (times[0] - 1, times[-1] + 1):
                 cmds.setKeyframe(curve, time=edge, value=0.0, inTangentType="flat",
@@ -100,8 +114,12 @@ def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=
         if cycled:
             cmds.setAttr(curve + ".preInfinity", _CYCLE)
             cmds.setAttr(curve + ".postInfinity", _CYCLE)
+        if step is not None:
+            step("keying %s.%s" % (plan.leaf(node), plan.LONG[ch]))
     for (node, ch), (curve, held) in moves.items():
         _move(node, ch, curve, held)
+        if step is not None:
+            step("moving %s.%s" % (plan.leaf(node), plan.LONG[ch]))
     return layer
 
 
@@ -335,22 +353,78 @@ def _span(obj, tops, targets, highlight):
 
 # ------------------------------------------------------------------ reading
 
-def _read(objs, frames):
-    """{obj: {frame: (tx, ty, tz, rx, ry, rz, sx, sy, sz)}} - one time walk, unrecorded."""
+class _Cancelled(Exception):
+    """Esc in the press's progress window."""
+
+
+def _read(reads, step=None):
+    """({obj: {frame: (tx, ty, tz, rx, ry, rz, sx, sy, sz)}}, the walk's `keys.Tweaks` or None):
+    each object read on its own frames only (`reads` {obj: frames}, `knotplan.layer_reads`) - one
+    time walk over their union, unrecorded; no walk when nothing is to be read. `step(text)`
+    after each frame; it raises `_Cancelled` on Esc, and the walk puts the time back first."""
     from maya_poselib import timewalk
-    out = dict((obj, {}) for obj in objs)
-    with timewalk.Walk(fresh=False) as walk:
+    out = dict((obj, {}) for obj in reads)
+    by_frame = {}
+    for obj, frames in reads.items():
         for frame in frames:
+            by_frame.setdefault(frame, []).append(obj)
+    if not by_frame:
+        return out, None
+    frames = sorted(by_frame)
+    with timewalk.Walk(fresh=False) as walk:
+        for count, frame in enumerate(frames):
             walk.go(frame)
-            for obj in objs:
+            for obj in by_frame[frame]:
                 out[obj][frame] = (tuple(cmds.getAttr(obj + ".translate")[0])
                                    + tuple(cmds.getAttr(obj + ".rotate")[0])
                                    + tuple(cmds.getAttr(obj + ".scale")[0]))
-    return out
+            if step is not None:
+                step("frame %g (%d of %d)" % (frame, count + 1, len(frames)))
+        tweaks = walk.tweaks
+    return out, tweaks
 
 
 def _free(obj):
     return [ch for ch in plan.LAYER_CHANNELS if not cmds.getAttr(obj + "." + ch, lock=True)]
+
+
+#  The time curve a channel's own keys are, by the channel's kind.
+_CURVE_KIND = dict([(ch, "animCurveTL") for ch in ("tx", "ty", "tz")]
+                   + [(ch, "animCurveTA") for ch in ("rx", "ry", "rz")]
+                   + [(ch, "animCurveTU") for ch in ("sx", "sy", "sz")])
+
+
+def _plain_left(path, channels):
+    """{channel: (curve, None) or (None, value)} when what is left on each of `channels`, once
+    the drivers are off, is its own time curve wired straight to it, or a plain value - else None
+    (a layer stands on it, a conversion sits between, something else drives it): then the second
+    walk reads the scene. Read off the curves it costs no walk (2026-10-16)."""
+    out = {}
+    for ch in channels:
+        plug = path + "." + ch
+        found = cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
+        if not found:
+            out[ch] = (None, cmds.getAttr(plug))
+            continue
+        node = found[0].split(".", 1)[0]
+        if cmds.nodeType(node) != _CURVE_KIND[ch]:
+            return None
+        out[ch] = (node, None)
+    return out
+
+
+def _left_rows(left, frames):
+    """{frame: row} of what `_plain_left` found - the curves evaluated at `frames` (one query a
+    curve), the plain values as they are; a channel not asked for is 0 (`layer_deltas` reads only
+    the channels it keys)."""
+    columns = {}
+    for ch, (curve, value) in left.items():
+        columns[ch] = _evs(curve, frames) if curve else None
+    rows = {}
+    for frame in frames:
+        rows[frame] = tuple((columns[ch][frame] if columns[ch] is not None else left[ch][1])
+                            if ch in left else 0.0 for ch in plan.LAYER_CHANNELS)
+    return rows
 
 
 # -------------------------------------------------------------------- press
@@ -380,11 +454,61 @@ def _ev(curve, time):
     return cmds.keyframe(curve, query=True, eval=True, time=(time, time))[0]
 
 
+def _evs(curve, times):
+    """{time: value} of the curve at `times`, UI units - ONE query (`keyframe -eval` takes many
+    times, measured equal to one query a time)."""
+    times = sorted(set(times))
+    if not times:
+        return {}
+    values = cmds.keyframe(curve, query=True, eval=True, time=[(t, t) for t in times]) or []
+    if len(values) != len(times):
+        raise RuntimeError("%s answered %d values for %d times" % (curve, len(values),
+                                                                    len(times)))
+    return dict(zip(times, values))
+
+
 def _slopes(curve, time):
     """(in, out) slope of a key, UI units a frame (its tangent angle's tangent - measured)."""
     angles = [cmds.keyTangent(curve, time=(time, time), query=True, **{flag: True})[0]
               for flag in ("inAngle", "outAngle")]
     return tuple(math.tan(math.radians(a)) for a in angles)
+
+
+def _keys_in(curve, window):
+    """[(time, in slope, out slope)] of the curve's keys in `window`, in order - three queries
+    whatever the number of keys (slopes as `_slopes`)."""
+    times = cmds.keyframe(curve, query=True, timeChange=True, time=window) or []
+    ins = cmds.keyTangent(curve, query=True, inAngle=True, time=window) or []
+    outs = cmds.keyTangent(curve, query=True, outAngle=True, time=window) or []
+    return [(t, math.tan(math.radians(a)), math.tan(math.radians(b)))
+            for t, a, b in zip(times, ins, outs)]
+
+
+def _insert(curve, time, times, outs):
+    """A key inserted at `time`, the shape kept (Maya's insert) - and a stepped key beside it
+    given its hold back: inserted before the first key, Maya turns that key's `step` fixed
+    (measured in 2027), and the segment after it, which may lie outside the highlight, smooth -
+    2.98 off over a 0..5 blocking curve. `times` / `outs` the keys as they stood."""
+    cmds.setKeyframe(curve, time=time, insert=True)
+    before = [i for i, t in enumerate(times) if t < time]
+    after = [i for i, t in enumerate(times) if t > time]
+    for i in before[-1:] + after[:1]:
+        if outs[i] in ("step", "stepnext"):
+            at = (times[i], times[i])
+            if cmds.keyTangent(curve, time=at, query=True, outTangentType=True)[0] != outs[i]:
+                cmds.keyTangent(curve, time=at, outTangentType=outs[i])
+
+
+def _bridge_kind(curve, first, last):
+    """How `curve` bridges a highlight `first..last` - "smooth", "stepped" or None (keyed on
+    every frame instead) - read off it as it stands, before anything changes
+    (`knotplan.bridge_plan`): told before the walk, a channel that bridges exactly needs none,
+    and `_bridge` goes by the same answer."""
+    times = cmds.keyframe(curve, query=True, timeChange=True) or []
+    outs = cmds.keyTangent(curve, query=True, outTangentType=True) or []
+    default = (cmds.keyTangent(query=True, g=True, outTangentType=True) or ["auto"])[0]
+    weighted = bool((cmds.keyTangent(curve, query=True, weightedTangents=True) or [False])[0])
+    return plan.bridge_plan(times, outs, weighted, first, last, default)
 
 
 def _bridge(curve, first, last):
@@ -394,24 +518,30 @@ def _bridge(curve, first, last):
     two keys' tangents. The layer's keys that give back exactly what it showed over the highlight
     ([(time, value, (in type, out type[, in angle, out angle]))]: a smooth curve's keys with their
     slopes minus the bridge's, a stepped curve's as they are with the bridge holding still), or
-    None (weighted, steps mixed in) - then it is keyed on every frame of the highlight."""
+    None (weighted, steps mixed in) - then it is keyed on every frame of the highlight.
+
+    Its curve is read in a handful of queries whatever its key count (2026-10-16: key by key it
+    was ten calls a key, 44 s for 65 controls' dense keys over 670 frames). How it bridges is
+    told before a key is inserted (`_bridge_kind`, the answer the press planned its walk by):
+    an edge past the curve's keys is never bridged from them - Maya's insert there re-types the
+    key beside it."""
+    kind = _bridge_kind(curve, first, last)
     edges = (first - 1.0, last + 1.0)
     times = cmds.keyframe(curve, query=True, timeChange=True) or []
+    outs = cmds.keyTangent(curve, query=True, outTangentType=True) or []
     for edge in edges:
         if not any(abs(t - edge) < 1e-6 for t in times):
-            cmds.setKeyframe(curve, time=edge, insert=True)
+            _insert(curve, edge, times, outs)
         knots._pin(curve, edge)
         outer = [t for t in times if (t < edge if edge < first else t > edge)]
         if outer:
             knots._pin(curve, max(outer) if edge < first else min(outer))
-    times = cmds.keyframe(curve, query=True, timeChange=True) or []
-    span = [t for t in times if edges[0] - 1e-6 <= t <= edges[1] + 1e-6]
-    outs = [cmds.keyTangent(curve, time=(t, t), query=True, outTangentType=True)[0]
-            for t in span[:-1]]
-    kind = plan.bridge_kind(outs, bool(cmds.keyTangent(curve, query=True,
-                                                       weightedTangents=True)[0]))
-    original = [(t, _ev(curve, t)) + _slopes(curve, t) for t in span]
-    if plan.bridged(times, first, last):
+    window = (edges[0] - 1e-6, edges[1] + 1e-6)
+    keys = _keys_in(curve, window)
+    span = [t for t, _si, _so in keys]
+    values = _evs(curve, span)
+    original = [(t, values[t], si, so) for t, si, so in keys]
+    if plan.bridged(span, first, last):
         cmds.cutKey(curve, time=(edges[0] + 1e-3, edges[1] - 1e-3), clear=True)
     if kind == "stepped":
         cmds.keyTangent(curve, time=(edges[0], edges[0]), outTangentType="step")
@@ -421,13 +551,23 @@ def _bridge(curve, first, last):
     if kind != "smooth":
         return None
     h = 1e-3
+    inner = [t for t in span if edges[0] < t < edges[1]]
+    at = _evs(curve, span + [t + h for t in inner] + [t - h for t in inner])
+    ends = _keys_in(curve, window)                      # the cut leaves the two edge keys
+
+    def end_slopes(t):
+        found = [(si, so) for k, si, so in ends if abs(k - t) < 1e-6]
+        if not found:
+            raise RuntimeError("%s lost its key at %g bridging %g-%g" % (curve, t, first, last))
+        return found[0]
+
     bridge = []
     for t in span:
         if edges[0] < t < edges[1]:
-            slope = (_ev(curve, t + h) - _ev(curve, t - h)) / (2.0 * h)
-            bridge.append((_ev(curve, t), slope, slope))
+            slope = (at[t + h] - at[t - h]) / (2.0 * h)
+            bridge.append((at[t], slope, slope))
         else:
-            bridge.append((_ev(curve, t),) + _slopes(curve, t))
+            bridge.append((at[t],) + end_slopes(t))
     return [(t, v, ("fixed", "fixed", math.degrees(math.atan(si)), math.degrees(math.atan(so))))
             for t, v, si, so in plan.bridge_keys(original, bridge)]
 
@@ -451,27 +591,30 @@ def _shared(curve):
 
 
 def _sorting(info, span):
-    """(moved, sampled): the channels whose base curve moves onto the layer whole - over the whole
-    take, a channel only its own keys move (not driven, its curve feeding nothing else) - and the
-    rest, read off the scene: a driven channel on every frame (it has no keys of its own: a knot
-    is keyed on every frame itself, and a constraint's turns between its targets' keys would be
-    lost), a plain one under a highlight by its own keys (`_bridge`) or, when that cannot be
-    exact, on every frame too."""
+    """(moved, sampled, exact): the channels whose base curve moves onto the layer whole - over
+    the whole take, a channel only its own keys move (not driven, its curve feeding nothing else);
+    under a highlight those a plain curve of its own bridges exactly (`_bridge_kind`, told before
+    anything changes) - and the rest, read off the scene on every frame of the span: a driven
+    channel (it has no keys of its own: a knot is keyed on every frame itself, and a constraint's
+    turns between its targets' keys would be lost), a plain one whose bridge cannot be exact."""
     free = set(_free(info["obj"]))
     wanted = (set(info["moving"]) | info["driven"]) & free
     if span[2]:
-        return set(), wanted
+        exact = set(ch for ch in info["moving"] if ch in free and ch not in info["driven"]
+                    and _bridge_kind(info["curves"][ch], span[0], span[1]) is not None)
+        return set(), wanted - exact, exact
     moved = set(ch for ch in info["moving"] if ch not in info["driven"] and ch in free
                 and not _shared(info["curves"][ch]))
-    return moved, wanted - moved
+    return moved, wanted - moved, set()
 
 
-def _clear_base(info, path, span, shown, now, moved=(), exact=None):
+def _clear_base(info, path, span, shown, now, moved=(), exact=None, step=None):
     """The base's own animation off one object, inside the press: whole take - each curve that
     moves deleted, the channel (and each channel a driver held) left on its first-frame value;
     a highlight - each such curve bridged (the exact layer keys of a channel nothing drives kept in
     `exact`), an unkeyed channel a foreign constraint drove kept at the current frame's pose (trap
-    238; a knot's channels have their own value back). The channels held that way."""
+    238; a knot's channels have their own value back). `step(text)` after each bridge. The
+    channels held that way."""
     first, last, ranged = span
     held = []
     for ch in sorted(set(info["moving"]) | (info["driven"] & set(_free(path)))):
@@ -486,6 +629,8 @@ def _clear_base(info, path, span, shown, now, moved=(), exact=None):
                 keys = _bridge(curve, first, last)
                 if keys is not None and exact is not None and ch not in info["driven"]:
                     exact[ch] = keys
+                if step is not None:
+                    step("bridging %s.%s" % (plan.leaf(path), plan.LONG[ch]))
             elif not curve and ch in info["held"]:
                 cmds.setAttr(base_plug, shown[now][index])
                 held.append(ch)
@@ -516,8 +661,46 @@ def _plans(objs, rigs):
     return plans, ""
 
 
-def bake(selection=None, highlight=SLIDER, name=None):
-    """The Layer press. The line. `name`: the layer's (1P Setup's), else `Baked_<first leaf>`."""
+#  A press with fewer steps than this (frames walked, curves bridged, channels keyed) shows no
+#  progress window: it is over before one would be read.
+PROGRESS_MIN = 60
+PROGRESS_TITLE = "Layer"
+#  The chunk's first step, so a cancel or a failure undoes the press and never the step before it.
+_CHUNK = "skeldarBakeLayer"
+
+
+class _Silent(object):
+    """No progress window: every step goes on."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def step(self, _text=""):
+        return True
+
+
+def _progress(total):
+    """Maya's progress window (Esc stops it, `timewalk.Progress`) for a press of `total` steps -
+    none below `PROGRESS_MIN`."""
+    if total < PROGRESS_MIN:
+        return _Silent()
+    from maya_poselib import timewalk
+    return timewalk.Progress(PROGRESS_TITLE, total)
+
+
+def _union(reads):
+    return set(f for frames in reads.values() for f in frames)
+
+
+def bake(selection=None, highlight=SLIDER, name=None, cancellable=True):
+    """The Layer press. The line. `name`: the layer's (1P Setup's), else `Baked_<first leaf>`.
+
+    `cancellable`: a long press shows Maya's progress window and Esc undoes it (`LAYER_CANCELLED`),
+    a press that fails is undone before its error goes on. False inside another press's chunk -
+    1P Setup's - which no Ctrl+Z from here can take apart: no window, nothing undone (as before)."""
     import maya_rigs
     objs, pivots = _objects(selection)
     if not objs:
@@ -533,13 +716,56 @@ def bake(selection=None, highlight=SLIDER, name=None):
         spans[obj] = _span(obj, info["tops"], targets, window)
         sorts[obj] = _sorting(info, spans[obj])
     now = cmds.currentTime(query=True)
-    frames = sorted(set(f for o in objs if sorts[o][1]
-                        for f in range(spans[o][0], spans[o][1] + 1))
-                    | set(spans[o][0] for o in objs) | {now})
+    reads, reads_after = plan.layer_reads(dict((o, spans[o]) for o in objs),
+                                          set(o for o in objs if sorts[o][1]), now)
+    bridges = sum(len(info["moving"]) for info in plans if spans[info["obj"]][2])
+    channels = sum(len(sorts[o][0]) + len(sorts[o][1]) + len(sorts[o][2]) for o in objs)
+    total = len(_union(reads)) + len(_union(reads_after)) + bridges + channels
+    with (_progress(total) if cancellable else _Silent()) as progress:
+        def step(text):
+            if not progress.step("Layer: " + text):
+                raise _Cancelled()
+            return True
+        try:
+            shown, tweaks = _read(reads, step)           # nothing has changed yet
+        except _Cancelled:
+            return plan.LAYER_CANCELLED
+        recording = cancellable and bool(cmds.undoInfo(query=True, state=True))
+        #  with undo off a press that has begun cannot be taken back: Esc goes unheard then
+        inside = step if recording else (lambda text: progress.step("Layer: " + text))
+        begun = []                         # the chunk holds a step of the press: undo takes it
+        try:
+            return _press(plans, objs, spans, sorts, shown, reads_after, now, pivots, name,
+                          inside, recording, begun)
+        except _Cancelled:
+            _take_back(begun, tweaks)
+            return plan.LAYER_CANCELLED
+        except Exception:
+            _take_back(begun, tweaks)
+            raise
+
+
+def _take_back(begun, tweaks):
+    """A press cancelled or failed inside its chunk: the chunk undone - only once it holds a
+    step of the press, never the animator's step before it - and the tweaks the first walk
+    found set back."""
+    if not begun:
+        return
+    cmds.undo()
+    if tweaks is not None:
+        tweaks.restore()
+
+
+def _press(plans, objs, spans, sorts, shown, reads_after, now, pivots, name, step, recording,
+           begun):
+    """The press's changes, in its undo chunk (its first step a select when `recording`, told
+    in `begun`, so a cancel or a failure undoes the press alone). The line."""
     uuids = dict((info["obj"], knots._uuid(info["obj"])) for info in plans)
     notes = []
-    with knots._press("skeldarBakeLayer"):
-        shown = _read(objs, frames)
+    with knots._press(_CHUNK):
+        if recording:
+            cmds.select(objs, replace=True)
+            begun.append(True)
         knots_off = _knots_off([t for info in plans for t in info["tops"]])
         constraints_off = 0
         for info in plans:
@@ -552,16 +778,31 @@ def bake(selection=None, highlight=SLIDER, name=None):
         for info in plans:
             path = live[info["obj"]]
             exact = exacts.setdefault(info["obj"], {})
-            held = _clear_base(info, path, spans[info["obj"]], shown[info["obj"]], now,
-                               sorts[info["obj"]][0], exact)
+            held = _clear_base(info, path, spans[info["obj"]], shown.get(info["obj"], {}), now,
+                               sorts[info["obj"]][0], exact, step)
             statics += [plan.leaf(path) + "." + ch for ch in held]
-        own = _read([live[o] for o in objs], frames)
+            lost = sorted(sorts[info["obj"]][2] - set(exact))
+            if lost:            # told exact before the walk, not exact now: nothing read for it
+                raise RuntimeError("Layer: %s %s did not bridge as its keys said" % (
+                    plan.leaf(path), ", ".join(lost)))
+        #  what is left: off its own curves where nothing else stands on the channels, else a
+        #  second walk of the scene
+        own, walk = {}, {}
+        for o, frames in reads_after.items():
+            left = _plain_left(live[o], sorted(sorts[o][1] - set(exacts.get(o, {}))))
+            if left is None:
+                walk[live[o]] = frames
+                continue
+            own[live[o]] = _left_rows(left, frames)
+            step("reading what is left of %s" % plan.leaf(live[o]))
+        walked, _tweaks = _read(walk, step)
+        own.update(walked)
         tracks, moves, first, last, ranged = {}, {}, None, None, False
         for info in plans:
             obj = info["obj"]
             path = live[obj]
             start, end, ranged = spans[obj]
-            moved, sampled = sorts[obj]
+            moved, sampled, _exact = sorts[obj]
             for ch in moved:
                 curve = info["curves"][ch]
                 moves[(path, ch)] = (curve, cmds.keyframe(curve, query=True, eval=True,
@@ -603,7 +844,7 @@ def bake(selection=None, highlight=SLIDER, name=None):
         if tracks or moves:
             leaves = [plan.leaf(live[o]) for o in objs]
             layer = write_deltas(name or plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
-                                 tracks, ranged=ranged, moves=moves)
+                                 tracks, ranged=ranged, moves=moves, step=step)
         cmds.select([live[o] for o in objs if live[o]], replace=True)
     starts = set(spans[o][0] for o in objs)
     keyed = sum(1 for info in plans if info["moving"])

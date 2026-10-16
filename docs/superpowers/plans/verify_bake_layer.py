@@ -39,6 +39,15 @@ L12 scale (2026-10-15, «запекание на слой не работает 
    layer as themselves (scale ADDED on it, not multiplied), the prop's world matrix as it was at
    every frame and half frame, the base holds frame 0's scale, muted it stands; a highlight over
    scale keys exact; a scaleConstraint baked and deleted; scale beside a knot.
+L13 speed and Esc (2026-10-16, a colleague: «bake to layer иногда вызывает зависание маи» - a
+   press froze Maya for minutes on a long take): a highlight over 12 props' dense keys walks no
+   frame and is exact at half frames; one constrained prop among 12 keyed is the only one read;
+   a bridge's cmds calls do not grow with its keys; 80 curves of every kind under a highlight
+   inside their keys, from their first key, from it to before the next and to past their last
+   show what they showed (an edge past the keys is read on every frame and a stepped key beside
+   it keeps its hold - Maya's insert there re-types the key beside it); Esc in
+   the first walk, the bridges, the second walk and the keying leaves the scene as it was and the
+   animator's last step the next undo; a press that fails is undone before its error goes on.
 """
 import math
 import os
@@ -867,9 +876,249 @@ def case_l12():
          % (gap, line))
 
 
+class Counted(object):
+    """`cmds` with every call counted (the bridge's cost, L13)."""
+
+    def __init__(self, real):
+        self.real, self.calls = real, 0
+
+    def __getattr__(self, attr):
+        fn = getattr(self.real, attr)
+        if not callable(fn):
+            return fn
+
+        def call(*args, **kwargs):
+            self.calls += 1
+            return fn(*args, **kwargs)
+        return call
+
+
+class FakeProgress(object):
+    """A progress window whose Esc comes at step `stop` (batch mode has no window to press)."""
+
+    def __init__(self, stop):
+        self.stop, self.texts = stop, []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def step(self, text=""):
+        self.texts.append(text)
+        return len(self.texts) < self.stop
+
+
+def dense_props(count, frames, name="dense"):
+    """`count` cubes keyed on every frame 0..frames-1 (tx, ty, rz: smooth waves, auto tangents)."""
+    cmds.file(new=True, force=True)
+    cmds.undoInfo(state=True, infinity=True)
+    cmds.playbackOptions(min=0, max=frames - 1, animationStartTime=0,
+                         animationEndTime=frames - 1)
+    props = []
+    for i in range(count):
+        prop = cmds.ls(cmds.polyCube(name="%s%d" % (name, i))[0], long=True)[0]
+        for ch, amp, period in (("tx", 10.0, 37.0), ("ty", 4.0, 23.0), ("rz", 30.0, 51.0)):
+            for f in range(0, frames, 6):
+                cmds.setKeyframe(prop, attribute=ch, time=f,
+                                 value=amp * math.sin(2 * math.pi * (f + 3 * i) / period))
+        props.append(prop)
+    cmds.bakeResults(props, time=(0, frames - 1), sampleBy=1, attribute=["tx", "ty", "rz"])
+    cmds.currentTime(5)
+    cmds.select(clear=True)
+    return props
+
+
+def case_l13():
+    """A press froze Maya for minutes on a long take (2026-10-16): measured on 692 frames, one
+    constrained control among 65 read all 65 on every frame of two walks, a highlight over the 65
+    walked twice and bridged key by key. Now: what is read, what a bridge costs, and Esc."""
+    case("L13 speed and Esc")
+    import time
+    reads = []
+    real_read = layerbake._read
+
+    def counting_read(wanted, step=None):
+        reads.append(dict((obj, len(frames)) for obj, frames in wanted.items()))
+        return real_read(wanted, step)
+
+    layerbake._read = counting_read
+    try:
+        props = dense_props(12, 300)
+        sample = props[3]
+        inside = [h + 0.5 for h in range(40, 260)]
+        before = channels(sample, inside)
+        del reads[:]
+        start = time.perf_counter()
+        line = layerbake.bake(props, highlight=(40, 261))
+        seconds = time.perf_counter() - start
+        read = sum(sum(r.values()) for r in reads)
+        gate(read == 0 and "outside the highlight" in line,
+             "a highlight over 12 props' dense keys (300 frames) walks no frame: %d object-frames"
+             " read, %.2f s - %s" % (read, seconds, line))
+        after = channels(sample, inside)
+        worst = max(abs(after[h][i] - before[h][i]) for h in inside for i in range(6))
+        gate(worst < 1e-6, "and every channel inside it exact at half frames: %.2e" % worst)
+
+        props = dense_props(12, 300)
+        loc = mover("target")
+        cmds.orientConstraint(loc, props[5], maintainOffset=True)
+        held = track(props[5], [0.0, 150.0, 299.0])
+        del reads[:]
+        line = layerbake.bake(props, highlight=None)
+        objects = sorted(set(o for r in reads for o in r))
+        gate(len(objects) == 1 and objects[0].endswith("dense5")
+             and all(n <= 301 for r in reads for n in r.values()),
+             "one constrained prop among 12 keyed: only it is read: %s - %s" % (reads, line))
+        ok, text = same(held, track(props[5], [0.0, 150.0, 299.0]))
+        gate(ok, "and it shows what the constraint showed: " + text)
+    finally:
+        layerbake._read = real_read
+
+    costs = []
+    for count in (50, 400):
+        cmds.file(new=True, force=True)
+        node = cmds.createNode("transform")
+        for f in range(count + 20):
+            cmds.setKeyframe(node, attribute="tx", time=f, value=math.sin(f / 7.0))
+        curve = curve_of(node, "tx")
+        counter = Counted(cmds)
+        layerbake.cmds, knots.cmds = counter, counter
+        try:
+            layerbake._bridge(curve, 10.0, 10.0 + count)
+        finally:
+            layerbake.cmds, knots.cmds = cmds, cmds
+        costs.append(counter.calls)
+    gate(costs[1] <= costs[0] + 2,
+         "a bridge's cmds calls do not grow with its keys: %d for 50 keys, %d for 400" % tuple(costs))
+
+    #  Every kind of curve under a highlight inside its keys, from its first key, from its first
+    #  key to before the next and to past its last (the edge one frame outside then falls beyond
+    #  the keys, where Maya's insert re-types the key beside it - measured: a stepped first key
+    #  turned smooth, the base outside the highlight 2.98 off, before and after this fix's start;
+    #  a spline last key's in tangent moved, 0.0625 off on a whole frame): the prop shows what it
+    #  showed on every frame, and at half frames wherever the layer holds keys of its own
+    #  (outside the highlight, and inside it when the bridge is exact).
+    configs = [("auto", "auto"), ("spline", "spline"), ("linear", "linear"), ("flat", "flat"),
+               ("flat", "step"), ("flat", "stepnext"), ("auto", "step"), ("clamped", "plateau")]
+    frames = [float(f) for f in range(-3, 34)]
+    worst, worst_at, cases, exact_cases = 0.0, None, 0, 0
+    for in_type, out_type in configs:
+        for weighted in (False, True):
+            for a, b in ((10, 21), (0, 21), (10, 31), (0, 4), (20, 32)):
+                cmds.file(new=True, force=True)
+                cmds.playbackOptions(min=0, max=30, animationStartTime=0, animationEndTime=30)
+                prop = cmds.ls(cmds.polyCube(name="kinds")[0], long=True)[0]
+                for k, (t, v) in enumerate(((0, 0.0), (5, 3.0), (12, 1.0), (18, 5.0), (24, 2.0),
+                                            (30, 4.0))):
+                    types = (in_type, out_type) if k != 2 else ("auto", "auto")
+                    cmds.setKeyframe(prop, attribute="tx", time=t, value=v,
+                                     inTangentType=types[0], outTangentType=types[1])
+                curve = curve_of(prop, "tx")
+                if weighted:
+                    cmds.keyTangent(curve, edit=True, weightedTangents=True)
+                exact = layerbake._bridge_kind(curve, a, b - 1) is not None
+                halves = [h + 0.5 for h in range(-3, 33) if exact or not a - 1 <= h + 0.5 <= b]
+                before = channels(prop, frames + halves)
+                layerbake.bake([prop], highlight=(a, b))
+                after = channels(prop, frames + halves)
+                gap = max(abs(after[h][0] - before[h][0]) for h in frames + halves)
+                cases += 1
+                exact_cases += int(exact)
+                if gap > worst:
+                    worst, worst_at = gap, (in_type, out_type, weighted, a, b)
+    gate(worst < 1e-6, "%d curves (%d bridged exactly, the rest on every frame): each shows what "
+         "it showed - worst %.2e %s" % (cases, exact_cases, worst, worst_at or ""))
+
+    #  Esc at each stage of a highlight press on a prop whose rotation a constraint drives, its
+    #  tz weighted (no exact bridge: read on every frame) and on the animator's own layer (what
+    #  is left of it is walked): the first walk, the bridges, the second walk, the keying - their
+    #  steps found by a press that runs through. A walk's time changes are undo steps in mayapy
+    #  (trap 222): the animator's last step is made after the tracking, and the queue read
+    #  before any tracking after the press.
+    def esc_scene():
+        prop = make_prop()
+        loc = mover("target")
+        cmds.orientConstraint(loc, prop, maintainOffset=True, skip=["x"])
+        cmds.setKeyframe(prop, attribute="tz", time=0, value=2.0)
+        cmds.setKeyframe(prop, attribute="tz", time=40, value=-3.0)
+        cmds.keyTangent(curve_of(prop, "tz"), edit=True, weightedTangents=True)
+        mine = cmds.animLayer("Anim1")
+        cmds.animLayer(mine, edit=True, attribute=prop + ".translateZ")
+        cmds.setKeyframe(prop, attribute="translateZ", animLayer=mine, time=8, identity=True)
+        cmds.setKeyframe(prop, attribute="translateZ", animLayer=mine, time=30, identity=True)
+        offset = cmds.animLayer(mine, query=True, findCurveForPlug=prop + ".translateZ")[0]
+        cmds.keyframe(offset, edit=True, time=(30, 30), absolute=True, valueChange=1.5)
+        cmds.currentTime(12)
+        return prop, loc
+
+    def pressed(stop):
+        fake = FakeProgress(stop)
+        real_progress = layerbake._progress
+        layerbake._progress = lambda total: fake
+        try:
+            return layerbake.bake([prop], highlight=(5, 36)), fake.texts
+        finally:
+            layerbake._progress = real_progress
+
+    prop, loc = esc_scene()
+    _line, texts = pressed(10 ** 9)
+    stages = []
+    for where, word in (("the first walk", "frame"), ("the bridges", "bridging"),
+                        ("the second walk", "frame"), ("the keying", "keying")):
+        after = stages[-1][1] if stages else 0
+        found = [i for i, text in enumerate(texts) if i >= after and word in text]
+        stages.append((where, found[1] if len(found) > 1 else (found[0] if found else None)))
+    gate(all(index is not None for _w, index in stages),
+         "a press through: its steps %s" % ([(w, i) for w, i in stages],))
+    for where, index in stages:
+        if index is None:
+            continue
+        prop, loc = esc_scene()
+        shown, own = track(prop), snapshot([prop])
+        cmds.setAttr(loc + ".ty", 1.0)                     # the animator's last step
+        undo_before = cmds.undoInfo(query=True, undoName=True)
+        line, at = pressed(index + 1)
+        undo_after = cmds.undoInfo(query=True, undoName=True)
+        ok, text = same(shown, track(prop))
+        gate(line == plan.LAYER_CANCELLED and snapshot([prop]) == own and ok
+             and undo_after == undo_before and abs(cmds.getAttr(loc + ".ty") - 1.0) < 1e-9,
+             "Esc in %s (at %s): %s - the scene as it was (%s), the animator's step stands and "
+             "is the next undo (%r)" % (where, at[-1:], line, text, undo_after))
+
+    prop = make_prop()
+    knots.create("knot", [prop], highlight=None)
+    nudge(knot_of(prop), "tx", 4.0)
+    shown, own = track(prop), snapshot([prop])
+    cmds.setAttr(prop + ".sx", 1.25)                       # the animator's last step
+    undo_before = cmds.undoInfo(query=True, undoName=True)
+    real_write = layerbake.write_deltas
+
+    def failing(*args, **kwargs):
+        raise RuntimeError("the writer failed")
+
+    layerbake.write_deltas = failing
+    try:
+        try:
+            layerbake.bake([prop], highlight=None)
+            raised = False
+        except RuntimeError:
+            raised = True
+    finally:
+        layerbake.write_deltas = real_write
+    undo_after = cmds.undoInfo(query=True, undoName=True)
+    cmds.setAttr(prop + ".sx", 1.0)
+    ok, text = same(shown, track(prop))
+    gate(raised and snapshot([prop]) == own and knot_of(prop) is not None and ok
+         and undo_after == undo_before,
+         "a press that fails is undone before its error goes on: the knot back, %s, the next "
+         "undo the animator's (%r)" % (text, undo_after))
+
+
 def main():
     for run in (case_l0, case_l9, case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8,
-                case_l10, case_l11, case_l12):
+                case_l10, case_l11, case_l12, case_l13):
         try:
             run()
         except Exception:

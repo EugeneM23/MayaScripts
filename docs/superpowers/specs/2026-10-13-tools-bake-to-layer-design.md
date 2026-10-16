@@ -157,3 +157,71 @@ others stayed on the base (muted, it still scaled), a scaleConstraint stayed.
 - Proof: `verify_bake_layer.py` **95/95** (L12: scale keys alone moved as themselves, the world
   matrix to 4.4e-16 at frames and half frames, the base frame 0's scale, muted it stands; a
   highlight exact to 3.7e-9; a scaleConstraint 0.0; scale beside a knot; one undo).
+
+## Addendum 5 (2026-10-16): the press froze Maya
+
+A colleague: «bake to layer иногда вызывает зависание маи». No loop in the code runs forever; the
+press grew with the selection times the frames and with the keys times the calls, ran with the
+viewport suspended (`timewalk.Walk`) and showed nothing, so on a long take Maya sat frozen for
+minutes. Measured in mayapy (a Manny rig, a UE clip retargeted over 692 frames, the parallel EM):
+
+- one constrained control among 65 selected: both walks read all 65 on every frame (273 129
+  `getAttr`), 28-38 s;
+- the 65 under a highlight: two walks of the scene and a bridge read key by key (ten calls a key:
+  1.69 million Maya calls), 76-92 s.
+
+What changed (`layerbake`, `knotplan`):
+
+- **Each walk reads only what it samples** (`knotplan.layer_reads`): an object with channels to
+  read on every frame is read on its span (the first walk at the current frame too); one whose keys
+  move onto the layer as they are, or bridge exactly, is not read at all.
+- **A channel that bridges exactly is known before the walk** (`_bridge_kind` ->
+  `knotplan.bridge_plan`, from the curve as it stands: `bridge_outs` tells the out types the bridge
+  will meet - an edge key already there its own, one Maya inserts inside a segment the segment's
+  `step`/`stepnext` else `fixed`, measured) and needs none; `_bridge` goes by the same answer, and a
+  channel told exact that does not bridge is refused (the press undone) rather than lost.
+- **What is left is read off its own curves** (`_plain_left`, `_left_rows`) when nothing but a time
+  curve of the channel's kind, wired straight to it, or a plain value stands on a channel - no
+  second walk; a layer, a conversion or another driver still walks.
+- **A bridge reads its curve in a few queries** whatever its key count (`_keys_in`; `_evs`:
+  `keyframe -eval` takes many times at once, measured equal to one at a time), and the writer sets
+  a key's tangent types and angles in one `keyTangent` (measured equal to two).
+- **A progress window** (`timewalk.Progress`) for a press of 60 steps or more - frames walked,
+  curves bridged, channels keyed. Esc in the first walk changes nothing; later the chunk is undone
+  (`LAYER_CANCELLED`). The chunk's first step is a select, so the undo never takes the animator's
+  step before an empty chunk; a press that fails is undone the same way before its error goes on;
+  with undo off Esc is heard in the first walk only. 1P Setup calls the press with
+  `cancellable=False`: it runs in 1P Setup's chunk, which nothing inside can take apart.
+
+Side by side in one process (HEAD and after alternating, best of 2, a peer's mayapy on the machine):
+
+| press | HEAD | after | Maya calls | frames walked |
+|---|---|---|---|---|
+| one constrained control | 10.9 s | 5.4 s | 7 543 -> 4 950 | 1 386 -> 693 |
+| a knot | 12.7 s | 5.2 s | 7 611 -> 5 029 | 1 386 -> 693 |
+| 65 keyed controls, the whole take | 2.0 s | 1.8 s | 10 999 -> 9 556 | 4 -> 0 |
+| 65 and one constrained | 27.9 s | 7.9 s | 282 587 -> 14 266 | 1 386 -> 693 |
+| the 65 under a highlight | 76.2 s | 18.8 s | 1 687 194 -> 296 781 | 1 346 -> 0 |
+
+What is left of the last is the writer, two calls a key (142 000 keys); the walk of a driven
+channel is the scene's evaluation, one walk now.
+
+**On the way, Maya's insert past the keys** (surveyed on 1296 curves: 108 changed shape, every one
+past the curve's keys; inside a segment the shape holds): before the first key it turns that key's
+out tangent `fixed` - a `step` becomes a smooth segment; after the last key it turns the last key's
+in tangent `fixed` (a spline 0.0625 off on a whole frame). The bridge inserts a key one frame
+outside the highlight, so HEAD rebuilt such a curve from its re-typed keys, and a highlight from a
+blocking curve's first key to before its next took the base's hold OUTSIDE the highlight with it
+(2.98 off at 4.75). Now an edge past the keys is read on every frame (`bridge_plan` answers None)
+and a stepped key beside an inserted edge gets its type back (`_insert`): both exact on every
+frame, outside the highlight at half frames too.
+
+Proof: `verify_bake_layer.py` **107/107 standalone** - L13: a highlight over 12 props' dense keys
+(300 frames) walks no frame and is exact at half frames (7e-11); one constrained prop among 12 keyed
+is the only one read; a bridge's calls do not grow with its keys (30 for 50 keys and for 400); 80
+curves of every kind under five highlight placements (inside the keys, from the first key, to
+before the second, past the last) show what they showed, worst 5.8e-9; Esc in the first walk, the
+bridges, the second walk and the keying leaves the scene as it was and the animator's last step
+standing and next to undo; a writer that raises is undone. `verify_tools_layers` 31/31,
+`verify_aim_overlap` 57/57, `verify_snapshot` 42/42, `verify_1p_setup` 13/13, `verify_knots` 90/90;
+6888 unit tests. Not seen in a GUI Maya: mayapy has no progress window (the verify fakes its Esc).
