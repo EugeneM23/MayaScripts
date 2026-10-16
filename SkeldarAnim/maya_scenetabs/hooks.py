@@ -292,6 +292,11 @@ def install(force=False):
             cameramenus.install()           # the panels' camera menus: the active tab's only
         except Exception:                                       # noqa: BLE001
             print(traceback.format_exc())
+        try:
+            from . import layereditor
+            layereditor.install()           # the Anim Layer Editor: the active tab as a scene
+        except Exception:                                       # noqa: BLE001
+            print(traceback.format_exc())
     return True
 
 

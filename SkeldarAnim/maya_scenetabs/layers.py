@@ -287,6 +287,11 @@ def refresh_editors():
 
 def _rebuild_editors():
     import maya.mel as mel
+    try:
+        from . import layereditor
+        layereditor.ensure()        # Maya sources its own layerEditor.mel again when it builds the editor
+    except Exception:                                           # noqa: BLE001 - a UI refresh only
+        pass
     for command in ('if (`treeView -exists AnimLayerTabanimLayerEditor` && `exists rebuildAnimLayerEditor`) '
                     'rebuildAnimLayerEditor("AnimLayerTab");',
                     'if (`exists updateLayersByType`) updateLayersByType("Display");'):

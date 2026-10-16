@@ -10745,6 +10745,31 @@ held `AS_DG_ATK_JA_01.ma.skeldartmp.ma` and `…skeldartmp.ma.skeldartmp.ma`). T
      created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
      names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
 
+**The Anim Layer Editor shows the active tab as a scene** (2026-10-16, the animator: «вижу какие-то
+анимационные слои даже в новой вкладке ... когда я выделяю нижний слой то ... выделяются все слои»).
+Maya's editor walks from the root, so it drew our holders as layers: `skeldarTabsLayerRoot` alone in an
+empty tab, `<tab>:AnimLayerRoot` between the base and a tab's layers. And the animator's root carried
+`collapse` on, where Maya's `animLayerEditorOnSelect` selects a collapsed layer's children.
+`maya_scenetabs/layereditor.py` reads Maya's `layerEditor.mel` and changes three lines in two procs:
+- `rebuildAnimLayerEditor`: a layer under a tab's root sits at the top; the root reads BaseAnimation
+  and a tab's layer reads its name without the prefix;
+- `animLayerEditorOnSelect`: a click on our root selects it alone.
+
+How it is loaded:
+- Ours is sourced as a whole copy, `%TEMP%/skeldar_scenetabs/skeldarLayerEditor.mel`, because those
+  procs call local procs of their file (a lone redefinition died on «Cannot find procedure
+  "getBestLayers"»).
+- The copy leaves out the file's last bare block, which builds the editor UI (sourced twice:
+  «'DisplayLayerUITabLayout' is not unique»).
+- `buildAnimLayerArray` is ours on top: no holders, and an empty list for an empty tab.
+- Maya sources its own file again when it builds the Channel Box / Layer Editor. Before every refresh
+  of ours, `layers._rebuild_editors` puts the copy back (`layereditor.ensure`).
+- Tabs off: every proc is Maya's.
+
+A Maya whose text differs keeps its own procs, said in the Script Editor. The scene's layers are never
+touched. Proof: `verify_tab_layer_editor.py` **13/13 in a disposable GUI Maya** (real Qt clicks down the
+tree; the base collapsed; Maya's own file sourced again), the labels read through the proc, pictures.
+
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 
 The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации
