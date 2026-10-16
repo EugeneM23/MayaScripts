@@ -235,8 +235,8 @@ class PoseTests(unittest.TestCase):
             j = w.index[name]
             want = c.worlds[j, 5, :3, :3] @ c.worlds[w.parents[j], 5, :3, :3].T
             self.assertLess(float(np.abs(pose["arms"][j] - want).max()), 1e-9, name)
-        gap = float(np.dot(c.worlds[w.index["foot_l"], 5, 3, :3] - c.worlds[w.index["foot_r"], 5, 3, :3], w.side))
-        self.assertAlmostEqual(pose["width"], gap - (w.feet["l"].coords[1] - w.feet["r"].coords[1]), places=6)
+        gap = float(np.dot(c.worlds[w.index["foot_l"], 5, 3, :3] - c.worlds[w.index["foot_r"], 5, 3, :3], w.across))
+        self.assertAlmostEqual(pose["width"], gap - (w.body_print("l") - w.body_print("r")), places=6)
         self.assertAlmostEqual(pose["toe"]["l"], 0.0, places=9)     # the walker's feet never turn
         self.assertEqual(pose["weapons"], {})
         only = wp.filtered(pose, ("torso", "feet"))
@@ -290,6 +290,29 @@ class PoseTests(unittest.TestCase):
             bone["world"] =[float(v) for v in (np.array(bone["world"]).reshape(4, 4) @ turn).reshape(16)]
         self.assertAlmostEqual(wp.prepare(w, statics_of(c), turned, wm, wt)["hips_yaw"],
                                pose["hips_yaw"] + math.radians(30.0), places=6)
+
+    def test_a_pose_stands_on_the_walk_s_body_not_on_its_root(self):
+        """A walk whose body is turned 35 deg about up against its own root (a diagonal backward walk, 2026-10-16:
+        the mirror pair in the animator's scene stood +-35 deg off their roots, the pose placed by the root read
+        76 deg off one body and 7 off the other, and Leg match crossed the first one's feet) takes a pose facing
+        its root just as the unturned walk does: the same hips turn, the same knee and toe turns."""
+        c = clip()
+        root = c.names.index("root")
+        turn = wm.exp_rot(np.array([0.0, 1.0, 0.0]) * math.radians(35.0))
+        turned = np.array(c.worlds, copy=True)          # the whole walk turned rigidly about the origin...
+        turned[..., :3, :3] = c.worlds[..., :3, :3] @ turn
+        turned[..., 3, :3] = c.worlds[..., 3, :3] @ turn
+        turned[root, :, :3, :3] = c.worlds[root, :, :3, :3]     # ...but its root facing the way it did
+        w0 = walk()
+        w1 = wm.analyse(wm.Clip(c.names, c.parents, turned, c.fps, c.up, "turned"))
+        statics = statics_of(c)
+        plain = wp.prepare(w0, statics, self.pose_of(c, 5), wm, wt)
+        moved = wp.prepare(w1, statics, self.pose_of(c, 5), wm, wt)
+        self.assertAlmostEqual(moved["hips_yaw"], plain["hips_yaw"], places=4)
+        for key in ("knee_turn", "toe"):
+            for side in "lr":
+                self.assertAlmostEqual(moved[key][side], plain[key][side], places=4, msg=key + side)
+        self.assertAlmostEqual(moved["width"], plain["width"], delta=0.05)
 
     def test_the_pelvis_height_is_read_over_the_feet_not_the_root(self):
         """A pose whose root stands 17 cm under its feet (dw's, 2026-10-13: the pose's pelvis read over the root

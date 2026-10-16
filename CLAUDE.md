@@ -10453,6 +10453,23 @@ Tests `test_walkmodel.BackwardTests` (the synthetic walker played backward: fail
 `SkimTests`; three StepTests / PoseTests read the synthetic foot's 10 cm-a-frame landing as no contact now.
 verify_walk 79/79, sprint 12/12, own 22/22; 6819 unit tests. Not re-keyed in the animator's scene.
 
+**…and a diagonal backward walk: the pose on the body, the feet spread across the body** (2026-10-16, the same
+day, a backward-right walk and its mirror in the animator's scene: «анимация выглядит так какбуд-то наш
+алгоритм перепутал ноги»). The pair's bodies stand ±35° against their own roots (their travel 125° off the body's
+front). Two defects, measured:
+- **The pose was placed by the walk's ROOT**: the sword pose (side-on, 41° against its own root) read 76° off one
+  body and 7° off the other, Leg match turned the hips back 76°, and the feet crossed the body line on 58 of 113
+  frames, up to 66 cm (the source: a 24 cm crossover). `pose.body_turn` (the walk's mean hip line against its rest
+  stood on the root) turns the carried pose about up through the root (`_turned`) before anything is read: hips
+  −41.3° on all three walks; a walk facing its root moves by its own 2-5°.
+- **Stance and a pose's width worked across the TRAVEL line**: a side-on stance projected onto it read +64 cm on
+  one of the pair and −41 on the other. Both now spread the feet along the body's own left-right
+  (`Walk.across`, the flat mean hip line; `print_across`, `body_print`) - for a forward walk the same axis to a
+  few degrees. The pair now come out alike (closest 39 / 39 cm, mean 21); at Stance below 1 a diagonal walk's
+  feet now narrow by the whole knob (before, only its across-travel part).
+Tests: `test_walktarget.PoseTests.test_a_pose_stands_on_the_walk_s_body_not_on_its_root` (fails by 35° on the old
+code); `verify_walk_sprint.py` gate 2 now reads «hips 41 deg» (36 before: the sprint's body is 4.8° off its root).
+
 260. **A walk's travel axes are not its body's.** The model read "forward" and "the walk's left" off the travel
      and took the body to face it. Walking backward, the knees point near 180 deg off the travel, so an absolute
      heading wraps (an outward knee read as turned in), a hip line read against `side` sits at ±180 (a least-squares

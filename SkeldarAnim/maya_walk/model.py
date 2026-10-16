@@ -643,6 +643,11 @@ class Walk(object):
         hips = (pos[self.index["thigh_l"], :P] - pos[self.index["thigh_r"], :P]).mean(axis=0)
         self.left = 1.0 if float(np.dot(hips, self.side)) >= 0.0 else -1.0
         self.lside, self.ahead = self.left * self.side, self.left * self.fwd
+        # the body's own left-right, flat: its mean hip line - what Stance and a pose's width spread the feet along
+        # (across the travel line a diagonal walk's feet stand 55 deg off it, and a side-on pose's width read +64 cm
+        # on one of a mirror pair and -41 on the other, 2026-10-16)
+        flat_hips = hips - float(np.dot(hips, self.up)) * self.up
+        self.across = _unit(flat_hips) if np.linalg.norm(flat_hips) > 1e-9 else self.lside
         steps = np.arange(P) / float(P)
         self.origin = pos[root, 0] + (pos[root, :P] - pos[root, 0] - np.outer(steps, travel)).mean(axis=0)
         self.rot, self.pos = rot[:, :P], pos[:, :P]
@@ -830,6 +835,14 @@ class Walk(object):
     def side_print(self, side):
         """The foot's footprints' mean place across the travel line (cm, + to the walk's left)."""
         return float(np.mean([foot.coords[1] for foot in self.steps[side]]))
+
+    def print_across(self, step):
+        """A footprint's place across the BODY (cm along `across`, + to the body's left)."""
+        return float(step.coords[0] * np.dot(self.fwd, self.across) + step.coords[1] * np.dot(self.side, self.across))
+
+    def body_print(self, side):
+        """The foot's footprints' mean place across the body (cm along `across`)."""
+        return float(np.mean([self.print_across(foot) for foot in self.steps[side]]))
 
     def stride_phase(self, tau):
         """The stride's phase at source time tau, radians: 2 pi a stride, running linearly between the left
@@ -2093,13 +2106,13 @@ class Walk(object):
         i, k, r = self._step_at(side, tau)
         foot = steps[i]
         sign = 1.0 if side == "l" else -1.0
-        middle = 0.5 * (self.side_print("l") + self.side_print("r"))
+        middle = 0.5 * (self.body_print("l") + self.body_print("r"))
 
         def shift(step, cycle):
-            half = step.coords[1] - middle
+            half = self.print_across(step) - middle
             across = stance * (half + sign * spread / 2.0) - half
             return ((travel2 - self.travel) * ((step.mid + cycle * P) / P)
-                    + (stride - 1.0) * step.coords[0] * self.fwd + across * self.side)
+                    + (stride - 1.0) * step.coords[0] * self.fwd + across * self.across)
         here = shift(foot, k)
         if r <= foot.length + 1e-9:
             return rot, src + here

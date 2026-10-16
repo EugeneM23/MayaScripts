@@ -168,7 +168,9 @@ try:
     print("        " + text)
     n = result.frames
     new = keyed(manny, walk, start, n)
-    gate(n == 60 and "legs matched x0.15, hips 36 deg to the spine" in text,
+    # 41 since 2026-10-16: the pose stands on the walk's body, not its root (the sprint's body is 4.8 deg off it;
+    # 36 before) - the sword pose's own side-on turn, the same on every walk
+    gate(n == 60 and "legs matched x0.15, hips 41 deg to the spine" in text,
          "%d frames, the status line says what Leg match did: %s"
          % (n, ([part for part in text.split(" | ") if part.startswith("legs")] or ["-"])[0]))
     i = walk.index

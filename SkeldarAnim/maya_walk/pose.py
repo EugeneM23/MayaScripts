@@ -139,11 +139,45 @@ def carried(names, first_worlds, statics, pose_bones, target_module):
     return dict((name, _np(out[name])) for name in names if name in out)
 
 
+def body_turn(walk, walk_rest):
+    """How far the walk's body stands turned about up against its own root (radians, + toward the walk's side
+    axis): its mean hip line against the hip line of its rest stood on the root at the cycle's first frame - a
+    few degrees for a walk facing its root, +-35 for the diagonal backward walks of 2026-10-16."""
+    rest = _rest_on_walk(walk, walk_rest)
+    flat = lambda v: v - np.dot(v, walk.up) * walk.up
+    mean = (walk.pos[walk.index["thigh_l"]] - walk.pos[walk.index["thigh_r"]]).mean(axis=0)
+    line = rest["thigh_l"][3, :3] - rest["thigh_r"][3, :3]
+    return _wrapped(_heading(flat(mean), walk) - _heading(flat(line), walk))
+
+
+def _turned(out, walk, angle):
+    """{name: 4x4} - the carried pose turned `angle` (radians) about up through the walk's root at the cycle's
+    first frame."""
+    turn = np.eye(4)
+    turn[:3, :3] = pm_turn = _up_turn(walk, angle)
+    pivot = walk.clip.worlds[walk.index["root"], 0, 3, :3]
+    turn[3, :3] = pivot - pivot @ pm_turn
+    return dict((name, _np(m) @ turn) for name, m in out.items())
+
+
+def _up_turn(walk, angle):
+    """The rotation (row vectors) turning a heading (_heading) by +`angle` about up."""
+    up, fwd, side = walk.up, walk.fwd, walk.side
+    c, s = math.cos(angle), math.sin(angle)
+    basis = np.stack([fwd, side, up])
+    spin = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+    return basis.T @ spin @ basis
+
+
 def prepare(walk, statics, pose_bones, model, target_module):
     """The pose as walkmodel.Walk.evaluate takes it (its docstring). `model` the walkmodel module,
-    `target_module` walktarget (its at_rest, leg lengths and twin rule)."""
+    `target_module` walktarget (its at_rest, leg lengths and twin rule). The pose stands on the walk's BODY: a
+    pose faces its root, and a walk whose body is turned against its own root (body_turn) has the pose turned
+    with it - placed by the root, a diagonal backward walk's pose stood 76 deg off the body and Leg match
+    crossed its feet (2026-10-16)."""
     walk_rest = target_module.at_rest(dict((leaf, dict(b)) for leaf, b in statics.items()))
     out, pairs, same, legs_ratio = _onto(walk.names, walk.clip.worlds[:, 0], statics, pose_bones, target_module)
+    out = _turned(out, walk, body_turn(walk, walk_rest))
     legs = ("thigh", "calf", "foot")
     rot = lambda name: model.orthonormal(_np(out[name])[:3, :3])
     spine = {}
@@ -176,7 +210,7 @@ def prepare(walk, statics, pose_bones, model, target_module):
             held[3, :3] *= scale
             weapons[h] = held
     ankle = dict((side, _np(out["foot_" + side])[3, :3]) for side in SIDES)
-    width = float(np.dot(ankle["l"] - ankle["r"], walk.side)) - (walk.side_print("l") - walk.side_print("r"))
+    width = float(np.dot(ankle["l"] - ankle["r"], walk.across)) - (walk.body_print("l") - walk.body_print("r"))
     toe = {}
     for side in SIDES:
         ball = "ball_" + side
