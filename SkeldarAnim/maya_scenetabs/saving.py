@@ -85,6 +85,111 @@ def export_uuids(namespace, references=True):
     return out + [uid for uid, _ in session.top_references(namespace)]
 
 
+def _foreign(name, namespace, tabs, own=(records.LAYER_ROOT, records.SESSION_NODE)):
+    """A node another tab's (its outermost namespace is another tab) or the session's own
+    (`own`: the session's root layer and node, in the root namespace)."""
+    parts = name.lstrip(":").split(":")
+    if len(parts) == 1:
+        return parts[0] in own
+    return parts[0] != namespace and parts[0] in tabs
+
+
+def foreign_inputs(uuids, namespace, tabs):
+    """Every connection by which the export would reach another tab or the session's own
+    nodes: `exportSelected` writes a node's whole upstream, so one input from another tab -
+    directly, or through a node of the root namespace - wrote that whole tab into this tab's
+    file, and the session's layer root with it (2026-10-16, live: a MaterialX blinn fed by
+    another tab's stack; measured: a root node between them leaks too). Walks upstream from
+    the tab's nodes through every node the export would write (not Maya's defaults or shared
+    nodes, not a reference's). Returns the edges as (source MPlug, destination MPlug)."""
+    import maya.api.OpenMaya as om
+    own = set(uuids)
+    session_nodes = (layers.root().lstrip(":") or records.LAYER_ROOT, records.SESSION_NODE)
+    found = om.MSelectionList()
+    for path in cmds.ls(uuids, long=True) or []:
+        try:
+            found.add(path)
+        except RuntimeError:
+            pass
+    queue = [found.getDependNode(i) for i in range(found.length())]
+    seen = set(own)
+    edges = []
+    while queue:
+        node = queue.pop()
+        for plug in om.MFnDependencyNode(node).getConnections():
+            source = plug.sourceWithConversion()
+            if source.isNull:
+                continue
+            fn = om.MFnDependencyNode(source.node())
+            uid = fn.uuid().asString()
+            if uid in own:
+                continue
+            if _foreign(fn.absoluteName(), namespace, tabs, session_nodes):
+                edges.append((source, plug))
+                continue
+            if uid in seen:
+                continue
+            seen.add(uid)
+            if fn.isDefaultNode or fn.isShared or fn.isFromReferencedFile:
+                continue
+            queue.append(source.node())
+    return edges
+
+
+def _end(plug):
+    """A plug kept as its node's handle and its attribute's full name: an MPlug held across
+    the save's renames and moves crashed Maya when read again (measured, 2026-10-16)."""
+    import maya.api.OpenMaya as om
+    return (om.MObjectHandle(plug.node()),
+            plug.partialName(includeNonMandatoryIndices=True, includeInstancedIndices=True,
+                             useFullAttributePath=True, useLongNames=True))
+
+
+def _plug_name(end):
+    import maya.api.OpenMaya as om
+    handle, attribute = end
+    if not handle.isValid():
+        return ""
+    node = handle.object()
+    if node.hasFn(om.MFn.kDagNode):
+        name = om.MDagPath.getAPathTo(node).fullPathName()
+    else:
+        name = om.MFnDependencyNode(node).absoluteName()
+    return "%s.%s" % (name, attribute)
+
+
+def _cut(edges):
+    """The edges cut, one by one; returns them as (source end, destination end), those a
+    locked node refuses left out."""
+    import maya.api.OpenMaya as om
+    done = []
+    for source, destination in edges:
+        ends = (_end(source), _end(destination))
+        modifier = om.MDGModifier()
+        try:
+            modifier.disconnect(source, destination)
+            modifier.doIt()
+        except RuntimeError:
+            continue
+        done.append(ends)
+    return done
+
+
+def _join(edges):
+    """`_cut` undone, edge by edge; raises after the rest when one does not go back."""
+    failed = []
+    for ends in edges:
+        source, destination = _plug_name(ends[0]), _plug_name(ends[1])
+        try:
+            if not cmds.isConnected(source, destination):
+                cmds.connectAttr(source, destination)
+        except (RuntimeError, ValueError):
+            failed.append("%s -> %s" % (source or "(gone)", destination or "(gone)"))
+    if failed:
+        raise RuntimeError("Scene Tabs: %d connection(s) to other tabs did not come back: %s"
+                           % (len(failed), ", ".join(failed[:5])))
+
+
 def save_tab(namespace=None, path=None, adopt=True, preserve_references=True):
     """The tab (the active one by default) into `path` (its own file by
     default). `adopt`: the tab takes the path and is clean after. A save
@@ -127,7 +232,7 @@ def _save_tab(namespace, path, adopt, preserve_references):
     recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
     selection = cmds.ls(selection=True, uuid=True) or []
     current = cmds.namespaceInfo(currentNamespace=True) or ":"
-    moved, links, folded = None, [], []
+    moved, links, folded, outside = None, [], [], []
     cmds.undoInfo(stateWithoutFlush=False)
     failures = []           # cleanup steps that raised; the export's own error wins
 
@@ -150,6 +255,8 @@ def _save_tab(namespace, path, adopt, preserve_references):
             #  file holds the pasted nodes as the tab's own (2026-10-16)
             folded = session.fold_pasted(namespace, [t["ns"] for t in state["tabs"]])
             _config(namespace, ranges)
+            #  a layer of the tab Maya hung on the session root goes under the tab's (for good)
+            layers.adopt_strays(namespace)
             layers.home_blends(namespace)
             uuids = export_uuids(namespace, preserve_references)
             renames = {}
@@ -157,6 +264,8 @@ def _save_tab(namespace, path, adopt, preserve_references):
             if tab_root:
                 links = layers.detach(tab_root)
                 renames[cmds.ls(tab_root, uuid=True)[0]] = records.FILE_LAYER_ROOT
+            #  nothing of another tab or of the session reachable from the file's nodes
+            outside = _cut(foreign_inputs(uuids, namespace, [t["ns"] for t in state["tabs"]]))
             cmds.namespace(setNamespace=":")
             moved = session.lift(namespace, renames)
             cmds.select(cmds.ls(uuids) or [], noExpand=True, replace=True)
@@ -171,6 +280,7 @@ def _save_tab(namespace, path, adopt, preserve_references):
                 step(lambda: session.lower(moved))
             step(lambda: cmds.namespace(setNamespace=current if current.startswith(":") else ":" + current))
             step(lambda: layers.attach(links))
+            step(lambda: _join(outside))
             step(lambda: layers.home_blends(namespace))   # Maya rebuilt some in the root (measured)
             step(reselect)
     finally:

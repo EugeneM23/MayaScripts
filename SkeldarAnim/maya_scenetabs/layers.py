@@ -61,8 +61,20 @@ def take_root():
         return []
     children = cmds.ls(_children(found), uuid=True) or []
     if found.split(":")[-1] != records.LAYER_ROOT:
+        #  a scene saved by an old build can hold a copy of the session root under its name:
+        #  out of the way first, or the real root comes out `skeldarTabsLayerRoot1` and the copy
+        #  is taken for it (2026-10-16); the copy goes into tab 1 and `tidy_imported` dissolves it
+        clash = ":" + records.LAYER_ROOT
+        if cmds.objExists(clash):
+            cmds.rename(clash, ":" + records.LAYER_ROOT + "Copy", ignoreShape=True)
         cmds.rename(found, ":" + records.LAYER_ROOT, ignoreShape=True)
     return children
+
+
+def is_root_copy(layer):
+    """A copy of the session root (`skeldarTabsLayerRoot`, `...Copy`, `...1`) inside a tab: an
+    old save wrote the session root into a tab's file (2026-10-16)."""
+    return ":" in layer and layer.split(":")[-1].startswith(records.LAYER_ROOT)
 
 
 def is_tab_root_name(layer):
@@ -149,8 +161,11 @@ def detach(layer):
 
 def attach(links):
     """`detach` undone: exactly those connections back. Never `animLayer -e
-    -parent`, which rebuilds the layer's blend nodes in the current namespace."""
+    -parent`, which rebuilds the layer's blend nodes in the current namespace.
+    A link whose node is gone is skipped: it names another session's scene."""
     for source, destination in links or []:
+        if not (cmds.objExists(source.split(".")[0]) and cmds.objExists(destination.split(".")[0])):
+            continue
         if not cmds.isConnected(source, destination):
             cmds.connectAttr(source, destination)
 
@@ -163,7 +178,7 @@ def adopt(layer, namespace):
     session_root = root()
     if not session_root or (cmds.animLayer(layer, q=True, parent=True) or "") != session_root:
         return False
-    if is_tab_root_name(layer) or layer.split(":")[-1] == records.LAYER_ROOT:
+    if is_tab_root_name(layer) or is_root_copy(layer) or layer.split(":")[-1] == records.LAYER_ROOT:
         return False
     made = tab_root(namespace, make=True)
     if not made or made == layer:
@@ -171,6 +186,46 @@ def adopt(layer, namespace):
     cmds.animLayer(layer, e=True, parent=made)
     home_blends(namespace)
     return True
+
+
+def adopt_strays(namespace):
+    """Every layer of the tab hanging on the session root (not its own root) moved under
+    the tab's root, as `adopt` does when Maya makes one. One left there takes the session
+    root into the tab's file, and every tab it holds with it (2026-10-16). Returns them."""
+    session_root = root()
+    if not session_root:
+        return []
+    strays = [layer for layer in session.typed(namespace, "animLayer")
+              if (cmds.animLayer(layer, q=True, parent=True) or "") == session_root
+              and not is_tab_root_name(layer) and not is_root_copy(layer)]
+    return [layer for layer in strays if adopt(layer, namespace)]
+
+
+def tidy_imported(namespace):
+    """An imported tab's layers that hang on the session root (not its own root) moved under
+    its root, and a copy of the session root it carries dissolved: an old save could write
+    another whole tab into a tab's file, the session's root with it (2026-10-16, live).
+    Returns how many layers moved."""
+    session_root = root()
+    if not session_root:
+        return 0
+    found = session.typed(namespace, "animLayer")
+    made = tab_root(namespace)
+    copies = [layer for layer in found if is_root_copy(layer)]
+    strays = [layer for layer in found if layer != made and layer not in copies
+              and (cmds.animLayer(layer, q=True, parent=True) or "") == session_root]
+    children = [child for copy in copies for child in _children(copy)]
+    if not (copies or strays):
+        return 0
+    made = made or tab_root(namespace, make=True)
+    for layer in children + strays:
+        if layer != made:
+            cmds.animLayer(layer, e=True, parent=made)
+    for copy in copies:
+        if cmds.objExists(copy) and not _children(copy):
+            cmds.delete(copy)
+    home_blends(namespace)
+    return len(children) + len(strays)
 
 
 def give_back(namespace, name):
@@ -260,6 +315,19 @@ def hide_layers(namespace):
         _store(layer, sources[0])
 
 
+def _on_manager(layer, source):
+    """A display layer back on its manager slot (a free one when that slot was taken
+    meanwhile, Maya's own manager when the stored one is gone)."""
+    manager = source.split(".")[0]
+    if not cmds.objExists(manager):
+        manager = "layerManager"
+        source = manager + ".displayLayerId[0]"
+    if not _manager_index_free(source):
+        used = cmds.getAttr(manager + ".displayLayerId", multiIndices=True) or [0]
+        source = "%s.displayLayerId[%d]" % (manager, max(used) + 1)
+    cmds.connectAttr(source, layer + ".identification", force=True)
+
+
 def show_layers(namespace):
     """`hide_layers` undone: the cut links back, each display layer on its manager slot again
     (a free one when its old slot was taken meanwhile)."""
@@ -271,11 +339,27 @@ def show_layers(namespace):
         source = _take(layer)
         if not source:
             continue
-        if not _manager_index_free(source):
-            manager = source.split(".")[0]
-            used = cmds.getAttr(manager + ".displayLayerId", multiIndices=True) or [0]
-            source = "%s.displayLayerId[%d]" % (manager, max(used) + 1)
-        cmds.connectAttr(source, layer + ".identification", force=True)
+        _on_manager(layer, source)
+
+
+def forget_stored(namespace):
+    """What an imported file brought of the hide state of the session that wrote it, dropped:
+    its layers' stored links name that session's plugs. An old save wrote a whole hidden tab
+    into another tab's file, its root's links with it, and the file did not open («No object
+    matches name: tab_...:AnimLayerRoot.solo», 2026-10-16, live). Its display layers go back
+    on the Layer Editor. Returns how many layers carried one."""
+    dropped = 0
+    for layer in session.typed(namespace, "animLayer"):
+        if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
+            _take(layer)
+            dropped += 1
+    for layer in session.typed(namespace, "displayLayer"):
+        if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
+            source = _take(layer)
+            if isinstance(source, str) and source:
+                _on_manager(layer, source)
+            dropped += 1
+    return dropped
 
 
 def refresh_editors():

@@ -10990,6 +10990,57 @@ the scene's own, and a failed switch puts the old flag back. Proof: `verify_scen
 **19/19** (mayapy), all **0 of 220**, `verify_tabs_scope.py` 0 of 46, unit tests
 `test_scenetabs_records.Cameras`. Not seen in a GUI Maya.
 
+**A tab's save wrote another whole tab into its file** (2026-10-16, the animator: «No object matches name:
+tab_AS_DG_ATK_JA_01_ma_skeldartmp_ma_skeldartmp:AnimLayerRoot.solo … Не могу открыть сцену»). The file
+was `Knife/AS_DG_ATK_JA_04.ma`, saved at 12:48. Read off it, it holds 3316 nodes of a tab that was
+hidden then: a Manny rig with `.lodv` off, its layers carrying their stored links (`skeldarTabOut`),
+and the session's `skeldarTabsLayerRoot`. Two separate failures:
+- **The save.** `exportSelected` writes a node's whole upstream (trap 263). The tab was tied to the
+  hidden one by a MaterialX blinn fed by that tab's `materialXStackShape1`, and to the session root by
+  a layer hanging on it, and the export followed both.
+  - `saving.foreign_inputs` walks upstream from the tab's nodes through every node the export would
+    write (not Maya's defaults, shared nodes or a reference's) and cuts every input from another tab
+    or from the session's root layer and node. The edges are kept as handles and full attribute
+    names, and put back after the export (`_cut` / `_join`).
+  - `layers.adopt_strays` moves a tab layer hanging on the session root under the tab's own root.
+- **The open.** `show_layers` re-attached the stored links of the session that WROTE the file, naming
+  nodes that are not here. Every open of such a file now runs `opening._tidy_file`, in `_import` and
+  in `start()` (a scene opened plainly, then the first tab):
+  - `leaked_tabs` finds a child `tab_*` namespace holding our hide state (stored links, a set we hid);
+    a rig pasted from another tab carries none. The animator is asked **Remove / Keep**, and the line
+    says which;
+  - `layers.forget_stored` drops every stored link the file brought; its display layers go back on
+    the Layer Editor;
+  - `layers.tidy_imported` puts layers hanging on the session root under the tab's root and dissolves
+    a copy of the session root (`is_root_copy`);
+  - `take_root` renames a copy named like the session root out of the way first: the real root came
+    out `skeldarTabsLayerRoot1`, and the copy was taken for it by name;
+  - `attach` skips a link whose node is gone.
+
+Proof: `verify_scene_tabs.py leak` **20/20** (mayapy):
+- tab B tied to hidden A through a root node and to C directly, with a layer on the session root, saves
+  clean: nothing of A or C or of the session, the layer under B's root, every connection back;
+- with the walk switched off, the same save writes A, C and the session root in (the control);
+- that file opens in a tab with Remove (asked, nothing left over) and with Keep (A and C inside, their
+  layers under the tab's root), away and back;
+- opened plainly, then a new tab: the real root named right, the copy gone.
+
+The animator's own JA_04 (a copy in mayapy): opened plainly, then a new tab, Remove takes the 3316 nodes
+out (10765 → 7449); its next save (5.2 s, 0.6 s of it the walk over 7403 nodes) holds no session root and
+no stored link. `verify_scene_tabs.py all` **0 of 240**, `verify_tabs_scope.py` 0 of 46; unit tests
+`tests/test_scenetabs_leak.py`. Not seen in a GUI Maya.
+
+262. **`namespace -removeNamespace -deleteNamespaceContent` over a DETACHED animation layer tree (a root
+     with no parent - a hidden tab's) corrupted Maya's heap**: the command returned, and the next `file`
+     operation (or the interpreter's exit) died with 0xc0000374. `cmds.delete` of the same layers, one at
+     a time, was fine, and so was the namespace delete after the root was parented again. Delete layers
+     node by node (`opening._remove_namespace`, the path a closed tab takes).
+263. **`file -exportSelected` writes every selected node's upstream, whatever its namespace.** One input from
+     another tab (or through a root-namespace node between them) writes that whole tab. A parent link to
+     the session's root layer writes the root, and through its children every tab still attached to it.
+     A tab's export must cut what leads outside first; `-exportSelectedStrict` would also drop the tab's
+     own nodes Maya made in the root namespace.
+
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 
 The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации

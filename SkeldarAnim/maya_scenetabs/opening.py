@@ -17,6 +17,7 @@ import maya.cmds as cmds
 from . import layers, records, session, switching
 
 ASK = None          # seam: callable(message, buttons) -> the button picked
+NOTES = []          # what tidying a file found, said by the press that opened it
 
 
 def _quiet(fn):
@@ -102,6 +103,7 @@ def start():
         children = layers.take_root()
         session.move_into(namespace)
         layers.give_children(namespace, children)
+        _tidy_file(namespace, os.path.basename(scene) or "The scene")
     except Exception:
         try:
             layers.give_back(namespace, root_name)
@@ -139,6 +141,57 @@ def _sweep(namespace):
     return doomed
 
 
+def leaked_tabs(namespace):
+    """Tabs an old save wrote into this tab's file, hidden (2026-10-16, live: a whole other tab
+    with its Manny rig and layers in AS_DG_ATK_JA_04.ma): a child namespace named like a tab
+    that holds our hide state - a layer's stored links, a set we hid. Nothing else carries it,
+    so a rig the animator pasted from another tab (shown, `fold_pasted`) is never one.
+    Returns [(leaf, node count)]."""
+    out = []
+    for child in session.child_namespaces(namespace):
+        if not child.startswith(records.TAB_PREFIX):
+            continue
+        nodes = cmds.namespaceInfo(":%s:%s" % (namespace, child), listOnlyDependencyNodes=True,
+                                   recurse=True) or []
+        marked = [n for n in cmds.ls(nodes, type=("animLayer", "displayLayer", "objectSet")) or []
+                  if cmds.attributeQuery(layers.OUT_ATTR, node=n, exists=True)
+                  or cmds.attributeQuery(switching.SET_MARK, node=n, exists=True)]
+        if marked:
+            out.append((child, len(nodes)))
+    return out
+
+
+def _tidy_file(namespace, name):
+    """A file's leftovers of the session that wrote it: another tab an old save wrote into it
+    (removed when the animator says so), its layers' stored links, a copy of the session root
+    and layers hanging on ours. The note goes to NOTES and the Script Editor."""
+    leaked = leaked_tabs(namespace)
+    if leaked:
+        listed = ", ".join("%s (%d nodes)" % (child, count) for child, count in leaked)
+        answer = _ask("%s holds another tab, hidden: %s. An old save of Scene Tabs wrote it into "
+                      "this file. Remove it from this tab?" % (name, listed), ("Remove", "Keep"), "Keep")
+        if answer == "Remove":
+            for child, _ in leaked:
+                #  node by node, as a closed tab goes: `namespace -deleteNamespaceContent` over
+                #  its detached layers corrupted Maya's heap (0xc0000374 on the next file op)
+                _remove_namespace("%s:%s" % (namespace, child))
+            note = "removed another tab an old save wrote into %s: %s" % (name, listed)
+        else:
+            note = "%s holds another tab an old save wrote into it: %s (kept)" % (name, listed)
+        NOTES.append(note)
+        print("Scene Tabs: " + note)
+    #  the hide state of the session that wrote the file is not this session's: its stored
+    #  links named nodes that are not here, and the file did not open (2026-10-16, live)
+    layers.forget_stored(namespace)
+    layers.tidy_imported(namespace)
+
+
+def _notes(message):
+    found = " | ".join(NOTES)
+    del NOTES[:]
+    return message + (" | " + found if found else "")
+
+
 def _ranges_of(namespace):
     node = ":%s:%s" % (namespace, records.CONFIG_NODE)
     if not cmds.objExists(node):
@@ -157,6 +210,7 @@ def _import(path, namespace):
               preserveReferences=True, executeScriptNodes=False, mergeNamespacesOnClash=False,
               ignoreVersion=True)
     _sweep(namespace)
+    _tidy_file(namespace, os.path.basename(path))
     return unit, (_ranges_of(namespace) or session.current_ranges())
 
 
@@ -209,6 +263,7 @@ def _new(state, namespace, make, index=None):
 def open_tab(path, index=None):
     """`path` into a new tab (the open scene becomes tab 1 first)."""
     path = _check(path)
+    del NOTES[:]
     state = start()
     namespace = records.namespace_for(path, _taken())
     done = {}
@@ -221,8 +276,8 @@ def open_tab(path, index=None):
         return item
     _new(state, namespace, make, index)
     cmds.file(modified=False)
-    return "Opened %s in a tab (%s, %s)" % (os.path.basename(path), done["unit"],
-                                            records.range_text(done["ranges"]))
+    return _notes("Opened %s in a tab (%s, %s)" % (os.path.basename(path), done["unit"],
+                                                   records.range_text(done["ranges"])))
 
 
 @_busy
@@ -246,6 +301,7 @@ def open_any(path):
 @_quiet
 def new_tab():
     """An empty tab (its first Save asks for a path)."""
+    del NOTES[:]
     state = start()
     namespace = records.namespace_for(records.UNTITLED, _taken())
 
@@ -255,7 +311,7 @@ def new_tab():
         item["cameras"] = switching.default_cameras()      # a new scene's, not the last tab's
         return item
     _new(state, namespace, make)
-    return "New empty tab"
+    return _notes("New empty tab")
 
 
 def _remove_namespace(namespace):

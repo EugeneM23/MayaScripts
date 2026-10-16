@@ -1362,6 +1362,172 @@ def phase_pasted():
          all(cmds.objExists(n) for n in ("mat", "mat1", "only", "Bow:Arrow", "Bow1:Arrow", "cubeB")))
 
 
+def _leak_tree(namespace):
+    """The tab's layers on the session root other than its own root, the root copies anywhere,
+    the layers still carrying stored links."""
+    from maya_scenetabs import layers
+    session_root = layers.root()
+    found = session.typed(namespace, "animLayer")
+    made = layers.tab_root(namespace)
+    loose = [l for l in found if l != made and (cmds.animLayer(l, q=True, parent=True) or "") == session_root]
+    copies = [l for l in cmds.ls(type="animLayer") or []
+              if l.split(":")[-1].startswith(records.LAYER_ROOT) and l != session_root]
+    stored = [l for l in found + session.typed(namespace, "displayLayer")
+              if cmds.attributeQuery(layers.OUT_ATTR, node=l, exists=True)]
+    return loose, copies, stored
+
+
+def phase_leak():
+    """2026-10-16, found live: AS_DG_ATK_JA_04.ma did not open as a tab («No object matches
+    name: tab_...:AnimLayerRoot.solo»). An old save had written another whole tab into it,
+    hidden, with the session's layer root: `exportSelected` writes a node's upstream, and the
+    tab was tied to the other one (a material fed by its stack) and to the session root (a layer
+    hung on it). A save now cuts every input from another tab or the session for the export;
+    a file an old save wrote opens, its leaked tab removed when the animator says so."""
+    from maya_scenetabs import layers, opening, saving, switching
+    made = {}
+    for tag in ("A", "B", "C"):
+        fresh()
+        cube = cmds.polyCube(name="cube" + tag)[0]
+        cmds.setKeyframe(cube, attribute="tx", time=0, value=0)
+        cmds.setKeyframe(cube, attribute="tx", time=10, value=5)
+        cmds.select(cube)
+        cmds.animLayer("L" + tag, addSelectedObjects=True)
+        cmds.setKeyframe(cube, attribute="ty", time=0, value=1, animLayer="L" + tag)
+        made[tag] = RUN + "/leak%s.ma" % tag
+        _save(made[tag])
+    answers = {"leak": "Remove"}
+    asked = []
+
+    def ask(message, buttons):
+        if "Remove" in buttons:
+            asked.append(message)
+            return answers["leak"]
+        return "Don't Save" if "Don't Save" in buttons else buttons[-1]
+    opening.ASK = ask
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.open_tab(made["B"])
+    opening.open_tab(made["C"])
+    a, b, c = "tab_leakA", "tab_leakB", "tab_leakC"
+    switching.switch(b)
+    # B tied to the others the ways an old save leaked them
+    cmds.select(b + ":cubeB")
+    stray = cmds.animLayer("Stray", addSelectedObjects=True)
+    gate("leak: a layer Maya makes hangs on the session root (the fixture)",
+         cmds.animLayer(stray, q=True, parent=True) == layers.root(), stray)
+    cmds.addAttr(b + ":cubeB", longName="fromA")
+    cmds.addAttr(b + ":cubeB", longName="fromC")
+    cmds.namespace(setNamespace=":")
+    mid = cmds.createNode("multDoubleLinear", name="leakMid")
+    cmds.namespace(setNamespace=":" + b)
+    ties = [(a + ":cubeA.translateY", mid + ".input1"), (mid + ".output", b + ":cubeB.fromA"),
+            (c + ":cubeC.translateZ", b + ":cubeB.fromC")]
+    for source, destination in ties:
+        cmds.connectAttr(source, destination)
+    target = RUN + "/leakSaved.ma"
+    message = saving.save_tab(b, path=target, adopt=False)
+    text = open(target).read()
+    gate("leak: B saves", message.startswith("Saved"), message)
+    others = ["cubeA", "cubeC", "tab_leakA", "tab_leakC", records.LAYER_ROOT, records.SESSION_NODE,
+              layers.OUT_ATTR]
+    gate("leak: the file holds nothing of the other tabs or of the session",
+         not [w for w in others if w in text], [w for w in others if w in text])
+    gate("leak: the node between them is B's upstream and goes in, cut from A", '"leakMid"' in text)
+    gate("leak: the stray layer went under B's root, in the file under BaseAnimation",
+         cmds.animLayer(stray, q=True, parent=True) == layers.tab_root(b)
+         and '"Stray.play" "BaseAnimation.cdly' in text.replace("connectAttr ", ""), stray)
+    gate("leak: every connection to the other tabs is back after the save",
+         all(cmds.isConnected(s, d) for s, d in ties))
+    gate("leak: the other tabs are still hidden, their layers off the Layer Editor",
+         all(cmds.attributeQuery(layers.OUT_ATTR, node=ns + ":AnimLayerRoot", exists=True)
+             and not cmds.animLayer(ns + ":AnimLayerRoot", q=True, parent=True) for ns in (a, c)))
+    # the control: the old save (no walk, no strays moved) writes A and C in, hidden
+    stray2 = cmds.animLayer("Stray2", addSelectedObjects=True)
+    real = saving.foreign_inputs, layers.adopt_strays
+    saving.foreign_inputs, layers.adopt_strays = (lambda *args: []), (lambda namespace: [])
+    leaky = RUN + "/leakOld.ma"
+    try:
+        saving.save_tab(b, path=leaky, adopt=False)
+    finally:
+        saving.foreign_inputs, layers.adopt_strays = real
+    text = open(leaky).read()
+    gate("leak: the old save writes the other tabs and the session root in (the control)",
+         "tab_leakA:cubeA" in text and "tab_leakC:cubeC" in text and records.LAYER_ROOT in text
+         and layers.OUT_ATTR in text,
+         stray2)
+    # a file the old save wrote, opened as a tab: Remove
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    del asked[:]
+    try:
+        message, error = opening.open_tab(leaky), ""
+    except Exception as exc:                                    # noqa: BLE001
+        message, error = "", str(exc)
+    new = session.state()["active"]
+    gate("leak: the file opens in a tab", message.startswith("Opened") and new == "tab_leakOld", message or error)
+    gate("leak: the animator is asked, the line says what went",
+         asked and "tab_leakA" in asked[0] and "tab_leakC" in asked[0] and "removed another tab" in message,
+         message)
+    gate("leak: the other tabs are gone from it",
+         not [n for n in session.child_namespaces(new) if n.startswith(records.TAB_PREFIX)]
+         and not cmds.objExists(":%s:tab_leakA:cubeA" % new), session.child_namespaces(new))
+    loose, copies, stored = _leak_tree(new)
+    gate("leak: no root copy, no loose layer, no stored link left", not (loose or copies or stored),
+         (loose, copies, stored))
+    gate("leak: its own layers under its root",
+         all(cmds.animLayer(":%s:%s" % (new, l), q=True, parent=True) == layers.tab_root(new)
+             for l in ("LB", "Stray", "Stray2")))
+    try:
+        switching.switch("tab_leakA")
+        switching.switch(new)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        error = str(exc)
+    gate("leak: away and back", not error and session.state()["active"] == new, error)
+    # Keep
+    answers["leak"] = "Keep"
+    message = opening.open_tab(leaky)
+    kept = session.state()["active"]
+    loose, copies, stored = _leak_tree(kept)
+    gate("leak: Keep opens it with the other tabs inside, said",
+         "(kept)" in message and cmds.objExists(":%s:tab_leakA:cubeA" % kept), message)
+    gate("leak: kept, their layers hang under the tab's root, nothing stored, no root copy",
+         not (loose or copies or stored)
+         and cmds.animLayer(":%s:tab_leakA:AnimLayerRoot" % kept, q=True, parent=True) == layers.tab_root(kept),
+         (loose, copies, stored))
+    try:
+        switching.switch("tab_leakA")
+        switching.switch(kept)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        error = str(exc)
+    gate("leak: kept, away and back", not error, error)
+    # opened plainly, then tabs on: the conversion
+    answers["leak"] = "Remove"
+    fresh()
+    cmds.file(leaky, open=True, force=True)
+    gate("leak: the file opens plainly (the control: its copy of the session root is there)",
+         cmds.objExists(":" + records.LAYER_ROOT) and cmds.objExists("cubeB"))
+    message = opening.new_tab()
+    first = session.state()["tabs"][0]["ns"]
+    try:
+        switching.switch(first)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        error = str(exc)
+    gate("leak: tabs on, the new tab made, tab 1 shown again", not error and "removed another tab" in message,
+         error or message)
+    loose, copies, stored = _leak_tree(first)
+    gate("leak: tab 1: the real root takes its name, the copy dissolved, the leak removed",
+         layers.root() == records.LAYER_ROOT and not (loose or copies or stored)
+         and not [n for n in session.child_namespaces(first) if n.startswith(records.TAB_PREFIX)]
+         and all(cmds.animLayer(":%s:%s" % (first, l), q=True, parent=True) == layers.tab_root(first)
+                 for l in ("LB", "Stray", "Stray2")),
+         (layers.root(), loose, copies, stored))
+    opening.ASK = None
+
+
 def _cam(name="persp", attr="translate"):
     node = name if attr in ("translate", "rotate") else cmds.listRelatives(name, shapes=True)[0]
     value = cmds.getAttr(node + "." + attr)
@@ -1499,7 +1665,8 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
-          "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras}
+          "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras,
+          "leak": phase_leak}
 
 
 def main(names):
