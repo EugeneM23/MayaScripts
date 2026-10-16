@@ -10500,7 +10500,7 @@ past the limit was tried and dropped: the target's retarget sank the pelvis back
 crossed 18 deg in a frame (near straight the angle is a square root of the distance). Tests
 `PelvisHeightTests` (rolls without a flip, legs off the limit); `verify_walk.py` 79/79, sprint 12/12, own 22/22.
 
-262. **Near straight, a knee is a square root of its reach.** A smooth hip-to-ankle distance touching the limit
+266. **Near straight, a knee is a square root of its reach.** A smooth hip-to-ankle distance touching the limit
      (a cover's peak) or clamped at it is a V or a plateau in the knee angle: 1 % of reach is 10 deg there. Keep a
      leg a little short of straight wherever something else has to give, and smooth what moves the ankle (a roll
      switching pivots) in time.
