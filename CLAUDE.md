@@ -11473,6 +11473,11 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
     onto it 72 ms after the last one.
   - Interface animations off: at once.
   - Filmstrip: `render_time_bar_burst.py` -> `time_bar_burst.png`.
+- **Bottom edge is the default** («по умолчанию выдвижной снизу таймлайн был активен при установке нашего
+  обновления»): `look.DEFAULT_MODE` "edge", and once per `look.DEFAULT_VERSION` (optionVar
+  `skeldarTimeBarDefaults`) `maya_timebar.upgrade()` - called first by `ensure()`, i.e. the hub's build - moves
+  Docked or unset to the bottom edge; Maya's own slider, if chosen, is kept. A choice made after it stands. Raise
+  DEFAULT_VERSION to make a later update switch it again.
 
 **Proof**:
 - `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake

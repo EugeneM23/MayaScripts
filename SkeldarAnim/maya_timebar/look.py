@@ -304,14 +304,27 @@ SLIDE_MS = 180          # out
 SLIDE_BACK_MS = 140     # back
 
 
+DEFAULT_MODE = "edge"   # the bottom edge by default (2026-10-16)
+DEFAULT_VERSION = 1     # raised when an update should switch the mode once more
+
+
 def mode_from(mode, old=None):
     """The mode from its optionVar; an older build's on/off one (1 docked, 0
-    Maya's) when there is none; docked by default."""
+    Maya's) when there is none; the bottom edge by default."""
     if mode in MODES:
         return mode
     if old is not None:
         return "docked" if old else "maya"
-    return "docked"
+    return DEFAULT_MODE
+
+
+def upgraded(mode, seen):
+    """The mode after an update (2026-10-16, «по умолчанию выдвижной снизу таймлайн был
+    активен при установке нашего обновления»): once per DEFAULT_VERSION the bar goes
+    to the bottom edge - unless the animator chose Maya's own slider."""
+    if seen >= DEFAULT_VERSION or mode == "maya":
+        return mode
+    return DEFAULT_MODE
 
 
 def bottom_band(window, height):

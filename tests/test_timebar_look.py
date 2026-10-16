@@ -188,7 +188,14 @@ class EdgeTests(unittest.TestCase):
         self.assertEqual(look.mode_from("edge"), "edge")
         self.assertEqual(look.mode_from(None, 0), "maya")
         self.assertEqual(look.mode_from(None, 1), "docked")
-        self.assertEqual(look.mode_from("nonsense"), "docked")
+        self.assertEqual(look.mode_from("nonsense"), "edge")
+        self.assertEqual(look.mode_from(None), "edge")
+
+    def test_an_update_moves_the_bar_to_the_bottom_edge_once(self):
+        self.assertEqual(look.upgraded("docked", 0), "edge")
+        self.assertEqual(look.upgraded("edge", 0), "edge")
+        self.assertEqual(look.upgraded("maya", 0), "maya")              # Maya's own, chosen: kept
+        self.assertEqual(look.upgraded("docked", look.DEFAULT_VERSION), "docked")   # a later choice stands
         self.assertEqual([m for _l, m in look.MODE_LABELS], list(look.MODES))
 
     def test_the_bands_sit_along_the_window_s_bottom(self):

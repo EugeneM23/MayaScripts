@@ -37,6 +37,7 @@ def uiscript(root):
 
 MODE_VAR = "skeldarTimeBarMode"          # maya | docked | edge (2026-10-16)
 LAST_VAR = "skeldarTimeBarLastMode"      # the last of docked / edge, for the switch back
+DEFAULTS_VAR = "skeldarTimeBarDefaults"  # the DEFAULT_VERSION this Maya has had
 
 
 def mode():
@@ -191,9 +192,23 @@ def set_mode(choice):
     return MESSAGES[choice]
 
 
+def upgrade():
+    """Once per look.DEFAULT_VERSION: the bottom edge, unless Maya's was chosen."""
+    import maya.cmds as cmds
+    from . import look
+    seen = cmds.optionVar(q=DEFAULTS_VAR) if cmds.optionVar(exists=DEFAULTS_VAR) else 0
+    if seen >= look.DEFAULT_VERSION:
+        return mode()
+    choice = look.upgraded(mode(), seen)
+    cmds.optionVar(stringValue=(MODE_VAR, choice))
+    cmds.optionVar(intValue=(DEFAULTS_VAR, look.DEFAULT_VERSION))
+    return choice
+
+
 def ensure():
-    """The mode the animator chose, standing (the hub's build calls it)."""
-    choice = mode()
+    """The mode the animator chose, standing (the hub's build calls it); an
+    update's new default taken once first."""
+    choice = upgrade()
     if choice == "edge":
         return ensure_edge()
     if choice == "docked":
