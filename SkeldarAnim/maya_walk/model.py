@@ -115,6 +115,9 @@ GROUND_ROOM = 0.6         # Ground time: a longer stance takes at most this shar
 STRETCH_REACH = 0.96      # Ground time past 1: the legs straighten at most this far (of their length)...
 GROUND_STRETCH = 0.15     # ...all of it at Ground time 1 + this
 ROLL_RELEASE = 0.1        # the heel's roll eases down over this share of a stride after its peak
+LEG_MARGIN = 0.008        # the legs held this share of their length short of their reach once they fall short...
+MARGIN_FULL = 2.0         # ...all of it once they fall this many cm short (from nothing at 0)
+ROLL_RATE = 100.0         # degrees a stride: a roll changes no faster (rate_limited) - the pelvis sinks the rest
 ROLL_BALL = 30.0          # degrees: a foot on its ball alone may roll this much further (heel up) for its leg's reach
 ROLL_HEEL = 15.0          # degrees: a foot on its heel alone may roll this much further (toes up)
 ROLL_COST = 25.0          # cm^2: a radian of roll weighs as much as 5 cm of the leg falling short (_roll_cost)
@@ -346,6 +349,24 @@ def smooth_cover(need, sigma):
     blur = np.real(np.fft.ifft(np.fft.fft(wide) * np.fft.fft(kernel / kernel.sum())))
     wanted = need > 1e-9
     return np.maximum(blur * float((need[wanted] / np.maximum(blur[wanted], 1e-12)).max()), 0.0)
+
+
+def rate_limited(roll, step):
+    """A periodic signed roll curve (one value a frame) changing no more than `step` a frame, by taking roll
+    away only: heel up and toes up each the largest curve under it that moves `step` a frame at most (its lower
+    envelope), so a flip from one to the other passes through zero (a step on each side of it)."""
+    roll = np.asarray(roll, float)
+    n = len(roll)
+    if n == 0:
+        return roll
+    offsets = np.arange(n)
+    distance = np.minimum(offsets, n - offsets) * step
+    out = np.zeros(n)
+    for part, sign in ((np.maximum(roll, 0.0), 1.0), (np.maximum(-roll, 0.0), -1.0)):
+        if part.any():
+            env = np.min([np.roll(part, s) + distance[s] for s in range(n)], axis=0)
+            out += sign * np.minimum(env, part)
+    return out
 
 
 def released(roll, frames):
@@ -2202,6 +2223,12 @@ class Walk(object):
         # time's long stance ended - the heel dropped, the ankle jumped back and the knee clicked (2026-10-13)
         # Under Ground time past 1 the stance ends with a large roll that rises as fast (2 -> 20 deg in two
         # frames): there the whole curve is a smooth cover over the frames' needs, heel up and toes up apart
+        # A stance leg short of its reach (a raised pelvis) rolls toes up over its heel from the strike, then heel
+        # up over its ball: taken frame by frame the toes-up roll came in 10-15 deg in one frame at the strike and
+        # flipped to heel up 15-22 deg in one frame at the heel-to-ball handoff, and the near-straight knee
+        # snapped (2026-10-16) - so the roll changes no faster than ROLL_RATE; where that leaves the leg short
+        # the pelvis's drop (a smooth cover below) takes the rest. Only ever less roll: a roll where the frame
+        # asked for none would move the foot's still point
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         for side in SIDES:
             if ks[side]["ground_time"] > 1.0:
@@ -2209,30 +2236,85 @@ class Walk(object):
                 sigma = LOWER_BLUR * n / self.strides
                 needs[side] = smooth_cover(up, sigma) - smooth_cover(back, sigma)
             needs[side] = released(needs[side], ROLL_RELEASE * n / self.strides)
+            if ks[side]["ground_time"] <= 1.0:
+                needs[side] = rate_limited(needs[side], math.radians(ROLL_RATE) * self.strides / float(n))
         ctx["rolls"] = (dict((side, np.append(needs[side], needs[side][0])) for side in SIDES)
                         if ctx["placement"] > 0.0 else None)
-        held, aloft = dict((side, np.zeros(n)) for side in SIDES), dict((side, np.zeros(n)) for side in SIDES)
-        for f, (phi, tau) in enumerate(times[:-1]):
-            for side in SIDES:
-                t, rot, ankle, hip, limit = legs[f][side]
-                down = self.planted(side, t, ctx)
-                if not down and not self._just_off(side, t, ctx):
-                    continue
-                ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx))[1]
-                q = ankle - hip
-                if np.linalg.norm(q) <= limit * (1.0 + 1e-9):
-                    continue
-                qu = float(np.dot(q, self.up))
-                disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
-                if disc >= 0.0:
-                    (held if down else aloft)[side][f] = -qu - math.sqrt(disc)
-        for side in SIDES:     # a foot just off the ground holds the pelvis no lower than its stance did...
-            cap = held[side].max()
-            if (ctx.get("ks") or {}).get(side, ctx["k"])["ground_time"] > 1.0:
-                cap = np.inf   # ...unless Ground time held it longer: its swing leaves from further behind
-            need = np.maximum(need, np.maximum(held[side], np.minimum(aloft[side], cap)))
+        # Near straight a knee turns tens of degrees for a millimetre of reach, so a leg held exactly at its
+        # limit by the drop's cover, or a swinging leg clamped there, snaps (2026-10-16, a raised pelvis): once
+        # the legs fall short anywhere (by MARGIN_FULL cm, eased in from nothing - so the defaults are untouched)
+        # they are held LEG_MARGIN of their length short of the limit, and a swinging foot past it is drawn in
+        # toward its hip on a smooth curve rather than clamped
+        def needs_for(margin):
+            held, aloft = dict((side, np.zeros(n)) for side in SIDES), dict((side, np.zeros(n)) for side in SIDES)
+            for f, (phi, tau) in enumerate(times[:-1]):
+                for side in SIDES:
+                    t, rot, ankle, hip, limit = legs[f][side]
+                    limit *= 1.0 - margin
+                    down = self.planted(side, t, ctx)
+                    # with the margin a swinging foot holds the pelvis as far as it cannot be drawn in: fully
+                    # as it comes down to its print, not at all mid-swing (swing_weight, the draw-in's own)
+                    share = 0.0 if down or self._just_off(side, t, ctx) or margin <= 0.0 else 1.0 - self.swing_at(side, t)
+                    if not down and share <= 0.0 and not self._just_off(side, t, ctx):
+                        continue
+                    ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx))[1]
+                    q = ankle - hip
+                    if np.linalg.norm(q) <= limit * (1.0 + 1e-9):
+                        continue
+                    qu = float(np.dot(q, self.up))
+                    disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
+                    if disc >= 0.0:
+                        if share > 0.0:      # (the margin's pass only, so only once the stance legs fall short)
+                            held[side][f] = share * (-qu - math.sqrt(disc))
+                        else:
+                            (held if down else aloft)[side][f] = -qu - math.sqrt(disc)
+            out = np.zeros(n)
+            for side in SIDES:     # a foot just off the ground holds the pelvis no lower than its stance did...
+                cap = held[side].max()
+                if (ctx.get("ks") or {}).get(side, ctx["k"])["ground_time"] > 1.0:
+                    cap = np.inf   # ...unless Ground time held it longer: its swing leaves from further behind
+                out = np.maximum(out, np.maximum(held[side], np.minimum(aloft[side], cap)))
+            return out
+        need = needs_for(0.0)
+        weight = min(1.0, float(need.max()) / MARGIN_FULL)        # the stance legs short: the margin comes in
+        if weight > 0.0:
+            need = np.maximum(need, weight * needs_for(LEG_MARGIN))
         drop = smooth_cover(need, LOWER_BLUR * len(need) / self.strides)     # LOWER_BLUR of a stride
+        ctx["reel"] = None
+        short = self._swing_excess(times, legs, ctx, drop, 0.0).max()
+        if weight > 0.0 or short > 0.0:          # a swing past its reach (or near it, with the margin): drawn in
+            margin = weight * LEG_MARGIN
+            reel = {}
+            for side in SIDES:
+                excess = self._swing_excess(times, legs, ctx, drop, margin, side)
+                reel[side] = smooth_cover(excess, LOWER_BLUR * n / self.strides)
+                reel[side] = np.append(reel[side], reel[side][0])
+            ctx["reel"] = reel
         return np.append(drop, drop[0])
+
+    def _swing_excess(self, times, legs, ctx, drop, margin, only=None):
+        """How far (cm, a frame) a swinging foot's ankle lies past its leg's reach (less `margin` of it) from the
+        hip lowered by `drop` (None: not lowered); the most of both feet, or `only` that side's."""
+        n = len(times) - 1
+        out = np.zeros(n)
+        for f, (phi, tau) in enumerate(times[:-1]):
+            for side in SIDES if only is None else (only,):
+                t, rot, ankle, hip, limit = legs[f][side]
+                if self.planted(side, t, ctx) or self._just_off(side, t, ctx) or self.swing_at(side, t) <= 0.0:
+                    continue
+                if drop is not None:
+                    hip = hip - self.up * drop[f]
+                ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx))[1]
+                out[f] = max(out[f], float(np.linalg.norm(ankle - hip)) - limit * (1.0 - margin))
+        return np.maximum(out, 0.0)
+
+    def _reel_of(self, side, tau, ctx):
+        """How far (cm) the swinging foot is drawn in toward its hip at body time tau (_lowering's), else 0."""
+        reel = ctx.get("reel")
+        if not reel:
+            return 0.0
+        f = int(round(tau * (len(reel[side]) - 1) / float(self.P)))
+        return float(reel[side][f % len(reel[side])])
 
     def _frame(self, phi, tau, ctx, drop=0.0, carry=None, only=None):
         """Every joint's new world at one frame (parents first, helpers last) - or only the joints in `only`
@@ -2743,6 +2825,11 @@ class Walk(object):
                                                 self._roll_of(side, tau, ctx))
         if turn is not None and rolls is not None:
             rolls[side] = turn
+        reel = self._reel_of(side, tau, ctx) * self.swing_at(side, src["t"])     # in the air only
+        if reel > 0.0:
+            reach = ankle - hip
+            d = float(np.linalg.norm(reach))
+            ankle = hip + reach * max(0.0, 1.0 - reel / d) if d > 1e-9 else ankle
         knee, reached, short = two_bone(hip, ankle, src["lengths"][0], src["lengths"][1], src["bend"],
                                         ctx.get("reach", self.reach)[side])
         e2 = _unit(reached - hip)

@@ -10479,6 +10479,32 @@ code); `verify_walk_sprint.py` gate 2 now reads «hips 41 deg» (36 before: the 
      took a foot skimming back along the floor at up to 15 cm a frame; Foot placement pinned it there and the leg
      could not reach. A contact needs the down point HELD too.
 
+**…a raised pelvis without knee clicks** (2026-10-16, `asd` under DG_Idle with Pelvis height +11.45 on the
+animator's Manny skeleton: «сильно дергаются колени»; read over 7001, reproduced in mayapy to the degree). The
+knees snapped 10-19 deg a frame where a leg reached its limit (the walk's straightest, 0.993): a swinging leg
+asked for 1.5-3 % past it sat clamped there for five frames; a stance leg was held exactly at it by the drop's
+cover; and the foot's roll came in 10-15 deg in one frame at the strike and flipped toes up -> heel up 15-22 deg
+in one frame at the heel-to-ball handoff. Three changes in `_lowering`:
+- the roll changes no faster than `ROLL_RATE` (100 deg a stride; `rate_limited`, the lower Lipschitz envelope -
+  only ever LESS roll: a cover put roll on frames that asked for none and slid the planted foot 0.56 cm); the
+  pelvis's drop takes the rest;
+- once the stance legs fall short anywhere (eased in over `MARGIN_FULL` 2 cm, so the defaults are untouched) every
+  leg is held `LEG_MARGIN` (0.8 %) of its length short of its limit; a foot coming down to its print holds the
+  pelvis by (1 - swing_weight);
+- a swinging foot past its reach is drawn in toward its hip by a smooth cover over the excess (`ctx["reel"]`,
+  `_reel_of`, x swing_weight in `_leg`) instead of clamped.
+On the scene: the knees' least 22.2 / 17.2 deg (was 13.7 / 12.4, clamped), the worst second difference 8.0 / 7.5
+deg (was 17.7 / 18.1; the walk's own at height 0: 11.0 / 6.1). The cost: past the reach Pelvis height gives
+up to ~1.5 cm less than asked (`verify_walk.py` gate 73: dw +8 -> +6.75). A soft clamp letting legs straighten
+past the limit was tried and dropped: the target's retarget sank the pelvis back to the limit, and the knee still
+crossed 18 deg in a frame (near straight the angle is a square root of the distance). Tests
+`PelvisHeightTests` (rolls without a flip, legs off the limit); `verify_walk.py` 79/79, sprint 12/12, own 22/22.
+
+262. **Near straight, a knee is a square root of its reach.** A smooth hip-to-ankle distance touching the limit
+     (a cover's peak) or clamped at it is a V or a plateau in the knee angle: 1 % of reach is 10 deg there. Keep a
+     leg a little short of straight wherever something else has to give, and smooth what moves the ankle (a roll
+     switching pivots) in time.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

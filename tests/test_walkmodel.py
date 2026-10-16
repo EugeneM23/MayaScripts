@@ -1526,6 +1526,49 @@ class PelvisHeightTests(unittest.TestCase):
             self.assertLess(float(reach.max()), w.reach[side] + 1e-3, side)
         self.assertGreater(max(r.info["drop"]), 30.0)            # the reach's drop takes most of it back
 
+    def rolls(self, w, knobs):
+        """The feet's roll curves (ctx["rolls"], radians a frame) of one evaluate."""
+        box, low = {}, w._lowering
+
+        def keep(times, ctx):
+            out = low(times, ctx)
+            box["rolls"] = ctx["rolls"]
+            return out
+        w._lowering = keep
+        try:
+            w.evaluate(knobs)
+        finally:
+            del w._lowering
+        return box["rolls"]
+
+    def test_a_raised_pelvis_keeps_the_legs_off_their_limit(self):
+        """Raised past the legs' reach, every leg - planted, landing or swinging - is held LEG_MARGIN short of its
+        limit: a knee held there by the drop's cover, or a swinging leg clamped at it, snapped straight and back
+        (2026-10-16; near straight a millimetre of reach is degrees of knee)."""
+        for kw in ({}, {"slip": 6.0}, {"stance": 0.5, "lift": 20.0}):
+            w = walk(**kw)
+            for knobs in ({"balance": 0.0, "pelvis_height": 12.0}, {"pelvis_height": 10.0, "stride": 1.2}):
+                r = w.evaluate(knobs)
+                self.assertLess(r.info["short"], 1e-6)
+                for side in "lr":
+                    th, ca, fo = (w.index["%s_%s" % (b, side)] for b in ("thigh", "calf", "foot"))
+                    length = np.linalg.norm(w.lt[ca], axis=1).mean() + np.linalg.norm(w.lt[fo], axis=1).mean()
+                    ext = np.linalg.norm(r.worlds[fo, :, 3, :3] - r.worlds[th, :, 3, :3], axis=1) / length
+                    self.assertLess(float(ext.max()), w.reach[side] * (1.0 - wm.LEG_MARGIN) + 1e-4, (kw, knobs, side))
+
+    def test_a_raised_pelvis_rolls_the_feet_without_a_flip(self):
+        """Pelvis height past what the stance legs reach (2026-10-16, «сильно дергаются колени»): the foot rolled
+        toes up over its heel, then heel up over its ball, flipping 15-22 deg in one frame at the heel-to-ball
+        handoff - the ankle jumped and the near-straight knee snapped. The roll passes the handoff smoothly."""
+        for kw in ({}, {"slip": 6.0}, {"stance": 0.5, "lift": 20.0}):
+            w = walk(**kw)
+            for cm in (6.0, 12.0):
+                for knobs in ({"balance": 0.0, "pelvis_height": cm}, {"pelvis_height": cm, "stride": 1.2}):
+                    rolls = self.rolls(w, knobs)
+                    for side in "lr":
+                        step = math.degrees(float(np.abs(np.diff(rolls[side])).max()))
+                        self.assertLess(step, 2.0 * wm.ROLL_RATE * w.strides / 24.0 + 1e-6, (kw, knobs, side))  # a flip: a step each side of 0
+
 
 class PelvisForwardTests(unittest.TestCase):
     """Pelvis forward: the hips this many cm ahead of (or behind) the feet, the body over them with them, the

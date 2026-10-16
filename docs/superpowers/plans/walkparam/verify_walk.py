@@ -990,12 +990,15 @@ try:
         lowered_r, lowered_i, lowered_m = dw_keys(dict(dw_scene, pelvis_height=-10.0))
         h_up = over_feet(raised_m, raised_i, raised_r.frames)
         h_down = over_feet(lowered_m, lowered_i, lowered_r.frames)
-        gate(abs(h_placed - pose_gap) < 1.0 and abs(h_up - h_placed - 8.0 * scale_dw) < 0.5
+        # +8 takes the legs past their reach: the reach's drop takes some back, and since 2026-10-16 the legs are
+        # held a margin short of it there (a near-straight knee snapped) - so up to 1.5 cm of the 8 is not given
+        gate(abs(h_placed - pose_gap) < 1.0 and -1.5 < h_up - h_placed - 8.0 * scale_dw < 0.5
              and abs(h_down - h_placed + 10.0 * scale_dw) < 0.5,
              "dw under the sword: the pelvis %.2f cm over the feet (the pose over its feet %.2f, size x%.3f), the legs "
-             "at %.2f..%.2f of their length; Pelvis height +8 -> %.2f, -10 -> %.2f (the legs %.2f..%.2f)"
-             % ((h_placed, pose_gap, scale_dw) + legs_of(placed_m, n_dw) + (h_up, h_down)
-                + legs_of(lowered_m, lowered_r.frames)))
+             "at %.2f..%.2f of their length; Pelvis height +8 -> %.2f (the legs %.2f..%.2f), -10 -> %.2f (the legs "
+             "%.2f..%.2f)"
+             % ((h_placed, pose_gap, scale_dw) + legs_of(placed_m, n_dw) + (h_up,) + legs_of(raised_m, raised_r.frames)
+                + (h_down,) + legs_of(lowered_m, lowered_r.frames)))
     else:
         print("        (no %s or %s: the several-steps gates skipped)" % (DW_FILE, SWORD_FILE))
 
