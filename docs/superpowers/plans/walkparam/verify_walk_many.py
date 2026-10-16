@@ -92,7 +92,7 @@ cmds.optionVar(stringValue=(panel.OPTION + "walk", "asd"))
 cmds.select([roots["A"], roots["B"]], replace=True)
 line = panel.press_apply()
 print(line)
-gate("2 skeletons processed" in line and "(asd)" in line, "Pick with two unkeyed skeletons selected puts the card asd on both")
+gate("2 skeletons pick asd" in line, "Pick with two skeletons selected puts the card asd on both")
 P_asd = sw.load_walk("asd", {})[0].P
 P_dw = sw.load_walk("dw", {})[0].P
 panel._walk_taken("dw")

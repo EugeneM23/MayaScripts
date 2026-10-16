@@ -95,3 +95,20 @@ and Pick kept whatever card a skeleton walked.
   walked yet has its own keys read as its cycle, else (no keys) takes the active card.
 - The tempo is the chosen cycle's own frames again; only selecting a walker on a card (which makes that card the
   active one) keeps the tempo's ratio. Selecting a walker on its own cycle leaves the walk well alone.
+
+## Addendum 3: the card comes first (the same day)
+
+After the third push: «Сейчас карточка анимации цикла не применяется вообще». The skeletons the second build had
+read as their own cycles (they carried keys) were left alone by every card choice and every Pick. Asked how to tell
+the two uses apart, the animator chose **«Карточка важнее»**:
+
+- **Pick puts the walk well's active card on every selected skeleton**, own-cycle walkers included. A skeleton not
+  walked yet that carries keys has them kept first (`_keep_original`, best effort: a clip that is no cycle is simply
+  not kept), so Use its own cycle and Restore the original keys still bring them back.
+- **Each on its own animation** is Pick's right button (`press_apply_own`), and what Pick does when there is no
+  card at all. The list's right button > Use its own cycle reads a walker's keys as its cycle when nothing was kept.
+- **Choosing a card** keys the selected walkers whatever they walk; nothing selected, every walker on a card (own
+  cycles keep theirs).
+- Found on the way: `cmds.createNode` selects what it makes, so every Pick left an animCurve selected and the next
+  card choice reached nobody. Curves are made with `skipSelect=True`, and the card reads the selection as walkers
+  only - anything else selected counts as nothing selected.

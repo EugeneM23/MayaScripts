@@ -10253,6 +10253,16 @@ live.**
   `card_walkers`) at the card's own tempo; Pick (`walk_for`): own cycle → kept, walks a card → the active card, not
   walked → its own keys captured, else the card. A walker on its own cycle is never changed by a card, and selecting
   one leaves the well alone; selecting a card walker activates its card with the tempo ratio kept.
+- **…and the card comes first** (after that push: «карточка анимации цикла не применяется вообще» - the skeletons
+  the previous build had read as own cycles were out of every card's reach; asked, «Карточка важнее»). Pick puts the
+  active card on every selected skeleton, own-cycle walkers too, keeping an unwalked skeleton's keys first
+  (`_keep_original`, best effort) for Use its own cycle / Restore. **Pick's right button > Pick: each on its own
+  animation** (`press_apply_own`) is the array road, and Pick's road with no card at all. A chosen card keys the
+  selected walkers whatever they walk (none selected: the card walkers). `verify_walk_own.py` **15/15** (13-15: Pick
+  on an animated skeleton puts dw on it, its own animation kept, Restore 0.000000 cm).
+  Found on the way: **Pick changed the animator's selection** - `write_curves`' `createNode` selected each new
+  curve, so after Pick the selection was an animCurve and a card clicked next reached nobody. `skipSelect=True`;
+  `card_walkers` reads the selection as walkers only (a bone, the top, a skinned mesh - `_selected_walkers`).
 
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the

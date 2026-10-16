@@ -170,11 +170,13 @@ LABELS = {
     "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
 }
 TIPS = {
-    "apply": "Pick: every selected skeleton is processed on ITS OWN cycle - the animation it carries is read on "
-             "the first Pick and kept on the skeleton (Restore the original keys puts it back) - with the card's "
-             "knobs and pose, and joins the list below. A skeleton with no keys takes the walk well's active card. "
-             "Every released knob re-keys every walker, each on its own cycle; the tempo counts the active "
-             "cycle's frames (the one selected last), the others take the same ratio of theirs.",
+    "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
+             "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
+             "animation is kept on it first (Restore the original keys puts it back). Right button: each on its "
+             "own animation - for arrays of clips. Every released knob re-keys every walker, each on its own "
+             "cycle; the tempo counts the active cycle's frames, the others take the same ratio of theirs.",
+    "apply_own": "Every selected skeleton processed on the animation it carries (read on the first press and kept "
+                 "on it) with the card's knobs and pose - one press for a whole array of clips",
     "reset": "Every knob back to its default (the tempo to the walk's own); every walker is keyed again",
     "walker_list": "The walkers: every skeleton Pick processed - «character - cycle». Click: select them (the "
                    "first one's cycle becomes the active one); right click: take a walker's settings into the card, "
@@ -452,13 +454,32 @@ def _walk_taken(name, say=True, keep_ratio=False):
 
 
 def card_walkers():
-    """The walkers a chosen walk card re-keys: the selected walkers that walk a card (not their own cycle) - none
-    selected, every such walker in the list."""
+    """The walkers a chosen walk card re-keys (the card comes first): the selected walkers, whatever they walk -
+    none selected, every walker that walks a card (one on its own cycle keeps it)."""
+    listed = scene.walkers()
+    chosen = _selected_walkers(listed)
+    if chosen:
+        return chosen
+    return [r for r in listed if not scene.is_own(scene.memo_of(r).get("walk"))]
+
+
+def _selected_walkers(listed):
+    """The walkers in `listed` the selection names: a bone of one, its top, a mesh skinned to it. Anything else
+    selected (a curve, a light, another character) names none."""
     cmds = _cmds()
-    walking = [r for r in scene.walkers() if not scene.is_own(scene.memo_of(r).get("walk"))]
-    picked = set(cmds.ls(selection=True, long=True) or [])
-    chosen = [r for r in walking if r in picked or any(p.startswith(r + "|") for p in picked)]
-    return chosen or ([] if picked & set(scene.walkers()) else walking)
+    found = []
+    for node in cmds.ls(selection=True, long=True) or []:
+        hit = [r for r in listed if node == r or node.startswith(r + "|")]
+        if not hit:
+            try:
+                root = scene.skeleton_root_of(node)
+            except Exception:                                # noqa: BLE001 - a rig, nothing skinned
+                root = None
+            hit = [r for r in listed if r == root]
+        for root in hit:
+            if root not in found:
+                found.append(root)
+    return found
 
 
 def take_walk_card(path):
@@ -1006,30 +1027,59 @@ def rekey_all(walk=None):
     return text + " | %.1f s" % (time.time() - started)
 
 
-def walk_for(root):
-    """The cycle Pick processes on `root` (2026-10-16: «pick должен брать цикл у каждого скелета и обрабатывать
-    его отдельно»): a skeleton on its own cycle keeps it; one that walks a card takes the active card (as Pick
-    always did - choosing a cycle and pressing Pick puts it on); one not walked yet has its own keys read as its
-    cycle and kept on it, else - no keys - takes the active card."""
-    memo = scene.memo_of(root)
-    walk = memo.get("walk")
-    if scene.is_own(walk) and scene.walk_exists(walk):
-        return walk
-    if walk:
-        return chosen_walk()
+def _own_for(root):
+    """`root`'s own cycle: the one it keeps, else its keys read as its cycle and kept on it; None without keys."""
     if scene.has_source(root):
         return scene.own_name(root)
     if scene.has_keys(root):
         return scene.capture_source(root)
-    return chosen_walk()
+    return None
 
 
-def press_apply(*_):
-    """Pick: every selected skeleton processed on its own cycle (walk_for) with the card's knobs and pose; each
-    joins the list. With no active cycle yet the first own cycle becomes it (the tempo counts its frames)."""
+def _keep_original(root):
+    """Before a card is keyed over a skeleton not walked yet, its own keys are kept (best effort) - so Use its own
+    cycle and Restore the original keys can bring them back. A clip that is no cycle is simply not kept."""
+    if scene.memo_of(root).get("walk") or scene.has_source(root) or not scene.has_keys(root):
+        return
+    try:
+        scene.capture_source(root)
+    except scene.REFUSALS:
+        pass
+
+
+def walk_for(root, own=False):
+    """The cycle Pick processes on `root`. The walk well's card comes first (2026-10-16, «Карточка важнее»):
+    Pick puts the active card on every selected skeleton. `own` (Pick > each on its own animation, for arrays of
+    clips), or no card at all: each skeleton on its own cycle - the one it keeps, else its keys read as its cycle
+    and kept on it."""
+    if own:
+        walk = scene.memo_of(root).get("walk")
+        if scene.is_own(walk) and scene.walk_exists(walk):
+            return walk
+        found = _own_for(root)
+        if found:
+            return found
+        return chosen_walk()
+    try:
+        card = chosen_walk()
+    except scene.Refusal:
+        found = _own_for(root)
+        if found:
+            return found
+        raise
+    _keep_original(root)
+    return card
+
+
+def press_apply(*_, **kw):
+    """Pick: the active walk card on every selected skeleton (each joins the list); `own=True` (Pick's right
+    button) - each selected skeleton on its own animation, with the card's knobs and pose. With no active cycle
+    yet the first own cycle becomes it (the tempo counts its frames)."""
+    own = kw.get("own", False)
+
     def run():
         roots = scene.selected_roots()
-        walks = [walk_for(root) for root in roots]           # every source kept before anything is keyed
+        walks = [walk_for(root, own) for root in roots]      # every source kept before anything is keyed
         try:
             chosen_walk()
         except scene.Refusal:
@@ -1037,10 +1087,18 @@ def press_apply(*_):
         lines = [_apply_to(root, walk) for root, walk in zip(roots, walks)]
         if len(lines) == 1:
             return lines[0]
+        if len(set(walks)) == 1:
+            return "%d skeletons pick %s: %s" % (len(roots), scene.walk_label(walks[0]),
+                                                 ", ".join(scene.walker_label(r) for r in roots))
         return "%d skeletons processed, each on its cycle: %s" % (
             len(roots), ", ".join("%s (%s)" % (scene.walker_label(r), scene.walk_label(w))
                                   for r, w in zip(roots, walks)))
     return _press(run)
+
+
+def press_apply_own(*_):
+    """Pick > each on its own animation: every selected skeleton processed on the animation it carries."""
+    return press_apply(own=True)
 
 
 def _each_picked(action, verb):
@@ -1059,8 +1117,13 @@ def use_card_picked(*_):
 
 
 def use_own_picked(*_):
-    """Right button > Use its own cycle: the picked walkers back on the cycle they kept."""
-    return _each_picked(lambda root: _apply_to(root, scene.own_name(root)), "own")
+    """Right button > Use its own cycle: the picked walkers on the cycle they kept (else their keys read as one)."""
+    def own(root):
+        walk = _own_for(root)
+        if walk is None:
+            raise scene.Refusal("%s keeps no animation of its own" % scene.walker_label(root))
+        return _apply_to(root, walk)
+    return _each_picked(own, "own")
 
 
 def restore_picked(*_):
@@ -1424,8 +1487,12 @@ def build_panel():
     cmds.setParent("..")
     hubstyle.mark(cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
                                  columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)]), "fill", layout=True)
-    hubstyle.mark(cmds.button(APPLY_BTN, label="Pick", height=hubstyle.height("button", 28),
-                              annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "walk")
+    pick = hubstyle.mark(cmds.button(APPLY_BTN, label="Pick", height=hubstyle.height("button", 28),
+                                     annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "walk")
+    cmds.popupMenu(parent=pick, button=3)
+    cmds.menuItem(label="Pick: each on its own animation", annotation=TIPS["apply_own"],
+                  command=press_apply_own)
+    cmds.setParent("..", menu=True)
     hubstyle.mark(cmds.button(RESET_BTN, label="Reset", height=hubstyle.height("button", 28),
                               annotation=TIPS["reset"], command=lambda *_: press_reset()), "secondary", "refresh")
     hubstyle.mark(cmds.checkBox(IN_PLACE_BOX, label="In place", annotation=TIPS["in_place"],

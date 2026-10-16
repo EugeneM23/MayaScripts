@@ -881,7 +881,8 @@ def write_curves(values, static, start, in_place=False):
                     cmds.delete(old)
                 if dest == plug and cmds.getAttr(plug, lock=True):
                     cmds.setAttr(plug, lock=False)
-                curve = cmds.createNode(kind, name="%s_%s" % (_short(path).split(":")[-1], ch))
+                curve = cmds.createNode(kind, name="%s_%s" % (_short(path).split(":")[-1], ch),
+                                        skipSelect=True)      # a press leaves the animator's selection as it was
                 cmds.connectAttr(curve + ".output", dest)
             times = om.MTimeArray([om.MTime(float(start + f), om.MTime.uiUnit()) for f in range(len(vals))])
             selection = om.MSelectionList()

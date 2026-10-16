@@ -351,7 +351,7 @@ class CardTests(unittest.TestCase):
         self.assertIn("Walk: asd", self.fake.values[panel.WALK_WELL_TEXT])        # no Qt here: its line
         self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
         self.assertIn("none", self.fake.values[panel.POSE_WELL_TEXT])             # no Qt here: its line
-        self.assertEqual(len(self.made("popupMenu")), 2)          # the walks folder; the walkers list
+        self.assertEqual(len(self.made("popupMenu")), 3)          # the walks folder; Pick's own; the list
         # the Rig pose tab: Create / Delete, Update (the press that takes the rig's edit) / Reset
         self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
         self.assertEqual(marks[panel.MEAN_DELETE_BTN], ("danger", "trash"))
@@ -431,7 +431,7 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.fake.selection = ["|a|root", "|b|root"]
         line = panel.press_apply()
-        self.assertIn("2 skeletons processed", line)
+        self.assertIn("2 skeletons pick asd", line)
         self.assertEqual([a[0] for a in self.applied], ["|a|root", "|b|root"])
         self.assertEqual(self.fake.items[panel.WALKER_LIST], ["root - asd", "root - asd"])
 
@@ -496,12 +496,26 @@ class CardTests(unittest.TestCase):
         panel.slider_changed()
         self.assertEqual([a[0] for a in self.applied[count:]], ["|b"])
 
-    def test_pick_processes_each_skeleton_on_its_own_cycle(self):
+    def test_pick_puts_the_card_on_every_skeleton_and_keeps_their_own_animation(self):
+        panel.build_panel()
+        self.keyed = {"|a"}                                      # a carries an animation of its own
+        self.fake.selection = ["|a", "|b"]
+        panel.press_apply()                                      # the card comes first («Карточка важнее»)
+        self.assertEqual([a[1] for a in self.applied], ["asd", "asd"])
+        self.assertEqual(self.sources, {"|a": scene.OWN + "a"})  # a's own animation kept before the card
+        self.fake.values[panel.WALKER_LIST] = [1]
+        panel.use_own_picked()                                   # the list's right button brings it back
+        self.assertEqual(self.applied[-1][:2], ("|a", scene.OWN + "a"))
+        self.fake.selection = ["|a"]                             # a walker on its own cycle: Pick puts the card
+        panel.press_apply()
+        self.assertEqual(self.applied[-1][:2], ("|a", "asd"))
+
+    def test_pick_own_processes_each_skeleton_on_its_own_cycle(self):
         panel.build_panel()
         self.keyed = {"|a", "|b"}                                # both carry an animation of their own
         self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
         self.fake.selection = ["|a", "|b", "|c"]                 # c has no keys: the walk well's card
-        line = panel.press_apply()
+        line = panel.press_apply_own()
         self.assertEqual([a[1] for a in self.applied], [scene.OWN + "a", scene.OWN + "b", "asd"])
         self.assertIn("3 skeletons processed", line)
         self.assertEqual(self.sources, {"|a": scene.OWN + "a", "|b": scene.OWN + "b"})
@@ -514,7 +528,7 @@ class CardTests(unittest.TestCase):
         count = len(self.applied)
         self.keyed.discard("|a")                                 # its keys are the result now: the kept one stays
         self.fake.selection = ["|a"]
-        panel.press_apply()
+        panel.press_apply_own()
         self.assertEqual(self.applied[count][1], scene.OWN + "a")
         self.fake.values[panel.WALKER_LIST] = [1]                # Restore: its original keys, out of the list
         panel.restore_picked()
@@ -524,7 +538,9 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.keyed = {"|own"}
         self.frames.update({scene.OWN + "own": 40, "asd": 32})
-        self.fake.selection = ["|own", "|card"]
+        self.fake.selection = ["|own"]
+        panel.press_apply_own()
+        self.fake.selection = ["|card"]
         panel.press_apply()
         self.assertEqual(self.memos["|card"]["walk"], "asd")
         self.fake.selection = []
@@ -545,9 +561,16 @@ class CardTests(unittest.TestCase):
         self.assertEqual(keyed[0][1], scene.card_walk(rel))
         self.assertEqual(keyed[0][2]["tempo"], 90.0)             # a chosen cycle starts at its own tempo
         self.assertEqual(self.memos["|own"]["walk"], scene.OWN + "own")
-        self.fake.selection = ["|own", "|card"]                  # Pick: own keeps its own, card takes the card
-        panel.press_apply()
-        self.assertEqual([a[1] for a in self.applied[-2:]], [scene.OWN + "own", scene.card_walk(rel)])
+        self.fake.selection = ["|own"]                           # selected: the card reaches it too
+        count = len(self.applied)
+        rel2 = "Walk cycles/asd.anim"
+        os.makedirs(os.path.join(self.library, rel2))
+        st.is_anim = lambda path: True
+        try:
+            panel.take_walk_card(os.path.join(self.library, rel2))
+        finally:
+            st.is_anim = real
+        self.assertEqual([a[:2] for a in self.applied[count:]], [("|own", scene.card_walk(rel2))])
 
     def test_with_no_walk_card_the_first_own_cycle_is_the_active_one(self):
         scene.walk_names = lambda: []
@@ -555,7 +578,7 @@ class CardTests(unittest.TestCase):
         self.keyed = {"|a", "|b"}
         self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
         self.fake.selection = ["|a", "|b"]
-        panel.press_apply()
+        panel.press_apply()                                      # no card at all: each on its own animation
         self.assertEqual(self.fake.vars[panel.OPTION + "walk"], scene.OWN + "a")
         tempos = dict((a[0], a[2]["tempo"]) for a in self.applied)
         self.assertEqual(tempos, {"|a": 40.0, "|b": 60.0})        # each keeps its own tempo

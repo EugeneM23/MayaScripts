@@ -85,7 +85,7 @@ gate(sw.walkers() == [], "three keyed skeletons, none walked yet")
 
 # ---- Pick on all three: each on its own cycle ----
 cmds.select(list(roots.values()), replace=True)
-line = panel.press_apply()
+line = panel.press_apply_own()                            # Pick's right button: each on its own animation
 print(line)
 gate("3 skeletons processed" in line, "Pick processes the three")
 gate(all(sw.has_source(roots[n]) for n in "ABC"), "each keeps its own cycle on its top joint")
@@ -110,7 +110,7 @@ gate(all(abs(after[n] / before[n] - 1.2) < 0.02 for n in "ABC"), "stride 1.2 len
 
 # ---- Pick again: the kept cycle, not the keys it now carries ----
 cmds.select(roots["B"], replace=True)
-panel.press_apply()
+panel.press_apply_own()
 gate(sw.memo_of(roots["B"]).get("walk") == names[1], "a second Pick works on the kept cycle again")
 
 # ---- the scene saved and opened elsewhere: the cycles travel with it ----
@@ -135,6 +135,18 @@ worst = max(float(np.linalg.norm(back[t] - source["A"][t])) for t in source["A"]
 gate(sorted(back) == sorted(source["A"]) and worst < 1e-3, "Restore: A's pelvis on its original keys (%d frames, "
      "%.6f cm)" % (len(back), worst))
 gate(not sw.has_source(roots["A"]) and roots["A"] not in sw.walkers(), "A is out of the list, nothing kept")
+
+# ---- Pick itself puts the card on (the card comes first), keeping the skeleton's own animation ----
+cmds.optionVar(stringValue=(panel.OPTION + "walk", "dw"))
+cmds.select(roots["A"], replace=True)
+print(panel.press_apply())
+gate(sw.memo_of(roots["A"]).get("walk") == "dw" and len(pelvis_track("A")) == 91,
+     "Pick on an animated skeleton puts the card dw on it (%d keys)" % len(pelvis_track("A")))
+gate(sw.has_source(roots["A"]), "its own animation was kept before the card was keyed")
+print(sw.restore_source(roots["A"]))
+back = pelvis_track("A")
+worst = max(float(np.linalg.norm(back[t] - source["A"][t])) for t in source["A"] if t in back)
+gate(sorted(back) == sorted(source["A"]) and worst < 1e-3, "and Restore brings it back (%.6f cm)" % worst)
 
 shutil.rmtree(TEMP, ignore_errors=True)
 print("FAILED gates: %s" % FAILED if FAILED else "all %d gates passed" % COUNT[0])
