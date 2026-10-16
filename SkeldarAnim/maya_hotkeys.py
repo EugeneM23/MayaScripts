@@ -261,6 +261,14 @@ def _camshake(func):
     return message if module.is_open() else _report(message)
 
 
+def _ragdoll(func):
+    """Press a Ragdoll button (2026-10-16): with the card closed it reads the remembered settings
+    and says its line in the viewport."""
+    from maya_ragdoll import panel
+    message = getattr(panel, func)()
+    return message if panel.is_open() else _report(message)
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -995,6 +1003,13 @@ _OURS = (
     ("camshake.apply", "Camera Shake", "Apply camera shake",
      "A shake in the card's mode on the selected camera over the highlighted frames",
      partial(_camshake, "press_apply")),
+    ("window.ragdoll", "Windows", "Ragdoll",
+     "Open the Ragdoll section: a rig falls by physics from a frame of its take",
+     partial(_show, "maya_ragdoll.panel", "show_window")),
+    ("ragdoll.fall", "Ragdoll", "Fall",
+     "The selected rig falls by physics from the current frame (or the highlight), baked into "
+     "its controls",
+     partial(_ragdoll, "press_fall")),
     ("window.tabs", "Windows", "Scene Tabs",
      "Show the scene tabs bar above the viewport: several scenes in one Maya",
      partial(_show, "maya_scenetabs.bar", "show")),

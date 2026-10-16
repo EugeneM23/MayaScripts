@@ -131,6 +131,7 @@ _PAYLOAD = (
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
+    "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh

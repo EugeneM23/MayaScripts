@@ -162,6 +162,10 @@ SECTIONS = (
     Section("camshake", "Camera Shake", "maya_camshake",
             "build_panel", "skeldarHubFrameCamShake",
             "animation", "video"),
+    #  2026-10-16: a rig falls by physics from a frame of its take (Bullet), baked into its controls.
+    Section("ragdoll", "Ragdoll", "maya_ragdoll.panel",
+            "build_panel", "skeldarHubFrameRagdoll",
+            "animation", "skull"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

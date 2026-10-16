@@ -11138,3 +11138,51 @@ spine_03's world turn the first frame's (the take turns it 102.5 deg); the knot'
 only; the camera under the knot, unkeyed, camera_root following it; a second press refused. 6701
 unit tests. Not seen live (the animator's checks). Custom attributes (IK foot roll, swivel) stay on
 the base: Layer bakes translate / rotate / scale.
+
+## Ragdoll: a fall out of the take, simulated and baked (2026-10-16)
+
+The animator: «ТЫ можешь настроить регдол для наших ригов? что бы персонажи падали по физике». Asked:
+a death or knockdown out of an animation, keeping the clip's momentum; baked into the rig's controls;
+**no ragdoll in the rigs** («наши риги не должны начать есть больше ресурсов») - a temporary one built
+per press, simulated, baked and deleted; muscles that hold the first frame's pose and FADE; the floor
+plus meshes selected with the rig as colliders; a «Drop weapon» check (on); a new override layer
+`Ragdoll_<frame>` by default or the base layer; the span the highlight, else the current frame plus
+Length. Spec `docs/superpowers/specs/2026-10-16-ragdoll-fall-design.md`.
+
+Package `SkeldarAnim/maya_ragdoll/` (payload row): `plan.py` (numpy, pure, a test pins no Maya), `sim.py`
+(Bullet), `weapon.py`, `fall.py` (the press), `panel.py` (the card). Hub section **Ragdoll** (Animation,
+after Camera Shake, Tabler `skull`); hotkey rows `window.ragdoll`, `ragdoll.fall`.
+- **The body**: 16 capsules (`plan.BODIES`: pelvis, two spine pieces, head, upper / lower arms, hands,
+  thighs, calves, feet) on the GAME skeleton, mass by de Leva's shares of Mass (75 kg); a capsule runs
+  from its first bone to the next body's, its radius the MEDIAN distance of the skinned vertices whose
+  heaviest influence rides it. Every other bone rides its nearest body rigidly (`riders`, `offsets`).
+  The floor is the lowest skinned sole point of the feet. Velocities at the start from frames a-1 and
+  a (cm/s, deg/s, world axes).
+- **The joints**: SixDOF2 (type 5) springs, linear locked, angular limits per joint (`BALL`, hinges for
+  knees and elbows read off the bend's own plane, straight: knee back, elbow forward); the spring holds
+  the first frame's pose at `MUSCLE_GAIN` 8 x m g L x Strength and is keyed to 0 over Muscle fade frames.
+- **The run**: our own solver (gravity -980, 240 Hz, 40 iterations, splitImpulse), a group
+  `skeldarRagdoll` deleted by UUID diff in a `finally`; stepped with `cmds.currentTime` one frame at a
+  time, unrecorded; the bodies' worlds become a Pose Library animation card in memory (the game bones, a
+  rig's drives) and are pasted with `animapply` (Replace, every frame, not in place - Main holds its
+  frame-a place). New layer: an override layer, weight 0 at a-1 and 1 at a (stepped), the take kept
+  under it; base: the keys after b cut. Drop weapon: the held weapon a box body, then on the floor road
+  (`bonedrive.park`, its bone following it), the hand track kept before the fall. One undo.
+- Refused: no rig / two rigs, a standing MoCap holder, a missing body bone.
+
+Proof: `docs/superpowers/plans/verify_ragdoll.py <clip> <rig key>` **26/26 mayapy standalone** on
+Manny_Rig, Creep_Rig and Orc_D_Rig (a UE sprint retargeted): the take before untouched 0.000000, bone
+lengths kept, the start velocity, nothing under the floor, lying and at rest at the end, no knee bent
+backward, the rig on the simulation within 3 cm (Orc D's hand_l 2.19 - the joints' slack), one undo /
+redo, no Bullet node left, the sword in the hand then on the floor, a box stopping the body (pelvis z
+205 against 349 free), a second press replacing its layer, the card's press with the card closed;
+`tests/test_ragdoll_plan.py` 18; 6876 unit tests. **Not seen live** (the animator's checks).
+
+265. **Maya Bullet, measured** (2026-10-16): gravity is in METRES (-9.8 drops a cm scene in slow motion:
+     -980); `initialVelocity` cm/s and `initialAngularVelocity` deg/s, world axes; the solver
+     initialises only on a time change AT its startTime (build, then `currentTime(a)`), steps only on
+     `cmds.currentTime` one frame at a time (not `MAnimControl`, and a skipped frame breaks it);
+     `CreateRigidBody` wires the scene's FIRST solver; `autoFit` defaults True and overrides the radius;
+     a capsule's `length` runs tip to tip; collision filters default group 1 / mask 1, so a ragdoll in
+     group 2 falls through a default floor (floor mask 1|2); angular limits are DEGREES in the
+     constraint transform's frame; only SixDOF2 (5) takes springs, type 4 ignores them silently.

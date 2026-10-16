@@ -492,7 +492,8 @@ class OurRows(unittest.TestCase):
         #  + tools.snapshot (2026-10-13, Snapshot)
         #  + window.tabs, tabs.next / .previous (2026-10-15, Scene Tabs)
         #  + radial.press / .release, window.radial (2026-10-15)
-        self.assertEqual(len(ours), 70)                 # + tools.fp_setup (2026-10-16, 1P Setup)
+        #  + tools.fp_setup (2026-10-16, 1P Setup)
+        self.assertEqual(len(ours), 72)                 # + window.ragdoll, ragdoll.fall (2026-10-16)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -554,7 +555,7 @@ class OurRows(unittest.TestCase):
                          ["window.armor", "window.camshake", "window.com", "window.connections",
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
-                          "window.poses", "window.radial", "window.scenesetup", "window.shared",
+                          "window.poses", "window.radial", "window.ragdoll", "window.scenesetup", "window.shared",
                           "window.stash", "window.tabs", "window.tailbuilder", "window.tools",
                           "window.uebridge", "window.walk",
                           "window.weapons"])
@@ -689,7 +690,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 20)                 # + maya_walk.panel, maya_camshake (2026-10-13), maya_radial, maya_scenetabs.bar (2026-10-15)
+        self.assertEqual(len(names), 21)                 # + maya_walk.panel, maya_camshake (2026-10-13), maya_radial, maya_scenetabs.bar (2026-10-15), maya_ragdoll.panel (2026-10-16)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)
