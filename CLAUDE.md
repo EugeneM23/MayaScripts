@@ -7555,6 +7555,48 @@ Setup read 504 on 2026-10-01, before the compact skin. Nor are the fade, a middl
 popup in Maya. The animator's to try after Check update. Not built: the inner card rules from the
 mockups (captioned sections, one orange button a card, segments vs tabs, a status plate).
 
+## The card rules: switches, captions, labels, a toned message line (2026-10-16)
+
+The animator, after the rail: «давай приступим теперь к дизайну». Shown as before/after mockups
+(https://claude.ai/artifact/228rNcXckRzKZMcBUjV7Fd). Asked: the shared rules first, then the densest
+three cards; **one orange button per SECTION** of a card. Spec
+`docs/superpowers/specs/2026-10-16-hub-card-rules-design.md`.
+
+**Shared (`maya_hubstyle`, `maya_hubqt`)**:
+1. A `segments` track is recessed: `track` #17181a with a 1 px `track_edge`. The checked
+   `segment` is a raised `thumb` #44474e with bold text. It used to be `line` grey, a button's
+   outline colour.
+2. `heading` is a section's caption: bold `muted` text at `{caption}` (8.5 logical px), padding
+   above it and a `hover` hairline under it. `_apply_mark` upper-cases it and spaces the letters,
+   which a Qt stylesheet cannot do.
+3. A new role, `label`: a row's label left of a field or a switch, muted and not bold.
+4. Every card's body opens with a hairline (`skeldarHubCardRule_<key>`) and 4 px under it. It
+   shows and hides with the body.
+5. The message line carries `skTone` from `hubstyle.tone(text)` (pure), shown as its left edge:
+   - `ok`: the text starts with a done word, a green edge;
+   - `wait`: «waiting» / «press Finish», orange;
+   - `no`: refused / cannot / failed / nothing changed / not found / error, red;
+   - plain otherwise, `line` grey.
+
+   The writers are unchanged. When `tone` is unsure it says plain, never green.
+
+**Cards**:
+- **Connections** has three captions: «FK / IK», «Weapon in hands» and «Any object»
+  (`CAPTION`, `_caption`). Every row label is a `label` (`_row_label`) and reads «Hand R».
+  Apply all stands alone under the parent rows; BakeAcross and Release have their own row.
+- **Animation Setup**: the skin captions «Character» and «Animation». It draws no Connect inset;
+  the classic hub keeps it and its «Characters» / «Connect» titles.
+- **Inventory**: `maya_invlook.panel` gains two `CAPTION_H` (18) bands, `cap_hands` and
+  `cap_tiles`, painted «HANDS» / «WEAPONS» with a hairline. The hands start under the first band.
+  The hand cards are named `HAND_CAPTION` («RIGHT» / «LEFT») in the caption style, the picked one
+  in `accent_text`.
+
+Proof: unit tests for `tone`, the sheet's rules, a heading's capitals and spacing, the card's rule,
+the message tone, the inventory bands, the Connections and Animation Setup builders' marks;
+6814 OK. `docs/superpowers/plans/render_card_rules.py` → `card_rules.png` draws a Connections-like
+card of Qt stand-ins under the skin's marks and the real Inventory panel, at 150 %. **Not seen
+live.** Next: the other cards, one by one.
+
 ## Characters > Delete: a character out of the scene, whole (2026-10-01)
 
 The animator: «Давай в разделе character сделаем кнопку удаления. Суть такая - я выделяю любую часть

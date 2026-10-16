@@ -255,7 +255,7 @@ def _classes():
     def caption(p, box, text, k):
         """A section's caption in a band: spaced capitals, muted, a hairline
         under it - the hub's `heading` in the panel's own paint."""
-        p.setFont(caption_font(9.5 * k))
+        p.setFont(caption_font(8.5 * k))
         p.setPen(colour("muted"))
         p.drawText(box.adjusted(int(2 * k), 0, 0, -int(3 * k)),
                    Qt.AlignLeft | Qt.AlignBottom, text.upper())
@@ -802,7 +802,7 @@ def _classes():
                        self._hand_lit(side, dragging))
             #  named as a section's caption (2026-10-16, the card rules): spaced
             #  capitals, muted; the picked hand in the accent's text colour
-            p.setFont(caption_font(9.5 * k))
+            p.setFont(caption_font(8.5 * k))
             p.setPen(colour("accent_text" if side == self.picked_side
                             else "muted"))
             p.drawText(rect_of(rects["name_" + side]), Qt.AlignLeft | Qt.AlignVCenter,

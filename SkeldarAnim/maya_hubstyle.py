@@ -461,7 +461,7 @@ QLabel[skRole="note"] {{ color: {muted}; }}
 QLabel[skRole="context"] {{ color: {muted}; }}
 QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
 QLabel[skRole="heading"] {{ color: {muted}; font-weight: bold;
-    font-size: {small}px; padding: {p8}px 0px {p3}px 0px;
+    font-size: {caption}px; padding: {p8}px 0px {p3}px 0px;
     border-bottom: {b1}px solid {hover}; }}
 QLabel[skRole="label"] {{ color: {muted}; font-weight: normal; }}
 QLabel[skRole="dot"] {{ color: {faint}; }}
@@ -573,6 +573,9 @@ def stylesheet(scale=1.0, tokens=None, arrow=None):
         values["r%d" % n] = px(n, scale)
     values["b1"] = px(1, scale)
     values["small"] = px(9.5, scale)     # the UI font is ~10.7 logical
+    #  a section's caption: spaced capitals read as large as the text at
+    #  this size (2026-10-16, the card rules)
+    values["caption"] = px(8.5, scale)
     sheet = _SHEET.format(**values).strip() + "\n"
     if arrow:
         sheet += ("QComboBox::drop-down {{ border: none; width: {0}px; }}\n"
