@@ -10638,6 +10638,37 @@ SkeldarAnim hotkey set, an editor card, 8 slots and no submenus. Spec
   offscreen (`radial_menu.png`). **Not seen in a live Maya**: the key's hold and release, the overlay's
   focus and clicks, a popup opening by the cursor - the animator's to try after Check update.
 
+**…and it moves** (2026-10-16, «элементы появлялись с анимацией из центра ... подсвечивались и
+увеличивались немного в размере ... скрывались анимацией как бы съезжаясь в центр»; shown first as a
+live HTML demo beside the hub proposals, https://claude.ai/artifact/KYPDH1djZXZS3vXeKPA9jA - the
+animator picked hub layout C, a rail and one card, for later). Spec
+`docs/superpowers/specs/2026-10-16-radial-menu-motion-design.md`.
+- **The timing is pure** (`maya_radial_rules`): `item_open` (ease-out-back from the centre,
+  `OPEN_MS` 200, slot i `OPEN_STEP_MS` 18 after slot 0 - clockwise from north; the menu opens AT
+  the cursor, so its direction gives no order), `item_close` (ease-in back in, `CLOSE_MS` 140, the
+  last slot first, 12 apart), `ring_open` / `ring_close`, `pose(u)` (place, size from
+  `START_SCALE` 0.3, opacity), `approach` (a lift over `HOVER_MS` 110), `lifted_scale`
+  (`HOVER_SCALE` 1.10), `FLASH_MS` 120.
+- **`Menu.phase`**: "open" (opening or up), "fired" (the chosen pill solid accent and flashing; the
+  item runs when the flash ends), "leaving" (back into the centre, then destroyed). `close_menu()`
+  moves a menu to `_state()["leaving"]` and lets it play; a new press `drop_leaving()`s it. A
+  leaving menu paints no alpha-1 veil (clicks go through to Maya) and takes no clicks. The pointed
+  pill: a lighter face, 2 px accent outline, accent glow rings, 1.10 times, the pointer line fading
+  in with it (it used to turn solid orange at once - that look is the chosen one's now).
+- **⋮ -> Interface animations off** (`animated()` = `maya_hubmotion.enabled()`): shown, run and
+  closed at once, as before.
+- `paint(widget, now=None, device=None)` - a test or a renderer draws on an image.
+Proof: `tests/test_radial_rules.MotionTests` (11), `tests/test_radial.MotionTests` (6, offscreen
+Qt on a fake clock: the ink grows from nothing, a lit pill draws more, the flash then the close then
+the run, no veil while leaving, off = at once); 6782 unit tests OK;
+`docs/superpowers/plans/render_radial_motion.py` draws the filmstrip `radial_menu_motion.png`.
+**Not seen live** (the animator's to try after Check update).
+
+259. **`QColor(image.pixel(x, y))` is always opaque**: `QImage.pixel` answers an ARGB int and
+     `QColor(int)` reads it as RGB, alpha 255. A test counting painted pixels by alpha read every
+     pixel as ink. Use `image.pixelColor(x, y).alpha()`. And `widget.render()` of a never-shown
+     translucent window fills its background: draw on the image through the paint code instead.
+
 ## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
 
 The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать

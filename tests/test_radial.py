@@ -164,5 +164,130 @@ class RadialTests(unittest.TestCase):
         self.assertEqual(sec.group, "settings")
 
 
+@unittest.skipUnless(HAVE_MAYA, "needs maya.cmds importable")
+class MotionTests(unittest.TestCase):
+    """The menu's motion offscreen (2026-10-16): out of the centre, lit, flashed, back in."""
+
+    def setUp(self):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6 import QtWidgets
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        import maya_hubqt
+        self.q = maya_hubqt.qt()
+        self.fake = FakeCmds()
+        self.clock = [1000.0]
+        self.ran = []
+        for name, value in (("cmds", self.fake), ("waiting", lambda key: False),
+                            ("animated", lambda: True), ("_now_ms", lambda: self.clock[0]),
+                            ("_run_later", lambda q, item, point: self.ran.append(item))):
+            old = getattr(maya_radial, name)
+            setattr(maya_radial, name, value)
+            self.addCleanup(setattr, maya_radial, name, old)
+        state = maya_radial._state()
+        saved = dict(state)
+        self.addCleanup(lambda: (state.clear(), state.update(saved)))
+        state["menu"] = state["leaving"] = None
+
+    def _menu(self):
+        menu = maya_radial.Menu(self.q)
+        menu.centre = (300, 300)
+        menu.origin = (0, 0)
+        menu.cursor = lambda: (300, 300)
+        menu.window = maya_radial._overlay_class(self.q)(menu)
+        menu.window.resize(600, 600)
+        self.addCleanup(menu.window.deleteLater)
+        maya_radial._state()["menu"] = menu
+        return menu
+
+    def _image(self, menu):
+        from PySide6 import QtGui
+        image = QtGui.QImage(600, 600, QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        menu.paint(menu.window, device=image)       # what the overlay itself paints
+        return image
+
+    def _ink(self, menu):
+        image = self._image(menu)
+        return sum(1 for y in range(0, 600, 3) for x in range(0, 600, 3)
+                   if image.pixelColor(x, y).alpha() > 60)
+
+    def test_pills_fly_out_of_the_centre(self):
+        menu = self._menu()
+        self.assertEqual(menu.progress(0), 0.0)
+        self.assertEqual(self._ink(menu), 0)
+        self.clock[0] += rules.OPEN_STEP_MS * 3
+        self.assertGreater(menu.progress(0), menu.progress(2))
+        half = self._ink(menu)
+        self.assertGreater(half, 0)
+        self.clock[0] += rules.open_total(menu.count)
+        for i in range(menu.count):
+            self.assertAlmostEqual(menu.progress(i), 1.0)
+        self.assertGreater(self._ink(menu), half)
+        self.assertFalse(menu.moving())
+
+    def test_the_pointed_pill_lifts_and_falls(self):
+        menu = self._menu()
+        self.clock[0] += rules.open_total(menu.count)
+        menu.hover = 2
+        menu.step_lift(rules.HOVER_MS / 2.0)
+        self.assertAlmostEqual(menu.lift[2], 0.5)
+        self.assertTrue(menu.moving())
+        menu.step_lift(rules.HOVER_MS)
+        self.assertEqual(menu.lift[2], 1.0)
+        lit = self._ink(menu)
+        menu.hover = None
+        menu.step_lift(rules.HOVER_MS)
+        self.assertEqual(menu.lift[2], 0.0)
+        self.assertGreater(lit, self._ink(menu))      # the glow and the larger pill
+
+    def test_chosen_flashes_then_goes_back_in_and_runs(self):
+        menu = self._menu()
+        self.clock[0] += rules.open_total(menu.count)
+        menu.choose(1)
+        self.assertEqual(menu.phase, "fired")
+        self.assertEqual(self.ran, [])
+        self.assertTrue(maya_radial.is_up())
+        self.clock[0] += rules.FLASH_MS
+        menu.tick()
+        self.assertEqual(self.ran, [rules.DEFAULTS[1]])
+        self.assertEqual(menu.phase, "leaving")
+        self.assertFalse(maya_radial.is_up())
+        self.assertIs(maya_radial._state()["leaving"], menu)
+        self.clock[0] += rules.CLOSE_STEP_MS + 1
+        self.assertLess(menu.progress(menu.count - 1), menu.progress(0))
+        menu.clicked(True)                            # takes no clicks while it goes
+        self.assertEqual(self.ran, [rules.DEFAULTS[1]])
+        self.clock[0] += rules.close_total(menu.count)
+        menu.tick()
+        self.assertIsNone(menu.window)
+        self.assertIsNone(maya_radial._state()["leaving"])
+
+    def test_closing_paints_no_veil(self):
+        menu = self._menu()
+        self.clock[0] += rules.open_total(menu.count)
+        maya_radial.close_menu()
+        self.assertEqual(menu.phase, "leaving")
+        image = self._image(menu)
+        self.assertEqual(image.pixelColor(5, 5).alpha(), 0)
+
+    def test_a_new_press_drops_a_closing_menu(self):
+        menu = self._menu()
+        maya_radial.close_menu()
+        self.assertIs(maya_radial._state()["leaving"], menu)
+        maya_radial.drop_leaving()
+        self.assertIsNone(menu.window)
+
+    def test_animations_off_is_at_once(self):
+        maya_radial.animated = lambda: False
+        menu = self._menu()
+        self.assertEqual(menu.progress(3), 1.0)
+        self.assertFalse(menu.moving())
+        menu.choose(4)
+        self.assertEqual(self.ran, [rules.DEFAULTS[4]])
+        self.assertIsNone(menu.window)
+        self.assertIsNone(maya_radial._state()["leaving"])
+
+
 if __name__ == "__main__":
     unittest.main()

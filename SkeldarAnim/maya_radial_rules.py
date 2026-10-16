@@ -164,3 +164,95 @@ def release_action(slot, filled, elapsed, tap=TAP_S):
 
 def finish_label(label):
     return "Finish " + label
+
+
+# ------------------------------------------------------------------ the motion (2026-10-16)
+#
+# «элементы появлялись с анимацией из центра ... подсвечивались и увеличивались немного в размере
+# ... скрывались анимацией как бы съезжаясь в центр». Times in milliseconds since the menu opened
+# (or began to close); spec docs/superpowers/specs/2026-10-16-radial-menu-motion-design.md.
+
+RING_MS = 160             # the ring and the centre grow
+OPEN_MS = 200             # one pill out of the centre
+OPEN_STEP_MS = 18         # the wave: slot i starts i steps after slot 0, clockwise from north
+CLOSE_MS = 140            # one pill back into the centre
+CLOSE_STEP_MS = 12        # the last slot first
+HOVER_MS = 110            # the lift under the mouse, 0 -> 1 (and back)
+FLASH_MS = 120            # a chosen pill flashes, then the menu closes and the item runs
+HOVER_SCALE = 1.10        # a lit pill's size
+START_SCALE = 0.3         # a pill's size at the centre
+OVERSHOOT = 1.02          # ease_out_back's c1: a peak about 1.07
+
+
+def _clamped(t):
+    return min(1.0, max(0.0, float(t)))
+
+
+def ease_out(t):
+    t = _clamped(t)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def ease_in(t):
+    t = _clamped(t)
+    return t * t * t
+
+
+def ease_out_back(t, c1=OVERSHOOT):
+    """Past 1 a little, then back: the pill lands with a small bounce."""
+    t = _clamped(t)
+    c3 = c1 + 1.0
+    return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
+
+
+def open_total(count=SLOTS):
+    return OPEN_MS + (clamp_count(count) - 1) * OPEN_STEP_MS
+
+
+def close_total(count=SLOTS):
+    return CLOSE_MS + (clamp_count(count) - 1) * CLOSE_STEP_MS
+
+
+def opened(elapsed, count=SLOTS):
+    return elapsed >= max(open_total(count), RING_MS)
+
+
+def closed(elapsed, count=SLOTS):
+    return elapsed >= close_total(count)
+
+
+def item_open(elapsed, index, count=SLOTS):
+    """How far slot `index` is out of the centre `elapsed` ms after the menu opened (0..~1.07)."""
+    return ease_out_back((elapsed - index * OPEN_STEP_MS) / float(OPEN_MS))
+
+
+def item_close(elapsed, index, count=SLOTS):
+    """How far slot `index` still is out `elapsed` ms after the menu began to close (1 -> 0)."""
+    rank = clamp_count(count) - 1 - index
+    return 1.0 - ease_in((elapsed - rank * CLOSE_STEP_MS) / float(CLOSE_MS))
+
+
+def ring_open(elapsed):
+    return ease_out(elapsed / float(RING_MS))
+
+
+def ring_close(elapsed, count=SLOTS):
+    return 1.0 - ease_in(elapsed / float(close_total(count)))
+
+
+def pose(u):
+    """(the share of the way from the centre, the size, the opacity) of a pill at progress `u`."""
+    grown = max(0.0, u)
+    return (u, START_SCALE + (1.0 - START_SCALE) * min(grown, 1.0), _clamped(1.4 * grown))
+
+
+def approach(current, target, dt_ms, ms=HOVER_MS):
+    """A lift moved toward `target` by `dt_ms` of the `ms` the whole way takes."""
+    step = float(dt_ms) / float(ms)
+    if target > current:
+        return min(target, current + step)
+    return max(target, current - step)
+
+
+def lifted_scale(lift):
+    return 1.0 + (HOVER_SCALE - 1.0) * ease_out(lift)

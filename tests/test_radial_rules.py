@@ -147,5 +147,77 @@ class PurityTests(unittest.TestCase):
         self.assertEqual(out.decode().strip(), "[]")
 
 
+class MotionTests(unittest.TestCase):
+    """The menu's motion (2026-10-16): out of the centre, lit under the mouse, back in."""
+
+    def test_easings_hold_their_ends(self):
+        for f in (rules.ease_out_back, rules.ease_in, rules.ease_out):
+            self.assertAlmostEqual(f(0.0), 0.0)
+            self.assertAlmostEqual(f(1.0), 1.0)
+            self.assertAlmostEqual(f(-1.0), 0.0)
+            self.assertAlmostEqual(f(2.0), 1.0)
+
+    def test_ease_out_back_overshoots_a_little(self):
+        peak = max(rules.ease_out_back(i / 100.0) for i in range(101))
+        self.assertGreater(peak, 1.03)
+        self.assertLess(peak, 1.12)
+
+    def test_slot_zero_first_then_a_wave_clockwise(self):
+        n = 8
+        at = rules.OPEN_STEP_MS + 1
+        self.assertGreater(rules.item_open(at, 0, n), rules.item_open(at, 1, n))
+        self.assertGreater(rules.item_open(at, 1, n), 0.0)
+        self.assertEqual(rules.item_open(at, 2, n), 0.0)
+        for i in range(n):
+            self.assertEqual(rules.item_open(0, i, n), 0.0)
+            self.assertAlmostEqual(rules.item_open(rules.open_total(n), i, n), 1.0)
+
+    def test_open_total(self):
+        self.assertEqual(rules.open_total(8), rules.OPEN_MS + 7 * rules.OPEN_STEP_MS)
+        self.assertFalse(rules.opened(rules.open_total(8) - 1, 8))
+        self.assertTrue(rules.opened(rules.open_total(8), 8))
+
+    def test_close_is_the_reverse_last_slot_first(self):
+        n = 8
+        at = rules.CLOSE_STEP_MS + 1
+        self.assertLess(rules.item_close(at, 7, n), rules.item_close(at, 6, n))
+        self.assertEqual(rules.item_close(at, 0, n), 1.0)
+        for i in range(n):
+            self.assertEqual(rules.item_close(0, i, n), 1.0)
+            self.assertEqual(rules.item_close(rules.close_total(n), i, n), 0.0)
+        self.assertTrue(rules.closed(rules.close_total(n), n))
+        self.assertFalse(rules.closed(rules.close_total(n) - 1, n))
+
+    def test_close_falls_monotonically(self):
+        values = [rules.item_close(t, 3, 8) for t in range(0, rules.close_total(8) + 1, 4)]
+        self.assertEqual(values, sorted(values, reverse=True))
+
+    def test_ring_grows_and_shrinks(self):
+        self.assertEqual(rules.ring_open(0), 0.0)
+        self.assertEqual(rules.ring_open(rules.RING_MS), 1.0)
+        self.assertEqual(rules.ring_close(0, 8), 1.0)
+        self.assertEqual(rules.ring_close(rules.close_total(8), 8), 0.0)
+
+    def test_pose_from_the_centre(self):
+        place, scale, opacity = rules.pose(0.0)
+        self.assertEqual((place, scale, opacity), (0.0, rules.START_SCALE, 0.0))
+        self.assertEqual(rules.pose(1.0), (1.0, 1.0, 1.0))
+        place, scale, opacity = rules.pose(1.05)
+        self.assertAlmostEqual(place, 1.05)
+        self.assertAlmostEqual(opacity, 1.0)
+
+    def test_lift_follows_the_mouse(self):
+        half = rules.HOVER_MS / 2.0
+        self.assertAlmostEqual(rules.approach(0.0, 1.0, half), 0.5)
+        self.assertEqual(rules.approach(0.9, 1.0, rules.HOVER_MS), 1.0)
+        self.assertAlmostEqual(rules.approach(1.0, 0.0, half), 0.5)
+        self.assertEqual(rules.approach(0.2, 0.0, rules.HOVER_MS), 0.0)
+        self.assertEqual(rules.approach(0.4, 0.4, 5), 0.4)
+
+    def test_lifted_scale(self):
+        self.assertEqual(rules.lifted_scale(0.0), 1.0)
+        self.assertAlmostEqual(rules.lifted_scale(1.0), rules.HOVER_SCALE)
+
+
 if __name__ == "__main__":
     unittest.main()

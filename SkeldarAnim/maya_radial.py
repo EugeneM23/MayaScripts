@@ -55,7 +55,21 @@ def _state():
     if st is None:
         st = {"menu": None, "finish": None}
         sys._skeldar_radial = st
+    st.setdefault("leaving", None)     # a menu playing its close (2026-10-16)
     return st
+
+
+def animated():
+    """The menu moves (⋮ -> Interface animations), else it is up and gone at once."""
+    try:
+        import maya_hubmotion
+        return bool(maya_hubmotion.enabled())
+    except Exception:                                        # noqa: BLE001
+        return True
+
+
+def _now_ms():
+    return time.perf_counter() * 1000.0
 
 
 # ------------------------------------------------------------------ the slots
@@ -231,6 +245,7 @@ def press():
     q = _qt()
     if q is None:
         return _report("The radial menu needs Maya's Qt UI")
+    drop_leaving()
     menu = Menu(q)
     _state()["menu"] = menu
     menu.show(keys_down())
@@ -250,8 +265,22 @@ def release():
 
 
 def close_menu():
+    """The menu goes: back into its centre when the animations are on, at once otherwise."""
     menu = _state()["menu"]
     _state()["menu"] = None
+    if menu is not None:
+        if menu.alive() and menu.animate:
+            drop_leaving()
+            _state()["leaving"] = menu
+            menu.leave()
+        else:
+            menu.destroy()
+
+
+def drop_leaving():
+    """A menu still playing its close is gone at once (a new press, a reload)."""
+    menu = _state()["leaving"]
+    _state()["leaving"] = None
     if menu is not None:
         menu.destroy()
 
@@ -361,7 +390,9 @@ def _overlay_class(q):
 
 
 class Menu(object):
-    """The menu while it is up: the overlay, the held keys, the slot pointed at."""
+    """The menu while it is up: the overlay, the held keys, the slot pointed at, and its motion
+    (2026-10-16): `phase` is "open" (opening or up), "fired" (a chosen pill flashing) or
+    "leaving" (going back into the centre)."""
 
     def __init__(self, q):
         self.q = q
@@ -380,6 +411,15 @@ class Menu(object):
         self.started = time.time()
         self.esc_was = False
         self._icons = {}
+        self.animate = animated()
+        self.phase = "open"
+        self.opened_at = _now_ms()
+        self.left_at = None           # when the close began
+        self.fired = None             # the chosen slot while it flashes
+        self.fired_at = None
+        self.pending = None           # (item, point) to run when the flash ends
+        self.lift = [0.0] * self.count
+        self.ticked_at = self.opened_at
 
     def alive(self):
         if self.window is None:
@@ -400,6 +440,7 @@ class Menu(object):
         self.origin = (rect.x(), rect.y())
         self.window = _overlay_class(q)(self, _main_window(q))
         self.window.setGeometry(rect)
+        self.opened_at = self.ticked_at = _now_ms()
         self.window.show()
         self.window.raise_()
         self.esc_was = key_down(VK_ESCAPE)
@@ -420,15 +461,94 @@ class Menu(object):
         return rules.slot_at(x - self.centre[0], y - self.centre[1], self.px(rules.DEAD),
                              self.count)
 
+    # ----------------------------------------------------------- the motion
+
+    def elapsed(self, now=None):
+        return (now if now is not None else _now_ms()) - self.opened_at
+
+    def moving(self, now=None):
+        """True while anything still has to be drawn again: the opening, a lift on its way."""
+        if not self.animate:
+            return False
+        if self.phase != "open":
+            return True
+        if not rules.opened(self.elapsed(now), self.count):
+            return True
+        return any(abs(lift - (1.0 if i == self.hover else 0.0)) > 1e-6
+                   for i, lift in enumerate(self.lift))
+
+    def step_lift(self, dt_ms):
+        for i in range(len(self.lift)):
+            target = 1.0 if (i == self.hover and self.phase == "open") else 0.0
+            self.lift[i] = target if not self.animate else \
+                rules.approach(self.lift[i], target, dt_ms)
+
+    def progress(self, index, now=None):
+        """How far pill `index` is out of the centre now (0 at the centre, 1 in its place)."""
+        if not self.animate:
+            return 1.0
+        now = now if now is not None else _now_ms()
+        out = rules.item_open(self.elapsed(now), index, self.count)
+        if self.phase == "leaving" and self.left_at is not None:
+            out = min(out, rules.item_close(now - self.left_at, index, self.count))
+        return out
+
+    def ring(self, now=None):
+        if not self.animate:
+            return 1.0
+        now = now if now is not None else _now_ms()
+        grown = rules.ring_open(self.elapsed(now))
+        if self.phase == "leaving" and self.left_at is not None:
+            grown = min(grown, rules.ring_close(now - self.left_at, self.count))
+        return grown
+
+    def leave(self):
+        """Back into the centre; destroyed when the close has played. Takes no clicks meanwhile
+        (and paints no veil, so a click goes through to Maya)."""
+        if self.phase == "leaving":
+            return
+        self.phase = "leaving"
+        self.left_at = _now_ms()
+        self.hover = None
+        if self.alive():
+            self.window.update()
+
     def tick(self):
         if not self.alive():
             return
+        now = _now_ms()
+        dt = max(0.0, now - self.ticked_at)
+        self.ticked_at = now
+        if self.phase == "leaving":
+            self.step_lift(dt)
+            if rules.closed(now - self.left_at, self.count):
+                if _state()["leaving"] is self:
+                    _state()["leaving"] = None
+                self.destroy()
+            else:
+                self.window.update()
+            return
+        if self.phase == "fired":
+            if now - self.fired_at >= rules.FLASH_MS:
+                pending, self.pending = self.pending, None
+                if _state()["menu"] is self:
+                    close_menu()
+                else:
+                    self.leave()
+                if pending is not None:
+                    _run_later(self.q, *pending)
+            else:
+                self.window.update()
+            return
         hover = self.pointed()
         cursor = self.cursor()
+        changed = hover != self.hover or (hover is not None and cursor != self.last_cursor)
+        self.hover = hover
+        self.last_cursor = cursor
+        was_moving = self.moving(now)
+        self.step_lift(dt)
         # the pointer line follows the cursor, so a move inside one slot repaints too
-        if hover != self.hover or (hover is not None and cursor != self.last_cursor):
-            self.hover = hover
-            self.last_cursor = cursor
+        if changed or was_moving:
             self.window.update()
         esc = key_down(VK_ESCAPE)
         if esc and not self.esc_was:
@@ -440,7 +560,7 @@ class Menu(object):
 
     def released(self):
         """The key let go."""
-        if not self.alive() or self.mode != "hold":
+        if not self.alive() or self.mode != "hold" or self.phase != "open":
             return
         slot = self.pointed()
         filled = slot is not None and bool(rules.parse(self.items[slot])[0])
@@ -454,6 +574,8 @@ class Menu(object):
             close_menu()
 
     def clicked(self, left):
+        if self.phase != "open":
+            return                    # flashing or going: it takes no clicks
         if not left:
             close_menu()
             return
@@ -466,15 +588,17 @@ class Menu(object):
     def choose(self, slot):
         item = self.items[slot]
         point = self.cursor()
-        close_menu()
-
-        def later():
-            try:
-                run_item(item, point)
-            except Exception as error:                       # noqa: BLE001
-                traceback.print_exc()
-                _report("Radial menu: {0}".format(error))
-        self.q.QtCore.QTimer.singleShot(0, later)
+        if not self.animate or not self.alive():
+            close_menu()
+            _run_later(self.q, item, point)
+            return
+        # the chosen pill flashes, then the menu goes back into its centre and the item runs
+        self.phase = "fired"
+        self.fired = slot
+        self.fired_at = _now_ms()
+        self.pending = (item, point)
+        self.hover = None
+        self.window.update()
 
     def destroy(self):
         if self.timer is not None:
@@ -506,32 +630,46 @@ class Menu(object):
         except Exception:                                    # noqa: BLE001
             return float(point[0] - self.origin[0]), float(point[1] - self.origin[1])
 
-    def paint(self, widget):
+    def paint(self, widget, now=None, device=None):
+        """Draw the menu on `widget` (or on `device`, an image of its size - a test)."""
         q = self.q
         QtCore, QtGui = q.QtCore, q.QtGui
         t = hubstyle.TOKENS
-        p = QtGui.QPainter(widget)
+        now = now if now is not None else _now_ms()
+        p = QtGui.QPainter(device if device is not None else widget)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        # alpha 1 everywhere: a click anywhere lands on the menu, not on the viewport under it
-        p.fillRect(widget.rect(), QtGui.QColor(0, 0, 0, 1))
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        # alpha 1 everywhere: a click anywhere lands on the menu, not on the viewport under it -
+        # but not once it goes, so a click while it closes reaches Maya
+        if self.phase != "leaving":
+            p.fillRect(widget.rect(), QtGui.QColor(0, 0, 0, 1))
         cx, cy = self._local(widget, self.centre)
         centre = QtCore.QPointF(cx, cy)
+        grown = max(0.0, self.ring(now))
+        ring_k = 0.2 + 0.8 * grown
         # the ring
         ring = self.px(rules.ring_radius(self.count))
+        p.setOpacity(grown)
         pen = QtGui.QPen(QtGui.QColor(t["line"]))
         pen.setWidthF(self.px(1.5))
         p.setPen(pen)
         p.setBrush(QtCore.Qt.NoBrush)
-        p.drawEllipse(centre, ring, ring)
-        # the line toward the cursor
-        if self.hover is not None:
-            x, y = self._local(widget, self.cursor())
-            pen = QtGui.QPen(QtGui.QColor(t["accent"]))
-            pen.setWidthF(self.px(2))
-            p.setPen(pen)
-            p.drawLine(centre, QtCore.QPointF(x, y))
+        p.drawEllipse(centre, ring * ring_k, ring * ring_k)
+        # the line toward the cursor, as lit as the pill it points at
+        if self.hover is not None and self.phase == "open":
+            lit = self.lift[self.hover] if self.animate else 1.0
+            if lit > 0.0:
+                x, y = self._local(widget, self.cursor())
+                colour = QtGui.QColor(t["accent"])
+                colour.setAlphaF(min(1.0, 0.25 + 0.75 * lit))
+                pen = QtGui.QPen(colour)
+                pen.setWidthF(self.px(2))
+                p.setOpacity(1.0)
+                p.setPen(pen)
+                p.drawLine(centre, QtCore.QPointF(x, y))
         # the centre
-        dead = self.px(rules.DEAD)
+        p.setOpacity(grown)
+        dead = self.px(rules.DEAD) * ring_k
         p.setPen(QtGui.QPen(QtGui.QColor(t["line"]), self.px(1)))
         p.setBrush(QtGui.QColor(t["panel"]))
         p.drawEllipse(centre, dead, dead)
@@ -541,43 +679,112 @@ class Menu(object):
         p.setFont(font)
         p.drawText(QtCore.QRectF(cx - dead, cy - dead, 2 * dead, 2 * dead),
                    QtCore.Qt.AlignCenter, "click" if self.mode == "click" else "")
-        # the pills
+        # the pills, the lit one last so its glow lies over its neighbours
         font.setPixelSize(int(self.px(12)))
         font.setBold(False)
         metrics = QtGui.QFontMetrics(font)
+        order = list(range(len(self.items)))
+        for top in (self.fired, self.hover):
+            if top is not None and top in order:
+                order.remove(top)
+                order.append(top)
+        for i in order:
+            self._paint_pill(p, i, cx, cy, ring, font, metrics, now)
+        p.end()
+
+    def _paint_pill(self, p, i, cx, cy, ring, font, metrics, now):
+        q = self.q
+        QtCore, QtGui = q.QtCore, q.QtGui
+        t = hubstyle.TOKENS
+        place, size, opacity = rules.pose(self.progress(i, now))
+        if opacity <= 0.0:
+            return
+        dx, dy = rules.slot_position(i, ring, self.count)
+        text = self.texts[i]
+        lift = self.lift[i] if self.animate else (1.0 if i == self.hover else 0.0)
+        fired = i == self.fired
+        p.setOpacity(opacity)
+        if not text:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(t["faint"] if lift > 0.5 else t["line"]))
+            r = self.px(4) * size * rules.lifted_scale(lift)
+            p.drawEllipse(QtCore.QPointF(cx + dx * place, cy + dy * place), r, r)
+            return
+        finish = text.startswith("Finish ")
         icon_px = int(self.px(16))
         h = self.px(30)
-        for i, item in enumerate(self.items):
-            dx, dy = rules.slot_position(i, ring, self.count)
-            px_, py_ = cx + dx, cy + dy
-            text = self.texts[i]
-            lit = i == self.hover
-            if not text:
-                p.setPen(QtCore.Qt.NoPen)
-                p.setBrush(QtGui.QColor(t["line"] if not lit else t["faint"]))
-                p.drawEllipse(QtCore.QPointF(px_, py_), self.px(4), self.px(4))
-                continue
-            finish = text.startswith("Finish ")
-            w = metrics.horizontalAdvance(text) + icon_px + self.px(26)
-            rect = QtCore.QRectF(px_ - w * rules.pill_anchor(i, self.count), py_ - h / 2.0, w, h)
-            if lit:
-                bg, fg = QtGui.QColor(t["accent"]), t["on_accent"]
-            else:
-                bg, fg = QtGui.QColor(t["card"]), t["accent_text"] if finish else t["text"]
-            p.setPen(QtGui.QPen(QtGui.QColor(t["accent"] if (lit or finish) else t["line"]),
-                                self.px(1)))
-            p.setBrush(bg)
-            p.drawRoundedRect(rect, h / 2.0, h / 2.0)
-            name = item_icon(self.items[i])
-            left = rect.left() + self.px(10)
-            if name:
-                p.drawPixmap(int(left), int(py_ - icon_px / 2.0),
-                             self._icon(name, fg if lit else t["muted"], icon_px))
-            p.setPen(QtGui.QColor(fg))
-            p.setFont(font)
-            p.drawText(QtCore.QRectF(left + icon_px + self.px(6), rect.top(),
-                                     w, h), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, text)
-        p.end()
+        w = metrics.horizontalAdvance(text) + icon_px + self.px(26)
+        # the pill's own centre in its place, then carried out of the menu's centre
+        fx = cx + dx - w * rules.pill_anchor(i, self.count) + w / 2.0
+        fy = cy + dy
+        x = cx + (fx - cx) * place
+        y = cy + (fy - cy) * place
+        k = size * rules.lifted_scale(lift)
+        p.save()
+        p.translate(x, y)
+        p.scale(k, k)
+        rect = QtCore.QRectF(-w / 2.0, -h / 2.0, w, h)
+        flash = 0.0
+        if fired and self.fired_at is not None:
+            flash = 1.0 - rules.ease_out((now - self.fired_at) / float(rules.FLASH_MS))
+        if fired:
+            bg, fg, edge = QtGui.QColor(t["accent"]), t["on_accent"], t["accent"]
+        else:
+            bg = _mix(QtGui, t["card"], t["card_active"], lift)
+            fg = t["accent_text"] if finish else t["text"]
+            edge = t["accent"] if (finish or lift > 0.0) else t["line"]
+        # the glow: rings of the accent fading outward
+        glow = max(lift, flash if fired else 0.0)
+        if glow > 0.0:
+            p.setBrush(QtCore.Qt.NoBrush)
+            spread = self.px(10) * (1.6 if fired else 1.0)
+            rings = 6
+            for j in range(rings, 0, -1):
+                grow = spread * j / float(rings)
+                colour = QtGui.QColor(t["accent"])
+                colour.setAlphaF(0.22 * glow * (1.0 - j / float(rings + 1)))
+                pen = QtGui.QPen(colour)
+                pen.setWidthF(spread / rings + 0.5)
+                p.setPen(pen)
+                p.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow),
+                                  h / 2.0 + grow, h / 2.0 + grow)
+        width = self.px(1) + self.px(1) * (lift if not fired else 1.0)
+        pen = QtGui.QPen(QtGui.QColor(edge))
+        pen.setWidthF(width)
+        p.setPen(pen)
+        p.setBrush(bg)
+        p.drawRoundedRect(rect, h / 2.0, h / 2.0)
+        name = item_icon(self.items[i])
+        left = rect.left() + self.px(10)
+        if name:
+            colour = fg if fired else (t["accent_text"] if lift > 0.5 else t["muted"])
+            p.drawPixmap(int(round(left)), int(round(-icon_px / 2.0)),
+                         self._icon(name, colour, icon_px))
+        p.setPen(QtGui.QColor(fg if not (lift > 0.5 and not fired) else "#ffffff"))
+        p.setFont(font)
+        p.drawText(QtCore.QRectF(left + icon_px + self.px(6), rect.top(), w, h),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, text)
+        p.restore()
+
+
+def _mix(QtGui, a, b, k):
+    """Colour `a` toward `b` by `k` (0..1)."""
+    ca, cb = QtGui.QColor(a), QtGui.QColor(b)
+    k = min(1.0, max(0.0, k))
+    return QtGui.QColor(int(round(ca.red() + (cb.red() - ca.red()) * k)),
+                        int(round(ca.green() + (cb.green() - ca.green()) * k)),
+                        int(round(ca.blue() + (cb.blue() - ca.blue()) * k)))
+
+
+def _run_later(q, item, point):
+    """Run a chosen item once the event loop turns (the menu's own press is over)."""
+    def later():
+        try:
+            run_item(item, point)
+        except Exception as error:                           # noqa: BLE001
+            traceback.print_exc()
+            _report("Radial menu: {0}".format(error))
+    q.QtCore.QTimer.singleShot(0, later)
 
 
 # --------------------------------------------------------- the finish popup
