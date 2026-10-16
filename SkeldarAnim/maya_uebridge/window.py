@@ -1168,13 +1168,15 @@ def build_rows():
                               columnAttach=("both", hubstyle.pick(0, 6)),
                               **hubstyle.pick({}, {"backgroundColor":
                                                    INSET_CLASSIC_BG}))
-    hubstyle.mark(inset, "inset", layout=True)
-    #  the block's title (2026-10-01 «UE Connect»; «Connect» since it reaches
-    #  Unity and a folder too) - the classic hub's only: the compact skin's
-    #  inset says it by standing apart (2026-10-08)
+    #  2026-10-16 (the card rules): the skin draws no inset - the caption
+    #  «Animation» parts the section, as every card's sections are parted;
+    #  the classic hub keeps its block and its title «Connect»
     if not hubstyle.skinning():
-        hubstyle.mark(cmds.text(_HEADING, label="Connect", align="left",
-                                font="boldLabelFont"), "heading")
+        hubstyle.mark(inset, "inset", layout=True)
+    #  the block's title (2026-10-01 «UE Connect»; «Connect» since it reaches
+    #  Unity and a folder too)
+    hubstyle.mark(cmds.text(_HEADING, label=hubstyle.pick("Animation", "Connect"),
+                            align="left", font="boldLabelFont"), "heading")
     #  where the animations come from
     from maya_uebridge import sources
     segments = cmds.rowLayout(numberOfColumns=len(sources.SOURCES),

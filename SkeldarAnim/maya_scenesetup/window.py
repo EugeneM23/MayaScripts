@@ -1092,9 +1092,9 @@ def build_characters_panel():
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
-    #  the compact skin has no headings (2026-10-08): the card says it
-    if not hubstyle.skinning():
-        heading(_CHARACTERS_HEADING, "Characters")
+    #  the section's caption (2026-10-16, the card rules: the skin captions
+    #  its two sections, Character and Animation; none 2026-10-08..16)
+    heading(_CHARACTERS_HEADING, hubstyle.pick("Character", "Characters"))
 
     model, kind = remembered_choice()
     #  [Rig | Skeleton] [+ Import] [Delete] [Camera Setup] on one row

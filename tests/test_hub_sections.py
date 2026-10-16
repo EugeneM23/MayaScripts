@@ -195,15 +195,18 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(roles[:3], [("primary", "plus"), ("danger", "trash"),
                                      ("secondary", "camera")])
 
-    def test_no_heading_in_the_skin(self):
-        """2026-10-08: the compact card says nothing twice - Characters and
-        Connect keep their headings in the classic hub only."""
+    def test_the_skin_captions_its_two_sections(self):
+        """2026-10-16, the card rules: Character and Animation captioned (no
+        heading 2026-10-08..16); the Connect inset is the classic hub's."""
         fake, marks = self._skin_build()
-        self.assertFalse([m for m in marks if m.role == "heading"])
-        texts = [c[1][0] for c in fake.calls if c[0] == "text" and c[1]
-                 and not c[2].get("edit")]
-        self.assertNotIn(scenesetup._CHARACTERS_HEADING, texts)
-        self.assertNotIn(uebridge._HEADING, texts)
+        heads = [m.name for m in marks if m.role == "heading"]
+        self.assertEqual(heads, [scenesetup._CHARACTERS_HEADING,
+                                 uebridge._HEADING])
+        labels = dict((c[1][0], c[2].get("label")) for c in fake.calls
+                      if c[0] == "text" and c[1] and not c[2].get("edit"))
+        self.assertEqual(labels[scenesetup._CHARACTERS_HEADING], "Character")
+        self.assertEqual(labels[uebridge._HEADING], "Animation")
+        self.assertFalse([m for m in marks if m.role == "inset"])
 
     def test_the_animation_list_has_a_grip(self):
         """2026-10-08: ten rows, a height grip under the list (the skin's);
