@@ -597,8 +597,23 @@ def phase_save():
     gate("save: a failing cleanup step raises, and the undo state and the names are restored",
          "injected" in cleanup_error and cmds.undoInfo(q=True, stateWithoutFlush=True)
          and cmds.objExists("tab_film:hero") and not cmds.objExists("|hero")
-         and not os.path.exists(RUN + "/film_failed_cleanup.ma.skeldartmp"),
+         and not [f for f in os.listdir(RUN) if f.startswith("film_failed_cleanup") and "skeldartmp" in f],
          (cleanup_error, cmds.undoInfo(q=True, stateWithoutFlush=True)))
+    # 2026-10-16, found live: with Maya's «Default file extensions» on, an export to
+    # `x.ma.skeldartmp` writes `x.ma.skeldartmp.ma`, and the save died on the rename after it
+    was_ext = cmds.file(q=True, defaultExtensions=True)
+    cmds.file(defaultExtensions=True)
+    try:
+        ext_path = RUN + "/film_with_extensions.ma"
+        try:
+            ext_message = saving.save_tab(path=ext_path, adopt=False)
+        except Exception as exc:                                # noqa: BLE001
+            ext_message = "raised %s" % exc
+    finally:
+        cmds.file(defaultExtensions=was_ext)
+    gate("save: with Maya's default file extensions on, the file is written and no temporary is left",
+         ext_message.startswith("Saved") and os.path.isfile(ext_path)
+         and not [f for f in os.listdir(RUN) if "skeldartmp" in f], ext_message)
     target = RUN + "/film_saved_as.ma"
     saving.save_tab(path=target)
     gate("save as: the tab takes the new path",
@@ -1291,13 +1306,69 @@ def phase_layer_editor():
          (session.exists(), cmds.ls(type="displayLayer"), cmds.ls(type="animLayer")))
 
 
+def phase_pasted():
+    """2026-10-16, found live: Copy / Paste from one tab into another nests the source tab's
+    namespace in the target (`tab_B:tab_A:mat`), and every save of the target then refused -
+    «cannot save tab_B: the scene already holds a namespace tab_A». A pasted tab namespace is
+    folded into the tab on save (its nodes are the target's: `mat` -> `mat1` beside its own),
+    and the save goes through."""
+    from maya_scenetabs import opening, saving
+    os.makedirs(RUN, exist_ok=True)
+    made = {}
+    for tag in ("A", "B"):
+        fresh()
+        cmds.namespace(add=":Bow")
+        cube = cmds.polyCube(name="cube" + tag)[0]
+        cmds.shadingNode("lambert", asShader=True, name="mat")
+        cmds.createDisplayLayer([cube], name=":Bow:Arrow", noRecurse=True)
+        made[tag] = RUN + "/pasted%s.ma" % tag
+        _save(made[tag])
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(made["B"])
+    a, b = "tab_pastedA", "tab_pastedB"
+    # what Maya's paste of A's material and layer makes in B (B's namespace current)
+    cmds.namespace(add=":%s:%s:Bow" % (b, a))
+    cmds.shadingNode("lambert", asShader=True, name=":%s:%s:mat" % (b, a))
+    cmds.shadingNode("lambert", asShader=True, name=":%s:%s:only" % (b, a))
+    cmds.createDisplayLayer(empty=True, name=":%s:%s:Bow:Arrow" % (b, a), noRecurse=True)
+    cmds.lockNode(":%s:%s:only" % (b, a), lock=True)
+    before_a = sorted(cmds.namespaceInfo(":" + a, listOnlyDependencyNodes=True, recurse=True) or [])
+    cmds.setAttr(b + ":cubeB.translateZ", 1)
+    try:
+        message = saving.save_tab(b)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        message, error = "", str(exc)
+    gate("pasted: a tab holding another tab's namespace saves", message.startswith("Saved"), message or error)
+    gate("pasted: the line says what was folded", "tab_pastedA" in message and "pasted" in message, message)
+    gate("pasted: the pasted namespace is gone from the tab",
+         not cmds.namespace(exists=":%s:%s" % (b, a)), cmds.namespaceInfo(":" + b, listOnlyNamespaces=True))
+    gate("pasted: its nodes are the tab's own, clashes renamed",
+         all(cmds.objExists(":%s:%s" % (b, n)) for n in ("mat", "mat1", "only", "Bow:Arrow", "Bow1:Arrow"))
+         and cmds.lockNode(":%s:only" % b, q=True, lock=True)[0])
+    gate("pasted: the other tab untouched",
+         sorted(cmds.namespaceInfo(":" + a, listOnlyDependencyNodes=True, recurse=True) or []) == before_a)
+    text = open(made["B"]).read()
+    gate("pasted: the file holds them under plain names, no tab namespace",
+         '-n "mat1"' in text and '-n "only"' in text and "tab_" not in text,
+         [l for l in text.splitlines() if "tab_" in l][:3])
+    gate("pasted: the tab is clean after the save",
+         not records.tab(session.state(), b)["modified"] and not cmds.file(q=True, modified=True))
+    fresh()
+    cmds.file(made["B"], open=True, force=True)
+    gate("pasted: the saved file opens with its own and the pasted nodes",
+         all(cmds.objExists(n) for n in ("mat", "mat1", "only", "Bow:Arrow", "Bow1:Arrow", "cubeB")))
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
-          "nested": phase_nested}
+          "nested": phase_nested, "pasted": phase_pasted}
 
 
 def main(names):

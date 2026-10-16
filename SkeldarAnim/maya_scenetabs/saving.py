@@ -117,11 +117,14 @@ def _save_tab(namespace, path, adopt, preserve_references):
                 switching.switch(was_active)
             return session.Cancelled("Save cancelled - %s left as it is on disk" % os.path.basename(target))
     ranges = session.current_ranges()
-    temporary = target + ".skeldartmp"
+    # ends in the target's own extension: with Maya's «Default file extensions» on, an
+    # export to `x.ma.skeldartmp` writes `x.ma.skeldartmp.ma` and the rename below found
+    # nothing (2026-10-16, measured)
+    temporary = os.path.splitext(target)[0] + ".skeldartmp" + ext
     recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
     selection = cmds.ls(selection=True, uuid=True) or []
     current = cmds.namespaceInfo(currentNamespace=True) or ":"
-    moved, links = None, []
+    moved, links, folded = None, [], []
     cmds.undoInfo(stateWithoutFlush=False)
     failures = []           # cleanup steps that raised; the export's own error wins
 
@@ -140,6 +143,9 @@ def _save_tab(namespace, path, adopt, preserve_references):
 
     try:
         try:
+            #  a paste from another tab nested that tab's namespace here: folded for good, the
+            #  file holds the pasted nodes as the tab's own (2026-10-16)
+            folded = session.fold_pasted(namespace, [t["ns"] for t in state["tabs"]])
             _config(namespace, ranges)
             layers.home_blends(namespace)
             uuids = export_uuids(namespace, preserve_references)
@@ -175,8 +181,11 @@ def _save_tab(namespace, path, adopt, preserve_references):
         item = dict(item, path=target, mtime=os.path.getmtime(target), modified=False)
         session.write_quiet(records.with_tab(session.state(), item))
         cmds.file(modified=False)
-    return "Saved %s (%s, %s)" % (os.path.basename(target), cmds.currentUnit(q=True, time=True),
-                                  records.range_text(ranges))
+    message = "Saved %s (%s, %s)" % (os.path.basename(target), cmds.currentUnit(q=True, time=True),
+                                     records.range_text(ranges))
+    if folded:
+        message += " | nodes pasted from %s are this tab's own now" % ", ".join(folded)
+    return message
 
 
 def save_as(namespace=None):

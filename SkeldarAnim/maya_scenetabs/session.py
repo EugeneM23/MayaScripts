@@ -186,6 +186,36 @@ def child_namespaces(namespace, skip=()):
             and n not in records.SYSTEM_NAMESPACES]
 
 
+def pasted_namespaces(namespace, tabs=()):
+    """A tab's child namespaces named like a tab: Maya's Copy / Paste from one tab into
+    another keeps the source tab's namespace under the current one (`tab_B:tab_A:mat`,
+    measured live 2026-10-16). It means nothing in the tab's file, and a save cannot lift
+    it into the root, where the source tab holds that name."""
+    return [child for child in child_namespaces(namespace)
+            if child in tabs or (child.startswith(records.TAB_PREFIX) and cmds.namespace(exists=":" + child))]
+
+
+def fold_pasted(namespace, tabs=()):
+    """Every pasted tab namespace in `namespace` folded into it, for good: its nodes and
+    namespaces become the tab's own, a name the tab already uses renamed (`mat` -> `mat1`,
+    Maya's `moveNamespace -force`). Returns the folded leaves."""
+    folded = []
+    for _ in range(32):                       # a paste of a paste nests deeper: fold until none
+        found = pasted_namespaces(namespace, tabs)
+        if not found:
+            break
+        for child in found:
+            path = ":%s:%s" % (namespace, child)
+            cmds.namespace(moveNamespace=(path, ":" + namespace), force=True)
+            if cmds.namespace(exists=path) and not cmds.namespaceInfo(path, listNamespace=True):
+                cmds.namespace(removeNamespace=path)
+            if cmds.namespace(exists=path):
+                raise TabError("cannot save %s: the namespace %s pasted from another tab did not fold into it"
+                               % (namespace, child))
+            folded.append(child)
+    return folded
+
+
 # ------------------------------------------------------------------ moving
 
 class Moved(object):
