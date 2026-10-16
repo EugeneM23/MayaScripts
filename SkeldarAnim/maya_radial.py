@@ -361,6 +361,7 @@ class Menu(object):
         self.scale = _scale()
         self.centre = (0, 0)          # global
         self.origin = (0, 0)          # the window's global top-left
+        self.last_cursor = None       # where the pointer line was last drawn to
         self.started = time.time()
         self.esc_was = False
         self._icons = {}
@@ -407,8 +408,11 @@ class Menu(object):
         if not self.alive():
             return
         hover = self.pointed()
-        if hover != self.hover:
+        cursor = self.cursor()
+        # the pointer line follows the cursor, so a move inside one slot repaints too
+        if hover != self.hover or (hover is not None and cursor != self.last_cursor):
             self.hover = hover
+            self.last_cursor = cursor
             self.window.update()
         esc = key_down(VK_ESCAPE)
         if esc and not self.esc_was:
@@ -476,6 +480,16 @@ class Menu(object):
             self._icons[key] = hubqt.pixmap(name, colour, size)
         return self._icons[key]
 
+    def _local(self, widget, point):
+        """A global point in the overlay's own pixels, as the window really stands
+        (a window placed off the asked rect, or another screen's scale, would put an
+        origin subtraction somewhere beside the mouse)."""
+        try:
+            local = widget.mapFromGlobal(self.q.QtCore.QPoint(int(point[0]), int(point[1])))
+            return float(local.x()), float(local.y())
+        except Exception:                                    # noqa: BLE001
+            return float(point[0] - self.origin[0]), float(point[1] - self.origin[1])
+
     def paint(self, widget):
         q = self.q
         QtCore, QtGui = q.QtCore, q.QtGui
@@ -484,7 +498,7 @@ class Menu(object):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         # alpha 1 everywhere: a click anywhere lands on the menu, not on the viewport under it
         p.fillRect(widget.rect(), QtGui.QColor(0, 0, 0, 1))
-        cx, cy = self.centre[0] - self.origin[0], self.centre[1] - self.origin[1]
+        cx, cy = self._local(widget, self.centre)
         centre = QtCore.QPointF(cx, cy)
         # the ring
         ring = self.px(rules.RADIUS)
@@ -494,12 +508,12 @@ class Menu(object):
         p.setBrush(QtCore.Qt.NoBrush)
         p.drawEllipse(centre, ring, ring)
         # the line toward the cursor
-        x, y = self.cursor()
         if self.hover is not None:
+            x, y = self._local(widget, self.cursor())
             pen = QtGui.QPen(QtGui.QColor(t["accent"]))
             pen.setWidthF(self.px(2))
             p.setPen(pen)
-            p.drawLine(centre, QtCore.QPointF(x - self.origin[0], y - self.origin[1]))
+            p.drawLine(centre, QtCore.QPointF(x, y))
         # the centre
         dead = self.px(rules.DEAD)
         p.setPen(QtGui.QPen(QtGui.QColor(t["line"]), self.px(1)))
