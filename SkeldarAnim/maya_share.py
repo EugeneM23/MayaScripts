@@ -803,10 +803,12 @@ def open_entry(rid):
     if not path:
         return _status(why)
     record = state()["entries"][rid]["record"]
-    if not tabscope.tabs_on(cmds) and not _save_changes():
+    empty = tabscope.scene_empty(cmds)
+    if empty and not _save_changes():
         return _status("Open cancelled - nothing changed.")
-    if record["kind"] == "scene" and tabscope.tabs_on(cmds):
-        #  scene tabs on (2026-10-15): a tab of its own, with its ranges, its vaccine swept
+    if record["kind"] == "scene" and not empty:
+        #  a scene open (2026-10-16; tabs on, 2026-10-15): a tab of its own beside it, with its
+        #  ranges, its vaccine swept - only an empty scene is replaced
         tabscope.open_scene(path, cmds)
         return _status("Opened {0} from {1} in a tab".format(
             record["name"], record.get("from") or "someone"))
@@ -817,7 +819,7 @@ def open_entry(rid):
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
         return _status("Opened {0} from {1}{2}".format(
             record["name"], record.get("from") or "someone", note))
-    tabscope.new_scene(cmds)
+    tabscope.new_scene(cmds)        # an empty tab beside a scene that is open
     return _status(_import_fbx(path, record, "Opened"))
 
 

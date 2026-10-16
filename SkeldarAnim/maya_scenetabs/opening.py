@@ -18,6 +18,7 @@ from . import layers, records, session, switching
 
 ASK = None          # seam: callable(message, buttons) -> the button picked
 NOTES = []          # what tidying a file found, said by the press that opened it
+CHANGED = []        # the tabs tidying changed: they open flagged, so a save writes the clean file
 
 
 def _quiet(fn):
@@ -104,6 +105,7 @@ def start():
         session.move_into(namespace)
         layers.give_children(namespace, children)
         _tidy_file(namespace, os.path.basename(scene) or "The scene")
+        first["modified"] = first["modified"] or namespace in CHANGED
     except Exception:
         try:
             layers.give_back(namespace, root_name)
@@ -164,7 +166,9 @@ def leaked_tabs(namespace):
 def _tidy_file(namespace, name):
     """A file's leftovers of the session that wrote it: another tab an old save wrote into it
     (removed when the animator says so), its layers' stored links, a copy of the session root
-    and layers hanging on ours. The note goes to NOTES and the Script Editor."""
+    and layers hanging on ours. The note goes to NOTES and the Script Editor. A tab the
+    animator had removed is put in CHANGED: it opens flagged (2026-10-16, live - opened clean,
+    nothing asked for a save, and the question came back on every open)."""
     leaked = leaked_tabs(namespace)
     if leaked:
         listed = ", ".join("%s (%d nodes)" % (child, count) for child, count in leaked)
@@ -175,7 +179,9 @@ def _tidy_file(namespace, name):
                 #  node by node, as a closed tab goes: `namespace -deleteNamespaceContent` over
                 #  its detached layers corrupted Maya's heap (0xc0000374 on the next file op)
                 _remove_namespace("%s:%s" % (namespace, child))
-            note = "removed another tab an old save wrote into %s: %s" % (name, listed)
+            note = ("removed another tab an old save wrote into %s: %s - save this tab to clean "
+                    "the file" % (name, listed))
+            CHANGED.append(namespace)
         else:
             note = "%s holds another tab an old save wrote into it: %s (kept)" % (name, listed)
         NOTES.append(note)
@@ -189,6 +195,7 @@ def _tidy_file(namespace, name):
 def _notes(message):
     found = " | ".join(NOTES)
     del NOTES[:]
+    del CHANGED[:]
     return message + (" | " + found if found else "")
 
 
@@ -263,7 +270,7 @@ def _new(state, namespace, make, index=None):
 def open_tab(path, index=None):
     """`path` into a new tab (the open scene becomes tab 1 first)."""
     path = _check(path)
-    del NOTES[:]
+    del NOTES[:], CHANGED[:]
     state = start()
     namespace = records.namespace_for(path, _taken())
     done = {}
@@ -275,7 +282,7 @@ def open_tab(path, index=None):
         item["cameras"] = switching.file_cameras(path)
         return item
     _new(state, namespace, make, index)
-    cmds.file(modified=False)
+    cmds.file(modified=namespace in CHANGED)
     return _notes("Opened %s in a tab (%s, %s)" % (os.path.basename(path), done["unit"],
                                                    records.range_text(done["ranges"])))
 
@@ -301,7 +308,7 @@ def open_any(path):
 @_quiet
 def new_tab():
     """An empty tab (its first Save asks for a path)."""
-    del NOTES[:]
+    del NOTES[:], CHANGED[:]
     state = start()
     namespace = records.namespace_for(records.UNTITLED, _taken())
 
@@ -423,20 +430,22 @@ def reload_tab(namespace=None, ask=True):
     active = namespace == state["active"]
     keep_unit = cmds.currentUnit(q=True, time=True)
     _delete_namespace(namespace)
+    del NOTES[:], CHANGED[:]
     unit, ranges = _import(item["path"], namespace)
     fresh_item = records.new_tab(namespace, item["path"], unit, ranges, _mtime(item["path"]))
+    fresh_item["modified"] = namespace in CHANGED
     #  the content read again, the view kept: the active tab's as the cameras stand, a hidden one's
     fresh_item["cameras"] = switching.capture_cameras() if active else dict(item.get("cameras") or {})
     state = records.with_tab(state, fresh_item)
     if active:
         state = switching.enter(state, namespace)
-        cmds.file(modified=False)
+        cmds.file(modified=namespace in CHANGED)
     else:
         switching.hide(namespace)
         cmds.currentUnit(time=keep_unit, updateAnimation=True)
         cmds.namespace(setNamespace=":" + state["active"])
     session.write(state)
-    return "Reloaded %s from disk" % name
+    return _notes("Reloaded %s from disk" % name)
 
 
 @_quiet

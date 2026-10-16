@@ -322,10 +322,11 @@ def open_selected(*_args):
     if not opened:
         return _status("Open cancelled - nothing changed.")
     refresh()
+    where = " in a tab" if scope.tabs_on(cmds) else ""
     if _is_fbx(name):
-        return _status("Opened {0} from the stash as a new scene.".format(name))
-    return _status("Opened {0} from the stash{1} - Ctrl+S writes the draft "
-                   "back into the stash.".format(name, note))
+        return _status("Opened {0} from the stash{1} as a new scene.".format(name, where))
+    return _status("Opened {0} from the stash{1}{2} - Ctrl+S writes the draft "
+                   "back into the stash.".format(name, where, note))
 
 
 def _import_fbx(path, name):

@@ -19,12 +19,18 @@ def _state(*namespaces, active=None):
 class FakeCmds(object):
     """The session node, the namespaces and what was asked of them."""
 
-    def __init__(self, state=None, namespaces=(), scene=""):
+    APP = "C:/Users/a/Documents/maya/"
+
+    def __init__(self, state=None, namespaces=(), scene="", modified=False):
         self.text = records.dumps(state) if state is not None else None
         self.namespaces = set(namespaces)
         self.current = ":"
         self.scene = scene
+        self.modified = modified
         self.calls = []
+
+    def internalVar(self, userAppDir=False):
+        return self.APP
 
     def objExists(self, name):
         return name == records.SESSION_NODE and self.text is not None
@@ -33,8 +39,8 @@ class FakeCmds(object):
         return self.text
 
     def file(self, *args, **kwargs):
-        if kwargs.get("query") and kwargs.get("sceneName"):
-            return self.scene
+        if kwargs.get("query"):
+            return self.scene if kwargs.get("sceneName") else self.modified
         self.calls.append(("file", args, kwargs))
 
     def namespace(self, exists=None, setNamespace=None, rename=None, parent=None):
@@ -197,14 +203,106 @@ class SceneName(unittest.TestCase):
         self.assertEqual(scope.scene_name(cmds), "C:/w/rig.ma")
 
 
+class SceneEmpty(unittest.TestCase):
+    """2026-10-16: the first scene opens into an empty one, every later one in a tab."""
+
+    def setUp(self):
+        self.saved = scope._holds_own
+        self.holds = False
+        scope._holds_own = lambda cmds: self.holds
+
+    def tearDown(self):
+        scope._holds_own = self.saved
+
+    def test_a_fresh_scene_is_empty(self):
+        self.assertTrue(scope.scene_empty(FakeCmds()))
+
+    def test_a_scene_from_a_file_is_not(self):
+        self.assertFalse(scope.scene_empty(FakeCmds(scene="C:/w/shot.ma")))
+
+    def test_an_untitled_scene_with_work_in_it_is_not(self):
+        self.holds = True
+        self.assertFalse(scope.scene_empty(FakeCmds(modified=True)))
+
+    def test_an_untitled_scene_flagged_with_nothing_in_it_is(self):
+        self.assertTrue(scope.scene_empty(FakeCmds(modified=True)))
+
+    def test_an_unmodified_untitled_scene_is_empty_without_a_scan(self):
+        self.holds = True
+        self.assertTrue(scope.scene_empty(FakeCmds()))
+
+    def test_the_session_file_an_untitled_scene_kept_counts_as_untitled(self):
+        named = FakeCmds.APP + "SkeldarTabs/session_20261016_101010.ma"
+        self.assertTrue(scope.scene_empty(FakeCmds(scene=named)))
+        self.assertFalse(scope.scene_empty(FakeCmds(scene="C:/w/session_20261016_101010.ma")))
+
+    def test_tabs_on_is_never_empty(self):
+        self.assertFalse(scope.scene_empty(FakeCmds(_state("tab_a", "tab_b"))))
+
+    def test_a_scene_that_cannot_be_read_holds_something(self):
+        from maya_scenetabs import session
+        scope._holds_own = self.saved
+        saved = session.own_nodes
+
+        def broken(namespace):
+            raise RuntimeError("no scene")
+        session.own_nodes = broken
+        try:
+            self.assertFalse(scope.scene_empty(FakeCmds(modified=True)))
+        finally:
+            session.own_nodes = saved
+
+
+class FakeOpening(object):
+
+    def __init__(self):
+        self.calls = []
+
+    def open_tab(self, path):
+        self.calls.append(("open_tab", path))
+        return "Opened %s in a tab" % path
+
+    def new_tab(self):
+        self.calls.append(("new_tab",))
+        return "New empty tab"
+
+
 class OpenNew(unittest.TestCase):
 
-    def test_tabs_off_opens_and_news_as_maya_does(self):
+    def setUp(self):
+        self.saved = scope._opening, scope._holds_own
+        self.opening = FakeOpening()
+        scope._opening = lambda: self.opening
+        scope._holds_own = lambda cmds: True
+
+    def tearDown(self):
+        scope._opening, scope._holds_own = self.saved
+
+    def test_an_empty_scene_opens_and_news_as_maya_does(self):
         cmds = FakeCmds()
         self.assertEqual(scope.open_scene("C:/w/a.ma", cmds, force=True), "")
         self.assertEqual(scope.new_scene(cmds), "")
         self.assertEqual(cmds.calls, [("file", ("C:/w/a.ma",), {"open": True, "force": True}),
                                       ("file", (), {"new": True, "force": True})])
+        self.assertEqual(self.opening.calls, [])
+
+    def test_with_a_scene_open_a_scene_opens_in_a_tab_beside_it(self):
+        """Stash replaced the scene while tabs were off (2026-10-16, live)."""
+        cmds = FakeCmds(scene="C:/w/shot.ma")
+        self.assertEqual(scope.open_scene("C:/w/b.ma", cmds, force=True), "Opened C:/w/b.ma in a tab")
+        self.assertEqual(scope.new_scene(cmds), "New empty tab")
+        self.assertEqual(cmds.calls, [])
+        self.assertEqual(self.opening.calls, [("open_tab", "C:/w/b.ma"), ("new_tab",)])
+
+    def test_untitled_work_goes_into_tab_one(self):
+        cmds = FakeCmds(modified=True)
+        scope.open_scene("C:/w/b.ma", cmds)
+        self.assertEqual(self.opening.calls, [("open_tab", "C:/w/b.ma")])
+
+    def test_tabs_on_opens_a_tab(self):
+        cmds = FakeCmds(_state("tab_a", "tab_b"))
+        scope.open_scene("C:/w/c.ma", cmds)
+        self.assertEqual(self.opening.calls, [("open_tab", "C:/w/c.ma")])
 
 
 class ShareNamesTheTabScope(unittest.TestCase):

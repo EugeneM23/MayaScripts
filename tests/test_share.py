@@ -487,6 +487,31 @@ class Actions(_Base):
             "minTime": 5.0, "maxTime": 45.0, "animationStartTime": 0.0,
             "animationEndTime": 50.0})
 
+    def test_with_a_scene_open_a_scene_opens_in_a_tab_beside_it(self):
+        """2026-10-16: only an empty scene is replaced; nothing asks to be saved."""
+        from maya_scenetabs import scope as tabscope
+        rec = self._colleague(name="Orc.ma", data=b"//Maya ASCII")
+        share.receive(rec)
+        self.fake.scene_name = "C:/w/shot.ma"
+        tabs = []
+
+        class Opening(object):
+            def open_tab(self, path):
+                tabs.append(path)
+                return "Opened in a tab"
+
+        def asked():
+            raise AssertionError("asked to save a scene that stays open")
+        saved = tabscope._opening, share._save_changes
+        tabscope._opening, share._save_changes = (lambda: Opening()), asked
+        try:
+            message = share.open_entry(rec["id"])
+        finally:
+            tabscope._opening, share._save_changes = saved
+        self.assertEqual([os.path.basename(p) for p in tabs], ["Orc.ma"])
+        self.assertEqual([k for a, k in self.fake.files if k.get("open")], [])
+        self.assertIn("in a tab", message)
+
 
 class Deleting(_Base):
     """Delete takes the picked files off EVERYBODY's list («Всё у всех»)."""

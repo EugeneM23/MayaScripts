@@ -582,6 +582,32 @@ class Acting(_Base):
         self.assertIs(opens[0]["prompt"], False)
         self.assertIn("Ctrl+S writes the draft back", message)
 
+    def test_with_a_scene_open_the_draft_opens_in_a_tab_beside_it(self):
+        """2026-10-16, live: with one scene open, Open replaced it; only after
+        «+ empty tab» did the next one open in a tab. Nothing replaced, nothing
+        asked to be saved."""
+        from maya_scenetabs import scope
+        self.pick("draft.ma")
+        self.fake.scene_name = "C:/w/shot.ma"
+        tabs = []
+
+        class Opening(object):
+            def open_tab(self, path):
+                tabs.append(path)
+                return "Opened in a tab"
+
+        def asked():
+            raise AssertionError("asked to save a scene that stays open")
+        saved = scope._opening, opener.save_changes
+        scope._opening, opener.save_changes = (lambda: Opening()), asked
+        try:
+            message = stash.open_selected()
+        finally:
+            scope._opening, opener.save_changes = saved
+        self.assertEqual([os.path.basename(p) for p in tabs], ["draft.ma"])
+        self.assertEqual([k for _a, k in self.fake.file_calls if k.get("open")], [])
+        self.assertIn("Opened draft.ma from the stash", message)
+
     def test_an_fbx_opens_through_the_import_guard(self):
         self.pick("clip.fbx")
         message = stash.open_selected()

@@ -135,9 +135,10 @@ def open_path(path):
     comes in as an import into a new scene, which Maya reads as a change
     (measured 2026-09-30 on every catalog weapon) - the next Open scene would
     ask to save an untouched file."""
-    if scope.tabs_on(cmds):
-        #  scene tabs on (2026-10-15): the file opens in a tab of its own - nothing is replaced,
-        #  so nothing asks to be saved; the shipped images still go on the plugin's copy
+    if not scope.scene_empty(cmds):
+        #  a scene open (2026-10-16; with tabs on since 2026-10-15): the file opens in a tab of
+        #  its own, the open scene tab 1 - nothing is replaced, so nothing asks to be saved; the
+        #  shipped images still go on the plugin's copy. Only an empty scene takes it in place.
         scope.open_scene(path, cmds)
         return True, _clean()
     if not save_changes():

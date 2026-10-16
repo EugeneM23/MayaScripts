@@ -1466,6 +1466,8 @@ def phase_leak():
         message, error = "", str(exc)
     new = session.state()["active"]
     gate("leak: the file opens in a tab", message.startswith("Opened") and new == "tab_leakOld", message or error)
+    gate("leak: Remove leaves the tab flagged, the line says to save it (the file stays leaky until then)",
+         cmds.file(q=True, modified=True) and "save this tab" in message, message)
     gate("leak: the animator is asked, the line says what went",
          asked and "tab_leakA" in asked[0] and "tab_leakC" in asked[0] and "removed another tab" in message,
          message)
@@ -1492,6 +1494,7 @@ def phase_leak():
     loose, copies, stored = _leak_tree(kept)
     gate("leak: Keep opens it with the other tabs inside, said",
          "(kept)" in message and cmds.objExists(":%s:tab_leakA:cubeA" % kept), message)
+    gate("leak: Keep opens it unflagged (nothing changed)", not cmds.file(q=True, modified=True))
     gate("leak: kept, their layers hang under the tab's root, nothing stored, no root copy",
          not (loose or copies or stored)
          and cmds.animLayer(":%s:tab_leakA:AnimLayerRoot" % kept, q=True, parent=True) == layers.tab_root(kept),
@@ -1518,6 +1521,8 @@ def phase_leak():
         error = str(exc)
     gate("leak: tabs on, the new tab made, tab 1 shown again", not error and "removed another tab" in message,
          error or message)
+    gate("leak: tab 1, cleaned, is flagged", cmds.file(q=True, modified=True)
+         and records.tab(session.state(), first)["modified"])
     loose, copies, stored = _leak_tree(first)
     gate("leak: tab 1: the real root takes its name, the copy dissolved, the leak removed",
          layers.root() == records.LAYER_ROOT and not (loose or copies or stored)
@@ -1526,6 +1531,70 @@ def phase_leak():
                  for l in ("LB", "Stray", "Stray2")),
          (layers.root(), loose, copies, stored))
     opening.ASK = None
+
+
+def phase_stash_open():
+    """2026-10-16, live: with one scene open, Stash's Open replaced it - only after «+ empty
+    tab» did the next open go into a tab. The plugin's opens (Stash, Shared, Open scene) now
+    take the first scene into an empty one and every later one into a tab beside it."""
+    from maya_scenesetup import opener
+    from maya_scenetabs import scope
+    os.makedirs(RUN, exist_ok=True)
+    files = {}
+    for tag in ("A", "B", "C"):
+        fresh()
+        cmds.polyCube(name="stash" + tag)
+        files[tag] = RUN + "/stash%s.ma" % tag
+        _save(files[tag])
+    cmds.loadPlugin("fbxmaya", quiet=True)
+    fresh()
+    cmds.polyCube(name="stashFbx")
+    fbx = RUN + "/stashFbx.fbx"
+    cmds.select("stashFbx")
+    cmds.file(fbx, force=True, exportSelected=True, type="FBX export")
+
+    def tabs():
+        return [t["ns"] for t in session.state()["tabs"]]
+    fresh()
+    gate("stash: a fresh scene is empty", scope.scene_empty())
+    opened, _note = opener.open_path(files["A"])
+    gate("stash: the first scene opens into it, plainly", opened and not session.exists()
+         and cmds.file(q=True, sceneName=True) == files["A"] and cmds.objExists("stashA"))
+    gate("stash: a scene from a file is not empty", not scope.scene_empty())
+    cmds.setAttr("stashA.tx", 3)
+    opened, _note = opener.open_path(files["B"])
+    gate("stash: the second opens in a tab beside it, the first is tab 1",
+         opened and tabs() == ["tab_stashA", "tab_stashB"] and session.state()["active"] == "tab_stashB"
+         and cmds.objExists("tab_stashA:stashA") and cmds.objExists("tab_stashB:stashB"), tabs())
+    gate("stash: tab 1 kept its unsaved change, flagged",
+         cmds.getAttr("tab_stashA:stashA.tx") == 3 and records.tab(session.state(), "tab_stashA")["modified"])
+    opened, _note = opener.open_path(files["C"])
+    gate("stash: the third, a third tab", tabs() == ["tab_stashA", "tab_stashB", "tab_stashC"], tabs())
+    # untitled work goes into tab 1
+    fresh()
+    cmds.polyCube(name="draftCube")
+    gate("stash: an untitled scene with work in it is not empty", not scope.scene_empty())
+    opener.open_path(files["A"])
+    first = session.state()["tabs"][0] if session.exists() else {}
+    gate("stash: the untitled work is tab 1, the file tab 2",
+         tabs() == [first.get("ns"), "tab_stashA"] and not first.get("path")
+         and cmds.objExists(":%s:draftCube" % first.get("ns")), tabs())
+    # untitled, flagged, nothing in it: the file takes its place
+    fresh()
+    cube = cmds.polyCube(name="gone")[0]
+    cmds.delete(cube)
+    gate("stash: an untitled scene flagged with nothing in it is empty",
+         cmds.file(q=True, modified=True) and scope.scene_empty())
+    opener.open_path(files["B"])
+    gate("stash: ... and the file opens into it", not session.exists() and cmds.objExists("stashB"))
+    # an FBX beside a scene: an empty tab, the FBX imported into it
+    message = scope.open_scene(fbx)
+    gate("stash: an FBX beside a scene opens in a tab of its own",
+         len(tabs()) == 2 and cmds.objExists(":%s:stashFbx" % session.state()["active"])
+         and cmds.objExists(":tab_stashB:stashB"), (tabs(), message))
+    # a new scene beside one
+    message = scope.new_scene()
+    gate("stash: a new scene beside one is an empty tab", len(tabs()) == 3, (tabs(), message))
 
 
 def _cam(name="persp", attr="translate"):
@@ -1666,7 +1735,7 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
           "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras,
-          "leak": phase_leak}
+          "leak": phase_leak, "stash_open": phase_stash_open}
 
 
 def main(names):

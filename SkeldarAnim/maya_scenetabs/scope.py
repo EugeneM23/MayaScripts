@@ -19,6 +19,8 @@ Three rules, each with its helpers:
   (`absolute`), and the plugin's own open / new of a scene opens a tab
   (`open_scene`, `new_scene`) - Maya's own are redirected by the hooks, but
   deferred, while the plugin's code runs on as if the scene were there.
+  With tabs off it opens a tab too unless the scene is empty (`scene_empty`):
+  the first scene goes into the one open, every later one beside it.
 """
 
 import contextlib
@@ -219,15 +221,56 @@ def export_scene(path, file_type, cmds_=None):
     return path
 
 
-def open_scene(path, cmds_=None, **flags):
-    """The plugin's own open of a scene: a new tab while tabs are on (a .ma /
-    .mb opened, an FBX imported into an empty tab), else Maya's open with
-    `flags`. Returns the tab's message, or "" for Maya's own open."""
+def _session_file(scene, cmds):
+    try:
+        folder = cmds.internalVar(userAppDir=True).rstrip("/\\") + "/SkeldarTabs"
+    except Exception:                                            # noqa: BLE001
+        return False
+    return records.is_session_file(scene, folder)
+
+
+def _holds_own(cmds):
+    """The open scene holds a node or a reference of its own (tabs off). A scene
+    that cannot be read counts as holding something: it is kept, in a tab."""
+    try:
+        from . import session
+        return bool(session.own_nodes("") or session.top_references(""))
+    except Exception:                                            # noqa: BLE001
+        return True
+
+
+def scene_empty(cmds_=None):
+    """Nothing to keep in the open scene (2026-10-16, the animator: «первая сцена
+    открывается в первой вкладке если та пустая, дальше сцены в любом случае
+    будут открываться в новых вкладках»): tabs off, untitled, and unmodified or
+    holding nothing of its own. The plugin's first open goes into it; with
+    anything else open, an open makes tabs (Stash used to replace the scene)."""
     cmds = _cmds(cmds_)
-    if not tabs_on(cmds):
+    if active_namespace(cmds):
+        return False
+    scene = (cmds.file(query=True, sceneName=True) or "").replace("\\", "/")
+    if scene and not _session_file(scene, cmds):
+        return False
+    if not cmds.file(query=True, modified=True):
+        return True
+    return not _holds_own(cmds)
+
+
+def _opening():
+    from . import opening
+    return opening
+
+
+def open_scene(path, cmds_=None, **flags):
+    """The plugin's own open of a scene: Maya's open with `flags` into an empty
+    scene (`scene_empty`), else a new tab (a .ma / .mb opened, an FBX imported
+    into an empty tab; with tabs off the open scene becomes tab 1 first).
+    Returns the tab's message, or "" for Maya's own open."""
+    cmds = _cmds(cmds_)
+    if scene_empty(cmds):
         cmds.file(path, open=True, **flags)
         return ""
-    from . import opening
+    opening = _opening()
     if path.lower().endswith(".fbx"):
         previous = active_namespace(cmds)
         message = opening.new_tab()
@@ -247,10 +290,9 @@ def open_scene(path, cmds_=None, **flags):
 
 
 def new_scene(cmds_=None):
-    """The plugin's own new scene: an empty tab while tabs are on, else Maya's new."""
+    """The plugin's own new scene: Maya's new over an empty scene, else an empty tab."""
     cmds = _cmds(cmds_)
-    if not tabs_on(cmds):
+    if scene_empty(cmds):
         cmds.file(new=True, force=True)
         return ""
-    from . import opening
-    return opening.new_tab()
+    return _opening().new_tab()

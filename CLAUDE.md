@@ -11041,6 +11041,26 @@ no stored link. `verify_scene_tabs.py all` **0 of 240**, `verify_tabs_scope.py` 
      A tab's export must cut what leads outside first; `-exportSelectedStrict` would also drop the tab's
      own nodes Maya made in the root namespace.
 
+**…a Remove leaves the tab flagged** (the same afternoon, the animator in a fresh Maya met the question on
+JA_04 again): the tab opened clean, nothing asked for a save, and the leak stayed in the file. A tab whose
+tidying removed something is in `opening.CHANGED` and opens flagged (`open_tab`, `reload_tab`, tab 1 in
+`start()`); the line ends «save this tab to clean the file». Keep leaves it unflagged.
+
+**The plugin's opens: the first scene in place, every later one in a tab** (2026-10-16, the animator:
+«открываю какую-то сцену, потом открываю сташ и открываю сцену из сташа ... в уже существующей
+переоткрывается сцена, но если нажать + empty tab то тогда следующие открытие из сташа будет открывать
+новую вкладку ... первая сцена открывается в первой вкладке если та пустая, дальше сцены в любом случае
+будут открываться в новых вкладках»). Stash, Shared and Open scene opened a tab only while tabs were on;
+with one scene open they replaced it. `scope.scene_empty`: tabs off, untitled (a session file name an
+untitled scene kept counts), and unmodified or holding no node and no reference of its own
+(`session.own_nodes("")`, `top_references("")`; unreadable = holds something). Only then does
+`scope.open_scene` / `new_scene` open in place; else `opening.open_tab` / `new_tab` (the open scene
+becomes tab 1, its unsaved changes kept and flagged, nothing asked). `opener.open_path` (Stash, Open
+scene) and `maya_share.open_entry` go by it; Stash's line says «in a tab». Maya's own File > Open with tabs
+off is still Maya's. Proof: `verify_scene_tabs.py stash_open` 12/12 (mayapy), all **0 of 255**,
+`verify_tabs_scope.py` 0 of 46; `test_scenetabs_scope.SceneEmpty` / `OpenNew`, Stash and Shared's tab
+tests; 6840 unit tests. Not seen in a GUI Maya.
+
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 
 The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации
