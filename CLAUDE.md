@@ -6432,6 +6432,16 @@ on 0/12/24, the clavicle on 6, Main on 18, the other arm / a leg / a finger on 3
 30, 32, auto/linear as the source, the mixed take → 10 keys, a layer key counted; nothing keyed → plain
 values); `verify_fkik_switch.py` **63/63** again (a retargeted take is keyed on every frame: «on 61 keys»);
 4651 unit tests.
+- **…and under animation layers** (2026-10-16, the animator: «потеряли умный перенос анимации по ключам ...
+  перепекают весь таймлайн»). The walk reached an `animLayer` through a blend node's weight and took the
+  layer's every input - and a layer's inputs are its MEMBER channels (`dagSetMembers`), so every curve on the
+  layer (the other limbs', dense ones too) came into the arm's plan. A layer is now followed only into its
+  weight / mute curves and its parent layer; a `message` source is never followed; a STILL curve upstream
+  counts no key (the 1P knot's static keys at the frame it was made on) - one on the arm's own control does
+  (`_fed` follows a layer's blend nodes to the control). `verify_fkik_keys.py` **16/16** (case D: the arm,
+  Main and a dense leg on a layer - IK on 0, 12, 18, 24 only); layers 37/37, switch 63/63, legs 12/12, spine
+  14/14; 6759 unit tests. **After 1P Setup every frame is still keyed, by the rule**: the arm hangs under
+  `FKSpine3_M`, which follows the 1P knot, and a Tools knot is baked on every frame.
 
 126. **AdvancedSkeleton's deformation arm joints are NOT the FK/IK blend.** Their orient constraint's
      `offsetX` is driven by the twist network (`twistAdditionElbow_R_output1DUC1.o ->

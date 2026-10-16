@@ -279,5 +279,36 @@ gate(not times([R.ik, R.pole]) and d[0] < KEPT_CM and d[1] < KEPT_DEG
      and "no keys - nothing keyed moves the arm" in text,
      "nothing keyed: plain values, no key, the arm kept: %s | %s" % (fmt(d), text))
 
+# ------------------------------------------------------------------ D: the controls on a layer
+# 2026-10-16, reported: «FK IK перепекают весь таймлайн». An animLayer lists its member
+# channels as inputs, and the walk reached the layer through a blend's weight - every curve on
+# the layer (the other limbs') came into the arm's plan. A still curve counts no key either.
+CASE[0] = "D"
+print("=" * 30, "D  Manny_Rig, the controls on an additive layer")
+rig, text = add("Manny_Rig")
+R = fkik.limb(rig, "R")[0]
+ub = [node(rig, b + "_r") for b in ("upperarm", "lowerarm", "hand", "middle_01")]
+key_arm(R, [0, 12, 24], [((0, 0, 0), 5, (0, 0, 0)), ((10, -25, 20), 40, (25, 10, -15)),
+                         ((-15, 20, -10), 70, (-20, -15, 30))])
+main, leg = node(rig, "Main"), node(rig, "IKLeg_L")
+key(main, "translateX", 0, 0.0)
+key(main, "translateX", 18, 30.0)
+for f in range(0, 49, 2):                                # a dense limb not upstream of the arm
+    key(leg, "translateY", f, float(f % 5))
+key(node(rig, "FKSpine3_M"), "rotateY", 7, 0.0)          # still: one key, moves nothing
+cmds.select([R.fk[0], R.fk[1], R.fk[2], main, leg])
+layer = cmds.animLayer("verifyLayer", addSelectedObjects=True)
+cmds.setKeyframe(leg, attribute="translateX", time=5, value=3.0, animLayer=layer)
+cmds.select(clear=True)
+expected = [0.0, 12.0, 18.0, 24.0]
+plan = fkik.key_plan(R, (0, 48, False))[1]
+gate(plan == expected, "the plan under a layer: the arm's and Main's keys only, %s: %s" % (expected, plan))
+shown = track(ub, list(range(0, 31)))
+text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
+got = times([R.ik, R.pole])
+d = diff(shown, track(ub, expected), expected)
+gate(got == expected and d[0] < KEPT_CM and d[1] < KEPT_DEG,
+     "FK -> IK keys only %s, the arm kept on them: %s, %s | %s" % (expected, got, fmt(d), text))
+
 print("=" * 30)
 print("%d gates, %d failed %s (%.0f s)" % (COUNT[0], len(FAILS), FAILS, time.time() - t_all))

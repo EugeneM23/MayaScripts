@@ -870,6 +870,10 @@ def driving_curves(nodes, plugs=()):
     todo = [("dag", full(n)) for n in nodes] + [("plug", p) for p in plugs]
 
     def take(source):
+        # a message connection carries no value, it only lists nodes (an animation layer's
+        # `blendNodes[]`, a set's members)
+        if attr_root(source) in ("message", "msg"):
+            return
         node = source.split(".", 1)[0]
         t = kind(node)
         if t in TIME_CURVES:
@@ -897,14 +901,45 @@ def driving_curves(nodes, plugs=()):
             todo.append(("dag", parent))
         pairs = cmds.listConnections(node, source=True, destination=False, connections=True,
                                      plugs=True) or []
+        layer = kind(node) == "animLayer"
         for dest, source in zip(pairs[0::2], pairs[1::2]):
-            if how == "all" or moves_matrix(dest):
+            if layer:
+                # a layer's inputs list its MEMBER channels (`dagSetMembers`): only its weight
+                # and mute move what it blends - a curve on them, or its parent layer's
+                # (following the members took every curve on the layer, 2026-10-16)
+                if kind(source.split(".", 1)[0]) in TIME_CURVES + ("animLayer",):
+                    take(source)
+            elif how == "all" or moves_matrix(dest):
                 take(source)
         if how == "dag" and kind(node) == "joint":
             for handle in cmds.listConnections(node + ".message", source=False, destination=True,
                                                type="ikHandle") or []:
                 todo.append(("all", full(handle)))
     return curves
+
+
+def _fed(curve):
+    """The long names of the nodes a time curve feeds, through animation layers' blend
+    nodes (a layer's curve feeds its control through them)."""
+    out, todo, seen = set(), [curve], set()
+    while todo:
+        node = todo.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for dest in cmds.listConnections(node + ".output" if node == curve else node,
+                                         source=False, destination=True) or []:
+            if cmds.objectType(dest).startswith(BLEND_NODE):
+                todo.append(dest)
+            else:
+                out.add(_long(dest))
+    return out
+
+
+def _moves(curve):
+    """Whether a time curve's keys hold more than one value."""
+    values = cmds.keyframe(curve, query=True, valueChange=True) or []
+    return bool(values) and max(values) - min(values) > CONSTANT
 
 
 def _keys_of(curve):
@@ -919,12 +954,15 @@ def key_plan(arm, span):
     """(frames to sample, frames keyed, {frame: (in, out) tangent types}) of
     a keys-only switch: the keys of what moves the arm it shows."""
     nodes, plugs, own = sources(arm, mode_of(blend_values(arm)))
-    curves = driving_curves(nodes, plugs)
-    table = dict((curve, _keys_of(curve)) for curve in curves)
     own_set = set(_long(node) for node in own)
-    mine = [table[c] for c in curves
-            if own_set & set(_long(node) for node in cmds.listConnections(
-                c + ".output", source=False, destination=True) or [])]
+    curves = driving_curves(nodes, plugs)
+    mine_set = set(c for c in curves if own_set & _fed(c))
+    # a still curve upstream moves nothing - its keys are no frame of the arm's (a knot's
+    # static keys at the frame it was made on); one on the arm's own control is a key the
+    # animator set, and moves over to the other chain
+    curves = [c for c in curves if c in mine_set or _moves(c)]
+    table = dict((curve, _keys_of(curve)) for curve in curves)
+    mine = [table[c] for c in curves if c in mine_set]
     every = list(table.values())
     keys = key_frames([t for curve in every for t, _i, _o in curve], span)
     tangents = dict((frame, tangents_at(mine, every, frame)) for frame in keys)
