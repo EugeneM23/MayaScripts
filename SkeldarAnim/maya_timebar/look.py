@@ -348,7 +348,7 @@ def zone_dwell(dwelt, inside, dt_ms):
 
 # -- the burst from the cursor (2026-10-16, mockup A, «скорость на 50 % медленнее») ---------
 
-BURST_SLOW = 1.5        # every timing of the mockup, half as fast again
+BURST_SLOW = 1.2        # every timing of the mockup: 1.5x, then 20 % faster (2026-10-16)
 UNROLL_MS = 240 * BURST_SLOW        # the panel unrolls from the cursor
 POP_OPEN_MS = 200 * BURST_SLOW      # a control pops in
 FOLD_MS = 140 * BURST_SLOW          # a control folds away

@@ -207,13 +207,13 @@ class EdgeTests(unittest.TestCase):
 
 class BurstTests(unittest.TestCase):
 
-    def test_half_as_fast_again_as_the_mockup(self):
-        self.assertEqual((look.UNROLL_MS, look.POP_OPEN_MS, look.FOLD_MS, look.CLOSE_MS), (360, 300, 210, 270))
+    def test_the_mockup_s_timings_1_2_times_longer(self):
+        self.assertEqual((look.UNROLL_MS, look.POP_OPEN_MS, look.FOLD_MS, look.CLOSE_MS), (288, 240, 168, 216))
 
     def test_nearer_pops_sooner_and_farther_folds_sooner(self):
         self.assertLess(look.burst_delay(10, 0), look.burst_delay(600, 0))
         self.assertLess(look.burst_delay(0, 0), look.burst_delay(0, 40))       # a row down counts more
-        self.assertEqual(look.burst_delay(0, 0), 60.0)
+        self.assertEqual(look.burst_delay(0, 0), 48.0)
         self.assertEqual(look.burst_delay(120, 0, ui=2.0), look.burst_delay(60, 0))
         self.assertGreater(look.fold_delay(10), look.fold_delay(600))
         self.assertEqual(look.fold_delay(5000), 0.0)
