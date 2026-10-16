@@ -325,7 +325,6 @@ def close_tab(namespace=None, ask=True):
             state = records.removed(state, namespace)
         session.write(state)
         raise
-    switching.forget_layout(item)
     state = records.removed(state, namespace)
     session.write(state)
     if len(state["tabs"]) == 1:
@@ -362,7 +361,6 @@ def reload_tab(namespace=None, ask=True):
     _delete_namespace(namespace)
     unit, ranges = _import(item["path"], namespace)
     fresh_item = records.new_tab(namespace, item["path"], unit, ranges, _mtime(item["path"]))
-    fresh_item["layout"] = item["layout"]
     state = records.with_tab(state, fresh_item)
     if active:
         state = switching.enter(state, namespace)
@@ -401,7 +399,6 @@ def finish():
     session.drop_held(moved)
     _remove_namespace(namespace)            # what is left in it is the import's furniture
     session.delete()
-    switching.forget_layout(last)
     if last["path"]:
         cmds.file(rename=last["path"])
     cmds.file(modified=modified)

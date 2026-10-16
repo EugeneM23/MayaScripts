@@ -261,6 +261,8 @@ def install(force=False):
     functions (the state lives on `sys`): they are removed and these installed."""
     if cmds.about(batch=True) and not force:
         return False
+    from . import workspaces
+    workspaces.sweep_once()             # the workspaces the first build's tabs left (2026-10-16)
     state = _st()
     if state["callbacks"] and state.get("owner") is on_save:
         return True

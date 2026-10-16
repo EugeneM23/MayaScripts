@@ -1,11 +1,12 @@
 """Scene tabs: switching. The tab being left is recorded (its time, view,
-selection, layout, modified flag) and hidden; the new one is shown with its
+selection, modified flag) and hidden; the new one is shown with its
 own, in ONE undo chunk - so a Ctrl+Z past a switch brings the previous tab
 back before it undoes that tab's step (measured: one undo restores the
 namespace, the unit, the ranges and the visibility).
 
 Hidden by `lodVisibility` and `hiddenInOutliner` on the tab's top nodes, never
-`visibility`, which the animator keys.
+`visibility`, which the animator keys. Maya's workspace is not a tab's: until
+2026-10-16 each tab saved one, and they piled up (`workspaces`).
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 """
 
@@ -147,43 +148,6 @@ def apply_views(views):
                 pass
 
 
-# ------------------------------------------------------------------ the layout
-
-def _layouts():
-    try:
-        return cmds.workspaceLayoutManager(listLayouts=True) or []
-    except RuntimeError:
-        return []
-
-
-def save_layout(tab):
-    if _gui():
-        try:
-            cmds.workspaceLayoutManager(saveAs=tab["layout"])
-        except RuntimeError:
-            pass
-
-
-def load_layout(tab):
-    if not _gui():
-        return
-    try:
-        if tab["layout"] in _layouts():
-            cmds.workspaceLayoutManager(setCurrent=tab["layout"])
-    except RuntimeError:
-        pass
-    from . import bar
-    bar.ensure_docked()
-
-
-def forget_layout(tab):
-    if _gui() and tab.get("layout") in _layouts():
-        try:
-            cmds.workspaceLayoutManager(delete=tab["layout"])
-        except RuntimeError:
-            pass
-
-
 # ------------------------------------------------------------------ leave / enter
 
 def leave(state):
@@ -199,15 +163,14 @@ def leave(state):
     current["frame"] = cmds.currentTime(q=True)
     current["selection"] = cmds.ls(selection=True, uuid=True) or []
     current["views"] = capture_views()
-    save_layout(current)
     hide(active)
     cmds.file(modified=False)
     return records.with_tab(state, current)
 
 
 def enter(state, namespace, fresh=False):
-    """`namespace` shown and made current with its time, view, selection and
-    layout (`fresh`: a new tab takes a copy of the current layout)."""
+    """`namespace` shown and made current with its time, view and selection
+    (`fresh`, a tab just opened: kept for the callers, it changes nothing now)."""
     current = dict(records.tab(state, namespace))
     show(namespace)
     cmds.namespace(setNamespace=":" + namespace)
@@ -222,10 +185,6 @@ def enter(state, namespace, fresh=False):
         cmds.select(found, replace=True)
     else:
         cmds.select(clear=True)
-    if fresh:
-        save_layout(current)
-    else:
-        load_layout(current)
     return records.with_tab(dict(state, active=namespace), current)
 
 

@@ -23,7 +23,6 @@ TAB_LAYER_ROOT = "AnimLayerRoot"      # Maya's own rename of an imported BaseAni
 FILE_LAYER_ROOT = "BaseAnimation"
 CONFIG_NODE = "sceneConfigurationScriptNode"
 CONFIG_SCRIPT_TYPE = 6                # what Maya writes for its configuration node
-WORKSPACE_PREFIX = "SkeldarTab_"
 TAB_PREFIX = "tab_"
 UNTITLED = "untitled"
 VERSION = 1
@@ -149,8 +148,7 @@ def empty_state():
 def new_tab(namespace, path, unit, ranges, mtime=0.0):
     return {"ns": namespace, "path": path or "", "mtime": float(mtime or 0.0),
             "unit": unit or "", "ranges": dict(ranges or {}), "frame": None,
-            "modified": False, "layout": WORKSPACE_PREFIX + namespace,
-            "views": [], "selection": []}
+            "modified": False, "views": [], "selection": []}
 
 
 def dumps(state):
@@ -172,7 +170,7 @@ def loads(text):
             continue
         tab = new_tab(item["ns"], item.get("path"), item.get("unit"),
                       item.get("ranges"), item.get("mtime"))
-        for key in ("frame", "modified", "layout", "views", "selection"):
+        for key in ("frame", "modified", "views", "selection"):
             if key in item:
                 tab[key] = item[key]
         out["tabs"].append(tab)
