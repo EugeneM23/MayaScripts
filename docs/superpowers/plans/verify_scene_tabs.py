@@ -1168,6 +1168,48 @@ def phase_outliner_sets():
          cmds.objExists("selA") and not hidden("selA") and hidden("ownHidden"))
 
 
+def phase_nested():
+    """2026-10-16, found live: a rig's own display layer (`Manny_Rig:UE5_Skeleton`, in a namespace
+    NESTED in the tab) showed in every tab - `ls(":tab:*", recursive=True)` does not reach a nested
+    namespace. A hidden tab's nested layers, sets and anim layers are hidden like its own."""
+    from maya_scenetabs import opening, switching
+    os.makedirs(RUN, exist_ok=True)
+    made = {}
+    for tag in ("A", "B"):
+        fresh()
+        cmds.namespace(add=":Rig" + tag)
+        cube = cmds.polyCube(name=":Rig%s:cube" % tag)[0]
+        cmds.createDisplayLayer([cube], name=":Rig%s:deep" % tag, noRecurse=True)
+        cmds.sets(cube, name=":Rig%s:ControlSet" % tag)
+        made[tag] = RUN + "/nested%s.ma" % tag
+        _save(made[tag])
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(made["B"])
+    a, b = "tab_nestedA:RigA", "tab_nestedB:RigB"
+
+    def shown_layer(name):
+        return cmds.getAttr(name + ".identification") != 0
+
+    def hidden_set(name):
+        return cmds.getAttr(name + ".hiddenInOutliner")
+
+    gate("nested: the hidden tab's nested layer out of the Display list, the active one's in",
+         not shown_layer(a + ":deep") and shown_layer(b + ":deep"))
+    gate("nested: the hidden tab's nested set out of the Outliner, the active one's in",
+         hidden_set(a + ":ControlSet") and not hidden_set(b + ":ControlSet"))
+    switching.switch("tab_nestedA")
+    gate("nested: switched - the other way round",
+         shown_layer(a + ":deep") and not shown_layer(b + ":deep")
+         and not hidden_set(a + ":ControlSet") and hidden_set(b + ":ControlSet"))
+    gate("nested: the layer still holds its cube",
+         cmds.editDisplayLayerMembers(a + ":deep", q=True) and cmds.listConnections(a + ":deep.drawInfo"))
+    opening.close_tab("tab_nestedB", ask=False)
+    gate("nested: back to one scene, the layer and the set shown",
+         shown_layer("RigA:deep") and not hidden_set("RigA:ControlSet"))
+
+
 def phase_layer_editor():
     """2026-10-15, found live: the Layer Editor showed every tab's layers. A hidden tab's anim
     layers are cut off the session root and its display layers taken off layerManager
@@ -1254,7 +1296,8 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
-          "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets}
+          "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
+          "nested": phase_nested}
 
 
 def main(names):

@@ -126,7 +126,7 @@ def _sweep(namespace):
     #  by type, never every node by its short name: a file holding two DAG nodes of one
     #  name (OverRig's `fin_jnt11` in every rig) lists a short name that matches no
     #  single node, and nodeType raised - the tab did not open (2026-10-15, live)
-    scripts = [s for s in cmds.ls(":%s:*" % namespace, type="script", recursive=True) or []
+    scripts = [s for s in session.typed(namespace, "script")
                if not cmds.referenceQuery(s, isNodeReferenced=True)]
     doomed = character.malware_nodes(scripts) + [
         s for s in scripts if s.split(":")[-1] == "uiConfigurationScriptNode"]

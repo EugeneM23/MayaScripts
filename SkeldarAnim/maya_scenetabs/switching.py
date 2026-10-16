@@ -42,7 +42,7 @@ SET_MARK = "skeldarTabSetHidden"
 def sets(namespace):
     """The tab's sets (objectSets of every kind: selection sets, the rig's ControlSet,
     shading groups), its namespace and the ones nested in it."""
-    return cmds.ls(":%s:*" % namespace, type="objectSet", recursive=True) or []
+    return session.typed(namespace, "objectSet")
 
 
 def hide_sets(namespace):

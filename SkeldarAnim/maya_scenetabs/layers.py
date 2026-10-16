@@ -12,7 +12,7 @@ import json
 
 import maya.cmds as cmds
 
-from . import records
+from . import records, session
 
 
 def root():
@@ -100,7 +100,7 @@ def home_blends(namespace):
     by name with another tab's when that tab is saved."""
     prefix = namespace + ":"
     moved = 0
-    for layer in cmds.ls(":%s:*" % namespace, type="animLayer", recursive=True) or []:
+    for layer in session.typed(namespace, "animLayer"):
         for node in cmds.animLayer(layer, q=True, blendNodes=True) or []:
             if node.startswith(prefix) or not cmds.objExists(node):
                 continue
@@ -243,12 +243,12 @@ def hide_layers(namespace):
     (`detach`), its display layers off layerManager with identification 0. Again on a
     hidden tab: nothing."""
     session_root = root()
-    for layer in cmds.ls(":%s:*" % namespace, type="animLayer", recursive=True) or []:
+    for layer in session.typed(namespace, "animLayer"):
         if session_root and (cmds.animLayer(layer, q=True, parent=True) or "") == session_root:
             if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
                 continue
             _store(layer, detach(layer))
-    for layer in cmds.ls(":%s:*" % namespace, type="displayLayer", recursive=True) or []:
+    for layer in session.typed(namespace, "displayLayer"):
         if cmds.attributeQuery(OUT_ATTR, node=layer, exists=True):
             continue
         sources = cmds.listConnections(layer + ".identification", source=True, destination=False,
@@ -263,11 +263,11 @@ def hide_layers(namespace):
 def show_layers(namespace):
     """`hide_layers` undone: the cut links back, each display layer on its manager slot again
     (a free one when its old slot was taken meanwhile)."""
-    for layer in cmds.ls(":%s:*" % namespace, type="animLayer", recursive=True) or []:
+    for layer in session.typed(namespace, "animLayer"):
         links = _take(layer)
         if links:
             attach([tuple(link) for link in links])
-    for layer in cmds.ls(":%s:*" % namespace, type="displayLayer", recursive=True) or []:
+    for layer in session.typed(namespace, "displayLayer"):
         source = _take(layer)
         if not source:
             continue

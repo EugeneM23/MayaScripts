@@ -127,6 +127,16 @@ def _skipped():
     return set(cmds.ls(names, uuid=True) or [])
 
 
+def typed(namespace, kind):
+    """The tab's nodes of `kind`, its own namespace AND every one nested in it (a rig's
+    `tab:Manny_Rig:`). `ls(":tab:*", recursive=True)` does NOT reach a nested namespace
+    (measured 2026-10-16: the rig's UE5_Skeleton layer and ControlSet escaped every hide)."""
+    if not namespace or not cmds.namespace(exists=":" + namespace):
+        return []
+    nodes = cmds.namespaceInfo(":" + namespace, listOnlyDependencyNodes=True, recurse=True) or []
+    return cmds.ls(nodes, type=kind) or [] if nodes else []
+
+
 def own_nodes(namespace):
     """The UUIDs of a namespace's OWN nodes at its own level ("" = the root
     namespace): not Maya's default, read-only or startup nodes, not referenced,
