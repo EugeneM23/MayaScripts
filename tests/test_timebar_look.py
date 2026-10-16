@@ -242,6 +242,29 @@ class BurstTests(unittest.TestCase):
         self.assertEqual(look.unroll(0, 300, 1000, False), (0.0, 1000.0))
 
 
+class MeterTests(unittest.TestCase):
+
+    def test_a_steady_scrub(self):
+        stamps = [i * 20.0 for i in range(100)]                  # a frame every 20 ms
+        out, text = look.meter_report(stamps, [1.0] * 99, [12.0] * 99)
+        self.assertEqual(out["changes"], 100)
+        self.assertAlmostEqual(out["rate"], 50.0)
+        self.assertEqual((out["ours"], out["maya"]), (1.0, 12.0))
+        self.assertIn("50 a second", text)
+        self.assertIn("the Time Bar's own work 1.00 ms", text)
+
+    def test_pauses_are_not_frames_and_maya_s_slider_is_named(self):
+        stamps = [0, 20, 40, 3000, 3020, 3040]
+        out, text = look.meter_report(stamps)
+        self.assertEqual(out["gap_max"], 20.0)
+        self.assertIn("Maya's own slider", text)
+
+    def test_nothing_scrubbed(self):
+        out, text = look.meter_report([], seconds=10)
+        self.assertEqual(out["changes"], 0)
+        self.assertIn("no scrubbing", text)
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_the_package_import_with_the_stdlib_alone(self):

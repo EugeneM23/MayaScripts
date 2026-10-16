@@ -77,6 +77,10 @@ class Link(object):
         from . import scene
         return getattr(scene, name)
 
+    def measure(self):
+        from . import meter
+        return meter.start()
+
     def back_to_maya(self):
         import maya.cmds as cmds
         from . import hide
@@ -155,6 +159,34 @@ def classes():
             renderers[key] = renderer
         if renderer is not None:
             renderer.render(p, rect)
+
+    halos = {}
+
+    def halo(hex_, ui):
+        """A key's glow at full strength - three rings fading outward - drawn once
+        per colour and size into a picture: a lit key is one drawPixmap, not three
+        antialiased rectangles (2026-10-16, a dense take lights dozens at a time)."""
+        key = (hex_, round(ui, 3))
+        picture = halos.get(key)
+        if picture is None:
+            z = 1.0 + KEY_LIFT
+            kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
+            grow = 4.5 * ui
+            w, h = kw + 2 * grow, kh + 2 * grow
+            picture = QtGui.QPixmap(int(round(w * 2)), int(round(h * 2)))
+            picture.setDevicePixelRatio(2.0)
+            picture.fill(Qt.transparent)
+            hp = QtGui.QPainter(picture)
+            hp.setRenderHint(QtGui.QPainter.Antialiasing)
+            hp.setPen(Qt.NoPen)
+            body = QtCore.QRectF(grow, grow, kw, kh)
+            for i in range(3, 0, -1):
+                g = i * 1.5 * ui
+                hp.setBrush(colour(hex_, 40 * (4 - i) / 3.0))
+                hp.drawRoundedRect(body.adjusted(-g, -g, g, g), 1.5 * ui + g, 1.5 * ui + g)
+            hp.end()
+            halos[key] = picture
+        return picture
 
     def glow(p, rect, radius, hex_, level, ui):
         """The radial menu's lit ring: rings fading outward, then a 2 px edge."""
@@ -471,6 +503,9 @@ def classes():
             self.key_lift = {}          # key -> 0..1, eased
             self.head_lift = 0.0
             self.reached = {}           # key -> clock() when the playhead reached it
+            self._static = None         # the still part, drawn once (`_paint`)
+            self._static_for = None
+            self.static_builds = 0
             self._was_busy = False
             self.index = strip.register(self)
 
@@ -526,33 +561,76 @@ def classes():
                 self._failed = True
 
         def _paint(self):
+            """The still part - the track, the sound, the bookmarks, the highlight, the
+            ruler and the keys - is one cached picture, drawn again only when it
+            changes (`_static_key`); each frame paints that picture, the keys that are
+            lit or lifted and the playhead over it (2026-10-16, «фпс проседает когда
+            перетаскиваешь ползунок»: the whole timeline drawn element by element was
+            3-5 ms a step and the key-fade tick 10 ms every 16 ms on a dense take)."""
             st = self.strip
             t = self.drag[2] if self.drag else self.track()
             tk, ui, s = st.tokens, st.ui, st.state
             w, h = float(self.width()), float(self.height())
             scale, opacity = st.opening_of(self.index)
+            entrance = st.entrance is not None
+            moving = (self.drag[3], self.preview) if (self.preview and self.drag and len(self.drag) > 3) else None
+            key = self._static_key(t, w, h, not entrance, moving)
+            if key != self._static_for or self._static is None:
+                dpr = max(1.0, float(self.devicePixelRatioF()))
+                picture = QtGui.QPixmap(max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
+                picture.setDevicePixelRatio(dpr)
+                picture.fill(Qt.transparent)
+                sp = QtGui.QPainter(picture)
+                sp.setRenderHint(QtGui.QPainter.Antialiasing)
+                self._draw_static(sp, t, w, h, not entrance, moving)
+                sp.end()
+                self._static, self._static_for = picture, key
+                self.static_builds += 1
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setOpacity(opacity)
             p.translate(0, h / 2)
             p.scale(1.0, scale)
             p.translate(0, -h / 2)
+            p.drawPixmap(0, 0, self._static)
+            p.setClipRect(QtCore.QRectF(1, 1, w - 2, h - 2))
+            p.setPen(Qt.NoPen)
+            self._draw_moving_keys(p, t, entrance, moving, opacity)
+            self._draw_playhead(p, t, w, h)
+            p.end()
+
+        def _static_key(self, t, w, h, with_keys, moving):
+            """What the cached picture shows; a new one is drawn when this changes."""
+            st, s = self.strip, self.strip.state
+            return (int(w), int(h), st.ui, round(t.v0, 4), round(t.v1, 4), s["p0"], s["p1"],
+                    bool(s.get("sound_shown")), id(st.wave), len(st.wave), tuple(st.marks),
+                    self.preview or s.get("highlight"), moving, with_keys,
+                    hash(tuple(st.keys)), hash(tuple(st.breakdowns)), self.devicePixelRatioF())
+
+        def _draw_static(self, p, t, w, h, with_keys, moving):
+            st = self.strip
+            tk, ui, s = st.tokens, st.ui, st.state
             p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
             p.setBrush(colour(tk["track"]))
             p.drawRoundedRect(QtCore.QRectF(0.5, 0.5, w - 1, h - 1), 6 * ui, 6 * ui)
             p.setClipRect(QtCore.QRectF(1, 1, w - 2, h - 2))
             p.setPen(Qt.NoPen)
-            # the sound
+            # the sound: one path, not a rectangle a bin
             if s.get("sound_shown") and st.wave:
-                p.setBrush(colour(WAVE))
+                path = QtGui.QPainterPath()
+                bw = max(1.0, ui * 0.8)
                 for frame, amp in st.wave:
                     if t.v0 <= frame <= t.v1:
                         hh = amp * (h - 12 * ui) / 2.0
-                        p.drawRect(QtCore.QRectF(t.x(frame), h / 2 - hh + 2 * ui, max(1.0, ui * 0.8), hh * 2))
+                        path.addRect(QtCore.QRectF(t.x(frame), h / 2 - hh + 2 * ui, bw, hh * 2))
+                p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+                p.fillPath(path, colour(WAVE))
+                p.setRenderHint(QtGui.QPainter.Antialiasing, True)
             # the bookmarks along the top
             small = QtGui.QFont(self.font())
             small.setPixelSize(max(7, int(9 * ui)))
             p.setFont(small)
+            small_metrics = QtGui.QFontMetricsF(small)
             for start, stop, rgb, name in st.marks:
                 x0, x1 = t.x(start), t.x(stop)
                 if x1 < 0 or x0 > w:
@@ -566,7 +644,7 @@ def classes():
                 c.setAlpha(255)
                 p.setBrush(c)
                 p.drawRoundedRect(QtCore.QRectF(band.left(), band.top(), 3 * ui, band.height()), 1.5 * ui, 1.5 * ui)
-                if band.width() > QtGui.QFontMetricsF(small).horizontalAdvance(name) + 10 * ui:
+                if band.width() > small_metrics.horizontalAdvance(name) + 10 * ui:
                     p.setPen(blend(c.name(), "#ffffff", 0.35))
                     p.drawText(band.adjusted(6 * ui, 0, -2 * ui, 0), Qt.AlignVCenter | Qt.AlignLeft, name)
             p.setPen(Qt.NoPen)
@@ -596,54 +674,90 @@ def classes():
             p.setFont(font)
             metrics = QtGui.QFontMetricsF(font)
             ry = h - 3 * ui
+            major, minor = colour(tk["muted"]), colour(tk["line"])
+            label_pen = colour(tk["faint"])
+            tall_of = {"label": 8 * ui, "mid": 5 * ui, "tick": 3 * ui}
+            tick_w = max(1.0, ui * 0.75)
             for frame, kind in look.ticks(t, ui):
                 x = round(t.x(frame))
-                tall = {"label": 8, "mid": 5, "tick": 3}[kind] * ui
+                tall = tall_of[kind]
                 p.setPen(Qt.NoPen)
-                p.setBrush(colour(tk["muted"] if kind == "label" else tk["line"]))
-                p.drawRect(QtCore.QRectF(x, ry - tall, max(1.0, ui * 0.75), tall))
+                p.setBrush(major if kind == "label" else minor)
+                p.drawRect(QtCore.QRectF(x, ry - tall, tick_w, tall))
                 if kind == "label":
                     text = look.frame_text(frame)
                     if x + 3 * ui + metrics.horizontalAdvance(text) <= w - 2 * ui:
-                        p.setPen(colour(tk["faint"]))
+                        p.setPen(label_pen)
                         p.drawText(QtCore.QPointF(x + 3 * ui, ry - 1 * ui), text)
-            # the keys
+            # the keys at rest
+            if with_keys:
+                p.setPen(Qt.NoPen)
+                kw, kh = 3 * ui, 14 * ui
+                for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
+                    path = QtGui.QPainterPath()
+                    for frame in frames:
+                        shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
+                        if t.v0 - 1 <= shown <= t.v1 + 1:
+                            path.addRoundedRect(QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh),
+                                                1.5 * ui, 1.5 * ui)
+                    p.fillPath(path, colour(hex_))
+
+        def _draw_moving_keys(self, p, t, entrance, moving, opacity):
+            """Over the picture: the keys that are lit or lifted, bigger and glowing -
+            or, while the bar bursts out or folds, every key at its own size."""
+            st = self.strip
+            tk, ui = st.tokens, st.ui
             now = st.clock()
-            moving = (self.drag[3], self.preview) if (self.preview and self.drag and len(self.drag) > 3) else None
-            p.setPen(Qt.NoPen)
-            for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
-                for frame in frames:
-                    shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
-                    if not (t.v0 - 1 <= shown <= t.v1 + 1):
-                        continue
-                    lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
-                    lift = max(self.key_lift.get(frame, 0.0), lit)
-                    z = 1.0 + KEY_LIFT * lift
-                    burst = 1.0
-                    if st.entrance is not None:
-                        g = self.mapToGlobal(QtCore.QPoint(int(t.x(shown)), int(KEY_Y * ui)))
-                        ks, burst = st.entrance_of(g.x(), g.y())
-                        z *= ks
-                        p.setOpacity(opacity * burst)
-                    kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
-                    rect = QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh)
-                    if lift > 0.01:
-                        for i in range(3, 0, -1):
-                            grow = i * 1.5 * ui
-                            p.setBrush(colour(hex_, 40 * lift * (4 - i) / 3.0))
-                            p.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow),
-                                              1.5 * ui + grow, 1.5 * ui + grow)
-                    p.setBrush(blend(hex_, RIM, lit * 0.7) if lit > 0.01 else colour(hex_))
-                    p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
-                    if burst < 1.0:
-                        p.setOpacity(opacity)
-            # the playhead
+            if entrance:
+                frames = [(f, tk["accent"]) for f in st.keys] + [(f, BREAKDOWN) for f in st.breakdowns]
+            else:
+                live = set(self.reached) | set(k for k, v in self.key_lift.items() if v > 0.005)
+                if not live:
+                    return
+                keys, bds = set(st.keys), set(st.breakdowns)
+                frames = [(f, tk["accent"] if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
+            plain = {}
+            for frame, hex_ in frames:
+                shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
+                if not (t.v0 - 1 <= shown <= t.v1 + 1):
+                    continue
+                lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
+                lift = max(self.key_lift.get(frame, 0.0), lit)
+                z = 1.0 + KEY_LIFT * lift
+                burst = 1.0
+                if entrance:
+                    g = self.mapToGlobal(QtCore.QPoint(int(t.x(shown)), int(KEY_Y * ui)))
+                    ks, burst = st.entrance_of(g.x(), g.y())
+                    z *= ks
+                kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
+                rect = QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh)
+                if lift > 0.01:
+                    picture = halo(hex_, ui)
+                    grow = 4.5 * ui * z / (1.0 + KEY_LIFT)
+                    p.setOpacity(opacity * burst * lift)
+                    p.drawPixmap(rect.adjusted(-grow, -grow, grow, grow), picture,
+                                 QtCore.QRectF(picture.rect()))
+                p.setOpacity(opacity * burst)
+                if lit > 0.01:
+                    p.setBrush(blend(hex_, RIM, lit * 0.7))
+                else:
+                    brush = plain.get(hex_)
+                    if brush is None:
+                        brush = plain[hex_] = colour(hex_)
+                    p.setBrush(brush)
+                p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
+            p.setOpacity(opacity)
+
+        def _draw_playhead(self, p, t, w, h):
+            st = self.strip
+            tk, ui, s = st.tokens, st.ui, st.state
             x = t.x(s["now"])
             head = colour(HIGHLIGHT if self.drag and self.drag[0] == "mid" else tk["accent"])
+            p.setPen(Qt.NoPen)
             p.setBrush(head)
             p.drawRect(QtCore.QRectF(x - 1 * ui, 0, 2 * ui, h))
             fz = 1.0 + 0.12 * self.head_lift
-            bold = QtGui.QFont(font)
+            bold = QtGui.QFont("Consolas")
             bold.setBold(True)
             bold.setPixelSize(max(8, int(10 * ui * fz)))
             p.setFont(bold)
@@ -658,7 +772,6 @@ def classes():
             p.drawRoundedRect(flag, 3 * ui, 3 * ui)
             p.setPen(colour(tk["on_accent"]))
             p.drawText(flag, Qt.AlignCenter, text)
-            p.end()
 
         # input ------------------------------------------------------------
         def _x(self, event):
@@ -775,6 +888,7 @@ def classes():
             """The playhead drawn on the new frame at once, then Maya sent there:
             `currentTime` evaluates the scene before it returns, and a paint left
             to the event loop waited for it - the playhead jumped frames."""
+            t0 = time.perf_counter()
             s, t = self.strip.state, self.drag[2] if self.drag else self.track()
             frame = self._frame(x, t)
             if frame == s["now"]:
@@ -784,7 +898,12 @@ def classes():
             self.reach(before, frame)
             self.strip.show_now()
             self.repaint()
+            t1 = time.perf_counter()
             self.strip.call("set_time" if update else "scrub_only", frame)
+            meter = _state().get("meter")
+            if meter is not None:          # the scrub meter: our work, then Maya's frame change
+                meter["ours"].append((t1 - t0) * 1000.0)
+                meter["mayas"].append((time.perf_counter() - t1) * 1000.0)
 
     # -- the strip -------------------------------------------------------------------
 
@@ -1290,6 +1409,7 @@ def classes():
                     ("Add bookmark", lambda: c("add_bookmark", sel)),
                     ("Playback range = highlight", (lambda: c("playback_from", sel)) if sel else None),
                     ("Frame the playback range", self.frame_playback), None,
+                    ("Measure scrubbing (10 s)", lambda: c("measure")),
                     ("Back to Maya's time slider", lambda: c("back_to_maya"))]
 
         def _fps_menu(self):

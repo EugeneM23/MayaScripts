@@ -253,6 +253,12 @@ def _timebar():
     return _report(maya_timebar.toggle())
 
 
+def _timebar_measure():
+    """The scrub meter (2026-10-16): it says its own start and report."""
+    from maya_timebar import meter
+    return meter.start()
+
+
 def _tabs(step):
     """The next / previous scene tab (2026-10-15)."""
     from maya_scenetabs import switching
@@ -1022,6 +1028,9 @@ _OURS = (
     ("window.timebar", "Windows", "Time Bar",
      "Switch between the Time Bar and Maya's own time slider",
      _timebar),
+    ("timebar.measure", "Time Bar", "Measure scrubbing",
+     "Clock the next 10 s of frame changes while you drag the playhead - the Time Bar's or Maya's",
+     _timebar_measure),
     ("window.tabs", "Windows", "Scene Tabs",
      "Show the scene tabs bar above the viewport: several scenes in one Maya",
      partial(_show, "maya_scenetabs.bar", "show")),

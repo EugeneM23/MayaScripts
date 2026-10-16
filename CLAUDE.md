@@ -11479,6 +11479,33 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
   Docked or unset to the bottom edge; Maya's own slider, if chosen, is kept. A choice made after it stands. Raise
   DEFAULT_VERSION to make a later update switch it again.
 
+**Speed** (the same evening: «проверим быстродействие... фпс программы проседает когда перетаскиваешь
+ползунок»). Measured headless (`docs/superpowers/plans/bench_time_bar.py`: the real strip at 150 % on a fake
+link, a key on every frame of 300, breakdowns, three bookmarks, a sound; a scrub at 60 steps a second; the
+same run on the previous build through `TIMEBAR_PLUGIN`):
+- before: the strip's own work **6.1 ms a scrub step** and **6.3 ms every 16 ms** while keys faded - on top of
+  Maya's frame change, **5.8 ms** on a keyed Manny rig in parallel (`bench_time_bar_maya.py`, mayapy; the
+  viewport's redraw comes on top in a GUI Maya). That roughly doubled a step's cost: the drop the animator felt.
+- after: **0.97 ms** a step (0.12 with Interface animations off), **0.5 ms** a fade tick, a paint 0.06 ms:
+  - the still part (the track, the sound as ONE path, bookmarks, the highlight, the ruler, the keys at rest as
+    one path a colour) is one cached picture (`Timeline._static`), drawn again only when `_static_key`
+    changes - the size, the view, the ranges, the keys, the marks, the sound, the highlight or a key drag's
+    preview (`static_builds` counts, a test pins none during a scrub);
+  - each frame paints the picture, the lit or lifted keys (`_draw_moving_keys`) and the playhead;
+  - a lit key's glow is a picture drawn once per colour and size (`halo`), one drawPixmap instead of three
+    antialiased rectangles.
+- The time-change callback adds nothing measurable (5.75 against 5.77 ms).
+- **The scrub meter** (`maya_timebar/meter.py`; the key menu's «Measure scrubbing (10 s)», hotkey row
+  `timebar.measure`): for 10 s every frame change Maya makes is clocked through `MDGMessage` - whichever
+  slider drives it, ours or Maya's - and, when ours does, its own work and Maya's `currentTime` per step
+  (`look.meter_report`; pauses over 0.5 s are not counted). The report goes to the Script Editor and the
+  viewport: the animator's A/B, ours against Maya's, in their own scene.
+
+271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
+     drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
+     of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached
+     QPixmap, many like shapes in one QPainterPath, a repeated glow in a sprite.
+
 **Proof**:
 - `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake
   link and covers both rows, painting, scrubbing, the middle scrub, the transport, highlights, key moves and

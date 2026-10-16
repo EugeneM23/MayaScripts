@@ -303,6 +303,49 @@ class TimeCallback(Strip):
         bar._time_changed(None, None)
 
 
+class Meter(Strip):
+
+    def test_a_running_meter_clocks_each_step_and_none_runs_otherwise(self):
+        state = bar._state()
+        saved = state.get("meter")
+        self.addCleanup(lambda: state.__setitem__("meter", saved) if saved else state.pop("meter", None))
+        state.pop("meter", None)
+        self.drag(self.tl, self.x(20), self.x(22))
+        state["meter"] = {"stamps": [], "ours": [], "mayas": [], "seconds": 10.0}
+        self.drag(self.tl, self.x(30), self.x(33))
+        meter = state["meter"]
+        self.assertEqual(len(meter["ours"]), 2)
+        self.assertTrue(all(ms >= 0 for ms in meter["ours"] + meter["mayas"]))
+
+    def test_the_key_menu_offers_it(self):
+        self.assertIn("Measure scrubbing (10 s)", [r[0] for r in self.strip.key_rows(30) if r])
+
+
+class Cache(Strip):
+
+    def test_the_still_part_is_drawn_once_while_scrubbing(self):
+        self.tl.repaint()
+        built = self.tl.static_builds
+        self.drag(self.tl, self.x(20), self.x(40))
+        for f in range(20, 40):
+            self.strip.state["now"] = float(f)
+            self.tl.repaint()
+        self.assertEqual(self.tl.static_builds, built)
+
+    def test_it_is_drawn_again_when_the_keys_or_the_view_change(self):
+        self.tl.repaint()
+        built = self.tl.static_builds
+        self.strip.keys = self.strip.keys + [50.0]
+        self.tl.repaint()
+        self.assertEqual(self.tl.static_builds, built + 1)
+        self.tl.view = (10.0, 30.0)
+        self.tl.repaint()
+        self.assertEqual(self.tl.static_builds, built + 2)
+        self.strip.state["highlight"] = (12, 14)
+        self.tl.repaint()
+        self.assertEqual(self.tl.static_builds, built + 3)
+
+
 class Highlight(Strip):
 
     def test_a_shift_drag_highlights_and_a_click_clears_it(self):

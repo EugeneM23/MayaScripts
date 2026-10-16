@@ -426,3 +426,39 @@ def unroll(u, cx, width, showing):
     e = ease_out_quint(u) if showing else 1 - ease_in_quint(u)
     cx = max(0.0, min(float(width), cx))
     return cx * (1 - e), cx + (width - cx) * e
+
+
+# -- the scrub meter (2026-10-16, «проверим быстродействие») --------------------------------
+
+def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
+    """What a measured scrub came to: `stamps` the clock (ms) of every frame change
+    Maya made, `ours` / `mayas` the Time Bar's own ms and Maya's `currentTime` ms per
+    step it drove (empty when Maya's own slider was used). Returns (dict, text)."""
+    def median(values):
+        values = sorted(values)
+        return values[len(values) // 2] if values else 0.0
+
+    def p95(values):
+        values = sorted(values)
+        return values[min(len(values) - 1, int(len(values) * 0.95))] if values else 0.0
+
+    stamps = sorted(stamps)
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    #  the scrubbing itself: gaps over half a second are pauses, not frames
+    moving = [g for g in gaps if g <= 500.0]
+    rate = (1000.0 / median(moving)) if moving and median(moving) > 0 else 0.0
+    out = {"changes": len(stamps), "rate": rate, "gap_median": median(moving), "gap_p95": p95(moving),
+           "gap_max": max(moving) if moving else 0.0, "ours": median(ours), "ours_p95": p95(ours),
+           "maya": median(mayas), "seconds": seconds}
+    if len(stamps) < 2:
+        text = "Scrub meter: no scrubbing in %g s - start it, then drag the playhead" % seconds
+        return out, text
+    text = ("Scrub meter: %d frame changes, %.0f a second while dragging (a step every %.1f ms, "
+            "p95 %.1f, longest %.0f)" % (out["changes"], rate, out["gap_median"], out["gap_p95"],
+                                         out["gap_max"]))
+    if ours:
+        text += " | the Time Bar's own work %.2f ms a step (p95 %.2f), Maya's frame change %.1f ms" % (
+            out["ours"], out["ours_p95"], out["maya"])
+    else:
+        text += " | Maya's own slider drove it"
+    return out, text
