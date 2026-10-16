@@ -125,6 +125,63 @@ class TextTests(unittest.TestCase):
         self.assertEqual([u for _, u in look.FPS], ["film", "pal", "ntsc", "show", "palf", "ntscf"])
 
 
+class FullBarTests(unittest.TestCase):
+
+    def test_zoom_keeps_the_frame_under_the_mouse(self):
+        v0, v1 = look.zoomed(0, 100, 30, 0.5)
+        self.assertEqual((v0, v1), (15.0, 65.0))
+        self.assertEqual(look.zoomed(0, 10, 5, 0.5), (0, 10))         # never under MIN_VIEW
+        self.assertEqual(look.zoomed(0, 100, 50, 4, 0, 100), (-20.0, 120.0))
+
+    def test_highlight_parts(self):
+        t = look.Track(0, 100, 0, 1000)
+        self.assertEqual(look.highlight_hit(t, 200, (20, 40)), "h0")
+        self.assertEqual(look.highlight_hit(t, 402, (20, 40)), "h1")
+        self.assertEqual(look.highlight_hit(t, 300, (20, 40)), "hmove")
+        self.assertIsNone(look.highlight_hit(t, 600, (20, 40)))
+        self.assertEqual(look.highlight_hit(t, 303, (30, 30)), "hmove")
+        self.assertIsNone(look.highlight_hit(t, 300, None))
+
+    def test_key_drag_moves_and_scales(self):
+        self.assertEqual(look.key_drag("hmove", (20, 40), 30, 35), (25, 45))
+        self.assertEqual(look.key_drag("h1", (20, 40), 40, 50), (20, 50))
+        self.assertEqual(look.key_drag("h0", (20, 40), 20, 45), (39, 40))
+        self.assertEqual(look.key_drag("h1", (30, 30), 30, 33), (33, 33))
+
+    def test_mapped_keys_follow_the_highlight(self):
+        self.assertEqual(look.mapped(30, (20, 40), (20, 60)), 40)
+        self.assertEqual(look.mapped(10, (20, 40), (20, 60)), 10)
+        self.assertEqual(look.mapped(30, (30, 30), (33, 33)), 33)
+
+    def test_passed_keys(self):
+        keys = [0, 6, 12, 30]
+        self.assertEqual(look.passed(keys, 10, 13), [12])
+        self.assertEqual(look.passed(keys, 12, 13), [])                # leaving a key lights nothing
+        self.assertEqual(look.passed(keys, 13, 10), [12])              # backwards too
+        self.assertEqual(look.passed(keys, 60, 0), [0])                # the loop's jump: the landing only
+        self.assertEqual(look.passed(keys, None, 6), [])
+
+    def test_the_motion_curves(self):
+        self.assertEqual(look.flash(0, 600), 1.0)
+        self.assertEqual(look.flash(600, 600), 0.0)
+        self.assertGreater(look.flash(100, 600), look.flash(300, 600))
+        self.assertEqual(look.approach(0.0, 1.0, 1000, 110), 1.0)
+        self.assertLess(look.approach(0.0, 1.0, 16, 110), 1.0)
+        self.assertGreater(max(look.back_out(u / 20.0) for u in range(21)), 1.0)   # it overshoots
+        self.assertEqual(look.back_out(1.0), 1.0)
+        self.assertEqual(look.opening(0, 3), (0.3, 0.0))
+        self.assertEqual(look.opening(10000, 3), (1.0, 1.0))
+
+    def test_envelope(self):
+        samples = [0.0] * 100 + [0.5] * 100 + [1.0] * 100        # 300 samples at 30 Hz: 10 s
+        env = look.envelope(samples, 30.0, 30.0, 0, 0, 299, per_frame=1)
+        self.assertEqual(len(env), 300)
+        self.assertEqual(env[50][1], 0.0)
+        self.assertAlmostEqual(env[150][1], 0.5)
+        self.assertEqual(env[250][1], 1.0)
+        self.assertEqual(look.envelope([], 30, 30, 0, 0, 10), [])
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_the_package_import_with_the_stdlib_alone(self):

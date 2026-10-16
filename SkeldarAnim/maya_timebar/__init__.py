@@ -14,7 +14,7 @@ CONTROL = "skeldarTimeBar"
 LABEL = "Time Bar"
 OPTIONVAR = "skeldarTimeBar"
 MAYA_CONTROLS = ("TimeSlider", "RangeSlider")
-HEIGHT = 44                 # logical px
+HEIGHT = 84                 # logical px: the range row and the time row
 
 
 def _state():
@@ -73,9 +73,16 @@ def ensure_docked():
         return ""
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
+        for flags in ({"actLikeMayaUIElement": True}, {"resizeHeight": HEIGHT}):
+            try:                    # a control the first build made: no tab, two rows tall
+                cmds.workspaceControl(CONTROL, edit=True, **flags)
+            except Exception:                                # noqa: BLE001
+                pass
     else:
+        #  actLikeMayaUIElement: no tab, no title - it sits as Maya's own slider does
         options = dict(label=LABEL, retain=False, floating=False, heightProperty="fixed",
-                       initialHeight=HEIGHT, uiScript=uiscript(plugin_root()))
+                       initialHeight=HEIGHT, actLikeMayaUIElement=True,
+                       uiScript=uiscript(plugin_root()))
         if cmds.workspaceControl("TimeSlider", exists=True):
             options["dockToControl"] = ("TimeSlider", "top")
         else:

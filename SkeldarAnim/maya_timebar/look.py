@@ -157,3 +157,140 @@ def frame_text(frame):
     if abs(frame - round(frame)) < 1e-6:
         return "%d" % int(round(frame))
     return ("%.2f" % frame).rstrip("0").rstrip(".")
+
+
+# -- the full bar (2026-10-16, the second mockup) -------------------------------------
+
+SPEEDS = (("Real-time", 1.0), ("Every frame", 0.0), ("Half", 0.5), ("Twice", 2.0))
+LOOPS = ("continuous", "once", "oscillate")
+TANGENTS = (("Auto", "auto"), ("Spline", "spline"), ("Clamped", "clamped"), ("Linear", "linear"),
+            ("Flat", "flat"), ("Stepped", "step"), ("Plateau", "plateau"))
+MIN_VIEW = 8.0              # the fewest frames a zoom shows
+
+
+def zoomed(v0, v1, at, factor, lo=None, hi=None):
+    """The view [v0, v1] zoomed by `factor` (>1 out, <1 in) about frame `at`;
+    never fewer than MIN_VIEW frames, never past [lo - 20, hi + 20] when given."""
+    n0 = at - (at - v0) * factor
+    n1 = at + (v1 - at) * factor
+    if n1 - n0 < MIN_VIEW:
+        return v0, v1
+    if lo is not None:
+        n0 = max(n0, lo - 20.0)
+    if hi is not None:
+        n1 = min(n1, hi + 20.0)
+    return n0, n1
+
+
+def highlight_hit(track, x, selection, ui=1.0):
+    """'h0' / 'h1' (the highlight's edges), 'hmove' (inside it) or None. A
+    one-frame highlight has no edges: anywhere on it moves."""
+    if not selection:
+        return None
+    a, b = selection
+    x0, x1 = track.x(a), track.x(b)
+    reach = HANDLE_REACH * ui
+    if b > a:
+        if abs(x - x0) <= reach:
+            return "h0"
+        if abs(x - x1) <= reach:
+            return "h1"
+    if x0 - (0 if b > a else reach) < x < x1 + (0 if b > a else reach):
+        return "hmove"
+    return None
+
+
+def key_drag(kind, selection, start, frame):
+    """The highlight after dragging its body ('hmove') or an edge ('h0' / 'h1')
+    from frame `start` to frame `frame`: a move keeps its length, an edge scales
+    toward the other edge, which stays."""
+    a, b = selection
+    d = int(round(frame)) - int(round(start))
+    if kind == "hmove" or b <= a:
+        return a + d, b + d
+    if kind == "h0":
+        return min(a + d, b - 1), b
+    return a, max(b + d, a + 1)
+
+
+def mapped(t, selection, target):
+    """Key time `t` after the highlight `selection` becomes `target`: the keys
+    inside follow linearly, rounded to whole frames; the others stay."""
+    a, b = selection
+    na, nb = target
+    if not (a - 1e-6 <= t <= b + 1e-6):
+        return t
+    if b <= a:
+        return t + (na - a)
+    return int(round(na + (t - a) * float(nb - na) / (b - a)))
+
+
+def passed(keys, before, now, near=6.0):
+    """The keys the playhead reached going from `before` to `now`: every key it
+    swept over when the step is short (playback, a scrub), only the one it lands
+    on after a jump (the loop going back to the start)."""
+    if before is None or abs(now - before) < 1e-9:
+        return []
+    lo, hi = min(before, now), max(before, now)
+    hit = []
+    for k in keys:
+        if abs(k - now) < 0.5:
+            hit.append(k)
+        elif hi - lo <= near and lo - 1e-6 < k <= hi + 1e-6 and abs(k - before) > 1e-6:
+            hit.append(k)
+    return hit
+
+
+def flash(age_ms, decay_ms):
+    """A reached key's light: 1 at once, eased back to 0 over `decay_ms`."""
+    if age_ms < 0 or age_ms >= decay_ms:
+        return 0.0
+    u = 1.0 - age_ms / float(decay_ms)
+    return u * u
+
+
+def approach(value, goal, dt_ms, ms):
+    """`value` eased toward `goal` over about `ms` (exponential, never past it)."""
+    if ms <= 0:
+        return goal
+    k = 1.0 - math.exp(-3.0 * dt_ms / ms)
+    out = value + (goal - value) * k
+    return goal if abs(out - goal) < 0.005 else out
+
+
+def back_out(u):
+    """The radial menu's ease-out-back: overshoots a little, lands on 1."""
+    u = max(0.0, min(1.0, u))
+    c = 1.70158
+    return 1 + (c + 1) * (u - 1) ** 3 + c * (u - 1) ** 2
+
+
+def opening(age_ms, index, open_ms=200.0, step_ms=18.0):
+    """(scale, opacity) of control `index` `age_ms` after the bar opened."""
+    u = (age_ms - index * step_ms) / open_ms
+    if u <= 0:
+        return 0.3, 0.0
+    if u >= 1:
+        return 1.0, 1.0
+    return 0.3 + 0.7 * back_out(u), min(1.0, u * 1.6)
+
+
+def envelope(samples, rate, fps, offset, start, end, per_frame=4):
+    """[(frame, amplitude 0..1)] of a mono sound (`samples` -1..1 at `rate` Hz,
+    starting at frame `offset`) over frames [start, end], `per_frame` bins a frame."""
+    out = []
+    if not samples or rate <= 0 or fps <= 0:
+        return out
+    n = len(samples)
+    step = 1.0 / per_frame
+    f = float(start)
+    peak = max(abs(s) for s in samples) or 1.0
+    while f <= end + 1e-9:
+        i0 = int((f - offset) / fps * rate)
+        i1 = int((f + step - offset) / fps * rate)
+        if i1 > 0 and i0 < n:
+            chunk = samples[max(0, i0):min(n, max(i1, i0 + 1))]
+            amp = max(abs(s) for s in chunk) / peak if chunk else 0.0
+            out.append((f, amp))
+        f += step
+    return out

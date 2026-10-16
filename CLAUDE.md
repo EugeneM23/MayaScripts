@@ -11312,41 +11312,102 @@ bit-for-bit repeatable. Not seen in a GUI Maya (port 7002 closed).
      0 with it suspended, in DG and parallel alike. mayapy has no viewport, so every verify fell. The
      simulation steps run with the refresh on (`fall.simulate`), suspended again after.
 
-## Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
+## Time Bar: Maya's time slider redrawn in the hub's look (2026-10-16)
 
 The animator: «Давай попробуем перерисовать интерфейс таймслайдера маи под наш стиль. Сделай пару макетов а я
-выберу». Three mockups (https://claude.ai/artifact/JS83VQsVewRHtnmjWBnwWZ): they chose **A, one bar**, **in place
-of Maya's** (Maya's slider hidden, ⋮ brings it back), and of Maya's behaviours only the **shift-drag highlight**
-in the first version. Spec `docs/superpowers/specs/2026-10-16-time-bar-design.md`.
+выберу».
+- The first mockups (https://claude.ai/artifact/JS83VQsVewRHtnmjWBnwWZ) went to **A, one bar**, in place of
+  Maya's; it shipped as `79bca77`. The playhead jumped frames (fixed in `3a2aaa3`, trap 269).
+- Then: «Ты не заменил интерфейс таймлайна а смастерил какую-то полку». Maya draws its own slider, so its shape
+  cannot be restyled. Asked, they chose **our panel made into a full time slider**, with every element of
+  Maya's two rows («все эллементы на скриншоте желательно перенести к нам»).
+- Also asked for: the radial menu's motion (a lift and a glow under the mouse, a scale) and keys that light up
+  as the playhead reaches them and fade back.
+- Mockup: https://claude.ai/artifact/4wDFBEEQgnjBvLv85ciwSt. Spec:
+  `docs/superpowers/specs/2026-10-16-time-bar-design.md` (its first version, one bar).
 
-- **Package `SkeldarAnim/maya_timebar/`** (a payload row): `look.py` (stdlib, a test pins it: `Track` frame <-> x,
-  `ticks`, `hit`, `dragged`, `highlight` / `range_array`, `neighbour_key`, `FPS`), `scene.py` (cmds: `light()`,
-  `keys()` - the selection's keys and breakdowns, `keyframe -q -breakdown`; the ranges, the time, the unit,
-  autoKey, play, the layers), `bar.py` (Qt: the strip, talking to Maya only through a `Link`, a fake in the
-  tests), `__init__.py` (the workspaceControl `skeldarTimeBar`, `ensure_docked` / `show` / `hide` / `toggle`,
-  `active()`, `highlight()`; nothing heavy at import).
-- **The strip** (44 logical px): prev key, play / pause, next key | the timeline (the animation range; the
-  playback range a lit band whose edges are handles, a double click types a number; grips at the far ends move
-  the animation range; keys orange, breakdowns cyan; the playhead with its frame on a flag) | the frame field |
-  fps chip (`currentUnit -time`) | Auto key | the active layer chip (its menu selects a layer). A press scrubs
-  and clears a highlight; **shift-drag highlights**; the right button: «Back to Maya's time slider». Play is
-  Maya's own `play`.
-- **In place of Maya's**: docked against `TimeSlider` (`dockToControl` top; the main window's bottom without
-  one), then `TimeSlider` and `RangeSlider` hidden. optionVar `skeldarTimeBar` (on by default); the hub's build
-  shows it (`maya_hub._time_bar_soon`, as the tabs bar); ⋮ -> **Time bar** (checkable, `set_timebar`); hotkey row
-  `window.timebar` (switches).
-- **The highlight** is written to `playbackOptions -selectionStartTime / -selectionEndTime / -selectionVisible`
-  (editable in 2027, measured in mayapy). `overrig.slider_selection()` and Camera Shake's `highlight()` read the
-  Time Bar's while it is active (`sys.modules.get("maya_timebar")` - never imported by them).
-  **Not known**: whether Maya's own commands and OverRig's MEL, which read `timeControl -q -rangeArray` on the
-  hidden slider, see that selection - a GUI Maya check, the animator's.
-- **Kept current** by scriptJobs parented to the control (`timeChanged` -> the playhead only, `playbackRangeChanged`,
-  `SelectionChanged`, `animLayerRefresh`, `Undo`, `Redo`), `MAnimMessage.addAnimKeyframeEditedCallback` marking the
-  keys dirty, and a 250 ms timer; the keys are not read during playback. The jobs find the strip through
-  `sys._skeldar_timebar`, never a held wrapper.
+**Package `SkeldarAnim/maya_timebar/`** (a payload row):
+- `look.py` (stdlib, a test pins it):
+  - `Track` frame <-> x, `ticks`, `dragged`, `highlight` / `range_array`, `neighbour_key`;
+  - `zoomed`, `highlight_hit`, `key_drag`, `mapped`, `passed`, `flash`, `approach`, `back_out`, `opening`,
+    `envelope`;
+  - `FPS`, `SPEEDS`, `LOOPS`, `TANGENTS`.
+- `scene.py` (cmds): every read and write the strip sends.
+- `bar.py` (Qt): `Strip`, `Timeline`, `RangeBlock`, `Pill`. It talks to Maya only through a `Link` (a fake in the
+  tests).
+- `__init__.py`: the workspaceControl `skeldarTimeBar` (84 logical px, `actLikeMayaUIElement`: no tab, no
+  title), plus `show` / `hide` / `toggle` / `active()` / `highlight()`.
 
-Proof: `tests/test_timebar_look.py`, `tests/test_timebar_bar.py` (the strip offscreen on a fake link: painting, a
-scrub, a shift-drag, the handles, the grips, the key buttons, playback); `docs/superpowers/plans/render_time_bar.py`
--> `time_bar.png` (150 %). **Not seen in a GUI Maya**: the docking in place of Maya's slider, real playback, the
-highlight seen by Maya's own commands. Not built: moving / scaling keys, the right-click key menu, the sound
-waveform.
+**Range row**:
+- The fields: animation start, playback start, playback end, animation end.
+- The range block: drag the body to slide the playback range, its orange edges to resize it.
+- Bookmarks: previous, add over the highlight, next. They are Maya's own `timeSliderBookmark` nodes, made
+  directly: the plugin's `createBookmark` reads Maya's slider and jumps time to the end.
+- Chips: character set (Maya's `highlightList`, as `currentCharacters.mel` reads it), the layer keys go to, fps.
+- Toggles: loop (continuous, once, oscillate in turn), cached playback (`evaluator -name cache`), speed (a chip:
+  real-time, every frame, half, twice), sound, Auto key, preferences (`preferencesWnd "timeslider"`).
+
+**Time row**:
+- The timeline shows the playback range; the wheel zooms about the mouse; Frame the playback range (key menu)
+  or a double click puts it back.
+- Bookmarks are a band along the top, their names inside. The sound is a waveform: `.wav` read with stdlib
+  `wave`, a ~2 kHz mono copy cached per file.
+- Keys are orange and breakdowns cyan; the playhead carries its frame on a flag.
+- **Shift-click or shift-drag highlights** (one frame too). Drag the blue block to move its keys, an edge to
+  scale them toward the other edge: one `keyframe -relative` or `scaleKey` + `snapKey`, one undo chunk, applied on
+  the release (a preview while dragging).
+- The right button opens the key menu: Set key, Breakdown, Cut / Copy / Paste / Delete, Tangents ▸, Snap,
+  Add bookmark, Playback range = highlight, Frame the playback range, Back to Maya's time slider.
+- A middle drag scrubs without updating the scene (`currentTime -update false`).
+- On the right: the frame field, then eight transport buttons (start, back a frame, back a key, play
+  backwards, play, forward a key, forward a frame, end).
+
+**Motion**:
+- The radial menu's: controls open from small with a bounce (`opening`, 18 ms apart), lift +10 % and glow under
+  the mouse (`HOVER_MS` 110), flash on a press, pop on a toggle.
+- The key under the mouse grows 60 %. A key the playhead reaches (playing, scrubbing, stepping) lights up and
+  fades back over `KEY_FADE_MS` 600. Only the keys it swept over or landed on light: leaving a key lights
+  nothing, a loop's jump lights only where it lands.
+- One 16 ms timer, running only while something moves.
+- ⋮ -> Interface animations off makes it all instant.
+
+**The highlight** is written to `playbackOptions -selectionStartTime / -selectionEndTime /
+-selectionVisible`. `overrig.slider_selection()` and Camera Shake read the Time Bar's while it is active (a
+one-frame highlight is none to them).
+- **Not known**: whether Maya's own commands and OverRig's MEL, which read `timeControl -q -rangeArray` on the
+  hidden slider, see it.
+
+**Kept current**:
+- scriptJobs parented to the control: `timeChanged` repaints the playhead at once (`repaint()`, not
+  `update()`), plus `playbackRangeChanged`, `SelectionChanged`, `animLayerRefresh`, `Undo`, `Redo`.
+- `MAnimMessage.addAnimKeyframeEditedCallback` marks keys dirty; a 250 ms timer reads the rest.
+- Keys are not read during playback. The jobs find the strip through `sys._skeldar_timebar`.
+
+**In place of Maya's**: docked against `TimeSlider`, then `TimeSlider` and `RangeSlider` hidden. optionVar
+`skeldarTimeBar` (on by default), hub ⋮ -> **Time bar**, hotkey row `window.timebar`.
+
+**Proof**:
+- `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake
+  link and covers both rows, painting, scrubbing, the middle scrub, the transport, highlights, key moves and
+  scales, the range block, zoom, the menus' rows, toggles, the reached keys and the opening.
+- `docs/superpowers/plans/verify_time_bar.py`: **all gates passed in mayapy standalone**:
+  - keys and breakdowns read;
+  - the highlight round trip;
+  - a move, a scale and a single key, each one undo, on whole frames;
+  - the key menu's commands;
+  - scrub without update;
+  - loop / speed / cache;
+  - bookmarks made and stepped;
+  - a generated `.wav`'s click found at its frame with the sound's offset;
+  - character sets listed;
+  - layers.
+  The current character set is a GUI-only check: batch Maya keeps none.
+- `docs/superpowers/plans/render_time_bar.py` -> `time_bar.png`: three states at 150 %.
+
+**Not seen in a GUI Maya**: the docking without a tab, real playback, the sound scrubbing, the highlight seen by
+Maya's own commands.
+
+269. **A widget painted with `update()` waits for an idle Maya never gives between frames.** `currentTime`
+     evaluates the scene before it returns and playback does not turn the event loop, so the Time Bar's playhead
+     jumped several frames while Maya's own slider moved on every one. Paint what must follow time with
+     `repaint()` before the call that evaluates, and from the `timeChanged` job.

@@ -31,13 +31,25 @@ for label, change in (("rest", {}),
                       ("highlight", {"highlight": (24, 41), "now": 31.0}),
                       ("playing", {"playing": True, "now": 47.0, "auto": False})):
     link = FakeLink()
-    link.s.update(a0=-10.0, a1=90.0, p0=0.0, p1=60.0, now=12.0)
-    link.k = ([0.0, 6.0, 12.0, 18.0, 24.0, 31.0, 40.0, 48.0, 56.0, 60.0], [9.0, 27.0, 44.0])
+    link.s.update(a0=-10.0, a1=120.0, p0=0.0, p1=95.0, now=30.0)
+    link.k = ([0.0, 6.0, 12.0, 18.0, 24.0, 31.0, 40.0, 48.0, 56.0, 64.0, 72.0, 80.0, 88.0, 95.0],
+              [9.0, 27.0, 44.0, 68.0])
+    link.marks = [(0.0, 14.0, (0.5, 0.66, 0.9), "Anticipation"), (14.0, 40.0, (0.88, 0.48, 0.21), "Attack"),
+                  (40.0, 95.0, (0.56, 0.82, 0.6), "Recovery")]
+    link.x["character"] = ""
     link.s.update(change)
-    strip = bar.make(link, UI, maya_hubstyle.TOKENS)
-    strip.resize(int(1400 * UI), int(44 * UI))
+    strip = bar.make(link, UI, maya_hubstyle.TOKENS, motion=True)
+    strip.resize(int(1400 * UI), int(86 * UI))
     strip.show()
     app.processEvents()
+    strip.opened = -100000.0                     # past the opening
+    if label == "highlight":
+        strip.transport["play"].hover = strip.transport["play"].goal = 1.0
+        strip.timeline.key_lift[40.0] = 1.0
+    if label == "playing":
+        strip.timeline.reached[40.0] = strip.clock() - 150
+        strip.timeline.reached[44.0] = strip.clock() - 30
+        strip.loop.hover = 1.0
     shots.append(strip.grab().toImage())
 
 pad = 12

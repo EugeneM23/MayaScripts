@@ -1,6 +1,6 @@
-"""The Time Bar's strip offscreen (2026-10-16): it paints, a press scrubs, a shift-drag
-highlights, the band's handles move the playback range, the buttons step through the
-keys - on a fake link, so no Maya scene is touched.
+"""The Time Bar offscreen (2026-10-16): the range row and the time row, on a fake
+link so no Maya scene is touched - painting, scrubbing, the highlight moving and
+scaling keys, the range block, zoom, the menus, the keys the playhead reaches.
 
 Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 """
@@ -25,47 +25,78 @@ class FakeLink(object):
         self.log = []
         self.s = {"now": 12.0, "a0": 0.0, "a1": 100.0, "p0": 10.0, "p1": 60.0,
                   "unit": "ntsc", "auto": True, "playing": False, "highlight": None}
-        self.k = ([0.0, 6.0, 12.0, 30.0], [9.0])
+        self.x = {"loop": "continuous", "speed": 1.0, "cache": True, "sound": "audio1",
+                  "sound_shown": True, "character": ""}
+        self.k = ([0.0, 6.0, 12.0, 30.0, 40.0], [9.0])
+        self.marks = [(10.0, 20.0, (0.5, 0.6, 0.9), "Anticipation")]
+
+    def _log(self, *entry):
+        self.log.append(entry)
 
     def light(self):
         return dict(self.s)
 
+    def extra(self):
+        return dict(self.x)
+
     def keys(self):
-        self.log.append(("keys",))
+        self._log("keys")
         return self.k
+
+    def bookmarks(self):
+        return list(self.marks)
+
+    def waveform(self, node, start, end):
+        return [(f, 0.5) for f in range(int(start), int(end) + 1)]
 
     def now(self):
         return self.s["now"]
 
     def set_time(self, frame):
-        self.log.append(("set_time", frame))
+        self._log("set_time", frame)
+        self.s["now"] = float(frame)
+
+    def scrub_only(self, frame):
+        self._log("scrub_only", frame)
         self.s["now"] = float(frame)
 
     def begin_scrub(self):
-        self.log.append(("begin_scrub",))
+        self._log("begin_scrub")
 
     def end_scrub(self):
-        self.log.append(("end_scrub",))
+        self._log("end_scrub")
 
     def set_ranges(self, a0, a1, p0, p1):
-        self.log.append(("set_ranges", a0, a1, p0, p1))
+        self._log("set_ranges", a0, a1, p0, p1)
         self.s.update(a0=a0, a1=a1, p0=p0, p1=p1)
 
     def set_highlight(self, sel):
-        self.log.append(("set_highlight", sel))
+        self._log("set_highlight", sel)
         self.s["highlight"] = sel
+
+    def move_keys(self, selection, target):
+        self._log("move_keys", selection, target)
 
     def step_key(self, forward, known):
         frame = look.neighbour_key(known, self.s["now"], forward)
         if frame is not None:
             self.set_time(frame)
 
-    def toggle_play(self):
-        self.log.append(("toggle_play",))
+    def toggle_play(self, forward=True):
+        self._log("toggle_play", forward)
         self.s["playing"] = not self.s["playing"]
 
     def toggle_auto(self):
         self.s["auto"] = not self.s["auto"]
+
+    def cycle_loop(self):
+        self.x["loop"] = {"continuous": "once", "once": "oscillate"}.get(self.x["loop"], "continuous")
+
+    def toggle_cache(self):
+        self.x["cache"] = not self.x["cache"]
+
+    def set_speed(self, v):
+        self.x["speed"] = v
 
     def set_unit(self, unit):
         self.s["unit"] = unit
@@ -77,117 +108,153 @@ class FakeLink(object):
         return "Layer1"
 
     def pick_layer(self, name):
-        self.log.append(("pick_layer", name))
+        self._log("pick_layer", name)
+
+    def character_sets(self):
+        return ["hero"]
+
+    def pick_character(self, name):
+        self._log("pick_character", name)
+
+    def sounds(self):
+        return ["audio1"]
+
+    def set_sound(self, node):
+        self._log("set_sound", node)
+
+    def toggle_sound(self):
+        self.x["sound_shown"] = not self.x["sound_shown"]
+
+    def add_bookmark(self, sel):
+        self._log("add_bookmark", sel)
+
+    def step_bookmark(self, forward):
+        self._log("step_bookmark", forward)
+
+    def preferences(self):
+        self._log("preferences")
 
     def back_to_maya(self):
-        self.log.append(("back",))
+        self._log("back")
 
 
 @unittest.skipIf(QT is None, "no Qt")
 class Strip(unittest.TestCase):
 
+    motion = False
+
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
-        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS)
-        self.strip.resize(1000, 44)
+        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=self.motion)
+        self.strip.resize(1500, 80)
         self.strip.move(3000, 3000)
         self.strip.show()
         self.app.processEvents()
         self.addCleanup(self.strip.deleteLater)
         self.tl = self.strip.timeline
 
-    def mouse(self, kind, x, button, buttons, mods=None):
+    def mouse(self, widget, kind, x, button, buttons, mods=None):
         Qt = QT.QtCore.Qt
-        local = QT.QtCore.QPointF(x, self.tl.height() / 2.0)
-        event = QT.QtGui.QMouseEvent(kind, local, QT.QtCore.QPointF(self.tl.mapToGlobal(local.toPoint())),
+        local = QT.QtCore.QPointF(x, widget.height() / 2.0)
+        event = QT.QtGui.QMouseEvent(kind, local, QT.QtCore.QPointF(widget.mapToGlobal(local.toPoint())),
                                      button, buttons, mods if mods is not None else Qt.NoModifier)
-        QT.QtWidgets.QApplication.sendEvent(self.tl, event)
+        QT.QtWidgets.QApplication.sendEvent(widget, event)
+
+    def drag(self, widget, x0, x1, button=None, mods=None):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        button = button or Qt.LeftButton
+        self.mouse(widget, E.MouseButtonPress, x0, button, button, mods)
+        self.mouse(widget, E.MouseMove, x1, Qt.NoButton, button, mods)
+        self.mouse(widget, E.MouseButtonRelease, x1, button, Qt.NoButton, mods)
 
     def x(self, frame):
         return self.tl.track().x(frame)
 
-    def test_it_shows_what_the_scene_holds(self):
-        self.assertEqual(self.strip.field.text(), "12")
-        self.assertEqual(self.strip.fps.text(), "30 fps")
-        self.assertTrue(self.strip.auto.isChecked())
-        self.assertIn("Layer1", self.strip.layer.text())
-        self.assertEqual(self.strip.keys, [0.0, 6.0, 12.0, 30.0])
-        self.assertEqual(self.strip.breakdowns, [9.0])
+    def calls(self, name):
+        return [e for e in self.link.log if e[0] == name]
 
-    def test_it_paints_the_band_keys_and_playhead(self):
+
+class Shows(Strip):
+
+    def test_both_rows_show_the_scene(self):
+        st = self.strip
+        self.assertEqual([f.text() for f in (st.anim_start, st.play_start, st.play_end, st.anim_end)],
+                         ["0", "10", "60", "100"])
+        self.assertEqual(st.field.text(), "12")
+        self.assertTrue(st.fps.text().startswith("30 fps"))
+        self.assertTrue(st.auto.isChecked())
+        self.assertTrue(st.loop.isChecked() and st.cache.isChecked() and st.sound.isChecked())
+        self.assertTrue(st.layer.text().startswith("Layer1"))
+        self.assertTrue(st.character.text().startswith("No Character Set"))
+        self.assertEqual(st.keys, [0.0, 6.0, 12.0, 30.0, 40.0])
+        self.assertEqual(st.breakdowns, [9.0])
+        self.assertEqual(len(st.marks), 1)
+        self.assertTrue(st.wave)
+        self.assertEqual(len(st.transport), 8)
+
+    def test_the_timeline_shows_the_playback_range(self):
+        t = self.tl.track()
+        self.assertEqual((t.v0, t.v1), (10.0, 60.0))
+
+    def test_it_paints_keys_and_the_playhead(self):
         image = QT.QtGui.QImage(self.tl.size(), QT.QtGui.QImage.Format_ARGB32)
         image.fill(0)
         self.tl.render(image)
-        row = self.tl.height() // 3
         accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
 
-        def near(px, c):
-            return abs(px.red() - c.red()) < 30 and abs(px.green() - c.green()) < 30 and abs(px.blue() - c.blue()) < 30
-        self.assertTrue(near(image.pixelColor(int(self.x(30)), row), accent), "a key")
-        self.assertTrue(near(image.pixelColor(int(self.x(12)), self.tl.height() - 6), accent), "the playhead")
-        self.assertFalse(near(image.pixelColor(int(self.x(45)), row), accent))
+        def near(px):
+            return all(abs(a - b) < 30 for a, b in ((px.red(), accent.red()), (px.green(), accent.green()),
+                                                     (px.blue(), accent.blue())))
+        self.assertTrue(near(image.pixelColor(int(self.x(30)), bar.KEY_Y)), "a key")
+        self.assertTrue(near(image.pixelColor(int(self.x(12)), self.tl.height() - 6)), "the playhead")
+        self.assertFalse(near(image.pixelColor(int(self.x(50)), bar.KEY_Y)))
 
-    def test_a_press_scrubs_to_the_whole_frame(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(E.MouseButtonPress, self.x(40.3), Qt.LeftButton, Qt.LeftButton)
-        self.mouse(E.MouseMove, self.x(44.6), Qt.NoButton, Qt.LeftButton)
-        self.mouse(E.MouseButtonRelease, self.x(44.6), Qt.LeftButton, Qt.NoButton)
-        self.assertEqual([e for e in self.link.log if e[0] == "set_time"], [("set_time", 40), ("set_time", 45)])
+
+class Time(Strip):
+
+    def test_a_press_scrubs_in_maya_s_scrub_mode(self):
+        self.drag(self.tl, self.x(40.3), self.x(44.6))
+        self.assertEqual(self.calls("set_time"), [("set_time", 40), ("set_time", 45)])
+        names = [e[0] for e in self.link.log if e[0] in ("begin_scrub", "set_time", "end_scrub")]
+        self.assertEqual((names[0], names[-1]), ("begin_scrub", "end_scrub"))
         self.assertEqual(self.strip.field.text(), "45")
-        names = [e[0] for e in self.link.log if e[0] != "keys"]
-        self.assertEqual(names[0], "begin_scrub")
-        self.assertEqual(names[-1], "end_scrub")
 
     def test_a_scrub_paints_the_new_frame_before_maya_evaluates_it(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        painted = []
+        painted, seen = [], []
         real = self.tl.paintEvent
         self.tl.paintEvent = lambda e: (painted.append(self.strip.state["now"]), real(e))
-        seen = []
         self.link.set_time = lambda f: seen.append(list(painted))
-        self.mouse(E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton)
         self.assertEqual(seen and seen[0][-1:], [40])
 
-    def test_a_shift_drag_highlights_and_a_click_clears_it(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        S = Qt.ShiftModifier
-        self.mouse(E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton, S)
-        self.mouse(E.MouseMove, self.x(22), Qt.NoButton, Qt.LeftButton, S)
-        self.mouse(E.MouseButtonRelease, self.x(22), Qt.LeftButton, Qt.NoButton, S)
-        self.assertEqual(self.link.s["highlight"], (22, 40))
-        self.assertNotIn("set_time", [e[0] for e in self.link.log])
-        self.mouse(E.MouseButtonPress, self.x(50), Qt.LeftButton, Qt.LeftButton)
-        self.mouse(E.MouseButtonRelease, self.x(50), Qt.LeftButton, Qt.NoButton)
-        self.assertIsNone(self.link.s["highlight"])
+    def test_a_middle_drag_moves_time_without_updating_the_scene(self):
+        Qt = QT.QtCore.Qt
+        self.drag(self.tl, self.x(20), self.x(25), Qt.MiddleButton)
+        self.assertEqual(self.calls("scrub_only"), [("scrub_only", 20), ("scrub_only", 25)])
+        self.assertFalse(self.calls("set_time"))
 
-    def test_dragging_a_handle_moves_the_playback_range(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(E.MouseButtonPress, self.x(60) - 1, Qt.LeftButton, Qt.LeftButton)
-        self.mouse(E.MouseMove, self.x(72), Qt.NoButton, Qt.LeftButton)
-        self.mouse(E.MouseButtonRelease, self.x(72), Qt.LeftButton, Qt.NoButton)
-        self.assertEqual(self.link.s["p1"], 72)
-        self.assertEqual(self.link.s["p0"], 10)
-        self.assertNotIn("set_time", [e[0] for e in self.link.log])
-
-    def test_the_grip_moves_the_animation_range_on_release(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(E.MouseButtonPress, 3, Qt.LeftButton, Qt.LeftButton)
-        self.mouse(E.MouseMove, self.x(-15), Qt.NoButton, Qt.LeftButton)
-        self.assertFalse([e for e in self.link.log if e[0] == "set_ranges"])
-        self.mouse(E.MouseButtonRelease, self.x(-15), Qt.LeftButton, Qt.NoButton)
-        self.assertEqual(self.link.s["a0"], -15)
-
-    def test_the_key_buttons_step_through_keys_and_breakdowns(self):
-        self.strip.next.click()
+    def test_the_transport_buttons(self):
+        st = self.strip
+        st.transport["nkey"].click()
         self.assertEqual(self.link.s["now"], 30.0)
-        self.strip.prev.click()
-        self.strip.prev.click()
+        st.transport["pkey"].click()
+        st.transport["pkey"].click()
         self.assertEqual(self.link.s["now"], 9.0)
+        st.transport["end"].click()
+        self.assertEqual(self.link.s["now"], 60.0)
+        st.transport["pfrm"].click()
+        self.assertEqual(self.link.s["now"], 59.0)
+        st.transport["start"].click()
+        self.assertEqual(self.link.s["now"], 10.0)
+        st.transport["back"].click()
+        self.assertEqual(self.calls("toggle_play")[-1], ("toggle_play", False))
+        st.transport["play"].click()
+        self.assertEqual(self.calls("toggle_play")[-1], ("toggle_play", True))
 
-    def test_play_toggles_and_keys_are_not_read_while_playing(self):
-        self.strip.play.click()
-        self.assertTrue(self.link.s["playing"])
+    def test_keys_are_not_read_while_playing(self):
+        self.link.s["playing"] = True
         self.link.log.clear()
         self.strip.refresh(keys=True)
         self.assertNotIn(("keys",), self.link.log)
@@ -213,6 +280,138 @@ class Strip(unittest.TestCase):
         self.link.set_time = boom
         self.strip.field.setText("5")
         self.strip.field.returnPressed.emit()        # printed, not raised
+
+
+class Highlight(Strip):
+
+    def test_a_shift_drag_highlights_and_a_click_clears_it(self):
+        S = QT.QtCore.Qt.ShiftModifier
+        self.drag(self.tl, self.x(40), self.x(22), mods=S)
+        self.assertEqual(self.link.s["highlight"], (22, 40))
+        self.assertFalse(self.calls("set_time"))
+        self.drag(self.tl, self.x(50), self.x(50))
+        self.assertIsNone(self.link.s["highlight"])
+
+    def test_a_shift_click_highlights_one_frame(self):
+        S = QT.QtCore.Qt.ShiftModifier
+        self.drag(self.tl, self.x(30), self.x(30), mods=S)
+        self.assertEqual(self.link.s["highlight"], (30, 30))
+
+    def test_dragging_the_highlight_moves_its_keys_once_on_release(self):
+        self.strip.state["highlight"] = (22, 40)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.assertEqual(self.tl.preview, (27, 45))
+        self.assertFalse(self.calls("move_keys"))
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (22, 40), (27, 45))])
+        self.assertEqual(self.link.s["highlight"], (27, 45))
+        self.assertFalse(self.calls("set_time"))
+
+    def test_dragging_an_edge_scales_toward_the_other_edge(self):
+        self.strip.state["highlight"] = (20, 40)
+        self.drag(self.tl, self.x(40), self.x(50))
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (20, 40), (20, 50))])
+
+    def test_a_single_frame_highlight_moves_its_key(self):
+        self.strip.state["highlight"] = (30, 30)
+        self.drag(self.tl, self.x(30), self.x(33))
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (30, 30), (33, 33))])
+
+
+class Range(Strip):
+
+    def range_x(self, frame):
+        s = self.strip.state
+        return (frame - s["a0"]) / (s["a1"] - s["a0"]) * self.strip.range.width()
+
+    def test_dragging_the_block_slides_the_playback_range(self):
+        self.drag(self.strip.range, self.range_x(35), self.range_x(45))
+        self.assertEqual((self.link.s["p0"], self.link.s["p1"]), (20, 70))
+
+    def test_dragging_an_edge_resizes_it(self):
+        self.drag(self.strip.range, self.range_x(60) - 3, self.range_x(80) - 3)
+        self.assertEqual((self.link.s["p0"], self.link.s["p1"]), (10, 80))
+
+    def test_a_typed_range_field(self):
+        self.strip.anim_end.setText("150")
+        self.strip.anim_end.returnPressed.emit()
+        self.assertEqual(self.link.s["a1"], 150)
+
+
+class Zoom(Strip):
+
+    def test_the_wheel_zooms_about_the_mouse_and_framing_goes_back(self):
+        x = self.x(30)
+        local = QT.QtCore.QPointF(x, 10)
+        wheel = QT.QtGui.QWheelEvent(local, QT.QtCore.QPointF(self.tl.mapToGlobal(local.toPoint())),
+                                     QT.QtCore.QPoint(), QT.QtCore.QPoint(0, 120), QT.QtCore.Qt.NoButton,
+                                     QT.QtCore.Qt.NoModifier, QT.QtCore.Qt.NoScrollPhase, False)
+        QT.QtWidgets.QApplication.sendEvent(self.tl, wheel)
+        t = self.tl.track()
+        self.assertLess(t.v1 - t.v0, 50.0)
+        self.assertAlmostEqual(t.frame(x), 30.0, places=3)
+        self.strip.frame_playback()
+        self.assertEqual((self.tl.track().v0, self.tl.track().v1), (10.0, 60.0))
+
+
+class Menus(Strip):
+
+    def labels(self, rows):
+        return [r[0] for r in rows if r is not None]
+
+    def test_the_key_menu(self):
+        rows = self.strip.key_rows(30)
+        self.assertEqual(rows[0], ("Keys at frame 30", None))
+        self.assertIn("Tangents", self.labels(rows))
+        self.strip.state["highlight"] = (20, 40)
+        self.assertEqual(self.strip.key_rows(30)[0][0], "Keys in 20-40")
+        menu, picked = self.strip.menu_rows(self.strip.key_rows(30))
+        self.assertTrue(picked)
+        menu.deleteLater()
+
+    def test_the_chips_menus_are_checked_where_the_scene_is(self):
+        self.assertEqual([r[2] for r in self.strip.fps_rows()], [False, False, True, False, False, False])
+        self.assertTrue(self.strip.speed_rows()[0][2])
+        self.assertEqual(self.labels(self.strip.layer_rows()), ["BaseAnimation", "Layer1"])
+        self.assertEqual(self.labels(self.strip.character_rows()), ["No Character Set", "hero"])
+        self.assertEqual(self.labels(self.strip.sound_rows()), ["No sound", "audio1", "Show on the timeline"])
+
+    def test_the_toggles_go_to_maya(self):
+        self.strip.loop.click()
+        self.assertEqual(self.link.x["loop"], "once")
+        self.assertFalse(self.strip.loop.isChecked())
+        self.strip.cache.click()
+        self.assertFalse(self.link.x["cache"])
+        self.strip.bm_add.click()
+        self.assertEqual(self.calls("add_bookmark"), [("add_bookmark", None)])
+        self.strip.bm_next.click()
+        self.assertEqual(self.calls("step_bookmark"), [("step_bookmark", True)])
+
+
+class Motion(Strip):
+
+    motion = True
+
+    def test_a_key_the_playhead_reaches_lights_up(self):
+        self.strip.state["now"] = 10.0
+        self.link.s["now"] = 13.0
+        self.strip.on_time()
+        self.assertIn(12.0, self.tl.reached)
+        self.assertNotIn(30.0, self.tl.reached)
+
+    def test_the_opening_starts_small(self):
+        self.strip.replay_opening()
+        scale, _opacity = self.strip.opening_of(5)
+        self.assertLess(scale, 1.0)
+
+    def test_without_motion_nothing_lights(self):
+        self.strip.motion = False
+        self.link.s["now"] = 13.0
+        self.strip.on_time()
+        self.assertEqual(self.tl.reached, {})
+        self.assertEqual(self.strip.opening_of(5), (1.0, 1.0))
 
 
 if __name__ == "__main__":
