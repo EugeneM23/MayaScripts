@@ -282,6 +282,27 @@ class Time(Strip):
         self.strip.field.returnPressed.emit()        # printed, not raised
 
 
+class TimeCallback(Strip):
+
+    def test_maya_s_time_callback_moves_the_playhead_every_frame(self):
+        saved = bar._state().get("bar")
+        bar._state()["bar"] = self.strip
+        self.addCleanup(lambda: bar._state().__setitem__("bar", saved))
+        seen = []
+        for frame in (13.0, 14.0, 15.0):
+            self.link.s["now"] = frame
+            bar._time_changed(None, None)
+            seen.append(self.strip.field.text())
+        self.assertEqual(seen, ["13", "14", "15"])
+
+    def test_a_callback_that_raises_stays_inside(self):
+        saved = bar._state().get("bar")
+        bar._state()["bar"] = self.strip
+        self.addCleanup(lambda: bar._state().__setitem__("bar", saved))
+        self.link.now = lambda: 1 / 0
+        bar._time_changed(None, None)
+
+
 class Highlight(Strip):
 
     def test_a_shift_drag_highlights_and_a_click_clears_it(self):

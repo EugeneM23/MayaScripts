@@ -1243,6 +1243,18 @@ def _job(method, *args):
             print(traceback.format_exc())
 
 
+def _time_changed(*_args):
+    """Maya's time changed - every frame of playback too (2026-10-16): the
+    `timeChanged` scriptJob did not run during playback, so the playhead moved
+    only with the 250 ms timer, 7-10 frames at a time."""
+    widget = current()
+    if widget is not None:
+        try:
+            widget.on_time()
+        except Exception:                                    # noqa: BLE001 - every frame: never raise
+            pass
+
+
 def _keys_edited(*_args):
     widget = current()
     if widget is not None:
@@ -1267,8 +1279,7 @@ def _start_jobs():
     import maya.cmds as cmds
     from functools import partial
     jobs = []
-    for event, method, args in (("timeChanged", "on_time", ()),
-                                ("playbackRangeChanged", "refresh", ()),
+    for event, method, args in (("playbackRangeChanged", "refresh", ()),
                                 ("SelectionChanged", "refresh", (True,)),
                                 ("animLayerRefresh", "refresh", (True,)),
                                 ("Undo", "refresh", (True,)),
@@ -1279,11 +1290,22 @@ def _start_jobs():
             pass
     _state()["jobs"] = jobs
     _drop_callbacks()
+    callbacks = []
+    try:
+        import maya.api.OpenMaya as om
+        callbacks.append(om.MDGMessage.addTimeChangeCallback(_time_changed))
+    except Exception:                                        # noqa: BLE001
+        #  no callback: the scriptJob at least moves it when Maya is idle
+        try:
+            jobs.append(cmds.scriptJob(event=["timeChanged", partial(_job, "on_time")], parent=CONTROL))
+        except Exception:                                    # noqa: BLE001
+            pass
     try:
         import maya.api.OpenMayaAnim as oma
-        _state()["callbacks"] = [oma.MAnimMessage.addAnimKeyframeEditedCallback(_keys_edited)]
+        callbacks.append(oma.MAnimMessage.addAnimKeyframeEditedCallback(_keys_edited))
     except Exception:                                        # noqa: BLE001
         pass
+    _state()["callbacks"] = callbacks
 
 
 def build():
