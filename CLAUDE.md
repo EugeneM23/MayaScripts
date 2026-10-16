@@ -10500,6 +10500,15 @@ past the limit was tried and dropped: the target's retarget sank the pelvis back
 crossed 18 deg in a frame (near straight the angle is a square root of the distance). Tests
 `PelvisHeightTests` (rolls without a flip, legs off the limit); `verify_walk.py` 79/79, sprint 12/12, own 22/22.
 
+**…and Foot flat** (the same evening, the same walk under LongSword_Idle_3P: «носки дергаются и немного торчат
+вверх», under Dagger_Idle_01 «вроде как все хорошо»). After the strike a stance leg short of its reach rocked its
+foot back on its heel (the toes-up reach roll, up to `ROLL_HEEL` 15 deg) - the ball 4.4-5.3 cm over the floor
+for five frames, the toes 2-5 deg up and wavering; the dagger pose stands lower and needed none. Knob **Foot
+flat** (`foot_flat`, Legs, sided, 0..1, default 1): it scales that roll's cap by (1 - flat) in `_roll_cost`, so
+at 1 the landed foot lies as the walk's own (ball 3.3 -> 2.4 cm, toes -2..-4 deg - equal to the dagger's) and
+the pelvis's drop reaches instead; the heel-up roll at the push-off is untouched. Test
+`test_foot_flat_keeps_a_landed_foot_flat_on_the_ground`; verify_walk 79/79, sprint 12/12, own 22/22.
+
 266. **Near straight, a knee is a square root of its reach.** A smooth hip-to-ankle distance touching the limit
      (a cover's peak) or clamped at it is a V or a plateau in the knee angle: 1 % of reach is 10 deg there. Keep a
      leg a little short of straight wherever something else has to give, and smooth what moves the ankle (a roll

@@ -27,6 +27,7 @@ KNOBS = (
     ("knee_foot", 0.5, 0.0, 1.0),
     ("foot_lag", 0.0, 0.0, 6.0),
     ("foot_flex", 1.0, 0.0, 3.0),
+    ("foot_flat", 1.0, 0.0, 1.0),
     ("bob", 1.0, 0.0, 3.0),
     ("sway", 1.0, 0.0, 3.0),
     ("surge", 1.0, 0.0, 3.0),
@@ -57,7 +58,7 @@ DEFAULTS = dict((k[0], k[1]) for k in KNOBS)
 RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  The knobs of a body part that has two sides (2026-10-13: «режим в котором левая и правая сторона станут
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
-SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "ground_time",
+SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
@@ -1628,9 +1629,14 @@ class Walk(object):
             return 0.0
         pivot, axis = geometry
         # Ground time past 1 stretches the trailing leg: its foot may stand that much higher on its toes
-        knob = ((ctx.get("ks") or {}).get(side) or ctx.get("k") or DEFAULTS)["ground_time"]
+        ks = (ctx.get("ks") or {}).get(side) or ctx.get("k") or DEFAULTS
+        knob = ks["ground_time"]
         stretch = max(1.0, knob) if sense > 0.0 else 1.0
-        cap = math.radians(ROLL_BALL * stretch if sense > 0.0 else ROLL_HEEL) * ctx["placement"]
+        # Foot flat: a foot on the ground after its strike stays flat on it - rolled back on its heel for a leg
+        # that falls short (a raised pelvis) its toes stood up off the floor and wavered (2026-10-16, a sword
+        # pose); at 1 it does not, the pelvis's drop reaches instead
+        flat = 1.0 - min(max(float(ks.get("foot_flat", 0.0)), 0.0), 1.0) if sense < 0.0 else 1.0
+        cap = math.radians(ROLL_BALL * stretch if sense > 0.0 else ROLL_HEEL) * ctx["placement"] * flat
         most = min(2.0 * cap, self._sole_room(side, rot, axis, sense))     # searched past the cap, eased into it
         if most <= 0.0 or cap <= 0.0:
             return 0.0

@@ -177,7 +177,7 @@ class KnobTests(unittest.TestCase):
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "in_place", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
-                          "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
+                          "foot_flex", "foot_flat", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
                           "arm_drag", "arm_bounce", "head", "head_drag", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
@@ -1555,6 +1555,23 @@ class PelvisHeightTests(unittest.TestCase):
                     length = np.linalg.norm(w.lt[ca], axis=1).mean() + np.linalg.norm(w.lt[fo], axis=1).mean()
                     ext = np.linalg.norm(r.worlds[fo, :, 3, :3] - r.worlds[th, :, 3, :3], axis=1) / length
                     self.assertLess(float(ext.max()), w.reach[side] * (1.0 - wm.LEG_MARGIN) + 1e-4, (kw, knobs, side))
+
+    def test_foot_flat_keeps_a_landed_foot_flat_on_the_ground(self):
+        """Foot flat (2026-10-16, «носки дергаются и немного торчат вверх»): a leg short of its reach after the strike
+        rocked the foot back on its heel, toes up, by as much as ROLL_HEEL - at 1 it never does (the pelvis sinks
+        instead, the leg still reaching), at 0 it does, and each side takes its own."""
+        w = walk()
+        knobs = {"balance": 0.0, "pelvis_height": 8.0}
+        rocked = self.rolls(w, dict(knobs, foot_flat=0.0))
+        flat = self.rolls(w, dict(knobs))
+        for side in "lr":
+            self.assertLess(float(rocked[side].min()), math.radians(-5.0), side)     # toes up without it
+            self.assertGreaterEqual(float(flat[side].min()), 0.0, side)             # never with it
+        r = w.evaluate(dict(knobs))
+        self.assertLess(r.info["short"], 1e-6)
+        one = self.rolls(w, dict(knobs, foot_flat_l=0.0))
+        self.assertLess(float(one["l"].min()), math.radians(-5.0))
+        self.assertGreaterEqual(float(one["r"].min()), 0.0)
 
     def test_a_raised_pelvis_rolls_the_feet_without_a_flip(self):
         """Pelvis height past what the stance legs reach (2026-10-16, «сильно дергаются колени»): the foot rolled

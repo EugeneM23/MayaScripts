@@ -73,7 +73,7 @@ GROUPS = (
     ("clean", "Clean", ("seam", "smooth")),
     ("step", "Step", ("stride", "tempo", "lift")),
     ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
-                      "foot_lag", "foot_flex")),
+                      "foot_lag", "foot_flex", "foot_flat")),
     ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
                           "pelvis_twist", "pelvis_list",
                           "root_sway")),
@@ -122,6 +122,9 @@ LABELS = {
     "foot_lag": ("Foot lag, fr", "Frames the swinging foot trails its shin: it flicks through after it "
                                  "leaves the ground and catches up before it lands (the toes 1.5x)"),
     "foot_flex": ("Foot flex", "x how far the swinging foot turns in its ankle (and the toes in theirs)"),
+    "foot_flat": ("Foot flat", "1: a foot on the ground lies flat on it after its strike - a leg that falls short "
+                               "(a raised pelvis) sinks the pelvis instead of rocking the foot back on its heel, "
+                               "toes up; 0 lets the heel rock (the toes lift off the floor)"),
     "pelvis_height": ("Pelvis height", "cm: raises (+) or lowers (-) the pelvis over the feet, the legs "
                                        "following - a walk or a pose that crouches stands up; the legs never "
                                        "straighten past the walk's straightest, so the feet stay down"),
