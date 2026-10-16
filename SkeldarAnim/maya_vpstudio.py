@@ -730,7 +730,7 @@ def panel_settings(options=None):
 
 #  The two view presets (2026-10-16, «две кнопки которые будут пресетами
 #  отображения в сцене»). Anim shows what an animator grabs and looks through
-#  - controls, cameras, locators, geometry and the selection's highlight - and
+#  - controls, cameras, locators, geometry, the grid, the selection highlight - and
 #  hides the bones; every other flag is left as it is. Default takes every
 #  effect off (shadows, our lights, AO, AA, blur, bloom, haze, depth of field)
 #  and shows every kind of object.
@@ -738,7 +738,7 @@ ANIM_VIEW = collections.OrderedDict((
     ("nurbsCurves", True), ("controllers", True), ("cameras", True),
     ("locators", True), ("polymeshes", True), ("nurbsSurfaces", True),
     ("subdivSurfaces", True), ("selectionHiliteDisplay", True),
-    ("joints", False),
+    ("grid", True), ("joints", False),
 ))
 
 DEFAULT_VIEW = collections.OrderedDict((
@@ -774,7 +774,7 @@ def anim_view():
     hidden; nothing else touched."""
     count = _edit_panels(ANIM_VIEW)
     cmds.refresh()
-    return ("Anim view - controls, cameras, locators, geometry shown, "
+    return ("Anim view - controls, cameras, locators, geometry, grid shown, "
             "joints hidden (%d panels)" % count)
 
 
@@ -1846,7 +1846,7 @@ def build_panel():
     hubstyle.mark(cmds.button(
         VIEW_BUTTONS["anim"], label="Anim",
         height=hubstyle.height("button", 28),
-        annotation="Anim view: controls, cameras, locators, geometry and the "
+        annotation="Anim view: controls, cameras, locators, geometry, the grid and the "
                    "selection shown, joints hidden - nothing else changes",
         command=_press_anim_view), "secondary", "run")
     hubstyle.mark(cmds.button(

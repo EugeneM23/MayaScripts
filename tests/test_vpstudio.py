@@ -1230,14 +1230,13 @@ class TestViewPresets(FakeSceneTest):
             flags = self.fake.panels[panel]
             self.assertIs(flags["joints"], False)
             for flag in ("nurbsCurves", "controllers", "cameras", "locators",
-                         "polymeshes", "selectionHiliteDisplay"):
+                         "polymeshes", "selectionHiliteDisplay", "grid"):
                 self.assertIs(flags[flag], True, flag)
         self.assertIn("2 panels", line)
 
     def test_anim_touches_nothing_else(self):
         vp.anim_view()
         flags = self.fake.panels["modelPanel1"]
-        self.assertIs(flags["grid"], False)
         self.assertEqual(flags["displayAppearance"], "wireframe")
         self.assertNotIn("shadows", flags)
         self.assertNotIn("allObjects", flags)
