@@ -97,6 +97,17 @@ class Membership(unittest.TestCase):
         self.assertEqual(scope.active_only(["|tab_b:root", "|root"], FakeCmds()), ["|tab_b:root", "|root"])
 
 
+class Shown(unittest.TestCase):
+
+    def test_the_hidden_tabs_nodes_go_the_rest_stay(self):
+        cmds = FakeCmds(_state("tab_a", "tab_b", "tab_c", active="tab_b"))
+        names = ["persp", "top", "tab_a:cam", "tab_b:cam", "|tab_c:rig|tab_c:Rig:shot", "tab_b:Rig:cam", "tab_ab:cam"]
+        self.assertEqual(scope.shown(names, cmds), ["persp", "top", "tab_b:cam", "tab_b:Rig:cam", "tab_ab:cam"])
+
+    def test_tabs_off_keeps_everything(self):
+        self.assertEqual(scope.shown(["tab_a:cam", "persp"], FakeCmds()), ["tab_a:cam", "persp"])
+
+
 class Names(unittest.TestCase):
 
     def setUp(self):

@@ -285,6 +285,11 @@ def install(force=False):
             _install_quit_filter()
         except Exception:                                       # noqa: BLE001
             print(traceback.format_exc())
+        try:
+            from . import cameramenus
+            cameramenus.install()           # the panels' camera menus: the active tab's only
+        except Exception:                                       # noqa: BLE001
+            print(traceback.format_exc())
     return True
 
 

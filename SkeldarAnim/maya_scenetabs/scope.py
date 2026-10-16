@@ -73,6 +73,29 @@ def active_only(paths, cmds_=None):
     return [p for p in paths or [] if within(own_namespace(p), active)]
 
 
+def _tab_names(cmds_=None):
+    try:
+        cmds = _cmds(cmds_)
+        if not cmds.objExists(records.SESSION_NODE):
+            return []
+        state = records.loads(cmds.getAttr(records.SESSION_NODE + "." + records.SESSION_ATTR) or "")
+    except Exception:                                            # noqa: BLE001
+        return []
+    return [t["ns"] for t in state["tabs"]] if len(state["tabs"]) >= 2 else []
+
+
+def shown(paths, cmds_=None):
+    """`paths` without the hidden tabs' nodes: the active tab's and everything outside
+    every tab (the root's persp / top / front / side) stay. As it is with tabs off.
+    For Maya's own lists that know nothing of tabs (the cameras of a panel's menus)."""
+    active = active_namespace(cmds_)
+    if not active:
+        return list(paths or [])
+    hidden = [ns for ns in _tab_names(cmds_) if ns != active]
+    return [p for p in paths or []
+            if not any(within(own_namespace(p), ns) for ns in hidden)]
+
+
 def qualified(name, cmds_=None):
     """`name` placed in the active tab (`tab_x:name`), or `name` with tabs off."""
     if not name:
