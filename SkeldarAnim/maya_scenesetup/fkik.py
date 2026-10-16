@@ -58,13 +58,14 @@ joints' places, the hand's turn, the arm's roll - and said.
 ## Keys where the arm has keys (2026-10-08)
 
 «если на ФК руке 3 ключа то и на ИК тоже должно быть 3 ключа и наоборот».
-The switch keys only the frames that something moving the SHOWN arm is
-keyed on: every time curve upstream of the source chain's world matrices
-(`driving_curves`: the arm's own controls, and what it hangs on - clavicle,
-spine, pelvis, Main, an animation layer, a constraint's weights), over a
-range its keys inside plus the range's two ends (`key_frames`); the new
-keys take the source keys' tangent types (`tangents_at`). Nothing keyed
-over the whole take: the arm stands still, one plain value. Between keys
+The switch keys only the frames the SHOWN arm's own controls are keyed on
+(`own_keys` / `own_curves`: their curves, straight or through animation
+layers and a knot's pairBlend; a mixed take's blend too) - since
+2026-10-16 not the keys of what it hangs on («нужно переносить ключи а не
+запекать весь таймлайн»: a body baked on every frame keyed every frame).
+Over a range its keys inside plus the range's two ends (`key_frames`); the
+new keys take the source keys' tangent types (`tangents_at`). The arm
+unkeyed: one plain value at the current frame. Between keys
 each chain interpolates its own way; the measure is at the keys. Hand ->
 Weapon still switches on every frame (`every_frame`): a proxy baked on
 every frame follows it anyway.
@@ -532,7 +533,7 @@ def switched_message(side, mode, span, m, notes, keys=None, kind=ARM):
         where = ("over the range %d..%d" if ranged else "over %d..%d") % (start, end)
         text = "%s to %s %s" % (label, mode, where)
     elif not keys:
-        text = "%s to %s, no keys - nothing keyed moves the arm" % (label, mode)
+        text = "%s to %s, no keys of its own - set at the current frame" % (label, mode)
     else:
         count = "%d key%s" % (len(keys), "" if len(keys) == 1 else "s")
         if ranged:
@@ -918,28 +919,38 @@ def driving_curves(nodes, plugs=()):
     return curves
 
 
-def _fed(curve):
-    """The long names of the nodes a time curve feeds, through animation layers' blend
-    nodes (a layer's curve feeds its control through them)."""
-    out, todo, seen = set(), [curve], set()
+# what lies between a control's channel and its keys: animation layers' blends, a Tools
+# knot's (or any constraint's) pairBlend - whose curve input is the control's own keys
+_PASS = (BLEND_NODE, "pairBlend", "unitConversion")
+
+
+def own_curves(nodes, plugs=()):
+    """The time curves keyed on the controls `nodes` themselves (every channel and
+    attribute of theirs) and on `plugs` - straight, or through animation layers'
+    blend nodes and a pairBlend. Nothing they hang on. A set of curve names."""
+    curves, seen = set(), set()
+    todo = []
+    for node in nodes:
+        pairs = cmds.listConnections(node, source=True, destination=False, connections=True,
+                                     plugs=True) or []
+        todo.extend(pairs[1::2])
+    for plug in plugs:
+        todo.extend(cmds.listConnections(plug, source=True, destination=False, plugs=True) or [])
     while todo:
-        node = todo.pop()
+        source = todo.pop()
+        if attr_root(source) in ("message", "msg"):
+            continue
+        node = source.split(".", 1)[0]
         if node in seen:
             continue
         seen.add(node)
-        for dest in cmds.listConnections(node + ".output" if node == curve else node,
-                                         source=False, destination=True) or []:
-            if cmds.objectType(dest).startswith(BLEND_NODE):
-                todo.append(dest)
-            else:
-                out.add(_long(dest))
-    return out
-
-
-def _moves(curve):
-    """Whether a time curve's keys hold more than one value."""
-    values = cmds.keyframe(curve, query=True, valueChange=True) or []
-    return bool(values) and max(values) - min(values) > CONSTANT
+        kind = cmds.nodeType(node)
+        if kind in TIME_CURVES:
+            curves.add(node)
+        elif kind.startswith(_PASS):
+            todo.extend(cmds.listConnections(node, source=True, destination=False,
+                                             plugs=True) or [])
+    return curves
 
 
 def _keys_of(curve):
@@ -952,20 +963,21 @@ def _keys_of(curve):
 
 def key_plan(arm, span):
     """(frames to sample, frames keyed, {frame: (in, out) tangent types}) of
-    a keys-only switch: the keys of what moves the arm it shows."""
-    nodes, plugs, own = sources(arm, mode_of(blend_values(arm)))
-    own_set = set(_long(node) for node in own)
-    curves = driving_curves(nodes, plugs)
-    mine_set = set(c for c in curves if own_set & _fed(c))
-    # a still curve upstream moves nothing - its keys are no frame of the arm's (a knot's
-    # static keys at the frame it was made on); one on the arm's own control is a key the
-    # animator set, and moves over to the other chain
-    curves = [c for c in curves if c in mine_set or _moves(c)]
-    table = dict((curve, _keys_of(curve)) for curve in curves)
-    mine = [table[c] for c in curves if c in mine_set]
-    every = list(table.values())
-    keys = key_frames([t for curve in every for t, _i, _o in curve], span)
-    tangents = dict((frame, tangents_at(mine, every, frame)) for frame in keys)
+    a keys-only switch: the keys of the arm it shows (`own_keys`)."""
+    _nodes, plugs, own = sources(arm, mode_of(blend_values(arm)))
+    return own_keys(own, plugs, span)
+
+
+def own_keys(own, plugs, span):
+    """(frames to sample, frames keyed, tangents): the keys on the controls `own`
+    (and `plugs` - a mixed take's blend) move over, nothing else - not the keys of
+    what the limb hangs on (a body baked on every frame would key every frame,
+    2026-10-16: «нужно переносить ключи а не запекать весь таймлайн»). No key
+    of theirs: one plain value at the current frame."""
+    curves = own_curves(own, plugs)
+    mine = [_keys_of(c) for c in curves]
+    keys = key_frames([t for curve in mine for t, _i, _o in curve], span)
+    tangents = dict((frame, tangents_at(mine, mine, frame)) for frame in keys)
     frames = keys or [cmds.currentTime(query=True)]
     return frames, keys, tangents
 

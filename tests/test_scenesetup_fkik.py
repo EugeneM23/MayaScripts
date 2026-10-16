@@ -344,7 +344,7 @@ class Messages(unittest.TestCase):
     def test_nothing_keyed_is_said(self):
         text = fkik.switched_message("R", fkik.IK, (0, 120, False),
                                      fkik.Measure(0.0, None, 0.0, 0.0, None), [], keys=[])
-        self.assertIn("Arm_R to IK, no keys - nothing keyed moves the arm", text)
+        self.assertIn("Arm_R to IK, no keys of its own - set at the current frame", text)
 
     def test_a_fraction_of_a_frame_is_shown_as_it_is(self):
         text = fkik.switched_message("R", fkik.IK, (0, 10, False),

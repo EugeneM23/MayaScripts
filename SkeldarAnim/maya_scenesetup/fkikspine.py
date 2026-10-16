@@ -478,7 +478,7 @@ def _to_fk(sp, frames, samples, span):
 
 def key_plan(sp, span):
     """(frames to sample, frames keyed, {frame: (in, out) tangents}) of a keys-only
-    switch: the keys of what moves the spine it shows (`fkik.driving_curves`)."""
+    switch: the keys of the spine's own controls (`fkik.own_keys`)."""
     mode = fkik.mode_of(fkik.blend_values(sp))
     ik = _ik_controls(sp)
     if mode == FK:
@@ -487,17 +487,7 @@ def key_plan(sp, span):
         nodes, plugs, own = list(sp.fkx) + list(sp.ikx) + ik, [], ik
     else:
         nodes, plugs, own = list(sp.fkx) + list(sp.ikx) + ik, [sp.blend], list(sp.fk) + ik
-    curves = fkik.driving_curves(nodes, plugs)
-    table = dict((curve, fkik._keys_of(curve)) for curve in curves)
-    own_set = set(fkik._long(node) for node in own)
-    mine = [table[c] for c in curves
-            if own_set & set(fkik._long(node) for node in cmds.listConnections(
-                c + ".output", source=False, destination=True) or [])]
-    every = list(table.values())
-    keys = fkik.key_frames([t for curve in every for t, _i, _o in curve], span)
-    tangents = dict((frame, fkik.tangents_at(mine, every, frame)) for frame in keys)
-    frames = keys or [cmds.currentTime(query=True)]
-    return frames, keys, tangents
+    return fkik.own_keys(own, plugs, span)
 
 
 def refusal(sp, mode, span):

@@ -5,17 +5,18 @@
 mayapy STANDALONE, an empty scene per case (spec
 docs/superpowers/specs/2026-10-08-fkik-keys-only-design.md). Hand keys, as an animator sets them:
 
+Since 2026-10-16 only the switched limb's OWN keys move over («нужно переносить ключи а не
+запекать весь таймлайн»), not the keys of what it hangs on.
 A  Manny_Rig, BLOCKING (stepped): the right FK arm keyed on 0, 12, 24, the clavicle on 0 and 6, Main
-   on 0 and 18; the left arm on 3 and 9, the right leg on 15, a right finger on 21 - none of them
-   upstream of the right arm. FK -> IK keys the IK control on exactly 0, 6, 12, 18, 24, stepped,
-   and the arm stands where it stood on EVERY frame (stepped holds); the FK keys untouched. IK -> FK
-   keys the FK controls on the same five, stepped, every frame kept.
+   on 0 and 18; the left arm on 3 and 9, the right leg on 15, a right finger on 21. FK -> IK keys
+   the IK control on exactly 0, 12, 24, stepped, the arm where it stood on them; the FK keys
+   untouched. IK -> FK keys the FK controls on the same three, stepped, kept on them.
 B  Creep_Rig, AUTO tangents: the FK arm on 0, 10, 20, 30, 40, the clavicle (linear) on 0 and 25. A
-   range 8..32 to IK keys 8, 10, 20, 25, 30, 32 (the keys inside and the range's ends), the arm
-   kept on those, auto where the arm had auto, linear on the clavicle's own frame, the blend stepped
-   7/8/32/33. From that mixed take the whole take to IK keys the union of both chains, the
-   clavicle and the blend, kept on every one. Back to FK on the same frames. An additive layer's
-   key on the wrist (36) is counted.
+   range 8..32 to IK keys 8, 10, 20, 30, 32 (the arm's keys inside and the range's ends), the arm
+   kept on those, auto where the arm had auto, the blend stepped 7/8/32/33. From that mixed take the
+   whole take to IK keys the union of both chains and the blend, kept on every one. Back to FK on
+   the same frames. An additive layer's key on the wrist (36) is counted.
+D  Manny_Rig, the arm, Main and a dense leg on an additive layer: the arm's keys only.
 C  Manny_Rig, NOTHING keyed (a pose set by hand): FK -> IK writes plain values, no key, the arm
    kept; the line says so.
 """
@@ -175,23 +176,25 @@ key(L.fk[0], "rotateY", 3, 15.0)                         # not upstream of the r
 key(L.fk[0], "rotateY", 9, -15.0)
 key(node(rig, "IKLeg_R"), "translateY", 15, 4.0)
 key(node(rig, "FKMiddleFinger1_R"), "rotateZ", 21, 30.0)
-expected = [0.0, 6.0, 12.0, 18.0, 24.0]
+expected = [0.0, 12.0, 24.0]
 shown = track(ub, frames)
-curves = fkik.driving_curves(*fkik.sources(R, fkik.FK)[:2])
+curves = fkik.own_curves(fkik.sources(R, fkik.FK)[2])
 gate(fkik.key_frames([t for c in curves for t in cmds.keyframe(c, query=True, timeChange=True)],
-                     (0, 48, False)) == expected,
-     "the walk from the FK arm finds the arm's, the clavicle's and Main's curves only: %s"
+                     (0, 48, False)) == expected
+     and all(c.split("|")[-1].split(":")[-1].startswith(("FKShoulder_R", "FKElbow_R", "FKWrist_R"))
+             for c in curves),
+     "the arm's own curves only, not the clavicle's or Main's: %s"
      % sorted(c.split("|")[-1] for c in curves))
 fk_keys = curves_of(R.fk)
 t0 = time.time()
 text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
 took = time.time() - t0
 got = times([R.ik, R.pole])
-d = diff(shown, track(ub, frames))
-gate(got == expected and "on 5 keys (0..24)" in text,
+d = diff(shown, track(ub, frames), [int(f) for f in expected])
+gate(got == expected and "on 3 keys (0..24)" in text,
      "FK -> IK keys the IK control and the pole on exactly %s: %s | %s (%.2f s)" % (expected, got, text, took))
 gate(d[0] < KEPT_CM and d[1] < KEPT_DEG,
-     "stepped: the arm where it stood on EVERY frame 0..30: %s" % fmt(d))
+     "stepped: the arm where it stood on its keys: %s" % fmt(d))
 gate(set(out_types(R.ik + ".rotateX")) == {"step"} and set(out_types(R.pole + ".translateX")) == {"step"},
      "the new keys stepped as the arm's: %s" % out_types(R.ik + ".rotateX"))
 same = all(fk_keys[p] == v for p, v in curves_of(R.fk).items())
@@ -199,9 +202,9 @@ gate(same and not cmds.keyframe(R.blend, query=True, keyframeCount=True) and cmd
      "the FK keys untouched, the blend unkeyed at 10")
 text = cx.switch_arm("R", fkik.FK, rig=rig, highlight=False)
 got = times(R.fk)
-d = diff(shown, track(ub, frames))
+d = diff(shown, track(ub, frames), [int(f) for f in expected])
 gate(got == expected and d[0] < KEPT_CM and d[1] < KEPT_DEG and set(out_types(R.fk[1] + ".rotateX")) == {"step"},
-     "IK -> FK keys the FK controls on the same five, stepped, every frame kept: %s, %s | %s"
+     "IK -> FK keys the FK controls on the same three, stepped, kept on them: %s, %s | %s"
      % (got, fmt(d), text))
 
 # ------------------------------------------------------------------ B: auto tangents, a range, mixed, a layer
@@ -221,12 +224,12 @@ shown = track(ub, frames)
 a, b = 8, 32
 text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=(float(a), float(b + 1)))
 got = times([R.ik, R.pole])
-inside = [8.0, 10.0, 20.0, 25.0, 30.0, 32.0]
+inside = [8.0, 10.0, 20.0, 30.0, 32.0]
 after = track(ub, frames)
 d_keys = diff(shown, after, [int(f) for f in inside])
 d_between = diff(shown, after, [f for f in range(a, b + 1) if f not in inside])
 d_out = diff(shown, after, [f for f in frames if f < a or f > b])
-gate(got == inside and "over the range 8..32 on 6 keys" in text,
+gate(got == inside and "over the range 8..32 on 5 keys" in text,
      "a range 8..32 to IK keys the keys inside and its ends: %s | %s" % (got, text))
 gate(d_keys[0] < KEPT_CM and d_keys[1] < KEPT_DEG and d_out[0] < KEPT_CM,
      "kept on those keys %s, outside %s; between keys each chain its own way: %s"
@@ -234,20 +237,20 @@ gate(d_keys[0] < KEPT_CM and d_keys[1] < KEPT_DEG and d_out[0] < KEPT_CM,
 tangent = dict(zip(cmds.keyframe(R.ik + ".rotateX", query=True, timeChange=True),
                    zip(cmds.keyTangent(R.ik + ".rotateX", query=True, inTangentType=True),
                        out_types(R.ik + ".rotateX"))))
-gate(all(tangent[f] == ("auto", "auto") for f in (10.0, 20.0, 30.0)) and tangent[25.0] == ("linear", "linear"),
-     "auto where the arm had auto, linear on the clavicle's own frame: %s" % tangent)
+gate(all(tangent[f] == ("auto", "auto") for f in (10.0, 20.0, 30.0)),
+     "auto where the arm had auto: %s" % tangent)
 blend = list(zip(cmds.keyframe(R.blend, query=True, timeChange=True),
                  cmds.keyframe(R.blend, query=True, valueChange=True)))
 gate(blend == [(7.0, 0.0), (8.0, 10.0), (32.0, 10.0), (33.0, 0.0)], "the blend stepped around it: %s" % blend)
 
-mixed_frames = [0.0, 7.0, 8.0, 10.0, 20.0, 25.0, 30.0, 32.0, 33.0, 40.0]
+mixed_frames = [0.0, 7.0, 8.0, 10.0, 20.0, 30.0, 32.0, 33.0, 40.0]
 shown_mixed = after
 text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
 got = times([R.ik, R.pole])
 d = diff(shown_mixed, track(ub, frames), [int(f) for f in mixed_frames])
 gate(got == mixed_frames and d[0] < KEPT_CM and d[1] < KEPT_DEG
      and not cmds.keyframe(R.blend, query=True, keyframeCount=True),
-     "from the mixed take the whole take to IK keys both chains', the clavicle's and the blend's "
+     "from the mixed take the whole take to IK keys both chains' and the blend's "
      "frames %s, kept on them: %s | %s" % (got, fmt(d), text))
 shown_ik = track(ub, frames)
 text = cx.switch_arm("R", fkik.FK, rig=rig, highlight=False)
@@ -276,13 +279,12 @@ shown = track(ub, [5, 30])
 text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
 d = diff(shown, track(ub, [5, 30]))
 gate(not times([R.ik, R.pole]) and d[0] < KEPT_CM and d[1] < KEPT_DEG
-     and "no keys - nothing keyed moves the arm" in text,
+     and "no keys of its own - set at the current frame" in text,
      "nothing keyed: plain values, no key, the arm kept: %s | %s" % (fmt(d), text))
 
 # ------------------------------------------------------------------ D: the controls on a layer
-# 2026-10-16, reported: «FK IK перепекают весь таймлайн». An animLayer lists its member
-# channels as inputs, and the walk reached the layer through a blend's weight - every curve on
-# the layer (the other limbs') came into the arm's plan. A still curve counts no key either.
+# 2026-10-16, reported: «FK IK перепекают весь таймлайн». Through a layer the walk once took
+# every curve on it (the other limbs'); now only the arm's own keys count, Main's not either.
 CASE[0] = "D"
 print("=" * 30, "D  Manny_Rig, the controls on an additive layer")
 rig, text = add("Manny_Rig")
@@ -300,9 +302,9 @@ cmds.select([R.fk[0], R.fk[1], R.fk[2], main, leg])
 layer = cmds.animLayer("verifyLayer", addSelectedObjects=True)
 cmds.setKeyframe(leg, attribute="translateX", time=5, value=3.0, animLayer=layer)
 cmds.select(clear=True)
-expected = [0.0, 12.0, 18.0, 24.0]
+expected = [0.0, 12.0, 24.0]
 plan = fkik.key_plan(R, (0, 48, False))[1]
-gate(plan == expected, "the plan under a layer: the arm's and Main's keys only, %s: %s" % (expected, plan))
+gate(plan == expected, "the plan under a layer: the arm's keys only, %s: %s" % (expected, plan))
 shown = track(ub, list(range(0, 31)))
 text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
 got = times([R.ik, R.pole])

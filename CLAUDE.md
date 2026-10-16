@@ -6435,13 +6435,20 @@ values); `verify_fkik_switch.py` **63/63** again (a retargeted take is keyed on 
 - **…and under animation layers** (2026-10-16, the animator: «потеряли умный перенос анимации по ключам ...
   перепекают весь таймлайн»). The walk reached an `animLayer` through a blend node's weight and took the
   layer's every input - and a layer's inputs are its MEMBER channels (`dagSetMembers`), so every curve on the
-  layer (the other limbs', dense ones too) came into the arm's plan. A layer is now followed only into its
-  weight / mute curves and its parent layer; a `message` source is never followed; a STILL curve upstream
-  counts no key (the 1P knot's static keys at the frame it was made on) - one on the arm's own control does
-  (`_fed` follows a layer's blend nodes to the control). `verify_fkik_keys.py` **16/16** (case D: the arm,
-  Main and a dense leg on a layer - IK on 0, 12, 18, 24 only); layers 37/37, switch 63/63, legs 12/12, spine
-  14/14; 6759 unit tests. **After 1P Setup every frame is still keyed, by the rule**: the arm hangs under
-  `FKSpine3_M`, which follows the 1P knot, and a Tools knot is baked on every frame.
+  layer (the other limbs', dense ones too) came into the arm's plan (`driving_curves` now follows a layer
+  only into its weight / mute and its parent layer, never a `message`).
+- **…the limb's OWN keys only, not what it hangs on** (the same day, after that fix, on a take whose arm was
+  keyed on 5 frames under a body - Main, RootX_M, the spine - baked on all 71: every frame again, by the
+  2026-10-08 rule; the animator: «при любом переносе фк ик ик фк нужно переносить ключи а не запекать весь
+  таймлайн целиком»). `key_plan` (arms, legs) and `fkikspine.key_plan` are `own_keys(own, plugs, span)`: the
+  curves on the shown chain's own controls (`own_curves`: straight, or through animation layers' blends, a
+  knot's pairBlend, a unitConversion) and a mixed take's blend; tangents from them. **The cost**: between
+  keys, a body move the arm has no key for is not followed the same way by both chains (the IK hand stands
+  in Main's space): measured on Creep, the clavicle keyed at 25 alone, the IK arm 12.3 cm / 17° off the FK
+  there; on the keys exact. No key of the limb's own: one plain value at the current frame («no keys of its
+  own - set at the current frame»). `verify_fkik_keys.py` **16/16** (A: 0/12/24 with the clavicle on 6 and
+  Main on 18; D: under a layer); layers 37/37, switch 63/63, legs 12/12, spine 14/14, spine take 36/36;
+  6759 unit tests. `driving_curves` is no longer used by the switch.
 
 126. **AdvancedSkeleton's deformation arm joints are NOT the FK/IK blend.** Their orient constraint's
      `offsetX` is driven by the twist network (`twistAdditionElbow_R_output1DUC1.o ->
