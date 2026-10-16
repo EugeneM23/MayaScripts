@@ -1209,6 +1209,85 @@ class TestRestoreWrites(FakeSceneTest):
         self.assertEqual(vp.apply_backdrop({}), 0)
 
 
+class TestViewPresets(FakeSceneTest):
+    """Anim and Default (2026-10-16): two presets of what the viewport
+    shows, every model panel at once."""
+
+    def setUp(self):
+        FakeSceneTest.setUp(self)
+        self.fake.chunks = []
+        self.fake.undoInfo = lambda **kw: self.fake.chunks.append(kw)
+        self.fake.panels = {
+            "modelPanel1": {"grid": False, "displayAppearance": "wireframe",
+                            "joints": True, "nurbsCurves": False},
+            "modelPanel4": {"grid": False, "joints": True}}
+        for attr in vp.EFFECTS_OFF:
+            self.fake.attrs["hardwareRenderingGlobals." + attr] = True
+
+    def test_anim_shows_what_an_animator_grabs_and_hides_the_bones(self):
+        line = vp.anim_view()
+        for panel in ("modelPanel1", "modelPanel4"):
+            flags = self.fake.panels[panel]
+            self.assertIs(flags["joints"], False)
+            for flag in ("nurbsCurves", "controllers", "cameras", "locators",
+                         "polymeshes", "selectionHiliteDisplay"):
+                self.assertIs(flags[flag], True, flag)
+        self.assertIn("2 panels", line)
+
+    def test_anim_touches_nothing_else(self):
+        vp.anim_view()
+        flags = self.fake.panels["modelPanel1"]
+        self.assertIs(flags["grid"], False)
+        self.assertEqual(flags["displayAppearance"], "wireframe")
+        self.assertNotIn("shadows", flags)
+        self.assertNotIn("allObjects", flags)
+        self.assertTrue(all(self.fake.attrs["hardwareRenderingGlobals." + a]
+                            for a in vp.EFFECTS_OFF))
+
+    def test_default_takes_every_effect_off_and_shows_everything(self):
+        line = vp.default_view()
+        for attr in vp.EFFECTS_OFF:
+            self.assertEqual(
+                self.fake.attrs["hardwareRenderingGlobals." + attr], 0, attr)
+        for panel in ("modelPanel1", "modelPanel4"):
+            flags = self.fake.panels[panel]
+            self.assertIs(flags["allObjects"], True)
+            self.assertIs(flags["shadows"], False)
+            self.assertEqual(flags["displayLights"], "default")
+        self.assertIn("effects off", line)
+        self.assertNotIn("studio removed", line)
+
+    def test_default_is_one_undo_step(self):
+        vp.default_view()
+        self.assertEqual(self.fake.chunks[0].get("openChunk"), True)
+        self.assertEqual(self.fake.chunks[-1].get("closeChunk"), True)
+
+    def test_default_takes_a_standing_studio_down_first(self):
+        taken = []
+        saved_find, saved_restore = vp.find_rig, vp.restore
+        vp.find_rig = lambda: "|VPStudio"
+        vp.restore = lambda undoable=True: taken.append(undoable) or "off"
+        try:
+            line = vp.default_view()
+        finally:
+            vp.find_rig, vp.restore = saved_find, saved_restore
+        self.assertEqual(taken, [False])
+        self.assertIn("studio removed", line)
+
+    def test_a_flag_this_maya_lacks_does_not_stop_the_others(self):
+        real = self.fake.modelEditor
+
+        def picky(name, **kwargs):
+            if "controllers" in kwargs:
+                raise RuntimeError("Invalid flag")
+            return real(name, **kwargs)
+
+        self.fake.modelEditor = picky
+        vp.anim_view()
+        self.assertIs(self.fake.panels["modelPanel4"]["joints"], False)
+        self.assertNotIn("controllers", self.fake.panels["modelPanel4"])
+
+
 class TestAutoKeyIsPutBack(FakeSceneTest):
 
     def test_the_block_leaves_autokey_as_it_found_it(self):
@@ -1363,10 +1442,12 @@ class TestPanelBuildsIntoTheHub(unittest.TestCase):
         marks = maya_hubstyle.take_marks()
         chips = [m.name for m in marks if m.role == "chip"]
         self.assertEqual(chips, [vp._control(k) for k, _l, _n in vp.CHECKS])
-        roles = dict((m.role, m.icon) for m in marks
-                     if m.role in ("primary", "secondary"))
-        self.assertEqual(roles, {"primary": "bulb",
-                                 "secondary": "arrow-back-up"})
+        roles = [(m.role, m.icon) for m in marks
+                 if m.role in ("primary", "secondary")]
+        self.assertEqual(roles, [("primary", "bulb"),
+                                 ("secondary", "arrow-back-up"),
+                                 ("secondary", "run"),
+                                 ("secondary", "refresh")])
 
     def test_the_dropdowns_go_live_only_after_the_build(self):
         """Setting an optionMenu's value fires its changeCommand, so the

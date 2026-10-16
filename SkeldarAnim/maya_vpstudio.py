@@ -728,6 +728,82 @@ def panel_settings(options=None):
     return plan
 
 
+#  The two view presets (2026-10-16, «две кнопки которые будут пресетами
+#  отображения в сцене»). Anim shows what an animator grabs and looks through
+#  - controls, cameras, locators, geometry and the selection's highlight - and
+#  hides the bones; every other flag is left as it is. Default takes every
+#  effect off (shadows, our lights, AO, AA, blur, bloom, haze, depth of field)
+#  and shows every kind of object.
+ANIM_VIEW = collections.OrderedDict((
+    ("nurbsCurves", True), ("controllers", True), ("cameras", True),
+    ("locators", True), ("polymeshes", True), ("nurbsSurfaces", True),
+    ("subdivSurfaces", True), ("selectionHiliteDisplay", True),
+    ("joints", False),
+))
+
+DEFAULT_VIEW = collections.OrderedDict((
+    ("allObjects", True), ("shadows", False), ("displayLights", "default"),
+    ("selectionHiliteDisplay", True),
+))
+
+#  The Viewport 2.0 effects Default switches off (hardwareRenderingGlobals).
+EFFECTS_OFF = collections.OrderedDict(
+    (attr, False) for attr in ("ssaoEnable", "motionBlurEnable",
+                               "multiSampleEnable", "lineAAEnable",
+                               "bloomEnable", "hwFogEnable"))
+
+
+def _edit_panels(plan, panels=None):
+    """Every model panel takes the plan's flags, each on its own (a flag this
+    Maya lacks is skipped). Answers how many panels took at least one."""
+    touched = 0
+    for panel in (model_panels() if panels is None else panels):
+        took = False
+        for flag, value in plan.items():
+            try:
+                cmds.modelEditor(panel, edit=True, **{flag: value})
+                took = True
+            except Exception:                                 # noqa: BLE001
+                continue
+        touched += int(took)
+    return touched
+
+
+def anim_view():
+    """Controls, cameras, locators, geometry and the selection drawn; bones
+    hidden; nothing else touched."""
+    count = _edit_panels(ANIM_VIEW)
+    cmds.refresh()
+    return ("Anim view - controls, cameras, locators, geometry shown, "
+            "joints hidden (%d panels)" % count)
+
+
+def default_view():
+    """Every effect off and every object shown. A Viewport Studio standing in
+    the scene is taken down first (its lights, floor and settings go, the
+    animator's own viewport comes back), so no light of ours is left."""
+    cmds.undoInfo(openChunk=True, chunkName="Default view")
+    try:
+        studio = ""
+        if find_rig():
+            restore(undoable=False)
+            studio = ", studio removed"
+        apply_plugs(collections.OrderedDict(
+            ("hardwareRenderingGlobals." + attr, value)
+            for attr, value in EFFECTS_OFF.items()))
+        panels = model_panels()
+        count = _edit_panels(DEFAULT_VIEW, panels)
+        for panel in panels:
+            camera = panel_camera(panel)
+            if camera and cmds.objExists(camera + ".depthOfField"):
+                apply_plugs({camera + ".depthOfField": False})
+        cmds.refresh()
+        return ("Default view - effects off, every object shown "
+                "(%d panels%s)" % (count, studio))
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
 def backdrop_settings(options=None):
     """What is behind the subject: a dark wall, or a sky.
 
@@ -1500,6 +1576,8 @@ CONTROL = {"look": "vpStudioLook",
 
 MENUS = ("look", "quality")
 
+VIEW_BUTTONS = {"anim": "vpStudioAnimView", "default": "vpStudioDefaultView"}
+
 MENU_ITEMS = {"look": LOOK_ORDER, "quality": QUALITY_ORDER}
 
 
@@ -1591,6 +1669,14 @@ def _press_setup(*_args):
 
 def _press_restore(*_args):
     return _run(lambda: _status(restore()))
+
+
+def _press_anim_view(*_args):
+    return _run(lambda: _status(anim_view()))
+
+
+def _press_default_view(*_args):
+    return _run(lambda: _status(default_view()))
 
 
 def _live_change(*_args):
@@ -1751,6 +1837,24 @@ def build_panel():
         annotation="put the animator's own viewport back and delete our "
                    "nodes",
         command=_press_restore), "secondary", "arrow-back-up")
+    cmds.setParent("..")
+
+    #  The two view presets, side by side, sharing the row (2026-10-16)
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                                 columnAttach=[(1, "both", 0), (2, "both", 4)]),
+                  "fill", layout=True)
+    hubstyle.mark(cmds.button(
+        VIEW_BUTTONS["anim"], label="Anim",
+        height=hubstyle.height("button", 28),
+        annotation="Anim view: controls, cameras, locators, geometry and the "
+                   "selection shown, joints hidden - nothing else changes",
+        command=_press_anim_view), "secondary", "run")
+    hubstyle.mark(cmds.button(
+        VIEW_BUTTONS["default"], label="Default",
+        height=hubstyle.height("button", 28),
+        annotation="Default view: shadows, lights and every effect off "
+                   "(the studio taken down), every object shown",
+        command=_press_default_view), "secondary", "refresh")
     cmds.setParent("..")
 
     hubstyle.mark(cmds.text(STATUS, label="pick a look and press Apply",
