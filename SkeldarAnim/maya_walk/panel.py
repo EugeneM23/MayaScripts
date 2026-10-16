@@ -430,10 +430,11 @@ def _active_frames():
         return None
 
 
-def _walk_taken(name, say=True):
-    """The walk `name` made the one Pick puts on - nobody re-keyed (2026-10-16: Pick assigns a cycle). The
-    card's tempo keeps its ratio to the cycle: counted in the new cycle's frames. The line."""
-    old = _active_frames()
+def _walk_taken(name, say=True, keep_ratio=False):
+    """The walk `name` made the active one (what Pick puts on a skeleton walking a card, what the tempo counts).
+    The tempo: the cycle's own frames, as it always was when a cycle is chosen - or, `keep_ratio` (a walker
+    selected), the same ratio counted in the new cycle's frames. The line."""
+    old = _active_frames() if keep_ratio else None
     tempo = float(values().get("tempo") or 0.0)
     walk, _, _, report = scene.load_walk(name, values())      # refused here: nothing remembered
     _set_walk(name)
@@ -450,15 +451,34 @@ def _walk_taken(name, say=True):
     return line + (" - Pick puts it on the selected skeletons" if say else "")
 
 
+def card_walkers():
+    """The walkers a chosen walk card re-keys: the selected walkers that walk a card (not their own cycle) - none
+    selected, every such walker in the list."""
+    cmds = _cmds()
+    walking = [r for r in scene.walkers() if not scene.is_own(scene.memo_of(r).get("walk"))]
+    picked = set(cmds.ls(selection=True, long=True) or [])
+    chosen = [r for r in walking if r in picked or any(p.startswith(r + "|") for p in picked)]
+    return chosen or ([] if picked & set(scene.walkers()) else walking)
+
+
 def take_walk_card(path):
-    """An animation card dropped into the walk well (or clicked there, or Use in Walk Builder): the walk Pick puts
-    on a skeleton (nobody re-keyed). Refused: a pose card, a card of objects, one that is no cycle."""
+    """An animation card dropped into the walk well (or clicked there, or Use in Walk Builder): the active cycle,
+    at its own tempo, and - as always - put on at once: the walkers that walk a card (card_walkers) take it. A
+    walker on its own cycle keeps it. Refused: a pose card, a card of objects, one that is no cycle."""
     def run():
         from maya_poselib import store
         if not store.is_anim(path):
             raise scene.wcards.Refusal("%s is a pose card - drop it into the pose well; the walk takes an "
                                        "animation card" % scene.wcards.card_name(path))
-        return _walk_taken(scene.card_walk(scene.wcards.relative(path, _library())))
+        name = scene.card_walk(scene.wcards.relative(path, _library()))
+        roots = card_walkers()
+        line = _walk_taken(name, say=not roots)
+        if not roots:
+            return line
+        lines = [_apply_to(root, name) for root in roots]
+        _SELECTED[0] = None
+        return lines[0] if len(lines) == 1 else "%s | %d walkers take it: %s" % (
+            line, len(roots), ", ".join(scene.walker_label(r) for r in roots))
     return _press(run)
 
 
@@ -835,12 +855,13 @@ _SELECTED = [None]       # the walker the selection named last: only a NEW one a
 
 
 def _activate(root):
-    """A listed walker newly selected: its cycle the walk well's active card (nobody re-keyed)."""
+    """A listed walker that walks a card newly selected: that card the walk well's active one, the tempo's ratio
+    kept (nobody re-keyed). A walker on its own cycle leaves the well alone."""
     if root == _SELECTED[0]:
         return
     _SELECTED[0] = root
     name = scene.memo_of(root).get("walk")
-    if not name or not scene.walk_exists(name):
+    if not name or scene.is_own(name) or not scene.walk_exists(name):
         return
     try:
         if chosen_walk() == name:
@@ -849,7 +870,7 @@ def _activate(root):
         pass
     quiet, _QUIET[0] = _QUIET[0], True
     try:
-        _walk_taken(name, say=False)
+        _walk_taken(name, say=False, keep_ratio=True)
     finally:
         _QUIET[0] = quiet
 
@@ -987,11 +1008,15 @@ def rekey_all(walk=None):
 
 def walk_for(root):
     """The cycle Pick processes on `root` (2026-10-16: «pick должен брать цикл у каждого скелета и обрабатывать
-    его отдельно»): the one it walks already (its own, or a card put on it), else its own keys read as its cycle
-    and kept on it, else - no keys - the walk well's active card."""
+    его отдельно»): a skeleton on its own cycle keeps it; one that walks a card takes the active card (as Pick
+    always did - choosing a cycle and pressing Pick puts it on); one not walked yet has its own keys read as its
+    cycle and kept on it, else - no keys - takes the active card."""
     memo = scene.memo_of(root)
-    if memo.get("walk") and scene.walk_exists(memo["walk"]):
-        return memo["walk"]
+    walk = memo.get("walk")
+    if scene.is_own(walk) and scene.walk_exists(walk):
+        return walk
+    if walk:
+        return chosen_walk()
     if scene.has_source(root):
         return scene.own_name(root)
     if scene.has_keys(root):

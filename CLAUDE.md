@@ -10247,6 +10247,12 @@ live.**
   stripped: each processed on its own cycle (32 / 91 frames, travel x1.000 each), stride 1.2 → x1.200 on all three,
   a second Pick on the kept cycle, the scene saved and reopened with the cache deleted re-keying from the scene,
   Restore 0.000000 cm). Limit: the mean pose correction of an own cycle lives in the walks folder, not the scene.
+- **…and choosing a cycle puts it on at once again** (after that push: «Мы сломали старый функционал теперь при
+  выборе цикла цикл сильно ускоряется» - reproduced: dw (90 fr) chosen, Pick, the skeleton kept asd (31 fr), three
+  times as fast). A walk card chosen in the well keys the selected card walkers (none selected: every card walker;
+  `card_walkers`) at the card's own tempo; Pick (`walk_for`): own cycle → kept, walks a card → the active card, not
+  walked → its own keys captured, else the card. A walker on its own cycle is never changed by a card, and selecting
+  one leaves the well alone; selecting a card walker activates its card with the tempo ratio kept.
 
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the

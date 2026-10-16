@@ -80,3 +80,18 @@ the skeleton**.
 - **The list's right button** adds Use the active walk card, Use its own cycle, and **Restore the original keys**
   (`scene.restore_source`: every joint keyed back from the kept cycle on every frame, the marker and the source
   removed, one undo step).
+
+## Addendum 2: choosing a cycle puts it on at once again (the same day)
+
+The animator, after the second push: «Мы сломали старый функционал теперь при выборе цикла цикл сильно
+ускоряется». Reproduced headless: a skeleton walked with asd (31 frames), dw (90 frames) chosen in the walk well,
+Pick - the skeleton kept asd, a cycle three times as fast as the one chosen. Choosing a cycle no longer put it on,
+and Pick kept whatever card a skeleton walked.
+
+- **Choosing a walk card** (drop, click, Use in Walk Builder) puts it on at once, as before: the selected walkers
+  that walk a card - none selected, every walker on a card - are keyed with it, at the card's own tempo
+  (`panel.card_walkers`). A walker on its own cycle is never changed by a card.
+- **Pick** (`walk_for`): a skeleton on its own cycle keeps it; one that walks a card takes the active card; one not
+  walked yet has its own keys read as its cycle, else (no keys) takes the active card.
+- The tempo is the chosen cycle's own frames again; only selecting a walker on a card (which makes that card the
+  active one) keeps the tempo's ratio. Selecting a walker on its own cycle leaves the walk well alone.

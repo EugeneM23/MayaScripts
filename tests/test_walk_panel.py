@@ -520,6 +520,35 @@ class CardTests(unittest.TestCase):
         panel.restore_picked()
         self.assertEqual(self.restored, ["|a"])
 
+    def test_choosing_a_card_puts_it_on_card_walkers_and_leaves_own_cycles(self):
+        panel.build_panel()
+        self.keyed = {"|own"}
+        self.frames.update({scene.OWN + "own": 40, "asd": 32})
+        self.fake.selection = ["|own", "|card"]
+        panel.press_apply()
+        self.assertEqual(self.memos["|card"]["walk"], "asd")
+        self.fake.selection = []
+        panel._walk_taken("asd")                                 # the tempo counts asd's frames
+        panel._set_knobs({"tempo": 16}, 32)                      # twice as fast
+        count = len(self.applied)
+        rel = "Walk cycles/dw.anim"
+        os.makedirs(os.path.join(self.library, rel))
+        from maya_poselib import store as st
+        real = st.is_anim
+        st.is_anim = lambda path: True
+        try:
+            panel.take_walk_card(os.path.join(self.library, rel))
+        finally:
+            st.is_anim = real
+        keyed = self.applied[count:]
+        self.assertEqual([a[0] for a in keyed], ["|card"])      # nothing selected: every card walker, no own one
+        self.assertEqual(keyed[0][1], scene.card_walk(rel))
+        self.assertEqual(keyed[0][2]["tempo"], 90.0)             # a chosen cycle starts at its own tempo
+        self.assertEqual(self.memos["|own"]["walk"], scene.OWN + "own")
+        self.fake.selection = ["|own", "|card"]                  # Pick: own keeps its own, card takes the card
+        panel.press_apply()
+        self.assertEqual([a[1] for a in self.applied[-2:]], [scene.OWN + "own", scene.card_walk(rel)])
+
     def test_with_no_walk_card_the_first_own_cycle_is_the_active_one(self):
         scene.walk_names = lambda: []
         panel.build_panel()
