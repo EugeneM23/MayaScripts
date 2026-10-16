@@ -11056,10 +11056,35 @@ untitled scene kept counts), and unmodified or holding no node and no reference 
 (`session.own_nodes("")`, `top_references("")`; unreadable = holds something). Only then does
 `scope.open_scene` / `new_scene` open in place; else `opening.open_tab` / `new_tab` (the open scene
 becomes tab 1, its unsaved changes kept and flagged, nothing asked). `opener.open_path` (Stash, Open
-scene) and `maya_share.open_entry` go by it; Stash's line says «in a tab». Maya's own File > Open with tabs
-off is still Maya's. Proof: `verify_scene_tabs.py stash_open` 12/12 (mayapy), all **0 of 255**,
-`verify_tabs_scope.py` 0 of 46; `test_scenetabs_scope.SceneEmpty` / `OpenNew`, Stash and Shared's tab
-tests; 6840 unit tests. Not seen in a GUI Maya.
+scene) and `maya_share.open_entry` go by it; Stash's line says «in a tab». Proof: `verify_scene_tabs.py
+stash_open` 12/12 (mayapy), all **0 of 255**, `verify_tabs_scope.py` 0 of 46; `test_scenetabs_scope.SceneEmpty`
+/ `OpenNew`, Stash and Shared's tab tests; 6840 unit tests. Not seen in a GUI Maya.
+
+**…and Maya's own File > Open too** (the same day, asked: «Сделай так, чтобы и Maya File > Open открывал
+новую вкладку, если сцена уже открыта и не пустая»). One rule for every road, `scope.opens_in_tab(path)`:
+tabs on - a tab; tabs off - a tab unless the scene is empty or `path` IS the scene (opening it again reverts it,
+as Maya does: a second tab of one file would save over the first). `hooks.on_open` with tabs off redirects
+when `hooks.redirects(path)`: a .ma / .mb, `opens_in_tab`, and no saved session (that brings its tabs back as
+before); an FBX, New, an empty scene stay Maya's. The plugin's own plain opens run inside `scope.decided()` (the
+check's bypass): a Save As between its decision and its open must not turn it into a tab. Maya's File > Open
+and Open Recent ask «save changes?» BEFORE `file -o` (trap 264), so `maya_scenetabs/savechanges.py` sources a
+copy of Maya's `saveChanges.mel` with its proc renamed `skeldarMayaSaveChanges` and defines `saveChanges`
+over it: an action that opens a scene the check takes into a tab (`savechanges.opened_path`,
+`hooks.goes_to_tab`) runs at once; anything else, an error, or the checks off is Maya's copy word for word
+(`hooks.install`, GUI only; a Maya whose file it does not know keeps its own). Tabs on gained the same: no
+question before a tab opens. **A script's `cmds.file(path, open=True)` beside a non-empty scene now opens a
+tab too** (it raises «File operation cancelled by user supplied callback» and the tab opens one idle later) -
+as it already did with tabs on. Proof: `verify_scene_tabs.py maya_open` 14/14 (Maya's saveChanges + file -o
+through the real checks in mayapy: into an empty scene in place, B beside a modified A in a tab with A's
+change kept, the same file reopened, a session, an FBX, New, the checks off), all **0 of 269**,
+`verify_tabs_scope.py` 0 of 46; `tests/test_scenetabs_savechanges.py`; 6857 unit tests. Not seen in a GUI
+Maya (the dialog itself never shows in mayapy).
+
+264. **Maya asks «save changes?» before `file -open` runs, not inside it.** File > Open and Open Recent go
+     through `pv_performAction` / `performFileAction`, which build `file -f ... -o "<path>"` and hand it to
+     `saveChanges(action)`: the dialog, then `evalEcho(action)`. A `kBeforeOpenCheck` that redirects the open
+     fires only after the animator has answered a question about a scene that is not going anywhere. Steer
+     the question in `saveChanges` itself.
 
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 

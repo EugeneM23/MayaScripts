@@ -135,10 +135,11 @@ def open_path(path):
     comes in as an import into a new scene, which Maya reads as a change
     (measured 2026-09-30 on every catalog weapon) - the next Open scene would
     ask to save an untouched file."""
-    if not scope.scene_empty(cmds):
+    if scope.opens_in_tab(path, cmds):
         #  a scene open (2026-10-16; with tabs on since 2026-10-15): the file opens in a tab of
         #  its own, the open scene tab 1 - nothing is replaced, so nothing asks to be saved; the
-        #  shipped images still go on the plugin's copy. Only an empty scene takes it in place.
+        #  shipped images still go on the plugin's copy. Only an empty scene, or the same file
+        #  opened again, takes it in place.
         scope.open_scene(path, cmds)
         return True, _clean()
     if not save_changes():
@@ -147,8 +148,9 @@ def open_path(path):
     if character.is_fbx(path):
         fbximport.open_file(path)
     else:
-        cmds.file(path, open=True, force=True, executeScriptNodes=False,
-                  ignoreVersion=True, prompt=False)
+        with scope.decided():
+            cmds.file(path, open=True, force=True, executeScriptNodes=False,
+                      ignoreVersion=True, prompt=False)
         restore_playback()
         note = _clean()
     cmds.file(modified=False)

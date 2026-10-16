@@ -1597,6 +1597,127 @@ def phase_stash_open():
     gate("stash: a new scene beside one is an empty tab", len(tabs()) == 3, (tabs(), message))
 
 
+def phase_maya_open():
+    """2026-10-16: Maya's own File > Open (and Open Recent) of a .ma / .mb goes into a tab while
+    the open scene is not empty - with tabs off too - and its «save changes?» is not asked then:
+    nothing is replaced. An empty scene, the same file again, a saved session, an FBX and New
+    stay Maya's."""
+    import maya.mel as mel
+    from maya_scenetabs import opening, savechanges, scope
+    os.makedirs(RUN, exist_ok=True)
+    files = {}
+    for tag in ("A", "B"):
+        fresh()
+        cmds.polyCube(name="open" + tag)
+        files[tag] = RUN + "/mopen%s.ma" % tag
+        _save(files[tag])
+    cmds.loadPlugin("fbxmaya", quiet=True)
+    fresh()
+    cmds.polyCube(name="openFbx")
+    fbx = RUN + "/mopenFbx.fbx"
+    cmds.select("openFbx")
+    cmds.file(fbx, force=True, exportSelected=True, type="FBX export")
+
+    def tabs():
+        return [t["ns"] for t in session.state()["tabs"]]
+
+    def maya_open(path):
+        """Maya's open as pv_performAction runs it: saveChanges, then the action."""
+        action = 'file -f -typ "mayaAscii" -o "%s";addRecentFile("%s", "mayaAscii")' % (path, path)
+        try:
+            mel.eval("saveChanges(\"%s\")" % action.replace("\\", "\\\\").replace('"', '\\"'))
+            return ""
+        except RuntimeError as exc:
+            return str(exc)
+
+    fresh()
+    hooks = hooks_on()
+    gate("open: our saveChanges sourced over Maya's", savechanges.install(force=True)
+         and "skeldarSaveChanges.mel" in (mel.eval('whatIs "%s"' % savechanges.MAYA) or ""))
+    error = maya_open(files["A"])
+    flush()
+    gate("open: into an empty scene Maya's own open", not error and not session.exists()
+         and scope.same_file(cmds.file(q=True, sceneName=True), files["A"]), error)
+    cmds.setAttr("openA.tx", 4)
+    gate("open: the scene modified, an open of another file skips the question",
+         cmds.file(q=True, modified=True) and savechanges.skip_question(
+             'file -f -o "%s"' % files["B"]))
+    maya_open(files["B"])
+    flush()
+    gate("open: tabs off, Maya's open of B goes into a tab beside A",
+         tabs() == ["tab_mopenA", "tab_mopenB"] and session.state()["active"] == "tab_mopenB"
+         and cmds.objExists("tab_mopenB:openB"), tabs())
+    gate("open: A kept its unsaved change, flagged", cmds.getAttr("tab_mopenA:openA.tx") == 4
+         and records.tab(session.state(), "tab_mopenA")["modified"])
+    # a saved session opened with tabs off brings its tabs back as before
+    sess = RUN + "/mopenSession.ma"
+    with hooks.bypass():
+        keep = cmds.file(q=True, sceneName=True)
+        cmds.file(rename=sess)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(rename=keep)
+    # the same file again, tabs off: Maya reopens it
+    fresh()
+    hooks = hooks_on()
+    savechanges.install(force=True)
+    cmds.file(files["A"], open=True, force=True)
+    cmds.setAttr("openA.tx", 6)
+    gate("open: the same file again asks as Maya does", not savechanges.skip_question(
+        'file -f -o "%s"' % files["A"]))
+    try:
+        cmds.file(files["A"], open=True, force=True)
+        error = ""
+    except RuntimeError as exc:
+        error = str(exc)
+    flush()
+    gate("open: ... and reopens it in place", not error and not session.exists()
+         and cmds.getAttr("openA.tx") == 0, error)
+    gate("open: a saved session asks as Maya does", not savechanges.skip_question(
+        'file -f -o "%s"' % sess))
+    try:
+        cmds.file(sess, open=True, force=True)
+        error = ""
+    except RuntimeError as exc:
+        error = str(exc)
+    flush()
+    gate("open: ... and opens as Maya does", not error and scope.same_file(
+        cmds.file(q=True, sceneName=True), sess), error)
+    # an FBX and New beside a scene: Maya's own
+    fresh()
+    hooks = hooks_on()
+    savechanges.install(force=True)
+    cmds.file(files["A"], open=True, force=True)
+    try:
+        cmds.file(fbx, open=True, force=True, type="FBX")
+        error = ""
+    except RuntimeError as exc:
+        error = str(exc)
+    flush()
+    gate("open: an FBX through Maya's Open replaces the scene as before",
+         not error and not session.exists() and cmds.objExists("openFbx"), error)
+    cmds.file(files["A"], open=True, force=True)
+    gate("open: New asks as Maya does", not savechanges.skip_question("file -f -new"))
+    try:
+        cmds.file(new=True, force=True)
+        error = ""
+    except RuntimeError as exc:
+        error = str(exc)
+    gate("open: New with tabs off is Maya's", not error and not session.exists()
+         and not cmds.objExists("openA"), error)
+    # the checks off: our saveChanges is Maya's again
+    cmds.file(files["A"], open=True, force=True)
+    hooks.remove()
+    gate("open: with the checks off nothing skips the question",
+         not savechanges.skip_question('file -f -o "%s"' % files["B"]))
+    try:
+        cmds.file(files["B"], open=True, force=True)
+        error = ""
+    except RuntimeError as exc:
+        error = str(exc)
+    gate("open: ... and Maya's open replaces the scene", not error and not session.exists()
+         and cmds.objExists("openB"), error)
+
+
 def _cam(name="persp", attr="translate"):
     node = name if attr in ("translate", "rotate") else cmds.listRelatives(name, shapes=True)[0]
     value = cmds.getAttr(node + "." + attr)
@@ -1735,7 +1856,7 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
           "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras,
-          "leak": phase_leak, "stash_open": phase_stash_open}
+          "leak": phase_leak, "stash_open": phase_stash_open, "maya_open": guarded(phase_maya_open)}
 
 
 def main(names):

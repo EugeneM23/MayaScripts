@@ -294,6 +294,27 @@ class OpenNew(unittest.TestCase):
         self.assertEqual(cmds.calls, [])
         self.assertEqual(self.opening.calls, [("open_tab", "C:/w/b.ma"), ("new_tab",)])
 
+    def test_the_same_file_opened_again_reverts_it_as_maya_does(self):
+        cmds = FakeCmds(scene="C:/w/shot.ma")
+        self.assertEqual(scope.open_scene("C:/W/shot.ma", cmds, force=True), "")
+        self.assertEqual(cmds.calls, [("file", ("C:/W/shot.ma",), {"open": True, "force": True})])
+        self.assertEqual(self.opening.calls, [])
+        self.assertFalse(scope.opens_in_tab("C:/w/./shot.ma", cmds))
+        self.assertTrue(scope.opens_in_tab("C:/w/other.ma", cmds))
+
+    def test_the_plugin_s_own_plain_open_passes_the_open_check(self):
+        from maya_scenetabs import hooks
+        seen = []
+
+        class Watch(FakeCmds):
+            def file(self, *args, **kwargs):
+                if kwargs.get("open"):
+                    seen.append(hooks._bypassed())
+                return FakeCmds.file(self, *args, **kwargs)
+        scope.open_scene("C:/w/a.ma", Watch())
+        self.assertEqual(seen, [True])
+        self.assertFalse(hooks._bypassed())
+
     def test_untitled_work_goes_into_tab_one(self):
         cmds = FakeCmds(modified=True)
         scope.open_scene("C:/w/b.ma", cmds)

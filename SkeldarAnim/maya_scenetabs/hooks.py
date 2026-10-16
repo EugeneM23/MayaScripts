@@ -1,7 +1,9 @@
 """Scene tabs: Maya's own Save, Open and New redirected while two or more tabs
 are open; a new animation layer put under the active tab's root; the bar kept
 in step with Undo, Redo and a scene opened; a quit that asks about unsaved
-tabs.
+tabs. With tabs off, Maya's Open of a .ma / .mb goes into a tab too while the
+open scene is not empty (`redirects`, 2026-10-16) - and Maya's «save changes?»
+before it is not asked (`savechanges`): nothing is replaced.
 
 The checks return False (Maya then prints «File operation cancelled by user
 supplied callback») and do the tab's work one idle later. The Save check has
@@ -12,6 +14,7 @@ scene name, which Save As has already set; the Open check gets the file
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 """
 
+import os
 import sys
 import tempfile
 import traceback
@@ -139,11 +142,35 @@ def on_save(client_data=None):
     return False
 
 
+def redirects(path):
+    """Tabs off: Maya's open of `path` goes into a tab instead (2026-10-16, the animator:
+    «и Maya File > Open открывал новую вкладку, если сцена уже открыта и не пустая») -
+    a Maya scene, the open scene not empty and not that very file (`scope.opens_in_tab`),
+    and no saved session (opening one brings its tabs back, as before). Tabs on: a Maya
+    scene that is no saved session."""
+    if os.path.splitext(path or "")[1].lower() not in records.FILE_TYPES:
+        return False
+    if not session.is_on():
+        from . import scope
+        if not scope.opens_in_tab(path):
+            return False
+    return not records.holds_session(path)
+
+
+def goes_to_tab(path):
+    """The Open check will take `path` into a tab: the checks installed, not our own open."""
+    if not _st()["callbacks"] or _bypassed():
+        return False
+    return redirects(path)
+
+
 @_checked("Open")
 def on_open(file_obj, client_data=None):
-    if _bypassed() or not session.is_on():
+    if _bypassed():
         return True
     path = (file_obj.resolvedFullName() or file_obj.rawFullName() or "").replace("\\", "/")
+    if not session.is_on() and not redirects(path):
+        return True
     from . import opening
     defer(_reported(lambda: opening.open_any(path)))
     return False
@@ -295,6 +322,11 @@ def install(force=False):
         try:
             from . import layereditor
             layereditor.install()           # the Anim Layer Editor: the active tab as a scene
+        except Exception:                                       # noqa: BLE001
+            print(traceback.format_exc())
+        try:
+            from . import savechanges
+            savechanges.install()           # no «save changes?» before an open that goes into a tab
         except Exception:                                       # noqa: BLE001
             print(traceback.format_exc())
     return True

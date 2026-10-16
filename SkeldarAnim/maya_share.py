@@ -803,18 +803,19 @@ def open_entry(rid):
     if not path:
         return _status(why)
     record = state()["entries"][rid]["record"]
-    empty = tabscope.scene_empty(cmds)
-    if empty and not _save_changes():
+    in_tab = tabscope.opens_in_tab(path, cmds)
+    if not in_tab and not _save_changes():
         return _status("Open cancelled - nothing changed.")
-    if record["kind"] == "scene" and not empty:
+    if record["kind"] == "scene" and in_tab:
         #  a scene open (2026-10-16; tabs on, 2026-10-15): a tab of its own beside it, with its
         #  ranges, its vaccine swept - only an empty scene is replaced
         tabscope.open_scene(path, cmds)
         return _status("Opened {0} from {1} in a tab".format(
             record["name"], record.get("from") or "someone"))
     if record["kind"] == "scene":
-        cmds.file(path, open=True, force=True, executeScriptNodes=False,
-                  ignoreVersion=True, prompt=False)
+        with tabscope.decided():
+            cmds.file(path, open=True, force=True, executeScriptNodes=False,
+                      ignoreVersion=True, prompt=False)
         _restore_playback()
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
         return _status("Opened {0} from {1}{2}".format(

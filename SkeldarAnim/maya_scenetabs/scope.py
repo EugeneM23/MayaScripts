@@ -24,6 +24,7 @@ Three rules, each with its helpers:
 """
 
 import contextlib
+import os
 
 from . import records
 
@@ -256,6 +257,43 @@ def scene_empty(cmds_=None):
     return not _holds_own(cmds)
 
 
+def same_file(a, b):
+    """Two paths naming one file (case and separators aside). Pure."""
+    if not a or not b:
+        return False
+    norm = lambda p: os.path.normcase(os.path.normpath(os.path.abspath(p)))   # noqa: E731
+    return norm(a) == norm(b)
+
+
+def opens_in_tab(path, cmds_=None):
+    """Whether an open of `path` goes into a tab: always while tabs are on; with
+    tabs off unless the scene is empty (`scene_empty`) or `path` IS the scene -
+    opening it again reverts it, as Maya does (a second tab of one file would
+    save over the first). Maya's File > Open asks the same (hooks.on_open)."""
+    cmds = _cmds(cmds_)
+    if active_namespace(cmds):
+        return True
+    if scene_empty(cmds):
+        return False
+    return not same_file(path, cmds.file(query=True, sceneName=True) or "")
+
+
+@contextlib.contextmanager
+def decided():
+    """An open the plugin has decided itself: the Open check lets it through
+    (between the decision and the open a Save As may have named the scene)."""
+    try:
+        from . import hooks
+        guard = hooks.bypass()
+    except Exception:                                            # noqa: BLE001
+        guard = None
+    if guard is None:
+        yield
+        return
+    with guard:
+        yield
+
+
 def _opening():
     from . import opening
     return opening
@@ -263,12 +301,13 @@ def _opening():
 
 def open_scene(path, cmds_=None, **flags):
     """The plugin's own open of a scene: Maya's open with `flags` into an empty
-    scene (`scene_empty`), else a new tab (a .ma / .mb opened, an FBX imported
-    into an empty tab; with tabs off the open scene becomes tab 1 first).
-    Returns the tab's message, or "" for Maya's own open."""
+    scene or over the same file (`opens_in_tab`), else a new tab (a .ma / .mb
+    opened, an FBX imported into an empty tab; with tabs off the open scene
+    becomes tab 1 first). Returns the tab's message, or "" for Maya's own open."""
     cmds = _cmds(cmds_)
-    if scene_empty(cmds):
-        cmds.file(path, open=True, **flags)
+    if not opens_in_tab(path, cmds):
+        with decided():
+            cmds.file(path, open=True, **flags)
         return ""
     opening = _opening()
     if path.lower().endswith(".fbx"):
