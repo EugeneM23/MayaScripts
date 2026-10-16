@@ -10235,6 +10235,18 @@ two on asd and one on dw: Pick on two at once, a knob re-keying all three each o
 dw's 90 → 16 of asd's 31), out of the list and back, two rig poses, asd's +20° reaching A and B 20.02° and C
 0.0000); `verify_walk_meanpose.py` again; unit tests in `test_walk_panel` / `test_walk_cycle_cards`. **Not seen
 live.**
+- **…and Pick processes each skeleton's OWN cycle** (the same day, after the push: «pick ко всем скелетам ...
+  применяет один и тот же цикл а он должен брать цикл у каждого скелета и обрабатывать его отдельно ... для
+  обработки массивов анимаций»; asked: onto the same skeleton, the source kept on it). `panel.walk_for`: the cycle a
+  walked skeleton walks, else its kept source, else its own keys read as its cycle (`scene.capture_source`, kept as
+  `skeldarWalkSource` on the top joint, base64 of the walk file - it travels with the scene), else (no keys) the
+  walk well's card. An own cycle is named `own:<digest>` and read into `<walks>/own/<digest>.walk.gz`, rewritten
+  from the scene when missing. Right button on the list: Use the active walk card, Use its own cycle, Restore the
+  original keys (`scene.restore_source`). With no card active the first own cycle is the active one (each keeps its
+  tempo). Proof: `verify_walk_own.py` **12/12 mayapy standalone** (three skeletons keyed asd / dw / asd x1.3 and
+  stripped: each processed on its own cycle (32 / 91 frames, travel x1.000 each), stride 1.2 → x1.200 on all three,
+  a second Pick on the kept cycle, the scene saved and reopened with the cache deleted re-keying from the scene,
+  Restore 0.000000 cm). Limit: the mean pose correction of an own cycle lives in the walks folder, not the scene.
 
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the

@@ -59,3 +59,24 @@ Unit tests on the card's fake cmds: Pick lists, several selected, a knob re-keys
 cycle and its tempo ratio, Remove from list, Take its settings, selecting a walker activates its cycle, the walk
 well activation keeps the ratio; meanrig per cycle. Headless verify in mayapy: two Manny skeletons and a Creep
 skeleton on two cycles, a knob re-keying all three, the mean pose of one cycle reaching only its walkers.
+
+## Addendum: each skeleton's OWN cycle (the same day)
+
+The first push read the request wrong: Pick put the walk well's one card on every selected skeleton. The animator:
+«pick ко всем скелетам в сцене применяет один и тот же цикл а он должен брать цикл у каждого скелета и обрабатывать
+его отдельно применяя одни и те же настройки. Это нужно для обработки массивов анимаций». Asked, both the
+recommendation: the result goes **onto the same skeleton**, and each skeleton's source is kept **in the scene, on
+the skeleton**.
+
+- **Pick** (`panel.walk_for`): a skeleton already walked keeps the cycle it walks; else one that keeps a source uses
+  it; else one with keys has them read as its cycle (`scene.capture_source`: `read_clip`, Save's rule) and kept on
+  its top joint (`skeldarWalkSource`, the walk file's gzip bytes in base64 - it travels with the scene); a skeleton
+  with no keys takes the walk well's card. Every source is read before anything is keyed.
+- **The own cycle's name** is `own:` + a digest of those bytes (`scene.own_name`); it is read into a walk file under
+  `<walks>/own/` (written again from the scene whenever it is missing - `_sync_own`), so load_walk, Fix posture and
+  the mean pose correction work on it as on any walk. The correction lives beside that file, not in the scene.
+- **Tempo**: with no card active the first own cycle becomes the active one, so each cycle keeps its own tempo
+  until the knob moves.
+- **The list's right button** adds Use the active walk card, Use its own cycle, and **Restore the original keys**
+  (`scene.restore_source`: every joint keyed back from the kept cycle on every frame, the marker and the source
+  removed, one undo step).

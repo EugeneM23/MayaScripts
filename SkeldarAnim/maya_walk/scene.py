@@ -375,9 +375,123 @@ def is_card(name):
     return bool(name) and name.startswith(CARD)
 
 
+#  ...and a third way (2026-10-16, «pick должен брать цикл у каждого скелета и обрабатывать его отдельно»): a
+#  skeleton's OWN cycle, read off its keys on its first Pick and kept on its top joint (SOURCE_ATTR: the walk file's
+#  gzip bytes, base64) - so it travels with the scene - named OWN + the bytes' digest and read into a walk file of
+#  its own under OWN_CACHE (the mean pose's correction and Fix posture live beside that file).
+OWN = "own:"
+OWN_CACHE = "own"
+SOURCE_ATTR = "skeldarWalkSource"
+
+
+def is_own(name):
+    return bool(name) and name.startswith(OWN)
+
+
 def walk_label(name):
-    """A walk's name as the animator reads it: a card's name, a file's name."""
+    """A walk's name as the animator reads it: a card's name, a file's name, «<character>'s cycle»."""
+    if is_own(name):
+        owner = _state().setdefault("own_labels", {}).get(name[len(OWN):])
+        return "%s's cycle" % owner if owner else "own cycle"
     return wcards.card_name(name[len(CARD):]) if is_card(name) else (name or "")
+
+
+def has_source(root):
+    """Whether `root` keeps its own cycle (its first Pick read it)."""
+    return bool(_cmds().attributeQuery(SOURCE_ATTR, node=root, exists=True))
+
+
+def _own_cache(digest):
+    return os.path.join(folder(), OWN_CACHE, digest + wf.SUFFIX)
+
+
+def own_name(root):
+    """The walk name of the cycle `root` keeps, its walk file written when missing."""
+    import base64
+    import hashlib
+    raw = _cmds().getAttr(root + "." + SOURCE_ATTR) or ""
+    if not raw:
+        raise Refusal("%s keeps no cycle of its own" % _short(root))
+    digest = hashlib.sha1(raw.encode("ascii")).hexdigest()[:16]
+    _state().setdefault("own_labels", {})[digest] = walker_label(root)
+    cache = _own_cache(digest)
+    if not os.path.exists(cache):
+        if not os.path.isdir(os.path.dirname(cache)):
+            os.makedirs(os.path.dirname(cache))
+        with open(cache + ".part", "wb") as handle:
+            handle.write(base64.b64decode(raw))
+        os.replace(cache + ".part", cache)
+        _forget(cache)
+    return OWN + digest
+
+
+def has_keys(root):
+    """Whether any joint under `root` carries translate / rotate keys."""
+    cmds = _cmds()
+    joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])
+    return any(cmds.keyframe(j, attribute=CHANNELS, query=True, keyframeCount=True) for j in joints)
+
+
+def capture_source(root):
+    """`root`'s own keys read as its cycle (read_clip, the Save rule) and kept on it - once: a second call answers
+    the cycle already kept. Returns the walk name."""
+    import base64
+    if has_source(root):
+        return own_name(root)
+    clip, start = read_clip(root)
+    bones, _note = read_bones(root)
+    statics = dict((leaf, {"parent": b["parent"], "canonical": b["canonical"], "rest": b["rest"]})
+                   for leaf, b in bones.items() if leaf in clip.names)
+    missing = [n for n in clip.names if n not in statics]
+    if missing:
+        raise Refusal("%d bones of %s read twice or unnamed: %s"
+                      % (len(missing), _short(root), ", ".join(missing[:4])))
+    clip.name = wf.safe_name(walker_label(root))
+    temporary = os.path.join(folder(), OWN_CACHE, "capture.part" + wf.SUFFIX)
+    wf.save(temporary, clip, statics, start)
+    with open(temporary, "rb") as handle:
+        raw = base64.b64encode(handle.read()).decode("ascii")
+    os.remove(temporary)
+    cmds = _cmds()
+    cmds.addAttr(root, longName=SOURCE_ATTR, dataType="string")
+    cmds.setAttr(root + "." + SOURCE_ATTR, raw, type="string")
+    return own_name(root)
+
+
+def _sync_own(digest):
+    """The walk file of an own cycle written from whichever skeleton in the scene keeps it."""
+    cmds = _cmds()
+    for path in cmds.ls(type="joint", long=True) or []:
+        if cmds.attributeQuery(SOURCE_ATTR, node=path, exists=True):
+            try:
+                if own_name(path) == OWN + digest:
+                    return True
+            except Refusal:
+                pass
+    return False
+
+
+def restore_source(root):
+    """`root`'s own cycle keyed back as it was read (every joint, every frame) and the walk taken off: the marker
+    and the kept cycle go. One undo step. Returns the line."""
+    if not has_source(root):
+        raise Refusal("%s keeps no original cycle (it took a walk card on no keys of its own)" % walker_label(root))
+    data = wf.load(walk_path(own_name(root)))
+    bones, _note = read_bones(root)
+    om = _om()
+    names = [n for n in data["names"] if n in bones]
+    index = dict((n, i) for i, n in enumerate(data["names"]))
+    worlds = data["worlds"]
+    frames = [dict((n, om.MMatrix([float(v) for v in worlds[index[n], f].reshape(16)])) for n in names)
+              for f in range(worlds.shape[1])]
+    values, static = channel_values(bones, frames, names, set(names))
+    cmds = _cmds()
+    with _Chunk("skeldarWalkRestore"):
+        write_curves(values, static, int(data.get("start", 0)))
+        for attr in (MARKER, SOURCE_ATTR, POSE_COPY):
+            if cmds.attributeQuery(attr, node=root, exists=True):
+                cmds.deleteAttr(root + "." + attr)
+    return "%s: its original keys back (%d frames), out of the list" % (walker_label(root), worlds.shape[1])
 
 
 def card_walk(rel):
@@ -392,6 +506,11 @@ def _card_cache(rel):
 def walk_path(name):
     """The walk file a walk `name` reads: a saved walk's, or the one an animation card is read into - written
     when it is missing or the card changed (a card gone keeps the walk it gave). Refused: no such walk."""
+    if is_own(name):
+        cache = _own_cache(name[len(OWN):])
+        if os.path.exists(cache) or _sync_own(name[len(OWN):]):
+            return cache
+        raise Refusal("no skeleton in the scene keeps %s" % walk_label(name))
     if not is_card(name):
         return wf.path_for(folder(), name)
     rel = name[len(CARD):]
@@ -429,6 +548,11 @@ def walk_exists(name):
     """Whether the walk `name` can be read (a saved file, or a card that reads or once read)."""
     if not name:
         return False
+    if is_own(name):
+        try:
+            return os.path.exists(walk_path(name))
+        except REFUSALS:
+            return False
     if not is_card(name):
         return os.path.exists(wf.path_for(folder(), name))
     try:

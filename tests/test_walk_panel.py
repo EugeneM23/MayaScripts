@@ -230,7 +230,8 @@ class CardTests(unittest.TestCase):
         self.state = {"loaded": {}, "target": None}
         names = ("_cmds", "walk_names", "walk_exists", "load_walk", "apply", "selected_root", "selected_top",
                  "selected_roots", "memo_of", "pick", "target_root", "_state", "fix_posture", "folder", "walkers",
-                 "walker_label", "set_listed")
+                 "walker_label", "set_listed", "has_source", "has_keys", "own_name", "capture_source",
+                 "restore_source")
         self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
         self.temp = tempfile.mkdtemp()
         self.library = os.path.join(self.temp, "library").replace("\\", "/")
@@ -270,6 +271,28 @@ class CardTests(unittest.TestCase):
         scene.apply = apply
         scene.walkers = lambda: sorted(r for r, m in self.memos.items() if m.get("walk") and m.get("listed", True))
         scene.walker_label = lambda root: root.rsplit("|", 1)[-1]
+        self.keyed = set()                        # skeletons that carry keys of their own
+        self.sources = {}                         # root: its kept own cycle
+        scene.has_keys = lambda root: root in self.keyed
+        scene.has_source = lambda root: root in self.sources
+
+        def own_name(root):
+            return self.sources[root]
+        scene.own_name = own_name
+
+        def capture_source(root):
+            self.sources.setdefault(root, scene.OWN + root.strip("|"))
+            return self.sources[root]
+        scene.capture_source = capture_source
+        self.restored = []
+
+        def restore_source(root):
+            self.restored.append(root)
+            self.memos.pop(root, None)
+            return "%s restored" % root
+        scene.restore_source = restore_source
+        real_exists = scene.walk_exists
+        scene.walk_exists = lambda name: scene.is_own(name) or real_exists(name)
 
         def set_listed(root, listed):
             self.memos[root]["listed"] = listed
@@ -408,7 +431,7 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.fake.selection = ["|a|root", "|b|root"]
         line = panel.press_apply()
-        self.assertIn("2 skeletons pick asd", line)
+        self.assertIn("2 skeletons processed", line)
         self.assertEqual([a[0] for a in self.applied], ["|a|root", "|b|root"])
         self.assertEqual(self.fake.items[panel.WALKER_LIST], ["root - asd", "root - asd"])
 
@@ -472,6 +495,41 @@ class CardTests(unittest.TestCase):
         count = len(self.applied)
         panel.slider_changed()
         self.assertEqual([a[0] for a in self.applied[count:]], ["|b"])
+
+    def test_pick_processes_each_skeleton_on_its_own_cycle(self):
+        panel.build_panel()
+        self.keyed = {"|a", "|b"}                                # both carry an animation of their own
+        self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
+        self.fake.selection = ["|a", "|b", "|c"]                 # c has no keys: the walk well's card
+        line = panel.press_apply()
+        self.assertEqual([a[1] for a in self.applied], [scene.OWN + "a", scene.OWN + "b", "asd"])
+        self.assertIn("3 skeletons processed", line)
+        self.assertEqual(self.sources, {"|a": scene.OWN + "a", "|b": scene.OWN + "b"})
+        self.fake.selection = []
+        self.fake.values[panel._control("bob")] = 1.5            # one knob, every cycle its own
+        panel.slider_changed()
+        keyed = dict((a[0], a) for a in self.applied[-3:])
+        self.assertEqual([keyed[r][1] for r in ("|a", "|b", "|c")], [scene.OWN + "a", scene.OWN + "b", "asd"])
+        self.assertTrue(all(keyed[r][2]["bob"] == 1.5 for r in keyed))
+        count = len(self.applied)
+        self.keyed.discard("|a")                                 # its keys are the result now: the kept one stays
+        self.fake.selection = ["|a"]
+        panel.press_apply()
+        self.assertEqual(self.applied[count][1], scene.OWN + "a")
+        self.fake.values[panel.WALKER_LIST] = [1]                # Restore: its original keys, out of the list
+        panel.restore_picked()
+        self.assertEqual(self.restored, ["|a"])
+
+    def test_with_no_walk_card_the_first_own_cycle_is_the_active_one(self):
+        scene.walk_names = lambda: []
+        panel.build_panel()
+        self.keyed = {"|a", "|b"}
+        self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
+        self.fake.selection = ["|a", "|b"]
+        panel.press_apply()
+        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], scene.OWN + "a")
+        tempos = dict((a[0], a[2]["tempo"]) for a in self.applied)
+        self.assertEqual(tempos, {"|a": 40.0, "|b": 60.0})        # each keeps its own tempo
 
     def test_take_settings_puts_a_walker_s_knobs_in_the_card(self):
         knobs = dict(wm.DEFAULTS, stance=0.33, tempo=90.0, pose=1.0)

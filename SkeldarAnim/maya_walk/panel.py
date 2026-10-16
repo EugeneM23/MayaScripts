@@ -11,9 +11,10 @@ Since 2026-10-15 the walk and the pose are both Pose Library cards in wells (col
 animation card of a walk cycle in the walk well, a pose card in the pose well; the old walk files and poses
 were moved into the library once. Apply is called Pick («мне кажется так понятнее что эта кнопка делает»).
 
-Select skeletons and press Pick: the active cycle is keyed onto each and each joins the card's list of
-walkers (2026-10-16, «обрабатывать сразу несколько циклов на разных персонажах»): the list is every walked
-skeleton in the scene (scene.walkers). The knobs and the pose are shared - a released knob re-keys every
+Select skeletons and press Pick: each is processed on its OWN cycle - the animation it carries, read on its
+first Pick and kept on it (scene.capture_source) - and joins the card's list of walkers (2026-10-16,
+«обрабатывать сразу несколько циклов на разных персонажах ... для обработки массивов анимаций»): the list is
+every walked skeleton in the scene (scene.walkers). A skeleton with no keys takes the walk well's card. The knobs and the pose are shared - a released knob re-keys every
 walker, each on its own cycle (the tempo as a ratio of the active cycle) - and each cycle keeps its own mean
 pose. Selecting a walker makes its cycle the active one. Every value is remembered (optionVars), so the card
 comes back as it was and a hotkey row presses with the card closed.
@@ -169,14 +170,16 @@ LABELS = {
     "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
 }
 TIPS = {
-    "apply": "Pick: put the active walk cycle on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, Biped "
-             "...), in its own proportions, from where it stands, and add it to the list below (a walker already "
-             "in it takes the new cycle). Every released knob re-keys every walker in the list, each on its own "
-             "cycle; the tempo counts the active cycle's frames, the others take the same ratio of theirs.",
+    "apply": "Pick: every selected skeleton is processed on ITS OWN cycle - the animation it carries is read on "
+             "the first Pick and kept on the skeleton (Restore the original keys puts it back) - with the card's "
+             "knobs and pose, and joins the list below. A skeleton with no keys takes the walk well's active card. "
+             "Every released knob re-keys every walker, each on its own cycle; the tempo counts the active "
+             "cycle's frames (the one selected last), the others take the same ratio of theirs.",
     "reset": "Every knob back to its default (the tempo to the walk's own); every walker is keyed again",
-    "walker_list": "The walkers: every skeleton Pick put a cycle on - «character - cycle». Click: select them (the "
+    "walker_list": "The walkers: every skeleton Pick processed - «character - cycle». Click: select them (the "
                    "first one's cycle becomes the active one); right click: take a walker's settings into the card, "
-                   "or remove it from the list (Delete too) - its keys stay, Pick puts it back",
+                   "put the active walk card on it or its own cycle back, restore its original keys, or remove it "
+                   "from the list (Delete too) - its keys stay, Pick puts it back",
     "save_walk": "Save: select a bone of a walk or a run and press - it goes to the Pose Library as an "
                  "animation card (folder Walk cycles) and into the walk well; a cycle or not: it is looped when it "
                  "is read (the loop found and its seam closed - the Clean tab)",
@@ -321,11 +324,12 @@ NO_WALK = "no walk cycle yet - drop an animation card of a walk into the walk we
 
 
 def chosen_walk():
-    """The walk Pick puts on a skeleton: the walk well's active card (scene.card_walk); a walk remembered before
-    the cards (a file's name) means the card it was moved into, else the file; else the well's first card,
-    else the first saved file."""
+    """The active cycle (what the tempo counts, what Rig pose and Fix posture act on, what Pick puts on a
+    skeleton with no keys of its own): a walker's own cycle once it is selected, else the walk well's active
+    card (scene.card_walk); a walk remembered before the cards (a file's name) means the card it was moved
+    into, else the file; else the well's first card, else the first saved file."""
     stored = _stored("walk") or ""
-    if scene.is_card(stored):
+    if scene.is_card(stored) or scene.is_own(stored):
         if scene.walk_exists(stored):
             return stored
     elif stored:
@@ -981,16 +985,62 @@ def rekey_all(walk=None):
     return text + " | %.1f s" % (time.time() - started)
 
 
+def walk_for(root):
+    """The cycle Pick processes on `root` (2026-10-16: «pick должен брать цикл у каждого скелета и обрабатывать
+    его отдельно»): the one it walks already (its own, or a card put on it), else its own keys read as its cycle
+    and kept on it, else - no keys - the walk well's active card."""
+    memo = scene.memo_of(root)
+    if memo.get("walk") and scene.walk_exists(memo["walk"]):
+        return memo["walk"]
+    if scene.has_source(root):
+        return scene.own_name(root)
+    if scene.has_keys(root):
+        return scene.capture_source(root)
+    return chosen_walk()
+
+
 def press_apply(*_):
-    """Pick: the active cycle onto every selected skeleton; each joins the list (or takes the new cycle)."""
+    """Pick: every selected skeleton processed on its own cycle (walk_for) with the card's knobs and pose; each
+    joins the list. With no active cycle yet the first own cycle becomes it (the tempo counts its frames)."""
     def run():
         roots = scene.selected_roots()
-        lines = [_apply_to(root) for root in roots]
+        walks = [walk_for(root) for root in roots]           # every source kept before anything is keyed
+        try:
+            chosen_walk()
+        except scene.Refusal:
+            _walk_taken(walks[0], say=False)
+        lines = [_apply_to(root, walk) for root, walk in zip(roots, walks)]
         if len(lines) == 1:
             return lines[0]
-        return "%d skeletons pick %s: %s" % (len(roots), scene.walk_label(chosen_walk()),
-                                             ", ".join(scene.walker_label(r) for r in roots))
+        return "%d skeletons processed, each on its cycle: %s" % (
+            len(roots), ", ".join("%s (%s)" % (scene.walker_label(r), scene.walk_label(w))
+                                  for r, w in zip(roots, walks)))
     return _press(run)
+
+
+def _each_picked(action, verb):
+    def run():
+        roots = _picked_walkers()
+        if not roots:
+            return "pick walkers in the list first"
+        return " | ".join(action(root) for root in roots)
+    return _press(run)
+
+
+def use_card_picked(*_):
+    """Right button > Use the active walk card: the picked walkers walk the walk well's card (their own cycle
+    stays kept - Use its own cycle takes it back)."""
+    return _each_picked(lambda root: _apply_to(root, chosen_walk()), "card")
+
+
+def use_own_picked(*_):
+    """Right button > Use its own cycle: the picked walkers back on the cycle they kept."""
+    return _each_picked(lambda root: _apply_to(root, scene.own_name(root)), "own")
+
+
+def restore_picked(*_):
+    """Right button > Restore the original keys: each picked walker's own cycle keyed back, out of the list."""
+    return _each_picked(scene.restore_source, "restore")
 
 
 def slider_changed(*_):
@@ -1296,6 +1346,10 @@ def _walker_list():
                         deleteKeyCommand=remove_from_list)
     cmds.popupMenu(button=3)
     cmds.menuItem(label="Take its settings into the card", command=take_settings_picked)
+    cmds.menuItem(label="Use the active walk card", command=use_card_picked)
+    cmds.menuItem(label="Use its own cycle", command=use_own_picked)
+    cmds.menuItem(label="Restore the original keys", command=restore_picked)
+    cmds.menuItem(divider=True)
     cmds.menuItem(label="Remove from the list", command=remove_from_list)
     cmds.setParent("..", menu=True)
 
