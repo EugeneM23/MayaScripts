@@ -512,6 +512,9 @@ def refusal(sp, mode, span):
         driver = fkik._foreign(node + "." + ch)
         if driver:
             return fkik.DRIVEN % (_LABEL, node.split("|")[-1] + "." + ch, driver)
+    why = fkik.layer_refusal([node + "." + ch for node, ch in plugs] + [sp.blend])
+    if why:
+        return "%s: %s" % (_LABEL, why)
     return ""
 
 

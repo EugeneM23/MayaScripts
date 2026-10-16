@@ -615,11 +615,151 @@ def _curve(plug):
 
 
 def _foreign(plug):
-    """What drives `plug` other than an animCurve, or None."""
+    """What drives `plug` other than an animCurve or animation layers holding only
+    curves, or None."""
     for node in _inputs(plug):
-        if not cmds.objectType(node).startswith("animCurve"):
-            return node
+        kind = cmds.objectType(node)
+        if kind.startswith("animCurve"):
+            continue
+        if kind.startswith(BLEND_NODE):
+            other = _stack_foreign(plug)
+            if other:
+                return _driver_words(other)
+            continue
+        return _driver_words(node)
     return None
+
+
+KNOT_ATTR = "skeldarKnotOf"           # a Tools knot's follow constraint (maya_tools.knots)
+
+
+def _driver_words(node):
+    """A driver as the refusal names it: a Tools knot's pairBlend says what it is
+    and what to do (1P Setup leaves one on FKSpine3_M)."""
+    try:
+        if cmds.objectType(node) == "pairBlend":
+            for con in cmds.listConnections(node, source=True, destination=False) or []:
+                if cmds.objectType(con, isAType="constraint") and cmds.attributeQuery(
+                        KNOT_ATTR, node=con, exists=True):
+                    return "a Tools knot (%s) - Bake or Remove it in Tools first" % con.split(":")[-1]
+    except (RuntimeError, ValueError):
+        pass
+    return node
+
+
+# ------------------------------------------------------------------ animation layers
+#
+# 2026-10-16, found live: after Tools > 1P Setup every animated control rides
+# `_3P_Upper_Body` / `_3P_Lower_Body`, and every press refused «IKArm_R.translateX is
+# driven by IKArm_R_translateX__3P_Upper_Body». A channel animation layers feed is keyed
+# with what it must SHOW on the active layer (the Tools' and the Pose Library's rule: the
+# selected non-base layer, else BaseAnimation) - `setKeyframe -animLayer L -value v`
+# writes what L needs for the channel to show v (measured, maya_tools.layered); every
+# other layer keeps its curves.
+
+BLEND_NODE = "animBlendNode"
+
+
+def _source(plug):
+    found = cmds.listConnections(plug, source=True, destination=False, plugs=True,
+                                 skipConversionNodes=True) or []
+    return found[0] if found else None
+
+
+def _blend_suffix(attr):
+    """A blend node's output attribute's suffix: '' for `output`, 'X' for `outputX`."""
+    return attr[len("output"):] if attr.startswith("output") else ""
+
+
+def _stack_foreign(plug):
+    """None when every input of the layers on `plug` is a time curve or a value, else
+    the node that drives one of them (an expression, a constraint inside a layer)."""
+    src = _source(plug)
+    for _ in range(64):
+        if not src:
+            return None
+        node, attr = src.split(".", 1)
+        kind = cmds.objectType(node)
+        if not kind.startswith(BLEND_NODE):
+            return None if kind.startswith("animCurve") else node
+        suffix = _blend_suffix(attr)
+        b = _source("%s.inputB%s" % (node, suffix))
+        if b:
+            b_node = b.split(".", 1)[0]
+            b_kind = cmds.objectType(b_node)
+            if not b_kind.startswith("animCurve") and not b_kind.startswith(BLEND_NODE):
+                return b_node
+        src = _source("%s.inputA%s" % (node, suffix))
+    return None
+
+
+def _layered(plug):
+    """True when an animation layer's blend node feeds `plug`."""
+    return any(cmds.objectType(n).startswith(BLEND_NODE) for n in _inputs(plug))
+
+
+def _active_layer():
+    """(Layer | None, refusal) - the layer a layered channel is keyed on."""
+    from maya_poselib import keys
+    return keys.active_layer()
+
+
+def layer_refusal(plugs):
+    """'' or why the layered ones among `plugs` cannot be keyed: the active layer locked,
+    or an additive layer in quaternion accumulation asked for exact rotate keys."""
+    layered = [p for p in plugs if _layered(p)]
+    if not layered:
+        return ""
+    from maya_poselib import keys
+    layer, why = _active_layer()
+    if why:
+        return why
+    if layer is not None and layer.additive and layer.quaternion and any(
+            p.rsplit(".", 1)[-1] in ROTATE for p in layered):
+        return keys.QUATERNION % layer.name
+    return ""
+
+
+def _layer_curve(plug):
+    """(layer name, its curve for `plug` or None) of the active layer."""
+    from maya_poselib import keys
+    layer, _why = _active_layer()
+    name = layer.name if layer is not None else None
+    return name, (keys.curve_for(plug, layer) if layer is not None else None)
+
+
+def _cut_layered(plug, span):
+    """The active layer's keys of `plug` in the span cut (all of them over a whole take)."""
+    _name, curve = _layer_curve(plug)
+    if not curve:
+        return
+    start, end, ranged = span
+    if ranged:
+        cmds.cutKey(curve, time=(start, end), clear=True)
+    else:
+        cmds.cutKey(curve, clear=True)
+
+
+def _key_layered(plug, frames, values, tangents=None):
+    """`plug` keyed on the active layer so that it SHOWS `values` on the frames."""
+    name, _curve = _layer_curve(plug)
+    if name and name != cmds.animLayer(query=True, root=True):
+        cmds.animLayer(name, edit=True, attribute=plug)
+    for frame, value in zip(frames, values):
+        flags = dict(time=frame, value=float(value))
+        if name:
+            flags["animLayer"] = name
+        in_type, out_type = (tangents or {}).get(frame, (None, None))
+        if in_type:
+            flags["inTangentType"] = in_type
+        if out_type:
+            flags["outTangentType"] = out_type
+        try:
+            cmds.setKeyframe(plug, **flags)
+        except (RuntimeError, TypeError):                    # a type this key cannot take
+            flags.pop("inTangentType", None)
+            flags.pop("outTangentType", None)
+            cmds.setKeyframe(plug, **flags)
 
 
 def blend_values(arm):
@@ -693,6 +833,10 @@ def refusal(arm, mode, span, ignore=()):
             driver = _foreign(node + "." + channel)
             if driver:
                 return DRIVEN % (label, node.split("|")[-1] + "." + channel, driver)
+    why = layer_refusal([node + "." + ch for node, channels in targets(arm, mode)
+                         if node not in ignore for ch in channels] + [arm.blend])
+    if why:
+        return "%s: %s" % (label, why)
     if mode == IK and ranged:
         off = off_default(_solve_attrs(arm))
         if off:
@@ -802,18 +946,31 @@ def _parent(node):
 
 
 def _seed(node, channels, frame):
-    """The channels' values at `frame` - where the new curve starts from."""
-    return [cmds.getAttr(node + "." + ch, time=frame) for ch in channels]
+    """The channels' values at `frame` - where the new curve starts from. A
+    layered channel is read after a real time change: `getAttr(time=)` skips a
+    layer's blend (trap 232)."""
+    plugs = [node + "." + ch for ch in channels]
+    if any(_layered(p) for p in plugs):
+        _goto(frame)
+        return [cmds.getAttr(p) for p in plugs]
+    return [cmds.getAttr(p, time=frame) for p in plugs]
 
 
-def _reset_solve(arm):
-    """The solve attributes to their defaults, their keys cut; names them."""
+def _reset_solve(arm, frames=()):
+    """The solve attributes to their defaults, their keys cut; names them. A
+    layered one is keyed at its default on the frames (a set value does not
+    hold under a layer)."""
     notes = []
     for plug in off_default(_solve_attrs(arm)):
         node, name = plug.rsplit(".", 1)
         default = (cmds.attributeQuery(name, node=node, listDefault=True) or [0.0])[0]
-        cmds.cutKey(plug, clear=True)
-        cmds.setAttr(plug, default)
+        if _layered(plug):
+            _cut_layered(plug, (0, 0, False))
+            _key_layered(plug, list(frames) or [cmds.currentTime(query=True)],
+                         [default] * max(1, len(frames)))
+        else:
+            cmds.cutKey(plug, clear=True)
+            cmds.setAttr(plug, default)
         notes.append("%s reset to %g" % (plug.split("|")[-1], default))
     return notes
 
@@ -821,6 +978,9 @@ def _reset_solve(arm):
 def _unkey(plug, span):
     """The plug's keys in the span cut (the whole take when not ranged)."""
     start, end, ranged = span
+    if _layered(plug):
+        _cut_layered(plug, span)
+        return
     if ranged:
         cmds.cutKey(plug, time=(start, end), clear=True)
     else:
@@ -834,6 +994,11 @@ def _write(plug, frames, values, span, locked, tangents=None):
     if locked:
         return
     start, end, ranged = span
+    if _layered(plug):
+        # on the active layer, as final values; never a plain value (it would not hold)
+        _cut_layered(plug, span)
+        _key_layered(plug, frames, values, tangents)
+        return
     if ranged:
         cmds.cutKey(plug, time=(start, end), clear=True)
     else:
@@ -859,6 +1024,19 @@ def _write(plug, frames, values, span, locked, tangents=None):
 def _write_blend(arm, mode, span):
     start, end, ranged = span
     target = BLEND[mode]
+    if _layered(arm.blend):
+        # the blend under a layer: the active layer keyed to show the target over the
+        # span (and, ranged, what it showed one frame outside each end)
+        frames = list(range(int(start), int(end) + 1))
+        values = [target] * len(frames)
+        if ranged:
+            edges = [(f, _shown_at(arm.blend, f)) for f in (start - 1, end + 1)]
+            frames = [edges[0][0]] + frames + [edges[1][0]]
+            values = [edges[0][1]] + values + [edges[1][1]]
+        _cut_layered(arm.blend, span)
+        _key_layered(arm.blend, frames, values,
+                     dict((f, ("linear", "step")) for f in frames))
+        return
     if not ranged:
         cmds.cutKey(arm.blend, clear=True)
         cmds.setAttr(arm.blend, target)
@@ -883,6 +1061,11 @@ def _write_blend(arm, mode, span):
 
 def _goto(frame):
     cmds.currentTime(frame, update=True)
+
+
+def _shown_at(plug, frame):
+    _goto(frame)
+    return cmds.getAttr(plug)
 
 
 def _sample(arm, frames):
@@ -1076,7 +1259,7 @@ def switch(arm, mode, span, every_frame=False):
             values = _to_fk(arm, frames, samples, span)
         else:
             if not ranged:
-                notes.extend(_reset_solve(arm))
+                notes.extend(_reset_solve(arm, frames))
             refusal = _pole_refusal(arm, frames, samples)
             if refusal:
                 return refusal

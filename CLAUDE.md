@@ -6360,6 +6360,30 @@ none of it since 2026-09-07 (`vendor_bake`).
 Not built then: legs (built 2026-10-10 with the spine, below), scale, an IK stretched to a longer FK arm,
 hotkey rows (`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
 
+**…and on animation layers** (2026-10-16, the animator in a scene after Tools > 1P Setup:
+«перестал работать connection переключение IK FK»). Every press refused «IKArm_R.translateX is
+driven by IKArm_R_translateX__3P_Upper_Body - not a key the switch can rewrite»: 1P Setup puts
+every animated control on `_3P_Upper_Body` / `_3P_Lower_Body`, and the switch took any input
+that was not an animCurve for a foreign driver. Now (`fkik`, used by `fkikspine` too):
+- a channel whose layers hold only time curves or values is not foreign (`_stack_foreign`);
+- a LAYERED channel is keyed with what it must SHOW on the active layer
+  (`maya_poselib.keys.active_layer`: the selected non-base layer, else BaseAnimation) through
+  `setKeyframe -animLayer L -value v` - the Tools' and Pose Library's rule; the active layer's
+  keys in the span are cut first, every other layer keeps its curves, nothing is collapsed to
+  a plain value (it would not hold under a layer); `_seed` reads a layered channel after a real
+  time change (trap 232); a layered solve attribute is keyed at its default; a layered blend is
+  keyed to show the target (stepped);
+- refused before anything moves (`layer_refusal`): a locked active layer, an additive one in
+  quaternion accumulation asked for rotate keys;
+- a Tools knot's pairBlend is named as such: «driven by a Tools knot (FKSpine3_M_parentConstraint1)
+  - Bake or Remove it in Tools first» (1P Setup leaves one on FKSpine3_M, so the spine's FK is
+  refused after it).
+Proof: `verify_fkik_layers.py` **37/37 standalone** (a UE clip on Manny, 1P Setup, then Arm_R,
+Leg_L to IK and back with nothing selected: the limb's places to 0.008 cm, the rest of the body
+0.000000, both layers' curves untouched; Arm_L with `_3P_Upper_Body` selected: its keys there,
+the base untouched; one undo; a locked layer refused; Spine to IK; the knot named). Checked
+read-only in the animator's scene: all eight limbs of their two rigs pass `refusal`.
+
 **The card follows the selection, and works in its popup copy** (2026-10-13, the animator: «у окошка
 conection в режиме виджета не работает переключение рук на оружие и обратно ... статусы не обновляются
 при выделении персонажа а только после применения скрипта»). Two causes:
@@ -10678,6 +10702,28 @@ for `tabs.next`.
 256. **"The outermost namespace" names the tab.** A message's character (`split(":")[0]`) read «tab_plain's
      right hand» and a clip label «tab_plain» once every node carried the tab's prefix. Read a path the animator
      sees through `scope.local`.
+**A paste from another tab is folded on save** (2026-10-16, the animator: «сцена не сохраняется»).
+Maya's Copy / Paste from tab A into tab B keeps A's namespace under B's current one
+(`tab_B:tab_A:Maya_Blinn4`, a MaterialX shader, its SG, a `materialXStack1` and an empty
+display layer measured in the live scene), and every save of B then refused - `lift` moves a
+tab's child namespaces into the root, where tab A holds that name: «cannot save tab_B: the
+scene already holds a namespace tab_A». It went to the bar's inViewMessage and the scene stayed
+`*`. `session.fold_pasted` (called first in `saving._save_tab`) folds a child namespace named
+like a tab of the session (or `tab_` + taken at the root) into the tab for good -
+`namespace -moveNamespace -force` (measured: clashing nodes renamed `mat` -> `mat1`, clashing
+child namespaces `Bow` -> `Bow1`, locked nodes moved), the emptied namespace removed - and the
+line says «nodes pasted from tab_A are this tab's own now». The file holds them under plain
+names, which is what a paste between two Mayas gives. `verify_scene_tabs.py pasted` 8/8, all
+**0 of 201**; saved live in the animator's scene (the files from before in
+`SkeldarTabs/before_save_20261016_091023`, a whole-session copy `rescue_20261016_090505.ma`).
+
+**…and the temporary file keeps the extension** (the same morning): with Maya's «Default file
+extensions» preference on (`file -q -defaultExtensions`), an export to `X.ma.skeldartmp` writes
+`X.ma.skeldartmp.ma` (measured), and the rename after it died «[WinError 2] The system cannot
+find the file» - the save failed and left the file beside the tab's (the animator's Knife folder
+held `AS_DG_ATK_JA_01.ma.skeldartmp.ma` and `…skeldartmp.ma.skeldartmp.ma`). The temporary is
+`<stem>.skeldartmp<ext>` now; a save gate runs with the preference on.
+
 257. **A save renames nodes, not strings.** A camera's `imageName` (`tab_plain:camera2`, the name it was
      created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
      names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
