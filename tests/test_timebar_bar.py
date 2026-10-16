@@ -41,6 +41,12 @@ class FakeLink(object):
         self.log.append(("set_time", frame))
         self.s["now"] = float(frame)
 
+    def begin_scrub(self):
+        self.log.append(("begin_scrub",))
+
+    def end_scrub(self):
+        self.log.append(("end_scrub",))
+
     def set_ranges(self, a0, a1, p0, p1):
         self.log.append(("set_ranges", a0, a1, p0, p1))
         self.s.update(a0=a0, a1=a1, p0=p0, p1=p1)
@@ -129,6 +135,19 @@ class Strip(unittest.TestCase):
         self.mouse(E.MouseButtonRelease, self.x(44.6), Qt.LeftButton, Qt.NoButton)
         self.assertEqual([e for e in self.link.log if e[0] == "set_time"], [("set_time", 40), ("set_time", 45)])
         self.assertEqual(self.strip.field.text(), "45")
+        names = [e[0] for e in self.link.log if e[0] != "keys"]
+        self.assertEqual(names[0], "begin_scrub")
+        self.assertEqual(names[-1], "end_scrub")
+
+    def test_a_scrub_paints_the_new_frame_before_maya_evaluates_it(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        painted = []
+        real = self.tl.paintEvent
+        self.tl.paintEvent = lambda e: (painted.append(self.strip.state["now"]), real(e))
+        seen = []
+        self.link.set_time = lambda f: seen.append(list(painted))
+        self.mouse(E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton)
+        self.assertEqual(seen and seen[0][-1:], [40])
 
     def test_a_shift_drag_highlights_and_a_click_clears_it(self):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt

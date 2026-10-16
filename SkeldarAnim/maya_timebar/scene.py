@@ -82,6 +82,27 @@ def set_ranges(a0, a1, p0, p1):
                          minTime=p0, maxTime=p1)
 
 
+def _slider():
+    import maya.mel as mel
+    return mel.eval("$gPlayBackSlider=$gPlayBackSlider")
+
+
+def begin_scrub():
+    """Maya's scrub mode for the length of a drag (Maya's slider's own: the sound
+    scrubs, the evaluation is the interactive one); the hidden slider still takes it."""
+    try:
+        cmds.timeControl(_slider(), edit=True, beginScrub=True)
+    except Exception:                                        # noqa: BLE001 - no slider, no scrub mode
+        pass
+
+
+def end_scrub():
+    try:
+        cmds.timeControl(_slider(), edit=True, endScrub=True)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def toggle_play():
     if cmds.play(q=True, state=True):
         cmds.play(state=False)

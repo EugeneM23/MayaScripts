@@ -222,6 +222,7 @@ def classes():
             kind = look.hit(t, x, s["now"], s["p0"], s["p1"], self.strip.ui)
             self.drag = (kind, None, t)
             if kind == "now":
+                self.strip.call("begin_scrub")
                 if s.get("highlight"):
                     s["highlight"] = None
                     self.strip.call("set_highlight", None)
@@ -250,6 +251,8 @@ def classes():
             kind = self.drag[0]
             self.drag = None
             s = self.strip.state
+            if kind == "now":
+                self.strip.call("end_scrub")
             if kind == "highlight":
                 sel = s.get("highlight")
                 if not sel or sel[1] <= sel[0]:
@@ -275,13 +278,18 @@ def classes():
                 self.strip.refresh()
 
         def _scrub(self, x):
+            """The playhead drawn on the new frame at once, then Maya sent there:
+            `currentTime` evaluates the scene before it returns, and a paint left
+            to the event loop (`update()`) waited for it - the playhead jumped
+            frames while Maya's own slider moves on every one."""
             s, t = self.strip.state, self.drag[2] if self.drag else self.track()
             frame = t.whole(x, lo=s["a0"], hi=s["a1"])
-            if frame != s["now"]:
-                s["now"] = frame
-                self.strip.call("set_time", frame)
-                self.strip.show_now()
-            self.update()
+            if frame == s["now"]:
+                return
+            s["now"] = frame
+            self.strip.show_now()
+            self.repaint()
+            self.strip.call("set_time", frame)
 
     class Strip(QtWidgets.QWidget):
 
@@ -382,7 +390,11 @@ def classes():
             if now is not None and now != self.state["now"]:
                 self.state["now"] = now
                 self.show_now()
-                self.timeline.update()
+                #  painted now, inside Maya's frame: Maya's playback does not let
+                #  the event loop run between frames, so `update()` drew one frame
+                #  in several (2026-10-16)
+                self.timeline.repaint()
+                self.field.repaint()
 
         def tick(self):
             try:
