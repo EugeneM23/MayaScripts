@@ -619,6 +619,12 @@ def classes():
                     lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
                     lift = max(self.key_lift.get(frame, 0.0), lit)
                     z = 1.0 + KEY_LIFT * lift
+                    burst = 1.0
+                    if st.entrance is not None:
+                        g = self.mapToGlobal(QtCore.QPoint(int(t.x(shown)), int(KEY_Y * ui)))
+                        ks, burst = st.entrance_of(g.x(), g.y())
+                        z *= ks
+                        p.setOpacity(opacity * burst)
                     kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
                     rect = QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh)
                     if lift > 0.01:
@@ -629,6 +635,8 @@ def classes():
                                               1.5 * ui + grow, 1.5 * ui + grow)
                     p.setBrush(blend(hex_, RIM, lit * 0.7) if lit > 0.01 else colour(hex_))
                     p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
+                    if burst < 1.0:
+                        p.setOpacity(opacity)
             # the playhead
             x = t.x(s["now"])
             head = colour(HIGHLIGHT if self.drag and self.drag[0] == "mid" else tk["accent"])
@@ -799,6 +807,8 @@ def classes():
             self.moving = []
             self._t0 = time.time()
             self.opened = 0.0
+            self.entrance = None        # the burst from / fold to the cursor (the bottom edge)
+            self.fades = []             # Qt's own fields and the dividers: faded in the burst
             self._last_step = None
             self.setStyleSheet(stylesheet(self.tokens, self.ui))
             ui = self.ui
@@ -869,6 +879,7 @@ def classes():
             self.field.setToolTip("Current frame")
             self.field.setFocusPolicy(Qt.ClickFocus)
             self.field.returnPressed.connect(self._typed)
+            self._fading(self.field)
             bottom.addWidget(self.field)
             bottom.addWidget(self._sep())
             self.transport = {}
@@ -912,7 +923,31 @@ def classes():
             sep = QtWidgets.QFrame(self)
             sep.setObjectName("skeldarTimeBarSep")
             sep.setFixedSize(max(1, int(self.ui)), int(20 * self.ui))
-            return sep
+            return self._fading(sep)
+
+        def _fading(self, widget):
+            """A widget we do not paint (a field, a divider) fades in the burst:
+            an opacity effect, held here (PySide deletes an effect whose wrapper is
+            collected, CLAUDE.md trap 201) and switched off at rest (trap 204)."""
+            effect = QtWidgets.QGraphicsOpacityEffect(widget)
+            effect.setEnabled(False)
+            widget.setGraphicsEffect(effect)
+            self.fades.append((widget, effect))
+            return widget
+
+        def _fade(self):
+            for widget, effect in self.fades:
+                try:
+                    if self.entrance is None:
+                        if effect.isEnabled():
+                            effect.setOpacity(1.0)
+                            effect.setEnabled(False)
+                        continue
+                    c = widget.mapToGlobal(widget.rect().center())
+                    effect.setOpacity(self.entrance_of(c.x(), c.y())[1])
+                    effect.setEnabled(True)
+                except RuntimeError:
+                    pass
 
         def _field(self, tip, on_value):
             field = QtWidgets.QLineEdit(self)
@@ -921,6 +956,7 @@ def classes():
             field.setFixedSize(int(52 * self.ui), int(24 * self.ui))
             field.setToolTip(tip)
             field.setFocusPolicy(Qt.ClickFocus)
+            self._fading(field)
 
             def done():
                 try:
@@ -939,7 +975,54 @@ def classes():
         def opening_of(self, index):
             if not self.motion:
                 return 1.0, 1.0
+            e = self.entrance
+            if e is not None:
+                age = self.clock() - e["t0"]
+                delay = e["delays"].get(index, 0.0)
+                return look.popping(age, delay) if e["open"] else look.folding(age, delay)
             return look.opening(self.clock() - self.opened, index)
+
+        def entrance_of(self, gx, gy):
+            """(scale, opacity) of a thing at the global point (gx, gy) in the
+            burst or the fold standing (a key on the timeline)."""
+            e = self.entrance
+            if e is None or not self.motion:
+                return 1.0, 1.0
+            age = self.clock() - e["t0"]
+            if e["open"]:
+                return look.popping(age, look.burst_delay(gx - e["gx"], gy - e["gy"], self.ui))
+            return look.folding(age, look.fold_delay(gx - e["gx"], self.ui))
+
+        def burst_at(self, gx, gy, opening=True):
+            """The controls - and the keys - pop in from the global point (gx, gy),
+            the nearest first, or fold toward it, the farthest first (2026-10-16,
+            mockup A, 1.5x slower). Returns how long it takes, ms."""
+            delays, far = {}, 0.0
+            points = [(w.index, w.mapToGlobal(w.rect().center())) for w in self.moving]
+            t = self.timeline.track()
+            points += [(None, self.timeline.mapToGlobal(QtCore.QPoint(int(t.x(k)), int(KEY_Y * self.ui))))
+                       for k in self.keys + self.breakdowns]
+            for index, c in points:
+                if opening:
+                    d = look.burst_delay(c.x() - gx, c.y() - gy, self.ui)
+                else:
+                    d = look.fold_delay(c.x() - gx, self.ui)
+                far = max(far, d)
+                if index is not None:
+                    delays[index] = d
+            if not self.motion:
+                self.entrance = None
+                return 0.0
+            for widget, _effect in self.fades:
+                c = widget.mapToGlobal(widget.rect().center())
+                far = max(far, look.burst_delay(c.x() - gx, c.y() - gy, self.ui) if opening
+                          else look.fold_delay(c.x() - gx, self.ui))
+            self.entrance = {"open": bool(opening), "t0": self.clock(), "gx": gx, "gy": gy,
+                             "delays": delays,
+                             "ends": far + (look.POP_OPEN_MS if opening else look.FOLD_MS)}
+            self._fade()
+            self.kick()
+            return self.entrance["ends"]
 
         def replay_opening(self):
             self.opened = self.clock()
@@ -956,6 +1039,14 @@ def classes():
                 dt = now - (self._last_step or now)
                 self._last_step = now
                 opening = self.motion and now - self.opened < 260 + 18 * len(self.moving)
+                e = self.entrance
+                if e is not None:
+                    if now - e["t0"] < e["ends"] + 20:
+                        opening = True
+                    elif e["open"]:
+                        self.entrance = None        # popped in: the controls as they are
+                        opening = True              # one more paint at rest
+                self._fade()
                 busy = opening
                 for widget in self.moving:
                     widget.step(dt)

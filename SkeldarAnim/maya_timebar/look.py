@@ -344,3 +344,72 @@ def zone_dwell(dwelt, inside, dt_ms):
     """The time the cursor has rested in the band so far: it grows while it stays,
     and any moment outside starts it again."""
     return dwelt + dt_ms if inside else 0.0
+
+
+# -- the burst from the cursor (2026-10-16, mockup A, «скорость на 50 % медленнее») ---------
+
+BURST_SLOW = 1.5        # every timing of the mockup, half as fast again
+UNROLL_MS = 240 * BURST_SLOW        # the panel unrolls from the cursor
+POP_OPEN_MS = 200 * BURST_SLOW      # a control pops in
+FOLD_MS = 140 * BURST_SLOW          # a control folds away
+CLOSE_MS = 180 * BURST_SLOW         # the panel closes onto the cursor
+CLOSE_AFTER_MS = 60 * BURST_SLOW    # after the last control folded
+START_SCALE = 0.3
+
+
+def ease_out_quint(u):
+    u = max(0.0, min(1.0, u))
+    return 1 - (1 - u) ** 5
+
+
+def ease_in_quint(u):
+    u = max(0.0, min(1.0, u))
+    return u ** 5
+
+
+def back_in(u):
+    """The radial menu's leave: draws back a little, then goes."""
+    u = max(0.0, min(1.0, u))
+    c = 1.70158
+    return (c + 1) * u ** 3 - c * u ** 2
+
+
+def burst_delay(dx, dy, ui=1.0):
+    """When a control pops in: the nearer the cursor the sooner (the mockup's
+    40 ms + 18 ms per 60 px, a vertical step counting 1.5)."""
+    d = (abs(dx) + abs(dy) * 1.5) / max(ui, 1e-6)
+    return (40.0 + d / 60.0 * 18.0) * BURST_SLOW
+
+
+def fold_delay(dx, ui=1.0):
+    """When a control folds away: the farthest first, toward the cursor."""
+    d = abs(dx) / max(ui, 1e-6)
+    return max(0.0, 180.0 - d / 60.0 * 12.0) * BURST_SLOW
+
+
+def popping(age, delay, ms=POP_OPEN_MS):
+    """(scale, opacity) of a control `age` ms into the burst, popping in at `delay`."""
+    u = (age - delay) / float(ms)
+    if u <= 0:
+        return START_SCALE, 0.0
+    if u >= 1:
+        return 1.0, 1.0
+    return START_SCALE + (1 - START_SCALE) * back_out(u), min(1.0, u * 1.6)
+
+
+def folding(age, delay, ms=FOLD_MS):
+    """(scale, opacity) of a control `age` ms into the fold, folding at `delay`."""
+    u = (age - delay) / float(ms)
+    if u <= 0:
+        return 1.0, 1.0
+    if u >= 1:
+        return START_SCALE, 0.0
+    e = back_in(u)
+    return 1.0 - (1 - START_SCALE) * e, max(0.0, 1.0 - u)
+
+
+def unroll(u, cx, width, showing):
+    """(x0, x1) of the panel `u` (0..1) into its unroll from - or close onto - `cx`."""
+    e = ease_out_quint(u) if showing else 1 - ease_in_quint(u)
+    cx = max(0.0, min(float(width), cx))
+    return cx * (1 - e), cx + (width - cx) * e

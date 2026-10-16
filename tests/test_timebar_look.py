@@ -205,6 +205,36 @@ class EdgeTests(unittest.TestCase):
         self.assertEqual(look.slide(5, 120, True, 0), 0)
 
 
+class BurstTests(unittest.TestCase):
+
+    def test_half_as_fast_again_as_the_mockup(self):
+        self.assertEqual((look.UNROLL_MS, look.POP_OPEN_MS, look.FOLD_MS, look.CLOSE_MS), (360, 300, 210, 270))
+
+    def test_nearer_pops_sooner_and_farther_folds_sooner(self):
+        self.assertLess(look.burst_delay(10, 0), look.burst_delay(600, 0))
+        self.assertLess(look.burst_delay(0, 0), look.burst_delay(0, 40))       # a row down counts more
+        self.assertEqual(look.burst_delay(0, 0), 60.0)
+        self.assertEqual(look.burst_delay(120, 0, ui=2.0), look.burst_delay(60, 0))
+        self.assertGreater(look.fold_delay(10), look.fold_delay(600))
+        self.assertEqual(look.fold_delay(5000), 0.0)
+
+    def test_pop_and_fold(self):
+        self.assertEqual(look.popping(0, 50), (look.START_SCALE, 0.0))
+        self.assertEqual(look.popping(50 + look.POP_OPEN_MS, 50), (1.0, 1.0))
+        self.assertGreater(max(look.popping(50 + look.POP_OPEN_MS * u / 20.0, 50)[0] for u in range(21)), 1.0)
+        self.assertEqual(look.folding(0, 50), (1.0, 1.0))
+        self.assertEqual(look.folding(50 + look.FOLD_MS, 50), (look.START_SCALE, 0.0))
+        self.assertGreater(look.folding(50 + look.FOLD_MS * 0.1, 50)[0], 1.0)  # draws back first
+
+    def test_unroll_from_and_onto_the_cursor(self):
+        self.assertEqual(look.unroll(0, 300, 1000, True), (300.0, 300.0))
+        self.assertEqual(look.unroll(1, 300, 1000, True), (0.0, 1000.0))
+        x0, x1 = look.unroll(0.5, 300, 1000, True)
+        self.assertTrue(0 < x0 < 300 < x1 < 1000)
+        self.assertEqual(look.unroll(1, 300, 1000, False), (300.0, 300.0))
+        self.assertEqual(look.unroll(0, 300, 1000, False), (0.0, 1000.0))
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_the_package_import_with_the_stdlib_alone(self):

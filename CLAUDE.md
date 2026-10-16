@@ -11459,6 +11459,20 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
   - Never with a button held (a marquee near the viewport's bottom), with Maya not active, or with a floating
     window or a menu over the band (`over_maya`: `QApplication.widgetAt` must be Maya's main window or ours).
   - The 2 px edge sensor still works too.
+- **The burst from the cursor** (mockup https://claude.ai/artifact/YKqW7DScHBYWFt64nWBArX, A, «скорость на 50 %
+  медленнее»; «и ключи на таймлайне пусть тоже проанимированы будут»). Every timing is the mockup's ×1.5
+  (`look.BURST_SLOW`).
+  - Coming out: the host's mask unrolls sideways from the cursor's x (`look.unroll`, ease-out quint, 360 ms, its
+    corners rounding while narrow, `BottomEdge._mask_span`).
+  - Meanwhile every painted control and every key pops from 0.3 with the radial menu's back ease, the nearest
+    first (`Strip.burst_at` / `entrance_of`, `look.burst_delay`: 60 ms + 27 ms per 60 logical px, a row down
+    counting 1.5).
+  - Qt's own fields and the dividers fade on the same schedule (`Strip._fading`: a held `QGraphicsOpacityEffect`,
+    disabled at rest - traps 201 / 204).
+  - Going back: they fold toward the cursor, the farthest first (`fold_delay`, `back_in`), then the mask closes
+    onto it 90 ms after the last one.
+  - Interface animations off: at once.
+  - Filmstrip: `render_time_bar_burst.py` -> `time_bar_burst.png`.
 
 **Proof**:
 - `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake

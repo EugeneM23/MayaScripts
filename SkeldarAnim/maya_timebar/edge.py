@@ -271,31 +271,61 @@ class BottomEdge(object):
         self._start_slide(False)
 
     def _start_slide(self, showing):
+        """The burst from the cursor (2026-10-16, mockup A, «скорость на 50 %
+        медленнее»): the panel unrolls sideways from where the mouse rests while
+        the controls and keys pop in, the nearest first; going back, they fold
+        toward the mouse and the panel closes onto it behind them."""
         if not self._motion():
+            self.strip.burst_at(0, 0, showing)
             self.offset = 0 if showing else self.host.height()
             self._settle(showing)
             return
-        self._slide = (self.strip.clock(), showing, self.offset)
+        gx, gy = self.cursor()
+        cx = gx - self.host.geometry().x()
+        self.offset = 0
+        self.strip.move(0, 0)
+        folded = self.strip.burst_at(gx, gy, showing)
+        self._slide = {"t0": self.strip.clock(), "showing": bool(showing), "cx": float(cx),
+                       "after": 0.0 if showing else folded + look.CLOSE_AFTER_MS}
+        if showing:
+            self._mask_span(cx, cx)
         self.anim.start()
 
     def slide_tick(self):
-        if self._slide is None:
+        b = self._slide
+        if b is None:
             self.anim.stop()
             return
-        started, showing, start = self._slide
-        h = self.host.height()
-        ms = look.SLIDE_MS if showing else look.SLIDE_BACK_MS
-        t = self.strip.clock() - started
-        #  from where the strip stands: a reveal during a slide back turns there
-        span = (start if showing else h - start) or h
-        part = look.slide(t, span, showing, ms)
-        self.offset = part if showing else start + part
-        self.strip.move(0, self.offset)
-        self._mask()
-        if t >= ms:
+        w = self.host.width()
+        age = self.strip.clock() - b["t0"]
+        if b["showing"]:
+            u = age / look.UNROLL_MS
+        else:
+            u = (age - b["after"]) / look.CLOSE_MS
+            if u <= 0:
+                self._mask_span(0, w)
+                return
+        x0, x1 = look.unroll(u, b["cx"], w, b["showing"])
+        self._mask_span(x0, x1)
+        if u >= 1:
             self.anim.stop()
             self._slide = None
-            self._settle(showing)
+            self._settle(b["showing"])
+
+    def _mask_span(self, x0, x1):
+        """Only [x0, x1] of the host shows, its corners rounding while it is narrow."""
+        q = hubqt.qt()
+        w, h = self.host.width(), self.host.height()
+        x0, x1 = max(0.0, x0), min(float(w), x1)
+        if x1 - x0 < 1:
+            x1 = x0 + 1
+        if x1 - x0 >= w - 0.5:
+            self.host.setMask(q.QtGui.QRegion(0, 0, w, h))
+            return
+        radius = 12 * getattr(self.strip, "ui", 1.0) * (1 - (x1 - x0) / float(max(w, 1)))
+        path = q.QtGui.QPainterPath()
+        path.addRoundedRect(q.QtCore.QRectF(x0, 0, x1 - x0, h), radius, radius)
+        self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
 
     def _settle(self, showing):
         self.offset = 0 if showing else self.host.height()

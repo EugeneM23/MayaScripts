@@ -169,34 +169,75 @@ class Edge(unittest.TestCase):
 
 
 class EdgeMotion(Edge):
+    """The burst from the cursor (mockup A, 1.5x slower)."""
 
     motion = True
+
+    def later(self, ms):
+        """Every clock of the burst moved `ms` into the past."""
+        b, e = self.edge._slide, self.edge.strip.entrance
+        if b is not None:
+            b["t0"] -= ms
+        if e is not None:
+            e["t0"] -= ms
+
+    def mask_width(self):
+        return self.edge.host.mask().boundingRect().width()
 
     def test_resting_on_the_edge_brings_it_out(self):
         self.at_edge()
         self.edge.dwell_done()
         self.assertTrue(self.edge.shown)
-        h = self.edge.host.height()
-        started, showing, start = self.edge._slide
-        self.edge._slide = (self.edge.strip.clock() - look.SLIDE_MS / 3.0, True, start)
+        w = self.edge.host.width()
+        self.assertLess(self.mask_width(), 5)                       # from a point under the cursor
+        self.later(look.UNROLL_MS / 3.0)
         self.edge.slide_tick()
-        self.assertTrue(0 < self.edge.offset < h)
-        self.edge._slide = (self.edge.strip.clock() - look.SLIDE_MS - 1, True, start)
+        self.assertTrue(5 < self.mask_width() < w)
+        self.later(look.UNROLL_MS)
         self.edge.slide_tick()
-        self.assertEqual(self.edge.offset, 0)
+        self.assertEqual(self.mask_width(), w)
+        self.assertIsNone(self.edge._slide)
+
+    def test_the_nearest_control_pops_first(self):
+        self.at_edge()
+        self.edge.dwell_done()
+        strip = self.edge.strip
+        delays = strip.entrance["delays"]
+        x = self.cursor[0]
+        near = min(strip.moving, key=lambda w: abs(w.mapToGlobal(w.rect().center()).x() - x))
+        far = max(strip.moving, key=lambda w: abs(w.mapToGlobal(w.rect().center()).x() - x))
+        self.assertLess(delays[near.index], delays[far.index])
+        self.later(delays[near.index] + look.POP_OPEN_MS / 2.0)
+        self.assertGreater(strip.opening_of(near.index)[0], look.START_SCALE)
+        self.assertEqual(strip.opening_of(far.index), (look.START_SCALE, 0.0))
+
+    def test_the_keys_pop_with_them(self):
+        self.at_edge()
+        self.edge.dwell_done()
+        strip = self.edge.strip
+        self.assertEqual(strip.entrance_of(self.cursor[0] + 300, self.cursor[1]), (look.START_SCALE, 0.0))
+        self.later(strip.entrance["ends"])
+        self.assertEqual(strip.entrance_of(self.cursor[0] + 300, self.cursor[1]), (1.0, 1.0))
 
     def test_leaving_it_sends_it_back(self):
         self.at_edge()
         self.edge.dwell_done()
-        self.edge._slide = (self.edge.strip.clock() - look.SLIDE_MS - 1, True, self.edge.host.height())
+        self.later(10000)
         self.edge.slide_tick()
         self.cursor[:] = [900, 300]
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
-        self.edge._slide = (self.edge.strip.clock() - look.SLIDE_BACK_MS - 1, False, 0)
+        b = self.edge._slide
+        self.assertFalse(b["showing"])
         self.edge.slide_tick()
-        self.assertEqual(self.edge.offset, self.edge.host.height())
+        self.assertEqual(self.mask_width(), self.edge.host.width())    # the controls fold first
+        self.later(b["after"] + look.CLOSE_MS / 2.0)
+        self.edge.slide_tick()
+        self.assertLess(self.mask_width(), self.edge.host.width())
+        self.later(look.CLOSE_MS)
+        self.edge.slide_tick()
         self.assertFalse(self.edge.host.isVisible())
+        self.assertTrue(self.edge.sensor.isVisible())
 
     test_the_pin_keeps_it_out = None
     test_a_drag_in_the_strip_keeps_it_out = None
