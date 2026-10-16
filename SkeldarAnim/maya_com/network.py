@@ -450,11 +450,11 @@ def create(char, model, info):
 
 def find_all():
     """Every CoM group in the scene (long paths)."""
-    out = []
-    for node in scope.active_only(cmds.ls(type="transform", long=True) or [], cmds):
-        if cmds.attributeQuery(MARKER, node=node, exists=True):
-            out.append(node)
-    return out
+    # the marker asked of Maya once, every namespace (recursive): an attributeQuery on every
+    # transform of every tab took 0.18 s on each selection change (2026-10-16)
+    found = cmds.ls("*." + MARKER, recursive=True, objectsOnly=True, type="transform",
+                    long=True) or []
+    return scope.active_only(found, cmds)
 
 
 def root_of(group):

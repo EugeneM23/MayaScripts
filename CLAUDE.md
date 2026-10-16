@@ -10776,6 +10776,23 @@ A Maya whose text differs keeps its own procs, said in the Script Editor. The sc
 touched. Proof: `verify_tab_layer_editor.py` **13/13 in a disposable GUI Maya** (real Qt clicks down the
 tree; the base collapsed; Maya's own file sourced again), the labels read through the proc, pictures.
 
+**The lag on selecting a control in tab mode** (2026-10-16, «чувствую задержку ... каждый раз когда
+выделяю контроллер и перетаскиваю его»). Measured in a disposable GUI Maya: three Manny rig tabs, the hub
+open (294 scriptJobs).
+- The drag is not it: a drag step costs 16.2 ms with tabs and 16.2 ms in one scene. Hidden tabs cost
+  nothing to draw or evaluate.
+- The selection was it: **680 ms from select to idle**, the hub cards' SelectionChanged jobs:
+  - Walk Builder's `scene.walkers()` ran 250 ms: an `attributeQuery` on every joint of every tab, twice;
+  - Center of Mass `network.find_all` ran 180 ms: the same on every transform;
+  - `maya_rigs.rigs()` ran ten times a selection, each a `listRelatives` on every joint;
+  - `naming.find_skeleton_roots` did one `listRelatives` per joint.
+- The fixes:
+  - a marker lookup is `ls("*.attr", recursive=True, objectsOnly=True, type=...)`: `recursive` crosses
+    namespaces, trap 70's pattern without it does not;
+  - `skeleton_root_of` asks for the namespace's joints alone, shallowest first;
+  - a skeleton root is a joint whose parent's path is no joint's, read off one listing.
+- After: **125-210 ms**, the same as one scene (125-175).
+
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 
 The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации

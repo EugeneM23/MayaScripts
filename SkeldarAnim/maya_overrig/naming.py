@@ -119,12 +119,15 @@ def find_skeleton_roots(exclude_under=()):
     excluded = tuple(exclude_under)
     inside = tuple(path + "|" for path in excluded)
 
+    # A joint is a root when its parent's path is no joint's: read off the one listing,
+    # not a listRelatives per joint (several runs on each selection change, 2026-10-16).
+    every = cmds.ls(type="joint", long=True) or []
+    joints = set(every)
     roots = []
-    for joint in scope.active_only(cmds.ls(type="joint", long=True) or [], cmds):
+    for joint in scope.active_only(every, cmds):
         if joint in excluded or (inside and joint.startswith(inside)):
             continue
-        if not cmds.listRelatives(joint, parent=True, type="joint",
-                                  fullPath=True):
+        if joint.rsplit("|", 1)[0] not in joints:
             roots.append(joint)
     return roots
 

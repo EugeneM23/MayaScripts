@@ -238,9 +238,19 @@ def _constrained_joints(namespace):
 
 def skeleton_root_of(namespace, group):
     """The rig's game skeleton root: the shallowest constrained joint of its
-    namespace outside its group, or ""."""
-    return shallowest([j for j in _constrained_joints(namespace)
-                       if not under(j, group)])
+    namespace outside its group, or "".
+
+    The namespace's joints are asked for alone and tried shallowest first, so the
+    answer (`shallowest` of the constrained ones) costs a listRelatives or two: a
+    listRelatives on every joint of the scene ran for every rig, many times on each
+    selection change (2026-10-16)."""
+    pattern = (":" + namespace + ":*") if namespace else ":*"
+    joints = [j for j in cmds.ls(pattern, type="joint", long=True) or []
+              if namespace_of(j) == namespace and not under(j, group)]
+    for joint in sorted(joints, key=lambda p: (p.count("|"), p)):
+        if cmds.listRelatives(joint, children=True, type="constraint"):
+            return joint
+    return ""
 
 
 def rigs():

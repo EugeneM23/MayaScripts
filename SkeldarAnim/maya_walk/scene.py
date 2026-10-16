@@ -182,9 +182,9 @@ def walkers():
     label. Read from the scene each time - nothing else stores the list."""
     cmds = _cmds()
     found = []
-    for path in cmds.ls(type="joint", long=True) or []:
-        if not cmds.attributeQuery(MARKER, node=path, exists=True):
-            continue
+    # the marker asked of Maya once, every namespace (recursive): an attributeQuery on every joint
+    # of every tab took 0.13 s on each selection change (2026-10-16)
+    for path in cmds.ls("*." + MARKER, recursive=True, objectsOnly=True, type="joint", long=True) or []:
         above = cmds.listRelatives(path, parent=True, fullPath=True)
         if above and cmds.nodeType(above[0]) == "joint":
             continue
