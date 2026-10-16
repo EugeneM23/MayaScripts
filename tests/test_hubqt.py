@@ -750,6 +750,30 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
         self.card = self.skin.add_card("characters", "Characters", "user",
                                        "#f0a26b", "#4a3322")
 
+    def test_a_heading_is_a_spaced_capital_caption(self):
+        """2026-10-16, the card rules: a section's caption."""
+        label = self.control(QtWidgets.QLabel, "animHeading", self.card.body)
+        label.setText("Animation")
+        hubqt.apply_marks([style.Mark("animHeading", "heading", None, False,
+                                      None)], self.card, 1.0)
+        self.assertEqual(label.text(), "ANIMATION")
+        self.assertEqual(label.property("skRole"), "heading")
+        self.assertGreater(label.font().letterSpacing(), 0)
+
+    def test_the_body_opens_under_a_hairline(self):
+        rule = self.card.body.findChild(QtWidgets.QFrame,
+                                        "skeldarHubCardRule_characters")
+        self.assertIsNotNone(rule)
+        self.assertEqual(self.card.body_layout.itemAt(0).widget(), rule)
+
+    def test_the_message_line_carries_its_tone(self):
+        self.skin.say("Imported A_Jump onto Manny_Rig", source="characters")
+        self.assertEqual(self.skin.message.property("skTone"), "ok")
+        self.skin.say("Retarget refused: no rig")
+        self.assertEqual(self.skin.message.property("skTone"), "no")
+        self.skin.say("Manny [rig] - press Import")
+        self.assertEqual(self.skin.message.property("skTone"), "")
+
     def test_a_role_becomes_the_property_and_an_icon_is_set(self):
         button = self.control(QtWidgets.QPushButton, "addCharacter",
                               self.card.body)
@@ -1721,11 +1745,13 @@ class CardMotion(SeamsMixin, unittest.TestCase):
     def test_the_gap_under_the_header_is_the_bodys_top_margin(self):
         """The column's spacing moved into the body's top margin, so it
         opens and shuts with the body; 4 since the compact skin
-        (2026-10-08, it was 6)."""
+        (2026-10-08, it was 6). Since 2026-10-16 the body opens with the
+        card's hairline and as much again under it."""
         header = self.card.header
         bottom = header.y() + header.height()
         top = self.child.mapTo(self.card.frame, QtCore.QPoint(0, 0)).y()
-        self.assertEqual(top - bottom, style.px(4, 1.0))
+        self.assertEqual(top - bottom,
+                         2 * style.px(4, 1.0) + max(1, style.px(1, 1.0)))
 
 
 class Rotated(unittest.TestCase):

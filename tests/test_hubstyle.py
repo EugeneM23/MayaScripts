@@ -133,14 +133,15 @@ class Stylesheet(unittest.TestCase):
         self.assertNotRegex(sheet, r"(^|\}|,)\s*QLabel\s*\{[^}]*background")
         self.assertNotRegex(sheet, r"\] QWidget\s*\{")
 
-    def test_a_heading_is_a_bold_title_over_a_line(self):
-        """2026-10-01: a section's title inside a card («UE Connect»,
-        «Weapon», «Armor») - bold, the primary text, a hairline under it."""
+    def test_a_heading_is_a_muted_caption_over_a_hairline(self):
+        """2026-10-01: a section's title inside a card; since 2026-10-16 (the
+        card rules) a caption - small, muted, bold, a hairline under it (the
+        skin upper-cases and spaces it)."""
         self.assertIn("heading", style.ROLES)
         rule = re.search(r'QLabel\[skRole="heading"\] \{([^}]*)\}',
                          style.stylesheet()).group(1)
         self.assertIn("font-weight: bold", rule)
-        self.assertIn(style.TOKENS["text"], rule)
+        self.assertIn(style.TOKENS["muted"], rule)
         self.assertIn("border-bottom", rule)
 
     def test_the_chip_hides_its_indicator(self):
@@ -411,3 +412,36 @@ class ToolRows(unittest.TestCase):
 
     def test_the_name_column(self):
         self.assertGreater(style.ROW_NAME, 40)
+
+
+class CardRules(unittest.TestCase):
+    """The shared card rules (2026-10-16): a recessed switch, a caption, a
+    muted row label, a toned message line."""
+
+    def test_tone(self):
+        cases = [("Imported A_Jump onto Manny_Rig, 61 fr", "ok"),
+                 ("Retargeted LongSword onto Creep_Rig", "ok"),
+                 ("Up to date: 601eaae", "ok"),
+                 ("Aim waiting - place the target, then Finish", "wait"),
+                 ("Retarget refused: 2 rigs in the scene", "no"),
+                 ("Cannot find the rig - select a control", "no"),
+                 ("nothing changed", "no"),
+                 ("Manny [rig] - press Import, or drag the portrait", ""),
+                 ("", "")]
+        for text, tone in cases:
+            self.assertEqual(style.tone(text), tone, text)
+
+    def test_the_rules_are_in_the_sheet(self):
+        sheet = style.stylesheet()
+        for token in ("track", "track_edge", "thumb"):
+            self.assertIn(token, style.TOKENS)
+        self.assertIn('QWidget[skRole="segments"] { background: %s'
+                      % style.TOKENS["track"], sheet)
+        self.assertIn('QPushButton[skRole="segment"]:checked { background: %s'
+                      % style.TOKENS["thumb"], sheet)
+        self.assertIn('QLabel[skRole="label"]', sheet)
+        for tone in ("ok", "wait", "no"):
+            self.assertIn('[skTone="%s"]' % tone, sheet)
+
+    def test_the_label_role(self):
+        self.assertIn("label", style.ROLES)

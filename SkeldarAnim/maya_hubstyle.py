@@ -72,6 +72,11 @@ TOKENS = {
     #  a tool row's icon (2026-10-13, the Tools card as a list): the card's
     #  own group colour, Animation's blue
     "tool_icon": "#7fa9e6",
+    #  the card rules (2026-10-16): a switch is recessed - its track darker
+    #  than the card with an edge, its lit segment a raised lighter thumb
+    "track": "#17181a",
+    "track_edge": "#26282c",
+    "thumb": "#44474e",
 }
 
 #  The objectNames the stylesheet scopes by (hubqt names its widgets so).
@@ -135,6 +140,8 @@ ROLES = (
     "toolrow",      # a button drawn as a flat list row, its `hint` after the name
     "subhead",      # a subsection's head: a chevron, the name, its `hint` right
     "caption",      # a small muted label that stays visible (a `note` does not)
+    "label",        # a row's label left of a field or a switch: muted
+                    # (2026-10-16, the card rules)
     "columns",      # a row layout whose widgets - any, not only buttons - share
                     # its width equally (layout=True)
 )
@@ -406,13 +413,15 @@ QPushButton[skRole="danger"]:hover {{ background: {danger_tint}; }}
 QPushButton[skRole="tool"] {{ background: {field}; border: none;
     padding: {p3}px; }}
 QPushButton[skRole="tool"]:hover {{ background: {hover}; }}
-QWidget[skRole="segments"] {{ background: {field}; border-radius: {r6}px; }}
+QWidget[skRole="segments"] {{ background: {track}; border-radius: {r6}px;
+    border: {b1}px solid {track_edge}; }}
 QWidget[skRole="inset"] {{ background: {inset}; border: {b1}px solid {inset_line};
     border-radius: {r8}px; }}
 QPushButton[skRole="segment"] {{ background: transparent; border: none;
     border-radius: {r4}px; padding: {p2}px {p6}px; color: {muted}; }}
 QPushButton[skRole="segment"]:hover {{ color: {text}; }}
-QPushButton[skRole="segment"]:checked {{ background: {line}; color: {text}; }}
+QPushButton[skRole="segment"]:checked {{ background: {thumb}; color: {text};
+    font-weight: bold; }}
 
 QComboBox {{ background: {field}; border: none; border-radius: {r6}px;
     padding: {p1}px {p6}px; color: {text}; }}
@@ -451,8 +460,10 @@ QLabel[skRole="status"] {{ color: {status_text}; padding: {p2}px {p2}px; }}
 QLabel[skRole="note"] {{ color: {muted}; }}
 QLabel[skRole="context"] {{ color: {muted}; }}
 QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
-QLabel[skRole="heading"] {{ color: {text}; font-weight: bold;
-    padding: {p6}px 0px {p3}px 0px; border-bottom: {b1}px solid {line}; }}
+QLabel[skRole="heading"] {{ color: {muted}; font-weight: bold;
+    font-size: {small}px; padding: {p8}px 0px {p3}px 0px;
+    border-bottom: {b1}px solid {hover}; }}
+QLabel[skRole="label"] {{ color: {muted}; font-weight: normal; }}
 QLabel[skRole="dot"] {{ color: {faint}; }}
 QPushButton[skRole="toolrow"] {{ background: transparent; border: none;
     border-radius: {r5}px; padding: {p2}px {p6}px; text-align: left;
@@ -505,7 +516,11 @@ QToolButton[skRole="version"]:hover {{ background: {hover}; color: {text}; }}
 QToolButton[skRole="version"][skState="ok"] {{ background: {ok_tint}; color: {ok}; }}
 QToolButton[skRole="version"][skState="new"] {{ background: {accent_tint};
     color: {accent_text}; }}
-QWidget[skRole="message"] {{ background: {status}; border-radius: {r6}px; }}
+QWidget[skRole="message"] {{ background: {status}; border-radius: {r6}px;
+    border-left: {p3}px solid {line}; }}
+QWidget[skRole="message"][skTone="ok"] {{ border-left: {p3}px solid {ok}; }}
+QWidget[skRole="message"][skTone="wait"] {{ border-left: {p3}px solid {accent}; }}
+QWidget[skRole="message"][skTone="no"] {{ border-left: {p3}px solid {danger}; }}
 QLabel[skRole="messagetext"] {{ color: {status_text}; }}
 QWidget[skRole="strip"] {{ background: {strip}; border-radius: {r7}px; }}
 QWidget[skRole="rail"] {{ background: {strip}; border-radius: {r7}px; }}
@@ -515,6 +530,35 @@ QToolButton[skRole="jump"]:hover {{ background: {card}; }}
 QLabel[skRole="grouplabel"] {{ color: {muted}; font-size: {small}px; }}
 QLabel[skRole="cardtitle"] {{ color: {text}; font-weight: bold; }}
 """
+
+
+#  The message line's tone (2026-10-16, the card rules): what a status says
+#  read from its words, the writers unchanged. Plain when unsure - a refusal
+#  in other words stays plain, never green.
+_DONE_WORDS = ("added", "applied", "baked", "deleted", "done", "equipped",
+               "exported", "imported", "installed", "keyed", "moved",
+               "released", "removed", "retargeted", "saved", "sent",
+               "switched", "unequipped", "updated", "up to date", "created",
+               "connected", "opened", "snapshot")
+_WAIT_WORDS = ("waiting", "press finish", "then finish")
+_NO_WORDS = ("refused", "refuses", "cannot", "can't", "could not",
+             "couldn't", "failed", "nothing changed", "not found", "error",
+             "is locked", "no rig", "nothing was")
+
+
+def tone(text):
+    """"ok" / "wait" / "no" / "" for a status `text` (the message line's
+    coloured edge). Pure."""
+    low = (text or "").strip().lower()
+    if not low:
+        return ""
+    if any(word in low for word in _NO_WORDS):
+        return "no"
+    if any(word in low for word in _WAIT_WORDS):
+        return "wait"
+    if any(low.startswith(word) for word in _DONE_WORDS):
+        return "ok"
+    return ""
 
 
 def stylesheet(scale=1.0, tokens=None, arrow=None):

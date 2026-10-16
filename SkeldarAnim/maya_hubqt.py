@@ -926,6 +926,14 @@ class Card(object):
         self.body_layout.setObjectName("skeldarHubBodyLayout_" + key)
         self.body_layout.setContentsMargins(0, s(4), 0, 0)
         self.body_layout.setSpacing(0)
+        #  the head ruled off (2026-10-16, the card rules): a hairline at the
+        #  top of the body, so it opens and shuts with it
+        rule = _named(w.QFrame(self.body), "skeldarHubCardRule_" + key)
+        rule.setFixedHeight(max(1, s(1)))
+        rule.setStyleSheet("background: {0}; border: none;".format(
+            hubstyle.TOKENS["hover"]))
+        self.body_layout.addWidget(rule)
+        self.body_layout.addSpacing(s(4))
         column.addWidget(self.header)
         column.addWidget(self.body)
         self._collapsed = None
@@ -1731,6 +1739,8 @@ class Skin(object):
                                                self.px(14)))
         self.message_icon.setVisible(card is not None and bool(text))
         self._message_source = source if text else None
+        self.message.setProperty("skTone", hubstyle.tone(text))
+        repolish(self.message)
         self.message.setVisible(bool(text))
         if state is not None:
             self.set_state(state)
@@ -2891,6 +2901,16 @@ def _apply_mark(mark, card, scale, size):
         apply_list_rows(mark.target, cover.rows, scale)
         return True
     widget.setProperty("skRole", mark.role)
+    if mark.role == "heading":
+        #  a section's caption (2026-10-16, the card rules): capitals with a
+        #  little room between the letters - a stylesheet can do neither
+        text = widget.property("text") or ""
+        widget.setProperty("text", text.upper())
+        caption = q.QtGui.QFont(widget.font())
+        caption.setLetterSpacing(q.QtGui.QFont.AbsoluteSpacing,
+                                 max(1.0, hubstyle.px(1, scale)))
+        widget.setFont(caption)
+        return True
     if mark.role == "inset":
         #  A plain QWidget paints no stylesheet background unless asked to
         #  (2026-10-02, the Connect block); its own layout gets the padding -
