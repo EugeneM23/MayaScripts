@@ -13,7 +13,8 @@ Spec: docs/superpowers/specs/2026-10-15-radial-menu-design.md. The animator: «�
   (alpha 1 everywhere, so a click anywhere lands on it), never taking focus.
 - A section opens its popup by the cursor (`maya_hubpop.open_at`); a function runs through
   `maya_hotkeys.run`; a two-step function that is left waiting gets the Finish popup.
-- `build_panel()` is the hub's Radial Menu card, the editor of the eight slots.
+- `build_panel()` is the hub's Radial Menu card, the editor of the slots and of how many there are
+  (2..12, eight by default; 2026-10-16: «возможность указывать количество разделов»).
 
 Qt is imported lazily through maya_hubqt. The state lives on `sys` (trap 111).
 """
@@ -32,14 +33,13 @@ KEY_LABEL = "alt+q"
 KEY = ("q", {"altModifier": True})
 
 SLOT_BTN = "skeldarRadialSlot{0}"
-CENTRE_BTN = "skeldarRadialCentre"
+SLOT_ROW = "skeldarRadialSlotRow{0}"
+SLOT_DIR = "skeldarRadialSlotDir{0}"
+COUNT_MENU = "skeldarRadialCount"
 STATUS = "skeldarRadialStatus"
 
 TICK_MS = 16
 FINISH_POLL_MS = 300
-
-# Where the slots stand in the editor's three rows (the compass: NW N NE / W . E / SW S SE).
-GRID = ((7, 0, 1), (6, None, 2), (5, 4, 3))
 
 # The icon of a function, by its row's key prefix (the section's own icon for a section).
 _COMMAND_ICONS = (
@@ -61,10 +61,24 @@ def _state():
 # ------------------------------------------------------------------ the slots
 
 def slots():
-    """The eight items (rules.decode of the optionVar)."""
+    """Every remembered item, rules.MAX_SLOTS of them (rules.decode of the optionVar); the menu
+    shows the first `count()`."""
     text = cmds.optionVar(query=rules.SLOTS_VAR) \
         if cmds.optionVar(exists=rules.SLOTS_VAR) else ""
     return rules.decode(text if isinstance(text, str) else "")
+
+
+def count():
+    """How many slots the menu shows (rules.SLOTS when never set)."""
+    if not cmds.optionVar(exists=rules.COUNT_VAR):
+        return rules.SLOTS
+    return rules.clamp_count(cmds.optionVar(query=rules.COUNT_VAR))
+
+
+def set_count(value):
+    value = rules.clamp_count(value)
+    cmds.optionVar(intValue=(rules.COUNT_VAR, value))
+    return value
 
 
 def set_slots(items):
@@ -356,7 +370,8 @@ class Menu(object):
         self.keys = []
         self.mode = "hold"            # "hold" while the key is down, "click" after a tap
         self.hover = None
-        self.items = slots()
+        self.count = count()
+        self.items = slots()[:self.count]
         self.texts = [slot_text(item) for item in self.items]
         self.scale = _scale()
         self.centre = (0, 0)          # global
@@ -402,7 +417,8 @@ class Menu(object):
 
     def pointed(self):
         x, y = self.cursor()
-        return rules.slot_at(x - self.centre[0], y - self.centre[1], self.px(rules.DEAD))
+        return rules.slot_at(x - self.centre[0], y - self.centre[1], self.px(rules.DEAD),
+                             self.count)
 
     def tick(self):
         if not self.alive():
@@ -501,7 +517,7 @@ class Menu(object):
         cx, cy = self._local(widget, self.centre)
         centre = QtCore.QPointF(cx, cy)
         # the ring
-        ring = self.px(rules.RADIUS)
+        ring = self.px(rules.ring_radius(self.count))
         pen = QtGui.QPen(QtGui.QColor(t["line"]))
         pen.setWidthF(self.px(1.5))
         p.setPen(pen)
@@ -532,7 +548,7 @@ class Menu(object):
         icon_px = int(self.px(16))
         h = self.px(30)
         for i, item in enumerate(self.items):
-            dx, dy = rules.slot_position(i, ring)
+            dx, dy = rules.slot_position(i, ring, self.count)
             px_, py_ = cx + dx, cy + dy
             text = self.texts[i]
             lit = i == self.hover
@@ -543,7 +559,7 @@ class Menu(object):
                 continue
             finish = text.startswith("Finish ")
             w = metrics.horizontalAdvance(text) + icon_px + self.px(26)
-            rect = QtCore.QRectF(px_ - w * rules.pill_anchor(i), py_ - h / 2.0, w, h)
+            rect = QtCore.QRectF(px_ - w * rules.pill_anchor(i, self.count), py_ - h / 2.0, w, h)
             if lit:
                 bg, fg = QtGui.QColor(t["accent"]), t["on_accent"]
             else:
@@ -733,22 +749,41 @@ def status(message):
 
 
 def refresh(*_):
-    """Every slot button reads its item."""
-    items = slots()
-    for i, item in enumerate(items):
+    """The count reads the optionVar; the first `count()` slot rows are shown, each its direction
+    and its item; the rest are hidden (their items kept)."""
+    n = count()
+    if cmds.optionMenu(COUNT_MENU, exists=True):
+        cmds.optionMenu(COUNT_MENU, edit=True, value=str(n))
+    for i, item in enumerate(slots()):
         name = _slot_name(i)
         if not cmds.button(name, exists=True):
             continue
+        shown = i < n
+        if cmds.rowLayout(SLOT_ROW.format(i), exists=True):
+            cmds.rowLayout(SLOT_ROW.format(i), edit=True, manage=shown)
+        if not shown:
+            continue
+        where = rules.direction(i, n)
+        if cmds.text(SLOT_DIR.format(i), exists=True):
+            cmds.text(SLOT_DIR.format(i), edit=True, label=where)
         label = item_label(item) or "(empty)"
         cmds.button(name, edit=True, label=label,
                     annotation="{0}: {1} - click to choose, right click to clear".format(
-                        rules.COMPASS[i], label))
+                        where, label))
 
 
 def _choose(index, item):
     set_slot(index, item)
     refresh()
-    return status("{0}: {1}".format(rules.COMPASS[index], item_label(item) or "empty"))
+    return status("{0}: {1}".format(rules.direction(index, count()),
+                                     item_label(item) or "empty"))
+
+
+def choose_count(value):
+    """The count dropdown: how many slots the menu shows."""
+    n = set_count(value)
+    refresh()
+    return status("{0} slots on the ring".format(n))
 
 
 def _fill_menu(menu, index):
@@ -772,8 +807,9 @@ def _fill_menu(menu, index):
 
 def reset_defaults():
     set_slots(rules.DEFAULTS)
+    set_count(rules.SLOTS)
     refresh()
-    return status("The eight slots are the defaults again")
+    return status("Eight slots, the defaults again")
 
 
 def bind_key():
@@ -788,38 +824,38 @@ def bind_key():
     return status("{0} opens the radial menu{1}".format(KEY_LABEL, note))
 
 
-def _fill_row():
-    row = cmds.rowLayout(numberOfColumns=3,
-                         columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)])
-    return hubstyle.mark(row, "fill", layout=True)
-
-
 def build_panel():
-    """The card: a line on how it works, the eight slots as a compass around the key, Reset and
-    Bind, the line."""
+    """The card: a line on how it works, the count of slots, one row a slot (its direction, its
+    item; the rows past the count hidden), Reset and Bind, the line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(
         label="Hold {0} over a viewport, point at a slot, let go. A tap keeps it up for a "
               "click.".format(KEY_LABEL), align="left", wordWrap=True, height=36), "caption")
-    for row in GRID:
-        _fill_row()
-        for index in row:
-            if index is None:
-                hubstyle.mark(cmds.button(CENTRE_BTN, label=KEY_LABEL, enable=False,
-                                          height=hubstyle.height("button", 26),
-                                          annotation="The key that holds the menu"),
-                              "secondary")
-                continue
-            name = cmds.button(_slot_name(index), label="",
-                               height=hubstyle.height("button", 26))
-            hubstyle.mark(name, "secondary")
-            menu = cmds.popupMenu(parent=name, button=1)
-            cmds.popupMenu(menu, edit=True,
-                           postMenuCommand=(lambda m, i: lambda *_: _fill_menu(m, i))(menu, index))
-            clear = cmds.popupMenu(parent=name, button=3)
-            cmds.menuItem(label="Clear", parent=clear,
-                          command=(lambda i: lambda *_: _choose(i, ""))(index))
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnWidth2=(hubstyle.pick(60, 70), 80),
+                   columnAttach=[(1, "both", 0), (2, "both", 4)])
+    cmds.text(label="Slots", align="left")
+    cmds.optionMenu(COUNT_MENU, annotation="How many slots the ring holds (eight by default); "
+                                           "slots past the count keep their items",
+                    changeCommand=lambda value, *_: choose_count(value))
+    for n in range(rules.MIN_SLOTS, rules.MAX_SLOTS + 1):
+        cmds.menuItem(label=str(n))
+    cmds.setParent("..")
+    for index in range(rules.MAX_SLOTS):
+        cmds.rowLayout(SLOT_ROW.format(index), numberOfColumns=2, adjustableColumn=2,
+                       columnWidth2=(hubstyle.pick(60, 70), 80),
+                       columnAttach=[(1, "both", 0), (2, "both", 4)])
+        hubstyle.mark(cmds.text(SLOT_DIR.format(index), label="", align="left"), "caption")
+        name = cmds.button(_slot_name(index), label="",
+                           height=hubstyle.height("button", 26))
+        hubstyle.mark(name, "secondary")
+        menu = cmds.popupMenu(parent=name, button=1)
+        cmds.popupMenu(menu, edit=True,
+                       postMenuCommand=(lambda m, i: lambda *_: _fill_menu(m, i))(menu, index))
+        clear = cmds.popupMenu(parent=name, button=3)
+        cmds.menuItem(label="Clear", parent=clear,
+                      command=(lambda i: lambda *_: _choose(i, ""))(index))
         cmds.setParent("..")
     row = cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "both", 0), (2, "both", 4)])
     hubstyle.mark(row, "fill", layout=True)

@@ -2,9 +2,11 @@
 
 Spec: docs/superpowers/specs/2026-10-15-radial-menu-design.md.
 
-Eight slots on one ring, clockwise from north. A slot holds an ITEM: a section of the hub
-(`"section:<key>"`, its popup opens by the cursor) or one of our hotkey rows (`"cmd:<row key>"`,
-the function runs). The slots are remembered in one optionVar as a JSON list of eight.
+COUNT slots on one ring (2..12, eight by default - `skeldarRadialCount`, 2026-10-16), clockwise
+from north. A slot holds an ITEM: a section of the hub (`"section:<key>"`, its popup opens by the
+cursor) or one of our hotkey rows (`"cmd:<row key>"`, the function runs). The slots are remembered
+in one optionVar as a JSON list of MAX_SLOTS: the menu shows the first COUNT, so a smaller count
+and back loses nothing.
 
 Stdlib only: maya_radial (Qt + cmds) and the tests import it.
 """
@@ -12,13 +14,16 @@ Stdlib only: maya_radial (Qt + cmds) and the tests import it.
 import json
 import math
 
-SLOTS = 8
+SLOTS = 8                 # the default count
+MIN_SLOTS = 2
+MAX_SLOTS = 12
 COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 SLOTS_VAR = "skeldarRadialSlots"
+COUNT_VAR = "skeldarRadialCount"
 
 DEAD = 28                 # logical px: the centre where no slot is chosen
 TAP_S = 0.25              # a release this soon after the press, in the centre, keeps the menu up
-RADIUS = 112              # logical px: the ring the pills stand on
+RADIUS = 112              # logical px: the ring the pills stand on (eight slots or fewer)
 
 SECTION = "section:"
 COMMAND = "cmd:"
@@ -65,54 +70,88 @@ def command_item(key):
 
 
 def encode(slots):
-    """The optionVar's text for eight items."""
+    """The optionVar's text for MAX_SLOTS items."""
     return json.dumps(list(normalised(slots)))
 
 
 def normalised(slots):
-    """Exactly eight items, each a string ("" for empty); anything else empty."""
+    """Exactly MAX_SLOTS items, each a string ("" for empty); anything else empty."""
     out = []
-    for item in list(slots or [])[:SLOTS]:
+    for item in list(slots or [])[:MAX_SLOTS]:
         out.append(item if isinstance(item, str) and parse(item)[0] else "")
-    return tuple(out + [""] * (SLOTS - len(out)))
+    return tuple(out + [""] * (MAX_SLOTS - len(out)))
 
 
 def decode(text):
-    """The eight items the optionVar holds; the defaults for no text or a broken one."""
+    """The MAX_SLOTS items the optionVar holds (an older list of eight padded); the defaults for
+    no text or a broken one."""
     if not text:
-        return DEFAULTS
+        return normalised(DEFAULTS)
     try:
         value = json.loads(text)
     except (TypeError, ValueError):
-        return DEFAULTS
+        return normalised(DEFAULTS)
     if not isinstance(value, list):
-        return DEFAULTS
+        return normalised(DEFAULTS)
     return normalised(value)
 
 
-def slot_at(dx, dy, dead=DEAD):
+def clamp_count(value):
+    """A slot count the menu can show: MIN_SLOTS..MAX_SLOTS, SLOTS for anything unreadable."""
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return SLOTS
+    if value <= 0:
+        return SLOTS
+    return max(MIN_SLOTS, min(MAX_SLOTS, value))
+
+
+def step(count=SLOTS):
+    """Degrees between two slots."""
+    return 360.0 / clamp_count(count)
+
+
+def slot_at(dx, dy, dead=DEAD, count=SLOTS):
     """The slot the cursor offset (dx right, dy DOWN, screen pixels) points at, or None inside
-    the dead zone. Slot 0 is north, then clockwise, each 45 degrees wide."""
+    the dead zone. Slot 0 is north, then clockwise, each 360/count degrees wide."""
     if math.hypot(dx, dy) < dead:
         return None
+    width = step(count)
     angle = math.degrees(math.atan2(dx, -dy)) % 360.0     # 0 north, clockwise
-    return int(((angle + 22.5) % 360.0) // 45.0)
+    return int(((angle + width / 2.0) % 360.0) // width) % clamp_count(count)
 
 
-def slot_position(index, radius=RADIUS):
+def ring_radius(count=SLOTS, radius=RADIUS):
+    """The ring a count of slots stands on: RADIUS up to eight, wider past it so the pills keep
+    the room between them that eight have."""
+    return radius * max(1.0, clamp_count(count) / 8.0)
+
+
+def slot_position(index, radius=RADIUS, count=SLOTS):
     """(dx, dy) of slot `index`'s centre from the menu's centre, dy down."""
-    angle = math.radians(index * 45.0)
+    angle = math.radians(index * step(count))
     return (radius * math.sin(angle), -radius * math.cos(angle))
 
 
-def pill_anchor(index):
+def pill_anchor(index, count=SLOTS):
     """Where a slot's label stands on its point, as the share of its width left of it: the east
     slots grow outward to the right (0), the west ones to the left (1), north and south are
     centred (0.5) - Maya's marking menu, so a long name never crosses the centre."""
-    dx, _dy = slot_position(index, 1.0)
+    dx, _dy = slot_position(index, 1.0, count)
     if abs(dx) < 1e-6:
         return 0.5
     return 0.0 if dx > 0 else 1.0
+
+
+def direction(index, count=SLOTS):
+    """A slot's name in the editor: the compass point when it stands on one of the eight, else
+    its angle clockwise from north ("30 deg")."""
+    angle = (index * step(count)) % 360.0
+    eighth = angle / 45.0
+    if abs(eighth - round(eighth)) < 1e-6:
+        return COMPASS[int(round(eighth)) % 8]
+    return "{0:g} deg".format(round(angle, 1))
 
 
 def release_action(slot, filled, elapsed, tap=TAP_S):

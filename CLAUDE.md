@@ -10519,9 +10519,13 @@ SkeldarAnim hotkey set, an editor card, 8 slots and no submenus. Spec
     (Finish runs the row again; X leaves the tool waiting; it closes itself when nothing waits); its slot
     reads «Finish Aim» meanwhile.
   - Esc, the right button or a click off the slots closes the menu.
-- **The card** «Radial Menu» (Settings, Tabler `aperture`): the 8 slots as a compass around the key (left
-  click: Empty / Sections / one submenu per hotkey category; right click: Clear), Reset to defaults,
-  **Bind alt+q** (into the current set, only when it is ours).
+- **The card** «Radial Menu» (Settings, Tabler `aperture`): **Slots** 2..12 (2026-10-16, «возможность
+  указывать количество разделов»; optionVar `skeldarRadialCount`, 8 by default), then one row a slot -
+  its direction (`rules.direction`: the compass point, else «30 deg») and its item (left click: Empty /
+  Sections / one submenu per hotkey category; right click: Clear); rows past the count hidden, their
+  items kept (`skeldarRadialSlots` holds `MAX_SLOTS` 12). Reset to defaults (8 slots, the default
+  items), **Bind alt+q** (into the current set, only when it is ours). Each slot is 360/count degrees;
+  past eight the ring widens (`ring_radius`: 112 x count/8).
 - `maya_hotkeys`: `RELEASE_ROWS` gives a key its release nameCommand (`bind_row`, which `bind_defaults`
   now calls per row); `DEFAULT_KEYS` + alt+q, version 7 (the next switch of the hotkey map binds it).
 - Proof: `tests/test_radial_rules.py`, `tests/test_radial.py`, the hotkeys' release binding;

@@ -30,6 +30,47 @@ class SlotTests(unittest.TestCase):
             self.assertEqual(rules.slot_at(dx, dy), i)
 
 
+class CountTests(unittest.TestCase):
+    def test_default_count_is_eight(self):
+        self.assertEqual(rules.SLOTS, 8)
+        self.assertEqual(rules.clamp_count(None), 8)
+        self.assertEqual(rules.clamp_count("x"), 8)
+        self.assertEqual(rules.clamp_count(0), 8)
+
+    def test_count_clamped(self):
+        self.assertEqual(rules.clamp_count(1), rules.MIN_SLOTS)
+        self.assertEqual(rules.clamp_count(40), rules.MAX_SLOTS)
+        self.assertEqual(rules.clamp_count("6"), 6)
+
+    def test_every_count_finds_its_own_slots(self):
+        for n in range(rules.MIN_SLOTS, rules.MAX_SLOTS + 1):
+            for i in range(n):
+                dx, dy = rules.slot_position(i, 100.0, n)
+                self.assertEqual(rules.slot_at(dx, dy, count=n), i, (n, i))
+
+    def test_four_slots_are_the_cross(self):
+        self.assertEqual(rules.slot_at(0, -50, count=4), 0)
+        self.assertEqual(rules.slot_at(50, 0, count=4), 1)
+        self.assertEqual(rules.slot_at(0, 50, count=4), 2)
+        self.assertEqual(rules.slot_at(-50, 0, count=4), 3)
+        self.assertEqual(rules.slot_at(50, -40, count=4), 1)     # 51 deg -> east
+
+    def test_ring_widens_past_eight(self):
+        self.assertEqual(rules.ring_radius(4), rules.RADIUS)
+        self.assertEqual(rules.ring_radius(8), rules.RADIUS)
+        self.assertAlmostEqual(rules.ring_radius(12), rules.RADIUS * 1.5)
+
+    def test_directions(self):
+        self.assertEqual([rules.direction(i, 8) for i in range(8)], list(rules.COMPASS))
+        self.assertEqual([rules.direction(i, 4) for i in range(4)], ["N", "E", "S", "W"])
+        self.assertEqual(rules.direction(1, 12), "30 deg")
+        self.assertEqual(rules.direction(3, 12), "E")
+
+    def test_a_smaller_count_keeps_the_items_past_it(self):
+        items = tuple("cmd:r{0}".format(i) for i in range(rules.MAX_SLOTS))
+        self.assertEqual(rules.decode(rules.encode(items)), items)
+
+
 class AnchorTests(unittest.TestCase):
     def test_labels_grow_outward(self):
         self.assertEqual([rules.pill_anchor(i) for i in range(8)],
@@ -46,17 +87,17 @@ class ItemTests(unittest.TestCase):
         self.assertEqual(rules.parse(None), (None, None))
 
     def test_round_trip(self):
-        slots = ("section:tools", "", "cmd:tools.aim", "", "", "", "", "")
+        slots = ("section:tools", "", "cmd:tools.aim") + ("",) * (rules.MAX_SLOTS - 3)
         self.assertEqual(rules.decode(rules.encode(slots)), slots)
 
     def test_short_and_junk_normalised(self):
         self.assertEqual(rules.decode('["cmd:a", 3, "bad"]'),
-                         ("cmd:a",) + ("",) * 7)
-        self.assertEqual(len(rules.decode('["cmd:a"]' )), 8)
+                         ("cmd:a",) + ("",) * (rules.MAX_SLOTS - 1))
+        self.assertEqual(len(rules.decode('["cmd:a"]')), rules.MAX_SLOTS)
 
     def test_broken_text_gives_defaults(self):
         for text in ("", None, "{", "{}", "7"):
-            self.assertEqual(rules.decode(text), rules.DEFAULTS)
+            self.assertEqual(rules.decode(text)[:rules.SLOTS], rules.DEFAULTS)
 
     def test_defaults_are_eight_valid_items(self):
         self.assertEqual(len(rules.DEFAULTS), rules.SLOTS)

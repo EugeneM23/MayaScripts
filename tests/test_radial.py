@@ -19,18 +19,23 @@ class FakeCmds(object):
         self.vars = {}
         self.messages = []
 
-    def optionVar(self, exists=None, query=None, stringValue=None, **_kw):
+    def optionVar(self, exists=None, query=None, stringValue=None, intValue=None, **_kw):
         if exists is not None:
             return exists in self.vars
         if query is not None:
             return self.vars.get(query, 0)
         if stringValue is not None:
             self.vars[stringValue[0]] = stringValue[1]
+        if intValue is not None:
+            self.vars[intValue[0]] = intValue[1]
 
     def inViewMessage(self, assistMessage=None, **_kw):
         self.messages.append(assistMessage)
 
     def button(self, *_a, **_kw):
+        return False
+
+    def optionMenu(self, *_a, **_kw):
         return False
 
     def text(self, *_a, **_kw):
@@ -49,7 +54,21 @@ class RadialTests(unittest.TestCase):
         maya_radial.cmds = self.saved
 
     def test_no_var_is_the_defaults(self):
-        self.assertEqual(maya_radial.slots(), rules.DEFAULTS)
+        self.assertEqual(maya_radial.slots()[:rules.SLOTS], rules.DEFAULTS)
+        self.assertEqual(maya_radial.count(), 8)
+
+    def test_count_remembered_and_clamped(self):
+        self.assertEqual(maya_radial.set_count(5), 5)
+        self.assertEqual(maya_radial.count(), 5)
+        maya_radial.set_count(99)
+        self.assertEqual(maya_radial.count(), rules.MAX_SLOTS)
+
+    def test_reset_brings_eight_back(self):
+        maya_radial.set_count(4)
+        maya_radial.set_slot(9, "section:studio")
+        maya_radial.reset_defaults()
+        self.assertEqual(maya_radial.count(), 8)
+        self.assertEqual(maya_radial.slots()[:8], rules.DEFAULTS)
 
     def test_set_slot_keeps_the_others(self):
         maya_radial.set_slot(2, "section:studio")
