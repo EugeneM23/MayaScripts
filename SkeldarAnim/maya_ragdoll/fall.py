@@ -23,6 +23,7 @@ import maya.cmds as cmds
 import numpy as np
 
 from maya_ragdoll import plan, sim
+from maya_ragdoll import impulse
 from maya_ragdoll import weapon as wp
 
 __all__ = ["fall", "Refused", "DEFAULTS", "LAYER_PREFIX"]
@@ -127,7 +128,7 @@ def _bodies(worlds, keys):
     return dict((key, plan.body_frame(key, worlds)) for key in keys)
 
 
-def simulate(ref, a, b, s, colliders=(), progress=None, weapons=()):
+def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=True):
     """{"bones", "parents", "before", "first", "bodies": {frame: {body: 4x4}}, "radius", ...} -
     the ragdoll run from `a` to `b`, nothing of it left in the scene."""
     from maya_poselib import scene, timewalk
@@ -158,6 +159,7 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=()):
             p, q = plan.axis_points(key, w_first)
             axis[key] = (p, q)
             radius[key] = plan.radius(points.get(key), p, q, float(np.linalg.norm(q - p)))
+        hits, hit_notes = (impulse.hits(ref.rig, body_first, a, b) if impulses else ([], []))
         floor = plan.floor_height([points.get(k) for k in ("foot_l", "foot_r")],
                                   [axis[k] + (radius[k],) for k in ("foot_l", "foot_r")])
         world = sim.Scene(a, float(s["friction"]), float(s["bounce"]))
@@ -199,8 +201,16 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=()):
             try:
                 cmds.currentTime(a)          # the solver initialises on a time change at its start
                 bodies = {a: world.read()}
+                done = []
                 for t in range(a + 1, b + 1):
+                    for hit in hits:
+                        if hit["at"] == t:   # set for the one step into t, cleared after it
+                            j, point = plan.impulse(mass[hit["key"]], hit["speed"], hit["tip"],
+                                                    hit["direction"], bodies[t - 1][hit["key"]])
+                            world.impulse(hit["key"], j, point)
+                            done.append(hit)
                     cmds.currentTime(t)      # Bullet steps on a real time change, not MAnimControl
+                    world.clear_impulses()
                     bodies[t] = world.read()
                     if progress is not None and not progress(t):
                         raise Refused("cancelled - nothing changed")
@@ -211,7 +221,7 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=()):
     tracks = dict((path, dict((t, m @ bodies[t][name]) for t in bodies))
                   for path, (name, m) in boxes.items())
     return {"bones": bones, "parents": parents, "rider_of": rider_of, "first": first,
-            "weapons": tracks,
+            "weapons": tracks, "impulses": done, "impulse_notes": hit_notes,
             "body_first": body_first, "bodies": bodies, "radius": radius, "floor": floor,
             "mass": mass}
 
@@ -412,4 +422,9 @@ def fall(selection=None, given=None, progress=None):
         line += " | %d collider%s" % (len(colliders), "" if len(colliders) == 1 else "s")
     if dropped:
         line += " | " + dropped
+    hit_line = impulse.summary(run.get("impulses"))
+    if hit_line:
+        line += " | " + hit_line
+    if run.get("impulse_notes"):
+        line += " | " + "; ".join(run["impulse_notes"])
     return True, line

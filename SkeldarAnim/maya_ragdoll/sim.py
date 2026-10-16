@@ -62,6 +62,7 @@ class Scene(object):
         self.friction, self.bounce = friction, bounce
         self.bodies = {}           # key: (transform, shape)
         self.joints = {}
+        self._hit = set()
 
     # ---------------------------------------------------------------- bodies
 
@@ -205,6 +206,22 @@ class Scene(object):
 
     def go(self, frame):
         oma.MAnimControl.setCurrentTime(om.MTime(frame, om.MTime.uiUnit()))
+
+    def impulse(self, key, j, point):
+        """A hit on body `key` for the next step: `j` kg*cm/s in world axes, `point` an offset from
+        its centre in world axes (Bullet's own: measured 2026-10-16). It acts on every step while
+        set - `clear_impulses` after the step."""
+        sh = self.bodies[key][1]
+        cmds.setAttr(sh + ".impulse", *[float(v) for v in j])
+        cmds.setAttr(sh + ".impulsePosition", *[float(v) for v in point])
+        self._hit.add(key)
+
+    def clear_impulses(self):
+        for key in getattr(self, "_hit", ()):
+            sh = self.bodies[key][1]
+            cmds.setAttr(sh + ".impulse", 0, 0, 0)
+            cmds.setAttr(sh + ".impulsePosition", 0, 0, 0)
+        self._hit = set()
 
     def read(self, names=None):
         """{body: 4x4 world} as the bodies stand now."""

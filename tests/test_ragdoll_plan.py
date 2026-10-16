@@ -160,6 +160,37 @@ class Bake(unittest.TestCase):
         self.assertEqual(plan.span(None, 12.0, 60), (12, 72))
 
 
+class Impulses(unittest.TestCase):
+
+    def test_the_nearest_capsule_axis_names_the_body(self):
+        axes = {"head": (np.array([0, 160, 0.0]), np.array([0, 175, 0.0])),
+                "pelvis": (np.array([0, 90, 0.0]), np.array([0, 100, 0.0]))}
+        self.assertEqual(plan.nearest_body((3, 170, 4), axes), "head")
+        self.assertEqual(plan.nearest_body((10, 95, 0), axes), "pelvis")
+
+    def test_an_arrow_rides_its_body(self):
+        body0 = at(turn((0, 0, 1), 30.0), (0, 100, 0))
+        arrow = at(turn((0, 1, 0), 90.0), (5, 110, 2))       # +Z turned onto +X
+        tip, d = plan.in_body(arrow, body0)
+        moved = at(turn((1, 0, 0), 50.0), (40, 20, 7))
+        _j, point = plan.impulse(1.0, 1.0, tip, d, moved)
+        expect = (np.append(plan.pos(arrow), 1) @ np.linalg.inv(body0) @ moved)[:3]
+        np.testing.assert_allclose(point + plan.pos(moved), expect, atol=1e-9)
+
+    def test_the_impulse_is_mass_times_speed_along_the_arrow_in_world(self):
+        body = at(turn((0, 1, 0), 90.0), (10, 50, 0))
+        j, point = plan.impulse(4.0, 3.0, (0, 0, 0), (1, 0, 0), body)
+        np.testing.assert_allclose(j, np.array([1, 0, 0]) @ turn((0, 1, 0), 90.0) * 1200, atol=1e-9)
+        np.testing.assert_allclose(point, [0, 0, 0], atol=1e-9)
+
+    def test_a_hit_before_the_fall_lands_on_its_first_step_after_it_none(self):
+        self.assertEqual(plan.hit_frame(2, 10, 40), 11)
+        self.assertEqual(plan.hit_frame(10, 10, 40), 11)
+        self.assertEqual(plan.hit_frame(25.4, 10, 40), 25)
+        self.assertEqual(plan.hit_frame(40, 10, 40), 40)
+        self.assertIsNone(plan.hit_frame(41, 10, 40))
+
+
 class Pure(unittest.TestCase):
 
     def test_plan_imports_nothing_of_maya(self):

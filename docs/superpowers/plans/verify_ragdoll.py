@@ -253,6 +253,89 @@ line = panel.press_fall()
 print("   ", line)
 gate("falls from frame %d to %d" % (A + 2, A + 17) in line, "the card's press with the card closed")
 
+
+# ---------------------------------------------------------------- phase 6: impulses
+from maya_ragdoll import impulse, plan  # noqa: E402
+import numpy as np  # noqa: E402
+for L in rd.layers():
+    cmds.delete(L)
+cmds.currentTime(A)
+arrow, iline = impulse.create([N("FKHead_M")])
+print("   ", iline)
+gate(cmds.getAttr(arrow + "." + impulse.MARKER) == "head" and cmds.getAttr(arrow + ".frame") == A,
+     "+ Impulse on FKHead_M: an arrow on the head at frame %d" % A)
+cmds.undo()
+gate(not cmds.objExists(arrow), "one undo takes the arrow away")
+cmds.redo()
+gate(cmds.objExists(arrow), "redo brings it back")
+gate(maya_rigs.under(arrow, rig.group), "the arrow is under the rig's group (Delete takes it)")
+REF = rd._ref([N("Main")])
+S = rd.settings({"length": 30})
+T = 30
+fps = rd._fps()
+
+
+def sim(**kw):
+    return rd.simulate(REF, A, A + T, S, **kw)["bodies"]
+
+
+cmds.setAttr(arrow + ".enabled", 0)
+base = sim()
+off = sim()
+same = max(np.abs(base[t]["head"] - off[t]["head"]).max() for t in base)
+gate(same < 1e-6, "a disabled arrow changes nothing (%.2e)" % same)
+centre = plan.pos(base[A]["head"])
+
+
+def aim(tip, direction, frame, speed=6.0):
+    cmds.setAttr(arrow + ".enabled", 1)
+    cmds.setAttr(arrow + ".frame", frame)
+    cmds.setAttr(arrow + ".speed", speed)
+    cmds.currentTime(A)
+    cmds.xform(arrow, worldSpace=True, matrix=plan.flat(impulse.arrow_matrix(tip, direction)))
+
+
+aim(centre, (1, 0, 0), A)
+hit = sim()
+dv = ((plan.pos(hit[A + 1]["head"]) - plan.pos(hit[A]["head"]))
+      - (plan.pos(base[A + 1]["head"]) - plan.pos(base[A]["head"]))) * fps
+print("    head dv on the hit step (cm/s)", np.round(dv, 1))
+along = dv[0]
+gate(along > 150 and abs(dv[0]) > 2 * max(abs(dv[1]), abs(dv[2])),
+     "a 6 m/s hit along +X knocks the head along +X (%.0f cm/s)" % along)
+
+
+def turned(bodies, t):
+    r = plan.rot(bodies[t]["head"]) @ plan.rot(bodies[A]["head"]).T
+    return math.degrees(math.acos(max(-1, min(1, (np.trace(r) - 1) / 2))))
+
+
+aim(centre + np.array([0, 0, 0.0]) + plan.rot(base[A]["head"])[0] * 12.0, (1, 0, 0), A)
+spun = sim()
+def apart(one, two, t):
+    r = plan.rot(one[t]["head"]) @ plan.rot(two[t]["head"]).T
+    return math.degrees(math.acos(max(-1, min(1, (np.trace(r) - 1) / 2))))
+
+
+gate(apart(spun, hit, A + 2) > 3.0,
+     "a hit off the head's axis turns it (%.1f deg from the hit through its centre at +2; that "
+     "one swung it %.1f on its neck)" % (apart(spun, hit, A + 2), apart(hit, base, A + 2)))
+aim(centre, (1, 0, 0), A + 10)
+mid = sim()
+before = max(np.abs(mid[t]["head"] - base[t]["head"]).max() for t in range(A, A + 10))
+after_ = (plan.pos(mid[A + 14]["head"]) - plan.pos(base[A + 14]["head"]))[0]
+gate(before < 1e-6 and after_ > 3.0, "a hit at %d changes nothing before it (%.1e) and moves the head "
+     "after (%.1f cm)" % (A + 10, before, after_))
+aim(centre, (1, 0, 0), A + T + 5)
+run = rd.simulate(REF, A, A + T, S)
+gate(any("after the fall" in n for n in run["impulse_notes"]) and not run["impulses"],
+     "an arrow after the fall is named: %s" % run["impulse_notes"])
+aim(centre, (1, 0, 0), A)
+cmds.select(N("FKElbow_R"))
+ok, line = rd.fall(given={"length": T})
+print("   ", line)
+gate(ok and "1 impulse: head 6 m/s at %d" % A in line, "Fall names the hit")
+
 print("")
 print("%d of %d gates failed" % (len(FAILS), COUNT[0]))
 for f in FAILS:

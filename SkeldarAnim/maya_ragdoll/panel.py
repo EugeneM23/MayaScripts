@@ -14,6 +14,7 @@ HUB_SECTION = "ragdoll"
 SUBTITLE = "skeldarRagdollSubtitle"
 STATUS = "skeldarRagdollStatus"
 FALL_BTN = "skeldarRagdollFall"
+IMPULSE_BTN = "skeldarRagdollImpulse"
 DROP_CHIP = "skeldarRagdollDropWeapon"
 OPTION = "skeldarRagdoll_settings"
 LAYER_TABS = "skeldarRagdollLayers"
@@ -40,6 +41,9 @@ TIPS = {
             "follows it",
     "layer": "New layer: the fall on Ragdoll_<frame>, the take kept under it (mute to see it). Base "
              "layer: the take's keys replaced from the fall on",
+    "impulse": "Select a part of a rig: an arrow on it - its tip is where the hit lands, the arrow "
+               "its direction; Frame, Speed (m/s) and Enabled in the Channel Box. Fall hits that "
+               "part at that frame",
     "fall": "Select any part of a rig (and any meshes to fall onto). The fall starts at the "
             "highlight's first frame, else the current frame",
 }
@@ -99,7 +103,13 @@ def subtitle():
         return rd.NOTHING
     s = remembered()
     a, b = rd.plan.span(rd._highlight(), cmds.currentTime(query=True), s["length"])
-    return "%s falls from frame %d to %d" % (ref.label, a, b)
+    from maya_ragdoll import impulse
+    try:
+        count = len([p for p in impulse.arrows(ref.rig) if cmds.getAttr(p + ".enabled")])
+    except Exception:                                      # noqa: BLE001
+        count = 0
+    tail = (", %d impulse%s" % (count, "" if count == 1 else "s")) if count else ""
+    return "%s falls from frame %d to %d%s" % (ref.label, a, b, tail)
 
 
 def refresh(*_):
@@ -119,6 +129,21 @@ def press_fall(*_):
         import traceback
         print(traceback.format_exc())
         message = "Ragdoll failed: %s" % error
+    refresh()
+    return status(message)
+
+
+def press_impulse(*_):
+    """+ Impulse: an arrow on the selected part of a rig."""
+    from maya_ragdoll import impulse
+    try:
+        _arrow, message = impulse.create()
+    except rd.Refused as refusal:
+        message = str(refusal)
+    except Exception as error:                              # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
+        message = "+ Impulse failed: %s" % error
     refresh()
     return status(message)
 
@@ -172,8 +197,11 @@ def build_panel():
             select=key == s["layer"], collection=LAYER_TABS, annotation=TIPS["layer"],
             onCommand=_changed), "segment")
     cmds.setParent("..")
-    hubstyle.mark(cmds.rowLayout(numberOfColumns=1, adjustableColumn=1,
-                                 columnAttach=[(1, "both", 0)]), "fill", layout=True)
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                                 columnAttach=[(1, "both", 0), (2, "both", 0)]), "fill", layout=True)
+    hubstyle.mark(cmds.button(IMPULSE_BTN, label="+ Impulse", height=hubstyle.height("button", 28),
+                              annotation=TIPS["impulse"], command=lambda *_: press_impulse()),
+                  "secondary", "plus")
     hubstyle.mark(cmds.button(FALL_BTN, label="Fall", height=hubstyle.height("button", 28),
                               annotation=TIPS["fall"], command=lambda *_: press_fall()),
                   "primary", "skull")

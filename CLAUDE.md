@@ -11270,6 +11270,34 @@ redo, no Bullet node left, the sword in the hand then on the floor, a box stoppi
 205 against 349 free), a second press replacing its layer, the card's press with the card closed;
 `tests/test_ragdoll_plan.py` 18; 6876 unit tests. **Not seen live** (the animator's checks).
 
+**…and impulses: an arrow on a body part, a hit at its own frame** (the same day: «реализовать возможность
+задать импульс в определенную часть тела по определенному вектору»; asked, all the recommendation: an
+arrow in the scene, its own Frame, its strength a speed in m/s). Spec
+`docs/superpowers/specs/2026-10-16-ragdoll-impulse-design.md`. `maya_ragdoll/impulse.py`; the card's
+**+ Impulse** (secondary, beside Fall), hotkey row `ragdoll.impulse`.
+- **+ Impulse**: the body whose capsule axis passes nearest the first selected node's pivot
+  (`plan.nearest_body`, read on the game skeleton now); an arrow `<ns>:impulse1` with its tip on that body's
+  centre pointing along the active view (`view_direction`, persp without one), in a space following the
+  body's first bone (`weaponspace.ensure_marked_space`, `skeldarRagdollImpulseSpace`, group
+  `RagdollImpulses` under the rig's group - Delete character takes it). Marked `skeldarRagdollImpulse` =
+  the body; Channel Box `frame`, `speed` (m/s, default 5), `enabled`; the head drawn on the arrow, the
+  shaft on a child stretched `speed` x 6 cm. One undo.
+- **In Fall** (`impulse.hits`, read at the fall's first frame in each body's frame, `plan.in_body`): a
+  frame at or before the fall hits on its first step, after it none (named); before the step into the
+  frame `sim.Scene.impulse` sets J = body mass x speed x 100 along the arrow at the tip less the body's
+  centre (`plan.impulse`), the step runs, `clear_impulses`. The line: «| 1 impulse: head 6 m/s at 9».
+- **The hit part does not reach the whole Speed**: the joints share the knock with the body - a 6 m/s
+  hit on the head gave the head 3.8-4.0 m/s on the hit step on all three rigs. Speed is the part's
+  speed as if it were loose.
+
+Proof: `verify_ragdoll.py` **36/36** on Manny_Rig, Creep_Rig and Orc_D_Rig (phase 6: + Impulse on
+FKHead_M names the head, one undo / redo, under the rig's group; a disabled arrow changes nothing,
+0.0; the hit along +X 376 / 400 / 375 cm/s on the head; off the head's axis 6.7-8.5 deg from the hit
+through its centre; a hit at a+10 changes nothing before it, 0.0, and moves the head 38.7 cm after; an
+arrow after the fall named; Fall's line); 6925 unit tests. Three verifies run at once once read the
+Creep's last frames 3.21 cm apart where alone it reads 0.28 twice: Bullet under a loaded machine is not
+bit-for-bit repeatable. Not seen in a GUI Maya (port 7002 closed).
+
 265. **Maya Bullet, measured** (2026-10-16): gravity is in METRES (-9.8 drops a cm scene in slow motion:
      -980); `initialVelocity` cm/s and `initialAngularVelocity` deg/s, world axes; the solver
      initialises only on a time change AT its startTime (build, then `currentTime(a)`), steps only on

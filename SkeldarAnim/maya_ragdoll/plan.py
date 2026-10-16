@@ -375,3 +375,45 @@ def span(highlight, current, length):
         a = int(round(current))
         b = a + int(round(length))
     return a, b
+
+
+# ---------------------------------------------------------------- impulses (2026-10-16)
+
+SHAFT_CM = 6.0             # an impulse arrow's shaft: this many cm a m/s of its speed
+
+
+def _segment_distance(p, a, b):
+    ab = b - a
+    t = float(np.clip(np.dot(p - a, ab) / max(float(np.dot(ab, ab)), 1e-12), 0.0, 1.0))
+    return float(np.linalg.norm(p - (a + ab * t)))
+
+
+def nearest_body(point, axes):
+    """The body whose capsule axis passes nearest `point`: `axes` {key: (start, end)}."""
+    p = np.asarray(point, dtype=float)
+    return min(axes, key=lambda k: (_segment_distance(p, *axes[k]), k))
+
+
+def in_body(arrow, body):
+    """(tip, direction) of an arrow (4x4, its +Z the direction, its origin the tip) in a body's
+    frame (4x4): what rides the body as it moves."""
+    local = rigid(arrow) @ np.linalg.inv(body)
+    return pos(local), _unit(rot(local)[2])
+
+
+def hit_frame(frame, a, b):
+    """The step an arrow at `frame` hits on, or None: at or before the fall's first frame, the
+    first step (`a + 1`); after its last, none."""
+    f = int(round(frame))
+    if f > b:
+        return None
+    return max(f, a + 1)
+
+
+def impulse(mass, speed, tip, direction, body):
+    """(J, point): the impulse (kg*cm/s, world) knocking a body of `mass` kg at `speed` m/s along
+    `direction`, and its point as Bullet takes it - an offset from the body's centre in world axes.
+    `tip` / `direction` in the body's frame, `body` its 4x4 now."""
+    d = _unit(np.asarray(direction, dtype=float) @ rot(body))
+    tip_w = np.append(np.asarray(tip, dtype=float), 1.0) @ body
+    return d * (float(mass) * float(speed) * 100.0), tip_w[:3] - pos(body)

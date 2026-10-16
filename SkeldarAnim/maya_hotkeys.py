@@ -1016,6 +1016,9 @@ _OURS = (
      "The selected rig falls by physics from the current frame (or the highlight), baked into "
      "its controls",
      partial(_ragdoll, "press_fall")),
+    ("ragdoll.impulse", "Ragdoll", "+ Impulse",
+     "An impulse arrow on the selected part of a rig: Fall hits that part along it at its Frame",
+     partial(_ragdoll, "press_impulse")),
     ("window.timebar", "Windows", "Time Bar",
      "Switch between the Time Bar and Maya's own time slider",
      _timebar),

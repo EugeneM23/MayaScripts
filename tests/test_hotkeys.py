@@ -493,7 +493,8 @@ class OurRows(unittest.TestCase):
         #  + window.tabs, tabs.next / .previous (2026-10-15, Scene Tabs)
         #  + radial.press / .release, window.radial (2026-10-15)
         #  + tools.fp_setup (2026-10-16, 1P Setup)
-        self.assertEqual(len(ours), 73)                 # + window.timebar (2026-10-16)
+        #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
+        self.assertEqual(len(ours), 74)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
