@@ -10169,7 +10169,12 @@ loop points, Holden's two-sided cubic offsets.
   2. the seam (**Seam, fr**, default 8): a helper or twist that does not loop is REBUILT (the helper on its bone at its rest
      relation; the twist by the UE rule, counter -(1-t) / follow t); a body joint keyed short refilled; else Holden, value
      and slope;
-  3. **Smooth, fr** (default 0): a periodic Gaussian on every joint.
+  3. **Smooth, fr** (default 0): a periodic Gaussian on every joint - **the feet kept where the source steps**
+     (`clean._keep_feet`: each leg solved again from its smoothed hip onto its old ankle, meanpose's leg solve).
+     Until 2026-10-16 the feet were smoothed too: their heights blurred across the contacts and the step reading
+     broke - at 0.9 one of three walks in the animator's scene read «the left foot steps 4 times a cycle and the
+     right 3» and Pick refused it (its status line only in the popup copy pressed); at 1.5 all three refused, at 3
+     they read as one stride a cycle.
 - **Fix posture is a BUTTON** in the Clean tab (`scene.fix_posture(name, knobs)`, `panel.press_fix_posture`): the walk read
   as it will be read (looped, its seam closed, not smoothed), its posture set right against the shipped UE5 idle
   (`assets/walk_reference_ue5.wpose.gz`, its 302 frames' mean, carried onto the walk by `pose.carried` - a headless 1P walk

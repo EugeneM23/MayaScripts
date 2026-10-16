@@ -712,9 +712,12 @@ def posture(rig, worlds, c, statics, reference, strength, report):
 
 def smooth(rig, r, sigma, report):
     """Every joint's turn and moving place (the root's off its travel line) through a periodic Gaussian of
-    `sigma` frames."""
+    `sigma` frames - but the feet stay where the source steps (_keep_feet): smoothed, a foot's height blurs
+    across its contacts and the walk misreads its steps (2026-10-16: Smooth 0.9 read a clip's left foot
+    stepping 4 times a cycle and the right 3, and Pick refused it)."""
     if sigma <= 0.0:
         return
+    before = rig.worlds()
     P = rig.frames - 1
     k = np.fft.rfftfreq(P)
     gain = np.exp(-0.5 * (2.0 * math.pi * k * sigma) ** 2)
@@ -730,8 +733,34 @@ def smooth(rig, r, sigma, report):
         if tx is not None:
             tx[:P] = low(tx[:P])
             rig.trans[j] = back(tx)
+    _keep_feet(rig, before)
     _close_frames(rig, r)
-    report.add("smooth", "every joint through a Gaussian of %.1f frames" % sigma, "smoothed %.1f fr" % sigma)
+    report.add("smooth", "every joint through a Gaussian of %.1f frames, the feet kept where they step" % sigma,
+               "smoothed %.1f fr" % sigma)
+
+
+def _keep_feet(rig, before):
+    """Each leg solved again on every frame from its smoothed hip onto the ankle `before` had (worlds before the
+    smoothing): the foot and what is under it as they were in the world, the thigh and calf turned the least
+    (meanpose's leg solve)."""
+    from . import meanpose as mp
+    index = rig.index
+    sides = [s for s in mp.SIDES if all("%s_%s" % (b, s) in index for b in mp.LEGS)]
+    if not sides:
+        return
+    old = Rig(rig.names, rig.parents, before)
+    after = rig.worlds()
+    R, P = before[..., :3, :3], before[..., 3, :3]
+    newR, newP = after[..., :3, :3].copy(), after[..., 3, :3].copy()
+    kids = mp._children(rig.parents)
+    for side in sides:
+        th = index["thigh_" + side]
+        foot = set(mp._below(index["foot_" + side], kids))
+        mp._solve_leg(side, th, index, old.rot, old.trans, R, P, newR, newP, kids, foot)
+    out = np.array(after, copy=True)
+    out[..., :3, :3], out[..., 3, :3] = newR, newP
+    kept = Rig(rig.names, rig.parents, out)
+    rig.rot, rig.trans = kept.rot, kept.trans
 
 
 def _helper_bones(c):

@@ -188,6 +188,34 @@ class SmoothTests(unittest.TestCase):
         out0, _ = run(noisy, smooth=0.0)
         self.assertGreater(float(deg(rig_of(out0.worlds).rot[j] @ np.swapaxes(original, -1, -2)).max()), 2.9)
 
+    def test_smooth_keeps_the_feet_where_they_step(self):
+        # 2026-10-16: Smooth 0.9 blurred a clip's foot heights until the walk read the left foot stepping 4 times
+        # and the right 3, and Pick refused it; the feet stay the source's, the legs reach them
+        worlds = walker_worlds()
+        rig = rig_of(worlds)
+        j = IDX["pelvis"]
+        noise = np.array([1.5 * (1 if f % 2 else -1) for f in range(P + 1)])
+        noise[-1] = noise[0]
+        rig.trans[j, :, 1] += noise                              # the hips jitter 1.5 cm up and down
+        noisy = rig.worlds()
+        out, report = run(noisy, smooth=3.0)
+        self.assertIn("smooth", steps(report))
+        for side in ("l", "r"):
+            for name in ("foot_" + side, "ball_" + side):
+                k = IDX[name]
+                self.assertLess(float(np.abs(out.worlds[k] - noisy[k]).max()), 1e-6, name)
+            th, ca, fo = IDX["thigh_" + side], IDX["calf_" + side], IDX["foot_" + side]
+            for f in range(P + 1):                               # the leg whole: its bones' lengths kept
+                for a, b in ((th, ca), (ca, fo)):
+                    was = np.linalg.norm(noisy[b, f, 3, :3] - noisy[a, f, 3, :3])
+                    now = np.linalg.norm(out.worlds[b, f, 3, :3] - out.worlds[a, f, 3, :3])
+                    self.assertAlmostEqual(float(now), float(was), places=5)
+        hips = out.worlds[j, :P, 3, 1]
+        self.assertLess(float(np.abs(np.diff(hips)).max()), 1.0)      # the jitter is gone from the hips
+        a, b = wm.analyse(clip_of(noisy)), wm.analyse(out)
+        for side in ("l", "r"):
+            self.assertEqual([f.on for f in a.steps[side]], [f.on for f in b.steps[side]])
+
 
 def turned(worlds, name, axis_world_like, degrees):
     """A copy with `name`'s local turned `degrees` about an axis given in its parent's frame."""
