@@ -11383,8 +11383,27 @@ one-frame highlight is none to them).
 - `MAnimMessage.addAnimKeyframeEditedCallback` marks keys dirty; a 250 ms timer reads the rest.
 - Keys are not read during playback. The jobs find the strip through `sys._skeldar_timebar`.
 
-**In place of Maya's**: docked against `TimeSlider`, then `TimeSlider` and `RangeSlider` hidden. optionVar
-`skeldarTimeBar` (on by default), hub ⋮ -> **Time bar**, hotkey row `window.timebar`.
+**In place of Maya's**: docked against `TimeSlider`, then `TimeSlider` and `RangeSlider` hidden. Hotkey row
+`window.timebar` switches ours and Maya's.
+
+**Three modes** (the same evening: «всплывающим когда наводим в область нижней части экрана»; asked: a third
+mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom edge**:
+- optionVar `skeldarTimeBarMode`; an older `skeldarTimeBar` 1/0 reads as Docked / Maya's (`look.mode_from`).
+- `maya_timebar.ensure()` is called by the hub's build; `set_mode`.
+- **Bottom edge** (`maya_timebar/edge.py`, `BottomEdge`): two frameless Qt.Tool windows owned by Maya's main
+  window:
+  - a host along the bottom of its client area (`look.bottom_band`), holding the strip;
+  - a 2 px sensor at window opacity 1/255.
+- It reuses `maya_edgerules`:
+  - the dwell, `may_reveal`, `hide_blockers`, the hide delay;
+  - plus a drag in the strip as a blocker.
+- It slides by moving the strip inside the host under a mask (`look.slide`, 180 ms out, 140 back).
+- It follows Maya's window on a 300 ms poll.
+- The strip shows a 📌 (`Strip.set_edge`) there only.
+- In this mode the docked control is hidden and its uiScript builds nothing (`bar.build`).
+- The jobs (`bar.start_jobs`) belong to no control: the old ones are killed and made again for whichever host
+  stands.
+- Tests: `tests/test_timebar_edge.py`. **Not seen in a GUI Maya.**
 
 **Proof**:
 - `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake

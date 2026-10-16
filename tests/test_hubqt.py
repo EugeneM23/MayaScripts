@@ -159,9 +159,17 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertIs(actions[6].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
+        self.assertEqual(actions[4].menu().objectName(), "skeldarHubTimeBarMenu")
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), ("timebar", True), "classic"])
+                          ("animations", False), "classic"])
+        rows = actions[4].menu().actions()
+        self.assertEqual([a.text() for a in rows], ["Maya's", "Docked", "Bottom edge"])
+        rows[2].trigger()
+        self.assertEqual(self.calls[-1], ("timebar", "edge"))
+        self.skin.paint_timebar("docked")
+        self.assertTrue(rows[1].isChecked())
+        self.assertEqual(self.calls[-1], ("timebar", "edge"))
 
     def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
         """2026-10-01: «звук наводки на кнопочку», switched in the menu."""

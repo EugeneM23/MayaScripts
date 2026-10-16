@@ -551,7 +551,7 @@ def _dress_timebar(skin):
     """The menu's Time bar row = the animator's choice (on by default)."""
     try:
         import maya_timebar
-        skin.paint_timebar(maya_timebar.wanted())
+        skin.paint_timebar(maya_timebar.mode())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -687,8 +687,7 @@ def _time_bar_soon():
     def show_bar():
         try:
             import maya_timebar
-            if maya_timebar.wanted():
-                maya_timebar.ensure_docked()
+            maya_timebar.ensure()
         except Exception:                                    # noqa: BLE001
             print("SkeldarAnim: the time bar could not be shown")
             print(traceback.format_exc())
@@ -1239,12 +1238,12 @@ def set_animations(on):
     return on
 
 
-def set_timebar(on):
-    """The menu's Time bar: ours in place of Maya's time slider, or Maya's back."""
+def set_timebar(choice):
+    """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16)."""
     import maya_timebar
-    message = maya_timebar.set_on(bool(on))
+    message = maya_timebar.set_on(choice)
     if is_skinned():
-        _SKIN.paint_timebar(bool(on))
+        _SKIN.paint_timebar(maya_timebar.mode())
     say(message)
     return message
 

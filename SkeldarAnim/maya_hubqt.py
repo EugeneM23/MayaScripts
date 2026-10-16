@@ -1459,8 +1459,11 @@ class Skin(object):
             if key == "layout":
                 self._build_layout_menu(text)
                 continue
+            if key == "timebar":
+                self._build_timebar_menu(text)
+                continue
             action = self.menu.addAction(text)
-            if key in ("sounds", "animations", "timebar"):
+            if key in ("sounds", "animations"):
                 #  a switch (2026-10-01, the hover sound, the card motion):
                 #  `triggered` carries the new state and is not emitted by
                 #  paint_sounds / paint_animations
@@ -1815,10 +1818,37 @@ class Skin(object):
         """The menu's Interface sounds row shows `on` (no callback)."""
         self.sounds_action.setChecked(bool(on))
 
-    def paint_timebar(self, on):
-        """The menu's Time bar row shows `on`: our strip in place of Maya's time
-        slider (2026-10-16; no callback)."""
-        self.timebar_action.setChecked(bool(on))
+    def _build_timebar_menu(self, text):
+        """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16): three
+        exclusive rows; a row's `triggered` calls back ("timebar", choice),
+        `paint_timebar` checks a row and calls nothing."""
+        q = qt()
+        sub = self.menu.addMenu(text)
+        sub.setObjectName("skeldarHubTimeBarMenu")
+        group_class = (getattr(q.QtGui, "QActionGroup", None)
+                       or q.QtWidgets.QActionGroup)       # Qt6 / Qt5
+        self._timebar_group = group_class(sub)
+        self._timebar_group.setExclusive(True)
+        self.timebar_actions = {}
+        for label, choice in (("Maya's", "maya"), ("Docked", "docked"),
+                              ("Bottom edge", "edge")):
+            action = sub.addAction(label)
+            action.setCheckable(True)
+            self._timebar_group.addAction(action)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("timebar", c))
+            self.timebar_actions[choice] = action
+
+    def paint_timebar(self, choice):
+        """The menu's Time bar shows `choice` (2026-10-16; no callback). An older
+        caller's True / False reads as Docked / Maya's."""
+        if choice is True:
+            choice = "docked"
+        elif choice is False:
+            choice = "maya"
+        action = getattr(self, "timebar_actions", {}).get(choice)
+        if action is not None:
+            action.setChecked(True)
 
     def paint_animations(self, on):
         """The cards slide and a jump glides (`on`) or everything is

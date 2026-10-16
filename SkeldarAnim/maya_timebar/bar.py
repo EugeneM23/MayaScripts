@@ -63,6 +63,7 @@ GLYPHS = {
     "cache": "M2 4h12v3H2zM2 9h12v3H2z",
     "sound": "M2 6h3l4-3v10L5 10H2zM11 4.6l1-1a6.4 6.4 0 0 1 0 8.8l-1-1a5 5 0 0 0 0-6.8z",
     "auto": "M8 2a6 6 0 1 1 0 12A6 6 0 0 1 8 2zm0 1.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM8 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6z",
+    "pin": "M9.5 1.5l5 5-1.4 1.4-1.1-.4-2.6 2.6.4 3.1-1.4 1.4-3-3-3.4 3.4-1-1 3.4-3.4-3-3 1.4-1.4 3.1.4 2.6-2.6-.4-1.1z",
     "prefs": ("M7 1h2l.4 1.8 1.4.6 1.6-1 1.4 1.4-1 1.6.6 1.4L15 7v2l-1.8.4-.6 1.4 1 1.6-1.4 1.4-1.6-1-1.4.6"
               "L9 15H7l-.4-1.8-1.4-.6-1.6 1-1.4-1.4 1-1.6-.6-1.4L1 9V7l1.8-.4.6-1.4-1-1.6 1.4-1.4 1.6 1 1.4-.6z"
               "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"),
@@ -850,7 +851,12 @@ def classes():
             self.sound.clicked.connect(lambda *_a: self._sound_menu())
             self.auto.clicked.connect(lambda *_a: self._do("toggle_auto"))
             self.prefs.clicked.connect(lambda *_a: self.call("preferences"))
-            for b in (self.loop, self.cache, self.speed, self.sound, self.auto, self.prefs):
+            #  the 📌 of the bottom edge (2026-10-16): only shown there
+            self.edge = None
+            self.pin = Pill(self, "pin", tip="Keep the time bar out", toggle=True)
+            self.pin.clicked.connect(lambda checked=False: self.edge and self.edge.set_pinned(self.pin.isChecked()))
+            self.pin.setVisible(False)
+            for b in (self.loop, self.cache, self.speed, self.sound, self.auto, self.prefs, self.pin):
                 top.addWidget(b)
             # time row
             self.timeline = Timeline(self)
@@ -893,6 +899,11 @@ def classes():
             self.kick()
 
         # building -----------------------------------------------------------
+        def set_edge(self, controller):
+            """Standing in the bottom edge's host: the 📌 shows."""
+            self.edge = controller
+            self.pin.setVisible(controller is not None)
+
         def register(self, widget):
             self.moving.append(widget)
             return len(self.moving) - 1
@@ -1275,9 +1286,18 @@ def _drop_callbacks():
     state["callbacks"] = []
 
 
-def _start_jobs():
+def start_jobs():
+    """The jobs and callbacks that keep the live strip current - one set, whichever
+    host it stands in (the docked control or the bottom edge): the old ones killed
+    first, none parented to a control that may be hidden."""
     import maya.cmds as cmds
     from functools import partial
+    for job in _state().get("jobs", []):
+        try:
+            if cmds.scriptJob(exists=job):
+                cmds.scriptJob(kill=job, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
     jobs = []
     for event, method, args in (("playbackRangeChanged", "refresh", ()),
                                 ("SelectionChanged", "refresh", (True,)),
@@ -1285,7 +1305,7 @@ def _start_jobs():
                                 ("Undo", "refresh", (True,)),
                                 ("Redo", "refresh", (True,))):
         try:
-            jobs.append(cmds.scriptJob(event=[event, partial(_job, method, *args)], parent=CONTROL))
+            jobs.append(cmds.scriptJob(event=[event, partial(_job, method, *args)]))
         except Exception:                                    # noqa: BLE001 - an event this Maya lacks
             pass
     _state()["jobs"] = jobs
@@ -1297,7 +1317,7 @@ def _start_jobs():
     except Exception:                                        # noqa: BLE001
         #  no callback: the scriptJob at least moves it when Maya is idle
         try:
-            jobs.append(cmds.scriptJob(event=["timeChanged", partial(_job, "on_time")], parent=CONTROL))
+            jobs.append(cmds.scriptJob(event=["timeChanged", partial(_job, "on_time")]))
         except Exception:                                    # noqa: BLE001
             pass
     try:
@@ -1309,9 +1329,15 @@ def _start_jobs():
 
 
 def build():
-    """The uiScript body: the strip inside the workspaceControl."""
+    """The uiScript body: the strip inside the workspaceControl - unless the bar
+    lives at the bottom edge now (Maya restoring a workspace that held the docked
+    control): then the control is hidden and nothing is built in it."""
     import maya.cmds as cmds
     import maya_hubqt
+    from . import mode, _hide_control
+    if mode() == "edge":
+        cmds.evalDeferred(_hide_control, lowestPriority=True)
+        return None
     q = maya_hubqt.qt()
     host = maya_hubqt.host_widget(CONTROL) if q is not None else None
     if host is None:
@@ -1323,5 +1349,6 @@ def build():
     widget = make(Link(), ui)
     host.layout().addWidget(widget)
     _state()["bar"] = widget
-    _start_jobs()
+    _state()["host"] = "docked"
+    start_jobs()
     return widget

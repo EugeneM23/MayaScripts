@@ -35,24 +35,37 @@ def uiscript(root):
             "import maya_timebar.bar\nmaya_timebar.bar.build()\n").format(root)
 
 
-def wanted():
-    """The animator's choice: ours (True, the default) or Maya's own slider."""
+MODE_VAR = "skeldarTimeBarMode"          # maya | docked | edge (2026-10-16)
+LAST_VAR = "skeldarTimeBarLastMode"      # the last of docked / edge, for the switch back
+
+
+def mode():
+    """Maya's, Docked or Bottom edge - an older build's on/off optionVar read
+    when there is no mode yet."""
     import maya.cmds as cmds
-    if not cmds.optionVar(exists=OPTIONVAR):
-        return True
-    return bool(cmds.optionVar(q=OPTIONVAR))
+    from . import look
+    value = cmds.optionVar(q=MODE_VAR) if cmds.optionVar(exists=MODE_VAR) else None
+    old = cmds.optionVar(q=OPTIONVAR) if cmds.optionVar(exists=OPTIONVAR) else None
+    return look.mode_from(value, old)
+
+
+def wanted():
+    """Ours (docked or at the bottom edge) rather than Maya's slider."""
+    return mode() != "maya"
 
 
 def active():
     """The time bar stands and Maya's slider is hidden by it: the highlight is ours.
     Cheap, and False wherever there is no UI."""
-    bar = _state().get("bar")
-    if bar is None:
+    if _state().get("bar") is None:
         return False
     try:
         import maya.cmds as cmds
         if cmds.about(batch=True):
             return False
+        edge = _state().get("edge")
+        if edge is not None and edge.alive():
+            return True
         return bool(cmds.workspaceControl(CONTROL, exists=True)
                     and cmds.workspaceControl(CONTROL, q=True, visible=True))
     except Exception:                                        # noqa: BLE001
@@ -71,6 +84,7 @@ def ensure_docked():
     import maya.cmds as cmds
     if cmds.about(batch=True):
         return ""
+    drop_edge()
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
         for flags in ({"actLikeMayaUIElement": True}, {"resizeHeight": HEIGHT}):
@@ -78,6 +92,9 @@ def ensure_docked():
                 cmds.workspaceControl(CONTROL, edit=True, **flags)
             except Exception:                                # noqa: BLE001
                 pass
+        from . import bar
+        if bar.current() is None or _state().get("host") != "docked":
+            bar.build()
     else:
         #  actLikeMayaUIElement: no tab, no title - it sits as Maya's own slider does
         options = dict(label=LABEL, retain=False, floating=False, heightProperty="fixed",
@@ -92,6 +109,50 @@ def ensure_docked():
     return CONTROL
 
 
+def _hide_control():
+    import maya.cmds as cmds
+    try:
+        if cmds.workspaceControl(CONTROL, exists=True):
+            cmds.workspaceControl(CONTROL, edit=True, visible=False)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def ensure_edge():
+    """The bar at the bottom edge of Maya's window: the docked one hidden, Maya's
+    two hidden, the bar out of sight until the cursor reaches the edge."""
+    import maya.cmds as cmds
+    if cmds.about(batch=True):
+        return None
+    edge = _state().get("edge")
+    if edge is not None and edge.alive():
+        maya_slider(False)
+        return edge
+    _hide_control()
+    from . import bar, edge as edge_module
+    edge_module.destroy_all()
+    ui = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
+    controller = edge_module.BottomEdge(lambda parent: bar.make(bar.Link(), ui, parent=parent))
+    _state()["edge"] = controller
+    _state()["bar"] = controller.strip
+    _state()["host"] = "edge"
+    bar.start_jobs()
+    maya_slider(False)
+    return controller
+
+
+def drop_edge():
+    edge = _state().pop("edge", None)
+    if edge is not None:
+        try:
+            edge.destroy()
+        except Exception:                                    # noqa: BLE001
+            pass
+        if _state().get("host") == "edge":
+            _state()["bar"] = None
+            _state()["host"] = None
+
+
 def maya_slider(show):
     """Maya's Time Slider and Range Slider shown or hidden."""
     import maya.cmds as cmds
@@ -103,26 +164,60 @@ def maya_slider(show):
             pass
 
 
+MESSAGES = {
+    "maya": "Maya's time slider is back - ⋮ -> Time bar brings ours again",
+    "docked": "Time bar docked in place of Maya's time slider",
+    "edge": "Time bar at the bottom edge - move the mouse to the bottom of Maya's window",
+}
+
+
+def set_mode(choice):
+    """Maya's, Docked or Bottom edge, remembered; returns what to say."""
+    import maya.cmds as cmds
+    from . import look
+    choice = choice if choice in look.MODES else "docked"
+    cmds.optionVar(stringValue=(MODE_VAR, choice))
+    cmds.optionVar(intValue=(OPTIONVAR, 0 if choice == "maya" else 1))
+    if choice != "maya":
+        cmds.optionVar(stringValue=(LAST_VAR, choice))
+    if choice == "maya":
+        drop_edge()
+        _hide_control()
+        maya_slider(True)
+    elif choice == "docked":
+        ensure_docked()
+    else:
+        ensure_edge()
+    return MESSAGES[choice]
+
+
+def ensure():
+    """The mode the animator chose, standing (the hub's build calls it)."""
+    choice = mode()
+    if choice == "edge":
+        return ensure_edge()
+    if choice == "docked":
+        return ensure_docked()
+    return None
+
+
 def show():
     import maya.cmds as cmds
-    cmds.optionVar(intValue=(OPTIONVAR, 1))
-    ensure_docked()
-    return "Time bar on - Maya's time slider is hidden (⋮ -> Time bar brings it back)"
+    last = cmds.optionVar(q=LAST_VAR) if cmds.optionVar(exists=LAST_VAR) else "docked"
+    return set_mode(last if last in ("docked", "edge") else "docked")
 
 
 def hide():
     """Maya's own slider back, ours hidden."""
-    import maya.cmds as cmds
-    cmds.optionVar(intValue=(OPTIONVAR, 0))
-    if cmds.workspaceControl(CONTROL, exists=True):
-        cmds.workspaceControl(CONTROL, edit=True, visible=False)
-    maya_slider(True)
-    return "Maya's time slider is back - ⋮ -> Time bar turns the time bar on again"
+    return set_mode("maya")
 
 
 def set_on(on):
+    """A choice ('maya' / 'docked' / 'edge') or, from an older caller, on / off."""
+    if isinstance(on, str):
+        return set_mode(on)
     return show() if on else hide()
 
 
 def toggle():
-    return set_on(not (wanted() and active()))
+    return hide() if wanted() and active() else show()

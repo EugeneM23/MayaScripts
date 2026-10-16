@@ -182,6 +182,29 @@ class FullBarTests(unittest.TestCase):
         self.assertEqual(look.envelope([], 30, 30, 0, 0, 10), [])
 
 
+class EdgeTests(unittest.TestCase):
+
+    def test_the_mode_and_an_older_build_s_switch(self):
+        self.assertEqual(look.mode_from("edge"), "edge")
+        self.assertEqual(look.mode_from(None, 0), "maya")
+        self.assertEqual(look.mode_from(None, 1), "docked")
+        self.assertEqual(look.mode_from("nonsense"), "docked")
+        self.assertEqual([m for _l, m in look.MODE_LABELS], list(look.MODES))
+
+    def test_the_bands_sit_along_the_window_s_bottom(self):
+        self.assertEqual(look.bottom_band((100, 50, 1900, 1000), 126), (100, 924, 1900, 126))
+        self.assertEqual(look.sensor_band((100, 50, 1900, 1000), 2), (100, 1048, 1900, 2))
+        self.assertEqual(look.bottom_band((0, 0, 800, 60), 126)[3], 60)
+
+    def test_the_slide(self):
+        self.assertEqual(look.slide(0, 120, True, 180), 120)
+        self.assertEqual(look.slide(180, 120, True, 180), 0)
+        self.assertLess(look.slide(60, 120, True, 180), 60)          # eases out: most of the way early
+        self.assertEqual(look.slide(0, 120, False, 140), 0)
+        self.assertEqual(look.slide(140, 120, False, 140), 120)
+        self.assertEqual(look.slide(5, 120, True, 0), 0)
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_the_package_import_with_the_stdlib_alone(self):

@@ -294,3 +294,43 @@ def envelope(samples, rate, fps, offset, start, end, per_frame=4):
             out.append((f, amp))
         f += step
     return out
+
+
+# -- the bottom edge (2026-10-16: «всплывающим когда наводим в область нижней части экрана») --
+
+MODES = ("maya", "docked", "edge")
+MODE_LABELS = (("Maya's", "maya"), ("Docked", "docked"), ("Bottom edge", "edge"))
+SLIDE_MS = 180          # out
+SLIDE_BACK_MS = 140     # back
+
+
+def mode_from(mode, old=None):
+    """The mode from its optionVar; an older build's on/off one (1 docked, 0
+    Maya's) when there is none; docked by default."""
+    if mode in MODES:
+        return mode
+    if old is not None:
+        return "docked" if old else "maya"
+    return "docked"
+
+
+def bottom_band(window, height):
+    """(x, y, w, h): the band along the bottom of Maya's window `window` (x, y,
+    w, h) the bar slides out into."""
+    x, y, w, h = window
+    height = min(int(height), int(h))
+    return int(x), int(y + h - height), int(w), height
+
+
+def sensor_band(window, px=2):
+    """The thin strip along the bottom of Maya's window that brings the bar out."""
+    x, y, w, h = window
+    return int(x), int(y + h - px), int(w), int(px)
+
+
+def slide(t_ms, height, showing, ms):
+    """How far the bar stands below its place (px) `t_ms` into a slide of `ms`:
+    out eases from `height` to 0, back from 0 to `height`."""
+    u = 1.0 if ms <= 0 else max(0.0, min(1.0, t_ms / float(ms)))
+    e = 1 - (1 - u) ** 3 if showing else u ** 3
+    return int(round(height * (1 - e))) if showing else int(round(height * e))
