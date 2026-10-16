@@ -10194,6 +10194,35 @@ Walk dropdown).
   one skeleton under the sword 2.0e-2 - a pose amplifies the card's 9-decimal rounding, asd reads 1.3e-2 there
   too; the card edited re-keyed, deleted keyed on). **Not seen live.**
 
+**…several walkers at once: Pick adds to a list** (2026-10-16: «обрабатывать сразу несколько циклов на разных
+персонажах ... pick должна добавлять персонажа в список ... для каждого цикла своя средняя поза ... все настройки
+работают одинаково для всех циклов но каждый цикл уникальный»; asked, all the recommendation: the knobs shared,
+the pose card shared, the mean pose per CYCLE). Spec `docs/superpowers/specs/2026-10-16-walk-builder-many-walkers-design.md`.
+**This replaces "the target" everywhere above: there is no single target any more.**
+- **The list is the scene's walked skeletons** (`scene.walkers()`: every top joint with the `skeldarWalk` marker v2
+  in the active tab whose memo is not `"listed": false`; read from the scene each time, so it survives save and
+  reopen, and older walked skeletons are listed). `scene.set_listed`, `walker_label` (the character group without
+  `_Character`, else the namespace, else the short name), `selected_roots`.
+- **Pick** (`press_apply`) puts the walk well's ACTIVE cycle on every selected skeleton and lists it; on a walker
+  already listed it changes its cycle. Activating another walk card re-keys nobody.
+- **Every re-key is `rekey_all(walk=None)`**: a released knob, a pose card taken / cleared / removed, a part chip,
+  In place, Reset - every listed walker, each on its own cycle with the card's knobs and pose; a walker that fails
+  is named and the others still keyed. Fix posture re-keys the walkers on that cycle only.
+- **Tempo is a ratio** (`walk_knobs`): the card counts the active cycle's frames, a walker on another cycle takes
+  the same ratio of its own (≥ 4); `_walk_taken` rescales the card's tempo to keep the ratio.
+- **The card's list** `skeldarWalkList` under Pick: «character - cycle», click selects them in the scene, Delete /
+  right click > Remove from the list (`listed` false, keys kept), right click > Take its settings into the card
+  (`take_settings`: what selecting a walked skeleton used to do). Selecting a NEW listed walker makes its cycle the
+  active one (`_activate`, `_SELECTED`: a refresh with the same walker still selected leaves a clicked walk card).
+- **Rig pose: one Manny rig per cycle** (`meanrig.rigs()`, `find(walk)`): Create acts on the active cycle (beside
+  its first walker); Update reads every rig into its own cycle and re-keys that cycle's walkers
+  (`update(rekey=panel.rekey_walkers)`, unrecorded); Reset / Delete the active cycle's.
+Proof: `docs/superpowers/plans/walkparam/verify_walk_many.py` **16/16 mayapy standalone** (three Manny skeletons,
+two on asd and one on dw: Pick on two at once, a knob re-keying all three each on its cycle, the tempo ratio (45 of
+dw's 90 → 16 of asd's 31), out of the list and back, two rig poses, asd's +20° reaching A and B 20.02° and C
+0.0000); `verify_walk_meanpose.py` again; unit tests in `test_walk_panel` / `test_walk_cycle_cards`. **Not seen
+live.**
+
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the
      forearms 8-9) and a 20 deg shoulder turn came with a phantom 0.9 deg on the forearm. Read them in their DRIVE

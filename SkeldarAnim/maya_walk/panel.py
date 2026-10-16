@@ -11,11 +11,14 @@ Since 2026-10-15 the walk and the pose are both Pose Library cards in wells (col
 animation card of a walk cycle in the walk well, a pose card in the pose well; the old walk files and poses
 were moved into the library once. Apply is called Pick («мне кажется так понятнее что эта кнопка делает»).
 
-Select a skeleton and press Pick: the walk is keyed onto it and it becomes the card's target - a released
-knob re-keys it. Selecting a skeleton that already walks reads its walk, pose and knobs into the card, and it
-becomes the target. Every value is remembered (optionVars), so the card comes
-back as it was and a hotkey row presses with the card closed.
-The design: docs/superpowers/specs/2026-10-13-walk-builder-card-design.md.
+Select skeletons and press Pick: the active cycle is keyed onto each and each joins the card's list of
+walkers (2026-10-16, «обрабатывать сразу несколько циклов на разных персонажах»): the list is every walked
+skeleton in the scene (scene.walkers). The knobs and the pose are shared - a released knob re-keys every
+walker, each on its own cycle (the tempo as a ratio of the active cycle) - and each cycle keeps its own mean
+pose. Selecting a walker makes its cycle the active one. Every value is remembered (optionVars), so the card
+comes back as it was and a hotkey row presses with the card closed.
+The design: docs/superpowers/specs/2026-10-13-walk-builder-card-design.md,
+2026-10-16-walk-builder-many-walkers-design.md.
 """
 import json
 import os
@@ -34,6 +37,9 @@ POSE_WELL_TEXT = "skeldarWalkPoseWellText"
 WALK_WELL = "skeldarWalkCycleWell"
 WALK_WELL_TEXT = "skeldarWalkCycleWellText"
 APPLY_BTN = "skeldarWalkApply"
+#  The walkers (2026-10-16, «кнопочка pick должна добавлять персонажа в список»): every skeleton Pick put a cycle
+#  on, read from the scene (scene.walkers); every knob re-keys them all, each on its own cycle
+WALKER_LIST = "skeldarWalkList"
 RESET_BTN = "skeldarWalkReset"
 SAVE_WALK_BTN = "skeldarWalkSaveWalk"
 GROUP_TABS = "skeldarWalkGroups"
@@ -55,7 +61,7 @@ SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
 SIDE_MARK = {"l": " L", "r": " R"}
 OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
-NOTHING = "Select a skeleton - Pick puts the walk on it"
+NOTHING = "Select skeletons - Pick puts the walk on them and lists them"
 
 #  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
 #  at a time; Clean's are the clean's (maya_walk.clean - scene.ALL_DEFAULTS), the rest the model's
@@ -163,10 +169,14 @@ LABELS = {
     "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
 }
 TIPS = {
-    "apply": "Pick: put the walk on the selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, Biped ...), in its own "
-             "proportions, from where it stands. It becomes the target: every released knob re-keys it. "
-             "Selecting a walked skeleton reads its walk, pose and knobs back.",
-    "reset": "Every knob back to its default (the tempo to the walk's own); the target is keyed again",
+    "apply": "Pick: put the active walk cycle on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, Biped "
+             "...), in its own proportions, from where it stands, and add it to the list below (a walker already "
+             "in it takes the new cycle). Every released knob re-keys every walker in the list, each on its own "
+             "cycle; the tempo counts the active cycle's frames, the others take the same ratio of theirs.",
+    "reset": "Every knob back to its default (the tempo to the walk's own); every walker is keyed again",
+    "walker_list": "The walkers: every skeleton Pick put a cycle on - «character - cycle». Click: select them (the "
+                   "first one's cycle becomes the active one); right click: take a walker's settings into the card, "
+                   "or remove it from the list (Delete too) - its keys stay, Pick puts it back",
     "save_walk": "Save: select a bone of a walk or a run and press - it goes to the Pose Library as an "
                  "animation card (folder Walk cycles) and into the walk well; a cycle or not: it is looped when it "
                  "is read (the loop found and its seam closed - the Clean tab)",
@@ -176,19 +186,21 @@ TIPS = {
     "fix_posture": "Fix posture: the walk's bones set right against the UE5 idle - a bone moved off its joint goes "
                    "back; a clavicle or a foot outside a body's limits (a shoulder dropped, a foot turned out) "
                    "takes its other side's motion mirrored, or - both sides out - the idle's pose with its own "
-                   "motion. Written into the walk's file (the original kept beside it as .orig); the target is "
-                   "keyed again",
+                   "motion. Written into the walk's file (the original kept beside it as .orig); the walkers on "
+                   "this cycle are keyed again",
     "in_place": "In place: the walk on the spot - the root stays where the first frame has it, the body moves "
                 "about it and the planted feet slide back (what a game moves by its capsule)",
-    "mean_create": "Create: a Manny rig beside the target, standing in the walk's mean pose (each bone's mean - an "
-                   "abstract pose) with every correction made so far; pressed again, the same rig posed again",
+    "mean_create": "Create: a Manny rig beside the first walker on the active cycle, standing in the cycle's mean "
+                   "pose (each bone's mean - an abstract pose) with every correction made so far; every cycle has "
+                   "its own rig, and pressed again the active cycle's is posed again",
     "mean_update": "Update: what you changed on the rig pose goes into the walk for the whole cycle - the spine, the "
                    "arms, the head and the pelvis's turn, its height, the feet's width, the knees' and the feet's "
-                   "turn - kept beside the walk's file; the target is keyed again. Undo on the rig, then Update, "
-                   "takes a change back",
-    "mean_delete": "Delete: the rig pose out of the scene; the walk keeps its correction",
-    "mean_reset": "Reset: the walk's correction dropped - the rig pose back in the plain mean pose, the target "
-                  "keyed again",
+                   "turn - kept beside the walk's file. Every rig pose in the scene is read, each into its own "
+                   "cycle, and the walkers on the cycles that changed are keyed again. Undo on the rig, then "
+                   "Update, takes a change back",
+    "mean_delete": "Delete: the active cycle's rig pose out of the scene; the cycle keeps its correction",
+    "mean_reset": "Reset: the active cycle's correction dropped - its rig pose back in the plain mean pose, the "
+                  "walkers on it keyed again",
     "pose_well": "The pose the walk takes at the Pose share: drag a pose card from the Pose Library here (or its "
                  "right button: Use in Walk Builder). The walk follows the card - its Update from selection is taken "
                  "on the next re-key; a copy kept on the walked skeleton walks on when the card is gone. Click: the "
@@ -406,29 +418,37 @@ def _show_walk_line():
         pass
 
 
-def _walk_taken(name):
-    """The walk `name` made the one Pick puts on: its own tempo in the card, the target keyed again. The line."""
+def _active_frames():
+    """The active cycle's own frames (what the card's tempo is counted in), or None without one."""
+    try:
+        return scene.load_walk(chosen_walk(), values())[0].P
+    except scene.REFUSALS:
+        return None
+
+
+def _walk_taken(name, say=True):
+    """The walk `name` made the one Pick puts on - nobody re-keyed (2026-10-16: Pick assigns a cycle). The
+    card's tempo keeps its ratio to the cycle: counted in the new cycle's frames. The line."""
+    old = _active_frames()
+    tempo = float(values().get("tempo") or 0.0)
     walk, _, _, report = scene.load_walk(name, values())      # refused here: nothing remembered
     _set_walk(name)
     show_report(report)
+    shown = walk.P if not (old and tempo >= 1) else max(4, int(round(tempo * walk.P / float(old))))
     quiet, _QUIET[0] = _QUIET[0], True
     try:
-        _set_knobs({"tempo": walk.P}, walk.P)
+        _set_knobs({"tempo": shown}, walk.P)
     finally:
         _QUIET[0] = quiet
     line = "walk %s | %s" % (scene.walk_label(name), walk.summary())
     if report.changed:
         line += " | " + report.short()
-    try:
-        root = scene.target_root()
-    except scene.Refusal:
-        return line + " - Pick puts it on the selected skeleton"
-    return line + " | " + _apply_to(root)
+    return line + (" - Pick puts it on the selected skeletons" if say else "")
 
 
 def take_walk_card(path):
     """An animation card dropped into the walk well (or clicked there, or Use in Walk Builder): the walk Pick puts
-    on a skeleton, the target keyed again. Refused: a pose card, a card of objects, one that is no cycle."""
+    on a skeleton (nobody re-keyed). Refused: a pose card, a card of objects, one that is no cycle."""
     def run():
         from maya_poselib import store
         if not store.is_anim(path):
@@ -561,7 +581,7 @@ def _set_card(rel):
 
 def take_card(path):
     """A Pose Library card dropped into the well (or Use in Walk Builder): the walk's pose. A share of 0 is set
-    to 1 (a pose dropped to do nothing reads as broken); a target standing is keyed again. Answers the line."""
+    to 1 (a pose dropped to do nothing reads as broken); every walker is keyed again. Answers the line."""
     def run():
         name, _bones = scene.wcards.read_card(path)          # refused: an animation or an objects card
         _set_card(scene.wcards.relative(path, _library()))
@@ -573,20 +593,15 @@ def take_card(path):
             finally:
                 _QUIET[0] = quiet
             note = " (Pose share set to 1)"
-        try:
-            root = scene.target_root()
-        except scene.Refusal:
-            return "pose card %s%s - select a skeleton and press Pick" % (name, note)
-        return "pose card %s%s | %s" % (name, note, _apply_to(root))
+        return _rekey("pose card %s%s" % (name, note))
     return _press(run)
 
 
 def _rekey(line):
-    try:
-        root = scene.target_root()
-    except scene.Refusal:
-        return line
-    return line + " | " + _apply_to(root)
+    """`line`, and every walker keyed again (none: how to get one)."""
+    if not scene.walkers():
+        return line + " - select skeletons and press Pick"
+    return line + " | " + rekey_all()
 
 
 def pick_card(path):
@@ -595,7 +610,7 @@ def pick_card(path):
 
 
 def clear_card():
-    """No card active: the walk's own posture (the well keeps its cards); a target standing is keyed again."""
+    """No card active: the walk's own posture (the well keeps its cards); every walker keyed again."""
     def run():
         _set_card("")
         return _rekey("no pose card - the walk's own posture")
@@ -755,7 +770,7 @@ def side_changed(mode):
 
 def knob_changed(name):
     """A released slider: in Left / Right a leg or arm knob sets that side alone; in Both it sets the knob
-    and links its sides again. Then the target is keyed again."""
+    and links its sides again. Then every walker is keyed again."""
     def changed(*_):
         if _QUIET[0]:
             return None
@@ -786,25 +801,53 @@ def show_group(key):
         cmds.iconTextRadioButton(_group_tab(key), edit=True, select=True)
 
 
-def _load(root):
-    """A walked skeleton's walk, pose, parts and knobs into the card; it becomes the target."""
-    name, knobs, pose, parts = scene.pick(root)
-    memo = scene.memo_of(root)
-    card = memo.get("pose_card") or (scene.wcards.legacy_card(pose) if pose else "")
+def take_settings(root):
+    """A walker's stored knobs, pose card and parts into the card (right button > Take its settings): they reach
+    every walker on the next re-key. Its cycle becomes the active one."""
+    def run():
+        name, knobs, pose, parts = scene.pick(root)
+        memo = scene.memo_of(root)
+        card = memo.get("pose_card") or (scene.wcards.legacy_card(pose) if pose else "")
+        quiet, _QUIET[0] = _QUIET[0], True
+        try:
+            _set_walk(name)
+            _set_card(card)
+            _set_parts(parts)
+            frames = int(knobs.get("tempo") or 30)
+            if scene.walk_exists(name):
+                walk, _, _, report = scene.load_walk(name, knobs)
+                frames = walk.P
+                show_report(report)
+            _set_knobs(knobs, frames)
+        finally:
+            _QUIET[0] = quiet
+        return "%s's settings are the card's - move a knob (or press Pick) to put them on every walker" \
+            % scene.walker_label(root)
+    return _press(run)
+
+
+_SELECTED = [None]       # the walker the selection named last: only a NEW one activates its cycle (a press that
+                         # refreshes the card with that walker still selected must not undo a walk card clicked)
+
+
+def _activate(root):
+    """A listed walker newly selected: its cycle the walk well's active card (nobody re-keyed)."""
+    if root == _SELECTED[0]:
+        return
+    _SELECTED[0] = root
+    name = scene.memo_of(root).get("walk")
+    if not name or not scene.walk_exists(name):
+        return
+    try:
+        if chosen_walk() == name:
+            return
+    except scene.Refusal:
+        pass
     quiet, _QUIET[0] = _QUIET[0], True
     try:
-        _set_walk(name)
-        _set_card(card)
-        _set_parts(parts)
-        frames = int(knobs.get("tempo") or 30)
-        if scene.walk_exists(name):
-            walk, _, _, report = scene.load_walk(name, knobs)
-            frames = walk.P
-            show_report(report)
-        _set_knobs(knobs, frames)
+        _walk_taken(name, say=False)
     finally:
         _QUIET[0] = quiet
-    return name
 
 
 # ---- the lines ----
@@ -814,25 +857,26 @@ def _short(path):
 
 
 def selection_line(root):
-    """The card's subtitle: the selected skeleton (walked or not), else the target."""
+    """The card's subtitle: the selected skeleton (a walker, walked but out of the list, or not walked), else
+    how many walkers the list holds."""
     try:
         walk = chosen_walk()
     except scene.Refusal:
         walk = None
     if root:
         memo = scene.memo_of(root)
+        label = scene.walker_label(root)
         if memo.get("walk"):
-            pose = memo.get("pose")
-            share = memo.get("knobs", {}).get("pose", 0.0)
-            return "%s walks %s%s" % (_short(root), scene.walk_label(memo["walk"]),
-                                      " under %s x%.2f" % (pose, share) if pose and share > 0 else "")
-        return ("%s: Pick puts %s on it" % (_short(root), scene.walk_label(walk)) if walk else
-                "%s: drop a walk cycle card first" % _short(root))
-    try:
-        target = scene.target_root()
-    except scene.Refusal:
+            if not memo.get("listed", True):
+                return "%s walks %s - out of the list (Pick puts it back)" % (label, scene.walk_label(memo["walk"]))
+            return "%s walks %s" % (label, scene.walk_label(memo["walk"]))
+        return ("%s: Pick adds it with %s" % (label, scene.walk_label(walk)) if walk else
+                "%s: drop a walk cycle card first" % label)
+    count = len(scene.walkers())
+    if not count:
         return NOTHING
-    return "Target: %s (%s)" % (_short(target), scene.walk_label(scene.memo_of(target).get("walk")) or "-")
+    return "%d walker%s in the list - every knob re-keys %s" % (count, "" if count == 1 else "s",
+                                                               "it" if count == 1 else "them all")
 
 
 def status(text):
@@ -847,18 +891,19 @@ def status(text):
 
 
 def refresh(*_):
-    """The subtitle from the selection; a walked skeleton selected that is not the target is read into the
-    card and becomes the target."""
+    """The subtitle and the list from the selection; a listed walker selected makes its cycle the active one."""
     cmds = _cmds()
     if not cmds.text(SUBTITLE, exists=True):
         return
     try:
         root = scene.selected_top()
-        if root and scene.memo_of(root).get("walk"):
-            uuid = (cmds.ls(root, uuid=True) or [None])[0]
-            if uuid != scene._state().get("target"):
-                _load(root)
+        memo = scene.memo_of(root) if root else {}
+        if memo.get("walk") and memo.get("listed", True):
+            _activate(root)
+        else:
+            _SELECTED[0] = None
         cmds.text(SUBTITLE, edit=True, label=selection_line(root))
+        show_list()
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -877,33 +922,88 @@ def _press(action):
 
 # ---- the presses ----
 
-def _apply_to(root):
-    _remember("walk", chosen_walk())
+def _apply_to(root, walk=None):
+    """The walk `walk` (the active cycle) keyed onto `root` with the card's knobs - the tempo as a ratio of the
+    active cycle (walk_knobs) - the card's pose and parts. The line."""
+    active = chosen_walk()
+    walk = walk or active
     _remember("parts", json.dumps(list(chosen_parts())))
-    result, info, text = scene.apply(root, chosen_walk(), values(), None, chosen_parts(), pose_card=chosen_card())
-    if info.get("clean") is not None:
+    result, info, text = scene.apply(root, walk, walk_knobs(walk), None, chosen_parts(), pose_card=chosen_card())
+    if info.get("clean") is not None and walk == active:
         show_report(info["clean"])
     return text
 
 
+def walk_knobs(walk):
+    """The card's knobs for a walker on cycle `walk`: the card's tempo counts the ACTIVE cycle's frames, so
+    another cycle takes the same ratio of its own (at least 4 frames)."""
+    knobs = values()
+    try:
+        active = chosen_walk()
+    except scene.Refusal:
+        return knobs
+    tempo = float(knobs.get("tempo") or 0.0)
+    if walk == active or tempo < 1:
+        return knobs
+    own = scene.load_walk(walk, knobs)[0].P
+    base = scene.load_walk(active, knobs)[0].P
+    knobs["tempo"] = float(max(4, int(round(tempo * own / float(base)))))
+    return knobs
+
+
+def rekey_all(walk=None):
+    """Every listed walker (only those on the cycle `walk` when given) keyed again, each on its own cycle with the
+    card's knobs and pose. A walker that fails is named, the others still keyed. The line."""
+    import time
+    started = time.time()
+    done, failed, lines = [], [], []
+    for root in scene.walkers():
+        name = scene.memo_of(root).get("walk")
+        if walk is not None and name != walk:
+            continue
+        label = "%s - %s" % (scene.walker_label(root), scene.walk_label(name))
+        try:
+            lines.append(_apply_to(root, name))
+            done.append(label)
+        except scene.REFUSALS as refusal:
+            failed.append("%s: %s" % (label, refusal))
+        except Exception as exc:                             # noqa: BLE001
+            print(traceback.format_exc())
+            failed.append("%s: %s" % (label, exc))
+    if not done and not failed:
+        return ("no walker on %s - Pick puts it on skeletons" % scene.walk_label(walk) if walk else
+                "no walker in the list - select skeletons and press Pick")
+    if len(done) == 1 and not failed:
+        return lines[0]
+    text = "%d walker%s keyed: %s" % (len(done), "" if len(done) == 1 else "s", ", ".join(done))
+    if failed:
+        text += " | not keyed: " + "; ".join(failed)
+    return text + " | %.1f s" % (time.time() - started)
+
+
 def press_apply(*_):
-    """Apply: the walk onto the selected skeleton, which becomes the target."""
-    return _press(lambda: _apply_to(scene.selected_root()))
+    """Pick: the active cycle onto every selected skeleton; each joins the list (or takes the new cycle)."""
+    def run():
+        roots = scene.selected_roots()
+        lines = [_apply_to(root) for root in roots]
+        if len(lines) == 1:
+            return lines[0]
+        return "%d skeletons pick %s: %s" % (len(roots), scene.walk_label(chosen_walk()),
+                                             ", ".join(scene.walker_label(r) for r in roots))
+    return _press(run)
 
 
 def slider_changed(*_):
-    """A released knob (a pose, a part): the target keyed again; none - say how to get one."""
+    """A released knob (a pose, a part): every walker keyed again; none - say how to get one."""
     if _QUIET[0]:
         return None
 
     def run():
-        try:
-            root = scene.target_root()
-        except scene.Refusal as refusal:                 # no target: the Clean tab still reads the walk again
+        if not scene.walkers():                          # nobody: the Clean tab still reads the walk again
             walk, _, _, report = scene.load_walk(chosen_walk(), values())
             show_report(report)
-            return str(refusal)
-        return _apply_to(root)
+            return "no walker in the list - select skeletons and press Pick"
+        return rekey_all()
     return _press(run)
 
 
@@ -915,7 +1015,7 @@ def walk_changed(*_):
 
 
 def in_place_changed(*_):
-    """The In place chip: remembered, the target keyed again."""
+    """The In place chip: remembered, every walker keyed again."""
     if _QUIET[0]:
         return None
     shown = _shown("in_place")
@@ -930,11 +1030,7 @@ def press_reset(*_):
         walk = scene.load_walk(chosen_walk(), knobs)[0]
         knobs["tempo"] = walk.P
         _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
-        try:
-            root = scene.target_root()
-        except scene.Refusal:
-            return "the knobs are back at their defaults - select a skeleton and press Pick"
-        return _apply_to(root)
+        return _rekey("the knobs are back at their defaults")
     return _press(run)
 
 
@@ -966,15 +1062,14 @@ def press_save_walk(*_):
 
 def press_fix_posture(*_):
     """Fix posture: the picked walk's posture set right in its file (scene.fix_posture), the report shown, the
-    target keyed again."""
+    walkers on it keyed again."""
     def run():
-        report, line = scene.fix_posture(chosen_walk(), values())
+        name = chosen_walk()
+        report, line = scene.fix_posture(name, values())
         show_report(report)
-        try:
-            root = scene.target_root()
-        except scene.Refusal:
+        if not any(scene.memo_of(r).get("walk") == name for r in scene.walkers()):
             return line
-        return line + " | " + _apply_to(root)
+        return line + " | " + rekey_all(name)
     return _press(run)
 
 
@@ -990,21 +1085,33 @@ def press_mean_create(*_):
 
 
 def press_mean_update(*_):
-    """Rig pose > Update: the rig's change into the walk, the target keyed again."""
+    """Rig pose > Update: every rig pose's change into its cycle, the walkers on those cycles keyed again."""
     from . import meanrig
-    return _press(meanrig.update)
+    return _press(lambda: meanrig.update(rekey=rekey_walkers))
 
 
 def press_mean_delete(*_):
-    """Rig pose > Delete: the rig out of the scene."""
+    """Rig pose > Delete: the active cycle's rig out of the scene."""
     from . import meanrig
-    return _press(meanrig.delete)
+    return _press(lambda: meanrig.delete(chosen_walk()))
 
 
 def press_mean_reset(*_):
-    """Rig pose > Reset: the walk's correction dropped, the rig and the target with it."""
+    """Rig pose > Reset: the active cycle's correction dropped, its rig and its walkers with it."""
     from . import meanrig
-    return _press(lambda: meanrig.reset(chosen_walk(), values()))
+    return _press(lambda: meanrig.reset(chosen_walk(), values(), rekey=rekey_walkers))
+
+
+def rekey_walkers(walk):
+    """The Rig pose's re-key: the walkers on the cycle `walk`, unrecorded (Ctrl+Z is the rig's). « -> ...»."""
+    roots = [r for r in scene.walkers() if scene.memo_of(r).get("walk") == walk]
+    if not roots:
+        return " (no walker on it - Pick puts it on skeletons)"
+    keyed = []
+    for root in roots:
+        scene.apply(root, walk, walk_knobs(walk), None, chosen_parts(), record=False, pose_card=chosen_card())
+        keyed.append(scene.walker_label(root))
+    return " -> %s keyed again" % ", ".join(keyed)
 
 
 def show_folder(*_):
@@ -1114,6 +1221,85 @@ def _slider(name):
                         step=0.05, precision=2, value=float(_stored("knob_" + name, default)), **common)
 
 
+LIST_ROW = 18            # logical px a row of the walkers' list
+LIST_ROWS = (2, 6)       # rows shown at least / at most (it scrolls past)
+
+
+def _list_rows():
+    """[(walker root, its row text)] - the card's list as the scene has it now."""
+    return [(root, "%s - %s" % (scene.walker_label(root), scene.walk_label(scene.memo_of(root).get("walk"))))
+            for root in scene.walkers()]
+
+
+def show_list():
+    """The walkers' list read again from the scene, the selected walkers lit, its height following its rows."""
+    cmds = _cmds()
+    if not cmds.textScrollList(WALKER_LIST, exists=True):
+        return
+    rows = _list_rows()
+    texts = [text for _, text in rows]
+    shown = cmds.textScrollList(WALKER_LIST, query=True, allItems=True) or []
+    if list(shown) != texts:
+        cmds.textScrollList(WALKER_LIST, edit=True, removeAll=True)
+        for text in texts:
+            cmds.textScrollList(WALKER_LIST, edit=True, append=text)
+    count = min(max(len(rows), LIST_ROWS[0]), LIST_ROWS[1])
+    cmds.textScrollList(WALKER_LIST, edit=True, height=count * LIST_ROW + 4, deselectAll=True)
+    picked = set(cmds.ls(selection=True, long=True) or [])
+    lit = [i + 1 for i, (root, _) in enumerate(rows) if root in picked]
+    if lit:
+        cmds.textScrollList(WALKER_LIST, edit=True, selectIndexedItem=lit)
+
+
+def _picked_walkers():
+    """The walkers the list's lit rows stand for."""
+    cmds = _cmds()
+    if not cmds.textScrollList(WALKER_LIST, exists=True):
+        return []
+    indices = cmds.textScrollList(WALKER_LIST, query=True, selectIndexedItem=True) or []
+    rows = _list_rows()
+    return [rows[i - 1][0] for i in indices if 0 < i <= len(rows)]
+
+
+def list_selected(*_):
+    """Rows clicked: those walkers selected in the scene (the first one's cycle then becomes the active one)."""
+    roots = _picked_walkers()
+    if roots:
+        _cmds().select(roots, replace=True)
+
+
+def remove_from_list(*_):
+    """The lit walkers out of the list - their keys stay, Pick puts one back."""
+    def run():
+        roots = _picked_walkers()
+        if not roots:
+            return "pick walkers in the list first"
+        for root in roots:
+            scene.set_listed(root, False)
+        show_list()
+        return "out of the list (keys kept): %s" % ", ".join(scene.walker_label(r) for r in roots)
+    return _press(run)
+
+
+def take_settings_picked(*_):
+    roots = _picked_walkers()
+    if not roots:
+        return status("pick a walker in the list first")
+    return take_settings(roots[0])
+
+
+def _walker_list():
+    """The walkers' list: one row a walker, «character - cycle»; Delete or the right button takes it out."""
+    cmds = _cmds()
+    cmds.textScrollList(WALKER_LIST, allowMultiSelection=True, height=LIST_ROWS[0] * LIST_ROW + 4,
+                        annotation=TIPS["walker_list"], selectCommand=list_selected,
+                        deleteKeyCommand=remove_from_list)
+    cmds.popupMenu(button=3)
+    cmds.menuItem(label="Take its settings into the card", command=take_settings_picked)
+    cmds.menuItem(label="Remove from the list", command=remove_from_list)
+    cmds.setParent("..", menu=True)
+
+
 def _rig_pose_buttons():
     """The Rig pose tab: Create / Delete, Update / Reset, a line on what it does."""
     import maya_hubstyle as hubstyle
@@ -1134,7 +1320,7 @@ def _rig_pose_buttons():
 
 
 def build_panel():
-    """The card into the current layout: the target line; the walk and the pose with their save icons; the
+    """The card into the current layout: the subtitle; the walk and the pose with their save icons; the
     pose's share and parts; Apply / Reset; the knob groups' tabs and the shown group; the status line."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
@@ -1167,6 +1353,7 @@ def build_panel():
                                 value=float(_stored("knob_in_place", 0.0) or 0.0) >= 0.5,
                                 changeCommand=in_place_changed), "chip")
     cmds.setParent("..")
+    _walker_list()
     shown = _stored("group", GROUPS[0][0])
     labels = dict((key, (label, names)) for key, label, names in GROUPS)
     cmds.iconTextRadioCollection(GROUP_TABS)

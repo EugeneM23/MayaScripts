@@ -162,6 +162,71 @@ def selected_root():
     return skeleton_root_of(selection[0])
 
 
+def selected_roots():
+    """Every skeleton the selection names (selected_root's rule per node), each once, in selection order."""
+    selection = _cmds().ls(selection=True, long=True)
+    if not selection:
+        raise Refusal("select a bone of a skeleton first")
+    roots = []
+    for node in selection:
+        root = skeleton_root_of(node)
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+# ---- the list of walkers (2026-10-16: several cycles on several characters at once) ----
+
+def walkers():
+    """The card's list: every walked top joint (the MARKER, v2) in the active tab not unlisted, sorted by
+    label. Read from the scene each time - nothing else stores the list."""
+    cmds = _cmds()
+    found = []
+    for path in cmds.ls(type="joint", long=True) or []:
+        if not cmds.attributeQuery(MARKER, node=path, exists=True):
+            continue
+        above = cmds.listRelatives(path, parent=True, fullPath=True)
+        if above and cmds.nodeType(above[0]) == "joint":
+            continue
+        memo = memo_of(path)
+        if memo.get("walk") and memo.get("listed", True):
+            found.append(path)
+    try:
+        from maya_scenetabs import scope
+        found = scope.active_only(found, cmds)
+    except ImportError:
+        pass
+    return sorted(found, key=lambda p: (walker_label(p).lower(), p))
+
+
+def set_listed(root, listed):
+    """The walker `root` in (True) or out of (False) the card's list; its keys stay."""
+    memo = memo_of(root)
+    if memo:
+        memo["listed"] = bool(listed)
+        _set_memo(root, memo)
+
+
+def walker_label(root):
+    """The character a walker is: its character group without _Character, else its namespace, else its
+    top's short name, else the joint's."""
+    leaf = _short(root)
+    top = root.lstrip("|").split("|")[0]
+    try:
+        from maya_scenetabs import scope
+        top = scope.local(top, _cmds()).lstrip("|").split("|")[0]
+        leaf = scope.local(leaf, _cmds()).rsplit("|", 1)[-1]
+    except ImportError:
+        pass
+    if top != root.lstrip("|") and top.endswith("_Character"):
+        return top[:-len("_Character")]
+    if ":" in leaf:
+        return leaf.rsplit(":", 1)[0]
+    if top != leaf:
+        return top
+    return leaf
+
+
 def read_bones(root):
     """The skeleton as the Pose Library reads it ({leaf: bone}, scene.skeleton) with this tool's rest rule:
     an unskinned skeleton whose bones are Manny's rests at Manny's bind (the plugin's template). Returns
@@ -793,7 +858,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         _set_memo(root, {"walk": walk_name, "pose": pose_label or "", "pose_card": pose_card or "",
                          "parts": list(parts),
                          "knobs": dict(result.info["knobs"], **wc.knobs(given)),
-                         "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION})
+                         "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
+                         "listed": True})
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
     #  short: the card's status line holds three lines (2026-10-13, «интерфейс рисуй компактным»)

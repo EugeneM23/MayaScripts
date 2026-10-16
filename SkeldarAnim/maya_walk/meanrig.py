@@ -3,14 +3,14 @@
 The animator: «кнопочку которая рядом с нашей походкой будет создавать manny rig на котором будет наша средняя
 поза и меняя анимацию на этом риге мы будем менять нашу позу для всего цикла».
 
-`press(walk)`: a Manny [rig] added (Add Character; one in a scene - a second press, or another walk, poses the same
-rig again) 150 cm beside the card's target, marked `MARKER` on its Main, and stood in the walk's mean pose with its
+`press(walk)`: a Manny [rig] added (Add Character; one a cycle since 2026-10-16 - a second press poses that
+cycle's rig again) 150 cm beside the first walker on the cycle, marked `MARKER` on its Main, and stood in the walk's mean pose with its
 correction (maya_walk.meanpose.mean_pose) through the Pose Library's solve - its controls hold plain values, no
 keys. What the rig shows is read back (`_read`: its game skeleton carried onto the walk's skeleton the way a pose
 is, maya_walk.pose._onto) and kept on the marker as the BASE.
 
 `update()` - the card's Update: the rig read again; what changed against the base (meanpose.combine) moves the walk's
-correction, written beside the walk's file; the card's target, when it walks this walk, is keyed again UNRECORDED
+correction, written beside the walk's file; every walker on the cycle (scene.walkers) is keyed again UNRECORDED
 (Ctrl+Z is the rig's: undo there, Update again); the base becomes what the rig shows. Nothing changed: nothing
 written. `delete()`: the rig out of the scene (Animation Setup's Delete); the walk's correction stays.
 
@@ -31,7 +31,7 @@ from . import scene
 from . import target as wt
 
 MARKER = "skeldarWalkMean"         # on the rig's Main: {"walk", "clean", "base": {bone: 16 floats}}
-OFFSET = 150.0                     # cm beside the target (along X)
+OFFSET = 150.0                     # cm beside the first walker on the cycle (along X)
 LABEL = "%s - mean pose"
 
 
@@ -54,12 +54,18 @@ def _state():
 
 # ---- which rig ----
 
-def find():
-    """The scene's mean pose rig (a maya_rigs.Rig whose Main carries MARKER), or None."""
+def rigs():
+    """Every mean pose rig in the scene (a maya_rigs.Rig whose Main carries MARKER) - one a cycle."""
     import maya_rigs
     cmds = _cmds()
-    for rig in maya_rigs.rigs():
-        if rig.main and cmds.objExists(rig.main) and cmds.attributeQuery(MARKER, node=rig.main, exists=True):
+    return [rig for rig in maya_rigs.rigs()
+            if rig.main and cmds.objExists(rig.main) and cmds.attributeQuery(MARKER, node=rig.main, exists=True)]
+
+
+def find(walk=None):
+    """The mean pose rig of the cycle `walk` (any one without `walk`), or None."""
+    for rig in rigs():
+        if walk is None or memo_of(rig).get("walk") == walk:
             return rig
     return None
 
@@ -174,25 +180,25 @@ def _pose(rig, data):
 
 # ---- the presses ----
 
-def _point():
-    """Beside the card's target, else at the origin."""
+def _point(walk=None):
+    """Beside the first walker on the cycle `walk`, else the first walker, else at the origin."""
     cmds = _cmds()
-    try:
-        root = scene.target_root()
-        x, _, z = cmds.xform(root, query=True, worldSpace=True, translation=True)
-        return (x + OFFSET, 0.0, z)
-    except scene.Refusal:
+    walkers = scene.walkers()
+    on = [r for r in walkers if scene.memo_of(r).get("walk") == walk] or walkers
+    if not on:
         return (0.0, 0.0, 0.0)
+    x, _, z = cmds.xform(on[0], query=True, worldSpace=True, translation=True)
+    return (x + OFFSET, 0.0, z)
 
 
-def _add():
+def _add(walk=None):
     import maya_rigs
     from maya_scenesetup import catalog, character
     from maya_uebridge import rigimport
     cmds = _cmds()
     selection = cmds.ls(selection=True, long=True) or []
     before = maya_rigs.rigs()
-    text = character.add_character(catalog.default_rig(), at=_point())
+    text = character.add_character(catalog.default_rig(), at=_point(walk))
     rig = rigimport.fresh_rig(before, maya_rigs.rigs())
     if rig is None:
         raise Refusal("no Manny rig was added: %s" % text)
@@ -204,17 +210,17 @@ def _add():
 
 
 def press(walk_name, clean=None):
-    """Create rig pose: the mean pose rig (added, or the one standing) stood in the walk `walk_name`'s mean pose
-    with its correction. Returns the status line."""
+    """Create rig pose: the cycle `walk_name`'s mean pose rig (added, or its own standing) stood in its mean pose
+    with its correction. Every cycle has a rig of its own. Returns the status line."""
     stop()
     clean = dict(scene.wc.knobs(clean))
     walk, statics = scene.load_walk(walk_name, clean)[:2]
     fix = scene.walk_fix(walk_name)[0]
     worlds = mp.mean_pose(walk, fix)
-    rig = find()
+    rig = find(walk_name)
     added = rig is None
     if added:
-        rig = _add()
+        rig = _add(walk_name)
     with scene.Unrecorded():
         _set_memo(rig, {"walk": walk_name, "clean": clean, "base": {}})
     _state()["bones"] = None
@@ -238,70 +244,87 @@ NO_RIG = "no rig pose in the scene - press Create first"
 NOTHING_MOVED = "nothing moved on the rig pose since the last Update"
 
 
-def update():
-    """Update: the rig's change into the walk's correction (the module docstring). Returns the status line;
-    refuses with no rig."""
+def update(rekey=None):
+    """Update: every mean pose rig read; each one's change goes into its own cycle's correction (the module
+    docstring), and `rekey(walk)` - the card's: the walkers on that cycle keyed again, unrecorded - answers a
+    tail for the line. Refuses with no rig."""
     stop()                           # an older build's watch, left in the session by an update, goes now
-    rig = find()
-    if rig is None:
+    standing = rigs()
+    if not standing:
         raise Refusal(NO_RIG)
-    memo = memo_of(rig)
-    name = memo.get("walk")
-    if not name or not scene.walk_exists(name):
-        raise Refusal("the rig pose stands for %s, which is not a saved walk" % (scene.walk_label(name) or "no walk"))
-    walk, statics = scene.load_walk(name, memo.get("clean"))[:2]
-    fix, path = scene.walk_fix(name)
-    now = _read(rig, walk, statics)
-    base = _unflat(memo.get("base") or {})
-    if not base:
+    lines, untouched = [], []
+    for rig in standing:
+        memo = memo_of(rig)
+        name = memo.get("walk")
+        if not name or not scene.walk_exists(name):
+            lines.append("%s stands for %s, which is not a saved walk"
+                         % (rig.namespace, scene.walk_label(name) or "no walk"))
+            continue
+        walk, statics = scene.load_walk(name, memo.get("clean"))[:2]
+        fix, path = scene.walk_fix(name)
+        now = _read(rig, walk, statics)
+        base = _unflat(memo.get("base") or {})
+        if not base:
+            with scene.Unrecorded():
+                _set_memo(rig, dict(memo, base=_flat(now)))
+            untouched.append(name)
+            continue
+        new, moved = mp.combine(fix, mp.measure(base, walk), mp.measure(now, walk))
+        if not moved:
+            untouched.append(name)
+            continue
+        mp.save(path, new)
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
+        line = "mean pose of %s: %s" % (scene.walk_label(name), mp.describe(moved))
+        lines.append(line + ((rekey or rekey_target)(name)))
+    if not lines:
         return NOTHING_MOVED
-    new, moved = mp.combine(fix, mp.measure(base, walk), mp.measure(now, walk))
-    if not moved:
-        return NOTHING_MOVED
-    mp.save(path, new)
-    with scene.Unrecorded():
-        _set_memo(rig, dict(memo, base=_flat(now)))
-    line = "mean pose of %s: %s" % (scene.walk_label(name), mp.describe(moved))
-    return line + rekey_target(name)
+    return " | ".join(lines)
 
 
 def rekey_target(name):
-    """The card's target keyed again, unrecorded, when it walks the walk `name`: « -> root keyed again»."""
-    try:
-        root = scene.target_root()
-    except scene.Refusal:
-        return " (no target walks it - Pick puts it on a skeleton)"
-    memo = scene.memo_of(root)
-    if memo.get("walk") != name:
-        return " (the target walks %s)" % (scene.walk_label(memo.get("walk")) or "nothing")
-    scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
-                tuple(memo.get("parts", scene.ALL_PARTS)), record=False, pose_card=memo.get("pose_card") or None)
-    return " -> %s keyed again" % root.rsplit("|", 1)[-1]
+    """Every walker on the cycle `name` keyed again, unrecorded, as it was keyed last (its own memo): « -> ...»."""
+    roots = [r for r in scene.walkers() if scene.memo_of(r).get("walk") == name]
+    if not roots:
+        return " (no walker on it - Pick puts it on skeletons)"
+    for root in roots:
+        memo = scene.memo_of(root)
+        scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
+                    tuple(memo.get("parts", scene.ALL_PARTS)), record=False,
+                    pose_card=memo.get("pose_card") or None)
+    return " -> %s keyed again" % ", ".join(scene.walker_label(r) for r in roots)
 
 
-def reset(walk_name, clean=None):
-    """Reset: the walk's correction dropped; the rig (when standing) back in the plain mean pose; the target keyed
-    again. Returns the status line."""
+def reset(walk_name, clean=None, rekey=None):
+    """Reset: the cycle's correction dropped; its rig (when standing) back in the plain mean pose; its walkers
+    keyed again (`rekey(walk)`, the card's; else as each was keyed last). Returns the status line."""
     fix, path = scene.walk_fix(walk_name)
     had = not mp.is_empty(fix)
     mp.save(path, mp.empty())
     label = scene.walk_label(walk_name)
     line = ("%s: the mean pose correction dropped" % label) if had else "%s has no correction" % label
-    if find() is not None:
+    if find(walk_name) is not None:
         press(walk_name, clean)
         line += ", the rig pose back in the mean pose"
-    return line + rekey_target(walk_name)
+    return line + (rekey or rekey_target)(walk_name)
 
 
-def delete():
-    """Delete rig pose: the rig out of the scene, whole (Animation Setup's Delete, no question asked - it is this
-    tool's); the walk's correction stays. Returns the status line."""
+def delete(walk=None):
+    """Delete rig pose: the cycle `walk`'s rig out of the scene, whole (Animation Setup's Delete, no question
+    asked - it is this tool's) - the only one standing when that cycle has none; the cycle's correction stays.
+    Returns the status line."""
     from maya_scenesetup import deletion
-    rig = find()
+    rig = find(walk)
     if rig is None:
-        raise Refusal("no rig pose in the scene")
+        standing = rigs()
+        if len(standing) == 1:
+            rig = standing[0]
+        elif standing:
+            raise Refusal("%s has no rig pose - %d others stand (select a walker on one to make its cycle the "
+                          "active one)" % (scene.walk_label(walk), len(standing)))
+        else:
+            raise Refusal("no rig pose in the scene")
     name = memo_of(rig).get("walk") or "-"
     stop()
     _state()["bones"] = None

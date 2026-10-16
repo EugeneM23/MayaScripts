@@ -210,7 +210,10 @@ class Panel(unittest.TestCase):
         self.fake.selection = ["|root"]
         panel.press_apply()
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/run.anim"))
-        panel.take_walk_card(stroll)                              # a click on it: the target keyed with it
+        count = len(self.case.applied)
+        panel.take_walk_card(stroll)                              # a click on it: Pick's next cycle, nobody keyed
+        self.assertEqual(len(self.case.applied), count)
+        panel.press_apply()                                       # Pick gives the walker the new cycle
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/stroll.anim"))
         self.assertEqual(len(panel.walk_list()), 2)
 

@@ -170,8 +170,35 @@ class FakeCmds(object):
         self.jobs[number] = (event, parent)
         return number
 
-    def ls(self, node, uuid=False, **kw):
+    def ls(self, node=None, uuid=False, selection=False, **kw):
+        if selection:
+            return list(self.selection)
         return ["uuid-" + node] if uuid else [node]
+
+    def select(self, nodes, replace=True, **kw):
+        self.selection = list(nodes)
+
+    def textScrollList(self, name, exists=False, query=False, edit=False, allItems=False, removeAll=False,
+                       append=None, selectIndexedItem=None, deselectAll=False, **kw):
+        rows = self.items.setdefault(name, [])
+        if exists:
+            return name in self.values
+        if query and allItems:
+            return list(rows)
+        if query and selectIndexedItem:
+            return list(self.values.get(name) or [])
+        if not edit:
+            self.values[name] = []
+            return self._made("textScrollList", name, **kw)
+        if removeAll:
+            del rows[:]
+        if append is not None:
+            rows.append(append)
+        if deselectAll:
+            self.values[name] = []
+        if selectIndexedItem is not None:
+            self.values[name] = list(selectIndexedItem)
+        return name
 
 
 class FakeWalk(object):
@@ -202,7 +229,8 @@ class CardTests(unittest.TestCase):
         self.memos = {}
         self.state = {"loaded": {}, "target": None}
         names = ("_cmds", "walk_names", "walk_exists", "load_walk", "apply", "selected_root", "selected_top",
-                 "memo_of", "pick", "target_root", "_state", "fix_posture", "folder")
+                 "selected_roots", "memo_of", "pick", "target_root", "_state", "fix_posture", "folder", "walkers",
+                 "walker_label", "set_listed")
         self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
         self.temp = tempfile.mkdtemp()
         self.library = os.path.join(self.temp, "library").replace("\\", "/")
@@ -210,15 +238,20 @@ class CardTests(unittest.TestCase):
         panel._library = lambda: self.library
         scene.folder = lambda: os.path.join(self.temp, "walks")
         panel.JOB.clear()
+        panel._SELECTED[0] = None
         panel._cmds = lambda: self.fake
         scene._cmds = lambda: self.fake
         scene.walk_names = lambda: ["asd", "dw"]
         scene.walk_exists = lambda name: name in ("asd", "dw") or scene.is_card(name)
         self.loaded = []
 
+        self.frames = {}                          # a cycle's own frames (FakeWalk.P otherwise)
+
         def load_walk(name, given=None):
             self.loaded.append((name, given))
-            return FakeWalk(), {}, 0, FakeReport()
+            walk = FakeWalk()
+            walk.P = self.frames.get(name, FakeWalk.P)
+            return walk, {}, 0, FakeReport()
         scene.load_walk = load_walk
         scene._state = lambda: self.state
         self.fixed = []
@@ -228,11 +261,25 @@ class CardTests(unittest.TestCase):
             return FakeReport(), "Fix posture: %s foot_l out: mirrored" % name
         scene.fix_posture = fix_posture
 
-        def apply(root, walk, given, pose, parts, pose_card=None):
+        def apply(root, walk, given, pose, parts, pose_card=None, record=True):
             self.applied.append((root, walk, given, pose_card, parts))
             self.state["target"] = "uuid-" + root
+            self.memos[root] = dict(self.memos.get(root, {}), walk=walk, knobs=dict(given), listed=True,
+                                    parts=list(parts))
             return None, {"clean": FakeReport()}, "%s on %s" % (walk, root)
         scene.apply = apply
+        scene.walkers = lambda: sorted(r for r, m in self.memos.items() if m.get("walk") and m.get("listed", True))
+        scene.walker_label = lambda root: root.rsplit("|", 1)[-1]
+
+        def set_listed(root, listed):
+            self.memos[root]["listed"] = listed
+        scene.set_listed = set_listed
+
+        def selected_roots():
+            if not self.fake.selection:
+                raise scene.Refusal("select a bone of a skeleton first")
+            return list(self.fake.selection)
+        scene.selected_roots = selected_roots
 
         def selected_root():
             if not self.fake.selection:
@@ -281,7 +328,7 @@ class CardTests(unittest.TestCase):
         self.assertIn("Walk: asd", self.fake.values[panel.WALK_WELL_TEXT])        # no Qt here: its line
         self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
         self.assertIn("none", self.fake.values[panel.POSE_WELL_TEXT])             # no Qt here: its line
-        self.assertEqual(len(self.made("popupMenu")), 1)          # the walks folder on a right click
+        self.assertEqual(len(self.made("popupMenu")), 2)          # the walks folder; the walkers list
         # the Rig pose tab: Create / Delete, Update (the press that takes the rig's edit) / Reset
         self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
         self.assertEqual(marks[panel.MEAN_DELETE_BTN], ("danger", "trash"))
@@ -345,42 +392,106 @@ class CardTests(unittest.TestCase):
         self.assertIn("select", panel.press_apply())
         self.assertEqual(self.applied, [])
 
-    def test_a_knob_rekeys_the_target_and_none_says_so(self):
+    def test_a_knob_rekeys_every_walker_and_none_says_so(self):
         panel.build_panel()
         self.assertIn("Pick", panel.slider_changed())
         self.assertEqual(self.applied, [])
         self.fake.selection = ["|root"]
         panel.press_apply()
-        self.fake.selection = []                                 # the target stays the target
+        self.fake.selection = []                                 # the list stays the list
         self.fake.values[panel._control("stride")] = 1.3
         panel.slider_changed()
         self.assertEqual(self.applied[-1][0], "|root")
         self.assertEqual(self.applied[-1][2]["stride"], 1.3)
 
-    def test_selecting_a_walked_skeleton_reads_it_into_the_card(self):
+    def test_pick_adds_every_selected_skeleton_to_the_list(self):
+        panel.build_panel()
+        self.fake.selection = ["|a|root", "|b|root"]
+        line = panel.press_apply()
+        self.assertIn("2 skeletons pick asd", line)
+        self.assertEqual([a[0] for a in self.applied], ["|a|root", "|b|root"])
+        self.assertEqual(self.fake.items[panel.WALKER_LIST], ["root - asd", "root - asd"])
+
+    def test_each_walker_keeps_its_cycle_and_the_tempo_ratio(self):
+        panel.build_panel()
+        self.frames["asd"] = 32
+        self.fake.vars[panel.OPTION + "walk"] = "asd"
+        panel._set_knobs({"tempo": 32}, 32)
+        self.fake.selection = ["|a"]
+        panel.press_apply()
+        panel.take_walk_card(os.path.join(self.library, "x"))    # not an animation card: refused, nothing changes
+        panel._walk_taken("dw")                                  # 90 frames: the ratio 1 kept, nobody re-keyed
+        count = len(self.applied)
+        self.assertEqual(self.fake.values[panel._control("tempo")], 90)
+        self.assertEqual(len(self.applied), count)
+        self.fake.selection = ["|b"]
+        panel.press_apply()
+        self.assertEqual(self.applied[-1][:2], ("|b", "dw"))
+        panel._set_knobs({"tempo": 45}, 90)                      # half the frames: twice as fast
+        self.fake.values[panel._control("bob")] = 2.0
+        line = panel.slider_changed()
+        keyed = dict((a[0], a) for a in self.applied[-2:])
+        self.assertEqual(keyed["|a"][1], "asd")                  # each on its own cycle
+        self.assertEqual(keyed["|b"][1], "dw")
+        self.assertEqual(keyed["|a"][2]["tempo"], 16.0)          # 45/90 of its own 32
+        self.assertEqual(keyed["|b"][2]["tempo"], 45.0)
+        self.assertEqual((keyed["|a"][2]["bob"], keyed["|b"][2]["bob"]), (2.0, 2.0))
+        self.assertIn("2 walkers keyed", line)
+
+    def test_a_walker_that_fails_is_named_and_the_others_keyed(self):
+        panel.build_panel()
+        self.fake.selection = ["|a", "|b"]
+        panel.press_apply()
+        apply = scene.apply
+
+        def picky(root, *a, **kw):
+            if root == "|a":
+                raise scene.Refusal("a is gone")
+            return apply(root, *a, **kw)
+        scene.apply = picky
+        line = panel.slider_changed()
+        self.assertIn("1 walker keyed: b - asd", line)
+        self.assertIn("a - asd: a is gone", line)
+
+    def test_removing_from_the_list_and_selecting_a_walker(self):
+        panel.build_panel()
+        self.fake.selection = ["|a", "|b"]
+        panel.press_apply()
+        self.memos["|b"]["walk"] = "dw"
+        self.fake.selection = ["|b"]
+        panel.refresh()                                          # its cycle the active one, nobody keyed
+        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], "dw")
+        self.assertEqual(self.fake.values[panel.WALKER_LIST], [2])
+        self.assertIn("b walks dw", self.fake.values[panel.SUBTITLE])
+        self.fake.values[panel.WALKER_LIST] = [1]
+        panel.list_selected()
+        self.assertEqual(self.fake.selection, ["|a"])
+        panel.remove_from_list()
+        self.assertFalse(self.memos["|a"]["listed"])
+        self.assertEqual(self.fake.items[panel.WALKER_LIST], ["b - dw"])
+        count = len(self.applied)
+        panel.slider_changed()
+        self.assertEqual([a[0] for a in self.applied[count:]], ["|b"])
+
+    def test_take_settings_puts_a_walker_s_knobs_in_the_card(self):
         knobs = dict(wm.DEFAULTS, stance=0.33, tempo=90.0, pose=1.0)
         self.memos["|walked"] = {"walk": "dw", "pose": "two_handed_sword", "pose_card": "Swords/sword.pose",
-                                 "parts": ["torso", "feet"],
-                                 "knobs": knobs}
+                                 "parts": ["torso", "feet"], "knobs": knobs}
         panel.build_panel()
         self.fake.selection = ["|walked"]
-        panel.refresh()
-        self.assertEqual(self.applied, [])                       # reading it keys nothing
-        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], "dw")
+        panel.refresh()                                          # selecting it no longer loads its knobs
+        self.assertNotEqual(self.fake.values[panel._control("stance")], 0.33)
+        panel.take_settings("|walked")
+        self.assertEqual(self.applied, [])                       # taking them keys nothing
         self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/sword.pose")
         self.assertEqual(self.fake.values[panel._control("stance")], 0.33)
         self.assertFalse(self.fake.values[panel._part_control("knees")])
-        self.assertEqual(self.state["target"], "uuid-|walked")
-        self.assertIn("walked walks dw under two_handed_sword", self.fake.values[panel.SUBTITLE])
-        self.fake.values[panel._control("stance")] = 0.5         # a knob moved: the card is the truth now
-        panel.refresh()
-        self.assertEqual(self.fake.values[panel._control("stance")], 0.5)
 
     def test_a_skeleton_not_walked_is_named(self):
         panel.build_panel()
         self.fake.selection = ["|a|root"]
         panel.refresh()
-        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Pick puts asd on it")
+        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Pick adds it with asd")
 
     def test_a_press_with_the_card_closed_reads_the_memory(self):
         self.fake.vars[panel.OPTION + "knob_stride"] = 1.4
@@ -413,7 +524,10 @@ class CardTests(unittest.TestCase):
         line = panel.press_fix_posture()
         self.assertEqual(self.fixed[-1][0], "dw")
         self.assertIn("Fix posture: dw", line)
-        self.assertEqual(len(self.applied), count + 1)          # the target keyed again
+        self.assertEqual(len(self.applied), count)              # nobody walks dw: nothing keyed
+        self.fake.vars[panel.OPTION + "walk"] = "asd"
+        panel.press_fix_posture()
+        self.assertEqual(len(self.applied), count + 1)          # the walker on asd keyed again
         self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
 
     def test_fix_posture_with_no_target_only_writes_the_walk(self):
@@ -517,8 +631,7 @@ class SideTests(CardTests):
         knobs = dict(wm.DEFAULTS, tempo=90.0, arm_drag_r=4.0)
         self.memos["|walked"] = {"walk": "dw", "pose": "", "parts": list(scene.ALL_PARTS), "knobs": knobs}
         panel.build_panel()
-        self.fake.selection = ["|walked"]
-        panel.refresh()
+        panel.take_settings("|walked")
         self.assertEqual(self.fake.labels[panel._control("arm_drag")], "Arm drag, fr *")
         panel.side_changed("r")()
         self.assertEqual(self.fake.values[panel._control("arm_drag")], 4.0)
