@@ -568,9 +568,14 @@ class FakeSkin(object):
 
     fail_finish = False
 
-    def __init__(self, layout, scale=1.0, callbacks=None):
-        self.layout = layout
-        self.host = layout                  # maya_hubqt.Skin keeps its host
+    def __init__(self, host, scale=1.0, callbacks=None, layout="accordion"):
+        self.layout = layout                # "rail" / "accordion" (2026-10-16)
+        self.host = host                    # maya_hubqt.Skin keeps its host
+        self.shown = None
+        self.switches = []                  # show_card, as asked
+        self.layout_painted = []
+        self.jump_groups = {}
+        self.collapsible = {}
         self.scale = scale
         self.callbacks = callbacks
         self.edge_mode = None               # set_edge_mode (the edge panel)
@@ -588,14 +593,27 @@ class FakeSkin(object):
         self.sheet = None
         self._alive = True
 
-    def add_jump(self, key, label, icon, colour):
+    def add_jump(self, key, label, icon, colour, group=None):
         self.jumps.append(key)
+        self.jump_groups[key] = group
+
+    def show_card(self, key, animate=False):
+        if key not in self.cards:
+            return None
+        self.switches.append((key, animate))
+        self.shown = key
+        return self.cards[key]
+
+    def paint_layout(self, choice):
+        self.layout_painted.append(choice)
 
     def add_group(self, key, label):
         self.groups.append(key)
         self.order.append(("group", key))
 
-    def add_card(self, key, label, icon, colour, chip, collapsed=False):
+    def add_card(self, key, label, icon, colour, chip, collapsed=False,
+                 collapsible=True):
+        self.collapsible[key] = collapsible
         card = FakeCard(key, collapsed)
         self.cards[key] = card
         self.order.append(("card", key))
@@ -671,6 +689,8 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.real = (hub.cmds, hub._hubqt, hub._dress_header)
         self.fake = FakeUiCmds(dpi=1.5)
         hub.cmds = self.fake
+        #  these are the accordion's (the rail, 2026-10-16: RailLayout)
+        self.fake.optionvars[hub.LAYOUT_VAR] = "accordion"
         self.qt = _fake_qt()
         hub._hubqt = lambda: self.qt
         hub._dress_header = lambda skin: None
@@ -687,7 +707,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertTrue(hub.skinned())
         hub.build()
         self.assertTrue(hub.is_skinned())
-        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.host, "widget of " + hub.CONTROL)
         self.assertEqual(hub._SKIN.scale, 1.5)
 
     def test_an_older_skin_in_the_control_goes_first(self):
@@ -1307,7 +1327,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertIs(self.he.state()["edge"], edge)
         self.assertEqual(edge.reveals, [])               # hidden
         self.assertTrue(hub.is_skinned())
-        self.assertIs(hub._SKIN.layout, edge.slot)
+        self.assertIs(hub._SKIN.host, edge.slot)
         self.assertTrue(hub._SKIN.edge_mode)
         self.assertEqual(hub._SKIN.scale, 1.5)
         self.assertEqual(self.qt.destroyed, [])          # not the control's
@@ -1431,7 +1451,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.fake.run_deferred()
         self.assertIn(hub.CONTROL, self.fake.deleted)
         self.assertEqual(self.built("characters"), 1)    # in the edge
-        self.assertIs(hub._SKIN.layout, self.edges[-1].slot)
+        self.assertIs(hub._SKIN.host, self.edges[-1].slot)
 
     def test_the_uiscript_builds_the_dock_once_the_mode_is_off(self):
         """Edge mode turned off before the deferred half ran: the control
@@ -1444,7 +1464,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(self.edges, [])
         self.assertNotIn(hub.CONTROL, self.fake.deleted)
         self.assertEqual(self.built("characters"), 1)
-        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.host, "widget of " + hub.CONTROL)
 
     def test_a_skin_failing_at_the_edge_leaves_the_hub_to_the_dock(self):
         """The dock's fallback for a broken skin is the classic hub; at the
@@ -1514,7 +1534,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertNotIn(hub.CONTROL, self.fake.deleted)
         self.assertFalse(hub.edge_on())                      # this session
         self.assertTrue(hub.is_skinned())
-        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.host, "widget of " + hub.CONTROL)
         printed = out.getvalue()
         self.assertIn("edge panel", printed)
         self.assertIn("no edge here", printed)              # the traceback
@@ -1556,7 +1576,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
             self.assertLessEqual(self._drain(), 2)
         self.assertIn(hub.CONTROL, self.fake.workspace)
         self.assertEqual(self.built("characters"), 1)
-        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.host, "widget of " + hub.CONTROL)
         self.assertTrue([text for text, _state in hub._SKIN.said
                          if "no edge here" in text])
 
@@ -1611,7 +1631,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.fake.run_deferred()
         self.assertTrue(older.destroyed)
         self.assertTrue(self.edges[-1].revealed_with_hold)
-        self.assertIs(hub._SKIN.layout, self.edges[-1].slot)
+        self.assertIs(hub._SKIN.host, self.edges[-1].slot)
 
     def test_show_in_dock_mode_with_an_edge_still_standing_leaves_it_first(self):
         """A switch off on its way (or Classic look): the edge panel goes
@@ -1648,7 +1668,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertTrue(new.shown)
         self.assertTrue(new.pinned)
         self.assertEqual(hub._SKIN.pins, [True])
-        self.assertIs(hub._SKIN.layout, new.slot)
+        self.assertIs(hub._SKIN.host, new.slot)
 
     def test_rebuild_of_a_hidden_edge_stays_hidden(self):
         self.fake.optionvars[hub.EDGE_VAR] = 1
@@ -1742,6 +1762,88 @@ class ClassicWithoutQt(FakeToolsMixin, unittest.TestCase):
     def test_the_marks_are_dropped(self):
         hub.build()
         self.assertEqual(hub.hubstyle.take_marks(), [])
+
+
+
+class RailLayout(FakeToolsMixin, unittest.TestCase):
+    """The rail (2026-10-16, layout C): the default skin, one card shown,
+    remembered; ⋮ -> Layout switches back to the accordion."""
+
+    def setUp(self):
+        self.real = (hub.cmds, hub._hubqt, hub._dress_header)
+        self.fake = FakeUiCmds(dpi=1.5)
+        hub.cmds = self.fake
+        self.qt = _fake_qt()
+        hub._hubqt = lambda: self.qt
+        hub._dress_header = lambda skin: None
+        FakeSkin.fail_finish = False
+        self.install_fakes()
+
+    def tearDown(self):
+        hub.cmds, hub._hubqt, hub._dress_header = self.real
+        hub._SKIN = None
+        self.remove_fakes()
+
+    def test_the_rail_is_the_default(self):
+        self.assertEqual(hub.layout(), "rail")
+        self.fake.optionvars[hub.LAYOUT_VAR] = "accordion"
+        self.assertEqual(hub.layout(), "accordion")
+        self.fake.optionvars[hub.LAYOUT_VAR] = "nonsense"
+        self.assertEqual(hub.layout(), "rail")
+
+    def test_current_falls_back_to_the_first_card(self):
+        first = hub.card_sections()[0].key
+        self.assertEqual(hub.current(), first)
+        hub.remember_current("tools")
+        self.assertEqual(hub.current(), "tools")
+        self.fake.optionvars[hub.CURRENT_VAR] = "gone"
+        self.assertEqual(hub.current(), first)
+        self.fake.optionvars[hub.CURRENT_VAR] = "armor"      # an alias
+        self.assertEqual(hub.current(), "weapons")
+
+    def test_a_rail_skin_shows_the_remembered_card(self):
+        hub.remember_current("poses")
+        self.fake.optionvars[hub.OPTIONVAR.format("poses")] = 1
+        hub.build()
+        skin = hub._SKIN
+        self.assertEqual(skin.layout, "rail")
+        self.assertEqual(skin.shown, "poses")
+        self.assertEqual(skin.layout_painted, ["rail"])
+        self.assertFalse(any(skin.collapsible.values()))
+        self.assertFalse(skin.cards["poses"].collapsed())
+        self.assertEqual(skin.jump_groups["tools"], "animation")
+
+    def test_focus_and_expand_show_the_card(self):
+        hub.build()
+        skin = hub._SKIN
+        hub.focus("tools")
+        self.assertEqual(skin.switches[-1], ("tools", True))
+        self.assertEqual(skin.active, "tools")
+        self.assertEqual(hub.current(), "tools")
+        hub.expand("studio")
+        self.assertEqual(skin.shown, "studio")
+        self.assertEqual(hub.current(), "studio")
+        #  nothing closed, no collapse remembered
+        self.assertFalse(any(card.collapsed() for card in skin.cards.values()))
+        self.assertFalse([k for k in self.fake.optionvars
+                          if k.startswith("skeldarAnimHub_collapsed_")])
+
+    def test_the_menu_switches_the_layout(self):
+        hub.build()
+        self.assertEqual(hub.set_layout("accordion"), "accordion")
+        self.assertEqual(self.fake.optionvars[hub.LAYOUT_VAR], "accordion")
+        self.assertIn(hub.rebuild, self.fake.deferred)
+        callbacks = hub._callbacks()
+        self.assertIs(callbacks["layout"], hub.set_layout)
+        self.assertIs(callbacks["popup"], hub._press_popup)
+
+    def test_an_accordion_skin_is_as_before(self):
+        self.fake.optionvars[hub.LAYOUT_VAR] = "accordion"
+        hub.build()
+        skin = hub._SKIN
+        self.assertEqual(skin.layout, "accordion")
+        self.assertIsNone(skin.shown)
+        self.assertTrue(all(skin.collapsible.values()))
 
 
 if __name__ == "__main__":

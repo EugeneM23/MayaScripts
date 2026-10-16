@@ -67,6 +67,11 @@ SCROLL = "skeldarAnimHubScroll"
 COLUMN = "skeldarAnimHubColumn"
 OPTIONVAR = "skeldarAnimHub_collapsed_{0}"
 CLASSIC_VAR = "skeldarAnimHub_classic"     # 1: the classic hub even with Qt
+#  The rail layout (2026-10-16, layout C): "rail" (the default) or "accordion";
+#  the card the rail shows is remembered.
+LAYOUT_VAR = "skeldarAnimHub_layout"
+CURRENT_VAR = "skeldarAnimHub_current"
+LAYOUTS = ("rail", "accordion")
 EDGE_VAR = edgerules.EDGE_VAR              # 1: the hub in the edge panel
 SIDE_VAR = edgerules.SIDE_VAR              # "left" / "right" (2026-10-09)
 NEW_LOOK_BUTTON = "skeldarAnimHubNewLook"
@@ -238,6 +243,45 @@ def remember(key, is_collapsed):
     cmds.optionVar(intValue=(OPTIONVAR.format(key), int(bool(is_collapsed))))
 
 
+def layout():
+    """The skin's layout: "rail" (a rail and one card, the default since
+    2026-10-16) or "accordion" (the cards stacked, ⋮ -> Layout)."""
+    if cmds.optionVar(exists=LAYOUT_VAR):
+        value = cmds.optionVar(query=LAYOUT_VAR)
+        if value in LAYOUTS:
+            return value
+    return "rail"
+
+
+def set_layout(choice):
+    """⋮ -> Layout: switched, remembered, the hub rebuilt in place. Deferred:
+    the press comes from inside the hub the rebuild deletes."""
+    choice = choice if choice in LAYOUTS else "rail"
+    cmds.optionVar(stringValue=(LAYOUT_VAR, choice))
+    cmds.evalDeferred(rebuild, lowestPriority=True)
+    return choice
+
+
+def current():
+    """The section the rail shows: the remembered one, else the first card."""
+    keys = [s.key for s in card_sections()]
+    if cmds.optionVar(exists=CURRENT_VAR):
+        value = ALIASES.get(cmds.optionVar(query=CURRENT_VAR),
+                            cmds.optionVar(query=CURRENT_VAR))
+        if value in keys:
+            return value
+    return keys[0] if keys else None
+
+
+def remember_current(key):
+    cmds.optionVar(stringValue=(CURRENT_VAR, key))
+
+
+def _rail():
+    """The standing skin is a rail."""
+    return is_skinned() and getattr(_SKIN, "layout", None) == "rail"
+
+
 def classic_asked():
     """The animator chose the classic hub (the skin's menu, Classic look)."""
     if cmds.optionVar(exists=CLASSIC_VAR):
@@ -382,6 +426,11 @@ def _callbacks():
         "hotkey_editor": _press_hotkey_editor,
         "classic": lambda: set_classic(True),
         "jump": focus,
+        #  the rail (2026-10-16): Ctrl+click / a middle click / the right
+        #  button's row opens the section as a popup by the cursor; ⋮ ->
+        #  Layout switches rail / accordion
+        "popup": _press_popup,
+        "layout": set_layout,
         "toggled": remember,
         #  a card's popout button (2026-10-09): the section's copy in the
         #  viewport opens or closes (maya_hubpop)
@@ -504,23 +553,31 @@ def _build_skin(host=None):
         host = qt.host_widget(CONTROL)
     else:
         qt.destroy_roots_in(host)
-    skin = qt.Skin(host, scale=scale, callbacks=_callbacks())
+    kind = layout()
+    rail = kind == "rail"
+    skin = qt.Skin(host, scale=scale, callbacks=_callbacks(), layout=kind)
     hubstyle.set_skinning(True)
     try:
         for sec in card_sections():
             skin.add_jump(sec.key, sec.label, sec.icon,
-                          hubstyle.group(sec.group).colour)
+                          hubstyle.group(sec.group).colour, group=sec.group)
         #  No group labels (2026-10-08, the compact hub): a card's group is
         #  the colour of its stripe and of its jump; the cards stand in their
         #  groups' order all the same (Skin.add_group stays an API).
         for sec in card_sections():
             grp = hubstyle.group(sec.group)
+            #  on the rail a card never collapses and its memory is not read
             card = skin.add_card(sec.key, sec.label, sec.icon, grp.colour,
-                                 grp.chip, collapsed=collapsed(sec.key))
+                                 grp.chip,
+                                 collapsed=False if rail else collapsed(sec.key),
+                                 collapsible=not rail)
             cmds.setParent(card.body_path())
             _run_builder(sec)
             qt.apply_marks(hubstyle.take_marks(), card, scale)
         _dress_header(skin)
+        skin.paint_layout(kind)
+        if rail:
+            skin.show_card(current())
         skin.finish(hubstyle.stylesheet(scale, arrow=_arrow(qt)))
     except Exception:
         hubstyle.take_marks()
@@ -1064,6 +1121,28 @@ def _press_popout(key):
         return False
 
 
+def _press_popup(key):
+    """A rail icon's popup (2026-10-16): the section's copy by the cursor
+    (maya_hubpop.open_at); without a viewport there, the popout's own place."""
+    import maya_hubpop
+    try:
+        point = _cursor()
+        if point is not None and maya_hubpop.open_at(key, point) is not None:
+            return True
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+    return _press_popout(key)
+
+
+def _cursor():
+    try:
+        q = _hubqt().qt()
+        pos = q.QtGui.QCursor.pos()
+        return (pos.x(), pos.y())
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def _adopt_popups():
     """The popups of an older module object destroyed, the remembered ones
     restored (deferred). Never raises: the hub builds whatever happens."""
@@ -1256,6 +1335,8 @@ def focus(key):
         return expand(key)
     if key not in _SKIN.cards:
         return None
+    if _rail():
+        return _show_on_rail(key)
     for other, card in _SKIN.cards.items():
         if other != key:
             card.set_collapsed(True, animate=True)
@@ -1274,6 +1355,8 @@ def expand(key):
         card = _SKIN.cards.get(key)
         if card is None:
             return None
+        if _rail():
+            return _show_on_rail(key)
         card.set_collapsed(False, animate=True)
         _SKIN.set_active(key)
         remember(key, False)
@@ -1287,6 +1370,17 @@ def expand(key):
     #  happens once this command returns - hence deferred.
     cmds.evalDeferred(lambda: scroll_to(key), lowestPriority=True)
     return sec.frame
+
+
+def _show_on_rail(key):
+    """The rail layout: card `key` the one shown, lit, remembered - no other
+    card closed and no collapse remembered (the rail has none)."""
+    card = _SKIN.show_card(key, animate=True)
+    if card is None:
+        return None
+    _SKIN.set_active(key)
+    remember_current(key)
+    return card
 
 
 def scroll_to(key, animate=False):
