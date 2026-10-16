@@ -192,13 +192,20 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=()):
                 k = plan.stiffness(float(s["strength"]), carried, lever)
                 world.build_joint(key, parent, frame, lo, hi, k,
                                   plan.fade_keys(a, float(s["fade"]), k))
-            cmds.currentTime(a)              # the solver initialises on a time change at its start
-            bodies = {a: world.read()}
-            for t in range(a + 1, b + 1):
-                cmds.currentTime(t)          # Bullet steps on a real time change, not MAnimControl
-                bodies[t] = world.read()
-                if progress is not None and not progress(t):
-                    raise Refused("cancelled - nothing changed")
+            # In a GUI Maya Bullet does not step while the viewport is suspended (the walk's
+            # `refresh -suspend`): every body stood still (measured 2026-10-16; mayapy has no
+            # viewport and fell). The steps run with the refresh on, suspended again after.
+            cmds.refresh(suspend=False)
+            try:
+                cmds.currentTime(a)          # the solver initialises on a time change at its start
+                bodies = {a: world.read()}
+                for t in range(a + 1, b + 1):
+                    cmds.currentTime(t)      # Bullet steps on a real time change, not MAnimControl
+                    bodies[t] = world.read()
+                    if progress is not None and not progress(t):
+                        raise Refused("cancelled - nothing changed")
+            finally:
+                cmds.refresh(suspend=True)
         finally:
             world.delete()
     tracks = dict((path, dict((t, m @ bodies[t][name]) for t in bodies))

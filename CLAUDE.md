@@ -11186,3 +11186,8 @@ redo, no Bullet node left, the sword in the hand then on the floor, a box stoppi
      a capsule's `length` runs tip to tip; collision filters default group 1 / mask 1, so a ragdoll in
      group 2 falls through a default floor (floor mask 1|2); angular limits are DEGREES in the
      constraint transform's frame; only SixDOF2 (5) takes springs, type 4 ignores them silently.
+266. **Bullet does not step in a GUI Maya while the viewport is suspended** (`refresh -suspend`, which every
+     `timewalk.Walk` turns on). The first Ragdoll push keyed 61 frames of one still pose in the animator's
+     Maya («ключи запекаются но ничего не происходит»): a test capsule fell 31 cm with the refresh on and
+     0 with it suspended, in DG and parallel alike. mayapy has no viewport, so every verify fell. The
+     simulation steps run with the refresh on (`fall.simulate`), suspended again after.
