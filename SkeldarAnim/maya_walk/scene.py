@@ -432,6 +432,44 @@ def has_keys(root):
     return any(cmds.keyframe(j, attribute=CHANNELS, query=True, keyframeCount=True) for j in joints)
 
 
+def keys_print(root):
+    """A digest of the keys on the BASE layer of every joint under `root` (base_input: an animation layer the
+    animator keys corrections on does not count). apply() keeps it on the marker, so new animation put on a walked
+    skeleton - a clip imported onto it - is told from the walk's own keys (keys_changed)."""
+    import hashlib
+    cmds = _cmds()
+    joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])
+    digest = hashlib.sha1()
+    for joint in sorted(joints):
+        for ch in CHANNELS:
+            try:
+                curve = base_input(joint + "." + ch)[1]
+            except Refusal:                                  # driven by something else: not keys
+                continue
+            if not curve:
+                continue
+            times = cmds.keyframe(curve, query=True, timeChange=True) or []
+            values = cmds.keyframe(curve, query=True, valueChange=True) or []
+            digest.update(repr((_short(joint).split(":")[-1], ch, [round(t, 3) for t in times],
+                                [round(v, 4) for v in values])).encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+def keys_changed(root):
+    """Whether a walked skeleton's keys are no longer the ones the walk wrote (new animation put on it). A marker
+    from before the digest was kept answers False: it cannot tell."""
+    memo = memo_of(root)
+    known = memo.get("keys")
+    return bool(memo.get("walk")) and bool(known) and known != keys_print(root)
+
+
+def drop_source(root):
+    """The cycle `root` kept goes (its keys are new animation now: the next Pick reads them)."""
+    cmds = _cmds()
+    if cmds.attributeQuery(SOURCE_ATTR, node=root, exists=True):
+        cmds.deleteAttr(root + "." + SOURCE_ATTR)
+
+
 def capture_source(root):
     """`root`'s own keys read as its cycle (read_clip, the Save rule) and kept on it - once: a second call answers
     the cycle already kept. Returns the walk name."""
@@ -984,7 +1022,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
                          "parts": list(parts),
                          "knobs": dict(result.info["knobs"], **wc.knobs(given)),
                          "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
-                         "listed": True})
+                         "listed": True, "keys": keys_print(root)})
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
     #  short: the card's status line holds three lines (2026-10-13, «интерфейс рисуй компактным»)

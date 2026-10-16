@@ -10263,6 +10263,13 @@ live.**
   Found on the way: **Pick changed the animator's selection** - `write_curves`' `createNode` selected each new
   curve, so after Pick the selection was an animCurve and a card clicked next reached nobody. `skipSelect=True`;
   `card_walkers` reads the selection as walkers only (a bone, the top, a skinned mesh - `_selected_walkers`).
+- **…an empty well, a clip loaded onto a walker, a card taken out, the tempo** (spec addendum 4). `chosen_walk` no
+  longer falls back to the first saved walk FILE (it put `Creep_Drunk` on a skeleton carrying its own clip): an empty
+  well is no walk. `apply` keeps `keys` (`scene.keys_print`: a digest of the base-layer keys it wrote); `keys_changed`
+  = a clip was put on since - Pick drops the old kept cycle and reads the new keys, a knob skips that walker. Taking a
+  card out of the well puts its walkers back on their own animation (`_back_to_own`). The tempo knows the cycle it
+  counts (`tempo_walk`, `skeldarWalk_tempoWalk`): a Pick after the active cycle changed some other way read another
+  cycle's frames (Creep_Drunk 90 fr squeezed into 31). `verify_walk_own.py` **22/22**.
 
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the

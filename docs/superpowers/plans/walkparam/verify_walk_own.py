@@ -17,7 +17,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 ASSETS = os.path.join(REPO, "SkeldarAnim", "assets")
-WALKS = [os.path.join(HERE, "walks", n) for n in ("asd.walk.gz", "dw.walk.gz")]
+WALKS = [os.path.join(HERE, "walks", n) for n in ("asd.walk.gz", "dw.walk.gz", "Creep_Drunk.walk.gz")]
 
 import maya.standalone
 maya.standalone.initialize()
@@ -147,6 +147,55 @@ print(sw.restore_source(roots["A"]))
 back = pelvis_track("A")
 worst = max(float(np.linalg.norm(back[t] - source["A"][t])) for t in source["A"] if t in back)
 gate(sorted(back) == sorted(source["A"]) and worst < 1e-3, "and Restore brings it back (%.6f cm)" % worst)
+
+# ---- an empty walk well: Pick reads the skeleton's clip, never a saved walk file (the animator's report) ----
+cmds.optionVar(remove=panel.OPTION + "walk")
+gate(sw.walk_names() == ["Creep_Drunk", "asd", "dw"], "the walks folder still holds saved files (%s)"
+     % ", ".join(sw.walk_names()))
+cmds.select(roots["A"], replace=True)
+print(panel.press_apply())
+gate(sw.is_own(sw.memo_of(roots["A"]).get("walk")) and len(pelvis_track("A")) == len(source["A"]),
+     "Pick with an empty well processes A's own clip (%s, %d keys)"
+     % (sw.memo_of(roots["A"]).get("walk"), len(pelvis_track("A"))))
+
+
+def load_clip(dst, walk):
+    """A clip put on the walker `dst` from outside the tool: its keys rewritten (here by the walk `walk`), its marker
+    left saying what it said before - as an import onto it leaves it."""
+    root = roots[dst]
+    memo = cmds.getAttr(root + "." + sw.MARKER)
+    sw.apply(root, walk, {})
+    cmds.setAttr(root + "." + sw.MARKER, memo, type="string")
+
+
+# ---- a clip loaded onto a walker: a knob leaves it, the next Pick reads it ----
+old_walk = sw.memo_of(roots["B"]).get("walk")
+load_clip("B", "asd")
+loaded = pelvis_track("B")
+gate(sw.keys_changed(roots["B"]), "B carries a clip loaded by hand: its keys are not the walk's any more")
+cmds.select(clear=True)
+line = panel.slider_changed()
+print(line)
+same = sorted(pelvis_track("B")) == sorted(loaded) and all(
+    np.allclose(pelvis_track("B")[t], loaded[t]) for t in loaded)
+gate("new keys on it" in line and same, "a knob leaves B's new clip alone and says so")
+cmds.select(roots["B"], replace=True)
+print(panel.press_apply())
+new_walk = sw.memo_of(roots["B"]).get("walk")
+gate(sw.is_own(new_walk) and new_walk != old_walk and len(pelvis_track("B")) == len(loaded),
+     "Pick reads B's new clip as its cycle (%d keys, was %s, now %s)" % (len(pelvis_track("B")), old_walk, new_walk))
+gate(not sw.keys_changed(roots["B"]), "and its keys are the walk's again")
+
+# ---- a card chosen after another cycle: at its own tempo (Creep_Drunk looked broken, squeezed into 31 frames) ----
+P_drunk = sw.load_walk("Creep_Drunk", {})[0].P
+panel._walk_taken("asd")                                  # the tempo counts asd's frames
+cmds.optionVar(stringValue=(panel.OPTION + "walk", "Creep_Drunk"))   # the active cycle changed some other way
+cmds.file(os.path.join(ASSETS, "Manny_Skeleton.ma"), i=True, namespace="D", ignoreVersion=True)
+roots["D"] = cmds.ls("D:root", long=True)[0]
+cmds.select(roots["D"], replace=True)
+print(panel.press_apply())
+gate(sw.memo_of(roots["D"]).get("walk") == "Creep_Drunk" and len(pelvis_track("D")) == P_drunk + 1,
+     "Creep_Drunk on a fresh skeleton at its own %d frames (%d keys)" % (P_drunk, len(pelvis_track("D"))))
 
 shutil.rmtree(TEMP, ignore_errors=True)
 print("FAILED gates: %s" % FAILED if FAILED else "all %d gates passed" % COUNT[0])

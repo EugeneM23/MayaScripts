@@ -217,6 +217,34 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/stroll.anim"))
         self.assertEqual(len(panel.walk_list()), 2)
 
+    def test_taking_a_card_out_puts_its_walkers_back_on_their_own_animation(self):
+        panel = self.panel
+        panel.build_panel()
+        stroll, run = self.write("stroll"), self.write("run")
+        panel.take_walk_card(stroll)
+        self.case.keyed = {"|a"}                                  # a carries its own clip; b nothing
+        self.fake.selection = ["|a", "|b"]
+        panel.press_apply()
+        card = scene.card_walk(cards.WALK_FOLDER + "/stroll.anim")
+        self.assertEqual([a[1] for a in self.case.applied[-2:]], [card, card])
+        self.fake.selection = []
+        line = panel.remove_walk_card(stroll)
+        self.assertEqual(self.case.applied[-1][:2], ("|a", scene.OWN + "a"))   # back on its own clip
+        self.assertEqual(self.case.memos["|b"]["walk"], card)                 # nothing to go back to
+        self.assertIn("back on their own animation: a", line)
+        self.assertIn("no animation of their own to go back to (keep the card's keys): b", line)
+
+    def test_the_tempo_counts_the_cycle_it_was_set_for(self):
+        panel = self.panel
+        panel.build_panel()
+        self.case.frames.update({"asd": 32, "dw": 90})
+        panel._walk_taken("asd")                                  # the tempo counts asd's 32 frames
+        self.fake.vars[panel.OPTION + "walk"] = "dw"              # the active cycle changed some other way
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertEqual(self.case.applied[-1][1:3][0], "dw")
+        self.assertEqual(self.case.applied[-1][2]["tempo"], 90.0)  # dw at its own 90, never squeezed into 32
+
     def test_a_pose_card_is_refused_by_the_walk_well(self):
         pose = self.tp.write_card(self.library, "", "goblin")
         self.assertIn("pose card", self.panel.take_walk_card(pose))
@@ -231,7 +259,8 @@ class Panel(unittest.TestCase):
         self.assertEqual(panel.chosen_walk(), scene.card_walk(cards.WALK_FOLDER + "/stroll.anim"))
         panel.remove_all_walk_cards()
         self.assertEqual(panel.walk_list(), [])
-        self.assertEqual(panel.chosen_walk(), "asd")             # the files left (the fake's walk_names)
+        with self.assertRaises(scene.Refusal):                   # an empty well is no walk (never a saved file)
+            panel.chosen_walk()
 
     def test_a_walk_remembered_by_name_means_its_migrated_card(self):
         self.write("dw")

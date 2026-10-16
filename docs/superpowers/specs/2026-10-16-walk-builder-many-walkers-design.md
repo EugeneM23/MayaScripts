@@ -112,3 +112,23 @@ the two uses apart, the animator chose **«Карточка важнее»**:
 - Found on the way: `cmds.createNode` selects what it makes, so every Pick left an animCurve selected and the next
   card choice reached nobody. Curves are made with `skipSelect=True`, and the card reads the selection as walkers
   only - anything else selected counts as nothing selected.
+
+## Addendum 4: an empty well, a clip loaded onto a walker, a card taken out, the tempo (the same day)
+
+The animator, after the fourth push: «загрузил в сцену анимацию на скелет, нажал пик и у меня при пустых карточках
+подгрузилась ... анимация которую я вообще не ожидал»; then «если я удаляю карточку цикла то анимация не возвращается
+на ту что была выбрана на скелете» and «после применения карточки (Creep_Drunk) анимация ломается».
+
+- **An empty walk well is no walk.** `chosen_walk` fell back to the first saved walk FILE in the walks folder
+  (alphabetically `Creep_Drunk`), so Pick put a walk nobody chose on the skeleton. The fallback is gone; with no card
+  Pick reads each skeleton's own animation. A walker's own cycle made active is not a card either (`_active_card`).
+- **A clip loaded onto a walker is new animation.** `apply` keeps a digest of the base-layer keys it wrote on the
+  marker (`scene.keys_print`, through `base_input`, so animation-layer corrections do not count); `keys_changed` tells
+  a clip put on afterwards. Pick then drops the old kept cycle and reads the new keys; a knob skips that walker and
+  says so (it would wipe the new clip).
+- **Taking a card out of the well** (`remove_walk_card`, `remove_all_walk_cards`) puts the walkers on it back on their
+  own animation (`_back_to_own`); one that kept nothing keeps the card's keys and is named.
+- **The tempo knows which cycle it counts** (`tempo_walk`, optionVar `skeldarWalk_tempoWalk`, set when a cycle is
+  chosen, the tempo slider moves, Reset, Take its settings). The active cycle could change some other way (a card
+  gone, the empty-well fallback) and the next Pick read a tempo meant for another cycle: Creep_Drunk (90 frames)
+  squeezed into asd's 31 - the likely «broken» Creep_Drunk.

@@ -326,10 +326,11 @@ NO_WALK = "no walk cycle yet - drop an animation card of a walk into the walk we
 
 
 def chosen_walk():
-    """The active cycle (what the tempo counts, what Rig pose and Fix posture act on, what Pick puts on a
-    skeleton with no keys of its own): a walker's own cycle once it is selected, else the walk well's active
-    card (scene.card_walk); a walk remembered before the cards (a file's name) means the card it was moved
-    into, else the file; else the well's first card, else the first saved file."""
+    """The active cycle (what the tempo counts, what Rig pose and Fix posture act on): a walker's own cycle once
+    it is selected, else the walk well's active card (scene.card_walk); a walk remembered before the cards (a
+    file's name) means the card it was moved into, else the file; else the well's first card. Nothing else - an
+    empty well is no walk (2026-10-16: an empty well used to fall back to the first saved walk file, and Pick put
+    a walk nobody chose on a skeleton carrying its own clip)."""
     stored = _stored("walk") or ""
     if scene.is_card(stored) or scene.is_own(stored):
         if scene.walk_exists(stored):
@@ -344,9 +345,6 @@ def chosen_walk():
         name = scene.card_walk(rel)
         if scene.walk_exists(name):
             return name
-    names = scene.walk_names()
-    if names:
-        return names[0]
     raise scene.Refusal(NO_WALK)
 
 
@@ -424,10 +422,37 @@ def _show_walk_line():
         pass
 
 
-def _active_frames():
-    """The active cycle's own frames (what the card's tempo is counted in), or None without one."""
+def tempo_walk():
+    """The cycle the card's tempo is counted in (2026-10-16): the one it was set for - by choosing a cycle, by
+    moving the slider, by Reset - kept beside it, so an active cycle that changed some other way (a card gone, an
+    empty well) never reads a tempo meant for another cycle (Creep_Drunk squeezed into another walk's 31 frames
+    looked broken). None without one."""
+    stored = _stored("tempoWalk") or ""
+    if stored and scene.walk_exists(stored):
+        return stored
     try:
-        return scene.load_walk(chosen_walk(), values())[0].P
+        return chosen_walk()
+    except scene.Refusal:
+        return None
+
+
+def _remember_tempo_walk(name=None):
+    """The tempo is counted in `name` (the active cycle without it) from now on."""
+    if name is None:
+        try:
+            name = chosen_walk()
+        except scene.Refusal:
+            name = ""
+    _remember("tempoWalk", name or "")
+
+
+def _active_frames():
+    """The frames of the cycle the card's tempo is counted in, or None without one."""
+    name = tempo_walk()
+    if not name:
+        return None
+    try:
+        return scene.load_walk(name, values())[0].P
     except scene.REFUSALS:
         return None
 
@@ -447,6 +472,7 @@ def _walk_taken(name, say=True, keep_ratio=False):
         _set_knobs({"tempo": shown}, walk.P)
     finally:
         _QUIET[0] = quiet
+    _remember_tempo_walk(name)
     line = "walk %s | %s" % (scene.walk_label(name), walk.summary())
     if report.changed:
         line += " | " + report.short()
@@ -503,31 +529,56 @@ def take_walk_card(path):
     return _press(run)
 
 
+def _back_to_own(walks):
+    """The walkers on any of the cycles `walks` (cards taken out of the well) back on the animation they kept
+    (2026-10-16: «если я удаляю карточку цикла то анимация не возвращается на ту что была выбрана на скелете»).
+    One that kept nothing stays as it is, named. A tail for the line."""
+    back, kept = [], []
+    for root in scene.walkers():
+        if scene.memo_of(root).get("walk") not in walks:
+            continue
+        if not scene.has_source(root):
+            kept.append(scene.walker_label(root))
+            continue
+        _apply_to(root, scene.own_name(root))
+        back.append(scene.walker_label(root))
+    tail = ""
+    if back:
+        tail += " | back on their own animation: %s" % ", ".join(back)
+    if kept:
+        tail += " | no animation of their own to go back to (keep the card's keys): %s" % ", ".join(kept)
+    return tail
+
+
 def remove_walk_card(path):
-    """A card taken out of the walk well; the walk it was moves on to the next card."""
+    """A card taken out of the walk well: the walkers on it back on their own animation; the active cycle, when it
+    was this card, moves on to the next card."""
     def run():
         rel = scene.wcards.relative(path, _library())
         active = _active_walk_rel() == rel
         _remember_walks([each for each in walk_list() if each != rel])
         name = scene.wcards.card_name(rel)
-        if not active:
-            _show_walk_line()
-            return "%s taken out of the walk well" % name
-        _remember("walk", "")
-        rest = walk_list()
-        if rest:
-            return "%s taken out of the walk well | %s" % (name, _walk_taken(scene.card_walk(rest[0])))
+        line = "%s taken out of the walk well" % name
+        if active:
+            _remember("walk", "")
+            rest = walk_list()
+            if rest:
+                line += " | " + _walk_taken(scene.card_walk(rest[0]), say=False)
+            else:
+                line += " - no walk card left"
         _show_walk_line()
-        return "%s taken out of the walk well - no walk card left" % name
+        return line + _back_to_own([scene.card_walk(rel)])
     return _press(run)
 
 
 def remove_all_walk_cards():
+    """The walk well emptied: every walker on a card back on its own animation."""
     def run():
+        gone = [scene.card_walk(rel) for rel in walk_list()]
         _remember_walks([])
         _remember("walk", "")
         _show_walk_line()
-        return "the walk well emptied"
+        return "the walk well emptied" + _back_to_own(gone)
     return _press(run)
 
 
@@ -829,6 +880,8 @@ def knob_changed(name):
                 if name in scene.wm.SIDED:
                     _forget_sides(name)
                     show_side(mode)
+            if name == "tempo":                  # the frames shown are the active cycle's
+                _remember_tempo_walk()
         return slider_changed()
     return changed
 
@@ -866,6 +919,7 @@ def take_settings(root):
             _set_knobs(knobs, frames)
         finally:
             _QUIET[0] = quiet
+        _remember_tempo_walk(name)
         return "%s's settings are the card's - move a knob (or press Pick) to put them on every walker" \
             % scene.walker_label(root)
     return _press(run)
@@ -971,7 +1025,12 @@ def _press(action):
 def _apply_to(root, walk=None):
     """The walk `walk` (the active cycle) keyed onto `root` with the card's knobs - the tempo as a ratio of the
     active cycle (walk_knobs) - the card's pose and parts. The line."""
-    active = chosen_walk()
+    try:
+        active = chosen_walk()
+    except scene.Refusal:                     # an empty walk well: only a walk named here can be keyed
+        if not walk:
+            raise
+        active = None
     walk = walk or active
     _remember("parts", json.dumps(list(chosen_parts())))
     result, info, text = scene.apply(root, walk, walk_knobs(walk), None, chosen_parts(), pose_card=chosen_card())
@@ -981,18 +1040,15 @@ def _apply_to(root, walk=None):
 
 
 def walk_knobs(walk):
-    """The card's knobs for a walker on cycle `walk`: the card's tempo counts the ACTIVE cycle's frames, so
-    another cycle takes the same ratio of its own (at least 4 frames)."""
+    """The card's knobs for a walker on cycle `walk`: the card's tempo counts the frames of the cycle it was set
+    for (tempo_walk), so another cycle takes the same ratio of its own (at least 4 frames)."""
     knobs = values()
-    try:
-        active = chosen_walk()
-    except scene.Refusal:
-        return knobs
+    counted = tempo_walk()
     tempo = float(knobs.get("tempo") or 0.0)
-    if walk == active or tempo < 1:
+    if not counted or walk == counted or tempo < 1:
         return knobs
     own = scene.load_walk(walk, knobs)[0].P
-    base = scene.load_walk(active, knobs)[0].P
+    base = scene.load_walk(counted, knobs)[0].P
     knobs["tempo"] = float(max(4, int(round(tempo * own / float(base)))))
     return knobs
 
@@ -1008,6 +1064,9 @@ def rekey_all(walk=None):
         if walk is not None and name != walk:
             continue
         label = "%s - %s" % (scene.walker_label(root), scene.walk_label(name))
+        if scene.keys_changed(root):                         # new animation on it: a knob must not wipe it
+            failed.append("%s: new keys on it since the walk - Pick it to take them" % label)
+            continue
         try:
             lines.append(_apply_to(root, name))
             done.append(label)
@@ -1037,9 +1096,9 @@ def _own_for(root):
 
 
 def _keep_original(root):
-    """Before a card is keyed over a skeleton not walked yet, its own keys are kept (best effort) - so Use its own
-    cycle and Restore the original keys can bring them back. A clip that is no cycle is simply not kept."""
-    if scene.memo_of(root).get("walk") or scene.has_source(root) or not scene.has_keys(root):
+    """Before a card is keyed over a skeleton's own animation, it is kept (best effort) - so Use its own cycle and
+    Restore the original keys can bring it back. A clip that is no cycle is simply not kept."""
+    if scene.has_source(root) or not scene.has_keys(root):
         return
     try:
         scene.capture_source(root)
@@ -1047,27 +1106,46 @@ def _keep_original(root):
         pass
 
 
-def walk_for(root, own=False):
-    """The cycle Pick processes on `root`. The walk well's card comes first (2026-10-16, «Карточка важнее»):
-    Pick puts the active card on every selected skeleton. `own` (Pick > each on its own animation, for arrays of
-    clips), or no card at all: each skeleton on its own cycle - the one it keeps, else its keys read as its cycle
-    and kept on it."""
-    if own:
-        walk = scene.memo_of(root).get("walk")
-        if scene.is_own(walk) and scene.walk_exists(walk):
-            return walk
-        found = _own_for(root)
-        if found:
-            return found
-        return chosen_walk()
+def _active_card():
+    """The walk well's active card (or a walk file chosen before the cards), None when the well holds none - a
+    walker's own cycle made active is not a card."""
     try:
-        card = chosen_walk()
+        walk = chosen_walk()
     except scene.Refusal:
+        return None
+    return None if scene.is_own(walk) else walk
+
+
+def walk_for(root, own=False):
+    """The cycle Pick processes on `root`. The walk well's card comes first (2026-10-16, «Карточка важнее»): Pick
+    puts the active card on every selected skeleton, its own animation kept first. `own` (Pick > each on its own
+    animation, for arrays of clips), or no card in the well: each skeleton on its own animation - the one it
+    keeps, else its keys read as its cycle. A walked skeleton whose keys are not the walk's any more (a clip
+    loaded onto it) carries new animation: the old kept cycle goes and the new keys are read."""
+    memo = scene.memo_of(root)
+    walked = bool(memo.get("walk"))
+    if walked and scene.keys_changed(root):
+        scene.drop_source(root)
+        walked = False
+    card = _active_card()
+    if own or card is None:
+        walk = memo.get("walk")
+        if walked and scene.is_own(walk) and scene.walk_exists(walk):
+            return walk
+        if walked and not scene.has_source(root):            # it walks a card and kept nothing of its own
+            if card:
+                return card
+            raise scene.Refusal("%s walks %s and keeps no animation of its own - load a clip on it, or drop a walk "
+                                "cycle card into the walk well" % (scene.walker_label(root), scene.walk_label(walk)))
         found = _own_for(root)
         if found:
             return found
-        raise
-    _keep_original(root)
+        if card:
+            return card
+        raise scene.Refusal("%s carries no animation and the walk well holds no card - load a clip on it, or drop "
+                            "a walk cycle card into the walk well" % scene.walker_label(root))
+    if not walked:
+        _keep_original(root)
     return card
 
 
@@ -1168,6 +1246,7 @@ def press_reset(*_):
         walk = scene.load_walk(chosen_walk(), knobs)[0]
         knobs["tempo"] = walk.P
         _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
+        _remember_tempo_walk()
         return _rekey("the knobs are back at their defaults")
     return _press(run)
 

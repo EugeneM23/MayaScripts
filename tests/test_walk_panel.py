@@ -231,7 +231,7 @@ class CardTests(unittest.TestCase):
         names = ("_cmds", "walk_names", "walk_exists", "load_walk", "apply", "selected_root", "selected_top",
                  "selected_roots", "memo_of", "pick", "target_root", "_state", "fix_posture", "folder", "walkers",
                  "walker_label", "set_listed", "has_source", "has_keys", "own_name", "capture_source",
-                 "restore_source")
+                 "restore_source", "keys_changed", "drop_source")
         self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
         self.temp = tempfile.mkdtemp()
         self.library = os.path.join(self.temp, "library").replace("\\", "/")
@@ -275,6 +275,10 @@ class CardTests(unittest.TestCase):
         self.sources = {}                         # root: its kept own cycle
         scene.has_keys = lambda root: root in self.keyed
         scene.has_source = lambda root: root in self.sources
+        self.reloaded = set()                     # walkers a clip was loaded onto since their walk
+        scene.keys_changed = lambda root: root in self.reloaded
+        scene.drop_source = lambda root: self.sources.pop(root, None)
+        self.fake.vars[panel.OPTION + "walk"] = "asd"            # the walk well's active walk (a saved file here)
 
         def own_name(root):
             return self.sources[root]
@@ -572,8 +576,33 @@ class CardTests(unittest.TestCase):
             st.is_anim = real
         self.assertEqual([a[:2] for a in self.applied[count:]], [("|own", scene.card_walk(rel2))])
 
+    def test_a_clip_loaded_onto_a_walker_is_what_the_next_pick_reads(self):
+        panel.build_panel()
+        del self.fake.vars[panel.OPTION + "walk"]                # an empty walk well
+        self.keyed = {"|a"}
+        self.fake.selection = ["|a"]
+        panel.press_apply()
+        self.assertEqual(self.applied[-1][1], scene.OWN + "a")   # no card: its own animation, never a saved file
+        self.reloaded.add("|a")                                  # a new clip loaded onto it
+        count = len(self.applied)
+        line = panel.slider_changed()                            # a knob does not wipe the new clip
+        self.assertEqual(len(self.applied), count)
+        self.assertIn("new keys on it since the walk", line)
+        self.sources["|a"] = scene.OWN + "a"
+        panel.press_apply()                                      # Pick drops the old kept cycle, reads the new
+        self.assertEqual(self.applied[-1][1], scene.OWN + "a")
+        self.assertEqual(len(self.applied), count + 1)
+
+    def test_an_empty_well_and_no_animation_is_refused(self):
+        panel.build_panel()
+        del self.fake.vars[panel.OPTION + "walk"]
+        self.fake.selection = ["|bare"]
+        self.assertIn("walk well holds no card", panel.press_apply())
+        self.assertEqual(self.applied, [])
+
     def test_with_no_walk_card_the_first_own_cycle_is_the_active_one(self):
         scene.walk_names = lambda: []
+        del self.fake.vars[panel.OPTION + "walk"]
         panel.build_panel()
         self.keyed = {"|a", "|b"}
         self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
