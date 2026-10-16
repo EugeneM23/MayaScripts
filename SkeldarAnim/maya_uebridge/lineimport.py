@@ -159,6 +159,14 @@ class _Progress(object):
                 pass
 
 
+def _shown(label):
+    """A character's name as the scene tab shows it (a skeleton's root path to its leaf)."""
+    if not label:
+        return label
+    from maya_scenetabs import scope
+    return scope.local(label).split("|")[-1]
+
+
 def track_of(source, start, end):
     """The clip's root over its own range (`lineup.sample_frames`)."""
     if start is None:
@@ -170,8 +178,8 @@ def track_of(source, start, end):
 def _discard(namespace):
     """A clip skeleton imported for a clip that will not be done."""
     try:
-        if cmds.namespace(exists=namespace):
-            cmds.namespace(removeNamespace=namespace,
+        if cmds.namespace(exists=":" + namespace.lstrip(":")):
+            cmds.namespace(removeNamespace=":" + namespace.lstrip(":"),
                            deleteNamespaceContent=True)
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
@@ -522,7 +530,7 @@ def _run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                 if failure:
                     failures.append((clip["name"], failure))
                 else:
-                    finished[index] = (label, clip["name"])
+                    finished[index] = (_shown(label), clip["name"])
             done = [finished[i] for i in sorted(finished)]
             if auto:
                 for group in by_row.values():

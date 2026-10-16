@@ -86,10 +86,11 @@ def node(rig, leaf_name):
 
 def label(rig):
     """How a message names a rig: its namespace, or its group for the
-    root-namespace one."""
+    root-namespace one - as the active scene tab shows it (`Manny_Rig`, never
+    `tab_x:Manny_Rig`; as it is with tabs off)."""
     if rig.namespace:
-        return rig.namespace
-    return (rig.group or "").lstrip("|") or "the rig"
+        return scope.relative(rig.namespace, cmds)
+    return scope.local((rig.group or "").lstrip("|"), cmds).lstrip("|") or "the rig"
 
 
 def under(path, top):

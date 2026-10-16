@@ -166,8 +166,8 @@ class kept_selection(object):
 def discard(namespace):
     """A clip skeleton nothing will keep."""
     try:
-        if namespace and cmds.namespace(exists=namespace):
-            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+        if namespace and cmds.namespace(exists=":" + namespace.lstrip(":")):
+            cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
     except Exception:                                        # noqa: BLE001
         import traceback
         traceback.print_exc()

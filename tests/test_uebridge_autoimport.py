@@ -234,7 +234,7 @@ class OntoNewRig(unittest.TestCase):
         autoimport.cmds = types.SimpleNamespace(
             undoInfo=lambda **k: self.calls.append(("undo", tuple(sorted(k)))),
             namespace=lambda exists=None, removeNamespace=None, **k: (
-                True if exists is not None else self.calls.append(("discard", removeNamespace))))
+                True if exists is not None else self.calls.append(("discard", (removeNamespace or "").lstrip(":")))))
         rigimport._rig_file_ok = lambda entry=None: True
         rigimport.ready_rig = lambda plan: (
             self.calls.append(("add", plan["entry"], plan["add"]))

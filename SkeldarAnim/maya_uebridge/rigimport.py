@@ -486,7 +486,7 @@ def retarget_imported(rig, mod, namespace, info, source, name, place=None,
     placed = _place(shift, rig, place, info.get("start")) if shift else ""
 
     bake_text = maya_rig_retarget.bake(rig=rig)
-    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
     _label(rig, name)
     line = result_line(name, info, connect_text, bake_text, namespace,
                        maya_rigs.label(rig))
@@ -581,7 +581,7 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
         try:
             decision = decide_bones(rig, mod, source)
         except maya_retargetmode.Cancelled:
-            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
             if plan["add"]:
                 discard_added(rig)
             restore_time(timing)
@@ -589,7 +589,7 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
         if not plan["add"]:
             rig, mod, notes, failure = ready_rig(plan)
             if failure:
-                cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+                cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
                 return "  |  ".join(notes + [failure])
         if decision.reason:
             notes.append(decision.reason)

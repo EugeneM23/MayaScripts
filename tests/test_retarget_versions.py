@@ -264,7 +264,7 @@ class SkeletonCancel(unittest.TestCase):
             dict(twin=bool(twin), moved=89, skipped=[], missing=[], mode=mode))
         si.cmds = types.SimpleNamespace(
             ls=lambda node, uuid=False, long=False: ["UUID"] if uuid else ["|root1"],
-            namespace=lambda **k: self.calls.append(("delete_ns", k.get("removeNamespace"))))
+            namespace=lambda **k: self.calls.append(("delete_ns", (k.get("removeNamespace") or "").lstrip(":"))))
         self.entry = types.SimpleNamespace(label="Creep [skeleton]", key="Creep_Skeleton")
 
     def test_cancel(self):
@@ -315,7 +315,7 @@ class RigImportCancel(unittest.TestCase):
                                                        or ("line", ""))
         rigimport.cmds = types.SimpleNamespace(
             undoInfo=lambda **k: None,
-            namespace=lambda **k: self.calls.append(("delete_ns", k.get("removeNamespace"))))
+            namespace=lambda **k: self.calls.append(("delete_ns", (k.get("removeNamespace") or "").lstrip(":"))))
         # the press notes the namespaces before its import (the sources merge,
         # 2026-10-02: a failed file import is taken back)
         saved_ns = rigimport.animimport.existing_namespaces

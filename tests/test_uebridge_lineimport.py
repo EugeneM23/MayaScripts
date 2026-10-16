@@ -146,9 +146,9 @@ class Press(unittest.TestCase):
             playbackOptions=lambda **k: self.calls.append(
                 ("timeline", k["minTime"], k["maxTime"])),
             namespace=lambda exists=None, removeNamespace=None, **k: (
-                exists in self.namespaces if exists is not None else
-                self.calls.append(("discard", removeNamespace)) or
-                self.namespaces.discard(removeNamespace)),
+                exists.lstrip(":") in self.namespaces if exists is not None else
+                self.calls.append(("discard", removeNamespace.lstrip(":"))) or
+                self.namespaces.discard(removeNamespace.lstrip(":"))),
             undoInfo=lambda **k: None)
         sys.modules["maya_rigs"] = types.SimpleNamespace(label=lambda rig: rig.namespace)
 

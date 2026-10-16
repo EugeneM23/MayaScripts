@@ -291,7 +291,7 @@ def bare_roots():
 def skeleton_label(root):
     """What a message calls a skeleton: the catalog row its Add recorded and
     its root («Manny UE5 [skeleton] (root)»), else its root."""
-    leaf_name = root.split("|")[-1]
+    leaf_name = scope.local(root.split("|")[-1])
     try:
         from maya_scenesetup import deletion
         label = deletion.recorded(root)[1]
@@ -430,7 +430,7 @@ def onto_existing(root, namespace, info, source, name, place, decide=None):
         try:
             decision = decide(source, root, skeleton_label(root), start)
         except maya_retargetmode.Cancelled:
-            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
             raise
     links = _links(root)
     for bone, _weapon in links:
@@ -451,7 +451,7 @@ def onto_existing(root, namespace, info, source, name, place, decide=None):
     if not result["moved"]:
         return "", ("no bone of {0} matches {1} - its skeleton is kept as {2}".format(
             name, label, namespace) + _why(result))
-    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
     _label(root, name)
     line = result_line(name, label, "", result, info)
     parts = [line, placed]
@@ -1028,13 +1028,13 @@ def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None)
             decision = decide(source, root, entry.label, start)
         except maya_retargetmode.Cancelled:
             discard_new(root)
-            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
             raise
     result = _transfer(source, root, start, end, decision)
     if not result["moved"]:
         return "", ("no bone of {0} matches {1} - its skeleton is kept as {2}".format(
             name, entry.label, namespace) + _why(result)), top
-    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    cmds.namespace(removeNamespace=":" + namespace.lstrip(":"), deleteNamespaceContent=True)
     _label(root, name)
     line = result_line(name, entry.label, top, result, info)
     line = "{0}  |  {1}".format(line, placed) if placed else line

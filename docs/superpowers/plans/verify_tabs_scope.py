@@ -194,6 +194,35 @@ def clip(ctx):
          and not cmds.namespace(exists=":clipX"), note)
 
 
+def bridge(ctx):
+    """2026-10-16, found live: every Animation Setup import left its clip skeleton at the
+    ROOT, in every tab - its namespace was deleted by a name relative to the tab's (trap 254)."""
+    clip_file = "C:/!!!Work/Animations/Export/ShortSword_Walk_1P.fbx"
+    if not os.path.isfile(clip_file):
+        gate("bridge: SKIPPED - no clip on this disk", True)
+        return
+    import maya_retargetmode
+    from maya_uebridge import lineimport, records as bridge_records, rigimport
+    maya_retargetmode.set_asker(lambda *a, **k: "stretch")
+    tabs = [t["ns"] for t in session.state()["tabs"]]
+
+    def outside():
+        tops = [t for t in cmds.ls(assemblies=True) or []
+                if not any(t.startswith(ns + ":") for ns in tabs) and t not in ("persp", "top", "front", "side")]
+        spaces = [n for n in cmds.namespaceInfo(":", listOnlyNamespaces=True) or []
+                  if n not in ("UI", "shared") and n not in tabs]
+        return tops + spaces
+
+    line = rigimport.import_and_retarget(clip_file, "ShortSword_Walk_1P", clip_fps=30.0, target="new_rig")
+    gate("bridge: onto a new rig, nothing left outside the tabs", not outside(), (outside(), line[:160]))
+    gate("bridge: the line names the rig as the tab shows it", "tab_" not in line, line[:200])
+    record = bridge_records.AnimRecord(*(["ShortSword_Walk_1P"] + [""] * (len(bridge_records.AnimRecord._fields) - 1)))
+    line = lineimport.run([record._replace(fps=30.0)], lambda r: (clip_file, 30.0), "skeleton")
+    gate("bridge: onto a new skeleton, nothing left outside the tabs", not outside(), (outside(), line[:160]))
+    gate("bridge: the scope still the active tab's",
+         cmds.namespaceInfo(currentNamespace=True).lstrip(":") == ACTIVE)
+
+
 def save(ctx):
     saved = saving.save_tab()
     saving.save_tab(path=RUN + "/plain_tab.ma", adopt=False)
@@ -259,7 +288,7 @@ def main():
     ctx = {"before": decoy_snapshot(), "film": film_file}
     switching.switch(ACTIVE)
     for name, run in (("questions", questions), ("add", add), ("retarget", retarget), ("export", export),
-                      ("weapon", weapon), ("delete", delete), ("clip", clip), ("save", save),
+                      ("weapon", weapon), ("delete", delete), ("clip", clip), ("bridge", bridge), ("save", save),
                       ("shared", shared), ("decoy", decoy), ("open_scene", open_scene)):
         section(name, run, ctx)
 
