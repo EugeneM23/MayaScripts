@@ -6449,6 +6449,12 @@ values); `verify_fkik_switch.py` **63/63** again (a retargeted take is keyed on 
   own - set at the current frame»). `verify_fkik_keys.py` **16/16** (A: 0/12/24 with the clavicle on 6 and
   Main on 18; D: under a layer); layers 37/37, switch 63/63, legs 12/12, spine 14/14, spine take 36/36;
   6759 unit tests. `driving_curves` is no longer used by the switch.
+- **…and a MUTED layer's keys are not the limb's** (the same day, `Knife/AS_DG_ATK_JA_02.ma`: the arm's
+  baked take, 71 keys, on a muted `_3P_Upper_Body` over 5 base keys - «не будем учитывать тот слой который
+  отключен»). `own_curves` leaves out a blend's `inputB` when its layer (`blend.message -> animLayer`) is
+  muted (`_layer_off`). On that scene: Arm_R to IK on 0, 14, 26, 40, 51, the arm kept to 0.0000 cm.
+  `verify_fkik_keys.py` **18/18** (E: 31 keys with the layer on, the base's 3 muted); layers 37/37, switch
+  63/63, legs 12/12, spine 14/14; 6766 unit tests.
 
 126. **AdvancedSkeleton's deformation arm joints are NOT the FK/IK blend.** Their orient constraint's
      `offsetX` is driven by the twist network (`twistAdditionElbow_R_output1DUC1.o ->

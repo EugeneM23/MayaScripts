@@ -312,5 +312,30 @@ d = diff(shown, track(ub, expected), expected)
 gate(got == expected and d[0] < KEPT_CM and d[1] < KEPT_DEG,
      "FK -> IK keys only %s, the arm kept on them: %s, %s | %s" % (expected, got, fmt(d), text))
 
+# ------------------------------------------------------------------ E: a muted layer
+# 2026-10-16: the knife scene's arm carried a baked take on a MUTED `_3P_Upper_Body` (71 keys) over
+# 5 base keys - «не будем учитывать тот слой который отключен».
+CASE[0] = "E"
+print("=" * 30, "E  Manny_Rig, a baked take on a muted layer")
+rig, text = add("Manny_Rig")
+R = fkik.limb(rig, "R")[0]
+key_arm(R, [0, 12, 24], [((0, 0, 0), 5, (0, 0, 0)), ((10, -25, 20), 40, (25, 10, -15)),
+                         ((-15, 20, -10), 70, (-20, -15, 30))])
+layer = cmds.animLayer("bakedLayer")
+cmds.animLayer(layer, edit=True, attribute=[R.fk[0] + ".rotateY", R.fk[2] + ".rotateX"])
+for f in range(0, 31):
+    cmds.setKeyframe(R.fk[0], attribute="rotateY", time=f, value=float(f % 7), animLayer=layer)
+    cmds.setKeyframe(R.fk[2], attribute="rotateX", time=f, value=float(f % 5), animLayer=layer)
+dense = fkik.key_plan(R, (0, 48, False))[1]
+cmds.animLayer(layer, edit=True, mute=True)
+plan = fkik.key_plan(R, (0, 48, False))[1]
+gate(len(dense) == 31 and plan == [0.0, 12.0, 24.0],
+     "a layer counts while on (%d keys), muted only the base's: %s" % (len(dense), plan))
+shown = track(ub, [0, 12, 24])
+text = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
+d = diff(shown, track(ub, [0, 12, 24]))
+gate(times([R.ik, R.pole]) == [0.0, 12.0, 24.0] and d[0] < KEPT_CM and d[1] < KEPT_DEG,
+     "FK -> IK under the muted layer keys 0, 12, 24, the arm kept: %s | %s" % (fmt(d), text))
+
 print("=" * 30)
 print("%d gates, %d failed %s (%.0f s)" % (COUNT[0], len(FAILS), FAILS, time.time() - t_all))

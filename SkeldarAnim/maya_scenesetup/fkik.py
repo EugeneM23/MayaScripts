@@ -927,7 +927,8 @@ _PASS = (BLEND_NODE, "pairBlend", "unitConversion")
 def own_curves(nodes, plugs=()):
     """The time curves keyed on the controls `nodes` themselves (every channel and
     attribute of theirs) and on `plugs` - straight, or through animation layers'
-    blend nodes and a pairBlend. Nothing they hang on. A set of curve names."""
+    blend nodes (a muted layer's own curves left out) and a pairBlend. Nothing they
+    hang on. A set of curve names."""
     curves, seen = set(), set()
     todo = []
     for node in nodes:
@@ -948,9 +949,28 @@ def own_curves(nodes, plugs=()):
         if kind in TIME_CURVES:
             curves.add(node)
         elif kind.startswith(_PASS):
-            todo.extend(cmds.listConnections(node, source=True, destination=False,
-                                             plugs=True) or [])
+            pairs = cmds.listConnections(node, source=True, destination=False,
+                                         connections=True, plugs=True) or []
+            off = kind.startswith(BLEND_NODE) and _layer_off(node)
+            for dest, src in zip(pairs[0::2], pairs[1::2]):
+                # a muted layer shows nothing: its keys are no keys of the limb (2026-10-16,
+                # «не будем учитывать тот слой который отключен»)
+                if off and dest.split(".", 1)[1].startswith("inputB"):
+                    continue
+                todo.append(src)
     return curves
+
+
+def _layer_off(blend):
+    """Whether the animation layer a blend node belongs to is muted (its own value,
+    `inputB`, then shows nothing)."""
+    for layer in cmds.listConnections(blend + ".message", source=False, destination=True,
+                                      type="animLayer") or []:
+        try:
+            return bool(cmds.animLayer(layer, query=True, mute=True))
+        except RuntimeError:
+            return False
+    return False
 
 
 def _keys_of(curve):
