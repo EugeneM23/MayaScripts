@@ -7526,6 +7526,19 @@ answered by clicking its Delete (`delete_character_confirm.png`, the card `delet
 both gone, the line «Deleted Manny_Rig (rig), ... - 2849 nodes», one Ctrl+Z bringing both back. 3473 unit
 tests. Not built: a hotkey row.
 
+**…and the animation layers it was in** (2026-10-16, «кнопочка удаления ... должна удалять и слои в
+которых находился персонаж (только если там нет объектов которые не относятся к удаляемому)»).
+`animLayer` is a HUB type, so until then a layer of only the rig's controls stayed behind, empty.
+`deletion.doomed_layers` (pure): a layer goes when it held something that goes (a member plug's node
+or a blend node in core ∪ doomed) or a child layer of it goes, holds nothing that stays, and every
+child of it goes; a layer that never held the character and every root stay. `emptied_roots`: a root
+left with no child goes too (Maya's editor does that with BaseAnimation), never Scene Tabs'
+`skeldarTabsLayerRoot` / `AnimLayerRoot` (trap 248). `Plan.layers` (UUIDs), deleted children first
+(a locked layer unlocked), named in the confirm and the line. Proof `verify_delete_layers.py` 14/14
+standalone (only-rig, locked, parent + child go; shared with a cube or another rig, an empty one stay;
+the cube still plays its layer; Ctrl+Z / redo; an emptied BaseAnimation goes and comes back);
+`verify_delete_character.py` 82/82; 6722 unit tests.
+
 156. **`lightLinker1` is not a default node, and it links every shading group of the scene.**
      `ls -defaultNodes` leaves it out; a connection-graph walk around one character's material reached
      every other character's shading groups through it and, from those, their meshes — so "delete what

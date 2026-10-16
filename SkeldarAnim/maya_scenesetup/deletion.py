@@ -42,7 +42,7 @@ Character = collections.namedtuple("Character", "kind label namespace root rig p
                                    defaults=((),))
 Plan = collections.namedtuple(
     "Plan", "characters tops core doomed namespaces riders disconnects foreign summaries refusal "
-            "kept", defaults=((),))
+            "kept layers", defaults=((), ()))
 
 # A node carrying a user attribute that starts with one of these is ours (a weapon, a space, the
 # camera, the CoM, a label, a record...), never a stranger in a character's group.
@@ -116,6 +116,54 @@ def doomed_components(core, frontier, provenance, neighbours, is_dag, is_hub):
         if touches or comp <= provenance:
             doomed |= comp
     return doomed
+
+
+def doomed_layers(layers, going):
+    """The animation layers to delete with the character. Pure.
+
+    `layers`: {name: (parent or None, set of the nodes it holds - its members' nodes and its blend
+    nodes, [child layer names])}; `going`: the nodes the delete takes. A layer goes when it held
+    something that goes, or a child layer of it goes, and it holds nothing that stays and every
+    child of it goes too. A layer that never held the character (an empty one of the animator's) and
+    a root layer (no parent) stay. 2026-10-16: «удалять и слои в которых находился персонаж (только
+    если там нет объектов которые не относятся к удаляемому)».
+    """
+    verdict = {}
+
+    def goes(name):
+        if name in verdict:
+            return verdict[name]
+        verdict[name] = False                                 # a cycle never deletes
+        parent, nodes, children = layers[name]
+        kids = [goes(child) for child in children if child in layers]
+        verdict[name] = bool(parent) and nodes <= going and all(kids) and (
+            bool(nodes & going) or any(kids))
+        return verdict[name]
+
+    return [name for name in layers if goes(name)]
+
+
+def emptied_roots(layers, doomed, keep=()):
+    """Root layers every child of which goes, holding nothing themselves: Maya's editor removes an
+    emptied BaseAnimation with its last layer. `keep`: roots of other tools (Scene Tabs'). Pure."""
+    out = []
+    for name, (parent, nodes, children) in layers.items():
+        if parent or nodes or name in keep or not children:
+            continue
+        if all(child in doomed for child in children):
+            out.append(name)
+    return out
+
+
+def layers_note(names):
+    """The confirm's line on the animation layers that go. Pure."""
+    if not names:
+        return ""
+    shown = list(names)[:6]
+    more = len(names) - len(shown)
+    return ("Their animation {0}, holding nothing else - deleted: ".format(
+        "layer" if len(names) == 1 else "layers") + ", ".join(shown)
+            + (" and {0} more".format(more) if more else ""))
 
 
 def _under(path, top):
@@ -218,7 +266,7 @@ def counted(count, word):
     return "{0} {1}{2}".format(count, word, "" if count == 1 else "s")
 
 
-def confirm_text(summaries, disconnects=(), foreign=(), kept=()):
+def confirm_text(summaries, disconnects=(), foreign=(), kept=(), layers=()):
     """The question before the delete. `summaries`: [(label, [what of theirs goes])]. Pure."""
     count = len(summaries)
     lines = ["Delete {0} and everything that belongs to {1}?".format(
@@ -238,6 +286,8 @@ def confirm_text(summaries, disconnects=(), foreign=(), kept=()):
         more = len(kept) - len(shown)
         lines += ["", "Not theirs, in their group - moved out to world level and kept: "
                   + ", ".join(shown) + (" and {0} more".format(more) if more else "")]
+    if layers:
+        lines += ["", layers_note(layers)]
     lines += ["", "Ctrl+Z brings them back."]
     return "\n".join(lines)
 
@@ -719,6 +769,41 @@ def _holder_constraints(rigs):
     return out
 
 
+def _layer_roots_kept():
+    """Scene Tabs' layer roots: never ours to delete (trap 248)."""
+    try:
+        from maya_scenetabs import records
+    except ImportError:
+        return lambda name: False
+    def kept(name):
+        leaf = name.split(":")[-1]
+        rest = leaf[len(records.TAB_LAYER_ROOT):]
+        return leaf == records.LAYER_ROOT or (
+            leaf.startswith(records.TAB_LAYER_ROOT) and (rest == "" or rest.isdigit()))
+    return kept
+
+
+def _anim_layers(going):
+    """UUIDs of the animation layers the delete takes (and of a root it empties). Reads only."""
+    names = cmds.ls(type="animLayer") or []
+    if not names:
+        return []
+    layers, uuid_of = {}, {}
+    for name in names:
+        uuid_of[name] = _uuid(name)
+        held = set()
+        for plug in cmds.animLayer(name, query=True, attribute=True) or []:
+            held.update(cmds.ls(plug.split(".")[0], uuid=True) or [])
+        held.update(cmds.ls(cmds.animLayer(name, query=True, blendNodes=True) or [],
+                            uuid=True) or [])
+        parent = cmds.animLayer(name, query=True, parent=True) or None
+        layers[name] = (parent, held, list(cmds.animLayer(name, query=True, children=True) or []))
+    doomed = doomed_layers(layers, going)
+    kept = _layer_roots_kept()
+    doomed += emptied_roots(layers, doomed, keep=[n for n in layers if kept(n)])
+    return [uuid_of[name] for name in doomed if uuid_of.get(name)]
+
+
 def _refusal(chars):
     for char in chars:
         for top in char.parts:
@@ -784,8 +869,9 @@ def plan(chars):
                                                fullPath=True) or [], uuid=True) or [])
     foreign = _foreign(core, skip)
     summaries = [(c.label, _summary(c)) for c in chars]
+    layers = _anim_layers(set(core) | set(doomed))
     return Plan(chars, outermost(tops), core, doomed, namespaces, riders, disconnects, foreign,
-                summaries, refusal, kept)
+                summaries, refusal, kept, layers)
 
 
 # ----------------------------------------------------------- the delete
@@ -845,6 +931,11 @@ def execute(p, unowned=0):
         dag = outermost([path for path in left if cmds.objectType(path, isAType="dagNode")])
         _delete(dag)
         _delete([path for path in (_path(uuid) for uuid in everything) if path])
+        layers = _delete_layers(p.layers)
+        if layers:
+            notes.append("{0} deleted: {1}.".format(
+                "Animation layer" if len(layers) == 1 else "Animation layers",
+                ", ".join(name.split(":")[-1] for name in layers)))
         for namespace in sorted(p.namespaces, key=lambda ns: -ns.count(":")):
             _remove_namespace(namespace, notes)
         from maya_scenesetup import connections
@@ -853,6 +944,36 @@ def execute(p, unowned=0):
         cmds.undoInfo(closeChunk=True)
     gone = before - len(cmds.ls() or [])
     return deleted_message([c.label for c in p.characters], gone, unowned, notes)
+
+
+def layer_names(uuids):
+    """The layers among `uuids` the animator made (roots left out), by name."""
+    out = []
+    for uuid in uuids or []:
+        path = _path(uuid)
+        if path and cmds.animLayer(path, query=True, parent=True):
+            out.append(path)
+    return out
+
+
+def _delete_layers(uuids):
+    """Delete the layers, children before their parent. Returns the names of the non-root ones."""
+    shown = layer_names(uuids)
+    left = [u for u in uuids or [] if _path(u)]
+    while left:
+        leaves = [u for u in left
+                  if not any(_uuid(c) in left for c in
+                             cmds.animLayer(_path(u), query=True, children=True) or [])]
+        if not leaves:
+            leaves = left
+        for uuid in leaves:
+            path = _path(uuid)
+            if path:
+                if cmds.lockNode(path, query=True, lock=True)[0]:
+                    cmds.lockNode(path, lock=False)
+                cmds.delete(path)
+        left = [u for u in left if u not in leaves and _path(u)]
+    return shown
 
 
 def _keep(kept):
@@ -913,6 +1034,6 @@ def delete_selected(selection=None, confirm=None):
     if p.refusal:
         return p.refusal
     if not (confirm or _confirm)(confirm_text(p.summaries, [maya_rigs.label(r) for r in p.disconnects],
-                                              p.foreign, p.kept)):
+                                              p.foreign, p.kept, layer_names(p.layers))):
         return CANCELLED
     return execute(p, len(unowned))

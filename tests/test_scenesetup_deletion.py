@@ -277,6 +277,58 @@ class Strangers(unittest.TestCase):
         self.assertEqual(deletion.kept_note([]), "")
 
 
+class AnimLayers(unittest.TestCase):
+    """2026-10-16: the animation layers the character was in go with it, when they hold nothing
+    else."""
+
+    LAYERS = {
+        "Base": (None, set(), ["OnlyRig", "Mixed", "Empty", "Parent", "Other"]),
+        "OnlyRig": ("Base", {"ctrl", "blend1"}, []),
+        "Mixed": ("Base", {"ctrl", "cube"}, []),
+        "Empty": ("Base", set(), []),
+        "Parent": ("Base", {"ctrl"}, ["Child"]),
+        "Child": ("Parent", {"elbow"}, []),
+        "Other": ("Base", {"cube"}, ["Inner"]),
+        "Inner": ("Other", {"ctrl"}, []),
+    }
+    GOING = {"ctrl", "blend1", "elbow"}
+
+    def test_a_layer_of_only_the_character_goes(self):
+        doomed = deletion.doomed_layers(self.LAYERS, self.GOING)
+        self.assertIn("OnlyRig", doomed)
+        self.assertIn("Parent", doomed)
+        self.assertIn("Child", doomed)
+        self.assertIn("Inner", doomed)
+
+    def test_a_layer_holding_anything_else_stays(self):
+        doomed = deletion.doomed_layers(self.LAYERS, self.GOING)
+        self.assertNotIn("Mixed", doomed)
+        self.assertNotIn("Other", doomed)
+
+    def test_a_layer_that_never_held_the_character_and_the_root_stay(self):
+        doomed = deletion.doomed_layers(self.LAYERS, self.GOING)
+        self.assertNotIn("Empty", doomed)
+        self.assertNotIn("Base", doomed)
+
+    def test_a_parent_with_a_child_that_stays_stays(self):
+        layers = dict(self.LAYERS, Child=("Parent", {"cube"}, []))
+        doomed = deletion.doomed_layers(layers, self.GOING)
+        self.assertNotIn("Parent", doomed)
+        self.assertNotIn("Child", doomed)
+
+    def test_an_emptied_root_goes_but_not_one_kept_or_still_holding(self):
+        layers = {"Base": (None, set(), ["A"]), "A": ("Base", {"ctrl"}, [])}
+        self.assertEqual(deletion.emptied_roots(layers, ["A"]), ["Base"])
+        self.assertEqual(deletion.emptied_roots(layers, ["A"], keep=["Base"]), [])
+        self.assertEqual(deletion.emptied_roots(self.LAYERS, ["OnlyRig"]), [])
+
+    def test_the_confirm_names_them(self):
+        text = deletion.confirm_text([("Manny_Rig (rig)", [])], layers=["OnlyRig", "Parent"])
+        self.assertIn("animation layers", text)
+        self.assertIn("OnlyRig, Parent", text)
+        self.assertNotIn("animation layer", deletion.confirm_text([("x (rig)", [])]))
+
+
 class Texts(unittest.TestCase):
     def test_the_confirm_names_everything(self):
         text = deletion.confirm_text(
