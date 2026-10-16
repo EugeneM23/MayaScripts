@@ -10948,7 +10948,11 @@ alone doubles the tab's prefix on everything the plugin creates.
   A check that fails on an internal error REFUSES (a bar message naming Tabs off) rather than failing open.
 - **The bar** (`maya_scenetabs/bar.py`) is a QTabBar in a workspaceControl docked at the top, shown by the
   hub's build (optionVar `skeldarSceneTabsBar`); hotkey rows `window.tabs`, `tabs.next`, `tabs.previous`
-  (unbound).
+  (unbound). **No «Scene Tabs» header since 2026-10-16** («ровная полоска с просто вкладками»): the control
+  is made `actLikeMayaUIElement` (Maya's own Status Line / Shelf way, the Time Bar's flag), and one an
+  older build made with Maya's tab is edited so, else deleted and made again (`bar._headerless`; it holds
+  only the bar, which its uiScript builds). Its X went with the tab: the bar's own menu hides it. Not seen
+  in a GUI Maya.
 
 Proof: `docs/superpowers/plans/verify_scene_tabs.py` **0 of 138 gates failed** in mayapy standalone (phases
 session, layers_alone, convert, layers, open_close, switch, save, hooks, hook_failures, restore); 6612 unit

@@ -141,5 +141,75 @@ class HubShowsTheBar(unittest.TestCase):
         self.assertLess(docked.index("hooks.install()"), docked.index("workspaceControl("))
 
 
+class FakeDockCmds(object):
+    """workspaceControl as ensure_docked uses it: exists, the tab flag asked and
+    edited, made, deleted."""
+
+    def __init__(self, exists=False, tab=True, locked=False, unasked=False):
+        self.exists, self.tab, self.locked, self.unasked = exists, tab, locked, unasked
+        self.made = []
+        self.deleted = 0
+
+    def about(self, batch=False):
+        return False
+
+    def workspaceControl(self, name, exists=False, q=False, edit=False, **flags):
+        if exists:
+            return self.exists
+        if q:
+            if self.unasked:
+                raise RuntimeError("cannot query")
+            return not self.tab
+        if edit:
+            if "actLikeMayaUIElement" in flags:
+                if self.locked:
+                    raise RuntimeError("creation only")
+                self.tab = not flags["actLikeMayaUIElement"]
+            return name
+        self.made.append(flags)
+        self.exists, self.tab = True, not flags.get("actLikeMayaUIElement")
+        return name
+
+    def deleteUI(self, name, control=False):
+        self.deleted += 1
+        self.exists = False
+
+
+class Headerless(unittest.TestCase):
+    """The bar is a plain strip of tabs: no Maya tab and no "Scene Tabs" title above it."""
+
+    def _dock(self, fake):
+        from unittest import mock
+        from maya_scenetabs import bar, hooks
+        with mock.patch.object(bar, "cmds", fake), mock.patch.object(hooks, "install"):
+            bar.ensure_docked()
+        return fake
+
+    def test_a_new_control_is_made_without_a_tab(self):
+        fake = self._dock(FakeDockCmds())
+        self.assertEqual(len(fake.made), 1)
+        self.assertIs(fake.made[0]["actLikeMayaUIElement"], True)
+        self.assertEqual(fake.made[0]["dockToMainWindow"], ("top", False))
+
+    def test_an_older_control_loses_its_tab_in_place(self):
+        fake = self._dock(FakeDockCmds(exists=True, tab=True))
+        self.assertFalse(fake.tab)
+        self.assertEqual((fake.made, fake.deleted), ([], 0))
+
+    def test_an_older_control_maya_will_not_change_is_made_again(self):
+        fake = self._dock(FakeDockCmds(exists=True, tab=True, locked=True))
+        self.assertEqual(fake.deleted, 1)
+        self.assertIs(fake.made[0]["actLikeMayaUIElement"], True)
+
+    def test_a_flag_maya_will_not_answer_is_trusted_after_the_edit(self):
+        fake = self._dock(FakeDockCmds(exists=True, tab=True, unasked=True))
+        self.assertEqual((fake.made, fake.deleted), ([], 0))
+        self.assertFalse(fake.tab)
+
+    def test_a_headerless_control_is_only_shown(self):
+        fake = self._dock(FakeDockCmds(exists=True, tab=False))
+        self.assertEqual((fake.made, fake.deleted), ([], 0))
+
+
 if __name__ == "__main__":
     unittest.main()

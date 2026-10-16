@@ -56,13 +56,36 @@ def ensure_docked():
         return ""
     from . import hooks
     hooks.install()
+    if cmds.workspaceControl(CONTROL, exists=True) and not _headerless(cmds):
+        cmds.deleteUI(CONTROL, control=True)        # made with a tab: made again without one
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
     else:
+        #  actLikeMayaUIElement: no tab and no title above the tabs - a plain strip,
+        #  as Maya's own Status Line and Shelf sit (2026-10-16)
         cmds.workspaceControl(CONTROL, label=LABEL, retain=False, floating=False,
                               dockToMainWindow=("top", False), heightProperty="fixed",
-                              initialHeight=HEIGHT, uiScript=uiscript(plugin_root()))
+                              initialHeight=HEIGHT, actLikeMayaUIElement=True,
+                              uiScript=uiscript(plugin_root()))
     return CONTROL
+
+
+def _headerless(cmds):
+    """True when the standing control has no tab: asked, else set and asked again.
+    A control an older build made carries Maya's tab; one Maya will not change
+    is made again (it holds only this bar, which its uiScript builds)."""
+    def asked():
+        try:
+            return bool(cmds.workspaceControl(CONTROL, q=True, actLikeMayaUIElement=True))
+        except Exception:                                    # noqa: BLE001
+            return None                  # no query of the flag
+    if asked():
+        return True
+    try:
+        cmds.workspaceControl(CONTROL, edit=True, actLikeMayaUIElement=True)
+    except Exception:                                        # noqa: BLE001
+        return False
+    return asked() is not False          # unasked: the edit is trusted
 
 
 def show():
