@@ -132,3 +132,30 @@ The animator, after the fourth push: «загрузил в сцену анима
   chosen, the tempo slider moves, Reset, Take its settings). The active cycle could change some other way (a card
   gone, the empty-well fallback) and the next Pick read a tempo meant for another cycle: Creep_Drunk (90 frames)
   squeezed into asd's 31 - the likely «broken» Creep_Drunk.
+
+## Addendum 5: switching pose cards over several walkers (the same day)
+
+The animator: «если прокинуть 2 карточки с позами то переключение между ними перестает работать и кажется плагин
+тоже». Reproduced headless with four walkers (two on cards, two on their own cycles of 90 frames) and two of their
+pose cards: every card click re-keyed all four on the spot - 8.5-9 s with Maya standing still, the well not lit
+until the end - and every click made meanwhile came in afterwards as one more re-key of everybody. Nothing failed;
+it only looked dead. Profiled: the walk model (`walk.evaluate`) was 85 % of a re-key.
+
+- **A press that re-keys every walker** (a pose card taken, clicked, cleared or removed, a knob, a part chip, In
+  place, Reset) changes the card at once and keys the walkers on Maya's next idle (`panel._rekey`,
+  `maya.utils.executeDeferred`, run in the card it was pressed in - `maya_hubcopy.wrap`). Presses made before that
+  idle - or while a re-key works, queued by Windows - fold into ONE re-key with what the card holds by then. Every
+  queued job is the same `_serve` ("key for the latest press, if any is pending"; counters on `sys`, trap 111): the
+  first to run keys, the others find nothing left. One that runs WHILE a re-key works (an idle Maya let through the
+  progress window) does nothing - never nested; that re-key stops between walkers («a newer press keys the rest:
+  ...») and queues one more job for the press. In batch mode (mayapy, the verifies, the tests) no idle comes: it
+  keys at once, as before.
+- **A progress window** over two or more walkers («keying 3 of 4: C - C's cycle»); Esc stops after the walker it is
+  on and the line names who was not keyed. A walker deleted meanwhile is skipped.
+- **A walk keeps its last evaluations** (`scene.evaluated`, `EVALS_KEPT` 4, on the walk object): the same knobs, the
+  same prepared pose object (prepared_pose's cache: a card edited is a new object) and parts answer from it. A walk
+  object is one reading of its file under its clean knobs and correction, a new object when any changes, so the
+  entries go with it. A switch back to a card already keyed: 2.3 s for the four (was 8.5-9), its keys equal a fresh
+  evaluation's to 2.7e-15.
+- Not changed: Pick, choosing a walk card, Fix posture and the Rig pose's Update still key at once (they name their
+  walkers); each walker's keys are still their own undo step.

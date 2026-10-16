@@ -17,12 +17,15 @@ first Pick and kept on it (scene.capture_source) - and joins the card's list of 
 every walked skeleton in the scene (scene.walkers). A skeleton with no keys takes the walk well's card. The knobs and the pose are shared - a released knob re-keys every
 walker, each on its own cycle (the tempo as a ratio of the active cycle) - and each cycle keeps its own mean
 pose. Selecting a walker makes its cycle the active one. Every value is remembered (optionVars), so the card
-comes back as it was and a hotkey row presses with the card closed.
+comes back as it was and a hotkey row presses with the card closed. A press that re-keys every walker changes
+the card at once and keys them on Maya's next idle, once for a burst of presses, under a progress window Esc
+stops (_rekey).
 The design: docs/superpowers/specs/2026-10-13-walk-builder-card-design.md,
 2026-10-16-walk-builder-many-walkers-design.md.
 """
 import json
 import os
+import sys
 import traceback
 
 from . import scene
@@ -693,11 +696,154 @@ def take_card(path):
     return _press(run)
 
 
+# ---- the re-key of every walker, on Maya's next idle ----
+#
+#  2026-10-16, the animator: «если прокинуть 2 карточки с позами то переключение между ними перестает работать и
+#  кажется плагин тоже». Measured: with four walkers in the list one pose card click keyed them all, ~10 s with
+#  Maya standing still and the card unlit until the end - and every click made meanwhile came in afterwards as one
+#  more re-key of everybody. So a press that keys every walker again (a pose card, a knob, a part, In place,
+#  Reset) changes the card at once and leaves the keys to Maya's next idle: the well and the line show the press
+#  straight away, and every press made before the idle comes - or while a re-key works, queued by Windows - folds
+#  into the one re-key that runs, with what the card holds by then. A progress window names each walker in turn
+#  and Esc stops after the one it is on. Every queued job is the same "serve what is pending": the first to run
+#  keys for the latest press, the others find nothing left, and one that runs while a re-key works (an idle Maya
+#  let through the progress window) does nothing - that re-key stops between walkers and queues one more job for
+#  the press. In batch mode (a verify, a test) no idle comes: it keys at once.
+
+REKEY_STATE = {"wanted": 0, "served": 0, "running": False, "line": ""}
+
+
+def _rekey_state():
+    """The re-keys asked for: `wanted` counts the presses, `served` the last one keyed for, `running` while one
+    keys, `line` the last press's. On sys (trap 111: an install's purge must not split it between two module
+    objects); a field an older build's state lacks is filled in (trap 139)."""
+    state = getattr(sys, "_skeldar_walk_rekey", None)
+    if not isinstance(state, dict):
+        state = {}
+        sys._skeldar_walk_rekey = state
+    for key, value in REKEY_STATE.items():
+        state.setdefault(key, value)
+    return state
+
+
+def _batch():
+    """No idle comes (mayapy; a cmds that cannot say): a re-key runs at once."""
+    try:
+        return bool(_cmds().about(batch=True))
+    except Exception:                                        # noqa: BLE001
+        return True
+
+
+def _later(job):
+    """`job()` on Maya's next idle, in the card (the hub's, a popup copy's) it was asked from; at once where Maya
+    cannot defer."""
+    import maya_hubcopy as hubcopy
+    job = hubcopy.wrap(job)
+    try:
+        import maya.utils
+        defer = maya.utils.executeDeferred
+    except (ImportError, AttributeError):
+        return job()
+    defer(job)
+    return None
+
+
 def _rekey(line):
-    """`line`, and every walker keyed again (none: how to get one)."""
-    if not scene.walkers():
-        return line + " - select skeletons and press Pick"
-    return line + " | " + rekey_all()
+    """`line`, and every walker keyed again - on Maya's next idle, once for a burst of presses (above); none: how to
+    get one. The line the card shows now: in batch the re-key's own, else that it is coming."""
+    walkers = scene.walkers()
+    if not walkers:
+        return (line + " - " if line else "") + "select skeletons and press Pick"
+    state = _rekey_state()
+    state["wanted"] += 1
+    state["line"] = line
+    if _batch():
+        text = _serve()
+        return line if text is None else text
+    _later(_rekey_idle)
+    return "%skeying %d walker%s..." % (line + " - " if line else "", len(walkers), "" if len(walkers) == 1 else "s")
+
+
+def _serve():
+    """The re-key pending, now, for the latest press: None when none is pending, or while one keys (never nested).
+    It stops between walkers when a press comes meanwhile. The line."""
+    state = _rekey_state()
+    if state["running"] or state["served"] >= state["wanted"]:
+        return None
+    target, line = state["wanted"], state["line"]
+    state["running"] = True
+    try:
+        text = rekey_all(stop=lambda: _rekey_state()["wanted"] != target)
+    finally:
+        state["running"] = False
+        state["served"] = target
+    return (line + " | " if line else "") + text
+
+
+def _rekey_idle():
+    """The idle's re-key, the card read again and its line - and one more job when a press came while it keyed."""
+    try:
+        text = _serve()
+    except Exception as exc:                                 # noqa: BLE001
+        print(traceback.format_exc())
+        text = "Walk Builder failed: %s" % exc
+    if text is None:
+        return
+    refresh()
+    status(text)
+    state = _rekey_state()
+    if state["served"] < state["wanted"]:
+        _later(_rekey_idle)
+
+
+class _Progress(object):
+    """Maya's cancellable progress window over a re-key of several walkers («keying 3 of 8: Manny - dw»), Esc stops
+    after the walker it is on (`at` answers False from then on). Nothing for one walker, in batch mode, or where
+    it cannot open - maya_poselib.timewalk.Progress's rules, on this module's cmds."""
+
+    def __init__(self, total):
+        self.total = total
+        self.on = False
+        self.cancelled = False
+
+    def __enter__(self):
+        if self.total < 2 or _batch():
+            return self
+        try:
+            _cmds().progressWindow(title="Walk Builder", progress=0, maxValue=self.total, status="...",
+                                   isInterruptable=True)
+            self.on = True
+        except Exception:                                    # noqa: BLE001 - no UI to show it in
+            self.on = False
+        return self
+
+    def at(self, done, text):
+        """`done` walkers keyed, `text` the one next: False once Esc was pressed."""
+        if self.on and not self.cancelled:
+            try:
+                cmds = _cmds()
+                cmds.progressWindow(edit=True, progress=done, status=text)
+                self.cancelled = bool(cmds.progressWindow(query=True, isCancelled=True))
+            except Exception:                                # noqa: BLE001 - the window is gone
+                self.on = False
+        return not self.cancelled
+
+    def __exit__(self, kind, error, trace):
+        if self.on:
+            self.on = False
+            try:
+                _cmds().progressWindow(endProgress=True)
+            except Exception:                                # noqa: BLE001
+                pass
+        return False
+
+
+def _gone(root):
+    """Whether the walker `root` left the scene (deleted while a progress window let the animator work)."""
+    try:
+        return not _cmds().objExists(root)
+    except Exception:                                        # noqa: BLE001 - a cmds that cannot say
+        return False
 
 
 def pick_card(path):
@@ -1053,36 +1199,50 @@ def walk_knobs(walk):
     return knobs
 
 
-def rekey_all(walk=None):
+def rekey_all(walk=None, stop=None):
     """Every listed walker (only those on the cycle `walk` when given) keyed again, each on its own cycle with the
-    card's knobs and pose. A walker that fails is named, the others still keyed. The line."""
+    card's knobs and pose. A walker that fails is named, the others still keyed. Several walkers: a progress window
+    names each in turn and Esc stops after the one it is on; `stop` (asked before each walker) True - a newer press
+    waits, the rest are left to it. The line."""
     import time
     started = time.time()
-    done, failed, lines = [], [], []
+    done, failed, lines, left, why = [], [], [], [], ""
+    roots = []
     for root in scene.walkers():
         name = scene.memo_of(root).get("walk")
-        if walk is not None and name != walk:
-            continue
-        label = "%s - %s" % (scene.walker_label(root), scene.walk_label(name))
-        if scene.keys_changed(root):                         # new animation on it: a knob must not wipe it
-            failed.append("%s: new keys on it since the walk - Pick it to take them" % label)
-            continue
-        try:
-            lines.append(_apply_to(root, name))
-            done.append(label)
-        except scene.REFUSALS as refusal:
-            failed.append("%s: %s" % (label, refusal))
-        except Exception as exc:                             # noqa: BLE001
-            print(traceback.format_exc())
-            failed.append("%s: %s" % (label, exc))
-    if not done and not failed:
+        if walk is None or name == walk:
+            roots.append((root, name, "%s - %s" % (scene.walker_label(root), scene.walk_label(name))))
+    with _Progress(len(roots)) as progress:
+        for index, (root, name, label) in enumerate(roots):
+            if not progress.at(index, "keying %d of %d: %s" % (index + 1, len(roots), label)):
+                why, left = "stopped by Esc - not keyed", [each[2] for each in roots[index:]]
+                break
+            if stop is not None and stop():                  # after the window: a click it let through counts
+                why, left = "a newer press keys the rest", [each[2] for each in roots[index:]]
+                break
+            if _gone(root):
+                continue
+            if scene.keys_changed(root):                     # new animation on it: a knob must not wipe it
+                failed.append("%s: new keys on it since the walk - Pick it to take them" % label)
+                continue
+            try:
+                lines.append(_apply_to(root, name))
+                done.append(label)
+            except scene.REFUSALS as refusal:
+                failed.append("%s: %s" % (label, refusal))
+            except Exception as exc:                         # noqa: BLE001
+                print(traceback.format_exc())
+                failed.append("%s: %s" % (label, exc))
+    if not done and not failed and not left:
         return ("no walker on %s - Pick puts it on skeletons" % scene.walk_label(walk) if walk else
                 "no walker in the list - select skeletons and press Pick")
-    if len(done) == 1 and not failed:
+    if len(done) == 1 and not failed and not left:
         return lines[0]
-    text = "%d walker%s keyed: %s" % (len(done), "" if len(done) == 1 else "s", ", ".join(done))
+    text = "%d walker%s keyed%s" % (len(done), "" if len(done) == 1 else "s", (": " + ", ".join(done)) if done else "")
     if failed:
         text += " | not keyed: " + "; ".join(failed)
+    if left:
+        text += " | %s: %s" % (why, ", ".join(left))
     return text + " | %.1f s" % (time.time() - started)
 
 
@@ -1219,7 +1379,7 @@ def slider_changed(*_):
             walk, _, _, report = scene.load_walk(chosen_walk(), values())
             show_report(report)
             return "no walker in the list - select skeletons and press Pick"
-        return rekey_all()
+        return _rekey("")
     return _press(run)
 
 

@@ -915,3 +915,199 @@ class PoseCardTests(unittest.TestCase):
     def test_a_card_picked_before_the_list_heads_it(self):
         self.fake.vars[panel.OPTION + "poseCard"] = "old.pose"
         self.assertEqual(panel.card_list(), ["old.pose"])
+
+
+class RekeyLaterTests(unittest.TestCase):
+    """A press that keys every walker again (a pose card, a knob) keys them on Maya's next idle, ONCE however
+    many presses came before it ran, under a progress window Esc stops (2026-10-16: two pose cards switched with
+    several walkers in the list - every click re-keyed them all while Maya stood still, and the clicks made
+    meanwhile stacked into more of them: «переключение между ними перестает работать и кажется плагин тоже»)."""
+
+    def setUp(self):
+        CardTests.setUp(self)
+        sys._skeldar_walk_rekey = None                        # the session's re-key state starts afresh
+        self.jobs = []
+        self.saved_later = panel._later
+        panel._later = self.jobs.append
+        self.fake.about = lambda **kw: False                  # a Maya with its UI: there is an idle
+        for root in ("|a", "|b"):
+            self.memos[root] = {"walk": "asd", "knobs": {}, "listed": True, "parts": []}
+
+    def tearDown(self):
+        panel._later = self.saved_later
+        sys._skeldar_walk_rekey = None
+        CardTests.tearDown(self)
+
+    def run_jobs(self):
+        jobs, self.jobs[:] = list(self.jobs), []
+        for job in jobs:
+            job()
+
+    def test_a_pose_click_lights_the_card_at_once_and_keys_the_walkers_on_idle(self):
+        panel.build_panel()
+        sword = write_card(self.library, "", "sword")
+        goblin = write_card(self.library, "", "goblin")
+        line = panel.take_card(sword)
+        self.assertEqual(panel.chosen_card(), "sword.pose")
+        self.assertEqual(self.applied, [])
+        self.assertIn("keying 2 walkers", line)
+        panel.take_card(goblin)
+        panel.pick_card(sword)                                    # clicked in turn before Maya was idle
+        panel.pick_card(goblin)
+        self.assertEqual(panel.chosen_card(), "goblin.pose")
+        self.assertEqual(len(self.jobs), 4)
+        self.run_jobs()
+        self.assertEqual([(a[0], a[3]) for a in self.applied], [("|a", "goblin.pose"), ("|b", "goblin.pose")])
+        self.assertIn("pose card goblin | 2 walkers keyed", self.fake.values[panel.STATUS])
+
+    def test_knobs_released_in_a_row_key_every_walker_once_with_the_last_value(self):
+        panel.build_panel()
+        for value in (1.1, 1.2, 1.3):
+            self.fake.values[panel._control("stride")] = value
+            panel.knob_changed("stride")()
+        self.assertEqual(self.applied, [])
+        self.run_jobs()
+        self.assertEqual([a[0] for a in self.applied], ["|a", "|b"])
+        self.assertEqual(self.applied[-1][2]["stride"], 1.3)
+
+    def test_with_nobody_listed_there_is_nothing_to_wait_for(self):
+        self.memos.clear()
+        sword = write_card(self.library, "", "sword")
+        self.assertIn("select skeletons and press Pick", panel.take_card(sword))
+        self.assertEqual(self.jobs, [])
+
+    def test_esc_in_the_progress_window_stops_after_the_walker_it_is_on(self):
+        self.memos["|c"] = {"walk": "asd", "knobs": {}, "listed": True, "parts": []}
+        calls = []
+
+        def progress_window(**kw):
+            calls.append(kw)
+            if kw.get("query"):
+                return sum(1 for c in calls if c.get("edit")) >= 2        # Esc seen before the second walker
+            return None
+        self.fake.progressWindow = progress_window
+        line = panel.rekey_all()
+        self.assertEqual([a[0] for a in self.applied], ["|a"])
+        self.assertIn("1 walker keyed: a - asd", line)
+        self.assertIn("stopped by Esc - not keyed: b - asd, c - asd", line)
+        self.assertEqual(calls[0].get("maxValue"), 3)
+        self.assertTrue(calls[0].get("isInterruptable"))
+        self.assertTrue(any(c.get("endProgress") for c in calls))
+
+    def test_a_newer_press_takes_the_rest_over_between_walkers(self):
+        line = panel.rekey_all(stop=lambda: len(self.applied) >= 1)
+        self.assertEqual([a[0] for a in self.applied], ["|a"])
+        self.assertIn("a newer press keys the rest: b - asd", line)
+
+    def test_an_idle_inside_the_progress_window_never_nests_and_the_press_made_there_is_served_after(self):
+        panel.build_panel()
+        sword = write_card(self.library, "", "sword")
+        goblin = write_card(self.library, "", "goblin")
+        panel.take_card(sword)
+        clicked = []
+
+        def progress_window(**kw):
+            if kw.get("query") and len(self.applied) == 1 and not clicked:
+                clicked.append(panel.pick_card(goblin))           # a click the progress window let through ...
+                self.run_jobs()                                   # ... and an idle Maya ran right there
+            return False if kw.get("query") else None
+        self.fake.progressWindow = progress_window
+        self.run_jobs()                                           # the sword's re-key: stopped after |a
+        self.assertTrue(clicked)
+        self.assertEqual([(a[0], a[3]) for a in self.applied], [("|a", "sword.pose")])
+        self.assertIn("a newer press keys the rest: b - asd", self.fake.values[panel.STATUS])
+        self.assertEqual(len(self.jobs), 1)                       # one more job, for the click
+        self.run_jobs()
+        self.assertEqual([(a[0], a[3]) for a in self.applied],
+                         [("|a", "sword.pose"), ("|a", "goblin.pose"), ("|b", "goblin.pose")])
+        self.assertIn("pose card goblin | 2 walkers keyed", self.fake.values[panel.STATUS])
+        self.run_jobs()
+        self.assertEqual((len(self.applied), self.jobs), (3, []))
+
+    def test_one_walker_needs_no_progress_window_nor_does_batch(self):
+        calls = []
+        self.fake.progressWindow = lambda **kw: calls.append(kw)
+        del self.memos["|b"]
+        panel.rekey_all()
+        self.memos["|b"] = {"walk": "asd", "knobs": {}, "listed": True, "parts": []}
+        self.fake.about = lambda **kw: True                       # batch: no window to show
+        panel.rekey_all()
+        self.assertEqual(calls, [])
+
+    def test_in_batch_the_walkers_are_keyed_at_once(self):
+        del self.fake.about                                       # no Maya to ask: as batch
+        sword = write_card(self.library, "", "sword")
+        line = panel.take_card(sword)
+        self.assertEqual(self.jobs, [])
+        self.assertEqual([a[0] for a in self.applied], ["|a", "|b"])
+        self.assertIn("pose card sword", line)
+        self.assertIn("| 2 walkers keyed: a - asd, b - asd", line)
+
+    def test_the_job_runs_in_the_card_it_was_pressed_in(self):
+        import maya.utils
+        import maya_hubcopy as hubcopy
+        panel._later = self.saved_later
+        caught, seen = [], []
+        had = getattr(maya.utils, "executeDeferred", None)
+        maya.utils.executeDeferred = caught.append
+        try:
+            scope = hubcopy.new_scope("walk")
+            with hubcopy.entered(scope):
+                panel._later(lambda: seen.append(hubcopy.current()))
+            self.assertEqual(len(caught), 1)
+            caught[0]()
+            self.assertEqual(seen, [scope])
+            hubcopy.close(scope, self.fake)
+        finally:
+            if had is None:
+                del maya.utils.executeDeferred
+            else:
+                maya.utils.executeDeferred = had
+
+
+class EvaluatedTests(unittest.TestCase):
+    """scene.evaluated: a walk's evaluations kept on the walk object, so a switch back to a pose already keyed
+    skips the model (2026-10-16: two pose cards switched over several walkers ran it on every walker every time -
+    85 % of a re-key)."""
+
+    def walk(self):
+        class Walk(object):
+            def __init__(self):
+                self.calls = 0
+
+            def evaluate(self, knobs=None, pose=None):
+                self.calls += 1
+                return ("result", self.calls)
+        return Walk()
+
+    def test_the_same_knobs_and_pose_reuse_the_result(self):
+        walk, prepared = self.walk(), object()
+        first = scene.evaluated(walk, {"stride": 1.0}, {"filtered": 1}, prepared, ("torso",))
+        again = scene.evaluated(walk, {"stride": 1.0}, {"filtered": 2}, prepared, ("torso",))
+        self.assertIs(first, again)
+        self.assertEqual(walk.calls, 1)
+
+    def test_other_knobs_parts_or_pose_evaluate_again(self):
+        walk, sword, goblin = self.walk(), object(), object()
+        scene.evaluated(walk, {"stride": 1.0}, {}, sword, ("torso",))
+        scene.evaluated(walk, {"stride": 1.1}, {}, sword, ("torso",))
+        scene.evaluated(walk, {"stride": 1.0}, {}, sword, ("arms",))
+        scene.evaluated(walk, {"stride": 1.0}, {}, goblin, ("torso",))
+        scene.evaluated(walk, {"stride": 1.0}, None)
+        self.assertEqual(walk.calls, 5)
+
+    def test_two_poses_switched_back_and_forth_evaluate_once_each(self):
+        walk, sword, goblin = self.walk(), object(), object()
+        for _ in range(3):
+            scene.evaluated(walk, {"pose": 1.0}, {}, sword, ("torso",))
+            scene.evaluated(walk, {"pose": 1.0}, {}, goblin, ("torso",))
+        self.assertEqual(walk.calls, 2)
+
+    def test_only_the_last_few_are_kept(self):
+        walk = self.walk()
+        for i in range(scene.EVALS_KEPT + 1):
+            scene.evaluated(walk, {"stride": float(i)}, None)
+        scene.evaluated(walk, {"stride": 0.0}, None)               # the oldest went
+        self.assertEqual(walk.calls, scene.EVALS_KEPT + 2)
+        scene.evaluated(walk, {"stride": float(scene.EVALS_KEPT)}, None)
+        self.assertEqual(walk.calls, scene.EVALS_KEPT + 2)

@@ -10270,6 +10270,16 @@ live.**
   card out of the well puts its walkers back on their own animation (`_back_to_own`). The tempo knows the cycle it
   counts (`tempo_walk`, `skeldarWalk_tempoWalk`): a Pick after the active cycle changed some other way read another
   cycle's frames (Creep_Drunk 90 fr squeezed into 31). `verify_walk_own.py` **22/22**.
+- **…two pose cards switched over several walkers** (spec addendum 5; «переключение между ними перестает работать и
+  кажется плагин тоже»). Every card click re-keyed every walker on the spot (four walkers of 90 frames: 8.5-9 s with
+  Maya still, the well unlit) and the clicks made meanwhile each came in after as one more full re-key - nothing
+  failed, it looked dead. A press that re-keys everybody (a pose card, a knob, a part, In place, Reset) now changes
+  the card at once and keys on Maya's next idle (`panel._rekey`: `executeDeferred` through `maya_hubcopy.wrap`), one
+  re-key for a burst of presses (every job is `_serve`, counters on `sys`; a job run while a re-key works does
+  nothing - never nested - and that re-key stops between walkers and queues one more), under a progress window Esc
+  stops; batch keys at once. `scene.evaluated` keeps a walk's last 4 evaluations on the walk
+  object (knobs + the prepared pose object + parts): a switch back 2.3 s for the four (was 8.5-9), its keys equal a
+  fresh evaluation's to 2.7e-15. Pick, a walk card, Fix posture and the rig pose's Update still key at once.
 
 246. **AdvancedSkeleton's limb bones do not roll, so a rig's game upperarm / lowerarm / thigh / calf read bare lose the
      roll its twist joints carry.** The mean pose put on Manny_Rig read back 8-14 deg off on the arms (hand_r 14.5, the

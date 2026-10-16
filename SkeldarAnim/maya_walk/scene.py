@@ -979,6 +979,29 @@ def model_knobs(given):
     return dict((k, v) for k, v in (given or {}).items() if k in wm.DEFAULTS or k in wm.SIDE_KNOBS)
 
 
+EVALS_KEPT = 4            # a walk's evaluations kept on it, the last ones (two pose cards switched hit them)
+
+
+def evaluated(walk, knobs, pose, prepared=None, parts=()):
+    """walk.evaluate(knobs, pose) - kept on the walk object, so a re-key asking for knobs and a pose already
+    evaluated skips the model: two pose cards switched back and forth over several walkers (2026-10-16; the model
+    is 85 % of a re-key). The key: the model's knobs, and the pose as its prepared object (prepared_pose's, one
+    object while the card and the walk stand; held by the entry, so its id is never reused) with its parts. A walk
+    object is one reading of a walk file under its clean knobs and correction - a new object when any of them
+    changes - so its entries go with it. The last EVALS_KEPT are kept."""
+    key = (repr(sorted((knobs or {}).items())), None if pose is None else (id(prepared), tuple(parts)))
+    kept = walk.__dict__.setdefault("_skeldar_evals", [])
+    for entry in kept:
+        if entry[0] == key and entry[1] is (prepared if pose is not None else None):
+            kept.remove(entry)
+            kept.append(entry)
+            return entry[2]
+    result = walk.evaluate(knobs, pose)
+    kept.append((key, prepared if pose is not None else None, result))
+    del kept[:-EVALS_KEPT]
+    return result
+
+
 def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None):
     """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
     skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
@@ -993,7 +1016,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     bones, note = read_bones(root)
     memo = memo_of(root)
     retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
-    pose = None
+    pose = prepared = None
     knobs = model_knobs(given)
     pose_label, pose_note, packed = pose_name or "", "", None
     if not pose_card and pose_name:         # an old pose name: its card when it was moved into the library
@@ -1006,9 +1029,10 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         pose_label, pose_bones, pose_note, ident = card_pose(pose_card, pose_name, root)
         if pose_bones is None:
             raise Refusal(pose_note or "no pose to walk in")
-        pose = wp.filtered(prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident), parts)
+        prepared = prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident)
+        pose = wp.filtered(prepared, parts)
         packed = wcards.pack(pose_bones)
-    result = walk.evaluate(knobs, pose)
+    result = evaluated(walk, knobs, pose, prepared, parts)
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
