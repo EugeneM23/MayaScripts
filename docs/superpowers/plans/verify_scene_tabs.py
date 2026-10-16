@@ -1120,6 +1120,54 @@ def phase_duplicates():
     gate("duplicates: closed", "Closed" in opening.close_tab(ns, ask=False) or not session.exists())
 
 
+def phase_outliner_sets():
+    """2026-10-16, found live: the Outliner showed a hidden tab's selection sets. A hidden tab's
+    sets are hiddenInOutliner (marked as ours); shown again, all back - but a set the animator
+    hid themselves stays hidden; a hidden tab's save writes neither the flag nor the mark."""
+    from maya_scenetabs import opening, saving, switching
+    os.makedirs(RUN, exist_ok=True)
+    made = {}
+    for tag in ("A", "B"):
+        fresh()
+        cube = cmds.polyCube(name="cube" + tag)[0]
+        cmds.sets(cube, name="sel" + tag)
+        if tag == "A":
+            own = cmds.sets(cube, name="ownHidden")
+            cmds.setAttr(own + ".hiddenInOutliner", 1)
+        made[tag] = RUN + "/sets%s.ma" % tag
+        _save(made[tag])
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(made["B"])
+    a, b = "tab_setsA", "tab_setsB"
+
+    def hidden(node):
+        return cmds.getAttr(node + ".hiddenInOutliner")
+
+    gate("outliner sets: the hidden tab's set hidden", hidden(a + ":selA") and not hidden(b + ":selB"),
+         (hidden(a + ":selA"), hidden(b + ":selB")))
+    switching.switch(a)
+    gate("outliner sets: switched - A's set back, B's hidden",
+         not hidden(a + ":selA") and hidden(b + ":selB"))
+    gate("outliner sets: the animator's own hidden set stays hidden", hidden(a + ":ownHidden"))
+    gate("outliner sets: no mark left on a shown tab",
+         not cmds.attributeQuery(switching.SET_MARK, node=a + ":selA", exists=True))
+    cmds.undo()
+    gate("outliner sets: undo of the switch hides A's set again",
+         session.state()["active"] == b and hidden(a + ":selA") and not hidden(b + ":selB"))
+    cmds.redo()
+    cmds.setAttr(b + ":cubeB.translateZ", 1)
+    saving.save_tab(b)
+    switching.switch(a)
+    text = open(made["B"]).read()
+    gate("outliner sets: a hidden tab saved carries no mark and no hidden flag on its set",
+         switching.SET_MARK not in text and hidden(b + ":selB"), text.count(switching.SET_MARK))
+    opening.close_tab(b, ask=False)
+    gate("outliner sets: back to one scene, its set shown",
+         cmds.objExists("selA") and not hidden("selA") and hidden("ownHidden"))
+
+
 def phase_layer_editor():
     """2026-10-15, found live: the Layer Editor showed every tab's layers. A hidden tab's anim
     layers are cut off the session root and its display layers taken off layerManager
@@ -1206,7 +1254,7 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
-          "layer_editor": phase_layer_editor}
+          "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets}
 
 
 def main(names):

@@ -33,23 +33,63 @@ def _set(node, attr, value):
         cmds.setAttr(plug, value)
 
 
+#  2026-10-16, found live: the Outliner listed a hidden tab's selection sets. A set is a
+#  DG node with its own `hiddenInOutliner`; the ones WE hid carry SET_MARK, so a set the
+#  animator hid stays hidden when its tab comes back.
+SET_MARK = "skeldarTabSetHidden"
+
+
+def sets(namespace):
+    """The tab's sets (objectSets of every kind: selection sets, the rig's ControlSet,
+    shading groups), its namespace and the ones nested in it."""
+    return cmds.ls(":%s:*" % namespace, type="objectSet", recursive=True) or []
+
+
+def hide_sets(namespace):
+    for node in sets(namespace):
+        if cmds.attributeQuery(SET_MARK, node=node, exists=True):
+            continue
+        if not cmds.attributeQuery("hiddenInOutliner", node=node, exists=True):
+            continue
+        if cmds.getAttr(node + ".hiddenInOutliner") or not cmds.getAttr(node + ".hiddenInOutliner",
+                                                                         settable=True):
+            continue
+        cmds.addAttr(node, longName=SET_MARK, attributeType="bool")
+        cmds.setAttr(node + ".hiddenInOutliner", 1)
+
+
+def show_sets(namespace):
+    for node in sets(namespace):
+        if not cmds.attributeQuery(SET_MARK, node=node, exists=True):
+            continue
+        cmds.deleteAttr(node + "." + SET_MARK)
+        _set(node, "hiddenInOutliner", 0)
+
+
+def _refresh_outliners():
+    if _gui():
+        cmds.evalDeferred("import maya.mel; maya.mel.eval('AEdagNodeCommonRefreshOutliners')",
+                          lowestPriority=True)
+
+
 def hide(namespace):
     for top in tops(namespace):
         _set(top, "lodVisibility", 0)
         _set(top, "hiddenInOutliner", 1)
+    hide_sets(namespace)
     layers.hide_layers(namespace)       # out of the Layer Editor too (2026-10-15)
     layers.refresh_editors()
+    _refresh_outliners()
 
 
 def show(namespace):
     for top in tops(namespace):
         _set(top, "lodVisibility", 1)
         _set(top, "hiddenInOutliner", 0)
+    show_sets(namespace)
     layers.show_layers(namespace)
     layers.refresh_editors()
-    if _gui():
-        cmds.evalDeferred("import maya.mel; maya.mel.eval('AEdagNodeCommonRefreshOutliners')",
-                          lowestPriority=True)
+    _refresh_outliners()
 
 
 # ------------------------------------------------------------------ the view
