@@ -431,8 +431,16 @@ def reload_tab(namespace=None, ask=True):
     keep_unit = cmds.currentUnit(q=True, time=True)
     _delete_namespace(namespace)
     del NOTES[:], CHANGED[:]
-    unit, ranges = _import(item["path"], namespace)
+    #  a hidden tab's file connects its camera keys to the scene's cameras: the active tab's
+    #  are taken off for the length of the import, the file's kept as the hidden tab's own
+    held = {} if active else switching.detach_cameras(state["active"])
+    try:
+        unit, ranges = _import(item["path"], namespace)
+    finally:
+        mine = {} if active else switching.detach_cameras(namespace)
+        switching.attach_cameras(held)
     fresh_item = records.new_tab(namespace, item["path"], unit, ranges, _mtime(item["path"]))
+    fresh_item["camera_curves"] = mine
     fresh_item["modified"] = namespace in CHANGED
     #  the content read again, the view kept: the active tab's as the cameras stand, a hidden one's
     fresh_item["cameras"] = switching.capture_cameras() if active else dict(item.get("cameras") or {})

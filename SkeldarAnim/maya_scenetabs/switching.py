@@ -7,7 +7,10 @@ namespace, the unit, the ranges and the visibility).
 Hidden by `lodVisibility` and `hiddenInOutliner` on the tab's top nodes, never
 `visibility`, which the animator keys. The startup cameras (persp, top, front, side) are
 the scene's, one of each for every tab: each tab keeps what they showed in it (2026-10-16,
-`capture_cameras` / `apply_cameras`; a new tab its file's, an empty one Maya's defaults).
+`capture_cameras` / `apply_cameras`; a new tab its file's, an empty one Maya's defaults),
+and its own keys on them: a key made in a tab is a curve in its namespace, connected while the
+tab is active and disconnected while it is hidden (`detach_cameras` / `attach_cameras`,
+2026-10-16: «если я накину анимации на камеру ... она будет во всех сценах»).
 Maya's workspace is not a tab's: until 2026-10-16 each tab saved one, and they piled up
 (`workspaces`).
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
@@ -191,6 +194,61 @@ def apply_cameras(cameras):
                 _set(target, long_name, value)
 
 
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT")
+
+
+def camera_curves(namespace):
+    """{"persp.translateX": curve, ...}: the time curves of `namespace` (its own or a
+    namespace nested in it) driving a startup camera's channels - keys made while the tab
+    was active (the current namespace is the tab's) or keys its file brought (an import
+    connects them to the scene's persp, measured)."""
+    prefix = namespace + ":"
+    out = {}
+    for transform, shape in startup_cameras().values():
+        for node in (transform, shape):
+            pairs = cmds.listConnections(node, source=True, destination=False, plugs=True,
+                                         connections=True, skipConversionNodes=True) or []
+            for plug, source in zip(pairs[::2], pairs[1::2]):
+                curve = source.split(".")[0]
+                if cmds.nodeType(curve) not in TIME_CURVES:
+                    continue
+                if not curve.lstrip(":").startswith(prefix):
+                    continue
+                out[plug.split("|")[-1]] = curve
+    return out
+
+
+def detach_cameras(namespace):
+    """The tab's curves taken off the startup cameras (each channel keeps the value it
+    showed). Returns {plug: curve UUID} for `attach_cameras`."""
+    out = {}
+    for plug, curve in sorted(camera_curves(namespace).items()):
+        uid = (cmds.ls(curve, uuid=True) or [None])[0]
+        try:
+            cmds.disconnectAttr(curve + ".output", ":" + plug)
+        except RuntimeError:
+            continue
+        if uid:
+            out[plug] = uid
+    return out
+
+
+def attach_cameras(curves):
+    """The tab's curves put back on the startup cameras. A curve gone, or a channel that
+    something else drives meanwhile, is left as it stands."""
+    for plug, uid in sorted((curves or {}).items()):
+        found = cmds.ls(uid) or []
+        target = ":" + plug
+        if not found or not cmds.objExists(target):
+            continue
+        if cmds.listConnections(target, source=True, destination=False):
+            continue
+        try:
+            cmds.connectAttr(found[0] + ".output", target)
+        except RuntimeError:
+            pass
+
+
 def _units():
     return cmds.currentUnit(q=True, linear=True), cmds.currentUnit(q=True, angle=True)
 
@@ -237,6 +295,7 @@ def leave(state):
     current["selection"] = cmds.ls(selection=True, uuid=True) or []
     current["views"] = capture_views()
     current["cameras"] = capture_cameras()
+    current["camera_curves"] = detach_cameras(active)
     hide(active)
     cmds.file(modified=False)
     return records.with_tab(state, current)
@@ -254,6 +313,7 @@ def enter(state, namespace, fresh=False):
     if current.get("frame") is not None:
         cmds.currentTime(current["frame"], update=True)
     apply_views(current.get("views"))
+    attach_cameras(current.get("camera_curves"))
     apply_cameras(current.get("cameras"))
     _off_hidden(namespace, [t["ns"] for t in state["tabs"]])
     found = cmds.ls(current.get("selection") or [], long=True) or []

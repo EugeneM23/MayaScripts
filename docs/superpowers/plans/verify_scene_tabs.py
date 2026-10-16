@@ -1718,6 +1718,107 @@ def phase_maya_open():
          and cmds.objExists("openB"), error)
 
 
+def phase_camera_keys():
+    """2026-10-16, the animator: «если я накину анимации на камеру которая в сцене по умолчанию то
+    она будет во всех сценах». A key on persp / top / front / side made in a tab is that tab's: its
+    curve is connected while the tab is active and disconnected while it is hidden."""
+    from maya_scenetabs import hooks, opening, saving, switching
+    os.makedirs(RUN, exist_ok=True)
+
+    def keyed(name, keys, focal=None):
+        fresh()
+        cmds.polyCube(name="cube" + name)
+        for frame, value in keys:
+            cmds.setKeyframe("persp", attribute="translateX", time=frame, value=value)
+        if focal:
+            for frame, value in focal:
+                cmds.setKeyframe("perspShape", attribute="focalLength", time=frame, value=value)
+        path = RUN + "/camk%s.ma" % name
+        _save(path)
+        return path
+
+    def tx(frame):
+        cmds.currentTime(frame + 1)
+        cmds.currentTime(frame)
+        return round(cmds.getAttr("persp.translateX"), 4)
+
+    def source(plug):
+        found = cmds.listConnections(":" + plug, source=True, destination=False) or []
+        return found[0] if found else ""
+
+    a = keyed("A", [(0, 10), (10, 50)])
+    b = keyed("B", [(0, -20), (10, -60)], focal=[(0, 20), (10, 80)])
+    c = keyed("C", [])
+    fresh()
+    cmds.file(a, open=True, force=True)
+    gate("cameras: a file's own keys on persp, before tabs", tx(10) == 50 and source("persp.translateX"))
+    opening.open_tab(b)
+    gate("cameras: B's keys drive persp in B", tx(10) == -60 and source("persp.translateX").startswith("tab_camkB:")
+         and round(cmds.getAttr("perspShape.focalLength"), 3) == 80.0, (tx(10), source("persp.translateX")))
+    gate("cameras: A's curve went into A's tab and waits off the camera",
+         cmds.objExists("tab_camkA:persp_translateX")
+         and not cmds.listConnections("tab_camkA:persp_translateX.output"))
+    switching.switch("tab_camkA")
+    gate("cameras: back in A, A's keys again", tx(10) == 50 and tx(0) == 10
+         and source("persp.translateX").startswith("tab_camkA:"), (tx(10), source("persp.translateX")))
+    gate("cameras: B's focal length keys are off the camera in A, A's own focal length back",
+         not source("perspShape.focalLength") and round(cmds.getAttr("perspShape.focalLength"), 3) == 35.0,
+         cmds.getAttr("perspShape.focalLength"))
+    opening.open_tab(c)
+    gate("cameras: a file with no keys - persp free, on the file's place",
+         not source("persp.translateX") and tx(10) == 28.0, tx(10))
+    cmds.setKeyframe("persp", attribute="translateY", time=0, value=5)
+    cmds.setKeyframe("persp", attribute="translateY", time=10, value=9)
+    gate("cameras: a key made in C is C's curve", source("persp.translateY").startswith("tab_camkC:"),
+         source("persp.translateY"))
+    switching.switch("tab_camkB")
+    cmds.undo()             # straight after the switch: a time change is an undo step in mayapy (trap 222)
+    gate("cameras: Ctrl+Z past the switch puts C's keys back", session.state()["active"] == "tab_camkC"
+         and source("persp.translateY").startswith("tab_camkC:") and not source("persp.translateX"),
+         (session.state()["active"], source("persp.translateY")))
+    switching.switch("tab_camkB")
+    gate("cameras: in B, C's key is off and B's on",
+         not source("persp.translateY") and tx(10) == -60 and round(cmds.getAttr("perspShape.focalLength"), 3) == 80.0)
+    target = RUN + "/camkB_saved.ma"
+    saving.save_tab(path=target, adopt=False)
+    text = open(target).read()
+    gate("cameras: B saved holds B's keys on persp, nothing of A's or C's",
+         'connectAttr "persp_translateX.o" ":persp.tx"' in text
+         and 'connectAttr "perspShape_focalLength.o" ":perspShape.fl"' in text
+         and "persp_translateY" not in text and "camkA" not in text and "camkC" not in text)
+    # a hidden tab read again from its file keeps its own keys; the active one's stay on
+    cmds.setKeyframe("persp", attribute="translateX", time=5, value=0)       # B edited, unsaved
+    opening.reload_tab("tab_camkA", ask=False)
+    gate("cameras: reloading hidden A leaves B's keys on persp",
+         source("persp.translateX").startswith("tab_camkB:") and tx(5) == 0.0, tx(5))
+    switching.switch("tab_camkA")
+    gate("cameras: ... and A comes back with its file's keys", tx(10) == 50
+         and source("persp.translateX").startswith("tab_camkA:"), (tx(10), source("persp.translateX")))
+    # a session saved and opened again: the hidden tabs' keys come back by their UUIDs
+    switching.switch("tab_camkC")
+    recovered = RUN + "/camk_session.ma"
+    with hooks.bypass():
+        cmds.file(rename=recovered)
+        cmds.file(save=True, force=True, type="mayaAscii")
+    fresh()
+    cmds.file(recovered, open=True, force=True)
+    opening.restore()
+    gate("cameras: restored, the active tab C's key on persp", session.state()["active"] == "tab_camkC"
+         and source("persp.translateY").startswith("tab_camkC:") and not source("persp.translateX"),
+         (session.state()["active"], source("persp.translateY"), source("persp.translateX")))
+    switching.switch("tab_camkA")
+    gate("cameras: restored, hidden A's keys come back on its switch", tx(10) == 50 and not source("persp.translateY"),
+         tx(10))
+    # a hidden tab closed takes its keys with it
+    opening.ASK = lambda message, buttons: "Don't Save"
+    try:
+        opening.close_tab("tab_camkB", ask=False)
+    finally:
+        opening.ASK = None
+    gate("cameras: closing hidden B deletes its curves, A's keys stay",
+         not cmds.ls("tab_camkB:*", type="animCurve") and tx(10) == 50)
+
+
 def _cam(name="persp", attr="translate"):
     node = name if attr in ("translate", "rotate") else cmds.listRelatives(name, shapes=True)[0]
     value = cmds.getAttr(node + "." + attr)
@@ -1856,7 +1957,7 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
           "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras,
-          "leak": phase_leak, "stash_open": phase_stash_open, "maya_open": guarded(phase_maya_open)}
+          "leak": phase_leak, "stash_open": phase_stash_open, "maya_open": guarded(phase_maya_open), "camera_keys": phase_camera_keys}
 
 
 def main(names):

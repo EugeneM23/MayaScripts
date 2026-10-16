@@ -227,6 +227,16 @@ class Cameras(unittest.TestCase):
         state = records.with_tab(records.empty_state(), tab)
         self.assertEqual(records.loads(records.dumps(state))["tabs"][0]["cameras"], tab["cameras"])
 
+    def test_a_record_carries_its_camera_keys_through_the_session_node(self):
+        """2026-10-16: a hidden tab's keys on persp wait off the camera, remembered by UUID;
+        a record read back without them would leave the tab's keys off for good."""
+        tab = records.new_tab("tab_a", "C:/w/a.ma", "ntsc", {})
+        self.assertEqual(tab["camera_curves"], {})
+        tab["camera_curves"] = {"persp.translateX": "ABC-1", "perspShape.focalLength": "ABC-2"}
+        state = records.with_tab(records.empty_state(), tab)
+        self.assertEqual(records.loads(records.dumps(state))["tabs"][0]["camera_curves"],
+                         tab["camera_curves"])
+
 
 def math_pi():
     import math

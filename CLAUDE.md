@@ -10974,7 +10974,7 @@ Measured first:
 Now a tab's record carries `cameras` (`records.CAMERA_ATTRS`: translate, rotate, focal length, centre of
 interest, ortho width, clip planes, tumble pivot, film aperture, overscan, in the scene's units):
 - `switching.leave` captures them and `enter` puts them back. A locked, keyed or driven channel is left
-  alone: a keyed persp is one curve for every tab;
+  alone (a keyed one is the tab's own curve since the same evening, below);
 - `open_tab` reads its FILE's: `.ma` up to the first other node, `.mb` from its chunks (DBLE / DBL3
   after the node's CREA, internal cm and radians). The `.ma` is in its header's units, converted;
 - `new_tab` takes Maya's defaults (`DEFAULT_CAMERAS`, measured);
@@ -10989,6 +10989,31 @@ flagged the scene, so a tab visited came out «unsaved»; `start()`'s moves flag
 the scene's own, and a failed switch puts the old flag back. Proof: `verify_scene_tabs.py cameras`
 **19/19** (mayapy), all **0 of 220**, `verify_tabs_scope.py` 0 of 46, unit tests
 `test_scenetabs_records.Cameras`. Not seen in a GUI Maya.
+
+**…and its own keys on them** (the same evening, the animator: «если я накину анимации на камеру которая в
+сцене по умолчанию то она будет во всех сценах. Мы можем сделать так что бы в каждой вкладке были свои
+камеры по умолчанию?»). Measured first (mayapy): a key on persp made while a tab is active is a curve in the
+tab's namespace (`tab_x:persp_translateX`; the current namespace is the tab's); an import of a file with an
+animated persp brings its curves into the tab's namespace and CONNECTS them to the scene's persp (`connectAttr
+"persp_translateX.o" ":persp.tx"`); a disconnected curve lives on and reconnects cleanly. So a tab's keys on
+the startup cameras are its own curves, on the camera only while the tab is active:
+- `switching.camera_curves(ns)`: the time curves of the tab's namespace (nested too) driving any channel of
+  persp / top / front / side and their shapes;
+- `leave` records them in `camera_curves` ({"persp.translateX": UUID}) and disconnects them
+  (`detach_cameras`); `enter` connects them back (`attach_cameras`) before `apply_cameras`, which skips the
+  keyed channels. A channel something else drives meanwhile is left alone;
+- the record keeps `camera_curves` through the session node (`records.loads` keeps only the keys it lists:
+  until then the list was read back empty and a tab's keys stayed off);
+- a reload of a HIDDEN tab takes the active tab's curves off for the length of the import (the file's would
+  otherwise fail to connect) and keeps the file's as the hidden tab's;
+- a save writes the tab's keys with persp (it is the active one then), nothing of another tab's; a hidden tab
+  closed takes its curves with it; a saved session brings them back by UUID.
+Not handled: an animation layer or a constraint on a startup camera (one for every tab, as before), and a
+key made with the ROOT namespace current (a script's): its curve is no tab's and stays on the camera in
+every tab.
+Proof: `verify_scene_tabs.py camera_keys` **15/15** (mayapy: three files keyed differently, switching both
+ways, a key made in a tab, Ctrl+Z past a switch, a save, a hidden reload, a session restored, a hidden tab
+closed), all **0 of 284**, `verify_tabs_scope.py` 0 of 46; 6858 unit tests. Not seen in a GUI Maya.
 
 **A tab's save wrote another whole tab into its file** (2026-10-16, the animator: «No object matches name:
 tab_AS_DG_ATK_JA_01_ma_skeldartmp_ma_skeldartmp:AnimLayerRoot.solo … Не могу открыть сцену»). The file
