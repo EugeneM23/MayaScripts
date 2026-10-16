@@ -491,7 +491,8 @@ class OurRows(unittest.TestCase):
         #  + window.camshake, camshake.apply (2026-10-13, Camera Shake)
         #  + tools.snapshot (2026-10-13, Snapshot)
         #  + window.tabs, tabs.next / .previous (2026-10-15, Scene Tabs)
-        self.assertEqual(len(ours), 69)                 # + radial.press / .release, window.radial (2026-10-15)
+        #  + radial.press / .release, window.radial (2026-10-15)
+        self.assertEqual(len(ours), 70)                 # + tools.fp_setup (2026-10-16, 1P Setup)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -508,7 +509,7 @@ class OurRows(unittest.TestCase):
         self.assertEqual(sorted(self._keys("tools.")),
                          ["tools.across", "tools.aim", "tools.attach_0", "tools.attach_1",
                           "tools.bake", "tools.bake_layer", "tools.double_local",
-                          "tools.double_world",
+                          "tools.double_world", "tools.fp_setup",
                           "tools.inside", "tools.knot", "tools.knot_offset",
                           "tools.knot_orient", "tools.overlap", "tools.remove",
                           "tools.snapshot", "tools.swap", "tools.world"])

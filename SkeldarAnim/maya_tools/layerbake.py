@@ -516,8 +516,8 @@ def _plans(objs, rigs):
     return plans, ""
 
 
-def bake(selection=None, highlight=SLIDER):
-    """The Layer press. The line."""
+def bake(selection=None, highlight=SLIDER, name=None):
+    """The Layer press. The line. `name`: the layer's (1P Setup's), else `Baked_<first leaf>`."""
     import maya_rigs
     objs, pivots = _objects(selection)
     if not objs:
@@ -602,7 +602,7 @@ def bake(selection=None, highlight=SLIDER):
         layer = ""
         if tracks or moves:
             leaves = [plan.leaf(live[o]) for o in objs]
-            layer = write_deltas(plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
+            layer = write_deltas(name or plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
                                  tracks, ranged=ranged, moves=moves)
         cmds.select([live[o] for o in objs if live[o]], replace=True)
     starts = set(spans[o][0] for o in objs)

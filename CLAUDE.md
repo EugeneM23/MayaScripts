@@ -10619,3 +10619,31 @@ for `tabs.next`.
 257. **A save renames nodes, not strings.** A camera's `imageName` (`tab_plain:camera2`, the name it was
      created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
      names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
+
+## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
+
+The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации
+мы получим нашу анимацию нижней части и стабилизированый верх, но ... старая анимация для третего
+лица на верхней части ... в слое хранится на всякий случай». Asked: Spine1-2 with the lower body;
+the camera in the knot with no animation; a rig with no 1P switch done without it, said; a second
+press refused. Spec `docs/superpowers/specs/2026-10-16-tools-1p-setup-design.md`.
+`SkeldarAnim/maya_tools/firstperson.py`; a fourth Tools subsection **1P** with the row **1P Setup**;
+hotkey row `tools.fp_setup`. One press on any part of a rig, one undo chunk:
+- `Main.view` = 1 (Manny, Orc D; else «no 1P mesh on this rig»);
+- Tools > Knot on `FKSpine3_M` over the whole take;
+- Tools > Layer (`layerbake.bake(..., name=)`) over the whole take: the lower controls (`Main`,
+  `RootX_M`, `FKRoot_M`, `HipSwinger_M`, `FKSpine1/2_M`, leg words, IK spine) and the knot onto
+  **`_3P_Lower_Body`**, every other animated control onto **`_3P_Upper_Body`** (Maya will not start
+  a node name with a digit: `3P_...` becomes `P_...`); the base keeps the first frame's pose; then
+  the knot's rotate curves moved from Lower to Upper (`move_curve`: the same curve node, exact -
+  both add by component). Both marked `skeldarFirstPerson` = the rig's namespace;
+- Camera Setup on `camera_root`, then the camera's keys cut and it parented under the knot where
+  it stood at the take's first frame (none on the Creep: no camera_root, said).
+Refused before anything changes: no rig, layers of ours for it, no `FKSpine3_M`, the spine in IK,
+anything Layer or Knot would refuse. Proof: `verify_1p_setup.py` **13/13** on Manny and Orc D,
+**12/12** on the Creep (a UE 3P clip retargeted): one undo / redo; both layers on the take to
+0.0000 cm / deg; both muted the first frame's pose; Lower alone the pelvis and legs as before and
+spine_03's world turn the first frame's (the take turns it 102.5 deg); the knot's turn on Upper
+only; the camera under the knot, unkeyed, camera_root following it; a second press refused. 6701
+unit tests. Not seen live (the animator's checks). Custom attributes (IK foot roll, swivel) stay on
+the base: Layer bakes translate / rotate / scale.

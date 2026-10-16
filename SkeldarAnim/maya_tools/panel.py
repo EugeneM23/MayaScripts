@@ -42,6 +42,7 @@ import maya.cmds as cmds
 
 import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
+from maya_tools import firstperson
 from maya_tools import knotplan as plan
 from maya_tools import knots
 from maya_tools import layerbake
@@ -58,11 +59,12 @@ SECTIONS = (
     ("knots", "Knots", "drive with a locator"),
     ("parent", "Parent", "motion kept"),
     ("overlap", "Overlap", "on a new layer"),
+    ("firstperson", "1P", "3P take split by layers"),
 )
 HEAD = dict((key, "skeldarToolsHead_" + key) for key, _, _ in SECTIONS)
 BODY = dict((key, "skeldarToolsBody_" + key) for key, _, _ in SECTIONS)
 OPEN_VAR = "skeldarToolsOpen_%s"
-OPEN_DEFAULT = {"knots": True, "parent": False, "overlap": False}
+OPEN_DEFAULT = {"knots": True, "parent": False, "overlap": False, "firstperson": False}
 ORDER_LABEL = "skeldarToolsOrderLabel"
 KNOT_BTN = "skeldarToolsKnot"
 OFFSET_BTN = "skeldarToolsKnotOffset"
@@ -96,6 +98,7 @@ TRANSLATE_VAR = "skeldarAcrossTranslate"
 #  The aim tab (2026-10-13).
 AIM_BTN = "skeldarToolsAim"
 SNAPSHOT_BTN = "skeldarToolsSnapshot"
+FP_BTN = "skeldarTools1PSetup"
 OVERLAP_NAMES = "skeldarToolsOverlapNames"
 OVERLAP_FIELDS = "skeldarToolsOverlapFields"
 SOFT_LABEL = "skeldarToolsSoftnessLabel"
@@ -184,6 +187,11 @@ TIPS = {
     "total": "Overlap: Lag is the whole chain's, shared over its links",
     "edges": "Overlap: the first and last poses stay as they are - the overlap fades in over "
              "the first fifth and out over the last",
+    "fp_setup": "1P Setup - select any part of a rig: its geometry to 1P, a knot on FKSpine3_M, "
+                "the lower body and the knot's travel onto layer _3P_Lower_Body, the upper body "
+                "and the knot's turn onto _3P_Upper_Body (the base keeps the first frame), and "
+                "the camera set up inside the knot. Lower alone: the legs with a stable top; "
+                "both: the 3P take as it was",
     "overlap": "Overlap - select a chain's root (Hierarchy) or its members top to bottom: each "
                "link trails its own motion, keyed on a new additive layer 'Overlap' (mute, "
                "weight or delete it; pressing again replaces it). A highlighted range overlaps "
@@ -209,6 +217,7 @@ HINTS = {
     SWAP_BTN: "child takes parent's place",
     ACROSS_BTN: "rides the last selected",
     OVERLAP_BTN: "trail onto a new layer",
+    FP_BTN: "layers, knot, 1P camera",
 }
 
 
@@ -459,6 +468,11 @@ def snapshot():
     return _press(lambda: knots.snapshot(order=order()))
 
 
+def fp_setup():
+    """1P Setup (2026-10-16)."""
+    return _press(firstperson.setup)
+
+
 def overlap_settings():
     """The Overlap's settings as the card (or the memory) holds them."""
     d = overlapplan.DEFAULTS
@@ -629,7 +643,12 @@ def _overlap_body():
     _row(OVERLAP_BTN, "Overlap", "wave-sine", TIPS["overlap"], overlap)
 
 
-_BODIES = {"knots": _knots_body, "parent": _parent_body, "overlap": _overlap_body}
+def _firstperson_body():
+    _row(FP_BTN, "1P Setup", "camera", TIPS["fp_setup"], fp_setup)
+
+
+_BODIES = {"knots": _knots_body, "parent": _parent_body, "overlap": _overlap_body,
+           "firstperson": _firstperson_body}
 
 
 def _footer():
