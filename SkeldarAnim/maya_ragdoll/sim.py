@@ -23,10 +23,15 @@ STATIC, DYNAMIC = 0, 2
 SIXDOF2 = 5
 LOCKED, LIMITED = 1, 2
 #  Bullet collides two bodies when each one's group is in the other's mask. Defaults: group 1,
-#  mask 1 (measured). The capsules: group 2, mask 1 - not each other; the floor and the colliders:
-#  group 1, mask 1|2 - everything
+#  mask 1 (measured). Maya's Bullet keeps 16 bits (a group of 1<<17 fell through the floor). The
+#  capsules: one group per part of the body (`plan.collision_filters`), colliding with each other
+#  but their jointed neighbours; the weapon: its own bit, the world only; the floor and the
+#  colliders: group 1, every bit
 RAGDOLL_GROUP = 2
-WORLD_MASK = 1 | RAGDOLL_GROUP
+WORLD_MASK = plan.world_mask()
+JOINT_DAMPING = 0.5        # maya.app.mayabullet.Ragdoll's DEFAULT_ANGULAR_DAMPING
+SOLVER_RATE = 240          # steps a second
+SOLVER_ITERATIONS = 40
 FLOOR_THICKNESS = 50.0
 FLOOR_SIZE = 5000.0
 SPRING_DAMPING = 0.5
@@ -56,8 +61,8 @@ class Scene(object):
         cmds.setAttr(self.solver + ".startTime", start)
         cmds.setAttr(self.solver + ".gravity", 0, -plan.G, 0)
         cmds.setAttr(self.solver + ".groundPlane", 0)
-        cmds.setAttr(self.solver + ".internalFixedFrameRate", 240)
-        cmds.setAttr(self.solver + ".maxNumIterations", 40)
+        cmds.setAttr(self.solver + ".internalFixedFrameRate", SOLVER_RATE)
+        cmds.setAttr(self.solver + ".maxNumIterations", SOLVER_ITERATIONS)
         cmds.setAttr(self.solver + ".splitImpulse", 1)
         self.friction, self.bounce = friction, bounce
         self.bodies = {}           # key: (transform, shape)
@@ -99,18 +104,19 @@ class Scene(object):
         cmds.setAttr(sh + ".restitution", self.bounce)
         return t, sh
 
-    def build_capsule(self, key, world, length, radius, mass, velocity, spin):
+    def build_capsule(self, key, world, length, radius, mass, velocity, spin, filters=None):
         t, sh = self._body("ragdoll_" + key, world, DYNAMIC, mass)
         cmds.setAttr(sh + ".colliderShapeType", SHAPE_CAPSULE)
         cmds.setAttr(sh + ".axis", 0)
         cmds.setAttr(sh + ".length", length)
         cmds.setAttr(sh + ".radius", radius)
-        cmds.setAttr(sh + ".linearDamping", 0.05)
-        cmds.setAttr(sh + ".angularDamping", 0.2)
+        cmds.setAttr(sh + ".linearDamping", plan.LINEAR_DAMPING)
+        cmds.setAttr(sh + ".angularDamping", plan.ANGULAR_DAMPING)
         cmds.setAttr(sh + ".initialVelocity", *[float(v) for v in velocity])
         cmds.setAttr(sh + ".initialAngularVelocity", *[float(v) for v in spin])
-        cmds.setAttr(sh + ".collisionFilterGroup", RAGDOLL_GROUP)
-        cmds.setAttr(sh + ".collisionFilterMask", 1)
+        group, mask = filters or (RAGDOLL_GROUP, plan.WORLD_BIT)
+        cmds.setAttr(sh + ".collisionFilterGroup", group)
+        cmds.setAttr(sh + ".collisionFilterMask", mask)
         self.bodies[key] = (t, sh)
         return t, sh
 
@@ -121,8 +127,8 @@ class Scene(object):
         cmds.setAttr(sh + ".extents", *[float(v) for v in extents])
         cmds.setAttr(sh + ".initialVelocity", *[float(v) for v in velocity])
         cmds.setAttr(sh + ".initialAngularVelocity", *[float(v) for v in spin])
-        cmds.setAttr(sh + ".collisionFilterGroup", RAGDOLL_GROUP)
-        cmds.setAttr(sh + ".collisionFilterMask", 1)
+        cmds.setAttr(sh + ".collisionFilterGroup", plan.WEAPON_BIT)
+        cmds.setAttr(sh + ".collisionFilterMask", plan.WORLD_BIT)
         self.bodies[name] = (t, sh)
         return t, sh
 
@@ -190,6 +196,8 @@ class Scene(object):
         for ax in "XYZ":
             cmds.setAttr(cs + ".linearConstraint" + ax, LOCKED)
             cmds.setAttr(cs + ".angularConstraint" + ax, LIMITED)
+        cmds.setAttr(cs + ".angularDamping", JOINT_DAMPING)
+        cmds.setAttr(cs + ".angularRestitution", 0.0)
         cmds.setAttr(cs + ".angularConstraintMin", *[float(v) for v in lo])
         cmds.setAttr(cs + ".angularConstraintMax", *[float(v) for v in hi])
         if stiffness > 0:

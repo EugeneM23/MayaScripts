@@ -21,9 +21,19 @@ maya.standalone.initialize()
 import maya.cmds as cmds  # noqa: E402
 import maya.mel as mel  # noqa: E402
 import maya.api.OpenMaya as om  # noqa: E402
+import numpy as np  # noqa: E402
+
+import os
+import importlib.util
 
 REPO = "C:/!!!Work/MayaScripts"
-sys.path.insert(0, REPO + "/SkeldarAnim")
+#  RAGDOLL_PLUGIN: another plugin folder to run (an older build, the control); the measures read
+#  the repo's plan whatever runs
+sys.path.insert(0, os.environ.get("RAGDOLL_PLUGIN", REPO + "/SkeldarAnim"))
+_spec = importlib.util.spec_from_file_location("measure_plan",
+                                               REPO + "/SkeldarAnim/maya_ragdoll/plan.py")
+MP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(MP)
 for p in ("matrixNodes", "quatNodes", "fbxmaya", "bullet"):
     try:
         cmds.loadPlugin(p, quiet=True)
@@ -149,13 +159,22 @@ for f in FAILS:
 
 
 def knee(f, side):
-    p = after[f]
-    thigh = p["calf_" + side] - p["thigh_" + side]
-    calf = p["foot_" + side] - p["calf_" + side]
-    left = after[f]["thigh_l"] - after[f]["thigh_r"]
-    c = (thigh ^ calf)
-    ang = math.degrees(thigh.angle(calf))
-    return ang if c * left >= 0 else -ang
+    """The knee's bend at frame f, signed in its OWN hinge: the axis it flexed about at the fall,
+    carried by the thigh (the hip line flips under a pelvis twisted while kneeling: a 135-degree
+    forward bend once read as 135 backward)."""
+    run = rd.LAST["run"]
+    w = dict((leaf, MP.mat(b["world"])) for leaf, b in run["first"].items())
+    th, ca = "thigh_" + side, "calf_" + side
+    p0, c0 = MP.axis_points(th, w), MP.axis_points(ca, w)
+    hx, _bend = MP.hinge_axis("knee", p0[1] - p0[0], c0[1] - c0[0], MP.facing(w)[2])
+    inv = np.linalg.inv(run["body_first"][th])
+    h = hx @ MP.rot(run["body_first"][th]).T @ MP.rot(run["bodies"][f][th])
+    pts = [(np.append(q, 1.0) @ inv @ run["bodies"][f][th])[:3] for q in p0]
+    inv_c = np.linalg.inv(run["body_first"][ca])
+    cpts = [(np.append(q, 1.0) @ inv_c @ run["bodies"][f][ca])[:3] for q in c0]
+    pd, cd = pts[1] - pts[0], cpts[1] - cpts[0]
+    ang = MP.angle(pd, cd)
+    return ang if np.dot(np.cross(pd, cd), h) >= 0 else -ang
 
 
 worst_knee = min(knee(f, s) for f in range(A, B + 1) for s in ("l", "r"))
@@ -178,6 +197,80 @@ for i, f in enumerate(range(A, B + 1)):
             worst_bake = (d, b, f)
 print("    bake worst", worst_bake)
 gate(worst_bake[0] < 3.0, "the rig plays the simulation (worst %.3f cm, %s at %s)" % worst_bake)
+print("%d of %d gates failed" % (len(FAILS), COUNT[0]))
+
+
+# ---------------------------------------------------------------- the body's own collisions and range
+import numpy as np  # noqa: E402
+
+RUN = rd.LAST["run"]
+KEYS = [r[0] for r in MP.BODIES]
+first_bones = RUN["first"]
+axis0, radius = {}, RUN["radius"]
+w0 = dict((leaf, MP.mat(b["world"])) for leaf, b in first_bones.items())
+for k in KEYS:
+    axis0[k] = MP.axis_points(k, w0)
+_filters, APART = MP.collision_filters(axis0, radius, KEYS)
+apart_pairs = set(pair for pair, _why in APART)
+print("    left apart:", ", ".join("%s-%s (%s)" % (p[0], p[1], w) for p, w in APART))
+
+
+def axis_at(k, t):
+    """A body's axis at frame t: its first-frame axis carried by its body's motion."""
+    m0 = RUN["body_first"][k]
+    inv = np.linalg.inv(m0)
+    m = RUN["bodies"][t][k]
+    pts = []
+    for p in axis0[k]:
+        v = np.append(p, 1.0) @ inv @ m
+        pts.append(v[:3])
+    return pts
+
+
+worst_pen = (0.0, None, None)
+for t in range(A, B + 1):
+    axes_t = dict((k, axis_at(k, t)) for k in KEYS)
+    for i, a in enumerate(KEYS):
+        for b in KEYS[i + 1:]:
+            ga, gb = MP.collision_group(a), MP.collision_group(b)
+            if ga == gb or tuple(sorted((ga, gb))) in apart_pairs:
+                continue
+            d = MP.penetration(axes_t[a], radius[a], axes_t[b], radius[b])                 - MP.penetration(axis0[a], radius[a], axis0[b], radius[b])
+            if d > worst_pen[0]:
+                worst_pen = (d, "%s-%s" % (a, b), t)
+print("    self-penetration worst %.2f cm (%s at %s)" % worst_pen)
+gate(worst_pen[0] < 3.0, "body parts do not pass through each other (worst %.2f cm, %s at %s)"
+     % worst_pen)
+
+rest_w = dict((leaf, MP.mat(b["rest"])) for leaf, b in first_bones.items())
+now_w = dict((leaf, MP.mat(b.get("drive") or b["world"])) for leaf, b in first_bones.items())
+facing_rest = MP.facing(rest_w)
+excess = (0.0, None, None)
+twisted = (0.0, None, None)
+for key, _bones, parent, kind, _sh, _s, _e in MP.BODIES:
+    if parent is None or kind in MP.HINGES:
+        continue
+    pr, cr = MP.body_frame(parent, rest_w), MP.body_frame(key, rest_w)
+    pn, cn = MP.body_frame(parent, now_w), MP.body_frame(key, now_w)
+    pdir = MP.axis_points(parent, rest_w)[1] - MP.axis_points(parent, rest_w)[0]
+    cdir = MP.axis_points(key, rest_w)[1] - MP.axis_points(key, rest_w)[0]
+    neutral = MP.anatomical_frame(kind, key, facing_rest, pdir)
+    child_neutral = neutral @ MP.turn_between(neutral[0], cdir)
+    jp0 = neutral @ MP.rot(pr).T @ MP.rot(pn)
+    jc0 = child_neutral @ MP.rot(cr).T @ MP.rot(cn)
+    for t in range(A, B + 1):
+        jp = jp0 @ MP.rot(RUN["body_first"][parent]).T @ MP.rot(RUN["bodies"][t][parent])
+        jc = jc0 @ MP.rot(RUN["body_first"][key]).T @ MP.rot(RUN["bodies"][t][key])
+        swing, twist = MP.cone_excess(kind, key, jp @ jc.T, jp0 @ jc0.T)
+        if swing > excess[0]:
+            excess = (swing, key, t)
+        if twist > twisted[0] and kind != "shoulder":
+            twisted = (twist, key, t)
+print("    past the human range: swing %.1f deg (%s at %s), twist %.1f deg (%s at %s)"
+      % (excess + twisted))
+gate(excess[0] < 25.0, "every joint swings inside the human range (worst %.1f deg past it, %s at %s)"
+     % excess)
+gate(twisted[0] < 25.0, "and twists inside it (worst %.1f deg past it, %s at %s)" % twisted)
 print("%d of %d gates failed" % (len(FAILS), COUNT[0]))
 
 

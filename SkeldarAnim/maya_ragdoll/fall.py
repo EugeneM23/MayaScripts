@@ -128,6 +128,25 @@ def _bodies(worlds, keys):
     return dict((key, plan.body_frame(key, worlds)) for key in keys)
 
 
+def _anatomy(first, keys):
+    """(rest bodies, bodies now, facing at rest) for the anatomical joints - each body as (4x4 frame,
+    axis direction); a rig's unrolled limb bones read in their DRIVE now (AdvancedSkeleton keeps their
+    roll in the twist joints: trap 246). None when the skeleton holds no rest."""
+    try:
+        rest = dict((leaf, plan.mat(bone["rest"])) for leaf, bone in first.items())
+    except (KeyError, TypeError, ValueError):
+        return None
+    now = dict((leaf, plan.mat(bone.get("drive") or bone["world"])) for leaf, bone in first.items())
+
+    def bodies(worlds):
+        out = {}
+        for key in keys:
+            p, q = plan.axis_points(key, worlds)
+            out[key] = (plan.body_frame(key, worlds), q - p)
+        return out
+    return bodies(rest), bodies(now), plan.facing(rest)
+
+
 def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=True):
     """{"bones", "parents", "before", "first", "bodies": {frame: {body: 4x4}}, "radius", ...} -
     the ragdoll run from `a` to `b`, nothing of it left in the scene."""
@@ -160,6 +179,8 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=Tru
             axis[key] = (p, q)
             radius[key] = plan.radius(points.get(key), p, q, float(np.linalg.norm(q - p)))
         hits, hit_notes = (impulse.hits(ref.rig, body_first, a, b) if impulses else ([], []))
+        anatomy = _anatomy(first, keys)
+        filters, apart = plan.collision_filters(axis, radius, keys)
         floor = plan.floor_height([points.get(k) for k in ("foot_l", "foot_r")],
                                   [axis[k] + (radius[k],) for k in ("foot_l", "foot_r")])
         world = sim.Scene(a, float(s["friction"]), float(s["bounce"]))
@@ -172,7 +193,7 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=Tru
                 length = float(np.linalg.norm(q - p))
                 v, w = plan.velocities(body_prev[key], body_first[key], fps)
                 world.build_capsule(key, body_first[key], plan.capsule_length(length, radius[key]),
-                                    radius[key], mass[key], v, w)
+                                    radius[key], mass[key], v, w, filters.get(key))
             boxes = {}
             for index, (_side, path, _bone) in enumerate(weapons):
                 centre, size = wp.local_box(path)
@@ -188,8 +209,15 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=Tru
                 anchor = axis[key][0]
                 parent_dir = axis[parent][1] - axis[parent][0]
                 child_dir = axis[key][1] - axis[key][0]
-                frame, lo, hi = plan.joint_frame(kind, anchor, parent_dir, child_dir, forward,
-                                                 plan.rot(body_first[key])[1])
+                if kind in plan.HINGES or anatomy is None:
+                    frame, lo, hi = plan.joint_frame(kind, anchor, parent_dir, child_dir, forward,
+                                                     plan.rot(body_first[key])[1])
+                else:
+                    rest_b, now_b, facing_rest = anatomy
+                    frame, lo, hi, _off = plan.anatomical_joint(
+                        kind, key, anchor,
+                        (rest_b[parent][0], rest_b[key][0], rest_b[parent][1], rest_b[key][1]),
+                        (now_b[parent][0], now_b[key][0]), facing_rest)
                 carried, lever = plan.carried(anchor, key, kids, mass, centres)
                 k = plan.stiffness(float(s["strength"]), carried, lever)
                 world.build_joint(key, parent, frame, lo, hi, k,
@@ -223,7 +251,7 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=Tru
     return {"bones": bones, "parents": parents, "rider_of": rider_of, "first": first,
             "weapons": tracks, "impulses": done, "impulse_notes": hit_notes,
             "body_first": body_first, "bodies": bodies, "radius": radius, "floor": floor,
-            "mass": mass}
+            "mass": mass, "apart": apart, "anatomy": anatomy, "axis": axis}
 
 
 # ------------------------------------------------------------------ the card

@@ -11312,6 +11312,53 @@ bit-for-bit repeatable. Not seen in a GUI Maya (port 7002 closed).
      0 with it suspended, in DG and parallel alike. mayapy has no viewport, so every verify fell. The
      simulation steps run with the refresh on (`fall.simulate`), suspended again after.
 
+**…a human's joints and a body that does not pass through itself** (the same evening: «найти в интернете
+параметры настройки гуманоида и перенести их к нам ... что бы части тела не протыкали друг друга»). Done
+alone. **This replaces the `BALL` limits above** (about the pose at the fall) and «the capsules: group 2,
+mask 1 - not each other».
+- **Human ranges about the anatomical NEUTRAL** (`plan.ANATOMY`: standing, arms hanging, feet forward;
+  AAOS norms - shoulder flex 170 / ext 60 / abd 150 / add 40 / twist 80, hip 120 / 30 / 45 / 30 / 45, wrist
+  80 / 70 / 25 / 80, ankle plantar 50 / dorsi 20, neck 45 / 45 / 40 / 60, the thoracolumbar 80 / 25 / 35 /
+  45 split over the two spine joints; hinges `HINGE_RANGE` elbow 145 + 5, knee 135 + 2). Each ball joint's
+  neutral frame is read on the REST facing (`anatomical_frame`: X the neutral direction, Z the flexion axis,
+  Y = Z x X, a positive Y turn takes a limb to the body's left - mirrored for the right side); the child's
+  own neutral is that frame turned the least onto its bind direction; the difference now is the offset.
+  A rig's unrolled limb bones are read in their drive (trap 246).
+- **Bullet's frame is the CHILD's** (`anatomical_joint`): a Bullet turn `m` is the anatomical `offset . m`,
+  so Bullet's X stays the limb's own twist (in the parent's frame a twist turned a hand already bent 20
+  degrees into a swing 30 past its range). Each axis's limit is how far a turn about it alone keeps the
+  joint inside its **swing-twist cone** (`cone_excess`: the swing as a rotation vector against the ellipse
+  of its abduction and flexion ranges - PhysX's and Unreal's measure, no gimbal - the twist against its
+  range); a pose already past it is kept from going further, never snapped back; the middle axis inside
+  +-85; then the box's corners are brought inside the cone, the sideways half-side giving way first
+  (`_inside_cone`). Only the swing: Bullet's two swings carry a twist of their own, and shrinking for it
+  left a hip 60 of its 120 degrees.
+- **Self-collision** (`collision_filters`): 12 groups (a limb's first body alone, the rest of the limb
+  together; Maya's Bullet keeps 16 bits), each body colliding with every group but its own, its jointed
+  neighbours' and those it already touches at the fall (`OVERLAP_SHARE` 0: touching capsules are pushed
+  apart on the first step - a hand on a thigh threw the Creep's pelvis 1.6 cm). The weapon its own bit,
+  the world only. `penetration` puts a capsule's cap centres half a radius INSIDE its segment.
+- Damping 0.05 / 0.6 (Bullet's ragdoll demo: 0.05 / 0.85), the joints' 0.5 (Maya's Ragdoll.py).
+- Sources read: Bullet's `BenchmarkDemo.cpp` RagDoll, Unity's CharacterJoint, community UE physics-asset
+  values, AAOS range-of-motion tables (they disagree by 10-20 degrees; ours sit a little inside the active
+  range - a ragdoll's joints are passive).
+
+Proof: `verify_ragdoll.py` (three new gates: self-penetration, swing past the human range, twist past it;
+the knee gate now signs the bend in the knee's own hinge, `RAGDOLL_PLUGIN` runs another build as the
+control): **39/39 on Manny_Rig, Creep_Rig and Orc_D_Rig** on a UE sprint; on a sprint attack the same
+three pass (penetration <= 0.4 cm, swing <= 12 deg past) but the Orc's wrist twist once read 42.8 - the
+clip-specific gates (floor, bake, the box's place, at rest) fail there for the old build as well. The old
+build on the same gates: **penetration 13-21 cm, 60-77 degrees past the human range**. 39 unit tests in
+`test_ragdoll_plan` (6983 in all). Not seen in a GUI Maya.
+
+270. **Maya's Bullet, more measured** (2026-10-16): the SixDOF2 constraint composes its angles **Rz . Ry .
+     Rx** (a joint locked at (30, 20, 10) settled on that product to 0.0000, XYZ was 0.18 off) - read with
+     XYZ, the middle limit was held on the wrong angle and a wrist drifted 40 past it; positive = a
+     right-handed turn of body B about the axis (B = `rigidBodyB`). `collisionFilterGroup/Mask` are 16
+     bits (a group of 1<<17 fell through the floor). On type 5, `angularLimitSoftness/Bias/Relaxation`,
+     `angularSoftness` and `maxNumIterations` change nothing (bit-for-bit); `internalFixedFrameRate` is
+     an enum 60 / 120 / 240. Its limits hold to ~5 degrees under a 1500 deg/s spin.
+
 ## Time Bar: Maya's time slider redrawn in the hub's look (2026-10-16)
 
 The animator: «Давай попробуем перерисовать интерфейс таймслайдера маи под наш стиль. Сделай пару макетов а я
