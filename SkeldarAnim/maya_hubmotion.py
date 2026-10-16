@@ -64,6 +64,11 @@ POPUP_OPEN_MS = 220
 POPUP_CLOSE_MS = 170
 POPUP_SLIDE = 10
 
+#  The rail layout (2026-10-16, layout C): a card chosen on the rail comes in
+#  RAIL_SLIDE logical px from the side while it fades in, over RAIL_SWITCH_MS.
+RAIL_SWITCH_MS = 160
+RAIL_SLIDE = 12
+
 
 def _cmds():
     import maya.cmds as cmds

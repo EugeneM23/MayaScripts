@@ -508,6 +508,7 @@ QToolButton[skRole="version"][skState="new"] {{ background: {accent_tint};
 QWidget[skRole="message"] {{ background: {status}; border-radius: {r6}px; }}
 QLabel[skRole="messagetext"] {{ color: {status_text}; }}
 QWidget[skRole="strip"] {{ background: {strip}; border-radius: {r7}px; }}
+QWidget[skRole="rail"] {{ background: {strip}; border-radius: {r7}px; }}
 QToolButton[skRole="jump"] {{ background: transparent; border: none;
     border-radius: {r5}px; padding: {p1}px; }}
 QToolButton[skRole="jump"]:hover {{ background: {card}; }}

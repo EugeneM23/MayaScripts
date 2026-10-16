@@ -278,6 +278,37 @@ def _leaf(name):
     return (name or "").split("|")[-1]
 
 
+def _modifiers():
+    """The keyboard modifiers held now (a seam: the tests hold their own)."""
+    return qt().QtWidgets.QApplication.keyboardModifiers()
+
+
+def _middle_class():
+    """An event filter calling `action` on a middle-button release over its
+    widget (a rail icon's popup, 2026-10-16)."""
+    if "middle" not in _CLASSES:
+        q = qt()
+
+        class Middle(q.QtCore.QObject):
+
+            def __init__(self, action, parent=None):
+                super(Middle, self).__init__(parent)
+                self._action = action
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                kind = event.type()
+                if kind in (q.QtCore.QEvent.MouseButtonPress,
+                            q.QtCore.QEvent.MouseButtonRelease) \
+                        and event.button() == q.QtCore.Qt.MiddleButton:
+                    if kind == q.QtCore.QEvent.MouseButtonRelease:
+                        self._action()
+                    return True
+                return False
+
+        _CLASSES["middle"] = Middle
+    return _CLASSES["middle"]
+
+
 def _named(widget, name, role=None):
     widget.setObjectName(name)
     if role:
@@ -795,10 +826,14 @@ class Card(object):
     off screen, or with `animate` False the old instant show / hide."""
 
     def __init__(self, key, label, icon_name, colour, chip, scale,
-                 collapsed=False, on_toggle=None, motion=None, on_popout=None):
+                 collapsed=False, on_toggle=None, motion=None, on_popout=None,
+                 collapsible=True):
         q = qt()
         w = q.QtWidgets
         self.key = key
+        #  the rail layout (2026-10-16): one card shown, never collapsed - no
+        #  chevron, the header's click does nothing
+        self.collapsible = bool(collapsible)
         self.label = label
         self.scale = scale
         #  What a section's status line says about its card (2026-10-08): the
@@ -894,6 +929,9 @@ class Card(object):
         column.addWidget(self.header)
         column.addWidget(self.body)
         self._collapsed = None
+        if not self.collapsible:
+            self.chevron.setVisible(False)
+            collapsed = False
         self.set_collapsed(collapsed)
 
     def body_path(self):
@@ -931,7 +969,7 @@ class Card(object):
         answers the new state at once. No callback: code opening a card
         remembers through the hub; only the animator's click calls back
         (`toggle`)."""
-        collapsed = bool(collapsed)
+        collapsed = bool(collapsed) and self.collapsible
         if collapsed == self._collapsed:
             return
         first = self._collapsed is None
@@ -944,6 +982,8 @@ class Card(object):
         self._settle()
 
     def toggle(self):
+        if not self.collapsible:
+            return
         self.set_collapsed(not self._collapsed, animate=True)
         if self._on_toggle:
             self._on_toggle(self.key, self._collapsed)
@@ -1163,9 +1203,20 @@ class Card(object):
 class Skin(object):
     """The whole skinned hub. `parent_layout` is the workspaceControl's."""
 
-    def __init__(self, parent, scale=1.0, callbacks=None):
+    def __init__(self, parent, scale=1.0, callbacks=None, layout="accordion"):
         q = qt()
         w = q.QtWidgets
+        #  The rail layout (2026-10-16, layout C: «Вариант С мне нравится»): a
+        #  column of section icons at the left, ONE card at the right
+        #  (`show_card`); "accordion" is the cards stacked as before.
+        self.layout = "rail" if layout == "rail" else "accordion"
+        self.rail = None
+        self.shown = None
+        self._switch = None
+        self._switch_card = None
+        self._jump_group = {}
+        self._last_group = None
+        self.layout_actions = {}
         #  a widget (the workspaceControl's) or a layout; the widget wrapper
         #  is kept, or its layout's wrapper dies with it (see host_widget)
         self.host = parent
@@ -1186,16 +1237,31 @@ class Skin(object):
         s = self.px
 
         self.root = _named(w.QWidget(), hubstyle.ROOT)
-        top = w.QVBoxLayout(self.root)
-        top.setObjectName("skeldarHubRootLayout")
-        #  compact (2026-10-08, variant B): margins and gaps 3, was 6
-        top.setContentsMargins(s(3), s(3), s(3), s(3))
-        top.setSpacing(s(3))
+        if self.layout == "rail":
+            outer = w.QHBoxLayout(self.root)
+            outer.setObjectName("skeldarHubRootLayout")
+            outer.setContentsMargins(s(3), s(3), s(3), s(3))
+            outer.setSpacing(s(3))
+            self.rail = self._build_rail()
+            outer.addWidget(self.rail)
+            area = _named(w.QWidget(), "skeldarHubRailColumn")
+            top = w.QVBoxLayout(area)
+            top.setObjectName("skeldarHubRailColumnLayout")
+            top.setContentsMargins(0, 0, 0, 0)
+            top.setSpacing(s(3))
+            outer.addWidget(area, 1)
+            self.header = None
+        else:
+            top = w.QVBoxLayout(self.root)
+            top.setObjectName("skeldarHubRootLayout")
+            #  compact (2026-10-08, variant B): margins and gaps 3, was 6
+            top.setContentsMargins(s(3), s(3), s(3), s(3))
+            top.setSpacing(s(3))
+            self.header = self._build_header()
+            top.addWidget(self.header)
         if parent_layout is not None:
             parent_layout.addWidget(self.root)
 
-        self.header = self._build_header()
-        top.addWidget(self.header)
         self.message = self._build_message()
         top.addWidget(self.message)
 
@@ -1293,14 +1359,62 @@ class Skin(object):
         #  hotkeys, the pin, the menu - no title, no version chip, no strip
         row.setContentsMargins(s(1), s(1), s(1), s(1))
         row.setSpacing(s(2))
-        logo = _named(w.QLabel("SA"), "skeldarHubLogo", "logo")
-        logo.setFixedSize(s(18), s(18))
-        logo.setAlignment(q.QtCore.Qt.AlignCenter)
+        logo = self._logo()
         #  the jumps share what the mark and the buttons leave (add_jump)
         self.jump_row = w.QHBoxLayout()
         self.jump_row.setObjectName("skeldarHubJumpRow")
         self.jump_row.setContentsMargins(0, 0, 0, 0)
         self.jump_row.setSpacing(s(1))
+        self._build_head_buttons()
+        row.addWidget(logo)
+        row.addLayout(self.jump_row, 1)
+        row.addWidget(self.hotkeys)
+        row.addWidget(self.pin)
+        row.addWidget(self.menu_button)
+        return header
+
+    def _logo(self):
+        q = qt()
+        logo = _named(q.QtWidgets.QLabel("SA"), "skeldarHubLogo", "logo")
+        logo.setFixedSize(self.px(18), self.px(18))
+        logo.setAlignment(q.QtCore.Qt.AlignCenter)
+        return logo
+
+    def _build_rail(self):
+        """The rail (2026-10-16): the mark, the section icons by group (a gap
+        and a hairline between two groups, `add_jump`), then at the bottom
+        the hotkey switch, the edge panel's pin and the menu - what the
+        header row holds in the accordion."""
+        q = qt()
+        w = q.QtWidgets
+        s = self.px
+        rail = _named(w.QWidget(), "skeldarHubRail", "rail")
+        rail.setAttribute(q.QtCore.Qt.WA_StyledBackground, True)
+        rail.setFixedWidth(s(32))
+        column = w.QVBoxLayout(rail)
+        column.setObjectName("skeldarHubRailLayout")
+        column.setContentsMargins(s(3), s(4), s(3), s(4))
+        column.setSpacing(s(2))
+        centre = q.QtCore.Qt.AlignHCenter
+        column.addWidget(self._logo(), 0, centre)
+        column.addSpacing(s(4))
+        self.jump_row = w.QVBoxLayout()
+        self.jump_row.setObjectName("skeldarHubJumpRow")
+        self.jump_row.setContentsMargins(0, 0, 0, 0)
+        self.jump_row.setSpacing(s(2))
+        column.addLayout(self.jump_row)
+        column.addStretch(1)
+        self._build_head_buttons()
+        for button in (self.hotkeys, self.pin, self.menu_button):
+            button.setFixedSize(s(26), s(26))
+            column.addWidget(button, 0, centre)
+        return rail
+
+    def _build_head_buttons(self):
+        """The hotkey switch, the edge panel's pin and the menu - the
+        header's in the accordion, the rail's bottom in the rail."""
+        q = qt()
+        w = q.QtWidgets
         self.hotkeys = self._head_button(
             "skeldarHubHotkeys", "keyboard", "Hotkey map: OFF",
             checkable=True)
@@ -1323,6 +1437,7 @@ class Skin(object):
                           ("Hotkey Editor...", "hotkey_editor"),
                           ("Interface sounds", "sounds"),
                           ("Interface animations", "animations"),
+                          ("Layout", "layout"),
                           ("Edge panel", "edge"),
                           (None, None),
                           ("Classic look", "classic")):
@@ -1331,6 +1446,9 @@ class Skin(object):
                 continue
             if key == "edge":
                 self._build_edge_menu(text)
+                continue
+            if key == "layout":
+                self._build_layout_menu(text)
                 continue
             action = self.menu.addAction(text)
             if key in ("sounds", "animations"):
@@ -1345,12 +1463,32 @@ class Skin(object):
             action.triggered.connect(lambda *_a, k=key: self._call(k))
         self.menu_button.setMenu(self.menu)
         self.menu_button.setPopupMode(w.QToolButton.InstantPopup)
-        row.addWidget(logo)
-        row.addLayout(self.jump_row, 1)
-        row.addWidget(self.hotkeys)
-        row.addWidget(self.pin)
-        row.addWidget(self.menu_button)
-        return header
+
+    def _build_layout_menu(self, text):
+        """The menu's Layout > Rail / Accordion (2026-10-16): two exclusive
+        rows, a row's `triggered` calls back ("layout", choice);
+        `paint_layout` checks a row and calls nothing."""
+        q = qt()
+        sub = self.menu.addMenu(text)
+        sub.setObjectName("skeldarHubLayoutMenu")
+        group_class = (getattr(q.QtGui, "QActionGroup", None)
+                       or q.QtWidgets.QActionGroup)       # Qt6 / Qt5
+        self._layout_group = group_class(sub)
+        self._layout_group.setExclusive(True)
+        for label, choice in (("Rail", "rail"), ("Accordion", "accordion")):
+            action = sub.addAction(label)
+            action.setCheckable(True)
+            self._layout_group.addAction(action)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("layout", c))
+            self.layout_actions[choice] = action
+        self.layout_actions[self.layout].setChecked(True)
+
+    def paint_layout(self, choice):
+        """The menu's Layout shows `choice` (no callback)."""
+        action = self.layout_actions.get(choice)
+        if action is not None:
+            action.setChecked(True)
 
     def _build_edge_menu(self, text):
         """⋮ -> Edge panel ▸ Off / Left edge / Right edge (2026-10-09, «Можем
@@ -1417,14 +1555,17 @@ class Skin(object):
         self.column.insertWidget(self.column.count() - 1, group)
         return group
 
-    def add_card(self, key, label, icon_name, colour, chip, collapsed=False):
+    def add_card(self, key, label, icon_name, colour, chip, collapsed=False,
+                 collapsible=True):
         card = Card(key, label, icon_name, colour, chip, self.scale,
-                    collapsed=collapsed,
+                    collapsed=collapsed, collapsible=collapsible,
                     on_toggle=lambda k, c: self._call("toggled", k, c),
                     motion=lambda: self.animations,
                     on_popout=lambda k: self._call("popout", k))
         self.column.insertWidget(self.column.count() - 1, card.frame)
         self.cards[key] = card
+        if self.layout == "rail" and self.shown is None:
+            card.frame.setVisible(False)            # show_card picks one
         return card
 
     def set_popped(self, key, on):
@@ -1434,23 +1575,146 @@ class Skin(object):
             card.set_popped(on)
         return bool(on)
 
-    def add_jump(self, key, label, icon_name, colour):
+    def add_jump(self, key, label, icon_name, colour, group=None):
         q = qt()
+        if (self.layout == "rail" and group is not None and self.jumps
+                and group != self._last_group):
+            self.jump_row.addWidget(self._rail_gap(group))
+        self._last_group = group
         button = _named(q.QtWidgets.QToolButton(), "skeldarHubJump_" + key,
                         "jump")
         button.setIcon(icon(icon_name, colour, self.px(16)))
         button.setIconSize(q.QtCore.QSize(self.px(16), self.px(16)))
         button.setToolTip(label)
         button.setAutoRaise(True)
-        button.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
-                             q.QtWidgets.QSizePolicy.Fixed)
-        button.setMinimumWidth(self.px(16))
-        button.clicked.connect(lambda *_a, k=key: self._call("jump", k))
+        if self.layout == "rail":
+            button.setFixedSize(self.px(26), self.px(26))
+            button.setToolTip(label + "\nCtrl+click or middle click: a popup")
+            button.setContextMenuPolicy(q.QtCore.Qt.CustomContextMenu)
+            button.customContextMenuRequested.connect(
+                lambda pos, k=key, b=button: run_menu(
+                    b, b.mapToGlobal(pos), self.rail_actions(k)))
+            button.installEventFilter(_middle_class()(
+                lambda k=key: self._call("popup", k), button))
+        else:
+            button.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
+                                 q.QtWidgets.QSizePolicy.Fixed)
+            button.setMinimumWidth(self.px(16))
+        button.clicked.connect(lambda *_a, k=key: self._jump(k))
         self.jump_row.addWidget(button)
+        self._jump_group[key] = group
         self.jumps[key] = button
         self._jump_colour[key] = colour
         self._jump_icon[key] = icon_name
         return button
+
+    def _rail_gap(self, group):
+        """The room between two groups on the rail, a hairline across it."""
+        q = qt()
+        w = q.QtWidgets
+        s = self.px
+        gap = _named(w.QWidget(), "skeldarHubRailGap_" + str(group),
+                     "railgap")
+        column = w.QVBoxLayout(gap)
+        column.setContentsMargins(s(4), s(4), s(4), s(4))
+        line = w.QFrame(gap)
+        line.setFixedHeight(max(1, s(1)))
+        line.setStyleSheet("background: {0}; border: none;".format(
+            hubstyle.TOKENS["line"]))
+        column.addWidget(line)
+        return gap
+
+    def _jump(self, key):
+        """A jump's click: Ctrl held opens the section as a popup (the rail's
+        second card, 2026-10-16), else the jump."""
+        q = qt()
+        if _modifiers() & q.QtCore.Qt.ControlModifier:
+            self._call("popup", key)
+        else:
+            self._call("jump", key)
+
+    def rail_actions(self, key):
+        """A rail icon's right-button menu: [(label, callable)]."""
+        return [("Show here", lambda: self._call("jump", key)),
+                ("Open as popup", lambda: self._call("popup", key))]
+
+    def show_card(self, key, animate=False):
+        """The rail layout: card `key` the one shown (every other frame
+        hidden), its rail icon marked current, the scroll at its top. Fading
+        in from RAIL_SLIDE px to the side when `animate`, the switch and the
+        screen allow it. Answers the card, or None for a key with none."""
+        card = self.cards.get(key)
+        if card is None:
+            return None
+        previous = self.shown
+        self._stop_switch()
+        for other, each in self.cards.items():
+            if other != key:
+                each.frame.setVisible(False)
+        card.frame.setVisible(True)
+        self.shown = key
+        for other, button in self.jumps.items():
+            current = other == key
+            button.setProperty("skCurrent", current)
+            button.setStyleSheet(self._current_sheet(other) if current
+                                 else "")
+        self.scroll.verticalScrollBar().setValue(0)
+        if (animate and self.animations and previous != key
+                and self.root.isVisible()):
+            self._fade_in(card)
+        return card
+
+    def _current_sheet(self, key):
+        colour = self._jump_colour.get(key, hubstyle.TOKENS["accent"])
+        return ("QToolButton {{ background: {0}; border: none; border-left: "
+                "{1}px solid {2}; border-radius: {3}px; }}").format(
+                    hubstyle.TOKENS["card_active"], max(1, self.px(2)),
+                    colour, self.px(5))
+
+    def _fade_in(self, card):
+        q = qt()
+        effect = q.QtWidgets.QGraphicsOpacityEffect(card.frame)
+        effect.setOpacity(0.0)
+        card.frame.setGraphicsEffect(effect)
+        #  held: PySide deletes an effect whose wrapper is collected (trap 201)
+        card._switch_effect = effect
+        slide = self.px(hubmotion.RAIL_SLIDE)
+        anim = q.QtCore.QVariantAnimation(self.root)
+        anim.setObjectName("skeldarHubRailSwitch")
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(hubmotion.RAIL_SWITCH_MS)
+
+        def tick(value):
+            k = hubmotion.ease(value)
+            if _valid(effect):
+                effect.setOpacity(k)
+            self.column.setContentsMargins(int(round(slide * (1.0 - k))), 0,
+                                           self.px(2), 0)
+        anim.valueChanged.connect(tick)
+        anim.finished.connect(self._stop_switch)
+        self._switch = anim
+        self._switch_card = card
+        anim.start()
+
+    def _stop_switch(self, *_args):
+        """The switch's fade over (or cut short): no effect left on the card,
+        the column back at its margins."""
+        anim, self._switch = self._switch, None
+        card, self._switch_card = self._switch_card, None
+        if anim is not None:
+            try:
+                anim.valueChanged.disconnect()
+                anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            anim.stop()
+            anim.deleteLater()
+        if card is not None and _valid(card.frame):
+            card.frame.setGraphicsEffect(None)
+            card._switch_effect = None
+        if anim is not None and _valid(self.content):
+            self.column.setContentsMargins(0, 0, self.px(2), 0)
 
     def finish(self, sheet):
         self.root.setStyleSheet(sheet)

@@ -148,11 +148,14 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",
-                          "Edge panel", "Classic look"])
+                          "Layout", "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
-        #  "Edge panel" is a submenu (2026-10-09): its own row calls nothing
-        self.assertIs(actions[4].menu(), self.skin.edge_menu)
+        #  "Layout" (2026-10-16) and "Edge panel" (2026-10-09) are submenus:
+        #  their own rows call nothing
+        self.assertEqual(actions[4].menu().objectName(),
+                         "skeldarHubLayoutMenu")
+        self.assertIs(actions[5].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
         self.assertEqual(self.calls,
@@ -2315,3 +2318,148 @@ class HoverGlowPaint(unittest.TestCase):
         self._grab(1.0)
         self.assertFalse(self.effect.broken, self.effect.error)
         self.assertEqual(self.effect.computed, 1)
+
+
+class Rail(unittest.TestCase):
+    """The rail layout (2026-10-16, layout C): a column of section icons at
+    the left, ONE card at the right, ⋮ -> Layout switching back."""
+
+    def setUp(self):
+        self.app = _app()
+        style._LISTENERS[:] = []
+        self.saved = (hubqt.find, hubqt.path_of, hubqt._modifiers)
+        hubqt.find = lambda name, layout=False: None
+        hubqt.path_of = lambda obj: "path|" + obj.objectName()
+        self.mods = [QtCore.Qt.NoModifier]
+        hubqt._modifiers = lambda: self.mods[0]
+        self.calls = []
+        names = ("hotkeys", "check_update", "hotkey_editor", "classic", "hover",
+                 "told", "pin", "edge", "edge_side", "sounds", "animations")
+        callbacks = dict((n, (lambda n=n, *a: self.calls.append((n,) + a)))
+                         for n in names)
+        callbacks.update({
+            "jump": lambda key: self.calls.append(("jump", key)),
+            "popup": lambda key: self.calls.append(("popup", key)),
+            "layout": lambda c: self.calls.append(("layout", c)),
+            "toggled": lambda key, c: self.calls.append(("toggled", key, c)),
+        })
+        self.host = QtWidgets.QWidget()
+        self.host_layout = QtWidgets.QVBoxLayout(self.host)
+        self.skin = hubqt.Skin(self.host_layout, scale=1.0,
+                               callbacks=callbacks, layout="rail")
+        for key, group in (("a", "scene"), ("b", "scene"), ("c", "animation")):
+            self.skin.add_jump(key, key.upper(), "tool", "#f0a26b", group=group)
+            self.skin.add_card(key, key.upper(), "tool", "#f0a26b", "#4a3322",
+                               collapsible=False)
+        self.skin.show_card("a")
+        self.host.resize(360, 600)
+        self.host.show()
+
+    def tearDown(self):
+        hubqt.find, hubqt.path_of, hubqt._modifiers = self.saved
+        if self.skin.alive():
+            self.skin.destroy()
+        style._LISTENERS[:] = []
+        self.host.deleteLater()
+
+    def test_the_rail_stands_left_of_the_cards_and_holds_the_buttons(self):
+        self.assertEqual(self.skin.layout, "rail")
+        self.assertIsNone(self.skin.header)
+        self.assertIsInstance(self.skin.root.layout(), QtWidgets.QHBoxLayout)
+        self.assertIs(self.skin.root.layout().itemAt(0).widget(),
+                      self.skin.rail)
+        for button in (self.skin.hotkeys, self.skin.pin,
+                       self.skin.menu_button):
+            self.assertTrue(self.skin.rail.isAncestorOf(button))
+        self.assertTrue(self.skin.rail.isAncestorOf(self.skin.jumps["a"]))
+        self.assertFalse(self.skin.rail.isAncestorOf(self.skin.scroll))
+
+    def test_a_gap_before_each_new_group(self):
+        names = [w.objectName() for w in
+                 self.skin.rail.findChildren(QtWidgets.QWidget)]
+        self.assertIn("skeldarHubRailGap_animation", names)
+        self.assertNotIn("skeldarHubRailGap_scene", names)
+
+    def test_one_card_shown(self):
+        self.app.processEvents()
+        root = self.skin.root
+        self.assertTrue(self.skin.cards["a"].frame.isVisibleTo(root))
+        self.assertFalse(self.skin.cards["b"].frame.isVisibleTo(root))
+        self.skin.show_card("c")
+        self.assertEqual(self.skin.shown, "c")
+        self.assertTrue(self.skin.cards["c"].frame.isVisibleTo(root))
+        self.assertFalse(self.skin.cards["a"].frame.isVisibleTo(root))
+        self.assertTrue(self.skin.jumps["c"].property("skCurrent"))
+        self.assertFalse(self.skin.jumps["a"].property("skCurrent"))
+        self.assertIsNone(self.skin.show_card("nope"))
+        self.assertEqual(self.skin.shown, "c")
+
+    def test_a_click_jumps_ctrl_click_pops_up(self):
+        self.skin.jumps["b"].click()
+        self.assertEqual(self.calls[-1], ("jump", "b"))
+        self.mods[0] = QtCore.Qt.ControlModifier
+        self.skin.jumps["c"].click()
+        self.assertEqual(self.calls[-1], ("popup", "c"))
+        self.assertEqual(self.skin.shown, "a")
+
+    def test_a_middle_click_pops_up(self):
+        button = self.skin.jumps["b"]
+        centre = QtCore.QPointF(button.rect().center())
+        for kind in (QtCore.QEvent.MouseButtonPress,
+                     QtCore.QEvent.MouseButtonRelease):
+            event = QtGui.QMouseEvent(kind, centre, centre,
+                                      QtCore.Qt.MiddleButton,
+                                      QtCore.Qt.MiddleButton
+                                      if kind == QtCore.QEvent.MouseButtonPress
+                                      else QtCore.Qt.NoButton,
+                                      QtCore.Qt.NoModifier)
+            QtWidgets.QApplication.sendEvent(button, event)
+        self.assertEqual(self.calls[-1], ("popup", "b"))
+
+    def test_the_right_button_menu(self):
+        rows = self.skin.rail_actions("c")
+        self.assertEqual([r[0] for r in rows], ["Show here", "Open as popup"])
+        rows[0][1]()
+        rows[1][1]()
+        self.assertEqual(self.calls[-2:], [("jump", "c"), ("popup", "c")])
+
+    def test_a_rail_card_does_not_collapse(self):
+        card = self.skin.cards["a"]
+        self.assertFalse(card.chevron.isVisibleTo(card.frame))
+        card.toggle()
+        self.assertFalse(card.collapsed())
+        card.set_collapsed(True)
+        self.assertFalse(card.collapsed())
+        self.assertNotIn("toggled", [c[0] for c in self.calls])
+
+    def test_the_layout_rows(self):
+        actions = self.skin.layout_actions
+        self.assertEqual(sorted(actions), ["accordion", "rail"])
+        self.skin.paint_layout("rail")
+        self.assertTrue(actions["rail"].isChecked())
+        self.assertEqual(self.calls, [])
+        actions["accordion"].trigger()
+        self.assertEqual(self.calls[-1], ("layout", "accordion"))
+
+    def test_a_switch_fades_in_and_leaves_no_effect(self):
+        self.skin.animations = True
+        self.skin.show_card("b", animate=True)
+        frame = self.skin.cards["b"].frame
+        self.assertIsNotNone(frame.graphicsEffect())
+        anim = self.skin._switch
+        self.assertIsNotNone(anim)
+        anim.setCurrentTime(anim.duration())
+        self.assertIsNone(frame.graphicsEffect())
+        self.skin.animations = False
+        self.skin.show_card("c", animate=True)
+        self.assertIsNone(self.skin.cards["c"].frame.graphicsEffect())
+
+    def test_the_accordion_is_unchanged(self):
+        host = QtWidgets.QWidget()
+        QtWidgets.QVBoxLayout(host)
+        skin = hubqt.Skin(host, scale=1.0)
+        self.assertEqual(skin.layout, "accordion")
+        self.assertIsNone(skin.rail)
+        self.assertIsNotNone(skin.header)
+        skin.destroy()
+        host.deleteLater()
