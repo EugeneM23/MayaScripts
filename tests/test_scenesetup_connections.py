@@ -303,15 +303,18 @@ class Panel(unittest.TestCase):
                           "BakeAcross", "Release"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
-        for wanted in ("Hand_R", "Hand_L", "Weapon"):
+        for wanted in ("Hand R", "Hand L", "Weapon"):
             self.assertIn(wanted, labels)
         #  no description paragraph (the animator: Â«Ð²ÐµÑÑŒ Ñ‚ÐµÐºÑÑ‚ Ð¾Ð¿Ð¸ÑÐ°Ð½Ð¸Ñ
         #  ÑƒÐ±Ð¸Ñ€Ð°ÐµÐ¼Â») - the header, the two FK/IK rows (2026-09-30), the
         #  chooser's label (2026-09-29), the three row labels and the status
         self.assertIn("Acts on", labels)
         #  (2026-10-08: both arms on one row, written "Arm R" / "Arm L")
-        self.assertEqual(labels[1:3], ["Arm R", "Arm L"])
-        self.assertEqual(len(labels), 11)           # + the legs' two labels and the spine (2026-10-10)
+        #  (2026-10-16: under the caption «FK / IK»)
+        self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
+        #  + the legs' two labels and the spine (2026-10-10), the three
+        #  captions (2026-10-16)
+        self.assertEqual(len(labels), 14)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -541,13 +544,24 @@ class Panel(unittest.TestCase):
                    if c[0] == "rowLayout" and "manage" in c[2]]
         self.assertEqual(manages, [False])
 
-    def test_apply_all_bake_and_release_share_a_row(self):
-        rows = self._made("rowLayout", numberOfColumns=3, adjustableColumn=1)
-        self.assertEqual(len(rows), 1)
-        index, _call = rows[0]
-        buttons = [c for c in self._inside(index) if c[0] == "button"]
-        self.assertEqual([b[2]["label"] for b in buttons],
-                         ["Apply all", "BakeAcross", "Release"])
+    def test_apply_all_alone_bake_and_release_under_their_caption(self):
+        """2026-10-16, the card rules: Apply all is the weapon section's
+        orange, alone; BakeAcross and Release (any object) share a row under
+        the caption «Any object»."""
+        rows = self._made("rowLayout", numberOfColumns=2, adjustableColumn=1)
+        inside = [[b[2]["label"] for b in self._inside(index)
+                   if b[0] == "button"] for index, _call in rows]
+        self.assertIn(["BakeAcross", "Release"], inside)
+        self.assertFalse([labels for labels in inside if "Apply all" in labels])
+        names = [c[1][0] for c in self.fake.calls if c[0] == "text" and c[1]]
+        for key in ("limbs", "weapon", "any"):
+            self.assertIn(cx.CAPTION[key], names)
+            self.assertEqual(self.marks[cx.CAPTION[key]].role, "heading")
+        order = [c[1][0] if c[1] else c[2].get("label")
+                 for c in self.fake.calls if c[0] in ("text", "button")
+                 and not c[2].get("edit")]
+        self.assertLess(order.index("Apply all"), order.index(cx.CAPTION["any"]))
+        self.assertLess(order.index(cx.CAPTION["any"]), order.index("BakeAcross"))
         #  and their marks stay what they were: the section's one primary,
         #  then the two secondaries
         roles = [(m.role, m.icon) for m in self.marks.values()

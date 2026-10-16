@@ -120,6 +120,21 @@ HEADER = "skeldarConnectionsHeader"
 MENU = {"R": "skeldarConnectionsParentR", "L": "skeldarConnectionsParentL",
         "W": "skeldarConnectionsParentW"}
 ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
+# The card's sections (2026-10-16, the card rules): a caption over each.
+CAPTION = {"limbs": "skeldarConnectionsCapLimbs",
+           "weapon": "skeldarConnectionsCapWeapon",
+           "any": "skeldarConnectionsCapAny"}
+
+
+def _caption(key, text):
+    """A section's caption in the card (the skin upper-cases it)."""
+    return hubstyle.mark(cmds.text(CAPTION[key], label=text, align="left",
+                                   font="boldLabelFont"), "heading")
+
+
+def _row_label(text):
+    """A row's label, muted in the skin."""
+    return hubstyle.mark(cmds.text(label=text, font="boldLabelFont"), "label")
 # Which of two weapons the rows act on (2026-09-29): a segment row above them,
 # its pick kept by UUID (a rename or a re-parent keeps it).
 CHOOSER = "skeldarConnectionsWeapon"
@@ -1434,8 +1449,7 @@ def _fkik_row(kind):
                                  (3, "left", 6), (4, "both", 3)],
                    **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
     for side in SIDES[::-1]:
-        cmds.text(label=fkik.LABEL[kind].format(side).replace("_", " "),
-                  font="boldLabelFont")
+        _row_label(fkik.LABEL[kind].format(side).replace("_", " "))
         segments = cmds.rowLayout(numberOfColumns=2,
                                   columnAttach=[(1, "both", 1), (2, "both", 1)])
         hubstyle.mark(segments, "segments", layout=True)
@@ -1459,7 +1473,7 @@ def _spine_row():
     columns - the spine is one, so it has no second side to share a row with."""
     cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "left", 0), (2, "both", 3)],
                    **hubstyle.pick({"columnWidth": [(2, ARM_L_WIDTH)]}, {}))
-    cmds.text(label="Spine", font="boldLabelFont")
+    _row_label("Spine")
     segments = cmds.rowLayout(numberOfColumns=2,
                               columnAttach=[(1, "both", 1), (2, "both", 1)])
     hubstyle.mark(segments, "segments", layout=True)
@@ -1499,10 +1513,12 @@ def build_panel():
     #  the skin's segments leave their tracks for a row of ours, so Arm L's
     #  track is as wide as its column is given: about half (ARM_L_WIDTH);
     #  the classic hub's track holds its buttons and sizes itself
+    _caption("limbs", "FK / IK")
     _fkik_row(fkik.ARM)
     #  the legs (2026-10-10): the same row under the arms, one per leg
     _fkik_row(fkik.LEG)
     _spine_row()
+    _caption("weapon", "Weapon in hands")
     #  Which of two weapons the rows act on (2026-09-29): the selection names
     #  one too. Two fixed segments - labels written by refresh, an empty slot
     #  disabled - rather than rows that come and go, which the skin's
@@ -1512,7 +1528,7 @@ def build_panel():
                    columnWidth2=(hubstyle.pick(48, 64), 110),
                    columnAttach=[(1, "left", 0), (2, "both", 3)],
                    manage=False)
-    cmds.text(label="Acts on", font="boldLabelFont")
+    _row_label("Acts on")
     chooser = cmds.rowLayout(numberOfColumns=2,
                              columnAttach=[(1, "both", 1), (2, "both", 1)])
     hubstyle.mark(chooser, "segments", layout=True)
@@ -1533,7 +1549,7 @@ def build_panel():
                        columnAlign3=("left", "left", "center"),
                        columnAttach=[(1, "left", 0), (2, "both", 4),
                                      (3, "right", 0)])
-        cmds.text(label=ROW_LABEL[row], font="boldLabelFont")
+        _row_label(ROW_LABEL[row].replace("_", " "))
         segments = cmds.rowLayout(numberOfColumns=len(choices),
                                   columnAttach=[(i + 1, "both", 1)
                                                 for i in range(len(choices))])
@@ -1556,15 +1572,17 @@ def build_panel():
             annotation="apply this row's parent only",
             command=_press_row(row)), "tool", "check")
         cmds.setParent("..")
-    #  Apply all, BakeAcross and Release on one row (2026-10-08)
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 3),
-                                 (3, "both", 3)])
+    #  Apply all the weapon section's one orange, alone on its row; BakeAcross
+    #  and Release - any object, not the weapon - under a caption of their
+    #  own (2026-10-16, the card rules; on one row since 2026-10-08)
     hubstyle.mark(cmds.button(
         label="Apply all", height=hubstyle.height("button", 32),
         backgroundColor=(0.45, 0.70, 0.50),
         annotation="bring the scene to all three parents",
         command=_press_apply_all), "primary", "check")
+    _caption("any", "Any object")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 3)])
     hubstyle.mark(cmds.button(
         label="BakeAcross", height=hubstyle.height("button", 28),
         annotation="Select the objects, then the parent LAST: each object "
