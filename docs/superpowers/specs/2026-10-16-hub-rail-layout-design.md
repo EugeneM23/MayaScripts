@@ -62,6 +62,13 @@ px narrower. A gate measures every card's `content.minimumSizeHint().width()` ag
 the rail layout. A card that does not fit is fixed in its own layout. The Inventory card was tuned
 to 360 px (trap 117).
 
+## What the build changed
+
+- No `QStackedWidget`. The cards stay in the accordion's scroll column, and `Skin.show_card` hides
+  every frame but one. The glide, the light, the popups and every card builder needed nothing new.
+- Measured offscreen at 150 % in a 540 px dock (360 logical): the rail is 48 physical px and the
+  card's viewport 477 px (it was 510).
+
 ## Not in this spec
 
 The inner card rules from the mockups: sections with captions, one orange button a card,

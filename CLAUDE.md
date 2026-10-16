@@ -7505,6 +7505,56 @@ stand at its place in its bone's axes.
      `Rigs/Weapons`). Before asking which of several assets is "the thing", trace what plays in the game (the
      anim BP, the clips, root lock) and what the animators' own scenes use.
 
+## The hub as a rail and one card (2026-10-16)
+
+The animator: «адвай переосмыслим весь наш интерфейс и улучшим его. сейчас очень много где все
+сливается! лоигческие разделы не отделены визуально». Three layouts were shown as mockups
+(https://claude.ai/artifact/KYPDH1djZXZS3vXeKPA9jA): A group headers, B group tabs, C a rail and
+one card. The animator picked **C**, a second card as a **popup**, and **a ⋮ switch back** to the
+accordion. Spec `docs/superpowers/specs/2026-10-16-hub-rail-layout-design.md`, plan beside the
+render script. **This changes the default skin**: what the hub-skin sections above say about the
+header row, the jump strip and collapsing cards is now the accordion's (⋮ → Layout → Accordion).
+
+- **`maya_hubqt.Skin(..., layout="rail")`**:
+  - the root is a row: `self.rail` (`skeldarHubRail`, role `rail`, 32 logical px wide) and a column
+    holding the message line and the scroll of cards. `self.header` is None;
+  - the rail holds the SA mark, then the section icons (`add_jump(..., group=)`). Before the first
+    icon of each new group stands a gap with a hairline (`skeldarHubRailGap_<group>`). The hotkeys
+    switch, the edge pin and ⋮ sit at the bottom (`_build_head_buttons`, shared with the accordion's
+    header);
+  - `show_card(key, animate)` hides every frame but one. It marks the icon `skCurrent`
+    (`card_active` with a 2 px bar of the group colour) and sets the scroll to 0. It fades the card
+    in from `hubmotion.RAIL_SLIDE` (12) over `RAIL_SWITCH_MS` (160) through a
+    `QGraphicsOpacityEffect`, which is removed at the end (`_stop_switch`);
+  - a click on an icon calls `("jump", key)`. Ctrl held (`_modifiers`, a seam), a middle click
+    (`_middle_class`) or the right button's «Open as popup» (`rail_actions`) call `("popup", key)`;
+  - rail cards are built `collapsible=False`: no chevron, `toggle` and `set_collapsed(True)` do
+    nothing;
+  - ⋮ → Layout ▸ Rail / Accordion (`layout_actions`, `paint_layout`) calls `("layout", choice)`.
+- **`maya_hub`**:
+  - `layout()` reads `skeldarAnimHub_layout` ("rail" by default) and `set_layout(choice)` writes it
+    and does a deferred `rebuild`;
+  - `current()` / `remember_current` keep `skeldarAnimHub_current`, falling back to the first card
+    for unset or stale, aliases read;
+  - `_build_skin` passes the layout and the groups. On the rail it ignores the collapse memory and
+    shows `current()`;
+  - `focus` / `expand` on the rail are `_show_on_rail` (show, light, remember; nothing closed,
+    no collapse remembered);
+  - `_press_popup` is `maya_hubpop.open_at(key, cursor)`, falling back to the popout toggle.
+- The edge panel builds the same skin and follows the layout. Classic look is untouched.
+
+Proof:
+- `tests/test_hubqt.Rail` (10) and `tests/test_hub.RailLayout` (6). The `Skinned` tests hold
+  `layout = accordion`. 6798 unit tests OK;
+- `docs/superpowers/plans/render_hub_rail.py` → `hub_rail.png`: the real rail and stub card bodies
+  at 150 % in the 360 px dock. The rail is 48 physical px and the card viewport 477, where it was
+  510.
+
+**Not seen live.** The cards' own minimum widths against that 477 are not measured: Animation
+Setup read 504 on 2026-10-01, before the compact skin. Nor are the fade, a middle click or the
+popup in Maya. The animator's to try after Check update. Not built: the inner card rules from the
+mockups (captioned sections, one orange button a card, segments vs tabs, a status plate).
+
 ## Characters > Delete: a character out of the scene, whole (2026-10-01)
 
 The animator: «Давай в разделе character сделаем кнопку удаления. Суть такая - я выделяю любую часть
