@@ -502,6 +502,11 @@ class IdentityTests(unittest.TestCase):
         self.assertIn("pelvis twists", wm.describe(r))
 
 
+def held(w, side, f):
+    """Whether frame f lies in one of the foot's contacts (Foot placement's: down AND held still)."""
+    return any((f - hs) % w.P <= to - hs for hs, to in w.contact[side])
+
+
 class StepTests(unittest.TestCase):
 
     def test_stride_moves_the_footprints_and_keeps_the_stance_foot_still(self):
@@ -557,7 +562,7 @@ class StepTests(unittest.TestCase):
             self.assertAlmostEqual(positions(r, "foot_r", w)[mid_r, 0], -10.0 * stance, places=9)
             left = w.feet["l"]
             prints = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
-            self.assertLess(float(np.ptp(prints, axis=0).max()), 1e-9)
+            self.assertLess(float(np.ptp(prints, axis=0).max()), 1e-6)     # the lock's own integration
 
     def test_swing_out_bows_the_swinging_foot_across(self):
         """+ cm out along sin(pi s) of the foot's flight (s 0 where it leaves the ground, 1 where it lands); a foot
@@ -567,6 +572,8 @@ class StepTests(unittest.TestCase):
             r = w.evaluate({"swing_out": out})
             for f in range(24):
                 s = w.air_progress("l", float(f))
+                if s is None and not held(w, "l", f):
+                    continue          # near the floor but still flying in at 10 cm a frame: no contact yet
                 want = 0.0 if s is None else out * math.sin(math.pi * s)
                 self.assertAlmostEqual(positions(r, "foot_l", w)[f, 0] - 10.0, want, places=6)
             self.assertTrue(any(w.air_progress("l", float(f)) is not None and 0.4 < w.air_progress("l", float(f)) < 0.6
@@ -574,6 +581,8 @@ class StepTests(unittest.TestCase):
         r = w.evaluate({"swing_out": 6.0})
         for f in range(24):                      # the right foot: out is -side for it
             s = w.air_progress("r", float(f))
+            if s is None and not held(w, "r", f):
+                continue
             want = 0.0 if s is None else -6.0 * math.sin(math.pi * s)
             self.assertAlmostEqual(positions(r, "foot_r", w)[f, 0] + 10.0, want, places=6)
 
@@ -704,7 +713,7 @@ class BodyTests(unittest.TestCase):
         self.assertLess(max(angle(m @ spine[0].T) for m in spine), 1e-6)
         left = w.feet["l"]
         foot = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
-        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-6)
 
 
 class PelvisTests(unittest.TestCase):
@@ -1019,7 +1028,7 @@ class PoseTests(unittest.TestCase):
         r = w.evaluate({"pose": 1.0}, a_pose(w))
         left = w.feet["l"]
         foot = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
-        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-6)
         moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
         self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
 
@@ -2120,3 +2129,59 @@ class SceneTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def backward_walk():
+    """The synthetic walker played backward: a walk that travels the way its back faces."""
+    c = clip()
+    c.worlds = c.worlds[:, ::-1].copy()
+    return wm.analyse(c)
+
+
+class BackwardTests(unittest.TestCase):
+    """A backward walk (2026-10-16): its body's left is the travel's right. A pose put its knees 40-50 deg in
+    (Leg match read their heading across the +-180 wrap) and its hip twist was fitted across the same wrap."""
+
+    def test_the_body_left_is_read_off_the_hips(self):
+        self.assertEqual(walk().left, 1.0)
+        w = backward_walk()
+        self.assertEqual(w.left, -1.0)
+        self.assertTrue(np.allclose(w.lside, -w.side) and np.allclose(w.ahead, -w.fwd))
+
+    def test_own_knobs_give_a_backward_walk_back(self):
+        w = backward_walk()
+        r = w.evaluate(w.own_knobs())
+        got = r.worlds[:, :w.P, 3, :3]
+        self.assertLess(float(np.abs(got - w.clip.worlds[:, :w.P, 3, :3]).max()), 1e-6)
+
+    def test_leg_match_turns_its_knees_out_as_a_forward_walk_does(self):
+        pose = {"knee_turn": {"l": 0.3, "r": -0.3}, "toe": {"l": 0.2, "r": -0.2}, "hips_yaw": 0.0}
+        ahead, back = walk(), backward_walk()
+        a, b = ahead.matched_pose(pose, 1.0, 1.0), back.matched_pose(pose, 1.0, 1.0)
+        for key in ("knee_turn", "toe"):
+            for s in "lr":
+                self.assertAlmostEqual(a[key][s], b[key][s], places=6, msg=(key, s))
+            self.assertGreater(b[key]["l"], 0.0)       # out: toward the body's left for the left leg
+            self.assertLess(b[key]["r"], 0.0)
+
+    def test_the_hip_drop_lifts_the_same_hip_either_way(self):
+        """Hip drop's added turn lifts the standing hip by the body's left and right, whichever way it walks."""
+        for w in (walk(), backward_walk()):
+            base = dict(w.own_knobs(), balance=0.0)
+            more = w.evaluate(dict(base, pelvis_list=base["pelvis_list"] + 6.0))
+            d = positions(more, "thigh_l", w) - positions(more, "thigh_r", w)
+            across = np.linalg.norm(d - np.outer(d @ w.up, w.up), axis=1)
+            got = np.degrees(np.arctan2(d @ w.up, across))
+            lists = np.array([w.list_at(f * w.P / float(more.frames)) for f in range(more.frames + 1)])
+            self.assertGreater(float(np.corrcoef(got, lists)[0, 1]), 0.9)
+
+
+class SkimTests(unittest.TestCase):
+
+    def test_a_foot_near_the_floor_still_flying_in_is_no_contact(self):
+        """The synthetic foot comes down within CONTACT_TOL at frame 23 still moving 10 cm a frame (twice the
+        walk's travel): its contact starts once it is held, not where it first nears the floor - a backward
+        walk's foot skimming 40 cm along the floor after its step was planted there and sank the pelvis 20 cm."""
+        w = walk()
+        hs, _ = w.contact["l"][0]
+        self.assertGreater(hs % w.P, 23.0)

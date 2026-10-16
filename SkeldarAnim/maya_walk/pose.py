@@ -69,7 +69,7 @@ def _rest_on_walk(walk, walk_rest):
 def _trunk_lean(pelvis, neck, walk):
     """The trunk line's (pelvis to neck_01, two points) forward lean from up, degrees."""
     line = np.asarray(neck, float) - np.asarray(pelvis, float)
-    return math.degrees(math.atan2(float(np.dot(line, walk.fwd)), float(np.dot(line, walk.up))))
+    return math.degrees(math.atan2(float(np.dot(line, getattr(walk, "ahead", walk.fwd))), float(np.dot(line, walk.up))))
 
 
 def gait_lean(walk, walk_rest, model):
@@ -81,7 +81,7 @@ def gait_lean(walk, walk_rest, model):
     for j, name in enumerate(walk.names):
         if walk.kind[j] in ("pelvis", "spine", "head") and name in rest:
             delta = model.orthonormal(rest[name][:3, :3]).T @ walk.wmean[j]
-            out[j] = float(np.dot(model.log_rot(delta), walk.side))
+            out[j] = float(np.dot(model.log_rot(delta), getattr(walk, "lside", walk.side)))
     return out
 
 

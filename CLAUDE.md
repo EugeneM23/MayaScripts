@@ -10431,6 +10431,32 @@ live.**
      compound with a keyable child. A verify that edits a channel by `setAttr(ctrl.rotateZ)` cannot see this - set the
      compound as a manipulator does.
 
+**…a backward walk** (2026-10-16, the animator's own clip on a Manny skeleton in their scene, 115 frames, four
+steps a foot, under LongSword_Idle_3P: «походка назад ... ноги сломаны ... на 93 кадре таз сильно проваливается»;
+read over 7001, reproduced in mayapy). Two defects, both of the model:
+- **The body's left is not the travel's left** (trap 260). `Walk.left` (+1 / -1, the mean hip line against
+  `side`), `lside = left * side`, `ahead = left * fwd` are the body's own. Leg match reads the knees' and toes'
+  headings from the body's front (`front` π for a backward walk); the pelvis and chest twist / sway fits read
+  against `lside` and their added turns are x `left`; Gait lean, `lean_room` and Swing out use `lside` / `ahead`.
+  A forward walk is unchanged to 0.0. Before: the pose turned both knees 40-50 deg in (now 26 / 15 deg out, as on
+  asd), the twist was fitted across ±180 (own knobs 0.44 cm off the source, now 0.0000), the hip drop reversed.
+- **A foot skimming the floor is no contact** (trap 261): `_placement` grows a contact past its step only while the
+  point that is down moves slower than the walk travels (`HELD_SHARE` 1.0 of the travel a frame). The right foot
+  skimmed 40 cm along the floor for six frames after its step, the lock pinned it, and the pelvis sank 20 cm at
+  frame 93 (now 0). Every forward walk on disk the same but sadda (its slide 53.8 -> 17 cm, drop 11.9 -> 10.6).
+Tests `test_walkmodel.BackwardTests` (the synthetic walker played backward: fails 4/4 on the old code) and
+`SkimTests`; three StepTests / PoseTests read the synthetic foot's 10 cm-a-frame landing as no contact now.
+verify_walk 79/79, sprint 12/12, own 22/22; 6819 unit tests. Not re-keyed in the animator's scene.
+
+260. **A walk's travel axes are not its body's.** The model read "forward" and "the walk's left" off the travel
+     and took the body to face it. Walking backward, the knees point near 180 deg off the travel, so an absolute
+     heading wraps (an outward knee read as turned in), a hip line read against `side` sits at ±180 (a least-squares
+     fit across the wrap is garbage), and a rotation about `fwd` drops the other hip. Measure body quantities in the
+     body's own axes; a frame turned 180 deg about up keeps every difference and handedness.
+261. **Near the floor is not planted.** A contact grown by height alone (heel or ball within 1.5 cm of its low)
+     took a foot skimming back along the floor at up to 15 cm a frame; Foot placement pinned it there and the leg
+     could not reach. A contact needs the down point HELD too.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).
