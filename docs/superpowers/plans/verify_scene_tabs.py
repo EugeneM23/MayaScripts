@@ -1362,13 +1362,144 @@ def phase_pasted():
          all(cmds.objExists(n) for n in ("mat", "mat1", "only", "Bow:Arrow", "Bow1:Arrow", "cubeB")))
 
 
+def _cam(name="persp", attr="translate"):
+    node = name if attr in ("translate", "rotate") else cmds.listRelatives(name, shapes=True)[0]
+    value = cmds.getAttr(node + "." + attr)
+    if isinstance(value, list):
+        return [round(v, 4) for v in value[0]]
+    return round(value, 4)
+
+
+def _cam_file(path, kind, unit="cm", persp=None, top_ow=None, side_ow=None, fl=None, tp=None):
+    fresh()
+    cmds.currentUnit(linear=unit)
+    cmds.polyCube(name="box_" + os.path.splitext(os.path.basename(path))[0])
+    if persp:
+        cmds.setAttr("persp.t", *persp[0])
+        cmds.setAttr("persp.r", *persp[1])
+    if fl:
+        cmds.setAttr("perspShape.fl", fl)
+    if tp:
+        cmds.setAttr("perspShape.tp", *tp)
+    if top_ow:
+        cmds.setAttr("top.t", 5, 1000, 7)
+        cmds.setAttr("topShape.ow", top_ow)
+    if side_ow:
+        cmds.setAttr("sideShape.ow", side_ow)
+    _save(path, kind)
+
+
+def phase_cameras():
+    """2026-10-16, the animator: «камеры перспективы и других направлений общие для всех
+    вкладок». Each tab keeps its own persp / top / front / side: its file's when it opens
+    (an import leaves the scene's), what it showed when it was left, Maya's defaults in an
+    empty tab; a save writes them into its file; a session file brings the active tab's."""
+    from maya_scenetabs import hooks, opening, saving, switching
+    os.makedirs(RUN, exist_ok=True)
+    a, b, m = RUN + "/camA.ma", RUN + "/camB.mb", RUN + "/camM.ma"
+    _cam_file(a, "mayaAscii", persp=((100, 50, 30), (-20, 70, 0)), fl=50, top_ow=77)
+    _cam_file(b, "mayaBinary", persp=((-80, 40, 60), (-15, -50, 0)), fl=24, tp=(1, 2, 3), side_ow=55)
+    _cam_file(m, "mayaAscii", unit="meter", persp=((1, 2, 3), (-10, 30, 0)))
+    fresh()
+    cmds.file(a, open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(b)
+    cmds.undoInfo(state=True, infinity=True)
+    gate("cameras: a tab opened from a .mb takes its file's persp",
+         _cam() == [-80.0, 40.0, 60.0] and _cam(attr="rotate") == [-15.0, -50.0, 0.0]
+         and _cam(attr="focalLength") == 24.0 and _cam(attr="tumblePivot") == [1.0, 2.0, 3.0],
+         (_cam(), _cam(attr="rotate"), _cam(attr="focalLength"), _cam(attr="tumblePivot")))
+    gate("cameras: and its side camera, the top the default its file has",
+         _cam("side", "orthographicWidth") == 55.0 and _cam("top", "orthographicWidth") == 30.0
+         and _cam("top") == [0.0, 1000.1, 0.0])
+    gate("cameras: no camera came in with the import", len(cmds.ls(type="camera")) == 4, cmds.ls(type="camera"))
+    switching.switch("tab_camA")
+    switching.switch("tab_camB")
+    switching.switch("tab_camA")
+    state = session.state()
+    gate("cameras: switching leaves clean tabs clean (it flagged every tab it entered)",
+         not cmds.file(q=True, modified=True)
+         and not any(t["modified"] for t in state["tabs"]), [(t["ns"], t["modified"]) for t in state["tabs"]])
+    cmds.setAttr("tab_camA:box_camA.translateX", 3)
+    switching.switch("tab_camB")
+    clean_b = not cmds.file(q=True, modified=True)
+    switching.switch("tab_camA")
+    gate("cameras: a modified tab stays modified, the other clean",
+         clean_b and cmds.file(q=True, modified=True), clean_b)
+    cmds.setAttr("tab_camA:box_camA.translateX", 0)
+    cmds.file(modified=False)
+    opening.reload_tab("tab_camB", ask=False)
+    switching.switch("tab_camB")
+    gate("cameras: a hidden tab read again from disk keeps its camera", _cam() == [-80.0, 40.0, 60.0], _cam())
+    switching.switch("tab_camA")
+    gate("cameras: the first tab's own back", _cam() == [100.0, 50.0, 30.0]
+         and _cam(attr="focalLength") == 50.0 and _cam("top", "orthographicWidth") == 77.0
+         and _cam("top") == [5.0, 1000.0, 7.0] and _cam("side", "orthographicWidth") == 30.0,
+         (_cam(), _cam("top"), _cam("top", "orthographicWidth")))
+    cmds.setAttr("persp.t", 11, 22, 33)
+    cmds.setAttr("perspShape.coi", 66)
+    switching.switch("tab_camB")
+    gate("cameras: a move in one tab stays there", _cam() == [-80.0, 40.0, 60.0], _cam())
+    switching.switch("tab_camA")
+    gate("cameras: and comes back with it", _cam() == [11.0, 22.0, 33.0]
+         and _cam(attr="centerOfInterest") == 66.0, (_cam(), _cam(attr="centerOfInterest")))
+    switching.switch("tab_camB")
+    cmds.undo()
+    gate("cameras: Ctrl+Z past a switch brings the tab and its camera back",
+         session.state()["active"] == "tab_camA" and _cam() == [11.0, 22.0, 33.0],
+         (session.state()["active"], _cam()))
+    opening.new_tab()
+    gate("cameras: an empty tab has a new scene's cameras",
+         _cam() == [28.0, 21.0, 28.0] and _cam(attr="focalLength") == 35.0
+         and _cam("top", "orthographicWidth") == 30.0 and _cam("top") == [0.0, 1000.1, 0.0], _cam())
+    opening.open_tab(m)
+    gate("cameras: a file in meters opens in this scene's centimeters",
+         _cam() == [100.0, 200.0, 300.0] and _cam(attr="rotate") == [-10.0, 30.0, 0.0], _cam())
+    switching.switch("tab_camB")
+    cmds.setAttr("persp.t", 7, 8, 9)
+    switching.switch("tab_camA")
+    saved = RUN + "/camB_saved.ma"
+    message = saving.save_tab("tab_camB", path=saved, adopt=False)
+    gate("cameras: a tab saved while another was active", str(message).startswith("Saved")
+         and session.state()["active"] == "tab_camB", message)
+    text = open(saved).read()
+    gate("cameras: its file holds its persp, not the other tab's",
+         'createNode transform -s -n "persp"' in text and '".t" -type "double3" 7 8 9' in text
+         and "11 22 33" not in text)
+    probe = RUN + "/camB_session.ma"
+    cmds.setAttr("persp.t", 4, 5, 6)
+    with hooks.bypass():
+        cmds.file(rename=probe)
+        cmds.file(save=True, force=True, type="mayaAscii")
+    fresh()
+    cmds.file(saved, open=True, force=True)
+    gate("cameras: the saved file opened alone shows the tab's persp",
+         _cam() == [7.0, 8.0, 9.0] and _cam(attr="focalLength") == 24.0
+         and _cam("side", "orthographicWidth") == 55.0 and cmds.objExists("box_camB")
+         and len(cmds.ls(type="camera")) == 4, (_cam(), _cam(attr="focalLength")))
+    fresh()
+    opening.open_tab(saved)
+    gate("cameras: and opened as a tab", _cam() == [7.0, 8.0, 9.0], _cam())
+    fresh()
+    cmds.file(probe, open=True, force=True)
+    opening.restore()
+    gate("cameras: a session file brings the active tab's camera as it was saved",
+         session.state()["active"] == "tab_camB" and _cam() == [4.0, 5.0, 6.0], _cam())
+    switching.switch("tab_camA")
+    gate("cameras: the other tabs keep theirs across the session file", _cam() == [11.0, 22.0, 33.0], _cam())
+    switching.switch("tab_camB")
+    gate("cameras: and the active one its newest", _cam() == [4.0, 5.0, 6.0], _cam())
+    hooks.remove()
+    opening.ASK = None
+
+
 PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
-          "nested": phase_nested, "pasted": phase_pasted}
+          "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras}
 
 
 def main(names):

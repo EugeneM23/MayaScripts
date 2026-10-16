@@ -10874,6 +10874,32 @@ open (294 scriptJobs).
   - a skeleton root is a joint whose parent's path is no joint's, read off one listing.
 - After: **125-210 ms**, the same as one scene (125-175).
 
+**Each tab has its own persp / top / front / side** (2026-10-16, «камеры перспективы и других
+направлений общие для всех вкладок»). The startup cameras are the scene's, one of each for every tab.
+Measured first:
+- an import leaves them as they are (the file's own persp never came in);
+- a tab's `exportSelected` wrote none, so its file reopened with Maya's defaults;
+- a new tab kept the last tab's camera; only the cameras a panel looked through were remembered.
+
+Now a tab's record carries `cameras` (`records.CAMERA_ATTRS`: translate, rotate, focal length, centre of
+interest, ortho width, clip planes, tumble pivot, film aperture, overscan, in the scene's units):
+- `switching.leave` captures them and `enter` puts them back. A locked, keyed or driven channel is left
+  alone: a keyed persp is one curve for every tab;
+- `open_tab` reads its FILE's: `.ma` up to the first other node, `.mb` from its chunks (DBLE / DBL3
+  after the node's CREA, internal cm and radians). The `.ma` is in its header's units, converted;
+- `new_tab` takes Maya's defaults (`DEFAULT_CAMERAS`, measured);
+- a save selects them too, so the file holds the tab's cameras;
+- `restore` takes the session file's (the active tab's as saved, newer than its record);
+- a reload keeps them;
+- a model panel left on a hidden tab's camera goes to persp.
+
+And a switch no longer flags the tab modified. Every switch's setAttrs and the session node's write
+flagged the scene, so a tab visited came out «unsaved»; `start()`'s moves flagged tab 1 the same way.
+`switching.settle_flag` sets the active record's flag after the last write (switch, a new tab), `start()`
+the scene's own, and a failed switch puts the old flag back. Proof: `verify_scene_tabs.py cameras`
+**19/19** (mayapy), all **0 of 220**, `verify_tabs_scope.py` 0 of 46, unit tests
+`test_scenetabs_records.Cameras`. Not seen in a GUI Maya.
+
 ## Tools > 1P Setup: a 3P take split by layers for first person (2026-10-16)
 
 The animator: «мы нажимаем кнопку и у нас все распределяется по слоям. Включив слой нижней анимации

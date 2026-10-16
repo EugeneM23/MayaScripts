@@ -116,6 +116,8 @@ def start():
     session.write(state)
     cmds.namespace(setNamespace=":" + namespace)
     cmds.file(rename=state["session"])
+    #  the moves into the namespace flagged the scene: tab 1 is as modified as the scene was
+    cmds.file(modified=first["modified"])
     return state
 
 
@@ -196,6 +198,7 @@ def _new(state, namespace, make, index=None):
         state = records.with_tab(before, make(), index)
         state = switching.enter(state, namespace, fresh=True)
         session.write(state)
+        switching.settle_flag(state)
     except Exception:
         _back_to(before, namespace)
         raise
@@ -212,7 +215,10 @@ def open_tab(path, index=None):
 
     def make():
         done["unit"], done["ranges"] = _import(path, namespace)
-        return records.new_tab(namespace, path, done["unit"], done["ranges"], _mtime(path))
+        item = records.new_tab(namespace, path, done["unit"], done["ranges"], _mtime(path))
+        #  its file's persp / top / front / side: an import leaves the scene's (measured)
+        item["cameras"] = switching.file_cameras(path)
+        return item
     _new(state, namespace, make, index)
     cmds.file(modified=False)
     return "Opened %s in a tab (%s, %s)" % (os.path.basename(path), done["unit"],
@@ -245,7 +251,9 @@ def new_tab():
 
     def make():
         cmds.namespace(add=namespace, parent=":")
-        return records.new_tab(namespace, "", cmds.currentUnit(q=True, time=True), session.current_ranges())
+        item = records.new_tab(namespace, "", cmds.currentUnit(q=True, time=True), session.current_ranges())
+        item["cameras"] = switching.default_cameras()      # a new scene's, not the last tab's
+        return item
     _new(state, namespace, make)
     return "New empty tab"
 
@@ -361,6 +369,8 @@ def reload_tab(namespace=None, ask=True):
     _delete_namespace(namespace)
     unit, ranges = _import(item["path"], namespace)
     fresh_item = records.new_tab(namespace, item["path"], unit, ranges, _mtime(item["path"]))
+    #  the content read again, the view kept: the active tab's as the cameras stand, a hidden one's
+    fresh_item["cameras"] = switching.capture_cameras() if active else dict(item.get("cameras") or {})
     state = records.with_tab(state, fresh_item)
     if active:
         state = switching.enter(state, namespace)
@@ -415,6 +425,9 @@ def restore():
     for item in state["tabs"]:
         if item["ns"] != state["active"]:
             switching.hide(item["ns"])
+    #  the file's startup cameras are the active tab's as it was saved - newer than its record
+    active = records.tab(state, state["active"])
+    state = records.with_tab(state, dict(active, cameras=switching.capture_cameras()))
     state = switching.enter(state, state["active"])
     session.write_quiet(state)
     if state.get("session"):

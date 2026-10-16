@@ -72,6 +72,9 @@ def export_uuids(namespace, references=True):
             #  the rig tab reopened at 1-120 for 0-50)
             continue
         out.append(cmds.ls(path, uuid=True)[0])
+    #  the startup cameras stand where this tab has them (a save makes it the active one):
+    #  written into its file, they open with it (an export writes none unselected, measured)
+    out += cmds.ls([n for pair in switching.startup_cameras().values() for n in pair], uuid=True) or []
     if not references:
         #  the references written in (stage 2, a copy for a colleague): their nodes, never
         #  their reference nodes, go into the file as plain nodes

@@ -108,6 +108,131 @@ class Furniture(unittest.TestCase):
         self.assertFalse(records.is_furniture("Layer1", "animLayer"))
 
 
+_MA = """//Maya ASCII 2027 scene
+requires maya "2027";
+currentUnit -l meter -a degree -t film;
+fileInfo "application" "maya";
+createNode transform -s -n "persp";
+\trename -uid "EEB287EF-4515-EF4A-384A-6C8BEF4AC36C";
+\tsetAttr ".v" no;
+\tsetAttr ".t" -type "double3" 1 2 3 ;
+\tsetAttr ".r" -type "double3" -20 70 5 ;
+createNode camera -s -n "perspShape" -p "persp";
+\trename -uid "15D9CE42-45E8-4B5A-DB6C-2BACBB409E1B";
+\tsetAttr -k off ".v" no;
+\tsetAttr ".fl" 50;
+\tsetAttr ".coi" 4;
+\tsetAttr ".imn" -type "string" "persp";
+\tsetAttr ".tp" -type "double3" 1 2 3 ;
+createNode transform -s -n "top";
+\tsetAttr ".t" -type "double3" 0 10 0 ;
+createNode camera -s -n "topShape" -p "top";
+\tsetAttr ".ow" 0.77;
+createNode transform -n "cube";
+\tsetAttr ".t" -type "double3" 9 9 9 ;
+createNode transform -s -n "side";
+\tsetAttr ".t" -type "double3" 7 7 7 ;
+"""
+
+
+def _chunk(tag, body, flags=b"\x88\x01\x00\x00"):
+    """A .mb chunk as measured (2026-10-16): tag, 4 flag bytes, an 8-byte size, the body padded to 8."""
+    pad = b"\0" * (((len(body) + 7) // 8) * 8 - len(body))
+    return tag + flags + len(body).to_bytes(8, "big") + body + pad
+
+
+def _mb_node(kind, names, attrs):
+    import struct
+    crea = _chunk(b"CREA", b"\x8d" + b"".join(n.encode() + b"\0" for n in names) + b"U" * 16, b"\0\0\0\0")
+    body = crea
+    for name, values in attrs:
+        tag = b"DBLE" if len(values) == 1 else b"DBL3"
+        body += _chunk(tag, name.encode() + b"\0" + b" " + struct.pack(">%dd" % len(values), *values))
+    return b"FOR8" + b"\0\0\0\0" + (len(body) + 4).to_bytes(8, "big") + kind + body
+
+
+class Cameras(unittest.TestCase):
+    """2026-10-16: each tab keeps its own persp / top / front / side."""
+
+    def test_the_defaults_are_a_new_scenes_and_copied(self):
+        cams = records.with_defaults({})
+        self.assertEqual(sorted(cams), sorted(records.STARTUP_CAMERAS))
+        self.assertEqual(cams["persp"]["translate"], [28.0, 21.0, 28.0])
+        self.assertEqual(cams["top"]["orthographicWidth"], 30.0)
+        cams["persp"]["translate"][0] = 99.0
+        self.assertEqual(records.DEFAULT_CAMERAS["persp"]["translate"][0], 28.0)
+
+    def test_a_ma_files_cameras_in_cm_and_degrees_up_to_its_first_other_node(self):
+        cams = records.cameras_from_ma(_MA)
+        self.assertEqual(cams["persp"]["translate"], [100.0, 200.0, 300.0])   # meters in the file
+        self.assertEqual(cams["persp"]["rotate"], [-20.0, 70.0, 5.0])
+        self.assertEqual(cams["persp"]["focalLength"], 50.0)
+        self.assertEqual(cams["persp"]["centerOfInterest"], 400.0)
+        self.assertEqual(cams["persp"]["tumblePivot"], [1.0, 2.0, 3.0])        # a plain double3
+        self.assertEqual(cams["top"]["translate"], [0.0, 1000.0, 0.0])
+        self.assertAlmostEqual(cams["top"]["orthographicWidth"], 77.0)
+        self.assertNotIn("side", cams)                                          # after the cube
+
+    def test_a_ma_in_radians(self):
+        text = _MA.replace("-a degree", "-a radian").replace("-20 70 5", "0 3.141592653589793 0")
+        self.assertAlmostEqual(records.cameras_from_ma(text)["persp"]["rotate"][1], 180.0)
+
+    def test_a_mb_files_cameras_from_its_chunks(self):
+        import math
+        data = (b"FOR8\0\0\0\0" + (0).to_bytes(8, "big") + b"Maya"
+                + _mb_node(b"XFRM", ["persp"], [("v", (0.0,)), ("t", (100.0, 50.0, 30.0)),
+                                                ("r", (math.radians(-20), math.radians(70), 0.0))])
+                + _mb_node(b"DCAM", ["perspShape", "persp"], [("fl", (50.0,)), ("coi", (123.5,)),
+                                                              ("tp", (1.0, 2.0, 3.0))])
+                + _mb_node(b"XFRM", ["cube"], [("t", (9.0, 9.0, 9.0))]))
+        cams = records.cameras_from_mb(data)
+        self.assertEqual(cams["persp"]["translate"], [100.0, 50.0, 30.0])
+        self.assertEqual([round(v, 9) for v in cams["persp"]["rotate"]], [-20.0, 70.0, 0.0])
+        self.assertEqual(cams["persp"]["focalLength"], 50.0)
+        self.assertEqual(cams["persp"]["centerOfInterest"], 123.5)
+        self.assertEqual(cams["persp"]["tumblePivot"], [1.0, 2.0, 3.0])
+        self.assertEqual(sorted(cams), ["persp"])
+        self.assertEqual(records.cameras_from_mb(b"CREA" + b"\xff" * 12), {})
+
+    def test_read_cameras_from_disk_and_defaults_for_the_rest(self):
+        folder = tempfile.mkdtemp()
+        ma = os.path.join(folder, "a.ma")
+        with open(ma, "w") as fh:
+            fh.write(_MA)
+        cams = records.read_cameras(ma)
+        self.assertEqual(cams["persp"]["translate"], [100.0, 200.0, 300.0])
+        self.assertEqual(cams["persp"]["orthographicWidth"], 10.0)              # the default
+        self.assertEqual(cams["side"], records.DEFAULT_CAMERAS["side"])
+        self.assertEqual(records.read_cameras(os.path.join(folder, "gone.ma")), records.with_defaults({}))
+
+    def test_in_the_scenes_units_only_lengths_and_angles_scale(self):
+        cams = records.cameras_in_units(records.with_defaults({}), "m", "rad")
+        self.assertEqual(cams["persp"]["translate"], [0.28, 0.21, 0.28])
+        self.assertAlmostEqual(cams["top"]["rotate"][0], -math_pi() / 2)
+        self.assertEqual(cams["persp"]["focalLength"], 35.0)
+        self.assertEqual(cams["persp"]["tumblePivot"], [0.0, 0.0, 0.0])
+        self.assertEqual(records.cameras_in_units(records.with_defaults({})), records.with_defaults({}))
+
+    def test_a_camera_of_another_tab(self):
+        tabs = ["tab_a", "tab_b"]
+        self.assertTrue(records.foreign_camera("|tab_b:grp|tab_b:shotCam", "tab_a", tabs))
+        self.assertFalse(records.foreign_camera("|tab_a:shotCam", "tab_a", tabs))
+        self.assertFalse(records.foreign_camera("|persp", "tab_a", tabs))
+        self.assertFalse(records.foreign_camera("|ref:cam", "tab_a", tabs))
+
+    def test_a_record_carries_its_cameras(self):
+        tab = _tab("tab_a")
+        self.assertEqual(tab["cameras"], {})
+        tab["cameras"] = records.with_defaults({})
+        state = records.with_tab(records.empty_state(), tab)
+        self.assertEqual(records.loads(records.dumps(state))["tabs"][0]["cameras"], tab["cameras"])
+
+
+def math_pi():
+    import math
+    return math.pi
+
+
 class State(unittest.TestCase):
 
     def test_round_trip(self):

@@ -5,8 +5,11 @@ back before it undoes that tab's step (measured: one undo restores the
 namespace, the unit, the ranges and the visibility).
 
 Hidden by `lodVisibility` and `hiddenInOutliner` on the tab's top nodes, never
-`visibility`, which the animator keys. Maya's workspace is not a tab's: until
-2026-10-16 each tab saved one, and they piled up (`workspaces`).
+`visibility`, which the animator keys. The startup cameras (persp, top, front, side) are
+the scene's, one of each for every tab: each tab keeps what they showed in it (2026-10-16,
+`capture_cameras` / `apply_cameras`; a new tab its file's, an empty one Maya's defaults).
+Maya's workspace is not a tab's: until 2026-10-16 each tab saved one, and they piled up
+(`workspaces`).
 Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 """
 
@@ -100,7 +103,8 @@ def _camera_shape(camera):
 
 
 def capture_views():
-    """Each model panel's camera, a startup camera's place, the display flags."""
+    """Each model panel's camera and display flags (the startup cameras' places are
+    the tab's `cameras`, `capture_cameras`)."""
     if not _gui():
         return []
     views = []
@@ -115,12 +119,6 @@ def capture_views():
                 view["flags"][flag] = cmds.modelEditor(panel, q=True, **{flag: True})
             except (RuntimeError, TypeError):
                 pass
-        if camera and cmds.objExists(camera):
-            shape = _camera_shape(camera)
-            if cmds.camera(shape, q=True, startupCamera=True):
-                view["matrix"] = cmds.xform(camera, q=True, matrix=True, worldSpace=True)
-                view["focal"] = cmds.getAttr(shape + ".focalLength")
-                view["coi"] = cmds.getAttr(shape + ".centerOfInterest")
         views.append(view)
     return views
 
@@ -136,7 +134,7 @@ def apply_views(views):
         camera = view.get("camera")
         if camera and cmds.objExists(camera):
             cmds.modelPanel(panel, e=True, camera=camera)
-            if "matrix" in view:
+            if "matrix" in view:            # a record from before the tab's `cameras`
                 shape = _camera_shape(camera)
                 cmds.xform(camera, matrix=view["matrix"], worldSpace=True)
                 cmds.setAttr(shape + ".focalLength", view["focal"])
@@ -146,6 +144,81 @@ def apply_views(views):
                 cmds.modelEditor(panel, e=True, **{flag: value})
             except (RuntimeError, TypeError):
                 pass
+
+
+# ------------------------------------------------------------------ the cameras
+
+def startup_cameras():
+    """{"persp": (transform, shape), ...}: the scene's startup cameras by name."""
+    out = {}
+    for shape in cmds.ls(type="camera", long=True) or []:
+        if not cmds.camera(shape, q=True, startupCamera=True):
+            continue
+        parent = (cmds.listRelatives(shape, parent=True, fullPath=True) or [""])[0]
+        name = parent.split("|")[-1]
+        if name in records.STARTUP_CAMERAS:
+            out[name] = (parent, shape)
+    return out
+
+
+def capture_cameras():
+    """What the startup cameras show now, in the scene's units."""
+    out = {}
+    for name, (transform, shape) in startup_cameras().items():
+        values = {}
+        for _short, long_name, node, _kind in records.CAMERA_ATTRS:
+            value = cmds.getAttr((transform if node == "transform" else shape) + "." + long_name)
+            values[long_name] = list(value[0]) if isinstance(value, list) else value
+        out[name] = values
+    return out
+
+
+def apply_cameras(cameras):
+    """The startup cameras put where `cameras` has them. A locked, keyed or driven
+    channel is left as it is (a keyed persp is one curve for every tab)."""
+    for name, (transform, shape) in startup_cameras().items():
+        values = (cameras or {}).get(name) or {}
+        for _short, long_name, node, _kind in records.CAMERA_ATTRS:
+            if long_name not in values:
+                continue
+            target = transform if node == "transform" else shape
+            value = values[long_name]
+            if isinstance(value, (list, tuple)):
+                children = cmds.attributeQuery(long_name, node=target, listChildren=True) or []
+                for child, part in zip(children, value):
+                    _set(target, child, part)
+            else:
+                _set(target, long_name, value)
+
+
+def _units():
+    return cmds.currentUnit(q=True, linear=True), cmds.currentUnit(q=True, angle=True)
+
+
+def file_cameras(path):
+    """A scene file's startup cameras in this scene's units (Maya's defaults where the
+    file says nothing: an import never brings them, measured)."""
+    return records.cameras_in_units(records.read_cameras(path), *_units())
+
+
+def default_cameras():
+    """Maya's startup cameras of a new scene, in this scene's units."""
+    return records.cameras_in_units(records.with_defaults({}), *_units())
+
+
+def _off_hidden(namespace, tabs):
+    """A model panel left looking through a hidden tab's camera (a new tab has no
+    views of its own) looks through persp instead."""
+    if not _gui():
+        return
+    for panel in cmds.getPanel(type="modelPanel") or []:
+        try:
+            camera = cmds.modelPanel(panel, q=True, camera=True)
+        except RuntimeError:
+            continue
+        path = (cmds.ls(camera, long=True) or [camera or ""])[0]
+        if records.foreign_camera(path, namespace, tabs) and "persp" in startup_cameras():
+            cmds.modelPanel(panel, e=True, camera=startup_cameras()["persp"][0])
 
 
 # ------------------------------------------------------------------ leave / enter
@@ -163,6 +236,7 @@ def leave(state):
     current["frame"] = cmds.currentTime(q=True)
     current["selection"] = cmds.ls(selection=True, uuid=True) or []
     current["views"] = capture_views()
+    current["cameras"] = capture_cameras()
     hide(active)
     cmds.file(modified=False)
     return records.with_tab(state, current)
@@ -180,6 +254,8 @@ def enter(state, namespace, fresh=False):
     if current.get("frame") is not None:
         cmds.currentTime(current["frame"], update=True)
     apply_views(current.get("views"))
+    apply_cameras(current.get("cameras"))
+    _off_hidden(namespace, [t["ns"] for t in state["tabs"]])
     found = cmds.ls(current.get("selection") or [], long=True) or []
     if found:
         cmds.select(found, replace=True)
@@ -188,8 +264,18 @@ def enter(state, namespace, fresh=False):
     return records.with_tab(dict(state, active=namespace), current)
 
 
-def _restore(before):
-    """A switch that failed half way: the tab that was active back, the rest hidden."""
+def settle_flag(state):
+    """The scene's modified flag the active tab's own. A switch's setAttrs and the
+    session's write flag the scene (measured: a clean tab came out modified from every
+    switch, and the next leave recorded it so): called after the last write."""
+    item = records.tab(state, state["active"]) or {}
+    cmds.file(modified=bool(item.get("modified")))
+
+
+def _restore(before, modified):
+    """A switch that failed half way: the tab that was active back, the rest hidden,
+    the scene's modified flag as it was before the switch (`before` is the state
+    before `leave`, whose record has not taken the flag yet)."""
     for item in before["tabs"]:
         if item["ns"] != before["active"]:
             hide(item["ns"])
@@ -197,6 +283,7 @@ def _restore(before):
         enter(before, before["active"])
     finally:
         session.write(before)
+        cmds.file(modified=bool(modified))
 
 
 def switch(namespace):
@@ -207,13 +294,15 @@ def switch(namespace):
     if records.tab(state, namespace) is None:
         raise session.TabError("no tab %s" % namespace)
     before = state
+    modified = cmds.file(q=True, modified=True)
     cmds.undoInfo(openChunk=True, chunkName="skeldarTabSwitch")
     try:
         try:
             state = enter(leave(state), namespace)
             session.write(state)
+            settle_flag(state)
         except Exception:
-            _restore(before)
+            _restore(before, modified)
             raise
     finally:
         cmds.undoInfo(closeChunk=True)
