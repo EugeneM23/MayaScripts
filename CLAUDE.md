@@ -11404,6 +11404,14 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
 - The jobs (`bar.start_jobs`) belong to no control: the old ones are killed and made again for whichever host
   stands.
 - Tests: `tests/test_timebar_edge.py`. **Not seen in a GUI Maya.**
+- **The zone** (after using it: «очень не удобно... выезжать когда мышка не на самом краю а в области где
+  стандартный таймлайн»): the cursor resting `ZONE_DWELL_MS` (150) anywhere in the band where Maya's slider stood
+  (`look.bottom_band`) brings it out.
+  - It is watched by a 50 ms cursor poll (`BottomEdge.zone_tick`), not a window: a window over the band would
+    take the viewport's and the command line's clicks.
+  - Never with a button held (a marquee near the viewport's bottom), with Maya not active, or with a floating
+    window or a menu over the band (`over_maya`: `QApplication.widgetAt` must be Maya's main window or ours).
+  - The 2 px edge sensor still works too.
 
 **Proof**:
 - `tests/test_timebar_look.py` and `tests/test_timebar_bar.py`: 71 tests. The strip runs offscreen on a fake

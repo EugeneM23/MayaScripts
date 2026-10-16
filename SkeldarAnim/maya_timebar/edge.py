@@ -81,13 +81,15 @@ class BottomEdge(object):
     out when the cursor rests on the bottom edge and goes when it leaves."""
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
-                 app_active=None, motion=None):
+                 app_active=None, motion=None, over_maya=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
         self._cursor = cursor
         self._buttons = buttons
         self._app_active = app_active
+        self._over_maya = over_maya
+        self.dwelt = 0.0              # ms the cursor has rested in the band (the zone)
         self.motion = motion
         self.pinned = False
         self.shown = False
@@ -129,11 +131,16 @@ class BottomEdge(object):
         self.place_timer = timer(PLACE_MS, self.place, single=False)
         self.watch = timer(WATCH_MS, self.watch_tick, single=False)
         self.anim = timer(16, self.slide_tick, single=False)
+        #  the zone (2026-10-16, «когда мышка не на самом краю а в области где
+        #  стандартный таймлайн»): the whole band, watched by a poll - a window
+        #  over it would take the viewport's and the command line's clicks
+        self.zone = timer(look.ZONE_POLL_MS, self.zone_tick, single=False)
         self.place()
         self.host.hide()
         self.sensor.show()
         self.sensor.raise_()
         self.place_timer.start()
+        self.zone.start()
 
     # seams --------------------------------------------------------------------------
     def cursor(self):
@@ -152,6 +159,23 @@ class BottomEdge(object):
             return self._app_active()
         q = hubqt.qt()
         return q.QtGui.QGuiApplication.applicationState() == q.QtCore.Qt.ApplicationActive
+
+    def over_maya(self):
+        """The cursor is over Maya's own window (or ours), not a floating editor
+        or another application, and no menu is open."""
+        if self._over_maya:
+            return self._over_maya()
+        q = hubqt.qt()
+        app = q.QtWidgets.QApplication
+        if app.activePopupWidget() is not None or app.activeModalWidget() is not None:
+            return False
+        x, y = self.cursor()
+        widget = app.widgetAt(x, y)
+        if widget is None:
+            return False
+        top = widget.window()
+        main = main_window()
+        return top is main or top is self.host or top is self.sensor
 
     def _motion(self):
         if self.motion is not None:
@@ -200,6 +224,24 @@ class BottomEdge(object):
     # coming out ------------------------------------------------------------------
     def sensor_entered(self):
         self.dwell.start()
+
+    def zone_tick(self):
+        """While hidden: the cursor resting ZONE_DWELL_MS in the band - where
+        Maya's slider stood - brings the bar out; a button held, another window
+        over the band, Maya not the active application, never."""
+        if self.shown:
+            self.dwelt = 0.0
+            return
+        window = self._window_rect()
+        if not window:
+            return
+        inside = rules.contains(look.bottom_band(window, self.height()), self.cursor())
+        if inside and (self.buttons() or not self.app_active() or not self.over_maya()):
+            inside = False
+        self.dwelt = look.zone_dwell(self.dwelt, inside, look.ZONE_POLL_MS)
+        if self.dwelt >= look.ZONE_DWELL_MS:
+            self.dwelt = 0.0
+            self.reveal()
 
     def dwell_done(self):
         window = self._window_rect()
@@ -303,7 +345,7 @@ class BottomEdge(object):
             self.hide_timer.start()
 
     def destroy(self):
-        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim):
+        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone):
             try:
                 t.stop()
             except RuntimeError:

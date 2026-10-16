@@ -34,11 +34,13 @@ class Edge(unittest.TestCase):
         self.window = list(WINDOW)
         self.cursor = [900, 500]
         self.down = [False]
+        self.over = [True]
         self.link = FakeLink()
         self.edge = edge.BottomEdge(
             lambda parent: bar.make(self.link, 1.0, maya_hubstyle.TOKENS, parent=parent, motion=self.motion),
             window_rect=lambda: tuple(self.window), cursor=lambda: tuple(self.cursor),
-            buttons=lambda: self.down[0], app_active=lambda: True, motion=self.motion)
+            buttons=lambda: self.down[0], app_active=lambda: True, motion=self.motion,
+            over_maya=lambda: self.over[0])
         self.addCleanup(self.edge.destroy)
 
     def at_edge(self):
@@ -117,6 +119,46 @@ class Edge(unittest.TestCase):
         self.assertTrue(self.edge.shown)
         self.edge.strip.timeline.drag = None
         self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def in_band(self):
+        x, y, w, h = look.bottom_band(self.window, self.edge.height())
+        self.cursor[:] = [x + w // 3, y + h // 2]
+
+    def rest(self, ms):
+        for _ in range(int(ms // look.ZONE_POLL_MS)):
+            self.edge.zone_tick()
+
+    def test_resting_where_maya_s_slider_stood_brings_it_out(self):
+        self.in_band()
+        self.rest(look.ZONE_DWELL_MS - look.ZONE_POLL_MS)
+        self.assertFalse(self.edge.shown)
+        self.rest(look.ZONE_POLL_MS)
+        self.assertTrue(self.edge.shown)
+
+    def test_passing_through_the_band_does_not(self):
+        self.in_band()
+        self.rest(look.ZONE_DWELL_MS - look.ZONE_POLL_MS)
+        self.cursor[:] = [900, 300]
+        self.edge.zone_tick()
+        self.in_band()
+        self.rest(look.ZONE_DWELL_MS - look.ZONE_POLL_MS)
+        self.assertFalse(self.edge.shown)
+
+    def test_not_with_a_button_held_nor_under_another_window(self):
+        self.in_band()
+        self.down[0] = True
+        self.rest(500)
+        self.assertFalse(self.edge.shown)
+        self.down[0] = False
+        self.over[0] = False
+        self.rest(500)
+        self.assertFalse(self.edge.shown)
+
+    def test_above_the_band_never(self):
+        x, y, w, h = look.bottom_band(self.window, self.edge.height())
+        self.cursor[:] = [x + 50, y - 5]
+        self.rest(500)
         self.assertFalse(self.edge.shown)
 
     def test_it_follows_maya_s_window(self):

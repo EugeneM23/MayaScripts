@@ -334,3 +334,13 @@ def slide(t_ms, height, showing, ms):
     u = 1.0 if ms <= 0 else max(0.0, min(1.0, t_ms / float(ms)))
     e = 1 - (1 - u) ** 3 if showing else u ** 3
     return int(round(height * (1 - e))) if showing else int(round(height * e))
+
+
+ZONE_DWELL_MS = 150     # the cursor resting in the band this long brings the bar out
+ZONE_POLL_MS = 50
+
+
+def zone_dwell(dwelt, inside, dt_ms):
+    """The time the cursor has rested in the band so far: it grows while it stays,
+    and any moment outside starts it again."""
+    return dwelt + dt_ms if inside else 0.0
