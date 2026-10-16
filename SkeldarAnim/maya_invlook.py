@@ -53,6 +53,12 @@ NAME_H = 16               # "Right hand" over a card (compact hub, 2026-10-08; w
 ROW_H = 15                # one channel row (was 19)
 ROW_GAP = 3               # between a row's name and its value
 TURN = 45                 # degrees an icon is turned to lie across its tile
+#  The card rules (2026-10-16): a caption band over the hands and one over the
+#  tiles, painted as the hub's section captions; the hand cards named in the
+#  same style.
+CAPTION_H = 18
+CAPTIONS = {"hands": "Hands", "tiles": "Weapons"}
+HAND_CAPTION = {"R": "Right", "L": "Left"}
 GHOST = maya_charlook.GHOST
 
 # The grip as Maya's Channel Box shows a transform: translate, then rotate.
@@ -131,20 +137,23 @@ def panel(width, count):
     left = max(0, (width - (2 * hand_w + HAND_GAP)) // 2)
     body_h = len(CHANNELS) * ROW_H
     hand_h = NAME_H + body_h + PAD
-    rects = {}
+    rects = {"cap_hands": (0, 0, width, CAPTION_H)}
+    top = CAPTION_H
     for side, x in (("R", left), ("L", left + hand_w + HAND_GAP)):
-        rects["hand_" + side] = (x, 0, hand_w, hand_h)
-        rects["name_" + side] = (x + PAD + 2, 0, max(0, hand_w - 2 * PAD - 2),
-                                 NAME_H)
+        rects["hand_" + side] = (x, top, hand_w, hand_h)
+        rects["name_" + side] = (x + PAD + 2, top,
+                                 max(0, hand_w - 2 * PAD - 2), NAME_H)
         well_x = x + hand_w - PAD - well_w
-        rects["well_" + side] = (well_x, NAME_H, well_w, body_h)
+        rects["well_" + side] = (well_x, top + NAME_H, well_w, body_h)
         col_x = x + PAD
         col_w = max(0, well_x - ROW_GAP - col_x)
-        rects["column_" + side] = (col_x, NAME_H, col_w, body_h)
+        rects["column_" + side] = (col_x, top + NAME_H, col_w, body_h)
         for index, channel in enumerate(CHANNELS):
             rects["row_%s_%s" % (side, channel)] = (
-                col_x, NAME_H + index * ROW_H, col_w, ROW_H)
-    y = hand_h + GAP
+                col_x, top + NAME_H + index * ROW_H, col_w, ROW_H)
+    cap_y = top + hand_h + GAP
+    rects["cap_tiles"] = (0, cap_y, width, CAPTION_H)
+    y = cap_y + CAPTION_H
     _cols, _cell, squares, height = maya_charlook.grid(width, count, 1.0)
     rects["tiles"] = [(x, y + ty, w, h) for x, ty, w, h in squares]
     rects["tilesarea"] = (0, y, width, height)

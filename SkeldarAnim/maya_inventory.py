@@ -245,6 +245,24 @@ def _classes():
         f.setBold(bold)
         return f
 
+    def caption_font(px):
+        """A section caption's font: bold, a little room between the letters
+        (the hub's `heading`, 2026-10-16)."""
+        f = font(px, bold=True)
+        f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, max(1.0, px / 9.5))
+        return f
+
+    def caption(p, box, text, k):
+        """A section's caption in a band: spaced capitals, muted, a hairline
+        under it - the hub's `heading` in the panel's own paint."""
+        p.setFont(caption_font(9.5 * k))
+        p.setPen(colour("muted"))
+        p.drawText(box.adjusted(int(2 * k), 0, 0, -int(3 * k)),
+                   Qt.AlignLeft | Qt.AlignBottom, text.upper())
+        p.setPen(QtGui.QPen(colour("hover"), max(1.0, k)))
+        y = box.bottom()
+        p.drawLine(box.left(), y, box.right(), y)
+
     def rounded(p, box, radius, fill=None, edge=None, width=1.0):
         """A rounded rect in the hub's corners: `fill` and `edge` are token
         names (None for none), the pen drawn inside the box."""
@@ -782,10 +800,13 @@ def _classes():
             k = self.k
             self._card(p, rect_of(rects["hand_" + side]),
                        self._hand_lit(side, dragging))
-            p.setFont(font(11 * k, bold=side == self.picked_side))
-            p.setPen(colour("text" if side == self.picked_side else "muted"))
+            #  named as a section's caption (2026-10-16, the card rules): spaced
+            #  capitals, muted; the picked hand in the accent's text colour
+            p.setFont(caption_font(9.5 * k))
+            p.setPen(colour("accent_text" if side == self.picked_side
+                            else "muted"))
             p.drawText(rect_of(rects["name_" + side]), Qt.AlignLeft | Qt.AlignVCenter,
-                       SLOT_LABEL[side])
+                       look.HAND_CAPTION[side].upper())
 
             grip = self.grips.get(side)
             editable = bool(grip[2]) if grip and len(grip) > 2 else True
@@ -889,6 +910,8 @@ def _classes():
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
             rects = self.rects()
             dragging = self._drag["source"] if self._drag else None
+            caption(p, rect_of(rects["cap_hands"]), look.CAPTIONS["hands"], k)
+            caption(p, rect_of(rects["cap_tiles"]), look.CAPTIONS["tiles"], k)
             for side in ("R", "L"):
                 self._paint_hand(p, rects, side, dragging)
 

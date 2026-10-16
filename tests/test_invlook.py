@@ -238,3 +238,22 @@ class Icons(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Captions(unittest.TestCase):
+    """2026-10-16, the card rules: «Hands» over the hand cards, «Weapons» over
+    the tiles, each a band of CAPTION_H the panel paints."""
+
+    def test_a_band_over_the_hands_and_one_over_the_tiles(self):
+        for width in (240, 320, 477):
+            r = look.panel(width, COUNT)
+            self.assertEqual(r["cap_hands"], (0, 0, width, look.CAPTION_H))
+            self.assertEqual(r["hand_R"][1], look.CAPTION_H)
+            cap = r["cap_tiles"]
+            self.assertEqual(cap[3], look.CAPTION_H)
+            self.assertGreaterEqual(cap[1], r["hand_R"][1] + r["hand_R"][3])
+            self.assertEqual(r["tilesarea"][1], cap[1] + look.CAPTION_H)
+
+    def test_the_caption_words(self):
+        self.assertEqual(look.CAPTIONS, {"hands": "Hands", "tiles": "Weapons"})
+        self.assertEqual(look.HAND_CAPTION, {"R": "Right", "L": "Left"})
