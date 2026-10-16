@@ -11283,3 +11283,42 @@ redo, no Bullet node left, the sword in the hand then on the floor, a box stoppi
      Maya («ключи запекаются но ничего не происходит»): a test capsule fell 31 cm with the refresh on and
      0 with it suspended, in DG and parallel alike. mayapy has no viewport, so every verify fell. The
      simulation steps run with the refresh on (`fall.simulate`), suspended again after.
+
+## Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
+
+The animator: «Давай попробуем перерисовать интерфейс таймслайдера маи под наш стиль. Сделай пару макетов а я
+выберу». Three mockups (https://claude.ai/artifact/JS83VQsVewRHtnmjWBnwWZ): they chose **A, one bar**, **in place
+of Maya's** (Maya's slider hidden, ⋮ brings it back), and of Maya's behaviours only the **shift-drag highlight**
+in the first version. Spec `docs/superpowers/specs/2026-10-16-time-bar-design.md`.
+
+- **Package `SkeldarAnim/maya_timebar/`** (a payload row): `look.py` (stdlib, a test pins it: `Track` frame <-> x,
+  `ticks`, `hit`, `dragged`, `highlight` / `range_array`, `neighbour_key`, `FPS`), `scene.py` (cmds: `light()`,
+  `keys()` - the selection's keys and breakdowns, `keyframe -q -breakdown`; the ranges, the time, the unit,
+  autoKey, play, the layers), `bar.py` (Qt: the strip, talking to Maya only through a `Link`, a fake in the
+  tests), `__init__.py` (the workspaceControl `skeldarTimeBar`, `ensure_docked` / `show` / `hide` / `toggle`,
+  `active()`, `highlight()`; nothing heavy at import).
+- **The strip** (44 logical px): prev key, play / pause, next key | the timeline (the animation range; the
+  playback range a lit band whose edges are handles, a double click types a number; grips at the far ends move
+  the animation range; keys orange, breakdowns cyan; the playhead with its frame on a flag) | the frame field |
+  fps chip (`currentUnit -time`) | Auto key | the active layer chip (its menu selects a layer). A press scrubs
+  and clears a highlight; **shift-drag highlights**; the right button: «Back to Maya's time slider». Play is
+  Maya's own `play`.
+- **In place of Maya's**: docked against `TimeSlider` (`dockToControl` top; the main window's bottom without
+  one), then `TimeSlider` and `RangeSlider` hidden. optionVar `skeldarTimeBar` (on by default); the hub's build
+  shows it (`maya_hub._time_bar_soon`, as the tabs bar); ⋮ -> **Time bar** (checkable, `set_timebar`); hotkey row
+  `window.timebar` (switches).
+- **The highlight** is written to `playbackOptions -selectionStartTime / -selectionEndTime / -selectionVisible`
+  (editable in 2027, measured in mayapy). `overrig.slider_selection()` and Camera Shake's `highlight()` read the
+  Time Bar's while it is active (`sys.modules.get("maya_timebar")` - never imported by them).
+  **Not known**: whether Maya's own commands and OverRig's MEL, which read `timeControl -q -rangeArray` on the
+  hidden slider, see that selection - a GUI Maya check, the animator's.
+- **Kept current** by scriptJobs parented to the control (`timeChanged` -> the playhead only, `playbackRangeChanged`,
+  `SelectionChanged`, `animLayerRefresh`, `Undo`, `Redo`), `MAnimMessage.addAnimKeyframeEditedCallback` marking the
+  keys dirty, and a 250 ms timer; the keys are not read during playback. The jobs find the strip through
+  `sys._skeldar_timebar`, never a held wrapper.
+
+Proof: `tests/test_timebar_look.py`, `tests/test_timebar_bar.py` (the strip offscreen on a fake link: painting, a
+scrub, a shift-drag, the handles, the grips, the key buttons, playback); `docs/superpowers/plans/render_time_bar.py`
+-> `time_bar.png` (150 %). **Not seen in a GUI Maya**: the docking in place of Maya's slider, real playback, the
+highlight seen by Maya's own commands. Not built: moving / scaling keys, the right-click key menu, the sound
+waveform.

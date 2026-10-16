@@ -538,6 +538,14 @@ def highlight():
     """The time slider's highlighted frames (first, last), or None."""
     if cmds.about(batch=True):
         return None
+    timebar = sys.modules.get("maya_timebar")            # the Time Bar's own highlight (2026-10-16)
+    if timebar is not None:
+        try:
+            if timebar.active():
+                found = timebar.highlight()
+                return (int(found[0]), int(found[1]) - 1) if found else None
+        except Exception:                                # noqa: BLE001 - Maya's slider then
+            pass
     try:
         import maya.mel as mel
         slider = mel.eval("$gPlayBackSlider=$gPlayBackSlider")    # the plugin's own way (overrig.py)

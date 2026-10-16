@@ -8,6 +8,7 @@ selects first. That is OverRig's interface, not a choice.
 """
 
 import os
+import sys
 from contextlib import contextmanager
 
 import maya.cmds as cmds
@@ -205,7 +206,17 @@ def slider_selection():
     OverRig reads `timeControl -q -ra` in nineteen places and bakes across
     it. A highlight the animator dragged and forgot silently decides every
     bake range, so the entry points refuse to run under one.
+
+    While the Time Bar stands in place of Maya's slider (2026-10-16) its
+    highlight is the one: asked only when the module is loaded already.
     """
+    timebar = sys.modules.get("maya_timebar")
+    if timebar is not None:
+        try:
+            if timebar.active():
+                return timebar.highlight()
+        except Exception:                                    # noqa: BLE001 - Maya's slider then
+            pass
     slider = mel.eval("$gPlayBackSlider=$gPlayBackSlider")
     if not cmds.timeControl(slider, query=True, rangeVisible=True):
         return None

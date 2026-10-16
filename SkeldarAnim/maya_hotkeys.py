@@ -247,6 +247,12 @@ def _camshake_module():
     return maya_camshake
 
 
+def _timebar():
+    """The Time Bar or Maya's own time slider (2026-10-16), the switch said."""
+    import maya_timebar
+    return _report(maya_timebar.toggle())
+
+
 def _tabs(step):
     """The next / previous scene tab (2026-10-15)."""
     from maya_scenetabs import switching
@@ -1010,6 +1016,9 @@ _OURS = (
      "The selected rig falls by physics from the current frame (or the highlight), baked into "
      "its controls",
      partial(_ragdoll, "press_fall")),
+    ("window.timebar", "Windows", "Time Bar",
+     "Switch between the Time Bar and Maya's own time slider",
+     _timebar),
     ("window.tabs", "Windows", "Scene Tabs",
      "Show the scene tabs bar above the viewport: several scenes in one Maya",
      partial(_show, "maya_scenetabs.bar", "show")),

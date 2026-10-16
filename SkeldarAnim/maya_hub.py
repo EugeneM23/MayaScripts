@@ -443,6 +443,8 @@ def _callbacks():
         "hover": _hover_sound,
         "sounds": set_sounds,
         "animations": set_animations,
+        #  the Time Bar (2026-10-16): ours in place of Maya's time slider
+        "timebar": set_timebar,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
         #  since 2026-10-09 its rows Off / Left edge / Right edge
         "pin": _press_pin,
@@ -493,6 +495,7 @@ def _dress_header(skin):
         print(traceback.format_exc())
     _dress_sounds(skin)
     _dress_animations(skin)
+    _dress_timebar(skin)
     _dress_edge(skin)
     _dress_popped(skin)
 
@@ -540,6 +543,15 @@ def _dress_animations(skin):
     try:
         import maya_hubmotion
         skin.paint_animations(maya_hubmotion.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_timebar(skin):
+    """The menu's Time bar row = the animator's choice (on by default)."""
+    try:
+        import maya_timebar
+        skin.paint_timebar(maya_timebar.wanted())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -605,6 +617,7 @@ def build():
     global _BUILT_HERE, _SKIN
     _register_pending_startup()
     _tabs_bar_soon()
+    _time_bar_soon()
     if not _BUILT_HERE:
         #  A fresh module object (Maya's start, an install): the popups an
         #  older one opened are destroyed, the remembered ones come back
@@ -660,6 +673,24 @@ def _tabs_bar_soon():
             bar.ensure_docked()
         except Exception:                                    # noqa: BLE001
             print("SkeldarAnim: the scene tabs bar could not be shown")
+            print(traceback.format_exc())
+    cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _time_bar_soon():
+    """The Time Bar in place of Maya's time slider (2026-10-16), shown with the
+    hub unless the animator went back to Maya's (⋮ -> Time bar off). Deferred
+    and guarded: a bar that cannot be built never costs the hub."""
+    if cmds.about(batch=True):
+        return
+
+    def show_bar():
+        try:
+            import maya_timebar
+            if maya_timebar.wanted():
+                maya_timebar.ensure_docked()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the time bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
 
@@ -1206,6 +1237,16 @@ def set_animations(on):
     if is_skinned():
         _SKIN.paint_animations(on)
     return on
+
+
+def set_timebar(on):
+    """The menu's Time bar: ours in place of Maya's time slider, or Maya's back."""
+    import maya_timebar
+    message = maya_timebar.set_on(bool(on))
+    if is_skinned():
+        _SKIN.paint_timebar(bool(on))
+    say(message)
+    return message
 
 
 def _press_hotkey_editor():
