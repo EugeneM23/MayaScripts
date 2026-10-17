@@ -35,12 +35,13 @@ class Edge(unittest.TestCase):
         self.cursor = [900, 500]
         self.down = [False]
         self.over = [True]
+        self.play = [False]
         self.link = FakeLink()
         self.edge = edge.BottomEdge(
             lambda parent: bar.make(self.link, 1.0, maya_hubstyle.TOKENS, parent=parent, motion=self.motion),
             window_rect=lambda: tuple(self.window), cursor=lambda: tuple(self.cursor),
             buttons=lambda: self.down[0], app_active=lambda: True, motion=self.motion,
-            over_maya=lambda: self.over[0])
+            over_maya=lambda: self.over[0], playing=lambda: self.play[0])
         self.addCleanup(self.edge.destroy)
 
     def at_edge(self):
@@ -120,6 +121,30 @@ class Edge(unittest.TestCase):
         self.edge.strip.timeline.drag = None
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
+
+    def test_it_stays_out_while_maya_plays(self):
+        self.at_edge()
+        self.edge.dwell_done()
+        self.cursor[:] = [900, 300]
+        self.play[0] = True
+        self.edge.hide_due()
+        self.assertTrue(self.edge.shown)
+        self.assertTrue(self.edge.hide_timer.isActive())          # asked again
+        self.play[0] = False
+        self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def test_play_brings_it_out_at_once(self):
+        self.cursor[:] = [900, 300]
+        self.edge.on_time()
+        self.assertFalse(self.edge.shown)                          # a time change alone: no
+        self.play[0] = True
+        self.edge.on_time()
+        self.assertTrue(self.edge.shown)
+        self.assertTrue(self.edge.host.isVisible())
+        self.assertIsNone(self.edge._slide)                        # no timer turns while playing
+        self.assertEqual(self.edge.offset, 0)
+        self.assertEqual(self.edge.host.mask().boundingRect().width(), self.edge.host.width())
 
     def in_band(self):
         x, y, w, h = look.bottom_band(self.window, self.edge.height())

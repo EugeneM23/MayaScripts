@@ -1304,7 +1304,7 @@ def classes():
                 return look.popping(age, look.burst_delay(gx - e["gx"], gy - e["gy"], self.ui))
             return look.folding(age, look.fold_delay(gx - e["gx"], self.ui))
 
-        def burst_at(self, gx, gy, opening=True):
+        def burst_at(self, gx, gy, opening=True, instant=False):
             """The controls - and the keys - pop in from the global point (gx, gy),
             the nearest first, or fold toward it, the farthest first (2026-10-16,
             mockup A, 1.5x slower). Returns how long it takes, ms."""
@@ -1321,8 +1321,10 @@ def classes():
                 far = max(far, d)
                 if index is not None:
                     delays[index] = d
-            if not self.motion:
+            if not self.motion or instant:
                 self.entrance = None
+                self._fade()
+                self.update()
                 return 0.0
             for widget, _effect in self.fades:
                 c = widget.mapToGlobal(widget.rect().center())
@@ -1705,6 +1707,12 @@ def _time_changed(*_args):
         try:
             widget.on_time()
         except Exception:                                    # noqa: BLE001 - every frame: never raise
+            pass
+    edge = _state().get("edge")
+    if edge is not None:
+        try:
+            edge.on_time()                    # Play while the bottom edge hides it: out
+        except Exception:                                    # noqa: BLE001
             pass
 
 

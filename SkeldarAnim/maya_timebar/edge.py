@@ -81,7 +81,7 @@ class BottomEdge(object):
     out when the cursor rests on the bottom edge and goes when it leaves."""
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
-                 app_active=None, motion=None, over_maya=None):
+                 app_active=None, motion=None, over_maya=None, playing=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -89,6 +89,7 @@ class BottomEdge(object):
         self._buttons = buttons
         self._app_active = app_active
         self._over_maya = over_maya
+        self._playing = playing
         self.dwelt = 0.0              # ms the cursor has rested in the band (the zone)
         self.motion = motion
         self.pinned = False
@@ -159,6 +160,16 @@ class BottomEdge(object):
             return self._app_active()
         q = hubqt.qt()
         return q.QtGui.QGuiApplication.applicationState() == q.QtCore.Qt.ApplicationActive
+
+    def playing(self):
+        """Maya is playing the timeline back."""
+        if self._playing:
+            return bool(self._playing())
+        try:
+            import maya.cmds as cmds
+            return bool(cmds.play(q=True, state=True))
+        except Exception:                                    # noqa: BLE001 - no Maya: not playing
+            return False
 
     def over_maya(self):
         """The cursor is over Maya's own window (or ours), not a floating editor
@@ -251,7 +262,16 @@ class BottomEdge(object):
         if rules.may_reveal(True, self.shown, self.buttons(), self.app_active()):
             self.reveal()
 
-    def reveal(self):
+    def on_time(self):
+        """Every time change (playback's frames too): Play pressed - a hotkey,
+        Maya's own - while the bar is hidden brings it out (2026-10-17, «если мы
+        нажимаем хоткеем плей а тайм слайдер спрятан то он должен показаться»).
+        At once: playback turns no event loop, so a burst's timers would not tick."""
+        if self.shown or not self.playing():
+            return
+        self.reveal(instant=True)
+
+    def reveal(self, instant=False):
         if self.shown:
             return
         self.place()
@@ -259,7 +279,7 @@ class BottomEdge(object):
         self.sensor.hide()
         self.host.show()
         self.host.raise_()
-        self._start_slide(True)
+        self._start_slide(True, instant=instant)
         self.watch.start()
 
     def conceal(self):
@@ -270,13 +290,15 @@ class BottomEdge(object):
         self.hide_timer.stop()
         self._start_slide(False)
 
-    def _start_slide(self, showing):
+    def _start_slide(self, showing, instant=False):
         """The burst from the cursor (2026-10-16, mockup A, «скорость на 50 %
         медленнее»): the panel unrolls sideways from where the mouse rests while
         the controls and keys pop in, the nearest first; going back, they fold
         toward the mouse and the panel closes onto it behind them."""
-        if not self._motion():
-            self.strip.burst_at(0, 0, showing)
+        if instant or not self._motion():
+            self._slide = None
+            self.anim.stop()
+            self.strip.burst_at(0, 0, showing, instant=instant)
             self.offset = 0 if showing else self.host.height()
             self._settle(showing)
             return
@@ -358,6 +380,8 @@ class BottomEdge(object):
                                       modal=app.activeModalWidget() is not None, typing=typing)
         if getattr(self.strip.timeline, "drag", None) or getattr(self.strip.range, "drag", None):
             reasons.append("dragging")
+        if self.playing():
+            reasons.append("playing")             # hidden only when not in use (2026-10-17)
         return reasons
 
     def hide_due(self):

@@ -11614,6 +11614,11 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
   `skeldarTimeBarDefaults`) `maya_timebar.upgrade()` - called first by `ensure()`, i.e. the hub's build - moves
   Docked or unset to the bottom edge; Maya's own slider, if chosen, is kept. A choice made after it stands. Raise
   DEFAULT_VERSION to make a later update switch it again.
+- **Not hidden while Maya plays** (2026-10-17, «прятали тайм слайдер только когда он не используется»):
+  `BottomEdge.blockers` adds "playing" (`play -q -state`), so the hide waits for the stop; and Play while it
+  is hidden (a hotkey, Maya's own) brings it out - `bar._time_changed` calls `BottomEdge.on_time` every
+  frame, which reveals it AT ONCE (`reveal(instant=True)`, `burst_at(..., instant=True)`): playback turns
+  no event loop, so the burst's timers would not tick. Tests in `test_timebar_edge`; not seen in a GUI Maya.
 
 **Speed** (the same evening: «проверим быстродействие... фпс программы проседает когда перетаскиваешь
 ползунок»). Measured headless (`docs/superpowers/plans/bench_time_bar.py`: the real strip at 150 % on a fake
