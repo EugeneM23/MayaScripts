@@ -1,0 +1,229 @@
+"""Side panel: Maya's Channel Box / Layer Editor and Attribute Editor in a panel that
+slides out of the right edge of Maya's window, the Time Bar's bottom edge on its side
+(2026-10-17). ⋮ -> Side panel ▸ Maya's / Right edge (Maya's by default); hotkey rows
+window.sidepanel, sidepanel.channels, sidepanel.attributes.
+
+Nothing heavy at import: MEL asks `holds(tab)` on every selection.
+Spec: docs/superpowers/specs/2026-10-17-side-panel-design.md
+"""
+
+import sys
+import traceback
+
+MODE_VAR = "skeldarSidePanelMode"
+TAB_VAR = "skeldarSidePanelTab"
+WIDTH_VAR = "skeldarSidePanelWidth"
+HIDDEN_VAR = "skeldarSidePanelHidden"   # Maya's controls we hid, shown again on Maya's mode
+
+
+def _state():
+    state = getattr(sys, "_skeldar_sidepanel", None)
+    if state is None:
+        state = {"edge": None, "held": {}}
+        sys._skeldar_sidepanel = state
+    return state
+
+
+def holds(tab):
+    """The panel holds `tab`'s editors (asked by Maya's visibility procs)."""
+    try:
+        return 1 if _state()["held"].get(tab) else 0
+    except Exception:                                        # noqa: BLE001
+        return 0
+
+
+def _cmds():
+    import maya.cmds as cmds
+    return cmds
+
+
+def _var(name, default=None):
+    cmds = _cmds()
+    return cmds.optionVar(q=name) if cmds.optionVar(exists=name) else default
+
+
+def mode():
+    from . import look
+    return look.mode_from(_var(MODE_VAR))
+
+
+def tab():
+    from . import look
+    return look.tab_from(_var(TAB_VAR))
+
+
+def _remember_tab(value):
+    _cmds().optionVar(stringValue=(TAB_VAR, value))
+
+
+def _remember_width(width):
+    _cmds().optionVar(intValue=(WIDTH_VAR, int(width)))
+
+
+def _remember_hidden(names):
+    cmds = _cmds()
+    cmds.optionVar(remove=HIDDEN_VAR)
+    for name in names:
+        cmds.optionVar(stringValueAppend=(HIDDEN_VAR, name))
+
+
+def _maya_wants(controller):
+    """A held editor's own workspaceControl shown again (Ctrl+A, Maya's toggles):
+    hidden at once, and ours comes out on that tab, held."""
+    from . import holder
+    for name, records in _state()["held"].items():
+        for record in records:
+            if record.get("ws") and holder.ws_visible(record["ws"]):
+                holder._set_ws(record["ws"], False)
+                controller.reveal(held=True, tab=name)
+                _remember_tab(name)
+                return
+
+
+def _borrow(controller):
+    from . import holder, look
+    separate = holder.separate()
+    held, hidden = {}, []
+    for name in look.TABS:
+        records = []
+        for component, form in look.forms(name, separate):
+            record = holder.take(component, form, controller.panel.pages[name])
+            if record is not None:
+                records.append(record)
+                if record.get("ws"):
+                    hidden.append(record["ws"])
+        held[name] = records
+    _state()["held"] = held
+    _remember_hidden(hidden)
+    holder.install()
+    return held
+
+
+def give_back():
+    """Every borrowed form back where it came from; Maya's procs again. Safe to call
+    any time - it acts only on what is held."""
+    from . import holder
+    held = _state().get("held") or {}
+    _state()["held"] = {}
+    gone = 0
+    for records in held.values():
+        for record in records:
+            try:
+                if holder.give(record):
+                    gone += 1
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+    holder.uninstall()
+    return gone
+
+
+def _show_hidden():
+    """Maya's controls an earlier session of ours left hidden, shown again."""
+    from . import holder
+    names = _var(HIDDEN_VAR) or []
+    if isinstance(names, str):
+        names = [names]
+    for name in names:
+        if _cmds().workspaceControl(name, exists=True):
+            holder._set_ws(name, True)
+    _cmds().optionVar(remove=HIDDEN_VAR)
+
+
+def ensure_edge():
+    cmds = _cmds()
+    if cmds.about(batch=True):
+        return None
+    edge = _state().get("edge")
+    if edge is not None and edge.alive():
+        return edge
+    drop_edge()
+    from . import edge as edge_module, look, panel
+    import maya_hubmotion
+    import maya_hubstyle
+    edge_module.destroy_all()
+    ui = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
+
+    def make(parent, on_tab, on_pin, on_width):
+        return panel.make(parent, ui, maya_hubstyle.TOKENS, motion=maya_hubmotion.enabled(),
+                          on_tab=on_tab, on_pin=on_pin, on_width=on_width)
+
+    def on_tab(value):
+        _remember_tab(value)
+        if value == "channels":
+            from . import holder
+            holder.update_channel_box()
+
+    from . import holder
+    controller = edge_module.SideEdge(make, width=_var(WIDTH_VAR, look.WIDTH), scale=ui,
+                                      on_tab=on_tab, on_width=_remember_width, tick=_maya_wants,
+                                      on_reveal=holder.update_channel_box)
+    controller.panel.set_tab(tab())
+    _state()["edge"] = controller
+    try:
+        _borrow(controller)
+    except Exception:                                        # noqa: BLE001
+        print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")
+        print(traceback.format_exc())
+        drop_edge()
+        _show_hidden()
+        return None
+    return controller
+
+
+def drop_edge():
+    """The forms given back FIRST - deleting the host would delete Maya's editors
+    with it - then the windows."""
+    give_back()
+    edge = _state().pop("edge", None)
+    if edge is not None:
+        try:
+            edge.destroy()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+MESSAGES = {
+    "maya": "Maya's Channel Box and Attribute Editor are back in place",
+    "edge": "Side panel at the right edge - rest the mouse on the right of Maya's window",
+}
+
+
+def set_mode(choice):
+    from . import look
+    choice = look.mode_from(choice)
+    _cmds().optionVar(stringValue=(MODE_VAR, choice))
+    if choice == "edge":
+        if ensure_edge() is None:
+            _cmds().optionVar(stringValue=(MODE_VAR, "maya"))
+            return "The side panel could not be built - see the Script Editor"
+    else:
+        drop_edge()
+        _show_hidden()
+    return MESSAGES[choice]
+
+
+def ensure():
+    """The mode the animator chose, standing (the hub's build calls it)."""
+    if mode() == "edge":
+        return ensure_edge()
+    _show_hidden()
+    return None
+
+
+def toggle():
+    return set_mode("maya" if mode() == "edge" else "edge")
+
+
+def show_tab(value):
+    """Out on `value`'s page, held (a hotkey); the panel switched on first if off."""
+    from . import look
+    value = look.tab_from(value)
+    edge = _state().get("edge")
+    if edge is None or not edge.alive():
+        set_mode("edge")
+        edge = _state().get("edge")
+    if edge is None:
+        return "The side panel is not available"
+    _remember_tab(value)
+    edge.reveal(held=True, tab=value)
+    return "Side panel: " + dict((t, l) for l, t in look.TAB_LABELS)[value]

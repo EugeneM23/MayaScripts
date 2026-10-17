@@ -449,6 +449,8 @@ def _callbacks():
         "mayaicons": set_mayaicons,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
+        #  the side panel (2026-10-17): Maya's editors at the right edge
+        "sidepanel": set_sidepanel,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
         #  since 2026-10-09 its rows Off / Left edge / Right edge
         "pin": _press_pin,
@@ -502,6 +504,7 @@ def _dress_header(skin):
     _dress_mayatheme(skin)
     _dress_mayaicons(skin)
     _dress_timebar(skin)
+    _dress_sidepanel(skin)
     _dress_edge(skin)
     _dress_popped(skin)
 
@@ -580,6 +583,15 @@ def _dress_timebar(skin):
         print(traceback.format_exc())
 
 
+def _dress_sidepanel(skin):
+    """The menu's Side panel row = the animator's choice (Maya's by default)."""
+    try:
+        import maya_sidepanel
+        skin.paint_sidepanel(maya_sidepanel.mode())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
 def _build_skin(host=None):
     """The skinned hub - into the workspaceControl, or into `host` (the edge
     panel's slot, 2026-10-08). Deleted whole if any of it fails, then
@@ -642,6 +654,7 @@ def build():
     _register_pending_startup()
     _tabs_bar_soon()
     _time_bar_soon()
+    _side_panel_soon()
     _maya_theme_soon()
     _maya_icons_soon()
     if not _BUILT_HERE:
@@ -768,6 +781,22 @@ def _time_bar_soon():
             print("SkeldarAnim: the time bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _side_panel_soon():
+    """The side panel at the right edge (2026-10-17) when the animator chose it,
+    else Maya's editors shown as they were. Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def show_panel():
+        try:
+            import maya_sidepanel
+            maya_sidepanel.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the side panel could not be shown")
+            print(traceback.format_exc())
+    cmds.evalDeferred(show_panel, lowestPriority=True)
 
 
 def is_skinned():
@@ -904,6 +933,7 @@ def _ensure_edge():
         #  the Time Bar likewise (2026-10-17): at Maya's start with the hub at
         #  the edge it was never built, and Maya's own slider stayed hidden
         _time_bar_soon()
+        _side_panel_soon()
         _maya_theme_soon()
         _maya_icons_soon()
     except Exception as error:
@@ -1346,6 +1376,16 @@ def set_timebar(choice):
     message = maya_timebar.set_on(choice)
     if is_skinned():
         _SKIN.paint_timebar(maya_timebar.mode())
+    say(message)
+    return message
+
+
+def set_sidepanel(choice):
+    """⋮ -> Side panel ▸ Maya's / Right edge (2026-10-17)."""
+    import maya_sidepanel
+    message = maya_sidepanel.set_mode(choice)
+    if is_skinned():
+        _SKIN.paint_sidepanel(maya_sidepanel.mode())
     say(message)
     return message
 

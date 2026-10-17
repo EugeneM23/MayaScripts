@@ -137,6 +137,7 @@ _PAYLOAD = (
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
+    "maya_sidepanel",           # the side panel: Channel Box / Layer Editor and Attribute Editor at the right edge (2026-10-17)
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh

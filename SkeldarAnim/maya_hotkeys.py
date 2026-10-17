@@ -253,6 +253,12 @@ def _timebar():
     return _report(maya_timebar.toggle())
 
 
+def _sidepanel(call, *args):
+    """The side panel (2026-10-17): switched, or out on a tab; said."""
+    import maya_sidepanel
+    return _report(getattr(maya_sidepanel, call)(*args))
+
+
 def _timebar_measure():
     """The scrub meter (2026-10-16): it says its own start and report."""
     from maya_timebar import meter
@@ -1032,6 +1038,15 @@ _OURS = (
     ("window.timebar", "Windows", "Time Bar",
      "Switch between the Time Bar and Maya's own time slider",
      _timebar),
+    ("window.sidepanel", "Windows", "Side Panel",
+     "Switch between the side panel at the right edge and Maya's own Channel Box and Attribute Editor",
+     partial(_sidepanel, "toggle")),
+    ("sidepanel.channels", "Side Panel", "Channels",
+     "The side panel out on the Channel Box / Layer Editor",
+     partial(_sidepanel, "show_tab", "channels")),
+    ("sidepanel.attributes", "Side Panel", "Attributes",
+     "The side panel out on the Attribute Editor",
+     partial(_sidepanel, "show_tab", "attributes")),
     ("timebar.measure", "Time Bar", "Measure scrubbing",
      "Clock the next 10 s of frame changes while you drag the playhead - the Time Bar's or Maya's",
      _timebar_measure),

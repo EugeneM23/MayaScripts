@@ -494,7 +494,8 @@ class OurRows(unittest.TestCase):
         #  + radial.press / .release, window.radial (2026-10-15)
         #  + tools.fp_setup (2026-10-16, 1P Setup)
         #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
-        self.assertEqual(len(ours), 76)                 # + ragdoll.blend (2026-10-17)
+        #  + ragdoll.blend (2026-10-17)
+        self.assertEqual(len(ours), 79)                 # + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -556,7 +557,7 @@ class OurRows(unittest.TestCase):
                          ["window.armor", "window.camshake", "window.com", "window.connections",
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
-                          "window.poses", "window.radial", "window.ragdoll", "window.scenesetup", "window.shared",
+                          "window.poses", "window.radial", "window.ragdoll", "window.scenesetup", "window.shared", "window.sidepanel",
                           "window.stash", "window.tabs", "window.tailbuilder", "window.timebar", "window.tools",
                           "window.uebridge", "window.walk",
                           "window.weapons"])

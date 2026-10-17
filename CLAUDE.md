@@ -11764,6 +11764,42 @@ Maya's own commands.
      jumped several frames while Maya's own slider moved on every one. Paint what must follow time with
      `repaint()` before the call that evaluates, and from the `timeChanged` job.
 
+## Side panel: the Channel Box and the Attribute Editor at the right edge (2026-10-17)
+
+The animator: «боковую панель по концепту нашего таймлайна, только для chanalbox/layer editor и атрибут
+эдитор», then «Сделай все до конца на свое усмотрение». Every choice was taken alone. Spec
+`docs/superpowers/specs/2026-10-17-side-panel-design.md`. Package `SkeldarAnim/maya_sidepanel/`
+(a payload row).
+- **The Time Bar's bottom edge on its side**: a frameless Qt.Tool host along the right of Maya's
+  window, 340 logical px (260..700, a grip on its left edge, `skeldarSidePanelWidth`). It comes out
+  when the cursor rests in a 14 px zone or on the 2 px sensor, unrolls from the cursor's height
+  (`maya_timebar.look.unroll`), and goes 1.2 s after the cursor left. A 📌, a held reveal
+  (`maya_edgerules.Hold`), a button, a menu or typing in a field keep it out. `look.py` is
+  stdlib; `edge.py` (`SideEdge`) and `panel.py` are Qt.
+- **Maya's own editors, borrowed, not copied** (`holder.py`): the Qt widgets of
+  `MainChannelsLayersLayout` (or `MainChannelBoxLayout` + `MainLayerEditorLayout` with
+  channelsLayersSeparate) and `MainAttributeEditorLayout` go into the tabs
+  `[Channels | Attributes]` (`skeldarSidePanelTab`), and their workspaceControls are hidden. The
+  record of each (control, parent's objectName, index, shown) is on `sys._skeldar_sidepanel`.
+  **Give back before any delete**: `drop_edge` gives every form back, then deletes the host. A
+  host deleted with a form inside would delete Maya's editor.
+- **Maya must think they are shown**: the Attribute Editor refreshes only while
+  `isAttributeEditorVisible()` is true, and showEditor (Ctrl+A) would restore the empty control.
+  While held, `isAttributeEditorVisible` / `isChannelBoxVisible` are redefined
+  (`look.MEL_OVERRIDE`, asking `maya_sidepanel.holds(tab)`); off, Maya's two files are sourced
+  again.
+- A held editor's control shown again by Maya (its toggles, Windows menu) is hidden on the next
+  300 ms tick, and ours comes out on that tab, held (`_maya_wants`).
+- Controls we hid are remembered (`skeldarSidePanelHidden`) and shown again in Maya's mode, at the
+  next start too.
+- ⋮ -> **Side panel ▸ Maya's / Right edge** (`skeldarSidePanelMode`, **Maya's by default** until
+  seen live). The hub's build calls `ensure()` deferred. Hotkey rows `window.sidepanel`,
+  `sidepanel.channels`, `sidepanel.attributes`.
+- Proof: `tests/test_sidepanel.py` (the band, the zone, out / back, the pin, a hold, the grip, the
+  tabs, take / give on stand-in widgets), 7201 unit tests. **`verify_side_panel.py` (GUI, ten
+  gates) is written and not run**: whether Maya's editors work inside our window is the
+  animator's live check.
+
 ## Maya theme: Maya in the hub's colours (2026-10-17)
 
 The animator: «Можем ли мы поменять цвета маи под наш интерфейс?». Four mockups

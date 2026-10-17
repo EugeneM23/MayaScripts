@@ -1463,6 +1463,7 @@ class Skin(object):
                           ("Maya theme", "mayatheme"),
                           ("Maya icons", "mayaicons"),
                           ("Time bar", "timebar"),
+                          ("Side panel", "sidepanel"),
                           ("Layout", "layout"),
                           ("Edge panel", "edge"),
                           (None, None),
@@ -1480,6 +1481,9 @@ class Skin(object):
                 continue
             if key == "timebar":
                 self._build_timebar_menu(text)
+                continue
+            if key == "sidepanel":
+                self._build_sidepanel_menu(text)
                 continue
             action = self.menu.addAction(text)
             if key in ("sounds", "animations", "mayatheme", "mayaicons"):
@@ -1869,6 +1873,32 @@ class Skin(object):
             action.triggered.connect(
                 lambda checked=False, c=choice: self._call("timebar", c))
             self.timebar_actions[choice] = action
+
+    def _build_sidepanel_menu(self, text):
+        """⋮ -> Side panel ▸ Maya's / Right edge (2026-10-17): exclusive rows; a
+        row's `triggered` calls back ("sidepanel", choice), `paint_sidepanel`
+        checks a row and calls nothing."""
+        q = qt()
+        sub = self.menu.addMenu(text)
+        sub.setObjectName("skeldarHubSidePanelMenu")
+        group_class = (getattr(q.QtGui, "QActionGroup", None)
+                       or q.QtWidgets.QActionGroup)       # Qt6 / Qt5
+        self._sidepanel_group = group_class(sub)
+        self._sidepanel_group.setExclusive(True)
+        self.sidepanel_actions = {}
+        for label, choice in (("Maya's", "maya"), ("Right edge", "edge")):
+            action = sub.addAction(label)
+            action.setCheckable(True)
+            self._sidepanel_group.addAction(action)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("sidepanel", c))
+            self.sidepanel_actions[choice] = action
+
+    def paint_sidepanel(self, choice):
+        """The menu's Side panel shows `choice` (no callback)."""
+        action = getattr(self, "sidepanel_actions", {}).get(choice)
+        if action is not None:
+            action.setChecked(True)
 
     def paint_timebar(self, choice):
         """The menu's Time bar shows `choice` (2026-10-16; no callback). An older
