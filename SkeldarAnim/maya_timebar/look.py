@@ -564,18 +564,22 @@ SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not a
 KEY_GAP = 0.18          # a key's cell: this share of the cell left free between neighbours
 KEY_GAP_MAX = 3.0       # ... at most this many logical px
 KEY_INSET = 2.0         # logical px off the key span's top and bottom
+KEY_WIDTH = 0.8         # a key's width, this share of what its cell leaves it
+                        # (2026-10-17, the animator: «ключи ... на 20% уже»)
 
 
 def key_cell(x0, cell, top, bottom, ui=1.0):
-    """(left, top, width, height) of a key on a whole frame, drawn as its frame's
-    cell filled (2026-10-17, the animator's mockup: «ключ закрашивает кадр»): a gap
-    between neighbouring keys, an inset top and bottom; a cell too thin for a gap is
-    filled whole, and a key is never thinner than 1.5 px."""
+    """(left, top, width, height) of a key on a whole frame, drawn in its frame's
+    cell (2026-10-17, the animator's mockup: «ключ закрашивает кадр»): a gap between
+    neighbouring keys, KEY_WIDTH of what is left, centred in the cell, an inset top
+    and bottom; a cell too thin for a gap gives up its gap, and a key is never
+    thinner than 1.5 px."""
     gap = max(1.0, min(KEY_GAP_MAX * ui, KEY_GAP * cell))
     if cell - gap < 2.0:
         gap = 0.0
+    width = max(1.5, (cell - gap) * KEY_WIDTH)
     inset = KEY_INSET * ui
-    return x0 + gap / 2.0, top + inset, max(1.5, cell - gap), max(1.0, bottom - top - 2 * inset)
+    return x0 + (cell - width) / 2.0, top + inset, width, max(1.0, bottom - top - 2 * inset)
 
 
 def key_centre(track, t):

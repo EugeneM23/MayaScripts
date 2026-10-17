@@ -489,9 +489,13 @@ class KeyCellTests(unittest.TestCase):
 
     def test_a_key_fills_its_cell_with_a_gap_and_an_inset(self):
         l, tp, w, h = look.key_cell(100.0, 20.0, 12.0, 58.0)
-        self.assertAlmostEqual(w, 20.0 - 3.0)
-        self.assertAlmostEqual(l, 101.5)
+        self.assertAlmostEqual(w, (20.0 - 3.0) * look.KEY_WIDTH)
+        self.assertAlmostEqual(l + w / 2.0, 110.0)      # centred in its cell
         self.assertAlmostEqual((tp, h), (14.0, 42.0))
+
+    def test_a_key_is_a_fifth_narrower_than_its_cell_leaves_it(self):
+        self.assertAlmostEqual(look.KEY_WIDTH, 0.8)
+        self.assertAlmostEqual(look.key_cell(0.0, 20.0, 0, 40)[2], 13.6)
 
     def test_neighbouring_keys_never_touch_on_a_roomy_track(self):
         a = look.key_cell(0.0, 10.0, 0, 40)
@@ -499,7 +503,7 @@ class KeyCellTests(unittest.TestCase):
         self.assertGreater(b[0] - (a[0] + a[2]), 0.9)
 
     def test_a_thin_cell_is_filled_whole_and_never_thinner_than_1_5(self):
-        self.assertAlmostEqual(look.key_cell(0.0, 2.5, 0, 40)[2], 2.5)
+        self.assertAlmostEqual(look.key_cell(0.0, 2.5, 0, 40)[2], 2.5 * look.KEY_WIDTH)
         self.assertAlmostEqual(look.key_cell(0.0, 0.5, 0, 40)[2], 1.5)
 
     def test_a_key_is_seen_in_its_cell_middle_or_on_its_time(self):
