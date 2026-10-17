@@ -11663,3 +11663,32 @@ payload row); ⋮ → **Maya theme**, a checkable row (optionVar `skeldarMayaThe
   **`verify_maya_theme.py` (a GUI Maya: every colour, the palette and sheet, Maya controls' size hints unchanged,
   playblasts on/off, everything back after Off) is written and NOT run.** Not seen in a GUI Maya: how far Maya's own
   style follows the palette.
+
+## Maya icons: every icon recoloured, the most visible redrawn (2026-10-17)
+
+The animator: «перерисовать все иконки интерфейса маи под наш стиль»; shown both ways
+(https://claude.ai/artifact/TpsFZDd63bpcYJ6Wm7EZ5w), «Build both». Spec
+`docs/superpowers/specs/2026-10-17-maya-icons-design.md`. ⋮ → **Maya icons** (optionVar `skeldarMayaIcons`, off by
+default); **seen after Maya restarts**.
+- **Measured**: Maya's resources hold 1652 icons (1596 PNG). A PNG of an icon's name in `<userAppDir>/2027/prefs/icons`
+  (the first folder of `XBMLANGPATH`, `internalVar -userBitmapsDir`) is what `MQtUtil.createIcon` answers;
+  `createPixmap` still answers Maya's own. So a control that takes a raw pixmap keeps Maya's picture.
+- `SkeldarAnim/maya_mayaicons.py`: On reads every PNG through `resourceManager -saveAs` (a temp folder) and writes into
+  prefs/icons: our drawing at Maya's pixel size for the drawn set, else `recolour` (numpy: greys between the hub's
+  darkest and its text by luminance, saturated colours to the accent's hue keeping saturation and value, alpha kept;
+  `AXES` icons keep their red, green and blue). 10.4 s for 1596. A file we did not write is never touched; ours are in
+  `skeldarMayaIcons.json` with sha1s, and Off deletes only those still holding what we wrote. Esc during On takes back
+  what it wrote. **Autodesk's pictures are recoloured on each machine and never shipped.**
+- `SkeldarAnim/maya_mayaicons_art.py` (stdlib): 24-grid SVG bodies, classes `l` / `a` / `m` / `f` / `af` / `tint`;
+  **146 hand drawings** (`ART`) out of the 184 icons Maya's main bars name, plus the 16 panel layouts generated from
+  their names (`layout_panels`) and 14 selection-mask "Partial" states (the mask on a tint). The 4 auto tangents differ
+  by their letter (`LETTER`, paths).
+- Proof: `tests/test_mayaicons.py` (17); `docs/superpowers/plans/verify_maya_icons.py` **9/9 in mayapy** with a scratch
+  `MAYA_APP_DIR` (all 1596 written, the animator's file kept, `createIcon("move_M.png")` answering ours, Off leaving
+  only theirs); `render_maya_icons.py` draws Maya / recoloured / ours side by side (local only: it holds Autodesk's
+  pictures). Not seen in a GUI Maya: which controls take a raw pixmap. New builds of our drawings reach prefs/icons only
+  when the row is switched off and on again.
+
+243. **QtSvg drops a dashed element's stroke when the dash is an attribute or a style beside its CSS class**
+     (measured 2026-10-17: `class="m" stroke-dasharray="2.2 2.2"` and `class="m" style="stroke-dasharray:..."` both
+     drew nothing - `pickTemplate` came out empty). A dashed class of its own (`.md{stroke-dasharray:2.2,2.2}`) draws.

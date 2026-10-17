@@ -46,6 +46,7 @@ class SeamsMixin(object):
             "sounds": lambda on: self.calls.append(("sounds", on)),
             "animations": lambda on: self.calls.append(("animations", on)),
             "mayatheme": lambda on: self.calls.append(("mayatheme", on)),
+            "mayaicons": lambda on: self.calls.append(("mayaicons", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "pin": lambda on: self.calls.append(("pin", on)),
             "edge": lambda on: self.calls.append(("edge", on)),
@@ -150,22 +151,22 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",
-                          "Maya theme", "Time bar", "Layout", "Edge panel", "Classic look"])
+                          "Maya theme", "Maya icons", "Time bar", "Layout", "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
         #  "Layout" (2026-10-16) and "Edge panel" (2026-10-09) are submenus:
         #  their own rows call nothing
-        self.assertEqual(actions[6].menu().objectName(),
+        self.assertEqual(actions[7].menu().objectName(),
                          "skeldarHubLayoutMenu")
-        self.assertIs(actions[7].menu(), self.skin.edge_menu)
+        self.assertIs(actions[8].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
-        self.assertEqual(actions[5].menu().objectName(), "skeldarHubTimeBarMenu")
+        self.assertEqual(actions[6].menu().objectName(), "skeldarHubTimeBarMenu")
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
                           ("animations", False), ("mayatheme", True),
-                          "classic"])
-        rows = actions[5].menu().actions()
+                          ("mayaicons", True), "classic"])
+        rows = actions[6].menu().actions()
         self.assertEqual([a.text() for a in rows], ["Maya's", "Docked", "Bottom edge"])
         rows[2].trigger()
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
@@ -195,6 +196,17 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.calls, [])
         action.trigger()
         self.assertEqual(self.calls, [("mayatheme", True)])
+
+    def test_the_maya_icons_row_is_a_checkbox_painted_without_a_call(self):
+        """2026-10-17: Maya's icons in the hub's style, switched in the menu."""
+        action = self.skin.mayaicons_action
+        self.assertTrue(action.isCheckable())
+        self.skin.paint_mayaicons(True)
+        self.assertTrue(action.isChecked())
+        self.skin.paint_mayaicons(False)
+        self.assertEqual(self.calls, [])
+        action.trigger()
+        self.assertEqual(self.calls, [("mayaicons", True)])
 
     def test_every_object_of_ours_has_a_name(self):
         """They are parts of the cmds paths of everything inside."""

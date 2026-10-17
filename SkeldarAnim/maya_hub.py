@@ -445,6 +445,8 @@ def _callbacks():
         "animations": set_animations,
         #  Maya in the hub's colours (2026-10-17, maya_mayatheme)
         "mayatheme": set_mayatheme,
+        #  Maya's icons in the hub's style (2026-10-17, maya_mayaicons)
+        "mayaicons": set_mayaicons,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
@@ -498,6 +500,7 @@ def _dress_header(skin):
     _dress_sounds(skin)
     _dress_animations(skin)
     _dress_mayatheme(skin)
+    _dress_mayaicons(skin)
     _dress_timebar(skin)
     _dress_edge(skin)
     _dress_popped(skin)
@@ -555,6 +558,15 @@ def _dress_mayatheme(skin):
     try:
         import maya_mayatheme
         skin.paint_mayatheme(maya_mayatheme.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_mayaicons(skin):
+    """The menu's Maya icons row = the switch (off by default)."""
+    try:
+        import maya_mayaicons
+        skin.paint_mayaicons(maya_mayaicons.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -1278,6 +1290,17 @@ def set_mayatheme(on):
     message = maya_mayatheme.set_enabled(on)
     if is_skinned():
         _SKIN.paint_mayatheme(maya_mayatheme.enabled())
+    say(message)
+    return message
+
+
+def set_mayaicons(on):
+    """⋮ -> Maya icons (2026-10-17): every icon recoloured, the most visible
+    redrawn, into prefs/icons; seen after Maya restarts."""
+    import maya_mayaicons
+    message = maya_mayaicons.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_mayaicons(maya_mayaicons.enabled())
     say(message)
     return message
 

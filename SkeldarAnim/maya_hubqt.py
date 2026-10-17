@@ -1446,6 +1446,7 @@ class Skin(object):
                           ("Interface sounds", "sounds"),
                           ("Interface animations", "animations"),
                           ("Maya theme", "mayatheme"),
+                          ("Maya icons", "mayaicons"),
                           ("Time bar", "timebar"),
                           ("Layout", "layout"),
                           ("Edge panel", "edge"),
@@ -1464,7 +1465,7 @@ class Skin(object):
                 self._build_timebar_menu(text)
                 continue
             action = self.menu.addAction(text)
-            if key in ("sounds", "animations", "mayatheme"):
+            if key in ("sounds", "animations", "mayatheme", "mayaicons"):
                 #  a switch (2026-10-01, the hover sound, the card motion):
                 #  `triggered` carries the new state and is not emitted by
                 #  paint_sounds / paint_animations
@@ -1822,6 +1823,10 @@ class Skin(object):
     def paint_mayatheme(self, on):
         """The menu's Maya theme row shows `on` (no callback; 2026-10-17)."""
         self.mayatheme_action.setChecked(bool(on))
+
+    def paint_mayaicons(self, on):
+        """The menu's Maya icons row shows `on` (no callback; 2026-10-17)."""
+        self.mayaicons_action.setChecked(bool(on))
 
     def _build_timebar_menu(self, text):
         """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16): three
