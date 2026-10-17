@@ -169,7 +169,41 @@ def _viewport_area():
         if not pane.isVisible() or pane.width() <= 0 or pane.height() <= 0:
             return None
         p = pane.mapToGlobal(pane.rect().topLeft())
-        return (p.x(), p.y(), pane.width(), pane.height())
+        x, y, w, h = p.x(), p.y(), pane.width(), pane.height()
+        #  below the viewport's own menus and icons (2026-10-17, «реил не должен
+        #  перекрывать другие меню»): the drawing area of the model panel standing
+        #  against the pane's left edge starts lower than the pane
+        top = _drawing_top(x)
+        if top is not None and y < top < y + h - 100:
+            h, y = h - (top - y), top
+        return (x, y, w, h)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _drawing_top(left):
+    """The global top of the drawing area of the visible model panel whose left
+    edge is the viewport's `left` (the upper one when panes are stacked), or None."""
+    try:
+        import maya.cmds as cmds
+        import maya.OpenMayaUI as omui
+        q = hubqt.qt()
+        tops = []
+        for panel in cmds.getPanel(visiblePanels=True) or []:
+            if cmds.getPanel(typeOf=panel) != "modelPanel":
+                continue
+            #  the M3dView's widget: the modelEditor control is the whole panel,
+            #  its icon bar included (read live: 167 against the drawing's 228)
+            m3d = omui.M3dView()
+            omui.M3dView.getM3dViewFromModelPanel(panel, m3d)
+            ptr = m3d.widget()
+            if not ptr:
+                continue
+            view = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+            g = view.mapToGlobal(view.rect().topLeft())
+            if abs(g.x() - left) <= 8:
+                tops.append(g.y())
+        return min(tops) if tops else None
     except Exception:                                        # noqa: BLE001
         return None
 
@@ -346,7 +380,7 @@ class Edge(object):
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
-                 rest=None):
+                 rest=None, shape=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -357,6 +391,9 @@ class Edge(object):
         #  click (reveal / conceal); the edge's hover does nothing
         self.rail = bool(rail)
         self.rest = rest
+        #  host-local rects (x, y, w, h) shown beyond the rail when out - the card;
+        #  None: the whole frame (2026-10-17)
+        self.shape = shape
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
         self.side = rules.side_of(side)
@@ -423,7 +460,7 @@ class Edge(object):
             self.host.show()
             #  the viewport moves and resizes with Maya's window and its docks
             self.follow = q.QtCore.QTimer(self.host)
-            self.follow.setInterval(300)
+            self.follow.setInterval(150)
             self.follow.timeout.connect(self._follow)
             self.follow.start()
         else:
@@ -439,9 +476,21 @@ class Edge(object):
             area = (tuple(self.work_area()), self.rest_px())
         except Exception:                                    # noqa: BLE001
             return
-        if area != self._area and self._anim is None:
+        if self._anim is not None:
+            return
+        if area != self._area:
             self._area = area
             self.place()
+            return
+        if self.shape is not None and self._rest_out:
+            #  the card grows and shrinks (a section opened, a list filled)
+            try:
+                shape = tuple(tuple(r) for r in (self.shape() or []))
+            except Exception:                                # noqa: BLE001
+                shape = ()
+            if shape != getattr(self, "_shape_seen", None):
+                self._shape_seen = shape
+                self._set_frame(self._frame)
 
     def rest_px(self):
         """How much of the host shows at rest, physical px from the edge: the
@@ -452,6 +501,31 @@ class Edge(object):
             return int(max(0, self.rest()))
         except Exception:                                    # noqa: BLE001
             return 0
+
+    def visible_rects(self):
+        """Every part of the panel showing on screen now (global x, y, w, h): the
+        rail, and - when out - the card `shape()` names, as far as the frame has
+        opened. The time bar steps aside for these and not for the empty height
+        under a card (2026-10-17)."""
+        if not self.alive() or not self.host.isVisible() or self._frame <= 0:
+            return []
+        if not (self.rail and self.shape is not None):
+            one = self.visible_rect()
+            return [one] if one else []
+        x, y, w, h = self._host_rect()
+        out = []
+        rx, rw = rules.frame_span(max(1, min(w, self.rest_px())), w, self.side)
+        out.append((x + rx, y, rw, h))
+        fx, fw = rules.frame_span(max(1, self._frame), w, self.side)
+        try:
+            rects = self.shape() or []
+        except Exception:                                    # noqa: BLE001
+            rects = []
+        for sx, sy, sw, sh in rects:
+            left, right = max(sx, fx), min(sx + sw, fx + fw)
+            if right > left and sh > 0:
+                out.append((x + left, y + sy, right - left, sh))
+        return out
 
     def visible_rect(self):
         """What of the panel shows on screen now (global x, y, w, h), or None:
@@ -568,6 +642,26 @@ class Edge(object):
         w = host.width()
         px = int(max(0, min(w, round(px))))
         self._frame = px
+        if self.rail and self.shape is not None:
+            #  the rail panel shows its rail and, as far as the frame has opened,
+            #  only what `shape()` names (the card): no backdrop under it
+            #  (2026-10-17, «не нужно им рисовать фон под ними»)
+            q = hubqt.qt()
+            h = host.height()
+            rx, rw = rules.frame_span(max(1, min(w, self.rest_px())), w, self.side)
+            region = q.QtGui.QRegion(rx, 0, rw, h)
+            fx, fw = rules.frame_span(max(1, px), w, self.side)
+            opened = q.QtGui.QRegion(fx, 0, fw, h)
+            try:
+                rects = self.shape() or []
+            except Exception:                                # noqa: BLE001
+                rects = []
+            for x, y, rw2, rh in rects:
+                region = region.united(opened.intersected(
+                    q.QtGui.QRegion(int(x), int(y), int(rw2), int(rh))))
+            host.setMask(region)
+            host.update()
+            return
         if px >= w:
             host.clearMask()
         else:

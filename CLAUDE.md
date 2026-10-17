@@ -11791,6 +11791,18 @@ switch and its optionVars are unchanged.
 - Proof: `tests/test_hubedge.RailDock` (6); live in the animator's Maya: the rail at the
   viewport's left (58 px), a click on Animation Setup's icon out to 681 px, the same click back to
   58. The 📌 still stands in the rail and does nothing there.
+- **Then, after using it** («таймлайн не должен перекрывать наш реил. у рейла когда всплывают окошки
+  не нужно им рисовать фон под ними. реил не должен перекрывать другие меню»):
+  - the area starts at the top of the drawing area of the model panel standing on the
+    viewport's left (`_drawing_top`, the panel's `M3dView` widget, read live at 228 against
+    the pane's 167). The modelEditor control is the whole panel, icon bar included. The
+    viewport's own menus and icons stay uncovered;
+  - out, the mask is the rail plus only the card (`shape=`, `maya_hubqt.card_shape`: the
+    message line and the card cut to the scroll area), followed every 150 ms as the card grows.
+    No backdrop under the card;
+  - the Time Bar steps aside for `Edge.visible_rects()`, the rail and the card, not the empty
+    height under it. An old Time Bar edge kept its old module's functions, so the install
+    rebuilt it (`drop_edge`, `ensure`). Live: the bar from x 60.
 
 ## Side panel: the Channel Box and the Attribute Editor at the right edge (2026-10-17)
 

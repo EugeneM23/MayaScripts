@@ -838,3 +838,46 @@ class RailDock(unittest.TestCase):
         self.VIEWPORT = (0, 100, 1200, 600)
         self.edge._follow()
         self.assertEqual(self.edge.host.geometry().getRect(), (0, 100, 360, 600))
+
+
+class RailShape(unittest.TestCase):
+    """2026-10-17: «не нужно им рисовать фон под ними» - out, only the rail and the
+    card show."""
+
+    def setUp(self):
+        self.app = _app()
+        self.card = [(60, 10, 280, 200)]
+        self.edge = hubedge.Edge(
+            scale=1.0, width=360, motion=lambda: False, rail=True,
+            rest=lambda: 40, shape=lambda: self.card,
+            work_area=lambda: (100, 150, 1500, 700),
+            cursor=lambda: (800, 400), buttons=lambda: False,
+            app_active=lambda: True)
+
+    def tearDown(self):
+        self.edge.destroy()
+
+    def test_out_only_the_rail_and_the_card_show(self):
+        self.edge.reveal()
+        mask = self.edge.host.mask()
+        self.assertTrue(mask.contains(QtCore.QPoint(20, 600)))      # the rail
+        self.assertTrue(mask.contains(QtCore.QPoint(100, 100)))     # the card
+        self.assertFalse(mask.contains(QtCore.QPoint(100, 400)))    # under the card
+        self.assertFalse(mask.contains(QtCore.QPoint(350, 100)))    # past it
+
+    def test_a_card_that_grows_is_followed(self):
+        self.edge.reveal()
+        self.card = [(60, 10, 280, 500)]
+        self.edge._follow()
+        self.assertTrue(self.edge.host.mask().contains(QtCore.QPoint(100, 400)))
+
+    def test_at_rest_only_the_rail(self):
+        mask = self.edge.host.mask()
+        self.assertTrue(mask.contains(QtCore.QPoint(20, 100)))
+        self.assertFalse(mask.contains(QtCore.QPoint(100, 100)))
+
+    def test_the_visible_rects_are_the_rail_and_the_card(self):
+        self.assertEqual(self.edge.visible_rects(), [(100, 150, 40, 700)])
+        self.edge.reveal()
+        self.assertEqual(self.edge.visible_rects(),
+                         [(100, 150, 40, 700), (160, 160, 280, 200)])

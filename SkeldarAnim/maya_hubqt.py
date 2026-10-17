@@ -195,6 +195,41 @@ def rail_rest(skin, host, side="left"):
     return max(0, left + rail.width() + margin)
 
 
+def card_shape(skin, host):
+    """Host-local rects (x, y, w, h) of what the rail panel shows beyond its rail
+    when out (2026-10-17, «не нужно им рисовать фон под ними»): the message line
+    when it is shown, and the card that is out - cut to the scroll area, so a
+    card taller than the panel shows only its scrolled part."""
+    out = []
+    if skin is None or not _valid(host):
+        return out
+    q = qt()
+    QtCore = q.QtCore
+
+    def rect_of(widget, clip=None):
+        p = widget.mapTo(host, QtCore.QPoint(0, 0))
+        r = QtCore.QRect(p.x(), p.y(), widget.width(), widget.height())
+        if clip is not None:
+            r = r.intersected(clip)
+        return r
+
+    try:
+        message = getattr(skin, "message", None)
+        if message is not None and _valid(message) and message.isVisible():
+            out.append(rect_of(message).getRect())
+        card = skin.cards.get(getattr(skin, "shown", None))
+        scroll = getattr(skin, "scroll", None)
+        if card is not None and scroll is not None and _valid(card.frame) \
+                and card.frame.isVisible():
+            view = rect_of(scroll.viewport())
+            r = rect_of(card.frame, view)
+            if not r.isEmpty():
+                out.append(r.getRect())
+    except RuntimeError:
+        pass
+    return out
+
+
 def destroy_roots_in(host):
     """Delete every skin root standing in widget `host`, NOW: the
     workspaceControl's (`destroy_roots`), or the edge panel's slot

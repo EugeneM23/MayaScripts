@@ -925,7 +925,7 @@ def _ensure_edge():
         #  click on one of its icons brings that card out beside it
         current = he.Edge(scale=_scale(), width=_edge_width(),
                           on_width=_save_edge_width, side=edge_side(),
-                          rail=True, rest=_rail_rest)
+                          rail=True, rest=_rail_rest, shape=_rail_shape)
         he.state()["edge"] = current
         _SKIN = _build_skin(host=current.slot, kind="rail")
         _SKIN.set_edge_mode(True, edge_side())
@@ -965,6 +965,15 @@ def _rail_rest():
     if current is None:
         return 0
     return _hubqt().rail_rest(_SKIN, current.host, current.side)
+
+
+def _rail_shape():
+    """What the edge panel shows beyond its rail when out: the card (and the
+    message line), nothing under it (2026-10-17)."""
+    current = edge()
+    if current is None or not is_skinned():
+        return []
+    return _hubqt().card_shape(_SKIN, current.host)
 
 
 def edge_failure_text(error):
