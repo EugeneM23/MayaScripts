@@ -53,7 +53,6 @@ HIGHLIGHT = "#7fa9e6"
 WAVE = "#565a68"
 RIM = "#fff1e2"
 SET_GLOW = 44       # logical px: the flash of a key set (2026-10-17: stronger, «глоу должен быть сильнее»)
-SPARKS = 34         # the sparks of a key deleted, each a glow with a hot core («брызги ярче»)
 
 #  the mockup's glyphs (16 x 16 SVG paths), drawn with QtSvg in the control's colour
 GLYPHS = {
@@ -174,30 +173,6 @@ def classes():
             renderer.render(p, rect)
 
     halos = {}
-    spark_sprites = {}
-
-    def spark_sprite(hex_, ui):
-        """One spark at full life - a glow in the key's colour round a hot core -
-        drawn once per colour and size: a wave of 1000 deleted keys draws pictures,
-        not gradients (2026-10-17)."""
-        key = (hex_, round(ui, 3))
-        picture = spark_sprites.get(key)
-        if picture is None:
-            r = 6 * ui
-            side = int(round(r * 4))
-            picture = QtGui.QPixmap(side, side)
-            picture.setDevicePixelRatio(2.0)
-            picture.fill(Qt.transparent)
-            sp = QtGui.QPainter(picture)
-            sp.setRenderHint(QtGui.QPainter.Antialiasing)
-            soft_dot(sp, r, r, r, hex_, 255)
-            sp.setPen(Qt.NoPen)
-            sp.setBrush(colour(RIM, 255))
-            sp.drawEllipse(QtCore.QPointF(r, r), 2.0 * ui, 2.0 * ui)
-            sp.end()
-            spark_sprites[key] = picture
-        return picture
-
 
     def halo(hex_, ui):
         """A key's glow at full strength - three rings fading outward - drawn once
@@ -665,21 +640,47 @@ def classes():
             t = self.track()
             if not st.motion or not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
                 return False
-            top, bottom = key_span(float(self.height()), st.ui)
-            cx, cy = st.point_of(self, look.key_centre(t, frame), (top + bottom) / 2.0)
+            cx, cy, rect = self._key_place(frame)
+            timing.setdefault("rect", rect)
             st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"], **timing)
             return True
 
+        def _key_place(self, frame):
+            """A key's middle and its drawn rectangle (left, top, w, h), in the overlay's
+            points: the cell it fills on a whole frame, its thin line between frames."""
+            st, t = self.strip, self.track()
+            ui = st.ui
+            top, bottom = key_span(float(self.height()), ui)
+            cx, cy = st.point_of(self, look.key_centre(t, frame), (top + bottom) / 2.0)
+            if look.on_frame(frame):
+                l, tp, w, h = look.key_cell(t.x(frame), t.scale, top, bottom, ui)
+            else:
+                w = KEY_W * ui
+                l, tp, h = t.x(frame) - w / 2.0, top, bottom - top
+            ox, oy = st.point_of(self, l, tp)
+            return cx, cy, (ox, oy, w, h)
+
         def delete_wave(self, removed):
-            """Keys deleted: their sparks one after another, left to right, the whole
+            """Keys deleted: each breaks into pieces, one after another, left to right, the whole
             wave within look.DELETE_TOTAL_MS however many (2026-10-17). `removed`:
             [(frame, breakdown)]. Only the keys in view play; the keys themselves are
             already gone."""
             t = self.track()
             shown = sorted(r for r in removed if t.v0 - 0.5 <= r[0] <= t.v1 + 1.5)
-            delays, life, count = look.delete_plan(len(shown))
-            for (frame, bd), delay in zip(shown, delays):
-                self.key_effect("delete", frame, bd, delay=delay, life=life, count=count, quiet=True)
+            if not self.strip.motion or not shown:
+                return
+            groups = look.shard_groups(len(shown))
+            delays, life = look.delete_plan(len(groups))
+            pieces = look.SHARDS[0] if len(shown) > look.SMALL_CHANGE else None   # a big wave: 3 each
+            for (a, b), delay in zip(groups, delays):
+                # neighbours too dense to tell apart break as one block of their keys
+                rects = [self._key_place(f)[2] for f, _bd in shown[a:b]]
+                left = min(r[0] for r in rects)
+                right = max(r[0] + r[2] for r in rects)
+                top, h = rects[0][1], rects[0][3]
+                frame, bd = shown[a]
+                self.key_effect("delete", frame, bd, delay=delay, life=life, pieces=pieces,
+                                rect=(left, top, right - left, h), quiet=True)
             if shown:
                 self.strip.fx.raise_()
                 self.strip.kick()
@@ -1140,9 +1141,7 @@ def classes():
                 p = QtGui.QPainter(self)
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
                 now, ui = self.strip.clock(), self.strip.ui
-                r = 6 * ui                                       # a spark sprite's radius
-                whole = QtCore.QRectF(0, 0, 24 * ui, 24 * ui)    # ... in its device pixels
-                sparks_by = {}      # every live spark, drawn after the flashes, by colour
+                broken = []         # the deleted keys mid-flight, drawn after the flashes
                 for i in self.items:
                     age = self.age(i, now)
                     if age < 0 or age >= i["life"]:
@@ -1158,29 +1157,37 @@ def classes():
                         soft_dot(p, i["cx"], i["cy"], SET_GLOW * 0.55 * ui * grow, i["hex"], 255 * fade)
                         soft_dot(p, i["cx"], i["cy"], 13 * ui, RIM, 255 * (1.0 - u) ** 2)
                     else:
-                        # a short wave keeps the sparks' reach: they fly as fast, for less time
-                        fly = look.EFFECT_MS["delete"] / float(i["life"])
-                        frags = sparks_by.setdefault(i["hex"], [])
-                        for dx, dy, life in look.sparks(i["seed"], i.get("count", SPARKS), age, i["life"],
-                                                        170 * ui * fly, 620 * ui * fly * fly):
-                            k = 0.5 + 0.5 * life
-                            frags.append((i["cx"] + dx, i["cy"] + dy, k, life))
+                        broken.append((i, age))
                     p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-                if sparks_by:
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                    for hex_, frags in sparks_by.items():
-                        sprite = spark_sprite(hex_, ui)
-                        for x, y, k, life in frags:
-                            p.setOpacity(life)
-                            p.drawPixmap(QtCore.QRectF(x - r * k, y - r * k, 2 * r * k, 2 * r * k),
-                                         sprite, whole)
-                    p.setOpacity(1.0)
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+                if broken:
+                    self._paint_shards(p, broken, ui)
                 p.end()
             except Exception:                                # noqa: BLE001
                 if not getattr(self, "_failed", False):
                     print(traceback.format_exc())
                 self._failed = True
+
+        @staticmethod
+        def _paint_shards(p, broken, ui):
+            """A deleted key broken into 3..5 pieces that together were the key, each
+            flying off spinning and falling (2026-10-17: «ключик сломался и разлетелся»).
+            A piece is a fillRect under its own transform: the cheapest rotated rectangle
+            measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
+            fly = 260 * ui
+            for i, age in broken:
+                life = i["life"]
+                k = look.EFFECT_MS["delete"] / float(life)     # a short life keeps the reach
+                body = QtGui.QColor(i["hex"])
+                for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, life,
+                                                              fly * k, 900 * ui * k * k,
+                                                              pieces=i.get("pieces")):
+                    body.setAlphaF(alpha)
+                    move = QtGui.QTransform()
+                    move.translate(cx, cy)
+                    move.rotate(angle)
+                    p.setTransform(move)
+                    p.fillRect(QtCore.QRectF(-w / 2.0, -h / 2.0, w, h), body)
+            p.resetTransform()
 
     # -- the strip -------------------------------------------------------------------
 
@@ -1201,6 +1208,7 @@ def classes():
             self._wave_key = None
             self.keys_dirty = True
             self.keys_edited = False    # Maya said keys were edited since the last read
+            self.keys_set = []          # setKeyframe since the last read: [(frame or None, breakdown)]
             self.moving = []
             self._t0 = time.time()
             self.opened = 0.0
@@ -1514,6 +1522,7 @@ def classes():
                     if self._keys_read and not self._quiet_keys:
                         self._key_effects(old_keys, old_bds, self.keys_edited)
                     self._keys_read, self._quiet_keys, self.keys_edited = True, False, False
+                    self.keys_set = []
                 self.marks = self.call("bookmarks") or []
             self._sound()
             self._paint_widgets()
@@ -1526,14 +1535,23 @@ def classes():
             edit (`edited`)."""
             if not self.motion:
                 return
-            gone = []
+            gone, flashed = [], set()
             for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
                 added, removed, _snapped = look.key_changes(old, new, edited)
                 for k in added:
                     self.timeline.key_effect("set", k, bd)
+                    flashed.add(k)
                 gone.extend((k, bd) for k in removed)
             if gone:
                 self.timeline.delete_wave(gone)
+            # a key set over one that stood: no key time changed, it flashes all the same
+            for frame, _bd in self.keys_set:
+                frame = self.state.get("now", 0.0) if frame is None else frame
+                if frame in flashed:
+                    continue
+                if frame in self.keys or frame in self.breakdowns:
+                    self.timeline.key_effect("set", frame, frame in self.breakdowns)
+                    flashed.add(frame)
 
         def _sound(self):
             s, t = self.state, self.timeline.track()
@@ -1729,7 +1747,7 @@ def classes():
                 self.keys_edited = True         # our own Cut / Delete: a wave, however many
                 return c(name, *args)
             return [(caption, None),
-                    ("Set key", lambda: c("set_key")),
+                    ("Set key", lambda: (self.keys_set.append((None, False)), c("set_key"))),
                     ("Breakdown", lambda: c("breakdown", sel, frame)), None,
                     ("Cut", lambda: edit("cut_keys", sel, frame)),
                     ("Copy", lambda: c("copy_keys", sel, frame)),
@@ -1822,6 +1840,18 @@ def _keys_edited(*_args):
         widget.keys_edited = True       # a deletion of many keys plays as a wave, not a reload
 
 
+def _command(command, *_args):
+    """Every MEL command Maya runs passes here: only a setKeyframe is looked at."""
+    if not command.startswith("setKeyframe"):
+        return
+    widget = current()
+    if widget is not None:
+        found = look.set_key_command(command)
+        if found is not None:
+            widget.keys_set.append(found)
+            widget.keys_dirty = True
+
+
 def _drop_callbacks():
     state = _state()
     try:
@@ -1873,6 +1903,11 @@ def start_jobs():
     try:
         import maya.api.OpenMayaAnim as oma
         callbacks.append(oma.MAnimMessage.addAnimKeyframeEditedCallback(_keys_edited))
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        import maya.api.OpenMaya as om
+        callbacks.append(om.MCommandMessage.addCommandCallback(_command))
     except Exception:                                        # noqa: BLE001
         pass
     _state()["callbacks"] = callbacks

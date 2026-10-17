@@ -11693,6 +11693,22 @@ sparks); the same day the animator: «откатив все эффекты ве�
   (`spark_sprite`). A 1000-key wave: setup 9 ms, frames ≤ 6.3 ms (the timeline's own redraw after the keys go,
   68 ms, is there without the wave too). PySide6's `drawPixmapFragments` takes one fragment, not a list.
   133 timebar tests.
+- **…the sparks replaced: a deleted key BREAKS, the wave twice as slow; a key set over a key flashes** (the same
+  day: «3-5 кусочков которые разлетаются и по объему повторяют сам ключ ... скорость удаления массива ключей можно
+  замедлить в двое», then «эффект постановки ключа должен срабатывать даже если ключ уже стоял»). This replaces
+  the sparks and the 300 ms above.
+  - `look.shards`: the key's own rectangle (its cell, or its line between frames) cut down its height into 3..5
+    uneven pieces (`shard_cuts`, `SHARDS`) that together ARE the key at age 0. They part left and right
+    alternately, are kicked up (the top ones higher), spin, fall, and fade over the last half. `EFFECT_MS`
+    delete 700.
+  - The wave: `DELETE_STEP_MS` 80, `DELETE_TOTAL_MS` 600, `DELETE_LIFE_MIN` 360. Past `SHARD_BUDGET` (900
+    pieces) neighbouring keys break as one block of their keys (`shard_groups`): 1000 keys, a pixel or two
+    each, throw ~900 pieces, not 3000. A piece is a `fillRect` under its own transform (3000 in 8.7 ms
+    antialiased; paths of many subpaths were slower). A 1000-key wave: frames ≤ 8.2 ms.
+  - A key set over a standing key changes no key time, so Maya's MEL `setKeyframe` (the S key, Channel Box ›
+    Key) is read off `MCommandMessage.addCommandCallback` (`look.set_key_command`: `-t`/`-time`, else the
+    current frame; a Python `cmds.setKeyframe` is not reported) and flashes when its frame holds a key; the
+    strip's own Set key marks itself. 138 timebar tests. Not seen in a GUI Maya.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

@@ -508,7 +508,7 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), ["delete"])
         self.paint()
 
-    def test_many_deleted_keys_play_left_to_right_within_300_ms(self):
+    def test_many_deleted_keys_play_left_to_right_within_600_ms(self):
         import time as _time
         self.link.s.update(p0=0.0, p1=999.0, a0=0.0, a1=999.0)
         self.link.k = ([float(f) for f in range(1000)], [])
@@ -519,20 +519,23 @@ class KeyEffects(Strip):
         self.strip.refresh(keys=True)
         self.assertEqual(self.strip.keys, [])           # the keys are gone at once
         items = self.strip.fx.items
-        self.assertEqual(len(items), 1000)
+        shown = [f for f in range(1000) if self.tl.track().v0 - 0.5 <= f <= self.tl.track().v1 + 1.5]
+        self.assertEqual(len(items), len(look.shard_groups(len(shown))))
+        self.assertLessEqual(len(items) * look.SHARDS[0], look.SHARD_BUDGET + look.SHARDS[0])
         xs = [i["cx"] for i in items]
         delays = [i["delay"] for i in items]
         self.assertEqual(xs, sorted(xs))                # left to right
         self.assertEqual(delays, sorted(delays))
-        self.assertLessEqual(max(d + i["life"] for d, i in zip(delays, items)), 300 + 1e-6)
+        self.assertLessEqual(max(d + i["life"] for d, i in zip(delays, items)), 600 + 1e-6)
+        self.assertTrue(all(len(i["rect"]) == 4 for i in items))
         start = self.strip.clock()
-        for at in (0, 100, 200):
+        for at in (0, 200, 400):
             self.strip.clock = (lambda t=start + at: t)
             t0 = _time.perf_counter()
             self.paint()
             self.assertLess(_time.perf_counter() - t0, 0.25)
-        self.strip.clock = (lambda: start + 301)
-        self.assertFalse(self.strip.fx.busy(start + 301))
+        self.strip.clock = (lambda: start + 601)
+        self.assertFalse(self.strip.fx.busy(start + 601))
 
     def test_a_selection_change_dropping_many_keys_is_no_wave(self):
         self.link.k = ([float(f) for f in range(100)], [])
@@ -541,6 +544,18 @@ class KeyEffects(Strip):
         self.link.k = ([], [])
         self.strip.refresh(keys=True)                   # no key edit reported: another selection
         self.assertEqual(self.kinds(), [])
+
+    def test_a_key_set_over_a_standing_key_flashes(self):
+        self.strip.state["now"] = 12.0
+        self.link.s["now"] = 12.0
+        self.strip.keys_set.append((None, False))       # Maya ran setKeyframe at the current frame
+        self.strip.refresh(keys=True)                   # the key times did not change
+        self.assertEqual(self.kinds(), ["set"])
+        self.strip.fx.items[:] = []
+        self.strip.keys_set.append((13.0, False))       # a frame with no key: nothing
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.strip.keys_set, [])
 
     def test_a_reload_or_a_snap_is_no_edit(self):
         self.link.k = ([float(f) for f in range(0, 100, 3)], [9.0])

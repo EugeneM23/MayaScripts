@@ -504,7 +504,7 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 600, "trail": 380, "play": 420}
+EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420}
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
@@ -568,30 +568,122 @@ def key_changes(old, new, edited=False):
     return added, removed, snapped
 
 
-DELETE_STEP_MS = 40     # a few keys deleted: one after another, this far apart
-DELETE_TOTAL_MS = 300   # many keys deleted: the whole wave, first spark to last, within this
-DELETE_LIFE_MIN = 180   # ... each key's sparks at least this long
-SPARK_BUDGET = 700      # sparks thrown by one wave, over all its keys (a frame stays light)
-SPARKS_MIN = 1
+DELETE_STEP_MS = 80     # a few keys deleted: one after another, this far apart
+DELETE_TOTAL_MS = 600   # many keys deleted: the whole wave, first key to last, within this
+DELETE_LIFE_MIN = 360   # ... each key's shards at least this long
+SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
 
 
-def delete_plan(n, sparks_each=34):
+def delete_plan(n):
     """How `n` deleted keys play, left to right (2026-10-17: «по очереди с лева на
-    право ... не дольше чем 300 мс»): (delays ms per key in time order, each key's
-    life ms, sparks per key). One key plays as it always did; a few follow each
-    other DELETE_STEP_MS apart; past SMALL_CHANGE the whole wave ends by
-    DELETE_TOTAL_MS. The sparks per key shrink so a wave of 1000 stays cheap."""
+    право», then «скорость удаления массива ключей можно замедлить в двое»):
+    (delays ms per key in time order, each key's life ms). One key plays its whole
+    EFFECT_MS; a few follow each other DELETE_STEP_MS apart; past SMALL_CHANGE the
+    whole wave ends by DELETE_TOTAL_MS however many keys."""
     full = EFFECT_MS["delete"]
     if n <= 0:
-        return [], full, sparks_each
-    count = max(SPARKS_MIN, min(sparks_each, SPARK_BUDGET // n))
+        return [], full
     if n == 1:
-        return [0.0], full, count
+        return [0.0], full
     if n <= SMALL_CHANGE:
-        return [DELETE_STEP_MS * i for i in range(n)], full, count
+        return [DELETE_STEP_MS * i for i in range(n)], full
     life = DELETE_LIFE_MIN
     spread = DELETE_TOTAL_MS - life
-    return [spread * i / float(n - 1) for i in range(n)], life, count
+    return [spread * i / float(n - 1) for i in range(n)], life
+
+
+def set_key_command(command):
+    """A MEL command Maya reported: (frame or None, breakdown) when it is a
+    `setKeyframe` - the S key, the Channel Box's Key Selected - else None. A key set
+    over a key that stood changes no key time, so this is how it still flashes
+    (2026-10-17: «эффект постановки ключа должен срабатывать даже если ключ уже
+    стоял»). No `-t`/`-time`: the current frame."""
+    if not command.startswith("setKeyframe"):
+        return None
+    words = command.replace('"', " ").replace(";", " ").split()
+    if not words or words[0] != "setKeyframe":
+        return None
+    frame, breakdown = None, False
+    for i, word in enumerate(words[:-1]):
+        if word in ("-t", "-time") and frame is None:
+            try:
+                frame = float(words[i + 1].split(":")[0])
+            except ValueError:
+                pass
+        elif word in ("-bd", "-breakdown"):
+            breakdown = words[i + 1] in ("1", "true", "on")
+    return frame, breakdown
+
+
+SHARD_BUDGET = 900      # pieces a wave may throw; past it neighbouring keys break as one block
+
+
+def shard_groups(n, budget=SHARD_BUDGET):
+    """[(start, end)] runs of the `n` deleted keys (in time order) that break as one:
+    each key alone while 3 pieces each fit the budget, else runs of neighbours - a
+    wave of 1000 keys, each a pixel or two wide, throws ~900 pieces, not 3000."""
+    if n <= 0:
+        return []
+    size = max(1, -(-n * SHARDS[0] // budget))
+    return [(i, min(n, i + size)) for i in range(0, n, size)]
+
+
+def _rand(state):
+    state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+    return state, (state % 10000) / 10000.0
+
+
+def shard_cuts(seed, height, pieces=None):
+    """Where a key of `height` breaks: [(top, bottom)] of 3..5 pieces (or `pieces`)
+    stacked down it, uneven, together the whole key."""
+    s = (int(seed) * 2654435761) & 0x7FFFFFFF
+    s, a = _rand(s)
+    n = SHARDS[0] + int(a * (SHARDS[1] - SHARDS[0] + 1))
+    n = min(n, SHARDS[1]) if not pieces else int(pieces)
+    sizes = []
+    for _i in range(n):
+        s, b = _rand(s)
+        sizes.append(0.6 + 0.8 * b)
+    total = sum(sizes)
+    cuts, y = [], 0.0
+    for w in sizes:
+        h = height * w / total
+        cuts.append((y, y + h))
+        y += h
+    return cuts
+
+
+def shards(seed, rect, age_ms, ms, speed, gravity, spin=540.0, pieces=None):
+    """A deleted key broken: its 3..5 pieces at `age_ms` - [(cx, cy, w, h, angle,
+    alpha)], logical px, y down, angle in degrees. Each piece starts exactly where it
+    was in the key (together they ARE the key at age 0), is kicked up and away from
+    the key's middle, spins and falls; it fades over the last half. Seeded, so a
+    paint at any time reads the same flight. `rect` = (left, top, width, height)."""
+    if age_ms < 0 or age_ms >= ms:
+        return []
+    left, top, w, h = rect
+    t = age_ms / 1000.0
+    u = age_ms / float(ms)
+    alpha = 1.0 if u < 0.5 else 1.0 - (u - 0.5) / 0.5
+    cuts = shard_cuts(seed, h, pieces)
+    s = (int(seed) * 40503 + 7) & 0x7FFFFFFF
+    s, r0 = _rand(s)
+    first = -1.0 if r0 < 0.5 else 1.0
+    mid = top + h / 2.0
+    out = []
+    for i, (a, b) in enumerate(cuts):
+        s, r2 = _rand(s)
+        s, r3 = _rand(s)
+        cy0 = top + (a + b) / 2.0
+        side = first if i % 2 == 0 else -first                  # the pieces part left and right
+        lift = (mid - cy0) / max(h, 1e-6)                       # the top pieces fly higher
+        vx = side * speed * (0.35 + 0.65 * r2)
+        vy = -speed * (0.55 + 0.6 * r3 + 0.8 * lift)
+        cx = left + w / 2.0 + vx * t
+        cy = cy0 + vy * t + 0.5 * gravity * t * t
+        angle = side * spin * (0.4 + 0.6 * r3) * t
+        out.append((cx, cy, w, b - a, angle, alpha))
+    return out
 
 
 def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):

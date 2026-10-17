@@ -331,7 +331,7 @@ class KeyEffectTests(unittest.TestCase):
         self.assertEqual(look.key_changes(None, [1.0]), ([], [], []))
         self.assertEqual(look.key_changes([], list(map(float, range(20)))), ([], [], []))
 
-    def test_sparks_are_a_formula_of_their_age_and_fall(self):
+    def test_sparks_are_a_formula_of_their_age_and_fall(self):  # the old delete effect, kept
         a = look.sparks(3, 24, 500, 600, 170, 620)
         self.assertEqual(a, look.sparks(3, 24, 500, 600, 170, 620))
         self.assertEqual(len(a), 24)
@@ -341,11 +341,12 @@ class KeyEffectTests(unittest.TestCase):
     def test_progress(self):
         self.assertIsNone(look.progress(-1, "set"))
         self.assertAlmostEqual(look.progress(260, "set"), 0.5)
-        self.assertIsNone(look.progress(600, "delete"))
+        self.assertIsNone(look.progress(look.EFFECT_MS["delete"], "delete"))
 
 
 class DeleteWaveTests(unittest.TestCase):
-    """Keys deleted together go left to right, the wave within 300 ms (2026-10-17)."""
+    """Keys deleted together break one after another left to right, the wave within
+    600 ms (2026-10-17: 300, then «замедлить в двое»)."""
 
     def test_an_edited_pure_deletion_of_many_keys_is_read(self):
         old = list(map(float, range(1000)))
@@ -353,21 +354,76 @@ class DeleteWaveTests(unittest.TestCase):
         self.assertEqual(look.key_changes(old, []), ([], [], []))      # a selection change: a reload
         self.assertEqual(look.key_changes(old, [5000.0], edited=True), ([], [], []))
 
-    def test_one_key_plays_as_it_always_did(self):
-        self.assertEqual(look.delete_plan(1), ([0.0], look.EFFECT_MS["delete"], 34))
+    def test_one_key_plays_its_whole_effect(self):
+        self.assertEqual(look.delete_plan(1), ([0.0], look.EFFECT_MS["delete"]))
 
     def test_a_few_keys_follow_each_other(self):
-        delays, life, _count = look.delete_plan(3)
+        delays, life = look.delete_plan(3)
         self.assertEqual(delays, [0, look.DELETE_STEP_MS, 2 * look.DELETE_STEP_MS])
         self.assertEqual(life, look.EFFECT_MS["delete"])
 
-    def test_many_keys_end_within_300_ms_and_stay_cheap(self):
+    def test_many_keys_end_within_600_ms(self):
+        self.assertEqual(look.DELETE_TOTAL_MS, 600)
         for n in (7, 50, 1000, 10000):
-            delays, life, count = look.delete_plan(n)
+            delays, life = look.delete_plan(n)
             self.assertEqual(len(delays), n)
             self.assertEqual(delays, sorted(delays))
             self.assertLessEqual(delays[-1] + life, look.DELETE_TOTAL_MS + 1e-6)
-            self.assertLessEqual(n * count, max(look.SPARK_BUDGET, n * look.SPARKS_MIN))
+
+    def test_a_key_breaks_into_three_to_five_pieces_that_are_the_key(self):
+        rect = (100.0, 20.0, 12.0, 40.0)
+        counts = set()
+        for seed in range(1, 60):
+            cuts = look.shard_cuts(seed, 40.0)
+            counts.add(len(cuts))
+            self.assertAlmostEqual(cuts[0][0], 0.0)
+            self.assertAlmostEqual(cuts[-1][1], 40.0)
+            for (a, b), (c, _d) in zip(cuts, cuts[1:]):
+                self.assertAlmostEqual(b, c)            # no gap, no overlap
+            start = look.shards(seed, rect, 0, 700, 260, 900)
+            self.assertEqual(len(start), len(cuts))
+            for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
+                self.assertAlmostEqual(cx, 106.0)       # at age 0 each piece sits in the key
+                self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
+                self.assertEqual((w, angle, alpha), (12.0, 0.0, 1.0))
+                self.assertAlmostEqual(h, b - a)
+        self.assertEqual(counts, {3, 4, 5})
+
+    def test_the_pieces_fly_apart_fall_and_fade(self):
+        rect = (100.0, 20.0, 12.0, 40.0)
+        late = look.shards(7, rect, 600, 700, 260, 900)
+        xs = [p[0] for p in late]
+        self.assertTrue(min(xs) < 106.0 < max(xs))      # some go left, some right
+        self.assertTrue(all(p[5] < 0.5 for p in late))
+        self.assertEqual(look.shards(7, rect, 700, 700, 260, 900), [])
+        self.assertEqual(look.shards(7, rect, 300, 700, 260, 900),
+                         look.shards(7, rect, 300, 700, 260, 900))
+
+
+class ShardGroupTests(unittest.TestCase):
+
+    def test_each_key_alone_until_the_budget_then_runs_of_neighbours(self):
+        self.assertEqual(look.shard_groups(0), [])
+        self.assertEqual(look.shard_groups(5), [(i, i + 1) for i in range(5)])
+        many = look.shard_groups(1000)
+        self.assertEqual(many[0][0], 0)
+        self.assertEqual(many[-1][1], 1000)
+        for (a, b), (c, _d) in zip(many, many[1:]):
+            self.assertEqual(b, c)                      # every key in exactly one run
+        self.assertLessEqual(len(many) * look.SHARDS[0], look.SHARD_BUDGET + look.SHARDS[0])
+
+
+class SetKeyCommandTests(unittest.TestCase):
+
+    def test_maya_s_setkeyframe_commands_are_read(self):
+        f = look.set_key_command
+        self.assertEqual(f('setKeyframe "-breakdown" 0 "-preserveCurveShape" 0 "-hierarchy" "none";\n'),
+                         (None, False))
+        self.assertEqual(f('setKeyframe "-at" "ty" "-t" 5 "pCube1";\n'), (5.0, False))
+        self.assertEqual(f('setKeyframe -breakdown 1 -time 12.5 pCube1'), (12.5, True))
+        self.assertIsNone(f('setKeyframeBlendshapeTargetWts;'))
+        self.assertIsNone(f('optionVar "-query" "setKeyframeWhich";'))
+        self.assertIsNone(f('currentTime 5;'))
 
 
 class KeyCellTests(unittest.TestCase):
