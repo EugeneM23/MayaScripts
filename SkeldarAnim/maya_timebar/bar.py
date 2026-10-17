@@ -17,7 +17,6 @@ held wrapper (trap 135).
 Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 """
 
-import math
 import time
 import traceback
 
@@ -214,19 +213,17 @@ def classes():
             path.addRect(QtCore.QRectF(x - kw / 2, y, kw, min(dash, bottom - y)))
             y += dash + gap
 
-    def glow(p, rect, radius, hex_, level, ui, spread=1.0, strength=1.0, edge=True):
+    def glow(p, rect, radius, hex_, level, ui):
         """The radial menu's lit ring: rings fading outward, then a 2 px edge."""
         if level <= 0.01:
             return
         p.setBrush(Qt.NoBrush)
         for i in range(4, 0, -1):
-            p.setPen(QtGui.QPen(colour(hex_, min(255, 46 * strength * level * (5 - i) / 4.0)),
-                                max(1.0, ui * spread)))
-            grow = i * 1.6 * ui * spread
+            p.setPen(QtGui.QPen(colour(hex_, 46 * level * (5 - i) / 4.0), max(1.0, ui)))
+            grow = i * 1.6 * ui
             p.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
-        if edge:
-            p.setPen(QtGui.QPen(colour(hex_, 255 * level), 2 * ui))
-            p.drawRoundedRect(rect, radius, radius)
+        p.setPen(QtGui.QPen(colour(hex_, 255 * level), 2 * ui))
+        p.drawRoundedRect(rect, radius, radius)
 
     def soft_dot(p, cx, cy, r, hex_, alpha):
         """A round glow: a radial gradient from `alpha` at the centre to nothing."""
@@ -239,12 +236,6 @@ def classes():
         p.setPen(Qt.NoPen)
         p.setBrush(QtGui.QBrush(g))
         p.drawEllipse(QtCore.QPointF(cx, cy), r, r)
-
-    def age_u(now, t0, kind):
-        """0..1 through an effect started at `t0`, None when there is none."""
-        if t0 is None:
-            return None
-        return look.progress(now - t0, kind)
 
     # -- a painted control -------------------------------------------------------
 
@@ -264,16 +255,6 @@ def classes():
             self.goal = 0.0
             self.flash_at = None
             self.pop_at = None
-            #  the effects (2026-10-17, the mockup): where the press landed, the
-            #  glyph that is morphing away, the label that is rolling away, the
-            #  loop's turn, the step buttons' push, the bookmark's drop
-            self.press_at, self.press_pos = None, None
-            self.morph = None           # (old glyph, t0)
-            self.roll = None            # (old text, t0)
-            self.spin_at = None
-            self.reveal_at = None
-            self.drop_at = None
-            self.nudge = 0              # -1 / +1: a step button's direction
             self._was_busy = False
             self.index = strip.register(self)
             self._fit()
@@ -299,35 +280,9 @@ def classes():
 
         def set_label(self, text):
             if text != self.text():
-                old = self.text()
                 self.setText(text)
                 self._fit()
-                if old and self.strip.motion and self.style_ == "chip":
-                    self.roll = (old, self.strip.clock())     # the value rolls up
-                    self.strip.kick()
                 self.update()
-
-        def set_glyph(self, glyph):
-            """A new glyph: the old one shrinks away as the new one grows in."""
-            if glyph != self.glyph:
-                old = self.glyph
-                self.glyph = glyph
-                if old and self.strip.motion:
-                    self.morph = (old, self.strip.clock())
-                    self.strip.kick()
-                self.update()
-
-        def spin(self):
-            """The loop's arrows turn a third of a turn."""
-            if self.strip.motion:
-                self.spin_at = self.strip.clock()
-                self.strip.kick()
-
-        def drop(self):
-            """The bookmark's flag drops in with a swing."""
-            if self.strip.motion:
-                self.drop_at = self.strip.clock()
-                self.strip.kick()
 
         def enterEvent(self, event):
             self.goal = 1.0
@@ -340,39 +295,18 @@ def classes():
             super(Pill, self).leaveEvent(event)
 
         def mousePressEvent(self, event):
-            now = self.strip.clock()
-            self.flash_at = now
-            if event.button() == Qt.LeftButton:
-                self.press_at = now
-                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
-                self.press_pos = QtCore.QPointF(pos)
-                self.strip.pressed(self)
+            self.flash_at = self.strip.clock()
             self.strip.kick()
             super(Pill, self).mousePressEvent(event)
 
         def nextCheckState(self):
             super(Pill, self).nextCheckState()
             self.pop_at = self.strip.clock()
-            if self.isChecked() and self.strip.motion:
-                self.reveal_at = self.pop_at        # waves staggered in, a fill sweeping
-
-        def breathing(self):
-            """Auto key's red dot breathes while it is on."""
-            return (self.style_ == "rec" and self.isCheckable() and self.isChecked()
-                    and self.strip.motion and self.isVisible())
 
         def busy(self, now):
-            if (abs(self.hover - self.goal) > 0.005
+            return (abs(self.hover - self.goal) > 0.005
                     or (self.flash_at is not None and now - self.flash_at < FLASH_MS)
-                    or (self.pop_at is not None and now - self.pop_at < POP_MS)
-                    or self.breathing()):
-                return True
-            for t0, kind in ((self.press_at, "press"), (self.morph and self.morph[1], "morph"),
-                             (self.roll and self.roll[1], "roll"), (self.spin_at, "spin"),
-                             (self.reveal_at, "reveal"), (self.drop_at, "drop")):
-                if t0 is not None and age_u(now, t0, kind) is not None:
-                    return True
-            return False
+                    or (self.pop_at is not None and now - self.pop_at < POP_MS))
 
         def step(self, dt):
             self.hover = look.approach(self.hover, self.goal, dt, HOVER_MS) if self.strip.motion else self.goal
@@ -395,8 +329,7 @@ def classes():
             pop = 1.0
             if self.pop_at is not None and s.motion and now - self.pop_at < POP_MS:
                 pop = 0.7 + 0.3 * look.back_out((now - self.pop_at) / float(POP_MS))
-            #  a press squeezes it to 0.88 (the mockup), then it springs back
-            z = scale * pop * (1.0 + LIFT * self.hover) * (1.0 - 0.12 * flash)
+            z = scale * pop * (1.0 + LIFT * self.hover) * (1.0 - 0.06 * flash)
             m = self.margin()
             base = QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m)
             p = QtGui.QPainter(self)
@@ -421,41 +354,7 @@ def classes():
             p.setPen(QtGui.QPen(colour(tk["line"]), 1) if self.style_ == "chip" else Qt.NoPen)
             p.setBrush(face)
             p.drawRoundedRect(base, radius, radius)
-            motion = s.motion
-            shape = QtGui.QPainterPath()
-            shape.addRoundedRect(base, radius, radius)
-            # Auto key turned on: the red fill sweeps out from the press
-            reveal = age_u(now, self.reveal_at, "reveal") if motion else None
-            if reveal is not None and self.style_ == "rec" and self.press_pos is not None:
-                p.save()
-                p.setClipPath(shape)
-                r = max(base.width(), base.height()) * 1.2 * look.ease_out_quint(reveal)
-                p.setPen(Qt.NoPen)
-                p.setBrush(colour(REC, 110 * (1.0 - reveal)))
-                p.drawEllipse(self.press_pos, r, r)
-                p.restore()
-            # the press: a hot ripple from where it landed
-            press = age_u(now, self.press_at, "press") if motion else None
-            if press is not None and self.press_pos is not None:
-                p.save()
-                p.setClipPath(shape)
-                r = max(base.width(), base.height()) * (0.25 + 1.1 * look.ease_out_quint(press))
-                soft_dot(p, self.press_pos.x(), self.press_pos.y(), r, RIM, 150 * (1.0 - press))
-                p.restore()
-            # lit: the play button while it plays, a toggle that is on, the
-            # breathing red of Auto key, the hover - brighter than a plain glow
-            lit = self.hover
-            if self.style_ == "play" and s.state.get("playing"):
-                lit = max(lit, 0.75)
-            elif on and self.style_ == "plain" and self.glyph in ("sound", "cache", "loop"):
-                lit = max(lit, 0.35)
-            hue = RIM if self.style_ == "play" else tk["accent"]
-            if self.breathing():
-                breath = 0.5 + 0.5 * math.sin(2 * math.pi * now / float(look.BREATH_MS))
-                glow(p, base, radius, REC, 0.25 + 0.45 * breath, ui, spread=1.3, strength=1.4, edge=False)
-            glow(p, base, radius, hue, lit, ui, spread=1.4, strength=1.5)
-            if press is not None:
-                glow(p, base, radius, tk["accent"], 1.0 - press, ui, spread=1.6, strength=2.0)
+            glow(p, base, radius, RIM if self.style_ == "play" else tk["accent"], self.hover, ui)
             if self.style_ == "play" or flash > 0.5:
                 ink = colour(tk["on_accent"])
             elif self.style_ == "rec" and on:
@@ -468,109 +367,17 @@ def classes():
             if self.glyph:
                 side = 15 * ui
                 gx = base.center().x() - side / 2 if not self.text() else base.left() + 9 * ui
-                grect = QtCore.QRectF(gx, base.center().y() - side / 2, side, side)
-                self._paint_glyph(p, grect, ink, now)
+                draw_glyph(p, self.glyph, QtCore.QRectF(gx, base.center().y() - side / 2, side, side), ink)
                 left = gx + side + 4 * ui
             if self.text():
                 p.setFont(self._font())
+                p.setPen(ink)
                 if self.glyph:
-                    box = QtCore.QRectF(left, base.top(), base.right() - left - 6 * ui, base.height())
-                    p.setPen(ink)
-                    p.drawText(box, Qt.AlignVCenter | Qt.AlignLeft, self.text())
+                    p.drawText(QtCore.QRectF(left, base.top(), base.right() - left - 6 * ui, base.height()),
+                               Qt.AlignVCenter | Qt.AlignLeft, self.text())
                 else:
-                    self._paint_label(p, base, ink, now, flash)
+                    p.drawText(base, Qt.AlignCenter, self.text())
             p.end()
-
-        def _paint_glyph(self, p, rect, ink, now):
-            """The glyph and its motion: a morph from the old one, the loop's turn,
-            the step buttons' push, the bookmark's drop, the gear's turn, the sound's
-            waves coming in one by one."""
-            ui, motion = self.strip.ui, self.strip.motion
-            c = rect.center()
-            angle, dx, dy = 0.0, 0.0, 0.0
-            if self.glyph == "prefs":
-                angle += 60.0 * self.hover                  # the gear turns under the mouse
-            spin = age_u(now, self.spin_at, "spin") if motion else None
-            if spin is not None:
-                angle += -120.0 * (1.0 - look.back_out(spin))
-            if self.nudge:
-                push = look.nudge(age_u(now, self.press_at, "nudge") if motion else None)
-                dx += self.nudge * 5 * ui * push
-            drop = age_u(now, self.drop_at, "drop") if motion else None
-            if drop is not None:
-                dy -= 7 * ui * (1.0 - look.back_out(drop))
-                angle += 18.0 * math.sin(drop * 3 * math.pi) * (1.0 - drop)
-            morph = age_u(now, self.morph[1], "morph") if (motion and self.morph) else None
-            p.save()
-            p.translate(c.x() + dx, c.y() + dy)
-            p.rotate(angle)
-            p.translate(-c.x(), -c.y())
-            if morph is not None:
-                p.save()
-                p.setOpacity(p.opacity() * (1.0 - morph))
-                k = 1.0 - 0.6 * morph
-                p.translate(c)
-                p.rotate(-90.0 * morph)
-                p.scale(k, k)
-                p.translate(-c)
-                draw_glyph(p, self.morph[0], rect, ink)
-                p.restore()
-                k = 0.4 + 0.6 * look.back_out(morph)
-                p.translate(c)
-                p.rotate(90.0 * (1.0 - morph))
-                p.scale(k, k)
-                p.translate(-c)
-            reveal = age_u(now, self.reveal_at, "reveal") if motion else None
-            if reveal is not None and self.glyph == "sound":
-                #  the speaker, then its waves one after the other
-                p.setClipRect(QtCore.QRectF(rect.left(), rect.top(),
-                                            rect.width() * (0.62 + 0.38 * look.ease_out_quint(reveal)),
-                                            rect.height()))
-            draw_glyph(p, self.glyph, rect, ink)
-            p.restore()
-            if self.breathing():
-                breath = 0.5 + 0.5 * math.sin(2 * math.pi * now / float(look.BREATH_MS))
-                soft_dot(p, c.x(), c.y(), 6 * ui * (1.0 + 0.25 * breath), REC, 90 + 90 * breath)
-
-        def _paint_label(self, p, base, ink, now, flash):
-            """A chip's text: the old value rolls up and out as the new one rolls in;
-            its arrow dips on a press."""
-            text, arrow = self.text(), ""
-            if text.endswith(u"\u25be"):
-                text, arrow = text[:-1].rstrip(), u"\u25be"
-            metrics = QtGui.QFontMetricsF(p.font())
-            gap = metrics.horizontalAdvance(" ")
-            aw = metrics.horizontalAdvance(arrow) if arrow else 0.0
-            tw = metrics.horizontalAdvance(text)
-            x0 = base.center().x() - (tw + (gap + aw if arrow else 0.0)) / 2.0
-            roll = age_u(now, self.roll[1], "roll") if (self.strip.motion and self.roll) else None
-            p.save()
-            p.setClipRect(base)
-            if roll is not None:
-                e = look.ease_out_quint(roll)
-                old = self.roll[0]
-                if old.endswith(u"\u25be"):
-                    old = old[:-1].rstrip()
-                full = p.opacity()
-                p.setOpacity(full * (1.0 - e))
-                p.setPen(ink)
-                ow = metrics.horizontalAdvance(old)
-                p.drawText(QtCore.QRectF(base.center().x() - ow / 2.0 - (gap + aw) / 2.0,
-                                         base.top() - base.height() * e, ow + 2, base.height()),
-                           Qt.AlignVCenter | Qt.AlignLeft, old)
-                p.setOpacity(full * e)
-                p.drawText(QtCore.QRectF(x0, base.top() + base.height() * (1.0 - e), tw + 2, base.height()),
-                           Qt.AlignVCenter | Qt.AlignLeft, text)
-                p.setOpacity(full)
-            else:
-                p.setPen(ink)
-                p.drawText(QtCore.QRectF(x0, base.top(), tw + 2, base.height()), Qt.AlignVCenter | Qt.AlignLeft, text)
-            if arrow:
-                dip = 3 * self.strip.ui * flash
-                p.setPen(ink)
-                p.drawText(QtCore.QRectF(x0 + tw + gap, base.top() + dip, aw + 2, base.height()),
-                           Qt.AlignVCenter | Qt.AlignLeft, arrow)
-            p.restore()
 
     # -- the range block -------------------------------------------------------
 
@@ -733,11 +540,6 @@ def classes():
             self.key_lift = {}          # key -> 0..1, eased
             self.head_lift = 0.0
             self.reached = {}           # key -> clock() when the playhead reached it
-            #  the effects (2026-10-17): drawn over the still picture from their age
-            self.effects = []           # {"kind", "t0", ...}
-            self.trail = {}             # frame -> clock() when the scrub left its cell
-            self.glide = None           # (from, to, t0): the playhead gliding there
-            self.pulse_at = None        # the playhead's flag pulsing (play on / off)
             self._static = None         # the still part, drawn once (`_paint`)
             self._static_for = None
             self.static_builds = 0
@@ -757,12 +559,6 @@ def classes():
                 return True
             if self.aim_key is not None and self.key_lift.get(self.aim_key, 0.0) < 0.995:
                 return True
-            if self.effects or self.trail:
-                return True
-            if self.glide is not None and age_u(now, self.glide[2], "glide") is not None:
-                return True
-            if self.pulse_at is not None and age_u(now, self.pulse_at, "play_on") is not None:
-                return True
             return any(now - t0 < KEY_FADE_MS for t0 in self.reached.values())
 
         def step(self, dt):
@@ -780,201 +576,16 @@ def classes():
             now = self.strip.clock()
             for k in [k for k, t0 in self.reached.items() if now - t0 >= KEY_FADE_MS]:
                 del self.reached[k]
-            self.effects = [e for e in self.effects if now - e["t0"] < look.EFFECT_MS[e["kind"]]]
-            for f in [f for f, t0 in self.trail.items() if now - t0 >= look.EFFECT_MS["trail"]]:
-                del self.trail[f]
 
-        # the effects ----------------------------------------------------------
-        def fx(self, kind, **data):
-            if not self.strip.motion:
-                return
-            data.update(kind=kind, t0=self.strip.clock())
-            self.effects.append(data)
-            self.strip.kick()
-
-        def _key_point(self, frame):
-            """Where key `frame` stands, as a point of the strip; None off the view."""
+        def key_effect(self, kind, frame, breakdown=False):
+            """A key set ("set": a round glow) or deleted ("delete": sparks) at `frame`."""
+            st = self.strip
             t = self.track()
-            if not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
-                return None
-            top, bottom = key_span(float(self.height()), self.strip.ui)
-            return self.strip.point_of(self, t.x(frame), (top + bottom) / 2.0)
-
-        def key_set(self, frame, breakdown=False):
-            """A key set: a beam up its frame line, the key white-hot, two rings
-            and sparks thrown up (520 ms)."""
-            st = self.strip
-            if not st.motion:
+            if not st.motion or not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
                 return
-            hex_ = BREAKDOWN if breakdown else st.tokens["accent"]
-            self.reached[frame] = st.clock()
-            self.fx("set", frame=frame, hex=hex_)
-            at = self._key_point(frame)
-            if at is None:
-                return
-            ui, ms = st.ui, look.EFFECT_MS["set"]
-            cx, cy = at
-            st.fx.add("glow", ms, cx=cx, cy=cy, r=30 * ui, hex=hex_, alpha=230)
-            st.fx.add("rings", ms, cx=cx, cy=cy, rx=46 * ui, ry=34 * ui, hex=RIM, width=2.6 * ui)
-            st.fx.add("rings", ms * 0.85, delay=ms * 0.15, cx=cx, cy=cy, rx=40 * ui, ry=28 * ui, hex=hex_,
-                      width=2.0 * ui)
-            st.fx.add("sparks", ms, cx=cx, cy=cy, count=12, speed=190 * ui, gravity=320 * ui,
-                      spread=120.0, hex=hex_, size=1.6)
-
-        def key_deleted(self, frame, breakdown=False):
-            """A key deleted: a flash, a shock ring, the key pinching out, sparks
-            falling (600 ms)."""
-            st = self.strip
-            if not st.motion:
-                return
-            hex_ = BREAKDOWN if breakdown else st.tokens["accent"]
-            self.fx("delete", frame=frame, hex=hex_)
-            at = self._key_point(frame)
-            if at is None:
-                return
-            ui, ms = st.ui, look.EFFECT_MS["delete"]
-            cx, cy = at
-            st.fx.add("glow", ms * 0.6, cx=cx, cy=cy, r=26 * ui, hex=RIM, alpha=230)
-            st.fx.add("rings", ms * 0.7, cx=cx, cy=cy, rx=44 * ui, ry=30 * ui, hex=RIM, width=3.0 * ui)
-            st.fx.add("sparks", ms, cx=cx, cy=cy, count=24, speed=170 * ui, gravity=620 * ui,
-                      spread=360.0, hex=hex_, size=1.5)
-
-        def glide_from(self, before, after):
-            """The playhead glides from `before` to `after` (260 ms); False when it
-            already glides there or nothing moves."""
-            if not self.strip.motion:
-                return False
-            now = self.strip.clock()
-            g = self.glide
-            if g is not None and g[1] == after and age_u(now, g[2], "glide") is not None:
-                return False
-            self.glide = (before, after, now)
-            self.strip.kick()
-            return True
-
-        def play_changed(self, playing):
-            """Play on: a frame closes in round the bar and the flag pulses; off:
-            the pulse."""
-            if not self.strip.motion:
-                return
-            if playing:
-                self.fx("play_on")
-            self.pulse_at = self.strip.clock()
-            self.strip.kick()
-
-        def _draw_effects(self, p, t, w, h):
-            st = self.strip
-            tk, ui, s = st.tokens, st.ui, st.state
-            now = st.clock()
-            accent = tk["accent"]
-            # the scrub's trail: the cells it left, fading
-            for frame, t0 in self.trail.items():
-                u = look.progress(now - t0, "trail")
-                if u is None:
-                    continue
-                c0, c1 = t.cell(frame)
-                p.setPen(Qt.NoPen)
-                p.setBrush(colour(accent, 0.28 * 255 * (1.0 - u)))
-                p.drawRect(QtCore.QRectF(c0, 0, max(1.0, c1 - c0), h))
-            top, bottom = key_span(h, ui)
-            for e in self.effects:
-                u = look.progress(now - e["t0"], e["kind"])
-                if u is None:
-                    continue
-                kind = e["kind"]
-                if kind == "set":
-                    x = t.x(e["frame"])
-                    rise = look.ease_out_quint(min(1.0, u / 0.45))
-                    beam = QtGui.QLinearGradient(0, h, 0, 0)
-                    beam.setColorAt(0.0, colour(RIM, 230 * (1.0 - u)))
-                    beam.setColorAt(1.0, colour(e["hex"], 0))
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QtGui.QBrush(beam))
-                    bw = 7 * ui * (1.0 - 0.5 * u)
-                    p.drawRect(QtCore.QRectF(x - bw / 2, h * (1.0 - rise), bw, h * rise))
-                    # the key rises in with a back ease, white-hot
-                    k = look.back_out(min(1.0, u / 0.5))
-                    mid = (top + bottom) / 2.0
-                    half = (bottom - top) / 2.0 * k
-                    p.setBrush(blend(e["hex"], "#ffffff", 0.85 * (1.0 - u)))
-                    kw = KEY_W * ui * (1.0 + 1.2 * (1.0 - u))
-                    p.drawRect(QtCore.QRectF(x - kw / 2, mid - half, kw, 2 * half))
-                elif kind == "delete":
-                    x = t.x(e["frame"])
-                    c0, c1 = t.cell(e["frame"])
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(colour("#ffffff", 150 * (1.0 - u) ** 2))
-                    p.drawRect(QtCore.QRectF(c0, 0, max(2 * ui, c1 - c0), h))
-                    pinch = 1.0 - look.ease_in_quint(min(1.0, u / 0.7))
-                    if pinch > 0.01:
-                        mid = (top + bottom) / 2.0
-                        half = (bottom - top) / 2.0 * pinch
-                        kw = KEY_W * ui * (1.0 + 1.5 * (1.0 - pinch))
-                        p.setBrush(blend(e["hex"], RIM, 1.0 - pinch))
-                        p.drawRect(QtCore.QRectF(x - kw / 2 * pinch, mid - half, kw * pinch, 2 * half))
-                elif kind == "snap":
-                    hex_ = BREAKDOWN if e.get("bd") else accent
-                    ghost = QtGui.QPainterPath()
-                    add_key(ghost, t.x(e["src"]), h, ui, False)
-                    p.fillPath(ghost, colour(hex_, 200 * (1.0 - u)))
-                    x = t.x(e["src"] + (e["dst"] - e["src"]) * look.back_out(u))
-                    mark = QtGui.QPainterPath()
-                    add_key(mark, x, h, ui, True, width=KEY_W * ui * 1.4)
-                    p.fillPath(mark, blend(hex_, RIM, 0.7 * (1.0 - u)))
-                elif kind == "move":
-                    k = look.back_out(u)
-                    for src, dst in e["pairs"]:
-                        ghost = QtGui.QPainterPath()
-                        add_key(ghost, t.x(src), h, ui, look.on_frame(src))
-                        p.fillPath(ghost, colour(RIM, 110 * (1.0 - u)))
-                        mark = QtGui.QPainterPath()
-                        add_key(mark, t.x(src + (dst - src) * k), h, ui, look.on_frame(dst),
-                                width=KEY_W * ui * 1.3)
-                        p.fillPath(mark, blend(accent, RIM, 0.6 * (1.0 - u)))
-                    a, b = e["target"]
-                    rect = QtCore.QRectF(t.x(a), 1, t.end(b) - t.x(a), h - 2)
-                    glow(p, rect, 3 * ui, HIGHLIGHT, 1.0 - u, ui, strength=1.5)
-                elif kind == "mark":
-                    x0, x1 = t.x(e["start"]), t.x(e["stop"])
-                    if x1 < 0 or x0 > w:
-                        continue
-                    c = QtGui.QColor.fromRgbF(*[max(0.0, min(1.0, float(v))) for v in e["rgb"]])
-                    full = max(2.0, x1 - x0 - 2)
-                    open_ = look.ease_out_quint(min(1.0, u / 0.7))
-                    mid = x0 + 1 + full / 2.0
-                    band = QtCore.QRectF(mid - full * open_ / 2.0, (LABEL_H + 1) * ui, full * open_, BAND_H * ui)
-                    p.setPen(Qt.NoPen)
-                    c.setAlpha(int(200 * (1.0 - u)))
-                    p.setBrush(c)
-                    p.drawRoundedRect(band, 3 * ui, 3 * ui)
-                    glow(p, band, 3 * ui, c.name(), 1.0 - u, ui, strength=1.6, edge=False)
-                elif kind == "loop":
-                    # an orange sweep from the end back to the start
-                    xe, xs = t.end(s["p1"]), t.x(s["p0"])
-                    head = xe + (xs - xe) * look.ease_in_out(u)
-                    tail = 70 * ui
-                    sweep = QtGui.QLinearGradient(head, 0, head + tail, 0)
-                    sweep.setColorAt(0.0, colour(RIM, 200 * (1.0 - u * 0.5)))
-                    sweep.setColorAt(0.25, colour(accent, 150 * (1.0 - u * 0.5)))
-                    sweep.setColorAt(1.0, colour(accent, 0))
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QtGui.QBrush(sweep))
-                    p.drawRect(QtCore.QRectF(head, 0, tail, h))
-
-        def _draw_play_frame(self, p, w, h):
-            """Play on: an accent frame closing in round the bar."""
-            st, now = self.strip, self.strip.clock()
-            for e in self.effects:
-                if e["kind"] != "play_on":
-                    continue
-                u = look.progress(now - e["t0"], "play_on")
-                if u is None:
-                    continue
-                ui = st.ui
-                inset = 1 + 7 * ui * look.ease_out_quint(u)
-                p.setBrush(Qt.NoBrush)
-                p.setPen(QtGui.QPen(colour(st.tokens["accent"], 255 * (1.0 - u)), 1 + 2.5 * ui * (1.0 - u)))
-                p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), 6 * ui, 6 * ui)
+            top, bottom = key_span(float(self.height()), st.ui)
+            cx, cy = st.point_of(self, t.x(frame), (top + bottom) / 2.0)
+            st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"])
 
         def reach(self, before, after):
             """The playhead went from `before` to `after`: the keys it reached light up."""
@@ -1031,12 +642,8 @@ def classes():
             p.drawPixmap(0, 0, self._static)
             p.setClipRect(QtCore.QRectF(1, 1, w - 2, h - 2))
             p.setPen(Qt.NoPen)
-            if st.motion and (self.effects or self.trail):
-                self._draw_effects(p, t, w, h)
             self._draw_moving_keys(p, t, entrance, moving, opacity)
             self._draw_playhead(p, t, w, h)
-            if st.motion and self.effects:
-                self._draw_play_frame(p, w, h)
             p.end()
 
         def _static_key(self, t, w, h, with_keys, moving):
@@ -1199,15 +806,7 @@ def classes():
         def _draw_playhead(self, p, t, w, h):
             st = self.strip
             tk, ui, s = st.tokens, st.ui, st.state
-            now = st.clock()
             c0, c1 = t.cell(s["now"])
-            g = self.glide
-            gu = age_u(now, g[2], "glide") if (g is not None and st.motion) else None
-            if gu is not None and g[1] == s["now"]:
-                #  gliding there: the cell slides from the frame it left
-                f0, f1 = math.floor(g[0] + 1e-9), math.floor(g[1] + 1e-9)
-                shown = f0 + (f1 - f0) * look.ease_in_out(gu)
-                c0, c1 = t.x(shown), t.x(shown + 1)
             x = (c0 + c1) / 2.0
             head = colour(HIGHLIGHT if self.drag and self.drag[0] == "mid" else tk["accent"])
             p.setPen(Qt.NoPen)
@@ -1220,9 +819,7 @@ def classes():
             p.setBrush(head)
             p.drawRect(QtCore.QRectF(cx, 0, cw, 1.5 * ui))
             p.drawRect(QtCore.QRectF(cx, h - 1.5 * ui, cw, 1.5 * ui))
-            pu = age_u(now, self.pulse_at, "play_on") if (self.pulse_at is not None and st.motion) else None
-            pulse = math.sin(math.pi * pu) if pu is not None else 0.0
-            fz = (1.0 + 0.12 * self.head_lift) * (1.0 + 0.25 * pulse)
+            fz = 1.0 + 0.12 * self.head_lift
             bold = QtGui.QFont("Consolas")
             bold.setBold(True)
             bold.setPixelSize(max(8, int(10 * ui * fz)))
@@ -1232,7 +829,7 @@ def classes():
             th = 14 * ui * fz
             fx = min(max(x - tw / 2, 1), w - tw - 1)
             flag = QtCore.QRectF(fx, h - th, tw, th)          # at the bottom, as Maya's
-            glow(p, flag, 3 * ui, head.name(), max(self.head_lift * 0.8, pulse), ui, strength=1.0 + pulse)
+            glow(p, flag, 3 * ui, head.name(), self.head_lift * 0.8, ui)
             p.setPen(Qt.NoPen)
             p.setBrush(head)
             p.drawRoundedRect(flag, 3 * ui, 3 * ui)
@@ -1315,10 +912,7 @@ def classes():
             elif kind in ("hmove", "h0", "h1"):
                 selection, target = self.drag[3], self.preview
                 if target and target != selection:
-                    pairs = [(k, look.mapped(k, selection, target)) for k in st.keys + st.breakdowns
-                             if look.inside(k, selection)]
-                    st._quiet_keys = True
-                    self.fx("move", pairs=pairs, target=tuple(target))
+                    st._quiet_keys = True               # a move is no set and delete
                     st.call("move_keys", selection, target)
                     s["highlight"] = target
                     st.call("set_highlight", target)
@@ -1375,8 +969,6 @@ def classes():
             before = s["now"]
             s["now"] = frame
             self.reach(before, frame)
-            if self.strip.motion:
-                self.trail[math.floor(before + 1e-9)] = self.strip.clock()
             self.strip.show_now()
             self.repaint()
             t1 = time.perf_counter()
@@ -1386,13 +978,12 @@ def classes():
                 meter["ours"].append((t1 - t0) * 1000.0)
                 meter["mayas"].append((time.perf_counter() - t1) * 1000.0)
 
-    # -- the effects' overlay ------------------------------------------------------
+    # -- the key effects' overlay -------------------------------------------------
 
     class FxLayer(QtWidgets.QWidget):
-        """Over the whole strip, deaf to the mouse: the rings, sparks and glows of
-        the effects (2026-10-17), which fly past the control that made them. Each
-        is drawn from its age alone - a spark's flight is a formula, not a state -
-        and the layer paints only while one is alive."""
+        """Over the whole strip, deaf to the mouse: a key set flashes a round glow,
+        a key deleted throws sparks (2026-10-17). Each is drawn from its age alone -
+        a spark's flight is a formula - and the layer paints only while one lives."""
 
         def __init__(self, strip):
             super(FxLayer, self).__init__(strip)
@@ -1404,17 +995,17 @@ def classes():
             self._was_busy = False
             self._seed = 1
 
-        def add(self, kind, ms, delay=0.0, **data):
+        def add(self, kind, **data):
             if not self.strip.motion:
                 return
             self._seed += 1
-            data.update(kind=kind, ms=float(ms), t0=self.strip.clock() + delay, seed=self._seed)
+            data.update(kind=kind, t0=self.strip.clock(), seed=self._seed)
             self.items.append(data)
             self.raise_()
             self.strip.kick()
 
         def busy(self, now):
-            self.items = [i for i in self.items if now - i["t0"] < i["ms"]]
+            self.items = [i for i in self.items if look.progress(now - i["t0"], i["kind"]) is not None]
             return bool(self.items)
 
         def paintEvent(self, _event):
@@ -1423,49 +1014,29 @@ def classes():
             try:
                 p = QtGui.QPainter(self)
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
-                now = self.strip.clock()
-                for item in self.items:
-                    age = now - item["t0"]
-                    if 0 <= age < item["ms"]:
-                        getattr(self, "_" + item["kind"])(p, item, age / item["ms"], age)
+                now, ui = self.strip.clock(), self.strip.ui
+                for i in self.items:
+                    age = now - i["t0"]
+                    u = look.progress(age, i["kind"])
+                    if u is None:
+                        continue
+                    if i["kind"] == "set":
+                        # a round flash, out and gone
+                        soft_dot(p, i["cx"], i["cy"], 30 * ui * (0.6 + 0.4 * look.back_out(min(1.0, u / 0.4))),
+                                 i["hex"], 235 * (1.0 - u) ** 2)
+                        soft_dot(p, i["cx"], i["cy"], 9 * ui, RIM, 200 * (1.0 - u) ** 3)
+                    else:
+                        for dx, dy, life in look.sparks(i["seed"], 24, age, look.EFFECT_MS["delete"],
+                                                        170 * ui, 620 * ui):
+                            size = 1.5 * ui * (0.5 + 0.5 * life)
+                            p.setPen(Qt.NoPen)
+                            p.setBrush(colour(i["hex"], 255 * life))
+                            p.drawEllipse(QtCore.QPointF(i["cx"] + dx, i["cy"] + dy), size, size)
                 p.end()
             except Exception:                                # noqa: BLE001
                 if not getattr(self, "_failed", False):
                     print(traceback.format_exc())
                 self._failed = True
-
-        def _rings(self, p, i, u, _age):
-            e = look.ease_out_quint(u)
-            p.setBrush(Qt.NoBrush)
-            p.setPen(QtGui.QPen(colour(i["hex"], 235 * (1.0 - u) ** 1.4), i["width"] * (1.0 - 0.6 * u)))
-            p.drawEllipse(QtCore.QPointF(i["cx"], i["cy"]), i["rx"] * (0.15 + 0.85 * e), i["ry"] * (0.15 + 0.85 * e))
-
-        def _glow(self, p, i, u, _age):
-            soft_dot(p, i["cx"], i["cy"], i["r"] * (0.7 + 0.3 * u), i["hex"], i.get("alpha", 210) * (1.0 - u) ** 2)
-
-        def _sparks(self, p, i, _u, age):
-            ui = self.strip.ui
-            for dx, dy, life in look.sparks(i["seed"], i["count"], age, i["ms"], i["speed"],
-                                            i["gravity"], up=i.get("up", True), spread=i.get("spread", 180.0)):
-                x, y = i["cx"] + dx, i["cy"] + dy
-                size = i.get("size", 1.6) * ui * (0.5 + 0.5 * life)
-                soft_dot(p, x, y, size * 3.2, i["hex"], 150 * life)
-                p.setPen(Qt.NoPen)
-                p.setBrush(colour(RIM, 255 * life))
-                p.drawEllipse(QtCore.QPointF(x, y), size, size)
-
-        def _frame_glow(self, p, i, u, _age):
-            glow(p, i["rect"], i["radius"], i["hex"], 1.0 - u, self.strip.ui, spread=1.4, strength=1.8)
-
-        def _plus(self, p, i, u, _age):
-            ui = self.strip.ui
-            font = QtGui.QFont(self.font())
-            font.setBold(True)
-            font.setPixelSize(max(9, int(13 * ui)))
-            p.setFont(font)
-            p.setPen(colour(i["hex"], 255 * (1.0 - u) ** 1.2))
-            y = i["cy"] - 18 * ui * look.ease_out_quint(u)
-            p.drawText(QtCore.QRectF(i["cx"] - 10 * ui, y - 10 * ui, 20 * ui, 20 * ui), Qt.AlignCenter, "+")
 
     # -- the strip -------------------------------------------------------------------
 
@@ -1536,7 +1107,7 @@ def classes():
             self.sound = Pill(self, "sound", tip="Sound under the frames", toggle=True)
             self.auto = Pill(self, "auto", tip="Auto key", style="rec", toggle=True)
             self.prefs = Pill(self, "prefs", tip="Time slider preferences")
-            self.loop.clicked.connect(lambda *_a: (self.loop.spin(), self._do("cycle_loop")))
+            self.loop.clicked.connect(lambda *_a: self._do("cycle_loop"))
             self.cache.clicked.connect(lambda *_a: self._do("toggle_cache"))
             self.speed.clicked.connect(lambda *_a: self._speed_menu())
             self.sound.clicked.connect(lambda *_a: self._sound_menu())
@@ -1574,18 +1145,15 @@ def classes():
                     ("nfrm", "Step forward a frame", lambda: self._go("nfrm"), False),
                     ("end", "Go to end", lambda: self._go("end"), False)):
                 b = Pill(self, name, tip=tip, style="play" if name == "play" else "plain", accent_glyph=accent)
-                b.nudge = {"start": -1, "pfrm": -1, "pkey": -1, "back": -1,
-                           "nkey": 1, "nfrm": 1, "end": 1}.get(name, 0)
                 b.clicked.connect(lambda *_a, f=action: (f(), self.refresh()))
                 bottom.addWidget(b)
                 self.transport[name] = b
             self.play, self.prev, self.next = self.transport["play"], self.transport["pkey"], self.transport["nkey"]
-            # the effects (2026-10-17)
+            # the key effects (2026-10-17)
             self.fx = FxLayer(self)
             self.fx.setGeometry(self.rect())
             self._keys_read = False     # the first read of the keys is no edit
-            self._quiet_keys = False    # a key move draws its own effect
-            self._was_playing = None
+            self._quiet_keys = False    # a key move is no set and delete
             # timers
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(TIMER_MS)
@@ -1729,37 +1297,6 @@ def classes():
             g = widget.mapTo(self, QtCore.QPoint(int(round(x)), int(round(y))))
             return float(g.x()), float(g.y())
 
-        def pressed(self, pill):
-            """A press: a ring out of the button and its sparks (the mockup)."""
-            if not self.motion:
-                return
-            ui, m = self.ui, pill.margin()
-            cx, cy = self.point_of(pill, pill.width() / 2.0, pill.height() / 2.0)
-            w, h = pill.width() - 2 * m, pill.height() - 2 * m
-            hue = RIM if pill.style_ == "play" else self.tokens["accent"]
-            self.fx.add("rings", look.EFFECT_MS["press"], cx=cx, cy=cy, rx=w * 0.95, ry=h * 1.05,
-                        hex=hue, width=2.2 * ui)
-            self.fx.add("sparks", look.EFFECT_MS["press"], cx=cx, cy=cy, count=8, speed=120 * ui,
-                        gravity=160 * ui, spread=300.0, hex=self.tokens["accent"], size=1.3)
-
-        def glow_field(self):
-            """The frame field glows when the time jumps."""
-            if not self.motion:
-                return
-            m = 1
-            x0, y0 = self.point_of(self.field, m, m)
-            rect = QtCore.QRectF(x0, y0, self.field.width() - 2 * m, self.field.height() - 2 * m)
-            self.fx.add("frame_glow", look.EFFECT_MS["field"], rect=rect, radius=5 * self.ui,
-                        hex=self.tokens["accent"])
-
-        def jumped(self, before, after):
-            """The time went from `before` to `after` by a press (a step, a key, the
-            field): the playhead glides there and the field glows."""
-            if self.state.get("playing") or abs(after - before) < 1.5:
-                return
-            if self.timeline.glide_from(before, after):
-                self.glow_field()
-
         def kick(self):
             if not self.anim.isActive():
                 self._last_step = self.clock()
@@ -1823,38 +1360,29 @@ def classes():
                 self.keys_dirty = True
             if self.keys_dirty and (force or not self.state.get("playing")):
                 found = self.call("keys")
-                old_keys, old_bds, old_marks = self.keys, self.breakdowns, self.marks
+                old_keys, old_bds = self.keys, self.breakdowns
                 if found is not None:
                     self.keys, self.breakdowns = list(found[0]), list(found[1])
                     self.keys_dirty = False
-                self.marks = self.call("bookmarks") or []
-                if found is not None:
                     if self._keys_read and not self._quiet_keys:
-                        self._edit_effects(old_keys, old_bds, old_marks)
+                        self._key_effects(old_keys, old_bds)
                     self._keys_read, self._quiet_keys = True, False
+                self.marks = self.call("bookmarks") or []
             self._sound()
             self._paint_widgets()
             self.timeline.update()
             self.range.update()
 
-        def _edit_effects(self, old_keys, old_bds, old_marks):
-            """A key set, deleted or snapped, a bookmark added: its effect."""
+        def _key_effects(self, old_keys, old_bds):
+            """A key set flashes, a key deleted throws sparks."""
             if not self.motion:
                 return
-            tl = self.timeline
             for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
-                added, removed, snapped = look.key_changes(old, new)
+                added, removed, _snapped = look.key_changes(old, new)
                 for k in added:
-                    tl.key_set(k, bd)
+                    self.timeline.key_effect("set", k, bd)
                 for k in removed:
-                    tl.key_deleted(k, bd)
-                for src, dst in snapped:
-                    tl.fx("snap", src=src, dst=dst, bd=bd)
-            before = set((m[0], m[1]) for m in old_marks)
-            fresh = [m for m in self.marks if (m[0], m[1]) not in before]
-            if len(fresh) <= 2:
-                for m in fresh:
-                    tl.fx("mark", start=m[0], stop=m[1], rgb=tuple(m[2]))
+                    self.timeline.key_effect("delete", k, bd)
 
         def _sound(self):
             s, t = self.state, self.timeline.track()
@@ -1884,11 +1412,6 @@ def classes():
                 before = self.state["now"]
                 self.state["now"] = now
                 self.timeline.reach(before, now)
-                if self.state.get("playing"):
-                    if now < before - 1:               # the loop went round: a sweep back
-                        self.timeline.fx("loop")
-                elif not self.timeline.drag:
-                    self.jumped(before, now)
                 self.show_now()
                 #  painted now, inside Maya's frame: Maya's playback does not let
                 #  the event loop run between frames, so `update()` drew one frame
@@ -1916,16 +1439,12 @@ def classes():
                                (self.play_end, "p1"), (self.anim_end, "a1")):
                 if not field.hasFocus():
                     field.setText(look.frame_text(s[key]))
-            playing = bool(s["playing"])
-            if self._was_playing is not None and playing != self._was_playing:
-                self.timeline.play_changed(playing)
-            self._was_playing = playing
-            self.play.set_glyph("pause" if playing else "play")
+            self.play.glyph = "pause" if s["playing"] else "play"
             self.play.update()
             self.fps.set_label(look.fps_label(s["unit"]) + u" ▾")
             self.auto.setChecked(bool(s["auto"]))
             loop = s.get("loop") or "continuous"
-            self.loop.set_glyph({"continuous": "loop", "once": "once", "oscillate": "oscillate"}.get(loop, "loop"))
+            self.loop.glyph = {"continuous": "loop", "once": "once", "oscillate": "oscillate"}.get(loop, "loop")
             self.loop.setChecked(loop != "once")
             self.loop.setToolTip("Looping: %s - press for the next" % loop)
             self.cache.setChecked(bool(s.get("cache")))
@@ -1949,7 +1468,6 @@ def classes():
             self.field.clearFocus()
             self.refresh()
             self.timeline.reach(before, self.state["now"])
-            self.jumped(before, self.state["now"])
 
         def _typed_range(self, which, value):
             s = self.state
@@ -1963,24 +1481,18 @@ def classes():
             before = s["now"]
             self.call("set_time", frame)
             self.timeline.reach(before, frame)
-            self.jumped(before, frame)
 
         def _step(self, forward):
             before = self.state["now"]
             self.call("step_key", forward, self.keys + self.breakdowns)
             self.refresh()
             self.timeline.reach(before, self.state["now"])
-            self.jumped(before, self.state["now"])
 
         def _bookmark(self, forward):
             self.call("step_bookmark", forward)
             self.refresh()
 
         def _add_bookmark(self):
-            self.bm_add.drop()
-            if self.motion:
-                cx, cy = self.point_of(self.bm_add, self.bm_add.width() / 2.0, self.bm_add.margin())
-                self.fx.add("plus", look.EFFECT_MS["plus"], cx=cx, cy=cy, hex=self.tokens["accent_text"])
             self.call("add_bookmark", self.state.get("highlight"))
             self.refresh(keys=True)
 

@@ -481,146 +481,57 @@ class Motion(Strip):
         self.assertEqual(self.strip.opening_of(5), (1.0, 1.0))
 
 
-class Effects(Strip):
-    """The mockup's effects (2026-10-17): each press or edit starts its own."""
+class KeyEffects(Strip):
+    """A key set flashes a round glow, a key deleted throws sparks (2026-10-17)."""
 
     motion = True
 
     def kinds(self):
-        return [e["kind"] for e in self.tl.effects]
-
-    def overlay(self):
         return [i["kind"] for i in self.strip.fx.items]
 
-    def paint_all(self):
-        for widget in [self.tl, self.strip.fx] + list(self.strip.moving):
-            widget.grab()
-        self.assertFalse(getattr(self.tl, "_failed", False))
+    def paint(self):
+        self.strip.fx.grab()
         self.assertFalse(getattr(self.strip.fx, "_failed", False))
-        for widget in self.strip.moving:
-            self.assertFalse(getattr(widget, "_failed", False), widget)
 
-    def test_a_key_set_beams_rings_and_sparks(self):
+    def test_a_key_set_flashes(self):
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), ["set"])
-        self.assertIn(20.0, self.tl.reached)
-        self.assertEqual(sorted(self.overlay()), ["glow", "rings", "rings", "sparks"])
-        self.paint_all()
+        self.paint()
 
-    def test_a_key_deleted_pinches_and_throws_sparks(self):
+    def test_a_key_deleted_throws_sparks(self):
         self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), ["delete"])
-        self.assertIn("sparks", self.overlay())
-        self.paint_all()
+        self.paint()
 
-    def test_a_key_snapped_slides_onto_its_frame(self):
-        self.link.k = ([0.0, 6.0, 12.0, 30.5, 40.0], [9.0])
-        self.strip.refresh(keys=True)
-        self.tl.effects[:] = []
-        self.link.k = ([0.0, 6.0, 12.0, 31.0, 40.0], [9.0])
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), ["snap"])
-        self.paint_all()
-
-    def test_a_reload_is_no_edit(self):
+    def test_a_reload_or_a_snap_is_no_edit(self):
         self.link.k = ([float(f) for f in range(0, 100, 3)], [9.0])
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), [])
+        self.link.k = ([0.0, 6.5], [9.0])
+        self.strip.refresh(keys=True)
+        self.strip.fx.items[:] = []
+        self.link.k = ([0.0, 7.0], [9.0])
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.kinds(), [])
 
-    def test_moving_keys_draws_the_move_not_a_delete_and_a_set(self):
-        self.tl.effects[:] = []
+    def test_moving_keys_is_no_set_and_delete(self):
         self.strip.state["highlight"] = (30, 30)
         self.link.k = ([0.0, 6.0, 12.0, 35.0, 40.0], [9.0])
         self.drag(self.tl, self.x(30), self.x(35))
-        self.assertEqual(self.kinds(), ["move"])
-        self.assertEqual(self.tl.effects[0]["pairs"], [(30.0, 35)])
-        self.paint_all()
-
-    def test_a_jump_glides_and_the_field_glows(self):
-        self.strip._go("end")
-        self.assertIsNotNone(self.tl.glide)
-        self.assertEqual(self.tl.glide[1], 60.0)
-        self.assertIn("frame_glow", self.overlay())
-        self.paint_all()
-
-    def test_a_step_of_one_frame_does_not_glide(self):
-        self.strip._go("nfrm")
-        self.assertIsNone(self.tl.glide)
-
-    def test_play_closes_a_frame_and_morphs_the_icon(self):
-        self.strip.play.click()
-        self.assertIn("play_on", self.kinds())
-        self.assertIsNotNone(self.tl.pulse_at)
-        self.assertEqual(self.strip.play.glyph, "pause")
-        self.assertEqual(self.strip.play.morph[0], "play")
-        self.paint_all()
-
-    def test_the_loop_going_round_sweeps_back(self):
-        self.strip.state["playing"] = True
-        self.link.s["playing"] = True
-        self.strip.state["now"] = 59.0
-        self.link.s["now"] = 10.0
-        self.strip.on_time()
-        self.assertIn("loop", self.kinds())
-        self.assertIsNone(self.tl.glide)
-        self.paint_all()
-
-    def test_a_scrub_leaves_a_trail(self):
-        self.drag(self.tl, self.x(20), self.x(25))
-        self.assertTrue(self.tl.trail)
-        self.paint_all()
-
-    def test_a_new_bookmark_unrolls(self):
-        self.link.marks.append((30.0, 40.0, (0.9, 0.5, 0.2), "Hit"))
-        self.strip.bm_add.click()
-        self.assertIn("mark", self.kinds())
-        self.assertIsNotNone(self.strip.bm_add.drop_at)
-        self.assertIn("plus", self.overlay())
-        self.paint_all()
-
-    def test_a_press_ripples_and_sparks(self):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        b = self.strip.prefs
-        self.mouse(b, E.MouseButtonPress, b.width() / 2.0, Qt.LeftButton, Qt.LeftButton)
-        self.assertIsNotNone(b.press_at)
-        self.assertIn("sparks", self.overlay())
-        self.assertTrue(b.busy(self.strip.clock()))
-        self.paint_all()
-
-    def test_the_loop_turns_and_a_chip_rolls(self):
-        self.strip.loop.click()
-        self.assertIsNotNone(self.strip.loop.spin_at)
-        self.strip.fps.set_label(u"24 fps \u25be")
-        self.assertIsNotNone(self.strip.fps.roll)
-        self.paint_all()
-
-    def test_auto_key_breathes_while_on(self):
-        self.assertTrue(self.strip.auto.isChecked())
-        self.assertTrue(self.strip.auto.busy(self.strip.clock() + 10 ** 6))
-        self.strip.motion = False
-        self.assertFalse(self.strip.auto.busy(self.strip.clock() + 10 ** 6))
+        self.assertEqual(self.kinds(), [])
 
     def test_the_effects_end(self):
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
         self.strip.refresh(keys=True)
-        later = self.strip.clock() + 5000
-        self.strip.clock = lambda: later
-        self.tl.step(16)
-        self.assertEqual(self.tl.effects, [])
-        self.assertFalse(self.strip.fx.busy(later))
+        self.assertFalse(self.strip.fx.busy(self.strip.clock() + 5000))
 
-    def test_without_motion_no_effect_starts(self):
+    def test_without_motion_nothing_starts(self):
         self.strip.motion = False
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 40.0], [9.0])
         self.strip.refresh(keys=True)
-        self.strip._go("end")
-        self.strip.play.click()
         self.assertEqual(self.kinds(), [])
-        self.assertEqual(self.overlay(), [])
-        self.assertIsNone(self.tl.glide)
-        self.assertIsNone(self.strip.play.morph)
 
 
 if __name__ == "__main__":
