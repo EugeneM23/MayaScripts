@@ -19,7 +19,7 @@ from maya_ragdoll import plan
 
 GROUP = "skeldarRagdoll"
 SHAPE_CAPSULE, SHAPE_BOX, SHAPE_MESH = 3, 1, 5
-STATIC, DYNAMIC = 0, 2
+STATIC, KINEMATIC, DYNAMIC = 0, 1, 2
 SIXDOF2 = 5
 LOCKED, LIMITED = 1, 2
 #  Bullet collides two bodies when each one's group is in the other's mask. Defaults: group 1,
@@ -104,8 +104,11 @@ class Scene(object):
         cmds.setAttr(sh + ".restitution", self.bounce)
         return t, sh
 
-    def build_capsule(self, key, world, length, radius, mass, velocity, spin, filters=None):
-        t, sh = self._body("ragdoll_" + key, world, DYNAMIC, mass)
+    def build_capsule(self, key, world, length, radius, mass, velocity, spin, filters=None,
+                      kind=DYNAMIC):
+        """A capsule body along its X; `kind` KINEMATIC: it goes where `place` puts it (Blend's
+        Anim zones)."""
+        t, sh = self._body("ragdoll_" + key, world, kind, mass if kind == DYNAMIC else 0.0)
         cmds.setAttr(sh + ".colliderShapeType", SHAPE_CAPSULE)
         cmds.setAttr(sh + ".axis", 0)
         cmds.setAttr(sh + ".length", length)
@@ -178,9 +181,10 @@ class Scene(object):
 
     # ---------------------------------------------------------------- joints
 
-    def build_joint(self, key, parent, world, lo, hi, stiffness, fade_keys):
-        """A SixDOF2 between the parent body and `key`'s at `world` (its frame): linear locked,
-        angular limited to `lo`..`hi` degrees, three angular springs keyed by `fade_keys`."""
+    def build_joint(self, key, parent, world, lo, hi, stiffness, fade_keys, linear=None):
+        """A SixDOF2 between the parent body and `key`'s at `world` (its frame): linear locked (or
+        `linear` = ((min xyz), (max xyz)) cm in the joint's frame as the parent carries it), angular
+        limited to `lo`..`hi` degrees, three angular springs keyed by `fade_keys`."""
         t = cmds.createNode("transform", name="ragdollJoint_" + key, parent=self.group,
                             skipSelect=True)
         cmds.xform(t, worldSpace=True, matrix=plan.flat(world))
@@ -194,8 +198,11 @@ class Scene(object):
         _connect(self.solver + ".startTime", cs + ".startTime")
         _connect(self.solver + ".currentTime", cs + ".currentTime")
         for ax in "XYZ":
-            cmds.setAttr(cs + ".linearConstraint" + ax, LOCKED)
+            cmds.setAttr(cs + ".linearConstraint" + ax, LOCKED if linear is None else LIMITED)
             cmds.setAttr(cs + ".angularConstraint" + ax, LIMITED)
+        if linear is not None:
+            cmds.setAttr(cs + ".linearConstraintMin", *[float(v) for v in linear[0]])
+            cmds.setAttr(cs + ".linearConstraintMax", *[float(v) for v in linear[1]])
         cmds.setAttr(cs + ".angularDamping", JOINT_DAMPING)
         cmds.setAttr(cs + ".angularRestitution", 0.0)
         cmds.setAttr(cs + ".angularConstraintMin", *[float(v) for v in lo])
@@ -209,6 +216,18 @@ class Scene(object):
                                      value=value, inTangentType="flat", outTangentType="flat")
         self.joints[key] = (t, cs)
         return cs
+
+    # ---------------------------------------------------------------- blend (2026-10-17)
+
+    def kick(self, key, j, torque):
+        """Body `key` given `j` (kg*cm/s, world) at its centre and `torque` (kg*cm^2*rad/s, world)
+        on the next step - each acts once a frame (measured: Bullet's capsule inertia is a box's,
+        `plan.capsule_inertia`). `clear_impulses` after the step."""
+        sh = self.bodies[key][1]
+        cmds.setAttr(sh + ".impulse", *[float(v) for v in j])
+        cmds.setAttr(sh + ".impulsePosition", 0, 0, 0)
+        cmds.setAttr(sh + ".torqueImpulse", *[float(v) for v in torque])
+        self._hit.add(key)
 
     # ---------------------------------------------------------------- the run
 
@@ -229,6 +248,7 @@ class Scene(object):
             sh = self.bodies[key][1]
             cmds.setAttr(sh + ".impulse", 0, 0, 0)
             cmds.setAttr(sh + ".impulsePosition", 0, 0, 0)
+            cmds.setAttr(sh + ".torqueImpulse", 0, 0, 0)
         self._hit = set()
 
     def read(self, names=None):

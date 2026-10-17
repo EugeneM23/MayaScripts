@@ -369,11 +369,170 @@ class SelfCollision(unittest.TestCase):
         self.assertTrue(any(pair == ("forearm_l", "spine_lo") and why.startswith("overlap")
                             for pair, why in apart))
 
+    def test_bodies_the_take_brings_together_are_left_apart(self):
+        axes, radii = self._standing()
+        later = dict(axes)
+        later["hand_l"] = (np.array([10.0, 100.0, 0]), np.array([5.0, 105.0, 0]))
+        filters, _apart = plan.collision_filters(axes, radii, poses=[later])
+        self.assertFalse(filters["hand_l"][1] & filters["spine_lo"][0])
+        alone, _apart = plan.collision_filters(axes, radii)
+        self.assertTrue(alone["hand_l"][1] & alone["spine_lo"][0])
+
     def test_segment_distance(self):
         d = plan.segment_distance((0, 0, 0), (10, 0, 0), (5, 3, 0), (5, 8, 0))
         self.assertAlmostEqual(d, 3.0, places=9)
         d = plan.segment_distance((0, 0, 0), (10, 0, 0), (12, 0, 4), (20, 0, 4))
         self.assertAlmostEqual(d, math.hypot(2, 4), places=9)
+
+
+class Blend(unittest.TestCase):
+
+    def test_every_body_has_a_zone_and_every_zone_a_body(self):
+        keys = [row[0] for row in plan.BODIES]
+        self.assertEqual(sorted(set(plan.zone_of(k) for k in keys)), sorted(plan.ZONES))
+        self.assertEqual(plan.zone_of("hand_l"), "arm_l")
+        self.assertEqual(plan.zone_of("foot_r"), "leg_r")
+        self.assertEqual(plan.zone_of("spine_hi"), "torso")
+
+    def test_zones_take_what_is_given_and_keep_the_rest(self):
+        z = plan.zones({"head": ["free", 0.2], "arm_l": ["bogus", 1.0], "leg_r": "x", "tail": 1})
+        self.assertEqual(z["head"], ["free", 0.2])
+        self.assertEqual(z["arm_l"], list(plan.PRESETS[plan.DEFAULT_PRESET][1]["arm_l"]))
+        self.assertEqual(list(z), list(plan.ZONES))
+
+    def test_presets_cover_every_zone(self):
+        for name in plan.PRESETS:
+            self.assertEqual(list(plan.preset(name)), list(plan.ZONES))
+        self.assertEqual(plan.preset("hit")["leg_l"][0], "anim")
+
+    def test_strength_eases_from_the_take_to_the_zone_and_back(self):
+        a, b = 10, 50
+        self.assertAlmostEqual(plan.blend_strength(a, a, b, 6, 10, 0.2), 1.0)
+        self.assertAlmostEqual(plan.blend_strength(a + 6, a, b, 6, 10, 0.2), 0.2)
+        self.assertAlmostEqual(plan.blend_strength(30, a, b, 6, 10, 0.2), 0.2)
+        self.assertAlmostEqual(plan.blend_strength(b, a, b, 6, 10, 0.2), 1.0)
+        mid = plan.blend_strength(a + 3, a, b, 6, 10, 0.2)
+        self.assertTrue(0.2 < mid < 1.0)
+        self.assertAlmostEqual(plan.blend_strength(a, a, b, 0, 0, 0.0), 0.0)
+
+    def test_the_layer_is_the_take_outside_and_eases_out_at_the_end(self):
+        keys = dict(plan.layer_weight_keys(10, 40, 10))
+        self.assertEqual(keys[9], 0.0)
+        self.assertEqual(keys[10], 1.0)
+        self.assertEqual(keys[30], 1.0)
+        self.assertEqual(keys[40], 0.0)
+        self.assertTrue(0.0 < keys[35] < 1.0)
+        none = dict(plan.layer_weight_keys(10, 40, 0))
+        self.assertEqual((none[40], none[41]), (1.0, 0.0))
+
+    def test_the_servo_takes_its_share_of_the_way(self):
+        before = at(np.identity(3), (0, 100, 0))
+        now = at(np.identity(3), (2, 100, 0))           # moving 2 cm a frame along X
+        target = at(turn((0, 1, 0), 30), (10, 100, 0))
+        inertia = plan.capsule_inertia(5.0, 30.0, 5.0)
+        j, torque = plan.servo(before, now, target, 30.0, 1.0, 5.0, inertia, gravity=0.0)
+        self.assertTrue(np.allclose(j, [5.0 * (8 - 2) * 30.0, 0, 0]))
+        spin = math.radians(30.0) * 30.0
+        self.assertTrue(np.allclose(np.abs(torque), [0, inertia[2] * spin, 0]))
+        half, _ = plan.servo(before, now, target, 30.0, 0.5, 5.0, inertia, gravity=0.0)
+        self.assertTrue(np.allclose(half, j * 0.5))
+        none = plan.servo(before, now, target, 30.0, 0.0, 5.0, inertia)
+        self.assertFalse(np.any(none[0]) or np.any(none[1]))
+
+    def test_the_servo_pays_for_gravity_over_the_frame(self):
+        still = at(np.identity(3), (0, 100, 0))
+        j, _t = plan.servo(still, still, still, 30.0, 1.0, 2.0, (1, 1, 1))
+        self.assertAlmostEqual(j[1], 2.0 * plan.G / 30.0)
+
+    def test_bullet_s_capsule_inertia_is_a_box_s(self):
+        along, across, _ = plan.capsule_inertia(5.0, 30.0, 5.0)
+        self.assertAlmostEqual(across, 416.6666, places=3)
+        self.assertAlmostEqual(along, 5.0 / 12.0 * 200.0)
+
+    def test_a_hit_off_centre_turns(self):
+        self.assertTrue(np.allclose(plan.hit_torque((0, 10, 0), (100, 0, 0)), [0, 0, -1000]))
+
+    def test_the_soles_follow_their_foot(self):
+        foot = at(np.identity(3), (0, 10, 0))
+        pts = np.array([[0, 2, 5], [0, 4, -5]])
+        lifted = at(np.identity(3), (0, 30, 0))
+        self.assertEqual(plan.sole_heights(pts, foot, [foot, lifted]), [2.0, 22.0])
+        self.assertEqual(plan.sole_heights(None, foot, [foot]), [])
+
+    def test_a_bone_is_carried_by_its_body_s_change(self):
+        bone = at(turn((0, 1, 0), 30), (1, 2, 3))
+        body = at(turn((1, 0, 0), 10), (0, 1, 0))
+        self.assertTrue(np.allclose(plan.carried_by(bone, body, body), bone))
+        moved = at(turn((0, 0, 1), 20), (5, 1, 0))
+        out = plan.carried_by(bone, body, moved)
+        self.assertTrue(np.allclose(out @ np.linalg.inv(moved), bone @ np.linalg.inv(body)))
+
+    def test_zone_strengths_stop_at_one(self):
+        self.assertEqual(plan.zones({"head": ["follow", 1.7]})["head"], ["follow", 1.0])
+
+    def test_planted_legs_hold_the_pelvis(self):
+        keys = [row[0] for row in plan.BODIES]
+        state, strength = plan.body_states(dict(plan.preset("hit")), keys)
+        self.assertEqual((state["pelvis"], strength["pelvis"]), ("anim", 1.0))
+        self.assertEqual(state["spine_lo"], "follow")
+        state, _s = plan.body_states(dict(plan.preset("follow")), keys)
+        self.assertEqual(state["pelvis"], "follow")
+
+    def test_a_limb_rolls_with_its_bend_plane_and_keeps_it_when_straight(self):
+        bent = {"thigh_l": at(turn((0, 1, 0), 80), (10, 90, 0)),     # the bone's own roll: any
+                "calf_l": at(np.identity(3), (10, 50, 8)),
+                "foot_l": at(np.identity(3), (10, 10, 0))}
+        straight = {"thigh_l": at(turn((0, 1, 0), -40), (10, 90, 0)),
+                    "calf_l": at(np.identity(3), (10, 50, 0)),
+                    "foot_l": at(np.identity(3), (10, 10, 0))}
+        keys = ["thigh_l", "calf_l"]
+        first, second = plan.blend_bodies([bent, straight], keys)
+        normal = np.cross(np.array([0, -40.0, 8]), np.array([0, -40.0, -8]))
+        normal /= np.linalg.norm(normal)
+        for key in keys:
+            self.assertAlmostEqual(abs(float(np.dot(plan.rot(first[key])[1], normal))), 1.0)
+        np.testing.assert_allclose(plan.rot(first["thigh_l"])[1], plan.rot(first["calf_l"])[1],
+                                   atol=1e-9)
+        # straight: no plane, so the roll carries on from the frame before
+        self.assertGreater(float(np.dot(plan.rot(second["thigh_l"])[1],
+                                        plan.rot(first["thigh_l"])[1])), 0.99)
+
+    def test_a_rigid_joint_gets_the_margin_a_shrug_its_reach(self):
+        joint = at(np.identity(3), (0, 100, 0))
+        parent = [at(np.identity(3), (0, 90, 0))] * 3
+        child = [at(np.identity(3), (0, 110, 0))] * 3
+        lo, hi = plan.joint_travel(joint, (0, 100, 0), parent, child, margin=0.5)
+        self.assertEqual((lo, hi), ((-0.5,) * 3, (0.5,) * 3))
+        child = [at(np.identity(3), (0, 110 + dy, 0)) for dy in (0, 4, -2)]
+        lo, hi = plan.joint_travel(joint, (0, 100, 0), parent, child, margin=0.5)
+        self.assertAlmostEqual(hi[1], 4.5)
+        self.assertAlmostEqual(lo[1], -2.5)
+
+    def test_joint_angles_read_the_take_and_widen_the_limits(self):
+        joint = at(np.identity(3), (0, 0, 0))
+        parents = [at(np.identity(3), (0, 0, 0))] * 2
+        children = [at(np.identity(3), (0, 0, 0)), at(turn((0, 0, 1), 30), (0, 0, 0))]
+        angles = plan.joint_angles(joint, parents, children)
+        np.testing.assert_allclose(angles[0], [0, 0, 0], atol=1e-9)
+        np.testing.assert_allclose(angles[1], [0, 0, 30], atol=1e-6)
+        lo, hi = plan.widened((-10, -10, -10), (10, 10, 10), angles, margin=2.0)
+        self.assertEqual(lo, (-10.0, -10.0, -10.0))
+        self.assertAlmostEqual(hi[2], 32.0)
+        lo, hi = plan.widened((0, 0, 0), (0, 0, 0), [(0, 120, 0)], margin=0.0)
+        self.assertEqual(hi[1], plan.MIDDLE_MAX)
+
+    def test_a_drift_is_leaned_against(self):
+        w = turn((1, 1, 0), 24)
+        np.testing.assert_allclose(plan.turn_power(w, 1.0), w, atol=1e-9)
+        half = plan.turn_power(w, 0.5)
+        np.testing.assert_allclose(half @ half, w, atol=1e-9)
+        np.testing.assert_allclose(plan.turn_power(w, -1.0) @ w, np.identity(3), atol=1e-9)
+        a, b = at(turn((0, 0, 1), 10), (1, 2, 3)), at(turn((0, 1, 0), 50), (0, 0, 0))
+        np.testing.assert_allclose(plan.rot(a) @ plan.world_turn(a, b), plan.rot(b), atol=1e-9)
+        target = at(turn((0, 0, 1), 10), (5, 0, 0))
+        np.testing.assert_allclose(plan.aimed(target, w, 0.0), target, atol=1e-9)
+        np.testing.assert_allclose(plan.rot(plan.aimed(target, w, 1.0)) @ w, plan.rot(target),
+                                   atol=1e-9)
 
 
 class Pure(unittest.TestCase):

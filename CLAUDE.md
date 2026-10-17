@@ -11417,6 +11417,47 @@ build on the same gates: **penetration 13-21 cm, 60-77 degrees past the human ra
      `angularSoftness` and `maxNumIterations` change nothing (bit-for-bit); `internalFixedFrameRate` is
      an enum 60 / 120 / 240. Its limits hold to ~5 degrees under a 1500 deg/s spin.
 
+**…and Blend: the take and the ragdoll mixed** (2026-10-17, «Возможно ли сделать режим в котором будет
+смешиваться наша анимация и работа регдола?»; asked: all three kinds - the body following the take, part
+take part physics, a blend in time - six zones in the card with presets, the span plus Blend in / out).
+Spec `docs/superpowers/specs/2026-10-17-ragdoll-blend-design.md` (read its addendum). `maya_ragdoll/blend.py`;
+the card is `[Fall | Blend]` now, hotkey row `ragdoll.blend` (`panel.press_blend`, `press_main`).
+- **The card in Blend**: Length / Mass / Friction / Bounce (both modes), presets **Hit reaction** (legs
+  Anim, the rest Follow 0.5), **Arm overlap** (arms Follow 0.3, the rest Anim), **All follow** (0.6); six
+  rows Torso / Head / Arm L / Arm R / Leg L / Leg R `[Anim | Follow | Free]` + a strength 0..1; Blend in /
+  Blend out, fr; the layer; + Impulse; **Blend**. Fall's muscles and Drop weapon show in Fall only.
+  Settings in `skeldarRagdoll_settings` (`mode`, `zones`, `blend_in`, `blend_out` added).
+- **The run**: the take read on every frame a-1..b; Fall's 16 capsules, all dynamic; each frame each
+  body KICKED toward the take's next frame (`plan.servo`: an impulse and a torque impulse, Strength the
+  share of the way, gravity paid for; Anim 1, Free 0, every zone easing from 1 over Blend in and back over
+  Blend out); half the last frame's landing error leaned against (`plan.aimed`); a limb rolls with its
+  bend plane (`plan.blend_bodies`); the joints' human range grown to the take's own angles and their
+  linear axes to the take's own reach (`plan.widened`, `plan.joint_travel`); bodies the take brings
+  together left apart; the pelvis plays the take whenever a leg does (`plan.body_states`); impulses hit
+  as in Fall (an Anim body's hit is dropped, said).
+- **The bake**: each bone the take turned by its body's SWING only (`plan.swung`, the take's roll kept),
+  laid down the skeleton by the take's offsets (its lengths); an Anim zone's bones and drives the take's
+  exactly. A new layer `RagdollBlend_<a>` (override, 0 before, 1 over the span, easing to 0 over Blend
+  out), else the base layer with nothing after the span cut. Weapons are not dropped.
+- Proof: `verify_ragdoll_blend.py` **14/14 standalone on Manny_Rig, Creep_Rig and Orc_D_Rig**:
+  - All follow at 1: every game bone within 2.75 / 3.17 / 2.74 cm of the take; lengths kept;
+  - the take outside the span 0.000000; one undo / redo; no Bullet node left;
+  - Hit reaction with a 4 m/s head arrow: the leg bones 0.0000-0.0024 cm; the head the same as without
+    the hit before it (0.000), knocked 5.7-6.3 cm, back on the take by the end;
+  - a sprint attack on Manny the same (its Anim leg bodies 3.98 cm, their bones exact).
+  57 plan tests; 7085 unit tests. **Not seen in a GUI Maya** (the card, a real press).
+
+273. **A powered ragdoll follows a take's roll at its peril.** A UE upper arm spins about its own axis up
+     to 80 deg a frame in a sword attack; a capsule servoed to that spin precesses (Bullet's gyroscopic
+     term, an anisotropic inertia) and swung 28 deg off its axis, 15 cm at the hand, while every body's
+     POSITION tracked to 0.5 cm. Servo the roll a joint needs (a limb's bend plane; the chest's, which
+     carries the shoulders), never the bone's. And a joint's linear lock fights a take whose clavicle
+     shrugs the shoulder 10 cm across the chest - give each joint the take's own reach.
+274. **`cmds.currentTime` in a verify between a press and its undo undoes the time, not the press**
+     (trap 222 again): a "run without the hit" undone after tracking it stayed in the scene, and the run
+     with the hit read the first run's layer as its take - 5 cm apart before the hit, with a
+     deterministic Bullet. Undo straight after the press, and compare runs through their cards.
+
 ## Time Bar: Maya's time slider redrawn in the hub's look (2026-10-16)
 
 The animator: «Давай попробуем перерисовать интерфейс таймслайдера маи под наш стиль. Сделай пару макетов а я

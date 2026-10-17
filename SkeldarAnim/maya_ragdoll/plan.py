@@ -19,6 +19,7 @@ Measured (mayapy, 2026-10-16) and relied on here:
 """
 
 import math
+from collections import OrderedDict
 
 import numpy as np
 
@@ -597,11 +598,12 @@ def penetration(axis_a, ra, axis_b, rb):
     return max(0.0, ra + rb - segment_distance(pa, qa, pb, qb))
 
 
-def collision_filters(axes, radii, keys=None):
+def collision_filters(axes, radii, keys=None, poses=()):
     """({body: (group bits, mask bits)}, [(group, group) pairs left apart and why]): every body
     collides with the world and with every other body's group but its own, its jointed neighbours'
     and those it already touches (deeper than OVERLAP_SHARE of the thinner radius). `axes` {body:
-    (start, end)} and `radii` {body: cm} at the fall's first frame."""
+    (start, end)} and `radii` {body: cm} at the fall's first frame; `poses`, more {body: (start,
+    end)} the bodies take (a Blend's take over its span) - a pair touching in any is left apart."""
     keys = [k for k in (keys or [r[0] for r in BODIES]) if k in axes]
     parent = dict((r[0], r[2]) for r in BODIES)
     apart = {}
@@ -619,7 +621,8 @@ def collision_filters(axes, radii, keys=None):
             pair = tuple(sorted((ga, gb)))
             if pair in apart:
                 continue
-            depth = penetration(axes[a], radii[a], axes[b], radii[b])
+            depth = max(penetration(pose[a], radii[a], pose[b], radii[b])
+                        for pose in [axes] + list(poses))
             if depth > OVERLAP_SHARE * min(radii[a], radii[b]) + 1e-9:
                 apart[pair] = "overlap %s-%s %.1f cm" % (a, b, depth)
     out = {}
@@ -750,3 +753,274 @@ def impulse(mass, speed, tip, direction, body):
     d = _unit(np.asarray(direction, dtype=float) @ rot(body))
     tip_w = np.append(np.asarray(tip, dtype=float), 1.0) @ body
     return d * (float(mass) * float(speed) * 100.0), tip_w[:3] - pos(body)
+
+
+# ---------------------------------------------------------------- blend (2026-10-17)
+
+#  Blend: the take and the ragdoll mixed. Six zones, each Anim (on the take at full strength,
+#  baked as the take), Follow (pulled toward the take at its own strength) or Free (pulled only
+#  during the blends)
+ZONES = ("torso", "head", "arm_l", "arm_r", "leg_l", "leg_r")
+ZONE_LABEL = {"torso": "Torso", "head": "Head", "arm_l": "Arm L", "arm_r": "Arm R",
+              "leg_l": "Leg L", "leg_r": "Leg R"}
+STATES = ("anim", "follow", "free")
+STATE_LABEL = {"anim": "Anim", "follow": "Follow", "free": "Free"}
+#  {name: {zone: (state, strength)}}
+PRESETS = OrderedDict((
+    ("hit", ("Hit reaction", dict(
+        [("leg_l", ("anim", 1.0)), ("leg_r", ("anim", 1.0))]
+        + [(z, ("follow", 0.5)) for z in ("torso", "head", "arm_l", "arm_r")]))),
+    ("overlap", ("Arm overlap", dict(
+        [("arm_l", ("follow", 0.3)), ("arm_r", ("follow", 0.3))]
+        + [(z, ("anim", 1.0)) for z in ("torso", "head", "leg_l", "leg_r")]))),
+    ("follow", ("All follow", dict((z, ("follow", 0.6)) for z in ZONES))),
+))
+DEFAULT_PRESET = "hit"
+def zone_of(key):
+    """The zone a body belongs to."""
+    if key in ("pelvis", "spine_lo", "spine_hi"):
+        return "torso"
+    if key == "head":
+        return "head"
+    side = key.rsplit("_", 1)[-1]
+    if key.startswith(("upperarm", "lowerarm", "hand")):
+        return "arm_" + side
+    return "leg_" + side
+
+
+def zones(given=None):
+    """{zone: [state, strength]} - the default preset's, overlaid by `given` (anything broken is
+    left at the default)."""
+    out = OrderedDict((z, list(PRESETS[DEFAULT_PRESET][1][z])) for z in ZONES)
+    for zone, value in (given or {}).items():
+        if zone not in out:
+            continue
+        try:
+            state, strength = value[0], float(value[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if state in STATES:
+            out[zone] = [state, max(0.0, min(strength, 1.0))]
+    return out
+
+
+def body_states(zones_given, keys):
+    """({body: state}, {body: strength}) from the zones - but the pelvis plays the take whenever a
+    leg does: planted legs hold the hips, or the hips would tear off them."""
+    z = zones(zones_given)
+    state = dict((k, z[zone_of(k)][0]) for k in keys)
+    strength = dict((k, float(z[zone_of(k)][1])) for k in keys)
+    if "pelvis" in state and "anim" in (z["leg_l"][0], z["leg_r"][0]):
+        state["pelvis"], strength["pelvis"] = "anim", 1.0
+    return state, strength
+
+
+def preset(name):
+    """{zone: [state, strength]} of a preset."""
+    return OrderedDict((z, list(PRESETS[name][1][z])) for z in ZONES)
+
+
+def smoothstep(u):
+    u = max(0.0, min(1.0, float(u)))
+    return u * u * (3.0 - 2.0 * u)
+
+
+def blend_strength(t, a, b, blend_in, blend_out, strength):
+    """A follow spring's strength at frame `t` of the span `a`..`b`: 1 (the take) at `a`, easing to
+    the zone's `strength` over `blend_in` frames, held, easing back to 1 over the last `blend_out`."""
+    s = float(strength)
+    out = s
+    if blend_in > 0 and t < a + blend_in:
+        out = 1.0 + (s - 1.0) * smoothstep((t - a) / float(blend_in))
+    if blend_out > 0 and t > b - blend_out:
+        back = smoothstep((t - (b - blend_out)) / float(blend_out))
+        out = out + (1.0 - out) * back
+    return out
+
+
+def layer_weight_keys(a, b, blend_out):
+    """[(time, weight)] of the Blend layer: 0 before the span, 1 from `a`, easing to 0 over the
+    last `blend_out` frames (0 at `b`)."""
+    keys = [(a - 1, 0.0), (a, 1.0)]
+    out = max(0, int(round(blend_out)))
+    if out <= 0:
+        return keys + [(b, 1.0), (b + 1, 0.0)]
+    start = max(a, b - out)
+    for t in range(start, b + 1):
+        keys.append((t, 1.0 - smoothstep((t - start) / float(max(1, b - start)))))
+    return keys
+
+
+def capsule_inertia(mass, length, radius):
+    """(about its axis, across, across) of a capsule body `length` cm tip to tip along its X: Bullet's
+    own - a box of length x 2r x 2r (measured: 416.7 for 5 kg, 30 x 5, against 406 for a solid
+    cylinder)."""
+    m = float(mass)
+    w = 2.0 * float(radius)
+    along = m / 12.0 * (w * w + w * w)
+    across = m / 12.0 * (float(length) ** 2 + w * w)
+    return along, across, across
+
+
+def servo(before, now, target, fps, strength, mass, inertia, gravity=G):
+    """(J kg*cm/s, torque kg*cm^2*rad/s), both world: the kick that turns a body standing at `now`
+    (4x4; at `before` a frame earlier) toward where it must be a frame later (`target`), taking
+    `strength` of the way (1: there, if nothing stands in its way; 0: nothing). `inertia` its
+    (along, across, across) about its own X, Y, Z. Gravity's pull over the frame is paid for."""
+    s = max(0.0, min(1.0, float(strength)))
+    if s <= 0.0:
+        return np.zeros(3), np.zeros(3)
+    dt = 1.0 / float(fps)
+    v_now, w_now = velocities(before, now, fps)
+    v_now = v_now - np.array([0.0, gravity * dt * 0.5, 0.0])    # the frame's end, not its middle
+    v_want, w_want = velocities(now, target, fps)
+    v_want = v_want + np.array([0.0, gravity * dt * 0.5, 0.0])
+    j = float(mass) * s * (v_want - v_now)
+    dw = np.radians(s * (w_want - w_now))
+    r = rot(now)
+    torque = r.T @ (np.asarray(inertia, dtype=float) * (r @ dw))
+    return j, torque
+
+
+def hit_torque(point, j):
+    """The torque (world) of an impulse `j` struck `point` (world, from the body's centre) away."""
+    return np.cross(np.asarray(point, dtype=float), np.asarray(j, dtype=float))
+
+
+def swung(take_body, sim_body):
+    """The take's body turned only as far as the ragdoll SWUNG its axis (its X): a capsule is round
+    about its axis, so the roll the ragdoll gives it is no physics - the take's roll is kept (a UE
+    upper arm rolls up to 80 degrees a frame in a sword attack, past what a body can follow)."""
+    x_take, x_sim = rot(take_body)[0], rot(sim_body)[0]
+    return frame(rot(take_body) @ turn_between(x_take, x_sim), pos(sim_body))
+
+
+def carried_by(take_bone, take_body, sim_body):
+    """A bone's world when its body moved from where the take put it to where the ragdoll did."""
+    return take_bone @ np.linalg.inv(take_body) @ sim_body
+
+
+def sole_heights(points, body_then, bodies):
+    """The lowest of a foot's skinned `points` (n x 3 world, read with its body at `body_then`) on
+    each of `bodies` (4x4): where its sole stands frame by frame. No points: nothing."""
+    if points is None or not len(points):
+        return []
+    p = np.asarray(points, dtype=float)
+    local = np.hstack([p, np.ones((len(p), 1))]) @ np.linalg.inv(body_then)
+    return [float(np.min((local @ m)[:, 1])) for m in bodies]
+
+
+# the linear room a Blend joint gets beyond what the take itself does (cm)
+LINEAR_MARGIN = 0.3
+
+
+def joint_travel(joint, child_anchor, parents_now, children_now, margin=LINEAR_MARGIN):
+    """((min xyz), (max xyz)) cm: how far the take moves a joint's child anchor off the joint as its
+    parent body carries it - `joint` and `child_anchor` read at the first frame (4x4, 3), then each
+    frame's parent and child bodies. A rigid joint (a hip) gets the margin only; a shoulder carried
+    by a shrugging clavicle the clavicle's reach - so the joint holds the chain together without
+    fighting the take."""
+    joint = np.asarray(joint, dtype=float)
+    p0, c0 = parents_now[0], children_now[0]
+    on_parent = joint @ np.linalg.inv(p0)
+    local = np.append(np.asarray(child_anchor, dtype=float), 1.0) @ np.linalg.inv(c0)
+    lo, hi = np.zeros(3), np.zeros(3)
+    for p, c in zip(parents_now, children_now):
+        a = on_parent @ p
+        d = ((local @ c)[:3] - pos(a)) @ rot(a).T
+        lo, hi = np.minimum(lo, d), np.maximum(hi, d)
+    return tuple(float(v) for v in lo - margin), tuple(float(v) for v in hi + margin)
+
+
+# a limb's bend plane decides its roll from this bend up (sine of the angle); below BEND_LOOSE the
+# roll is carried on from the frame before
+BEND_LOOSE, BEND_FIRM = math.sin(math.radians(3.0)), math.sin(math.radians(15.0))
+#  each limb body: (upper body, lower body) whose axes make its bend plane
+BEND_PAIRS = {}
+for _s in ("l", "r"):
+    for _up, _lo in (("upperarm_", "lowerarm_"), ("thigh_", "calf_")):
+        BEND_PAIRS[_up + _s] = BEND_PAIRS[_lo + _s] = (_up + _s, _lo + _s)
+
+
+def blend_bodies(worlds_seq, keys):
+    """[{body: 4x4}] for each pose of `worlds_seq`: `body_frame`, but an upper or lower limb rolls
+    with its bend plane (Y along upper x lower) - the roll a hinge needs - rather than with its bone,
+    which a UE clip spins up to 80 deg a frame; a limb near straight carries its roll on from the
+    frame before."""
+    out, prev = [], {}
+    for worlds in worlds_seq:
+        bodies = dict((k, body_frame(k, worlds)) for k in keys)
+        for key in keys:
+            pair = BEND_PAIRS.get(key)
+            if pair is None:
+                continue
+            x = rot(bodies[key])[0]
+            n = np.cross(rot(bodies[pair[0]])[0], rot(bodies[pair[1]])[0])
+            size = float(np.linalg.norm(n))
+            w = smoothstep((size - BEND_LOOSE) / (BEND_FIRM - BEND_LOOSE))
+            n = n / size if size > 1e-9 else rot(bodies[key])[1]
+            if key in prev:
+                carried = prev[key][1] @ turn_between(prev[key][0], x)
+                if np.dot(n, carried) < 0:          # the plane's side carries on: an elbow
+                    n = -n                          # straightening past 0 is not a half roll
+                hint = w * n + (1.0 - w) * carried
+            else:
+                hint = n if w > 0 else rot(bodies[key])[1]
+            y = perpendicular(x, hint)
+            bodies[key] = frame(np.array([x, y, np.cross(x, y)]), pos(bodies[key]))
+            prev[key] = (x, y)
+        out.append(bodies)
+    return out
+
+
+# the angular room a Blend joint gets beyond what the take itself does (degrees); Bullet's middle axis
+# stays inside MIDDLE_MAX
+ANGULAR_MARGIN, MIDDLE_MAX = 3.0, 85.0
+
+
+def joint_angles(joint, parents_now, children_now):
+    """[(x, y, z)] Bullet's angles of a joint at each pose (`euler_xyz` of the child's axes in the
+    joint's frame as the parent carries it), zero at the first."""
+    joint = np.asarray(joint, dtype=float)
+    on_parent = rot(joint) @ rot(parents_now[0]).T
+    on_child = rot(joint) @ rot(children_now[0]).T
+    out = []
+    for p, c in zip(parents_now, children_now):
+        ra, rb = on_parent @ rot(p), on_child @ rot(c)
+        out.append(euler_xyz(ra @ rb.T))
+    return out
+
+
+def widened(lo, hi, angles, margin=ANGULAR_MARGIN):
+    """(lo, hi) degrees grown to hold every one of `angles` (and the margin past it) - a Blend joint
+    never fights the take it follows; the middle axis kept inside MIDDLE_MAX."""
+    a = np.asarray(angles, dtype=float).reshape(-1, 3)
+    lo = np.minimum(np.asarray(lo, dtype=float), a.min(axis=0) - margin)
+    hi = np.maximum(np.asarray(hi, dtype=float), a.max(axis=0) + margin)
+    lo[1], hi[1] = max(lo[1], -MIDDLE_MAX), min(hi[1], MIDDLE_MAX)
+    return tuple(float(v) for v in lo), tuple(float(v) for v in hi)
+
+
+def world_turn(before, now):
+    """The world turn W (3x3 rows) taking `before`'s rotation onto `now`'s: rot(now) = rot(before) W."""
+    return rot(before).T @ rot(now)
+
+
+def turn_power(w, k):
+    """The world turn `w` (3x3) taken `k` times (k fractional, negative: back) about its own axis."""
+    m = np.asarray(w, dtype=float).T                   # column form
+    c = float(np.clip((np.trace(m) - 1.0) * 0.5, -1.0, 1.0))
+    theta = math.acos(c)
+    if theta < 1e-9 or math.pi - theta < 1e-6:
+        return np.identity(3)
+    axis = np.array([m[2, 1] - m[1, 2], m[0, 2] - m[2, 0], m[1, 0] - m[0, 1]]) / (2 * math.sin(theta))
+    a = theta * float(k)
+    kx = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    col = np.identity(3) + math.sin(a) * kx + (1.0 - math.cos(a)) * (kx @ kx)
+    return col.T
+
+
+def aimed(target, drift, k):
+    """`target` (4x4) turned back by `k` of `drift` (a world turn the last frame's step landed off
+    its aim): Bullet's spinning bodies precess, the same way on the next frame."""
+    return frame(rot(target) @ turn_power(drift, -k), pos(target))

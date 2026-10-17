@@ -42,6 +42,10 @@ DEFAULTS = OrderedDict((
     ("bounce", 0.1),
     ("drop_weapon", True),
     ("layer", "new"),          # "new" | "base"
+    ("mode", "fall"),          # "fall" | "blend" (2026-10-17, `blend.py`)
+    ("blend_in", 6.0),
+    ("blend_out", 10.0),
+    ("zones", None),           # {zone: [state, strength]} - `plan.zones`
 ))
 
 NOTHING = "Select any part of a rig - Fall drops it from the current frame"
@@ -64,6 +68,8 @@ def settings(given=None):
         if key in out:
             out[key] = value
     out["layer"] = "base" if out["layer"] == "base" else "new"
+    out["mode"] = "blend" if out["mode"] == "blend" else "fall"
+    out["zones"] = dict(plan.zones(out["zones"] if isinstance(out["zones"], dict) else None))
     return out
 
 
@@ -281,11 +287,19 @@ def card(ref, run, a, b):
         for leaf, (body, m) in drives.items():
             drive_rows[leaf].append(animdata.encode(plan.flat(m @ run["bodies"][t][body])))
     frames = {"bones": order, "world": world_rows, "drive": drive_rows}
+    return card_header(ref, bones, rider_of, a, b, "Ragdoll"), frames
+
+
+def card_header(ref, bones, rider_of, a, b, name):
+    """A Pose Library animation card's header for the rig's own skeleton over `a`..`b`: its members
+    the bones riding a body."""
+    from maya_poselib import animcapture, scene
+    order = list(bones)
     members = [leaf for leaf in order if leaf in rider_of]
     header = animcapture._common("character")
     header.update(animcapture._span(a, b))
     header.update({
-        "name": "Ragdoll",
+        "name": name,
         "key_times": [],
         "character": scene.identity(ref),
         "bones": dict((name, animcapture._static(bone)) for name, bone in bones.items()),
@@ -294,7 +308,7 @@ def card(ref, run, a, b):
         "rig_source": True,
         "objects": [],
     })
-    return header, frames
+    return header
 
 
 # ------------------------------------------------------------------ the layer
