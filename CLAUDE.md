@@ -11709,6 +11709,11 @@ sparks); the same day the animator: «откатив все эффекты ве�
     Key) is read off `MCommandMessage.addCommandCallback` (`look.set_key_command`: `-t`/`-time`, else the
     current frame; a Python `cmds.setKeyframe` is not reported) and flashes when its frame holds a key; the
     strip's own Set key marks itself. 138 timebar tests. Not seen in a GUI Maya.
+  - **The wave's rule changed the same day** («когда ключей много осколки летят сильно далеко и сильно быстро ...
+    полет самих частиц не должен ускоряться ... запустить эффект не позднее чем за 1 секунду»): every key flies
+    exactly as a single key - the whole `EFFECT_MS` 700, the same speed and gravity - and only the starts are
+    staggered, `DELETE_STEP_MS` 80 apart, squeezed so the last starts by `DELETE_START_MS` 1000. The 600 ms
+    total and the faster short-lived pieces are gone. A 1000-key wave: frames ≤ 3.7 ms.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

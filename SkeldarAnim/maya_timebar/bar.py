@@ -1175,12 +1175,9 @@ def classes():
             measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
             fly = 260 * ui
             for i, age in broken:
-                life = i["life"]
-                k = look.EFFECT_MS["delete"] / float(life)     # a short life keeps the reach
                 body = QtGui.QColor(i["hex"])
-                for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, life,
-                                                              fly * k, 900 * ui * k * k,
-                                                              pieces=i.get("pieces")):
+                for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
+                                                              fly, 900 * ui, pieces=i.get("pieces")):
                     body.setAlphaF(alpha)
                     move = QtGui.QTransform()
                     move.translate(cx, cy)

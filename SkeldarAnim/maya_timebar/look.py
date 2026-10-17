@@ -568,28 +568,24 @@ def key_changes(old, new, edited=False):
     return added, removed, snapped
 
 
-DELETE_STEP_MS = 80     # a few keys deleted: one after another, this far apart
-DELETE_TOTAL_MS = 600   # many keys deleted: the whole wave, first key to last, within this
-DELETE_LIFE_MIN = 360   # ... each key's shards at least this long
+DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
+DELETE_START_MS = 1000  # ... but the last one starts within this, however many (2026-10-17)
 SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
 
 
 def delete_plan(n):
-    """How `n` deleted keys play, left to right (2026-10-17: «по очереди с лева на
-    право», then «скорость удаления массива ключей можно замедлить в двое»):
-    (delays ms per key in time order, each key's life ms). One key plays its whole
-    EFFECT_MS; a few follow each other DELETE_STEP_MS apart; past SMALL_CHANGE the
-    whole wave ends by DELETE_TOTAL_MS however many keys."""
+    """How `n` deleted keys play, left to right: (delays ms per key in time order,
+    each key's life ms). Every key breaks exactly as a single key does - the whole
+    EFFECT_MS, the same flight - and only the starts are staggered: DELETE_STEP_MS
+    apart, squeezed so the last starts by DELETE_START_MS (2026-10-17: «полет самих
+    частиц не должен ускоряться ... запустить эффект не позднее чем за 1 секунду»)."""
     full = EFFECT_MS["delete"]
     if n <= 0:
         return [], full
     if n == 1:
         return [0.0], full
-    if n <= SMALL_CHANGE:
-        return [DELETE_STEP_MS * i for i in range(n)], full
-    life = DELETE_LIFE_MIN
-    spread = DELETE_TOTAL_MS - life
-    return [spread * i / float(n - 1) for i in range(n)], life
+    spread = min(DELETE_STEP_MS * (n - 1), DELETE_START_MS)
+    return [spread * i / float(n - 1) for i in range(n)], full
 
 
 def set_key_command(command):

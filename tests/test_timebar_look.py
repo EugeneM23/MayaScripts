@@ -362,13 +362,15 @@ class DeleteWaveTests(unittest.TestCase):
         self.assertEqual(delays, [0, look.DELETE_STEP_MS, 2 * look.DELETE_STEP_MS])
         self.assertEqual(life, look.EFFECT_MS["delete"])
 
-    def test_many_keys_end_within_600_ms(self):
-        self.assertEqual(look.DELETE_TOTAL_MS, 600)
-        for n in (7, 50, 1000, 10000):
+    def test_every_key_flies_whole_and_the_last_starts_within_a_second(self):
+        self.assertEqual(look.DELETE_START_MS, 1000)
+        for n in (2, 7, 13, 50, 1000, 10000):
             delays, life = look.delete_plan(n)
             self.assertEqual(len(delays), n)
             self.assertEqual(delays, sorted(delays))
-            self.assertLessEqual(delays[-1] + life, look.DELETE_TOTAL_MS + 1e-6)
+            self.assertEqual(life, look.EFFECT_MS["delete"])        # the flight of a single key
+            self.assertLessEqual(delays[-1], look.DELETE_START_MS + 1e-6)
+        self.assertEqual(look.delete_plan(7)[0][1], look.DELETE_STEP_MS)   # a few: one step apart
 
     def test_a_key_breaks_into_three_to_five_pieces_that_are_the_key(self):
         rect = (100.0, 20.0, 12.0, 40.0)
