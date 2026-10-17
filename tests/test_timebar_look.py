@@ -402,6 +402,22 @@ class DeleteWaveTests(unittest.TestCase):
                          look.shards(7, rect, 300, 700, 260, 900))
 
 
+class ShardFlightTests(unittest.TestCase):
+
+    def test_the_flight_is_snap_and_drop(self):
+        # variant D of the six played side by side (2026-10-17)
+        self.assertEqual((look.SHARD_SPEED, look.SHARD_FALL, look.SHARD_SPIN), (110.0, 1600.0, 300.0))
+        self.assertEqual(look.EFFECT_MS["delete"], 600)
+        rect = (100.0, 30.0, 12.0, 44.0)
+        far = 0.0
+        for seed in range(1, 40):
+            for age in range(0, 600, 20):
+                for cx, cy, _w, _h, _a, _al in look.shards(seed, rect, age, 600, look.SHARD_SPEED,
+                                                            look.SHARD_FALL):
+                    far = max(far, abs(cx - 106.0))
+        self.assertLess(far, 70.0)                      # a short kick: pieces stay near the key
+
+
 class ShardGroupTests(unittest.TestCase):
 
     def test_each_key_alone_until_the_budget_then_runs_of_neighbours(self):

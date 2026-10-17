@@ -11725,6 +11725,11 @@ sparks); the same day the animator: «откатив все эффекты ве�
     500. Each wave item carries its keys' own rectangles (`ghosts`); while it waits its turn the overlay draws
     them as the keys were, so a key vanishes only when its pieces fly. The data is still gone at once.
     A 1000-key wave: frames ≤ 9.7 ms.
+  - **…the flight is «Snap and drop»** («давай уменьшим дальность разлета или скорость ... тестовые макеты»):
+    six flights were played side by side at the strip's real 84 px, clipped as in Maya
+    (https://claude.ai/artifact/T7Re27ujCv5iAAT3RPyrwv), and the animator picked D: `SHARD_SPEED` 110,
+    `SHARD_FALL` 1600, `SHARD_SPIN` 300 (logical px / s, deg / s), `EFFECT_MS` delete 600. It was 260 / 900 /
+    540 / 700, which threw the pieces out of the strip's top.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

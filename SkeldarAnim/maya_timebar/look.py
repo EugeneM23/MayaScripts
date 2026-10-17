@@ -504,7 +504,7 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420}
+EFFECT_MS = {"set": 520, "delete": 600, "trail": 380, "play": 420}
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
@@ -571,6 +571,11 @@ def key_changes(old, new, edited=False):
 DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
 DELETE_START_MS = 500   # ... but the last one starts within this, however many (2026-10-17: 1 s, then 0.5)
 SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
+# ... and how they fly: «Snap and drop», picked from six played side by side (2026-10-17) -
+# a short kick and a heavy fall, logical px per second (spin degrees per second)
+SHARD_SPEED = 110.0
+SHARD_FALL = 1600.0
+SHARD_SPIN = 300.0
 
 
 def delete_plan(n):
@@ -650,7 +655,7 @@ def shard_cuts(seed, height, pieces=None):
     return cuts
 
 
-def shards(seed, rect, age_ms, ms, speed, gravity, spin=540.0, pieces=None):
+def shards(seed, rect, age_ms, ms, speed, gravity, spin=SHARD_SPIN, pieces=None):
     """A deleted key broken: its 3..5 pieces at `age_ms` - [(cx, cy, w, h, angle,
     alpha)], logical px, y down, angle in degrees. Each piece starts exactly where it
     was in the key (together they ARE the key at age 0), is kicked up and away from

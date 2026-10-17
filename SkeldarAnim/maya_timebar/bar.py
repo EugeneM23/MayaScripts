@@ -1185,11 +1185,11 @@ def classes():
             flying off spinning and falling (2026-10-17: «ключик сломался и разлетелся»).
             A piece is a fillRect under its own transform: the cheapest rotated rectangle
             measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
-            fly = 260 * ui
             for i, age in broken:
                 body = QtGui.QColor(i["hex"])
                 for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
-                                                              fly, 900 * ui, pieces=i.get("pieces")):
+                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui,
+                                                              pieces=i.get("pieces")):
                     body.setAlphaF(alpha)
                     move = QtGui.QTransform()
                     move.translate(cx, cy)
