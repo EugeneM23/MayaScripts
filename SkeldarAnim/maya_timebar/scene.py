@@ -455,14 +455,19 @@ def move_keys(selection, target):
     na, nb = target
     if (na, nb) == (a, b):
         return
+    #  the highlight's cells, [a, b + 1): a key between frames in the last cell
+    #  moves too (2026-10-17, the cells drawn as Maya's slider draws them)
+    span = (a, b + 1 - 1e-3)
     with _chunk("skeldarTimeBarMoveKeys"):
         if b <= a or (nb - na) == (b - a):
-            cmds.keyframe(edit=True, time=(a, b), relative=True, timeChange=na - a, option="over")
+            cmds.keyframe(edit=True, time=span, relative=True, timeChange=na - a, option="over")
         else:
             pivot = b if nb == b else a
-            cmds.scaleKey(time=(a, b), timeScale=float(nb - na) / (b - a), timePivot=pivot)
+            factor = float(nb - na) / (b - a)
+            cmds.scaleKey(time=span, timeScale=factor, timePivot=pivot)
             #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
-            cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b) + 0.5), timeMultiple=1)
+            far = pivot + (b + 1 - pivot) * factor
+            cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
 
 
 def playback_from(selection):

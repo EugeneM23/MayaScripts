@@ -11559,6 +11559,18 @@ same run on the previous build through `TIMEBAR_PLUGIN`):
   (`look.meter_report`; pauses over 0.5 s are not counted). The report goes to the Script Editor and the
   viewport: the animator's A/B, ours against Maya's, in their own scene.
 
+**Frames are cells, as in Maya's slider** (2026-10-17, the animator with two screenshots of Maya's: «кадр он не
+пустой а как бы прямоугольной формы ... метка ключа отображает расположение ключа во времени ... ползунок ...
+закрашивает прямоугольник кадра»):
+- `look.Track(..., cells=True)` (the timeline only): frame f is the cell [f, f + 1), the track runs to v1 + 1,
+  `whole(x)` is the cell x falls in (floor), `cell(f)`, `end(f)`; the wheel zooms over cell edges;
+- the playhead fills its frame's cell (`HEAD_FILL`, accent edges top and bottom), the flag centred on it;
+- a key is a line on its time (`add_key`, `KEY_W` 2.5): solid on a whole frame (`look.on_frame`), dashed where it
+  stands between frames; lit and lifted keys the same mark, wider and glowing;
+- the highlight covers its cells [a, b + 1) (`look.inside`): a move takes a key between frames in the last cell
+  and keeps its fraction (`mapped`, `scene.move_keys`); an edge drag counts frame lines (`Timeline._grip`);
+- the playback range's dimming starts after p1's cell; `passed` lights the keys in the playhead's cell.
+
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
      of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached

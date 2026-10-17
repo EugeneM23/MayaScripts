@@ -169,7 +169,8 @@ class Strip(unittest.TestCase):
         self.mouse(widget, E.MouseButtonRelease, x1, button, Qt.NoButton, mods)
 
     def x(self, frame):
-        return self.tl.track().x(frame)
+        """Just inside frame `frame`'s cell (its left edge is the frame line)."""
+        return self.tl.track().x(frame) + 0.25
 
     def calls(self, name):
         return [e for e in self.link.log if e[0] == name]
@@ -215,10 +216,11 @@ class Time(Strip):
 
     def test_a_press_scrubs_in_maya_s_scrub_mode(self):
         self.drag(self.tl, self.x(40.3), self.x(44.6))
-        self.assertEqual(self.calls("set_time"), [("set_time", 40), ("set_time", 45)])
+        #  a frame is a cell (2026-10-17): 44.6 is inside frame 44's
+        self.assertEqual(self.calls("set_time"), [("set_time", 40), ("set_time", 44)])
         names = [e[0] for e in self.link.log if e[0] in ("begin_scrub", "set_time", "end_scrub")]
         self.assertEqual((names[0], names[-1]), ("begin_scrub", "end_scrub"))
-        self.assertEqual(self.strip.field.text(), "45")
+        self.assertEqual(self.strip.field.text(), "44")
 
     def test_a_scrub_paints_the_new_frame_before_maya_evaluates_it(self):
         painted, seen = [], []
@@ -375,7 +377,7 @@ class Highlight(Strip):
 
     def test_dragging_an_edge_scales_toward_the_other_edge(self):
         self.strip.state["highlight"] = (20, 40)
-        self.drag(self.tl, self.x(40), self.x(50))
+        self.drag(self.tl, self.x(41) - 0.5, self.x(51))      # the right edge: cell 40's end
         self.assertEqual(self.calls("move_keys"), [("move_keys", (20, 40), (20, 50))])
 
     def test_a_single_frame_highlight_moves_its_key(self):
@@ -408,6 +410,7 @@ class Zoom(Strip):
 
     def test_the_wheel_zooms_about_the_mouse_and_framing_goes_back(self):
         x = self.x(30)
+        under = self.tl.track().frame(x)
         local = QT.QtCore.QPointF(x, 10)
         wheel = QT.QtGui.QWheelEvent(local, QT.QtCore.QPointF(self.tl.mapToGlobal(local.toPoint())),
                                      QT.QtCore.QPoint(), QT.QtCore.QPoint(0, 120), QT.QtCore.Qt.NoButton,
@@ -415,7 +418,7 @@ class Zoom(Strip):
         QT.QtWidgets.QApplication.sendEvent(self.tl, wheel)
         t = self.tl.track()
         self.assertLess(t.v1 - t.v0, 50.0)
-        self.assertAlmostEqual(t.frame(x), 30.0, places=3)
+        self.assertAlmostEqual(t.frame(x), under, places=3)
         self.strip.frame_playback()
         self.assertEqual((self.tl.track().v0, self.tl.track().v1), (10.0, 60.0))
 

@@ -35,6 +35,15 @@ PAD = 10                # logical px either side of the timeline's frames
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
 KEY_Y = 21              # the keys' centre
+KEY_W = 2.5             # a key's mark, logical px wide (2026-10-17: a line, as Maya's)
+DASH_W = 0.8            # a key between frames: its dashes this share of a mark's width
+DASH, DASH_GAP = 3.0, 2.0
+HEAD_FILL = 70          # the playhead's cell, its fill's alpha
+
+
+def key_span(h, ui):
+    """(top, bottom) of a key's mark: under the bookmarks band to the bottom."""
+    return (BAND_H + 3) * ui, h - 1.5 * ui
 
 REC = "#e0524a"
 BREAKDOWN = "#6fb7c9"
@@ -187,6 +196,21 @@ def classes():
             hp.end()
             halos[key] = picture
         return picture
+
+    def add_key(path, x, h, ui, whole, width=None):
+        """A key's mark into `path`: a solid bar on its frame line for a key on a
+        whole frame, a dashed one where it stands between frames (2026-10-17,
+        Maya's slider: the mark is where the key is in time)."""
+        top, bottom = key_span(h, ui)
+        kw = (width or KEY_W * ui) * (1.0 if whole else DASH_W)
+        if whole:
+            path.addRect(QtCore.QRectF(x - kw / 2, top, kw, bottom - top))
+            return
+        dash, gap = DASH * ui, DASH_GAP * ui
+        y = top
+        while y < bottom:
+            path.addRect(QtCore.QRectF(x - kw / 2, y, kw, min(dash, bottom - y)))
+            y += dash + gap
 
     def glow(p, rect, radius, hex_, level, ui):
         """The radial menu's lit ring: rings fading outward, then a 2 px edge."""
@@ -512,7 +536,7 @@ def classes():
         def track(self):
             s, pad = self.strip.state, PAD * self.strip.ui
             v0, v1 = self.view or (s["p0"], s["p1"])
-            return look.Track(v0, v1, pad, self.width() - pad)
+            return look.Track(v0, v1, pad, self.width() - pad, cells=True)
 
         # motion -------------------------------------------------------------
         def busy(self, now):
@@ -652,12 +676,12 @@ def classes():
             p.setBrush(colour("#000000", 85))
             if t.x(s["p0"]) > 0:
                 p.drawRect(QtCore.QRectF(0, 0, t.x(s["p0"]), h))
-            if t.x(s["p1"]) < w:
-                p.drawRect(QtCore.QRectF(t.x(s["p1"]), 0, w, h))
+            if t.end(s["p1"]) < w:
+                p.drawRect(QtCore.QRectF(t.end(s["p1"]), 0, w, h))
             # the highlight
             sel = self.preview or s.get("highlight")
             if sel:
-                hx0, hx1 = t.x(sel[0]) - 2 * ui, t.x(sel[1]) + 2 * ui
+                hx0, hx1 = t.x(sel[0]), t.end(sel[1])
                 p.setBrush(colour(HIGHLIGHT, 0x4a))
                 p.drawRoundedRect(QtCore.QRectF(hx0, 1, hx1 - hx0, h - 2), 3 * ui, 3 * ui)
                 p.setBrush(colour(HIGHLIGHT))
@@ -692,14 +716,12 @@ def classes():
             # the keys at rest
             if with_keys:
                 p.setPen(Qt.NoPen)
-                kw, kh = 3 * ui, 14 * ui
                 for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
                     path = QtGui.QPainterPath()
                     for frame in frames:
                         shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
-                        if t.v0 - 1 <= shown <= t.v1 + 1:
-                            path.addRoundedRect(QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh),
-                                                1.5 * ui, 1.5 * ui)
+                        if t.v0 - 1 <= shown <= t.v1 + 2:
+                            add_key(path, t.x(shown), h, ui, look.on_frame(shown))
                     p.fillPath(path, colour(hex_))
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
@@ -707,6 +729,7 @@ def classes():
             or, while the bar bursts out or folds, every key at its own size."""
             st = self.strip
             tk, ui = st.tokens, st.ui
+            h = float(self.height())
             now = st.clock()
             if entrance:
                 frames = [(f, tk["accent"]) for f in st.keys] + [(f, BREAKDOWN) for f in st.breakdowns]
@@ -729,8 +752,11 @@ def classes():
                     g = self.mapToGlobal(QtCore.QPoint(int(t.x(shown)), int(KEY_Y * ui)))
                     ks, burst = st.entrance_of(g.x(), g.y())
                     z *= ks
-                kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
-                rect = QtCore.QRectF(t.x(shown) - kw / 2, KEY_Y * ui - kh / 2, kw, kh)
+                x = t.x(shown)
+                whole = look.on_frame(shown)
+                top, bottom = key_span(h, ui)
+                kw = KEY_W * ui * min(z, 1.6)
+                rect = QtCore.QRectF(x - kw / 2, top, kw, bottom - top)
                 if lift > 0.01:
                     picture = halo(hex_, ui)
                     grow = 4.5 * ui * z / (1.0 + KEY_LIFT)
@@ -745,17 +771,27 @@ def classes():
                     if brush is None:
                         brush = plain[hex_] = colour(hex_)
                     p.setBrush(brush)
-                p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
+                mark = QtGui.QPainterPath()
+                add_key(mark, x, h, ui, whole, width=kw)
+                p.drawPath(mark)
             p.setOpacity(opacity)
 
         def _draw_playhead(self, p, t, w, h):
             st = self.strip
             tk, ui, s = st.tokens, st.ui, st.state
-            x = t.x(s["now"])
+            c0, c1 = t.cell(s["now"])
+            x = (c0 + c1) / 2.0
             head = colour(HIGHLIGHT if self.drag and self.drag[0] == "mid" else tk["accent"])
             p.setPen(Qt.NoPen)
+            #  the frame's cell filled, as Maya's slider fills it (2026-10-17): the
+            #  keys inside it show through; at least a line when cells are thin
+            cw = max(c1 - c0, 2 * ui)
+            cx = x - cw / 2.0
+            p.setBrush(colour(head.name(), HEAD_FILL))
+            p.drawRect(QtCore.QRectF(cx, 0, cw, h))
             p.setBrush(head)
-            p.drawRect(QtCore.QRectF(x - 1 * ui, 0, 2 * ui, h))
+            p.drawRect(QtCore.QRectF(cx, 0, cw, 1.5 * ui))
+            p.drawRect(QtCore.QRectF(cx, h - 1.5 * ui, cw, 1.5 * ui))
             fz = 1.0 + 0.12 * self.head_lift
             bold = QtGui.QFont("Consolas")
             bold.setBold(True)
@@ -776,6 +812,13 @@ def classes():
         # input ------------------------------------------------------------
         def _x(self, event):
             return event.position().x() if hasattr(event, "position") else event.x()
+
+        def _grip(self, part, x, t):
+            """The frame a highlight drag counts from: an edge counts frame lines
+            (it sits on one, the edge of a cell), the body counts cells."""
+            if part in ("h0", "h1"):
+                return int(round(t.frame(x)))
+            return self._frame(x, t)
 
         def _frame(self, x, t=None):
             s = self.strip.state
@@ -801,7 +844,7 @@ def classes():
                 return
             part = look.highlight_hit(t, x, s.get("highlight"), st.ui)
             if part:
-                self.drag = (part, self._frame(x, t), t, tuple(s["highlight"]))
+                self.drag = (part, self._grip(part, x, t), t, tuple(s["highlight"]))
                 self.preview = tuple(s["highlight"])
                 return
             self.drag = ("now", None, t)
@@ -823,7 +866,7 @@ def classes():
                 s["highlight"] = look.highlight(start, self._frame(x, t))
                 self.update()
             else:
-                target = look.key_drag(kind, self.drag[3], start, self._frame(x, t))
+                target = look.key_drag(kind, self.drag[3], start, self._grip(kind, x, t))
                 if target != self.preview:
                     self.preview = target
                     self.update()
@@ -862,7 +905,9 @@ def classes():
             if not delta:
                 return
             at = t.frame(event.position().x() if hasattr(event, "position") else event.x())
-            self.view = look.zoomed(t.v0, t.v1, at, 1.15 if delta < 0 else 1 / 1.15, s["a0"], s["a1"])
+            #  zoomed over the cells' edges, the last cell's end included
+            v0, v1 = look.zoomed(t.v0, t.v1 + 1, at, 1.15 if delta < 0 else 1 / 1.15, s["a0"], s["a1"] + 1)
+            self.view = (v0, v1 - 1)
             self.strip.view_changed()
             event.accept()
 

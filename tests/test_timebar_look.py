@@ -27,6 +27,43 @@ class TrackTests(unittest.TestCase):
         self.assertGreater(t.scale, 0)
 
 
+class CellTests(unittest.TestCase):
+    """2026-10-17: the timeline's frames are cells [f, f + 1), as Maya's slider."""
+
+    def setUp(self):
+        self.t = look.Track(0, 9, 0, 100, cells=True)            # 10 cells of 10 px
+
+    def test_the_last_frame_has_a_whole_cell(self):
+        self.assertAlmostEqual(self.t.scale, 10.0)
+        self.assertEqual(self.t.cell(9), (90.0, 100.0))
+        self.assertEqual(self.t.end(9), 100.0)
+
+    def test_a_press_takes_the_cell_it_falls_in(self):
+        self.assertEqual(self.t.whole(44.0), 4)
+        self.assertEqual(self.t.whole(49.9), 4)
+        self.assertEqual(self.t.whole(50.0), 5)
+
+    def test_a_key_between_frames_stands_in_its_cell(self):
+        self.assertEqual(self.t.cell(6.47), (60.0, 70.0))
+        self.assertTrue(look.on_frame(6.0))
+        self.assertFalse(look.on_frame(6.47))
+
+    def test_the_highlight_holds_its_cells_and_a_move_keeps_the_fraction(self):
+        self.assertTrue(look.inside(40.6, (30, 40)))
+        self.assertFalse(look.inside(41.0, (30, 40)))
+        self.assertAlmostEqual(look.mapped(40.6, (30, 40), (33, 43)), 43.6)
+        self.assertEqual(look.mapped(35.0, (30, 40), (30, 50)), 40)
+
+    def test_the_playhead_lights_the_keys_in_its_cell(self):
+        self.assertEqual(look.passed([6.0, 6.47, 7.0], 30.0, 6.0), [6.0, 6.47])
+
+    def test_without_cells_nothing_changes(self):
+        t = look.Track(0, 10, 0, 100)
+        self.assertAlmostEqual(t.scale, 10.0)
+        self.assertEqual(t.whole(46.0), 5)
+        self.assertEqual(t.end(10), 100.0)
+
+
 class TickTests(unittest.TestCase):
 
     def test_labels_leave_room_for_their_numbers(self):

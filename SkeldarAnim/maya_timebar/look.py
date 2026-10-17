@@ -34,18 +34,38 @@ def fps_label(unit):
 
 
 class Track(object):
-    """The timeline's frame <-> x over [left, right] showing frames [v0, v1]."""
+    """The timeline's frame <-> x over [left, right] showing frames [v0, v1].
 
-    def __init__(self, v0, v1, left, right):
+    With `cells` (the timeline, 2026-10-17, as Maya's own slider) a frame is a
+    cell [f, f + 1): the track runs to v1 + 1, so the last frame's cell is
+    whole, and the frame under an x is the cell it falls in."""
+
+    def __init__(self, v0, v1, left, right, cells=False):
         self.v0, self.v1 = float(v0), float(v1)
-        if self.v1 <= self.v0:
-            self.v1 = self.v0 + 1.0
+        self.cells = bool(cells)
+        if self.v1 < self.v0 or (self.v1 == self.v0 and not self.cells):
+            self.v1 = self.v0 + (0.0 if self.cells else 1.0)
         self.left, self.right = float(left), float(max(right, left + 1))
+
+    @property
+    def span(self):
+        """Frames the track's width holds."""
+        return (self.v1 - self.v0) + (1.0 if self.cells else 0.0)
 
     @property
     def scale(self):
         """px a frame."""
-        return (self.right - self.left) / (self.v1 - self.v0)
+        return (self.right - self.left) / self.span
+
+    def cell(self, frame):
+        """(x0, x1) of the cell frame `frame` falls in."""
+        f = math.floor(frame + 1e-9)
+        return self.x(f), self.x(f + 1)
+
+    def end(self, frame):
+        """The x where whole frame `frame` ends: its cell's right edge, or the
+        frame itself without cells."""
+        return self.x(frame + 1) if self.cells else self.x(frame)
 
     def x(self, frame):
         return self.left + (frame - self.v0) * self.scale
@@ -54,8 +74,9 @@ class Track(object):
         return self.v0 + (x - self.left) / self.scale
 
     def whole(self, x, lo=None, hi=None):
-        """The whole frame under `x`, kept in [lo, hi] when given."""
-        f = int(math.floor(self.frame(x) + 0.5))
+        """The whole frame under `x` (the cell it falls in, with cells), kept in
+        [lo, hi] when given."""
+        f = int(math.floor(self.frame(x) + (1e-9 if self.cells else 0.5)))
         if lo is not None:
             f = max(int(math.ceil(lo)), f)
         if hi is not None:
@@ -97,11 +118,11 @@ def hit(track, x, now, p0, p1, ui=1.0, band=True):
     grip = GRIP * ui
     if x < track.left + grip * 0.5 and x <= track.x(p0) - HANDLE_REACH * ui:
         return "a0"
-    if x > track.right - grip * 0.5 and x >= track.x(p1) + HANDLE_REACH * ui:
+    if x > track.right - grip * 0.5 and x >= track.end(p1) + HANDLE_REACH * ui:
         return "a1"
     if band:
         reach = HANDLE_REACH * ui
-        d0, d1 = abs(x - track.x(p0)), abs(x - track.x(p1))
+        d0, d1 = abs(x - track.x(p0)), abs(x - track.end(p1))
         if min(d0, d1) <= reach:
             return "p0" if d0 <= d1 else "p1"
     return "now"
@@ -188,7 +209,7 @@ def highlight_hit(track, x, selection, ui=1.0):
     if not selection:
         return None
     a, b = selection
-    x0, x1 = track.x(a), track.x(b)
+    x0, x1 = track.x(a), track.end(b)
     reach = HANDLE_REACH * ui
     if b > a:
         if abs(x - x0) <= reach:
@@ -213,14 +234,26 @@ def key_drag(kind, selection, start, frame):
     return a, max(b + d, a + 1)
 
 
+def inside(t, selection):
+    """Key time `t` in the highlight's cells, [first, last + 1)."""
+    a, b = selection
+    return a - 1e-6 <= t < b + 1 - 1e-6
+
+
+def on_frame(t):
+    """A key on a whole frame (a solid mark) rather than between frames (dashed)."""
+    return abs(t - round(t)) < 1e-4
+
+
 def mapped(t, selection, target):
-    """Key time `t` after the highlight `selection` becomes `target`: the keys
-    inside follow linearly, rounded to whole frames; the others stay."""
+    """Key time `t` after the highlight `selection` becomes `target`: the keys in
+    its cells move with it, a key between frames keeping its place in its cell;
+    scaled, they follow linearly and land on whole frames; the others stay."""
     a, b = selection
     na, nb = target
-    if not (a - 1e-6 <= t <= b + 1e-6):
+    if not inside(t, selection):
         return t
-    if b <= a:
+    if b <= a or (nb - na) == (b - a):
         return t + (na - a)
     return int(round(na + (t - a) * float(nb - na) / (b - a)))
 
@@ -233,8 +266,9 @@ def passed(keys, before, now, near=6.0):
         return []
     lo, hi = min(before, now), max(before, now)
     hit = []
+    cell = math.floor(now + 1e-9)
     for k in keys:
-        if abs(k - now) < 0.5:
+        if cell - 1e-6 <= k < cell + 1 - 1e-6:          # in the cell the playhead fills
             hit.append(k)
         elif hi - lo <= near and lo - 1e-6 < k <= hi + 1e-6 and abs(k - before) > 1e-6:
             hit.append(k)
