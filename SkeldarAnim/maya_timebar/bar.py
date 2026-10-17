@@ -34,6 +34,7 @@ KEY_LIFT = 0.6          # a key grows 60 % (under the mouse or reached)
 PAD = 10                # logical px either side of the timeline's frames
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
+LABEL_H = 11            # the frame numbers' row at the very top, the band under it (2026-10-17)
 KEY_Y = 21              # the keys' centre
 KEY_W = 2.5             # a key's mark, logical px wide (2026-10-17: a line, as Maya's)
 DASH_W = 0.8            # a key between frames: its dashes this share of a mark's width
@@ -43,7 +44,7 @@ HEAD_FILL = 70          # the playhead's cell, its fill's alpha
 
 def key_span(h, ui):
     """(top, bottom) of a key's mark: under the bookmarks band to the bottom."""
-    return (BAND_H + 3) * ui, h - 1.5 * ui
+    return (LABEL_H + 1) * ui, h - 1.5 * ui
 
 REC = "#e0524a"
 BREAKDOWN = "#6fb7c9"
@@ -660,7 +661,7 @@ def classes():
                 if x1 < 0 or x0 > w:
                     continue
                 c = QtGui.QColor.fromRgbF(*[max(0.0, min(1.0, float(v))) for v in rgb])
-                band = QtCore.QRectF(x0 + 1, 2 * ui, max(2.0, x1 - x0 - 2), BAND_H * ui)
+                band = QtCore.QRectF(x0 + 1, (LABEL_H + 1) * ui, max(2.0, x1 - x0 - 2), BAND_H * ui)
                 c.setAlpha(70)
                 p.setPen(Qt.NoPen)
                 p.setBrush(c)
@@ -700,7 +701,7 @@ def classes():
             #  as Maya's slider (2026-10-17): the ticks stand at the bottom, a frame's
             #  number at the top under the bookmarks band; the playhead's own number
             #  is at the bottom
-            ry = (BAND_H + 2) * ui
+            ry = 1 * ui                                   # the numbers at the very top
             tick_y = h - 3 * ui
             major, minor = colour(tk["muted"]), colour(tk["line"])
             label_pen = colour(tk["faint"])
