@@ -214,6 +214,13 @@ def _start_job():
         _state()["job"] = None
 
 
+def playing():
+    try:
+        return bool(_cmds().play(q=True, state=True))
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def _on_selection():
     """After Maya's own selection handlers (deferred): theirs ran last and left the
     Attribute Editor empty when ours ran first (measured live 2026-10-17)."""
@@ -226,7 +233,10 @@ def _on_selection():
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
     try:
-        _cmds().evalDeferred(later, lowestPriority=True)
+        if playing():
+            later()          # playback starves the idle queue: now, or never (2026-10-17)
+        else:
+            _cmds().evalDeferred(later, lowestPriority=True)
     except Exception:                                        # noqa: BLE001
         later()
 

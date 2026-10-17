@@ -11832,7 +11832,11 @@ The animator: «боковую панель по концепту нашего �
   the panel out (from the cursor's height) and `selected` keeps it out (`look.blockers`).
   Nothing selected starts the usual hide (the cursor over it, the 📌 still keep it). The edge
   hover works as before, and a panel built with a selection standing comes out at once.
-  Seen live: pSphere1 selected, out, kept by `selected`.
+  Seen live: pSphere1 selected, out, kept by `selected`. **During playback** («во время плей мода
+  выделяю объект то панель не выезжает») no idle and no timer tick comes between frames (trap 269):
+  the selection job runs `later()` at once instead of `evalDeferred`, the reveal is instant, and
+  `repaint_all` repaints the host synchronously. Not seen live: commands sent over the port wait
+  for idle too, so playback is the animator's to try.
 - **The Time Bar steps aside, the panel goes to the bottom** (the same day: «таймслайдер будет
   тоже учитывать наши интрефейсы и не перекрывать их ... если нет на экране таймслайдера то
   можно нашу боковую панель растянуть до низа»). The side panel takes MainPane's whole height

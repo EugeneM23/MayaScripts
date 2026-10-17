@@ -156,6 +156,7 @@ class Edge(unittest.TestCase):
         self.ticks = []
         self.picture = None
         self.sel = [False]
+        self.play = [False]
 
         def make(parent, on_tab, on_pin, on_width):
             return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
@@ -167,7 +168,7 @@ class Edge(unittest.TestCase):
                                   over_maya=lambda: self.over[0], motion=False,
                                   on_tab=self.tabs.append, on_width=self.widths.append,
                                   tick=self.ticks.append, capture=lambda host: self.picture,
-                                  selected=lambda: self.sel[0])
+                                  selected=lambda: self.sel[0], playing=lambda: self.play[0])
         self.addCleanup(self.edge.destroy)
 
     def geometry(self, widget):
@@ -262,6 +263,19 @@ class Edge(unittest.TestCase):
         self.edge.selection_changed()
         self.edge.hide_due()
         self.assertTrue(self.edge.shown)
+
+    def test_a_selection_during_playback_brings_it_out_at_once(self):
+        """2026-10-17: «во время плей мода выделяю объект то панель не выезжает» -
+        playback ticks no timer, so no burst: out at once, painted now."""
+        self.edge.motion = True
+        self.picture = self.burst_picture()
+        self.play[0] = True
+        self.sel[0] = True
+        self.assertTrue(self.edge.selection_changed())
+        self.assertTrue(self.edge.shown)
+        self.assertIsNone(self.edge._slide)
+        self.assertTrue(self.edge.host.isVisible())
+        self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
 
     def test_nothing_selected_brings_nothing_out(self):
         self.assertFalse(self.edge.selection_changed())

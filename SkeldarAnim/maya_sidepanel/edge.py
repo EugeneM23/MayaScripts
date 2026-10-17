@@ -103,7 +103,8 @@ class SideEdge(object):
 
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
-                 on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None):
+                 on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
+                 playing=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -117,6 +118,7 @@ class SideEdge(object):
         self._on_reveal = on_reveal
         self._capture = capture        # a seam: (host) -> QPixmap, for the tests
         self._selected = selected      # (2026-10-17) something selected: out and kept out
+        self._playing = playing
         import maya_hubstyle
         self._face = maya_hubstyle.TOKENS["panel"]
         self.motion = motion
@@ -211,6 +213,18 @@ class SideEdge(object):
             return self._app_active()
         q = hubqt.qt()
         return q.QtGui.QGuiApplication.applicationState() == q.QtCore.Qt.ApplicationActive
+
+    def playing(self):
+        """Maya is playing back: no timer ticks and no idle comes between frames, so
+        the panel comes out at once and paints now (2026-10-17, «во время плей мода
+        выделяю объект то панель не выезжает»)."""
+        if self._playing is not None:
+            return bool(self._playing())
+        try:
+            import maya.cmds as cmds
+            return bool(cmds.play(q=True, state=True))
+        except Exception:                                    # noqa: BLE001
+            return False
 
     def selected(self):
         """Something is selected in the scene (the panel is wanted then)."""
@@ -355,7 +369,7 @@ class SideEdge(object):
         self.shown = True
         nudge_timebar()
         self.sensor.hide()
-        if instant or not self._motion():
+        if instant or not self._motion() or self.playing():
             self.host.show()
             self.host.raise_()
             self._start_slide(True, instant=True)
@@ -519,6 +533,8 @@ class SideEdge(object):
                 asked += 1
             except (RuntimeError, TypeError):
                 pass
+        if self.playing():
+            self.host.repaint()       # no idle comes between frames of playback (trap 269)
         return asked
 
     def _settle(self, showing):
