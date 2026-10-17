@@ -103,6 +103,7 @@ _PAYLOAD = (
     "maya_hubcopy.py",          # a section's second build: the scope its names live in (2026-10-09)
     "maya_hubpop_rules.py",     # where a section's popup stands in its viewport (2026-10-09)
     "maya_hubpop.py",           # a section's popup over the active viewport (2026-10-09)
+    "maya_hubburst.py",         # its popups bursting out of a point (2026-10-17)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)

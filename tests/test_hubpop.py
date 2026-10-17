@@ -468,8 +468,12 @@ class Motion(Seams):
         self.assertLessEqual(popup.root.height(), rules.MAX_HEIGHT)
         self.assertGreater(popup.root.height(), popup._chrome())
 
-    def test_the_open_fades_in_and_settles_at_full_opacity(self):
-        popup = hubpop.open_popup("alpha", animate=True)
+    def test_without_a_burst_the_open_fades_in_and_settles_at_full_opacity(self):
+        def no_burst():
+            raise RuntimeError("no effect here")
+
+        with mock.patch.object(hubpop, "_burst_class", no_burst):
+            popup = hubpop.open_popup("alpha", animate=True)
         self.assertLess(popup.root.windowOpacity(), 1.0)
         settle(self, lambda: popup._open_anim is None)
         self.assertAlmostEqual(popup.root.windowOpacity(), 1.0)
@@ -544,6 +548,118 @@ class Motion(Seams):
         self.assertIsNone(popup._open_anim)
         self.assertIsNone(popup._roll_anim)
         self.assertIsNone(popup._light_anim)
+
+
+class Burst(Seams):
+    """The popup bursting out of a point and folding back into one (2026-10-17,
+    maya_hubburst; spec 2026-10-17-popup-burst-design.md)."""
+
+    def corner(self, popup):
+        """A global point on the root's top-left corner of the card."""
+        at = popup.root.mapToGlobal(QtCore.QPoint(4, 4))
+        return (at.x(), at.y())
+
+    def alpha_at(self, popup, x, y):
+        return popup.root.grab().toImage().pixelColor(x, y).alpha()
+
+    def test_the_open_bursts_and_ends_with_the_frame_plain(self):
+        popup = hubpop.open_popup("alpha", animate=True)
+        self.assertIsNotNone(popup.burst)
+        self.assertTrue(popup.bursting())
+        self.assertEqual(popup.root.windowOpacity(), 1.0)
+        self.assertTrue(popup.root.testAttribute(
+            QtCore.Qt.WA_TransparentForMouseEvents))
+        popup.root.grab()                       # one draw: the plan is made
+        settle(self, lambda: popup._open_anim is None)
+        self.assertFalse(popup.bursting())
+        self.assertFalse(popup.root.testAttribute(
+            QtCore.Qt.WA_TransparentForMouseEvents))
+        self.assertGreater(popup.burst.draws, 0)
+        self.assertFalse(popup.burst.broken, popup.burst.error)
+
+    def test_it_starts_as_a_small_shape_at_the_point_and_ends_whole(self):
+        popup = hubpop.open_popup("alpha")
+        point = self.corner(popup)
+        popup.show_open(hubpop._rect_of("modelPanel1"), animate=True, origin=point)
+        popup._stop_anim("_open_anim")          # hold it, to look at moments
+        effect = popup.burst
+        w, h = popup.root.width(), popup.root.height()
+        far = (w - 10, h - 6)
+        effect.ms = 150.0
+        self.assertEqual(self.alpha_at(popup, *far), 0)
+        self.assertGreater(self.alpha_at(popup, 14, 12), 0)
+        self.assertTrue(effect.plan.opening)
+        self.assertGreater(len(effect.plan.parts), 1)
+        effect.ms = effect.plan.total
+        self.assertGreater(self.alpha_at(popup, *far), 0)
+
+    def test_the_close_folds_leaves_the_list_and_destroys_the_window(self):
+        popup = hubpop.open_popup("alpha")
+        self.assertTrue(hubpop.close_popup("alpha", animate=True,
+                                           origin=self.corner(popup)))
+        self.assertFalse(hubpop.is_open("alpha"))
+        self.assertIn(popup, hubpop._state()["closing"])
+        self.assertTrue(popup.bursting())
+        popup.root.grab()
+        self.assertFalse(popup.burst.plan.opening)
+        settle(self, lambda: popup not in hubpop._state()["closing"])
+        self.assertFalse(popup.alive())
+
+    def test_a_drawing_that_fails_draws_the_frame_plain_and_ends(self):
+        def broken(plan, ms):
+            raise ValueError("no")
+
+        popup = hubpop.open_popup("alpha")
+        with mock.patch.object(hubpop.hubburst, "at", broken):
+            popup.show_open(hubpop._rect_of("modelPanel1"), animate=True,
+                            origin=self.corner(popup))
+            image = popup.root.grab().toImage()
+            self.assertTrue(popup.burst.broken)
+            self.assertIn("ValueError", popup.burst.error)
+            w, h = popup.root.width(), popup.root.height()
+            self.assertGreater(image.pixelColor(w - 10, h - 6).alpha(), 0)
+            settle(self, lambda: popup._open_anim is None)
+        self.assertFalse(popup.bursting())
+
+    def test_with_animations_off_nothing_bursts(self):
+        with mock.patch.object(hubpop.hubmotion, "enabled", lambda: False):
+            popup = hubpop.open_popup("alpha", animate=True)
+            self.assertIsNone(popup.burst)
+            hubpop.close_popup("alpha", animate=True)
+        self.assertFalse(popup.alive())
+
+    def test_the_light_waits_for_the_burst(self):
+        popup = hubpop.open_popup("alpha", animate=True)
+        QtWidgets.QApplication.sendEvent(
+            popup.root, QtCore.QEvent(QtCore.QEvent.Enter))
+        self.assertIsNone(popup._light_anim)
+        self.assertEqual(popup.frame.level, 0.0)
+        with mock.patch.object(hubpop, "_under", lambda root: True):
+            popup._settle()
+            popup._opened()
+        settle(self, lambda: popup.frame.level >= 1.0)
+
+    def test_open_at_bursts_from_its_point(self):
+        seen = []
+        real = hubpop.Popup.show_open
+
+        def show_open(popup, rect, animate=False, origin=None):
+            seen.append(origin)
+            return real(popup, rect, animate=animate, origin=origin)
+
+        with mock.patch.object(hubpop.Popup, "show_open", show_open):
+            hubpop.open_at("alpha", (300, 200))
+        self.assertEqual(seen, [(300, 200)])
+
+    def test_the_close_button_folds_into_where_it_was_pressed(self):
+        hubpop.open_popup("alpha")
+        calls = []
+        with mock.patch.object(hubpop, "_cursor_point", lambda: (77, 88)), \
+                mock.patch.object(hubpop, "close_popup",
+                                  lambda key, **kw: calls.append((key, kw))):
+            hubpop._defer_close("alpha")
+            self.run_deferred()
+        self.assertEqual(calls, [("alpha", {"animate": True, "origin": (77, 88)})])
 
 
 class Resize(TitleMouse):

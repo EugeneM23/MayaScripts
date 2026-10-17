@@ -7597,6 +7597,60 @@ the message tone, the inventory bands, the Connections and Animation Setup build
 card of Qt stand-ins under the skin's marks and the real Inventory panel, at 150 %. **Not seen
 live.** Next: the other cards, one by one.
 
+## A section popup bursts out of a point and folds back into one (2026-10-17)
+
+The animator: «Давай сделаем так что бы наши поапы появлялись с приятной анимацией сделай мекеты». Five
+live variants (https://claude.ai/artifact/AQZc8xz9Bys9kXzXiFgZ2z); they chose **D, from the point**.
+Spec `docs/superpowers/specs/2026-10-17-popup-burst-design.md`. **This replaces the 2026-10-09 fade and
+rise of `maya_hubpop`'s open and close**; that fade remains only as the fallback when a burst cannot start.
+
+- **The point**: a popup opens from the global point it was called from and closes into the point the
+  close came from.
+  - `open_at` passes the cursor (the radial menu, a Ctrl-click on the rail, the card's popout button);
+    `open_popup(..., origin=)` and `close_popup(..., origin=)` take one.
+  - `_defer_close` (the X) passes the cursor where it was pressed; None means the cursor.
+  - The point is clamped `ORIGIN_PAD` (12 logical px) inside the card.
+- **The timing**: `SkeldarAnim/maya_hubburst.py` (stdlib, pure, a payload row; `plan_open`, `plan_close`,
+  `at(plan, ms)`, `rows`, `bands`).
+  - **Opening**:
+    - the card's rounded shape grows from a 28 x 20 box at the point to the card over `SHAPE_MS` 300
+      (ease-out quint), its radius 10 to 8;
+    - the face fades in over 60 ms;
+    - each row starts `DELAY0` 40 + 22 ms per 60 logical px of distance from the point, nearest first;
+      it fades in over 140 ms and scales 0.82 to 1 about its point-side over 240 ms (back ease 1.6).
+  - **Closing**:
+    - the rows fold the farthest first, 22 ms apart, 130 ms each, to 0 and 0.86;
+    - the shape closes into the point over 200 ms (in-cubic), from 60 ms before the last row ends;
+    - the face fades out over its last 80 ms.
+  - Rows are the title and the section's content split until no piece is taller than 64 logical px
+    (visible children, depth 8, clipped to the scroll viewport). Past 48 rows they are merged into
+    bands.
+- **The drawing**: `PopupBurst`, a `QGraphicsEffect` on the popup's frame (`_burst_class`), held by the
+  popup (trap 201) and DISABLED at rest (trap 204).
+  - It takes the frame's picture once a burst (`sourcePixmap`; the text is grayscale-antialiased only
+    while it stands in, trap 202). Each tick it draws:
+    - the picture;
+    - each row's place filled with the card's face (`card` toward `card_active` by the light's level);
+    - each row's piece at its opacity and scale;
+    - all of it masked by the antialiased rounded shape (`DestinationIn`), at the face's opacity.
+  - The plan is made at the first draw, when the window is laid out. Maya's controls are never touched.
+  - A drawing that raises marks it `broken` (`error` kept) and draws the frame plain to the end.
+- **While it moves**:
+  - the window takes no mouse;
+  - the card light waits (`_on_hover` returns), and is set from where the cursor is when the burst ends
+    (`_under`);
+  - a `QVariantAnimation` over `MAX_MS` drives it and stops at the plan's total;
+  - a fold ends by hiding the window, then the old close path deletes it.
+  - `open_at` still destroys a standing copy of the section at once: two copies must not overlap.
+  - ⋮ -> Interface animations off: at once, no effect made.
+
+Proof: `tests/test_hubburst.py` (the origin's clamp, the open and close schedules, rows and bands, a
+subprocess check that it imports no Maya or Qt) and `tests/test_hubpop.Burst` (8: the frame plain and
+the mouse back after an open; a small shape at the point and a far pixel transparent mid-way; the close
+leaving the list and destroying the window; a failing drawing; animations off; the light waiting;
+`open_at`'s and the X's points). 7040 unit tests OK. `docs/superpowers/plans/render_popup_burst.py` ->
+`popup_burst.png`, a filmstrip of both on the test seams. **Not seen in a GUI Maya.**
+
 ## Characters > Delete: a character out of the scene, whole (2026-10-01)
 
 The animator: «Давай в разделе character сделаем кнопку удаления. Суть такая - я выделяю любую часть

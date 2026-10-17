@@ -40,6 +40,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubburst as hubburst
 import maya_hubcopy as hubcopy
 import maya_hubmotion as hubmotion
 import maya_hubpop_rules as rules
@@ -306,6 +307,164 @@ def _paint_outline(frame, q):
         painter.end()
 
 
+def _burst_class():
+    """The popup's burst (2026-10-17, maya_hubburst): a QGraphicsEffect on the card's frame,
+    DISABLED at rest so the frame paints as it always has (trap 204). While a burst runs it takes
+    the frame's picture once and draws it each tick: the whole picture, each row's place filled
+    with the card's face, each row's piece back at its opacity and scale, all of it masked by
+    the rounded shape and drawn at the face's opacity. Maya's controls are never touched; their
+    text is grayscale-antialiased only while the picture stands in (trap 202). A failure marks
+    it `broken` and the frame is drawn as it is from then on."""
+    if "burst" not in _CLASSES:
+        q = hubqt.qt()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+
+        class PopupBurst(QtWidgets.QGraphicsEffect):
+
+            def __init__(self, planner, parent=None):
+                super(PopupBurst, self).__init__(parent)
+                self.planner = planner      # opening -> (hubburst.Plan, (r, g, b) face)
+                self.opening = True
+                self.ms = 0.0
+                self.plan = None
+                self.face = None
+                self.pix = None
+                self.offset = QtCore.QPoint()
+                self.ratio = 1.0
+                self.draws = 0
+                self.broken = False
+                self.error = None
+                self._image = None
+                self._mask = None
+                self.setEnabled(False)
+
+            def begin(self, opening):
+                self.opening = opening
+                self.ms = 0.0
+                self.plan = None
+                self.pix = None
+                self.setEnabled(True)
+
+            def stop(self):
+                self.plan = None
+                self.pix = None
+                self._image = None
+                self._mask = None
+                self.setEnabled(False)
+
+            def done(self):
+                return self.broken or (self.plan is not None
+                                       and self.ms >= self.plan.total)
+
+            def draw(self, painter):
+                if self.broken:
+                    self.drawSource(painter)
+                    return
+                try:
+                    if not self._draw(painter):
+                        self.drawSource(painter)
+                except Exception:                            # noqa: BLE001
+                    self.broken = True
+                    self.error = traceback.format_exc()
+                    self.drawSource(painter)
+
+            def _take(self):
+                offset = QtCore.QPoint()
+                pix = self.sourcePixmap(QtCore.Qt.DeviceCoordinates, offset,
+                                        QtWidgets.QGraphicsEffect.NoPad)
+                if pix.isNull():
+                    return False
+                inner = self.sourceBoundingRect(QtCore.Qt.LogicalCoordinates)
+                self.pix = pix
+                self.offset = QtCore.QPoint(offset)
+                self.ratio = pix.width() / max(1.0, float(inner.width()))
+                self.plan, self.face = self.planner(self.opening)
+                fmt = QtGui.QImage.Format_ARGB32_Premultiplied
+                self._image = QtGui.QImage(pix.width(), pix.height(), fmt)
+                self._mask = QtGui.QImage(pix.width(), pix.height(), fmt)
+                return True
+
+            def _draw(self, painter):
+                if self.pix is None and not self._take():
+                    return False
+                if self.plan is None:
+                    return False
+                k = self.ratio
+                state = hubburst.at(self.plan, self.ms)
+                face = QtGui.QColor(*self.face)
+                image = self._image
+                image.fill(0)
+                p = QtGui.QPainter(image)
+                try:
+                    p.drawPixmap(0, 0, self.pix)
+                    rects = [QtCore.QRectF(r[0] * k, r[1] * k, r[2] * k, r[3] * k)
+                             for r in self.plan.parts]
+                    for rect in rects:
+                        p.fillRect(rect, face)
+                    p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+                    for rect, piv, (op, sc) in zip(rects, self.plan.pivots, state.parts):
+                        if op <= 0.002:
+                            continue
+                        px, py = rect.left() + piv[0] * k, rect.top() + piv[1] * k
+                        p.save()
+                        p.setOpacity(min(1.0, op))
+                        p.translate(px, py)
+                        p.scale(sc, sc)
+                        p.translate(-px, -py)
+                        p.drawPixmap(rect, self.pix, rect)
+                        p.restore()
+                    mask = self._mask
+                    mask.fill(0)
+                    m = QtGui.QPainter(mask)
+                    try:
+                        m.setRenderHint(QtGui.QPainter.Antialiasing, True)
+                        m.setPen(QtCore.Qt.NoPen)
+                        m.setBrush(QtGui.QColor(0, 0, 0))
+                        x0, y0, x1, y1 = state.shape
+                        r = state.radius * k
+                        m.drawRoundedRect(QtCore.QRectF(x0 * k, y0 * k, (x1 - x0) * k,
+                                                        (y1 - y0) * k), r, r)
+                    finally:
+                        m.end()
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_DestinationIn)
+                    p.drawImage(0, 0, mask)
+                finally:
+                    p.end()
+                painter.save()
+                try:
+                    painter.setWorldTransform(QtGui.QTransform())
+                    painter.setOpacity(max(0.0, min(1.0, state.face)))
+                    painter.drawImage(self.offset, image)
+                finally:
+                    painter.restore()
+                self.draws += 1
+                return True
+
+        _CLASSES["burst"] = PopupBurst
+    return _CLASSES["burst"]
+
+
+def _cursor_point():
+    """The cursor's global position (physical px), or None."""
+    try:
+        q = hubqt.qt()
+        pos = q.QtGui.QCursor.pos()
+        return (pos.x(), pos.y())
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _under(root):
+    """True when the cursor stands on the window `root`."""
+    point = _cursor_point()
+    if point is None:
+        return False
+    try:
+        return bool(root.frameGeometry().contains(point[0], point[1]))
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def _hover_class():
     """An event filter on the popup window: its Enter and Leave, which light
     the popup as a card is lit (2026-10-09). It never swallows an event."""
@@ -477,6 +636,8 @@ class Popup(object):
         self.bar_w = None         # a rolled-up popup's width dragged (logical; None = its name's)
         self.grips = []           # the edge strips: right, bottom, corner (2026-10-09)
         self._grip_start = None   # a resize drag in progress: (point, w, h, viewport rect)
+        self.burst = None         # the frame's burst effect (2026-10-17, made on the first burst)
+        self._origin = None       # the global point a burst comes from or goes to
 
     # ------------------------------------------------------------ state
 
@@ -904,13 +1065,19 @@ class Popup(object):
 
     # ------------------------------------------------------- open and close
 
-    def show_open(self, rect, animate=False):
-        """Show the window (2026-10-09): at once, or fading in and rising
-        POPUP_SLIDE logical px into its place (POPUP_OPEN_MS)."""
+    def show_open(self, rect, animate=False, origin=None):
+        """Show the window: at once, or (2026-10-17) bursting out of the global `origin` - the
+        cursor when None (maya_hubburst). A burst that cannot start falls back to the fade and
+        rise of 2026-10-09 (POPUP_SLIDE logical px, POPUP_OPEN_MS)."""
         self._stop_anim("_open_anim")
+        self._end_burst()
         self.slide = 0.0
         self.root.setWindowOpacity(1.0)
         if not animate:
+            self.root.show()
+            return
+        if self._burst(True, origin, self._opened):
+            self._place_at(rect)
             self.root.show()
             return
         slide = float(hubstyle.px(hubmotion.POPUP_SLIDE, self.scale))
@@ -940,15 +1107,20 @@ class Popup(object):
         self._open_anim = anim
         anim.start()
 
-    def fade_out(self, done):
-        """Fade the window out (2026-10-09, POPUP_CLOSE_MS), then call `done`.
-        Its controls take no press meanwhile."""
+    def fade_out(self, done, origin=None):
+        """Fold the window into the global `origin` (2026-10-17, the cursor when None), else fade
+        it out (2026-10-09, POPUP_CLOSE_MS), then call `done`. Its controls take no press
+        meanwhile."""
         self._stop_anim("_open_anim")
         self._stop_anim("_roll_anim")
         if self.root is None:
             done()
             return
         q = hubqt.qt()
+        self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
+        if self.root.isVisible() and self._burst(False, origin, lambda: self._folded(done)):
+            return
+        self._end_burst()
         self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
         start = self.root.windowOpacity()
         anim = _animation(0.0, 1.0, hubmotion.POPUP_CLOSE_MS)
@@ -1000,7 +1172,146 @@ class Popup(object):
         anim.start()
 
     def _on_hover(self, entered):
+        if self.bursting():
+            return              # the light waits for the burst (2026-10-17)
         self.set_light(entered, animate=hubmotion.enabled())
+
+    # ------------------------------------------------------------- burst
+
+    def bursting(self):
+        effect = self.burst
+        try:
+            return bool(effect is not None and effect.isEnabled())
+        except RuntimeError:                                  # its frame is gone
+            return False
+
+    def _burst_effect(self):
+        """The frame's burst effect, made and set once (held: trap 201)."""
+        if self.burst is not None:
+            return self.burst
+        if self.frame is None:
+            return None
+        effect = _burst_class()(self._burst_plan)
+        self.frame.setGraphicsEffect(effect)
+        self.burst = effect
+        return effect
+
+    def _burst(self, opening, origin, done):
+        """Start a burst (`opening`) or a fold toward the global `origin` (the cursor when
+        None); `done` is called when it ends. False when it cannot start."""
+        try:
+            effect = self._burst_effect()
+            if effect is None:
+                return False
+            q = hubqt.qt()
+            self._stop_anim("_light_anim")
+            self._origin = origin if origin is not None else _cursor_point()
+            if self._origin is None:
+                self._origin = (self.root.x(), self.root.y())
+            self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
+            effect.begin(opening)
+            self.frame.update()
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+            self._end_burst()
+            return False
+        slot = "_open_anim" if opening else "_fade"
+        anim = _animation(0.0, 1.0, hubburst.MAX_MS)
+
+        def finish():
+            if getattr(self, slot) is not anim:
+                return
+            setattr(self, slot, None)
+            done()
+
+        def tick(value):
+            if self.root is None or self.burst is None:
+                return
+            try:
+                effect.ms = value * hubburst.MAX_MS
+                self.frame.update()
+                if effect.done():
+                    anim.stop()
+                    finish()
+            except RuntimeError:                              # the window is gone
+                pass
+
+        anim.valueChanged.connect(tick)
+        anim.finished.connect(finish)
+        setattr(self, slot, anim)
+        anim.start()
+        return True
+
+    def _end_burst(self):
+        """The frame painted as it is again, the window taking presses."""
+        effect = self.burst
+        if effect is not None:
+            try:
+                effect.stop()
+            except RuntimeError:
+                self.burst = None
+        if self.root is not None:
+            q = hubqt.qt()
+            try:
+                self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, False)
+                if self.frame is not None:
+                    self.frame.update()
+            except RuntimeError:
+                pass
+
+    def _opened(self):
+        """A burst in: the frame plain, and lit when the mouse is over it now."""
+        self._end_burst()
+        if self.root is None:
+            return
+        self.set_light(_under(self.root), animate=hubmotion.enabled())
+
+    def _folded(self, done):
+        """A fold out: the window hidden at once (its last frame is empty), then `done`."""
+        if self.root is not None:
+            try:
+                self.root.hide()
+            except RuntimeError:
+                pass
+        done()
+
+    def _burst_plan(self, opening):
+        """The burst's plan, at its first draw (the window is laid out by then), and the
+        card's face: card toward card_active by the light's level."""
+        q = hubqt.qt()
+        frame = self.frame
+        o = frame.mapFromGlobal(q.QtCore.QPoint(int(self._origin[0]), int(self._origin[1])))
+        size = (frame.width(), frame.height())
+        make = hubburst.plan_open if opening else hubburst.plan_close
+        plan = make((o.x(), o.y()), size, self._burst_parts(), self.scale)
+        face = hubburst.blend(hubstyle.TOKENS["card"], hubstyle.TOKENS["card_active"],
+                              getattr(frame, "level", 0.0))
+        return plan, face
+
+    def _burst_parts(self):
+        """The title row and the section's rows, in the frame's coordinates."""
+        q = hubqt.qt()
+        QtWidgets = q.QtWidgets
+        frame = self.frame
+        zero = q.QtCore.QPoint(0, 0)
+
+        def rect_of(widget):
+            at = widget.mapTo(frame, zero)
+            return (at.x(), at.y(), widget.width(), widget.height())
+
+        def kids(widget):
+            return [c for c in widget.children()
+                    if isinstance(c, QtWidgets.QWidget) and not c.isWindow()
+                    and c.isVisible() and c.width() > 0 and c.height() > 0]
+
+        parts = [rect_of(self.title)]
+        if self.scroll is not None and self.content is not None \
+                and self.scroll.isVisible():
+            clip = rect_of(self.scroll.viewport())
+            found = hubburst.rows(self.content, kids, rect_of,
+                                  hubstyle.px(hubburst.ROW_MAX, self.scale), clip)
+            parts.extend(hubburst.bands(found, hubburst.MAX_PARTS - 1))
+        return parts
 
     # ------------------------------------------------------------ place
 
@@ -1044,6 +1355,7 @@ class Popup(object):
             return
         if self._open_anim is not None:
             self._stop_anim("_open_anim")
+            self._end_burst()
             self.slide = 0.0
             self.root.setWindowOpacity(1.0)
             rect = _rect_of(self.panel)
@@ -1118,12 +1430,12 @@ def open_keys():
             if popup.alive()]
 
 
-def open_popup(key, offset=None, animate=False, panel=None):
+def open_popup(key, offset=None, animate=False, panel=None, origin=None):
     """Open section `key`'s popup in the ACTIVE viewport (the focused model
     panel, else the first visible one). The popup it returns, or None when
     there is no viewport to put it in (said on the hub's line). `animate`: it
     fades in and rises (the header button's press); the restore opens them at
-    once."""
+    once. `origin`: the global point it bursts out of (2026-10-17; the cursor when None)."""
     st = _state()
     if is_open(key):
         return st["popups"][key]
@@ -1144,7 +1456,7 @@ def open_popup(key, offset=None, animate=False, panel=None):
         #  (2026-10-09: a popup opened by its button comes back where it was)
         popup.offset = offset if offset is not None else stored_offset(key)
         popup.place(rect, index=len(open_keys()))
-        popup.show_open(rect, animate=animate and hubmotion.enabled())
+        popup.show_open(rect, animate=animate and hubmotion.enabled(), origin=origin)
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         popup.destroy()
@@ -1188,25 +1500,26 @@ def open_at(key, point, animate=True):
     offset = rules.offset_of(x, y, rect, scale)
     if stored_collapsed(key):
         _save_collapsed(key, False)
-    popup = open_popup(key, offset=offset, animate=animate, panel=panel)
+    popup = open_popup(key, offset=offset, animate=animate, panel=panel, origin=point)
     if popup is not None:
         _save_offset(key, offset)
     return popup
 
 
-def close_popup(key, forget=True, animate=False):
+def close_popup(key, forget=True, animate=False, origin=None):
     """Close section `key`'s popup. `animate` (the header button's and the
     close button's press): it fades out first, and it is gone from the hub's
     list at once. `forget`: it stays closed after a restart (the close button
     and the hub's press); False when an install destroys it - the next startup
-    brings it back."""
+    brings it back. `origin`: the global point it folds into (2026-10-17; the cursor when
+    None)."""
     st = _state()
     popup = st["popups"].pop(key, None)
     if popup is not None:
         if animate and hubmotion.enabled() and popup.alive() \
                 and popup.root.isVisible():
             st["closing"].append(popup)
-            popup.fade_out(lambda: _later(lambda: _finish_closing(popup)))
+            popup.fade_out(lambda: _later(lambda: _finish_closing(popup)), origin=origin)
         else:
             popup.destroy()
     if not st["popups"]:
@@ -1435,8 +1748,9 @@ def _tick():
 
 def _defer_close(key):
     """The close button's press: deferred - it comes from inside the window
-    the close deletes - and faded (2026-10-09)."""
-    cmds.evalDeferred(lambda: close_popup(key, animate=True),
+    the close deletes - and folded into the cursor where it was pressed (2026-10-17)."""
+    point = _cursor_point()
+    cmds.evalDeferred(lambda: close_popup(key, animate=True, origin=point),
                       lowestPriority=True)
 
 
