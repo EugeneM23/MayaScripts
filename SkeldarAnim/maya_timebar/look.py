@@ -569,7 +569,7 @@ def key_changes(old, new, edited=False):
 
 
 DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
-DELETE_START_MS = 1000  # ... but the last one starts within this, however many (2026-10-17)
+DELETE_START_MS = 500   # ... but the last one starts within this, however many (2026-10-17: 1 s, then 0.5)
 SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
 
 
@@ -578,7 +578,8 @@ def delete_plan(n):
     each key's life ms). Every key breaks exactly as a single key does - the whole
     EFFECT_MS, the same flight - and only the starts are staggered: DELETE_STEP_MS
     apart, squeezed so the last starts by DELETE_START_MS (2026-10-17: «полет самих
-    частиц не должен ускоряться ... запустить эффект не позднее чем за 1 секунду»)."""
+    частиц не должен ускоряться ... запустить эффект не позднее чем за 1 секунду», then
+    «максимальное время уменьшим до 0.5»)."""
     full = EFFECT_MS["delete"]
     if n <= 0:
         return [], full

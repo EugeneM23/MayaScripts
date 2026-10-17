@@ -679,8 +679,10 @@ def classes():
                 right = max(r[0] + r[2] for r in rects)
                 top, h = rects[0][1], rects[0][3]
                 frame, bd = shown[a]
+                # the keys stay drawn where they stood until they break (`ghosts`): the data
+                # is gone already, the picture of each key waits for its turn
                 self.key_effect("delete", frame, bd, delay=delay, life=life, pieces=pieces,
-                                rect=(left, top, right - left, h), quiet=True)
+                                rect=(left, top, right - left, h), ghosts=rects, quiet=True)
             if shown:
                 self.strip.fx.raise_()
                 self.strip.kick()
@@ -1142,8 +1144,12 @@ def classes():
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
                 now, ui = self.strip.clock(), self.strip.ui
                 broken = []         # the deleted keys mid-flight, drawn after the flashes
+                waiting = []        # deleted keys not broken yet: still drawn as keys
                 for i in self.items:
                     age = self.age(i, now)
+                    if age < 0 and i.get("ghosts"):
+                        waiting.append(i)
+                        continue
                     if age < 0 or age >= i["life"]:
                         continue                                # waiting its turn, or over
                     u = age / float(i["life"])
@@ -1159,6 +1165,12 @@ def classes():
                     else:
                         broken.append((i, age))
                     p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+                if waiting:
+                    p.setPen(Qt.NoPen)
+                    for i in waiting:
+                        p.setBrush(QtGui.QColor(i["hex"]))
+                        for l, tp, w, h in i["ghosts"]:
+                            p.drawRoundedRect(QtCore.QRectF(l, tp, w, h), 1.5 * ui, 1.5 * ui)
                 if broken:
                     self._paint_shards(p, broken, ui)
                 p.end()

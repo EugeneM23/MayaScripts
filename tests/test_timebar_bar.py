@@ -508,7 +508,7 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), ["delete"])
         self.paint()
 
-    def test_many_deleted_keys_play_left_to_right_the_last_starting_within_a_second(self):
+    def test_many_deleted_keys_play_left_to_right_the_last_starting_within_half_a_second(self):
         import time as _time
         self.link.s.update(p0=0.0, p1=999.0, a0=0.0, a1=999.0)
         self.link.k = ([float(f) for f in range(1000)], [])
@@ -526,18 +526,39 @@ class KeyEffects(Strip):
         delays = [i["delay"] for i in items]
         self.assertEqual(xs, sorted(xs))                # left to right
         self.assertEqual(delays, sorted(delays))
-        self.assertLessEqual(max(delays), 1000 + 1e-6)
+        self.assertLessEqual(max(delays), 500 + 1e-6)
         self.assertTrue(all(i["life"] == look.EFFECT_MS["delete"] for i in items))
         self.assertTrue(all(len(i["rect"]) == 4 for i in items))
         start = self.strip.clock()
-        for at in (0, 400, 900):
+        for at in (0, 250, 600):
             self.strip.clock = (lambda t=start + at: t)
             t0 = _time.perf_counter()
             self.paint()
             self.assertLess(_time.perf_counter() - t0, 0.25)
-        end = start + 1000 + look.EFFECT_MS["delete"] + 1
+        end = start + 500 + look.EFFECT_MS["delete"] + 1
         self.strip.clock = (lambda: end)
         self.assertFalse(self.strip.fx.busy(end))
+
+    def test_a_deleted_key_stays_drawn_until_it_breaks(self):
+        self.link.k = ([float(f) for f in range(10, 40)], [])
+        self.strip.refresh(keys=True)
+        self.strip.fx.items[:] = []
+        self.link.k = ([], [])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        last = self.strip.fx.items[-1]
+        self.assertGreater(last["delay"], 0)
+        l, tp, w, h = last["ghosts"][0]
+        start = self.strip.clock()
+
+        def lit(at):
+            self.strip.clock = (lambda: start + at)
+            img = self.strip.grab().toImage()
+            c = img.pixelColor(int(l + w / 2.0), int(tp + h / 2.0))
+            return c.red() > 150 and c.blue() < 120         # the accent, not the dark track
+
+        self.assertTrue(lit(0))                             # waiting its turn: still the key
+        self.assertFalse(lit(last["delay"] + look.EFFECT_MS["delete"] + 1))
 
     def test_a_selection_change_dropping_many_keys_is_no_wave(self):
         self.link.k = ([float(f) for f in range(100)], [])

@@ -362,8 +362,8 @@ class DeleteWaveTests(unittest.TestCase):
         self.assertEqual(delays, [0, look.DELETE_STEP_MS, 2 * look.DELETE_STEP_MS])
         self.assertEqual(life, look.EFFECT_MS["delete"])
 
-    def test_every_key_flies_whole_and_the_last_starts_within_a_second(self):
-        self.assertEqual(look.DELETE_START_MS, 1000)
+    def test_every_key_flies_whole_and_the_last_starts_within_half_a_second(self):
+        self.assertEqual(look.DELETE_START_MS, 500)
         for n in (2, 7, 13, 50, 1000, 10000):
             delays, life = look.delete_plan(n)
             self.assertEqual(len(delays), n)
