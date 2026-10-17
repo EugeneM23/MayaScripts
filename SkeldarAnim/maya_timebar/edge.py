@@ -266,12 +266,28 @@ class BottomEdge(object):
         """Every time change (playback's frames too): Play pressed - a hotkey,
         Maya's own - while the bar is hidden brings it out (2026-10-17, «если мы
         нажимаем хоткеем плей а тайм слайдер спрятан то он должен показаться»).
-        At once: playback turns no event loop, so a burst's timers would not tick."""
-        if self.shown or not self.playing():
+        The same burst as a reveal by the mouse («тоже должен с анимацией»), from
+        the cursor's x on the bar's row; playback turns no event loop, so its timers
+        do not tick - each frame of playback steps it here instead."""
+        if self.shown:
+            if self._slide is not None or getattr(self.strip, "entrance", None) is not None:
+                self.step()
             return
-        self.reveal(instant=True)
+        if not self.playing():
+            return
+        self.reveal(on_row=True)
+        self.step()
 
-    def reveal(self, instant=False):
+    def step(self):
+        """One step of a burst, painted now (from playback, where no timer ticks)."""
+        if self._slide is not None:
+            self.slide_tick()
+        animate = getattr(self.strip, "_animate", None)
+        if animate is not None:
+            animate()
+        self.strip.repaint()
+
+    def reveal(self, instant=False, on_row=False):
         if self.shown:
             return
         self.place()
@@ -279,7 +295,7 @@ class BottomEdge(object):
         self.sensor.hide()
         self.host.show()
         self.host.raise_()
-        self._start_slide(True, instant=instant)
+        self._start_slide(True, instant=instant, on_row=on_row)
         self.watch.start()
 
     def conceal(self):
@@ -290,7 +306,7 @@ class BottomEdge(object):
         self.hide_timer.stop()
         self._start_slide(False)
 
-    def _start_slide(self, showing, instant=False):
+    def _start_slide(self, showing, instant=False, on_row=False):
         """The burst from the cursor (2026-10-16, mockup A, «скорость на 50 %
         медленнее»): the panel unrolls sideways from where the mouse rests while
         the controls and keys pop in, the nearest first; going back, they fold
@@ -303,7 +319,11 @@ class BottomEdge(object):
             self._settle(showing)
             return
         gx, gy = self.cursor()
-        cx = gx - self.host.geometry().x()
+        g = self.host.geometry()
+        if on_row:                         # a hotkey: the cursor may be anywhere
+            gx = max(g.x(), min(g.x() + g.width(), gx))
+            gy = g.y() + g.height() // 2
+        cx = gx - g.x()
         self.offset = 0
         self.strip.move(0, 0)
         folded = self.strip.burst_at(gx, gy, showing)

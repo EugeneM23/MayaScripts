@@ -134,7 +134,7 @@ class Edge(unittest.TestCase):
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
 
-    def test_play_brings_it_out_at_once(self):
+    def test_play_brings_it_out(self):
         self.cursor[:] = [900, 300]
         self.edge.on_time()
         self.assertFalse(self.edge.shown)                          # a time change alone: no
@@ -142,9 +142,9 @@ class Edge(unittest.TestCase):
         self.edge.on_time()
         self.assertTrue(self.edge.shown)
         self.assertTrue(self.edge.host.isVisible())
-        self.assertIsNone(self.edge._slide)                        # no timer turns while playing
-        self.assertEqual(self.edge.offset, 0)
-        self.assertEqual(self.edge.host.mask().boundingRect().width(), self.edge.host.width())
+        if not self.motion:
+            self.assertIsNone(self.edge._slide)
+            self.assertEqual(self.edge.host.mask().boundingRect().width(), self.edge.host.width())
 
     def in_band(self):
         x, y, w, h = look.bottom_band(self.window, self.edge.height())
@@ -208,6 +208,26 @@ class EdgeMotion(Edge):
 
     def mask_width(self):
         return self.edge.host.mask().boundingRect().width()
+
+    def test_play_bursts_it_out_frame_by_frame(self):
+        self.cursor[:] = [900, 300]                                # up in the viewport
+        self.play[0] = True
+        self.edge.on_time()
+        self.assertIsNotNone(self.edge._slide)
+        self.assertIsNotNone(self.edge.strip.entrance)
+        w = self.edge.host.width()
+        g = self.edge.host.geometry()
+        self.assertAlmostEqual(self.edge._slide["cx"], 900 - g.x())   # from the cursor's x
+        self.assertLess(self.mask_width(), 5)
+        self.later(look.UNROLL_MS / 3.0)
+        self.edge.on_time()                                        # the next frame of playback
+        self.assertTrue(5 < self.mask_width() < w)
+        self.later(10000)
+        self.edge.on_time()
+        self.edge.on_time()
+        self.assertIsNone(self.edge._slide)
+        self.assertIsNone(self.edge.strip.entrance)
+        self.assertEqual(self.mask_width(), w)
 
     def test_resting_on_the_edge_brings_it_out(self):
         self.at_edge()
