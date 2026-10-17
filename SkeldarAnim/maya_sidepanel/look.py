@@ -38,6 +38,22 @@ def clamp_width(width):
     return int(max(MIN_WIDTH, min(MAX_WIDTH, int(round(width)))))
 
 
+def area(pane, window, bar_height=0):
+    """The rect the panel lives in (2026-10-17, «не растягивалась на весь экран а
+    видела границы других интерфейсов»): the viewport area - Maya's `pane` (the
+    MainPane workspaceControl, under the menus, status line, shelf and scene tabs) -
+    ending above the band at the bottom of Maya's `window` where the Time Bar slides
+    out (`bar_height` px, 0 without it); Maya's whole window when there is no pane."""
+    rect = pane or window
+    if not rect:
+        return None
+    x, y, w, h = (int(v) for v in rect)
+    bottom = y + h
+    if window and bar_height:
+        bottom = min(bottom, int(window[1]) + int(window[3]) - int(bar_height))
+    return x, y, w, max(1, bottom - y)
+
+
 def side_band(window, width, scale=1.0, least=0):
     """(x, y, w, h): the panel against the right of Maya's window `window`, its
     full height, `width` logical px wide - at least `least` physical px - and

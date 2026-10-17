@@ -158,15 +158,8 @@ def ensure_edge():
     controller.panel.set_tab(tab())
     _state()["edge"] = controller
     try:
-        held = _borrow(controller)
-        widths = []
-        for records in held.values():
-            for record in records:
-                w = holder.widget(record["form"])
-                if w is not None:
-                    widths.append(w.minimumSizeHint().width())
-        controller.least = look.min_width_px(widths, ui)
-        controller.place()
+        _borrow(controller)
+        _fit(controller)
         _start_job()
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")
@@ -175,6 +168,22 @@ def ensure_edge():
         _show_hidden()
         return None
     return controller
+
+
+def _fit(edge):
+    """The panel at least as wide as Maya's borrowed forms ask now - the Attribute
+    Editor asks more once it shows a node (308 px empty, 648 px on a mesh, live)."""
+    from . import holder, look
+    widths = []
+    for records in (_state().get("held") or {}).values():
+        for record in records:
+            w = holder.widget(record["form"])
+            if w is not None:
+                widths.append(w.minimumSizeHint().width())
+    least = look.min_width_px(widths, getattr(edge.panel, "ui", 1.0))
+    if least > edge.least:
+        edge.least = least
+        edge.place()
 
 
 def refresh():
@@ -188,6 +197,7 @@ def refresh():
         holder.refresh_attribute_editor()
     else:
         holder.update_channel_box()
+    _fit(edge)
     edge.repaint_all()
 
 

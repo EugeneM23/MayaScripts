@@ -32,6 +32,17 @@ class Look(unittest.TestCase):
                 "assert not bad, bad")
         subprocess.check_call([sys.executable, "-c", code], cwd=PLUGIN)
 
+    def test_the_area_is_the_viewport_above_the_time_bar(self):
+        """2026-10-17: under the menus, status line and tabs (Maya's MainPane), above
+        the Time Bar's band - read live: the window (0, 34, 2560, 1494), the pane
+        (2, 176, 2556, 1350)."""
+        window, pane = (0, 34, 2560, 1494), (2, 176, 2556, 1350)
+        self.assertEqual(look.area(pane, window), pane)
+        self.assertEqual(look.area(pane, window, 126), (2, 176, 2556, 1402 - 176))
+        self.assertEqual(look.area(None, window), window)
+        self.assertEqual(look.area(pane, window, 2), pane)        # a bar no taller than the gap under the pane
+        self.assertIsNone(look.area(None, None))
+
     def test_the_band_stands_against_the_right_of_maya_s_window(self):
         self.assertEqual(look.side_band(WINDOW, 340, 1.0), (1360, 50, 340, 900))
         self.assertEqual(look.side_band(WINDOW, 340, 1.5), (1190, 50, 510, 900))

@@ -11819,6 +11819,13 @@ The animator: «боковую панель по концепту нашего �
   unrolling from the cursor. Going back, the rows fold the farthest first (`fold_delay`), then
   the mask closes onto the cursor. Measured live: out 424 ms, back 582 ms; no picture means the
   plain unroll. The zone is 48 logical px (was 14).
+- **Inside the other interfaces' bounds** (the same day: «не растягивалась на весь экран а видела
+  границы других интрефейсов»). The panel, its sensor and zone live in the viewport area: Maya's
+  `MainPane` workspaceControl, under the menus, status line, shelf and scene tabs. They end above
+  the Time Bar's band when it sits at the bottom edge (`look.area`, `edge._window_rect`, looked up
+  every 300 ms). Measured live: the window (0, 34, 2560, 1494), the pane (2, 176, 2556, 1350),
+  the panel 176..1411 with the Time Bar's host from 1411. The least width is read again on every
+  refresh (`_fit`): the Attribute Editor asks 308 px empty and 648 px on a mesh.
 
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done

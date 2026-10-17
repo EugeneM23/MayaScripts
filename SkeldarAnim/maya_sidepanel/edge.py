@@ -30,12 +30,35 @@ PLACE_MS = 300
 WATCH_MS = 60
 
 
+def _global_rect(widget):
+    top_left = widget.mapToGlobal(widget.rect().topLeft())
+    return top_left.x(), top_left.y(), widget.width(), widget.height()
+
+
 def _window_rect():
+    """Where the panel lives: the viewport area (Maya's MainPane), above the Time
+    Bar's band when the Time Bar sits at the bottom edge; Maya's window without a
+    pane. Looked up every time (trap 135)."""
     window = main_window()
     if window is None:
         return None
-    top_left = window.mapToGlobal(window.rect().topLeft())
-    return top_left.x(), top_left.y(), window.width(), window.height()
+    pane = None
+    try:
+        from . import holder
+        w = holder.widget("MainPane")
+        if w is not None and w.isVisible() and w.width() > 0 and w.height() > 0:
+            pane = _global_rect(w)
+    except Exception:                                        # noqa: BLE001
+        pane = None
+    reserved = 0
+    try:
+        import sys
+        bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
+        if bar is not None and bar.alive():
+            reserved = bar.height()
+    except Exception:                                        # noqa: BLE001
+        reserved = 0
+    return look.area(pane, _global_rect(window), reserved)
 
 
 def destroy_all():
