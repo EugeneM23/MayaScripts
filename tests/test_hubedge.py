@@ -768,3 +768,73 @@ class RightSide(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RailDock(unittest.TestCase):
+    """2026-10-17: «вешаем наш реил к боку экрана вьюпорта пусть он там висит
+    постоянно, а при клике по иконкам рейла будут выезжать наши разделы» - the rail
+    always shows on the viewport's side, the card comes out on a click only."""
+
+    VIEWPORT = (100, 150, 1500, 700)
+
+    def setUp(self):
+        self.app = _app()
+        self.point = (800, 400)
+        self.edge = hubedge.Edge(
+            scale=1.0, width=360, motion=lambda: False, rail=True,
+            rest=lambda: 40, work_area=lambda: self.VIEWPORT,
+            cursor=lambda: self.point, buttons=lambda: False,
+            app_active=lambda: True)
+
+    def tearDown(self):
+        self.edge.destroy()
+
+    def frame_rect(self):
+        return self.edge.host.mask().boundingRect().getRect()
+
+    def test_the_rail_stands_on_the_viewport_side_at_rest(self):
+        self.assertTrue(self.edge.host.isVisible())
+        self.assertFalse(self.edge.sensor.isVisible())
+        self.assertFalse(self.edge.shown)
+        self.assertEqual(self.edge.host.geometry().getRect(), (100, 150, 360, 700))
+        self.assertEqual(self.frame_rect(), (0, 0, 40, 700))
+        self.assertEqual(self.edge.visible_rect(), (100, 150, 40, 700))
+        self.assertFalse(self.edge.grip.isVisible())
+
+    def test_a_reveal_opens_the_card_and_a_conceal_leaves_the_rail(self):
+        self.edge.reveal()
+        self.assertTrue(self.edge.shown)
+        self.assertTrue(self.edge.host.mask().isEmpty())          # all of it
+        self.assertTrue(self.edge.grip.isVisible())
+        self.edge.conceal()
+        self.assertFalse(self.edge.shown)
+        self.assertTrue(self.edge.host.isVisible())
+        self.assertEqual(self.frame_rect(), (0, 0, 40, 700))
+
+    def test_the_hover_rules_do_nothing(self):
+        self.edge.reveal()
+        self.point = (1500, 400)
+        self.edge.host_left()
+        self.edge.hide_due()
+        self.edge.press_at((1500, 400))
+        self.assertTrue(self.edge.shown)
+        self.assertFalse(self.edge.hide.isActive())
+        self.edge.conceal()
+        self.point = (100, 400)
+        self.edge.dwell_done()
+        self.assertFalse(self.edge.shown)
+
+    def test_toggle(self):
+        self.assertTrue(self.edge.toggle())
+        self.assertFalse(self.edge.toggle())
+
+    def test_the_right_side(self):
+        self.edge.set_side("right")
+        self.assertTrue(self.edge.host.isVisible())
+        self.assertEqual(self.edge.host.geometry().getRect(), (1240, 150, 360, 700))
+        self.assertEqual(self.frame_rect(), (320, 0, 40, 700))
+
+    def test_it_follows_the_viewport(self):
+        self.VIEWPORT = (0, 100, 1200, 600)
+        self.edge._follow()
+        self.assertEqual(self.edge.host.geometry().getRect(), (0, 100, 360, 600))

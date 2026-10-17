@@ -153,6 +153,27 @@ def _maya_work_area():
     return screen.availableGeometry().getRect()
 
 
+def _viewport_area():
+    """Maya's viewport area (the MainPane workspaceControl: under the menus, the
+    status line, the shelf and the scene tabs), global physical px, or None. Found
+    every time (trap 135)."""
+    if not hubqt._maya_ui_ok():
+        return None
+    try:
+        import maya.OpenMayaUI as omui
+        q = hubqt.qt()
+        ptr = omui.MQtUtil.findControl("MainPane")
+        if not ptr:
+            return None
+        pane = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+        if not pane.isVisible() or pane.width() <= 0 or pane.height() <= 0:
+            return None
+        p = pane.mapToGlobal(pane.rect().topLeft())
+        return (p.x(), p.y(), pane.width(), pane.height())
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def _qt_cursor():
     pos = hubqt.qt().QtGui.QCursor.pos()
     return (pos.x(), pos.y())
@@ -324,10 +345,18 @@ class Edge(object):
 
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
-                 buttons=None, app_active=None, side="left"):
+                 buttons=None, app_active=None, side="left", rail=False,
+                 rest=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
+        #  2026-10-17 («вешаем наш реил к боку экрана вьюпорта пусть он там висит
+        #  постоянно, а при клике по иконкам рейла будут выезжать наши разделы»):
+        #  `rail` - the panel stands on the VIEWPORT's side, its rail always
+        #  showing (`rest()` px of it from the edge), the card out only by a
+        #  click (reveal / conceal); the edge's hover does nothing
+        self.rail = bool(rail)
+        self.rest = rest
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
         self.side = rules.side_of(side)
@@ -388,9 +417,50 @@ class Edge(object):
 
         self.place()
         self.grip.raise_()
-        self.host.hide()
-        self.sensor.show()
-        self.sensor.raise_()
+        self._area = None
+        if self.rail:
+            self.sensor.hide()
+            self.host.show()
+            #  the viewport moves and resizes with Maya's window and its docks
+            self.follow = q.QtCore.QTimer(self.host)
+            self.follow.setInterval(300)
+            self.follow.timeout.connect(self._follow)
+            self.follow.start()
+        else:
+            self.host.hide()
+            self.sensor.show()
+            self.sensor.raise_()
+
+    def _follow(self):
+        """The rail panel stands on the viewport's side wherever it moves."""
+        if not self.alive():
+            return
+        try:
+            area = (tuple(self.work_area()), self.rest_px())
+        except Exception:                                    # noqa: BLE001
+            return
+        if area != self._area and self._anim is None:
+            self._area = area
+            self.place()
+
+    def rest_px(self):
+        """How much of the host shows at rest, physical px from the edge: the
+        rail (`rest()`), or nothing for the hover panel."""
+        if not self.rail or self.rest is None:
+            return 0
+        try:
+            return int(max(0, self.rest()))
+        except Exception:                                    # noqa: BLE001
+            return 0
+
+    def visible_rect(self):
+        """What of the panel shows on screen now (global x, y, w, h), or None:
+        the time bar steps aside for it (maya_timebar.edge._obstacles)."""
+        if not self.alive() or not self.host.isVisible() or self._frame <= 0:
+            return None
+        x, y, w, h = self._host_rect()
+        fx, fw = rules.frame_span(max(1, self._frame), w, self.side)
+        return x + fx, y, fw, h
 
     def _timer(self, ms, call):
         q = hubqt.qt()
@@ -414,7 +484,11 @@ class Edge(object):
         return self._anim is not None
 
     def work_area(self):
-        return self._work_area() if self._work_area else _maya_work_area()
+        if self._work_area:
+            return self._work_area()
+        if self.rail:
+            return _viewport_area() or _maya_work_area()
+        return _maya_work_area()
 
     def _host_rect(self):
         return self.host.geometry().getRect()
@@ -459,7 +533,15 @@ class Edge(object):
             return
         w, h = host.width(), host.height()
         line = self._line()
-        if self._anim is not None:
+        if self.rail:
+            #  the slot never moves: the frame (the window's mask) opens from
+            #  the rail to the whole panel and closes back onto it
+            offset = 0
+            if self._anim is None:
+                self._set_frame(w if self._rest_out else self.rest_px())
+            if grip is not None and hubqt._valid(grip):
+                grip.setVisible(bool(self._rest_out))
+        elif self._anim is not None:
             offset = self.offset
         else:
             offset = 0 if self._rest_out else -w
@@ -504,6 +586,9 @@ class Edge(object):
             return
         for timer in (self.dwell, self.hide, self.retry):
             timer.stop()
+        if self.rail:
+            self._rail_slide(True)
+            return
         if self._shown and self._anim is None:
             self.host.raise_()
         else:
@@ -533,10 +618,57 @@ class Edge(object):
             timer.stop()
         if not self._shown:
             return
+        if self.rail:
+            self._rail_slide(False)
+            return
         self._shown = False
         self.hold = rules.Hold()
         self._sync_watch()
         self._slide(False)
+
+    def toggle(self):
+        """The rail: out when in, in when out."""
+        if self._shown:
+            self.conceal()
+        else:
+            self.reveal()
+        return self._shown
+
+    def _rail_slide(self, showing):
+        """The rail panel: the window's frame opens from the rail to the whole
+        width (out) or closes back onto it (in), from where it stands; the
+        host stays up with its rail."""
+        self._stop_anim()
+        self._shown = bool(showing)
+        self.place()
+        self.host.show()
+        self.host.raise_()
+        width = max(1, self.host.width())
+        rest = min(width, self.rest_px())
+        end = width if showing else rest
+        start = self._frame
+        try:
+            moving = bool(self.motion())
+        except Exception:                                    # noqa: BLE001
+            moving = False
+        if showing:
+            self._rest_out = True        # the grip and the frame follow at the end
+            if hubqt._valid(self.grip):
+                self.grip.setVisible(True)
+                self.grip.raise_()
+        if not moving or start == end:
+            self._rail_done(showing)
+            return
+        span = max(1, width - rest)
+        self._animate(rules.IN_MS if showing else rules.OUT_MS, span, showing,
+                      start, end, self._set_frame,
+                      lambda: self._rail_done(showing))
+
+    def _rail_done(self, showing):
+        self._stop_anim()
+        self._rest_out = bool(showing)
+        if self.alive():
+            self._fit_slot()
 
     def _slide(self, showing):
         """Out: the frame first, then the hub inside it (2026-10-09: the
@@ -665,7 +797,7 @@ class Edge(object):
     def dwell_done(self):
         """The dwell is over: the cursor still on the edge, no button held,
         Maya the active application -> out."""
-        if not self.alive():
+        if not self.alive() or self.rail:
             return
         area = self.work_area()
         if not rules.contains(rules.sensor_rect(area, self.side),
@@ -683,7 +815,7 @@ class Edge(object):
         self.hold.enter()
 
     def host_left(self):
-        if not self.alive():
+        if not self.alive() or self.rail:      # the rail panel goes by a click only
             return
         if self.hold.leave():
             self._sync_watch()
@@ -693,7 +825,7 @@ class Edge(object):
     def press_at(self, point):
         """A press anywhere in the application, global physical px: outside
         the panel it releases a command's hold."""
-        if not self.alive() or not self._shown:
+        if not self.alive() or not self._shown or self.rail:
             return
         if rules.contains(self._host_rect(), point):
             return
@@ -725,7 +857,7 @@ class Edge(object):
     def hide_due(self):
         """The hide (or a retry) timer: go, unless something holds it - then
         ask again in RETRY_MS."""
-        if not self.alive() or not self._shown:
+        if not self.alive() or not self._shown or self.rail:
             return
         reasons = self.blockers()
         if reasons:
@@ -762,6 +894,10 @@ class Edge(object):
         self.hold = rules.Hold()
         self._sync_watch()
         self.side = side
+        if self.rail:
+            self.place()
+            self.host.show()
+            return True
         self.host.hide()
         self.place()
         self.sensor.show()

@@ -80,8 +80,14 @@ def _obstacles():
         pass
     hub = (getattr(sys, "_skeldar_hubedge", None) or {}).get("edge")
     try:
-        if hub is not None and hub.alive() and hub.shown:
-            out.append(_rect_of(hub.host))
+        if hub is not None and hub.alive():
+            #  what of the hub's panel shows: the rail panel's rail at rest, its
+            #  card when out (2026-10-17); the hover panel only when out
+            visible = getattr(hub, "visible_rect", None)
+            rect = visible() if visible is not None else (
+                _rect_of(hub.host) if hub.shown else None)
+            if rect:
+                out.append(rect)
     except Exception:                                        # noqa: BLE001
         pass
     return out

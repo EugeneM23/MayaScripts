@@ -11769,6 +11769,29 @@ Maya's own commands.
      jumped several frames while Maya's own slider moved on every one. Paint what must follow time with
      `repaint()` before the call that evaluates, and from the `timeChanged` job.
 
+## The hub's edge panel is a rail on the viewport's side (2026-10-17)
+
+The animator: «Давай переделаем нашу боковую панель для основного плагина. Теперь она должна не
+выезжать при наведении на край, вешаем наш рейл к боку экрана вьюпорта, пусть он там висит постоянно,
+а при клике по иконкам рейла будут выезжать наши разделы». This replaces the hover behaviour of
+"The hub as a rail" / edge-panel sections in edge mode. The ⋮ -> Edge panel ▸ Off / Left / Right
+switch and its optionVars are unchanged.
+- **`maya_hubedge.Edge(rail=True, rest=)`**: the host stands on the viewport's side (`MainPane`,
+  `_viewport_area`), followed every 300 ms (`_follow`). At rest the window's mask (`frame`) shows
+  only `rest()` px: the rail and its margin (`maya_hubqt.rail_rest`). `reveal` / `conceal`
+  (`_rail_slide`) open and close the frame from the rail to the whole width; the slot never moves.
+  No sensor, no dwell. The hover rules return at once in rail mode: leaving, a press outside, the
+  hide timer.
+- **`maya_hub`**: `_ensure_edge` builds the skin in the rail layout whatever `layout()` says
+  (`_build_skin(kind="rail")`). On the right side the rail stands at the root's right
+  (`Skin.set_rail_side`). `focus(key)` (a rail icon's click) brings that card out, and a click on
+  the card already out sends it back to the rail. `show(key)` still reveals on its card.
+- **The Time Bar steps aside for what shows** (`Edge.visible_rect`): the rail at rest, the card
+  when out.
+- Proof: `tests/test_hubedge.RailDock` (6); live in the animator's Maya: the rail at the
+  viewport's left (58 px), a click on Animation Setup's icon out to 681 px, the same click back to
+  58. The 📌 still stands in the rail and does nothing there.
+
 ## Side panel: the Channel Box and the Attribute Editor at the right edge (2026-10-17)
 
 The animator: «боковую панель по концепту нашего таймлайна, только для chanalbox/layer editor и атрибут

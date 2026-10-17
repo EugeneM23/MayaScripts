@@ -592,7 +592,7 @@ def _dress_sidepanel(skin):
         print(traceback.format_exc())
 
 
-def _build_skin(host=None):
+def _build_skin(host=None, kind=None):
     """The skinned hub - into the workspaceControl, or into `host` (the edge
     panel's slot, 2026-10-08). Deleted whole if any of it fails, then
     re-raised."""
@@ -605,7 +605,7 @@ def _build_skin(host=None):
         host = qt.host_widget(CONTROL)
     else:
         qt.destroy_roots_in(host)
-    kind = layout()
+    kind = kind or layout()
     rail = kind == "rail"
     skin = qt.Skin(host, scale=scale, callbacks=_callbacks(), layout=kind)
     hubstyle.set_skinning(True)
@@ -921,11 +921,16 @@ def _ensure_edge():
     try:
         he = _hubedge()
         he.destroy_all()
+        #  2026-10-17: the rail hangs on the viewport's side for good and a
+        #  click on one of its icons brings that card out beside it
         current = he.Edge(scale=_scale(), width=_edge_width(),
-                          on_width=_save_edge_width, side=edge_side())
+                          on_width=_save_edge_width, side=edge_side(),
+                          rail=True, rest=_rail_rest)
         he.state()["edge"] = current
-        _SKIN = _build_skin(host=current.slot)
+        _SKIN = _build_skin(host=current.slot, kind="rail")
         _SKIN.set_edge_mode(True, edge_side())
+        _SKIN.set_rail_side(edge_side())
+        current.place()
         #  the scene tabs bar and its hooks (2026-10-15): build() shows them, and
         #  with the hub at the edge build() is not what builds the hub - an
         #  update rebuilt it here and the bar never came
@@ -949,6 +954,17 @@ def _ensure_edge():
         raise
     _BUILT_HERE = True
     return current
+
+
+def _rail_rest():
+    """How much of the edge panel shows at rest, physical px from its edge: the
+    rail and the margin round it (2026-10-17)."""
+    if not is_skinned() or getattr(_SKIN, "rail", None) is None:
+        return 0
+    current = edge()
+    if current is None:
+        return 0
+    return _hubqt().rail_rest(_SKIN, current.host, current.side)
 
 
 def edge_failure_text(error):
@@ -1521,6 +1537,16 @@ def focus(key):
         return expand(key)
     if key not in _SKIN.cards:
         return None
+    current = edge()
+    if current is not None and getattr(current, "rail", False) and _skin_at(current):
+        #  the rail at the viewport's side (2026-10-17): a click brings that
+        #  card out; the card already out, the click sends it back
+        if current.shown and _SKIN.shown == key:
+            current.conceal()
+            return None
+        card = _show_on_rail(key)
+        current.reveal()
+        return card
     if _rail():
         return _show_on_rail(key)
     for other, card in _SKIN.cards.items():

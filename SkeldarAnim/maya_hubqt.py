@@ -180,6 +180,21 @@ def destroy_roots(control):
     return destroy_roots_in(host_widget(control))
 
 
+def rail_rest(skin, host, side="left"):
+    """How far from `host`'s `side` edge the skin's rail reaches, physical px,
+    plus the root's margin: what the rail panel shows at rest (2026-10-17). 0
+    without a rail or before it is laid out."""
+    rail = getattr(skin, "rail", None)
+    if rail is None or not _valid(rail) or not _valid(host) or rail.width() <= 1:
+        return 0
+    q = qt()
+    margin = skin.px(3)
+    left = rail.mapTo(host, q.QtCore.QPoint(0, 0)).x()
+    if side == "right":
+        return max(0, host.width() - left + margin)
+    return max(0, left + rail.width() + margin)
+
+
 def destroy_roots_in(host):
     """Delete every skin root standing in widget `host`, NOW: the
     workspaceControl's (`destroy_roots`), or the edge panel's slot
@@ -1826,6 +1841,17 @@ class Skin(object):
         if not on:
             self.pin.setChecked(False)
         self.paint_edge(on, side)
+
+    def set_rail_side(self, side):
+        """The rail against `side` (2026-10-17, the rail hung on the viewport's
+        side): on the right it stands at the root's right, the cards on its left."""
+        if self.rail is None:
+            return
+        q = qt()
+        layout = self.root.layout()
+        if layout is not None:
+            layout.setDirection(q.QtWidgets.QBoxLayout.RightToLeft if side == "right"
+                                else q.QtWidgets.QBoxLayout.LeftToRight)
 
     def paint_pin(self, on):
         """The 📌 shows `on` (no callback: `clicked` is the press's alone) -

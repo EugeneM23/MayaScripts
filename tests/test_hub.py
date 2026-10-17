@@ -655,6 +655,9 @@ class FakeSkin(object):
         self.edge_side = side
         self.edge_painted.append((bool(on), side))
 
+    def set_rail_side(self, side):
+        self.rail_side = side
+
     def paint_edge(self, on, side="left"):
         self.edge_painted.append((bool(on), side))
 
@@ -1082,6 +1085,16 @@ class FakeEdge(object):
         self.side = side
         self.shown = False
         return True
+
+    def place(self):
+        pass
+
+    def toggle(self):
+        if self.shown:
+            self.conceal()
+        else:
+            self.reveal()
+        return self.shown
 
     def alive(self):
         return not self.destroyed
