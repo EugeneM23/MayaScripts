@@ -5,16 +5,18 @@ The animator: «перерисовать все иконки интерфейс�
 «recolour all icons, and redraw the most visible ~150 in our line style».
 Spec: docs/superpowers/specs/2026-10-17-maya-icons-design.md
 
-A PNG of an icon's name in `<userAppDir>/2027/prefs/icons` (the first folder
-of XBMLANGPATH) is what Maya's `createIcon` answers (measured). So On writes
-there and Off deletes what it wrote:
+Every icon (`name.png`, `name_150.png`, `name_200.png`) is drawn or
+recoloured into a folder of ours, and Maya's icon buttons are pointed at it
+by full path - at once, and every WATCH_MS for panels built later. (A file of
+an icon's name in prefs/icons does not reach Maya's own buttons: measured.)
 
-    enabled() / set_enabled(on)   ⋮ -> Maya icons (off by default); shows
-                                  after Maya restarts
+    enabled() / set_enabled(on)   ⋮ -> Maya icons (off by default), at once
+    ensure()                      at Maya's start: point the buttons again
     recolour(rgba, keep_axes)     numpy: greys to the hub's, accents orange
     render(name, w, h)            one of our drawings as a QImage
     write_icons(dest, ...)        every icon into `dest`, a manifest of ours
     remove_icons(dest)            ours out of `dest`, nothing else
+    pointed / repoint             which image a button carries, and setting it
 
 Autodesk's pictures are recoloured on each machine from its own Maya and never
 shipped. A file in `dest` we did not write is never touched.
@@ -123,7 +125,7 @@ def from_array(a):
 
 def qimage_recoloured(image, name):
     """Maya's icon `image` recoloured (axis icons keep their axes)."""
-    stem = os.path.splitext(name)[0]
+    stem = base_stem(name)[0]
     return from_array(recolour(to_array(image), stem in AXES))
 
 
@@ -182,6 +184,23 @@ def file_sha1(path):
         return None
 
 
+#  Maya keeps each icon at three sizes, `name.png`, `name_150.png` and
+#  `name_200.png`, and at a 150 % or 200 % display takes the large one first
+#  (measured 2026-10-17 in a GUI Maya: `:/move_M_150.png` and `_200` exist
+#  though `resourceManager` lists neither, and with only `move_M.png` of ours
+#  in prefs/icons the toolbox kept Maya's). Every size is written.
+SCALES = (("_150", 1.5), ("_200", 2.0))
+
+
+def base_stem(filename):
+    """("move_M", "_150") for "move_M_150.png"; ("move_M", "") for the 1x."""
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    for suffix, _ in SCALES:
+        if stem.endswith(suffix) and len(stem) > len(suffix):
+            return stem[:-len(suffix)], suffix
+    return stem, ""
+
+
 def may_write(dest, filename, ours):
     """We may write `filename` in `dest`: it is not there, or it is ours and
     unchanged since (`ours`: the manifest)."""
@@ -208,7 +227,7 @@ def write_icons(dest, sources, progress=None):
         if not may_write(dest, filename, ours):
             kept.append(filename)
             continue
-        stem = os.path.splitext(filename)[0]
+        stem, _suffix = base_stem(filename)
         try:
             if stem in drawn:
                 new = render(stem, image.width() or 20, image.height() or 20)
@@ -274,9 +293,18 @@ def enabled():
 
 
 def maya_sources():
-    """Every PNG of Maya's resources as (filename, QImage), read through a
-    temp folder."""
-    _, QtGui, _ = _qt()                                      # noqa: N806
+    """Every PNG of Maya's resources as (filename, QImage): from Qt's
+    resource tree (`:/name.png`, `:/name_150.png`, `:/name_200.png` - a GUI
+    Maya has them all), else, where that tree holds no icon (mayapy), the 1x
+    ones `resourceManager` lists, read through a temp folder."""
+    QtCore, QtGui, _ = _qt()                                 # noqa: N806
+    names = qt_resource_pngs()
+    if names:
+        for filename in names:
+            image = QtGui.QImage(":/" + filename)
+            if not image.isNull():
+                yield filename, image
+        return
     cmds = _cmds()
     tmp = tempfile.mkdtemp(prefix="skeldar_icons_")
     for filename in sorted(cmds.resourceManager(nameFilter="*.png") or []):
@@ -291,47 +319,204 @@ def maya_sources():
             yield filename, image
 
 
+def qt_resource_pngs():
+    """The PNG files at the root of Qt's resource tree (Maya's icons)."""
+    QtCore, _, _ = _qt()                                     # noqa: N806
+    out = []
+    it = QtCore.QDirIterator(":/", QtCore.QDirIterator.NoIteratorFlags)
+    while it.hasNext():
+        path = it.next()
+        name = path[2:] if path.startswith(":/") else path
+        if name.lower().endswith(".png") and "/" not in name:
+            out.append(name)
+    return sorted(out)
+
+
+# ---------------------------------------------------------- the buttons
+#
+#  A file of an icon's name in prefs/icons does NOT reach Maya's own buttons
+#  (measured 2026-10-17 in a GUI Maya, after a restart: the toolbox, the
+#  status line and a freshly made iconTextButton all drew Maya's resource,
+#  though `MQtUtil.createIcon` answered ours). Pointed at our file by its
+#  full path, a button draws ours at once. So ours live in a folder of our
+#  own and every icon button is pointed there - now, and every WATCH_MS for
+#  the panels Maya builds later (a sweep costs ~0.02 s for ~500 buttons).
+
+#  the cmds kinds that carry an image, and their image flags
+KINDS = (("iconTextButton", "image1"), ("iconTextCheckBox", "image1"),
+         ("iconTextRadioButton", "image1"), ("symbolButton", "image"),
+         ("symbolCheckBox", "image"), ("shelfButton", "image1"),
+         ("toolButton", "image1"))
+WATCH_MS = 2000
+STATE = "_skeldar_mayaicons"           # on sys (trap 111)
+
+
+def pointed(image, folder, have, on):
+    """The image a button should carry: on, an icon we have (by its file
+    name, wherever Maya resolved it) points into `folder`; off, one of ours
+    goes back to its bare name. None = leave it."""
+    if not image:
+        return None
+    norm = image.replace("\\", "/")
+    folder = folder.replace("\\", "/").rstrip("/") + "/"
+    name = norm.rsplit("/", 1)[-1]
+    ours = norm.lower().startswith(folder.lower())
+    if on:
+        if ours or name not in have:
+            return None
+        return folder + name
+    return name if ours else None
+
+
+def repoint(folder, have, on=True):
+    """Every icon button of Maya pointed at our file (on) or back at Maya's
+    (off). Answers how many changed."""
+    cmds = _cmds()
+    changed = 0
+    for kind, flag in KINDS:
+        command = getattr(cmds, kind)
+        #  by full path: Maya names the buttons of every viewport alike
+        #  ("ShadedBtn" four times), and a short name edits the first only
+        for control in cmds.lsUI(type=kind, long=True) or []:
+            try:
+                image = command(control, query=True, **{flag: True})
+                new = pointed(image, folder, have, on)
+                if new is not None:
+                    command(control, edit=True, **{flag: new})
+                    changed += 1
+            except Exception:                                # noqa: BLE001
+                continue
+    return changed
+
+
+def icon_folder():
+    """`<userAppDir>/<version>/SkeldarIcons`: ours, outside Maya's own
+    icon folders."""
+    cmds = _cmds()
+    return os.path.normpath(os.path.join(cmds.internalVar(userAppDir=True),
+                                         cmds.about(version=True),
+                                         "SkeldarIcons"))
+
+
+def have_in(folder):
+    try:
+        return frozenset(n for n in os.listdir(folder) if n.endswith(".png"))
+    except Exception:                                        # noqa: BLE001
+        return frozenset()
+
+
+def _state():
+    import sys
+    state = getattr(sys, STATE, None)
+    if state is None:
+        state = {}
+        setattr(sys, STATE, state)
+    return state
+
+
+def watch(folder):
+    """A timer that points the buttons of panels built later (WATCH_MS)."""
+    QtCore, _, _ = _qt()                                     # noqa: N806
+    state = _state()
+    unwatch()
+    have = have_in(folder)
+    timer = QtCore.QTimer()
+    timer.setInterval(WATCH_MS)
+
+    def tick():
+        try:
+            repoint(folder, have, True)
+        except Exception:                                    # noqa: BLE001
+            pass
+    timer.timeout.connect(tick)
+    timer.start()
+    state["timer"] = timer
+    return timer
+
+
+def unwatch():
+    timer = _state().pop("timer", None)
+    if timer is not None:
+        try:
+            timer.stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def _write_all(folder):
+    """Every icon into `folder`, under a progress window Esc stops. Answers
+    (written, stopped)."""
+    cmds = _cmds()
+    batch = cmds.about(batch=True)
+    if not batch:
+        cmds.progressWindow(title="Maya icons", status="Drawing icons...",
+                            isInterruptable=True, progress=0, maxValue=100)
+
+    def progress(i, n):
+        if batch or i % 50:
+            return True
+        if cmds.progressWindow(query=True, isCancelled=True):
+            return False
+        cmds.progressWindow(edit=True, progress=int(100.0 * i / max(n, 1)),
+                            status="Icon %d of %d" % (i, n))
+        return True
+    try:
+        written, _, stopped = write_icons(folder, maya_sources(), progress)
+    finally:
+        if not batch:
+            cmds.progressWindow(endProgress=True)
+    return written, stopped
+
+
+def _legacy_cleanup():
+    """The first build wrote into prefs/icons (never seen by Maya's buttons):
+    ours there go."""
+    try:
+        return remove_icons(icons_dir())[0]
+    except Exception:                                        # noqa: BLE001
+        return 0
+
+
+def ensure():
+    """At Maya's start (the hub's build), while the icons are on: the files
+    made if they are missing, the buttons pointed, the watch started."""
+    if not enabled():
+        return 0
+    folder = icon_folder()
+    if not read_manifest(folder):
+        _write_all(folder)
+    count = repoint(folder, have_in(folder), True)
+    if not _cmds().about(batch=True):
+        watch(folder)
+    return count
+
+
 def set_enabled(on):
-    """⋮ -> Maya icons: written or removed, remembered, the line to say."""
+    """⋮ -> Maya icons: our icons drawn and Maya's buttons pointed at them,
+    at once; or every button back on Maya's and our folder emptied."""
     on = bool(on)
     cmds = _cmds()
-    dest = icons_dir()
+    folder = icon_folder()
+    legacy = _legacy_cleanup()
     if on:
-        batch = cmds.about(batch=True)
-        if not batch:
-            cmds.progressWindow(title="Maya icons", status="Drawing icons...",
-                                isInterruptable=True, progress=0, maxValue=100)
-
-        def progress(i, n):
-            if batch or i % 25:
-                return True
-            if cmds.progressWindow(query=True, isCancelled=True):
-                return False
-            cmds.progressWindow(edit=True, progress=int(100.0 * i / max(n, 1)),
-                                status="Icon %d of %d" % (i, n))
-            return True
-        try:
-            written, kept, stopped = write_icons(dest, maya_sources(),
-                                                 progress)
-        finally:
-            if not batch:
-                cmds.progressWindow(endProgress=True)
+        written, stopped = _write_all(folder)
         if stopped:
-            removed, _ = remove_icons(dest)
+            remove_icons(folder)
             cmds.optionVar(intValue=(OPTIONVAR, 0))
-            return ("Maya icons: stopped - nothing changed (%d written and "
-                    "taken back)" % removed)
+            return "Maya icons: stopped - nothing changed"
+        count = repoint(folder, have_in(folder), True)
+        if not cmds.about(batch=True):
+            watch(folder)
         cmds.optionVar(intValue=(OPTIONVAR, 1))
-        message = ("Maya icons ON - %d icons in the hub's style; restart "
-                   "Maya to see them" % written)
-        if kept:
-            message += (" | %d of your own icons in %s kept"
-                        % (len(kept), dest))
-        return message
-    removed, changed = remove_icons(dest)
-    cmds.optionVar(intValue=(OPTIONVAR, 0))
-    message = ("Maya icons OFF - %d icons taken out; restart Maya to see its "
-               "own" % removed)
-    if changed:
-        message += " | %d changed since kept" % len(changed)
+        message = ("Maya icons ON - %d buttons now show our icons (%d drawn "
+                   "or recoloured); the Outliner's node icons stay Maya's"
+                   % (count, written))
+    else:
+        unwatch()
+        count = repoint(folder, have_in(folder), False)
+        removed, _ = remove_icons(folder)
+        cmds.optionVar(intValue=(OPTIONVAR, 0))
+        message = ("Maya icons OFF - %d buttons back on Maya's icons" % count)
+    if legacy:
+        message += " | %d files of the first build taken out of prefs/icons" % legacy
     return message

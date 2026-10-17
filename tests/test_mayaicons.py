@@ -183,10 +183,97 @@ class Folder(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.dest)),
                          ["somethingElse.png", "theirs.png"])
 
+    def test_the_large_sizes_are_written_too(self):
+        """2026-10-17, live: at a 150 % display Maya takes `name_150.png`
+        first, so ours must exist at every size or the toolbox keeps Maya's."""
+        sources = [("move_M_150.png", maya_icon("#5285a6", 48)),
+                   ("move_M_200.png", maya_icon("#5285a6", 64)),
+                   ("other_150.png", maya_icon("#5285a6", 30))]
+        written, _, _ = icons.write_icons(self.dest, sources)
+        self.assertEqual(written, 3)
+        for name, size in (("move_M_150.png", 48), ("move_M_200.png", 64),
+                           ("other_150.png", 30)):
+            self.assertEqual(QtGui.QImage(os.path.join(self.dest, name)).width(),
+                             size)
+        drawn = icons.to_array(QtGui.QImage(os.path.join(self.dest,
+                                                         "move_M_150.png")))
+        ref = icons.to_array(icons.render("move_M", 48, 48))
+        np.testing.assert_allclose(drawn, ref, atol=1 / 255.0)
+
+    def test_base_stem(self):
+        self.assertEqual(icons.base_stem("move_M_150.png"), ("move_M", "_150"))
+        self.assertEqual(icons.base_stem("move_M_200.png"), ("move_M", "_200"))
+        self.assertEqual(icons.base_stem("move_M.png"), ("move_M", ""))
+        self.assertEqual(icons.base_stem("_150.png"), ("_150", ""))
+
     def test_a_stop_answers_stopped(self):
         _, _, stopped = icons.write_icons(self.dest, self.sources(),
                                           progress=lambda i, n: i < 1)
         self.assertTrue(stopped)
+
+
+class Pointing(unittest.TestCase):
+    """2026-10-17, live: Maya's own buttons never read prefs/icons; pointed
+    at our file by its full path they draw ours at once."""
+
+    FOLDER = "C:/maya/2027/SkeldarIcons"
+    HAVE = frozenset(("move_M.png", "Shaded.png"))
+
+    def test_a_bare_name_we_have_points_into_our_folder(self):
+        self.assertEqual(icons.pointed("move_M.png", self.FOLDER, self.HAVE, True),
+                         self.FOLDER + "/move_M.png")
+
+    def test_a_path_maya_resolved_points_into_ours_too(self):
+        self.assertEqual(icons.pointed("C:\\maya\\2027\\prefs\\icons\\Shaded.png",
+                                       self.FOLDER, self.HAVE, True),
+                         self.FOLDER + "/Shaded.png")
+
+    def test_an_icon_we_lack_or_already_ours_is_left(self):
+        self.assertIsNone(icons.pointed("other.png", self.FOLDER, self.HAVE, True))
+        self.assertIsNone(icons.pointed(self.FOLDER + "/move_M.png",
+                                        self.FOLDER, self.HAVE, True))
+        self.assertIsNone(icons.pointed("", self.FOLDER, self.HAVE, True))
+
+    def test_off_gives_back_the_bare_name_and_leaves_others(self):
+        self.assertEqual(icons.pointed(self.FOLDER + "/move_M.png",
+                                       self.FOLDER, self.HAVE, False),
+                         "move_M.png")
+        self.assertIsNone(icons.pointed("move_M.png", self.FOLDER, self.HAVE,
+                                        False))
+
+    def test_repoint_edits_every_kind(self):
+        images = {"iconTextButton": {"b1": "move_M.png", "b2": "other.png"},
+                  "symbolButton": {"s1": "Shaded.png"},
+                  "toolButton": {"t1": "move_M.png"}}
+        edits = []
+
+        class Cmds(object):
+            def lsUI(self, type=None, long=False):             # noqa: A002
+                assert long, "repoint must list full paths"
+                return list(images.get(type, {}))
+
+            def __getattr__(self, kind):
+                def command(control, query=False, edit=False, **flags):
+                    (flag, value), = flags.items()
+                    if query:
+                        return images[kind][control]
+                    edits.append((kind, control, flag, value))
+                    images[kind][control] = value
+                return command
+
+        saved = icons._cmds
+        icons._cmds = lambda: Cmds()
+        try:
+            self.assertEqual(icons.repoint(self.FOLDER, self.HAVE, True), 3)
+            self.assertIn(("symbolButton", "s1", "image",
+                           self.FOLDER + "/Shaded.png"), edits)
+            self.assertIn(("toolButton", "t1", "image1",
+                           self.FOLDER + "/move_M.png"), edits)
+            self.assertEqual(images["iconTextButton"]["b2"], "other.png")
+            self.assertEqual(icons.repoint(self.FOLDER, self.HAVE, False), 3)
+            self.assertEqual(images["iconTextButton"]["b1"], "move_M.png")
+        finally:
+            icons._cmds = saved
 
 
 if __name__ == "__main__":

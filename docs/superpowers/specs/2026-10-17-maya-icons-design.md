@@ -43,3 +43,28 @@
   removal on a temp folder (a file of the animator's kept, an edited file of ours kept, the rest gone), the menu row.
 - `docs/superpowers/plans/render_maya_icons.py`: a contact sheet of Maya's drawn set beside ours.
 - Not seen in a GUI Maya when written: which of Maya's controls take a raw pixmap and keep Maya's icon.
+
+
+## Addendum, the same morning: prefs/icons does not reach Maya's buttons
+
+The animator, after Check update and a press: the icons were Maya's. Measured in a scratch GUI Maya (own
+`MAYA_APP_DIR`, killed after):
+
+- **A file in prefs/icons never reaches Maya's own buttons**, after a restart too: the toolbox, the status line and a
+  freshly made `iconTextButton -image1 "move_M.png"` all drew Maya's resource. `MQtUtil.createIcon` answered ours,
+  which is what the mayapy proof measured - the wrong question.
+- Maya keeps every icon at three sizes in Qt's resources (`:/move_M.png`, `:/move_M_150.png`, `:/move_M_200.png`;
+  `resourceManager` lists only the first) and takes the large one at a 150 / 200 % display. A resource of ours
+  registered with `QResource.registerResource` does not override Maya's.
+- **A button pointed at our file by its full path draws ours at once.** So: every size (7282 PNG at the root of `:/`)
+  is drawn or recoloured into `<userAppDir>/<version>/SkeldarIcons` (ours alone, never prefs/icons), every icon button
+  of the KINDS (`iconTextButton`, `iconTextCheckBox`, `iconTextRadioButton`, `symbolButton`, `symbolCheckBox`,
+  `shelfButton`, `toolButton`) is pointed there (`repoint`, `pointed` pure), a Qt timer does it again every 2 s for
+  panels built later (~0.02 s a sweep), and the hub's build calls `ensure()` at Maya's start. Off points every button
+  back at its bare name and empties the folder. No restart either way. The files the first build wrote into
+  prefs/icons are removed by its manifest on the next press.
+- **By full path (`lsUI -long`)**: Maya names every viewport's bar buttons alike (`ShadedBtn` four times); by short
+  name only the first viewport changed.
+- Measured: On 10.9 s (7270 files), 347 buttons at once, the Graph Editor opened afterwards on ours through the watch,
+  every viewport's bar on ours; Off 425 buttons back, none left, the folder empty. Not changed: the Outliner's node
+  icons and anything else Maya draws in C++ without a cmds image.

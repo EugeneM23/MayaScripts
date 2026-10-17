@@ -11678,27 +11678,36 @@ payload row); ⋮ → **Maya theme**, a checkable row (optionVar `skeldarMayaThe
 
 The animator: «перерисовать все иконки интерфейса маи под наш стиль»; shown both ways
 (https://claude.ai/artifact/TpsFZDd63bpcYJ6Wm7EZ5w), «Build both». Spec
-`docs/superpowers/specs/2026-10-17-maya-icons-design.md`. ⋮ → **Maya icons** (optionVar `skeldarMayaIcons`, off by
-default); **seen after Maya restarts**.
-- **Measured**: Maya's resources hold 1652 icons (1596 PNG). A PNG of an icon's name in `<userAppDir>/2027/prefs/icons`
-  (the first folder of `XBMLANGPATH`, `internalVar -userBitmapsDir`) is what `MQtUtil.createIcon` answers;
-  `createPixmap` still answers Maya's own. So a control that takes a raw pixmap keeps Maya's picture.
-- `SkeldarAnim/maya_mayaicons.py`: On reads every PNG through `resourceManager -saveAs` (a temp folder) and writes into
-  prefs/icons: our drawing at Maya's pixel size for the drawn set, else `recolour` (numpy: greys between the hub's
-  darkest and its text by luminance, saturated colours to the accent's hue keeping saturation and value, alpha kept;
-  `AXES` icons keep their red, green and blue). 10.4 s for 1596. A file we did not write is never touched; ours are in
-  `skeldarMayaIcons.json` with sha1s, and Off deletes only those still holding what we wrote. Esc during On takes back
-  what it wrote. **Autodesk's pictures are recoloured on each machine and never shipped.**
-- `SkeldarAnim/maya_mayaicons_art.py` (stdlib): 24-grid SVG bodies, classes `l` / `a` / `m` / `f` / `af` / `tint`;
-  **146 hand drawings** (`ART`) out of the 184 icons Maya's main bars name, plus the 16 panel layouts generated from
-  their names (`layout_panels`) and 14 selection-mask "Partial" states (the mask on a tint). The 4 auto tangents differ
-  by their letter (`LETTER`, paths).
-- Proof: `tests/test_mayaicons.py` (17); `docs/superpowers/plans/verify_maya_icons.py` **9/9 in mayapy** with a scratch
-  `MAYA_APP_DIR` (all 1596 written, the animator's file kept, `createIcon("move_M.png")` answering ours, Off leaving
-  only theirs); `render_maya_icons.py` draws Maya / recoloured / ours side by side (local only: it holds Autodesk's
-  pictures). Not seen in a GUI Maya: which controls take a raw pixmap. New builds of our drawings reach prefs/icons only
-  when the row is switched off and on again.
+`docs/superpowers/specs/2026-10-17-maya-icons-design.md` - **read its addendum**: the first build (997a053) wrote into
+prefs/icons and changed nothing on screen. ⋮ → **Maya icons** (optionVar `skeldarMayaIcons`, off by default), **at
+once, no restart**.
+- **How Maya finds its icons** (measured in a scratch GUI Maya): every icon is in Qt's resources at three sizes,
+  `:/name.png`, `:/name_150.png`, `:/name_200.png` (`resourceManager` lists only the 1x), and a 150 % display takes
+  the `_150`. **Maya's own buttons never read prefs/icons**, a restart changes nothing, a registered `QResource`
+  does not override Maya's; `MQtUtil.createIcon` answers a prefs/icons file, which made the first mayapy proof pass
+  while the screen did not change. **A button pointed at a file by its full path draws it at once.**
+- `SkeldarAnim/maya_mayaicons.py`: On draws or recolours all 7282 PNGs at the root of `:/` into
+  `<userAppDir>/<version>/SkeldarIcons` (`write_icons`, 10.9 s; `recolour` numpy: greys between the hub's darkest and
+  its text by luminance, saturated colours to the accent's hue, alpha kept, `AXES` keep their red/green/blue), then
+  points every icon button of `KINDS` there (`repoint` over `lsUI -type <kind> -long` - **by full path: every
+  viewport's bar names its buttons alike**, `pointed` pure) and starts a Qt timer that sweeps again every `WATCH_MS`
+  2 s for panels built later (~0.02 s a sweep). The hub's build calls `ensure()` at Maya's start. Off points every
+  button back at its bare name and empties the folder; the first build's prefs/icons files go by its manifest.
+  **Autodesk's pictures are recoloured on each machine and never shipped.** Not changed: the Outliner's node icons and
+  anything else Maya draws without a cmds image.
+- `SkeldarAnim/maya_mayaicons_art.py` (stdlib): 24-grid SVG bodies, classes `l` / `a` / `m` / `f` / `af` / `tint`
+  (and the dashed `ld` / `ad` / `md`); **146 hand drawings** (`ART`) out of the 184 icons Maya's main bars name, plus
+  the 16 panel layouts generated from their names (`layout_panels`) and 14 selection-mask "Partial" states. Drawn at
+  each size's own pixels (`base_stem`: `move_M_150.png` is `move_M` at 48 px).
+- Proof: `tests/test_mayaicons.py` (25); live in a scratch Maya: 347 buttons on ours at once, every viewport's bar,
+  the Graph Editor opened afterwards caught by the watch, Off 425 back and none left (pictures in the session only).
+  `docs/superpowers/plans/verify_maya_icons.py` (GUI, phased) is written to that run's gates. `render_maya_icons.py`
+  draws Maya / recoloured / ours side by side (local only: it holds Autodesk's pictures).
 
 243. **QtSvg drops a dashed element's stroke when the dash is an attribute or a style beside its CSS class**
      (measured 2026-10-17: `class="m" stroke-dasharray="2.2 2.2"` and `class="m" style="stroke-dasharray:..."` both
      drew nothing - `pickTemplate` came out empty). A dashed class of its own (`.md{stroke-dasharray:2.2,2.2}`) draws.
+244. **"Maya's icon lookup answers our file" is not "Maya's buttons show it".** `MQtUtil.createIcon("move_M.png")`
+     answered a prefs/icons file in mayapy and in the GUI, and every button Maya draws - the toolbox, the status line,
+     the panel bars, a fresh `iconTextButton` - drew its Qt resource all the same, after a restart too. A proof about
+     what is on screen looks at the screen (a window grab), and a cmds control is edited by its full path.

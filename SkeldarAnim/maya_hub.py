@@ -643,6 +643,7 @@ def build():
     _tabs_bar_soon()
     _time_bar_soon()
     _maya_theme_soon()
+    _maya_icons_soon()
     if not _BUILT_HERE:
         #  A fresh module object (Maya's start, an install): the popups an
         #  older one opened are destroyed, the remembered ones come back
@@ -700,6 +701,23 @@ def _tabs_bar_soon():
             print("SkeldarAnim: the scene tabs bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _maya_icons_soon():
+    """Maya's icons in the hub's style (2026-10-17): at Maya's start, while
+    they are on, Maya's buttons pointed at ours again and watched. Deferred
+    and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def icons():
+        try:
+            import maya_mayaicons
+            maya_mayaicons.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the Maya icons could not be applied")
+            print(traceback.format_exc())
+    cmds.evalDeferred(icons, lowestPriority=True)
 
 
 def _maya_theme_soon():
@@ -871,6 +889,7 @@ def _ensure_edge():
         #  the edge it was never built, and Maya's own slider stayed hidden
         _time_bar_soon()
         _maya_theme_soon()
+        _maya_icons_soon()
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")
@@ -1296,7 +1315,7 @@ def set_mayatheme(on):
 
 def set_mayaicons(on):
     """⋮ -> Maya icons (2026-10-17): every icon recoloured, the most visible
-    redrawn, into prefs/icons; seen after Maya restarts."""
+    redrawn, Maya's buttons pointed at them at once."""
     import maya_mayaicons
     message = maya_mayaicons.set_enabled(on)
     if is_skinned():

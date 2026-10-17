@@ -1,35 +1,23 @@
-"""Proof of Maya icons (2026-10-17), in mayapy standalone with a scratch
-MAYA_APP_DIR (its prefs/icons is the folder written):
+"""Proof of Maya icons (2026-10-17) in a GUI Maya - a scratch one with its
+own MAYA_APP_DIR, never the animator's - sent over its command port:
 
-    set MAYA_APP_DIR=<scratch>
-    mayapy verify_maya_icons.py
-
-On through `set_enabled(True)`: every PNG of Maya's resources written, the
-drawn set from our drawings at Maya's size, a file of "the animator's" kept;
-Maya's own icon lookup (MQtUtil.createIcon) answering ours; Off taking ours
-out and leaving theirs. Prints one line a gate and the count failed.
+On through `set_enabled(True)`: every PNG of Maya's Qt resources (1x, _150,
+_200) drawn or recoloured into <userAppDir>/<version>/SkeldarIcons; every
+icon button of Maya pointed there by full path, in EVERY viewport (Maya names
+their buttons alike); a panel built afterwards caught by the watch; Off
+giving every button back and emptying the folder. Prints a line a gate.
+Run twice: once to switch on (then wait 3 s for the watch), once with
+VERIFY_PHASE = "off".
 """
 
 import os
 import sys
-import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "SkeldarAnim"))
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-assert "MAYA_APP_DIR" in os.environ, "set a scratch MAYA_APP_DIR"
-
-from PySide6 import QtGui, QtWidgets                          # noqa: E402
-APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-import maya.standalone                                        # noqa: E402
-maya.standalone.initialize()
+sys.path.insert(0, r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya.cmds as cmds                                      # noqa: E402
-import maya.OpenMayaUI as omui                                # noqa: E402
-import shiboken6                                              # noqa: E402
-
 import maya_mayaicons as icons                                # noqa: E402
-import maya_mayaicons_art as art                              # noqa: E402
 
+PHASE = globals().get("VERIFY_PHASE", "on")
 RESULTS = []
 
 
@@ -38,49 +26,44 @@ def gate(name, ok, detail=""):
     print("%s  %s  %s" % ("PASS" if ok else "FAIL", name, detail))
 
 
-def maya_icon(name):
-    ptr = omui.MQtUtil.createIcon(name)
-    icon = shiboken6.wrapInstance(int(ptr), QtGui.QIcon)
-    return icon.pixmap(icon.availableSizes()[0]).toImage()
+def on_ours():
+    hits, total = 0, 0
+    for kind, flag in icons.KINDS:
+        for control in cmds.lsUI(type=kind, long=True) or []:
+            try:
+                image = getattr(cmds, kind)(control, query=True, **{flag: True})
+            except Exception:                                # noqa: BLE001
+                continue
+            total += 1
+            hits += "SkeldarIcons" in (image or "")
+    return hits, total
 
 
-dest = icons.icons_dir()
-gate("the folder is the scratch prefs/icons",
-     os.path.normpath(os.environ["MAYA_APP_DIR"]) in dest, dest)
-os.makedirs(dest, exist_ok=True)
-with open(os.path.join(dest, "fileNew.png"), "wb") as handle:
-    handle.write(b"the animator's own fileNew")
-pngs = [n for n in cmds.resourceManager(nameFilter="*.png") or []]
-before = maya_icon("move_M.png")
-
-start = time.time()
-message = icons.set_enabled(True)
-took = time.time() - start
-print(message)
-written = [n for n in os.listdir(dest) if n.endswith(".png")]
-gate("on: every PNG written but theirs", len(written) == len(pngs),
-     "%d of %d PNGs in the folder, %.1f s" % (len(written), len(pngs), took))
-gate("on: theirs kept", open(os.path.join(dest, "fileNew.png"), "rb").read()
-     == b"the animator's own fileNew")
-gate("on: said, with the restart", "restart" in message and "1 of your own"
-     in message, message)
-sizes_ok = all(QtGui.QImage(os.path.join(dest, n + ".png")).width() > 0
-               for n in art.NAMES if n != "fileNew"
-               and os.path.exists(os.path.join(dest, n + ".png")))
-gate("on: every drawn icon written and readable", sizes_ok)
-after = maya_icon("move_M.png")
-same = icons.to_array(after).tobytes() == icons.to_array(
-    icons.render("move_M", after.width(), after.height())).tobytes()
-gate("Maya's createIcon answers our move_M", same and
-     icons.to_array(before).tobytes() != icons.to_array(after).tobytes(),
-     "%dx%d" % (after.width(), after.height()))
-gate("on: remembered", icons.enabled())
-
-message = icons.set_enabled(False)
-print(message)
-left = sorted(os.listdir(dest))
-gate("off: only theirs left", left == ["fileNew.png"], ", ".join(left[:5]))
-gate("off: remembered", not icons.enabled())
-
-failed = RESULTS.count(False)
-print("verify_maya_icons: %d of %d gates failed" % (failed, len(RESULTS)))
+folder = icons.icon_folder()
+if PHASE == "on":
+    message = icons.set_enabled(True)
+    print(message)
+    files = [n for n in os.listdir(folder) if n.endswith(".png")]
+    gate("every size written", any(n.endswith("_150.png") for n in files)
+         and any(n.endswith("_200.png") for n in files), "%d files" % len(files))
+    shaded = [c for c in cmds.lsUI(type="iconTextCheckBox", long=True) or []
+              if c.endswith("|ShadedBtn")]
+    ours = [c for c in shaded if "SkeldarIcons" in
+            cmds.iconTextCheckBox(c, query=True, image1=True)]
+    gate("every viewport's Shaded button on ours", shaded and len(ours) == len(shaded),
+         "%d of %d" % (len(ours), len(shaded)))
+    import maya.mel as mel
+    mel.eval("GraphEditor;")
+    print("now wait 3 s, then run with VERIFY_PHASE = 'watch'")
+elif PHASE == "watch":
+    hits, total = on_ours()
+    gate("the Graph Editor opened after On is on ours (the watch)",
+         hits > 0.6 * total, "%d of %d buttons" % (hits, total))
+else:
+    print(icons.set_enabled(False))
+    hits, _ = on_ours()
+    gate("off: no button on ours", hits == 0, str(hits))
+    gate("off: the folder emptied", not [n for n in os.listdir(folder)
+                                          if n.endswith(".png")])
+print("verify_maya_icons: %d of %d gates failed" % (RESULTS.count(False),
+                                                    len(RESULTS)))
