@@ -703,6 +703,18 @@ def _tabs_bar_soon():
     cmds.evalDeferred(show_bar, lowestPriority=True)
 
 
+def _on_or_retired(module, flag):
+    """Maya theme / Maya icons at Maya's start: applied again while their
+    flag is on; with it off (hidden since 2026-10-17) switched off where the
+    animator left it on, so Maya's own colours and icons come back."""
+    if _hubqt().feature(flag):
+        module.ensure()
+        return ""
+    if module.enabled():
+        return "SkeldarAnim: " + module.set_enabled(False)
+    return ""
+
+
 def _maya_icons_soon():
     """Maya's icons in the hub's style (2026-10-17): at Maya's start, while
     they are on, Maya's buttons pointed at ours again and watched. Deferred
@@ -713,7 +725,9 @@ def _maya_icons_soon():
     def icons():
         try:
             import maya_mayaicons
-            maya_mayaicons.ensure()
+            said = _on_or_retired(maya_mayaicons, "MAYA_ICONS")
+            if said:
+                print(said)
         except Exception:                                    # noqa: BLE001
             print("SkeldarAnim: the Maya icons could not be applied")
             print(traceback.format_exc())
@@ -730,7 +744,9 @@ def _maya_theme_soon():
     def theme():
         try:
             import maya_mayatheme
-            maya_mayatheme.ensure()
+            said = _on_or_retired(maya_mayatheme, "MAYA_THEME")
+            if said:
+                print(said)
         except Exception:                                    # noqa: BLE001
             print("SkeldarAnim: the Maya theme could not be applied")
             print(traceback.format_exc())

@@ -59,6 +59,21 @@ EDGE_CHOICES = (("Off", "off"), ("Left edge", "left"),
                 ("Right edge", "right"))
 
 
+def feature(name):
+    """A flag of skeldar_features (beside this file), False where it is not
+    there: the menu's Maya theme and Maya icons rows wait behind MAYA_THEME
+    and MAYA_ICONS (hidden since 2026-10-17)."""
+    try:
+        import skeldar_features
+        return bool(getattr(skeldar_features, name, False))
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+#  a menu row shown only while its flag is on
+FLAGGED_ROWS = {"mayatheme": "MAYA_THEME", "mayaicons": "MAYA_ICONS"}
+
+
 def qt():
     """PySide6 (Maya 2025+), else PySide2, as one namespace; None without Qt."""
     if _QT:
@@ -1455,6 +1470,8 @@ class Skin(object):
             if text is None:
                 self.menu.addSeparator()
                 continue
+            if key in FLAGGED_ROWS and not feature(FLAGGED_ROWS[key]):
+                continue
             if key == "edge":
                 self._build_edge_menu(text)
                 continue
@@ -1822,11 +1839,15 @@ class Skin(object):
 
     def paint_mayatheme(self, on):
         """The menu's Maya theme row shows `on` (no callback; 2026-10-17)."""
-        self.mayatheme_action.setChecked(bool(on))
+        action = getattr(self, "mayatheme_action", None)
+        if action is not None:                  # hidden behind MAYA_THEME
+            action.setChecked(bool(on))
 
     def paint_mayaicons(self, on):
         """The menu's Maya icons row shows `on` (no callback; 2026-10-17)."""
-        self.mayaicons_action.setChecked(bool(on))
+        action = getattr(self, "mayaicons_action", None)
+        if action is not None:                  # hidden behind MAYA_ICONS
+            action.setChecked(bool(on))
 
     def _build_timebar_menu(self, text):
         """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16): three

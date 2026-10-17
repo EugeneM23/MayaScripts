@@ -48,3 +48,14 @@ PICKER = False
 # shapes). Off since 2026-09-08 («уберем с нашей полки оверлапер»); the
 # module ships, and this flag brings the button back.
 OVERSHOOT = False
+
+# Maya in the hub's colours (maya_mayatheme) and Maya's icons in the hub's
+# style (maya_mayaicons), the hub menu's two rows ⋮ -> Maya theme / Maya
+# icons. Off since 2026-10-17, the day they were built: «давай пока откатим
+# наши наработки по изменению цвета и иконок вернем старые цвета в маю по
+# умолчанию а функционал который включает новые спрячем но оставим в
+# проекте». Off, the rows are gone and the hub's build switches either one
+# off where it was left on (the animator's colours given back, our icon
+# files taken out). The modules, tests and specs stay.
+MAYA_THEME = False
+MAYA_ICONS = False

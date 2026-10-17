@@ -1860,5 +1860,51 @@ class RailLayout(FakeToolsMixin, unittest.TestCase):
         self.assertTrue(all(skin.collapsible.values()))
 
 
+class MayaLookRetired(unittest.TestCase):
+    """2026-10-17: Maya theme and Maya icons hidden behind skeldar_features;
+    where the animator left one on, the hub's build switches it off so Maya's
+    own colours and icons come back."""
+
+    class Module(object):
+        def __init__(self, on):
+            self.on, self.calls = on, []
+
+        def enabled(self):
+            return self.on
+
+        def ensure(self):
+            self.calls.append("ensure")
+
+        def set_enabled(self, on):
+            self.calls.append(("set", on))
+            self.on = on
+            return "Maya theme OFF - Maya's own colours back"
+
+    def run_with(self, flags, module):
+        saved = hub._hubqt
+        hub._hubqt = lambda: types.SimpleNamespace(
+            feature=lambda name: name in flags)
+        try:
+            return hub._on_or_retired(module, "MAYA_THEME")
+        finally:
+            hub._hubqt = saved
+
+    def test_flag_off_and_left_on_is_switched_off(self):
+        module = self.Module(True)
+        said = self.run_with((), module)
+        self.assertEqual(module.calls, [("set", False)])
+        self.assertIn("OFF", said)
+
+    def test_flag_off_and_already_off_does_nothing(self):
+        module = self.Module(False)
+        self.assertEqual(self.run_with((), module), "")
+        self.assertEqual(module.calls, [])
+
+    def test_flag_on_applies_it_again(self):
+        module = self.Module(True)
+        self.run_with(("MAYA_THEME",), module)
+        self.assertEqual(module.calls, ["ensure"])
+
+
 if __name__ == "__main__":
     unittest.main()

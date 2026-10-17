@@ -11738,3 +11738,11 @@ once, no restart**.
      answered a prefs/icons file in mayapy and in the GUI, and every button Maya draws - the toolbox, the status line,
      the panel bars, a fresh `iconTextButton` - drew its Qt resource all the same, after a restart too. A proof about
      what is on screen looks at the screen (a window grab), and a cmds control is edited by its full path.
+
+**Both hidden the same day** (the animator: «давай пока откатим наши наработки по изменению цвета и иконок вернем
+старые цвета в маю по умолчанию а функционал который включает новые спрячем но оставим в проекте»):
+`skeldar_features.MAYA_THEME` and `MAYA_ICONS` are False, so the hub menu builds neither row
+(`maya_hubqt.feature`, `FLAGGED_ROWS`; the paint methods do nothing without their row), and the hub's build
+(`maya_hub._on_or_retired`) switches off whichever the animator left on - the theme's saved colours written back, our
+icon files taken out of SkeldarIcons and prefs/icons, every button back on Maya's. Flip a flag to bring a row back;
+the modules, tests, specs and verify scripts stay.

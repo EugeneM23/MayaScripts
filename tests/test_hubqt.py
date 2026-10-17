@@ -23,12 +23,15 @@ def _app():
 
 class SeamsMixin(object):
 
+    FEATURES = ()          # skeldar_features flags on (hubqt.feature)
+
     def setUp(self):
         self.app = _app()
         #  skins register on the status relay (2026-10-08); a test that
         #  deletes a skin's root without destroy() would leave it there
         style._LISTENERS[:] = []
-        self.saved = (hubqt.find, hubqt.path_of)
+        self.saved = (hubqt.find, hubqt.path_of, hubqt.feature)
+        hubqt.feature = lambda name: name in self.FEATURES
         self.controls = {}
         hubqt.find = lambda name, layout=False: self.controls.get(name)
         hubqt.path_of = lambda obj: "path|" + obj.objectName()
@@ -57,7 +60,7 @@ class SeamsMixin(object):
                                callbacks=callbacks)
 
     def tearDown(self):
-        hubqt.find, hubqt.path_of = self.saved
+        hubqt.find, hubqt.path_of, hubqt.feature = self.saved
         if self.skin.alive():
             self.skin.destroy()
         style._LISTENERS[:] = []
@@ -70,7 +73,51 @@ class SeamsMixin(object):
         return widget
 
 
+class FlaggedRows(SeamsMixin, unittest.TestCase):
+    """Maya theme / Maya icons with their flags on (skeldar_features)."""
+
+    FEATURES = ("MAYA_THEME", "MAYA_ICONS")
+
+    def test_the_rows_are_built_after_interface_animations(self):
+        texts = [a.text() for a in self.skin.menu.actions()
+                 if not a.isSeparator()]
+        self.assertEqual(texts[3:6], ["Interface animations", "Maya theme",
+                                      "Maya icons"])
+
+    def test_the_maya_theme_row_is_a_checkbox_painted_without_a_call(self):
+        """2026-10-17: Maya in the hub's colours, switched in the menu."""
+        action = self.skin.mayatheme_action
+        self.assertTrue(action.isCheckable())
+        self.skin.paint_mayatheme(True)
+        self.assertTrue(action.isChecked())
+        self.skin.paint_mayatheme(False)
+        self.assertEqual(self.calls, [])
+        action.trigger()
+        self.assertEqual(self.calls, [("mayatheme", True)])
+
+    def test_the_maya_icons_row_is_a_checkbox_painted_without_a_call(self):
+        """2026-10-17: Maya's icons in the hub's style, switched in the menu."""
+        action = self.skin.mayaicons_action
+        self.assertTrue(action.isCheckable())
+        self.skin.paint_mayaicons(True)
+        self.assertTrue(action.isChecked())
+        self.skin.paint_mayaicons(False)
+        self.assertEqual(self.calls, [])
+        action.trigger()
+        self.assertEqual(self.calls, [("mayaicons", True)])
+
+
 class TheShell(SeamsMixin, unittest.TestCase):
+
+    def test_maya_theme_and_icons_are_hidden_behind_their_flags(self):
+        """2026-10-17: «функционал который включает новые спрячем но оставим
+        в проекте» - off, the rows are not built and painting them is
+        nothing."""
+        texts = [a.text() for a in self.skin.menu.actions()]
+        self.assertNotIn("Maya theme", texts)
+        self.assertNotIn("Maya icons", texts)
+        self.skin.paint_mayatheme(True)
+        self.skin.paint_mayaicons(True)
 
     def test_the_root_goes_into_the_host_named_for_the_stylesheet(self):
         self.assertEqual(self.skin.root.objectName(), style.ROOT)
@@ -151,22 +198,21 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",
-                          "Maya theme", "Maya icons", "Time bar", "Layout", "Edge panel", "Classic look"])
+                          "Time bar", "Layout", "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
         #  "Layout" (2026-10-16) and "Edge panel" (2026-10-09) are submenus:
         #  their own rows call nothing
-        self.assertEqual(actions[7].menu().objectName(),
+        self.assertEqual(actions[5].menu().objectName(),
                          "skeldarHubLayoutMenu")
-        self.assertIs(actions[8].menu(), self.skin.edge_menu)
+        self.assertIs(actions[6].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
-        self.assertEqual(actions[6].menu().objectName(), "skeldarHubTimeBarMenu")
+        self.assertEqual(actions[4].menu().objectName(), "skeldarHubTimeBarMenu")
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), ("mayatheme", True),
-                          ("mayaicons", True), "classic"])
-        rows = actions[6].menu().actions()
+                          ("animations", False), "classic"])
+        rows = actions[4].menu().actions()
         self.assertEqual([a.text() for a in rows], ["Maya's", "Docked", "Bottom edge"])
         rows[2].trigger()
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
@@ -186,27 +232,6 @@ class TheShell(SeamsMixin, unittest.TestCase):
         action.trigger()
         self.assertEqual(self.calls, [("sounds", True)])
 
-    def test_the_maya_theme_row_is_a_checkbox_painted_without_a_call(self):
-        """2026-10-17: Maya in the hub's colours, switched in the menu."""
-        action = self.skin.mayatheme_action
-        self.assertTrue(action.isCheckable())
-        self.skin.paint_mayatheme(True)
-        self.assertTrue(action.isChecked())
-        self.skin.paint_mayatheme(False)
-        self.assertEqual(self.calls, [])
-        action.trigger()
-        self.assertEqual(self.calls, [("mayatheme", True)])
-
-    def test_the_maya_icons_row_is_a_checkbox_painted_without_a_call(self):
-        """2026-10-17: Maya's icons in the hub's style, switched in the menu."""
-        action = self.skin.mayaicons_action
-        self.assertTrue(action.isCheckable())
-        self.skin.paint_mayaicons(True)
-        self.assertTrue(action.isChecked())
-        self.skin.paint_mayaicons(False)
-        self.assertEqual(self.calls, [])
-        action.trigger()
-        self.assertEqual(self.calls, [("mayaicons", True)])
 
     def test_every_object_of_ours_has_a_name(self):
         """They are parts of the cmds paths of everything inside."""
