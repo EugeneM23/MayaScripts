@@ -534,5 +534,57 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), [])
 
 
+class PlayAndTrail(Strip):
+    """Play pressed closes a frame round the bar; the cells the playhead leaves
+    glow and fade, scrubbing and playing (2026-10-17)."""
+
+    motion = True
+
+    def test_a_scrub_leaves_fading_cells(self):
+        self.drag(self.tl, self.x(20), self.x(25))
+        self.assertTrue(self.tl.trail)
+        self.tl.grab()
+        self.assertFalse(getattr(self.tl, "_failed", False))
+        later = self.strip.clock() + 5000
+        self.strip.clock = lambda: later
+        self.tl.step(16)
+        self.assertEqual(self.tl.trail, {})
+
+    def test_playback_leaves_fading_cells(self):
+        self.strip.state["playing"] = True
+        self.link.s["playing"] = True
+        for now in (13.0, 14.0, 15.0):
+            self.link.s["now"] = now
+            self.strip.on_time()
+        self.assertEqual(sorted(self.tl.trail), [12, 13, 14])
+
+    def test_a_time_change_while_still_leaves_no_trail(self):
+        self.link.s["now"] = 20.0
+        self.strip.on_time()
+        self.assertEqual(self.tl.trail, {})
+
+    def test_play_closes_a_frame_round_the_bar(self):
+        self.strip.play.click()
+        self.assertIsNotNone(self.tl.play_at)
+        self.assertTrue(self.tl.busy(self.strip.clock()))
+        self.tl.grab()
+        self.assertFalse(getattr(self.tl, "_failed", False))
+
+    def test_stopping_closes_no_frame(self):
+        self.strip.state["playing"] = True
+        self.link.s["playing"] = True
+        self.strip.refresh()
+        self.tl.play_at = None
+        self.strip.play.click()
+        self.assertIsNone(self.tl.play_at)
+
+    def test_without_motion_neither(self):
+        self.strip.motion = False
+        self.drag(self.tl, self.x(20), self.x(25))
+        self.strip.play.click()
+        self.assertEqual(self.tl.trail, {})
+        self.assertIsNone(self.tl.play_at)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ held wrapper (trap 135).
 Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 """
 
+import math
 import time
 import traceback
 
@@ -540,6 +541,8 @@ def classes():
             self.key_lift = {}          # key -> 0..1, eased
             self.head_lift = 0.0
             self.reached = {}           # key -> clock() when the playhead reached it
+            self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
+            self.play_at = None         # Play pressed: a frame closes in round the bar
             self._static = None         # the still part, drawn once (`_paint`)
             self._static_for = None
             self.static_builds = 0
@@ -559,6 +562,10 @@ def classes():
                 return True
             if self.aim_key is not None and self.key_lift.get(self.aim_key, 0.0) < 0.995:
                 return True
+            if self.trail:
+                return True
+            if self.play_at is not None and look.progress(now - self.play_at, "play") is not None:
+                return True
             return any(now - t0 < KEY_FADE_MS for t0 in self.reached.values())
 
         def step(self, dt):
@@ -576,6 +583,48 @@ def classes():
             now = self.strip.clock()
             for k in [k for k, t0 in self.reached.items() if now - t0 >= KEY_FADE_MS]:
                 del self.reached[k]
+            self._prune_trail(now)
+
+        def _prune_trail(self, now):
+            for f in [f for f, t0 in self.trail.items() if look.progress(now - t0, "trail") is None]:
+                del self.trail[f]
+
+        def leave(self, frame):
+            """The playhead left `frame`'s cell (a scrub, playback): it glows and fades."""
+            if not self.strip.motion:
+                return
+            now = self.strip.clock()
+            self._prune_trail(now)          # playback turns no timer: prune here too
+            self.trail[math.floor(frame + 1e-9)] = now
+            self.strip.kick()
+
+        def played(self):
+            """Play pressed: an accent frame closes in round the bar."""
+            if self.strip.motion:
+                self.play_at = self.strip.clock()
+                self.strip.kick()
+
+        def _draw_trail(self, p, t, h):
+            now, accent = self.strip.clock(), self.strip.tokens["accent"]
+            p.setPen(Qt.NoPen)
+            for frame, t0 in self.trail.items():
+                u = look.progress(now - t0, "trail")
+                if u is None:
+                    continue
+                c0, c1 = t.cell(frame)
+                p.setBrush(colour(accent, look.TRAIL_ALPHA * 255 * (1.0 - u)))
+                p.drawRect(QtCore.QRectF(c0, 0, max(1.0, c1 - c0), h))
+
+        def _draw_play_frame(self, p, w, h):
+            st = self.strip
+            u = look.progress(st.clock() - self.play_at, "play") if self.play_at is not None else None
+            if u is None:
+                return
+            ui = st.ui
+            inset = 1 + 7 * ui * look.ease_out_quint(u)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QtGui.QPen(colour(st.tokens["accent"], 255 * (1.0 - u)), 1 + 2.5 * ui * (1.0 - u)))
+            p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), 6 * ui, 6 * ui)
 
         def key_effect(self, kind, frame, breakdown=False):
             """A key set ("set": a round glow) or deleted ("delete": sparks) at `frame`."""
@@ -642,8 +691,12 @@ def classes():
             p.drawPixmap(0, 0, self._static)
             p.setClipRect(QtCore.QRectF(1, 1, w - 2, h - 2))
             p.setPen(Qt.NoPen)
+            if st.motion and self.trail:
+                self._draw_trail(p, t, h)
             self._draw_moving_keys(p, t, entrance, moving, opacity)
             self._draw_playhead(p, t, w, h)
+            if st.motion and self.play_at is not None:
+                self._draw_play_frame(p, w, h)
             p.end()
 
         def _static_key(self, t, w, h, with_keys, moving):
@@ -969,6 +1022,7 @@ def classes():
             before = s["now"]
             s["now"] = frame
             self.reach(before, frame)
+            self.leave(before)
             self.strip.show_now()
             self.repaint()
             t1 = time.perf_counter()
@@ -1412,6 +1466,8 @@ def classes():
                 before = self.state["now"]
                 self.state["now"] = now
                 self.timeline.reach(before, now)
+                if self.state.get("playing"):
+                    self.timeline.leave(before)
                 self.show_now()
                 #  painted now, inside Maya's frame: Maya's playback does not let
                 #  the event loop run between frames, so `update()` drew one frame
@@ -1439,7 +1495,11 @@ def classes():
                                (self.play_end, "p1"), (self.anim_end, "a1")):
                 if not field.hasFocus():
                     field.setText(look.frame_text(s[key]))
-            self.play.glyph = "pause" if s["playing"] else "play"
+            playing = bool(s["playing"])
+            if playing and getattr(self, "_was_playing", None) is False:
+                self.timeline.played()
+            self._was_playing = playing
+            self.play.glyph = "pause" if playing else "play"
             self.play.update()
             self.fps.set_label(look.fps_label(s["unit"]) + u" ▾")
             self.auto.setChecked(bool(s["auto"]))

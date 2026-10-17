@@ -11661,6 +11661,12 @@ sparks); the same day the animator: «откатив все эффекты ве�
   `SMALL_CHANGE` keys), a snap onto a frame and a key move (`_quiet_keys`) start nothing; none with ⋮ →
   Interface animations off.
 - Speed as before the mockup (`bench_time_bar.py`: a scrub step 1.5 ms). 110 timebar tests. Not seen in a GUI Maya.
+- **…and two more back** (minutes later: «эффект сужения на таймлайне когда нажал плей ... клеточки ... перекрашиваются
+  и гаснут ... добавим его для плей режима»): Play pressed closes an accent frame in round the timeline (`played`,
+  `play_at`, 420 ms; stopping makes none); the cell the playhead leaves glows `TRAIL_ALPHA` 0.28 and fades over 380 ms
+  (`Timeline.leave`, `trail`) - while scrubbing, and in playback from `on_time`. Playback turns no timer (trap 269), so
+  the trail is drawn from its age in the paint `on_time` forces and pruned on each `leave`. A scrub step 1.6 ms; 116
+  timebar tests.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

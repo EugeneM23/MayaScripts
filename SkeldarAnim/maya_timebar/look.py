@@ -504,7 +504,8 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 600}
+EFFECT_MS = {"set": 520, "delete": 600, "trail": 380, "play": 420}
+TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
 
