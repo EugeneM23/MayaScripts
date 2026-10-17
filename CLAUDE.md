@@ -11850,6 +11850,13 @@ The animator: «боковую панель по концепту нашего �
   The side panel's reveal and hide call `nudge_timebar()` so the bar moves at once. Live: side
   out 2008..2558 down to 1526, the bar 2..2008; side in, the bar 2..2558. **The side panel waits
   600 ms before it hides** (`look.HIDE_MS`, half the Time Bar's 1200: «в 2 раза меньше»).
+- **It does not hide by itself while the Time Bar is out** (the same day: «таймслайдер меняет свой
+  размер если панель закрывается ... панель не может закрыться сам (только если пользователь как-то
+  ее закроет)»): blocker `timebar` (`SideEdge.timebar_out`). A ✕ in the header
+  (`skeldarSidePanelClose`, `close_by_hand`) sends it away whatever keeps it (the 📌 dropped).
+  The edge then waits for the cursor to leave the zone (`closed`), or the button, standing in the
+  zone, would bring it straight back; a new selection brings it out again. Live: both out,
+  blockers `["timebar"]`, `hide_due` kept it, ✕ took it away.
 
 277. **A scriptJob does not fire during playback.** Maya runs scriptJobs when it is idle, and
      playback never is: a timeChanged job fired 0 times in 25 s of playback (measured

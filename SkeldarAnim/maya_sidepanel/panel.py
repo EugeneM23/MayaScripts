@@ -14,6 +14,7 @@ from . import look
 PANEL = "skeldarSidePanel"
 HEADER = "skeldarSidePanelHeader"
 PIN = "skeldarSidePanelPin"
+CLOSE = "skeldarSidePanelClose"
 GRIP = "skeldarSidePanelGrip"
 
 
@@ -38,8 +39,10 @@ QWidget#{header} QPushButton:checked {{
     background: {thumb}; color: {text}; font-weight: bold; border-color: {line};
 }}
 QPushButton#{pin}:checked {{ background: {accent_tint}; color: {accent_text}; border-color: {accent}; }}
+QPushButton#{close}:hover {{ background: {danger_tint}; color: {danger}; }}
 QWidget#{grip} {{ background: transparent; border-left: 1px solid {inset_line}; }}
-""".format(panel=PANEL, header=HEADER, pin=PIN, grip=GRIP, panel_c=t["panel"], line=t["line"],
+""".format(panel=PANEL, header=HEADER, pin=PIN, close=CLOSE, grip=GRIP, panel_c=t["panel"], line=t["line"],
+           danger=t["danger"], danger_tint=t["danger_tint"],
            track=t["track"], track_edge=t["track_edge"], muted=t["muted"], hover=t["hover"],
            text=t["text"], thumb=t["thumb"], accent=t["accent"], accent_tint=t["accent_tint"],
            accent_text=t["accent_text"], inset_line=t["inset_line"],
@@ -118,6 +121,13 @@ def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_
             self.pin.setToolTip("Keep the side panel out")
             self.pin.toggled.connect(lambda on: on_pin(on) if on_pin else None)
             row.addWidget(self.pin)
+            #  2026-10-17: the panel no longer hides by itself while the Time Bar is
+            #  out, so a press must be able to send it away
+            self.close_button = QtWidgets.QPushButton("✕", header)
+            self.close_button.setObjectName(CLOSE)
+            self.close_button.setFocusPolicy(QtCore.Qt.NoFocus)
+            self.close_button.setToolTip("Hide the side panel")
+            row.addWidget(self.close_button)
             column.addWidget(header)
             self.header = header
 

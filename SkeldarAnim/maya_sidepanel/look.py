@@ -162,12 +162,13 @@ def tab_of_component(component):
 
 
 def blockers(pinned=False, held=False, inside=False, buttons=False, popup=False,
-             modal=False, typing=False, dragging=False, selected=False):
+             modal=False, typing=False, dragging=False, selected=False, timebar=False):
     """Why the panel must stay out, in a fixed order (empty: it may go)."""
     reasons = []
     for name, value in (("pinned", pinned), ("held", held), ("inside", inside),
                         ("buttons", buttons), ("popup", popup), ("modal", modal),
-                        ("typing", typing), ("dragging", dragging), ("selected", selected)):
+                        ("typing", typing), ("dragging", dragging), ("selected", selected),
+                        ("timebar", timebar)):
         if value:
             reasons.append(name)
     return reasons

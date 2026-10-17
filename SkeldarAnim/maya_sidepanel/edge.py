@@ -104,7 +104,7 @@ class SideEdge(object):
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
                  on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
-                 playing=None):
+                 playing=None, timebar=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -119,6 +119,8 @@ class SideEdge(object):
         self._capture = capture        # a seam: (host) -> QPixmap, for the tests
         self._selected = selected      # (2026-10-17) something selected: out and kept out
         self._playing = playing
+        self._timebar = timebar
+        self.closed = False            # sent away by the close button: the edge waits for the cursor to leave
         import maya_hubstyle
         self._face = maya_hubstyle.TOKENS["panel"]
         self.motion = motion
@@ -145,6 +147,9 @@ class SideEdge(object):
         layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
         self.host = host
         self.panel = make_panel(host, self._tab_picked, self.set_pinned, self._grip)
+        close = getattr(self.panel, "close_button", None)
+        if close is not None:
+            close.clicked.connect(lambda checked=False: self.close_by_hand())
         layout.addWidget(self.panel)
         controller = self
 
@@ -225,6 +230,37 @@ class SideEdge(object):
             return bool(cmds.play(q=True, state=True))
         except Exception:                                    # noqa: BLE001
             return False
+
+    def timebar_out(self):
+        """The Time Bar at the bottom edge is out: it stepped aside for this panel,
+        and the panel hiding by itself would make it jump wider (2026-10-17, «таймслайдер
+        меняет свой размер если панель закрывается»)."""
+        if self._timebar is not None:
+            return bool(self._timebar())
+        import sys
+        bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
+        try:
+            return bool(bar is not None and bar.alive() and bar.shown)
+        except Exception:                                    # noqa: BLE001
+            return False
+
+    def close_by_hand(self):
+        """The close button: away now, whatever would keep it out; the edge does not
+        bring it back until the cursor has left the edge's zone."""
+        self.closed = True
+        self.hold.held = self.hold.entered = False
+        if self.pinned:
+            self.set_pinned(False)
+        self.conceal()
+
+    def _waits_after_close(self, zone_rect):
+        """True while the panel, closed by hand, waits for the cursor to leave."""
+        if not self.closed:
+            return False
+        if rules.contains(zone_rect, self.cursor(), margin=2):
+            return True
+        self.closed = False
+        return False
 
     def selected(self):
         """Something is selected in the scene (the panel is wanted then)."""
@@ -337,7 +373,10 @@ class SideEdge(object):
         window = self._window_rect()
         if not window:
             return
-        inside = rules.contains(look.zone_band(window, self.scale), self.cursor())
+        zone = look.zone_band(window, self.scale)
+        inside = rules.contains(zone, self.cursor())
+        if self._waits_after_close(zone):
+            inside = False
         if inside and (self.buttons() or not self.app_active() or not self.over_maya()
                        or in_timebar_band(self.cursor())):
             inside = False
@@ -350,6 +389,8 @@ class SideEdge(object):
         window = self._window_rect()
         if not window or not rules.contains(look.sensor_band(window, look.SENSOR_PX), self.cursor(),
                                             margin=2):
+            return
+        if self._waits_after_close(look.zone_band(window, self.scale)):
             return
         if rules.may_reveal(True, self.shown, self.buttons(), self.app_active()):
             self.reveal()
@@ -367,6 +408,7 @@ class SideEdge(object):
             return
         self.place()
         self.shown = True
+        self.closed = False
         nudge_timebar()
         self.sensor.hide()
         if instant or not self._motion() or self.playing():
@@ -572,7 +614,8 @@ class SideEdge(object):
                              inside=rules.contains(self._host_rect(), self.cursor()),
                              buttons=self.buttons(), popup=app.activePopupWidget() is not None,
                              modal=app.activeModalWidget() is not None, typing=typing,
-                             dragging=self._width0 is not None, selected=self.selected())
+                             dragging=self._width0 is not None, selected=self.selected(),
+                             timebar=self.timebar_out())
 
     def hide_due(self):
         if not self.shown:

@@ -157,6 +157,7 @@ class Edge(unittest.TestCase):
         self.picture = None
         self.sel = [False]
         self.play = [False]
+        self.bar_out = [False]
 
         def make(parent, on_tab, on_pin, on_width):
             return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
@@ -168,7 +169,8 @@ class Edge(unittest.TestCase):
                                   over_maya=lambda: self.over[0], motion=False,
                                   on_tab=self.tabs.append, on_width=self.widths.append,
                                   tick=self.ticks.append, capture=lambda host: self.picture,
-                                  selected=lambda: self.sel[0], playing=lambda: self.play[0])
+                                  selected=lambda: self.sel[0], playing=lambda: self.play[0],
+                                  timebar=lambda: self.bar_out[0])
         self.addCleanup(self.edge.destroy)
 
     def geometry(self, widget):
@@ -276,6 +278,41 @@ class Edge(unittest.TestCase):
         self.assertIsNone(self.edge._slide)
         self.assertTrue(self.edge.host.isVisible())
         self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
+
+    def test_it_stays_while_the_time_bar_is_out(self):
+        """2026-10-17: «таймслайдер меняет свой размер если панель закрывается» -
+        while the bar is out the panel does not hide by itself."""
+        self.edge.reveal()
+        self.bar_out[0] = True
+        self.cursor[:] = [300, 300]
+        self.edge.watch_tick()
+        self.assertIn("timebar", self.edge.blockers())
+        self.edge.hide_due()
+        self.assertTrue(self.edge.shown)
+        self.bar_out[0] = False
+        self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def test_the_close_button_sends_it_away_whatever_keeps_it(self):
+        self.sel[0] = True
+        self.bar_out[0] = True
+        self.edge.selection_changed()
+        self.edge.set_pinned(True)
+        self.cursor[:] = [1690, 60]             # the button stands in the edge's zone
+        self.edge.panel.close_button.click()
+        self.assertFalse(self.edge.shown)
+        self.assertFalse(self.edge.pinned)
+        for _ in range(20):                     # still in the zone: it waits
+            self.edge.zone_tick()
+        self.edge.dwell_done()
+        self.assertFalse(self.edge.shown)
+        self.cursor[:] = [600, 400]             # left the zone
+        self.edge.zone_tick()
+        self.assertFalse(self.edge.closed)
+        self.cursor[:] = [1690, 400]
+        for _ in range(int(look.ZONE_DWELL_MS // look.ZONE_POLL_MS)):
+            self.edge.zone_tick()
+        self.assertTrue(self.edge.shown)
 
     def test_nothing_selected_brings_nothing_out(self):
         self.assertFalse(self.edge.selection_changed())
