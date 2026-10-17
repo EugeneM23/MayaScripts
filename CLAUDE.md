@@ -11446,6 +11446,16 @@ the card is `[Fall | Blend]` now, hotkey row `ragdoll.blend` (`panel.press_blend
     the hit before it (0.000), knocked 5.7-6.3 cm, back on the take by the end;
   - a sprint attack on Manny the same (its Anim leg bodies 3.98 cm, their bones exact).
   57 plan tests; 7085 unit tests. **Not seen in a GUI Maya** (the card, a real press).
+- **…Follow is a spring with weight** (the same day: «персонаж остается на своем месте и что-то там
+  дергается ... Я вообще не вижу работы регдола»; spec addendum 2). The share-of-the-way kick lagged a
+  fast take and snapped back (the error flipping sign frame to frame, its jump 17.6 cm) and read as no
+  physics. Now a Follow body's error from the take is carried on by a damped spring solved exactly
+  (`plan.follow`, `spring_step`, `follow_spring`: 0.5..6 Hz log-spaced by strength, damping 0.4, the
+  muscles holding strength² of gravity), and the kick lands it at the take plus that error; Anim (1)
+  keeps the servo and its drift lean, Free (0) nothing. A press with no impulse and no Free zone says
+  Follow only adds weight and lag. Measured: the jump 3-4 cm; on a 60-frame emote Follow 0.5 lags and
+  sags the hand 6-11 cm, Free arms hang 50-64 cm off; the verify 14/14 on all three rigs, a 4 m/s head
+  hit knocking the head 13-16 cm (6 before). 63 plan tests. Not seen in a GUI Maya.
 
 273. **A powered ragdoll follows a take's roll at its peril.** A UE upper arm spins about its own axis up
      to 80 deg a frame in a sword attack; a capsule servoed to that spin precesses (Bullet's gyroscopic

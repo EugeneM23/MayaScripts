@@ -444,6 +444,55 @@ class Blend(unittest.TestCase):
         j, _t = plan.servo(still, still, still, 30.0, 1.0, 2.0, (1, 1, 1))
         self.assertAlmostEqual(j[1], 2.0 * plan.G / 30.0)
 
+    def test_a_follow_spring_is_softer_and_carries_less_weight_at_a_lower_strength(self):
+        soft, _z, carried_soft = plan.follow_spring(0.2)
+        firm, _z, carried_firm = plan.follow_spring(0.8)
+        self.assertLess(soft, firm)
+        self.assertLess(carried_soft, carried_firm)
+        self.assertAlmostEqual(plan.follow_spring(0.0)[0], 2 * math.pi * plan.FOLLOW_SOFT_HZ)
+        self.assertAlmostEqual(plan.follow_spring(1.0)[0], 2 * math.pi * plan.FOLLOW_FIRM_HZ)
+
+    def test_the_spring_step_is_exact_for_a_damped_oscillator(self):
+        w, z, h = 10.0, 0.4, 1e-5
+        e, v = 1.0, 0.5
+        for _ in range(int(round(0.3 / h))):           # integrate finely and compare
+            v += (-w * w * e - 2 * z * w * v) * h
+            e += v * h
+        self.assertAlmostEqual(float(plan.spring_step(1.0, 0.5, w, z, 0.3)), e, places=3)
+
+    def test_a_rotation_vector_round_trips(self):
+        m = turn((0.3, 1.0, -0.2), 70)
+        back = plan.from_rotvec(plan.rotvec(m))
+        self.assertTrue(np.allclose(back, m, atol=1e-9))
+
+    def test_follow_at_strength_one_is_the_servo_and_at_zero_nothing(self):
+        before = at(np.identity(3), (0, 100, 0))
+        now = at(np.identity(3), (2, 100, 0))
+        target = at(turn((0, 1, 0), 30), (10, 100, 0))
+        inertia = plan.capsule_inertia(5.0, 30.0, 5.0)
+        full = plan.follow(before, now, before, now, target, 30.0, 1.0, 5.0, inertia)
+        servo = plan.servo(before, now, target, 30.0, 1.0, 5.0, inertia)
+        self.assertTrue(np.allclose(full[0], servo[0]) and np.allclose(full[1], servo[1]))
+        none = plan.follow(before, now, before, now, target, 30.0, 0.0, 5.0, inertia)
+        self.assertFalse(np.any(none[0]) or np.any(none[1]))
+
+    def test_a_follow_body_on_the_take_keeps_with_it_and_sags_under_what_it_does_not_carry(self):
+        still = at(np.identity(3), (0, 100, 0))
+        j, torque = plan.follow(still, still, still, still, still, 30.0, 0.5, 2.0, (1, 1, 1))
+        self.assertFalse(np.any(torque))
+        carried = plan.follow_spring(0.5)[2]
+        lift = 2.0 * plan.G / 30.0                       # the impulse that holds it still a frame
+        self.assertAlmostEqual(j[1], lift * (1 + carried) / 2.0)
+        self.assertLess(j[1], lift)
+
+    def test_a_follow_body_off_the_take_is_pulled_back_part_of_the_way(self):
+        target = at(np.identity(3), (0, 100, 0))
+        off = at(np.identity(3), (10, 100, 0))
+        j, _t = plan.follow(off, off, target, target, target, 30.0, 0.5, 2.0, (1, 1, 1),
+                            gravity=0.0)
+        self.assertLess(j[0], 0.0)                       # back toward the take
+        self.assertGreater(j[0], -2.0 * 10 * 30.0)       # not all the way in one frame
+
     def test_bullet_s_capsule_inertia_is_a_box_s(self):
         along, across, _ = plan.capsule_inertia(5.0, 30.0, 5.0)
         self.assertAlmostEqual(across, 416.6666, places=3)

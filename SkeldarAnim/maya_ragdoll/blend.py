@@ -141,11 +141,18 @@ def simulate(ref, a, b, s, colliders=(), progress=None, impulses=True):
                         # roll, and spinning it up to the take's roll (80 deg a frame) let Bullet's
                         # gyroscopic term swing the axis 28 deg off
                         want = target[t][key]
+                        p_k = pull(key, t)
+                        if p_k < 1.0:        # a spring with weight: it lags, swings and sags
+                            aims.pop(key, None)
+                            kicks[key] = plan.follow(
+                                bodies[t - 2][key], bodies[t - 1][key], target[t - 2][key],
+                                target[t - 1][key], want, fps, p_k, mass[key], inertia[key])
+                            continue
                         if key in drift:
-                            want = plan.aimed(want, drift[key], DRIFT_GAIN * pull(key, t))
+                            want = plan.aimed(want, drift[key], DRIFT_GAIN)
                         aims[key] = want
                         kicks[key] = plan.servo(bodies[t - 2][key], bodies[t - 1][key], want,
-                                                fps, pull(key, t), mass[key], inertia[key])
+                                                fps, 1.0, mass[key], inertia[key])
                     for hit in hits:
                         if hit["at"] == t:
                             j, point = plan.impulse(mass[hit["key"]], hit["speed"], hit["tip"],
@@ -160,13 +167,10 @@ def simulate(ref, a, b, s, colliders=(), progress=None, impulses=True):
                     world.clear_impulses()
                     bodies[t] = world.read()
                     struck = set(h["key"] for h in hits if h["at"] == t)
-                    for key in keys:         # how far the step landed off its aim, a hit aside
-                        p_k = pull(key, t)
+                    for key in keys:         # how far a held body's step landed off its aim
                         drift.pop(key, None)
-                        if p_k > 0.0 and key not in struck:
-                            reach = plan.aimed(aims[key], plan.world_turn(bodies[t - 1][key],
-                                                                          aims[key]), 1.0 - p_k)
-                            drift[key] = plan.world_turn(reach, bodies[t][key])
+                        if key in aims and key not in struck:
+                            drift[key] = plan.world_turn(aims[key], bodies[t][key])
                     if progress is not None and not progress(t):
                         raise rd.Refused("cancelled - nothing changed")
             finally:
@@ -326,4 +330,7 @@ def blend(selection=None, given=None, progress=None):
         line += " | " + hit_line
     if run.get("impulse_notes"):
         line += " | " + "; ".join(run["impulse_notes"])
+    if not run.get("impulses") and "free" not in set(run["state"].values()):
+        line += (" | no impulse and no Free zone: Follow only adds weight and lag - "
+                 "+ Impulse for a hit, Free for a limp part, a lower strength for more")
     return True, line

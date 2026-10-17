@@ -882,6 +882,86 @@ def servo(before, now, target, fps, strength, mass, inertia, gravity=G):
     return j, torque
 
 
+# A Follow zone is a spring with weight: its strength sets how fast the body comes back to the
+# take (a frequency between these, log-spaced), how much of gravity's pull the muscles carry, and
+# the spring rings a little (FOLLOW_DAMPING under 1). Measured 2026-10-17: a share-of-the-way kick
+# each frame (servo below 1) lagged a fast take and snapped back - a twitch, no weight.
+FOLLOW_SOFT_HZ = 0.5
+FOLLOW_FIRM_HZ = 6.0
+FOLLOW_DAMPING = 0.4
+
+
+def follow_spring(strength):
+    """(omega rad/s, damping ratio, the share of gravity carried: strength^2) of a Follow at `strength`."""
+    s = max(0.0, min(1.0, float(strength)))
+    hz = FOLLOW_SOFT_HZ * (FOLLOW_FIRM_HZ / FOLLOW_SOFT_HZ) ** s
+    return 2.0 * math.pi * hz, FOLLOW_DAMPING, s * s
+
+
+def spring_step(e0, v0, omega, zeta, dt):
+    """A damped spring's error a time `dt` on, from error `e0` and its rate `v0` (any shape)."""
+    e0 = np.asarray(e0, dtype=float)
+    v0 = np.asarray(v0, dtype=float)
+    decay = math.exp(-zeta * omega * dt)
+    if zeta < 1.0:
+        wd = omega * math.sqrt(1.0 - zeta * zeta)
+        return decay * (e0 * math.cos(wd * dt) + (v0 + zeta * omega * e0) / wd * math.sin(wd * dt))
+    return decay * (e0 + (v0 + omega * e0) * dt)
+
+
+def rotvec(m3):
+    """The rotation vector (radians, world axis) of a world turn (3x3 rows, as world_turn gives)."""
+    m = np.asarray(m3, dtype=float).T
+    c = float(np.clip((np.trace(m) - 1.0) * 0.5, -1.0, 1.0))
+    theta = math.acos(c)
+    if theta < 1e-9:
+        return np.zeros(3)
+    if math.pi - theta < 1e-6:
+        return np.zeros(3)
+    axis = np.array([m[2, 1] - m[1, 2], m[0, 2] - m[2, 0], m[1, 0] - m[0, 1]]) / (2 * math.sin(theta))
+    return axis * theta
+
+
+def from_rotvec(v):
+    """The world turn (3x3 rows) of a rotation vector (radians)."""
+    v = np.asarray(v, dtype=float)
+    theta = float(np.linalg.norm(v))
+    if theta < 1e-12:
+        return np.identity(3)
+    axis = v / theta
+    kx = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    col = np.identity(3) + math.sin(theta) * kx + (1.0 - math.cos(theta)) * (kx @ kx)
+    return col.T
+
+
+def follow(before, now, target_before, target_now, target_next, fps, strength, mass, inertia,
+           gravity=G):
+    """(J, torque) of a Follow body: the body standing at `now` (`before` a frame earlier) is off the
+    take (`target_now`, `target_before` a frame earlier) by an error that a damped spring
+    (`follow_spring`) carries on for a frame; the kick lands it at `target_next` plus that error.
+    The muscles carry strength^2 of gravity, the rest of it sags the body. Strength 1 is `servo`."""
+    s = max(0.0, min(1.0, float(strength)))
+    if s >= 1.0:
+        return servo(before, now, target_next, fps, 1.0, mass, inertia, gravity)
+    if s <= 0.0:
+        return np.zeros(3), np.zeros(3)
+    omega, zeta, carried_share = follow_spring(s)
+    dt = 1.0 / float(fps)
+    v_now, w_now = velocities(before, now, fps)
+    v_take, w_take = velocities(target_before, target_now, fps)
+    e1 = spring_step(pos(now) - pos(target_now), v_now - v_take, omega, zeta, dt)
+    v_want = (pos(target_next) + e1 - pos(now)) * fps
+    lift = np.array([0.0, gravity * dt * 0.5, 0.0])
+    j = float(mass) * ((v_want + carried_share * lift) - (v_now - lift))
+    r1 = spring_step(rotvec(world_turn(target_now, now)), np.radians(w_now - w_take), omega, zeta, dt)
+    want_rot = rot(target_next) @ from_rotvec(r1)
+    _v, w_want = velocities(now, frame(want_rot, pos(now)), fps)
+    dw = np.radians(w_want - w_now)
+    r = rot(now)
+    torque = r.T @ (np.asarray(inertia, dtype=float) * (r @ dw))
+    return j, torque
+
+
 def hit_torque(point, j):
     """The torque (world) of an impulse `j` struck `point` (world, from the body's centre) away."""
     return np.cross(np.asarray(point, dtype=float), np.asarray(j, dtype=float))

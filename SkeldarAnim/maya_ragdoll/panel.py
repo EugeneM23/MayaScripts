@@ -67,10 +67,11 @@ TIPS = {
     "mode": "Fall: the rig drops as a rag doll. Blend: the take and the ragdoll mixed",
     "anim": "Anim: this zone plays the take exactly and carries its neighbours (legs in Anim hold "
             "the pelvis too)",
-    "follow": "Follow: this zone is physics pulled toward the take - Strength 1 keeps it on the "
-              "take, lower lets hits and the body swing it further",
+    "follow": "Follow: this zone is a body on a spring to the take - it lags, swings past and "
+              "sags under its weight; Strength 1 keeps it on the take",
     "free": "Free: this zone is a rag doll between Blend in and Blend out",
-    "zone_strength": "How hard a Follow zone is pulled toward the take (0..1)",
+    "zone_strength": "How stiff a Follow zone's spring is and how much of its weight it holds "
+                     "(1: on the take; 0.5: lags and sags a hand's width; 0.2: nearly limp)",
     "preset": "Sets the six zones",
 }
 JOB = {}

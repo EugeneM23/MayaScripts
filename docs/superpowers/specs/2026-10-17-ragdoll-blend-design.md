@@ -115,3 +115,29 @@ Creep_Rig and Orc_D_Rig.
 - The sprint attack on Manny too, with its Anim leg bodies 3.98 cm off (their bones exact).
 
 Not built besides: a weapon's own body in Blend; the IK spine.
+
+## Addendum 2: Follow is a spring with weight (2026-10-17)
+
+The animator tried the build: «персонаж остается на своем месте и что-то там дергается ... Я вообще не
+вижу работы регдола». Measured in mayapy on the Longsword combo, Hit reaction, no impulse: the bodies
+left the take only during the fast swing (10 cm at the forearm) and their error flipped sign from frame
+to frame (-5.8, +0.4, +3.5 cm): a share-of-the-way kick each frame lags a fast take and snaps back. The
+frame-to-frame change of the error reached 17.6 cm - the twitch - and nothing read as weight.
+
+- **Follow** (`plan.follow`): each body's error from the take (place and turn, world axes) is carried
+  on one frame by a damped spring solved exactly (`spring_step`, `FOLLOW_DAMPING` 0.4: it rings a
+  little), and the kick lands the body at the take's next frame plus that error. The strength sets the
+  spring (`follow_spring`: 0.5 to 6 Hz, log-spaced - 0.5 is 1.7 Hz) and how much of gravity the muscles
+  hold (strength squared: at 0.5 a quarter, the rest sags the body). Strength 1 is the old servo
+  (Anim); 0 nothing (Free). The discrete map, the velocity read off the last two frames, is stable at
+  every frequency (spectral radius 0.39-0.98, checked).
+- The drift lean stays for the held bodies only.
+- The status line says when there is no impulse and no Free zone: Follow then only adds weight and lag.
+
+Measured after (mayapy):
+- the Longsword's 18-frame span: the frame-to-frame jump of the error 3-4 cm (17.6 before);
+- Victory_Emote, 60 frames at the card's defaults: Follow 0.5 lags and sags the hand and head 6-11 cm
+  with a jump of 1.0-1.3 cm; Free arms hang 50-64 cm off the take;
+- `verify_ragdoll_blend.py` **14/14 on Manny_Rig, Creep_Rig and Orc_D_Rig**: strength 1 within 2.75 /
+  3.17 / 2.74 cm, the legs exact, a 4 m/s head hit knocking the head 14.4 / 15.8 / 13.4 cm (5.7-7
+  before) and back by the end.
