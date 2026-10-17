@@ -384,8 +384,8 @@ def slide(t_ms, height, showing, ms):
 
 
 ZONE_DWELL_MS = 150     # the cursor resting in the band this long brings the bar out
-HIDE_MS = 455           # the bar waits this long after the cursor left before it hides
-                        # (2026-10-17: 30 % longer than the hub panel's 350, edgerules.HIDE_MS)
+HIDE_MS = 1200          # the bar waits this long after the cursor left before it hides
+                        # (2026-10-17: 1.2 s, the animator; the hub panel keeps edgerules.HIDE_MS)
 ZONE_POLL_MS = 50
 
 

@@ -66,9 +66,8 @@ class CellTests(unittest.TestCase):
 
 class HideDelayTests(unittest.TestCase):
 
-    def test_the_bar_waits_30_percent_longer_than_the_hub_panel(self):
-        import maya_edgerules
-        self.assertEqual(look.HIDE_MS, round(maya_edgerules.HIDE_MS * 1.3))
+    def test_the_bar_waits_1_2_seconds_before_it_hides(self):
+        self.assertEqual(look.HIDE_MS, 1200)
 
 
 class TickTests(unittest.TestCase):
