@@ -11867,7 +11867,8 @@ The animator: «боковую панель по концепту нашего �
   (`maya_timebar.look.popping`) nearest the cursor's height first (`open_delay`), under the mask
   unrolling from the cursor. Going back, the rows fold the farthest first (`fold_delay`), then
   the mask closes onto the cursor. Measured live: out 424 ms, back 582 ms; no picture means the
-  plain unroll. The zone is 48 logical px (was 14).
+  plain unroll. The zone is 62 logical px (14, then 48, then 30 % wider: «зону срабатывания
+  увеличим на 30%»).
 - **Inside the other interfaces' bounds** (the same day: «не растягивалась на весь экран а видела
   границы других интрефейсов»). The panel, its sensor and zone live in the viewport area: Maya's
   `MainPane` workspaceControl, under the menus, status line, shelf and scene tabs. They end above
@@ -11906,6 +11907,12 @@ The animator: «боковую панель по концепту нашего �
   The edge then waits for the cursor to leave the zone (`closed`), or the button, standing in the
   zone, would bring it straight back; a new selection brings it out again. Live: both out,
   blockers `["timebar"]`, `hide_due` kept it, ✕ took it away.
+- **Out on selection is optional** (the same day: «сделаем опциональным выезд по выделению»):
+  ⋮ -> Side panel ▸ **Out on selection**, a checkbox (optionVar `skeldarSidePanelOnSelect`, on by
+  default). Off, the edge's `selected` seam (`maya_sidepanel._has_selection`) answers False, so a
+  selection neither brings the panel out nor keeps it out; the zone, the pin and the rest still do.
+  `maya_hub.set_sidepanel_select`, `paint_sidepanel(choice, on_select)`. Live: on, a selection
+  brought it out.
 - **Out over a Time Bar already out, it ends at the bar's top** (the same day: «если таймслайдер
   растянулся на весь экран то панель не должна опускаться до самого низа и пододвигать тайм
   слайдер»): `reveal` sets `above_bar` when the bar is out, and `place` cuts the band at the bar's

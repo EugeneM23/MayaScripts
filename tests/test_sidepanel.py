@@ -51,8 +51,8 @@ class Look(unittest.TestCase):
 
     def test_the_sensor_and_the_zone_run_down_the_right_edge(self):
         self.assertEqual(look.sensor_band(WINDOW, 2), (1698, 50, 2, 900))
-        self.assertEqual(look.zone_band(WINDOW, 1.0), (1652, 50, 48, 900))
-        self.assertEqual(look.zone_band(WINDOW, 1.5), (1628, 50, 72, 900))
+        self.assertEqual(look.zone_band(WINDOW, 1.0), (1638, 50, 62, 900))
+        self.assertEqual(look.zone_band(WINDOW, 1.5), (1607, 50, 93, 900))
 
     def test_the_burst_rows_cover_the_panel_and_pop_nearest_first(self):
         rows = look.rows(900, 1.5)
@@ -139,6 +139,55 @@ class Holds(unittest.TestCase):
                 del sys._skeldar_sidepanel
             else:
                 sys._skeldar_sidepanel = saved
+
+
+class OnSelect(unittest.TestCase):
+    """2026-10-17 «сделаем опциональным выезд по выделению»."""
+
+    def setUp(self):
+        import maya_sidepanel
+        self.mod = maya_sidepanel
+        self.vars = {}
+        self.picked = ["pCube1"]
+        test = self
+
+        class Cmds(object):
+            def optionVar(self, q=None, exists=None, intValue=None, **_):
+                if exists is not None:
+                    return exists in test.vars
+                if q is not None:
+                    return test.vars[q]
+                if intValue is not None:
+                    test.vars[intValue[0]] = intValue[1]
+
+            def ls(self, selection=False, head=None):
+                return list(test.picked)
+
+        self.saved = maya_sidepanel._cmds
+        maya_sidepanel._cmds = lambda: Cmds()
+
+    def tearDown(self):
+        self.mod._cmds = self.saved
+
+    def test_on_by_default_a_selection_counts(self):
+        self.assertTrue(self.mod.on_select())
+        self.assertTrue(self.mod._has_selection())
+        self.picked = []
+        self.assertFalse(self.mod._has_selection())
+
+    def test_off_a_selection_never_counts_and_is_remembered(self):
+        saved = getattr(sys, "_skeldar_sidepanel", None)
+        sys._skeldar_sidepanel = {"edge": None, "held": {}}
+        try:
+            self.mod.set_on_select(False)
+        finally:
+            if saved is None:
+                del sys._skeldar_sidepanel
+            else:
+                sys._skeldar_sidepanel = saved
+        self.assertEqual(self.vars[self.mod.SELECT_VAR], 0)
+        self.assertFalse(self.mod.on_select())
+        self.assertFalse(self.mod._has_selection())
 
 
 @unittest.skipIf(QT is None, "no Qt")

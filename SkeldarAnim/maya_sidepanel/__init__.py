@@ -14,6 +14,7 @@ MODE_VAR = "skeldarSidePanelMode"
 TAB_VAR = "skeldarSidePanelTab"
 WIDTH_VAR = "skeldarSidePanelWidth"
 HIDDEN_VAR = "skeldarSidePanelHidden"   # Maya's controls we hid, shown again on Maya's mode
+SELECT_VAR = "skeldarSidePanelOnSelect"  # 1 (default): a selection brings it out, keeps it
 
 
 def _state():
@@ -50,6 +51,39 @@ def mode():
 def tab():
     from . import look
     return look.tab_from(_var(TAB_VAR))
+
+
+def on_select():
+    """A selection brings the panel out and keeps it out - optional since
+    2026-10-17 («сделаем опциональным выезд по выделению»), on by default."""
+    try:
+        return bool(_var(SELECT_VAR, 1))
+    except Exception:                                        # noqa: BLE001
+        return True
+
+
+def set_on_select(on):
+    """⋮ -> Side panel ▸ Out on selection."""
+    on = bool(on)
+    _cmds().optionVar(intValue=(SELECT_VAR, 1 if on else 0))
+    controller = _state().get("edge")
+    if controller is not None and on:
+        try:
+            controller.selection_changed()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    return ("Side panel: comes out on a selection" if on
+            else "Side panel: a selection no longer brings it out")
+
+
+def _has_selection():
+    """The edge's `selected` seam: False whenever the option is off."""
+    if not on_select():
+        return False
+    try:
+        return bool(_cmds().ls(selection=True, head=1))
+    except Exception:                                        # noqa: BLE001
+        return False
 
 
 def _remember_tab(value):
@@ -179,7 +213,7 @@ def ensure_edge():
     from . import holder
     controller = edge_module.SideEdge(make, width=_var(WIDTH_VAR, look.WIDTH), scale=ui,
                                       on_tab=on_tab, on_width=_remember_width, tick=_maya_wants,
-                                      on_reveal=refresh)
+                                      on_reveal=refresh, selected=_has_selection)
     controller.panel.set_tab(tab())
     _state()["edge"] = controller
     try:

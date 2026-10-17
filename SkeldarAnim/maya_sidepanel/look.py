@@ -15,7 +15,7 @@ HEADER = 30             # logical px: the tabs and the pin
 GRIP = 5                # logical px: the width grip on the inner (left) side
 #  logical px along the right edge the cursor may rest in (2026-10-17: 14, then
 #  48 - «как и у таймслайдера не нужно было вести мышку до самого края»)
-ZONE_PX = 48
+ZONE_PX = 62     # 48, then 30 % wider (2026-10-17, «зону срабатывания увеличим на 30%»)
 SENSOR_PX = 2           # physical px
 
 ZONE_DWELL_MS = _bar.ZONE_DWELL_MS

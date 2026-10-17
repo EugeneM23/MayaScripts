@@ -451,6 +451,7 @@ def _callbacks():
         "timebar": set_timebar,
         #  the side panel (2026-10-17): Maya's editors at the right edge
         "sidepanel": set_sidepanel,
+        "sidepanel_select": set_sidepanel_select,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
         #  since 2026-10-09 its rows Off / Left edge / Right edge
         "pin": _press_pin,
@@ -587,7 +588,7 @@ def _dress_sidepanel(skin):
     """The menu's Side panel row = the animator's choice (Maya's by default)."""
     try:
         import maya_sidepanel
-        skin.paint_sidepanel(maya_sidepanel.mode())
+        skin.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -1410,7 +1411,17 @@ def set_sidepanel(choice):
     import maya_sidepanel
     message = maya_sidepanel.set_mode(choice)
     if is_skinned():
-        _SKIN.paint_sidepanel(maya_sidepanel.mode())
+        _SKIN.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
+    say(message)
+    return message
+
+
+def set_sidepanel_select(on):
+    """⋮ -> Side panel ▸ Out on selection (2026-10-17)."""
+    import maya_sidepanel
+    message = maya_sidepanel.set_on_select(on)
+    if is_skinned():
+        _SKIN.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
     say(message)
     return message
 

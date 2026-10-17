@@ -52,6 +52,7 @@ class SeamsMixin(object):
             "mayaicons": lambda on: self.calls.append(("mayaicons", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "sidepanel": lambda choice: self.calls.append(("sidepanel", choice)),
+            "sidepanel_select": lambda on: self.calls.append(("sidepanel_select", on)),
             "pin": lambda on: self.calls.append(("pin", on)),
             "edge": lambda on: self.calls.append(("edge", on)),
             "edge_side": lambda c: self.calls.append(("edge_side", c)),
@@ -223,12 +224,22 @@ class TheShell(SeamsMixin, unittest.TestCase):
         #  the side panel (2026-10-17): Maya's / Right edge
         self.assertEqual(actions[5].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[5].menu().actions()
-        self.assertEqual([a.text() for a in side], ["Maya's", "Right edge"])
+        self.assertEqual([a.text() for a in side if not a.isSeparator()],
+                         ["Maya's", "Right edge", "Out on selection"])
         side[1].trigger()
         self.assertEqual(self.calls[-1], ("sidepanel", "edge"))
         self.skin.paint_sidepanel("maya")
         self.assertTrue(side[0].isChecked())
         self.assertEqual(self.calls[-1], ("sidepanel", "edge"))
+        #  Out on selection (2026-10-17): a checkbox, painted without a call
+        select = side[-1]
+        self.assertTrue(select.isCheckable() and select.isChecked())
+        select.trigger()
+        self.assertEqual(self.calls[-1], ("sidepanel_select", False))
+        self.skin.paint_sidepanel("edge", True)
+        self.assertTrue(select.isChecked())
+        self.assertTrue(side[1].isChecked())
+        self.assertEqual(self.calls[-1], ("sidepanel_select", False))
 
     def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
         """2026-10-01: «звук наводки на кнопочку», switched in the menu."""
