@@ -504,7 +504,7 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 600, "trail": 380, "play": 420}
+EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420}
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
@@ -571,11 +571,11 @@ def key_changes(old, new, edited=False):
 DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
 DELETE_START_MS = 500   # ... but the last one starts within this, however many (2026-10-17: 1 s, then 0.5)
 SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
-# ... and how they fly: «Snap and drop», picked from six played side by side (2026-10-17) -
-# a short kick and a heavy fall, logical px per second (spin degrees per second)
-SHARD_SPEED = 143.0         # 110, then 30 % more («на 30 процентов увеличим силу разлета»)
-SHARD_FALL = 1600.0
-SHARD_SPIN = 300.0
+# ... and how they fly: «Shorter», variant B of six played side by side (2026-10-17; D «Snap and
+# drop» first) - two thirds of the first flight's kick, its fall; logical px / s, spin deg / s
+SHARD_SPEED = 170.0
+SHARD_FALL = 900.0
+SHARD_SPIN = 420.0
 
 
 def delete_plan(n):
