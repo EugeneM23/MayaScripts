@@ -52,6 +52,8 @@ BREAKDOWN = "#6fb7c9"
 HIGHLIGHT = "#7fa9e6"
 WAVE = "#565a68"
 RIM = "#fff1e2"
+SET_GLOW = 44       # logical px: the flash of a key set (2026-10-17: stronger, «глоу должен быть сильнее»)
+SPARKS = 34         # the sparks of a key deleted, each a glow with a hot core («брызги ярче»)
 
 #  the mockup's glyphs (16 x 16 SVG paths), drawn with QtSvg in the control's colour
 GLYPHS = {
@@ -1096,18 +1098,25 @@ def classes():
                     u = look.progress(age, i["kind"])
                     if u is None:
                         continue
+                    # added light: what is under the flash brightens instead of being covered
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
                     if i["kind"] == "set":
-                        # a round flash, out and gone
-                        soft_dot(p, i["cx"], i["cy"], 30 * ui * (0.6 + 0.4 * look.back_out(min(1.0, u / 0.4))),
-                                 i["hex"], 235 * (1.0 - u) ** 2)
-                        soft_dot(p, i["cx"], i["cy"], 9 * ui, RIM, 200 * (1.0 - u) ** 3)
+                        # a round flash, out and gone: a wide halo laid twice, a hot core
+                        grow = 0.6 + 0.4 * look.back_out(min(1.0, u / 0.4))
+                        fade = (1.0 - u) ** 1.5
+                        soft_dot(p, i["cx"], i["cy"], SET_GLOW * ui * grow, i["hex"], 255 * fade)
+                        soft_dot(p, i["cx"], i["cy"], SET_GLOW * 0.55 * ui * grow, i["hex"], 255 * fade)
+                        soft_dot(p, i["cx"], i["cy"], 13 * ui, RIM, 255 * (1.0 - u) ** 2)
                     else:
-                        for dx, dy, life in look.sparks(i["seed"], 24, age, look.EFFECT_MS["delete"],
+                        for dx, dy, life in look.sparks(i["seed"], SPARKS, age, look.EFFECT_MS["delete"],
                                                         170 * ui, 620 * ui):
-                            size = 1.5 * ui * (0.5 + 0.5 * life)
+                            x, y = i["cx"] + dx, i["cy"] + dy
+                            soft_dot(p, x, y, 6 * ui * (0.5 + 0.5 * life), i["hex"], 255 * life)
+                            size = 2.0 * ui * (0.5 + 0.5 * life)
                             p.setPen(Qt.NoPen)
-                            p.setBrush(colour(i["hex"], 255 * life))
-                            p.drawEllipse(QtCore.QPointF(i["cx"] + dx, i["cy"] + dy), size, size)
+                            p.setBrush(colour(RIM, 255 * life))
+                            p.drawEllipse(QtCore.QPointF(x, y), size, size)
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
                 p.end()
             except Exception:                                # noqa: BLE001
                 if not getattr(self, "_failed", False):

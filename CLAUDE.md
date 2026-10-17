@@ -11680,6 +11680,9 @@ sparks); the same day the animator: «откатив все эффекты ве�
   with its glow, an entering one is squeezed about its middle. A key between frames stays a dashed line on its
   time. Aim, the key effects and the entrance use the cell's middle (`look.key_centre`), and a key is aimed
   anywhere in its cell. A scrub step 2.0 ms (bench); 126 timebar tests. Not seen in a GUI Maya.
+- **…stronger** (the same day: «глоу должен быть сильнее ... брызги ярче»): both effects are drawn as ADDED
+  light (`CompositionMode_Plus`); a key set: a halo `SET_GLOW` 44 logical px laid twice plus a 13 px hot core,
+  fading as (1 − u)^1.5; a key deleted: `SPARKS` 34, each a 6 px glow in the key's colour with a hot `RIM` core.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
