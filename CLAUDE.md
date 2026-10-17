@@ -11485,6 +11485,8 @@ the card is `[Fall | Blend]` now, hotkey row `ragdoll.blend` (`panel.press_blend
     mid-span: frozen in the first frame's direction, the morning's «стоит и что-то там дергается».
 - **Tests**: `tests/test_ragdoll_sim.py`, 5 tests (two fail on the build before); 7121 unit tests;
   `verify_ragdoll.py` 39/39 and `verify_ragdoll_blend.py` 14/14 on Manny_Rig, Creep_Rig and Orc_D_Rig.
+- **Seen live**: the animator updated through Check update and pressed Fall and Blend in their own Maya;
+  both work (2026-10-17).
 
 275. **Bullet does not step in a GUI Maya with Cached Playback on**, whatever the refresh. Measured
      2026-10-17: a capsule fell 0.0 cm over 10 frames with the cache on (refresh on or suspended), and
