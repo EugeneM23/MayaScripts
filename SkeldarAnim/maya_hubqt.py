@@ -225,6 +225,12 @@ def card_shape(skin, host):
             r = rect_of(card.frame, view)
             if not r.isEmpty():
                 out.append(r.getRect())
+            #  a card taller than the panel scrolls: its bar stands beside the
+            #  card, outside its rect, and must show too (2026-10-17: Animation
+            #  Setup's Import Animation was out of reach under the cut)
+            bar = scroll.verticalScrollBar()
+            if bar is not None and _valid(bar) and bar.isVisible() and bar.maximum() > 0:
+                out.append(rect_of(bar).getRect())
     except RuntimeError:
         pass
     return out

@@ -2426,6 +2426,43 @@ class HoverGlowPaint(unittest.TestCase):
         self.assertEqual(self.effect.computed, 1)
 
 
+class CardShapeScroll(unittest.TestCase):
+    """2026-10-17: a card taller than the rail panel scrolls, and its scroll bar
+    stands outside the card's rect - the mask must show it too."""
+
+    def test_the_scroll_bar_of_a_tall_card_is_in_the_shape(self):
+        _app()
+        host = QtWidgets.QWidget()
+        host.resize(400, 300)
+        scroll = QtWidgets.QScrollArea(host)
+        scroll.setGeometry(0, 0, 400, 300)
+        scroll.setWidgetResizable(True)
+        frame = QtWidgets.QFrame()
+        frame.setMinimumHeight(900)
+        scroll.setWidget(frame)
+        host.show()
+        QtWidgets.QApplication.processEvents()
+
+        class Card(object):
+            pass
+        card = Card()
+        card.frame = frame
+
+        class Skin(object):
+            pass
+        skin = Skin()
+        skin.message = None
+        skin.cards = {"a": card}
+        skin.shown = "a"
+        skin.scroll = scroll
+        rects = hubqt.card_shape(skin, host)
+        bar = scroll.verticalScrollBar()
+        self.assertTrue(bar.isVisible())
+        p = bar.mapTo(host, QtCore.QPoint(0, 0))
+        self.assertIn((p.x(), p.y(), bar.width(), bar.height()), rects)
+        host.close()
+
+
 class Rail(unittest.TestCase):
     """The rail layout (2026-10-16, layout C): a column of section icons at
     the left, ONE card at the right, ⋮ -> Layout switching back."""
