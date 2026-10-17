@@ -699,6 +699,29 @@ def place_character(model, kind, point):
     return message
 
 
+def swap_character(model, kind, root):
+    """A portrait dropped on a character standing in the scene (2026-10-17, «попадал в стоящий в
+    сцене скелет с анимацией то скелет удалялся а анимация пересаживалась на наш риг»): that
+    character swapped for the portrait's, its take retargeted - `swap`. Returns the line."""
+    from maya_scenesetup import swap
+    if catalog.is_auto(model):
+        say_character(charlook.AUTO_ADD)
+        return charlook.AUTO_ADD
+    entry = catalog.character_for(model, kind)
+    if entry is None:
+        found = catalog.model_by_key(model)
+        text = charlook.absent_text(found.label if found else model, kind)
+        say_character(text)
+        return text
+    message = swap.swap(entry, root)
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    say_character(message)
+    return message
+
+
 def open_character_scene(model, kind):
     """Open scene on a portrait (2026-09-30, «при нажатии правой клавишей по
     иконке рига ... Open scene ... открывался соответствующий файл»): the

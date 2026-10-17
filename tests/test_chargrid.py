@@ -45,6 +45,10 @@ class FakeScene(object):
         self.log.append(("place", model, kind, point))
         return "placed"
 
+    def swap(self, model, kind, root):
+        self.log.append(("swap", model, kind, root))
+        return "swapped"
+
     def open_scene(self, model, kind):
         self.log.append(("open_scene", model, kind))
         return "opened"
@@ -176,6 +180,14 @@ class Grid(unittest.TestCase):
         self.grid.drop_at(500, 500, "Creep")
         self.assertEqual(self.acts("place"), [("place", "Creep", "rig", (120.0, 0.0, -35.0))])
         self.assertEqual(self.grid.status_text, "placed")
+
+    def test_a_drop_on_a_character_swaps_it(self):
+        self.scene.aim = dict(kind="swap", root="|root", label="root",
+                              text="swap root for Creep [rig]")
+        self.grid.drop_at(500, 500, "Creep")
+        self.assertEqual(self.acts("place"), [])
+        self.assertEqual(self.acts("swap"), [("swap", "Creep", "rig", "|root")])
+        self.assertEqual(self.grid.status_text, "swapped")
 
     def test_no_floor_places_nothing_and_says_why(self):
         self.scene.aim = dict(kind="none", text="no floor under the cursor")

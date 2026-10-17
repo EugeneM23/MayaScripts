@@ -166,8 +166,37 @@ class Scene(object):
         except Exception:                                    # noqa: BLE001
             return 1.0
 
-    def target(self, gx, gy):
+    def __init__(self):
+        self._snap = None
+        self._label = ""
+
+    def begin(self, label=""):
+        """A drag starts: every character read once (2026-10-17, a portrait dropped on one
+        swaps it). `label` is the dragged row's, for the caption."""
         from maya_scenesetup import droptarget
+        try:
+            self._snap = droptarget.snapshot()
+        except Exception:                                    # noqa: BLE001
+            self._snap = []
+        self._label = label
+
+    def end(self):
+        self._snap = None
+
+    def target(self, gx, gy):
+        """kind "swap" (root, label, text) over a character, else the floor (`floor_at`)."""
+        from maya_scenesetup import droptarget, swap
+        snap = self._snap
+        if snap is None:
+            try:
+                snap = droptarget.snapshot()
+            except Exception:                                # noqa: BLE001
+                snap = []
+        if snap:
+            aim = droptarget.character_target(gx, gy, snap, self.scale())
+            if aim.get("kind") == "character":
+                return dict(kind="swap", root=aim["root"], label=aim["label"],
+                            text=swap.swap_caption(aim["label"], self._label or "it"))
         return droptarget.floor_at(gx, gy)
 
     def over_hub(self, gx, gy):
@@ -182,6 +211,10 @@ class Scene(object):
     def place(self, model, kind, point):
         from maya_scenesetup import window
         return window.place_character(model, kind, point)
+
+    def swap(self, model, kind, root):
+        from maya_scenesetup import window
+        return window.swap_character(model, kind, root)
 
     def open_scene(self, model, kind):
         from maya_scenesetup import window
@@ -525,6 +558,9 @@ def _classes():
             if aim.get("kind") == "floor":
                 point, kind = aim["point"], self.kind
                 return self._act(lambda: self.scene.place(model, kind, point))
+            if aim.get("kind") == "swap":
+                root, kind = aim["root"], self.kind
+                return self._act(lambda: self.scene.swap(model, kind, root))
             return self._say(aim.get("text") or "no target")
 
         # -------------------------------------------------------- drag
@@ -535,6 +571,9 @@ def _classes():
                           size, self.k, anchor=(0.5, 0.5), name=GHOST_NAME,
                           backdrop="field")
             self._drag = dict(model=model, ghost=ghost)
+            begin = getattr(self.scene, "begin", None)
+            if begin is not None:
+                begin(self._row(model))
             self._put_out()
             ghost.follow(point)
             ghost.show()
@@ -552,6 +591,9 @@ def _classes():
                 ghost.deleteLater()
             self._drag = None
             self._press = None
+            end = getattr(self.scene, "end", None)
+            if end is not None:
+                end()
             try:
                 self.releaseKeyboard()
             except Exception:                                # noqa: BLE001
@@ -580,6 +622,8 @@ def _classes():
                 drag["ghost"].set_caption(
                     look.place_caption(self._row(drag["model"]), aim["point"]),
                     True)
+            elif aim.get("kind") == "swap":
+                drag["ghost"].set_caption(aim.get("text", ""), True)
             else:
                 drag["ghost"].set_caption(aim.get("text", ""), False)
 

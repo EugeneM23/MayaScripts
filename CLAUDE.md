@@ -12024,3 +12024,43 @@ once, no restart**.
 (`maya_hub._on_or_retired`) switches off whichever the animator left on - the theme's saved colours written back, our
 icon files taken out of SkeldarIcons and prefs/icons, every button back on Maya's. Flip a flag to bring a row back;
 the modules, tests, specs and verify scripts stay.
+
+## A portrait dropped on a character swaps it (2026-10-17)
+
+The animator: «когда я переносил драгом наш риг на сцену и попадал в стоящий в сцене скелет с анимацией
+то скелет удалялся а анимация пересаживалась на наш риг по правилам ретаргета ... скелет на скелет ...
+скелет на РИГ ... любой из этих объектов может быть в каких-то констрейнах или слоях». Asked, all the
+recommendation: the animator's objects constrained to the old character are **re-bound** to the new one
+(else baked), its **weapons, armor, camera and CoM carried**, **rig onto rig swaps too**. Spec
+`docs/superpowers/specs/2026-10-17-character-swap-design.md`. `SkeldarAnim/maya_scenesetup/swap.py`.
+- **The drop**: Animation Setup's portrait grid reads every character once per drag
+  (`maya_chargrid.Scene.begin` → `droptarget.snapshot`); a release over one (the Weapons rule,
+  `droptarget.character_target`) is kind `swap` - ghost «swap Manny_Rig for Creep [rig]» -
+  `window.swap_character` → `swap.swap(entry, root)`. Over the floor it stands there, as before.
+- **One road for every pair**: the old game skeleton baked into a plain copy in a root-level namespace
+  (`bake_copy`: same names, orients, rotate orders, parent-constrained with no offset, `bakeResults
+  -simulation` over playback ∪ animation range ∪ its joints' and controls' keys) - whatever drove it (a
+  rig, layers, knots, constraints) is in those curves, and the copy is what the bridge's import leaves.
+  Then the bridge's own rules: a rig `ready_rig` + `decide_bones` (the proportions question; a twin never
+  asked) + `retarget_imported`; a skeleton `skeletonimport.onto_skeleton` with `choose_for`. World space:
+  the new one stands where the old one stood. Cancel deletes what was added; the old one is untouched.
+- **Carried** (`carry`): the same weapon into the same hand (`equip.to_hand`; a floor weapon
+  `to_floor` where it lay), each armor piece, Camera Setup on a skeleton (a rig's bake makes one), a CoM
+  weighed again. Connections' hands-on-weapon links are named, not carried.
+- **Re-bound** (`foreign_constraints`, `rebind_all`): a constraint outside the old character aimed into it
+  gets the new node - a bone by leaf, a rig control by leaf onto a rig, else the nearest BODY game bone
+  within 5 cm (helpers `ik_*`, `weapon_*`... left out: `ik_hand_gun` stands on `hand_r`), a carried
+  weapon by its new node; same kind copies the parentConstraint's per-target offsets, else the offset is
+  captured on the current frame; a non-parent constraint re-binds only same kind. The rest (a knot inside
+  the old character, armor) is baked into its own curves and the constraint goes. Retarget holders and
+  BakeAcross links are Delete's.
+- **The old one deleted** (`deletion.plan` + `execute`, no question: the drop is the question); its
+  layers holding only it go too. The new one selected, the time back. A file import flushes undo (trap
+  115): the swap itself cannot be undone; the delete step can.
+Proof: `docs/superpowers/plans/verify_character_swap.py` **13/13 mayapy standalone** (a UE clip on a Manny
+skeleton with an additive pelvis layer, a cube on its hand, a sword: swapped for Manny_Rig unasked, every
+bone 0.072 cm / 0.0009 deg - the limb bones' roll is the twist joints' - the cube re-bound to
+`Manny_Rig:hand_r` 0.0000, the sword carried; that rig with a knot on FKHead_M turned 20 deg and a sphere
+on FKWrist_R swapped for a skeleton: the knot's turn in the take 0.0000 cm, the sphere on `hand_r`; onto a
+Creep rig asked once, limbs pointing as before to 0.58 deg; Cancel leaving the Creep and 0 nodes);
+`tests/test_scenesetup_swap.py`; 7247 unit tests. **Not seen in a GUI Maya** (a real drag).
