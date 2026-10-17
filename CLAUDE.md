@@ -11857,6 +11857,12 @@ The animator: «боковую панель по концепту нашего �
   The edge then waits for the cursor to leave the zone (`closed`), or the button, standing in the
   zone, would bring it straight back; a new selection brings it out again. Live: both out,
   blockers `["timebar"]`, `hide_due` kept it, ✕ took it away.
+- **Out over a Time Bar already out, it ends at the bar's top** (the same day: «если таймслайдер
+  растянулся на весь экран то панель не должна опускаться до самого низа и пододвигать тайм
+  слайдер»): `reveal` sets `above_bar` when the bar is out, and `place` cuts the band at the bar's
+  top (`bar_top`, `look.cut_above`). The bar keeps its whole width: the panel no longer reaches
+  into its band. The panel goes down once the bar has gone; out first, it goes to the bottom and
+  the bar steps aside as before. Live: the bar 2..2558, the panel 176..1411.
 
 277. **A scriptJob does not fire during playback.** Maya runs scriptJobs when it is idle, and
      playback never is: a timeChanged job fired 0 times in 25 s of playback (measured

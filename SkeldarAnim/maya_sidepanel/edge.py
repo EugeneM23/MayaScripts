@@ -104,7 +104,7 @@ class SideEdge(object):
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
                  on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
-                 playing=None, timebar=None):
+                 playing=None, timebar=None, bar_top=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -120,6 +120,8 @@ class SideEdge(object):
         self._selected = selected      # (2026-10-17) something selected: out and kept out
         self._playing = playing
         self._timebar = timebar
+        self._bar_top = bar_top
+        self.above_bar = False         # came out over a Time Bar already out: ends at its top
         self.closed = False            # sent away by the close button: the edge waits for the cursor to leave
         import maya_hubstyle
         self._face = maya_hubstyle.TOKENS["panel"]
@@ -318,10 +320,31 @@ class SideEdge(object):
         return hubqt._valid(self.host)
 
     # placement -----------------------------------------------------------------------
+    def bar_top(self):
+        """The top of the Time Bar's band while the bar is out (global y), else None."""
+        if self._bar_top is not None:
+            return self._bar_top()
+        import sys
+        bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
+        try:
+            if bar is not None and bar.alive() and bar.shown:
+                return bar.host.geometry().y()
+        except Exception:                                    # noqa: BLE001
+            pass
+        return None
+
     def place(self):
         window = self._window_rect()
         if not window:
             return
+        if self.above_bar:
+            #  came out over a Time Bar already out: ends at its top rather than
+            #  pushing it aside (2026-10-17); down to the bottom once it has gone
+            top = self.bar_top()
+            if top is None:
+                self.above_bar = False
+            else:
+                window = look.cut_above(window, top)
         rect = (tuple(window), self.width, self.least)
         if rect == self._rect:
             return
@@ -406,6 +429,8 @@ class SideEdge(object):
             if tab is not None and self._on_reveal is not None:
                 self._on_reveal()
             return
+        self.above_bar = self.bar_top() is not None
+        self._rect = None
         self.place()
         self.shown = True
         self.closed = False

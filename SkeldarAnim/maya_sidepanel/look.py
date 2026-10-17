@@ -54,6 +54,12 @@ def area(pane, window, bar_height=0):
     return x, y, w, max(1, bottom - y)
 
 
+def cut_above(rect, top):
+    """`rect` (x, y, w, h) ending at the global `top` (no higher than its own top + 1)."""
+    x, y, w, h = (int(v) for v in rect)
+    return x, y, w, max(1, min(h, int(top) - y))
+
+
 def side_band(window, width, scale=1.0, least=0):
     """(x, y, w, h): the panel against the right of Maya's window `window`, its
     full height, `width` logical px wide - at least `least` physical px - and

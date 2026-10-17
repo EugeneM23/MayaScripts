@@ -158,6 +158,7 @@ class Edge(unittest.TestCase):
         self.sel = [False]
         self.play = [False]
         self.bar_out = [False]
+        self.bar_y = [None]
 
         def make(parent, on_tab, on_pin, on_width):
             return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
@@ -170,7 +171,7 @@ class Edge(unittest.TestCase):
                                   on_tab=self.tabs.append, on_width=self.widths.append,
                                   tick=self.ticks.append, capture=lambda host: self.picture,
                                   selected=lambda: self.sel[0], playing=lambda: self.play[0],
-                                  timebar=lambda: self.bar_out[0])
+                                  timebar=lambda: self.bar_out[0], bar_top=lambda: self.bar_y[0])
         self.addCleanup(self.edge.destroy)
 
     def geometry(self, widget):
@@ -292,6 +293,25 @@ class Edge(unittest.TestCase):
         self.bar_out[0] = False
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
+
+    def test_over_a_time_bar_already_out_it_ends_at_its_top(self):
+        """2026-10-17: «если таймслайдер растянулся на весь экран то панель не должна
+        опускаться до самого низа и пододвигать тайм слайдер»."""
+        self.bar_y[0] = 830                     # the bar out, its top at y 830
+        self.edge.reveal()
+        self.assertTrue(self.edge.above_bar)
+        self.assertEqual(self.geometry(self.edge.host), (1360, 50, 340, 780))
+        self.bar_y[0] = None                    # the bar went: down to the bottom
+        self.edge.place_tick()
+        self.assertFalse(self.edge.above_bar)
+        self.assertEqual(self.geometry(self.edge.host), (1360, 50, 340, 900))
+
+    def test_out_first_it_goes_to_the_bottom_and_stays_there(self):
+        self.edge.reveal()
+        self.assertFalse(self.edge.above_bar)
+        self.bar_y[0] = 830                     # the bar comes out after: it steps aside
+        self.edge.place_tick()
+        self.assertEqual(self.geometry(self.edge.host), (1360, 50, 340, 900))
 
     def test_the_close_button_sends_it_away_whatever_keeps_it(self):
         self.sel[0] = True
