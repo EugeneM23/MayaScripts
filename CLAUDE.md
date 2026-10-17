@@ -11868,12 +11868,38 @@ The animator: «боковую панель по концепту нашего �
   top (`bar_top`, `look.cut_above`). The bar keeps its whole width: the panel no longer reaches
   into its band. The panel goes down once the bar has gone; out first, it goes to the bottom and
   the bar steps aside as before. Live: the bar 2..2558, the panel 176..1411.
+- **The Time Bar's colours inside, and Maya's paths fixed** (the same day: «приблизить дизайн и
+  цвета наших панелей к таймслайдеру», «эту стандартную маевскую серость», «слои отображения ...
+  торчат с левой стороны»). Done in `skin.py`, applied by `_skin` on borrow:
+  - the hidden Maya theme's palette (`maya_mayatheme.palette`) on the page stack
+    (`skeldarSidePanelStack`);
+  - a sheet scoped to that stack: buttons, fields, combos, menus, tabs, scrollbars, frame
+    headers - colours, borders, radii, plus the Layer Editor tabs' padding;
+  - `recolor`: Maya's own filled greys swapped by exact colour (#444444, #2b2b2b, #5d5d5d), on
+    borrow and after every refresh, and swapped back (`back=True`) in `give_back`;
+  - the Channel Box's own flags `backgroundColor` / `attrBgColor` (`channel_box`), Maya's #444444
+    put back in Maya's mode. Its node and section rows (#444444 / #373737) are data of its C++
+    model and painted by its C++ delegate: they keep Maya's grey;
+  - the display layers' grid cells (`layerEditor.mel`: `-cellWidthHeight 350 20`) set to the
+    list's visible width every 300 ms while out (`holder.fit_layers`), with its fill ours; 350
+    and Maya's fill back in Maya's mode.
+  The Attribute Editor's section headers paint their own #5d5d5d; a QGraphicsEffect swapping
+  colours on them was tried and taken out. **Trap 278**, found on the way: the panel's QLayouts
+  had no names.
 
 277. **A scriptJob does not fire during playback.** Maya runs scriptJobs when it is idle, and
      playback never is: a timeChanged job fired 0 times in 25 s of playback (measured
      2026-10-17), and the side panel's SelectionChanged job never heard a selection made while
      playing. What must react during playback hangs on OpenMaya callbacks
      (`MEventMessage.addEventCallback`, `MDGMessage.addTimeChangeCallback` - the Time Bar's).
+
+278. **Maya builds a control's path through the QLayouts above it, and an unnamed one is an empty
+     segment.** Hosted in our window, the Attribute Editor's path read
+     `skeldarSidePanelHost|||||MainAttributeEditorLayout|...`. Such a path cannot be set as a
+     parent, so a section expanded in the panel built its controls under the editor's bottom
+     buttons (49 controls found there, live). Every QLayout of ours above Maya's forms is named
+     (`panel.name_layouts`); with names, a Qt click on «Tangent Space» built its rows inside the
+     section. The misplaced ones were deleted by hand and `refreshEditorTemplates` run.
 
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done

@@ -67,10 +67,22 @@ def _remember_hidden(names):
         cmds.optionVar(stringValueAppend=(HIDDEN_VAR, name))
 
 
+def _fit_layers():
+    """The display layers' rows across the panel, on its colours (holder.fit_layers);
+    asked every 300 ms while out - the panel is resized by the grip and Maya builds
+    the rows again whenever layers change."""
+    from . import holder
+    import maya_hubstyle
+    h = maya_hubstyle.TOKENS["track"].lstrip("#")
+    holder.fit_layers(background=[int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)])
+
+
 def _maya_wants(controller):
     """A held editor's own workspaceControl shown again (Ctrl+A, Maya's toggles):
     hidden at once, and ours comes out on that tab, held."""
     from . import holder
+    if controller.shown and _state()["held"].get("channels"):
+        _fit_layers()
     for name, records in _state()["held"].items():
         for record in records:
             if record.get("ws") and holder.ws_visible(record["ws"]):
@@ -106,6 +118,16 @@ def give_back():
     held = _state().get("held") or {}
     _state()["held"] = {}
     gone = 0
+    try:                                    # Maya's greys back on what goes back
+        import maya_hubqt
+        from . import skin
+        for records in held.values():
+            for record in records:
+                w = holder.widget(record.get("form"))
+                if w is not None:
+                    skin.recolor(w, maya_hubqt.qt().QtGui, back=True)
+    except Exception:                                        # noqa: BLE001
+        pass
     for records in held.values():
         for record in records:
             try:
@@ -114,6 +136,9 @@ def give_back():
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
     holder.uninstall()
+    from . import skin
+    skin.channel_box(False)
+    holder.unfit_layers()
     return gone
 
 
@@ -159,6 +184,7 @@ def ensure_edge():
     _state()["edge"] = controller
     try:
         _borrow(controller)
+        _skin(controller, ui)
         _fit(controller)
         _start_job()
         controller.selection_changed()          # something selected already: out
@@ -169,6 +195,29 @@ def ensure_edge():
         _show_hidden()
         return None
     return controller
+
+
+def _skin(edge, ui):
+    """The pages and Maya's editors in them in the Time Bar's colours (2026-10-17).
+    Never fatal: a skin that fails leaves Maya's colours."""
+    try:
+        import maya_hubqt
+        from . import skin
+        skin.apply(edge.panel.stack, maya_hubqt.qt().QtGui, ui)
+        skin.channel_box(True)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _recolor(edge):
+    """Maya's filled greys swapped again - the Attribute Editor builds new widgets
+    for every node it shows."""
+    try:
+        import maya_hubqt
+        from . import skin
+        skin.recolor(edge.panel.stack, maya_hubqt.qt().QtGui)
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _fit(edge):
@@ -199,6 +248,7 @@ def refresh():
     else:
         holder.update_channel_box()
     _fit(edge)
+    _recolor(edge)
     edge.repaint_all()
 
 

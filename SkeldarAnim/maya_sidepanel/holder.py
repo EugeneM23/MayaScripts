@@ -182,6 +182,55 @@ def uninstall():
             pass
 
 
+LAYER_GRID = "LayerEditorDisplayLayerLayout"
+LAYER_SCROLL = "DisplayLayerScrollLayout"
+LAYER_CELL = (350, 20)          # layerEditor.mel's own: -cellWidthHeight 350 20
+LAYER_BACKGROUND = (0.165, 0.165, 0.165)
+
+
+def fit_layers(background=None):
+    """The display layers' rows as wide as their list (2026-10-17, «слои отображения
+    ... торчат где-то с левой стороны и много пустого места»): Maya builds the grid
+    with cells 350 wide whatever the dock, so in the wider panel the rows ended
+    early. `background` (r, g, b) the list's own fill. Returns the cell width set,
+    or 0 when nothing changed."""
+    cmds = _cmds()
+    try:
+        if not cmds.gridLayout(LAYER_GRID, exists=True):
+            return 0
+        if background is not None and cmds.scrollLayout(LAYER_SCROLL, exists=True):
+            cmds.scrollLayout(LAYER_SCROLL, edit=True, backgroundColor=background)
+        #  the list's VISIBLE width, logical: scrollLayout's scrollAreaWidth answers
+        #  the content's (551 in a 390 px panel - a scrollbar, live)
+        width = 0
+        holder_widget = widget(LAYER_SCROLL)
+        if holder_widget is not None:
+            q = hubqt.qt()
+            areas = holder_widget.findChildren(q.QtWidgets.QAbstractScrollArea)
+            if areas:
+                scale = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
+                width = int(areas[0].viewport().width() / float(scale))
+        width = int(width) - 2
+        if width < 120 or width == cmds.gridLayout(LAYER_GRID, q=True, cellWidth=True):
+            return 0
+        cmds.gridLayout(LAYER_GRID, edit=True, cellWidth=width)
+        return width
+    except Exception:                                        # noqa: BLE001
+        return 0
+
+
+def unfit_layers():
+    """Maya's own cells and fill again."""
+    cmds = _cmds()
+    try:
+        if cmds.gridLayout(LAYER_GRID, exists=True):
+            cmds.gridLayout(LAYER_GRID, edit=True, cellWidth=LAYER_CELL[0])
+        if cmds.scrollLayout(LAYER_SCROLL, exists=True):
+            cmds.scrollLayout(LAYER_SCROLL, edit=True, backgroundColor=LAYER_BACKGROUND)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def update_channel_box():
     try:
         _cmds().channelBox("mainChannelBox", edit=True, update=True)

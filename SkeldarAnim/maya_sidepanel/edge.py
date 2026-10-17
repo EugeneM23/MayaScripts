@@ -153,6 +153,8 @@ class SideEdge(object):
         if close is not None:
             close.clicked.connect(lambda checked=False: self.close_by_hand())
         layout.addWidget(self.panel)
+        from . import panel as panel_module
+        panel_module.name_layouts(host)
         controller = self
 
         class Overlay(QtWidgets.QWidget):

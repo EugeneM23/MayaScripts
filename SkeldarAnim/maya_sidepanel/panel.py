@@ -49,6 +49,29 @@ QWidget#{grip} {{ background: transparent; border-left: 1px solid {inset_line}; 
            r=px(5), pad=px(10), h=px(22), fs=px(11.5))
 
 
+def name_layouts(root, prefix="skeldarSidePanelLayout"):
+    """Every unnamed QLayout of OUR widgets under `root` (the host) named. Maya builds a
+    control's path through the QLayouts above it, and an unnamed one is an empty
+    segment: `skeldarSidePanelHost|||||MainAttributeEditorLayout` could not be set as
+    a parent, and an Attribute Editor section expanded in the panel built its
+    controls under the editor's bottom buttons instead (2026-10-17, live). Maya's own
+    layouts inside the borrowed forms are left as they are. Returns how many."""
+    q = hubqt.qt()
+    named = 0
+    for layout in [root.layout()] + root.findChildren(q.QtWidgets.QLayout):
+        try:
+            if layout is None or layout.objectName():
+                continue
+            owner = layout.parentWidget()
+            if owner is None or not owner.objectName().startswith("skeldarSidePanel"):
+                continue
+            named += 1
+            layout.setObjectName("%s%d" % (prefix, named))
+        except RuntimeError:
+            pass
+    return named
+
+
 def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_width=None):
     q = hubqt.qt()
     QtCore, QtWidgets = q.QtCore, q.QtWidgets
@@ -132,6 +155,7 @@ def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_
             self.header = header
 
             self.stack = QtWidgets.QStackedWidget(self)
+            self.stack.setObjectName("skeldarSidePanelStack")
             self.pages = {}
             for tab in look.TABS:
                 page = QtWidgets.QWidget(self.stack)
