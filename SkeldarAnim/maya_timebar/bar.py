@@ -705,7 +705,7 @@ def classes():
             tick_y = h - 3 * ui
             major, minor = colour(tk["muted"]), colour(tk["line"])
             label_pen = colour(tk["faint"])
-            tall_of = {"label": 8 * ui, "mid": 5 * ui, "tick": 3 * ui}
+            tall_of = {"label": 10.4 * ui, "mid": 6.5 * ui, "tick": 3.9 * ui}      # 30 % taller (2026-10-17)
             tick_w = max(1.0, ui * 0.75)
             for frame, kind in look.ticks(t, ui):
                 x = round(t.x(frame))
