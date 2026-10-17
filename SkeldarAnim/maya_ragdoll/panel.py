@@ -15,9 +15,11 @@ from maya_ragdoll import fall as rd
 HUB_SECTION = "ragdoll"
 SUBTITLE = "skeldarRagdollSubtitle"
 STATUS = "skeldarRagdollStatus"
-FALL_BTN = "skeldarRagdollFall"
-BLEND_BTN = "skeldarRagdollBlend"
-IMPULSE_BTN = "skeldarRagdollImpulse"
+FALL_BTN = "skeldarRagdollFallButton"
+BLEND_BTN = "skeldarRagdollBlendButton"
+#  never a name the scene uses: a popup copy renames every string equal to one of its controls'
+#  names, and this one was impulse.MARKER (the arrow's attribute), so + Impulse failed in a copy
+IMPULSE_BTN = "skeldarRagdollImpulseButton"
 DROP_CHIP = "skeldarRagdollDropWeapon"
 OPTION = "skeldarRagdoll_settings"
 LAYER_TABS = "skeldarRagdollLayers"

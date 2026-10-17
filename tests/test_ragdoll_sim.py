@@ -97,5 +97,22 @@ class CacheOff(unittest.TestCase):
                          [("cache", False), ("cache", True)])
 
 
+class CardNames(unittest.TestCase):
+    """A popup copy of the card renames every string equal to one of its controls' names, so no
+    control may share a name with a scene marker or an undo chunk (+ Impulse failed in a copy:
+    its button was named impulse.MARKER)."""
+
+    def test_no_control_is_named_like_a_scene_name(self):
+        from maya_ragdoll import blend, fall, impulse, panel, weapon
+
+        def names(module):
+            return set(v for k, v in vars(module).items()
+                       if k.isupper() and isinstance(v, str) and v.startswith("skeldar"))
+        scene = set()
+        for module in (blend, fall, impulse, sim, weapon):
+            scene |= names(module)
+        self.assertFalse(names(panel) & scene)
+
+
 if __name__ == "__main__":
     unittest.main()
