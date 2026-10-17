@@ -245,6 +245,16 @@ def classes():
         p.setBrush(QtGui.QBrush(g))
         p.drawEllipse(QtCore.QPointF(cx, cy), r, r)
 
+    def band(p, x, h, half, hex_, alpha):
+        """A soft vertical band of light at `x`, `half` each side, the whole height `h`."""
+        if half <= 0.25 or alpha <= 1:
+            return
+        g = QtGui.QLinearGradient(x - half, 0, x + half, 0)
+        g.setColorAt(0.0, colour(hex_, 0))
+        g.setColorAt(0.5, colour(hex_, alpha))
+        g.setColorAt(1.0, colour(hex_, 0))
+        p.fillRect(QtCore.QRectF(x - half, 0, half * 2, h), QtGui.QBrush(g))
+
     # -- a painted control -------------------------------------------------------
 
     class Pill(QtWidgets.QAbstractButton):
@@ -1162,6 +1172,8 @@ def classes():
                         soft_dot(p, i["cx"], i["cy"], SET_GLOW * ui * grow, i["hex"], 255 * fade)
                         soft_dot(p, i["cx"], i["cy"], SET_GLOW * 0.55 * ui * grow, i["hex"], 255 * fade)
                         soft_dot(p, i["cx"], i["cy"], 13 * ui, RIM, 255 * (1.0 - u) ** 2)
+                    elif i["kind"] == "reveal":
+                        self._paint_reveal(p, i, age, ui)
                     else:
                         broken.append((i, age))
                     p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
@@ -1178,6 +1190,25 @@ def classes():
                 if not getattr(self, "_failed", False):
                     print(traceback.format_exc())
                 self._failed = True
+
+        def _paint_reveal(self, p, item, age, ui):
+            """The bar coming out (2026-10-17, of five flashes the animator took B):
+            the two unrolling edges carry the light outward, brightest on the cursor
+            and fading as they slow; behind them the top edge stays lit a moment. The
+            host's mask clips it to the unrolled span like everything else."""
+            accent = self.strip.tokens["accent"]
+            h = float(self.height())
+            x0, x1, edges, edge, top = look.reveal_glow(age, item["cx"], float(self.width()))
+            for x in edges:
+                band(p, x, h, look.EDGE_GLOW * ui, accent, 255 * 0.75 * edge)
+                band(p, x, h, look.EDGE_CORE * ui, RIM, 255 * 0.9 * edge)
+            if top <= 0.0 or x1 - x0 < 1:
+                return
+            g = QtGui.QLinearGradient(0, 0, 0, look.TOP_GLOW * ui)
+            g.setColorAt(0.0, colour(accent, 255 * 0.4 * top))
+            g.setColorAt(1.0, colour(accent, 0))
+            p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, look.TOP_GLOW * ui), QtGui.QBrush(g))
+            p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, 1.5 * ui), colour(accent, 255 * 0.95 * top))
 
         @staticmethod
         def _paint_shards(p, broken, ui):
@@ -1429,11 +1460,16 @@ def classes():
                 far = max(far, d)
                 if index is not None:
                     delays[index] = d
+            # the reveal's racing edges (2026-10-17, mockup B): a new reveal replaces the
+            # last one's flash, going back takes it away
+            self.fx.items = [i for i in self.fx.items if i["kind"] != "reveal"]
             if not self.motion or instant:
                 self.entrance = None
                 self._fade()
                 self.update()
                 return 0.0
+            if opening:
+                self.fx.add("reveal", cx=float(self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy))).x()))
             for widget, _effect in self.fades:
                 c = widget.mapToGlobal(widget.rect().center())
                 far = max(far, look.burst_delay(c.x() - gx, c.y() - gy, self.ui) if opening

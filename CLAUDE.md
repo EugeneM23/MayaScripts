@@ -11609,6 +11609,20 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
     onto it 72 ms after the last one.
   - Interface animations off: at once.
   - Filmstrip: `render_time_bar_burst.py` -> `time_bar_burst.png`.
+- **A glow flash as it comes out** (2026-10-17, «при открывании таймслайдера добавим вспышку глоу»). Five flashes
+  were played side by side (https://claude.ai/artifact/QpmHD9mK769aD24XsJsupw) and the animator took **B, the
+  racing edges**; spec `2026-10-17-time-bar-reveal-glow-design.md`.
+  - **The edges**: the two edges of the unrolling panel carry the light outward. Each is a band of the
+    accent `EDGE_GLOW` 24 logical px each side with a `RIM` core of 3 px, brightest on the cursor and
+    fading as the edges slow, `(1 - e)^0.55`.
+  - **The top edge**: it stays lit behind them, a 1.5 px line and a 16 px glow fading over `REVEAL_MS`
+    780 ms. All of it is added light.
+  - **Where**: `look.reveal_glow(age, cx, width)`; the fx item `reveal` added by `Strip.burst_at` when it
+    opens with motion, painted by `FxLayer._paint_reveal`, clipped by the host's mask like everything else.
+  - A second reveal replaces the flash, going back takes it away, an instant reveal or Interface
+    animations off has none. Every bottom-edge reveal flashes: the mouse, Play, a bake, a key set.
+  - Proof: `RevealGlow` and `RevealGlowTests` in the timebar tests; filmstrip
+    `render_time_bar_reveal_glow.py` -> `time_bar_reveal_glow.png`. Not seen in a GUI Maya.
 - **Bottom edge is the default** («по умолчанию выдвижной снизу таймлайн был активен при установке нашего
   обновления»): `look.DEFAULT_MODE` "edge", and once per `look.DEFAULT_VERSION` (optionVar
   `skeldarTimeBarDefaults`) `maya_timebar.upgrade()` - called first by `ensure()`, i.e. the hub's build - moves

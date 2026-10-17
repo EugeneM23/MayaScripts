@@ -494,6 +494,28 @@ def unroll(u, cx, width, showing):
     return cx * (1 - e), cx + (width - cx) * e
 
 
+# -- the reveal's glow (2026-10-17, «при открывании таймслайдера добавим вспышку глоу»: of five
+#    flashes played side by side the animator took B, the racing edges) -------------------------
+
+REVEAL_MS = 780         # the whole flash: the edges race out, the top edge stays lit a moment
+EDGE_GLOW = 24          # logical px each side: the light an unrolling edge carries
+EDGE_CORE = 3           # logical px each side: its hot core
+TOP_GLOW = 16           # logical px: how far down the lit top edge glows
+
+
+def reveal_glow(age, cx, width):
+    """The racing edges `age` ms into a reveal from `cx` across `width`: (x0, x1, edges,
+    edge, top) - the unrolling span (`unroll`), the edge xs still inside the window, the
+    light they carry (1 on the cursor, fading as they slow) and the lit top edge's
+    (1 -> 0 over REVEAL_MS)."""
+    u = age / float(UNROLL_MS)
+    x0, x1 = unroll(u, cx, width, True)
+    edges = [x for x in (x0, x1) if 0.5 < x < width - 0.5]
+    edge = (1.0 - ease_out_quint(u)) ** 0.55 if edges else 0.0
+    top = max(0.0, 1.0 - age / float(REVEAL_MS)) ** 1.6
+    return x0, x1, edges, edge, top
+
+
 # -- the scrub meter (2026-10-16, «проверим быстродействие») --------------------------------
 
 def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
@@ -534,7 +556,7 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420}
+EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420, "reveal": REVEAL_MS}
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 

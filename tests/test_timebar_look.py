@@ -285,6 +285,47 @@ class BurstTests(unittest.TestCase):
         self.assertEqual(look.unroll(0, 300, 1000, False), (0.0, 1000.0))
 
 
+class RevealGlowTests(unittest.TestCase):
+    """The racing edges of the reveal (2026-10-17, mockup B of five)."""
+
+    def test_the_mockup_s_numbers(self):
+        self.assertEqual((look.REVEAL_MS, look.EDGE_GLOW, look.EDGE_CORE, look.TOP_GLOW), (780, 24, 3, 16))
+        self.assertEqual(look.EFFECT_MS["reveal"], look.REVEAL_MS)
+
+    def test_both_edges_start_on_the_cursor_at_full_light(self):
+        x0, x1, edges, edge, top = look.reveal_glow(0, 300, 1000)
+        self.assertEqual((x0, x1), (300.0, 300.0))
+        self.assertEqual(edges, [300.0, 300.0])
+        self.assertEqual((edge, top), (1.0, 1.0))
+
+    def test_the_edges_ride_the_unroll_and_fade_as_they_slow(self):
+        mid = look.UNROLL_MS * 0.3
+        x0, x1, edges, edge, top = look.reveal_glow(mid, 300, 1000)
+        u0, u1 = look.unroll(0.3, 300, 1000, True)
+        self.assertAlmostEqual(x0, u0, places=6)
+        self.assertAlmostEqual(x1, u1, places=6)
+        self.assertEqual(edges, [x0, x1])
+        self.assertTrue(0.0 < edge < 1.0)
+        self.assertTrue(0.0 < top < 1.0)
+        later = look.reveal_glow(look.UNROLL_MS * 0.6, 300, 1000)
+        self.assertLess(later[3], edge)
+        self.assertLess(later[4], top)
+
+    def test_an_edge_at_the_window_s_end_carries_nothing(self):
+        x0, x1, edges, edge, _top = look.reveal_glow(look.UNROLL_MS, 300, 1000)
+        self.assertEqual((x0, x1), (0.0, 1000.0))
+        self.assertEqual(edges, [])
+        self.assertEqual(edge, 0.0)
+        _x0, _x1, edges, _e, _t = look.reveal_glow(look.UNROLL_MS * 0.4, 0, 1000)
+        self.assertEqual(len(edges), 1)                 # from the left end: one edge races
+
+    def test_the_top_edge_stays_lit_after_the_unroll_and_is_gone_at_the_end(self):
+        top = look.reveal_glow(look.UNROLL_MS + 100, 300, 1000)[4]
+        self.assertGreater(top, 0.0)
+        self.assertEqual(look.reveal_glow(look.REVEAL_MS, 300, 1000)[4], 0.0)
+        self.assertEqual(look.reveal_glow(look.REVEAL_MS + 50, 300, 1000)[4], 0.0)
+
+
 class MeterTests(unittest.TestCase):
 
     def test_a_steady_scrub(self):

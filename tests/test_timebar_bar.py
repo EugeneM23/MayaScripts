@@ -609,6 +609,66 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), [])
 
 
+class RevealGlow(Strip):
+    """The bar coming out at the bottom edge flashes its racing edges (2026-10-17, mockup B)."""
+
+    motion = True
+
+    def reveals(self):
+        return [i for i in self.strip.fx.items if i["kind"] == "reveal"]
+
+    def burst(self, x, opening=True, instant=False):
+        g = self.strip.mapToGlobal(QT.QtCore.QPoint(x, 40))
+        return self.strip.burst_at(g.x(), g.y(), opening, instant=instant)
+
+    def at(self, ms):
+        start = self.reveals()[0]["t0"]
+        self.strip.clock = (lambda: start + ms)
+
+    def light(self, x, y):
+        c = self.strip.grab().toImage().pixelColor(x, y)
+        return c.red() + c.green() + c.blue()
+
+    def test_an_opening_burst_flashes_from_the_cursor(self):
+        self.burst(400)
+        items = self.reveals()
+        self.assertEqual(len(items), 1)
+        self.assertAlmostEqual(items[0]["cx"], 400.0, delta=1.0)
+        self.assertEqual(items[0]["life"], look.REVEAL_MS)
+
+    def test_a_second_reveal_replaces_the_first(self):
+        self.burst(400)
+        self.burst(900)
+        items = self.reveals()
+        self.assertEqual(len(items), 1)
+        self.assertAlmostEqual(items[0]["cx"], 900.0, delta=1.0)
+
+    def test_going_back_flashes_nothing_and_takes_the_flash_away(self):
+        self.burst(400)
+        self.burst(400, opening=False)
+        self.assertEqual(self.reveals(), [])
+
+    def test_an_instant_reveal_or_no_motion_flashes_nothing(self):
+        self.burst(400, instant=True)
+        self.assertEqual(self.reveals(), [])
+        self.strip.motion = False
+        self.burst(400)
+        self.assertEqual(self.reveals(), [])
+
+    def test_it_lights_the_edges_and_the_top_then_ends(self):
+        self.burst(400)
+        self.at(0)
+        lit = self.light(400, 40)
+        self.assertGreater(lit, self.light(1200, 40) + 200)    # the edges on the cursor, nothing far off
+        self.assertFalse(getattr(self.strip.fx, "_failed", False))
+        self.at(look.UNROLL_MS + 100)
+        top = self.light(1200, 0)
+        self.at(look.REVEAL_MS + 1)
+        self.assertGreater(top, self.light(1200, 0) + 60)      # the top edge still lit after the unroll
+        self.assertFalse(self.strip.fx.busy(self.strip.clock()))
+        self.assertFalse(getattr(self.strip.fx, "_failed", False))
+
+
 class PlayAndTrail(Strip):
     """Play pressed closes a frame round the bar; the cells the playhead leaves
     glow and fade, scrubbing and playing (2026-10-17)."""
