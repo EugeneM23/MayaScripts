@@ -542,14 +542,18 @@ def progress(age_ms, kind):
     return age_ms / float(ms)
 
 
-def key_changes(old, new):
+def key_changes(old, new, edited=False):
     """What an edit did to the key times: (added, removed, snapped) - snapped
     pairs (from, to) where a key between frames went onto a whole frame next to
-    it. Nothing when the change is a reload (more than SMALL_CHANGE keys)."""
+    it. Nothing when the change is a reload (more than SMALL_CHANGE keys) - except
+    a pure deletion Maya reported as a key edit (`edited`), however many keys: the
+    animator deleted a whole highlight of them (2026-10-17)."""
     if old is None:
         return [], [], []
     before, after = set(old), set(new)
     added, removed = sorted(after - before), sorted(before - after)
+    if edited and removed and not added:
+        return [], removed, []
     if len(added) + len(removed) > SMALL_CHANGE:
         return [], [], []
     snapped = []
@@ -562,6 +566,32 @@ def key_changes(old, new):
             removed.remove(k)
             added.remove(to)
     return added, removed, snapped
+
+
+DELETE_STEP_MS = 40     # a few keys deleted: one after another, this far apart
+DELETE_TOTAL_MS = 300   # many keys deleted: the whole wave, first spark to last, within this
+DELETE_LIFE_MIN = 180   # ... each key's sparks at least this long
+SPARK_BUDGET = 700      # sparks thrown by one wave, over all its keys (a frame stays light)
+SPARKS_MIN = 1
+
+
+def delete_plan(n, sparks_each=34):
+    """How `n` deleted keys play, left to right (2026-10-17: «по очереди с лева на
+    право ... не дольше чем 300 мс»): (delays ms per key in time order, each key's
+    life ms, sparks per key). One key plays as it always did; a few follow each
+    other DELETE_STEP_MS apart; past SMALL_CHANGE the whole wave ends by
+    DELETE_TOTAL_MS. The sparks per key shrink so a wave of 1000 stays cheap."""
+    full = EFFECT_MS["delete"]
+    if n <= 0:
+        return [], full, sparks_each
+    count = max(SPARKS_MIN, min(sparks_each, SPARK_BUDGET // n))
+    if n == 1:
+        return [0.0], full, count
+    if n <= SMALL_CHANGE:
+        return [DELETE_STEP_MS * i for i in range(n)], full, count
+    life = DELETE_LIFE_MIN
+    spread = DELETE_TOTAL_MS - life
+    return [spread * i / float(n - 1) for i in range(n)], life, count
 
 
 def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):

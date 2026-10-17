@@ -344,6 +344,32 @@ class KeyEffectTests(unittest.TestCase):
         self.assertIsNone(look.progress(600, "delete"))
 
 
+class DeleteWaveTests(unittest.TestCase):
+    """Keys deleted together go left to right, the wave within 300 ms (2026-10-17)."""
+
+    def test_an_edited_pure_deletion_of_many_keys_is_read(self):
+        old = list(map(float, range(1000)))
+        self.assertEqual(look.key_changes(old, [], edited=True), ([], old, []))
+        self.assertEqual(look.key_changes(old, []), ([], [], []))      # a selection change: a reload
+        self.assertEqual(look.key_changes(old, [5000.0], edited=True), ([], [], []))
+
+    def test_one_key_plays_as_it_always_did(self):
+        self.assertEqual(look.delete_plan(1), ([0.0], look.EFFECT_MS["delete"], 34))
+
+    def test_a_few_keys_follow_each_other(self):
+        delays, life, _count = look.delete_plan(3)
+        self.assertEqual(delays, [0, look.DELETE_STEP_MS, 2 * look.DELETE_STEP_MS])
+        self.assertEqual(life, look.EFFECT_MS["delete"])
+
+    def test_many_keys_end_within_300_ms_and_stay_cheap(self):
+        for n in (7, 50, 1000, 10000):
+            delays, life, count = look.delete_plan(n)
+            self.assertEqual(len(delays), n)
+            self.assertEqual(delays, sorted(delays))
+            self.assertLessEqual(delays[-1] + life, look.DELETE_TOTAL_MS + 1e-6)
+            self.assertLessEqual(n * count, max(look.SPARK_BUDGET, n * look.SPARKS_MIN))
+
+
 class KeyCellTests(unittest.TestCase):
 
     def test_a_key_fills_its_cell_with_a_gap_and_an_inset(self):

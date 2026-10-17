@@ -11683,6 +11683,16 @@ sparks); the same day the animator: «откатив все эффекты ве�
 - **…stronger** (the same day: «глоу должен быть сильнее ... брызги ярче»): both effects are drawn as ADDED
   light (`CompositionMode_Plus`); a key set: a halo `SET_GLOW` 44 logical px laid twice plus a 13 px hot core,
   fading as (1 − u)^1.5; a key deleted: `SPARKS` 34, each a 6 px glow in the key's colour with a hot `RIM` core.
+- **…a deletion of many keys is a wave, left to right, within 300 ms** (the same day: «массив ключей ... по
+  очереди с лева на право ... 1000 ... не дольше чем 300 мс ... ключи должны удалиться мгновенно»). The keys
+  are gone at once; only the sparks are staggered (`Timeline.delete_wave`, `look.delete_plan`): one key as
+  before, up to `SMALL_CHANGE` 40 ms apart, more spread over 120 ms with a 180 ms life each (the sparks fly
+  faster to keep their reach), `SPARK_BUDGET` 700 sparks a wave (1000 keys: one each). A pure deletion of any
+  size counts only when Maya reported a key edit (`keys_edited`, set by the AnimKeyframeEdited callback and our
+  own Cut / Delete), so a selection change dropping many keys plays nothing. A spark is one cached picture
+  (`spark_sprite`). A 1000-key wave: setup 9 ms, frames ≤ 6.3 ms (the timeline's own redraw after the keys go,
+  68 ms, is there without the wave too). PySide6's `drawPixmapFragments` takes one fragment, not a list.
+  133 timebar tests.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

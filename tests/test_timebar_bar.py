@@ -508,6 +508,40 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), ["delete"])
         self.paint()
 
+    def test_many_deleted_keys_play_left_to_right_within_300_ms(self):
+        import time as _time
+        self.link.s.update(p0=0.0, p1=999.0, a0=0.0, a1=999.0)
+        self.link.k = ([float(f) for f in range(1000)], [])
+        self.strip.refresh(keys=True)
+        self.strip.fx.items[:] = []
+        self.link.k = ([], [])
+        self.strip.keys_edited = True                   # as Maya's key-edit callback says
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.strip.keys, [])           # the keys are gone at once
+        items = self.strip.fx.items
+        self.assertEqual(len(items), 1000)
+        xs = [i["cx"] for i in items]
+        delays = [i["delay"] for i in items]
+        self.assertEqual(xs, sorted(xs))                # left to right
+        self.assertEqual(delays, sorted(delays))
+        self.assertLessEqual(max(d + i["life"] for d, i in zip(delays, items)), 300 + 1e-6)
+        start = self.strip.clock()
+        for at in (0, 100, 200):
+            self.strip.clock = (lambda t=start + at: t)
+            t0 = _time.perf_counter()
+            self.paint()
+            self.assertLess(_time.perf_counter() - t0, 0.25)
+        self.strip.clock = (lambda: start + 301)
+        self.assertFalse(self.strip.fx.busy(start + 301))
+
+    def test_a_selection_change_dropping_many_keys_is_no_wave(self):
+        self.link.k = ([float(f) for f in range(100)], [])
+        self.strip.refresh(keys=True)
+        self.strip.fx.items[:] = []
+        self.link.k = ([], [])
+        self.strip.refresh(keys=True)                   # no key edit reported: another selection
+        self.assertEqual(self.kinds(), [])
+
     def test_a_reload_or_a_snap_is_no_edit(self):
         self.link.k = ([float(f) for f in range(0, 100, 3)], [9.0])
         self.strip.refresh(keys=True)
