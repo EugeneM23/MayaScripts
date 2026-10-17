@@ -83,7 +83,7 @@ class SideEdge(object):
 
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
-                 on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None):
+                 on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -96,6 +96,7 @@ class SideEdge(object):
         self._tick = tick
         self._on_reveal = on_reveal
         self._capture = capture        # a seam: (host) -> QPixmap, for the tests
+        self._selected = selected      # (2026-10-17) something selected: out and kept out
         import maya_hubstyle
         self._face = maya_hubstyle.TOKENS["panel"]
         self.motion = motion
@@ -190,6 +191,32 @@ class SideEdge(object):
             return self._app_active()
         q = hubqt.qt()
         return q.QtGui.QGuiApplication.applicationState() == q.QtCore.Qt.ApplicationActive
+
+    def selected(self):
+        """Something is selected in the scene (the panel is wanted then)."""
+        if self._selected is not None:
+            return bool(self._selected())
+        try:
+            import maya.cmds as cmds
+            return bool(cmds.ls(selection=True, head=1))
+        except Exception:                                    # noqa: BLE001
+            return False
+
+    def selection_changed(self):
+        """2026-10-17 («если у нас не пустое выделение то она выезжает и не
+        прячется ... показывать панель тогда когда она нужна»): something selected
+        brings the panel out and keeps it out; nothing selected lets it go by the
+        usual rules (the cursor over it, the pin, ... still keep it).
+        True when this call brought it out."""
+        if self.selected():
+            self.hide_timer.stop()
+            if not self.shown:
+                self.reveal()
+                return True
+            return False
+        if self.shown and not self.hide_timer.isActive():
+            self.hide_timer.start()
+        return False
 
     def over_maya(self):
         if self._over_maya:
@@ -506,7 +533,7 @@ class SideEdge(object):
                              inside=rules.contains(self._host_rect(), self.cursor()),
                              buttons=self.buttons(), popup=app.activePopupWidget() is not None,
                              modal=app.activeModalWidget() is not None, typing=typing,
-                             dragging=self._width0 is not None)
+                             dragging=self._width0 is not None, selected=self.selected())
 
     def hide_due(self):
         if not self.shown:

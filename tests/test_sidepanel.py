@@ -155,6 +155,7 @@ class Edge(unittest.TestCase):
         self.widths = []
         self.ticks = []
         self.picture = None
+        self.sel = [False]
 
         def make(parent, on_tab, on_pin, on_width):
             return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
@@ -165,7 +166,8 @@ class Edge(unittest.TestCase):
                                   buttons=lambda: self.down[0], app_active=lambda: True,
                                   over_maya=lambda: self.over[0], motion=False,
                                   on_tab=self.tabs.append, on_width=self.widths.append,
-                                  tick=self.ticks.append, capture=lambda host: self.picture)
+                                  tick=self.ticks.append, capture=lambda host: self.picture,
+                                  selected=lambda: self.sel[0])
         self.addCleanup(self.edge.destroy)
 
     def geometry(self, widget):
@@ -229,6 +231,41 @@ class Edge(unittest.TestCase):
         self.assertFalse(self.edge.shown)
         self.assertFalse(self.edge.host.isVisible())
         self.assertTrue(self.edge.sensor.isVisible())
+
+    def test_a_selection_brings_it_out_and_keeps_it(self):
+        """2026-10-17: «если у нас не пустое выделение то она выезжает и не прячется»."""
+        self.sel[0] = True
+        self.assertTrue(self.edge.selection_changed())
+        self.assertTrue(self.edge.shown)
+        self.cursor[:] = [300, 300]
+        self.edge.watch_tick()
+        self.assertIn("selected", self.edge.blockers())
+        self.edge.hide_due()
+        self.assertTrue(self.edge.shown)
+        self.assertFalse(self.edge.selection_changed())          # already out
+
+    def test_an_empty_selection_lets_it_go(self):
+        self.sel[0] = True
+        self.edge.selection_changed()
+        self.sel[0] = False
+        self.cursor[:] = [300, 300]
+        self.edge.selection_changed()
+        self.assertTrue(self.edge.hide_timer.isActive())
+        self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def test_an_empty_selection_with_the_cursor_on_it_keeps_it(self):
+        self.sel[0] = True
+        self.edge.selection_changed()
+        self.sel[0] = False
+        self.cursor[:] = [1500, 400]
+        self.edge.selection_changed()
+        self.edge.hide_due()
+        self.assertTrue(self.edge.shown)
+
+    def test_nothing_selected_brings_nothing_out(self):
+        self.assertFalse(self.edge.selection_changed())
+        self.assertFalse(self.edge.shown)
 
     def test_the_pin_button_pins(self):
         self.edge.panel.pin.click()

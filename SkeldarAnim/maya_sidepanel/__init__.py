@@ -161,6 +161,7 @@ def ensure_edge():
         _borrow(controller)
         _fit(controller)
         _start_job()
+        controller.selection_changed()          # something selected already: out
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")
         print(traceback.format_exc())
@@ -218,6 +219,9 @@ def _on_selection():
     Attribute Editor empty when ours ran first (measured live 2026-10-17)."""
     def later():
         try:
+            edge = _state().get("edge")
+            if edge is not None and edge.alive() and edge.selection_changed():
+                return                          # brought out: the reveal refreshed it
             refresh()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())

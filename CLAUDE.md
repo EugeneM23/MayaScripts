@@ -11826,6 +11826,13 @@ The animator: «боковую панель по концепту нашего �
   every 300 ms). Measured live: the window (0, 34, 2560, 1494), the pane (2, 176, 2556, 1350),
   the panel 176..1411 with the Time Bar's host from 1411. The least width is read again on every
   refresh (`_fit`): the Attribute Editor asks 308 px empty and 648 px on a mesh.
+- **Out while something is selected** (the same day: «если у нас не пустое выделение то она
+  выезжает и не прячется. Суть в том что бы показывать панель тогда когда она нужна»). The
+  deferred SelectionChanged job calls `SideEdge.selection_changed()`. Something selected brings
+  the panel out (from the cursor's height) and `selected` keeps it out (`look.blockers`).
+  Nothing selected starts the usual hide (the cursor over it, the 📌 still keep it). The edge
+  hover works as before, and a panel built with a selection standing comes out at once.
+  Seen live: pSphere1 selected, out, kept by `selected`.
 
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done
