@@ -40,8 +40,23 @@ class Look(unittest.TestCase):
 
     def test_the_sensor_and_the_zone_run_down_the_right_edge(self):
         self.assertEqual(look.sensor_band(WINDOW, 2), (1698, 50, 2, 900))
-        self.assertEqual(look.zone_band(WINDOW, 1.0), (1686, 50, 14, 900))
-        self.assertEqual(look.zone_band(WINDOW, 1.5), (1679, 50, 21, 900))
+        self.assertEqual(look.zone_band(WINDOW, 1.0), (1652, 50, 48, 900))
+        self.assertEqual(look.zone_band(WINDOW, 1.5), (1628, 50, 72, 900))
+
+    def test_the_burst_rows_cover_the_panel_and_pop_nearest_first(self):
+        rows = look.rows(900, 1.5)
+        self.assertEqual(rows[0][0], 0)
+        self.assertEqual(rows[-1][1], 900)
+        self.assertEqual(rows[0][1] - rows[0][0], 66)
+        self.assertLess(look.open_delay(0, 1.5), look.open_delay(300, 1.5))
+        self.assertEqual(look.open_delay(-300, 1.5), look.open_delay(300, 1.5))
+        #  going back, the farthest folds first and the nearest last
+        self.assertEqual(look.fold_delay(800, 1.5, 800), 0.0)
+        self.assertGreater(look.fold_delay(0, 1.5, 800), look.fold_delay(400, 1.5, 800))
+        self.assertGreaterEqual(look.open_total(450, 900, 1.5), look.UNROLL_MS)
+        self.assertLess(look.open_total(450, 900, 1.5), look.open_total(0, 900, 1.5))
+        self.assertLess(look.open_total(0, 1500, 1.5), 700)
+        self.assertGreater(look.close_folded(450, 900, 1.5), look.FOLD_MS)
 
     def test_the_grip_widens_to_the_left(self):
         self.assertEqual(look.dragged_width(340, -60, 1.0), 400)
@@ -128,6 +143,7 @@ class Edge(unittest.TestCase):
         self.tabs = []
         self.widths = []
         self.ticks = []
+        self.picture = None
 
         def make(parent, on_tab, on_pin, on_width):
             return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
@@ -138,7 +154,7 @@ class Edge(unittest.TestCase):
                                   buttons=lambda: self.down[0], app_active=lambda: True,
                                   over_maya=lambda: self.over[0], motion=False,
                                   on_tab=self.tabs.append, on_width=self.widths.append,
-                                  tick=self.ticks.append)
+                                  tick=self.ticks.append, capture=lambda host: self.picture)
         self.addCleanup(self.edge.destroy)
 
     def geometry(self, widget):
@@ -288,6 +304,62 @@ class Edge(unittest.TestCase):
         self.edge.reveal()
         self.edge.reveal(tab="attributes")
         self.assertEqual(calls, [1, 1])
+
+    def burst_picture(self):
+        pixmap = QT.QtGui.QPixmap(340, 900)
+        pixmap.fill(QT.QtGui.QColor("#ff0000"))
+        return pixmap
+
+    def draw_overlay(self):
+        image = QT.QtGui.QImage(340, 900, QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QT.QtGui.QPainter(image)
+        self.edge.paint_burst(painter)
+        painter.end()
+        return image
+
+    def test_a_reveal_bursts_the_panel_s_picture_from_the_cursor(self):
+        """2026-10-17, «как у таймслайдера»: the picture moves, Maya's editors wait."""
+        self.picture = self.burst_picture()
+        self.edge.motion = True
+        self.cursor[:] = [1690, 500]
+        self.edge.reveal()
+        self.assertTrue(self.edge.overlay.isVisible())
+        self.assertEqual(self.edge.host.windowOpacity(), 1.0)
+        b = self.edge._slide
+        self.assertEqual(b["cy"], 450.0)
+        b["t0"] -= look.open_delay(0, 1.0) + look.POP_MS * 0.3      # the middle rows popping
+        image = self.draw_overlay()
+        face = QT.QtGui.QColor(maya_hubstyle.TOKENS["panel"])
+        self.assertGreater(image.pixelColor(170, 450).red(), face.red() + 60)  # near: coming in
+        self.assertEqual(image.pixelColor(170, 10).name(), face.name())         # far: not yet
+        b["t0"] -= look.open_total(450, 900, 1.0)
+        self.edge.slide_tick()
+        self.assertIsNone(self.edge._slide)
+        self.assertFalse(self.edge.overlay.isVisible())
+        self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
+
+    def test_going_back_folds_the_picture_then_closes_onto_the_cursor(self):
+        self.edge.reveal()
+        self.picture = self.burst_picture()
+        self.edge.motion = True
+        self.cursor[:] = [300, 500]
+        self.edge.conceal()
+        b = self.edge._slide
+        self.assertTrue(self.edge.overlay.isVisible())
+        self.edge.slide_tick()
+        self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)   # folding first
+        b["t0"] -= b["folded"] + look.CLOSE_MS + 1
+        self.edge.slide_tick()
+        self.assertIsNone(self.edge._slide)
+        self.assertFalse(self.edge.host.isVisible())
+        self.assertTrue(self.edge.sensor.isVisible())
+
+    def test_no_picture_falls_back_to_the_plain_unroll(self):
+        self.edge.motion = True
+        self.edge.reveal()
+        self.assertFalse(self.edge.overlay.isVisible())
+        self.assertIsNotNone(self.edge._slide)
 
     def test_the_end_of_the_unroll_asks_every_widget_to_paint(self):
         """2026-10-17, live: Maya's editors showed their values only where the mouse

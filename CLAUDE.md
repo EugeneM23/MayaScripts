@@ -11810,6 +11810,16 @@ The animator: «боковую панель по концепту нашего �
   Seen live after: pCube1's and persp's attributes following the selection, the panel drawn
   whole, the Channel Box exact.
 
+- **The Time Bar's burst, and a wider zone** (the same day: «хороший дизайн и плавная анимация ...
+  точно также и для этих панелей ... невидимая область»). Maya's editors are too heavy to move
+  frame by frame, so a PICTURE moves. The reveal shows the host at window opacity 0, refreshes the
+  editors, and takes the panel's picture by DWM `PrintWindow` (~60 ms, live). An overlay
+  (`skeldarSidePanelBurst`) paints that picture in `look.rows` of 44 logical px, each popping
+  (`maya_timebar.look.popping`) nearest the cursor's height first (`open_delay`), under the mask
+  unrolling from the cursor. Going back, the rows fold the farthest first (`fold_delay`), then
+  the mask closes onto the cursor. Measured live: out 424 ms, back 582 ms; no picture means the
+  plain unroll. The zone is 48 logical px (was 14).
+
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done
      when the control is raised. A form moved out of a hidden control is never refreshed, even
