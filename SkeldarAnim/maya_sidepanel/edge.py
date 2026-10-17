@@ -54,6 +54,21 @@ def _window_rect():
     return look.area(pane, _global_rect(window))
 
 
+def in_timebar_band(point):
+    """The point is in the Time Bar's bottom-edge band: the bottom-right corner is
+    the bar's (it runs to the edge while the panel is hidden), not the panel's zone."""
+    import sys
+    bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
+    try:
+        if bar is not None and bar.alive():
+            window = bar._window_rect()
+            if window:
+                return rules.contains(bar._bands(window)[0], point)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return False
+
+
 def nudge_timebar():
     """The Time Bar at the bottom edge placed again now (it steps aside for the
     side panel when the panel comes out, and back when it goes)."""
@@ -309,7 +324,8 @@ class SideEdge(object):
         if not window:
             return
         inside = rules.contains(look.zone_band(window, self.scale), self.cursor())
-        if inside and (self.buttons() or not self.app_active() or not self.over_maya()):
+        if inside and (self.buttons() or not self.app_active() or not self.over_maya()
+                       or in_timebar_band(self.cursor())):
             inside = False
         self.dwelt = look.zone_dwell(self.dwelt, inside, look.ZONE_POLL_MS)
         if self.dwelt >= look.ZONE_DWELL_MS:

@@ -66,21 +66,16 @@ def _rect_of(widget):
 
 
 def _obstacles():
-    """Our panels the bar must not cover (2026-10-17): the side panel (its band when
-    out, its zone strip when not) and the hub's edge panel when out. Found through
-    their state on `sys`, never kept."""
+    """Our panels the bar must not cover (2026-10-17): the side panel while it is out
+    and the hub's edge panel while out - hidden, they leave the whole width to the
+    bar («тайм слайдер не доезжает до края»: its zone strip once cut 72 px off).
+    Found through their state on `sys`, never kept."""
     import sys
     out = []
     side = (getattr(sys, "_skeldar_sidepanel", None) or {}).get("edge")
     try:
-        if side is not None and side.alive():
-            if side.shown or side.host.isVisible():
-                out.append(_rect_of(side.host))
-            else:
-                window = side._window_rect()
-                if window:
-                    from maya_sidepanel import look as side_look
-                    out.append(side_look.zone_band(window, side.scale))
+        if side is not None and side.alive() and (side.shown or side.host.isVisible()):
+            out.append(_rect_of(side.host))
     except Exception:                                        # noqa: BLE001
         pass
     hub = (getattr(sys, "_skeldar_hubedge", None) or {}).get("edge")
