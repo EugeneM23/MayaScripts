@@ -23,6 +23,11 @@ from tests.test_timebar_bar import FakeLink
 WINDOW = [100, 50, 1600, 900]
 
 
+def edge_module():
+    from maya_timebar import edge
+    return edge
+
+
 @unittest.skipIf(QT is None, "no Qt")
 class Edge(unittest.TestCase):
 
@@ -36,12 +41,14 @@ class Edge(unittest.TestCase):
         self.down = [False]
         self.over = [True]
         self.play = [False]
+        self.suspend = [False]
         self.link = FakeLink()
         self.edge = edge.BottomEdge(
             lambda parent: bar.make(self.link, 1.0, maya_hubstyle.TOKENS, parent=parent, motion=self.motion),
             window_rect=lambda: tuple(self.window), cursor=lambda: tuple(self.cursor),
             buttons=lambda: self.down[0], app_active=lambda: True, motion=self.motion,
-            over_maya=lambda: self.over[0], playing=lambda: self.play[0])
+            over_maya=lambda: self.over[0], playing=lambda: self.play[0],
+            suspended=lambda: self.suspend[0])
         self.addCleanup(self.edge.destroy)
 
     def at_edge(self):
@@ -132,6 +139,32 @@ class Edge(unittest.TestCase):
         self.assertTrue(self.edge.hide_timer.isActive())          # asked again
         self.play[0] = False
         self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def test_a_bake_brings_it_out_and_keeps_it(self):
+        self.cursor[:] = [900, 300]
+        for _ in range(edge_module().BAKE_RUN - 1):
+            self.edge.on_time()
+        self.assertFalse(self.edge.shown)                          # a step or two: no
+        self.edge.on_time()
+        self.assertTrue(self.edge.shown)
+        self.assertTrue(self.edge.baking)
+        self.edge.hide_due()
+        self.assertTrue(self.edge.shown)                           # not while it bakes
+        self.edge._idle()                                          # the bake is done
+        self.edge.hide_due()
+        self.assertFalse(self.edge.shown)
+
+    def test_steps_with_the_event_loop_between_are_no_bake(self):
+        for _ in range(10):
+            self.edge.on_time()
+            self.edge._idle()
+        self.assertFalse(self.edge.shown)
+
+    def test_our_own_walks_with_the_viewport_suspended_are_no_bake(self):
+        self.suspend[0] = True
+        for _ in range(10):
+            self.edge.on_time()
         self.assertFalse(self.edge.shown)
 
     def test_play_brings_it_out(self):

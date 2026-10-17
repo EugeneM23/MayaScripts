@@ -32,6 +32,8 @@ SENSOR = "skeldarTimeBarEdgeSensor"
 SENSOR_OPACITY = 1.0 / 255
 PLACE_MS = 300          # Maya's window moved or resized: followed this often
 WATCH_MS = 60           # while out: is the cursor still on it
+BAKE_RUN = 3            # time changes in a row, each within BAKE_GAP_MS: a bake (2026-10-17)
+BAKE_GAP_MS = 250       # longer with no time change: whatever walked the time is done
 
 
 def main_window():
@@ -81,7 +83,7 @@ class BottomEdge(object):
     out when the cursor rests on the bottom edge and goes when it leaves."""
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
-                 app_active=None, motion=None, over_maya=None, playing=None):
+                 app_active=None, motion=None, over_maya=None, playing=None, suspended=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -90,6 +92,9 @@ class BottomEdge(object):
         self._app_active = app_active
         self._over_maya = over_maya
         self._playing = playing
+        self._suspended = suspended
+        self.run = 0                  # time changes since the event loop last turned
+        self.baking = False
         self.dwelt = 0.0              # ms the cursor has rested in the band (the zone)
         self.motion = motion
         self.pinned = False
@@ -132,6 +137,7 @@ class BottomEdge(object):
         self.place_timer = timer(PLACE_MS, self.place, single=False)
         self.watch = timer(WATCH_MS, self.watch_tick, single=False)
         self.anim = timer(16, self.slide_tick, single=False)
+        self.idle = timer(BAKE_GAP_MS, self._idle)   # restarted by every time change
         #  the zone (2026-10-16, «когда мышка не на самом краю а в области где
         #  стандартный таймлайн»): the whole band, watched by a poll - a window
         #  over it would take the viewport's and the command line's clicks
@@ -169,6 +175,17 @@ class BottomEdge(object):
             import maya.cmds as cmds
             return bool(cmds.play(q=True, state=True))
         except Exception:                                    # noqa: BLE001 - no Maya: not playing
+            return False
+
+    def suspended(self):
+        """The viewport's refresh is suspended - our own frame walks (timewalk,
+        the CoM engine) run so, and they are no bake the animator watches."""
+        if self._suspended:
+            return bool(self._suspended())
+        try:
+            import maya.cmds as cmds
+            return bool(cmds.refresh(q=True, suspend=True))
+        except Exception:                                    # noqa: BLE001
             return False
 
     def over_maya(self):
@@ -268,15 +285,33 @@ class BottomEdge(object):
         нажимаем хоткеем плей а тайм слайдер спрятан то он должен показаться»).
         The same burst as a reveal by the mouse («тоже должен с анимацией»), from
         the cursor's x on the bar's row; playback turns no event loop, so its timers
-        do not tick - each frame of playback steps it here instead."""
+        do not tick - each frame of playback steps it here instead.
+
+        A bake (Bake Simulation, 2026-10-17: «когда мы делаем bake simulation
+        таймслайдер тоже должен быть виден и проигрываться») is not playback: it
+        reads as BAKE_RUN time changes in a row, each within BAKE_GAP_MS of the last
+        (a gap, not an event loop turn: Maya's bake may turn it for its progress), the
+        viewport not suspended; it brings the bar out and keeps it out the same way.
+        Holding a step hotkey reads the same, and that is use too."""
+        playing = self.playing()
+        if not playing:
+            self.run += 1
+            self.idle.start()
+            if self.run >= BAKE_RUN and not self.baking and not self.suspended():
+                self.baking = True
         if self.shown:
             if self._slide is not None or getattr(self.strip, "entrance", None) is not None:
                 self.step()
             return
-        if not self.playing():
+        if not (playing or self.baking):
             return
         self.reveal(on_row=True)
         self.step()
+
+    def _idle(self):
+        """BAKE_GAP_MS with no time change: whatever walked the time is done."""
+        self.run = 0
+        self.baking = False
 
     def step(self):
         """One step of a burst, painted now (from playback, where no timer ticks)."""
@@ -402,6 +437,8 @@ class BottomEdge(object):
             reasons.append("dragging")
         if self.playing():
             reasons.append("playing")             # hidden only when not in use (2026-10-17)
+        if self.baking:
+            reasons.append("baking")
         return reasons
 
     def hide_due(self):
@@ -419,7 +456,8 @@ class BottomEdge(object):
             self.hide_timer.start()
 
     def destroy(self):
-        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone):
+        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone,
+                  self.idle):
             try:
                 t.stop()
             except RuntimeError:

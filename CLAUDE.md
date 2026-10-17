@@ -11619,7 +11619,13 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
   is hidden (a hotkey, Maya's own) brings it out with the same burst - `bar._time_changed` calls
   `BottomEdge.on_time` every frame: it reveals it from the cursor's x on the bar's row (`on_row`) and, since
   playback turns no event loop and the burst's timers do not tick, steps the burst itself on each frame
-  (`BottomEdge.step`: `slide_tick`, the strip's `_animate`, a `repaint`). Tests in `test_timebar_edge`;
+  (`BottomEdge.step`: `slide_tick`, the strip's `_animate`, a `repaint`). **A bake too** («когда мы делаем
+  bake simulation таймслайдер тоже должен быть виден»): measured in mayapy, `bakeResults -simulation` walks the
+  time frame by frame (the time-change callback fires on each) with `play -q -state` False, and
+  `MCommandMessage` reports the command only after it ran (and never a Python `cmds` call). So `on_time` counts
+  time changes outside playback, each within `BAKE_GAP_MS` (250) of the last; `BAKE_RUN` (3) in a row with the
+  viewport NOT suspended (our own frame walks suspend it) is a bake: it reveals and steps the bar like Play,
+  `baking` blocks the hide until a gap. Holding a step hotkey reads the same. Tests in `test_timebar_edge`;
   not seen in a GUI Maya.
 
 **Speed** (the same evening: «проверим быстродействие... фпс программы проседает когда перетаскиваешь
