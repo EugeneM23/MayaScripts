@@ -11807,6 +11807,11 @@ switch and its optionVars are unchanged.
     `sidepanel.edge._window_rect` takes `maya_hubedge._viewport_area("right")`, the drawing area
     of the model panel on the viewport's right (`_drawing_top(edge, side)`). Live: the panel
     from y 228, under the viewport's icon bar.
+  - **the rail panel ends above the Time Bar's band** («некоторые окошки в рейле например как волк
+    билдер сильно высокие и ломают тайм слайдер»): `_above_timebar` cuts the work area at the
+    bar's host top while the bar sits at the bottom edge. A tall card scrolls inside the panel and
+    the bar keeps its width. Live: the panel 228..1411, the bar from x 2. A live Edge kept its old
+    class's methods after `importlib.reload`; `e.__class__ = maya_hubedge.Edge` moved it.
 
 ## Side panel: the Channel Box and the Attribute Editor at the right edge (2026-10-17)
 

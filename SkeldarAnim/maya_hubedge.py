@@ -181,6 +181,24 @@ def _viewport_area(side="left"):
         return None
 
 
+def _above_timebar(area):
+    """`area` ending above the Time Bar's band while the Time Bar sits at the
+    bottom edge (2026-10-17, «некоторые окошки в рейле например как волк билдер
+    сильно высокие и ломают тайм слайдер»): a tall card scrolls inside the panel
+    instead of reaching the bar, and the bar keeps its whole width."""
+    try:
+        bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
+        if bar is None or not bar.alive():
+            return area
+        top = bar.host.geometry().y()
+    except Exception:                                        # noqa: BLE001
+        return area
+    x, y, w, h = area
+    if y < top < y + h:
+        h = top - y
+    return (x, y, w, h)
+
+
 def _drawing_top(edge, side="left"):
     """The global top of the drawing area of the visible model panel whose left
     edge is the viewport's `left` (the upper one when panes are stacked), or None."""
@@ -562,7 +580,8 @@ class Edge(object):
         if self._work_area:
             return self._work_area()
         if self.rail:
-            return _viewport_area(self.side) or _maya_work_area()
+            area = _viewport_area(self.side) or _maya_work_area()
+            return _above_timebar(area)
         return _maya_work_area()
 
     def _host_rect(self):
