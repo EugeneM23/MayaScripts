@@ -466,5 +466,36 @@ class KeyCellTests(unittest.TestCase):
         self.assertAlmostEqual(look.key_centre(t, 3.0), t.x(3.0) + 5.0)
         self.assertAlmostEqual(look.key_centre(t, 3.5), t.x(3.5))
 
+
+class FreeSpanTests(unittest.TestCase):
+    """2026-10-17: the bar at the bottom edge steps aside for our panels and Maya's
+    docked editors. Read live: the window (0, 34, 2560, 1494), the pane (2, 176,
+    2556, 1350)."""
+
+    WINDOW = (0, 34, 2560, 1494)
+
+    def test_maya_s_viewport_area_across(self):
+        self.assertEqual(look.free_span(self.WINDOW, 117), (0, 2560))
+        self.assertEqual(look.free_span(self.WINDOW, 117, (2, 176, 2556, 1350)), (2, 2558))
+        self.assertEqual(look.free_span(self.WINDOW, 117, (300, 176, 1800, 1350)), (300, 2100))
+
+    def test_a_panel_on_the_right_cuts_the_end_on_the_left_the_start(self):
+        side = (1910, 176, 648, 1350)            # the side panel, down to the bottom
+        hub = (0, 34, 540, 1494)                 # the hub's edge panel on the left
+        self.assertEqual(look.free_span(self.WINDOW, 117, None, [side]), (0, 1910))
+        self.assertEqual(look.free_span(self.WINDOW, 117, None, [side, hub]), (540, 1910))
+
+    def test_a_panel_above_the_band_does_not_count(self):
+        self.assertEqual(look.free_span(self.WINDOW, 117, None, [(1910, 176, 648, 1200)]),
+                         (0, 2560))
+
+    def test_nothing_left_gives_the_whole_width(self):
+        self.assertEqual(look.free_span(self.WINDOW, 117, None, [(0, 34, 2560, 1494)]),
+                         (0, 2560))
+
+    def test_the_band_cut_to_the_span(self):
+        self.assertEqual(look.band_in(self.WINDOW, 117, (0, 1910)), (0, 1411, 1910, 117))
+
+
 if __name__ == "__main__":
     unittest.main()

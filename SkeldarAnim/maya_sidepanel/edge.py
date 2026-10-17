@@ -36,9 +36,10 @@ def _global_rect(widget):
 
 
 def _window_rect():
-    """Where the panel lives: the viewport area (Maya's MainPane), above the Time
-    Bar's band when the Time Bar sits at the bottom edge; Maya's window without a
-    pane. Looked up every time (trap 135)."""
+    """Where the panel lives: the viewport area (Maya's MainPane), down to its
+    bottom - the Time Bar at the bottom edge steps aside for the panel instead
+    (2026-10-17, maya_timebar.edge._obstacles); Maya's window without a pane.
+    Looked up every time (trap 135)."""
     window = main_window()
     if window is None:
         return None
@@ -50,15 +51,19 @@ def _window_rect():
             pane = _global_rect(w)
     except Exception:                                        # noqa: BLE001
         pane = None
-    reserved = 0
+    return look.area(pane, _global_rect(window))
+
+
+def nudge_timebar():
+    """The Time Bar at the bottom edge placed again now (it steps aside for the
+    side panel when the panel comes out, and back when it goes)."""
+    import sys
+    bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
     try:
-        import sys
-        bar = (getattr(sys, "_skeldar_timebar", None) or {}).get("edge")
         if bar is not None and bar.alive():
-            reserved = bar.height()
+            bar.place()
     except Exception:                                        # noqa: BLE001
-        reserved = 0
-    return look.area(pane, _global_rect(window), reserved)
+        pass
 
 
 def destroy_all():
@@ -332,6 +337,7 @@ class SideEdge(object):
             return
         self.place()
         self.shown = True
+        nudge_timebar()
         self.sensor.hide()
         if instant or not self._motion():
             self.host.show()
@@ -505,6 +511,7 @@ class SideEdge(object):
             self.repaint_all()
             return
         self.host.hide()
+        nudge_timebar()
         self._full_mask()
         self.sensor.show()
         self.sensor.raise_()

@@ -20,7 +20,7 @@ SENSOR_PX = 2           # physical px
 
 ZONE_DWELL_MS = _bar.ZONE_DWELL_MS
 ZONE_POLL_MS = _bar.ZONE_POLL_MS
-HIDE_MS = _bar.HIDE_MS
+HIDE_MS = _bar.HIDE_MS // 2    # 600: half the Time Bar's wait (2026-10-17, «в 2 раза меньше»)
 UNROLL_MS = _bar.UNROLL_MS
 CLOSE_MS = _bar.CLOSE_MS
 zone_dwell = _bar.zone_dwell

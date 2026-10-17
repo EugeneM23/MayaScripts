@@ -369,6 +369,36 @@ def bottom_band(window, height):
     return int(x), int(y + h - height), int(w), height
 
 
+def free_span(window, height, pane=None, obstacles=()):
+    """(x0, x1): the stretch of the bottom band the bar may take (2026-10-17, «таймслайдер
+    будет тоже учитывать наши интерфейсы и не перекрывать их»): Maya's viewport area
+    `pane` across (docked editors left out), less every one of our panels in
+    `obstacles` (x, y, w, h) that reaches into the band - one standing in the right
+    half cuts the band's end, in the left half its start. Maya's whole width when
+    nothing is left."""
+    x, y, w, h = (int(v) for v in window)
+    top, bottom = y + h - int(height), y + h
+    x0, x1 = x, x + w
+    if pane:
+        x0, x1 = max(x0, int(pane[0])), min(x1, int(pane[0]) + int(pane[2]))
+    for ox, oy, ow, oh in obstacles:
+        if oy >= bottom or oy + oh <= top or ow <= 0:
+            continue
+        if ox + ow / 2.0 >= (x0 + x1) / 2.0:
+            x1 = min(x1, int(ox))
+        else:
+            x0 = max(x0, int(ox + ow))
+    if x1 - x0 < 1:
+        return x, x + w
+    return x0, x1
+
+
+def band_in(window, height, span):
+    """The bottom band (bottom_band) cut to `span` (x0, x1)."""
+    x, y, w, h = bottom_band(window, height)
+    return int(span[0]), y, int(span[1] - span[0]), h
+
+
 def sensor_band(window, px=2):
     """The thin strip along the bottom of Maya's window that brings the bar out."""
     x, y, w, h = window

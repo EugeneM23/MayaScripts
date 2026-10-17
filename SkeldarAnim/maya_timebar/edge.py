@@ -60,6 +60,52 @@ def _window_rect():
     return top_left.x(), top_left.y(), window.width(), window.height()
 
 
+def _rect_of(widget):
+    p = widget.mapToGlobal(widget.rect().topLeft())
+    return p.x(), p.y(), widget.width(), widget.height()
+
+
+def _obstacles():
+    """Our panels the bar must not cover (2026-10-17): the side panel (its band when
+    out, its zone strip when not) and the hub's edge panel when out. Found through
+    their state on `sys`, never kept."""
+    import sys
+    out = []
+    side = (getattr(sys, "_skeldar_sidepanel", None) or {}).get("edge")
+    try:
+        if side is not None and side.alive():
+            if side.shown or side.host.isVisible():
+                out.append(_rect_of(side.host))
+            else:
+                window = side._window_rect()
+                if window:
+                    from maya_sidepanel import look as side_look
+                    out.append(side_look.zone_band(window, side.scale))
+    except Exception:                                        # noqa: BLE001
+        pass
+    hub = (getattr(sys, "_skeldar_hubedge", None) or {}).get("edge")
+    try:
+        if hub is not None and hub.alive() and hub.shown:
+            out.append(_rect_of(hub.host))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return out
+
+
+def _free_span(window, height):
+    """The stretch of the bottom band the bar may take: Maya's viewport area across
+    (MainPane), less our panels standing in the band (look.free_span)."""
+    pane = None
+    try:
+        from maya_sidepanel import holder
+        w = holder.widget("MainPane")
+        if w is not None and w.isVisible() and w.width() > 0:
+            pane = _rect_of(w)
+    except Exception:                                        # noqa: BLE001
+        pane = None
+    return look.free_span(window, height, pane, _obstacles())
+
+
 def destroy_all():
     """Every host and sensor of ours standing, found by name (an older module
     object's too - trap 102). Returns how many."""
@@ -83,10 +129,12 @@ class BottomEdge(object):
     out when the cursor rests on the bottom edge and goes when it leaves."""
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
-                 app_active=None, motion=None, over_maya=None, playing=None, suspended=None):
+                 app_active=None, motion=None, over_maya=None, playing=None, suspended=None,
+                 span=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
+        self._span = span or _free_span        # (window, height) -> (x0, x1), 2026-10-17
         self._cursor = cursor
         self._buttons = buttons
         self._app_active = app_active
@@ -228,16 +276,29 @@ class BottomEdge(object):
         window = self._window_rect()
         if not window:
             return
-        rect = (tuple(window), self.height())
+        band, sensor = self._bands(window)
+        rect = (tuple(window), self.height(), band)
         if rect == self._rect:
             return
         self._rect = rect
-        x, y, w, h = look.bottom_band(window, self.height())
+        x, y, w, h = band
         self.host.setGeometry(x, y, w, h)
         self.strip.setGeometry(0, self.offset, w, h)
-        self._mask()
+        if self._slide is None:
+            self._mask()
+        self.sensor.setGeometry(*sensor)
+
+    def _bands(self, window):
+        """(band, sensor): the bottom band and the 2 px sensor, both cut to the stretch
+        our other panels and Maya's docked editors leave free (look.free_span)."""
+        height = self.height()
+        try:
+            span = self._span(window, height)
+        except Exception:                                    # noqa: BLE001
+            span = (window[0], window[0] + window[2])
+        band = look.band_in(window, height, span)
         sx, sy, sw, sh = look.sensor_band(window, rules.SENSOR_PX)
-        self.sensor.setGeometry(sx, sy, sw, sh)
+        return band, (int(span[0]), sy, int(span[1] - span[0]), sh)
 
     def _mask(self):
         q = hubqt.qt()
@@ -263,7 +324,7 @@ class BottomEdge(object):
         window = self._window_rect()
         if not window:
             return
-        inside = rules.contains(look.bottom_band(window, self.height()), self.cursor())
+        inside = rules.contains(self._bands(window)[0], self.cursor())
         if inside and (self.buttons() or not self.app_active() or not self.over_maya()):
             inside = False
         self.dwelt = look.zone_dwell(self.dwelt, inside, look.ZONE_POLL_MS)
@@ -273,7 +334,7 @@ class BottomEdge(object):
 
     def dwell_done(self):
         window = self._window_rect()
-        if not window or not rules.contains(look.sensor_band(window, rules.SENSOR_PX), self.cursor(),
+        if not window or not rules.contains(self._bands(window)[1], self.cursor(),
                                             margin=2):
             return
         if rules.may_reveal(True, self.shown, self.buttons(), self.app_active()):

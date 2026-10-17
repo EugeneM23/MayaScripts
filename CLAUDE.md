@@ -11833,6 +11833,16 @@ The animator: «боковую панель по концепту нашего �
   Nothing selected starts the usual hide (the cursor over it, the 📌 still keep it). The edge
   hover works as before, and a panel built with a selection standing comes out at once.
   Seen live: pSphere1 selected, out, kept by `selected`.
+- **The Time Bar steps aside, the panel goes to the bottom** (the same day: «таймслайдер будет
+  тоже учитывать наши интрефейсы и не перекрывать их ... если нет на экране таймслайдера то
+  можно нашу боковую панель растянуть до низа»). The side panel takes MainPane's whole height
+  again. The Time Bar's bottom-edge band and sensor are cut to `maya_timebar.look.free_span`:
+  MainPane across (docked editors left out), less our panels reaching into the band
+  (`edge._obstacles`). Those are the side panel while it shows (its zone strip while hidden) and
+  the hub's edge panel while out; a panel in the right half cuts the end, in the left the start.
+  The side panel's reveal and hide call `nudge_timebar()` so the bar moves at once. Live: side
+  out 2008..2558 down to 1526, the bar 2..2008; side in, the bar 2..2486. **The side panel waits
+  600 ms before it hides** (`look.HIDE_MS`, half the Time Bar's 1200: «в 2 раза меньше»).
 
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done
