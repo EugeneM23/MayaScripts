@@ -825,6 +825,9 @@ def _ensure_edge():
         #  with the hub at the edge build() is not what builds the hub - an
         #  update rebuilt it here and the bar never came
         _tabs_bar_soon()
+        #  the Time Bar likewise (2026-10-17): at Maya's start with the hub at
+        #  the edge it was never built, and Maya's own slider stayed hidden
+        _time_bar_soon()
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")

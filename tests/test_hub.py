@@ -1350,6 +1350,19 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
             hub._tabs_bar_soon = original
         self.assertEqual(asked, [True])
 
+    def test_the_edge_shows_the_time_bar(self):
+        """2026-10-17: the same for the Time Bar - with the hub at the edge
+        Maya's start showed neither the Time Bar nor Maya's own slider."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        asked = []
+        original = hub._time_bar_soon
+        hub._time_bar_soon = lambda: asked.append(True)
+        try:
+            hub.start()
+        finally:
+            hub._time_bar_soon = original
+        self.assertEqual(asked, [True])
+
     def test_start_twice_is_one_edge(self):
         self.fake.optionvars[hub.EDGE_VAR] = 1
         first = hub.start()
