@@ -128,7 +128,8 @@ def simulate(ref, a, b, s, colliders=(), progress=None, impulses=True):
                     return 1.0
                 return plan.blend_strength(t, a, b, blend_in, blend_out, (
                     0.0 if state[key] == "free" else strength[key]))
-            # Bullet steps only with the viewport's refresh on (trap 266)
+            # Bullet steps only with the viewport's refresh on (trap 266) and Cached Playback off
+            # (`sim.Scene` switches it off while it stands)
             cmds.refresh(suspend=False)
             try:
                 cmds.currentTime(a)          # the solver initialises on a time change at its start

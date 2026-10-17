@@ -46,12 +46,46 @@ def _connect(src, dst, **kw):
     cmds.connectAttr(src, dst, force=True, **kw)
 
 
+def cache_on():
+    """Is Maya's Cached Playback on? False where there is no cache evaluator to ask."""
+    try:
+        return bool(cmds.evaluator(name="cache", query=True, enable=True))
+    except Exception:                                       # noqa: BLE001 - nothing to ask
+        return False
+
+
+def _cache(on):
+    cmds.evaluator(name="cache", enable=on)
+
+
 class Scene(object):
     """The ragdoll's nodes: `build_*` make them, `step`/`read` simulate, `delete` takes every node
-    the build made (a UUID diff - the pairBlends and the stiffness curves included)."""
+    the build made (a UUID diff - the pairBlends and the stiffness curves included).
+
+    Cached Playback is off for as long as the nodes stand: switched off before the first one is
+    made when it was on, and back on once `delete` has taken them. With it on, Bullet does not step
+    in a GUI Maya at all (measured 2026-10-17: a capsule fell 0.0 cm over 10 frames with the cache
+    on, 85.3 cm with it off; a Fall pressed with it on left the character standing). mayapy has no
+    cache and always stepped, so no headless verify could see it. Switching the cache off flushes
+    it: it fills again after the press, as after any edit."""
 
     def __init__(self, start, friction, bounce):
         _plugin()
+        self.cache = cache_on()
+        if self.cache:
+            _cache(False)
+        try:
+            self._make(start, friction, bounce)
+        except BaseException:
+            self._cache_back()
+            raise
+
+    def _cache_back(self):
+        if self.cache:
+            self.cache = False
+            _cache(True)
+
+    def _make(self, start, friction, bounce):
         self.before = set(cmds.ls(cmds.ls(), uuid=True) or [])
         self.group = cmds.createNode("transform", name=GROUP, skipSelect=True)
         self.solver_t = cmds.createNode("transform", name=GROUP + "Solver", parent=self.group,
@@ -260,19 +294,23 @@ class Scene(object):
         return out
 
     def delete(self):
-        """Every node the build made, gone (by UUID: whatever Maya named them)."""
-        now = set(cmds.ls(cmds.ls(), uuid=True) or [])
-        made = [u for u in now - self.before]
-        paths = cmds.ls(made, long=True) or []
-        dag = [p for p in paths if p.startswith("|")]
-        tops = [p for p in dag if not any(p.startswith(o + "|") for o in dag if o != p)]
-        for path in tops + [p for p in paths if not p.startswith("|")]:
-            if cmds.objExists(path):
-                try:
-                    cmds.lockNode(path, lock=False)
-                    cmds.delete(path)
-                except Exception:                     # noqa: BLE001 - gone with its parent
-                    pass
+        """Every node the build made, gone (by UUID: whatever Maya named them), then Cached
+        Playback back on if the build switched it off."""
+        try:
+            now = set(cmds.ls(cmds.ls(), uuid=True) or [])
+            made = [u for u in now - self.before]
+            paths = cmds.ls(made, long=True) or []
+            dag = [p for p in paths if p.startswith("|")]
+            tops = [p for p in dag if not any(p.startswith(o + "|") for o in dag if o != p)]
+            for path in tops + [p for p in paths if not p.startswith("|")]:
+                if cmds.objExists(path):
+                    try:
+                        cmds.lockNode(path, lock=False)
+                        cmds.delete(path)
+                    except Exception:                 # noqa: BLE001 - gone with its parent
+                        pass
+        finally:
+            self._cache_back()
 
 
 def skinned_points(meshes, rider_of):

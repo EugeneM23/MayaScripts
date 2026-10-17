@@ -230,7 +230,8 @@ def simulate(ref, a, b, s, colliders=(), progress=None, weapons=(), impulses=Tru
                                   plan.fade_keys(a, float(s["fade"]), k))
             # In a GUI Maya Bullet does not step while the viewport is suspended (the walk's
             # `refresh -suspend`): every body stood still (measured 2026-10-16; mayapy has no
-            # viewport and fell). The steps run with the refresh on, suspended again after.
+            # viewport and fell). The steps run with the refresh on, suspended again after. Nor
+            # does it step with Cached Playback on: `sim.Scene` switches that off while it stands.
             cmds.refresh(suspend=False)
             try:
                 cmds.currentTime(a)          # the solver initialises on a time change at its start

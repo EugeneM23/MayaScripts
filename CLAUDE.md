@@ -11468,6 +11468,31 @@ the card is `[Fall | Blend]` now, hotkey row `ragdoll.blend` (`panel.press_blend
      with the hit read the first run's layer as its take - 5 cm apart before the hit, with a
      deterministic Bullet. Undo straight after the press, and compare runs through their cards.
 
+**…and Cached Playback switched off while it simulates** (2026-10-17, the animator: «после того как мы
+сделали бленд у нас вообще весь регдолл сломался теперь и фол не работает хотя до этого фол работал
+отлично»; asked, «Персонаж стоит»: the layer is made, the character stands). Spec addendum in
+`2026-10-16-ragdoll-fall-design.md`.
+- **Not the Blend code**: every headless verify still fell, and the build before Blend gave the same
+  numbers as HEAD.
+- **Reproduced in a disposable GUI Maya**: with Cached Playback on, Bullet does not step at all (trap 275).
+  A Fall left the pelvis at 86.5 cm at the end (the take's 83.3); with the cache off the same press
+  fell to 23.5.
+- **The fix**: `sim.Scene` switches the cache off before it makes its first node, when it was on, and back
+  on once `delete` has taken the nodes (`cache_on`, `_cache`; a build that fails puts it back).
+- **Measured in the GUI Maya with the cache on**:
+  - Fall falls: the pelvis at 23.7 at the end, the cache on again after, no Bullet node left;
+  - Blend with Free arms hangs them 71-77 cm off the take. The build before held them 2-5 cm off
+    mid-span: frozen in the first frame's direction, the morning's «стоит и что-то там дергается».
+- **Tests**: `tests/test_ragdoll_sim.py`, 5 tests (two fail on the build before); 7121 unit tests;
+  `verify_ragdoll.py` 39/39 and `verify_ragdoll_blend.py` 14/14 on Manny_Rig, Creep_Rig and Orc_D_Rig.
+
+275. **Bullet does not step in a GUI Maya with Cached Playback on**, whatever the refresh. Measured
+     2026-10-17: a capsule fell 0.0 cm over 10 frames with the cache on (refresh on or suspended), and
+     85.3 cm with it off and the refresh on. A fresh Maya 2027 has the cache on, and the Time Bar has a
+     chip for it. mayapy has no cache evaluator, so no headless verify can see it. Switch the cache off
+     before the solver is built (`evaluator -name cache -enable 0`, which flushes it) and back on once
+     its nodes are gone.
+
 ## Time Bar: Maya's time slider redrawn in the hub's look (2026-10-16)
 
 The animator: «Давай попробуем перерисовать интерфейс таймслайдера маи под наш стиль. Сделай пару макетов а я

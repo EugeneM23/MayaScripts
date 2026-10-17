@@ -100,3 +100,33 @@ UE run clip retargeted: the keys before `a` untouched; the bake's bones on the s
 bone lengths kept; every capsule above the floor at every frame; the body at `a+1` moving as the
 clip did; at rest by `b`; the base-layer mode; a selected box stopping the fall; the weapon on the
 floor; Undo; nothing of Bullet in the scene after the press.
+
+## Addendum: Cached Playback switched off while it simulates (2026-10-17)
+
+The animator, the day Blend was built: «после того как мы сделали бленд у нас вообще весь регдолл
+сломался теперь и фол не работает хотя до этого фол работал отлично». Asked, «Персонаж стоит»: the
+layer is made and the character stands.
+
+- **Not the Blend code**: `verify_ragdoll.py` gave the same numbers on HEAD and on the build before
+  Blend (b6c0bbb, `Run_Fwd.fbx` on Manny_Rig), and every headless verify fell.
+- **Reproduced in a disposable GUI Maya** (port 7027, a scratch `MAYA_APP_DIR`). With Cached Playback
+  on, Bullet does not step at all, with the refresh on or suspended: a capsule fell 0.0 cm over 10
+  frames, against 85.3 cm with the cache off and the refresh on. Fall pressed with the cache on left the
+  pelvis at 86.5 cm at the end (the take's 83.3); with the cache off the same press brought it to 23.5.
+- **Why no verify saw it**: a fresh Maya 2027 has the cache on, and the Time Bar has a chip for it.
+  mayapy has no cache evaluator, so no headless verify could see it.
+- **The fix**: `sim.Scene` switches the cache off before it makes its first node, when it was on. It
+  switches it back on once `delete` has taken the nodes; a build that fails puts it back at once. The
+  cache flushes and fills again after the press, as after any edit. Fall and Blend both build through
+  `sim.Scene`.
+
+Measured after, in the GUI Maya with the cache on:
+- **Fall** falls: the pelvis at 23.7 cm at the end, up to 245 cm off the take. The cache is on again
+  after the press, and no Bullet node is left.
+- **Blend** with Free arms hangs them 71-77 cm off the take mid-span; the legs and pelvis stay on it
+  (0.00). The same Blend on the build before: 2-5 cm off mid-span. The arms stood frozen in the first
+  frame's direction.
+
+Tests: `tests/test_ragdoll_sim.py`, 5 tests; two of them fail on the build before. 7121 unit tests;
+`verify_ragdoll.py` (`AS_Longs_SprintLoop.fbx`) 39/39 and `verify_ragdoll_blend.py`
+(`AS_Longsword_Attack_Back_Light_Combo_1_3P.fbx`) 14/14 on Manny_Rig, Creep_Rig and Orc_D_Rig.

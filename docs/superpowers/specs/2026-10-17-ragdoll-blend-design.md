@@ -141,3 +141,17 @@ Measured after (mayapy):
 - `verify_ragdoll_blend.py` **14/14 on Manny_Rig, Creep_Rig and Orc_D_Rig**: strength 1 within 2.75 /
   3.17 / 2.74 cm, the legs exact, a 4 m/s head hit knocking the head 14.4 / 15.8 / 13.4 cm (5.7-7
   before) and back by the end.
+
+## Addendum 3: the frozen ragdoll was Cached Playback (2026-10-17)
+
+«Я вообще не вижу работы регдола», which Addendum 2 answered, had a second cause the headless runs
+could not show. In a GUI Maya with Cached Playback on, Bullet does not step at all: every body stood
+in its first frame's pose, and only the bake's turn toward it moved. The ragdoll Fall spec's addendum of
+the same day has the measurements and the fix: `sim.Scene` switches the cache off while its nodes
+stand.
+
+Measured in a disposable GUI Maya with the cache on, a sprint on Manny_Rig, Free arms, the rest Anim:
+- the build before the fix: the hands 2-5 cm off the take mid-span;
+- after the fix: 71-77 cm off, hanging.
+
+The spring Follow stands on its own measurements: the twitch went from 17.6 cm to 3-4 cm.
