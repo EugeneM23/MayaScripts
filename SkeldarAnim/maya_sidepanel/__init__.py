@@ -203,15 +203,24 @@ def refresh():
 
 
 def _start_job():
-    """A SelectionChanged job while the panel holds Maya's editors (killed by
-    drop_edge): the Attribute Editor follows the selection while it is out."""
-    cmds = _cmds()
+    """A SelectionChanged callback while the panel holds Maya's editors (removed by
+    drop_edge): the panel comes out with a selection and the Attribute Editor
+    follows it. OpenMaya's event callback, not a scriptJob: Maya runs scriptJobs
+    only when it is idle, and playback is never idle - the panel stayed in while
+    the animator selected during playback (2026-10-17, measured: a timeChanged
+    scriptJob fired 0 times in 25 s of playback)."""
     _kill_job()
     try:
-        _state()["job"] = cmds.scriptJob(event=["SelectionChanged", _on_selection],
-                                         killWithScene=False)
+        import maya.OpenMaya as om
+        _state()["callback"] = om.MEventMessage.addEventCallback(
+            "SelectionChanged", lambda *args: _on_selection())
     except Exception:                                        # noqa: BLE001
-        _state()["job"] = None
+        _state()["callback"] = None
+        try:
+            _state()["job"] = _cmds().scriptJob(event=["SelectionChanged", _on_selection],
+                                                killWithScene=False)
+        except Exception:                                    # noqa: BLE001
+            _state()["job"] = None
 
 
 def playing():
@@ -242,6 +251,13 @@ def _on_selection():
 
 
 def _kill_job():
+    callback = _state().pop("callback", None)
+    if callback is not None:
+        try:
+            import maya.OpenMaya as om
+            om.MMessage.removeCallback(callback)
+        except Exception:                                    # noqa: BLE001
+            pass
     job = _state().pop("job", None)
     if job:
         try:

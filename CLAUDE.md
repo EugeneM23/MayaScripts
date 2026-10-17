@@ -11835,7 +11835,10 @@ The animator: «боковую панель по концепту нашего �
   Seen live: pSphere1 selected, out, kept by `selected`. **During playback** («во время плей мода
   выделяю объект то панель не выезжает») no idle and no timer tick comes between frames (trap 269):
   the selection job runs `later()` at once instead of `evalDeferred`, the reveal is instant, and
-  `repaint_all` repaints the host synchronously. Not seen live: commands sent over the port wait
+  `repaint_all` repaints the host synchronously - and the selection is heard through
+  `om.MEventMessage.addEventCallback("SelectionChanged")`, not a scriptJob (trap 277). Seen live
+  after that: pSphere1 selected at frame 10 of playback, the panel out at once, its Channel Box
+  filled. The first try (scriptJob) did nothing: commands sent over the port wait
   for idle too, so playback is the animator's to try.
 - **The Time Bar steps aside, the panel goes to the bottom** (the same day: «таймслайдер будет
   тоже учитывать наши интрефейсы и не перекрывать их ... если нет на экране таймслайдера то
@@ -11847,6 +11850,12 @@ The animator: «боковую панель по концепту нашего �
   The side panel's reveal and hide call `nudge_timebar()` so the bar moves at once. Live: side
   out 2008..2558 down to 1526, the bar 2..2008; side in, the bar 2..2558. **The side panel waits
   600 ms before it hides** (`look.HIDE_MS`, half the Time Bar's 1200: «в 2 раза меньше»).
+
+277. **A scriptJob does not fire during playback.** Maya runs scriptJobs when it is idle, and
+     playback never is: a timeChanged job fired 0 times in 25 s of playback (measured
+     2026-10-17), and the side panel's SelectionChanged job never heard a selection made while
+     playing. What must react during playback hangs on OpenMaya callbacks
+     (`MEventMessage.addEventCallback`, `MDGMessage.addTimeChangeCallback` - the Time Bar's).
 
 276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
      RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done
