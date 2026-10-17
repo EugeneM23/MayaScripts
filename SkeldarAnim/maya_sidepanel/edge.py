@@ -328,12 +328,18 @@ class SideEdge(object):
         borrowed editors exposes them without a paint: the Attribute Editor's
         values came only where the mouse passed (2026-10-17, live)."""
         q = hubqt.qt()
+        QWidget = q.QtWidgets.QWidget
         self.host.update()
-        for widget in self.host.findChildren(q.QtWidgets.QWidget):
+        asked = 0
+        #  QWidget.update unbound: an item view's own update() wants an index
+        #  (QTableView.update() raised TypeError in Maya's Attribute Editor)
+        for widget in self.host.findChildren(QWidget):
             try:
-                widget.update()
-            except RuntimeError:
+                QWidget.update(widget)
+                asked += 1
+            except (RuntimeError, TypeError):
                 pass
+        return asked
 
     def _settle(self, showing):
         if showing:

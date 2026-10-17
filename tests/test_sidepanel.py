@@ -292,14 +292,16 @@ class Edge(unittest.TestCase):
     def test_the_end_of_the_unroll_asks_every_widget_to_paint(self):
         """2026-10-17, live: Maya's editors showed their values only where the mouse
         passed after the panel unrolled."""
-        painted = []
-        child = QT.QtWidgets.QWidget(self.edge.panel)
-        child.update = lambda: painted.append(1)
+        asked = []
+        real = self.edge.repaint_all
+        self.edge.repaint_all = lambda: asked.append(real())
+        QT.QtWidgets.QTableView(self.edge.panel)       # its update() wants an index
         self.edge.motion = True
         self.edge.reveal()
         self.edge._slide["t0"] -= look.UNROLL_MS + 1
         self.edge.slide_tick()
-        self.assertEqual(painted, [1])
+        self.assertEqual(len(asked), 1)
+        self.assertGreater(asked[0], 10)
 
     def test_the_unroll_masks_from_the_cursor_and_ends_whole(self):
         self.edge.motion = True
