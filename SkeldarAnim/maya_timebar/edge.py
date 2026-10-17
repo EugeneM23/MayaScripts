@@ -127,7 +127,7 @@ class BottomEdge(object):
             t.timeout.connect(lambda: controller._guard(call))
             return t
         self.dwell = timer(rules.DWELL_MS, self.dwell_done)
-        self.hide_timer = timer(rules.HIDE_MS, self.hide_due)
+        self.hide_timer = timer(look.HIDE_MS, self.hide_due)
         self.place_timer = timer(PLACE_MS, self.place, single=False)
         self.watch = timer(WATCH_MS, self.watch_tick, single=False)
         self.anim = timer(16, self.slide_tick, single=False)
