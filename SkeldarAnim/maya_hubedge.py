@@ -153,7 +153,7 @@ def _maya_work_area():
     return screen.availableGeometry().getRect()
 
 
-def _viewport_area():
+def _viewport_area(side="left"):
     """Maya's viewport area (the MainPane workspaceControl: under the menus, the
     status line, the shelf and the scene tabs), global physical px, or None. Found
     every time (trap 135)."""
@@ -173,7 +173,7 @@ def _viewport_area():
         #  below the viewport's own menus and icons (2026-10-17, «реил не должен
         #  перекрывать другие меню»): the drawing area of the model panel standing
         #  against the pane's left edge starts lower than the pane
-        top = _drawing_top(x)
+        top = _drawing_top(x if side != "right" else x + w, side)
         if top is not None and y < top < y + h - 100:
             h, y = h - (top - y), top
         return (x, y, w, h)
@@ -181,7 +181,7 @@ def _viewport_area():
         return None
 
 
-def _drawing_top(left):
+def _drawing_top(edge, side="left"):
     """The global top of the drawing area of the visible model panel whose left
     edge is the viewport's `left` (the upper one when panes are stacked), or None."""
     try:
@@ -201,7 +201,8 @@ def _drawing_top(left):
                 continue
             view = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
             g = view.mapToGlobal(view.rect().topLeft())
-            if abs(g.x() - left) <= 8:
+            at = g.x() + view.width() if side == "right" else g.x()
+            if abs(at - edge) <= 8:
                 tops.append(g.y())
         return min(tops) if tops else None
     except Exception:                                        # noqa: BLE001
@@ -561,7 +562,7 @@ class Edge(object):
         if self._work_area:
             return self._work_area()
         if self.rail:
-            return _viewport_area() or _maya_work_area()
+            return _viewport_area(self.side) or _maya_work_area()
         return _maya_work_area()
 
     def _host_rect(self):

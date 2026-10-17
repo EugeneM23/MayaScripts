@@ -11803,6 +11803,10 @@ switch and its optionVars are unchanged.
   - the Time Bar steps aside for `Edge.visible_rects()`, the rail and the card, not the empty
     height under it. An old Time Bar edge kept its old module's functions, so the install
     rebuilt it (`drop_edge`, `ensure`). Live: the bar from x 60.
+  - **the Channel Box side panel the same** («тоже самое касается выдвижной панели ченел бокса»):
+    `sidepanel.edge._window_rect` takes `maya_hubedge._viewport_area("right")`, the drawing area
+    of the model panel on the viewport's right (`_drawing_top(edge, side)`). Live: the panel
+    from y 228, under the viewport's icon bar.
 
 ## Side panel: the Channel Box and the Attribute Editor at the right edge (2026-10-17)
 

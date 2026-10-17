@@ -45,12 +45,22 @@ def _window_rect():
         return None
     pane = None
     try:
-        from . import holder
-        w = holder.widget("MainPane")
-        if w is not None and w.isVisible() and w.width() > 0 and w.height() > 0:
-            pane = _global_rect(w)
+        #  the viewport's drawing area on its right (2026-10-17, «тоже самое
+        #  касается выдвижной панели ченел бокса он сейчас перекрывает интерфейс
+        #  программы»): below the viewport's own menus and icon bar, as the hub's
+        #  rail stands
+        import maya_hubedge
+        pane = maya_hubedge._viewport_area("right")
     except Exception:                                        # noqa: BLE001
         pane = None
+    if pane is None:
+        try:
+            from . import holder
+            w = holder.widget("MainPane")
+            if w is not None and w.isVisible() and w.width() > 0 and w.height() > 0:
+                pane = _global_rect(w)
+        except Exception:                                    # noqa: BLE001
+            pane = None
     return look.area(pane, _global_rect(window))
 
 
