@@ -697,10 +697,11 @@ def classes():
             font.setPixelSize(max(8, int(10 * ui)))
             p.setFont(font)
             metrics = QtGui.QFontMetricsF(font)
-            #  as Maya's slider (2026-10-17): the ticks hang from the top, under the
-            #  bookmarks band, and a frame's number stands beside its tick at the top;
-            #  the playhead's own number is at the bottom
+            #  as Maya's slider (2026-10-17): the ticks stand at the bottom, a frame's
+            #  number at the top under the bookmarks band; the playhead's own number
+            #  is at the bottom
             ry = (BAND_H + 2) * ui
+            tick_y = h - 3 * ui
             major, minor = colour(tk["muted"]), colour(tk["line"])
             label_pen = colour(tk["faint"])
             tall_of = {"label": 8 * ui, "mid": 5 * ui, "tick": 3 * ui}
@@ -710,7 +711,7 @@ def classes():
                 tall = tall_of[kind]
                 p.setPen(Qt.NoPen)
                 p.setBrush(major if kind == "label" else minor)
-                p.drawRect(QtCore.QRectF(x, ry, tick_w, tall))
+                p.drawRect(QtCore.QRectF(x, tick_y - tall, tick_w, tall))
                 if kind == "label":
                     text = look.frame_text(frame)
                     if x + 3 * ui + metrics.horizontalAdvance(text) <= w - 2 * ui:
