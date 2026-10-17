@@ -322,5 +322,33 @@ class Purity(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
 
+class EffectTests(unittest.TestCase):
+
+    def test_key_changes_reads_sets_deletes_and_snaps(self):
+        self.assertEqual(look.key_changes([1.0, 2.0], [1.0, 2.0, 5.0]), ([5.0], [], []))
+        self.assertEqual(look.key_changes([1.0, 2.0], [1.0]), ([], [2.0], []))
+        self.assertEqual(look.key_changes([1.0, 2.5], [1.0, 3.0]), ([], [], [(2.5, 3.0)]))
+        self.assertEqual(look.key_changes(None, [1.0]), ([], [], []))
+        self.assertEqual(look.key_changes([], list(map(float, range(20)))), ([], [], []))
+
+    def test_sparks_are_a_formula_of_their_age(self):
+        a = look.sparks(7, 12, 100, 520, 190, 0)
+        self.assertEqual(a, look.sparks(7, 12, 100, 520, 190, 0))
+        self.assertEqual(len(a), 12)
+        self.assertTrue(all(dy < 0 for _dx, dy, _l in a))          # thrown up
+        self.assertEqual(look.sparks(7, 12, 600, 520, 190, 320), [])
+        down = look.sparks(3, 24, 500, 600, 170, 620, spread=360.0)
+        self.assertGreater(sum(dy for _dx, dy, _l in down) / len(down), 0)   # gravity wins
+
+    def test_progress_and_the_nudge(self):
+        self.assertEqual(look.progress(-1, "set"), None)
+        self.assertAlmostEqual(look.progress(260, "set"), 0.5)
+        self.assertEqual(look.progress(520, "set"), None)
+        self.assertEqual(look.nudge(None), 0.0)
+        self.assertAlmostEqual(look.nudge(0.25), 1.0)
+        self.assertEqual(look.nudge(0.8), 0.0)
+        self.assertAlmostEqual(look.ease_in_out(0.5), 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

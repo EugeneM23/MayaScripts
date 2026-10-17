@@ -11649,6 +11649,34 @@ same run on the previous build through `TIMEBAR_PLUGIN`):
   and keeps its fraction (`mapped`, `scene.move_keys`); an edge drag counts frame lines (`Timeline._grip`);
 - the playback range's dimming starts after p1's cell; `passed` lights the keys in the playhead's cell.
 
+**Effects, carried from the mockup** (2026-10-17, «все эффекты из макета - и таймлайна, и кнопок - в наш
+таймслайдер»; mockup https://claude.ai/artifact/DdErKFKs3dL5p8mSEQkHxX). Every one is drawn from its AGE alone
+(`look.EFFECT_MS`, `look.progress`; a spark's flight is `look.sparks`, seeded, no stepped state), and none starts
+with ⋮ → Interface animations off.
+- **The overlay** `FxLayer` (`skeldarTimeBarFx`): a mouse-deaf child over the whole strip for what flies past a
+  control (rings, sparks, glows, the bookmark's «+», the frame field's glow). It paints only while an item lives.
+- **The timeline's own** (`Timeline.effects`, drawn over the cached picture, under the playhead):
+  - a key set: a beam, the key rising white-hot, two rings, 12 sparks up;
+  - a key deleted: a flash, a shock ring, the mark pinching out, 24 sparks falling;
+  - a key snapped onto its frame: it slides there, the dashed mark fading;
+  - a scrub's trail of cells;
+  - a playhead glide on a jump (`jumped`: Go to start / end, a key step, the field; not a frame step, not while
+    playing, not a scrub);
+  - play on: a frame closing in and the flag's pulse (off: the pulse);
+  - the loop going round: a sweep back;
+  - a key move: ghosts and the keys flying to their place (`_quiet_keys`, so no delete + set);
+  - a new bookmark unrolling.
+  Set / delete / snap / bookmark are read by diffing the keys a refresh reads (`look.key_changes`; more than
+  `SMALL_CHANGE` changed keys is a reload, the first read nothing).
+- **The buttons** (`Pill`): a press squeezes to 0.88, a hot ripple from the press point, a ring and 8 sparks; a
+  brighter hover glow; the glyph morphs (play ⇄ pause, the loop's modes); the loop turns 120°; the step buttons
+  push their way; the gear turns 60° under the mouse; a chip's value rolls up and its ▾ dips; Sound's waves come
+  in; Auto key's fill sweeps from the press, and its red dot breathes while on (`BREATH_MS`; that keeps the motion
+  timer running while Auto key is on); the bookmark flag drops in.
+- Speed (`bench_time_bar.py`, the machine noisier than on 2026-10-16): a scrub step 2.0 ms (the build before 1.6),
+  a motion tick 1.1 ms (0.8). Picture `docs/superpowers/plans/time_bar_effects.png`
+  (`render_time_bar_effects.py`). 120 timebar tests. **Not seen in a GUI Maya.**
+
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
      of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached

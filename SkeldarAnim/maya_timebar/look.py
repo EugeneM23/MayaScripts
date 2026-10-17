@@ -498,3 +498,81 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
     else:
         text += " | Maya's own slider drove it"
     return out, text
+
+
+# -- the effects (2026-10-17, the effects mockup: «все эффекты из макета - и
+#    таймлайна, и кнопок - в наш таймслайдер») -------------------------------
+
+EFFECT_MS = {
+    "set": 520, "delete": 600, "trail": 380, "glide": 260, "play_on": 420,
+    "play_off": 300, "loop": 480, "move": 360, "mark": 420, "snap": 300,
+    "press": 420, "plus": 520, "field": 380, "morph": 220, "spin": 260,
+    "roll": 220, "reveal": 320, "nudge": 220, "drop": 360,
+}
+BREATH_MS = 1400        # Auto key's red dot breathes while on
+SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
+
+
+def ease_in_out(u):
+    """Cubic ease in-out over [0, 1]."""
+    u = max(0.0, min(1.0, u))
+    return 4 * u * u * u if u < 0.5 else 1 - (-2 * u + 2) ** 3 / 2.0
+
+
+def progress(age_ms, kind):
+    """0..1 through effect `kind`, None once it is over (or before it starts)."""
+    ms = EFFECT_MS[kind]
+    if age_ms < 0 or age_ms >= ms:
+        return None
+    return age_ms / float(ms)
+
+
+def key_changes(old, new):
+    """What an edit did to the key times: (added, removed, snapped) - snapped
+    pairs (from, to) where a key between frames went onto its whole frame.
+    Nothing when the change is a reload (more than SMALL_CHANGE keys moved)."""
+    if old is None:
+        return [], [], []
+    before, after = set(old), set(new)
+    added, removed = sorted(after - before), sorted(before - after)
+    if len(added) + len(removed) > SMALL_CHANGE:
+        return [], [], []
+    snapped = []
+    for k in list(removed):
+        if abs(k - round(k)) < 1e-4:
+            continue
+        to = next((f for f in (float(math.floor(k)), float(math.ceil(k))) if f in added), None)
+        if to is not None:
+            snapped.append((k, to))
+            removed.remove(k)
+            added.remove(to)
+    return added, removed, snapped
+
+
+def sparks(seed, count, age_ms, ms, speed, gravity, up=True, spread=180.0):
+    """Sparks thrown from a point: [(dx, dy, life)] at `age_ms` (dy down, logical
+    px), `life` 1 at the throw and 0 at the end. Seeded, so a paint at any time
+    reads the same flight: no state is stepped."""
+    if age_ms < 0 or age_ms >= ms:
+        return []
+    out, t = [], age_ms / 1000.0
+    s = (int(seed) * 2654435761) & 0xFFFFFFFF
+    for i in range(count):
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        a = (s % 10000) / 10000.0
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        b = (s % 10000) / 10000.0
+        base = -90.0 if up else 90.0
+        angle = math.radians(base + (a - 0.5) * spread)
+        v = speed * (0.45 + 0.55 * b)
+        dx = math.cos(angle) * v * t
+        dy = math.sin(angle) * v * t + 0.5 * gravity * t * t
+        out.append((dx, dy, 1.0 - age_ms / float(ms)))
+    return out
+
+
+def nudge(u):
+    """A step button's push: out and back, 0 at both ends, 1 at a quarter."""
+    if u is None:
+        return 0.0
+    return math.sin(math.pi * min(1.0, u / 0.5)) if u < 0.5 else 0.0
