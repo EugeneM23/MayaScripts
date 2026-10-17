@@ -443,6 +443,8 @@ def _callbacks():
         "hover": _hover_sound,
         "sounds": set_sounds,
         "animations": set_animations,
+        #  Maya in the hub's colours (2026-10-17, maya_mayatheme)
+        "mayatheme": set_mayatheme,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
@@ -495,6 +497,7 @@ def _dress_header(skin):
         print(traceback.format_exc())
     _dress_sounds(skin)
     _dress_animations(skin)
+    _dress_mayatheme(skin)
     _dress_timebar(skin)
     _dress_edge(skin)
     _dress_popped(skin)
@@ -543,6 +546,15 @@ def _dress_animations(skin):
     try:
         import maya_hubmotion
         skin.paint_animations(maya_hubmotion.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_mayatheme(skin):
+    """The menu's Maya theme row = the switch (off by default)."""
+    try:
+        import maya_mayatheme
+        skin.paint_mayatheme(maya_mayatheme.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -618,6 +630,7 @@ def build():
     _register_pending_startup()
     _tabs_bar_soon()
     _time_bar_soon()
+    _maya_theme_soon()
     if not _BUILT_HERE:
         #  A fresh module object (Maya's start, an install): the popups an
         #  older one opened are destroyed, the remembered ones come back
@@ -675,6 +688,23 @@ def _tabs_bar_soon():
             print("SkeldarAnim: the scene tabs bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _maya_theme_soon():
+    """Maya in the hub's colours (2026-10-17): the Qt part applied again at
+    Maya's start while the theme is on (Maya keeps the display colours in its
+    prefs). Deferred and guarded: it never costs the hub."""
+    if cmds.about(batch=True):
+        return
+
+    def theme():
+        try:
+            import maya_mayatheme
+            maya_mayatheme.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the Maya theme could not be applied")
+            print(traceback.format_exc())
+    cmds.evalDeferred(theme, lowestPriority=True)
 
 
 def _time_bar_soon():
@@ -828,6 +858,7 @@ def _ensure_edge():
         #  the Time Bar likewise (2026-10-17): at Maya's start with the hub at
         #  the edge it was never built, and Maya's own slider stayed hidden
         _time_bar_soon()
+        _maya_theme_soon()
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")
@@ -1239,6 +1270,16 @@ def set_animations(on):
     if is_skinned():
         _SKIN.paint_animations(on)
     return on
+
+
+def set_mayatheme(on):
+    """⋮ -> Maya theme (2026-10-17): Maya in the hub's colours, or its own."""
+    import maya_mayatheme
+    message = maya_mayatheme.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_mayatheme(maya_mayatheme.enabled())
+    say(message)
+    return message
 
 
 def set_timebar(choice):

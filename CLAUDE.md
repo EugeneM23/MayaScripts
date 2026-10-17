@@ -11601,3 +11601,24 @@ Maya's own commands.
      evaluates the scene before it returns and playback does not turn the event loop, so the Time Bar's playhead
      jumped several frames while Maya's own slider moved on every one. Paint what must follow time with
      `repaint()` before the call that evaluates, and from the `timeChanged` job.
+
+## Maya theme: Maya in the hub's colours (2026-10-17)
+
+The animator: «Можем ли мы поменять цвета маи под наш интерфейс?». Four mockups
+(https://claude.ai/artifact/3cscUGngcoXQjp4on8Lr1Z); they chose **B, the hub whole**. Spec
+`docs/superpowers/specs/2026-10-17-maya-theme-design.md`. `SkeldarAnim/maya_mayatheme.py` (stdlib at import, a
+payload row); ⋮ → **Maya theme**, a checkable row (optionVar `skeldarMayaTheme`, **off by default**).
+- **Qt's palette** on the QApplication from `hubstyle.TOKENS` (`PALETTE`, `DISABLED`; selection `#5a3922` with
+  `accent_text`), and **a sheet appended to the application's own** between `START` / `END` markers: tooltips, the
+  menu bar, line edits, item-view selection, header sections, splitter handles. **Colours, borders and radii only,
+  never a size** (a test pins it) and no blanket QWidget rule: the hub's root sheet sets the same properties for its
+  widgets and wins.
+- **Maya's display colours** (`RGB`: the viewport gradient, the Graph Editor, Outliner child highlight, Node Editor,
+  Dope Sheet, Hypergraph) plus `displayPref -displayGradient` on. Keys, curves, tangents and manipulators keep Maya's.
+- On: what stands is kept ONCE as JSON in `skeldarMayaTheme_saved` (a second On never saves the theme as theirs);
+  Off: written back, the memory removed, the palette and sheet put back (`sys._skeldar_mayatheme`). At Maya's start the
+  hub's build calls `ensure()` (deferred): only the Qt part, since Maya keeps the display colours in its prefs.
+- Proof: `tests/test_mayatheme.py` (18, the Qt part offscreen), the menu row in `test_hubqt`; 7078 unit tests.
+  **`verify_maya_theme.py` (a GUI Maya: every colour, the palette and sheet, Maya controls' size hints unchanged,
+  playblasts on/off, everything back after Off) is written and NOT run.** Not seen in a GUI Maya: how far Maya's own
+  style follows the palette.

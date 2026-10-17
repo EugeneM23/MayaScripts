@@ -97,6 +97,7 @@ _PAYLOAD = (
     "maya_hubqt.py",            # its Qt widgets
     "maya_hubsound.py",         # its interface sounds (2026-10-01)
     "maya_hubmotion.py",        # how its cards move (2026-10-01)
+    "maya_mayatheme.py",        # Maya in the hub's colours (2026-10-17)
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
     "maya_hubedge.py",          # the edge panel's windows (2026-10-08)
