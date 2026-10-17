@@ -506,6 +506,17 @@ class BottomEdge(object):
             return
         self.conceal()
 
+    def key_set(self):
+        """A key was set (the S hotkey, the Channel Box's Key): the bar out - from
+        the cursor's x on its row, as a Play hotkey brings it - or, out already, its
+        wait for the hide begun again (2026-10-17)."""
+        if not self.shown:
+            self.reveal(on_row=True)
+            return True
+        if self.hide_timer.isActive():
+            self.hide_timer.start()
+        return False
+
     def set_pinned(self, on):
         self.pinned = bool(on)
         if not on and self.shown:

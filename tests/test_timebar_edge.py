@@ -63,6 +63,19 @@ class Edge(unittest.TestCase):
         self.assertEqual((g.x(), g.y(), g.width(), g.height()), look.sensor_band(self.window, 2))
         self.assertTrue(self.edge.strip.pin.isVisibleTo(self.edge.strip))
 
+    def test_a_key_set_brings_it_out_and_restarts_the_wait(self):
+        """2026-10-17: «если я ставлю ключик хоткеем то панель тайм слайдера должна
+        появиться а время его ожидания откатиться»."""
+        self.assertTrue(self.edge.key_set())
+        self.assertTrue(self.edge.shown)
+        self.edge.watch_tick()                  # the cursor elsewhere: the wait begins
+        self.assertTrue(self.edge.hide_timer.isActive())
+        import time
+        time.sleep(0.3)
+        self.assertLess(self.edge.hide_timer.remainingTime(), look.HIDE_MS - 200)
+        self.assertFalse(self.edge.key_set())
+        self.assertGreater(self.edge.hide_timer.remainingTime(), look.HIDE_MS - 100)
+
     def test_the_host_is_the_bottom_band(self):
         g = self.edge.host.geometry()
         self.assertEqual((g.x(), g.width()), (100, 1600))

@@ -11614,6 +11614,11 @@ mode, the edge of Maya's window). ⋮ -> **Time bar ▸ Maya's / Docked / Bottom
   `skeldarTimeBarDefaults`) `maya_timebar.upgrade()` - called first by `ensure()`, i.e. the hub's build - moves
   Docked or unset to the bottom edge; Maya's own slider, if chosen, is kept. A choice made after it stands. Raise
   DEFAULT_VERSION to make a later update switch it again.
+- **A key set brings it out** (2026-10-17, «если я ставлю ключик хоткеем то панель тайм слайдера
+  должна появиться а время его ожидания откатиться»): the MCommandMessage callback that already
+  hears `setKeyframe` (`bar._command`) calls `BottomEdge.key_set()` on the next event-loop turn. Hidden,
+  the bar comes out from the cursor's x on its row; out, its hide wait starts again. Live: hidden,
+  `SetKey` (the S hotkey's command) on a temporary locator brought it out.
 - **Not hidden while Maya plays** (2026-10-17, «прятали тайм слайдер только когда он не используется»):
   `BottomEdge.blockers` adds "playing" (`play -q -state`), so the hide waits for the stop; and Play while it
   is hidden (a hotkey, Maya's own) brings it out with the same burst - `bar._time_changed` calls

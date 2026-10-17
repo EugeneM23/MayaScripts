@@ -1859,6 +1859,26 @@ def _command(command, *_args):
         if found is not None:
             widget.keys_set.append(found)
             widget.keys_dirty = True
+    edge = _state().get("edge")
+    if edge is not None and look.set_key_command(command) is not None:
+        #  a key set (the S hotkey, the Channel Box): the bar out, its wait for the
+        #  hide begun again (2026-10-17, «если я ставлю ключик хоткеем то панель тайм
+        #  слайдера должна появиться а время его ожидания откатиться») - when the event
+        #  loop next turns, not inside Maya's command
+        try:
+            import maya_hubqt
+            q = maya_hubqt.qt()
+            q.QtCore.QTimer.singleShot(0, lambda: _key_set_on(edge))
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def _key_set_on(edge):
+    try:
+        if edge.alive():
+            edge.key_set()
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _drop_callbacks():
