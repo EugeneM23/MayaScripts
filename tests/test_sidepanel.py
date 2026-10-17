@@ -80,6 +80,19 @@ class Look(unittest.TestCase):
         self.assertEqual(look.MEL_RESTORE, ('source "isAttributeEditorVisible.mel";',
                                             'source "isChannelBoxVisible.mel";'))
 
+    def test_the_band_is_at_least_what_maya_s_forms_ask_for(self):
+        """2026-10-17, live: the Attribute Editor asks 643 px at 150 % against the
+        band's 510, the host grew past its mask and the panel showed half."""
+        self.assertEqual(look.min_width_px([643, 400], 1.5), 651)
+        self.assertEqual(look.side_band(WINDOW, 340, 1.5, least=651), (1049, 50, 651, 900))
+        self.assertEqual(look.side_band(WINDOW, 340, 1.5, least=200)[2], 510)
+        self.assertEqual(look.min_width_px([5000], 1.0), look.MAX_WIDTH)
+
+    def test_the_ae_refresh_is_maya_s_update_without_the_raise_test(self):
+        self.assertIn("global proc skeldarSidePanelRefreshAE()", look.MEL_REFRESH_AE)
+        self.assertIn("updateAE($last)", look.MEL_REFRESH_AE)
+        self.assertNotIn("-raise", look.MEL_REFRESH_AE)
+
     def test_blockers_in_order(self):
         self.assertEqual(look.blockers(), [])
         self.assertEqual(look.blockers(pinned=True, typing=True, dragging=True),
@@ -256,6 +269,25 @@ class Edge(unittest.TestCase):
         self.assertEqual(self.geometry(self.edge.host), (860, 0, 340, 700))
         self.assertEqual(len(self.ticks), 1)
         self.assertIs(self.ticks[0], self.edge)
+
+    def test_the_host_is_not_grown_by_a_wide_child_and_keeps_its_least(self):
+        wide = QT.QtWidgets.QWidget()
+        wide.setMinimumWidth(700)
+        self.edge.panel.pages["attributes"].addWidget(wide)
+        self.edge.reveal()
+        self.app.processEvents()
+        self.assertEqual(self.edge.host.width(), 340)
+        self.edge.least = 650
+        self.edge.place()
+        self.assertEqual(self.geometry(self.edge.host), (1050, 50, 650, 900))
+        self.assertEqual(self.edge.host.mask().boundingRect().width(), 650)
+
+    def test_a_reveal_on_a_tab_while_out_still_refreshes(self):
+        calls = []
+        self.edge._on_reveal = lambda: calls.append(1)
+        self.edge.reveal()
+        self.edge.reveal(tab="attributes")
+        self.assertEqual(calls, [1, 1])
 
     def test_the_unroll_masks_from_the_cursor_and_ends_whole(self):
         self.edge.motion = True

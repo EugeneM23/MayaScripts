@@ -150,9 +150,21 @@ def give(record):
     return True
 
 
+def refresh_attribute_editor():
+    """The Attribute Editor on the last selected node (look.MEL_REFRESH_AE)."""
+    try:
+        mel = _mel()
+        if not mel.eval('exists "skeldarSidePanelRefreshAE"'):
+            mel.eval(look.MEL_REFRESH_AE)
+        mel.eval("skeldarSidePanelRefreshAE")
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
 def install():
     """The two visibility procs answer for the panel (look.MEL_OVERRIDE)."""
     try:
+        _mel().eval(look.MEL_REFRESH_AE)
         _mel().eval(look.MEL_OVERRIDE)
         return True
     except Exception:                                        # noqa: BLE001

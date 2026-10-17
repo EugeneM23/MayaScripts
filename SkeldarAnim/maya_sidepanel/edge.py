@@ -75,6 +75,7 @@ class SideEdge(object):
         self.motion = motion
         self.scale = float(scale or 1.0)
         self.width = look.clamp_width(width)
+        self.least = 0                # physical px Maya's borrowed forms ask for
         self._width0 = None
         self.pinned = False
         self.shown = False
@@ -90,6 +91,9 @@ class SideEdge(object):
         host.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
         layout = QtWidgets.QVBoxLayout(host)
         layout.setContentsMargins(0, 0, 0, 0)
+        #  never grown by what it holds: Maya's Attribute Editor asks for more
+        #  than the band, and a host that grew outran its mask (2026-10-17, live)
+        layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
         self.host = host
         self.panel = make_panel(host, self._tab_picked, self.set_pinned, self._grip)
         layout.addWidget(self.panel)
@@ -179,11 +183,11 @@ class SideEdge(object):
         window = self._window_rect()
         if not window:
             return
-        rect = (tuple(window), self.width)
+        rect = (tuple(window), self.width, self.least)
         if rect == self._rect:
             return
         self._rect = rect
-        x, y, w, h = look.side_band(window, self.width, self.scale)
+        x, y, w, h = look.side_band(window, self.width, self.scale, self.least)
         self.host.setGeometry(x, y, w, h)
         if self._slide is None:
             self._full_mask()
@@ -253,6 +257,8 @@ class SideEdge(object):
         if held:
             self.hold.start()
         if self.shown:
+            if tab is not None and self._on_reveal is not None:
+                self._on_reveal()
             return
         self.place()
         self.shown = True

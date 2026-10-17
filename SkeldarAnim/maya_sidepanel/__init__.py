@@ -149,18 +149,25 @@ def ensure_edge():
 
     def on_tab(value):
         _remember_tab(value)
-        if value == "channels":
-            from . import holder
-            holder.update_channel_box()
+        refresh()
 
     from . import holder
     controller = edge_module.SideEdge(make, width=_var(WIDTH_VAR, look.WIDTH), scale=ui,
                                       on_tab=on_tab, on_width=_remember_width, tick=_maya_wants,
-                                      on_reveal=holder.update_channel_box)
+                                      on_reveal=refresh)
     controller.panel.set_tab(tab())
     _state()["edge"] = controller
     try:
-        _borrow(controller)
+        held = _borrow(controller)
+        widths = []
+        for records in held.values():
+            for record in records:
+                w = holder.widget(record["form"])
+                if w is not None:
+                    widths.append(w.minimumSizeHint().width())
+        controller.least = look.min_width_px(widths, ui)
+        controller.place()
+        _start_job()
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")
         print(traceback.format_exc())
@@ -170,9 +177,60 @@ def ensure_edge():
     return controller
 
 
+def refresh():
+    """What the panel shows brought up to date: Maya defers both editors' updates
+    while their own controls are hidden, so the panel asks when it is out."""
+    edge = _state().get("edge")
+    if edge is None or not edge.alive() or not edge.shown:
+        return
+    from . import holder
+    if edge.panel.tab == "attributes":
+        holder.refresh_attribute_editor()
+    else:
+        holder.update_channel_box()
+
+
+def _start_job():
+    """A SelectionChanged job while the panel holds Maya's editors (killed by
+    drop_edge): the Attribute Editor follows the selection while it is out."""
+    cmds = _cmds()
+    _kill_job()
+    try:
+        _state()["job"] = cmds.scriptJob(event=["SelectionChanged", _on_selection],
+                                         killWithScene=False)
+    except Exception:                                        # noqa: BLE001
+        _state()["job"] = None
+
+
+def _on_selection():
+    """After Maya's own selection handlers (deferred): theirs ran last and left the
+    Attribute Editor empty when ours ran first (measured live 2026-10-17)."""
+    def later():
+        try:
+            refresh()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    try:
+        _cmds().evalDeferred(later, lowestPriority=True)
+    except Exception:                                        # noqa: BLE001
+        later()
+
+
+def _kill_job():
+    job = _state().pop("job", None)
+    if job:
+        try:
+            cmds = _cmds()
+            if cmds.scriptJob(exists=job):
+                cmds.scriptJob(kill=job, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
 def drop_edge():
     """The forms given back FIRST - deleting the host would delete Maya's editors
     with it - then the windows."""
+    _kill_job()
     give_back()
     edge = _state().pop("edge", None)
     if edge is not None:

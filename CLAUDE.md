@@ -11796,9 +11796,25 @@ The animator: «боковую панель по концепту нашего �
   seen live). The hub's build calls `ensure()` deferred. Hotkey rows `window.sidepanel`,
   `sidepanel.channels`, `sidepanel.attributes`.
 - Proof: `tests/test_sidepanel.py` (the band, the zone, out / back, the pin, a hold, the grip, the
-  tabs, take / give on stand-in widgets), 7201 unit tests. **`verify_side_panel.py` (GUI, ten
-  gates) is written and not run**: whether Maya's editors work inside our window is the
-  animator's live check.
+  tabs, take / give on stand-in widgets), 7201 unit tests. `verify_side_panel.py` (GUI, ten
+  gates) is written and not run.
+- **First live use, the same day** («панель не отрендерилась полностью, парамметров нету»), two
+  defects found over port 7001 and fixed (pictures by DWM `PrintWindow`, never `grab()`, trap 134):
+  - trap 276: the Attribute Editor never updated. Fix: our own `skeldarSidePanelRefreshAE`
+    (`look.MEL_REFRESH_AE`), an unconditional `updateAE` of the last selected node. It runs on
+    reveal, on a tab switch and deferred after every SelectionChanged while the panel is out on
+    Attributes (a job killed by `drop_edge`);
+  - the Attribute Editor wants ~648 px at 150 % and the host grew to it while its mask stayed at
+    510: half the panel was black. The host's layout is `SetNoConstraint`, and the band is at
+    least what the borrowed forms' `minimumSizeHint` asks (`look.min_width_px`, `SideEdge.least`).
+  Seen live after: pCube1's and persp's attributes following the selection, the panel drawn
+  whole, the Channel Box exact.
+
+276. **Maya's `autoUpdateAttrEd` updates the Attribute Editor only while its workspaceControl is
+     RAISED** (`workspaceControl -q -raise`); otherwise it sets `$gAEDeferredUpdate`, to be done
+     when the control is raised. A form moved out of a hidden control is never refreshed, even
+     with `isAttributeEditorVisible` answering true. Call `updateAE` yourself, deferred after
+     Maya's own selection handlers: run first, it was undone, the AE back on "Select an object".
 
 ## Maya theme: Maya in the hub's colours (2026-10-17)
 

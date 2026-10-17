@@ -36,11 +36,12 @@ def clamp_width(width):
     return int(max(MIN_WIDTH, min(MAX_WIDTH, int(round(width)))))
 
 
-def side_band(window, width, scale=1.0):
+def side_band(window, width, scale=1.0, least=0):
     """(x, y, w, h): the panel against the right of Maya's window `window`, its
-    full height, `width` logical px wide (never wider than the window)."""
+    full height, `width` logical px wide - at least `least` physical px - and
+    never wider than the window."""
     x, y, w, h = window
-    pw = int(min(w, round(clamp_width(width) * float(scale or 1.0))))
+    pw = int(min(w, max(int(least), round(clamp_width(width) * float(scale or 1.0)))))
     return int(x + w - pw), int(y), pw, int(h)
 
 
@@ -123,4 +124,34 @@ global proc int isChannelBoxVisible() {
 	}
 }
 '''
+
+# Maya's autoUpdateAttrEd defers the update while the Attribute Editor's own
+# workspaceControl is not raised - and ours is hidden for good while the panel
+# holds the form. This is its update, run by us when the panel shows the
+# Attributes page (measured live 2026-10-17: the AE stayed on "Select an object").
+MEL_REFRESH_AE = r'''
+global proc skeldarSidePanelRefreshAE() {
+	global int $gAEDeferredUpdate;
+	global string $gAEPrevSelectedNodes[];
+	global string $gAECurrentTab;
+	string $nodes[] = `ls -sl -l -o -ufe`;
+	int $count = size($nodes);
+	if ($count == 0) return;
+	string $last = $nodes[$count - 1];
+	// always: Maya's own handler runs around ours and can leave the AE on
+	// "Select an object" with its bookkeeping already saying the node is shown
+	updateAE($last);
+	$gAEPrevSelectedNodes = $nodes;
+	$gAEDeferredUpdate = false;
+}
+'''
+
+
+def min_width_px(form_widths, scale):
+    """The panel's least width in physical px: what Maya's borrowed forms ask for
+    (their minimumSizeHint) plus the grip, never past MAX_WIDTH."""
+    need = max([0] + [int(w) for w in form_widths]) + int(round(GRIP * float(scale or 1.0)))
+    return int(min(need, round(MAX_WIDTH * float(scale or 1.0))))
+
+
 MEL_RESTORE = ('source "isAttributeEditorVisible.mel";', 'source "isChannelBoxVisible.mel";')
