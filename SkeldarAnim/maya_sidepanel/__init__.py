@@ -188,6 +188,7 @@ def refresh():
         holder.refresh_attribute_editor()
     else:
         holder.update_channel_box()
+    edge.repaint_all()
 
 
 def _start_job():

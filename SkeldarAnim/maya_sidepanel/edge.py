@@ -203,6 +203,7 @@ class SideEdge(object):
         q = hubqt.qt()
         self.host.setMask(q.QtGui.QRegion(0, 0, max(1, self.host.width()),
                                           max(1, self.host.height())))
+        self.host.update()
 
     def _host_rect(self):
         g = self.host.geometry()
@@ -320,10 +321,24 @@ class SideEdge(object):
         path = q.QtGui.QPainterPath()
         path.addRoundedRect(q.QtCore.QRectF(0, y0, w, y1 - y0), radius, radius)
         self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        self.host.update()
+
+    def repaint_all(self):
+        """Every widget in the panel asked to paint again. A mask growing over Maya's
+        borrowed editors exposes them without a paint: the Attribute Editor's
+        values came only where the mouse passed (2026-10-17, live)."""
+        q = hubqt.qt()
+        self.host.update()
+        for widget in self.host.findChildren(q.QtWidgets.QWidget):
+            try:
+                widget.update()
+            except RuntimeError:
+                pass
 
     def _settle(self, showing):
         if showing:
             self._full_mask()
+            self.repaint_all()
             return
         self.host.hide()
         self._full_mask()
