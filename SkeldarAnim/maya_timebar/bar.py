@@ -199,11 +199,17 @@ def classes():
             halos[key] = picture
         return picture
 
-    def add_key(path, x, h, ui, whole, width=None):
-        """A key's mark into `path`: a solid bar on its frame line for a key on a
-        whole frame, a dashed one where it stands between frames (2026-10-17,
-        Maya's slider: the mark is where the key is in time)."""
+    def add_key(path, x, h, ui, whole, width=None, cell=None, grow=0.0):
+        """A key's mark into `path`: on a whole frame its frame's cell filled, with a
+        gap between neighbours (`cell`, px a frame; the animator's mockup, 2026-10-17),
+        grown by `grow` when lit; where it stands between frames a dashed line on its
+        time (Maya's slider: the mark is where the key is in time)."""
         top, bottom = key_span(h, ui)
+        if whole and cell:
+            l, tp, w, hh = look.key_cell(x, cell, top, bottom, ui)
+            path.addRoundedRect(QtCore.QRectF(l - grow, tp - grow, w + 2 * grow, hh + 2 * grow),
+                                1.5 * ui, 1.5 * ui)
+            return
         kw = (width or KEY_W * ui) * (1.0 if whole else DASH_W)
         if whole:
             path.addRect(QtCore.QRectF(x - kw / 2, top, kw, bottom - top))
@@ -633,7 +639,7 @@ def classes():
             if not st.motion or not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
                 return
             top, bottom = key_span(float(self.height()), st.ui)
-            cx, cy = st.point_of(self, t.x(frame), (top + bottom) / 2.0)
+            cx, cy = st.point_of(self, look.key_centre(t, frame), (top + bottom) / 2.0)
             st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"])
 
         def reach(self, before, after):
@@ -801,7 +807,7 @@ def classes():
                     for frame in frames:
                         shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
                         if t.v0 - 1 <= shown <= t.v1 + 2:
-                            add_key(path, t.x(shown), h, ui, look.on_frame(shown))
+                            add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
                     p.fillPath(path, colour(hex_))
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
@@ -829,14 +835,26 @@ def classes():
                 z = 1.0 + KEY_LIFT * lift
                 burst = 1.0
                 if entrance:
-                    g = self.mapToGlobal(QtCore.QPoint(int(t.x(shown)), int(KEY_Y * ui)))
+                    g = self.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, shown)), int(KEY_Y * ui)))
                     ks, burst = st.entrance_of(g.x(), g.y())
                     z *= ks
                 x = t.x(shown)
                 whole = look.on_frame(shown)
                 top, bottom = key_span(h, ui)
                 kw = KEY_W * ui * min(z, 1.6)
-                rect = QtCore.QRectF(x - kw / 2, top, kw, bottom - top)
+                grow = 0.0
+                if whole:
+                    #  the cell, grown a little when lit and squeezed toward its middle
+                    #  while it pops in
+                    l, tp, cw, ch = look.key_cell(x, t.scale, top, bottom, ui)
+                    grow = 1.5 * ui * lift
+                    if z < 1.0:
+                        cx, cy = l + cw / 2.0, tp + ch / 2.0
+                        cw, ch = cw * max(z, 0.05), ch * max(z, 0.05)
+                        l, tp = cx - cw / 2.0, cy - ch / 2.0
+                    rect = QtCore.QRectF(l - grow, tp - grow, cw + 2 * grow, ch + 2 * grow)
+                else:
+                    rect = QtCore.QRectF(x - kw / 2, top, kw, bottom - top)
                 if lift > 0.01:
                     picture = halo(hex_, ui)
                     grow = 4.5 * ui * z / (1.0 + KEY_LIFT)
@@ -852,7 +870,10 @@ def classes():
                         brush = plain[hex_] = colour(hex_)
                     p.setBrush(brush)
                 mark = QtGui.QPainterPath()
-                add_key(mark, x, h, ui, whole, width=kw)
+                if whole:
+                    mark.addRoundedRect(rect, 1.5 * ui, 1.5 * ui)
+                else:
+                    add_key(mark, x, h, ui, whole, width=kw)
                 p.drawPath(mark)
             p.setOpacity(opacity)
 
@@ -999,8 +1020,9 @@ def classes():
         def _aim(self, x):
             t, ui = self.track(), self.strip.ui
             best, near = None, 7 * ui
+            near = max(near, t.scale / 2.0)
             for k in self.strip.keys + self.strip.breakdowns:
-                d = abs(t.x(k) - x)
+                d = abs(look.key_centre(t, k) - x)
                 if d < near:
                     best, near = k, d
             head = abs(t.x(self.strip.state["now"]) - x) < 8 * ui
@@ -1311,7 +1333,7 @@ def classes():
             delays, far = {}, 0.0
             points = [(w.index, w.mapToGlobal(w.rect().center())) for w in self.moving]
             t = self.timeline.track()
-            points += [(None, self.timeline.mapToGlobal(QtCore.QPoint(int(t.x(k)), int(KEY_Y * self.ui))))
+            points += [(None, self.timeline.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, k)), int(KEY_Y * self.ui))))
                        for k in self.keys + self.breakdowns]
             for index, c in points:
                 if opening:

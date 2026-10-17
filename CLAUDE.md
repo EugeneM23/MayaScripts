@@ -11672,6 +11672,12 @@ sparks); the same day the animator: «откатив все эффекты ве�
   (`Timeline.leave`, `trail`) - while scrubbing, and in playback from `on_time`. Playback turns no timer (trap 269), so
   the trail is drawn from its age in the paint `on_time` forces and pruned on each `leave`. A scrub step 1.6 ms; 116
   timebar tests.
+- **…a key fills its frame** (the same day, from an animated mockup: «ключ закрашивает кадр»): a key on a whole
+  frame is its cell filled, rounded 1.5 px (`look.key_cell`: a gap of 0.18 of the cell, at most 3 logical px,
+  between neighbours, none in a cell too thin for it; 2 px inset top and bottom); a lit key's cell grows 1.5 px
+  with its glow, an entering one is squeezed about its middle. A key between frames stays a dashed line on its
+  time. Aim, the key effects and the entrance use the cell's middle (`look.key_centre`), and a key is aimed
+  anywhere in its cell. A scrub step 2.0 ms (bench); 126 timebar tests. Not seen in a GUI Maya.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

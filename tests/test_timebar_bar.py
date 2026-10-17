@@ -207,7 +207,10 @@ class Shows(Strip):
         def near(px):
             return all(abs(a - b) < 30 for a, b in ((px.red(), accent.red()), (px.green(), accent.green()),
                                                      (px.blue(), accent.blue())))
-        self.assertTrue(near(image.pixelColor(int(self.x(30)), bar.KEY_Y)), "a key")
+        #  a key fills its frame's cell (2026-10-17): sampled in the cell's middle
+        mid = look.key_centre(self.tl.track(), 30.0)
+        self.assertTrue(near(image.pixelColor(int(mid), bar.KEY_Y)), "a key")
+        self.assertFalse(near(image.pixelColor(int(self.tl.track().x(30.0)), bar.KEY_Y)), "the gap beside it")
         self.assertTrue(near(image.pixelColor(int(self.x(12)), self.tl.height() - 6)), "the playhead")
         self.assertFalse(near(image.pixelColor(int(self.x(50)), bar.KEY_Y)))
 
@@ -585,6 +588,20 @@ class PlayAndTrail(Strip):
         self.assertEqual(self.tl.trail, {})
         self.assertIsNone(self.tl.play_at)
 
+
+class CellKeys(Strip):
+    """A key on a whole frame fills its cell (2026-10-17)."""
+
+    def test_a_key_is_aimed_anywhere_in_its_cell(self):
+        t = self.tl.track()
+        self.tl._aim(t.x(30.0) + t.scale * 0.8)
+        self.assertEqual(self.tl.aim_key, 30.0)
+
+    def test_a_lit_key_paints(self):
+        self.tl.reached[30.0] = self.strip.clock()
+        self.tl.key_lift[12.0] = 1.0
+        self.tl.grab()
+        self.assertFalse(getattr(self.tl, "_failed", False))
 
 if __name__ == "__main__":
     unittest.main()

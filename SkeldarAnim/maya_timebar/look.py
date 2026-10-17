@@ -509,6 +509,31 @@ TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
 
+KEY_GAP = 0.18          # a key's cell: this share of the cell left free between neighbours
+KEY_GAP_MAX = 3.0       # ... at most this many logical px
+KEY_INSET = 2.0         # logical px off the key span's top and bottom
+
+
+def key_cell(x0, cell, top, bottom, ui=1.0):
+    """(left, top, width, height) of a key on a whole frame, drawn as its frame's
+    cell filled (2026-10-17, the animator's mockup: «ключ закрашивает кадр»): a gap
+    between neighbouring keys, an inset top and bottom; a cell too thin for a gap is
+    filled whole, and a key is never thinner than 1.5 px."""
+    gap = max(1.0, min(KEY_GAP_MAX * ui, KEY_GAP * cell))
+    if cell - gap < 2.0:
+        gap = 0.0
+    inset = KEY_INSET * ui
+    return x0 + gap / 2.0, top + inset, max(1.5, cell - gap), max(1.0, bottom - top - 2 * inset)
+
+
+def key_centre(track, t):
+    """The x a key at time `t` is seen at: its cell's middle on a whole frame, the
+    time itself between frames (a dashed line)."""
+    if on_frame(t) and getattr(track, "cells", False):
+        return track.x(t) + track.scale / 2.0
+    return track.x(t)
+
+
 def progress(age_ms, kind):
     """0..1 through effect `kind`, None once it is over (or before it starts)."""
     ms = EFFECT_MS[kind]
