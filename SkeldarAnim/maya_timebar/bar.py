@@ -697,7 +697,10 @@ def classes():
             font.setPixelSize(max(8, int(10 * ui)))
             p.setFont(font)
             metrics = QtGui.QFontMetricsF(font)
-            ry = h - 3 * ui
+            #  as Maya's slider (2026-10-17): the ticks hang from the top, under the
+            #  bookmarks band, and a frame's number stands beside its tick at the top;
+            #  the playhead's own number is at the bottom
+            ry = (BAND_H + 2) * ui
             major, minor = colour(tk["muted"]), colour(tk["line"])
             label_pen = colour(tk["faint"])
             tall_of = {"label": 8 * ui, "mid": 5 * ui, "tick": 3 * ui}
@@ -707,12 +710,12 @@ def classes():
                 tall = tall_of[kind]
                 p.setPen(Qt.NoPen)
                 p.setBrush(major if kind == "label" else minor)
-                p.drawRect(QtCore.QRectF(x, ry - tall, tick_w, tall))
+                p.drawRect(QtCore.QRectF(x, ry, tick_w, tall))
                 if kind == "label":
                     text = look.frame_text(frame)
                     if x + 3 * ui + metrics.horizontalAdvance(text) <= w - 2 * ui:
                         p.setPen(label_pen)
-                        p.drawText(QtCore.QPointF(x + 3 * ui, ry - 1 * ui), text)
+                        p.drawText(QtCore.QPointF(x + 3 * ui, ry + metrics.ascent()), text)
             # the keys at rest
             if with_keys:
                 p.setPen(Qt.NoPen)
@@ -801,7 +804,7 @@ def classes():
             tw = QtGui.QFontMetricsF(bold).horizontalAdvance(text) + 10 * ui * fz
             th = 14 * ui * fz
             fx = min(max(x - tw / 2, 1), w - tw - 1)
-            flag = QtCore.QRectF(fx, 0, tw, th)
+            flag = QtCore.QRectF(fx, h - th, tw, th)          # at the bottom, as Maya's
             glow(p, flag, 3 * ui, head.name(), self.head_lift * 0.8, ui)
             p.setPen(Qt.NoPen)
             p.setBrush(head)
