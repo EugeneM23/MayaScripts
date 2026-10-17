@@ -11729,7 +11729,8 @@ sparks); the same day the animator: «откатив все эффекты ве�
     six flights were played side by side at the strip's real 84 px, clipped as in Maya
     (https://claude.ai/artifact/T7Re27ujCv5iAAT3RPyrwv), and the animator picked D: `SHARD_SPEED` 110,
     `SHARD_FALL` 1600, `SHARD_SPIN` 300 (logical px / s, deg / s), `EFFECT_MS` delete 600. It was 260 / 900 /
-    540 / 700, which threw the pieces out of the strip's top.
+    540 / 700, which threw the pieces out of the strip's top. Then «на 30 процентов увеличим силу разлета»:
+    `SHARD_SPEED` 143.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6

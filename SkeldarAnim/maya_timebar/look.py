@@ -573,7 +573,7 @@ DELETE_START_MS = 500   # ... but the last one starts within this, however many 
 SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
 # ... and how they fly: «Snap and drop», picked from six played side by side (2026-10-17) -
 # a short kick and a heavy fall, logical px per second (spin degrees per second)
-SHARD_SPEED = 110.0
+SHARD_SPEED = 143.0         # 110, then 30 % more («на 30 процентов увеличим силу разлета»)
 SHARD_FALL = 1600.0
 SHARD_SPIN = 300.0
 
