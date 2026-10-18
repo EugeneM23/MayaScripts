@@ -258,6 +258,42 @@ class Presses(Panel):
                           "Remove selection", "Merge down", "Delete"])
 
 
+class Scaled(Panel):
+    """At 150 % the height is logical px x ui, the remembered height logical."""
+
+    def setUp(self):
+        from maya_timebar import layerpanel
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        self.link = FakeLink()
+        self.panel = layerpanel.Panel(FakeStrip(), self.link, 1.5, maya_hubstyle.TOKENS, False)
+        self.addCleanup(self.panel.destroy)
+
+    def test_the_default_height_is_logical(self):
+        self.panel.open((1300, 815))
+        g = self.panel.column.geometry()
+        self.assertEqual(g.height(), int(round(L.DEFAULT_H * 1.5)))
+        self.assertEqual(g.y() + g.height(), int(round(800 - L.ABOVE * 1.5)))
+        lay = self.panel.column.layout_()
+        self.assertEqual(len(self.panel._visible_rows(lay)), 3)
+        lg = self.panel.lanes.geometry()
+        self.assertEqual((lg.y(), lg.height()), (g.y(), g.height()))      # the lanes level with the rows
+
+    def test_a_grip_drag_stores_logical_px(self):
+        self.panel.open((1300, 815))
+        col = self.panel.column
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        g0 = col.geometry()
+        for kind, dy, held in ((E.MouseButtonPress, 0, Qt.LeftButton), (E.MouseMove, -60, Qt.LeftButton),
+                               (E.MouseButtonRelease, -60, Qt.NoButton)):
+            p = QT.QtCore.QPointF(20, 3 + dy)
+            gp = QT.QtCore.QPointF(g0.x() + 20, g0.y() + 3 + dy)
+            QT.QtWidgets.QApplication.sendEvent(col, QT.QtGui.QMouseEvent(kind, p, gp, Qt.LeftButton, held,
+                                                                          Qt.NoModifier))
+        self.assertEqual(self.link.opts["skeldarTimeBarLayersHeight"], L.DEFAULT_H + 40)
+        self.assertEqual(col.height(), int(round((L.DEFAULT_H + 40) * 1.5)))
+        self.assertEqual(col.geometry().bottom(), g0.bottom())
+
+
 class Motion(Panel):
 
     motion = True

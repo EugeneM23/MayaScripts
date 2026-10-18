@@ -303,7 +303,7 @@ class Panel(object):
         the lanes from the timeline's left to the column."""
         try:
             strip, timeline = self.strip.strip_rect(), self.strip.timeline_rect()
-            height = L.clamp_height(self.height * 1.0, self.strip.top_room())
+            height = L.clamp_height(self.height, self.strip.top_room() / self.ui) * self.ui      # logical -> px
             rect = L.column_rect(strip, timeline, height, self.ui)
             geo = tuple(int(round(v)) for v in rect)
             if self.column.geometry().getRect() != geo:
@@ -387,7 +387,7 @@ class Panel(object):
                 self._hide_lanes(burst=True)
             self.column.invalidate()
         elif kind == "grip":
-            self.drag = ("grip", float(gy if gy is not None else 0.0), float(self.column.height()))
+            self.drag = ("grip", float(gy if gy is not None else 0.0), L.clamp_height(self.height, self.strip.top_room() / self.ui))   # logical px
             self.column.update()
         elif kind == "foot":
             self.flashes[("foot", hit[1])] = self.clock()
@@ -463,7 +463,7 @@ class Panel(object):
             self._set_weight(name, L.weight_at(x, rect))
         elif self.drag[0] == "grip":
             _kind, gy0, h0 = self.drag
-            self.height = L.clamp_height(h0 - (gy - gy0), self.strip.top_room())
+            self.height = L.clamp_height(h0 - (gy - gy0) / self.ui, self.strip.top_room() / self.ui)
             self.place()
             self._clamp_scroll()
             self.column.invalidate()
