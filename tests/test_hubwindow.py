@@ -77,8 +77,25 @@ class Pill(unittest.TestCase):
         self.pill = hubwindow.pill_class()("x", 1.0)
         self.pill.show()
 
-    def test_a_pill_is_24_by_22(self):
-        self.assertEqual((self.pill.width(), self.pill.height()), (24, 22))
+    def test_a_pill_is_its_24_by_22_face_and_4_px_round_it(self):
+        self.assertEqual((self.pill.width(), self.pill.height()), (32, 30))
+
+    def test_a_hovered_pill_glows_outside_its_face(self):
+        with mock.patch.object(hubmotion, "enabled", lambda: False):
+            self.pill.hover(True)
+        image = QtGui.QImage(32, 30, QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        self.pill.render(image)
+        face = QtCore.QRect(4, 4, 24, 22)
+        glow = 0
+        for y in range(30):
+            for x in range(32):
+                c = image.pixelColor(x, y)
+                if face.contains(x, y) or c.alpha() == 0:
+                    continue
+                if c.red() > c.blue() + 20:
+                    glow += 1
+        self.assertGreater(glow, 20)
 
     def test_hover_lifts_it_and_rest_stops_its_timer(self):
         self.pill.hover(True)
@@ -146,6 +163,22 @@ class Burst(unittest.TestCase):
         edge = [e for e in hubburst.light(plan, 30.0).edges if e[0] == "x"][0]
         lit = image.pixelColor(int(edge[1]), 80)
         self.assertGreater(lit.red(), 120)
+
+    def test_the_light_stays_inside_the_rounded_corners(self):
+        origin = self.frame.mapToGlobal(QtCore.QPoint(120, 80))
+        self.burster.run(True, (origin.x(), origin.y()), lambda: None)
+        self.frame.grab()
+        effect = self.burster.effect
+        effect.ms = 30.0
+        image = self.frame.grab().toImage()
+        state = hubburst.at(effect.plan, 30.0)
+        x0, y0, x1, y1 = state.shape
+        self.assertGreater(state.radius, 3.0)
+        lit = hubburst.light(effect.plan, 30.0)
+        self.assertTrue(lit.edges)
+        # the bounding rect's own corner lies outside the rounded shape: no light there
+        c = image.pixelColor(int(x0), int(y0))
+        self.assertLess(c.red(), 60)
 
     def test_with_animations_off_nothing_runs(self):
         with mock.patch.object(hubmotion, "enabled", lambda: False):

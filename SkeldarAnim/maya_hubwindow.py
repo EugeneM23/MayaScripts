@@ -31,7 +31,8 @@ RIM = "#fff1e2"          # maya_timebar.bar.RIM: light's hot core
 HOVER_MS = 110           # maya_timebar.bar.HOVER_MS: the radial menu's lift
 FLASH_MS = 120.0         # a press (maya_timebar.bar.FLASH_MS)
 TICK_MS = 16
-PILL_W, PILL_H = 24, 22  # logical px
+PILL_W, PILL_H = 24, 22  # logical px: the face
+PILL_PAD = 4             # room round the face for the lift and the first rings
 PILL_RADIUS = 5
 PILL_ICON = 14
 
@@ -122,8 +123,9 @@ def dress(frame, scale):
 # ------------------------------------------------------------------- the pill
 
 def pill_class():
-    """PillButton(icon_name, scale, parent=None): a 24 x 22 painted button (radius 5, face
-    `field`, a 1 px `track_edge`). Under the mouse it lifts +10 %, its face `hover`, four
+    """PillButton(icon_name, scale, parent=None): a painted button, its 24 x 22 face (radius
+    5, `field`, a 1 px `track_edge`) centred in a 32 x 30 widget, so the lift and the first
+    rings show (the outer rings reaching past 4 px are clipped; review 2026-10-18). Under the mouse it lifts +10 %, its face `hover`, four
     accent rings outside it; a press flashes 120 ms (face `accent`, -6 %, the icon
     `on_accent`). `set_lit(on)` shows the icon in `accent_text` (its window stands)."""
     if "pill" not in _CLASSES:
@@ -143,7 +145,8 @@ def pill_class():
                 self._press_t0 = None
                 self._failed = False
                 self._icons = {}
-                self.setFixedSize(hubstyle.px(PILL_W, scale), hubstyle.px(PILL_H, scale))
+                self.setFixedSize(hubstyle.px(PILL_W + 2 * PILL_PAD, scale),
+                                  hubstyle.px(PILL_H + 2 * PILL_PAD, scale))
                 self.setAutoRaise(True)
                 self.setCursor(QtCore.Qt.PointingHandCursor)
                 self.timer = QtCore.QTimer(self)
@@ -386,6 +389,7 @@ def burst_class():
                 except Exception:                            # noqa: BLE001
                     self.broken = True
                     self.error = traceback.format_exc()
+                    traceback.print_exc()                    # once: broken from now on
                     self.drawSource(painter)
 
             def _take(self):
@@ -451,8 +455,12 @@ def burst_class():
                     lit = hubburst.light(self.plan, self.ms)
                     if lit.edges or lit.top > 0.003:
                         p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
                         x0, y0, x1, y1 = (v * k for v in state.shape)
-                        p.setClipRect(QtCore.QRectF(x0, y0, x1 - x0, y1 - y0))
+                        clip = QtGui.QPainterPath()
+                        rr = state.radius * k
+                        clip.addRoundedRect(QtCore.QRectF(x0, y0, x1 - x0, y1 - y0), rr, rr)
+                        p.setClipPath(clip)              # the shape itself, corners too
                         sc = self.plan.scale * k
                         for axis, pos, inten in lit.edges:
                             for half, colour, alpha in (
