@@ -75,8 +75,9 @@ Colours come from `maya_hubstyle.TOKENS` only.
   - the buttons ⌄ (roll up) and ✕ as painted pills: 24 × 22, radius 5, face `field`, a 1 px
     `track_edge`.
   - The pills move as every control of ours does: hover 110 ms +10 % with the accent glow, press
-    flash 120 ms. They reuse the hub's existing `QToolButton` glow (`maya_hubglow`) where it
-    already applies, and add only the pill face.
+    flash 120 ms. They are painted buttons of our own (`maya_hubwindow.PillButton`, the Time Bar's
+    `Pill` in miniature): the window stands outside the hub's root, where the hub's ink glow does
+    not reach.
 - **The content** stands on its own card: `card`, radius 6, 5 px from the frame's sides and bottom.
 - **No hairline under the title**, **no accent along the top** and **no stripe**.
 - **The light**: the active window glows as a lit card does (`paint_light`: `card_active` face
