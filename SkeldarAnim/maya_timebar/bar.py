@@ -20,6 +20,7 @@ Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 import math
 import time
 import traceback
+import types
 
 from . import CONTROL, look, _state
 
@@ -80,6 +81,29 @@ GLYPHS = {
               "L9 15H7l-.4-1.8-1.4-.6-1.6 1-1.4-1.4 1-1.6-.6-1.4L1 9V7l1.8-.4.6-1.4-1-1.6 1.4-1.4 1.6 1 1.4-.6z"
               "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"),
 }
+
+
+#  the layer panel's glyphs (2026-10-18)
+GLYPHS.update({
+    "layers": "M8 1.2l7 3.6-7 3.6-7-3.6zM2.4 7.3L8 10.2l5.6-2.9 1.4.7L8 11.6 1 8zM2.4 10.5L8 13.4l5.6-2.9 1.4.7L8 14.8 1 11.2z",
+    "lanes": "M1 3h4v2H1zM6 3h9v2H6zM1 7h7v2H1zM9 7h6v2H9zM1 11h3v2H1zM5 11h10v2H5z",
+    "lock": "M4.5 7V5a3.5 3.5 0 0 1 7 0v2H13v7H3V7zm1.6 0h3.8V5a1.9 1.9 0 0 0-3.8 0z",
+    "plus": "M7 2h2v5h5v2H9v5H7V9H2V7h5z",
+    "addsel": "M2 2h6v2H4v8h4v2H2zM9 7h3V4l3.5 4-3.5 4V9H9z",
+    "remsel": "M8 2h6v12H8v-2h4V4H8zM10 7H6.5V4L3 8l3.5 4V9H10z",
+    "merge": "M3 2h2v4c0 1.2 1 2 3 2s3-.8 3-2V2h2v4c0 2-1.4 3.4-4 3.9V12h2.2L8 15l-3.2-3H7V9.9C4.4 9.4 3 8 3 6z",
+    "select": "M3 1.5l9.5 7.2-4.2.6 2.5 4.6-1.9 1-2.5-4.7L3 13z",
+    "trash": "M6 1h4v1.5h4V4H2V2.5h4zM3.5 5h9l-.8 10H4.3z",
+})
+
+_KIT = None
+
+
+def kit():
+    """The strip's paint helpers for the layer panel (made with the classes)."""
+    if _KIT is None:
+        classes()
+    return _KIT
 
 
 class Link(object):
@@ -1826,6 +1850,9 @@ def classes():
             point = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
             self._menu(point, self.key_rows(frame))
 
+    global _KIT
+    _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph, glow=glow,
+                                 halo=halo, soft_dot=soft_dot)
     return Strip, Timeline, RangeBlock, Pill
 
 
