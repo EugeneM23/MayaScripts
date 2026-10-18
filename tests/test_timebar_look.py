@@ -553,3 +553,28 @@ class DragKeys(unittest.TestCase):
         self.assertEqual(look.drag_key("r", shift=True), "SetKeyScale")
         for args in (("w",), ("s", True), ("s", False, True), ("s", False, False, True), ("",), ("x",)):
             self.assertIsNone(look.drag_key(*args), args)
+
+    def test_what_s_does_on_the_strip(self):
+        self.assertIsNone(look.key_action(None, None, (1, 5), 3.0))
+        drag = ("hmove", 30, None, (22, 40))
+        self.assertEqual(look.key_action("SetKey", drag, None, (27, 45)),
+                         ("stamp", (22, 40), (27, 45)))          # where the block is dragged to
+        self.assertEqual(look.key_action("SetKey", ("h1", 40, None, (22, 40)), None, (22, 50)),
+                         ("stamp", (22, 40), (22, 50)))          # an edge drag: scaled
+        self.assertIsNone(look.key_action("SetKeyRotate", drag, None, (27, 45)))
+        self.assertIsNone(look.key_action("SetKey", ("hl", 3, None), None))
+        self.assertEqual(look.key_action("SetKey", ("now", None, None), (1, 5), 3.0), ("run",))
+        self.assertEqual(look.key_action("SetKey", None, (4.0, 9.0), 3.0), ("range", 4, 9))
+        self.assertIsNone(look.key_action("SetKey", None, (4, 4), 3.0))
+        self.assertIsNone(look.key_action("SetKey", None, None, 3.0))
+
+    def test_copies_s_put_down_stay_where_they_went_down_while_the_block_moves(self):
+        self.assertIsNone(look.held(None))
+        stamped = {"c": {"keys": [(22.0, {}), (30.0, {}), (40.0, {})], "stamped": {27.0, 35.0, 45.0}}}
+        carried = look.held(stamped)
+        self.assertEqual(carried, (frozenset({22.0, 30.0, 40.0}), frozenset({27.0, 35.0, 45.0})))
+        self.assertEqual(look.shown_at(30, (22, 40), (32, 50), carried), [40])     # dragged
+        self.assertEqual(look.shown_at(35, (22, 40), (32, 50), carried), [35])     # a copy stays
+        self.assertEqual(look.shown_at(35, (22, 40), (32, 50)), [45])              # before any S
+        both = look.held({"c": {"keys": [(30.0, {})], "stamped": {30.0}}})
+        self.assertEqual(sorted(look.shown_at(30, (30, 30), (34, 34), both)), [30, 34])

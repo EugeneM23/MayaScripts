@@ -84,7 +84,6 @@ GLYPHS = {
               "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"),
 }
 
-
 #  the layer panel's glyphs (2026-10-18)
 GLYPHS.update({
     "layers": "M8 1.2l7 3.6-7 3.6-7-3.6zM2.4 7.3L8 10.2l5.6-2.9 1.4.7L8 11.6 1 8zM2.4 10.5L8 13.4l5.6-2.9 1.4.7L8 14.8 1 11.2z",
@@ -591,20 +590,36 @@ def classes():
 
     # -- keys during a drag ------------------------------------------------------
 
+    TEXT_INPUTS = (QtWidgets.QLineEdit, QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit,
+                   QtWidgets.QAbstractSpinBox)
+
     class DragKeys(QtCore.QObject):
-        """While the playhead is dragged, S (Shift+W/E/R) still sets keys: a held
-        button keeps the key from Maya's hotkeys, so we catch it application-wide and
-        run Maya's own command (`look.DRAG_KEYS`)."""
+        """S (Shift+W/E/R) on the strip (`look.key_action`): during a timeline drag a
+        held button keeps the key from Maya's hotkeys, so we catch it application-wide
+        and run Maya's own command (`look.DRAG_KEYS`), or put a copy of a dragged key
+        block where the drag has it now (only the selected keys, none in the gaps);
+        with no drag and a highlight standing, the key goes on every frame of the
+        highlight. Installed for the strip's life."""
 
         def __init__(self, strip):
             super(DragKeys, self).__init__(strip)
             self.strip = strip
 
+        def _plain_key(self):
+            """Not typing into a field: only then is S the strip's. The strip may be
+            hidden at the bottom edge - a highlight set, the mouse gone to the
+            viewport, S pressed there is still the highlight's."""
+            focus = QtWidgets.QApplication.focusWidget()
+            return not (focus is not None and isinstance(focus, TEXT_INPUTS))
+
         def eventFilter(self, obj, event):
-            if event.type() != QtCore.QEvent.KeyPress:
+            kind = event.type()
+            override = kind == QtCore.QEvent.ShortcutOverride
+            if kind != QtCore.QEvent.KeyPress and not override:
                 return False
+            tl = self.strip.timeline
             if event.isAutoRepeat():
-                return int(event.key()) in (83, 87, 69, 82)           # S W E R held down
+                return bool(tl.drag) and int(event.key()) in (83, 87, 69, 82)   # S W E R held down
             mods, code = event.modifiers(), int(event.key())
             letter = chr(code) if 65 <= code <= 90 else ""          # Qt.Key_A .. Key_Z
             name = look.drag_key(letter,
@@ -612,11 +627,23 @@ def classes():
                                  bool(mods & Qt.AltModifier))
             if not name:
                 return False
-            drag, preview = self.strip.timeline.drag, self.strip.timeline.preview
-            if name == "SetKey" and drag and drag[0] == "hmove":
-                #  a key block being dragged: S puts a copy of it down where it stands
-                if preview:
-                    self.strip.call("stamp_keys", drag[3], preview)
+            if not tl.drag and not self._plain_key():
+                return False
+            action = look.key_action(name, tl.drag, self.strip.state.get("highlight"), tl.preview)
+            if action is None:
+                return False
+            if override:
+                #  Maya's own S is a shortcut: taking the override keeps it from
+                #  firing, and the key press then comes here (2026-10-18: «ключи не
+                #  ставятся при переносе»)
+                event.accept()
+                return True
+            if action[0] == "stamp":
+                got = self.strip.call("stamp_keys", action[1], action[2], tl.stamped)
+                if tl.stamped is None and got:
+                    tl.stamped = got            # the keys dragged: the release moves only them
+            elif action[0] == "range":
+                self.strip.call("key_range", action[1], action[2], name)
             else:
                 self.strip.call("run_key_command", name)
             #  the strip's tick reads no keys while the playhead is dragged: the key
@@ -640,6 +667,7 @@ def classes():
             self.drag = None            # (kind, start frame, the track at the press[, the highlight])
             self.view = None            # (v0, v1) after a zoom; None follows the playback range
             self.preview = None         # the highlight's target while keys are dragged
+            self.stamped = None         # {curve: [times]} once S put copies down in a drag
             self.aim_key = None         # the key under the mouse
             self.aim_head = False
             self.key_lift = {}          # key -> 0..1, eased
@@ -821,7 +849,8 @@ def classes():
             w, h = float(self.width()), float(self.height())
             scale, opacity = st.opening_of(self.index)
             entrance = st.entrance is not None
-            moving = (self.drag[3], self.preview) if (self.preview and self.drag and len(self.drag) > 3) else None
+            moving = ((self.drag[3], self.preview, look.held(self.stamped))
+                      if (self.preview and self.drag and len(self.drag) > 3) else None)
             key = self._static_key(t, w, h, not entrance, moving)
             if key != self._static_for or self._static is None:
                 dpr = max(1.0, float(self.devicePixelRatioF()))
@@ -951,9 +980,9 @@ def classes():
                 for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
                     path = QtGui.QPainterPath()
                     for frame in frames:
-                        shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
-                        if t.v0 - 1 <= shown <= t.v1 + 2:
-                            add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
+                        for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
+                            if t.v0 - 1 <= shown <= t.v1 + 2:
+                                add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
                     p.fillPath(path, colour(hex_))
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
@@ -972,8 +1001,8 @@ def classes():
                 keys, bds = set(st.keys), set(st.breakdowns)
                 frames = [(f, tk["accent"] if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
             plain = {}
-            for frame, hex_ in frames:
-                shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
+            for frame, hex_, shown in [(f, c, x) for f, c in frames
+                                       for x in (look.shown_at(f, *moving) if moving else (f,))]:
                 if not (t.v0 - 1 <= shown <= t.v1 + 1):
                     continue
                 lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
@@ -1080,7 +1109,6 @@ def classes():
                 return
             if event.button() == Qt.MiddleButton:
                 self.drag = ("mid", None, t)
-                self._keys_on()
                 self._scrub(x, update=False)
                 return
             if event.button() != Qt.LeftButton:
@@ -1094,11 +1122,21 @@ def classes():
             part = look.highlight_hit(t, x, s.get("highlight"), st.ui)
             if part:
                 self.drag = (part, self._grip(part, x, t), t, tuple(s["highlight"]))
+                self.stamped = None
                 self.preview = tuple(s["highlight"])
-                self._keys_on()
                 return
+            key = self._key_under(x, t)
+            if key is not None and self._frame(x, t) != s["now"]:      # the playhead's own cell scrubs
+                #  a key pressed: dragged past Qt's start distance it moves on its own,
+                #  no highlight needed; let go where it was, it is a click on the time
+                #  (2026-10-18: «перетаскивать ключи без обязательного выделения»)
+                self.drag = ("kpend", self._frame(x, t), t, x, key)
+                return
+            self._press_time(x, t)
+
+        def _press_time(self, x, t):
+            st, s = self.strip, self.strip.state
             self.drag = ("now", None, t)
-            self._keys_on()
             st.call("begin_scrub")
             if s.get("highlight"):
                 s["highlight"] = None
@@ -1111,6 +1149,14 @@ def classes():
                 self._aim(x)
                 return
             kind, start, t = self.drag[0], self.drag[1], self.drag[2]
+            if kind == "kpend":
+                if abs(x - self.drag[3]) < QtWidgets.QApplication.startDragDistance():
+                    return
+                frame = int(math.floor(self.drag[4] + 1e-6))
+                self.drag = ("hmove", start, t, (frame, frame), "loose")
+                self.stamped = None
+                self.preview = (frame, frame)
+                kind = "hmove"
             if kind in ("now", "mid"):
                 self._scrub(x, update=(kind == "now"))
             elif kind == "hl":
@@ -1122,33 +1168,15 @@ def classes():
                     self.preview = target
                     self.update()
 
-        def _keys_on(self):
-            """S sets keys for the length of a playhead drag (`DragKeys`)."""
-            self._keys_off()
-            app = QtWidgets.QApplication.instance()
-            if app is not None:
-                self._drag_keys = DragKeys(self.strip)
-                app.installEventFilter(self._drag_keys)
-
-        def _keys_off(self):
-            keys = getattr(self, "_drag_keys", None)
-            self._drag_keys = None
-            if keys is not None:
-                app = QtWidgets.QApplication.instance()
-                if app is not None:
-                    app.removeEventFilter(keys)
-                keys.deleteLater()
-
-        def hideEvent(self, event):
-            self._keys_off()
-            super(Timeline, self).hideEvent(event)
-
         def mouseReleaseEvent(self, event):
-            self._keys_off()
             if not self.drag:
                 return
             kind = self.drag[0]
             st, s = self.strip, self.strip.state
+            if kind == "kpend":
+                #  a key clicked, not dragged: the time goes there, as on the track
+                self._press_time(self.drag[3], self.drag[2])
+                kind = "now"
             if kind == "now":
                 st.call("end_scrub")
             elif kind == "mid":
@@ -1159,9 +1187,13 @@ def classes():
                 selection, target = self.drag[3], self.preview
                 if target and target != selection:
                     st._quiet_keys = True               # a move is no set and delete
-                    st.call("move_keys", selection, target)
-                    s["highlight"] = target
-                    st.call("set_highlight", target)
+                    if self.stamped:
+                        st.call("move_keys", selection, target, self.stamped)
+                    else:
+                        st.call("move_keys", selection, target)
+                    loose = len(self.drag) > 4 and self.drag[4] == "loose"
+                    s["highlight"] = None if loose else target
+                    st.call("set_highlight", s["highlight"])
                     self.drag, self.preview = None, None
                     st.refresh(keys=True)
             self.drag = None
@@ -1199,10 +1231,22 @@ def classes():
                     best, near = k, d
             head = abs(t.x(self.strip.state["now"]) - x) < 8 * ui
             part = look.highlight_hit(t, x, self.strip.state.get("highlight"), ui)
-            self.setCursor(Qt.OpenHandCursor if part == "hmove" else Qt.SizeHorCursor)
+            grab = part == "hmove" or (not part and self._key_under(x, t) is not None)
+            self.setCursor(Qt.OpenHandCursor if grab else Qt.SizeHorCursor)
             if best != self.aim_key or head != self.aim_head:
                 self.aim_key, self.aim_head = best, head
                 self.strip.kick()
+
+        def _key_under(self, x, t):
+            """The key whose cell the press is in (a key between frames: within half a
+            cell, at least 3 px, of its line); None off every key."""
+            near = max(3 * self.strip.ui, t.scale / 2.0)
+            best = None
+            for k in self.strip.keys + self.strip.breakdowns:
+                d = abs(look.key_centre(t, k) - x)
+                if d <= near:
+                    best, near = k, d
+            return best
 
         def _scrub(self, x, update=True):
             """The playhead drawn on the new frame at once, then Maya sent there:
@@ -1468,6 +1512,11 @@ def classes():
             self.anim = QtCore.QTimer(self)
             self.anim.setInterval(FRAME_MS)
             self.anim.timeout.connect(self._animate)
+            # S on the strip: during a drag, and over a highlight (2026-10-18)
+            self.drag_keys = DragKeys(self)
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self.drag_keys)
             self.refresh(keys=True, force=True)     # read once even if Maya is playing
             self.timer.start()
             self.opened = self.clock()

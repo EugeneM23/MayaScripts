@@ -77,11 +77,15 @@ class FakeLink(object):
         self._log("set_highlight", sel)
         self.s["highlight"] = sel
 
-    def move_keys(self, selection, target):
-        self._log("move_keys", selection, target)
+    def move_keys(self, selection, target, only=None):
+        self._log("move_keys", selection, target, *([only] if only else []))
 
-    def stamp_keys(self, selection, target):
-        self._log("stamp_keys", selection, target)
+    def stamp_keys(self, selection, target, only=None):
+        self._log("stamp_keys", selection, target, *([only] if only else []))
+        return {"curve": {"keys": [(float(selection[0]), {})], "stamped": set()}}
+
+    def key_range(self, a, b, name):
+        self._log("key_range", a, b, name)
 
     def step_key(self, forward, known):
         frame = look.neighbour_key(known, self.s["now"], forward)
@@ -224,9 +228,9 @@ class Shows(Strip):
 class Time(Strip):
 
     def test_a_press_scrubs_in_maya_s_scrub_mode(self):
-        self.drag(self.tl, self.x(40.3), self.x(44.6))
-        #  a frame is a cell (2026-10-17): 44.6 is inside frame 44's
-        self.assertEqual(self.calls("set_time"), [("set_time", 40), ("set_time", 44)])
+        self.drag(self.tl, self.x(41.3), self.x(44.6))
+        #  a frame is a cell (2026-10-17): 44.6 is inside frame 44's (41: no key there)
+        self.assertEqual(self.calls("set_time"), [("set_time", 41), ("set_time", 44)])
         names = [e[0] for e in self.link.log if e[0] in ("begin_scrub", "set_time", "end_scrub")]
         self.assertEqual((names[0], names[-1]), ("begin_scrub", "end_scrub"))
         self.assertEqual(self.strip.field.text(), "44")
@@ -237,8 +241,8 @@ class Time(Strip):
         self.tl.paintEvent = lambda e: (painted.append(self.strip.state["now"]), real(e))
         self.link.set_time = lambda f: seen.append(list(painted))
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(self.tl, E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton)
-        self.assertEqual(seen and seen[0][-1:], [40])
+        self.mouse(self.tl, E.MouseButtonPress, self.x(41), Qt.LeftButton, Qt.LeftButton)
+        self.assertEqual(seen and seen[0][-1:], [41])
 
     def test_a_middle_drag_moves_time_without_updating_the_scene(self):
         Qt = QT.QtCore.Qt
@@ -350,7 +354,7 @@ class Meter(Strip):
         state.pop("meter", None)
         self.drag(self.tl, self.x(20), self.x(22))
         state["meter"] = {"stamps": [], "ours": [], "mayas": [], "seconds": 10.0}
-        self.drag(self.tl, self.x(30), self.x(33))
+        self.drag(self.tl, self.x(31), self.x(33))
         meter = state["meter"]
         self.assertEqual(len(meter["ours"]), 2)
         self.assertTrue(all(ms >= 0 for ms in meter["ours"] + meter["mayas"]))
@@ -399,6 +403,63 @@ class Highlight(Strip):
         self.drag(self.tl, self.x(30), self.x(30), mods=S)
         self.assertEqual(self.link.s["highlight"], (30, 30))
 
+    def test_s_over_a_highlight_keys_every_frame_of_it(self):
+        Qt = QT.QtCore.Qt
+        press = lambda: QT.QtWidgets.QApplication.sendEvent(               # noqa: E731
+            QT.QtWidgets.QApplication.instance(),
+            QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_S, Qt.NoModifier, "s"))
+        self.strip.state["highlight"] = (20, 24)
+        press()
+        self.assertEqual(self.calls("key_range"), [("key_range", 20, 24, "SetKey")])
+        field = QT.QtWidgets.QLineEdit()
+        self.addCleanup(field.deleteLater)
+        field.show()
+        field.setFocus()
+        self.app.processEvents()
+        if QT.QtWidgets.QApplication.focusWidget() is field:
+            press()
+            self.assertEqual(len(self.calls("key_range")), 1, "typing in a field is typing")
+        field.clearFocus()
+        field.hide()
+        self.strip.state["highlight"] = (20, 20)
+        press()
+        self.strip.state["highlight"] = None
+        press()
+        self.assertEqual(len(self.calls("key_range")), 1, "one frame or none: Maya's S")
+        self.assertFalse(self.calls("run_key_command"))
+
+    def test_a_key_dragged_without_a_highlight_moves_and_leaves_none(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = None
+        self.drag(self.tl, self.x(30), self.x(34))
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (30, 30), (34, 34))])
+        self.assertIsNone(self.link.s["highlight"])
+        self.assertFalse(self.calls("set_time"), "a key drag is no scrub")
+
+    def test_a_key_clicked_without_moving_sets_the_time_there(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(30), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("set_time"), [("set_time", 30)])
+        self.assertFalse(self.calls("move_keys"))
+
+    def test_the_playhead_on_a_key_is_grabbed_not_the_key(self):
+        self.link.s["now"] = self.strip.state["now"] = 30.0
+        self.drag(self.tl, self.x(30), self.x(34))
+        self.assertFalse(self.calls("move_keys"))
+        self.assertEqual(self.calls("set_time")[-1], ("set_time", 34))
+
+    def test_s_during_a_key_drag_takes_maya_s_shortcut_away(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        override = QT.QtGui.QKeyEvent(E.ShortcutOverride, Qt.Key_S, Qt.NoModifier, "s")
+        override.ignore()
+        QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), override)
+        self.assertTrue(override.isAccepted(), "the shortcut must not fire")
+        self.assertFalse(self.calls("stamp_keys"), "the override only claims the key")
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+
     def test_s_while_dragging_keys_puts_a_copy_of_them_down(self):
         self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
@@ -406,11 +467,15 @@ class Highlight(Strip):
         self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
         press = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
         QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), press)
+        # the copy goes where the block is being dragged to (2026-10-18: «когда мы переносим
+        # ключик и нажимаем хотей S то мы должны проставлять этот ключик»), not on the playhead
         self.assertEqual(self.calls("stamp_keys"), [("stamp_keys", (22, 40), (27, 45))])
         self.assertFalse(self.calls("run_key_command"), "no transform key")
         self.mouse(self.tl, E.MouseMove, self.x(40), Qt.NoButton, Qt.LeftButton)
         self.mouse(self.tl, E.MouseButtonRelease, self.x(40), Qt.LeftButton, Qt.NoButton)
-        self.assertEqual(self.calls("move_keys"), [("move_keys", (22, 40), (32, 50))])
+        # the release moves only the keys that were dragged, not the copies S put down
+        self.assertEqual(self.calls("move_keys"),
+                         [("move_keys", (22, 40), (32, 50), {"curve": {"keys": [(22.0, {})], "stamped": set()}})])
 
     def test_dragging_the_highlight_moves_its_keys_once_on_release(self):
         self.strip.state["highlight"] = (22, 40)

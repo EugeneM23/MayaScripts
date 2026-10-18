@@ -670,6 +670,64 @@ def drag_key(letter, shift=False, ctrl=False, alt=False):
     return DRAG_KEYS.get((letter.lower(), bool(shift)))
 
 
+def held(stamped):
+    """What a key drag carries once S has put copies down (`stamp_keys`' record):
+    (the dragged keys' times, the copies' times), each a frozenset over every
+    curve; None before any S."""
+    if not stamped:
+        return None
+    moved, copies = set(), set()
+    for rec in stamped.values():
+        moved.update(round(t, 4) for t, _data in rec.get("keys", ()))
+        copies.update(round(t, 4) for t in rec.get("stamped", ()))
+    return frozenset(moved), frozenset(copies)
+
+
+def shown_at(frame, selection, target, carried=None):
+    """Where a key is drawn while a block is dragged: a dragged key at its place on
+    `target`, any other key where it stands - a copy S put down stays where it
+    went down, it is not part of the drag («поставленные ключи добавляются в мое
+    выделение», 2026-10-18). A dragged key with a copy on its own time is drawn
+    at both."""
+    if carried is None:
+        return [mapped(frame, selection, target)]
+    moved, copies = carried
+    t = round(frame, 4)
+    out = []
+    if t in moved:
+        out.append(mapped(frame, selection, target))
+    if t in copies or t not in moved:
+        out.append(frame)
+    return out
+
+
+def key_action(name, drag, highlight, preview=None):
+    """What a Set Key key does on the strip (2026-10-18):
+    ('stamp', selection, target) - highlighted keys are being dragged (moved, or
+        scaled by an edge) and S is pressed: a copy of exactly those keys goes down
+        where they are being dragged to, nothing in the gaps between them («когда
+        мы переносим массив ключей и нажимаем s то мы должны проставлять все ключи
+        которые у нас выделены, ключи в пробелах массива проставлять не нужно»);
+    ('run',) - a playhead drag: Maya's own command, at the current frame;
+    ('range', a, b) - no drag, a highlight of two frames or more: a key on every frame
+        of it («во всех кадрах проставились ключи (такая себе версия бейка)»);
+    None - Maya's hotkey as usual. `drag` is the timeline's drag tuple or None,
+    `preview` the dragged keys' highlight now."""
+    if not name:
+        return None
+    if drag:
+        if drag[0] in ("hmove", "h0", "h1") and len(drag) > 3:
+            if name != "SetKey":
+                return None
+            return ("stamp", tuple(drag[3]), tuple(preview or drag[3]))
+        if drag[0] == "hl":                  # drawing a highlight: no key
+            return None
+        return ("run",)
+    if highlight and highlight[1] > highlight[0]:
+        return ("range", int(highlight[0]), int(highlight[1]))
+    return None
+
+
 def set_key_command(command):
     """A MEL command Maya reported: (frame or None, breakdown) when it is a
     `setKeyframe` - the S key, the Channel Box's Key Selected - else None. A key set
