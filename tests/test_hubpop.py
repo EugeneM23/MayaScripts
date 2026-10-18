@@ -585,7 +585,7 @@ class Burst(Seams):
         effect = popup.burst
         w, h = popup.root.width(), popup.root.height()
         far = (w - 10, h - 6)
-        effect.ms = 150.0
+        effect.ms = 60.0                        # the Time Bar's unroll is quick: 0.7 of the way
         self.assertEqual(self.alpha_at(popup, *far), 0)
         self.assertGreater(self.alpha_at(popup, 14, 12), 0)
         self.assertTrue(effect.plan.opening)

@@ -8,6 +8,7 @@ import unittest
 import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 
 import maya_hubburst as burst
+from maya_timebar import look as tlook
 
 SIZE = (300.0, 400.0)
 PARTS = [(4.0, 2.0, 292.0, 24.0),      # the title
@@ -58,8 +59,7 @@ class Open(unittest.TestCase):
         d = self.plan.delays
         self.assertLess(d[0], d[2])
         self.assertLess(d[2], d[3])
-        self.assertAlmostEqual(d[0], burst.DELAY0 + burst.DELAY_PER * (
-            burst._dist((20, 12), (150, 14)) / burst.STEP))
+        self.assertAlmostEqual(d[0], tlook.burst_delay(130, 2), delta=0.5)
 
     def test_distances_count_in_logical_pixels(self):
         big = burst.plan_open((30, 15), (450, 600), [(6, 540, 438, 36)], scale=1.5)
@@ -68,14 +68,15 @@ class Open(unittest.TestCase):
 
     def test_a_row_overshoots_a_little_then_settles(self):
         d = self.plan.delays[0]
-        scales = [burst.at(self.plan, d + ms).parts[0][1] for ms in range(0, 241, 4)]
+        scales = [burst.at(self.plan, d + ms).parts[0][1] for ms in range(0, 289, 4)]
         self.assertGreater(max(scales), 1.0)
-        self.assertLess(max(scales), 1.05)
+        self.assertLess(max(scales), 1.1)
         self.assertAlmostEqual(scales[-1], 1.0)
 
-    def test_the_total_covers_the_shape_and_the_last_row(self):
+    def test_the_total_covers_the_shape_the_light_and_the_last_row(self):
         self.assertGreaterEqual(self.plan.total, burst.SHAPE_MS)
-        self.assertAlmostEqual(self.plan.total, max(self.plan.delays) + burst.PART_MS)
+        self.assertGreaterEqual(self.plan.total, burst.REVEAL_MS)
+        self.assertGreaterEqual(self.plan.total, max(self.plan.delays) + burst.PART_MS)
 
     def test_a_pivot_is_the_row_point_nearest_the_origin(self):
         self.assertEqual(self.plan.pivots[0], (16.0, 10.0))
@@ -95,7 +96,7 @@ class Close(unittest.TestCase):
 
     def test_the_farthest_row_folds_first(self):
         d = self.plan.delays
-        self.assertEqual(d[3], 0.0)
+        self.assertEqual(d[3], min(d))
         self.assertGreater(d[0], d[3])
 
     def test_it_ends_small_about_the_point_and_gone(self):
@@ -153,6 +154,81 @@ class Blend(unittest.TestCase):
         self.assertEqual(burst.blend("#000000", "#ffffff", 0.0), (0, 0, 0))
         self.assertEqual(burst.blend("#000000", "#ffffff", 1.0), (255, 255, 255))
         self.assertEqual(burst.blend("#000000", "#ffffff", 0.5), (128, 128, 128))
+
+
+class TimeBarNumbers(unittest.TestCase):
+    """2026-10-18: the burst is the Time Bar's (spec 2026-10-18-floating-windows-design.md)."""
+
+    SIZE = (300.0, 400.0)
+    PARTS = [(10, 10, 280, 30), (10, 300, 280, 30)]
+
+    def test_the_shape_grows_over_the_time_bars_unroll(self):
+        plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
+        self.assertEqual(burst.at(plan, tlook.UNROLL_MS).shape, (0.0, 0.0, 300.0, 400.0))
+        mid = burst.at(plan, tlook.UNROLL_MS / 2.0).shape
+        self.assertLess(mid[2], 300.0)
+
+    def test_a_part_pops_from_the_time_bars_start_scale(self):
+        plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
+        d = plan.delays[0]
+        op, sc = burst.at(plan, d + 1.0).parts[0]
+        self.assertAlmostEqual(sc, tlook.START_SCALE, delta=0.02)
+        self.assertEqual(burst.at(plan, d + tlook.POP_OPEN_MS).parts[0], (1.0, 1.0))
+
+    def test_the_nearest_part_starts_by_the_time_bars_delay(self):
+        plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
+        self.assertLess(plan.delays[0], plan.delays[1])
+        self.assertAlmostEqual(plan.delays[0], tlook.burst_delay(130, 5), delta=0.5)
+
+    def test_the_close_starts_its_shape_after_the_last_fold(self):
+        plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
+        last = max(plan.delays) + tlook.FOLD_MS
+        self.assertAlmostEqual(plan.m0, last + tlook.CLOSE_AFTER_MS, delta=0.5)
+        self.assertAlmostEqual(plan.total, plan.m0 + tlook.CLOSE_MS, delta=0.5)
+
+    def test_a_folded_part_ends_at_the_start_scale_and_gone(self):
+        plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
+        d = plan.delays[0]
+        self.assertEqual(burst.at(plan, d + tlook.FOLD_MS).parts[0], (0.0, tlook.START_SCALE))
+
+
+class Light(unittest.TestCase):
+
+    SIZE = (300.0, 400.0)
+    PARTS = [(10, 10, 280, 30)]
+
+    def test_the_edges_inside_the_card_carry_light_while_it_grows(self):
+        plan = burst.plan_open((150, 200), self.SIZE, self.PARTS)
+        light = burst.light(plan, 40.0)
+        axes = sorted(e[0] for e in light.edges)
+        self.assertEqual(axes, ["x", "x", "y", "y"])
+        self.assertTrue(all(0.0 < e[2] <= 1.0 for e in light.edges))
+
+    def test_the_edge_light_fades_as_the_edges_slow(self):
+        plan = burst.plan_open((150, 200), self.SIZE, self.PARTS)
+        early = max(e[2] for e in burst.light(plan, 20.0).edges)
+        later = max(e[2] for e in burst.light(plan, 200.0).edges)
+        self.assertGreater(early, later)
+
+    def test_an_edge_on_the_card_border_carries_none(self):
+        plan = burst.plan_open((150, 200), self.SIZE, self.PARTS)
+        self.assertEqual(burst.light(plan, tlook.UNROLL_MS).edges, [])
+
+    def test_the_top_lights_once_the_shape_reaches_it_and_fades(self):
+        plan = burst.plan_open((150, 390), self.SIZE, self.PARTS)
+        self.assertEqual(burst.light(plan, 1.0).top, 0.0)
+        reached = burst.light(plan, tlook.UNROLL_MS).top
+        self.assertGreater(reached, 0.0)
+        self.assertEqual(burst.light(plan, tlook.REVEAL_MS).top, 0.0)
+
+    def test_a_close_carries_no_light(self):
+        plan = burst.plan_close((150, 200), self.SIZE, self.PARTS)
+        light = burst.light(plan, 50.0)
+        self.assertEqual((light.edges, light.top), ([], 0.0))
+
+    def test_the_light_lengths_are_the_time_bars(self):
+        self.assertEqual((burst.EDGE_GLOW, burst.EDGE_CORE, burst.TOP_GLOW),
+                         (tlook.EDGE_GLOW, tlook.EDGE_CORE, tlook.TOP_GLOW))
 
 
 class Pure(unittest.TestCase):
