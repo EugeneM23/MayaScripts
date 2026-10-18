@@ -1,8 +1,9 @@
 """maya_hubpop - the popup window, its drag, its follow and its memory.
 
 Offscreen Qt, and the Maya seams replaced: `cmds` by a fake that keeps the
-optionVars, the viewport (`active_panel`, `_rect_of`) and the hub (`_hub`) by
-plain stand-ins. The Maya-side proof is live (the spec's section); these tests
+optionVars, the screens (`screens`) and the hub (`_hub`) by plain stand-ins.
+Since 2026-10-18 a popup is a floating window (spec:
+docs/superpowers/specs/2026-10-18-floating-windows-design.md). The Maya-side proof is live (the spec's section); these tests
 pin the logic a press depends on. Spec:
 docs/superpowers/specs/2026-10-09-hub-section-popups-design.md.
 """
@@ -24,12 +25,14 @@ import maya_hubpop as hubpop
 import maya_hubpop_rules as rules
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
+import maya_hubwindow as hubwindow
 from tests.test_hubcopy import FakeCmds
 
 Section = collections.namedtuple("Section",
                                  "key label module builder frame group icon")
 
-VIEW = (100, 50, 1000, 700)     # the viewport's rectangle, physical px
+VIEW = (100, 50, 1000, 700)     # a region of the screen the drags go to, physical px
+SCREEN = (0, 0, 1920, 1040)     # the one screen's available geometry, physical px
 
 
 def _app():
@@ -125,11 +128,7 @@ class Seams(unittest.TestCase):
             mock.patch.object(hubpop, "_hub", lambda: self.hub),
             mock.patch.object(hubpop, "_scale", lambda: 1.0),
             mock.patch.object(hubpop, "_main_window", lambda: None),
-            mock.patch.object(hubpop, "model_panels",
-                              lambda: ["modelPanel1"]),
-            mock.patch.object(hubpop, "active_panel",
-                              lambda: "modelPanel1"),
-            mock.patch.object(hubpop, "_gl_rect", lambda panel: VIEW),
+            mock.patch.object(hubpop, "screens", lambda: [SCREEN]),
             mock.patch.object(hubqt, "path_of",
                               lambda obj: "path|" + obj.objectName()),
         ]
@@ -141,7 +140,6 @@ class Seams(unittest.TestCase):
         self.hub.paint_calls = []
         hubpop._state()["popups"].clear()
         hubpop._state()["queued"] = False        # a restore queued by another test
-        hubpop._stop_timer()
         self.addCleanup(self._tear_down)
 
     def _tear_down(self):
@@ -183,11 +181,15 @@ class Window(Seams):
 
     def test_the_title_row_carries_the_section_name_and_a_close_button(self):
         popup = hubpop.open_popup("alpha")
-        titles = [w.text() for w in popup.root.findChildren(QtWidgets.QLabel)]
-        self.assertIn("Alpha", titles)
-        closes = popup.root.findChildren(QtWidgets.QToolButton)
-        self.assertTrue(any(b.objectName().startswith(
-            "skeldarAnimPopupClose_") for b in closes))
+        name = popup.root.findChild(QtWidgets.QLabel,
+                                    "skeldarAnimPopupName_" + popup.scope.tag)
+        self.assertEqual(name.text(), "ALPHA")
+        pills = popup.root.findChildren(hubwindow.pill_class())
+        close = [b for b in pills
+                 if b.objectName() == "skeldarAnimPopupClose_" + popup.scope.tag]
+        self.assertEqual(len(close), 1)
+        self.assertEqual(close[0].icon_name, "x")
+        self.assertGreaterEqual(popup.title.height(), hubstyle.px(34, 1.0))
 
     def test_the_card_button_is_lit_while_the_popup_stands(self):
         hubpop.open_popup("alpha")
@@ -204,55 +206,8 @@ class Window(Seams):
         with self.assertRaises(KeyError):
             hubpop.open_popup("hotkeys")
 
-    def test_no_viewport_says_so_and_opens_nothing(self):
-        with mock.patch.object(hubpop, "active_panel", lambda: None):
-            self.assertIsNone(hubpop.open_popup("alpha"))
-        self.assertTrue(any("no 3D view" in m for m in self.hub.said))
-        self.assertFalse(hubpop.is_open("alpha"))
-
 
 class Placement(Seams):
-
-    def test_the_default_place_is_inside_the_viewport_top_right(self):
-        popup = hubpop.open_popup("alpha")
-        x, y = popup.root.x(), popup.root.y()
-        self.assertGreaterEqual(x, VIEW[0])
-        self.assertLessEqual(x + popup.root.width(), VIEW[0] + VIEW[2])
-        self.assertGreaterEqual(y, VIEW[1])
-
-    def test_a_second_popup_cascades_from_the_first(self):
-        first = hubpop.open_popup("alpha")
-        second = hubpop.open_popup("beta")
-        self.assertNotEqual((first.root.x(), first.root.y()),
-                            (second.root.x(), second.root.y()))
-
-    def test_the_popup_follows_its_viewport(self):
-        popup = hubpop.open_popup("alpha")
-        before = (popup.root.x() - VIEW[0], popup.root.y() - VIEW[1])
-        moved = (VIEW[0] + 200, VIEW[1] + 90, VIEW[2], VIEW[3])
-        with mock.patch.object(hubpop, "_gl_rect", lambda panel: moved):
-            popup.follow()
-        self.assertEqual((popup.root.x() - moved[0],
-                          popup.root.y() - moved[1]), before)
-
-    def test_it_hides_while_its_panel_is_not_visible_and_shows_again(self):
-        popup = hubpop.open_popup("alpha")
-        with mock.patch.object(hubpop, "model_panels", lambda: []):
-            popup.follow()
-        self.assertTrue(popup.hidden)
-        popup.follow()                  # the panel is visible again (setUp)
-        self.assertFalse(popup.hidden)
-
-    def test_a_drag_is_clamped_to_the_viewport_and_remembered(self):
-        popup = hubpop.open_popup("alpha")
-        popup._grab((popup.root.x() + 10, popup.root.y() + 5))
-        popup._drag((-5000, 9000))
-        self.assertEqual(popup.root.x(), VIEW[0])
-        self.assertEqual(popup.root.y() + popup.root.height(),
-                         VIEW[1] + VIEW[3])
-        popup._drop()
-        self.assertEqual(self.cmds.vars.get("skeldarHubPopupPos_alpha"),
-                         rules.encode_offset(popup.offset))
 
     def test_a_drag_inside_the_viewport_lands_under_the_pointer(self):
         popup = hubpop.open_popup("alpha")
@@ -264,7 +219,7 @@ class Placement(Seams):
     def test_a_drop_without_a_drag_saves_nothing(self):
         popup = hubpop.open_popup("alpha")
         popup._drop()
-        self.assertNotIn("skeldarHubPopupPos_alpha", self.cmds.vars)
+        self.assertNotIn(rules.WINDOW_POS_VAR.format("alpha"), self.cmds.vars)
 
 
 class TitleMouse(Seams):
@@ -290,7 +245,7 @@ class TitleMouse(Seams):
         self.mouse(title, QtCore.QEvent.MouseButtonRelease, (40, 8), target,
                    QtCore.Qt.NoButton)
         self.assertIsNone(popup.grab)
-        self.assertIn("skeldarHubPopupPos_alpha", self.cmds.vars)
+        self.assertIn(rules.WINDOW_POS_VAR.format("alpha"), self.cmds.vars)
 
     def test_a_move_without_the_button_does_nothing(self):
         popup = hubpop.open_popup("alpha")
@@ -321,18 +276,17 @@ class Memory(Seams):
         popup._grab((popup.root.x() + 1, popup.root.y() + 1))
         popup._drag((VIEW[0] + 333, VIEW[1] + 111))
         popup._drop()
-        remembered = popup.offset
+        remembered = popup.place
         hubpop.destroy_all(forget=False)
         hubpop.restore_later()
         self.run_deferred()
         again = hubpop._state()["popups"].get("alpha")
         self.assertIsNotNone(again)
-        self.assertEqual(rules.decode_offset(
-            self.cmds.vars["skeldarHubPopupPos_alpha"]), remembered)
-        self.assertEqual(again.offset, remembered)
+        self.assertEqual(rules.decode_place(
+            self.cmds.vars[rules.WINDOW_POS_VAR.format("alpha")]), remembered)
+        self.assertEqual(again.place, remembered)
         self.assertEqual((again.root.x(), again.root.y()),
-                         rules.origin_of(remembered, VIEW, again.root.width(),
-                                         again.root.height(), 1.0))
+                         (VIEW[0] + 332, VIEW[1] + 110))
 
     def test_a_restore_skips_a_section_the_hub_no_longer_has(self):
         self.cmds.vars["skeldarHubPopups"] = "gone,alpha"
@@ -345,10 +299,10 @@ class Memory(Seams):
         popup._grab((popup.root.x() + 1, popup.root.y() + 1))
         popup._drag((VIEW[0] + 400, VIEW[1] + 150))
         popup._drop()
-        remembered = popup.offset
+        remembered = popup.place
         hubpop.close_popup("alpha")
         again = hubpop.open_popup("alpha")
-        self.assertEqual(again.offset, remembered)
+        self.assertEqual(again.place, remembered)
 
 
     def test_adopt_destroys_the_old_popups_and_queues_the_restore(self):
@@ -362,10 +316,11 @@ class Memory(Seams):
 
 class Toggle(Seams):
 
-    def test_toggle_opens_then_closes(self):
+    def test_toggle_is_present(self):
+        self.assertIs(hubpop.toggle, hubpop.present)
         self.assertTrue(hubpop.toggle("alpha"))
-        self.assertFalse(hubpop.toggle("alpha"))
-        self.assertFalse(hubpop.is_open("alpha"))
+        self.assertTrue(hubpop.toggle("alpha"))
+        self.assertTrue(hubpop.is_open("alpha"))
 
 
 class Roll(TitleMouse):
@@ -472,12 +427,13 @@ class Motion(Seams):
         def no_burst():
             raise RuntimeError("no effect here")
 
-        with mock.patch.object(hubpop, "_burst_class", no_burst):
+        with mock.patch.object(hubpop.hubwindow, "burst_class", no_burst):
             popup = hubpop.open_popup("alpha", animate=True)
         self.assertLess(popup.root.windowOpacity(), 1.0)
+        place = (popup.root.x(), popup.root.y())
         settle(self, lambda: popup._open_anim is None)
         self.assertAlmostEqual(popup.root.windowOpacity(), 1.0)
-        self.assertEqual(popup.slide, 0.0)
+        self.assertEqual((popup.root.x(), popup.root.y()), place)   # it stands still
 
     def test_the_close_fades_out_and_leaves_the_list_at_once(self):
         popup = hubpop.open_popup("alpha")
@@ -519,7 +475,7 @@ class Motion(Seams):
         popup._grab((popup.root.x() + 1, popup.root.y() + 1))
         self.assertIsNone(popup._open_anim)
         self.assertEqual(popup.root.windowOpacity(), 1.0)
-        self.assertEqual(popup.slide, 0.0)
+        self.assertFalse(popup.bursting())
 
     def test_the_card_light_comes_up_under_the_mouse_and_goes_down(self):
         popup = hubpop.open_popup("alpha")
@@ -570,8 +526,7 @@ class Burst(Seams):
         self.assertTrue(popup.root.testAttribute(
             QtCore.Qt.WA_TransparentForMouseEvents))
         popup.root.grab()                       # one draw: the plan is made
-        settle(self, lambda: popup._open_anim is None)
-        self.assertFalse(popup.bursting())
+        settle(self, lambda: not popup.bursting())
         self.assertFalse(popup.root.testAttribute(
             QtCore.Qt.WA_TransparentForMouseEvents))
         self.assertGreater(popup.burst.draws, 0)
@@ -579,9 +534,15 @@ class Burst(Seams):
 
     def test_it_starts_as_a_small_shape_at_the_point_and_ends_whole(self):
         popup = hubpop.open_popup("alpha")
+        row = QtWidgets.QWidget()               # a row of the section: the fake builds none
+        row.setFixedHeight(60)
+        popup.body.addWidget(row)
+        row.show()
+        popup._fit()
         point = self.corner(popup)
-        popup.show_open(hubpop._rect_of("modelPanel1"), animate=True, origin=point)
-        popup._stop_anim("_open_anim")          # hold it, to look at moments
+        popup.show_open(animate=True, origin=point)
+        held, popup.burster.anim = popup.burster.anim, None
+        held.stop()                             # hold it, to look at moments
         effect = popup.burst
         w, h = popup.root.width(), popup.root.height()
         far = (w - 10, h - 6)
@@ -611,15 +572,13 @@ class Burst(Seams):
 
         popup = hubpop.open_popup("alpha")
         with mock.patch.object(hubpop.hubburst, "at", broken):
-            popup.show_open(hubpop._rect_of("modelPanel1"), animate=True,
-                            origin=self.corner(popup))
+            popup.show_open(animate=True, origin=self.corner(popup))
             image = popup.root.grab().toImage()
             self.assertTrue(popup.burst.broken)
             self.assertIn("ValueError", popup.burst.error)
             w, h = popup.root.width(), popup.root.height()
             self.assertGreater(image.pixelColor(w - 10, h - 6).alpha(), 0)
-            settle(self, lambda: popup._open_anim is None)
-        self.assertFalse(popup.bursting())
+            settle(self, lambda: not popup.bursting())
 
     def test_with_animations_off_nothing_bursts(self):
         with mock.patch.object(hubpop.hubmotion, "enabled", lambda: False):
@@ -643,9 +602,9 @@ class Burst(Seams):
         seen = []
         real = hubpop.Popup.show_open
 
-        def show_open(popup, rect, animate=False, origin=None):
+        def show_open(popup, animate=False, origin=None):
             seen.append(origin)
-            return real(popup, rect, animate=animate, origin=origin)
+            return real(popup, animate=animate, origin=origin)
 
         with mock.patch.object(hubpop.Popup, "show_open", show_open):
             hubpop.open_at("alpha", (300, 200))
@@ -730,13 +689,6 @@ class Resize(TitleMouse):
         self.assertEqual((popup.root.width(), popup.root.height()),
                          (width + 40, height + 30))
 
-    def test_the_popup_stays_inside_the_viewport_while_it_is_widened(self):
-        popup = hubpop.open_popup("alpha")
-        self.move_to(popup, VIEW[0] + 100, VIEW[1] + 100)
-        self.drag_grip(popup.grips[0], 5000, 0)
-        self.assertLessEqual(popup.root.x() + popup.root.width(),
-                             VIEW[0] + VIEW[2] - rules.MARGIN)
-
     def test_the_popup_cannot_be_dragged_narrower_than_its_minimum(self):
         popup = hubpop.open_popup("alpha")
         self.move_to(popup, VIEW[0] + 100, VIEW[1] + 100)
@@ -783,6 +735,84 @@ class Resize(TitleMouse):
                          (width, height))
         self.assertEqual(again.user_w, width)
         self.assertEqual(again.user_h, height)
+
+
+class Floating(Seams):
+    """2026-10-18: a window, free of the viewport."""
+
+    def test_a_window_opens_with_no_viewport_at_all(self):
+        popup = hubpop.open_popup("alpha")
+        self.assertIsNotNone(popup)
+        self.assertFalse(hasattr(popup, "panel") and popup.panel)
+
+    def test_with_no_place_it_stands_by_its_point(self):
+        popup = hubpop.open_popup("alpha", origin=(600, 400))
+        self.assertEqual((popup.root.x(), popup.root.y()), (600 - 18, 400 - 14))
+
+    def test_a_drag_may_leave_any_viewport_and_is_kept_on_its_screen(self):
+        popup = hubpop.open_popup("alpha", origin=(600, 400))
+        popup._grab((610, 405))
+        popup._drag((1900, 1030))
+        x, y = popup.root.x(), popup.root.y()
+        self.assertEqual(x + popup.root.width(), 1920)
+        self.assertEqual(y + popup.root.height(), 1040)
+        popup._drop()
+        self.assertIn(rules.WINDOW_POS_VAR.format("alpha"), self.cmds.vars)
+
+    def test_a_place_off_every_screen_is_dropped(self):
+        self.cmds.vars[rules.WINDOW_POS_VAR.format("alpha")] = "5000.00,100.00"
+        popup = hubpop.open_popup("alpha", origin=(600, 400))
+        self.assertEqual((popup.root.x(), popup.root.y()), (582, 386))
+
+    def test_the_old_viewport_offset_is_not_read(self):
+        self.cmds.vars[rules.POS_VAR.format("alpha")] = "10.00,10.00"
+        popup = hubpop.open_popup("alpha", origin=(600, 400))
+        self.assertEqual((popup.root.x(), popup.root.y()), (582, 386))
+
+    def test_present_on_a_standing_window_flashes_and_makes_no_copy(self):
+        first = hubpop.open_popup("alpha")
+        self.assertTrue(hubpop.present("alpha"))
+        self.assertIs(hubpop._state()["popups"]["alpha"], first)
+        self.assertGreater(first.frame.flash, 0.0)
+
+    def test_no_follow_timer_runs(self):
+        hubpop.open_popup("alpha")
+        self.assertIsNone(hubpop._state()["timer"])
+
+    def test_the_frame_is_look_b_with_pills(self):
+        popup = hubpop.open_popup("alpha")
+        self.assertIsInstance(popup.frame, hubwindow.frame_class())
+        names = [b.objectName() for b in popup.root.findChildren(hubwindow.pill_class())]
+        self.assertTrue(any(n.startswith("skeldarAnimPopupClose_") for n in names))
+        self.assertTrue(any(n.startswith("skeldarAnimPopupRoll_") for n in names))
+
+    def test_a_restore_needs_no_3d_view(self):
+        self.cmds.vars[rules.POPUPS_VAR] = "alpha"
+        self.cmds.vars[rules.WINDOW_POS_VAR.format("alpha")] = "300.00,200.00"
+        self.assertEqual(hubpop._restore(), ["alpha"])
+        popup = hubpop._state()["popups"]["alpha"]
+        self.assertEqual((popup.root.x(), popup.root.y()), (300, 200))
+
+    def test_the_roll_pill_shows_the_state(self):
+        popup = hubpop.open_popup("alpha")
+        self.assertEqual(popup.roll.icon_name, "chevron-down")
+        popup.toggle_roll()
+        self.assertEqual(popup.roll.icon_name, "chevron-right")
+
+    def test_the_notify_paints_the_floating_dot_too(self):
+        floated = []
+        self.hub.paint_floating = lambda key, on: floated.append((key, on))
+        hubpop.open_popup("alpha")
+        hubpop.close_popup("alpha")
+        self.assertEqual(floated, [("alpha", True), ("alpha", False)])
+
+    def test_open_at_closes_a_standing_window_and_opens_it_at_the_point(self):
+        first = hubpop.open_popup("alpha", origin=(1200, 700))
+        again = hubpop.open_at("alpha", (600, 400), animate=False)
+        self.assertIsNot(again, first)
+        self.assertEqual((again.root.x(), again.root.y()), (582, 386))
+        self.assertEqual(rules.decode_place(
+            self.cmds.vars[rules.WINDOW_POS_VAR.format("alpha")]), (582.0, 386.0))
 
 
 class Card(unittest.TestCase):

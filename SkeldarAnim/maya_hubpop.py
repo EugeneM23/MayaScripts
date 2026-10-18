@@ -1,38 +1,38 @@
-"""maya_hubpop - a section's copy in a popup window over the active viewport.
+"""maya_hubpop - a section's copy in a floating window of its own.
 
-2026-10-09 (spec: docs/superpowers/specs/2026-10-09-hub-section-popups-design.md).
-The animator: «для каждого из наших разделов ... кнопочка которая открывает
-копию раздела в окне вьюпорта ... перетаскивать эти попапы в пределах рабочего
-окна ... всегда следовали за окном».
+2026-10-18 (spec: docs/superpowers/specs/2026-10-18-floating-windows-design.md). The
+animator: «Попапы которые живут исключительно в рамках вьюпорта нам больше не нужны. Давай
+наш плагин будет теперь открывать обычные окна ... перерисуем наши окна и сделаем новые
+анимации в стиле таймслайдера».
 
-Each popup is a second build of a section (maya_hubcopy: its controls and
-callbacks run in a scope of their own) in a frameless Qt.Tool window owned by
-Maya's main window - the edge panel's pattern (maya_hubedge): above Maya, not
-above another application, gone with Maya when minimised. Inside, a card-like
-frame: the section's icon and name, a roll-up and a close button, and a scroll
-area holding the section's controls.
+Each window is a second build of a section (maya_hubcopy: its controls and callbacks run in
+a scope of their own) in a frameless Qt.Tool window owned by Maya's main window - above
+Maya, not above another application, gone with Maya when minimised. It is free of the
+viewport: a drag of its title row carries it anywhere, onto another monitor too, and it is
+kept wholly on the screen under the cursor (maya_hubpop_rules: screen_for, clamp_origin).
+Its place is its top-left in global logical px, remembered in rules.WINDOW_POS_VAR; a place
+whose title row stands on no screen any more is dropped, and with no place the window stands
+by the point it came from (rules.place_by_point). It needs no 3D view, so a restore at
+Maya's start waits only for Maya's main window.
 
-The review of the first design (2026-10-09, the same day): the window is see-
-through, so the card's rounded corners show the viewport and not a dark square;
-a rolled-up popup is its name alone; an expanded one is at most
-rules.MAX_HEIGHT tall and scrolls; opening, closing and rolling slide and fade
-(maya_hubmotion POPUP_*); a popup lights up under the mouse as a card does.
+Look B (maya_hubwindow): the hub's dark panel with a hairline, a 34 px title row - the
+section's icon in its group colour, its name in spaced capitals, the roll-up and close
+buttons as painted pills - and the section on a card inside. It bursts out of the point that
+was pressed and folds back into the one the close came from (maya_hubwindow.Burster, the
+Time Bar's burst). One window a section: a second ⧉ raises it and flashes it (`present`).
 
-The second pass of the review (2026-10-09, the same day): a rolled-up popup is as
-wide as its name; its edges drag to resize - the right edge the width, the bottom
-the height, the corner both; a double click gives a side back to automatic. The
-sizes are remembered per section (maya_hubpop_rules: SIZE_VAR, BAR_VAR).
+The 2026-10-09 history (spec: 2026-10-09-hub-section-popups-design.md): the window is see-
+through, so its rounded corners show what is behind; a rolled-up window is its name alone
+and as wide as it; an unrolled one is at most rules.MAX_HEIGHT tall and scrolls; its edges
+drag to resize (right, bottom, corner; a double click gives a side back), the sizes
+remembered per section (SIZE_VAR, BAR_VAR, COLLAPSED_VAR); it lights up under the mouse as a
+card does. Until 2026-10-18 it lived inside the active viewport, followed it 20 times a
+second and hid with its panel; that is gone.
 
-Its place is an offset from its viewport's top-left (maya_hubpop_rules: the
-clamp, the cascade, the stored text). A drag of the title row moves it and is
-clamped to the viewport's GL rectangle, so it cannot be carried onto another
-monitor; a 20 Hz timer keeps it on the viewport when Maya's window moves, and
-hides it while its panel is not visible.
-
-The state lives on `sys` (trap 111: an install purges our modules, and the
-popups must find the windows an older module object opened, to destroy them).
-Qt is imported lazily through maya_hubqt; the hub is imported lazily here too
-(maya_hub imports this module for its header button).
+The state lives on `sys` (trap 111: an install purges our modules, and the windows must find
+the ones an older module object opened, to destroy them). Qt is imported lazily through
+maya_hubqt; the hub is imported lazily here too (maya_hub imports this module for its card
+button).
 """
 
 import sys
@@ -46,23 +46,29 @@ import maya_hubmotion as hubmotion
 import maya_hubpop_rules as rules
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
+import maya_hubwindow as hubwindow
 
-FOLLOW_MS = 50            # the viewport is followed 20 times a second
-RESTORE_MS = 500          # a restore with no 3D view yet waits this long
+RESTORE_MS = 500          # a restore before Maya's main window stands waits this long
 RESTORE_TRIES = 60        # ... and gives up after this many tries (30 s)
+TITLE_H = 34              # logical px: the title row, room for a 30-tall pill (2026-10-18)
+FALLBACK_SCREEN = (0, 0, 1920, 1080)   # no screen known (no QGuiApplication yet)
+AT_CURSOR = rules.AT_CURSOR
 
 _CLASSES = {}
 
 
 def _state():
-    """The popups standing (by key, in opening order), the ones fading shut,
-    the follow timer and the restore's bookkeeping. On `sys` (trap 111)."""
+    """The windows standing (by key, in opening order), the ones folding shut and the
+    restore's bookkeeping. On `sys` (trap 111). `timer` is always None since 2026-10-18 (no
+    viewport to follow); an older module object may have left one running, and destroy_all
+    stops it."""
     st = getattr(sys, "_skeldar_hubpop", None)
     if st is None:
         st = {"popups": {}, "timer": None, "queued": False, "tries": 0,
               "restoring": False}
         sys._skeldar_hubpop = st
     st.setdefault("closing", [])
+    st.setdefault("timer", None)
     return st
 
 
@@ -100,59 +106,21 @@ def _main_window():
     return None
 
 
-GL_CLASS = "QmayaGLWidget"     # the model panel's native GL surface
-
-
-def model_panels():
-    """Every visible model panel, in Maya's own order."""
-    visible = cmds.getPanel(visiblePanels=True) or []
-    return [panel for panel in visible
-            if (cmds.getPanel(typeOf=panel) or "") == "modelPanel"]
-
-
-def active_panel():
-    """The focused model panel, else the first visible one, else None - where
-    a new popup goes (2026-10-09, «добавляется в активное окно»)."""
-    panels = model_panels()
-    if not panels:
-        return None
+def screens():
+    """Every screen's available geometry (x, y, w, h), the rectangles a window is kept on
+    (2026-10-18). Maya runs Qt at a device pixel ratio of 1 (trap 98), so these are the
+    physical pixels the windows move in. Never empty: with no screen known, FALLBACK_SCREEN
+    (rules.screen_for needs one)."""
+    found = []
     try:
-        focus = cmds.getPanel(withFocus=True)
+        q = hubqt.qt()
+        for screen in q.QtGui.QGuiApplication.screens():
+            g = screen.availableGeometry()
+            if g.width() > 0 and g.height() > 0:
+                found.append((g.x(), g.y(), g.width(), g.height()))
     except Exception:                                        # noqa: BLE001
-        focus = None
-    return focus if focus in panels else panels[0]
-
-
-def _gl_rect(panel):
-    """The panel's GL surface as (x, y, w, h) in global pixels, read while the
-    panel's wrapper is held and never handed out (trap 96)."""
-    q = hubqt.qt()
-    try:
-        import maya.OpenMayaUI as omui
-        pointer = omui.MQtUtil.findControl(panel)
-        if not pointer or q is None:
-            return None
-        holder = q.shiboken.wrapInstance(int(pointer), q.QtWidgets.QWidget)
-        for child in holder.findChildren(q.QtWidgets.QWidget):
-            try:
-                if (child.metaObject().className() != GL_CLASS
-                        or not child.isVisible()):
-                    continue
-                corner = child.mapToGlobal(q.QtCore.QPoint(0, 0))
-                return (corner.x(), corner.y(), child.width(), child.height())
-            except RuntimeError:          # a widget Maya deleted mid-walk
-                continue
-    except Exception:                                        # noqa: BLE001
-        return None
-    return None
-
-
-def _rect_of(panel):
-    """The panel's GL surface (x, y, w, h) in global pixels while the panel is
-    visible, else None."""
-    if not panel or panel not in model_panels():
-        return None
-    return _gl_rect(panel)
+        found = []
+    return found or [FALLBACK_SCREEN]
 
 
 def _global(event):
@@ -173,7 +141,7 @@ def _later(fn):
 
 
 def _animation(start, end, ms):
-    """A QVariantAnimation with no Qt parent: the popup keeps it and stops it
+    """A QVariantAnimation with no Qt parent: the window keeps it and stops it
     (a window deleted under a running animation must not take it along by
     parenthood)."""
     q = hubqt.qt()
@@ -247,201 +215,6 @@ def _title_class():
 
         _CLASSES["title"] = TitleRow
     return _CLASSES["title"]
-
-
-def _popup_frame_class():
-    """The popup's card frame (2026-10-09, «улучшим визуал рамки»): the card's
-    own paint (its light and its group's stripe) and, over it, a 1 px outline
-    in the hub's line colour, rounded like the card, a 2 px accent along the
-    top in the section's group colour, and a hairline under the title row. The
-    outline is painted, not a stylesheet border: a border would take layout
-    space the popup must not waste."""
-    if "frame" not in _CLASSES:
-        q = hubqt.qt()
-        base = hubqt._frame_class()
-
-        class PopupFrame(base):
-
-            def __init__(self, scale=1.0, parent=None):
-                super(PopupFrame, self).__init__(scale, parent)
-                self.title = None
-                self.accent = None
-
-            def paintEvent(self, event):                   # noqa: N802
-                super(PopupFrame, self).paintEvent(event)
-                _paint_outline(self, q)
-
-        _CLASSES["frame"] = PopupFrame
-    return _CLASSES["frame"]
-
-
-def _paint_outline(frame, q):
-    """The outline, the accent and the title's hairline of a popup frame. The
-    grey outline fades as the light comes up (2026-10-09): the orange ring takes
-    its place, as a lit card's does."""
-    s = frame.scale
-    painter = q.QtGui.QPainter(frame)
-    try:
-        painter.setRenderHint(q.QtGui.QPainter.Antialiasing, True)
-        radius = float(hubstyle.px(8, s))
-        line = q.QtGui.QColor(hubstyle.TOKENS["line"])
-        line.setAlphaF(max(0.0, 1.0 - float(getattr(frame, "level", 0.0))))
-        pen = q.QtGui.QPen(line)
-        pen.setWidthF(1.0)
-        painter.setPen(pen)
-        painter.setBrush(q.QtCore.Qt.NoBrush)
-        box = q.QtCore.QRectF(frame.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.drawRoundedRect(box, radius, radius)
-        if frame.accent:
-            top = q.QtCore.QRectF(radius, 0.0, box.width() - 2 * radius,
-                                  float(hubstyle.px(2, s)))
-            painter.fillRect(top, q.QtGui.QColor(frame.accent))
-        if frame.title is not None:
-            y = frame.title.geometry().bottom() + 1
-            hairline = q.QtGui.QColor(hubstyle.TOKENS["inset_line"])
-            pen.setColor(hairline)
-            painter.setPen(pen)
-            painter.drawLine(q.QtCore.QPointF(box.left() + radius / 2.0, y),
-                             q.QtCore.QPointF(box.right() - radius / 2.0, y))
-    finally:
-        painter.end()
-
-
-def _burst_class():
-    """The popup's burst (2026-10-17, maya_hubburst): a QGraphicsEffect on the card's frame,
-    DISABLED at rest so the frame paints as it always has (trap 204). While a burst runs it takes
-    the frame's picture once and draws it each tick: the whole picture, each row's place filled
-    with the card's face, each row's piece back at its opacity and scale, all of it masked by
-    the rounded shape and drawn at the face's opacity. Maya's controls are never touched; their
-    text is grayscale-antialiased only while the picture stands in (trap 202). A failure marks
-    it `broken` and the frame is drawn as it is from then on."""
-    if "burst" not in _CLASSES:
-        q = hubqt.qt()
-        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
-
-        class PopupBurst(QtWidgets.QGraphicsEffect):
-
-            def __init__(self, planner, parent=None):
-                super(PopupBurst, self).__init__(parent)
-                self.planner = planner      # opening -> (hubburst.Plan, (r, g, b) face)
-                self.opening = True
-                self.ms = 0.0
-                self.plan = None
-                self.face = None
-                self.pix = None
-                self.offset = QtCore.QPoint()
-                self.ratio = 1.0
-                self.draws = 0
-                self.broken = False
-                self.error = None
-                self._image = None
-                self._mask = None
-                self.setEnabled(False)
-
-            def begin(self, opening):
-                self.opening = opening
-                self.ms = 0.0
-                self.plan = None
-                self.pix = None
-                self.setEnabled(True)
-
-            def stop(self):
-                self.plan = None
-                self.pix = None
-                self._image = None
-                self._mask = None
-                self.setEnabled(False)
-
-            def done(self):
-                return self.broken or (self.plan is not None
-                                       and self.ms >= self.plan.total)
-
-            def draw(self, painter):
-                if self.broken:
-                    self.drawSource(painter)
-                    return
-                try:
-                    if not self._draw(painter):
-                        self.drawSource(painter)
-                except Exception:                            # noqa: BLE001
-                    self.broken = True
-                    self.error = traceback.format_exc()
-                    self.drawSource(painter)
-
-            def _take(self):
-                offset = QtCore.QPoint()
-                pix = self.sourcePixmap(QtCore.Qt.DeviceCoordinates, offset,
-                                        QtWidgets.QGraphicsEffect.NoPad)
-                if pix.isNull():
-                    return False
-                inner = self.sourceBoundingRect(QtCore.Qt.LogicalCoordinates)
-                self.pix = pix
-                self.offset = QtCore.QPoint(offset)
-                self.ratio = pix.width() / max(1.0, float(inner.width()))
-                self.plan, self.face = self.planner(self.opening)
-                fmt = QtGui.QImage.Format_ARGB32_Premultiplied
-                self._image = QtGui.QImage(pix.width(), pix.height(), fmt)
-                self._mask = QtGui.QImage(pix.width(), pix.height(), fmt)
-                return True
-
-            def _draw(self, painter):
-                if self.pix is None and not self._take():
-                    return False
-                if self.plan is None:
-                    return False
-                k = self.ratio
-                state = hubburst.at(self.plan, self.ms)
-                face = QtGui.QColor(*self.face)
-                image = self._image
-                image.fill(0)
-                p = QtGui.QPainter(image)
-                try:
-                    p.drawPixmap(0, 0, self.pix)
-                    rects = [QtCore.QRectF(r[0] * k, r[1] * k, r[2] * k, r[3] * k)
-                             for r in self.plan.parts]
-                    for rect in rects:
-                        p.fillRect(rect, face)
-                    p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
-                    for rect, piv, (op, sc) in zip(rects, self.plan.pivots, state.parts):
-                        if op <= 0.002:
-                            continue
-                        px, py = rect.left() + piv[0] * k, rect.top() + piv[1] * k
-                        p.save()
-                        p.setOpacity(min(1.0, op))
-                        p.translate(px, py)
-                        p.scale(sc, sc)
-                        p.translate(-px, -py)
-                        p.drawPixmap(rect, self.pix, rect)
-                        p.restore()
-                    mask = self._mask
-                    mask.fill(0)
-                    m = QtGui.QPainter(mask)
-                    try:
-                        m.setRenderHint(QtGui.QPainter.Antialiasing, True)
-                        m.setPen(QtCore.Qt.NoPen)
-                        m.setBrush(QtGui.QColor(0, 0, 0))
-                        x0, y0, x1, y1 = state.shape
-                        r = state.radius * k
-                        m.drawRoundedRect(QtCore.QRectF(x0 * k, y0 * k, (x1 - x0) * k,
-                                                        (y1 - y0) * k), r, r)
-                    finally:
-                        m.end()
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_DestinationIn)
-                    p.drawImage(0, 0, mask)
-                finally:
-                    p.end()
-                painter.save()
-                try:
-                    painter.setWorldTransform(QtGui.QTransform())
-                    painter.setOpacity(max(0.0, min(1.0, state.face)))
-                    painter.drawImage(self.offset, image)
-                finally:
-                    painter.restore()
-                self.draws += 1
-                return True
-
-        _CLASSES["burst"] = PopupBurst
-    return _CLASSES["burst"]
 
 
 def _cursor_point():
@@ -604,40 +377,38 @@ def _arrow():
 
 
 class Popup(object):
-    """One section's popup: its scope, its window and the place it stands."""
+    """One section's floating window: its scope, its window and the place it stands."""
 
-    def __init__(self, key, sec, panel, scale):
+    def __init__(self, key, sec, scale):
         self.key = key
         self.sec = sec
-        self.panel = panel
         self.scale = scale
         self.scope = None
         self.root = None
         self.title = None
         self.subtitle_slot = None
+        self.card = None          # the content's card (look B), holding the scroll area
         self.scroll = None
         self.content = None
         self.body = None
-        self.offset = None        # logical, from the viewport's top-left
+        self.place = None         # the window's top-left, global logical px (2026-10-18)
         self.grab = None          # a drag's cursor offset in the window
-        self.hidden = False
         self.frame = None
         self.column = None
-        self.roll = None          # the roll-up button in the title row
+        self.roll = None          # the roll-up pill in the title row
         self.collapsed = False    # rolled up to its name (2026-10-09)
-        self.slide = 0.0          # physical px still offset down while opening
         self._hover = None        # the window's Enter / Leave watcher
         self._light_anim = None   # the card light fading (frame.level)
+        self._flash_anim = None   # a second ⧉'s flash (frame.flash, 2026-10-18)
         self._roll_anim = None    # the window sliding to its rolled height
-        self._open_anim = None    # the window fading and rising in
-        self._fade = None         # the window fading out (closing)
+        self._open_anim = None    # the window fading in (no burst)
+        self._fade = None         # the window fading out (closing, no burst)
         self.user_w = None        # the width the animator dragged (logical; None = automatic)
         self.user_h = None        # the height dragged, unrolled (logical; None = automatic)
-        self.bar_w = None         # a rolled-up popup's width dragged (logical; None = its name's)
+        self.bar_w = None         # a rolled-up window's width dragged (logical; None = its name's)
         self.grips = []           # the edge strips: right, bottom, corner (2026-10-09)
-        self._grip_start = None   # a resize drag in progress: (point, w, h, viewport rect)
-        self.burst = None         # the frame's burst effect (2026-10-17, made on the first burst)
-        self._origin = None       # the global point a burst comes from or goes to
+        self._grip_start = None   # a resize drag in progress: (point, w, h, screen rect)
+        self.burster = None       # maya_hubwindow.Burster on the frame (2026-10-18)
 
     # ------------------------------------------------------------ state
 
@@ -650,6 +421,11 @@ class Popup(object):
         except Exception:                                    # noqa: BLE001
             return False
 
+    @property
+    def burst(self):
+        """The frame's burst effect, None until the first burst (held by the Burster)."""
+        return self.burster.effect if self.burster is not None else None
+
     # ------------------------------------------------------------ build
 
     def _window(self):
@@ -658,121 +434,119 @@ class Popup(object):
         Qt = q.QtCore.Qt
         s = self.scale
         tag = self.scope.tag
+        tokens = hubstyle.TOKENS
         px = lambda n: hubstyle.px(n, s)                    # noqa: E731
         root = w.QWidget(_main_window(), Qt.Tool | Qt.FramelessWindowHint)
         root.setObjectName(hubstyle.POPUP_ROOT + "_" + tag)
         root.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        #  See-through (2026-10-09): the card's rounded corners show the
-        #  viewport. The root is a plain QWidget, whose stylesheet background
-        #  is not drawn - the palette's is, and that was the dark square
-        #  behind the corners.
+        #  See-through (2026-10-09): the frame's rounded corners show what is behind.
+        #  The root is a plain QWidget, whose stylesheet background is not drawn - the
+        #  palette's is, and that was the dark square behind the corners.
         root.setAttribute(Qt.WA_TranslucentBackground, True)
         outer = w.QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        #  the card's frame; its border is the painted outline's (see
-        #  _popup_frame_class), so the frame is exactly its content
-        frame = hubqt._named(_popup_frame_class()(s),
-                             "skeldarAnimPopupFrame_" + tag)
-        frame.setProperty("skCard", True)
-        colour = hubstyle.group(self.sec.group).colour
-        frame.accent = colour
+        #  look B (2026-10-18, maya_hubwindow): the panel with its hairline, the card inside
+        frame = hubqt._named(hubwindow.frame_class()(s), "skeldarAnimPopupFrame_" + tag)
         outer.addWidget(frame)
         self.frame = frame
         column = w.QVBoxLayout(frame)
-        #  the least height around the title (2026-10-09, «короче»)
-        column.setContentsMargins(px(3), px(2), px(3), px(2))
+        column.setContentsMargins(px(5), 0, px(5), px(5))
         column.setSpacing(0)
         self.column = column
 
         self.title = hubqt._named(
             _title_class()(self._grab, self._drag, self._drop,
-                           lambda: self.toggle_roll(animate=True), root),
-            "skeldarAnimPopupTitle_" + tag, "cardhead")
-        frame.title = self.title
-        self.title.setSizePolicy(w.QSizePolicy.Preferred,
-                                 w.QSizePolicy.Fixed)
+                           lambda: self.toggle_roll(animate=True), frame),
+            "skeldarAnimPopupTitle_" + tag)
+        self.title.setFixedHeight(px(TITLE_H))
+        self.title.setSizePolicy(w.QSizePolicy.Preferred, w.QSizePolicy.Fixed)
         row = w.QHBoxLayout(self.title)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(px(5))
-        chip_label = w.QLabel()
-        chip_label.setFixedSize(px(16), px(16))
-        chip_label.setAlignment(Qt.AlignCenter)
-        chip_label.setPixmap(hubqt.pixmap(self.sec.icon, colour, px(11)))
-        chip_label.setStyleSheet("background: {0}; border-radius: {1}px;"
-                                 .format(hubstyle.group(self.sec.group).chip,
-                                         px(4)))
-        title_label = hubqt._named(w.QLabel(self.sec.label),
-                                   "skeldarAnimPopupName_" + tag, "cardtitle")
+        row.setContentsMargins(px(5), 0, 0, 0)
+        row.setSpacing(px(6))
+        colour = hubstyle.group(self.sec.group).colour
+        icon = w.QLabel()
+        icon.setObjectName("skeldarAnimPopupIcon_" + tag)
+        icon.setPixmap(hubqt.pixmap(self.sec.icon, colour, px(15)))
+        icon.setStyleSheet("background: transparent;")
+        name = hubqt._named(w.QLabel(self.sec.label.upper()),
+                            "skeldarAnimPopupName_" + tag)
+        #  the heading role's look: spaced capitals, bold, muted, at the caption size
+        name.setStyleSheet(
+            "color: {0}; font-weight: bold; letter-spacing: 1px; font-size: {1}px; "
+            "background: transparent;".format(tokens["muted"], hubstyle.px(8.5, s)))
         self.subtitle_slot = hubqt._named(w.QWidget(),
                                           "skeldarAnimPopupSub_" + tag)
         self.subtitle_slot.setSizePolicy(w.QSizePolicy.Ignored,
                                          w.QSizePolicy.Preferred)
         sub = w.QHBoxLayout(self.subtitle_slot)
         sub.setContentsMargins(0, 0, 0, 0)
-        close = hubqt._named(w.QToolButton(), "skeldarAnimPopupClose_" + tag,
-                             "popclose")
-        close.setIcon(hubqt.icon("x", hubstyle.TOKENS["muted"], px(12)))
-        close.setIconSize(q.QtCore.QSize(px(12), px(12)))
-        close.setAutoRaise(True)
-        close.setFixedSize(px(18), px(16))
-        close.setCursor(Qt.PointingHandCursor)
-        close.setToolTip("Close the popup - the section stays in the hub")
-        close.clicked.connect(lambda *_a, k=self.key: _defer_close(k))
-        #  roll up / unroll (2026-10-09): the chevron as the card's own, down
-        #  while open, right while rolled up; a click on the name does the same
-        self.roll = hubqt._named(w.QToolButton(),
-                                 "skeldarAnimPopupRoll_" + tag, "poproll")
-        self.roll.setAutoRaise(True)
-        self.roll.setFixedSize(px(18), px(16))
-        self.roll.setCursor(Qt.PointingHandCursor)
+        #  roll up / unroll (2026-10-09): the chevron, down while open, right while rolled
+        #  up; a click on the name does the same. Painted pills since 2026-10-18.
+        pill = hubwindow.pill_class()
+        self.roll = hubqt._named(pill("chevron-down", s), "skeldarAnimPopupRoll_" + tag)
         self.roll.clicked.connect(lambda *_a: self.toggle_roll(animate=True))
-        row.addWidget(chip_label)
-        row.addWidget(title_label)
+        close = hubqt._named(pill("x", s), "skeldarAnimPopupClose_" + tag)
+        close.setToolTip("Close the window - the section stays in the hub")
+        close.clicked.connect(lambda *_a, k=self.key: _defer_close(k))
+        row.addWidget(icon)
+        row.addWidget(name)
         row.addWidget(self.subtitle_slot, 1)
         row.addWidget(self.roll)
         row.addWidget(close)
         column.addWidget(self.title)
         self._paint_roll()
 
+        #  the section stands on its own card (look B), the scroll area inside it
+        self.card = w.QFrame()
+        self.card.setObjectName("skeldarAnimPopupCard_" + tag)
+        frame.content = self.card
+        card_column = w.QVBoxLayout(self.card)
+        card_column.setContentsMargins(px(4), px(4), px(4), px(4))
+        card_column.setSpacing(0)
         self.scroll = w.QScrollArea()
         #  its own name (2026-10-09): the hub's scroll area is found by its
-        #  name, and a popup's must not be
+        #  name, and a window's must not be
         self.scroll.setObjectName("skeldarAnimPopupScroll_" + tag)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(w.QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        #  a roll slides the scroll area to nothing, so it has no minimum
+        #  a roll slides the scroll area to nothing, so it has no minimum: Ignored, as
+        #  setMinimumHeight(0) reads as "unset" and QScrollArea's own minimum (48 px)
+        #  held the card, and so the window, taller than a dragged height (2026-10-18)
         self.scroll.setMinimumHeight(0)
+        self.scroll.setSizePolicy(w.QSizePolicy.Preferred, w.QSizePolicy.Ignored)
+        self.card.setSizePolicy(w.QSizePolicy.Preferred, w.QSizePolicy.Ignored)
         #  the viewport paints nothing: the card's face shows through it
         self.scroll.viewport().setAutoFillBackground(False)
         self.content = hubqt._named(w.QWidget(),
                                     "skeldarAnimPopupBody_" + tag, "popbody")
         self.body = w.QVBoxLayout(self.content)
         self.body.setObjectName("skeldarAnimPopupBodyLayout_" + tag)
-        self.body.setContentsMargins(0, px(2), 0, 0)
+        self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setSpacing(0)
         self.scroll.setWidget(self.content)
-        column.addWidget(self.scroll, 1)
+        card_column.addWidget(self.scroll, 1)
+        column.addWidget(self.card, 1)
 
         sheet = hubstyle.stylesheet(s, arrow=_arrow())
-        #  the card's own 2 px border is the painted outline's (see
-        #  _popup_frame_class): none here, so the frame is exactly its content;
-        #  the scroll area and its body paint nothing of their own
+        #  the frame and the card paint themselves (maya_hubwindow); the scroll area and
+        #  its body paint nothing of their own
         root.setStyleSheet(
             sheet
-            + "\n#{0} {{ border: none; }}\n"
+            + "\n#{0} {{ border: none; background: transparent; }}\n"
               "QScrollArea#{1} {{ background: transparent; border: none; }}\n"
               "#{2} {{ background: transparent; }}".format(
                   frame.objectName(), self.scroll.objectName(),
                   self.content.objectName()))
+        hubwindow.dress(frame, s)
         self.root = root
         #  the light: the window's Enter and Leave (2026-10-09, as a card's)
         self._hover = _hover_class()(self._on_hover, root)
         root.installEventFilter(self._hover)
         #  the edges a drag resizes (2026-10-09, «изменять размер перетягивая за край»):
         #  thin strips above the frame - right (the width), bottom (the height), corner
-        #  (both); a rolled-up popup has its right strip only (_place_grips)
+        #  (both); a rolled-up window has its right strip only (_place_grips)
         self.grips = []
         for kind in ("right", "bottom", "corner"):
             grip = _grip_class()(
@@ -792,6 +566,8 @@ class Popup(object):
             hubcopy.install(cmds)
         self.scope = hubcopy.new_scope(section=self.key)
         self._window()
+        self.burster = hubwindow.Burster(self.frame, self._burst_parts,
+                                         self._burst_face, self.scale)
         card = PopupCard(self.subtitle_slot, self.title)
         hubstyle.take_marks()
         hubstyle.set_skinning(True)
@@ -807,15 +583,38 @@ class Popup(object):
         self.collapsed = stored_collapsed(self.key)
         self.user_w, self.user_h = stored_size(self.key)
         self.bar_w = stored_bar(self.key)
-        self.scroll.setVisible(not self.collapsed)
+        self._show_body(not self.collapsed)
         self._paint_roll()
         self._fit()
+
+    def _show_body(self, on):
+        """The section's card shown or hidden (rolled up): hidden, not destroyed."""
+        for widget in (self.card, self.scroll):
+            if widget is not None:
+                widget.setVisible(bool(on))
 
     def _chrome(self):
         """The height that is not the section: the title row and the frame's
         own margins (2026-10-09)."""
         margins = self.column.contentsMargins()
-        return margins.top() + margins.bottom() + self.title.sizeHint().height()
+        title_h = max(self.title.sizeHint().height(), self.title.minimumHeight())
+        return margins.top() + margins.bottom() + title_h
+
+    def _sides(self):
+        """The width round the section: the frame's and the card's side margins."""
+        margins = self.column.contentsMargins()
+        inner = self.card.layout().contentsMargins() if self.card is not None else None
+        width = margins.left() + margins.right()
+        if inner is not None:
+            width += inner.left() + inner.right()
+        return width
+
+    def _card_pad(self):
+        """The card's own top and bottom margins, round the scroll area."""
+        if self.card is None:
+            return 0
+        inner = self.card.layout().contentsMargins()
+        return inner.top() + inner.bottom()
 
     def _target(self, rect):
         """The (w, h) the window takes in `rect` now (rules.popup_size), the
@@ -830,20 +629,29 @@ class Popup(object):
         else:
             user_w, user_h = self.user_w, self.user_h
         return rules.popup_size(
-            self.content.minimumSizeHint().width(), hint.height(), rect,
+            self.content.minimumSizeHint().width() + self._sides(),
+            hint.height() + self._card_pad(), rect,
             self.scale, self._chrome(), collapsed=self.collapsed,
             scrollbar_w=hubstyle.px(12, self.scale),
             title_w=self._title_width(), user_w=user_w, user_h=user_h)
 
+    def _centre(self):
+        """The window's centre, global physical px."""
+        if self.root is None:
+            return (0, 0)
+        return (self.root.x() + self.root.width() // 2,
+                self.root.y() + self.root.height() // 2)
+
+    def _screen(self):
+        """The available rectangle of the screen the window stands on (2026-10-18)."""
+        return rules.screen_for(self._centre(), screens())
+
     def _fit(self, keep_place=False):
-        """The window's size (2026-10-09, «минимум лишнего места»): the
-        section's own natural size, within its viewport's rect and the cap -
-        rolled up, the title row alone. `keep_place`: a roll-up or unroll keeps
-        the window where it stands, clamped into the viewport (the offset is what
-        is remembered, so it comes back when there is room). With no panel
-        known, the section's size alone."""
-        panel_rect = _rect_of(self.panel)
-        rect = panel_rect or (0, 0, 10000, 10000)
+        """The window's size (2026-10-09, «минимум лишнего места»): the section's own
+        natural size, within its screen less the margins and the cap - rolled up, the
+        title row alone. `keep_place`: the window is kept where it stands, clamped onto
+        its screen (a roll-up or unroll, 2026-10-18)."""
+        rect = self._screen()
         w, h = self._target(rect)
         #  The window's minimum is the layout's, and it is updated when Maya's
         #  event loop runs: a roll-up measured in the same send kept the expanded
@@ -851,12 +659,21 @@ class Popup(object):
         #  cleared first, so this resize is the one taken; the layout sets its own
         #  minimum again.
         self._set_size(w, h)
-        if keep_place and panel_rect is not None:
-            self._place_at(panel_rect)
+        if keep_place:
+            self._keep_on(rect)
+
+    def _keep_on(self, rect):
+        """The window clamped wholly onto `rect`; moved only when it is not there."""
+        if self.root is None:
+            return
+        w, h = self.root.width(), self.root.height()
+        x, y = rules.clamp_origin(self.root.x(), self.root.y(), w, h, rect)
+        if (self.root.x(), self.root.y()) != (x, y):
+            self.root.move(x, y)
 
     def _title_width(self):
         """The title row's own width with the frame's side margins: the width a
-        rolled-up popup takes to show its name (2026-10-09)."""
+        rolled-up window takes to show its name (2026-10-09)."""
         margins = self.column.contentsMargins()
         return margins.left() + margins.right() + self.title.sizeHint().width()
 
@@ -891,19 +708,16 @@ class Popup(object):
         right.show()
 
     def _grip_drag(self, kind, point, start):
-        """A resize drag's press (`start`: the window's size and the viewport are
-        taken then) and its moves: the new size from the cursor, bounded by
-        rules.bounds, so the far edges stay inside the viewport. The size is the
-        window's own memory, logical (2026-10-09)."""
+        """A resize drag's press (`start`: the window's size and its screen are taken
+        then) and its moves: the new size from the cursor, bounded by rules.bounds, so
+        the far edges stay on the screen. The size is the window's own memory, logical
+        (2026-10-09; the screen in place of the viewport since 2026-10-18)."""
         if self.root is None:
             return
         if start:
             self._settle()
-            rect = _rect_of(self.panel)
-            if rect is None:
-                self._grip_start = None
-                return
-            self._grip_start = (point, self.root.width(), self.root.height(), rect)
+            self._grip_start = (point, self.root.width(), self.root.height(),
+                                self._screen())
             return
         if self._grip_start is None:
             return
@@ -914,7 +728,7 @@ class Popup(object):
         if kind in ("bottom", "corner") and not self.collapsed:
             new_h = h0 + (point[1] - y0)
         low_w, high_w, low_h, high_h = rules.bounds(
-            self.content.minimumSizeHint().width(), rect, self.scale,
+            self.content.minimumSizeHint().width() + self._sides(), rect, self.scale,
             self._chrome(), collapsed=self.collapsed,
             scrollbar_w=hubstyle.px(12, self.scale),
             title_w=self._title_width(),
@@ -959,21 +773,8 @@ class Popup(object):
         _save_popup_size(self.key, self.user_w, self.user_h)
         _save_popup_bar(self.key, self.bar_w)
 
-    def _place_at(self, rect):
-        """The window at its offset in `rect` - moved down by the opening's
-        slide while that runs - clamped inside the viewport. Moved only when
-        it is not already there."""
-        if self.root is None or self.offset is None:
-            return
-        w, h = self.root.width(), self.root.height()
-        x, y = rules.origin_of(self.offset, rect, w, h, self.scale)
-        x, y = rules.clamp_origin(x, y + self.slide, w, h, rect)
-        pos = self.root.pos()
-        if (pos.x(), pos.y()) != (x, y):
-            self.root.move(x, y)
-
     def set_collapsed(self, on, remember=True, animate=False):
-        """Roll the popup up to its name, or unroll it (2026-10-09). `animate`
+        """Roll the window up to its name, or unroll it (2026-10-09). `animate`
         (and the Interface animations on): the window slides to its new height;
         else at once. The section's controls are hidden, not destroyed, so
         nothing it holds is lost. Remembered for the next start unless
@@ -989,8 +790,7 @@ class Popup(object):
                 self._roll_to(on)
             else:
                 self._stop_anim("_roll_anim")
-                if self.scroll is not None:
-                    self.scroll.setVisible(not on)
+                self._show_body(not on)
                 self._fit(keep_place=True)
         if remember:
             _save_collapsed(self.key, on)
@@ -998,17 +798,13 @@ class Popup(object):
 
     def _roll_to(self, on):
         """The window slides to its rolled height or its unrolled one (2026-10-09,
-        «плавная анимация»): its height eased from where it stands, its top kept,
-        the scroll area shown while it opens and hidden once it has shut. The
-        target is measured once, at the start."""
+        «плавная анимация»): its height eased from where it stands, its top kept (and
+        the window kept on its screen), the card shown while it opens and hidden once
+        it has shut. The target is measured once, at the start."""
         self._stop_anim("_roll_anim")
-        rect = _rect_of(self.panel)
-        if rect is None:
-            self.scroll.setVisible(not on)
-            self._fit(keep_place=True)
-            return
+        rect = self._screen()
         if not on:
-            self.scroll.setVisible(True)
+            self._show_body(True)
         w, target = self._target(rect)
         start, start_w = self.root.height(), self.root.width()
         if target == start and w == start_w:
@@ -1025,7 +821,7 @@ class Popup(object):
             k = hubmotion.ease(value)
             self._set_size(hubmotion.lerp(start_w, w, k),
                            hubmotion.lerp(start, target, k))
-            self._place_at(rect)
+            self._keep_on(rect)
 
         def done():
             self._roll_anim = None
@@ -1037,69 +833,72 @@ class Popup(object):
         anim.start()
 
     def _roll_done(self, on):
-        """The end of a roll: a shut popup's scroll area hidden, its size exact."""
+        """The end of a roll: a shut window's card hidden, its size exact."""
         if self.root is None:
             return
-        if on and self.scroll is not None:
-            self.scroll.setVisible(False)
+        if on:
+            self._show_body(False)
         self._fit(keep_place=True)
 
     def toggle_roll(self, animate=False):
-        """The roll-up button's press, or a click on the title row (animated
+        """The roll-up pill's press, or a click on the title row (animated
         there). Answers the new state."""
         return self.set_collapsed(not self.collapsed, animate=animate)
 
     def _paint_roll(self):
-        """The chevron as the hub's cards draw theirs: down while open, right
-        while rolled up."""
+        """The roll pill's chevron as the hub's cards draw theirs: down while open,
+        right while rolled up."""
         if self.roll is None:
             return
-        q = hubqt.qt()
-        name = "chevron-right" if self.collapsed else "chevron-down"
-        size = hubstyle.px(12, self.scale)
-        self.roll.setIcon(hubqt.icon(name, hubstyle.TOKENS["muted"], size))
-        self.roll.setIconSize(q.QtCore.QSize(size, size))
+        self.roll.set_icon("chevron-right" if self.collapsed else "chevron-down")
         self.roll.setToolTip("Unroll" if self.collapsed
                              else "Roll up to the name")
 
+    # ------------------------------------------------------------ place
+
+    def place_window(self, origin=None):
+        """The window's top-left: its remembered place when that still falls on a screen,
+        else by `origin` (the point it came from; the cursor when None) - 2026-10-18. Then
+        it is sized for the screen it stands on, and the place it took is its `place`."""
+        w, h = self.root.width(), self.root.height()
+        shown = screens()
+        x_y = None
+        if self.place is not None:
+            x_y = rules.place_on_screens(self.place, w, h, shown, self.scale)
+        if x_y is None:
+            point = origin or _cursor_point() or (shown[0][0] + 100, shown[0][1] + 100)
+            x_y = rules.place_by_point(point, w, h, shown, self.scale)
+        self.root.move(int(x_y[0]), int(x_y[1]))
+        self._fit(keep_place=True)
+        self.place = (self.root.x() / self.scale, self.root.y() / self.scale)
+
     # ------------------------------------------------------- open and close
 
-    def show_open(self, rect, animate=False, origin=None):
-        """Show the window: at once, or (2026-10-17) bursting out of the global `origin` - the
-        cursor when None (maya_hubburst). A burst that cannot start falls back to the fade and
-        rise of 2026-10-09 (POPUP_SLIDE logical px, POPUP_OPEN_MS)."""
+    def show_open(self, animate=False, origin=None):
+        """Show the window: at once, or bursting out of the global `origin` - the cursor
+        when None (maya_hubwindow.Burster, 2026-10-17/18). A burst that cannot start falls
+        back to a fade (POPUP_OPEN_MS); the window stands still while it fades."""
         self._stop_anim("_open_anim")
         self._end_burst()
-        self.slide = 0.0
         self.root.setWindowOpacity(1.0)
         if not animate:
             self.root.show()
             return
         if self._burst(True, origin, self._opened):
-            self._place_at(rect)
             self.root.show()
             return
-        slide = float(hubstyle.px(hubmotion.POPUP_SLIDE, self.scale))
-        self.slide = slide
         self.root.setWindowOpacity(0.0)
         self.root.show()
-        self._place_at(rect)
         anim = _animation(0.0, 1.0, hubmotion.POPUP_OPEN_MS)
 
         def tick(value):
-            if self.root is None:
-                return
-            k = hubmotion.ease(value)
-            self.root.setWindowOpacity(k)
-            self.slide = (1.0 - k) * slide
-            self._place_at(rect)
+            if self.root is not None:
+                self.root.setWindowOpacity(hubmotion.ease(value))
 
         def done():
             self._open_anim = None
             if self.root is not None:
-                self.slide = 0.0
                 self.root.setWindowOpacity(1.0)
-                self._place_at(rect)
 
         anim.valueChanged.connect(tick)
         anim.finished.connect(done)
@@ -1107,11 +906,12 @@ class Popup(object):
         anim.start()
 
     def fade_out(self, done, origin=None):
-        """Fold the window into the global `origin` (2026-10-17, the cursor when None), else fade
-        it out (2026-10-09, POPUP_CLOSE_MS), then call `done`. Its controls take no press
-        meanwhile."""
+        """Fold the window into the global `origin` (2026-10-17, the cursor when None), else
+        fade it out (2026-10-09, POPUP_CLOSE_MS), then call `done`. Its controls take no
+        press meanwhile."""
         self._stop_anim("_open_anim")
         self._stop_anim("_roll_anim")
+        self._stop_anim("_flash_anim")
         if self.root is None:
             done()
             return
@@ -1170,6 +970,40 @@ class Popup(object):
         self._light_anim = anim
         anim.start()
 
+    def flash(self):
+        """A second ⧉ on a standing window (2026-10-18): it is raised and flashes as a
+        chosen card does (maya_hubqt.Card.pulse) - the flash from its peak down to 0 over
+        the rest of hubmotion.FLASH_MS. With the Interface animations off it is only
+        raised."""
+        if not self.alive():
+            return
+        try:
+            self.root.raise_()
+        except RuntimeError:
+            return
+        self._stop_anim("_flash_anim")
+        frame = self.frame
+        if frame is None or not hubmotion.enabled() or not frame.isVisible():
+            return
+        rise = hubmotion.FLASH_RISE
+        frame.flash = 1.0
+        frame.update()
+        anim = _animation(rise, 1.0, hubmotion.FLASH_MS * (1.0 - rise))
+
+        def tick(value):
+            frame.flash = hubmotion.flash_at(value)
+            frame.update()
+
+        def done():
+            self._flash_anim = None
+            frame.flash = 0.0
+            frame.update()
+
+        anim.valueChanged.connect(tick)
+        anim.finished.connect(done)
+        self._flash_anim = anim
+        anim.start()
+
     def _on_hover(self, entered):
         if self.bursting():
             return              # the light waits for the burst (2026-10-17)
@@ -1178,77 +1012,34 @@ class Popup(object):
     # ------------------------------------------------------------- burst
 
     def bursting(self):
-        effect = self.burst
-        try:
-            return bool(effect is not None and effect.isEnabled())
-        except RuntimeError:                                  # its frame is gone
-            return False
-
-    def _burst_effect(self):
-        """The frame's burst effect, made and set once (held: trap 201)."""
-        if self.burst is not None:
-            return self.burst
-        if self.frame is None:
-            return None
-        effect = _burst_class()(self._burst_plan)
-        self.frame.setGraphicsEffect(effect)
-        self.burst = effect
-        return effect
+        return bool(self.burster is not None and self.burster.busy())
 
     def _burst(self, opening, origin, done):
         """Start a burst (`opening`) or a fold toward the global `origin` (the cursor when
-        None); `done` is called when it ends. False when it cannot start."""
+        None); `done` is called when it ends. False when it cannot start (the Burster's
+        rule: animations off, no frame, a failure)."""
+        if self.burster is None or self.root is None:
+            return False
+        q = hubqt.qt()
+        self._stop_anim("_light_anim")
+        point = origin or _cursor_point() or (self.root.x(), self.root.y())
+        self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
         try:
-            effect = self._burst_effect()
-            if effect is None:
-                return False
-            q = hubqt.qt()
-            self._stop_anim("_light_anim")
-            self._origin = origin if origin is not None else _cursor_point()
-            if self._origin is None:
-                self._origin = (self.root.x(), self.root.y())
-            self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
-            effect.begin(opening)
-            self.frame.update()
+            started = self.burster.run(opening, point, done)
         except Exception:                                    # noqa: BLE001
             traceback.print_exc()
+            started = False
+        if not started:
             self._end_burst()
-            return False
-        slot = "_open_anim" if opening else "_fade"
-        anim = _animation(0.0, 1.0, hubburst.MAX_MS)
-
-        def finish():
-            if getattr(self, slot) is not anim:
-                return
-            setattr(self, slot, None)
-            done()
-
-        def tick(value):
-            if self.root is None or self.burst is None:
-                return
-            try:
-                effect.ms = value * hubburst.MAX_MS
-                self.frame.update()
-                if effect.done():
-                    anim.stop()
-                    finish()
-            except RuntimeError:                              # the window is gone
-                pass
-
-        anim.valueChanged.connect(tick)
-        anim.finished.connect(finish)
-        setattr(self, slot, anim)
-        anim.start()
-        return True
+        return started
 
     def _end_burst(self):
         """The frame painted as it is again, the window taking presses."""
-        effect = self.burst
-        if effect is not None:
+        if self.burster is not None:
             try:
-                effect.stop()
+                self.burster.stop(quiet=True)
             except RuntimeError:
-                self.burst = None
+                pass
         if self.root is not None:
             q = hubqt.qt()
             try:
@@ -1274,18 +1065,10 @@ class Popup(object):
                 pass
         done()
 
-    def _burst_plan(self, opening):
-        """The burst's plan, at its first draw (the window is laid out by then), and the
-        card's face: card toward card_active by the light's level."""
-        q = hubqt.qt()
-        frame = self.frame
-        o = frame.mapFromGlobal(q.QtCore.QPoint(int(self._origin[0]), int(self._origin[1])))
-        size = (frame.width(), frame.height())
-        make = hubburst.plan_open if opening else hubburst.plan_close
-        plan = make((o.x(), o.y()), size, self._burst_parts(), self.scale)
-        face = hubburst.blend(hubstyle.TOKENS["card"], hubstyle.TOKENS["card_active"],
-                              getattr(frame, "level", 0.0))
-        return plan, face
+    def _burst_face(self):
+        """The card's face under a burst: card toward card_active by the light's level."""
+        return hubburst.blend(hubstyle.TOKENS["card"], hubstyle.TOKENS["card_active"],
+                              getattr(self.frame, "level", 0.0))
 
     def _burst_parts(self):
         """The title row and the section's rows, in the frame's coordinates."""
@@ -1312,35 +1095,6 @@ class Popup(object):
             parts.extend(hubburst.bands(found, hubburst.MAX_PARTS - 1))
         return parts
 
-    # ------------------------------------------------------------ place
-
-    def place(self, rect, index=None):
-        """Put the window at its offset (or the default for `index`), inside
-        `rect`. The offset is stored."""
-        if self.offset is None:
-            w, h = self.root.width(), self.root.height()
-            self.offset = rules.default_offset(index or 0, rect, w, h,
-                                               self.scale)
-        self._place_at(rect)
-
-    def follow(self):
-        """The viewport moved, or its panel hid: the window goes with it (or
-        hides); a drag in progress moves it itself."""
-        if not self.alive():
-            return
-        rect = _rect_of(self.panel)
-        if rect is None:
-            if not self.hidden:
-                self.root.hide()
-                self.hidden = True
-            return
-        if self.hidden:
-            self.root.show()
-            self.hidden = False
-        if self.grab is not None or self.offset is None:
-            return
-        self._place_at(rect)
-
     # ------------------------------------------------------------- drag
 
     def _grab(self, point):
@@ -1352,36 +1106,32 @@ class Popup(object):
         """Finish an opening or a roll at once: a drag takes the window."""
         if self.root is None:
             return
-        if self._open_anim is not None:
+        if self._open_anim is not None or self.bursting():
             self._stop_anim("_open_anim")
             self._end_burst()
-            self.slide = 0.0
             self.root.setWindowOpacity(1.0)
-            rect = _rect_of(self.panel)
-            if rect is not None:
-                self._place_at(rect)
         if self._roll_anim is not None:
             self._stop_anim("_roll_anim")
             self._roll_done(self.collapsed)
 
     def _drag(self, point):
+        """A drag of the title row (2026-10-18): anywhere, kept wholly on the screen under
+        the cursor, so it can be carried from one monitor to the next."""
         if self.grab is None:
             return
-        rect = _rect_of(self.panel)
-        if rect is None:
-            return
         w, h = self.root.width(), self.root.height()
-        x, y = rules.clamp_origin(point[0] - self.grab[0],
-                                  point[1] - self.grab[1], w, h, rect)
+        rect = rules.screen_for(point, screens())
+        x, y = rules.clamp_origin(point[0] - self.grab[0], point[1] - self.grab[1],
+                                  w, h, rect)
         self.root.move(x, y)
-        self.offset = rules.offset_of(x, y, rect, self.scale)
+        self.place = (x / self.scale, y / self.scale)
 
     def _drop(self):
         if self.grab is None:
             return
         self.grab = None
-        if self.offset is not None:
-            _save_offset(self.key, self.offset)
+        if self.place is not None:
+            _save_place(self.key, self.place)
 
     # ----------------------------------------------------------- destroy
 
@@ -1395,8 +1145,13 @@ class Popup(object):
                 pass
 
     def _stop_all(self):
-        for slot in ("_light_anim", "_roll_anim", "_open_anim", "_fade"):
+        for slot in ("_light_anim", "_flash_anim", "_roll_anim", "_open_anim", "_fade"):
             self._stop_anim(slot)
+        if self.burster is not None:
+            try:
+                self.burster.stop(quiet=True)
+            except RuntimeError:
+                pass
 
     def destroy(self):
         """The copy closed (its scriptJobs killed, its names forgotten) and
@@ -1429,12 +1184,12 @@ def open_keys():
             if popup.alive()]
 
 
-def open_popup(key, offset=None, animate=False, panel=None, origin=None):
-    """Open section `key`'s popup in the ACTIVE viewport (the focused model
-    panel, else the first visible one). The popup it returns, or None when
-    there is no viewport to put it in (said on the hub's line). `animate`: it
-    fades in and rises (the header button's press); the restore opens them at
-    once. `origin`: the global point it bursts out of (2026-10-17; the cursor when None)."""
+def open_popup(key, place=None, animate=False, origin=None):
+    """Open section `key`'s floating window (2026-10-18: no viewport is asked). `place`:
+    its top-left in global logical px, else the one remembered, else by `origin` (the
+    global point it bursts out of; the cursor when None). `animate`: it bursts out (the
+    card button's press); the restore opens them at once. The window it returns; a section
+    already open answers its standing window."""
     st = _state()
     if is_open(key):
         return st["popups"][key]
@@ -1442,76 +1197,48 @@ def open_popup(key, offset=None, animate=False, panel=None, origin=None):
     sec = hub.section(key)
     if sec is None or sec.key in hub.HEADER_ONLY:
         raise KeyError("no popup for section '{0}'".format(key))
-    panel = panel or active_panel()
-    rect = _rect_of(panel)
-    if rect is None:
-        _say("{0}: no 3D view to open it in - open a viewport".format(
-            sec.label))
-        return None
-    popup = Popup(key, sec, panel, _scale())
+    popup = Popup(key, sec, _scale())
     try:
         popup.build()
         #  the place remembered from the last drag, when the caller names none
-        #  (2026-10-09: a popup opened by its button comes back where it was)
-        popup.offset = offset if offset is not None else stored_offset(key)
-        popup.place(rect, index=len(open_keys()))
-        popup.show_open(rect, animate=animate and hubmotion.enabled(), origin=origin)
+        popup.place = place if place is not None else stored_place(key)
+        popup.place_window(origin)
+        popup.show_open(animate=animate and hubmotion.enabled(), origin=origin)
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
         popup.destroy()
         raise
     st["popups"][key] = popup
-    _ensure_timer()
     if not st["restoring"]:
         _save_open()
     _notify(key, True)
     return popup
 
 
-def panel_at(point):
-    """The visible model panel whose GL surface holds the global `point`
-    (x, y), else None."""
-    for panel in model_panels():
-        rect = _gl_rect(panel)
-        if rect and rect[0] <= point[0] < rect[0] + rect[2]                 and rect[1] <= point[1] < rect[1] + rect[3]:
-            return panel
-    return None
-
-
-AT_CURSOR = (18, 14)        # logical px: the popup's top-left left of and above the cursor
-
-
 def open_at(key, point, animate=True):
-    """Section `key`'s popup by the global `point` (the radial menu,
-    2026-10-15: «если он уже был открыт где-то то он должен открыться в новом
-    месте возле курсора мышки»): in the viewport under the point, else the
-    active one; a popup already open anywhere is closed and opened here,
-    unrolled. The popup, or None with no viewport."""
+    """Section `key`'s window by the global `point` (the radial menu, 2026-10-15: «если он
+    уже был открыт где-то то он должен открыться в новом месте возле курсора мышки»): a
+    window standing anywhere is closed and opened here, unrolled, its top-left AT_CURSOR
+    left of and above the point, kept on the point's screen. The window."""
     if is_open(key):
         close_popup(key, forget=False)
-    panel = panel_at(point) or active_panel()
-    rect = _rect_of(panel)
-    if rect is None:
-        return open_popup(key, animate=animate)
     scale = _scale()
-    x = point[0] - hubstyle.px(AT_CURSOR[0], scale)
-    y = point[1] - hubstyle.px(AT_CURSOR[1], scale)
-    offset = rules.offset_of(x, y, rect, scale)
+    place = ((point[0] - AT_CURSOR[0] * scale) / scale,
+             (point[1] - AT_CURSOR[1] * scale) / scale)
     if stored_collapsed(key):
         _save_collapsed(key, False)
-    popup = open_popup(key, offset=offset, animate=animate, panel=panel, origin=point)
-    if popup is not None:
-        _save_offset(key, offset)
+    popup = open_popup(key, place=place, animate=animate, origin=point)
+    if popup is not None and popup.place is not None:
+        _save_place(key, popup.place)
     return popup
 
 
 def close_popup(key, forget=True, animate=False, origin=None):
-    """Close section `key`'s popup. `animate` (the header button's and the
-    close button's press): it fades out first, and it is gone from the hub's
-    list at once. `forget`: it stays closed after a restart (the close button
-    and the hub's press); False when an install destroys it - the next startup
-    brings it back. `origin`: the global point it folds into (2026-10-17; the cursor when
-    None)."""
+    """Close section `key`'s window. `animate` (the card button's and the close pill's
+    press): it folds out first, and it is gone from the hub's list at once. `forget`: it
+    stays closed after a restart (the close pill and the hub's press); False when an install
+    destroys it - the next startup brings it back. `origin`: the global point it folds into
+    (2026-10-17; the cursor when None)."""
     st = _state()
     popup = st["popups"].pop(key, None)
     if popup is not None:
@@ -1521,8 +1248,6 @@ def close_popup(key, forget=True, animate=False, origin=None):
             popup.fade_out(lambda: _later(lambda: _finish_closing(popup)), origin=origin)
         else:
             popup.destroy()
-    if not st["popups"]:
-        _stop_timer()
     if forget:
         _save_open()
     _notify(key, False)
@@ -1530,26 +1255,32 @@ def close_popup(key, forget=True, animate=False, origin=None):
 
 
 def _finish_closing(popup):
-    """A popup that faded out is destroyed (2026-10-09)."""
+    """A window that folded out is destroyed (2026-10-09)."""
     st = _state()
     if popup in st["closing"]:
         st["closing"].remove(popup)
     popup.destroy()
 
 
-def toggle(key):
-    """The header button's press: open (fading in), or close (fading out) when
-    open. True when open now."""
+def present(key, origin=None):
+    """The card button's press (2026-10-18): the window opens, bursting out of `origin`
+    (the cursor when None); a window already standing is raised and flashes, and no copy is
+    made («одно окно на раздел»). True: the window stands."""
+    st = _state()
     if is_open(key):
-        close_popup(key, animate=True)
-        return False
-    return open_popup(key, animate=True) is not None
+        st["popups"][key].flash()
+        return True
+    return open_popup(key, animate=True, origin=origin) is not None
+
+
+toggle = present            # the name the hub's popout button called before 2026-10-18
 
 
 def destroy_all(forget=False):
-    """Every popup destroyed: ours, the ones fading out, and any an older module
-    object opened (found by objectName - trap 102's family). `forget` as
-    close_popup. Returns how many."""
+    """Every window destroyed: ours, the ones folding out, and any an older module object
+    opened (found by objectName - trap 102's family). A follow timer an older module object
+    left running (before 2026-10-18) is stopped. `forget` as close_popup. Returns how
+    many."""
     st = _state()
     count = 0
     for key, popup in list(st["popups"].items()):
@@ -1561,7 +1292,12 @@ def destroy_all(forget=False):
         popup.destroy()
         count += 1
     st["closing"] = []
-    _stop_timer()
+    if st.get("timer"):
+        try:
+            st["timer"].stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+    st["timer"] = None
     q = hubqt.qt()
     if q is not None and q.QtWidgets.QApplication.instance() is not None:
         for widget in list(q.QtWidgets.QApplication.topLevelWidgets()):
@@ -1583,7 +1319,7 @@ def destroy_all(forget=False):
 
 def adopt():
     """A fresh module object took the hub over (an install, a restart): the
-    popups an older one opened go, the remembered ones come back (deferred,
+    windows an older one opened go, the remembered ones come back (deferred,
     `restore_later`). Called by maya_hub.build() on a fresh module object."""
     destroy_all(forget=False)
     return restore_later()
@@ -1600,11 +1336,13 @@ def remembered_keys():
                              _card_keys())
 
 
-def stored_offset(key):
-    var = rules.POS_VAR.format(key)
+def stored_place(key):
+    """The window's remembered top-left, global logical px, or None (2026-10-18). The old
+    viewport offset (rules.POS_VAR) is not read: it held a place in a viewport."""
+    var = rules.WINDOW_POS_VAR.format(key)
     if not cmds.optionVar(exists=var):
         return None
-    return rules.decode_offset(cmds.optionVar(query=var))
+    return rules.decode_place(str(cmds.optionVar(query=var)))
 
 
 def _save_open():
@@ -1612,13 +1350,13 @@ def _save_open():
                                 rules.encode_keys(open_keys())))
 
 
-def _save_offset(key, offset):
-    cmds.optionVar(stringValue=(rules.POS_VAR.format(key),
-                                rules.encode_offset(offset)))
+def _save_place(key, place):
+    cmds.optionVar(stringValue=(rules.WINDOW_POS_VAR.format(key),
+                                rules.encode_place(place)))
 
 
 def stored_size(key):
-    """The unrolled popup's size the animator dragged: (w, h) logical, None for a
+    """The unrolled window's size the animator dragged: (w, h) logical, None for a
     side that is automatic (2026-10-09)."""
     var = rules.SIZE_VAR.format(key)
     if not cmds.optionVar(exists=var):
@@ -1627,7 +1365,7 @@ def stored_size(key):
 
 
 def stored_bar(key):
-    """A rolled-up popup's width the animator dragged, logical; None = it fits its
+    """A rolled-up window's width the animator dragged, logical; None = it fits its
     name (2026-10-09)."""
     var = rules.BAR_VAR.format(key)
     if not cmds.optionVar(exists=var):
@@ -1646,7 +1384,7 @@ def _save_popup_bar(key, w):
 
 
 def stored_collapsed(key):
-    """Whether section `key`'s popup was left rolled up (2026-10-09). False
+    """Whether section `key`'s window was left rolled up (2026-10-09). False
     when nothing is remembered."""
     var = rules.COLLAPSED_VAR.format(key)
     if not cmds.optionVar(exists=var):
@@ -1660,7 +1398,7 @@ def _save_collapsed(key, on):
 
 
 def restore_later():
-    """Queue the restore of the remembered popups, deferred and once. The mark
+    """Queue the restore of the remembered windows, deferred and once. The mark
     that a restore is queued is set only once Maya has taken the call: a call
     that failed must not leave every later restore thinking one is pending
     (found 2026-10-09 by a run that built the hub before the popup tests)."""
@@ -1674,8 +1412,9 @@ def restore_later():
 
 
 def _restore():
-    """Open the remembered popups. With no 3D view yet, the attempt waits and
-    repeats (RESTORE_TRIES, a Maya still starting up)."""
+    """Open the remembered windows. A window needs no 3D view (2026-10-18): the attempt
+    waits and repeats only while Maya's UI runs and its main window does not stand yet
+    (RESTORE_TRIES, a Maya still starting up)."""
     st = _state()
     st["queued"] = False
     try:
@@ -1685,7 +1424,7 @@ def _restore():
         return []
     if not pending:
         return []
-    if active_panel() is None:
+    if _main_window() is None and hubqt._maya_ui_ok():
         st["tries"] += 1
         if st["tries"] <= RESTORE_TRIES:
             _retry_later()
@@ -1695,7 +1434,7 @@ def _restore():
     try:
         for key in pending:
             try:
-                if open_popup(key, offset=stored_offset(key)) is not None:
+                if open_popup(key) is not None:
                     opened.append(key)
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
@@ -1713,40 +1452,10 @@ def _retry_later():
         pass
 
 
-# -------------------------------------------------------------- the timer
-
-def _ensure_timer():
-    st = _state()
-    if st["timer"] is not None:
-        return
-    q = hubqt.qt()
-    timer = q.QtCore.QTimer()
-    timer.setInterval(FOLLOW_MS)
-    timer.timeout.connect(_tick)
-    timer.start()
-    st["timer"] = timer
-
-
-def _stop_timer():
-    st = _state()
-    timer = st["timer"]
-    st["timer"] = None
-    if timer is not None:
-        timer.stop()
-
-
-def _tick():
-    for popup in list(_state()["popups"].values()):
-        try:
-            popup.follow()
-        except Exception:                                    # noqa: BLE001
-            traceback.print_exc()
-
-
 # ------------------------------------------------------------ the rest
 
 def _defer_close(key):
-    """The close button's press: deferred - it comes from inside the window
+    """The close pill's press: deferred - it comes from inside the window
     the close deletes - and folded into the cursor where it was pressed (2026-10-17)."""
     point = _cursor_point()
     cmds.evalDeferred(lambda: close_popup(key, animate=True, origin=point),
@@ -1754,16 +1463,14 @@ def _defer_close(key):
 
 
 def _notify(key, on):
-    """The hub's card button lit or dark (a popup closed by its own button
-    too)."""
+    """The hub told a window opened or closed (one closed by its own pill too): the card's
+    button lit or dark (`paint_popped`) and the rail's dot (`paint_floating`, 2026-10-18).
+    Each asked on its own: a hub without one still hears the other."""
     try:
         _hub().paint_popped(key, on)
     except Exception:                                        # noqa: BLE001
         pass
-
-
-def _say(message):
     try:
-        _hub().say(message)
+        _hub().paint_floating(key, on)
     except Exception:                                        # noqa: BLE001
-        print("SkeldarAnim: " + message)
+        pass

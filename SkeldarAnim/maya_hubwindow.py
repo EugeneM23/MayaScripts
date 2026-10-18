@@ -112,12 +112,17 @@ def frame_class():
 def dress(frame, scale):
     """No stylesheet face over ours: the frame paints no styled background and its content
     is transparent. The frame's `skCard` property is NOT set (the skin's rule would paint
-    it)."""
+    it). The content's rule names the content alone: a selector-less rule reaches every
+    widget under it, and the section's fields would lose their faces (trap 98)."""
     q = hubqt.qt()
     frame.setAttribute(q.QtCore.Qt.WA_StyledBackground, False)
     content = getattr(frame, "content", None)
     if content is not None:
-        content.setStyleSheet("background: transparent;")
+        name = content.objectName()
+        if name:
+            content.setStyleSheet("#{0} {{ background: transparent; }}".format(name))
+        else:
+            content.setAttribute(q.QtCore.Qt.WA_StyledBackground, False)
 
 
 # ------------------------------------------------------------------- the pill

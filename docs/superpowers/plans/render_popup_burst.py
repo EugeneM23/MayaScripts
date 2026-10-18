@@ -44,12 +44,13 @@ class Strip(t.Seams):
 
         def shoot(opening, moments, total=None):
             if opening:
-                popup.show_open(hubpop._rect_of("modelPanel1"), animate=True,
-                                origin=(point.x(), point.y()))
-                popup._stop_anim("_open_anim")
+                popup.show_open(animate=True, origin=(point.x(), point.y()))
+                held, popup.burster.anim = popup.burster.anim, None
+                held.stop()
             else:
                 popup._burst(False, (point.x(), point.y()), lambda: None)
-                popup._stop_anim("_fade")
+                held, popup.burster.anim = popup.burster.anim, None
+                held.stop()
             effect = popup.burst
             popup.root.grab()               # the first draw makes the plan
             for m in moments:

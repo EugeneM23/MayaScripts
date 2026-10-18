@@ -4,8 +4,9 @@
 Every decision the popup makes about its place and its size is here, so the tests
 run with neither Maya nor Qt: the size it takes (automatic, or as the animator drags
 its edges), the bounds a drag may take, the origin it is clamped to inside a rectangle
-(so a drag cannot carry it off its screen), the offset that is remembered, the cascade
-of the default places, and the optionVars' text.
+(so a drag cannot carry it off its screen), the offset that is remembered, and the
+optionVars' text. The viewport's cascade of default places went with the viewport
+(2026-10-18).
 
 Since 2026-10-18 (spec: docs/superpowers/specs/2026-10-18-floating-windows-design.md) a
 rectangle is a SCREEN's available geometry, not a viewport's: a popup sits in a
@@ -19,7 +20,6 @@ display scale (`scale`, Maya's realScaleValue) where they meet the rectangle.
 
 WIDTH = 360            # logical px: the widest a popup takes unless its section needs more
 MARGIN = 12            # logical px kept from the viewport's edges
-CASCADE = 24           # logical px each default place steps from the last
 MIN_HEIGHT = 40        # logical px: an unrolled popup is never shorter (2026-10-09)
 MAX_HEIGHT = 560       # logical px: an unrolled popup is never taller - a taller section scrolls (2026-10-09)
                        # a floating window is not squeezed into a viewport, 2026-10-18
@@ -105,18 +105,6 @@ def place_on_screens(place, w, h, screens, scale):
         if _inside(probe, rect):
             return clamp_origin(x, y, w, h, rect)
     return None
-
-
-def default_offset(index, rect, w, h, scale):
-    """The offset of the `index`-th popup opened without a remembered place:
-    the top-right corner of the viewport, each one cascading down and left
-    from the last, clamped so it always stands inside. Pure."""
-    scale = float(scale) or 1.0
-    step = CASCADE * scale * int(index)
-    x = rect[0] + rect[2] - w - MARGIN * scale - step
-    y = rect[1] + MARGIN * scale + step
-    origin = clamp_origin(x, y, w, h, rect)
-    return offset_of(origin[0], origin[1], rect, scale)
 
 
 def _avail(rect, scale):

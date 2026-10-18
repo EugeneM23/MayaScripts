@@ -67,33 +67,6 @@ class OffsetAndOrigin(unittest.TestCase):
         self.assertEqual(rules.offset_of(110, 60, VIEW, 0), (10.0, 10.0))
 
 
-class DefaultOffsets(unittest.TestCase):
-
-    def test_the_first_sits_in_the_top_right_corner_inside_the_margin(self):
-        x, y = rules.origin_of(rules.default_offset(0, VIEW, 300, 200, 1.0),
-                               VIEW, 300, 200, 1.0)
-        self.assertEqual(x, VIEW[0] + VIEW[2] - 300 - rules.MARGIN)
-        self.assertEqual(y, VIEW[1] + rules.MARGIN)
-
-    def test_each_next_cascades_down_and_left(self):
-        first = rules.origin_of(rules.default_offset(0, VIEW, 300, 200, 1.0),
-                                VIEW, 300, 200, 1.0)
-        second = rules.origin_of(rules.default_offset(1, VIEW, 300, 200, 1.0),
-                                 VIEW, 300, 200, 1.0)
-        self.assertEqual(second, (first[0] - rules.CASCADE,
-                                  first[1] + rules.CASCADE))
-
-    def test_a_deep_cascade_stays_inside(self):
-        for index in range(0, 40):
-            x, y = rules.origin_of(rules.default_offset(index, VIEW, 300, 200,
-                                                        1.0),
-                                   VIEW, 300, 200, 1.0)
-            self.assertGreaterEqual(x, VIEW[0])
-            self.assertLessEqual(x + 300, VIEW[0] + VIEW[2])
-            self.assertGreaterEqual(y, VIEW[1])
-            self.assertLessEqual(y + 200, VIEW[1] + VIEW[3])
-
-
 class PopupSize(unittest.TestCase):
     """The size rule (2026-10-09): the hub's dock width unless the section needs
     more, the height exactly its content plus the title row, rolled up = the title."""
@@ -230,6 +203,9 @@ RIGHT = (1920, 0, 2560, 1400)
 
 class Screens(unittest.TestCase):
     """A floating window stands on the screens, not in a viewport (2026-10-18)."""
+
+    def test_the_viewport_cascade_is_gone(self):
+        self.assertFalse(hasattr(rules, "default_offset"))
 
     def test_the_screen_holding_the_point(self):
         self.assertEqual(rules.screen_for((2000, 50), [LEFT, RIGHT]), RIGHT)
