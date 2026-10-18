@@ -452,6 +452,8 @@ def _callbacks():
         #  the side panel (2026-10-17): Maya's editors at the right edge
         "sidepanel": set_sidepanel,
         "sidepanel_select": set_sidepanel_select,
+        #  our Channel Box in it (2026-10-18, maya_channelbox)
+        "sidepanel_box": set_sidepanel_box,
         #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
         #  since 2026-10-09 its rows Off / Left edge / Right edge
         "pin": _press_pin,
@@ -588,9 +590,17 @@ def _dress_sidepanel(skin):
     """The menu's Side panel row = the animator's choice (Maya's by default)."""
     try:
         import maya_sidepanel
-        skin.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
+        skin.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select(), _box_on())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
+
+
+def _box_on():
+    try:
+        import maya_channelbox
+        return maya_channelbox.enabled()
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def _build_skin(host=None, kind=None):
@@ -1422,6 +1432,20 @@ def set_sidepanel_select(on):
     message = maya_sidepanel.set_on_select(on)
     if is_skinned():
         _SKIN.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
+    say(message)
+    return message
+
+
+def repaint_sidepanel():
+    """The menu's Side panel rows painted from what stands (no callback)."""
+    if is_skinned():
+        _dress_sidepanel(_SKIN)
+
+
+def set_sidepanel_box(on):
+    """⋮ -> Side panel ▸ Our Channel Box (2026-10-18, maya_channelbox)."""
+    import maya_channelbox
+    message = maya_channelbox.set_enabled(on)
     say(message)
     return message
 

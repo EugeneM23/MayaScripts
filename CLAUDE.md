@@ -12097,3 +12097,48 @@ bone 0.072 cm / 0.0009 deg - the limb bones' roll is the twist joints' - the cub
 on FKWrist_R swapped for a skeleton: the knot's turn in the take 0.0000 cm, the sphere on `hand_r`; onto a
 Creep rig asked once, limbs pointing as before to 0.58 deg; Cancel leaving the Creep and 0 nodes);
 `tests/test_scenesetup_swap.py`; 7247 unit tests. **Not seen in a GUI Maya** (a real drag).
+
+## Our Channel Box in the side panel, variant A "Rows" (2026-10-18)
+
+The animator: «Давай попробуем сделать свое меню для Chenel box. Предложи несколько вариантов в стиле
+нашего таймлайна». Three live mockups (https://claude.ai/artifact/BSFzRVGoQejgtwHc1VJkzJ): A rows,
+B vectors, C per-channel tracks. They picked **A**, «только давай избавимся от мусорной полоски
+оранжевого цвета по краям окошка» - the mockup's reveal glow along the panel's edges: the box has no
+edge light (the mockup's v2 drops it too). Spec `docs/superpowers/specs/2026-10-18-channel-box-rows-design.md`.
+
+- **Package `SkeldarAnim/maya_channelbox/`** (a payload row): `look.py` (stdlib, a test pins it:
+  `fmt`, `typed` with `+= -= *= /=`, `state_of`, `group_of` / `rows` (hairlines between t / r / s /
+  visibility / the rest), `layout` / `hit` / `cell_rect`, `select`, `per_px` / `modifier` / `scrubbed`,
+  `key_moves`; the Time Bar's motion numbers imported), `scene.py` (cmds: `snapshot` - the lead
+  object's keyable + channel-box attrs, SHAPES / INPUTS / OUTPUTS from Maya's hidden `mainChannelBox`
+  object lists, each channel's value, kind, limits, lock, mute (a `mute` node looked through),
+  source curve / layer / driven, keys, breakdowns, on-key, changed (value off its curve), and its
+  `targets` on every selected object; the writes), `box.py` (Qt: `Head`, `Canvas`, `Fx`, `Edit`,
+  one 16 ms driver), `__init__.py` (mount, callbacks, the switch).
+- **Where**: the side panel's Channels tab in right-edge mode, above Maya's Layer Editor in a
+  splitter `skeldarSidePanelChannelBoxSplit` (share in `skeldarChannelBoxSplit`, 70 %). Maya's Channel
+  Box half hidden in place - combined: `paneLayout ChannelsLayersPaneLayout -configuration single
+  -setPane LayerEditorForm 1` (initChannelsLayers.mel's names), separate: `MainChannelBoxLayout`
+  hidden - and put back by `unmount()` (moving Maya's forms back into the page BEFORE ours is
+  deleted). `maya_sidepanel._borrow` mounts, `give_back` unmounts first, `refresh` refreshes ours.
+  ⋮ → Side panel ▸ **Our Channel Box** (`skeldarChannelBoxOurs`, on; `maya_sidepanel.rebuild()`), and
+  the box's own menu row «Maya's Channel Box».
+- **The hand**: click a name selects (Ctrl / Shift), written into Maya's hidden box with
+  `channelBox mainChannelBox -e -select` so the Graph Editor and S keep reading it; drag a name or a
+  value = the virtual slider over every selected channel of every selected object (Maya's channel
+  speed × 0.1 / 1° / 0.01 a px or a 200th of a bounded range, Shift ×5, Ctrl ×0.2), one undo chunk;
+  double-click a value types (relative too); a bool's value toggles, an enum's opens its names; the
+  key cell keys / unkeys this frame; the right button Key / Breakdown / Delete keys at the frame,
+  Mute, Lock, Select / Break connections, Copy / Paste values, Channel Speed Slow / Medium / Fast.
+- **Motion** (docs/interface-motion.md): hover lift + glow 110 ms on the cell and the well, press
+  flash 120, bool pop 200; a key that came onto the frame flashes (520), one that left breaks (700,
+  the wave); a key the playhead reaches lights (600, `passed`). Callbacks: SelectionChanged / Undo /
+  Redo / animLayerRefresh / keyframe edited (a full read, coalesced on the next turn), time changed
+  (values and key cells only, repainted at once - trap 269), attribute changed on the shown nodes
+  (values; a connection or lock = full).
+- Proof: `tests/test_channelbox_look.py` 19, `test_channelbox_box.py` 15 (offscreen on a fake link:
+  paint, selection + sync, a drag in one chunk with locked channels left out, typed values, the cell,
+  the effects, lights, a section, the menu, the driver stopping; the mount over stand-in widgets),
+  `test_channelbox_scene.py` 5 (fake cmds); the hub menu test; 7311 tests OK. Picture
+  `docs/superpowers/plans/channel_box.png` (`render_channel_box.py`). **Not seen in a GUI Maya**: the
+  hidden pane, the `-select` sync, the callbacks, the real fonts and sizes in the panel.

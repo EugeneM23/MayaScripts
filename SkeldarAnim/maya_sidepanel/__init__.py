@@ -142,13 +142,42 @@ def _borrow(controller):
     _state()["held"] = held
     _remember_hidden(hidden)
     holder.install()
+    _mount_box(controller, held.get("channels") or [])
     return held
+
+
+def _mount_box(controller, records):
+    """Our Channel Box over Maya's Layer Editor (maya_channelbox, 2026-10-18). Never
+    fatal: a box that cannot mount leaves Maya's Channel Box in place."""
+    try:
+        import maya_channelbox
+        if maya_channelbox.enabled() and records:
+            maya_channelbox.mount(controller.panel, records, getattr(controller.panel, "ui", 1.0))
+    except Exception:                                        # noqa: BLE001
+        print("SkeldarAnim: our Channel Box could not mount - Maya's stays")
+        print(traceback.format_exc())
+        try:
+            import maya_channelbox
+            maya_channelbox.unmount()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def rebuild():
+    """The panel built again (our Channel Box switched on or off)."""
+    drop_edge()
+    return ensure_edge()
 
 
 def give_back():
     """Every borrowed form back where it came from; Maya's procs again. Safe to call
     any time - it acts only on what is held."""
     from . import holder
+    try:                                    # ours away first: Maya's forms back in the page
+        import maya_channelbox
+        maya_channelbox.unmount()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
     held = _state().get("held") or {}
     _state()["held"] = {}
     gone = 0
@@ -281,6 +310,11 @@ def refresh():
         holder.refresh_attribute_editor()
     else:
         holder.update_channel_box()
+        try:
+            import maya_channelbox
+            maya_channelbox.refresh()
+        except Exception:                                    # noqa: BLE001
+            pass
     _fit(edge)
     _recolor(edge)
     edge.repaint_all()

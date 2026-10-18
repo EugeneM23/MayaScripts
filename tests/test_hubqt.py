@@ -53,6 +53,7 @@ class SeamsMixin(object):
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "sidepanel": lambda choice: self.calls.append(("sidepanel", choice)),
             "sidepanel_select": lambda on: self.calls.append(("sidepanel_select", on)),
+            "sidepanel_box": lambda on: self.calls.append(("sidepanel_box", on)),
             "pin": lambda on: self.calls.append(("pin", on)),
             "edge": lambda on: self.calls.append(("edge", on)),
             "edge_side": lambda c: self.calls.append(("edge_side", c)),
@@ -225,14 +226,22 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual(actions[5].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[5].menu().actions()
         self.assertEqual([a.text() for a in side if not a.isSeparator()],
-                         ["Maya's", "Right edge", "Out on selection"])
+                         ["Maya's", "Right edge", "Out on selection", "Our Channel Box"])
         side[1].trigger()
         self.assertEqual(self.calls[-1], ("sidepanel", "edge"))
         self.skin.paint_sidepanel("maya")
         self.assertTrue(side[0].isChecked())
         self.assertEqual(self.calls[-1], ("sidepanel", "edge"))
+        #  Our Channel Box (2026-10-18): a checkbox, painted without a call
+        ours = side[-1]
+        self.assertTrue(ours.isCheckable() and ours.isChecked())
+        ours.trigger()
+        self.assertEqual(self.calls[-1], ("sidepanel_box", False))
+        self.skin.paint_sidepanel("edge", None, True)
+        self.assertTrue(ours.isChecked())
+        self.assertEqual(self.calls[-1], ("sidepanel_box", False))
         #  Out on selection (2026-10-17): a checkbox, painted without a call
-        select = side[-1]
+        select = side[-2]
         self.assertTrue(select.isCheckable() and select.isChecked())
         select.trigger()
         self.assertEqual(self.calls[-1], ("sidepanel_select", False))

@@ -1967,18 +1967,25 @@ class Skin(object):
         self.sidepanel_select_action.setChecked(True)
         self.sidepanel_select_action.triggered.connect(
             lambda checked=False: self._call("sidepanel_select", bool(checked)))
+        # 2026-10-18: our painted Channel Box in the panel (maya_channelbox)
+        self.sidepanel_box_action = sub.addAction("Our Channel Box")
+        self.sidepanel_box_action.setCheckable(True)
+        self.sidepanel_box_action.setChecked(True)
+        self.sidepanel_box_action.triggered.connect(
+            lambda checked=False: self._call("sidepanel_box", bool(checked)))
 
-    def paint_sidepanel(self, choice, on_select=None):
+    def paint_sidepanel(self, choice, on_select=None, box=None):
         """The menu's Side panel shows `choice` and, given, whether a selection
-        brings it out (no callback)."""
+        brings it out and whether our Channel Box shows (no callback)."""
         action = getattr(self, "sidepanel_actions", {}).get(choice)
         if action is not None:
             action.setChecked(True)
-        select = getattr(self, "sidepanel_select_action", None)
-        if select is not None and on_select is not None:
-            select.blockSignals(True)
-            select.setChecked(bool(on_select))
-            select.blockSignals(False)
+        for row, value in ((getattr(self, "sidepanel_select_action", None), on_select),
+                           (getattr(self, "sidepanel_box_action", None), box)):
+            if row is not None and value is not None:
+                row.blockSignals(True)
+                row.setChecked(bool(value))
+                row.blockSignals(False)
 
     def paint_timebar(self, choice):
         """The menu's Time bar shows `choice` (2026-10-16; no callback). An older
