@@ -113,6 +113,15 @@ class Hits(unittest.TestCase):
         scrolled = self.lay.row_at(2, L.ROW_H + L.ROW_GAP)
         self.assertEqual(scrolled, rect)
 
+    def test_the_base_row_has_no_solo_weight_or_number_to_hit(self):
+        lay = L.Layout(380, 268, anim_rows(4), "anim", 1.0)
+        base_i = len(lay.rows) - 1
+        rect = lay.row_at(base_i, 0)
+        # the same slots a non-base row would have, measured from a non-base row_parts
+        plain = L.row_parts(rect, "anim", 1.0)
+        for part in ("solo", "weight", "wnum"):
+            self.assertEqual(L.hit(lay, *self.centre(plain[part]), scroll=0), ("row", base_i, "name"))
+
     def test_outside_the_rows_in_the_well_is_nothing(self):
         x, y, w, h = self.lay.well
         self.assertIsNone(L.hit(self.lay, x + w / 2.0, y + h - 2, scroll=0))

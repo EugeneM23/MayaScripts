@@ -78,6 +78,7 @@ class Layout(object):
         pitch = (ROW_H + ROW_GAP) * u
         self.rows = [(wx + WELL_PAD * u, wy + WELL_PAD * u + i * pitch, ww - 2 * WELL_PAD * u, ROW_H * u)
                      for i in range(len(rows))]
+        self.bases = [bool(r.get("base")) for r in rows]
         self.content_h = len(rows) * pitch - ROW_GAP * u + 2 * WELL_PAD * u if rows else 0.0
         self.max_scroll = max(0.0, self.content_h - wh)
         names = FOOT.get(tab, FOOT["anim"])
@@ -128,7 +129,7 @@ def row_parts(rect, tab, ui, base=False):
 
 def hit(layout, x, y, scroll):
     """What is under (x, y): ("grip",), ("tab", t), ("lanes",), ("foot", name),
-    ("row", i, part or "row"), ("scroll",) or None."""
+    ("row", i, part), or None. A row with no control under the point is ("row", i, "name")."""
     if _inside(layout.grip, x, y):
         return ("grip",)
     for tab, rect in layout.segments.items():
@@ -143,7 +144,8 @@ def hit(layout, x, y, scroll):
         for i in range(len(layout.rows)):
             rect = layout.row_at(i, scroll)
             if _inside(rect, x, y):
-                for part, prect in row_parts(rect, layout.tab, layout.ui).items():
+                base = layout.bases[i]
+                for part, prect in row_parts(rect, layout.tab, layout.ui, base=base).items():
                     if part != "name" and _inside(prect, x, y):
                         return ("row", i, part)
                 return ("row", i, "name")
