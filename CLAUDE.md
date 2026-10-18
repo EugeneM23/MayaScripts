@@ -11540,8 +11540,10 @@ The animator: «Давай попробуем перерисовать инте�
 **Range row**:
 - The fields: animation start, playback start, playback end, animation end.
 - The range block: drag the body to slide the playback range, its orange edges to resize it.
-- Bookmarks: previous, add over the highlight, next. They are Maya's own `timeSliderBookmark` nodes, made
-  directly: the plugin's `createBookmark` reads Maya's slider and jumps time to the end.
+- Bookmarks: Maya's own `timeSliderBookmark` nodes, made directly: the plugin's `createBookmark` reads Maya's
+  slider and jumps time to the end. **The previous / add / next pills are gone since 2026-10-18** (the layers
+  pill took their place, below); the bookmarks stay as the band on the timeline and «Add bookmark» in the key
+  menu (`scene.add_bookmark`, `scene.bookmarks`; `scene.step_bookmark` went with its button).
 - Chips: character set (Maya's `highlightList`, as `currentCharacters.mel` reads it), the layer keys go to, fps.
 - Toggles: loop (continuous, once, oscillate in turn), cached playback (`evaluator -name cache`), speed (a chip:
   real-time, every frame, half, twice), sound, Auto key, preferences (`preferencesWnd "timeslider"`).
@@ -11777,6 +11779,75 @@ sparks); the same day the animator: «откатив все эффекты ве�
     540 / 700, which threw the pieces out of the strip's top. Then «на 30 процентов увеличим силу разлета»:
     `SHARD_SPEED` 143. Then «B · Shorter - давай вот эту попробуем»: B is what stands - `SHARD_SPEED` 170,
     `SHARD_FALL` 900, `SHARD_SPIN` 420, `EFFECT_MS` delete 700.
+
+**The layer panel** (2026-10-18, «Давай мы удалим с нашего таймлайна кнопки который делают book marks и вместо
+этих кнопочек добавим кнопочку которая будет открывать и закрывать выдвижную панель с слоями. Панель эту
+давай нарисуем свою по нашим правилам»). Three live mockups (https://claude.ai/artifact/VPbk5HvyxNMuw6jZv1hc5u:
+A a column over the button, B lanes on the timeline, C a chip row); they took A and changed it - the column at
+the bar's RIGHT, a Display section beside Animation, the top edge resizes it, an optional lanes button as in B.
+Spec `docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md`.
+- **On the bar**: the **layers pill** (`Strip.layers_btn`, glyph `layers`, a toggle, lit while the panel is open)
+  after Auto key and a divider; its badge reads the number of animation layers, BaseAnimation included. The
+  layer chip keeps its text and its click opens / closes the panel too (its menu is gone).
+- **The column** (`skeldarTimeBarLayers`): a frameless translucent `Qt.Tool` child of Maya's main window,
+  painted by us (no Maya widgets but a QLineEdit made while a name is typed), ~320 logical px wide, standing
+  over the frame field and the transport, its bottom 6 px above the strip. It follows the strip every 300 ms.
+  - **Height**: default 268, at least 150, at most up to Maya's viewport area less 10; the top edge is a 9 px
+    grip (`SizeVerCursor`, lit accent while hovered / dragged), remembered in `skeldarTimeBarLayersHeight`. The
+    height is LOGICAL px times the UI scale (trap 64: found by the filmstrip at 1.5, the first build was too
+    short there).
+  - **Head**: segments `[Animation n | Display n]` (`skeldarTimeBarLayersTab`) and the lanes button (disabled
+    on Display).
+  - **Animation**: a row a layer, newest first, BaseAnimation last, scene tabs' roots read as the tab's
+    BaseAnimation and the session holders never shown: mode badge (ADD / OVR / BASE), name, weight track (drag =
+    `.weight` live, one undo chunk press to release; a keyed weight is keyed at the current frame), **M**, **S**,
+    lock. A muted or solo-left-out layer is dimmed, its name struck through. The active row (the layer keys go
+    to) is `card_active` with a 1.5 px accent outline. Right button: Additive / Override, Rename, Select
+    objects, Add selection, Remove selection, Merge down, Delete.
+  - **Display**: swatch, name, **V**, **P** (shown in playback), the type (– / T / R, a click steps it); right
+    button: Rename, Colour, Select objects, Add / Remove selection, Delete.
+  - **Foot**: the one orange **+ Layer** (from the selection, else empty), then icon buttons (Add / Remove
+    selection, Merge, Delete; Display: Select objects, Delete). A refusal says itself on the column's own line
+    under the foot (4 s), never a dialog.
+  - Every write is Maya's at once and one undo chunk; only the picture animates. The column reads again on
+    `animLayerRefresh`, `SelectionChanged`, Undo, Redo, the display layer events and the strip's 250 ms tick
+    while open, repainting only when a signature of names and values changed.
+- **The lanes** (`skeldarTimeBarLayerLanes`, `skeldarTimeBarLayerLanes` optionVar, off by default): out while the
+  column is open on Animation and the button is on; from the timeline's left to the column's left; a ruler, one
+  lane a row at the row's height (the list's scroll moves them), each showing the keys the SELECTION has in
+  THAT layer (`animLayer -findCurveForPlug`; BaseAnimation's are the base curves) as cells (`key_cell`), the
+  active lane orange, the playhead's cell through all. A click on a lane makes its layer active. Read on
+  SelectionChanged, on a key edit and on `animLayerRefresh`; the playhead cell is repainted from the strip's
+  time callback (`repaint()`, trap 269).
+- **Motion** (the Time Bar's own numbers from `look`): the column's shape unrolls out of the pill (the reveal's
+  top-edge light too), its parts pop in nearest the pill first and fold farthest first on closing; the lanes do
+  the same out of the column's left edge; a tab switch pops the new rows in a wave from the lit segment; an added
+  layer's row pops in, a deleted one's picture folds where it stood (the data is gone at once); M / S / lock / V /
+  P / type / lanes pop (`POP_MS`), hover lifts + glows, a press flashes. The still picture is cached and rebuilt
+  only when its key changes; one 16 ms driver for both windows, stopped at rest; ⋮ -> Interface animations off:
+  all at once.
+- **With the bar**: while the column is open `BottomEdge.blockers()` answers `"layers"` (the bar does not hide);
+  `conceal` or a bar hidden by other means closes it; Maya's own slider mode has no pill and no column;
+  `drop_edge` / a rebuilt strip destroys both windows by name (`destroy_all`, trap 102), widgets are found again
+  by name, never kept (trap 135).
+- **Modules**: `layerlook.py` (stdlib: layout rects, hits, the height clamp, row order, signature, wave
+  schedule), `layerscene.py` (cmds: every read and write; `scene.layer_state` / `layer_link` feed the strip),
+  `layerpanel.py` (Qt: `LayerColumn`, `LayerLanes`, the controller, the driver).
+- **Merge** is Maya's own procedure: `performAnimLayerMerge.mel` sourced, then `animLayerMerge`; it makes
+  `Merged_Layer`, deletes the sources and reads the `animLayerMerge*` optionVars (set for the call and put back),
+  the result renamed to the upper layer's name. Into BaseAnimation is refused. **One undo** inside our chunk: the
+  five steps the verify first saw were its own `currentTime` calls (trap 222). `colorIndex` answers None in
+  standalone, so an index colour reads blank there (RGB-override colours read fine); the GUI is unchecked.
+- **Proof**: `tests/test_timebar_layerlook.py`, `_layerscene.py`, `_layerpanel.py` and the updated
+  `test_timebar_bar.py`, 7373 unit tests OK; `docs/superpowers/plans/verify_timebar_layers.py` **0 of 20 gates
+  failed** in mayapy standalone (every write read back, Merge's values equal before and after at four frames,
+  keys per layer exact, one undo a press); `render_timebar_layers.py` -> `timebar_layers.png` (opening, both
+  tabs, lanes, a 420 px resize, closing) and `bench_timebar_layers.py` (12 layers, 40 keys, lanes out, 1.5x, 200
+  runs): a hover step **0.388 ms** median (0.642 p95), `on_time` **0.120 ms**, 0 picture rebuilds in a sweep,
+  a full column repaint 1.35 ms, the lanes 1.76 ms. Known, not fixed: `layerpanel.py` is ~1600 lines (the painted
+  windows could split from the controller); the glow rings round a hovered foot button look slightly banded.
+  **Not seen in a GUI Maya** (the animator's to try after Check update: the pill, the column and its resize, a
+  weight drag, Merge, the lanes, the burst, the bar staying out while it is open).
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
