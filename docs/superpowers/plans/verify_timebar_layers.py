@@ -62,25 +62,26 @@ S.set_weight(second, 1.0)
 
 # merge: the scene must play the same before and after
 cmds.optionVar(intValue=("animLayerMergeUp", 0))
-before = values(cube + ".translateX")
+before = values(cube + ".translateX")      # (time changes are undo steps in standalone: measure undo first)
+ok, msg = S.merge_down(second)
+merged = [r["name"] for r in S.anim_layers()]
+steps = 0
+while len(cmds.ls(type="animLayer")) < 3 and steps < 20:
+    cmds.undo(); steps += 1
+undone = [r["name"] for r in S.anim_layers()]
+print("undo steps to restore the merge:", steps)
+gate(steps == 1 and len(undone) == 3, "ONE undo brings both layers back (%d step(s)): %s" % (steps, undone))
 ok, msg = S.merge_down(second)
 after_names = [r["name"] for r in S.anim_layers()]
 after = values(cube + ".translateX")
 gate(ok, "merge down: %s; layers now %s" % (msg, after_names))
-gate(len(after_names) == 2, "two layers became one (plus the base): %s" % after_names)
+gate(len(after_names) == 2 and merged == after_names, "two layers became one (plus the base): %s" % after_names)
 gate(before == after, "the scene plays the same: %s -> %s" % (before, after))
 gate(first.split(":")[-1] == after_names[0].split(":")[-1] or second.split(":")[-1] == after_names[0].split(":")[-1],
      "the result keeps a source layer's name: %s" % after_names[0])
 gate(cmds.optionVar(q="animLayerMergeUp") == 0, "the merge's option put back")
 cmds.undo()
-undone = [r["name"] for r in S.anim_layers()]
-steps = 1
-while len(undone) < 3 and steps < 5:
-    cmds.undo(); steps += 1
-    undone = [r["name"] for r in S.anim_layers()]
-print("undo steps to restore the merge:", steps)
-gate(len(undone) == 3, "undo brings both layers back after %d undo steps (NOT one: Maya's merge proc writes outside our chunk): %s" % (steps, undone))
-gate(values(cube + ".translateX") == before, "and the values")
+gate(values(cube + ".translateX") == before, "undone, the values are back")
 base = cmds.animLayer(q=True, root=True)
 gate(not S.merge_down(S.anim_layers()[-2]["name"])[0], "nothing to merge into the base")
 gate(not S.delete_anim(base)[0], "BaseAnimation is never deleted")

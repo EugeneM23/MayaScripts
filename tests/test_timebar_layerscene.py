@@ -133,6 +133,14 @@ class Writes(Reads):
         self.assertFalse(ok)
         self.assertIn("nothing to merge into", msg)
 
+    def test_a_second_begin_weight_closes_the_first_chunk(self):
+        S._WEIGHT["open"] = False
+        S.begin_weight()
+        S.begin_weight()
+        S.end_weight()
+        opens = [bool(c.get("openChunk")) for c in self.cmds.chunks]
+        self.assertEqual(opens, [True, False, True, False])
+
     def test_display_flags(self):
         S.set_display("lay1", "playback", False)
         self.assertTrue(self.cmds.attrs["lay1.hideOnPlayback"])

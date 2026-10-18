@@ -199,6 +199,8 @@ _WEIGHT = {"open": False}
 
 
 def begin_weight():
+    if _WEIGHT["open"]:                      # a lost end_weight must not nest chunks
+        end_weight()
     cmds.undoInfo(openChunk=True, chunkName=CHUNK)
     _WEIGHT["open"] = True
 
