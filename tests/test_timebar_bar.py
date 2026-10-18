@@ -134,9 +134,6 @@ class FakeLink(object):
     def add_bookmark(self, sel):
         self._log("add_bookmark", sel)
 
-    def step_bookmark(self, forward):
-        self._log("step_bookmark", forward)
-
     def preferences(self):
         self._log("preferences")
 
@@ -490,7 +487,6 @@ class Menus(Strip):
     def test_the_chips_menus_are_checked_where_the_scene_is(self):
         self.assertEqual([r[2] for r in self.strip.fps_rows()], [False, False, True, False, False, False])
         self.assertTrue(self.strip.speed_rows()[0][2])
-        self.assertEqual(self.labels(self.strip.layer_rows()), ["BaseAnimation", "Layer1"])
         self.assertEqual(self.labels(self.strip.character_rows()), ["No Character Set", "hero"])
         self.assertEqual(self.labels(self.strip.sound_rows()), ["No sound", "audio1", "Show on the timeline"])
 
@@ -500,10 +496,21 @@ class Menus(Strip):
         self.assertFalse(self.strip.loop.isChecked())
         self.strip.cache.click()
         self.assertFalse(self.link.x["cache"])
-        self.strip.bm_add.click()
-        self.assertEqual(self.calls("add_bookmark"), [("add_bookmark", None)])
-        self.strip.bm_next.click()
-        self.assertEqual(self.calls("step_bookmark"), [("step_bookmark", True)])
+
+    def test_no_bookmark_pills_and_a_layers_pill_on_the_right(self):
+        for gone in ("bm_prev", "bm_add", "bm_next"):
+            self.assertFalse(hasattr(self.strip, gone))
+        btn = self.strip.layers_btn
+        self.assertGreater(btn.x(), self.strip.auto.x())
+        self.assertLess(btn.x(), self.strip.prefs.x())
+        self.assertTrue(btn.isCheckable())
+
+    def test_the_pill_and_the_chip_open_the_panel(self):
+        opened = []
+        self.strip.toggle_layers = lambda *a: opened.append(True)
+        self.strip.layers_btn.click()
+        self.strip.layer.click()
+        self.assertEqual(len(opened), 2)
 
 
 class Motion(Strip):

@@ -1367,20 +1367,11 @@ def classes():
             top.addWidget(self.play_end)
             top.addWidget(self.anim_end)
             top.addWidget(self._sep())
-            self.bm_prev = Pill(self, "bm_prev", tip="Previous bookmark")
-            self.bm_add = Pill(self, "bm_add", tip="Add a bookmark over the highlight", accent_glyph=True)
-            self.bm_next = Pill(self, "bm_next", tip="Next bookmark")
-            self.bm_prev.clicked.connect(lambda *_a: self._bookmark(False))
-            self.bm_next.clicked.connect(lambda *_a: self._bookmark(True))
-            self.bm_add.clicked.connect(lambda *_a: self._add_bookmark())
-            for b in (self.bm_prev, self.bm_add, self.bm_next):
-                top.addWidget(b)
-            top.addWidget(self._sep())
             self.character = Pill(self, text="No Character Set", tip="Character set", style="chip")
             self.layer = Pill(self, text="BaseAnimation", tip="The animation layer keys go to", style="chip")
             self.fps = Pill(self, text="30 fps", tip="Frame rate", style="chip")
             self.character.clicked.connect(lambda *_a: self._character_menu())
-            self.layer.clicked.connect(lambda *_a: self._layer_menu())
+            self.layer.clicked.connect(lambda *_a: self.toggle_layers())
             self.fps.clicked.connect(lambda *_a: self._fps_menu())
             for b in (self.character, self.layer, self.fps):
                 top.addWidget(b)
@@ -1391,6 +1382,10 @@ def classes():
             self.sound = Pill(self, "sound", tip="Sound under the frames", toggle=True)
             self.auto = Pill(self, "auto", tip="Auto key", style="rec", toggle=True)
             self.prefs = Pill(self, "prefs", tip="Time slider preferences")
+            #  the layer panel's pill (2026-10-18), in place of the bookmark pills
+            self.layers_btn = Pill(self, "layers", tip="Animation and display layers", toggle=True)
+            self.layers_btn.clicked.connect(lambda *_a: self.toggle_layers())
+            self.layer_panel = None
             self.loop.clicked.connect(lambda *_a: self._do("cycle_loop"))
             self.cache.clicked.connect(lambda *_a: self._do("toggle_cache"))
             self.speed.clicked.connect(lambda *_a: self._speed_menu())
@@ -1402,7 +1397,10 @@ def classes():
             self.pin = Pill(self, "pin", tip="Keep the time bar out", toggle=True)
             self.pin.clicked.connect(lambda checked=False: self.edge and self.edge.set_pinned(self.pin.isChecked()))
             self.pin.setVisible(False)
-            for b in (self.loop, self.cache, self.speed, self.sound, self.auto, self.prefs, self.pin):
+            for b in (self.loop, self.cache, self.speed, self.sound, self.auto):
+                top.addWidget(b)
+            top.addWidget(self._sep())
+            for b in (self.layers_btn, self.prefs, self.pin):
                 top.addWidget(b)
             # time row
             self.timeline = Timeline(self)
@@ -1709,6 +1707,8 @@ def classes():
             self._sound()
             self.timeline.update()
             self.range.update()
+            if self.layer_panel is not None and self.layer_panel.is_open():
+                self.layer_panel.refresh()
 
         def on_time(self):
             """timeChanged: the playhead only (playback calls it every frame)."""
@@ -1766,6 +1766,7 @@ def classes():
             self.character.set_label((s.get("character") or "No Character Set") + u" ▾")
             layer = self.call("layer_label") or ""
             self.layer.set_label((layer + u" ▾") if layer else "No layers")
+            self.layers_btn.setChecked(bool(self.layer_panel and self.layer_panel.is_open()))
 
         # presses ---------------------------------------------------------------
         def _typed(self):
@@ -1799,13 +1800,50 @@ def classes():
             self.refresh()
             self.timeline.reach(before, self.state["now"])
 
-        def _bookmark(self, forward):
-            self.call("step_bookmark", forward)
-            self.refresh()
+        def toggle_layers(self):
+            """The layers pill or the chip: the layer panel opened or closed out of the pill."""
+            from . import layerpanel
+            if self.layer_panel is None:
+                parent = None
+                try:
+                    from . import edge as _edge
+                    parent = _edge.main_window()
+                except Exception:                            # noqa: BLE001
+                    parent = None
+                self.layer_panel = layerpanel.Panel(self, self.link.layer_link(), self.ui, self.tokens,
+                                                    self.motion, parent)
+            c = self.layers_btn.mapToGlobal(self.layers_btn.rect().center())
+            self.layer_panel.toggle((c.x(), c.y()))
+            self.layers_btn.setChecked(self.layer_panel.is_open())
 
-        def _add_bookmark(self):
-            self.call("add_bookmark", self.state.get("highlight"))
-            self.refresh(keys=True)
+        def strip_rect(self):
+            p = self.mapToGlobal(self.rect().topLeft())
+            return (p.x(), p.y(), self.width(), self.height())
+
+        def timeline_rect(self):
+            t = self.timeline
+            p = t.mapToGlobal(t.rect().topLeft())
+            return (p.x(), p.y(), t.width(), t.height())
+
+        def top_room(self):
+            """From the strip's top to the top of Maya's viewport area (else the screen)."""
+            top = None
+            try:
+                import maya_hubedge
+                area = maya_hubedge._viewport_area("right")
+                top = area[1] if area else None
+            except Exception:                                # noqa: BLE001
+                top = None
+            if top is None:
+                screen = self.screen().availableGeometry() if self.screen() else None
+                top = screen.y() if screen is not None else 0
+            return self.strip_rect()[1] - top
+
+        def track(self):
+            return self.timeline.track()
+
+        def now(self):
+            return self.state.get("now", 0.0)
 
         def menu_rows(self, rows, menu=None):
             """A QMenu of `rows`: (label, callable | None [, checked]), None for a
@@ -1853,12 +1891,6 @@ def classes():
             return [(text, (lambda v=value: self.call("set_speed", v)), abs(speed - value) < 1e-6)
                     for text, value in look.SPEEDS]
 
-        def layer_rows(self):
-            found = self.call("layers") or []
-            if not found:
-                return [("No animation layers", None)]
-            return [(label, (lambda n=name: self.call("pick_layer", n)), sel) for name, label, sel in found]
-
         def character_rows(self):
             current = self.state.get("character") or ""
             rows = [("No Character Set", (lambda: self.call("pick_character", "")), not current)]
@@ -1903,9 +1935,6 @@ def classes():
 
         def _speed_menu(self):
             self._menu(self.speed, self.speed_rows())
-
-        def _layer_menu(self):
-            self._menu(self.layer, self.layer_rows())
 
         def _character_menu(self):
             self._menu(self.character, self.character_rows())
@@ -1977,6 +2006,8 @@ def _keys_edited(*_args):
     if widget is not None:
         widget.keys_dirty = True
         widget.keys_edited = True       # a deletion of many keys plays as a wave, not a reload
+        if widget.layer_panel is not None:
+            widget.layer_panel.keys_dirty()
 
 
 def _command(command, *_args):
@@ -2042,7 +2073,12 @@ def start_jobs():
                                 ("SelectionChanged", "refresh", (True,)),
                                 ("animLayerRefresh", "refresh", (True,)),
                                 ("Undo", "refresh", (True,)),
-                                ("Redo", "refresh", (True,))):
+                                ("Redo", "refresh", (True,)),
+                                ("displayLayerChange", "refresh", ()),
+                                ("displayLayerManagerChange", "refresh", ()),
+                                ("displayLayerAdded", "refresh", ()),
+                                ("displayLayerDeleted", "refresh", ()),
+                                ("displayLayerVisibilityChanged", "refresh", ())):
         try:
             jobs.append(cmds.scriptJob(event=[event, partial(_job, method, *args)]))
         except Exception:                                    # noqa: BLE001 - an event this Maya lacks
@@ -2086,6 +2122,11 @@ def build():
     host = maya_hubqt.host_widget(CONTROL) if q is not None else None
     if host is None:
         return None
+    try:
+        from . import layerpanel
+        layerpanel.destroy_all()
+    except Exception:                                        # noqa: BLE001
+        pass
     for old in host.findChildren(q.QtWidgets.QWidget, ROOT_NAME):
         old.setParent(None)
         old.deleteLater()

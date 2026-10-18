@@ -405,6 +405,9 @@ class BottomEdge(object):
         self.shown = False
         self.watch.stop()
         self.hide_timer.stop()
+        panel = getattr(self.strip, "layer_panel", None)
+        if panel is not None and panel.is_open():
+            panel.close()                         # a hide no blocker stopped: the panel goes at once
         self._start_slide(False)
 
     def _start_slide(self, showing, instant=False, on_row=False):
@@ -505,6 +508,9 @@ class BottomEdge(object):
             reasons.append("playing")             # hidden only when not in use (2026-10-17)
         if self.baking:
             reasons.append("baking")
+        panel = getattr(self.strip, "layer_panel", None)
+        if panel is not None and panel.is_open():
+            reasons.append("layers")              # the layer panel stands on the bar (2026-10-18)
         return reasons
 
     def hide_due(self):

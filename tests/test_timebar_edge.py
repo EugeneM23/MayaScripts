@@ -154,6 +154,16 @@ class Edge(unittest.TestCase):
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
 
+    def test_an_open_layer_panel_blocks_the_hide(self):
+        """2026-10-18: the layer panel stands on the bar and keeps it out."""
+        class Open:
+            def is_open(self):
+                return True
+        self.assertNotIn("layers", self.edge.blockers())
+        self.edge.strip.layer_panel = Open()
+        self.assertIn("layers", self.edge.blockers())
+        self.edge.strip.layer_panel = None
+
     def test_a_bake_brings_it_out_and_keeps_it(self):
         self.cursor[:] = [900, 300]
         for _ in range(edge_module().BAKE_RUN - 1):

@@ -305,14 +305,10 @@ def add_bookmark(selection):
     return node
 
 
-def step_bookmark(forward):
-    """The time to the next (or previous) bookmark's start; False with none."""
-    starts = [b[0] for b in bookmarks()]
-    frame = look.neighbour_key(starts, now(), forward)
-    if frame is None:
-        return False
-    set_time(frame)
-    return True
+def layer_link():
+    """The layer panel's road into Maya."""
+    from . import layerscene
+    return layerscene
 
 
 # sound -------------------------------------------------------------------------------
