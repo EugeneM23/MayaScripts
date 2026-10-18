@@ -74,7 +74,6 @@ class Panel(object):
         self.keys = {}
         self.phase = "closed"
         self.age_override = None        # tests only: the age of a running burst, ms
-        self.parts_t0 = None
         self.burst = None               # the column's: {"t0", "open", "origin", "delays", "close_at", "ends"}
         self.lanes_burst = None         # the lanes': the same shape
         self.wave = None                # a tab switch: {"t0", "delays": {i: ms}}
@@ -87,7 +86,7 @@ class Panel(object):
         self._last_step = None
         self._was_busy = False
         self._editor = None
-        column_class, lanes_class, _field = _classes()
+        column_class, lanes_class = _classes()[:2]
         self.column = column_class(self, parent)
         self.lanes = lanes_class(self, parent)
         self.driver = q.QtCore.QTimer(self.column)
@@ -127,6 +126,12 @@ class Panel(object):
         """A write: its message on the column's line, the scene read again, the strip
         told (its chip shows the active layer)."""
         answer = self._call(name, *args)
+        self._after_write(answer)
+        return answer
+
+    def _after_write(self, answer):
+        """The tail of every write: the link's message said, the scene read again,
+        the strip told."""
         if isinstance(answer, (tuple, list)) and len(answer) > 1 and answer[1]:
             self.say(answer[1])
         self.refresh(force=True)
@@ -136,7 +141,6 @@ class Panel(object):
                 refresh(keys=True)
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
-        return answer
 
     # -- state -------------------------------------------------------------------
     def is_open(self):
@@ -232,7 +236,6 @@ class Panel(object):
         if self.motion:
             lay = self.column.layout_()
             self.burst = self._make_burst(self._column_parts(lay), self._local(self.column, origin), True)
-            self.parts_t0 = self.burst["t0"]
             self.phase = "opening"
         else:
             self.burst = None
@@ -244,6 +247,7 @@ class Panel(object):
         self.kick()
 
     def close(self, origin=None):
+        self._end_drag()
         self.placer.stop()
         self._drop_editor()
         if origin is None:
@@ -384,7 +388,7 @@ class Panel(object):
             self.column.invalidate()
         elif kind == "grip":
             self.drag = ("grip", float(gy if gy is not None else 0.0), float(self.column.height()))
-            self.column.invalidate()
+            self.column.update()
         elif kind == "foot":
             self.flashes[("foot", hit[1])] = self.clock()
             self._foot(hit[1], lay)
@@ -439,8 +443,16 @@ class Panel(object):
             self.drag = ("weight", name, rect)
             self._call("begin_weight")
             if pos is not None:
-                self._call("set_weight", name, L.weight_at(pos[0], rect))
-                self.refresh(force=True)
+                self._set_weight(name, L.weight_at(pos[0], rect))
+
+    def _set_weight(self, name, value):
+        """A weight while it is dragged: Maya's at once, the row updated here; the
+        scene is read again once, on the release."""
+        self._call("set_weight", name, value)
+        for row in self.rows["anim"]:
+            if row["name"] == name:
+                row["weight"] = value
+        self.column.invalidate()
 
     def drag_to(self, x, gy):
         """A move while a weight or the grip is held."""
@@ -448,8 +460,7 @@ class Panel(object):
             return
         if self.drag[0] == "weight":
             _kind, name, rect = self.drag
-            self._call("set_weight", name, L.weight_at(x, rect))
-            self.refresh(force=True)
+            self._set_weight(name, L.weight_at(x, rect))
         elif self.drag[0] == "grip":
             _kind, gy0, h0 = self.drag
             self.height = L.clamp_height(h0 - (gy - gy0), self.strip.top_room())
@@ -459,24 +470,22 @@ class Panel(object):
             if self._lanes_shown():
                 self.lanes.invalidate()
 
+    def _end_drag(self):
+        """Whatever ends a drag without a release (the column closed or hidden, the
+        mouse grab lost, the window deactivated) still closes Maya's undo chunk and
+        keeps the height; once only (release clears the drag first)."""
+        if self.drag:
+            self.release()
+
     def release(self):
         drag, self.drag = self.drag, None
         if not drag:
             return
         if drag[0] == "weight":
-            answer = self._call("end_weight")
-            if isinstance(answer, (tuple, list)) and len(answer) > 1 and answer[1]:
-                self.say(answer[1])
-            self.refresh(force=True)
-            refresh = getattr(self.strip, "refresh", None)
-            if refresh is not None:
-                try:
-                    refresh(keys=True)
-                except Exception:                            # noqa: BLE001
-                    print(traceback.format_exc())
+            self._after_write(self._call("end_weight"))
         elif drag[0] == "grip":
             self._set_option(HEIGHT_VAR, int(round(self.height)))
-        self.column.invalidate()
+        self.column.update()
         self.kick()
 
     def _foot(self, name, lay):
@@ -635,7 +644,7 @@ class Panel(object):
                 if not self.motion:
                     self.hover[uid] = goal
         if changed:
-            self.column.invalidate()
+            self.column.update()
             self.kick()
 
     # -- the driver --------------------------------------------------------------
@@ -695,7 +704,7 @@ class Panel(object):
                     busy = True
                 else:
                     del table[uid]
-                    self.column.invalidate()
+                    self.column.update()
         for uid, goal in self.goal.items():
             if abs(self.hover.get(uid, 0.0) - goal) > 0.005:
                 busy = True
@@ -712,7 +721,7 @@ class Panel(object):
                 if level == 0.0 and goal == 0.0:
                     del self.goal[uid]
                     self.hover.pop(uid, None)
-                    self.column.invalidate()
+                    self.column.update()
             busy = self._busy(now)
             if busy or self._was_busy:
                 if self.column.isVisible():
@@ -727,6 +736,10 @@ class Panel(object):
             print(traceback.format_exc())
 
     def destroy(self):
+        try:
+            self._end_drag()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
         for timer in (self.driver, self.placer, self.status_timer):
             try:
                 timer.stop()
@@ -778,6 +791,15 @@ class Panel(object):
         age = self.clock() - t0
         return max(0.0, 1.0 - age / float(bar.FLASH_MS)) if age < bar.FLASH_MS else 0.0
 
+    def excluded(self, lay):
+        """The parts left out of the still picture: all of them in a burst, the
+        wave's rows while it runs (a set that changes only at its start and end)."""
+        if self.motion and self.burst is not None:
+            return frozenset(uid for uid, _rect in self._column_parts(lay))
+        if self.motion and self.wave is not None:
+            return frozenset(("row", i) for i in self.wave["delays"])
+        return frozenset()
+
     def live_units(self, lay):
         """The parts drawn over the cached picture this frame: everything in a burst,
         the rows in a wave, what is lifted, popping or flashing, the grip held."""
@@ -786,8 +808,8 @@ class Panel(object):
             return units
         live = set()
         if self.motion and self.wave is not None:
-            age = self.clock() - self.wave["t0"]
-            live |= set(("row", i) for i, d in self.wave["delays"].items() if age < d + look.POP_OPEN_MS)
+            #  the wave's rows are out of the still picture until the wave ends
+            live |= set(("row", i) for i in self.wave["delays"])
         for uid in list(self.goal) + list(self.hover):
             if self.goal.get(uid, 0.0) > 0 or self.hover.get(uid, 0.0) > 0.005:
                 live.add(_unit_of(uid))
@@ -917,14 +939,33 @@ def _classes():
                 self._done = True
                 self.panel._drop_editor()
 
+    class Painted(QtWidgets.QWidget):
+        """What the column and the lanes share: a paint that raises prints once and
+        stops (`_failed`); the wheel scrolls the list."""
+
+        def paintEvent(self, _event):
+            if self._failed:
+                return
+            try:
+                self._paint()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                self._failed = True
+
+        def wheelEvent(self, event):
+            dy = event.angleDelta().y()
+            self.panel.scroll_by(-dy / 120.0 * (L.ROW_H + L.ROW_GAP) * self.panel.ui)
+            event.accept()
+
     # -- the column --------------------------------------------------------------
 
-    class Column(QtWidgets.QWidget):
+    class Column(Painted):
 
         def __init__(self, panel, parent=None):
             super(Column, self).__init__(parent)
             self.panel = panel
             window_flags(self, COLUMN)
+            self.rebuilds = 0               # how often the still picture was drawn again
             self._cache = None
             self._cache_key = None
             self._failed = False
@@ -986,32 +1027,31 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
 
+        def hideEvent(self, event):
+            self.panel._end_drag()
+            super(Column, self).hideEvent(event)
+
+        def event(self, event):
+            if event.type() in (QtCore.QEvent.UngrabMouse, QtCore.QEvent.WindowDeactivate):
+                try:
+                    self.panel._end_drag()
+                except Exception:                            # noqa: BLE001
+                    print(traceback.format_exc())
+            return super(Column, self).event(event)
+
         def leaveEvent(self, event):
             if not self.panel.drag:
                 self.panel.hover_at(None)
             super(Column, self).leaveEvent(event)
 
-        def wheelEvent(self, event):
-            dy = event.angleDelta().y()
-            self.panel.scroll_by(-dy / 120.0 * (L.ROW_H + L.ROW_GAP) * self.panel.ui)
-            event.accept()
-
         # -- painting ----------------------------------------------------------
-        def paintEvent(self, _event):
-            if self._failed:
-                return
-            try:
-                self._paint()
-            except Exception:                                # noqa: BLE001
-                print(traceback.format_exc())
-                self._failed = True
-
         def _paint(self):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             w, h = float(self.width()), float(self.height())
             lay = self.layout_()
             live = pn.live_units(lay)
+            excluded = pn.excluded(lay)
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             b = pn.burst if pn.motion else None
@@ -1025,9 +1065,10 @@ def _classes():
                 p.setClipPath(clip)
             key = (self.width(), self.height(), ui, pn.tab, round(pn.scroll, 2),
                    L.signature(pn.current_rows()), pn.picked_disp, pn.status, pn.lanes_on,
-                   len(pn.rows["anim"]), len(pn.rows["disp"]), frozenset(live))
+                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded)
             if key != self._cache_key or self._cache is None:
-                self._cache = self._picture(lay, live)
+                self.rebuilds += 1
+                self._cache = self._picture(lay, excluded)
                 self._cache_key = key
             p.drawPixmap(0, 0, self._cache)
             # what moves, over the picture
@@ -1070,8 +1111,10 @@ def _classes():
                 p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
             p.end()
 
-        def _picture(self, lay, live):
-            """Everything at rest but the live parts, into one picture."""
+        def _picture(self, lay, excluded):
+            """Everything at rest, into one picture: the parts a burst or a wave moves
+            left out; what is lifted, popping or flashing is drawn over it each frame
+            (the Timeline's way), so a hover never draws the picture again."""
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             ratio = self.devicePixelRatioF() or 1.0
@@ -1085,8 +1128,7 @@ def _classes():
             p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
             p.setBrush(colour(tk["panel"]))
             p.drawRoundedRect(QtCore.QRectF(0.5, 0.5, w - 1, h - 1), 8 * ui, 8 * ui)
-            if ("grip",) not in live:
-                self._grip(p, lay)
+            self._grip(p, lay, rest=True)
             # the head's track
             a, d = lay.segments["anim"], lay.segments["disp"]
             track = QtCore.QRectF(a[0], a[1], d[0] + d[2] - a[0], a[3]).adjusted(-2 * ui, -2 * ui, 2 * ui, 2 * ui)
@@ -1099,7 +1141,7 @@ def _classes():
             p.setBrush(colour(tk["field"]))
             p.drawRoundedRect(well, 6 * ui, 6 * ui)
             for uid, _rect in pn._column_parts(lay):
-                if uid in live:
+                if uid in excluded:
                     continue
                 if uid[0] == "row":
                     p.save()
@@ -1128,10 +1170,11 @@ def _classes():
             p.end()
             return pic
 
-        def _grip(self, p, lay):
+        def _grip(self, p, lay, rest=False):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
-            level = 1.0 if (pn.drag and pn.drag[0] == "grip") else pn.hover.get(("grip",), 0.0)
+            held = pn.drag and pn.drag[0] == "grip"
+            level = 0.0 if rest else (1.0 if held else pn.hover.get(("grip",), 0.0))
             bw = (34 + 12 * level) * ui
             rect = QtCore.QRectF((self.width() - bw) / 2.0, 3 * ui, bw, 3 * ui)
             p.save()
@@ -1373,7 +1416,7 @@ def _classes():
 
     # -- the lanes ---------------------------------------------------------------
 
-    class Lanes(QtWidgets.QWidget):
+    class Lanes(Painted):
 
         def __init__(self, panel, parent=None):
             super(Lanes, self).__init__(parent)
@@ -1409,20 +1452,6 @@ def _classes():
                         return
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
-
-        def wheelEvent(self, event):
-            dy = event.angleDelta().y()
-            self.panel.scroll_by(-dy / 120.0 * (L.ROW_H + L.ROW_GAP) * self.panel.ui)
-            event.accept()
-
-        def paintEvent(self, _event):
-            if self._failed:
-                return
-            try:
-                self._paint()
-            except Exception:                                # noqa: BLE001
-                print(traceback.format_exc())
-                self._failed = True
 
         def _shape(self, w, h, ui):
             path = QtGui.QPainterPath()

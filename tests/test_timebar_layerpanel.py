@@ -199,6 +199,58 @@ class Presses(Panel):
         self.click(self.col, *self.centre(rect))
         self.assertIn(("create_anim",), self.link.log)
 
+    def test_a_weight_drag_ended_by_close_closes_the_chunk_once(self):
+        rect = L.row_parts(self.lay.row_at(0, 0), "anim", 1.0)["weight"]
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        p = QT.QtCore.QPointF(rect[0] + rect[2] * 0.5, rect[1] + 4)
+        ev = QT.QtGui.QMouseEvent(E.MouseButtonPress, p, QT.QtCore.QPointF(self.col.mapToGlobal(p.toPoint())),
+                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        QT.QtWidgets.QApplication.sendEvent(self.col, ev)
+        self.panel.close()
+        self.panel.destroy()
+        names = [e[0] for e in self.link.log]
+        self.assertEqual(names.count("begin_weight"), 1)
+        self.assertEqual(names.count("end_weight"), 1)
+        self.assertEqual(names[-1], "end_weight")
+
+    def test_a_weight_drag_reads_the_scene_once(self):
+        rect = L.row_parts(self.lay.row_at(0, 0), "anim", 1.0)["weight"]
+        reads = []
+        real = self.link.anim_layers
+        self.link.anim_layers = lambda: reads.append(1) or real()
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        for kind, u, held in ((E.MouseButtonPress, 0.2, Qt.LeftButton), (E.MouseMove, 0.4, Qt.LeftButton),
+                              (E.MouseMove, 0.6, Qt.LeftButton), (E.MouseButtonRelease, 0.6, Qt.NoButton)):
+            p = QT.QtCore.QPointF(rect[0] + rect[2] * u, rect[1] + 4)
+            ev = QT.QtGui.QMouseEvent(kind, p, QT.QtCore.QPointF(self.col.mapToGlobal(p.toPoint())),
+                                      Qt.LeftButton, held, Qt.NoModifier)
+            QT.QtWidgets.QApplication.sendEvent(self.col, ev)
+        self.assertEqual(len(reads), 1)
+        self.assertAlmostEqual(self.link.anim[0]["weight"], 0.6, places=2)
+
+    def test_a_hover_sweep_draws_the_still_picture_once(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+
+        def paint():
+            img = QT.QtGui.QImage(self.col.size(), QT.QtGui.QImage.Format_ARGB32)
+            img.fill(0)
+            self.col.render(img)
+        paint()
+        first = self.col.rebuilds
+        for i in range(len(self.lay.rows)):
+            for part in ("name", "mute", "solo", "lock"):
+                parts = L.row_parts(self.lay.row_at(i, 0), "anim", 1.0, base=self.lay.bases[i])
+                if part not in parts:
+                    continue
+                p = QT.QtCore.QPointF(*self.centre(parts[part]))
+                ev = QT.QtGui.QMouseEvent(E.MouseMove, p, QT.QtCore.QPointF(self.col.mapToGlobal(p.toPoint())),
+                                          Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+                QT.QtWidgets.QApplication.sendEvent(self.col, ev)
+                paint()
+        self.panel.hover_at(None)
+        paint()
+        self.assertEqual(self.col.rebuilds, first)
+
     def test_the_right_button_rows(self):
         rows = self.panel.row_menu(0)
         self.assertEqual([r[0] for r in rows if r],
