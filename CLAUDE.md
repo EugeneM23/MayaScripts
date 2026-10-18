@@ -4840,6 +4840,22 @@ is one flag each whenever it is asked for.
 
 ## Conventions
 
+- **Every interface looks and moves like the Time Bar** (the animator,
+  2026-10-18: «Я хочу что бы мы всегда делали интерфейс в стиле в котором у
+  нас сейчас сделан тайм слайдер»). The look and animation rules, the numbers
+  and the checklist are in **`docs/interface-motion.md`**: the visual style
+  and the motion only, no behaviour or mouse rules (the animator, the same
+  day). Read it before building or reworking anything that shows or moves,
+  and copy its checklist into the spec. In short:
+  - a panel opens out of a point and closes into it (in nearest first, out
+    farthest first);
+  - every part moves on its own;
+  - a control's states: hover 110 ms + 10 % + glow, a press flash 120 ms, a
+    toggle pop 200 ms; an effect is added light, where its thing is;
+  - the data is instant, only the picture animates;
+  - numbers in a stdlib module, imported from `maya_timebar.look`;
+  - one 16 ms driver that stops at rest, the still part cached;
+  - ⋮ → Interface animations off gives the same end state at once.
 - **No more per-tool shelf icons** (the animator, 2026-09-17: «точечные
   иконки для полки мы не рисуем, они больше не нужны»). Since the hub, a
   new tool is a SECTION of `maya_hub.SECTIONS` — a `build_panel()` and a
