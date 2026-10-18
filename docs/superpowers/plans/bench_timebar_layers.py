@@ -143,4 +143,12 @@ def sweep_step():
 report("hover step (move + repaint)", timed(sweep_step))
 print("picture rebuilds during the sweep: %d" % (col.rebuilds - base))
 report("Panel.on_time() (lanes playhead)", timed(panel.on_time))
+#  the strip's 250 ms tick reads the rows only; a keys read (selection, layer change,
+#  undo) reads the lanes' keys too (2026-10-18 final review)
+reads = []
+real = panel.link.keys_by_layer
+panel.link.keys_by_layer = lambda names: reads.append(1) or real(names)
+report("Panel.refresh() (the tick: rows)", timed(panel.refresh))
+print("keys reads during the ticks: %d" % len(reads))
+report("Panel.refresh(keys=True)", timed(lambda: panel.refresh(keys=True)))
 panel.destroy()

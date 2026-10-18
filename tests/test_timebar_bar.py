@@ -825,5 +825,82 @@ class CellKeys(Strip):
         self.tl.grab()
         self.assertFalse(getattr(self.tl, "_failed", False))
 
+
+class LayerPanelReads(Strip):
+    """The open layer panel re-reads with the strip (2026-10-18 final review): the
+    jobs (animLayerRefresh, SelectionChanged, Undo, Redo, a scene opened) and the
+    tick reach it; the lanes' keys only on a keys read."""
+
+    def setUp(self):
+        super(LayerPanelReads, self).setUp()
+        from maya_timebar import layerpanel
+        from tests.test_timebar_layerpanel import FakeLink as LayerLink
+        self.ll = LayerLink()
+        self.ll.opts[layerpanel.LANES_VAR] = 1
+        self.reads = {"anim": 0, "keys": 0}
+        anim, keys = self.ll.anim_layers, self.ll.keys_by_layer
+
+        def counted_anim():
+            self.reads["anim"] += 1
+            return anim()
+
+        def counted_keys(names):
+            self.reads["keys"] += 1
+            return keys(names)
+        self.ll.anim_layers, self.ll.keys_by_layer = counted_anim, counted_keys
+        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS, False)
+        self.addCleanup(self.panel.destroy)
+        self.strip.layer_panel = self.panel
+        self.panel.open((1300, 815))
+
+    def test_the_strip_refresh_reads_the_open_panel_again(self):
+        before = self.reads["anim"]
+        self.strip.refresh(keys=True)                   # what the animLayerRefresh job runs
+        self.assertGreater(self.reads["anim"], before)
+
+    def test_an_undo_shows_the_new_rows(self):
+        self.ll.anim[0]["weight"] = 0.2                 # a fake Ctrl+Z took a weight back
+        self.strip.refresh(keys=True)
+        self.assertAlmostEqual(self.panel.rows["anim"][0]["weight"], 0.2)
+
+    def test_the_tick_reads_rows_not_keys(self):
+        self.assertTrue(self.panel.lanes.isVisible())
+        before = self.reads["keys"]
+        self.strip.tick()
+        self.assertEqual(self.reads["keys"], before)
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.reads["keys"], before + 1)
+
+    def test_a_key_edit_reads_the_lanes_once_on_the_next_refresh(self):
+        before = self.reads["keys"]
+        state = bar._state()
+        old = state.get("bar")
+        state["bar"] = self.strip
+        self.addCleanup(state.__setitem__, "bar", old)
+        bar._keys_edited()
+        bar._keys_edited()
+        self.assertEqual(self.reads["keys"], before)    # not on the callback itself
+        self.strip.tick()
+        self.assertEqual(self.reads["keys"], before + 1)
+
+    def test_a_forced_strip_refresh_forces_the_panel(self):
+        seen = []
+        real = self.panel.refresh
+        self.panel.refresh = lambda **kw: seen.append(kw) or real(**kw)
+        self.strip.refresh(keys=True, force=True)
+        self.assertEqual(seen[-1], {"keys": True, "force": True})
+
+    def test_a_scene_opened_job_reads_with_force(self):
+        events = {e: args for e, method, args in bar.JOB_EVENTS if method == "refresh"}
+        self.assertEqual(events.get("SceneOpened"), (True, True))
+        self.assertEqual(events.get("NewSceneOpened"), (True, True))
+
+    def test_a_closed_panel_is_not_read(self):
+        self.panel.close()
+        before = self.reads["anim"]
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.reads["anim"], before)
+
+
 if __name__ == "__main__":
     unittest.main()

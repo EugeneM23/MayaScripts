@@ -408,6 +408,9 @@ class BottomEdge(object):
         panel = getattr(self.strip, "layer_panel", None)
         if panel is not None and panel.is_open():
             panel.close()                         # a hide no blocker stopped: the panel goes at once
+            btn = getattr(self.strip, "layers_btn", None)
+            if btn is not None:
+                btn.setChecked(False)             # dark with it, not on the next tick
         self._start_slide(False)
 
     def _start_slide(self, showing, instant=False, on_row=False):
@@ -477,6 +480,9 @@ class BottomEdge(object):
         self.offset = 0 if showing else self.host.height()
         self.strip.move(0, self.offset)
         self._mask()
+        panel = getattr(self.strip, "layer_panel", None)
+        if showing and panel is not None and panel.is_open():
+            panel.place()                         # on the bar where the slide ended, not 300 ms on
         if not showing:
             self.host.hide()
             self.sensor.show()

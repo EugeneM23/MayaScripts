@@ -248,6 +248,40 @@ class Edge(unittest.TestCase):
         g = self.edge.host.geometry()
         self.assertEqual((g.x(), g.width(), g.y() + g.height()), (0, 1200, 700))
 
+    def test_a_hide_closing_the_layer_panel_unlights_the_pill(self):
+        """2026-10-18: the pill goes dark with the panel, not on the next tick."""
+        class Open:
+            open = True
+
+            def is_open(self):
+                return self.open
+
+            def close(self, *_a):
+                self.open = False
+        self.edge.reveal(instant=True)
+        self.edge.strip.layer_panel = Open()
+        self.edge.strip.layers_btn.setChecked(True)
+        self.edge.conceal()
+        self.assertFalse(self.edge.strip.layers_btn.isChecked())
+        self.edge.strip.layer_panel = None
+
+    def test_the_slide_settled_places_an_open_layer_panel(self):
+        """2026-10-18: the column stands on the bar where the slide ends."""
+        placed = []
+
+        class Open:
+            def is_open(self):
+                return True
+
+            def place(self):
+                placed.append(1)
+        self.edge.strip.layer_panel = Open()
+        self.edge._settle(True)
+        self.assertEqual(placed, [1])
+        self.edge._settle(False)
+        self.assertEqual(placed, [1])
+        self.edge.strip.layer_panel = None
+
 
 class EdgeMotion(Edge):
     """The burst from the cursor (mockup A, 1.5x slower)."""

@@ -16,6 +16,8 @@ Measured (docs/superpowers/plans/probe_timebar_layers.py, Maya 2027):
 Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 """
 
+import sys
+
 import maya.cmds as cmds
 
 
@@ -142,6 +144,30 @@ def _selected_nodes():
     return set(n.split(".")[0] for n in (cmds.ls(selection=True) or []))
 
 
+TIME_CURVES = ["animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU"]
+
+
+def _base_curves(root, nodes):
+    """The base layer's time curves of `nodes` (2026-10-18, the final review: one
+    findCurveForPlug per keyable attribute of every selected node, and a keyframe
+    call per curve): the curves on the nodes themselves (a channel no layer holds) in
+    one listConnections; then, for the channels a layer's blend node drives (one more
+    listConnections), the base curve under the blends, which only the root's
+    findCurveForPlug finds. A driven key's curve is no time and is left out."""
+    nodes = sorted(nodes)
+    curves = set(cmds.listConnections(nodes, source=True, destination=False, type="animCurve") or [])
+    pairs = cmds.listConnections(nodes, source=True, destination=False, type="animBlendNodeBase",
+                                 connections=True, plugs=True) or []
+    for plug in sorted(set(pairs[0::2])):
+        try:
+            curves.update(cmds.animLayer(root, q=True, findCurveForPlug=plug) or [])
+        except Exception:                                    # noqa: BLE001 - trap 211
+            pass
+    if not curves:
+        return []
+    return cmds.ls(sorted(curves), type=TIME_CURVES) or []
+
+
 def keys_by_layer(names):
     """{layer: [times]} of the selection's keys in each layer of `names`."""
     nodes = _selected_nodes()
@@ -150,25 +176,18 @@ def keys_by_layer(names):
         return out
     root, _layers = _anim_names()
     for name in names:
-        times = set()
-        plugs = []
         if name == root:
-            for node in nodes:
-                for attr in cmds.listAttr(node, keyable=True) or []:
-                    plugs.append(node + "." + attr)
+            curves = _base_curves(root, nodes)
         else:
-            plugs = [p for p in (cmds.animLayer(name, q=True, attribute=True) or [])
-                     if p.split(".")[0] in nodes]
-        for plug in plugs:
-            try:
-                curves = cmds.animLayer(name, q=True, findCurveForPlug=plug) or []
-            except Exception:                                # noqa: BLE001 - trap 211
-                curves = []
-            if not curves and name == root:
-                curves = cmds.listConnections(plug, source=True, destination=False, type="animCurve") or []
-            for curve in curves:
-                times.update(cmds.keyframe(curve, q=True, timeChange=True) or [])
-        out[name] = sorted(times)
+            curves = []
+            for plug in (cmds.animLayer(name, q=True, attribute=True) or []):
+                if plug.split(".")[0] not in nodes:
+                    continue
+                try:
+                    curves.extend(cmds.animLayer(name, q=True, findCurveForPlug=plug) or [])
+                except Exception:                            # noqa: BLE001 - trap 211
+                    pass
+        out[name] = sorted(set(cmds.keyframe(curves, q=True, timeChange=True) or [])) if curves else []
     return out
 
 
@@ -195,7 +214,9 @@ def set_flag(name, flag, on):
     return True, ""
 
 
-_WEIGHT = {"open": False}
+#  kept on sys (trap 111): a weight chunk opened by a module an install purged is
+#  still the one a rebuild's destroy_all must close
+_WEIGHT = sys.__dict__.setdefault("_skeldar_timebar_weight", {"open": False})
 
 
 def begin_weight():

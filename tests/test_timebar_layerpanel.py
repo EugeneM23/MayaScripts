@@ -258,6 +258,76 @@ class Presses(Panel):
                           "Remove selection", "Merge down", "Delete"])
 
 
+class Reads(Panel):
+    """What the panel reads when (2026-10-18 final review): rows on every refresh,
+    the lanes' keys only when they can have changed."""
+
+    def setUp(self):
+        from maya_timebar import layerpanel
+        super(Reads, self).setUp()
+        self.link.opts[layerpanel.LANES_VAR] = 1
+        self.keys = []
+        real = self.link.keys_by_layer
+        self.link.keys_by_layer = lambda names: self.keys.append(names) or real(names)
+        self.panel.open((1300, 815))
+        self.assertTrue(self.panel.lanes.isVisible())
+        del self.keys[:]
+
+    def test_a_plain_refresh_reads_no_keys(self):
+        self.panel.refresh()
+        self.assertEqual(self.keys, [])
+
+    def test_a_keys_refresh_reads_them(self):
+        self.panel.refresh(keys=True)
+        self.assertEqual(len(self.keys), 1)
+
+    def test_new_rows_read_the_keys(self):
+        self.link.anim.insert(0, dict(self.link.anim[0], name="A3", label="A3"))
+        self.panel.refresh()
+        self.assertEqual(len(self.keys), 1)
+
+    def test_keys_dirty_waits_for_the_next_refresh(self):
+        self.panel.keys_dirty()
+        self.panel.keys_dirty()
+        self.assertEqual(self.keys, [])
+        self.panel.refresh()
+        self.assertEqual(len(self.keys), 1)
+        self.panel.refresh()
+        self.assertEqual(len(self.keys), 1)
+
+
+class DestroyAll(Panel):
+    """A rebuild mid-drag (2026-10-18 final review): destroy_all ends the weight drag."""
+
+    def test_destroy_all_ends_a_weight_drag(self):
+        from unittest import mock
+        from maya_timebar import layerpanel, layerscene
+        self.panel.open((1300, 815))
+        lay = self.panel.column.layout_()
+        rect = L.row_parts(lay.row_at(0, 0), "anim", 1.0)["weight"]
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        p = QT.QtCore.QPointF(rect[0] + rect[2] * 0.5, rect[1] + 4)
+        ev = QT.QtGui.QMouseEvent(E.MouseButtonPress, p, QT.QtCore.QPointF(self.panel.column.mapToGlobal(p.toPoint())),
+                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        QT.QtWidgets.QApplication.sendEvent(self.panel.column, ev)
+        self.assertTrue(self.panel.drag)
+        with mock.patch.object(layerscene, "end_weight") as ended:
+            layerpanel.destroy_all()
+        names = [e[0] for e in self.link.log]
+        self.assertEqual(names.count("end_weight"), 1)
+        self.assertIsNone(self.panel.drag)
+        self.assertTrue(ended.called)
+        self.assertNotIn(self.panel, layerpanel.live_panels())
+
+    def test_destroy_all_with_no_panel_still_ends_the_chunk(self):
+        from unittest import mock
+        from maya_timebar import layerpanel, layerscene
+        self.panel.destroy()
+        with mock.patch.object(layerscene, "end_weight") as ended:
+            layerpanel.destroy_all()
+        self.assertTrue(ended.called)
+
+
 class Scaled(Panel):
     """At 150 % the height is logical px x ui, the remembered height logical."""
 

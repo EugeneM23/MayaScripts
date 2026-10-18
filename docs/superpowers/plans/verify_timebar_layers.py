@@ -95,4 +95,57 @@ d = S.display_layers()[0]
 gate((d["visible"], d["playback"], d["type"]) == (False, False, 2), "V, P, type written: %s" % d)
 cmds.select(clear=True); S.display_select(name)
 gate(cmds.ls(selection=True) == [cube], "the layer's objects selected")
+
+# keys_by_layer on 9 layers (2026-10-18 final review): its cost, and the base layer's
+# keys read with listConnections equal to the old per-plug findCurveForPlug read
+import time
+cmds.file(new=True, force=True)
+cube = cmds.polyCube(name="cube9")[0]
+for attr, frames in (("translateX", (0, 10, 20)), ("translateY", (3, 33)), ("rotateZ", (7,))):
+    for t in frames:
+        cmds.setKeyframe(cube, attribute=attr, time=t, value=t * 0.1)
+driver = cmds.polySphere(name="driver")[0]
+cmds.setDrivenKeyframe(cube + ".scaleX", currentDriver=driver + ".ty", driverValue=0, value=1)
+cmds.setDrivenKeyframe(cube + ".scaleX", currentDriver=driver + ".ty", driverValue=5, value=2)
+names9 = []
+for i in range(9):
+    cmds.select(cube)
+    layer = cmds.animLayer("L%d" % i, addSelectedObjects=True)
+    names9.append(layer)
+    cmds.setKeyframe(cube, attribute="translateX", time=40 + i, value=i, animLayer=layer)
+cmds.select(cube)
+root = cmds.animLayer(q=True, root=True)
+
+
+def old_base_keys():
+    times = set()
+    for attr in cmds.listAttr(cube, keyable=True) or []:
+        plug = cube + "." + attr
+        try:
+            curves = cmds.animLayer(root, q=True, findCurveForPlug=plug) or []
+        except Exception:
+            curves = []
+        if not curves:
+            curves = cmds.listConnections(plug, source=True, destination=False, type="animCurve") or []
+        for c in cmds.ls(curves, type=S.TIME_CURVES) or []:
+            times.update(cmds.keyframe(c, q=True, timeChange=True) or [])
+    return sorted(times)
+
+
+all9 = [root] + names9
+S.keys_by_layer(all9)
+runs = []
+for _ in range(20):
+    t0 = time.perf_counter()
+    k9 = S.keys_by_layer(all9)
+    runs.append((time.perf_counter() - t0) * 1000.0)
+runs.sort()
+t0 = time.perf_counter()
+old = old_base_keys()
+old_ms = (time.perf_counter() - t0) * 1000.0
+print("keys_by_layer on 9 layers + base: median %.2f ms, max %.2f ms (the old base read alone %.2f ms)"
+      % (runs[len(runs) // 2], runs[-1], old_ms))
+gate(k9[root] == old == [0.0, 3.0, 7.0, 10.0, 20.0, 33.0],
+     "the base layer's keys as the per-plug read had them, no driven key: %s / %s" % (k9[root], old))
+gate(all(k9[n] == [40.0 + i] for i, n in enumerate(names9)), "each layer's own key: %s" % [k9[n] for n in names9])
 print("%d of %d gates failed" % (len(FAIL), N[0]))

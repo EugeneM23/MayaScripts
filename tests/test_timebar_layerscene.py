@@ -33,6 +33,8 @@ class FakeCmds(object):
         if q and kw.get("attribute"):
             return ["cube.translateX"] if name in ("A", "B") else []
         if q and "findCurveForPlug" in kw:
+            if name == "BaseAnimation":
+                return {"cube.translateX": ["base_tx"]}.get(kw["findCurveForPlug"])
             return {"A": ["A_tx"], "B": ["B_tx"]}.get(name)
         if e and "selected" in kw:
             self.selected[name] = kw["selected"]
@@ -45,10 +47,29 @@ class FakeCmds(object):
         self.calls.append(("setAttr", plug, value))
         self.attrs[plug] = value
 
-    def listConnections(self, plug, source=True, destination=False, type=None):
-        return []
+    #  the base layer's graph (2026-10-18 final review): (source node, destination plug)
+    edges = ()
+    kinds = {}
+
+    def listConnections(self, objs, source=True, destination=False, type=None, connections=False, plugs=False):
+        self.calls.append(("listConnections", objs, type, connections))
+        objs = [objs] if isinstance(objs, str) else list(objs)
+        out = []
+        for src, dst in self.edges:
+            node = dst.split(".")[0]
+            if dst not in objs and node not in objs:
+                continue
+            kind = self.kinds.get(src, "")
+            if type == "animCurve" and not kind.startswith("animCurve"):
+                continue
+            if type == "animBlendNodeBase" and not kind.startswith("animBlendNode"):
+                continue
+            out.extend([dst, src] if connections else [src])
+        return out
 
     def ls(self, *a, **kw):
+        if isinstance(kw.get("type"), (list, tuple)):
+            return [n for n in (a[0] if a else []) if self.kinds.get(n) in kw["type"]]
         if kw.get("type") == "displayLayer":
             return ["defaultLayer", "lay1"]
         if kw.get("selection"):
@@ -59,7 +80,11 @@ class FakeCmds(object):
         return self.colour
 
     def keyframe(self, curve, q=True, timeChange=True):
-        return {"A_tx": [0.0, 10.0], "B_tx": [5.0]}.get(curve, [])
+        times = {"A_tx": [0.0, 10.0], "B_tx": [5.0], "base_tx": [0.0, 20.0], "base_ty": [3.0],
+                 "driven": [-1.0]}
+        if isinstance(curve, (list, tuple)):
+            return [t for c in curve for t in times.get(c, [])]
+        return times.get(curve, [])
 
     def undoInfo(self, **kw):
         self.chunks.append(kw)
@@ -114,6 +139,24 @@ class Reads(unittest.TestCase):
 
     def test_keys_of_the_selection_in_each_layer(self):
         self.assertEqual(S.keys_by_layer(["A", "B"]), {"A": [0.0, 10.0], "B": [5.0]})
+
+    def test_the_base_layer_s_keys_in_a_few_calls(self):
+        """2026-10-18 final review: the base layer's curves gathered with listConnections
+        over the selection (an unlayered channel's own curve; a layered channel's base
+        curve through the root, one findCurveForPlug per LAYERED channel, never per
+        keyable attribute) and read with one keyframe call; a driven key is no time."""
+        c = self.cmds
+        c.kinds = {"base_ty": "animCurveTL", "driven": "animCurveUL", "base_tx": "animCurveTL",
+                   "A_tx": "animCurveTL", "B_tx": "animCurveTL",
+                   "blendA": "animBlendNodeAdditiveDL", "blendB": "animBlendNodeAdditiveDL"}
+        c.edges = (("base_ty", "cube.translateY"), ("driven", "cube.translateZ"),
+                   ("blendB", "cube.translateX"), ("blendA", "blendB.inputA"), ("B_tx", "blendB.inputB"),
+                   ("base_tx", "blendA.inputA"), ("A_tx", "blendA.inputB"))
+        keys = S.keys_by_layer(["BaseAnimation"])
+        self.assertEqual(keys, {"BaseAnimation": [0.0, 3.0, 20.0]})
+        finds = [e for e in c.calls if e[0] == "animLayer" and "findCurveForPlug" in e[2]]
+        self.assertEqual([e[2]["findCurveForPlug"] for e in finds], ["cube.translateX"])
+        self.assertEqual(len([e for e in c.calls if e[0] == "listConnections"]), 2)
 
 
 class Writes(Reads):

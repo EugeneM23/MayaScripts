@@ -1672,7 +1672,8 @@ def classes():
                 self.state.update(extra)
             if keys:
                 self.keys_dirty = True
-            if self.keys_dirty and (force or not self.state.get("playing")):
+            read_keys = bool(self.keys_dirty and (force or not self.state.get("playing")))
+            if read_keys:
                 found = self.call("keys")
                 old_keys, old_bds = self.keys, self.breakdowns
                 if found is not None:
@@ -1687,6 +1688,10 @@ def classes():
             self._paint_widgets()
             self.timeline.update()
             self.range.update()
+            #  the open layer panel reads with the strip (2026-10-18 final review): the
+            #  jobs and the tick reach it; its lanes' keys only when the strip read keys
+            if self.layer_panel is not None and self.layer_panel.is_open():
+                self.layer_panel.refresh(keys=read_keys, force=force)
 
         def _key_effects(self, old_keys, old_bds, edited=False):
             """A key set flashes, keys deleted throw sparks one after another left to
@@ -1732,8 +1737,6 @@ def classes():
             self._sound()
             self.timeline.update()
             self.range.update()
-            if self.layer_panel is not None and self.layer_panel.is_open():
-                self.layer_panel.refresh()
 
         def on_time(self):
             """timeChanged: the playhead only (playback calls it every frame)."""
@@ -2084,6 +2087,23 @@ def _drop_callbacks():
     state["callbacks"] = []
 
 
+#  (event, the strip's method, its arguments); refresh's are (keys, force). A scene
+#  opened reads everything again, forced, so the layer panel never writes to a
+#  closed scene's nodes (2026-10-18 final review)
+JOB_EVENTS = (("playbackRangeChanged", "refresh", ()),
+              ("SelectionChanged", "refresh", (True,)),
+              ("animLayerRefresh", "refresh", (True,)),
+              ("Undo", "refresh", (True,)),
+              ("Redo", "refresh", (True,)),
+              ("SceneOpened", "refresh", (True, True)),
+              ("NewSceneOpened", "refresh", (True, True)),
+              ("displayLayerChange", "refresh", ()),
+              ("displayLayerManagerChange", "refresh", ()),
+              ("displayLayerAdded", "refresh", ()),
+              ("displayLayerDeleted", "refresh", ()),
+              ("displayLayerVisibilityChanged", "refresh", ()))
+
+
 def start_jobs():
     """The jobs and callbacks that keep the live strip current - one set, whichever
     host it stands in (the docked control or the bottom edge): the old ones killed
@@ -2097,16 +2117,7 @@ def start_jobs():
         except Exception:                                    # noqa: BLE001
             pass
     jobs = []
-    for event, method, args in (("playbackRangeChanged", "refresh", ()),
-                                ("SelectionChanged", "refresh", (True,)),
-                                ("animLayerRefresh", "refresh", (True,)),
-                                ("Undo", "refresh", (True,)),
-                                ("Redo", "refresh", (True,)),
-                                ("displayLayerChange", "refresh", ()),
-                                ("displayLayerManagerChange", "refresh", ()),
-                                ("displayLayerAdded", "refresh", ()),
-                                ("displayLayerDeleted", "refresh", ()),
-                                ("displayLayerVisibilityChanged", "refresh", ())):
+    for event, method, args in JOB_EVENTS:
         try:
             jobs.append(cmds.scriptJob(event=[event, partial(_job, method, *args)]))
         except Exception:                                    # noqa: BLE001 - an event this Maya lacks

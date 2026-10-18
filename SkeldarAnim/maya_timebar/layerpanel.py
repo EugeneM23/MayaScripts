@@ -10,6 +10,7 @@ The data is the link's at once; only the picture moves (docs/interface-motion.md
 Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 """
 
+import sys
 import time
 import traceback
 
@@ -36,8 +37,27 @@ FOOT_GLYPHS = {"add": "plus", "addsel": "addsel", "remsel": "remsel", "merge": "
 COLOUR_INDICES = tuple(range(1, 32))
 
 
+def live_panels():
+    """The panels standing, kept on sys (trap 111): an older module's too."""
+    return sys.__dict__.setdefault("_skeldar_timebar_layer_panels", [])
+
+
 def destroy_all():
-    """Every column and lanes window by name - an older module's too (trap 102)."""
+    """Every panel ended (a weight drag's chunk closed), then every column and lanes
+    window by name - an older module's too (trap 102). A rebuild mid-drag must not
+    leave Maya's undo chunk open (2026-10-18 final review): the chunk is closed in
+    any case, a no-op when none is open."""
+    for panel in list(live_panels()):
+        try:
+            panel.destroy()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    del live_panels()[:]
+    try:
+        from . import layerscene
+        layerscene.end_weight()
+    except Exception:                                        # noqa: BLE001 - no Maya here
+        pass
     q = maya_hubqt.qt()
     if q is None:
         return
@@ -72,6 +92,7 @@ class Panel(object):
         self.picked_disp = None
         self.scroll = 0.0
         self.keys = {}
+        self._keys_stale = False        # a key edit: the lanes read on the next refresh
         self.phase = "closed"
         self.age_override = None        # tests only: the age of a running burst, ms
         self.burst = None               # the column's: {"t0", "open", "origin", "delays", "close_at", "ends"}
@@ -99,6 +120,7 @@ class Panel(object):
         self.status_timer.setSingleShot(True)
         self.status_timer.setInterval(STATUS_MS)
         self.status_timer.timeout.connect(self._clear_status)
+        live_panels().append(self)
 
     # -- the link ----------------------------------------------------------------
     def _option(self, name, default):
@@ -134,8 +156,14 @@ class Panel(object):
         the strip told."""
         if isinstance(answer, (tuple, list)) and len(answer) > 1 and answer[1]:
             self.say(answer[1])
-        self.refresh(force=True)
         refresh = getattr(self.strip, "refresh", None)
+        if refresh is not None and getattr(self.strip, "layer_panel", None) is self and self.is_open():
+            try:
+                refresh(keys=True, force=True)               # it reads this panel too, once
+                return
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+        self.refresh(force=True, keys=True)
         if refresh is not None:
             try:
                 refresh(keys=True)
@@ -275,7 +303,7 @@ class Panel(object):
         return (float(self.lanes.width()), lay.head[1] + lay.head[3] / 2.0)
 
     def _show_lanes(self, burst):
-        self.keys = self._call("keys_by_layer", [r["name"] for r in self.rows["anim"]]) or {}
+        self._read_keys()
         self.place()
         self.lanes.show()
         self.lanes.raise_()
@@ -316,25 +344,34 @@ class Panel(object):
             print(traceback.format_exc())
 
     # -- reading -----------------------------------------------------------------
-    def refresh(self, force=False):
+    def refresh(self, force=False, keys=False):
+        """The rows read again (cheap: the strip's tick runs this four times a second);
+        the lanes' keys only when they can have changed (2026-10-18 final review) - a
+        keys read (`keys`: the selection, a layer change, an undo, a scene opened),
+        a key edit marked by `keys_dirty`, new rows or a forced read."""
         anim = self._call("anim_layers") or []
         disp = self._call("display_layers") or []
         sigs = (L.signature(anim), L.signature(disp))
-        if force or sigs != self._sigs:
+        changed = force or sigs != self._sigs
+        if changed:
             self._sigs = sigs
             self.rows = {"anim": anim, "disp": disp}
             if self.picked_disp not in [r["name"] for r in disp]:
                 self.picked_disp = None
             self._clamp_scroll()
             self.column.invalidate()
-        if self._lanes_shown():
-            self.keys = self._call("keys_by_layer", [r["name"] for r in self.rows["anim"]]) or {}
-            self.lanes.invalidate()
+        if self._lanes_shown() and (keys or changed or self._keys_stale):
+            self._read_keys()
+
+    def _read_keys(self):
+        self._keys_stale = False
+        self.keys = self._call("keys_by_layer", [r["name"] for r in self.rows["anim"]]) or {}
+        self.lanes.invalidate()
 
     def keys_dirty(self):
-        if self._lanes_shown():
-            self.keys = self._call("keys_by_layer", [r["name"] for r in self.rows["anim"]]) or {}
-            self.lanes.invalidate()
+        """A key edit (Maya's callback, many in a drag or a bake): read on the next
+        refresh, not here."""
+        self._keys_stale = True
 
     def on_time(self):
         """The lanes' playhead cell: repainted now, not on an idle (trap 269)."""
@@ -753,6 +790,10 @@ class Panel(object):
             except RuntimeError:
                 pass
         self.phase = "closed"
+        try:
+            live_panels().remove(self)
+        except ValueError:
+            pass
 
     # -- the burst, read by the painters -----------------------------------------
     def burst_of(self, uid):
