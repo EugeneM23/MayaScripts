@@ -11724,6 +11724,13 @@ sparks); the same day the animator: «откатив все эффекты ве�
   **20 % narrower the same day** («ключи на нашем таймлайне на 20% уже»): a key is `look.KEY_WIDTH` (0.8) of
   what its cell leaves after the gap, centred in the cell (`key_cell`); the line between frames `bar.KEY_W`
   2.5 → 2.0. The shards, the ghosts and the lit glow follow `key_cell`.
+  **Three cubes, and a 30 % stronger pulse** (2026-10-18: «эффект разлета осколков ... из 3 кубиков (всегда
+  кубики разлетаются) ... анимация сжатия ... на 30 % сильнее, при появлении ключа тоже»; asked, «появление» =
+  a key just set with S): a deleted key always breaks into three squares, side a third of the key's height,
+  stacked down its middle whatever its width (`look.shard_cuts(height)`, `SHARDS = (3, 3)`, the `pieces`
+  argument gone). A key the playhead reaches swells `bar.KEY_PULSE` (1.3) times as far as a hovered one (the
+  cell's grow 1.5 → 1.95 px, a line up to 1.78 wide) and shrinks back over `KEY_FADE_MS`; a key just set does
+  the same (`key_effect("set")` lights it in `reached`), beside its round glow. 167 timebar tests.
 - **…stronger** (the same day: «глоу должен быть сильнее ... брызги ярче»): both effects are drawn as ADDED
   light (`CompositionMode_Plus`); a key set: a halo `SET_GLOW` 44 logical px laid twice plus a 13 px hot core,
   fading as (1 − u)^1.5; a key deleted: `SPARKS` 34, each a 6 px glow in the key's colour with a hot `RIM` core.

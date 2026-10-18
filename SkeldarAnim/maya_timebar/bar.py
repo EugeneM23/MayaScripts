@@ -33,6 +33,8 @@ POP_MS = 200            # a toggle
 KEY_FADE_MS = 600       # a key the playhead reached
 LIFT = 0.10             # +10 % under the mouse
 KEY_LIFT = 0.6          # a key grows 60 % (under the mouse or reached)
+KEY_PULSE = 1.3         # ... and a key reached or just set swells and shrinks back 30 % more
+                        # (2026-10-18: «анимация сжатия должна быть на 30 % сильнее»)
 PAD = 10                # logical px either side of the timeline's frames
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
@@ -713,6 +715,11 @@ def classes():
             cx, cy, rect = self._key_place(frame)
             timing.setdefault("rect", rect)
             st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"], **timing)
+            if kind == "set":
+                # the key itself swells and shrinks back, as one the playhead reaches
+                # (2026-10-18: «при появлении ключа тоже»)
+                self.reached[frame] = st.clock()
+                st.kick()
             return True
 
         def _key_place(self, frame):
@@ -741,7 +748,6 @@ def classes():
                 return
             groups = look.shard_groups(len(shown))
             delays, life = look.delete_plan(len(groups))
-            pieces = look.SHARDS[0] if len(shown) > look.SMALL_CHANGE else None   # a big wave: 3 each
             for (a, b), delay in zip(groups, delays):
                 # neighbours too dense to tell apart break as one block of their keys
                 rects = [self._key_place(f)[2] for f, _bd in shown[a:b]]
@@ -751,7 +757,7 @@ def classes():
                 frame, bd = shown[a]
                 # the keys stay drawn where they stood until they break (`ghosts`): the data
                 # is gone already, the picture of each key waits for its turn
-                self.key_effect("delete", frame, bd, delay=delay, life=life, pieces=pieces,
+                self.key_effect("delete", frame, bd, delay=delay, life=life,
                                 rect=(left, top, right - left, h), ghosts=rects, quiet=True)
             if shown:
                 self.strip.fx.raise_()
@@ -947,7 +953,8 @@ def classes():
                     continue
                 lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
                 lift = max(self.key_lift.get(frame, 0.0), lit)
-                z = 1.0 + KEY_LIFT * lift
+                swell = max(self.key_lift.get(frame, 0.0), lit * KEY_PULSE)
+                z = 1.0 + KEY_LIFT * swell
                 burst = 1.0
                 if entrance:
                     g = self.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, shown)), int(KEY_Y * ui)))
@@ -956,13 +963,13 @@ def classes():
                 x = t.x(shown)
                 whole = look.on_frame(shown)
                 top, bottom = key_span(h, ui)
-                kw = KEY_W * ui * min(z, 1.6)
+                kw = KEY_W * ui * min(z, 1.0 + KEY_LIFT * KEY_PULSE)
                 grow = 0.0
                 if whole:
                     #  the cell, grown a little when lit and squeezed toward its middle
                     #  while it pops in
                     l, tp, cw, ch = look.key_cell(x, t.scale, top, bottom, ui)
-                    grow = 1.5 * ui * lift
+                    grow = 1.5 * ui * swell
                     if z < 1.0:
                         cx, cy = l + cw / 2.0, tp + ch / 2.0
                         cw, ch = cw * max(z, 0.05), ch * max(z, 0.05)
@@ -1297,15 +1304,14 @@ def classes():
 
         @staticmethod
         def _paint_shards(p, broken, ui):
-            """A deleted key broken into 3..5 pieces that together were the key, each
-            flying off spinning and falling (2026-10-17: «ключик сломался и разлетелся»).
+            """A deleted key broken into three cubes, each flying off spinning and falling
+            (2026-10-17: «ключик сломался и разлетелся»; cubes since 2026-10-18).
             A piece is a fillRect under its own transform: the cheapest rotated rectangle
             measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
             for i, age in broken:
                 body = QtGui.QColor(i["hex"])
                 for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
-                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui,
-                                                              pieces=i.get("pieces")):
+                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui):
                     body.setAlphaF(alpha)
                     move = QtGui.QTransform()
                     move.translate(cx, cy)

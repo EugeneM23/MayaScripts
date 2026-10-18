@@ -413,24 +413,21 @@ class DeleteWaveTests(unittest.TestCase):
             self.assertLessEqual(delays[-1], look.DELETE_START_MS + 1e-6)
         self.assertEqual(look.delete_plan(7)[0][1], look.DELETE_STEP_MS)   # a few: one step apart
 
-    def test_a_key_breaks_into_three_to_five_pieces_that_are_the_key(self):
-        rect = (100.0, 20.0, 12.0, 40.0)
-        counts = set()
-        for seed in range(1, 60):
-            cuts = look.shard_cuts(seed, 40.0)
-            counts.add(len(cuts))
-            self.assertAlmostEqual(cuts[0][0], 0.0)
-            self.assertAlmostEqual(cuts[-1][1], 40.0)
-            for (a, b), (c, _d) in zip(cuts, cuts[1:]):
-                self.assertAlmostEqual(b, c)            # no gap, no overlap
-            start = look.shards(seed, rect, 0, 700, 260, 900)
-            self.assertEqual(len(start), len(cuts))
-            for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
-                self.assertAlmostEqual(cx, 106.0)       # at age 0 each piece sits in the key
-                self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
-                self.assertEqual((w, angle, alpha), (12.0, 0.0, 1.0))
-                self.assertAlmostEqual(h, b - a)
-        self.assertEqual(counts, {3, 4, 5})
+    def test_a_key_always_breaks_into_three_cubes_stacked_down_it(self):
+        # 2026-10-18: «из 3 кубиков (всегда кубики разлетаются)»
+        cuts = look.shard_cuts(42.0)
+        self.assertEqual(cuts, [(0.0, 14.0), (14.0, 28.0), (28.0, 42.0)])
+        for rect in ((100.0, 20.0, 12.0, 42.0), (100.0, 20.0, 2.0, 42.0), (100.0, 20.0, 60.0, 42.0)):
+            for seed in range(1, 60):
+                start = look.shards(seed, rect, 0, 700, 260, 900)
+                self.assertEqual(len(start), 3)
+                for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
+                    self.assertAlmostEqual(cx, rect[0] + rect[2] / 2.0)   # down the key's middle
+                    self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
+                    self.assertEqual((w, h, angle, alpha), (14.0, 14.0, 0.0, 1.0))   # a square
+                for age in (100, 400, 650):
+                    for _cx, _cy, w, h, _a, _al in look.shards(seed, rect, age, 700, 260, 900):
+                        self.assertEqual(w, h)
 
     def test_the_pieces_fly_apart_fall_and_fade(self):
         rect = (100.0, 20.0, 12.0, 40.0)

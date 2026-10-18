@@ -548,6 +548,14 @@ class KeyEffects(Strip):
         self.assertEqual(self.kinds(), ["set"])
         self.paint()
 
+    def test_a_key_set_swells_as_a_reached_one_does_30_percent_more_than_a_hover(self):
+        # 2026-10-18: «анимация сжатия ... на 30 % сильнее, при появлении ключа тоже»
+        self.assertEqual(bar.KEY_PULSE, 1.3)
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.refresh(keys=True)
+        self.assertIn(20.0, self.strip.timeline.reached)
+        self.paint()
+
     def test_a_key_deleted_throws_sparks(self):
         self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
         self.strip.refresh(keys=True)

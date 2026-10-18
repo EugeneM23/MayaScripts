@@ -626,7 +626,8 @@ def key_changes(old, new, edited=False):
 
 DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
 DELETE_START_MS = 500   # ... but the last one starts within this, however many (2026-10-17: 1 s, then 0.5)
-SHARDS = (3, 5)         # a deleted key breaks into this many pieces (2026-10-17: «3-5 кусочков»)
+SHARDS = (3, 3)         # a deleted key breaks into three cubes (2026-10-18: «из 3 кубиков (всегда
+                        # кубики разлетаются)»; 3..5 uneven pieces before)
 # ... and how they fly: «Shorter», variant B of six played side by side (2026-10-17; D «Snap and
 # drop» first) - two thirds of the first flight's kick, its fall; logical px / s, spin deg / s
 SHARD_SPEED = 170.0
@@ -710,39 +711,27 @@ def _rand(state):
     return state, (state % 10000) / 10000.0
 
 
-def shard_cuts(seed, height, pieces=None):
-    """Where a key of `height` breaks: [(top, bottom)] of 3..5 pieces (or `pieces`)
-    stacked down it, uneven, together the whole key."""
-    s = (int(seed) * 2654435761) & 0x7FFFFFFF
-    s, a = _rand(s)
-    n = SHARDS[0] + int(a * (SHARDS[1] - SHARDS[0] + 1))
-    n = min(n, SHARDS[1]) if not pieces else int(pieces)
-    sizes = []
-    for _i in range(n):
-        s, b = _rand(s)
-        sizes.append(0.6 + 0.8 * b)
-    total = sum(sizes)
-    cuts, y = [], 0.0
-    for w in sizes:
-        h = height * w / total
-        cuts.append((y, y + h))
-        y += h
-    return cuts
+def shard_cuts(height):
+    """Where a key of `height` breaks: [(top, bottom)] of its three cubes stacked
+    down it, each a third of its height."""
+    side = height / float(SHARDS[0])
+    return [(i * side, (i + 1) * side) for i in range(SHARDS[0])]
 
 
-def shards(seed, rect, age_ms, ms, speed, gravity, spin=SHARD_SPIN, pieces=None):
-    """A deleted key broken: its 3..5 pieces at `age_ms` - [(cx, cy, w, h, angle,
-    alpha)], logical px, y down, angle in degrees. Each piece starts exactly where it
-    was in the key (together they ARE the key at age 0), is kicked up and away from
-    the key's middle, spins and falls; it fades over the last half. Seeded, so a
-    paint at any time reads the same flight. `rect` = (left, top, width, height)."""
+def shards(seed, rect, age_ms, ms, speed, gravity, spin=SHARD_SPIN):
+    """A deleted key broken into three cubes at `age_ms` - [(cx, cy, w, h, angle,
+    alpha)], logical px, y down, angle in degrees. A cube's side is a third of the
+    key's height, whatever its width (a hairline key throws cubes too); the three
+    start stacked down the key's middle, are kicked up and away from it, spin and
+    fall; they fade over the last half. Seeded, so a paint at any time reads the same
+    flight. `rect` = (left, top, width, height)."""
     if age_ms < 0 or age_ms >= ms:
         return []
     left, top, w, h = rect
     t = age_ms / 1000.0
     u = age_ms / float(ms)
     alpha = 1.0 if u < 0.5 else 1.0 - (u - 0.5) / 0.5
-    cuts = shard_cuts(seed, h, pieces)
+    cuts = shard_cuts(h)
     s = (int(seed) * 40503 + 7) & 0x7FFFFFFF
     s, r0 = _rand(s)
     first = -1.0 if r0 < 0.5 else 1.0
@@ -759,7 +748,7 @@ def shards(seed, rect, age_ms, ms, speed, gravity, spin=SHARD_SPIN, pieces=None)
         cx = left + w / 2.0 + vx * t
         cy = cy0 + vy * t + 0.5 * gravity * t * t
         angle = side * spin * (0.4 + 0.6 * r3) * t
-        out.append((cx, cy, w, b - a, angle, alpha))
+        out.append((cx, cy, b - a, b - a, angle, alpha))
     return out
 
 
