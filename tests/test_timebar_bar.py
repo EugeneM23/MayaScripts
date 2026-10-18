@@ -113,6 +113,9 @@ class FakeLink(object):
     def layer_label(self):
         return "Layer1"
 
+    def layer_state(self):
+        return "Layer1", len(self.layers())
+
     def pick_layer(self, name):
         self._log("pick_layer", name)
 
@@ -504,6 +507,32 @@ class Menus(Strip):
         self.assertGreater(btn.x(), self.strip.auto.x())
         self.assertLess(btn.x(), self.strip.prefs.x())
         self.assertTrue(btn.isCheckable())
+
+    def test_the_badge_counts_the_layers_and_is_absent_with_none(self):
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "2")
+        self.link.layer_state = lambda: ("", 0)
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "")
+        self.strip.layers_btn.grab()                    # painting with and without the badge
+        self.link.layer_state = lambda: ("Layer1", 3)
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "3")
+        self.strip.layers_btn.grab()
+
+    def test_the_time_change_reaches_the_layer_panel(self):
+        seen = []
+
+        class Panel:
+            def on_time(self):
+                seen.append(1)
+
+            def is_open(self):
+                return False
+        self.strip.layer_panel = Panel()
+        self.link.now = lambda: 17.0
+        self.strip.on_time()
+        self.assertEqual(seen, [1])
 
     def test_the_pill_and_the_chip_open_the_panel(self):
         opened = []

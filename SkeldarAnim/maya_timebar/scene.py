@@ -171,6 +171,13 @@ def layer_label(found=None):
     return picked[-1] if picked else "BaseAnimation"
 
 
+def layer_state():
+    """(the chip's text, the number of animation layers - the root counted) from ONE read of the
+    layers: ('', 0) without any."""
+    found = layers()
+    return layer_label(found), len(found)
+
+
 def pick_layer(name):
     for other, _label_, _sel in layers():
         try:

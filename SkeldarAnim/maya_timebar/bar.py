@@ -299,6 +299,7 @@ def classes():
             self.goal = 0.0
             self.flash_at = None
             self.pop_at = None
+            self.badge = ""             # a small round count at the top-right (2026-10-18)
             self._was_busy = False
             self.index = strip.register(self)
             self._fit()
@@ -326,6 +327,12 @@ def classes():
             if text != self.text():
                 self.setText(text)
                 self._fit()
+                self.update()
+
+        def set_badge(self, text):
+            text = str(text) if text else ""
+            if text != self.badge:
+                self.badge = text
                 self.update()
 
         def enterEvent(self, event):
@@ -421,7 +428,25 @@ def classes():
                                Qt.AlignVCenter | Qt.AlignLeft, self.text())
                 else:
                     p.drawText(base, Qt.AlignCenter, self.text())
+            if self.badge:
+                self._paint_badge(p, base, on)
             p.end()
+
+        def _paint_badge(self, p, base, on):
+            """The count: card_active face and text2 ink (accent and on_accent while the pill is on),
+            a 1 px panel border."""
+            tk, ui = self.strip.tokens, self.strip.ui
+            font = QtGui.QFont("Consolas")
+            font.setPixelSize(max(7, int(9 * ui)))
+            p.setFont(font)
+            w = max(13 * ui, QtGui.QFontMetrics(font).horizontalAdvance(self.badge) + 7 * ui)
+            h = 13 * ui
+            box = QtCore.QRectF(base.right() - w + 4 * ui, base.top() - 3 * ui, w, h)
+            p.setPen(QtGui.QPen(colour(tk["panel"]), max(1.0, ui)))
+            p.setBrush(colour(tk["accent"] if on else tk["card_active"]))
+            p.drawRoundedRect(box, h / 2.0, h / 2.0)
+            p.setPen(colour(tk["on_accent"] if on else tk["text2"]))
+            p.drawText(box, Qt.AlignCenter, self.badge)
 
     # -- the range block -------------------------------------------------------
 
@@ -1725,6 +1750,8 @@ def classes():
                 #  in several (2026-10-16)
                 self.timeline.repaint()
                 self.field.repaint()
+                if self.layer_panel is not None:
+                    self.layer_panel.on_time()
 
         def tick(self):
             try:
@@ -1764,8 +1791,9 @@ def classes():
             label = next((t for t, v in look.SPEEDS if abs(v - speed) < 1e-6), "%gx" % speed)
             self.speed.set_label(label + u" ▾")
             self.character.set_label((s.get("character") or "No Character Set") + u" ▾")
-            layer = self.call("layer_label") or ""
+            layer, count = self.call("layer_state") or ("", 0)
             self.layer.set_label((layer + u" ▾") if layer else "No layers")
+            self.layers_btn.set_badge(count if count else "")
             self.layers_btn.setChecked(bool(self.layer_panel and self.layer_panel.is_open()))
 
         # presses ---------------------------------------------------------------
