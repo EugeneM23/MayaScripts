@@ -1,13 +1,16 @@
-"""maya_hubpop_rules - where a section's popup stands in its viewport, and how big it is. Pure.
+"""maya_hubpop_rules - where a section's window stands on the screens, and how big it is. Pure.
 
 2026-10-09 (spec: docs/superpowers/specs/2026-10-09-hub-section-popups-design.md).
 Every decision the popup makes about its place and its size is here, so the tests
 run with neither Maya nor Qt: the size it takes (automatic, or as the animator drags
-its edges), the bounds a drag may take, the origin it is clamped to inside its
-viewport's rectangle (so a drag cannot carry it onto another monitor), the offset
-that is remembered (logical px from the viewport's top-left, so it moves with the
-viewport and survives a different scale), the cascade of the default places, and
-the optionVars' text.
+its edges), the bounds a drag may take, the origin it is clamped to inside a rectangle
+(so a drag cannot carry it off its screen), the offset that is remembered, the cascade
+of the default places, and the optionVars' text.
+
+Since 2026-10-18 (spec: docs/superpowers/specs/2026-10-18-floating-windows-design.md) a
+rectangle is a SCREEN's available geometry, not a viewport's: a popup sits in a
+viewport, a floating window stands on the screens. `screen_for`, `place_by_point` and
+`place_on_screens` place a window by a point or by its remembered place.
 
 Rectangles are (x, y, width, height) in global physical pixels (what the GL
 surface reports); offsets, sizes and the margins are logical, multiplied by the
@@ -18,15 +21,20 @@ WIDTH = 360            # logical px: the widest a popup takes unless its section
 MARGIN = 12            # logical px kept from the viewport's edges
 CASCADE = 24           # logical px each default place steps from the last
 MIN_HEIGHT = 40        # logical px: an unrolled popup is never shorter (2026-10-09)
-MAX_HEIGHT = 320       # logical px: an unrolled popup is never taller - a taller section scrolls (2026-10-09)
+MAX_HEIGHT = 560       # logical px: an unrolled popup is never taller - a taller section scrolls (2026-10-09)
+                       # a floating window is not squeezed into a viewport, 2026-10-18
 MIN_RESIZE_W = 160     # logical px: the narrowest an unrolled popup is dragged to (2026-10-09)
 GRIP_W = 5             # logical px: the strip along each edge a resize drag takes (2026-10-09)
 
 POPUPS_VAR = "skeldarHubPopups"          # the keys open, in opening order
-POS_VAR = "skeldarHubPopupPos_{0}"       # one popup's offset: "x,y"
+POS_VAR = "skeldarHubPopupPos_{0}"       # one popup's offset: "x,y" (the old viewport offset, unread since 2026-10-18)
 COLLAPSED_VAR = "skeldarHubPopupCollapsed_{0}"   # 1: rolled up to its name (2026-10-09)
 SIZE_VAR = "skeldarHubPopupSize_{0}"     # an unrolled popup's size "w,h", logical; "-" = automatic
 BAR_VAR = "skeldarHubPopupBar_{0}"       # a rolled-up popup's width, logical; "-" = fits its name
+WINDOW_POS_VAR = "skeldarHubWindowPos_{0}"   # a window's top-left, global logical "x,y" (2026-10-18)
+
+AT_CURSOR = (18, 14)   # logical px: a window by a point stands this far left of and above it
+TITLE_PROBE = 16       # logical px down from the top: the title row a remembered place must keep on a screen
 
 
 def clamp_origin(x, y, w, h, rect):
@@ -60,6 +68,45 @@ def origin_of(offset, rect, w, h, scale):
     return clamp_origin(x, y, w, h, rect)
 
 
+def _inside(point, rect):
+    return rect[0] <= point[0] < rect[0] + rect[2] and rect[1] <= point[1] < rect[1] + rect[3]
+
+
+def _distance(point, rect):
+    dx = max(rect[0] - point[0], 0, point[0] - (rect[0] + rect[2] - 1))
+    dy = max(rect[1] - point[1], 0, point[1] - (rect[1] + rect[3] - 1))
+    return dx * dx + dy * dy
+
+
+def screen_for(point, screens):
+    """The available rectangle holding `point`, else the nearest one. Pure (2026-10-18)."""
+    for rect in screens:
+        if _inside(point, rect):
+            return rect
+    return min(screens, key=lambda rect: _distance(point, rect))
+
+
+def place_by_point(point, w, h, screens, scale):
+    """A window's top-left by `point`: AT_CURSOR left of and above it, kept on the
+    screen that holds the point. Pure (2026-10-18)."""
+    scale = float(scale) or 1.0
+    x = point[0] - AT_CURSOR[0] * scale
+    y = point[1] - AT_CURSOR[1] * scale
+    return clamp_origin(x, y, w, h, screen_for(point, screens))
+
+
+def place_on_screens(place, w, h, screens, scale):
+    """A remembered logical top-left, physical and on its screen - or None when its
+    title row stands on no screen any more (a monitor unplugged). Pure (2026-10-18)."""
+    scale = float(scale) or 1.0
+    x, y = place[0] * scale, place[1] * scale
+    probe = (x + w / 2.0, y + TITLE_PROBE * scale)
+    for rect in screens:
+        if _inside(probe, rect):
+            return clamp_origin(x, y, w, h, rect)
+    return None
+
+
 def default_offset(index, rect, w, h, scale):
     """The offset of the `index`-th popup opened without a remembered place:
     the top-right corner of the viewport, each one cascading down and left
@@ -89,7 +136,8 @@ def bounds(min_w, rect, scale, chrome_h, collapsed=False, scrollbar_w=0,
     (`min_w`) and room for a scroll bar; the height is at least MIN_HEIGHT. The
     viewport less its margins caps both. `origin` (the window's top-left, physical)
     caps the far edges at the viewport's margin too: a window cannot be dragged out
-    of its viewport. Pure."""
+    of its viewport. Since 2026-10-18 `rect` is a SCREEN's available geometry for a
+    floating window (the same rule holds). Pure."""
     scale = float(scale) or 1.0
     avail_w, avail_h = _avail(rect, scale)
     high_w, high_h = avail_w, avail_h
@@ -127,6 +175,7 @@ def popup_size(min_w, content_h, rect, scale, chrome_h, collapsed=False,
     A size the animator dragged (`user_w`, `user_h`, logical) is taken unchanged
     where `bounds` allows, and a dragged height may be taller than MAX_HEIGHT (the
     animator chose it). Everything is kept inside the viewport less its margins.
+    Since 2026-10-18 `rect` may be a SCREEN's available geometry (a floating window).
     Pure."""
     scale = float(scale) or 1.0
     avail_w, avail_h = _avail(rect, scale)
@@ -200,6 +249,10 @@ def decode_offset(text):
         return (float(parts[0]), float(parts[1]))
     except ValueError:
         return None
+
+
+encode_place = encode_offset     # a window's remembered place: the same text (2026-10-18)
+decode_place = decode_offset
 
 
 def encode_single(value):

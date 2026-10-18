@@ -125,8 +125,9 @@ class PopupSize(unittest.TestCase):
         self.assertEqual(w, rules.WIDTH + 12)
 
     def test_an_expanded_popup_is_never_taller_than_the_cap_at_any_scale(self):
-        _w, h = rules.popup_size(0, 500, VIEW, 1.5, 40)
-        self.assertEqual(h, int(round(rules.MAX_HEIGHT * 1.5)))
+        # content taller than the cap, so the cap (not the content) sets the height
+        _w, h = rules.popup_size(0, 9000, VIEW, 1.5, 40)
+        self.assertEqual(h, min(int(round(rules.MAX_HEIGHT * 1.5)), 600 - 2 * 12 * 1.5))
 
     def test_a_section_under_the_cap_is_not_scrolled(self):
         w, h = rules.popup_size(0, 100, VIEW, 1.0, 40, scrollbar_w=12)
@@ -172,8 +173,9 @@ class Resize(unittest.TestCase):
                                           user_h=300), (500, 300))
 
     def test_a_dragged_height_may_be_taller_than_the_automatic_cap(self):
-        _w, h = rules.popup_size(0, 100, VIEW, 1.0, 40, user_h=500)
-        self.assertEqual(h, 500)
+        tall = (100, 50, 800, 1000)     # a window on a tall screen, so the viewport does not cap it
+        _w, h = rules.popup_size(0, 100, tall, 1.0, 40, user_h=700)
+        self.assertEqual(h, 700)
         self.assertGreater(h, rules.MAX_HEIGHT)
 
     def test_a_dragged_size_is_held_to_the_minimums(self):
@@ -220,6 +222,51 @@ class Resize(unittest.TestCase):
         self.assertIsNone(rules.decode_single("0"))
         self.assertIsNone(rules.decode_single("abc"))
         self.assertEqual(rules.decode_single(rules.encode_single(190.0)), 190.0)
+
+
+LEFT = (0, 0, 1920, 1040)
+RIGHT = (1920, 0, 2560, 1400)
+
+
+class Screens(unittest.TestCase):
+    """A floating window stands on the screens, not in a viewport (2026-10-18)."""
+
+    def test_the_screen_holding_the_point(self):
+        self.assertEqual(rules.screen_for((2000, 50), [LEFT, RIGHT]), RIGHT)
+
+    def test_a_point_on_no_screen_takes_the_nearest(self):
+        self.assertEqual(rules.screen_for((5000, 50), [LEFT, RIGHT]), RIGHT)
+        self.assertEqual(rules.screen_for((-300, 50), [LEFT, RIGHT]), LEFT)
+
+    def test_a_window_by_a_point_stands_left_of_and_above_it(self):
+        self.assertEqual(rules.place_by_point((500, 400), 300, 200, [LEFT], 1.5),
+                         (500 - 27, 400 - 21))
+
+    def test_a_window_by_a_point_is_kept_on_its_screen(self):
+        x, y = rules.place_by_point((1910, 1030), 300, 200, [LEFT, RIGHT], 1.0)
+        self.assertEqual((x + 300, y + 200), (1920, 1040))
+
+    def test_a_remembered_place_on_a_screen_is_taken(self):
+        self.assertEqual(rules.place_on_screens((1300.0, 100.0), 300, 200, [LEFT, RIGHT], 1.5),
+                         (1950, 150))
+
+    def test_a_remembered_place_on_no_screen_is_dropped(self):
+        self.assertIsNone(rules.place_on_screens((3000.0, 100.0), 300, 200, [LEFT], 1.0))
+
+    def test_a_remembered_place_hanging_off_a_screen_is_pulled_on(self):
+        # the title centre (1850) is on the screen, the window overhangs its right edge
+        self.assertEqual(rules.place_on_screens((1700.0, 100.0), 300, 200, [LEFT], 1.0),
+                         (1620, 100))
+
+    def test_the_window_place_has_its_own_option_var(self):
+        self.assertEqual(rules.WINDOW_POS_VAR.format("tools"), "skeldarHubWindowPos_tools")
+        self.assertNotEqual(rules.WINDOW_POS_VAR, rules.POS_VAR)
+
+    def test_a_window_may_stand_taller_than_a_popup_did(self):
+        self.assertEqual(rules.MAX_HEIGHT, 560)
+
+    def test_the_place_round_trips_as_text(self):
+        self.assertEqual(rules.decode_place(rules.encode_place((12.5, -3.0))), (12.5, -3.0))
 
 
 class Memory(unittest.TestCase):
