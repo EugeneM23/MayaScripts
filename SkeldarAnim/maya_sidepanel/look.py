@@ -13,6 +13,7 @@ TAB_LABELS = (("Channels", "channels"), ("Attributes", "attributes"))
 WIDTH, MIN_WIDTH, MAX_WIDTH = 340, 260, 700     # logical px
 HEADER = 30             # logical px: the tabs and the pin
 GRIP = 5                # logical px: the width grip on the inner (left) side
+RADIUS = 8              # logical px: the window's corners (the hub's card radius, 2026-10-18)
 #  logical px along the right edge the cursor may rest in (2026-10-17: 14, then
 #  48 - «как и у таймслайдера не нужно было вести мышку до самого края»)
 ZONE_PX = 62     # 48, then 30 % wider (2026-10-17, «зону срабатывания увеличим на 30%»)

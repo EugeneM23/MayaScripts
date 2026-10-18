@@ -373,10 +373,18 @@ class SideEdge(object):
         if self._tick is not None:
             self._tick(self)
 
+    def _rest_radius(self):
+        """The corners at rest (2026-10-18, the animator: «не скругленные края у нашего
+        окна а острые (кстати это баг)»): the hub's card radius."""
+        return look.RADIUS * getattr(self.panel, "ui", 1.0)
+
     def _full_mask(self):
         q = hubqt.qt()
-        self.host.setMask(q.QtGui.QRegion(0, 0, max(1, self.host.width()),
-                                          max(1, self.host.height())))
+        w, h = max(1, self.host.width()), max(1, self.host.height())
+        path = q.QtGui.QPainterPath()
+        r = self._rest_radius()
+        path.addRoundedRect(q.QtCore.QRectF(0, 0, w, h), r, r)
+        self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
         self.host.update()
 
     def _host_rect(self):
@@ -589,7 +597,8 @@ class SideEdge(object):
         if y1 - y0 >= h - 0.5:
             self._full_mask()
             return
-        radius = 12 * getattr(self.panel, "ui", 1.0) * (1 - (y1 - y0) / float(max(h, 1)))
+        radius = max(self._rest_radius(),
+                     12 * getattr(self.panel, "ui", 1.0) * (1 - (y1 - y0) / float(max(h, 1))))
         path = q.QtGui.QPainterPath()
         path.addRoundedRect(q.QtCore.QRectF(0, y0, w, y1 - y0), radius, radius)
         self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))

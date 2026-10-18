@@ -329,6 +329,16 @@ class Edge(unittest.TestCase):
         self.assertTrue(self.edge.host.isVisible())
         self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
 
+    def test_the_window_has_round_corners_at_rest(self):
+        """2026-10-18: «не скругленные края у нашего окна а острые (кстати это баг)»."""
+        self.edge.reveal(instant=True)
+        mask = self.edge.host.mask()
+        w, h = self.edge.host.width(), self.edge.host.height()
+        self.assertFalse(mask.contains(QT.QtCore.QPoint(0, 0)))
+        self.assertFalse(mask.contains(QT.QtCore.QPoint(w - 1, h - 1)))
+        self.assertTrue(mask.contains(QT.QtCore.QPoint(w // 2, h // 2)))
+        self.assertTrue(mask.contains(QT.QtCore.QPoint(0, h // 2)))
+
     def test_it_stays_while_the_time_bar_is_out(self):
         """2026-10-17: «таймслайдер меняет свой размер если панель закрывается» -
         while the bar is out the panel does not hide by itself."""

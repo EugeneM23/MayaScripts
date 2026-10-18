@@ -122,6 +122,11 @@ class SceneTests(unittest.TestCase):
         self.assertTrue(scene.sync_selection(["|IKLeg_L.translateX"]))
         self.assertEqual(self.fake.edits[-1]["select"], ["|IKLeg_L.translateX"])
 
+    def test_visibility_stands_after_the_scales_as_in_maya(self):
+        self.assertEqual(scene.ordered(["visibility", "translateX", "rotateX", "scaleX", "swivel"]),
+                         ["translateX", "rotateX", "scaleX", "visibility", "swivel"])
+        self.assertEqual(scene.ordered(["swivel"]), ["swivel"])
+
     def test_nothing_selected(self):
         self.fake.sel = []
         self.assertEqual(scene.snapshot()["sections"], [])

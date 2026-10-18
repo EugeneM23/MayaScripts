@@ -518,8 +518,10 @@ def classes():
                 vink = tk["on_accent"]
             p.setFont(value_font)
             p.setPen(colour(vink))
-            p.drawText(well.adjusted(5 * ui, 0, -6 * ui, 0), Qt.AlignVCenter | Qt.AlignRight,
-                       look.fmt(ch["value"], ch["kind"], box.precision, ch.get("names")))
+            inner = well.adjusted(5 * ui, 0, -6 * ui, 0)
+            text = look.fmt(ch["value"], ch["kind"], box.precision, ch.get("names"))
+            text = QtGui.QFontMetrics(value_font).elidedText(text, Qt.ElideRight, int(max(4, inner.width())))
+            p.drawText(inner, Qt.AlignVCenter | Qt.AlignRight, text)
             p.restore()
 
         def _paint_cell(self, p, cell, state, muted, changed, fl):

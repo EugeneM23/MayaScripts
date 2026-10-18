@@ -61,7 +61,55 @@ def _attrs(node):
     for attr in keyable + shown:
         if attr not in out:
             out.append(attr)
+    return ordered(out)
+
+
+def ordered(attrs):
+    """Maya's Channel Box order: listAttr puts visibility first, the Channel Box shows
+    it after the scales (seen live 2026-10-18)."""
+    if "visibility" not in attrs:
+        return list(attrs)
+    rest = [a for a in attrs if a != "visibility"]
+    at = 0
+    for i, a in enumerate(rest):
+        if a.startswith(("translate", "rotate", "scale")) and not a.startswith(("rotateOrder", "rotateAxis")):
+            at = i + 1
+    return rest[:at] + ["visibility"] + rest[at:]
+
+
+def _shapes(lead):
+    try:
+        return cmds.listRelatives(lead, shapes=True, noIntermediate=True, fullPath=True) or []
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
+def _inputs(lead):
+    """The history Maya's Channel Box lists under INPUTS: what feeds the shapes,
+    DAG nodes left out, the uninteresting ones (groupParts, tweak) too."""
+    out = []
+    for shape in _shapes(lead):
+        try:
+            found = cmds.listHistory(shape, pruneDagObjects=True, interestLevel=2) or []
+        except Exception:                                    # noqa: BLE001
+            found = []
+        for node in found:
+            if node not in out and node != shape:
+                out.append(node)
     return out
+
+
+def _object_list(kind, flag, lead):
+    """Maya's own list for SHAPES / INPUTS / OUTPUTS - empty while its Channel Box is
+    hidden (live 2026-10-18), so shapes and inputs are read ourselves then."""
+    found = _box_list(flag)
+    if found:
+        return found
+    if kind == "shapes":
+        return _shapes(lead)
+    if kind == "inputs":
+        return _inputs(lead)
+    return []
 
 
 def _enum_names(node, attr):
@@ -178,7 +226,7 @@ def snapshot(opened=()):
                  "channels": channels(lead, objs, main=True)}]
     for kind, title, flag in TITLES:
         first = True
-        for node in _box_list(flag):
+        for node in _object_list(kind, flag, lead):
             if not cmds.objExists(node):
                 continue
             key = kind + ":" + node

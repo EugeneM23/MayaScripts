@@ -12115,14 +12115,20 @@ edge light (the mockup's v2 drops it too). Spec `docs/superpowers/specs/2026-10-
   source curve / layer / driven, keys, breakdowns, on-key, changed (value off its curve), and its
   `targets` on every selected object; the writes), `box.py` (Qt: `Head`, `Canvas`, `Fx`, `Edit`,
   one 16 ms driver), `__init__.py` (mount, callbacks, the switch).
-- **Where**: the side panel's Channels tab in right-edge mode, above Maya's Layer Editor in a
-  splitter `skeldarSidePanelChannelBoxSplit` (share in `skeldarChannelBoxSplit`, 70 %). Maya's Channel
-  Box half hidden in place - combined: `paneLayout ChannelsLayersPaneLayout -configuration single
-  -setPane LayerEditorForm 1` (initChannelsLayers.mel's names), separate: `MainChannelBoxLayout`
-  hidden - and put back by `unmount()` (moving Maya's forms back into the page BEFORE ours is
-  deleted). `maya_sidepanel._borrow` mounts, `give_back` unmounts first, `refresh` refreshes ours.
+- **Where**: the side panel's Channels tab in right-edge mode, **alone, the whole height** (the
+  same day, after seeing it live: «нужно убрать окно слоев» - the first build stood over Maya's Layer
+  Editor in a splitter). Maya's Channels forms are moved into a hidden holder
+  `skeldarSidePanelChannelBoxKept` (alive: its Channel Box keeps updating and takes our selection)
+  and put back by `unmount()` (moving them into the page BEFORE ours is deleted).
+  `maya_sidepanel._borrow` mounts, `give_back` unmounts first, `refresh` refreshes ours.
   ⋮ → Side panel ▸ **Our Channel Box** (`skeldarChannelBoxOurs`, on; `maya_sidepanel.rebuild()`), and
   the box's own menu row «Maya's Channel Box».
+- **Seen live 2026-10-18** (port 7001, the animator's Maya, a temporary cube): the rows, a key, the
+  layer editor gone. Two things fixed there: `listAttr -k` puts visibility first, Maya's box after
+  the scales (`scene.ordered`); Maya's hidden box answers EMPTY object lists, so SHAPES (listRelatives)
+  and INPUTS (`listHistory -pruneDagObjects -interestLevel 2`) are read ourselves. A long enum name
+  is elided. And the side panel's window had square corners at rest (only the unroll was rounded):
+  `look.RADIUS` 8 since, the mask never below it.
 - **The hand**: click a name selects (Ctrl / Shift), written into Maya's hidden box with
   `channelBox mainChannelBox -e -select` so the Graph Editor and S keep reading it; drag a name or a
   value = the virtual slider over every selected channel of every selected object (Maya's channel

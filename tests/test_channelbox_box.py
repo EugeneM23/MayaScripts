@@ -321,7 +321,8 @@ class MountTests(unittest.TestCase):
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
 
-    def test_mount_and_unmount_keep_the_forms(self):
+    def test_mount_shows_ours_alone_and_unmount_gives_the_forms_back(self):
+        """2026-10-18 «нужно убрать окно слоев»: Maya's forms kept hidden, ours alone."""
         import maya_channelbox
         from maya_sidepanel import holder
         QtWidgets = QT.QtWidgets
@@ -330,35 +331,33 @@ class MountTests(unittest.TestCase):
         form = QtWidgets.QWidget(page)
         form.setObjectName("MainChannelsLayersLayout")
         layout.addWidget(form)
+        page.show()
 
         class Panel(object):
             pages = {"channels": layout}
 
-        saved = (holder.widget, maya_channelbox._hide_maya_box, maya_channelbox._show_maya_box,
-                 maya_channelbox.enabled, maya_channelbox._start_callbacks, box_module.make)
-        shown = []
+        saved = (holder.widget, maya_channelbox.enabled, maya_channelbox._start_callbacks, box_module.make)
         try:
             holder.widget = lambda name: form if name == "MainChannelsLayersLayout" else None
-            maya_channelbox._hide_maya_box = lambda combined: "combined" if combined else None
-            maya_channelbox._show_maya_box = lambda how: shown.append(how)
             maya_channelbox.enabled = lambda: True
             maya_channelbox._start_callbacks = lambda: None
-            box_module.make = lambda link, ui, tokens, parent=None, motion=None: saved[5](
+            box_module.make = lambda link, ui, tokens, parent=None, motion=None: saved[3](
                 FakeLink(), ui, tokens, parent, motion)
             built = maya_channelbox.mount(Panel(), [{"form": "MainChannelsLayersLayout"}])
-            self.assertIsNotNone(built)
-            split = page.findChild(QtWidgets.QSplitter, maya_channelbox.SPLIT)
-            self.assertIsNotNone(split)
-            self.assertTrue(split.isAncestorOf(form))
-            self.assertTrue(split.isAncestorOf(built))
+            self.app.processEvents()
+            self.assertIs(built.parentWidget(), page)
+            self.assertTrue(built.isVisible())
+            self.assertFalse(form.isVisible())                  # alive, hidden
+            kept = page.findChild(QtWidgets.QWidget, maya_channelbox.HOLDER)
+            self.assertTrue(kept.isAncestorOf(form))
             maya_channelbox.unmount()
             self.app.processEvents()
             self.assertIs(form.parentWidget(), page)
-            self.assertEqual(shown, ["combined"])
+            self.assertTrue(form.isVisible())
             self.assertIsNone(maya_channelbox.current())
         finally:
-            (holder.widget, maya_channelbox._hide_maya_box, maya_channelbox._show_maya_box,
-             maya_channelbox.enabled, maya_channelbox._start_callbacks, box_module.make) = saved
+            (holder.widget, maya_channelbox.enabled, maya_channelbox._start_callbacks,
+             box_module.make) = saved
             page.deleteLater()
 
 
