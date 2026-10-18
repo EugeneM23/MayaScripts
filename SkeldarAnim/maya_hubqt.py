@@ -10,8 +10,7 @@ the brainstorm): a root of ours inside the same workspaceControl, holding
               with the icon of the card that said it (`say`, `_told`)
     scroll    CARDS - a clickable header (icon chip, title, the moved
               subtitle, chevron) over a BODY whose named layout is where a
-              tool's `build_panel()` runs, a group-colour stripe down its
-              left edge
+              tool's `build_panel()` runs
 
 Every cmds control a builder makes lands in a body through
 `cmds.setParent(path_of(body_layout))` -- measured 2026-09-28 in a probe
@@ -332,6 +331,28 @@ def icon(name, colour, size, on_colour=None):
     return result
 
 
+def icon_with_dot(name, colour, size, dot):
+    """The icon `name` with an accent dot at its top right (a window stands,
+    2026-10-18)."""
+    q = qt()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    pix = QtGui.QPixmap(pixmap(name, colour, size))
+    painter = QtGui.QPainter(pix)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        ring = QtGui.QColor(hubstyle.TOKENS["accent"])
+        ring.setAlphaF(0.35)
+        painter.setBrush(ring)
+        painter.drawEllipse(QtCore.QRectF(size - dot - 1.5, -0.5,
+                                          dot + 2.0, dot + 2.0))
+        painter.setBrush(QtGui.QColor(hubstyle.TOKENS["accent"]))
+        painter.drawEllipse(QtCore.QRectF(size - dot - 0.5, 0.5, dot, dot))
+    finally:
+        painter.end()
+    return QtGui.QIcon(pix)
+
+
 # ICON colour per role: the text colour the stylesheet gives that role.
 _ICON_COLOUR = {"primary": "on_accent", "danger": "danger"}
 
@@ -437,12 +458,9 @@ def _frame_class():
     its plain face) painting its own LIGHT over that face: `level` 0..1 and
     `flash` 0..1, animated by its Card (2026-10-01, «красивый глоу и анимацию
     подсветки»). A full repaint of a card costs 1.5 ms (UE Bridge, measured),
-    so the whole light - the face's tint too - can fade. Since 2026-10-08 it
-    also paints its group's colour as a `stripe` down its left edge (the
-    group labels are gone from the compact skin), OVER the light: the light's
-    face and its 2 px ring reach the edge and, painted after them, a lit
-    card (level 1, or mid-flash) would show no stripe at all - every card
-    shows its group (2026-10-08, the review of the first build)."""
+    so the whole light - the face's tint too - can fade. Since 2026-10-18 no
+    group stripe (the animator: «мусорная полоска ... это баг»); the group
+    shows on the card's jump icon only."""
     if "frame" not in _CLASSES:
         q = qt()
 
@@ -453,38 +471,14 @@ def _frame_class():
                 self.scale = scale
                 self.level = 0.0
                 self.flash = 0.0
-                self.stripe = None
 
             def paintEvent(self, event):                   # noqa: N802
                 super(CardFrame, self).paintEvent(event)
                 if self.level > 0.002 or self.flash > 0.002:
                     paint_light(self, self.level, self.flash, self.scale)
-                if self.stripe:
-                    paint_stripe(self, self.stripe, self.scale)
 
         _CLASSES["frame"] = CardFrame
     return _CLASSES["frame"]
-
-
-def paint_stripe(widget, colour, scale):
-    """The card's group as a bar down its left edge (2026-10-08: the group
-    labels are gone in the compact skin), clipped by the rounded face. Drawn
-    last, over the card's light, so a lit card keeps it (the light's ring
-    covers those 3 px)."""
-    q = qt()
-    QtCore, QtGui = q.QtCore, q.QtGui
-    radius = float(hubstyle.px(8, scale))
-    bar = float(hubstyle.px(3, scale))
-    painter = QtGui.QPainter(widget)
-    try:
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        face = QtGui.QPainterPath()
-        face.addRoundedRect(QtCore.QRectF(widget.rect()), radius, radius)
-        painter.setClipPath(face)
-        painter.fillRect(QtCore.QRectF(0, 0, bar, widget.height()),
-                         QtGui.QColor(colour))
-    finally:
-        painter.end()
 
 
 def paint_light(widget, level, flash, scale):
@@ -930,7 +924,6 @@ class Card(object):
         self._flash_anim = None
         self.frame = _named(_frame_class()(scale), "skeldarHubCard_" + key)
         self.frame.setProperty("skCard", True)
-        self.frame.stripe = colour
         column = w.QVBoxLayout(self.frame)
         column.setObjectName("skeldarHubCardLayout_" + key)
         #  compact (2026-10-08, variant B): 5 / 4 / 5 / 5, was 8 / 7 / 8 / 8
@@ -1309,6 +1302,7 @@ class Skin(object):
         #  it (set_state) and its group's colour comes back with no state
         self._jump_colour = {}
         self._jump_icon = {}
+        self.floating = set()
         #  ⋮ -> Interface animations (2026-10-01): the cards slide, a jump
         #  glides (maya_hub sets it from maya_hubmotion's optionVar)
         self.animations = True
@@ -1756,11 +1750,27 @@ class Skin(object):
         return card
 
     def _current_sheet(self, key):
-        colour = self._jump_colour.get(key, hubstyle.TOKENS["accent"])
-        return ("QToolButton {{ background: {0}; border: none; border-left: "
-                "{1}px solid {2}; border-radius: {3}px; }}").format(
-                    hubstyle.TOKENS["card_active"], max(1, self.px(2)),
-                    colour, self.px(5))
+        #  no bar on the icon (2026-10-18); `key` kept for the callers
+        return ("QToolButton {{ background: {0}; border: none; "
+                "border-radius: {1}px; }}").format(
+                    hubstyle.TOKENS["card_active"], self.px(5))
+
+    def set_floating(self, key, on):
+        """The jump icon of section `key` with a dot while its window stands
+        (2026-10-18)."""
+        button = self.jumps.get(key)
+        if on:
+            self.floating.add(key)
+        else:
+            self.floating.discard(key)
+        if button is None or not _valid(button):
+            return bool(on)
+        size = self.px(16)
+        colour = self._jump_colour.get(key, hubstyle.TOKENS["muted"])
+        name = self._jump_icon.get(key, "")
+        button.setIcon(icon_with_dot(name, colour, size, self.px(5)) if on
+                       else icon(name, colour, size))
+        return bool(on)
 
     def _fade_in(self, card):
         q = qt()

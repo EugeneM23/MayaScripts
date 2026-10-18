@@ -625,7 +625,7 @@ def _build_skin(host=None, kind=None):
             skin.add_jump(sec.key, sec.label, sec.icon,
                           hubstyle.group(sec.group).colour, group=sec.group)
         #  No group labels (2026-10-08, the compact hub): a card's group is
-        #  the colour of its stripe and of its jump; the cards stand in their
+        #  the colour of its jump; the cards stand in their
         #  groups' order all the same (Skin.add_group stays an API).
         for sec in card_sections():
             grp = hubstyle.group(sec.group)

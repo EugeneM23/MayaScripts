@@ -560,57 +560,31 @@ class Cards(SeamsMixin, unittest.TestCase):
         self.assertEqual(card.header.toolTip(),
                          "Select the clip's skeleton\nand the rig")
 
-    def test_a_card_carries_its_group_stripe(self):
+    def test_a_card_paints_no_group_stripe(self):
+        """2026-10-18 («мусорная полоска с левого края и сверху ... это баг»):
+        no bar."""
         card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
                                   "#7fa9e6", "#23324a")
-        self.assertEqual(card.frame.stripe, "#7fa9e6")
+        self.assertFalse(getattr(card.frame, "stripe", None))
+        self.assertFalse(hasattr(hubqt, "paint_stripe"))
         self.assertEqual((card.icon_name, card.colour),
                          ("arrows-exchange", "#7fa9e6"))
         self.assertEqual(card.status_controls, set())
 
-    def test_the_stripe_is_painted_inside_the_card(self):
-        from PySide6 import QtGui
-        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
-                                  "#7fa9e6", "#23324a")
-        frame = card.frame
-        #  a frame under a layout is sized by it when it is rendered (170 x 31
-        #  here), so the image is bigger than that and the sample is taken
-        #  mid-height, clear of the rounded corners
-        image = QtGui.QImage(200, 100, QtGui.QImage.Format_ARGB32)
-        image.fill(0)
-        frame.render(image)
-        middle = max(1, frame.height() // 2)
-        self.assertEqual(image.pixelColor(1, middle).name(), "#7fa9e6")
-        self.assertEqual(image.pixelColor(2, middle).name(), "#7fa9e6")
-        self.assertNotEqual(image.pixelColor(frame.width() // 2,
-                                             middle).name(), "#7fa9e6")
-        self.assertNotEqual(image.pixelColor(5, middle).name(), "#7fa9e6")
-        frame.stripe = None                       # no group colour, no bar
-        image.fill(0)
-        frame.render(image)
-        self.assertNotEqual(image.pixelColor(1, middle).name(), "#7fa9e6")
-
-    def test_a_lit_card_keeps_its_stripe(self):
-        """Review of the first build: the light's face and 2 px ring reach the
-        edge, and a stripe painted BEFORE them vanished on a lit card. Every
-        card shows its group, lit, flashing or idle."""
+    def test_the_card_left_edge_is_the_card_face(self):
         from PySide6 import QtGui
         card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
                                   "#7fa9e6", "#23324a")
         frame = card.frame
         image = QtGui.QImage(200, 100, QtGui.QImage.Format_ARGB32)
-        for level, flash in ((1.0, 0.0), (0.5, 0.0), (0.0, 1.0), (1.0, 1.0),
-                             (0.5, 0.5)):
+        for level, flash in ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)):
             frame.level, frame.flash = level, flash
             image.fill(0)
             frame.render(image)
             middle = max(1, frame.height() // 2)
             for x in (0, 1, 2):
-                self.assertEqual(image.pixelColor(x, middle).name(),
-                                 "#7fa9e6", (level, flash, x))
-            #  the bar is 3 px: past it the card's own light shows
-            self.assertNotEqual(image.pixelColor(4, middle).name(),
-                                "#7fa9e6", (level, flash))
+                self.assertNotEqual(image.pixelColor(x, middle).name(),
+                                    "#7fa9e6", (level, flash, x))
         frame.level = frame.flash = 0.0
 
     def test_compact_card_margins(self):
@@ -2513,6 +2487,23 @@ class Rail(unittest.TestCase):
             self.skin.destroy()
         style._LISTENERS[:] = []
         self.host.deleteLater()
+
+    def test_the_rail_icon_on_show_has_no_coloured_bar(self):
+        sheet = self.skin._current_sheet("a")
+        self.assertNotIn("border-left", sheet)
+
+    def test_a_section_with_a_window_shows_a_dot_on_its_icon(self):
+        self.skin.set_floating("a", True)
+        self.assertIn("a", self.skin.floating)
+        self.skin.set_floating("a", False)
+        self.assertNotIn("a", self.skin.floating)
+
+    def test_the_dot_changes_the_icon_pixels(self):
+        size = self.skin.px(16)
+        plain = hubqt.icon("tool", "#f0a26b", size).pixmap(size, size).toImage()
+        dotted = hubqt.icon_with_dot("tool", "#f0a26b", size,
+                                     self.skin.px(5)).pixmap(size, size).toImage()
+        self.assertNotEqual(plain, dotted)
 
     def test_the_rail_stands_left_of_the_cards_and_holds_the_buttons(self):
         self.assertEqual(self.skin.layout, "rail")

@@ -722,7 +722,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
 
     def test_cards_in_group_order_and_no_frames(self):
         """2026-10-08 (the compact hub): the cards stand in their groups'
-        order with no label between them - a card's group is its stripe."""
+        order with no label between them - a card's group is its jump's colour."""
         hub.build()
         self.assertEqual(hub._SKIN.order, [
             ("card", "characters"), ("card", "weapons"),
@@ -735,7 +735,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
 
     def test_the_skin_has_no_group_labels(self):
-        """The compact skin shows a card's group as a coloured stripe, so
+        """The compact skin shows a card's group on its jump icon only, so
         `_build_skin` never asks for a group label (Skin.add_group stays an
         API)."""
         hub.build()

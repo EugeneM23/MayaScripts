@@ -676,7 +676,6 @@ class Popup(object):
                              "skeldarAnimPopupFrame_" + tag)
         frame.setProperty("skCard", True)
         colour = hubstyle.group(self.sec.group).colour
-        frame.stripe = colour
         frame.accent = colour
         outer.addWidget(frame)
         self.frame = frame
