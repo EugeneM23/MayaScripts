@@ -411,6 +411,14 @@ def set_key():
     cmds.setKeyframe()
 
 
+def run_key_command(name):
+    """One of Maya's Set Key runtime commands (`look.DRAG_KEYS`), as its hotkey runs it."""
+    if name not in look.DRAG_KEYS.values():
+        raise ValueError("not a key command: %r" % (name,))
+    import maya.mel as mel
+    mel.eval(name)
+
+
 def breakdown(selection, frame):
     a, b = _span(selection, frame)
     with _chunk("skeldarTimeBarBreakdown"):
@@ -468,6 +476,27 @@ def move_keys(selection, target):
             #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
             far = pivot + (b + 1 - pivot) * factor
             cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
+
+
+def stamp_keys(selection, target):
+    """A copy of the selection's keys in `selection` put down at `target` (a key
+    block being dragged, S pressed: «ставится ключик который мы перетаскиваем»);
+    the originals stay. One undo step."""
+    a, b = selection
+    na = target[0]
+    if na == a:
+        return
+    span = (a, b + 1 - 1e-3)
+    with _chunk("skeldarTimeBarStampKeys"):
+        if not cmds.copyKey(time=span, option="keys"):
+            return
+        cmds.pasteKey(time=(na + (_first_key(span) - a),), option="merge")
+
+
+def _first_key(span):
+    """The first key time in `span` among the selection's curves (the paste lands it)."""
+    times = cmds.keyframe(q=True, time=span, timeChange=True) or []
+    return min(times) if times else span[0]
 
 
 def playback_from(selection):

@@ -562,6 +562,42 @@ def classes():
                 self.goal[k] = 0.0
             self.strip.kick()
 
+    # -- keys during a drag ------------------------------------------------------
+
+    class DragKeys(QtCore.QObject):
+        """While the playhead is dragged, S (Shift+W/E/R) still sets keys: a held
+        button keeps the key from Maya's hotkeys, so we catch it application-wide and
+        run Maya's own command (`look.DRAG_KEYS`)."""
+
+        def __init__(self, strip):
+            super(DragKeys, self).__init__(strip)
+            self.strip = strip
+
+        def eventFilter(self, obj, event):
+            if event.type() != QtCore.QEvent.KeyPress:
+                return False
+            if event.isAutoRepeat():
+                return int(event.key()) in (83, 87, 69, 82)           # S W E R held down
+            mods, code = event.modifiers(), int(event.key())
+            letter = chr(code) if 65 <= code <= 90 else ""          # Qt.Key_A .. Key_Z
+            name = look.drag_key(letter,
+                                 bool(mods & Qt.ShiftModifier), bool(mods & Qt.ControlModifier),
+                                 bool(mods & Qt.AltModifier))
+            if not name:
+                return False
+            drag, preview = self.strip.timeline.drag, self.strip.timeline.preview
+            if name == "SetKey" and drag and drag[0] == "hmove":
+                #  a key block being dragged: S puts a copy of it down where it stands
+                if preview:
+                    self.strip.call("stamp_keys", drag[3], preview)
+            else:
+                self.strip.call("run_key_command", name)
+            #  the strip's tick reads no keys while the playhead is dragged: the key
+            #  and its flash show now, not on the release (2026-10-18)
+            self.strip.refresh(keys=True)
+            self.strip.timeline.repaint()
+            return True
+
     # -- the timeline ------------------------------------------------------------
 
     class Timeline(QtWidgets.QWidget):
@@ -1012,6 +1048,7 @@ def classes():
                 return
             if event.button() == Qt.MiddleButton:
                 self.drag = ("mid", None, t)
+                self._keys_on()
                 self._scrub(x, update=False)
                 return
             if event.button() != Qt.LeftButton:
@@ -1026,8 +1063,10 @@ def classes():
             if part:
                 self.drag = (part, self._grip(part, x, t), t, tuple(s["highlight"]))
                 self.preview = tuple(s["highlight"])
+                self._keys_on()
                 return
             self.drag = ("now", None, t)
+            self._keys_on()
             st.call("begin_scrub")
             if s.get("highlight"):
                 s["highlight"] = None
@@ -1051,7 +1090,29 @@ def classes():
                     self.preview = target
                     self.update()
 
+        def _keys_on(self):
+            """S sets keys for the length of a playhead drag (`DragKeys`)."""
+            self._keys_off()
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                self._drag_keys = DragKeys(self.strip)
+                app.installEventFilter(self._drag_keys)
+
+        def _keys_off(self):
+            keys = getattr(self, "_drag_keys", None)
+            self._drag_keys = None
+            if keys is not None:
+                app = QtWidgets.QApplication.instance()
+                if app is not None:
+                    app.removeEventFilter(keys)
+                keys.deleteLater()
+
+        def hideEvent(self, event):
+            self._keys_off()
+            super(Timeline, self).hideEvent(event)
+
         def mouseReleaseEvent(self, event):
+            self._keys_off()
             if not self.drag:
                 return
             kind = self.drag[0]

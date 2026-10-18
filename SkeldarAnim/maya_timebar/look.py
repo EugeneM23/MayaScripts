@@ -650,6 +650,25 @@ def delete_plan(n):
     return [spread * i / float(n - 1) for i in range(n)], full
 
 
+#  The keys a drag on the timeline still answers (2026-10-18, the animator: «зажимаю
+#  кнопку мышки и вожу таймслайдер ... нажимаю S то ключи проставлялись»): while a
+#  button is held the key does not reach Maya's hotkeys, so the strip runs Maya's own
+#  runtime command for it - the one Maya's default set binds there.
+DRAG_KEYS = {
+    ("s", False): "SetKey",
+    ("w", True): "SetKeyTranslate",
+    ("e", True): "SetKeyRotate",
+    ("r", True): "SetKeyScale",
+}
+
+
+def drag_key(letter, shift=False, ctrl=False, alt=False):
+    """Maya's runtime command for a key pressed during a timeline drag, else None."""
+    if ctrl or alt or not letter:
+        return None
+    return DRAG_KEYS.get((letter.lower(), bool(shift)))
+
+
 def set_key_command(command):
     """A MEL command Maya reported: (frame or None, breakdown) when it is a
     `setKeyframe` - the S key, the Channel Box's Key Selected - else None. A key set

@@ -56,6 +56,9 @@ class FakeLink(object):
         self._log("set_time", frame)
         self.s["now"] = float(frame)
 
+    def run_key_command(self, name):
+        self._log("run_key_command", name)
+
     def scrub_only(self, frame):
         self._log("scrub_only", frame)
         self.s["now"] = float(frame)
@@ -76,6 +79,9 @@ class FakeLink(object):
 
     def move_keys(self, selection, target):
         self._log("move_keys", selection, target)
+
+    def stamp_keys(self, selection, target):
+        self._log("stamp_keys", selection, target)
 
     def step_key(self, forward, known):
         frame = look.neighbour_key(known, self.s["now"], forward)
@@ -240,6 +246,33 @@ class Time(Strip):
         self.assertEqual(self.calls("scrub_only"), [("scrub_only", 20), ("scrub_only", 25)])
         self.assertFalse(self.calls("set_time"))
 
+    def key(self, code, mods=None, repeat=False):
+        Qt = QT.QtCore.Qt
+        event = QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, code, mods or Qt.NoModifier, "", repeat)
+        target = QT.QtWidgets.QWidget()
+        self.addCleanup(target.deleteLater)
+        QT.QtWidgets.QApplication.sendEvent(target, event)
+        return event
+
+    def test_s_sets_a_key_while_the_playhead_is_dragged(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.key(Qt.Key_S)
+        self.assertFalse(self.calls("run_key_command"), "no drag, Maya's hotkey's")
+        for button in (Qt.LeftButton, Qt.MiddleButton):
+            self.link.log[:] = []
+            self.mouse(self.tl, E.MouseButtonPress, self.x(20), button, button)
+            self.key(Qt.Key_S)
+            self.key(Qt.Key_S, repeat=True)
+            self.key(Qt.Key_W, Qt.ShiftModifier)
+            self.key(Qt.Key_W)
+            self.key(Qt.Key_S, Qt.ControlModifier)
+            self.assertEqual(len(self.calls("keys")), 2, "the keys read again at once, mid-drag")
+            self.mouse(self.tl, E.MouseButtonRelease, self.x(20), button, Qt.NoButton)
+            self.assertEqual(self.calls("run_key_command"),
+                             [("run_key_command", "SetKey"), ("run_key_command", "SetKeyTranslate")])
+            self.key(Qt.Key_S)
+            self.assertEqual(len(self.calls("run_key_command")), 2, "released: Maya's again")
+
     def test_the_transport_buttons(self):
         st = self.strip
         st.transport["nkey"].click()
@@ -365,6 +398,19 @@ class Highlight(Strip):
         S = QT.QtCore.Qt.ShiftModifier
         self.drag(self.tl, self.x(30), self.x(30), mods=S)
         self.assertEqual(self.link.s["highlight"], (30, 30))
+
+    def test_s_while_dragging_keys_puts_a_copy_of_them_down(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        press = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), press)
+        self.assertEqual(self.calls("stamp_keys"), [("stamp_keys", (22, 40), (27, 45))])
+        self.assertFalse(self.calls("run_key_command"), "no transform key")
+        self.mouse(self.tl, E.MouseMove, self.x(40), Qt.NoButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(40), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (22, 40), (32, 50))])
 
     def test_dragging_the_highlight_moves_its_keys_once_on_release(self):
         self.strip.state["highlight"] = (22, 40)

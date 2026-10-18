@@ -544,3 +544,15 @@ class FreeSpanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DragKeys(unittest.TestCase):
+
+    def test_maya_s_set_key_commands_for_a_drag(self):
+        self.assertEqual(look.drag_key("s"), "SetKey")
+        self.assertEqual(look.drag_key("S"), "SetKey")
+        self.assertEqual(look.drag_key("w", shift=True), "SetKeyTranslate")
+        self.assertEqual(look.drag_key("e", shift=True), "SetKeyRotate")
+        self.assertEqual(look.drag_key("r", shift=True), "SetKeyScale")
+        for args in (("w",), ("s", True), ("s", False, True), ("s", False, False, True), ("",), ("x",)):
+            self.assertIsNone(look.drag_key(*args), args)
