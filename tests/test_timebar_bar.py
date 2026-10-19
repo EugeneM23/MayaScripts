@@ -592,6 +592,85 @@ class Zoom(Strip):
         self.assertEqual((self.tl.track().v0, self.tl.track().v1), (10.0, 60.0))
 
 
+class RightDouble(Strip):
+    """A double click of the right button highlights every key (2026-10-19)."""
+
+    def setUp(self):
+        super(RightDouble, self).setUp()
+        self.menus = []
+        self.strip.key_menu = lambda where, frame: self.menus.append((where, frame))
+
+    def right(self, x, kind=None):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, kind or E.MouseButtonPress, x, Qt.RightButton, Qt.RightButton)
+        self.mouse(self.tl, E.MouseButtonRelease, x, Qt.RightButton, Qt.NoButton)
+
+    def test_a_double_highlights_every_key_and_opens_no_menu(self):
+        self.right(self.x(30))
+        self.right(self.x(30), QT.QtCore.QEvent.MouseButtonDblClick)
+        self.assertEqual(self.strip.state["highlight"], (0, 40))
+        self.assertEqual(self.calls("set_highlight")[-1], ("set_highlight", (0, 40)))
+        self.assertFalse(self.tl.menu_wait.isActive())
+        self.tl.menu_wait.timeout.emit()            # a late tick opens nothing
+        self.assertEqual(self.menus, [])
+
+    def test_two_presses_count_as_well(self):
+        self.right(self.x(30))
+        self.right(self.x(50))
+        self.assertEqual(self.strip.state["highlight"], (0, 40))
+
+    def test_one_press_opens_the_menu_once_the_wait_is_over(self):
+        self.right(self.x(30))
+        self.assertTrue(self.tl.menu_wait.isActive())
+        self.assertEqual(self.menus, [])
+        self.assertLessEqual(self.tl.menu_wait.interval(), bar.look.RIGHT_DOUBLE_MS)
+        self.tl.menu_wait.timeout.emit()
+        self.assertEqual(len(self.menus), 1)
+        self.assertEqual(self.menus[0][1], 30)
+        self.assertIsNone(self.strip.state["highlight"])
+
+    def test_a_press_after_the_wait_is_a_new_one(self):
+        self.right(self.x(30))
+        self.tl.right_at -= bar.look.RIGHT_DOUBLE_MS + 50
+        self.right(self.x(30))
+        self.assertIsNone(self.strip.state["highlight"])
+        self.assertTrue(self.tl.menu_wait.isActive())
+
+    def left(self, x, kind=None):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, kind or E.MouseButtonPress, x, Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, x, Qt.LeftButton, Qt.NoButton)
+
+    def test_a_left_double_highlights_every_key(self):
+        self.left(self.x(30))
+        self.left(self.x(30), QT.QtCore.QEvent.MouseButtonDblClick)
+        self.assertEqual(self.strip.state["highlight"], (0, 40))
+        self.assertEqual(self.calls("set_highlight")[-1], ("set_highlight", (0, 40)))
+
+    def test_a_left_double_with_no_keys_frames_the_playback_range(self):
+        self.strip.keys, self.strip.breakdowns = [], []
+        self.strip.keys_dirty = False
+        self.tl.view = (20.0, 30.0)
+        self.left(self.x(25), QT.QtCore.QEvent.MouseButtonDblClick)
+        self.assertIsNone(self.strip.state["highlight"])
+        self.assertEqual((self.tl.track().v0, self.tl.track().v1), (10.0, 60.0))
+
+    def test_no_keys_no_highlight(self):
+        self.strip.keys, self.strip.breakdowns = [], []
+        self.strip.keys_dirty = False
+        self.assertFalse(self.tl.highlight_all())
+        self.assertIsNone(self.strip.state["highlight"])
+
+    def test_the_key_menu_offers_it_with_keys(self):
+        rows = [r for r in self.strip.key_rows(30) if r]
+        row = [r for r in rows if r[0].startswith("Highlight all keys")]
+        self.assertEqual(len(row), 1)
+        self.assertIsNotNone(row[0][1])
+        self.strip.keys, self.strip.breakdowns = [], []
+        row = [r for r in self.strip.key_rows(30) if r and r[0].startswith("Highlight all keys")]
+        self.assertIsNone(row[0][1])
+
+
 class Menus(Strip):
 
     def labels(self, rows):

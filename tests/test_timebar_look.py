@@ -578,3 +578,22 @@ class DragKeys(unittest.TestCase):
         self.assertEqual(look.shown_at(35, (22, 40), (32, 50)), [45])              # before any S
         both = look.held({"c": {"keys": [(30.0, {})], "stamped": {30.0}}})
         self.assertEqual(sorted(look.shown_at(30, (30, 30), (34, 34), both)), [30, 34])
+
+
+class AllKeysTests(unittest.TestCase):
+    """A right double click highlights every key (2026-10-19)."""
+
+    def test_first_to_last_breakdowns_included(self):
+        self.assertEqual(look.all_keys([6.0, 30.0, 12.0], [2.0, 41.0]), (2, 41))
+
+    def test_a_key_between_frames_counts_in_its_cell(self):
+        self.assertEqual(look.all_keys([4.5, 19.5, 7.9999999], []), (4, 19))
+        self.assertEqual(look.all_keys([-3.5], []), (-4, -4))
+
+    def test_none_without_keys(self):
+        self.assertIsNone(look.all_keys([], []))
+
+    def test_the_double_window(self):
+        self.assertFalse(look.right_double(None, 1000.0, 300))
+        self.assertTrue(look.right_double(1000.0, 1250.0, 300))
+        self.assertFalse(look.right_double(1000.0, 1301.0, 300))

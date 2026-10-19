@@ -152,6 +152,27 @@ def highlight(start, end):
     return (a, b) if a <= b else (b, a)
 
 
+#  a second right press within this many ms (or Qt's double-click interval, if shorter)
+#  highlights every key; the key menu waits for it (2026-10-19)
+RIGHT_DOUBLE_MS = 300
+
+
+def all_keys(keys, breakdowns=()):
+    """The highlight over every key the strip shows: (the first key's cell, the last
+    key's cell) - a key between frames counts in the cell it stands in. None with no
+    keys (2026-10-19: «виділення всіх ключів по подвійному кліку правої кнопки»)."""
+    times = list(keys) + list(breakdowns)
+    if not times:
+        return None
+    return (int(math.floor(min(times) + 1e-6)), int(math.floor(max(times) + 1e-6)))
+
+
+def right_double(first, now_ms, window_ms):
+    """True when a right press at `now_ms` is the second of a double: `first` is the
+    earlier press's ms (None for none) and it was at most `window_ms` ago."""
+    return first is not None and 0 <= now_ms - first <= window_ms
+
+
 def range_array(selection):
     """(first, last) -> [first, last + 1), as `timeControl -q -rangeArray` answers a
     highlight; None for nothing or one frame (the tools' rule: more than one frame)."""

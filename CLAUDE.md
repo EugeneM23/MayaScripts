@@ -11562,6 +11562,16 @@ The animator: «Давай попробуем перерисовать инте�
   the release (a preview while dragging).
 - The right button opens the key menu: Set key, Breakdown, Cut / Copy / Paste / Delete, Tangents ▸, Snap,
   Add bookmark, Playback range = highlight, Frame the playback range, Back to Maya's time slider.
+- **A right double click highlights every key** (2026-10-19, «виділення всіх ключів по подвійному кліку правої
+  кнопки миші»): the first key's cell to the last's, breakdowns included (`look.all_keys`), sent like a
+  shift-drag (`set_highlight`) - then the blue block moves / scales them all and the key menu acts on them.
+  So the key menu now waits `Timeline.double_window()` (Qt's double-click interval, at most
+  `look.RIGHT_DOUBLE_MS` 300) after a right press (`menu_wait`, `_right_press`); a second press in that time
+  (Qt sends it as a double-click event) cancels the menu. Also in the menu: «Highlight all keys». No keys:
+  nothing. Tests `RightDouble`, `AllKeysTests`. **A left double click does the same** (the same
+  day, «зроби те саме тільки на ліву кнопку»): its first press still moves the time there; with no
+  keys a left double frames the playback range, as before. Both checked live over 7001 with real Qt
+  events on a temporary keyed locator.
 - A middle drag scrubs without updating the scene (`currentTime -update false`).
 - On the right: the frame field, then eight transport buttons (start, back a frame, back a key, play
   backwards, play, forward a key, forward a frame, end).

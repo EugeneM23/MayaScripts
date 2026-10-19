@@ -685,6 +685,11 @@ def classes():
             self.reached = {}           # key -> clock() when the playhead reached it
             self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
             self.play_at = None         # Play pressed: a frame closes in round the bar
+            self.right_at = None        # ms of a right press whose key menu waits for a second one
+            self.menu_wait = QtCore.QTimer(self)    # the key menu, opened once no second press came
+            self.menu_wait.setSingleShot(True)
+            self.menu_wait.timeout.connect(self._open_menu)
+            self._menu_at = None        # (global point, frame) of the waiting menu
             self._static = None         # the still part, drawn once (`_paint`)
             self._static_for = None
             self.static_builds = 0
@@ -1118,7 +1123,7 @@ def classes():
                 st.call("live_end", tuple(self.preview) if self.preview else None)
                 st.refresh(keys=True)
             if event.button() == Qt.RightButton:
-                st.key_menu(event, self._frame(x, t))
+                self._right_press(event, self._frame(x, t))
                 return
             if event.button() == Qt.MiddleButton:
                 self.drag = ("mid", None, t)
@@ -1235,9 +1240,51 @@ def classes():
             self.update()
 
         def mouseDoubleClickEvent(self, event):
-            """Frame the playback range again after a zoom."""
-            if event.button() == Qt.LeftButton and self.view is not None:
-                self.strip.frame_playback()
+            """A double click of either button highlights every key (Qt sends the
+            second press as this event; 2026-10-19). With no keys, a left double
+            frames the playback range again after a zoom, as it used to."""
+            if event.button() == Qt.RightButton:
+                self._right_press(event, self._frame(self._x(event)))
+                return
+            if event.button() == Qt.LeftButton:
+                if not self.highlight_all() and self.view is not None:
+                    self.strip.frame_playback()
+
+        # the right button: the key menu, or every key on a double --------------
+        def double_window(self):
+            return min(QtWidgets.QApplication.doubleClickInterval(), look.RIGHT_DOUBLE_MS)
+
+        def _right_press(self, event, frame):
+            """A right press waits `double_window` ms before opening the key menu: a
+            second one in that time highlights every key instead (2026-10-19)."""
+            now = time.perf_counter() * 1000.0
+            if look.right_double(self.right_at, now, self.double_window()):
+                self.right_at, self._menu_at = None, None
+                self.menu_wait.stop()
+                self.highlight_all()
+                return
+            point = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            self.right_at, self._menu_at = now, (QtCore.QPoint(point), frame)
+            self.menu_wait.start(self.double_window())
+
+        def _open_menu(self):
+            waiting, self._menu_at, self.right_at = self._menu_at, None, None
+            if waiting is not None:
+                self.strip.key_menu(waiting[0], waiting[1])
+
+        def highlight_all(self):
+            """Every key the strip shows highlighted, first to last - then the blue
+            block moves or scales them all, the key menu acts on them all."""
+            st, s = self.strip, self.strip.state
+            if st.keys_dirty:
+                st.refresh()
+            sel = look.all_keys(st.keys, st.breakdowns)
+            if sel is None:
+                return False
+            s["highlight"] = sel
+            st.call("set_highlight", sel)
+            self.update()
+            return True
 
         def wheelEvent(self, event):
             s, t = self.strip.state, self.track()
@@ -2222,6 +2269,8 @@ def classes():
                     ("Tangents", [(label, (lambda k=kind: c("tangents", sel, frame, k)))
                                   for label, kind in look.TANGENTS]),
                     ("Snap to whole frames", lambda: c("snap_keys", sel, frame)), None,
+                    ("Highlight all keys (double click)",
+                     self.timeline.highlight_all if (self.keys or self.breakdowns) else None),
                     ("Add bookmark", lambda: c("add_bookmark", sel)),
                     ("Playback range = highlight", (lambda: c("playback_from", sel)) if sel else None),
                     ("Frame the playback range", self.frame_playback), None,
@@ -2240,8 +2289,14 @@ def classes():
         def _sound_menu(self):
             self._menu(self.sound, self.sound_rows())
 
-        def key_menu(self, event, frame):
-            point = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+        def key_menu(self, where, frame):
+            """`where`: a global QPoint, or the mouse event the menu opens at."""
+            if isinstance(where, QtCore.QPoint):
+                point = where
+            elif hasattr(where, "globalPosition"):
+                point = where.globalPosition().toPoint()
+            else:
+                point = where.globalPos()
             self._menu(point, self.key_rows(frame))
 
     global _KIT
