@@ -10999,7 +10999,7 @@ The animator: «Возможно ли в maya сделать вкладки ка
 сразу несколько программ?» - then the references route: «мы нажимаем на вкладку и все объекты которые она
 референсит скрываются и деактивируются, изменяется найтройки вюпорта, открываются старые окна и показываются
 новые». Asked: tabs are for all three of working on several scenes, carrying things between them and looking
-at a scene beside the work; approach A (imports, not references); one shared undo history; the bar above the
+at a scene beside the work; approach A (imports, not references); one shared undo history (per tab since 2026-10-19, below); the bar above the
 viewport; each tab its own whole layout. Spec `docs/superpowers/specs/2026-10-15-scene-tabs-design.md` (read
 its planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage1.md`. Stage 2, the plugin seeing only the active tab, is `2026-10-15-scene-tabs-plugin-scope-design.md` (its
 planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage2.md` - built with stage 1: stage 1
@@ -11028,8 +11028,8 @@ alone doubles the tab's prefix on everything the plugin creates.
   restores the tabs - once, even when a SceneOpened job fires inside the open). One scene open is ordinary
   Maya; the second converts it into tab 1 (1 ms, by UUID).
 - **Switching** records the tab being left (modified flag, unit, ranges, frame, selection, views, layout) and
-  hides it (`lodVisibility`, `hiddenInOutliner`), then shows the new one - ONE undo chunk, so Ctrl+Z past a
-  switch brings the tab back before undoing its step.
+  hides it (`lodVisibility`, `hiddenInOutliner`), then shows the new one - outside the undo queue since
+  2026-10-19 (below: each tab its own undo history).
 - **Saving** lifts the tab into the root namespace by UUID, cuts its layer root free (written as
   `BaseAnimation`), writes its ranges into its configuration node, exports to a temp file and replaces the
   tab's file; refuses by name on a root-namespace clash; asks when the file changed on disk. A save puts back
@@ -11109,6 +11109,25 @@ held `AS_DG_ATK_JA_01.ma.skeldartmp.ma` and `…skeldartmp.ma.skeldartmp.ma`). T
 257. **A save renames nodes, not strings.** A camera's `imageName` (`tab_plain:camera2`, the name it was
      created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
      names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
+
+**Each tab its own undo history, as far as one queue allows** (2026-10-19, «Для каждой вкладки нужно
+реализовать свою историю действий»; asked, the tab boundary over per-tab snapshots and a flush per
+switch). Spec `docs/superpowers/specs/2026-10-19-scene-tabs-undo-design.md`. Maya has ONE linear queue:
+a tab's steps made before another tab's work lie under it and can never be reached past it.
+`maya_scenetabs/tabundo.py`:
+- a switch is no undo step (`switching.switch` runs unrecorded); entering a tab whose work is not on the
+  queue's top lays a FENCE, a chunk `skeldarTabFence:<ns>:<serial>` holding a `setAttr` of the session
+  node's `skeldarFence` (Maya records no empty chunk; `undoInfo -q -undoName` names a chunk);
+- an `MEventMessage` "Undo" callback redoes a fence undone (any road: hotkey, Edit menu, a script) and
+  says «Start of this tab's undo history» (+ «its earlier steps are under another tab's work»); a "Redo"
+  callback undoes another tab's fence redone back;
+- a tab left untouched has its fence undone off the top as it is left, so A → empty B → A goes on;
+- `opening._quiet`'s flush calls `tabundo.reset(active)`.
+A popped fence is an undo, which flags the scene: the switch puts the flag back before it records the
+tab left. Proof: `verify_scene_tabs.py undo` 11/11, all **0 of 293**, `verify_tabs_scope.py` 0 of 46
+(mayapy); the gates that proved «Ctrl+Z past a switch brings the
+tab back» (switch, outliner_sets, layer_editor, camera_keys, cameras) now prove it stays;
+`tests/test_scenetabs_tabundo.py`. Not seen in a GUI Maya.
 
 **The Anim Layer Editor shows the active tab as a scene** (2026-10-16, the animator: «вижу какие-то
 анимационные слои даже в новой вкладке ... когда я выделяю нижний слой то ... выделяются все слои»).

@@ -227,8 +227,8 @@ def _refresh_bar():
 
 
 def _undone():
-    """Undo / Redo: the bar and the Layer Editor (a switch undone brings the other
-    tab's layers back in; the editors do not notice by themselves)."""
+    """Undo / Redo: the bar and the Layer Editor. A switch is no undo step since
+    2026-10-19 (`tabundo`), but an undo can still add or take a layer."""
     _refresh_bar()
     try:
         from . import layers

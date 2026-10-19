@@ -1,8 +1,8 @@
 """Scene tabs: switching. The tab being left is recorded (its time, view,
 selection, modified flag) and hidden; the new one is shown with its
-own, in ONE undo chunk - so a Ctrl+Z past a switch brings the previous tab
-back before it undoes that tab's step (measured: one undo restores the
-namespace, the unit, the ranges and the visibility).
+own, outside the undo queue: each tab's history ends at a fence laid as it is
+entered (`tabundo`, 2026-10-19). Until then a switch was one undo chunk and a
+Ctrl+Z past it brought the previous tab back.
 
 Hidden by `lodVisibility` and `hiddenInOutliner` on the tab's top nodes, never
 `visibility`, which the animator keys. The startup cameras (persp, top, front, side) are
@@ -18,7 +18,7 @@ Spec: docs/superpowers/specs/2026-10-15-scene-tabs-design.md
 
 import maya.cmds as cmds
 
-from . import layers, records, session
+from . import layers, records, session, tabundo
 
 VIEW_FLAGS = ("displayAppearance", "displayTextures", "displayLights", "shadows", "joints",
               "nurbsCurves", "polymeshes", "locators", "cameras", "grid")
@@ -347,7 +347,9 @@ def _restore(before, modified):
 
 
 def switch(namespace):
-    """One undo chunk: leave the active tab, enter `namespace`."""
+    """Leave the active tab, enter `namespace` - outside the undo queue, with a
+    fence on it for the tab entered (`tabundo`): Ctrl+Z in a tab never reaches
+    another tab's work and never switches tabs (2026-10-19)."""
     state = session.state()
     if namespace == state["active"]:
         return state
@@ -355,17 +357,22 @@ def switch(namespace):
         raise session.TabError("no tab %s" % namespace)
     before = state
     modified = cmds.file(q=True, modified=True)
-    cmds.undoInfo(openChunk=True, chunkName="skeldarTabSwitch")
+    lay = tabundo.before_switch(state["active"], namespace, cmds)
+    cmds.file(modified=bool(modified))      # a fence popped (an undo) flags the scene; the tab left is as it was
+    recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
+    cmds.undoInfo(stateWithoutFlush=False)
     try:
         try:
             state = enter(leave(state), namespace)
             session.write(state)
-            settle_flag(state)
         except Exception:
             _restore(before, modified)
             raise
     finally:
-        cmds.undoInfo(closeChunk=True)
+        cmds.undoInfo(stateWithoutFlush=recording)
+    if lay:
+        tabundo.after_switch(namespace, records.SESSION_NODE, cmds)
+    settle_flag(state)
     return state
 
 

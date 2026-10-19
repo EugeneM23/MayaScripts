@@ -41,6 +41,8 @@ def _quiet(fn):
             cmds.undoInfo(stateWithoutFlush=recording)
             if recording and not isinstance(result, session.Cancelled):
                 cmds.flushUndo()
+                from . import tabundo
+                tabundo.reset(session.state()["active"] if session.exists() else None)
     run.__name__ = fn.__name__
     run.__doc__ = fn.__doc__
     return run
