@@ -108,3 +108,35 @@ was refuted by the live command log: it ran, and no `animLayer -edit` and no ste
 
 Not seen in a GUI Maya: the viewport message, Edit > Undo, the Script Editor's
 «Undo: skeldarTabFence...» lines.
+
+## The final design: one shared history, nothing lost (the same evening)
+
+The queue the 7002 Maya held showed real edits in every visit: move, SetKey, key moves, a sphere
+created, alternating `untitled` and `untitled1`. With the boundary, every return found the tab's history
+under the other tab's edits. That is not noise: it is the limit itself. Asked again, offering one shared
+history, the boundary, or per-tab snapshots of keys and poses, the animator chose **«Общая история,
+ничего не терять»**. This replaces the boundary above.
+
+- **Markers, not fences.** A switch still runs outside the queue and lays one recorded chunk, now
+  `skeldarTabSwitch:<from>:<to>:<serial>`. It names both tabs, so no bookkeeping is needed to cross it.
+- **Ctrl+Z crosses a marker in the same press.** The Undo event callback switches to `<from>`
+  (`switching.switch(ns, history=False)`: no marker, nothing popped) and undoes once more. Markers in a
+  row are crossed the same way. The viewport says «Undo in attack: move -r 1 0 0», naming the step when
+  Maya named it. Redo crosses into `<to>` and redoes the step after the marker. One press is always one
+  real step, wherever it was made.
+- **Looking leaves nothing.** Leaving a tab undoes its looking steps from the top of the queue, down to
+  the first real step or marker. Those are MEL selections and `currentTime` (frame hotkeys); the
+  selection and frame are kept for the tab. Then a tab that added nothing over the marker that led into
+  it has that marker popped. A popped marker is never redone. So Ctrl+Z never walks into a tab to undo a
+  click. A tab with real steps of its own keeps a marker when left, even if this visit only looked:
+  otherwise Ctrl+Z from the next tab would undo its step without showing it.
+- **Old fences.** A boundary-build fence left in a queue (an update mid-session) stops Ctrl+Z with
+  «Older steps are from before the tabs update - Ctrl+Z stops here». What lay under it may be a hidden
+  tab's, and which one is unknown.
+
+Proof: `verify_scene_tabs.py undo` **15/15** (Ctrl+Z from the film back to the rig and its step in one
+press; on to the film; redo all the way across; a visit with only a click and a frame change leaving
+nothing, its click and frame kept; clicks over a real step coming off; four presses walking back through
+both tabs newest first, each in its own tab, and four redos; an old fence stopping Ctrl+Z). The
+switch / outliner_sets / layer_editor / camera_keys / cameras gates prove a Ctrl+Z past a switch brings
+the tab back again. All **0 of 299**, `verify_tabs_scope.py` 0 of 46.

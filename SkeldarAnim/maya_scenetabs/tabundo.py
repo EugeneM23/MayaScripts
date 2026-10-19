@@ -1,54 +1,64 @@
-"""Scene tabs: each tab's own undo history, as far as Maya's ONE queue allows
-(2026-10-19, the animator: «Для каждой вкладки нужно реализовать свою историю
-действий сейчас одна на все вкладки»).
+"""Scene tabs: one undo history for every tab, where nothing is lost (2026-10-19).
 
-Maya keeps one linear undo queue, so separate stacks are impossible: a tab's
-steps made before another tab's work lie under that work. What this gives:
+The animator asked first for each tab's own history («Для каждой вкладки нужно
+реализовать свою историю действий»). Maya keeps ONE linear undo queue, so two
+histories that both go on after edits in the other tab cannot exist in one Maya:
+a tab boundary was built, and in use every visit buried the tab before it (they
+key and move in both tabs). Asked again, they chose one shared history where
+nothing is lost («Общая история, ничего не терять»). What this gives:
 
-- a switch is no step: it runs outside the queue (`switching.switch`);
-- entering a tab lays a FENCE when the queue's top is not already this tab's
-  work - a recorded no-op chunk named `skeldarTabFence:<namespace>:<serial>`
-  (a setAttr of a counter on the session node; Maya records no empty chunk);
-- Ctrl+Z (any road: the hotkey, Edit > Undo, a script) that undoes a fence is
-  redone at once from the Undo event, and the viewport says it is the start
-  of this tab's history - it never reaches another tab's work and never
-  switches tabs (measured 2026-10-19 in mayapy: a redo inside the Undo event
-  callback holds, three undos in a row stayed on the fence);
-- a tab left with nothing done in it has its fence taken back off the queue's
-  top as it is left, so A -> B (nothing) -> A goes on with A's history;
-- a fence redone from the redo queue in another tab is undone back the same way.
+- a switch runs outside the queue (`switching.switch`) and leaves a MARKER on it:
+  a recorded chunk named `skeldarTabSwitch:<from>:<to>:<serial>`, a setAttr of a
+  counter on the session node (Maya records no empty chunk);
+- Ctrl+Z (any road) that undoes a marker switches to the tab it came from and
+  undoes that tab's last step in the same press, saying so in the viewport; Redo
+  that redoes a marker switches to the tab it led to and redoes the step after it.
+  So one press is always one real step, wherever it was made (measured in mayapy:
+  an undo or redo inside the Undo / Redo event callback holds);
+- leaving a tab takes the steps that only LOOKED off the queue (MEL selections
+  and time changes on its marker, `_drop_selection`), and a tab left with nothing
+  done has its marker taken back (`plan_enter`): A -> B (only looked) -> A leaves
+  nothing, and Ctrl+Z never walks into a tab for somebody's click;
+- a marker popped that way is not redone (`on_redo` takes it back).
 
-What is whose lives on `sys` (the queue is the session's, never saved).
-`reset` after a flush (an import, an open): the queue is empty, its top the
-active tab's. Spec: docs/superpowers/specs/2026-10-19-scene-tabs-undo-design.md
+What is whose lives on `sys` (the queue is the session's, never saved). `reset`
+after a flush (an import, an open): the queue is empty, its top the active tab's.
+Spec: docs/superpowers/specs/2026-10-19-scene-tabs-undo-design.md
 """
 
 import sys
 
-PREFIX = "skeldarTabFence:"
+PREFIX = "skeldarTabSwitch:"
+LEGACY = "skeldarTabFence:"         # the boundary build's fences: which tab lay below is unknown
 COUNTER = "skeldarFence"            # the counter attribute on the session node
 
-START = "Start of this tab's undo history"
-UNDER = "Start of this tab's undo history - its earlier steps are under another tab's work"
-UNDER_NAMED = "%s: start of undo here - earlier steps are under the work done in %s (Maya keeps one undo list)"
-ENTERED = "%s: earlier undo steps are under the work done in %s - Ctrl+Z here starts from now"
+UNDO_IN = "Undo in %s"
+REDO_IN = "Redo in %s"
+OLDER = "Older steps are from before the tabs update - Ctrl+Z stops here"
 
 
 # ------------------------------------------------------------------ pure
 
-def fence_name(namespace, serial):
-    return "%s%s:%d" % (PREFIX, namespace, serial)
+def marker_name(leaving, entering, serial):
+    return "%s%s:%s:%d" % (PREFIX, leaving, entering, serial)
 
 
-def is_fence(name):
+def is_marker(name):
     return bool(name) and str(name).startswith(PREFIX)
 
 
-def fence_tab(name):
-    """The namespace a fence's name stands for ("" for anything else)."""
-    if not is_fence(name):
-        return ""
-    return str(name)[len(PREFIX):].rsplit(":", 1)[0]
+def is_legacy(name):
+    return bool(name) and str(name).startswith(LEGACY)
+
+
+def marker_tabs(name):
+    """(from, to) of a marker's name, ("", "") for anything else."""
+    if not is_marker(name):
+        return "", ""
+    parts = str(name)[len(PREFIX):].split(":")
+    if len(parts) != 3:
+        return "", ""
+    return parts[0], parts[1]
 
 
 SELECTION = ("select", "selectKey", "hilite", "currentTime")
@@ -63,41 +73,22 @@ def is_selection(name):
     return bool(words) and words[0] in SELECTION
 
 
-def latest_fence(fences, namespace):
-    """The newest fence of `namespace` still on the books ("" when none)."""
-    names = [n for n, r in fences.items() if r.get("ns") == namespace]
-    return max(names, key=_serial) if names else ""
-
-
-def plan_enter(fences, owner, leaving, entering, top):
-    """(pop, lay) for a switch from `leaving` to `entering` with `top` the
-    queue's top name: pop the leaving tab's fence when nothing was done on it
-    (it is still the top), then lay a fence unless the work left on top is
-    `entering`'s own. `fences` {name: {"ns", "below"}}, `owner` the tab whose
-    work is on top (None unknown)."""
-    record = fences.get(top) if top else None
-    pop = bool(record) and record["ns"] == leaving
-    after = record["below"] if pop else owner
+def plan_enter(markers, owner, leaving, entering, top):
+    """(pop, lay) for a switch from `leaving` to `entering` with `top` the queue's
+    top name: pop the marker that led into `leaving` when nothing was done there
+    (it is still the top), then lay a marker unless the steps left on top are
+    `entering`'s own. `markers` {name: {"from", "to", "below"}}, `owner` the tab
+    whose steps are on top (None unknown)."""
+    record = markers.get(top) if top else None
+    pop = bool(record) and record.get("to") == leaving
+    after = record.get("below") if pop else owner
     return pop, after != entering
 
 
-def blocked_message(fences, name, title=None):
-    """What Ctrl+Z says on a fence: whether this tab's work was on the queue
-    before the fence was laid (then it lies under another tab's work, named
-    through `title(namespace)` when given)."""
-    record = fences.get(name) or {}
-    if not record.get("earlier"):
-        return START
-    if title and record.get("ns") and record.get("below"):
-        return UNDER_NAMED % (title(record["ns"]), title(record["below"]))
-    return UNDER
-
-
-def entered_message(record, title):
-    """What entering a tab says when its history went under another tab's work ("" otherwise)."""
-    if not record or not record.get("earlier") or not record.get("below"):
-        return ""
-    return ENTERED % (title(record["ns"]), title(record["below"]))
+def say_step(template, title, step):
+    """«Undo in attack: move -r 1 0 0» - the step's name when Maya gave it one."""
+    text = template % title
+    return text + (": " + step.strip() if step and step.strip() else "")
 
 
 def _serial(name):
@@ -111,21 +102,20 @@ def _serial(name):
 
 def state():
     st = getattr(sys, "_skeldar_tabundo", None)
-    if st is None:
-        st = {"fences": {}, "owner": None, "seen": set(), "serial": 0, "inside": False,
-              "callbacks": [], "handler": None}
+    if st is None or "markers" not in st:
+        old = st or {}
+        st = {"markers": {}, "owner": None, "popped": set(), "serial": old.get("serial", 0),
+              "inside": False, "callbacks": old.get("callbacks", []), "handler": old.get("handler")}
         sys._skeldar_tabundo = st
-    st.setdefault("seen", set())
     return st
 
 
 def reset(owner):
-    """The queue flushed: nothing on it is fenced, its top (empty) is `owner`'s."""
+    """The queue flushed: no marker is on it, its top (empty) is `owner`'s."""
     st = state()
-    st["fences"] = {}
+    st["markers"] = {}
+    st["popped"] = set()
     st["owner"] = owner
-    st["seen"] = set()          # the tabs that left steps of their own on the queue
-    st["entry_top"] = ""        # the queue's top when the active tab was entered
 
 
 # ------------------------------------------------------------------ the scene
@@ -141,61 +131,45 @@ def recording(cmds=None):
 
 
 def before_switch(leaving, entering, cmds=None):
-    """Called before the switch's unrecorded work: pops the leaving tab's fence
-    when nothing was done on it. Returns True when `after_switch` must lay a
-    fence for `entering`. Does nothing (False) while the queue is not recording."""
+    """Called before the switch's unrecorded work: the leaving tab's looking steps
+    off, its marker popped when nothing was done there. Returns True when
+    `after_switch` must lay a marker. Does nothing (False) while not recording."""
     cmds = cmds or _cmds()
     if not recording(cmds):
         return False
     install(cmds)
     st = state()
     top = _drop_selection(leaving, cmds)
-    pop, lay = plan_enter(st["fences"], st["owner"], leaving, entering, top)
+    pop, lay = plan_enter(st["markers"], st["owner"], leaving, entering, top)
     if pop:
-        record = st["fences"].pop(top)
+        record = st["markers"].pop(top)
         st["inside"] = True
         try:
             cmds.undo()
         finally:
             st["inside"] = False
-        st["owner"] = record["below"]
-        if not record.get("earlier"):
-            st["seen"].discard(leaving)     # nothing of its own under that fence either
-    elif st["owner"] == leaving and top != st.get("entry_top", ""):
-        st["seen"].add(leaving)             # it leaves steps of its own on the queue
-    if not lay:
-        st["entry_top"] = cmds.undoInfo(q=True, undoName=True) or ""
+        st["popped"].add(top)
+        st["owner"] = record.get("below")
     return lay
 
 
 def _drop_selection(leaving, cmds):
-    """The queue's top after taking off the selection steps that lie on the
-    leaving tab's fence, when those are all it holds (2026-10-19, «История
-    скидывается после переключения между вкладками»: a click in a tab is a
-    `select` step, so a tab only looked at buried the tab before it). The steps
-    are undone from the top while each is a selection (`is_selection`); on a
-    step that is not, every one is redone and the queue is as it was. The
-    selection and the frame shown are put back unrecorded: `switching.leave`
-    records them. Time steps count too: a time change is an undo step."""
+    """The queue's top after taking off the leaving tab's steps that only looked
+    (`is_selection`) from the top of the queue, down to its first real step or a
+    marker (2026-10-19: a click in a tab is a `select` step, a frame change a
+    `currentTime` one - left on, Ctrl+Z from another tab would come back here to
+    undo a click). The selection and the frame shown are put back unrecorded:
+    `switching.leave` records them."""
     st = state()
     top = cmds.undoInfo(q=True, undoName=True) or ""
-    target = latest_fence(st["fences"], leaving)
-    if not target or top == target or st["owner"] != leaving or not is_selection(top):
+    if st["owner"] != leaving or not is_selection(top):
         return top
     shown = cmds.ls(selection=True, long=True) or []
     frame = cmds.currentTime(q=True)
     undone = 0
     st["inside"] = True
     try:
-        while True:
-            name = cmds.undoInfo(q=True, undoName=True) or ""
-            if name == target:
-                break
-            if not is_selection(name):
-                for _ in range(undone):
-                    cmds.redo()
-                undone = 0
-                break
+        while is_selection(cmds.undoInfo(q=True, undoName=True) or ""):
             cmds.undo()
             undone += 1
     finally:
@@ -213,8 +187,8 @@ def _drop_selection(leaving, cmds):
     return cmds.undoInfo(q=True, undoName=True) or ""
 
 
-def after_switch(entering, session_node, cmds=None):
-    """Lays the fence for `entering` (one recorded chunk)."""
+def after_switch(leaving, entering, session_node, cmds=None):
+    """Lays the marker of a switch from `leaving` to `entering` (one recorded chunk)."""
     cmds = cmds or _cmds()
     if not recording(cmds) or not cmds.objExists(session_node):
         return ""
@@ -228,19 +202,14 @@ def after_switch(entering, session_node, cmds=None):
         finally:
             cmds.undoInfo(stateWithoutFlush=was)
     st["serial"] += 1
-    name = fence_name(entering, st["serial"])
+    name = marker_name(leaving, entering, st["serial"])
     cmds.undoInfo(openChunk=True, chunkName=name)
     try:
         cmds.setAttr(plug, st["serial"])
     finally:
         cmds.undoInfo(closeChunk=True)
-    record = {"ns": entering, "below": st["owner"], "earlier": entering in st["seen"]}
-    st["fences"][name] = record
+    st["markers"][name] = {"from": leaving, "to": entering, "below": st["owner"]}
     st["owner"] = entering
-    st["entry_top"] = name
-    said = entered_message(record, _title)
-    if said:
-        _say(said, cmds)
     return name
 
 
@@ -262,47 +231,107 @@ def _active():
         return ""
 
 
+def _tabs():
+    try:
+        from . import session
+        return [t["ns"] for t in session.state()["tabs"]] if session.exists() else []
+    except Exception:                                           # noqa: BLE001
+        return []
+
+
+def _go(namespace):
+    """The tab shown, outside the history (no marker, no pop)."""
+    if not namespace or namespace == _active() or namespace not in _tabs():
+        return False
+    from . import switching
+    switching.switch(namespace, history=False)
+    return True
+
+
 def _say(message, cmds):
     print(message)
     if not cmds.about(batch=True):
         try:
-            cmds.inViewMessage(assistMessage=message, position="topCenter", fade=True, fadeStayTime=3000)
+            cmds.inViewMessage(assistMessage=message, position="topCenter", fade=True, fadeStayTime=2500)
         except Exception:                                       # noqa: BLE001
             pass
 
 
 def on_undo(*_):
-    """An undo that took a fence off: redo it."""
+    """An undo that took a marker off: the tab it came from shown, and that tab's
+    last step undone in the same press (markers in a row crossed the same way)."""
     st = state()
     if st["inside"]:
         return
     cmds = _cmds()
     name = cmds.undoInfo(q=True, redoName=True) or ""
-    if not is_fence(name):
+    if is_legacy(name):
+        #  a boundary-build fence (an update mid-session): the steps under it may be a
+        #  hidden tab's, and which one is not known - undoing past it would change a tab
+        #  nobody sees. Put back, and say so.
+        st["inside"] = True
+        try:
+            cmds.redo()
+        finally:
+            st["inside"] = False
+        _say(OLDER, cmds)
+        return
+    if not is_marker(name):
         return
     st["inside"] = True
+    step, shown = "", _active()
     try:
-        cmds.redo()
+        for _ in range(256):
+            source, _target = marker_tabs(name)
+            if _go(source):
+                shown = source
+            try:
+                cmds.undo()
+            except RuntimeError:                    # nothing left to undo
+                break
+            name = cmds.undoInfo(q=True, redoName=True) or ""
+            if not is_marker(name):
+                step = name
+                break
     finally:
         st["inside"] = False
-    _say(blocked_message(st["fences"], name, _title), cmds)
+    st["owner"] = shown
+    _say(say_step(UNDO_IN, _title(shown), step), cmds)
 
 
 def on_redo(*_):
-    """A redo that put another tab's fence back on: undo it."""
+    """A redo that put a marker back: the tab it led to shown, and the step after
+    it redone in the same press. A marker a switch popped is taken back off."""
     st = state()
     if st["inside"]:
         return
     cmds = _cmds()
     name = cmds.undoInfo(q=True, undoName=True) or ""
-    if not is_fence(name) or fence_tab(name) == _active():
+    if not is_marker(name):
         return
     st["inside"] = True
+    step, shown = "", _active()
     try:
-        cmds.undo()
+        if name in st["popped"]:
+            cmds.undo()                             # a visit that left nothing: not history
+            _say("Nothing to redo", cmds)
+            return
+        for _ in range(256):
+            _source, target = marker_tabs(name)
+            if _go(target):
+                shown = target
+            try:
+                cmds.redo()
+            except RuntimeError:                    # nothing left to redo
+                break
+            name = cmds.undoInfo(q=True, undoName=True) or ""
+            if not is_marker(name) or name in st["popped"]:
+                step = "" if is_marker(name) else name
+                break
     finally:
         st["inside"] = False
-    _say("Nothing to redo in this tab", cmds)
+    st["owner"] = shown
+    _say(say_step(REDO_IN, _title(shown), step), cmds)
 
 
 def install(cmds=None):
