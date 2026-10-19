@@ -76,6 +76,36 @@ scene.move_keys((30, 30), (33, 33))
 gate("one key moved", times(cube) == [0, 10, 20, 33, 40], str(times(cube)))
 cmds.undo()
 
+# 5b the live drag (2026-10-19: «во время переноса анимация во вьюпорте не обновляется»):
+# the keys move on every step, a key passed over comes back, S keeps a copy, the release
+# is one undo step, a drag given up leaves the curve as it was
+start_keys = times(cube)
+start_vals = cmds.keyframe(cube, at="tx", q=True, valueChange=True)
+cmds.currentTime(25)
+gate("live: a drag begins", scene.live_begin((20, 20)))
+scene.live_to((25, 25))
+gate("live: the scene shows the key at its new place at once",
+     abs(cmds.getAttr(cube + ".tx") - start_vals[start_keys.index(20)]) < 1e-6,
+     str(cmds.getAttr(cube + ".tx")))
+scene.live_to((30, 30))
+gate("live: over a key", times(cube) == [0, 10, 30, 40], str(times(cube)))
+scene.live_to((35, 35))
+gate("live: the key passed over comes back with its value",
+     times(cube) == [0, 10, 30, 35, 40]
+     and cmds.keyframe(cube, at="tx", q=True, time=(30, 30), valueChange=True)
+     == [start_vals[start_keys.index(30)]], str(times(cube)))
+stamp = scene.live_stamp()
+gate("live: S answers the copies", bool(stamp) and any(r["stamped"] for r in stamp.values()))
+scene.live_to((37, 37))
+gate("live: the copy stays where S put it", times(cube) == [0, 10, 30, 35, 37, 40], str(times(cube)))
+scene.live_end((37, 37))
+gate("live: the release sets it down", times(cube) == [0, 10, 30, 35, 37, 40], str(times(cube)))
+cmds.undo()
+gate("live: one undo takes the whole drag", times(cube) == start_keys, str(times(cube)))
+scene.live_begin((20, 20)); scene.live_to((3, 3)); scene.live_end(None)
+gate("live: a drag given up leaves the curve", times(cube) == start_keys
+     and cmds.keyframe(cube, at="tx", q=True, valueChange=True) == start_vals, str(times(cube)))
+
 # 6 the key menu
 scene.set_time(10)
 scene.copy_keys(None, 10)

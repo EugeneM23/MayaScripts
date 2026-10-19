@@ -1946,13 +1946,19 @@ def classes():
         def add_drawn_copies(self, stamped, selection, target):
             """The copies S put down in a live drag, drawn where they went down: the
             scene holds them, but the strip reads keys again only on the release."""
-            keys, bds = set(self.keys), set(self.breakdowns)
+            keys, bds, put = set(self.keys), set(self.breakdowns), {}
             for rec in stamped.values():
                 for t, data in rec.get("keys", ()):
                     nt = round(look.mapped(t, selection, target), 4)
                     if round(nt, 4) in rec.get("stamped", ()):
-                        (bds if data.get("breakdown") else keys).add(nt)
+                        bd = bool(data.get("breakdown"))
+                        (bds if bd else keys).add(nt)
+                        put[nt] = put.get(nt, False) or bd
             self.keys, self.breakdowns = sorted(keys), sorted(bds)
+            #  the flash and the swell a set key gets (2026-10-19: «пропали эффекты и
+            #  анимация когда я ставлю его копию хоткеем S» - no key read, no effect)
+            for nt, bd in sorted(put.items()):
+                self.timeline.key_effect("set", nt, bd)
 
         def _key_effects(self, old_keys, old_bds, edited=False):
             """A key set flashes, keys deleted throw sparks one after another left to

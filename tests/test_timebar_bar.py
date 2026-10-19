@@ -1022,5 +1022,92 @@ class LayerPanelReads(Strip):
         self.assertEqual(self.reads["anim"], before)
 
 
+class LiveLink(FakeLink):
+    """A link that moves the scene's keys while they are dragged (scene.live_*)."""
+
+    def live_begin(self, selection):
+        self._log("live_begin", tuple(selection))
+        self.sel, self.target, self.stamped = tuple(selection), tuple(selection), set()
+        return True
+
+    def live_to(self, target):
+        self._log("live_to", tuple(target))
+        self.target = tuple(target)
+
+    def live_stamp(self):
+        self._log("live_stamp", self.target)
+        self.stamped.add(float(self.target[0]))
+        return {"curve": {"keys": [(float(self.sel[0]), {"breakdown": False})],
+                          "stamped": set(self.stamped)}}
+
+    def live_end(self, target=None):
+        self._log("live_end", target)
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class LiveKeyDrag(Strip):
+    """2026-10-19: «во время переноса анимация во вьюпорте не обновляется» - the keys
+    move in the scene on every step of the drag, the release sets them down once;
+    then «пропали эффекты и анимация когда я ставлю его копию хоткеем S»."""
+
+    motion = True
+
+    def setUp(self):
+        super(LiveKeyDrag, self).setUp()
+        self.link = LiveLink()
+        self.strip.link = self.link
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+
+    def press_s(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        press = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), press)
+
+    def test_every_step_of_the_drag_moves_the_scene_s_keys(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(33), Qt.NoButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.assertEqual(self.calls("live_begin"), [("live_begin", (22, 40))])
+        self.assertEqual(self.calls("live_to"), [("live_to", (25, 43)), ("live_to", (27, 45))])
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("live_end"), [("live_end", (27, 45))])
+        self.assertFalse(self.calls("move_keys"), "the live drag set its keys down itself")
+        self.assertEqual(self.link.s["highlight"], (27, 45))
+        self.assertIsNone(self.tl.live)
+
+    def test_no_key_is_read_while_the_drag_moves_them(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        before = len(self.calls("keys"))
+        self.strip.refresh(keys=True)
+        self.assertEqual(len(self.calls("keys")), before, "drawn from the keys read before it")
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+        self.assertGreater(len(self.calls("keys")), before, "read again on the release")
+
+    def test_s_in_a_live_drag_flashes_and_swells_the_copy(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.strip.fx.items[:] = []
+        self.tl.reached.clear()
+        self.press_s()
+        self.assertEqual(self.calls("live_stamp"), [("live_stamp", (27, 45))])
+        self.assertFalse(self.calls("stamp_keys"), "the keys stand on the target already")
+        self.assertEqual([i["kind"] for i in self.strip.fx.items], ["set"], "the copy's flash")
+        self.assertIn(27.0, self.tl.reached, "the copy swells as a set key does")
+        self.assertIn(27.0, self.strip.keys, "the copy drawn where it went down")
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+
+    def test_a_drag_whose_release_never_came_is_set_down_on_the_next_press(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonPress, self.x(50), Qt.LeftButton, Qt.LeftButton)
+        self.assertEqual(self.calls("live_end"), [("live_end", (27, 45))])
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(50), Qt.LeftButton, Qt.NoButton)
+
+
 if __name__ == "__main__":
     unittest.main()
