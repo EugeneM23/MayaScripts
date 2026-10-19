@@ -806,13 +806,24 @@ class Floating(Seams):
         hubpop.close_popup("alpha")
         self.assertEqual(floated, [("alpha", True), ("alpha", False)])
 
-    def test_open_at_closes_a_standing_window_and_opens_it_at_the_point(self):
+    def test_open_at_moves_a_standing_window_to_the_point_without_a_rebuild(self):
+        # 2026-10-19: the standing window is moved, unrolled and flashed - built once
         first = hubpop.open_popup("alpha", origin=(1200, 700))
-        again = hubpop.open_at("alpha", (600, 400), animate=False)
-        self.assertIsNot(again, first)
+        first.set_collapsed(True)
+        with mock.patch.object(hubpop.Popup, "build") as build, \
+                mock.patch.object(hubpop.Popup, "flash") as flash:
+            again = hubpop.open_at("alpha", (600, 400), animate=False)
+        self.assertIs(again, first)
+        build.assert_not_called()
+        flash.assert_called_once_with()
+        self.assertFalse(again.collapsed)
         self.assertEqual((again.root.x(), again.root.y()), (582, 386))
         self.assertEqual(rules.decode_place(
             self.cmds.vars[rules.WINDOW_POS_VAR.format("alpha")]), (582.0, 386.0))
+
+    def test_open_at_opens_the_window_at_the_point(self):
+        popup = hubpop.open_at("alpha", (600, 400), animate=False)
+        self.assertEqual((popup.root.x(), popup.root.y()), (582, 386))
 
 
 class Card(unittest.TestCase):

@@ -241,12 +241,13 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(menu.lift[2], 0.0)
         self.assertGreater(lit, self._ink(menu))      # the glow and the larger pill
 
-    def test_chosen_flashes_then_goes_back_in_and_runs(self):
+    def test_chosen_runs_at_once_then_flashes_and_goes_back_in(self):
         menu = self._menu()
         self.clock[0] += rules.open_total(menu.count)
         menu.choose(1)
         self.assertEqual(menu.phase, "fired")
-        self.assertEqual(self.ran, [])
+        # the item is asked for at the press, not after the flash (2026-10-19)
+        self.assertEqual(self.ran, [rules.DEFAULTS[1]])
         self.assertTrue(maya_radial.is_up())
         self.clock[0] += rules.FLASH_MS
         menu.tick()

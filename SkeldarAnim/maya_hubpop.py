@@ -1196,12 +1196,25 @@ def open_at(key, point, animate=True):
     """Section `key`'s window by the global `point` (the radial menu, 2026-10-15: «если он
     уже был открыт где-то то он должен открыться в новом месте возле курсора мышки»): a
     window standing anywhere is closed and opened here, unrolled, its top-left AT_CURSOR
-    left of and above the point, kept on the point's screen. The window."""
-    if is_open(key):
-        close_popup(key, forget=False)
+    left of and above the point, kept on the point's screen. The window.
+
+    A window already standing is MOVED there, unrolled and flashed, not built again
+    (2026-10-19, «при нажатии на кнопку открытия в круговом меню происходит задержка»):
+    building a section's controls is what took the time."""
     scale = _scale()
     place = ((point[0] - AT_CURSOR[0] * scale) / scale,
              (point[1] - AT_CURSOR[1] * scale) / scale)
+    standing = _state()["popups"].get(key) if is_open(key) else None
+    if standing is not None and standing.alive():
+        if standing.collapsed:
+            standing.set_collapsed(False, animate=False)
+        standing.place = place
+        standing.place_window(point)
+        standing.flash()
+        _save_place(key, standing.place)
+        return standing
+    if is_open(key):
+        close_popup(key, forget=False)
     if stored_collapsed(key):
         _save_collapsed(key, False)
     popup = open_popup(key, place=place, animate=animate, origin=point)

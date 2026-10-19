@@ -417,7 +417,7 @@ class Menu(object):
         self.left_at = None           # when the close began
         self.fired = None             # the chosen slot while it flashes
         self.fired_at = None
-        self.pending = None           # (item, point) to run when the flash ends
+        self.pending = None           # unused since 2026-10-19: the item runs at the press
         self.lift = [0.0] * self.count
         self.ticked_at = self.opened_at
 
@@ -592,13 +592,15 @@ class Menu(object):
             close_menu()
             _run_later(self.q, item, point)
             return
-        # the chosen pill flashes, then the menu goes back into its centre and the item runs
+        # the chosen pill flashes, then the menu goes back into its centre; the item runs
+        # at once, not after the flash (2026-10-19: the 120 ms of flash were a wait)
         self.phase = "fired"
         self.fired = slot
         self.fired_at = _now_ms()
-        self.pending = (item, point)
+        self.pending = None
         self.hover = None
         self.window.update()
+        _run_later(self.q, item, point)
 
     def destroy(self):
         if self.timer is not None:
