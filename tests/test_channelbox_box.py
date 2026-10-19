@@ -269,11 +269,10 @@ class BoxTests(unittest.TestCase):
         self.mouse("release", self.point(parts["value"]))
         self.assertEqual(dict([e for e in self.link.log if e[0] == "write"][-1][1])["IKLeg_L.visibility"], 0)
 
-    def test_time_moving_reads_values_and_lights_the_keys_reached(self):
+    def test_time_moving_reads_the_key_cells_and_lights_nothing(self):
         self.link.frame = 24.0
         self.box.on_time()
-        lights = [i for i in self.box.canvas.fx.items if i["kind"] == "light"]
-        self.assertEqual(len(lights), 2)                     # translateX and translateY keys at 24
+        self.assertEqual(self.box.canvas.fx.items, [])       # no glow on keys the playhead passes
         tx = self.box.rows[self.row_of("translateX")[0]]["channel"]
         self.assertTrue(tx["on_key"])
 

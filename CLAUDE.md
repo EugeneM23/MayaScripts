@@ -12219,7 +12219,8 @@ edge light (the mockup's v2 drops it too). Spec `docs/superpowers/specs/2026-10-
   Mute, Lock, Select / Break connections, Copy / Paste values, Channel Speed Slow / Medium / Fast.
 - **Motion** (docs/interface-motion.md): hover lift + glow 110 ms on the cell and the well, press
   flash 120, bool pop 200; a key that came onto the frame flashes (520), one that left breaks (700,
-  the wave); a key the playhead reaches lights (600, `passed`). Callbacks: SelectionChanged / Undo /
+  the wave); a key the playhead passes does NOT light (taken out 2026-10-19: «когда двигаем
+  таймслайдер ... на иконках ключей появляется глоу»). Callbacks: SelectionChanged / Undo /
   Redo / animLayerRefresh / keyframe edited (a full read, coalesced on the next turn), time changed
   (values and key cells only, repainted at once - trap 269), attribute changed on the shown nodes
   (values; a connection or lock = full).

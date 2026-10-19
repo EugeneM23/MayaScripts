@@ -811,9 +811,10 @@ def classes():
 
         def on_time(self):
             """Time moved (every frame of playback too): the values and the key cells
-            read again - no full read - and the keys the playhead reached light."""
+            read again - no full read. Nothing lights: a key the playhead passes is not
+            an event of the Channel Box (the animator, 2026-10-19)."""
             frame = self.link.now()
-            before, self.frame = self.frame, frame
+            self.frame = frame
             chans = self.channels()
             values = self.link.values([ch["plug"] for ch in chans])
             for ch, v in zip(chans, values):
@@ -824,17 +825,6 @@ def classes():
                 ch["changed"] = False
                 ch["breakdown"] = ch["on_key"] and any(abs(b - frame) < 1e-3
                                                        for b in ch.get("breakdowns") or [])
-            if before is not None and self.motion:
-                for i, (y, h, parts) in enumerate(self.placed):
-                    row = self.rows[i]
-                    if row["kind"] != "channel":
-                        continue
-                    ch = row["channel"]
-                    if ch.get("locked") or not ch.get("keys"):
-                        continue
-                    if look.passed(ch["keys"], before, frame):
-                        self.canvas.fx.add("light", rect=look.cell_rect(parts["mark"], self.ui),
-                                           hex=self._key_hex(ch))
             self.canvas.repaint()
 
         def _key_hex(self, ch):
