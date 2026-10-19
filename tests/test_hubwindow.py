@@ -153,6 +153,21 @@ class Burst(unittest.TestCase):
         x0, y0, x1, y1 = shapes[-1]
         self.assertLess(x1 - x0, 240)
 
+    def test_a_burst_ticks_without_any_paint(self):
+        """Review 2026-10-18: the plan is made on the first tick when no paint
+        made it; it ends at the plan's total."""
+        shapes, ended = [], []
+        origin = self.frame.mapToGlobal(QtCore.QPoint(10, 10))
+        self.burster.run(True, (origin.x(), origin.y()), lambda: ended.append(1),
+                         on_tick=shapes.append)
+        self.burster.effect.ms = 40.0
+        self.burster.tick_now()
+        self.assertIsNotNone(self.burster.effect.plan)
+        self.assertEqual(len(shapes), 1)
+        self.burster.effect.ms = self.burster.effect.plan.total
+        self.burster.tick_now()
+        self.assertEqual(ended, [1])
+
     def test_the_light_is_added_inside_the_shape(self):
         origin = self.frame.mapToGlobal(QtCore.QPoint(120, 80))
         self.burster.run(True, (origin.x(), origin.y()), lambda: None)

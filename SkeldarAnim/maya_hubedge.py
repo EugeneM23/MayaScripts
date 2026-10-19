@@ -422,6 +422,7 @@ class Edge(object):
         #  runs. None, or a burst that cannot start: the frame's old slide.
         self.burst = burst
         self.burst_shape = None
+        self._burst_gen = 0         # each rail move's number: stale bursts are deaf
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
         self.side = rules.side_of(side)
@@ -562,7 +563,10 @@ class Edge(object):
 
     def visible_rect(self):
         """What of the panel shows on screen now (global x, y, w, h), or None:
-        the time bar steps aside for it (maya_timebar.edge._obstacles)."""
+        the time bar steps aside for it (maya_timebar.edge._obstacles). The
+        frame's whole span: a rail panel's time bar asks `visible_rects`, which
+        cuts the card to a running burst (2026-10-18); this one rect is the
+        bound round all of it."""
         if not self.alive() or not self.host.isVisible() or self._frame <= 0:
             return None
         x, y, w, h = self._host_rect()
@@ -777,6 +781,7 @@ class Edge(object):
         as the burst has grown it - or folds into it, the frame back on the
         rail when the fold ends."""
         self._stop_anim()
+        self._burst_gen += 1        # any burst still running is no longer heard
         self._shown = bool(showing)
         self.place()
         self.host.show()
@@ -812,23 +817,22 @@ class Edge(object):
         if origin is None:
             return False
         width = max(1, self.host.width())
+        #  only the newest burst speaks (review 2026-10-18): a card folding
+        #  while another bursts out (each card has its own Burster) must not
+        #  write its shape or send the panel back to the rail when it ends
+        gen = self._burst_gen
+
+        def current():
+            return self._burst_gen == gen and self.alive()
+
         if showing:
             #  until the first tick the card shows as the burst's start box
-            #  about the point (the host-local shape replaces it then)
-            q = hubqt.qt()
-            at = self.host.mapFromGlobal(q.QtCore.QPoint(int(origin[0]),
-                                                        int(origin[1])))
-            hx = hubstyle.px(hubburst.START_HALF[0], self.scale)
-            hy = hubstyle.px(hubburst.START_HALF[1], self.scale)
-            self.burst_shape = (at.x() - hx, at.y() - hy, 2 * hx, 2 * hy)
-            self._rest_out = True
-            self._set_frame(width)
-            if hubqt._valid(self.grip):
-                self.grip.setVisible(True)
-                self.grip.raise_()
+            #  about the point, pulled inside the card as the plan pulls it
+            #  (the host-local shape replaces it then)
+            self.burst_shape = self._start_box(origin)
 
         def on_shape(shape):
-            if not self.alive():
+            if not current():
                 return
             x0, y0, x1, y1 = shape
             self.burst_shape = (int(round(x0)), int(round(y0)),
@@ -837,9 +841,9 @@ class Edge(object):
             self._set_frame(self._frame)
 
         def done():
-            self.burst_shape = None
-            if not self.alive():
+            if not current():
                 return
+            self.burst_shape = None
             if not showing:
                 self._shown = False
                 self._set_frame(min(width, self.rest_px()))
@@ -852,7 +856,42 @@ class Edge(object):
             ran = False
         if not ran:
             self.burst_shape = None
-        return ran
+            return False
+        if showing and self._burst_gen == gen:
+            #  asked first, the frame whole only once the burst runs: a refused
+            #  one would have flashed the whole card for a frame
+            self._rest_out = True
+            self._set_frame(width)
+            if hubqt._valid(self.grip):
+                self.grip.setVisible(True)
+                self.grip.raise_()
+        return True
+
+    def _start_box(self, origin):
+        """The burst's start box (x, y, w, h), host-local, about global `origin`
+        pulled ORIGIN_PAD inside the card (the largest of `shape()`'s rects) the
+        way maya_hubburst.plan_open pulls it."""
+        q = hubqt.qt()
+        at = self.host.mapFromGlobal(q.QtCore.QPoint(int(origin[0]),
+                                                    int(origin[1])))
+        px, py = at.x(), at.y()
+        try:
+            rects = [r for r in (self.shape() or []) if r[2] > 0 and r[3] > 0] \
+                if self.shape is not None else []
+        except Exception:                                    # noqa: BLE001
+            rects = []
+        hx = hubstyle.px(hubburst.START_HALF[0], self.scale)
+        hy = hubstyle.px(hubburst.START_HALF[1], self.scale)
+        if not rects:
+            return (px - hx, py - hy, 2 * hx, 2 * hy)
+        cx, cy, cw, ch = max(rects, key=lambda r: r[2] * r[3])
+        lx, ly = hubburst.clamp_origin((px - cx, py - cy), (cw, ch),
+                                       hubburst.ORIGIN_PAD * self.scale)
+        #  and the box kept inside the card (maya_hubburst._box)
+        x0, y0 = max(0.0, lx - hx), max(0.0, ly - hy)
+        x1, y1 = min(float(cw), lx + hx), min(float(ch), ly + hy)
+        return (int(round(cx + x0)), int(round(cy + y0)),
+                int(round(x1 - x0)), int(round(y1 - y0)))
 
     def _rail_done(self, showing):
         self._stop_anim()

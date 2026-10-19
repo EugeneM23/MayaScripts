@@ -938,10 +938,52 @@ class RailBurst(unittest.TestCase):
     def test_the_card_hides_under_the_start_box_until_the_first_tick(self):
         self.shapes = []
         edge = self.build()
-        edge.reveal(origin=(140, 270))              # host-local (40, 120)
+        edge.reveal(origin=(140, 270))              # host-local (40, 120): the rail
+        #  pulled ORIGIN_PAD inside the card (60, 10, 280, 200), as the plan pulls it
+        #  and the box kept inside the card (maya_hubburst._box)
         hx, hy = hubedge.hubburst.START_HALF
-        self.assertEqual(edge.burst_shape, (40 - hx, 120 - hy, 2 * hx, 2 * hy))
-        self.assertFalse(edge.host.mask().contains(QtCore.QPoint(200, 150)))
+        x = 60 + hubedge.hubburst.ORIGIN_PAD
+        left = max(60, x - hx)
+        self.assertEqual(edge.burst_shape, (left, 120 - hy, x + hx - left, 2 * hy))
+        mask = edge.host.mask()
+        self.assertTrue(mask.contains(QtCore.QPoint(x, 120)))       # the box shows
+        self.assertFalse(mask.contains(QtCore.QPoint(200, 150)))
+
+    def test_a_refused_burst_is_asked_before_the_frame_opens(self):
+        frames = []
+
+        def refuse(showing, origin, done, on_shape):
+            frames.append(edge.frame)
+            return False
+        edge = self.build(burst=refuse, motion=True)
+        rest = edge.frame
+        edge.reveal(origin=(140, 270))
+        self.assertEqual(frames, [rest])            # not the whole width first
+
+    def test_an_older_burst_is_deaf_once_another_card_bursts(self):
+        """Review 2026-10-18: ✕ on card A (its fold running), then B's icon - A's
+        fold must not write its shape over B's or send the panel back."""
+        calls = []
+
+        def seam(showing, origin, done, on_shape):
+            calls.append((showing, done, on_shape))
+            return True
+        edge = self.build(burst=seam)
+        edge.reveal(origin=(140, 270))               # A out
+        calls[-1][1]()
+        edge.conceal(origin=(300, 180))              # A folding
+        a_done, a_shape = calls[-1][1], calls[-1][2]
+        edge.reveal(origin=(140, 400))               # B bursting
+        b_done, b_shape = calls[-1][1], calls[-1][2]
+        b_shape((70, 20, 110, 50))
+        a_shape((0, 0, 5, 5))
+        a_done()
+        self.assertTrue(edge.shown)
+        self.assertEqual(edge.frame, edge.host.width())
+        self.assertEqual(edge.burst_shape, (70, 20, 40, 30))
+        b_done()
+        self.assertTrue(edge.shown)
+        self.assertIsNone(edge.burst_shape)
 
     def test_the_visible_rects_follow_the_burst(self):
         edge = self.build()
@@ -1036,6 +1078,9 @@ class RailBurstThroughTheHub(unittest.TestCase):
             label = QtWidgets.QLabel("row {0}".format(i))
             label.setFixedHeight(30)
             self.card.body_layout.addWidget(label)
+        skin.add_jump("beta", "Beta", "user", "#7fa9e6", group="scene")
+        self.beta = skin.add_card("beta", "Beta", "user", "#7fa9e6", "#23324a",
+                                  collapsible=False)
         skin.show_card("alpha")
         hub._SKIN = self.skin = skin
         self.edge.place()
@@ -1044,9 +1089,10 @@ class RailBurstThroughTheHub(unittest.TestCase):
     def tearDown(self):
         hub = self.hub
         self.motion.stop()
-        burster = getattr(self.card, "burster", None)
-        if burster is not None:
-            burster.stop(quiet=True)
+        for card in (self.card, self.beta):
+            burster = getattr(card, "burster", None)
+            if burster is not None:
+                burster.stop(quiet=True)
         hub.cmds, hub._SKIN, hub._cursor, self.hubqt.find, self.hubqt.path_of, \
             listeners = self.saved
         self.style._LISTENERS[:] = listeners
@@ -1071,10 +1117,15 @@ class RailBurstThroughTheHub(unittest.TestCase):
         self.assertTrue(burster.busy())
         self.assertEqual(burster._origin, (centre.x(), centre.y()))
         self.assertTrue(self.edge.shown)
-        #  until the first tick the card shows as the start box about the icon
+        #  until the first tick the card shows as the start box: about the icon,
+        #  pulled inside the card as the plan pulls it
         x, y, w, h = self.edge.burst_shape
         at = self.edge.host.mapFromGlobal(centre)
-        self.assertTrue(x <= at.x() <= x + w and y <= at.y() <= y + h)
+        card = self.card.frame.geometry()
+        top = self.card.frame.mapTo(self.edge.host, QtCore.QPoint(0, 0))
+        self.assertGreaterEqual(x, top.x())
+        self.assertLessEqual(x + w, top.x() + card.width())
+        self.assertTrue(y <= at.y() <= y + h or not (top.y() <= at.y() <= top.y() + card.height()))
         #  a tick: the shape in the host's coordinates
         self.card.frame.grab()
         burster.effect.ms = 60.0
@@ -1103,3 +1154,45 @@ class RailBurstThroughTheHub(unittest.TestCase):
         self.assertFalse(self.edge.shown)
         self.assertEqual(self.edge.frame, min(self.edge.host.width(), self.edge.rest_px()))
         self.assertIsNone(self.edge.burst_shape)
+
+    def test_the_burst_runs_with_no_paint_at_all(self):
+        """Review 2026-10-18: a frame masked to nothing may never be painted in
+        Maya; the plan is made on the first tick, the shape grows, the burst
+        ends at the plan's total, not at the driver's MAX_MS."""
+        self.edge._shown = False
+        self.hub.focus("alpha")
+        burster = self.card.burster
+        start = self.edge.burst_shape
+        burster.effect.ms = 120.0
+        burster.tick_now()                         # no grab: the plan from the tick
+        plan = burster.effect.plan
+        self.assertIsNotNone(plan)
+        self.assertLess(plan.total, 1200)
+        grown = self.edge.burst_shape
+        self.assertGreater(grown[2] * grown[3], start[2] * start[3])
+        burster.effect.ms = plan.total
+        burster.tick_now()
+        self.assertFalse(burster.busy())
+        self.assertIsNone(self.edge.burst_shape)
+        self.assertTrue(self.edge.shown)
+
+    def test_a_fold_cut_short_by_another_card_never_hides_it(self):
+        """Review 2026-10-18: ✕ on alpha (its fold running), then beta's icon -
+        alpha's Burster stopped, its end never heard, beta out."""
+        self.edge._shown = False
+        self.hub.focus("alpha")
+        self.finish()
+        self.card.close.click()
+        alpha = self.card.burster
+        self.assertTrue(alpha.busy())
+        self.hub.focus("beta")
+        self.assertFalse(alpha.busy())
+        beta = self.beta.burster
+        self.assertTrue(beta.busy())
+        self.assertTrue(self.edge.shown)
+        alpha._finish()                            # a late end of the old fold
+        self.assertTrue(self.edge.shown)
+        beta.effect.ms = 2000.0
+        beta.tick_now()
+        self.assertTrue(self.edge.shown)
+        self.assertEqual(self.edge.frame, self.edge.host.width())

@@ -586,6 +586,11 @@ class Burster(object):
             return
         try:
             effect.ms = ms
+            if effect.plan is None:
+                #  the plan is geometry alone: made here when no paint has made
+                #  it yet (a frame masked down to nothing may never be painted;
+                #  review 2026-10-18). The effect's first paint makes the same.
+                effect.plan, effect.face = self._plan(effect.opening)
             self.frame.update()
             if self._on_tick is not None and effect.plan is not None:
                 self._on_tick(hubburst.at(effect.plan, ms).shape)

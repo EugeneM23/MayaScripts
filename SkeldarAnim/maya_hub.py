@@ -1000,8 +1000,10 @@ def _rail_burst(showing, origin, done, on_shape):
     (2026-10-18, spec 2026-10-18-floating-windows § 4, 5): the window's Burster
     (maya_hubwindow) on the card's look-B frame, held on the card. `on_shape`
     hears the shape in the edge host's coordinates. False when it cannot run:
-    the hub not skinned, no card shown, no origin, animations off, a failure
-    (the edge then slides as before)."""
+    the hub not skinned, no card shown, no origin, no edge, or the Burster
+    refusing (its own rule: animations off, no frame, a failure) - the edge
+    then slides as before. Any other card's burst still running is stopped
+    (a fold of the card before, review 2026-10-18)."""
     if not is_skinned() or origin is None or _SKIN.shown not in _SKIN.cards:
         return False
     current = edge()
@@ -1011,6 +1013,13 @@ def _rail_burst(showing, origin, done, on_shape):
     import maya_hubwindow
     qt = _hubqt()
     card = _SKIN.cards[_SKIN.shown]
+    for other in _SKIN.cards.values():
+        running = getattr(other, "burster", None)
+        if other is not card and running is not None:
+            try:
+                running.stop(quiet=True)
+            except RuntimeError:
+                pass
     frame, host = card.frame, current.host
     burster = getattr(card, "burster", None)
     if burster is None:
@@ -1399,7 +1408,7 @@ def _press_popout(key):
 def _press_rail_close(key):
     """The edge rail card's ✕ (2026-10-18): the card folds into the point
     pressed and the rail goes back to rest."""
-    current = _rail_edge_out()
+    current = _rail_edge_out(key)
     if current is not None:
         current.conceal(origin=_cursor())
     return None
