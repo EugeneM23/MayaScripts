@@ -209,5 +209,41 @@ class Purity(unittest.TestCase):
         self.assertIn("clean", out.stdout, out.stderr)
 
 
+
+class ImportLabel(unittest.TestCase):
+    """2026-10-19, variant A: the Import button says what it will do."""
+
+    def test_nothing_picked(self):
+        self.assertEqual(records.import_label([], "rig", "onto"), "Import animation")
+
+    def test_one_onto_the_selected(self):
+        self.assertEqual(records.import_label(["A_Jump"], "rig", "onto", "Manny"),
+                         "Import A_Jump → selected rig")
+
+    def test_one_onto_a_new_one(self):
+        self.assertEqual(records.import_label(["A_Jump"], "skeleton", "new", "Creep"),
+                         "Import A_Jump → a new Creep skeleton")
+
+    def test_several_onto_new_ones(self):
+        self.assertEqual(records.import_label(["a", "b", "c"], "rig", "new", "Manny"),
+                         "Import 3 animations → 3 new Manny rigs")
+
+    def test_auto(self):
+        self.assertEqual(records.import_label(["A"], "rig", "new", "", auto=True),
+                         "Import A → our rig or its own")
+
+    def test_a_long_name_is_cut_to_fit(self):
+        label = records.import_label(["LongSword_Attack_Right_Heavy_3P_Combo"],
+                                     "rig", "new", "Manny")
+        self.assertLessEqual(len(label), records.IMPORT_LABEL_MAX)
+        self.assertIn("…", label)
+        self.assertTrue(label.endswith("a new Manny rig"))
+
+    def test_the_segments_follow_the_kind(self):
+        self.assertEqual(records.target_labels("rig"), ("Selected rig", "A new rig"))
+        self.assertEqual(records.target_labels("skeleton"),
+                         ("Selected skeleton", "A new skeleton"))
+
+
 if __name__ == "__main__":
     unittest.main()

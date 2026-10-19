@@ -75,6 +75,12 @@ _HEADING = "ueAnimBridgeHeading"     # «Connect», the block's title (2026-10-0
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
+#  2026-10-19 (variant A): the rows' labels, the Import button, the Export fold
+_FROM_LABEL = "ueAnimBridgeFromLabel"
+_ONTO_LABEL = "ueAnimBridgeOntoLabel"
+_IMPORT = "ueAnimBridgeImport"
+_EXPORT_TOGGLE = "ueAnimBridgeExportToggle"
+_EXPORT_ROW = "ueAnimBridgeExportRow"
 #  2026-10-02 («раздел с подключением к unreal engine нужно визуально как-то
 #  отделить ... подключаться не только к анриал енжину а и к Unity, и просто к
 #  папке с FBX файлами»): the rows are one block set into the card, and a
@@ -278,6 +284,7 @@ def _repopulate(quiet=False):
     for index, record in enumerate(shown, 1):
         if record.package in keep:
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
+    paint_import()
     if not quiet:
         _status(count_line(len(_STATE["records"]), len(shown), query))
     return shown
@@ -655,11 +662,6 @@ TARGET_SEGMENTS = (
      "Animation Setup says - takes the clip; several picked stand in a square "
      "about the scene's zero, one per animation."),
 )
-
-#  The segment's label where the full one is too wide for the one-row Import
-#  line (2026-10-08, variant B: «Onto selected» is «Onto sel.» in both hubs;
-#  the tooltip above says the rest). Keyed by TARGETS' values.
-SHORT_TARGET = {"onto": "Onto sel."}
 
 
 def mode_for(kind, target):
@@ -1175,10 +1177,16 @@ def build_rows():
         hubstyle.mark(inset, "inset", layout=True)
     #  the block's title (2026-10-01 «UE Connect»; «Connect» since it reaches
     #  Unity and a folder too)
-    hubstyle.mark(cmds.text(_HEADING, label=hubstyle.pick("Animation", "Connect"),
+    #  2026-10-19 (variant A): the card's second numbered step
+    hubstyle.mark(cmds.text(_HEADING, label=hubstyle.pick("2 \u00b7 Animation",
+                                                          "2. Animation"),
                             align="left", font="boldLabelFont"), "heading")
-    #  where the animations come from
+    #  where the animations come from: «From [Unreal | Unity | Folder]»
     from maya_uebridge import sources
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.text(_FROM_LABEL, label="From", align="left",
+                            width=62), "label")
     segments = cmds.rowLayout(numberOfColumns=len(sources.SOURCES),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(sources.SOURCES))])
@@ -1202,6 +1210,7 @@ def build_rows():
             select=source == remembered, annotation=tips[source],
             onCommand=lambda *_a, s=source: _run(lambda: _source_changed(s))),
             "segment")
+    cmds.setParent("..")
     cmds.setParent("..")
     #  the editor line: shown in the classic hub, hidden in the skin (its
     #  text is the dropdown's tooltip and the dot's state, `_header`).
@@ -1247,6 +1256,7 @@ def build_rows():
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
                    "drop.",
+        selectCommand=lambda *_: paint_import(),
         doubleClickCommand=lambda *_: _run(import_selected, busy=_import_busy()))
     #  under the list its height grip (2026-10-08): the skin turns this 8 px
     #  placeholder into a grip and shows the list's remembered rows (ten by
@@ -1254,51 +1264,58 @@ def build_rows():
     #  placeholder is a quiet gap
     hubstyle.grip(cmds.separator(_LIST_GRIP, height=8, style="none"), _LIST)
 
-    #  [Onto sel. | New] [clock] [Import] [FBX] [uasset] - one row (variant B)
-    #  in the skin. The classic hub's words on that row asked 544 px, wider
-    #  than the animator's dock (510; live, 2026-10-08): there the segments
-    #  and «timeline» stand over Import Animation and the two exports.
-    skin = hubstyle.skinning()
-    if skin:
-        cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
-                       columnAttach=[(1, "left", 0), (2, "left", 3),
-                                     (3, "both", 3), (4, "left", 3),
-                                     (5, "left", 3)])
-    else:
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                       columnAttach=[(1, "both", 0), (2, "left", 6)])
+    #  2026-10-19 (variant A, «сделаем его более понятным»): «Put it on
+    #  [Selected rig | A new rig]», the timeline box in words, ONE Import
+    #  button that names the clip and where it goes (`paint_import`), and the
+    #  two exports folded under «Export» - rarer than an import, and no longer
+    #  on the import's row.
+    kind = import_kind()
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.text(_ONTO_LABEL, label="Put it on", align="left",
+                            width=62), "label")
     segments = cmds.rowLayout(numberOfColumns=len(TARGETS),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(TARGETS))])
     hubstyle.mark(segments, "segments", layout=True)
     cmds.iconTextRadioCollection(_MODE)
-    for target, label, note in TARGET_SEGMENTS:
+    for (target, _label, note), words in zip(TARGET_SEGMENTS,
+                                             records.target_labels(kind)):
         hubstyle.mark(cmds.iconTextRadioButton(
-            target_button(target), style="textOnly",
-            label=SHORT_TARGET.get(target, label),
+            target_button(target), style="textOnly", label=words,
             height=hubstyle.height("segment", 22),
-            select=target == TARGETS[0], annotation=note), "segment")
+            select=target == TARGETS[0], annotation=note,
+            onCommand=lambda *_a: paint_import()), "segment")
     cmds.setParent("..")
-    #  a clock pill in the skin, the word «timeline» in the classic hub
+    cmds.setParent("..")
     hubstyle.mark(cmds.checkBox(
-        _TIMELINE, label=hubstyle.pick("", "timeline"), value=True,
-        annotation="set the timeline to the clip's range"), "chip", "clock")
-    if not skin:
-        cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
-                       columnAttach=[(1, "both", 0), (2, "left", 3),
-                                     (3, "left", 3)])
+        _TIMELINE, label="Set the timeline to the clip", value=True,
+        annotation="Set the playback range to the imported clip's frames"),
+        "chip")
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("Import", "Import Animation"),
+        _IMPORT, label=records.import_label([], kind, TARGETS[0]),
         height=hubstyle.height("button", 32),
-        annotation="Import the selected animation(s) from the source onto the "
-                   "character Animation Setup and the Import row say",
+        annotation="Import the picked animation(s) from the source onto the "
+                   "character the two switches above say. Several picked: "
+                   "onto a character the first goes; onto new characters "
+                   "they stand in a square.",
         command=lambda *_: _run(import_selected,
                                 busy=_import_busy())),
         "primary", "download")
+    #  «Export ▸» opens the two exports under it, remembered
+    opened = bool(_var(EXPORT_OPEN_VAR, 0))
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("", "FBX..."),
-        height=hubstyle.height("button", 28), width=hubstyle.pick(26, 50),
+        _EXPORT_TOGGLE, label=export_toggle_label(opened),
+        height=hubstyle.height("field", 24),
+        annotation="Show or hide the two exports: an FBX of your choosing, "
+                   "or the selected Unreal AnimSequence written over",
+        command=lambda *_: _run(toggle_export)), "secondary")
+    cmds.rowLayout(_EXPORT_ROW, numberOfColumns=2, adjustableColumn=1,
+                   manage=opened,
+                   columnAttach=[(1, "both", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.button(
+        label="Export FBX...",
+        height=hubstyle.height("button", 28),
         annotation="Export FBX... - Write the scene skeleton's animation to "
                    "an FBX of your choosing (selection, else the rig, else "
                    "the only skeleton), baked on export.",
@@ -1306,8 +1323,8 @@ def build_rows():
                                 busy="writing the fbx...")),
         "secondary", "upload")
     hubstyle.mark(cmds.button(
-        _UASSET, label="uasset", height=hubstyle.height("button", 28),
-        width=hubstyle.pick(52, 56),
+        _UASSET, label="Export to uasset", height=hubstyle.height("button", 28),
+        width=hubstyle.pick(130, 120),
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
                    "uasset is written on disk with no changelist behind it, "
@@ -1324,6 +1341,58 @@ def build_rows():
     # card's line says the portrait's choice on open.
     _source_changed(remembered)
     _attach_drag()
+
+
+EXPORT_OPEN_VAR = "ueAnimBridgeExportOpen"
+
+
+def export_toggle_label(opened):
+    """«Export ▸» folded, «Export ▾» open."""
+    return "Export \u25be" if opened else "Export \u25b8"
+
+
+def toggle_export():
+    """Fold or unfold the two exports, remembered (2026-10-19, variant A)."""
+    opened = not bool(_var(EXPORT_OPEN_VAR, 0))
+    cmds.optionVar(intValue=(EXPORT_OPEN_VAR, int(opened)))
+    if cmds.rowLayout(_EXPORT_ROW, exists=True):
+        cmds.rowLayout(_EXPORT_ROW, edit=True, manage=opened)
+    if cmds.button(_EXPORT_TOGGLE, exists=True):
+        cmds.button(_EXPORT_TOGGLE, edit=True,
+                    label=export_toggle_label(opened))
+
+
+def _model_label():
+    """The picked portrait's name («Manny»), "" without Scene Setup."""
+    try:
+        from maya_scenesetup import window as scene_window
+        from maya_scenesetup import catalog
+        found = catalog.model_by_key(scene_window.current_choice()[0])
+        return found.label if found is not None else ""
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def paint_import():
+    """The words that follow the choice (2026-10-19, variant A): «Put it on
+    [Selected rig | A new rig]» in the card's kind, and the Import button
+    naming the picked clip and where it goes. Reads no scene; never raises
+    - a row click or a segment calls it."""
+    try:
+        kind = import_kind()
+        for target, words in zip(TARGETS, records.target_labels(kind)):
+            name = target_button(target)
+            if cmds.iconTextRadioButton(name, exists=True):
+                cmds.iconTextRadioButton(name, edit=True, label=words)
+        if not cmds.button(_IMPORT, exists=True):
+            return
+        names = ([record.name for record in _selected_records()]
+                 if cmds.textScrollList(_LIST, exists=True) else [])
+        cmds.button(_IMPORT, edit=True, label=records.import_label(
+            names, kind, import_target(), _model_label(),
+            auto=auto_kind() is not None))
+    except Exception:                                        # noqa: BLE001
+        pass                         # the words are a courtesy, never a press
 
 
 def source_button(source):

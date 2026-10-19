@@ -111,6 +111,16 @@ def import_text(label):
             "viewport".format(label))
 
 
+def add_label(model_label, kind):
+    """The Add button's words (2026-10-19, variant A: «сделаем его более
+    понятным»): what it brings - «Add Manny rig» - or a bare «Add» when the
+    picked portrait has nothing of that kind (the Auto card, Orc D's
+    skeleton): the press then says why."""
+    if not model_label:
+        return "Add"
+    return "Add {0} {1}".format(model_label, kind)
+
+
 def tag_text(kind):
     """The pill on a dimmed portrait."""
     return "no " + kind

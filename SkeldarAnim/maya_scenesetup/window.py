@@ -57,6 +57,10 @@ _CHARACTER_STATUS = "mayaSceneSetupCharacterStatus"  # the Characters line
 _BOUND = "mayaSceneSetupBound"
 #  The sections' titles inside the cards (2026-10-01, «Пусть все будет консистентно»).
 _CHARACTERS_HEADING = "mayaSceneSetupCharactersHeading"
+#  2026-10-19 (variant A): the «Type» label before [Rig | Skeleton] and the
+#  Add button, whose words follow the portrait picked (`add_label`)
+_KIND_LABEL = "mayaSceneSetupCharacterKindLabel"
+_ADD = "mayaSceneSetupCharacterAdd"
 #  The Inventory card's two tabs (2026-10-01, the evening: «в ней два раздела
 #  между которыми мы переключаемся нажимая на название раздела Weapon или
 #  Armor ... две под вкладки»): the segments, a column per tab, the memory.
@@ -578,7 +582,32 @@ def say_character(text):
     _status(text, _CHARACTER_STATUS)
 
 
+def add_label():
+    """The Add button's words for the portrait and kind picked: «Add Manny
+    rig», a bare «Add» when that portrait has nothing of the kind."""
+    model, kind = current_choice()
+    entry = None if catalog.is_auto(model) else catalog.character_for(model, kind)
+    found = catalog.model_by_key(model) if entry is not None else None
+    return charlook.add_label(found.label if found is not None else "", kind)
+
+
+def _paint_labels():
+    """The words that follow the choice: Add's here, and the bridge's «Put it
+    on» segments and Import button (2026-10-19, variant A)."""
+    try:
+        if cmds.button(_ADD, exists=True):
+            cmds.button(_ADD, edit=True, label=add_label())
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from maya_uebridge import window as bridge
+        bridge.paint_import()
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def _say_choice():
+    _paint_labels()
     kind = auto_kind()
     if kind:
         say_character(charlook.auto_text(kind))
@@ -624,6 +653,7 @@ def remembered_character():
 def character_changed():
     """Remember the choice. Nothing else: the press is what imports."""
     label = _dropdown_value() or ""
+    _paint_labels()
     if label in AUTO_LABELS:
         cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, label))
         _status(charlook.auto_text(AUTO_LABELS[label]), _CHARACTER_STATUS)
@@ -1093,6 +1123,11 @@ def build_characters_panel():
     the character where it lands. No colour here: the Colour section paints.
     The character line is the card's subtitle (2026-09-28).
 
+    2026-10-19 (variant A, «сделаем его более понятным»): two numbered steps,
+    «1 · Character» and «2 · Animation». A «Type» label before [Rig |
+    Skeleton]; the portraits; then [Add Manny rig] [Camera] [Delete] in words,
+    the Add button naming what it brings. The rows below are the bridge's.
+
     2026-10-01 («UE bridge и character ... их нужно объеденить в одно
     окно»): the UE Bridge's rows follow, under Camera Setup
     (`maya_uebridge.window.build_rows`) - the animation list, Import
@@ -1117,39 +1152,42 @@ def build_characters_panel():
     hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
     #  the section's caption (2026-10-16, the card rules: the skin captions
     #  its two sections, Character and Animation; none 2026-10-08..16)
-    heading(_CHARACTERS_HEADING, hubstyle.pick("Character", "Characters"))
+    #  2026-10-19, variant A («сделаем его более понятным»): the card is two
+    #  numbered steps - pick a character, then put an animation on it - and
+    #  every switch has a word before it, every button a word on it
+    heading(_CHARACTERS_HEADING, hubstyle.pick("1 · Character",
+                                               "1. Character"))
 
     model, kind = remembered_choice()
-    #  [Rig | Skeleton] [+ Import] [Delete] [Camera Setup] on one row
-    #  (2026-10-08, variant B); Delete and Camera Setup are icons in the skin
-    cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "left", 3),
-                                 (3, "left", 3), (4, "left", 3)])
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.text(_KIND_LABEL, label="Type", align="left",
+                            width=hubstyle.pick(62, 62)), "label")
     _kind_row(kind)
-    #  «Add Character на + Import (Вернем кнопке оранжевый цвет)»: the card's
-    #  first primary again; the skin draws the plus, the classic hub spells it.
+    cmds.setParent("..")
+
+    cmds.columnLayout(_PORTRAITS, adjustableColumn=True)
+    cmds.setParent("..")
+    if not _attach_grid(model, kind):
+        _character_dropdown()
+
+    #  [Add Manny rig] [Camera] [Delete]: the Add button names what it brings
+    #  (`add_label`), the other two carry their words in both hubs
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 3),
+                                 (3, "left", 3)])
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("Import", "+ Import"),
-        height=hubstyle.height("button", 32), width=hubstyle.pick(84, 90),
-        annotation="Import the picked rig or skeleton into this scene, at "
+        _ADD, label=add_label(),
+        height=hubstyle.height("button", 32),
+        annotation="Add the picked rig or skeleton to this scene, at "
                    "the origin -- or drag its portrait into a viewport to "
                    "stand it where it lands. As many as you like, each rig "
                    "in its own namespace; the Colour section repaints it.",
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
         "primary", "plus")
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("", "Delete"),
-        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 64),
-        annotation="Delete the characters the selection belongs to - select "
-                   "any part of each: a control, a bone, a mesh, its weapon - "
-                   "with everything of theirs: weapons, armor, camera, centre "
-                   "of mass, materials, layers. Asks first; Ctrl+Z brings "
-                   "them back.",
-        command=lambda *_args: _run(delete_characters, _CHARACTER_STATUS)),
-        "danger", "trash")
-    hubstyle.mark(cmds.button(
-        label=hubstyle.pick("", "Camera"),
-        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 64),
+        label="Camera",
+        height=hubstyle.height("button", 32), width=hubstyle.pick(82, 64),
         annotation="Camera Setup: A camera on the character's camera_root, "
                    "the bone's animation baked onto it, the bone driven by "
                    "the camera from then on - what the retarget does at its "
@@ -1157,12 +1195,17 @@ def build_characters_panel():
                    "camera.",
         command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS)),
         "secondary", "camera")
+    hubstyle.mark(cmds.button(
+        label="Delete",
+        height=hubstyle.height("button", 32), width=hubstyle.pick(80, 64),
+        annotation="Delete the characters the selection belongs to - select "
+                   "any part of each: a control, a bone, a mesh, its weapon - "
+                   "with everything of theirs: weapons, armor, camera, centre "
+                   "of mass, materials, layers. Asks first; Ctrl+Z brings "
+                   "them back.",
+        command=lambda *_args: _run(delete_characters, _CHARACTER_STATUS)),
+        "danger", "trash")
     cmds.setParent("..")
-
-    cmds.columnLayout(_PORTRAITS, adjustableColumn=True)
-    cmds.setParent("..")
-    if not _attach_grid(model, kind):
-        _character_dropdown()
 
     _bridge_rows()
     hubstyle.mark(cmds.text(_CHARACTER_STATUS, label="", align="left",

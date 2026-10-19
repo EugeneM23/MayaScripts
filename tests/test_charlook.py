@@ -172,5 +172,17 @@ class Boundary(unittest.TestCase):
             self.assertIn(name, install.payload())
 
 
+
+class AddLabel(unittest.TestCase):
+    """2026-10-19, variant A: the Add button names what it brings."""
+
+    def test_names_the_model_and_kind(self):
+        self.assertEqual(look.add_label("Manny", "rig"), "Add Manny rig")
+        self.assertEqual(look.add_label("Creep", "skeleton"), "Add Creep skeleton")
+
+    def test_nothing_of_that_kind_is_a_bare_add(self):
+        self.assertEqual(look.add_label("", "skeleton"), "Add")
+
+
 if __name__ == "__main__":
     unittest.main()

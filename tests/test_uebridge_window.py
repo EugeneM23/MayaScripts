@@ -179,8 +179,8 @@ class NoPerforce(unittest.TestCase):
         #  2026-10-08: one row of [Onto sel. | New] [timeline] [Import] [FBX]
         #  [uasset] - the classic hub's labels are the short ones, the
         #  tooltips keep «Export FBX...» and the long «Import Animation»
-        for label in ('label=hubstyle.pick("", "FBX...")', 'label="uasset"',
-                      '"Import Animation")', '"Onto selected"', '"New"',
+        for label in ('label="Export FBX..."', 'label="Export to uasset"',
+                      'records.import_label(', '"Onto selected"', '"New"',
                       'Export FBX... - '):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))

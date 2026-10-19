@@ -7614,6 +7614,25 @@ the message tone, the inventory bands, the Connections and Animation Setup build
 card of Qt stand-ins under the skin's marks and the real Inventory panel, at 150 %. **Not seen
 live.** Next: the other cards, one by one.
 
+## Animation Setup as two numbered steps (2026-10-19)
+
+The animator: «Давай переделаем меню animation setup и сделаем его более понятным». Three mockups
+(https://claude.ai/artifact/WRzYdrKnKmDKqCHqJjCZcM); they chose **A, two steps**. Spec
+`docs/superpowers/specs/2026-10-19-animation-setup-clearer-design.md`. **This replaces the
+2026-10-08 compact layout described in "Characters and the UE Bridge: one card" and the card rules.**
+- **1 · Character**: `Type [Rig | Skeleton]` (a `label`), the portraits, `[Add Manny rig] [Camera]
+  [Delete]` in words in both hubs; Add names what it brings (`charlook.add_label`, a bare «Add» when
+  the portrait has nothing of the kind).
+- **2 · Animation**: `From [Unreal | Unity | Folder]`, dropdown, search, list, `Put it on [Selected rig
+  | A new rig]` (words follow the kind, `records.target_labels`), «Set the timeline to the clip», ONE
+  Import naming the clip and where it goes (`records.import_label`, ≤ 44 characters, trap 67), and
+  «Export ▸» folding Export FBX... / Export to uasset (`ueAnimBridgeExportOpen`, folded by default).
+- `bridge.paint_import()` repaints those words (no scene read, never raises); a row click, a target
+  segment, `_repopulate` and `scenesetup.window._paint_labels` (portrait / kind) call it.
+- New names: `mayaSceneSetupCharacterKindLabel`, `mayaSceneSetupCharacterAdd`, `ueAnimBridgeFromLabel`,
+  `ueAnimBridgeOntoLabel`, `ueAnimBridgeImport`, `ueAnimBridgeExportToggle`, `ueAnimBridgeExportRow`.
+  `SHORT_TARGET` is gone. Unit tests only; 7596 OK. Not seen in a GUI Maya.
+
 ## A section popup bursts out of a point and folds back into one (2026-10-17)
 
 The animator: «Давай сделаем так что бы наши поапы появлялись с приятной анимацией сделай мекеты». Five

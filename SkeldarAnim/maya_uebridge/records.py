@@ -27,6 +27,41 @@ AnimRecord = collections.namedtuple(
 
 _ILLEGAL = re.compile(r"[^A-Za-z0-9_]")
 
+#  Animation Setup's Import button says what it will do (2026-10-19, variant
+#  A). A Qt button is as wide as its words and widens the dock's column
+#  (trap 67), so the words are kept within this many characters.
+IMPORT_LABEL_MAX = 44
+
+
+def target_labels(kind):
+    """The «Put it on» segments' words for the card's kind: («Selected rig»,
+    «A new rig»)."""
+    return ("Selected " + kind, "A new " + kind)
+
+
+def import_label(names, kind, target, model_label="", auto=False):
+    """The Import button's words: «Import A_Jump → selected rig», «Import 3
+    animations → 3 new Manny rigs». `names` are the picked rows' clip names
+    in order, `target` "onto" / "new", `auto` the Auto card. A long clip
+    name is cut with «…» so the whole stays within IMPORT_LABEL_MAX."""
+    if not names:
+        return "Import animation"
+    count = len(names)
+    if auto:
+        where = ("selected " + kind if target == "onto"
+                 else "our {0} or its own".format(kind))
+    elif target == "onto":
+        where = "selected " + kind
+    else:
+        what = "{0} {1}".format(model_label, kind).strip()
+        where = ("a new " + what if count == 1
+                 else "{0} new {1}s".format(count, what))
+    clip = names[0] if count == 1 else "{0} animations".format(count)
+    room = IMPORT_LABEL_MAX - len("Import  → ") - len(where)
+    if len(clip) > room:
+        clip = clip[:max(room - 1, 4)] + "…"
+    return "Import {0} → {1}".format(clip, where)
+
 
 def _number(value, cast):
     """Asset registry tags arrive as text, and some assets carry none at all."""
