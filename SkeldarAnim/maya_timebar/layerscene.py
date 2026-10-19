@@ -892,6 +892,54 @@ def lane_keys(op, names, selection, frame, kind=None):
     return True, ""
 
 
+def lane_key_range(names, a, b):
+    """S over a lane block (no drag): a key on every frame `a`..`b` of the selection's
+    channels in each layer of `names`, as the timeline keys a highlight (scene.key_range;
+    2026-10-19: «При выделении массива не работает проставление ключей как на
+    таймлайне»). The curves that stand get their keys inserted first (their shape kept),
+    then each frame is keyed on its layer. One undo step; the time put back."""
+    nodes = _selected_nodes()
+    if not nodes:
+        return False, "nothing selected"
+    root, _layers = _anim_names()
+    targets = []
+    for name in names:
+        if name == root:
+            plugs = ["%s.%s" % (n, at) for n in sorted(nodes) for at in (cmds.listAttr(n, keyable=True) or [])]
+            layer = _maya_root(root)
+        else:
+            if _get(name + ".lock", False):
+                continue
+            plugs = [p for p in (cmds.animLayer(name, q=True, attribute=True) or []) if p.split(".")[0] in nodes]
+            layer = name
+        if plugs:
+            targets.append((layer, plugs))
+    if not targets:
+        return False, "the selection is not in %s" % ", ".join(_label(n) for n in names)
+    frames = range(int(a), int(b) + 1)
+    now = cmds.currentTime(q=True)
+    with _chunk():
+        cmds.refresh(suspend=True)
+        try:
+            #  inside each curve's own keys only (an insert past them re-types the key
+            #  beside it, CLAUDE.md trap 267)
+            for curve in curves_of(names):
+                times = cmds.keyframe(curve, q=True, timeChange=True) or []
+                if not times:
+                    continue
+                for frame in frames:
+                    if min(times) < frame < max(times):
+                        cmds.setKeyframe(curve, insert=True, time=(frame,))
+            for frame in frames:
+                cmds.currentTime(frame, update=True)
+                for layer, plugs in targets:
+                    cmds.setKeyframe(plugs, animLayer=layer)
+        finally:
+            cmds.currentTime(now, update=True)
+            cmds.refresh(suspend=False)
+    return True, "a key on every frame %d-%d" % (int(a), int(b))
+
+
 def lane_set_key(name):
     """A key at the current frame on layer `name` for the selection's channels in it
     (on BaseAnimation: their keyable channels)."""

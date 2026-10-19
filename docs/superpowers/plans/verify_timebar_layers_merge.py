@@ -124,6 +124,26 @@ gate(layer_keys(lane, cube + ".translateY") == before_keys, "one undo takes the 
      % layer_keys(lane, cube + ".translateY"))
 gate(cmds.keyframe(base_tx, q=True, timeChange=True) == base_before, "the base never touched by the drag")
 
+# -- S over a lane block: a key on every frame of it, the shape kept, one undo --------------
+plug = cube + ".translateY"
+shown = []
+for f in range(3, 9):
+    cmds.currentTime(f)
+    shown.append(round(cmds.getAttr(plug), 4))
+before_keys = layer_keys(lane, plug)
+ok, msg = S.lane_key_range([lane], 3, 8)
+got = layer_keys(lane, plug)
+gate(ok and all(float(f) in got for f in range(3, 9)), "S over a lane block 3-8: a key on each frame: %s" % got)
+cmds.undo()
+gate(layer_keys(lane, plug) == before_keys, "one undo takes them all back")
+cmds.redo()
+after = []
+for f in range(3, 9):
+    cmds.currentTime(f)
+    after.append(round(cmds.getAttr(plug), 4))
+gate(after == shown, "the animation the same on every frame: %s -> %s" % (shown, after))
+gate(cmds.keyframe(base_tx, q=True, timeChange=True) == base_before, "the base never touched by the block")
+
 
 # -- in scene tabs: a tab's BaseAnimation has a parent, Maya's proc misses it ---------
 import os

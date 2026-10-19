@@ -530,13 +530,16 @@ class Panel(object):
             rows = self.rows["anim"]
             names = [rows[k]["name"] for k in L.lanes_between(drag[1], min(i, len(rows) - 1))]
             a, b = look.highlight(drag[2], frame)
-            self.lane_sel = {"a": a, "b": b, "names": names}
+            sel = {"a": a, "b": b, "names": names}
+            if sel != self.lane_sel:
+                self.lane_sel = sel
+                self.lanes.invalidate()
         elif drag[0] == "key":
             target = look.key_drag(drag[1], drag[3], drag[2], self._lane_grip(drag[1], x, t))
             if target != self.lane_preview:
                 self.lane_preview = target
                 self._lane_live_to(target)
-        self.lanes.invalidate()
+                self.lanes.update()             # the still picture stays; the dragged part moves
 
     def _lane_live_to(self, target):
         """The scene's keys follow the drag, as under the timeline (the viewport shows it)."""
@@ -603,6 +606,16 @@ class Panel(object):
                         have.append(float(nt))
                         have.sort()
 
+    def lane_key_range(self):
+        """S with a lane block of two frames or more standing and no drag: a key on every
+        frame of it on its lanes' layers (the timeline's rule for a highlight). True when
+        it was ours."""
+        sel = self.lane_sel
+        if self.lane_drag or not sel or sel["b"] <= sel["a"] or not self._lanes_shown():
+            return False
+        self._write("lane_key_range", list(sel["names"]), int(sel["a"]), int(sel["b"]))
+        return True
+
     def lane_release(self):
         drag, self.lane_drag = self.lane_drag, None
         if not drag:
@@ -614,7 +627,10 @@ class Panel(object):
         if drag[0] == "scrub":
             self._call("end_scrub")
         elif drag[0] == "key":
-            target, self.lane_preview = self.lane_preview, None
+            #  the preview stays until the keys are read again: cleared first, a paint in
+            #  between (Maya's time callback repaints the lanes at once) drew the key at its
+            #  old place for a moment (2026-10-19: «сперва мигает изображение там где он был»)
+            target = self.lane_preview
             sel, loose = drag[3], drag[4]
             names = list(self.lane_sel["names"]) if self.lane_sel else []
             moved = bool(target) and tuple(target) != tuple(sel)
@@ -625,6 +641,7 @@ class Panel(object):
                 self._after_write(self._call("lane_live_end", tuple(target or sel)))
             elif moved and names:
                 self._write("lane_move", names, sel, tuple(target))
+            self.lane_preview = None
             self.lane_stamped = None
             if moved and names:
                 self.lane_sel = None if loose else {"a": target[0], "b": target[1], "names": names}
@@ -1826,8 +1843,9 @@ def _classes():
     # -- the lanes ---------------------------------------------------------------
 
     class LaneKeys(QtCore.QObject):
-        """S during a lanes drag (the timeline's DragKeys): a held button keeps the key
-        from Maya's hotkeys, so it is caught application-wide while a drag stands."""
+        """S on the lanes (the timeline's DragKeys): during a drag a held button keeps the
+        key from Maya's hotkeys, so it is caught application-wide; with no drag, S over a
+        lane block of two frames or more keys every frame of it."""
 
         def __init__(self, panel, parent=None):
             super(LaneKeys, self).__init__(parent)
@@ -1839,14 +1857,29 @@ def _classes():
                 override = kind == QtCore.QEvent.ShortcutOverride
                 if kind != QtCore.QEvent.KeyPress and not override:
                     return False
-                if not self.panel.lane_drag or int(event.key()) != int(Qt.Key_S):
+                if int(event.key()) != int(Qt.Key_S):
                     return False
                 if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier):
+                    return False
+                pn = self.panel
+                if pn.lane_drag:
+                    if override or event.isAutoRepeat():
+                        event.accept()
+                        return True
+                    return bool(pn.lane_stamp())
+                #  no drag: a lane block of two frames or more takes S, as a timeline
+                #  highlight does - unless the key goes into a text field
+                sel = pn.lane_sel
+                if not sel or sel["b"] <= sel["a"] or not pn._lanes_shown():
+                    return False
+                focus = QtWidgets.QApplication.focusWidget()
+                if focus is not None and isinstance(focus, (QtWidgets.QLineEdit, QtWidgets.QTextEdit,
+                                                            QtWidgets.QPlainTextEdit, QtWidgets.QAbstractSpinBox)):
                     return False
                 if override or event.isAutoRepeat():
                     event.accept()
                     return True
-                return bool(self.panel.lane_stamp())
+                return bool(pn.lane_key_range())
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
                 return False
@@ -1859,6 +1892,7 @@ def _classes():
             window_flags(self, LANES)
             self._cache = None
             self._cache_key = None
+            self.rebuilds = 0               # how often the still picture was drawn again
             self._failed = False
             self._menu_at = None
             self.setMouseTracking(True)
@@ -1994,10 +2028,12 @@ def _classes():
             keys_sig = tuple(sorted((n, tuple(v)) for n, v in pn.keys.items()))
             sel = pn.lane_sel
             sel_key = (sel["a"], sel["b"], tuple(sel["names"])) if sel else None
+            dragging = pn.lane_preview is not None and bool(sel)
             key = (self.width(), self.height(), ui, round(pn.scroll, 2), L.signature(pn.rows["anim"]),
-                   keys_sig, tkey, b is not None, sel_key, pn.lane_preview, look.held(pn.lane_stamped))
+                   keys_sig, tkey, b is not None, sel_key, dragging)
             if b is not None:
                 self._draw(p, lay, t, w, h, True)
+                self._draw_dragged(p, lay, t, w)
             else:
                 if key != self._cache_key or self._cache is None:
                     ratio = self.devicePixelRatioF() or 1.0
@@ -2009,7 +2045,9 @@ def _classes():
                     self._draw(q, lay, t, w, h, False)
                     q.end()
                     self._cache, self._cache_key = pic, key
+                    self.rebuilds += 1
                 p.drawPixmap(0, 0, self._cache)
+                self._draw_dragged(p, lay, t, w)
             # the playhead's cell through every lane
             if t is not None:
                 try:
@@ -2061,13 +2099,62 @@ def _classes():
             well = qrect(lay.well)
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), float(self.width()), well.height()))
-            path = QtGui.QPainterPath()
-            _key_shape(path, t, aim[1], top, bottom, ui, KEY_LIFT)
-            glow(p, path.boundingRect(), 2 * ui, tk["accent"], 1.0, ui)
-            p.fillPath(path, colour(tk["accent_text"]))
+            rect = _key_rect(t, aim[1], top, bottom, ui, KEY_LIFT)
+            glow(p, rect, 2 * ui, tk["accent"], 1.0, ui)
+            p.setPen(Qt.NoPen)
+            p.setBrush(colour(tk["accent_text"]))
+            p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
             p.restore()
 
+        def _lanes_of(self, lay, t, moving):
+            """(row index, row, lane rect, scale, opacity) of every lane shown."""
+            pn = self.panel
+            rows = pn.rows["anim"]
+            out = []
+            for i in pn._visible_rows(lay):
+                if i >= len(rows):
+                    continue
+                r = lay.row_at(i, pn.scroll)
+                lane = QtCore.QRectF(t.left, r[1], max(1.0, t.right - t.left), r[3])
+                scale, opacity = pn.lane_of(i) if moving else (1.0, 1.0)
+                if opacity > 0.001:
+                    out.append((i, rows[i], lane, scale, opacity))
+            return out
+
+        def _key_colour(self, row):
+            tk = self.panel.tokens
+            if row.get("active"):
+                return colour(tk["accent"])
+            if row.get("base"):
+                return colour(tk["faint"])
+            return colour(tk["muted"])
+
+        def _keys(self, p, t, lane, frames, ui):
+            """Each key its own rounded rect: one path of hundreds of rounded rects fills
+            ~30x slower in Qt (9 ms against 0.3 for 200 keys, measured 2026-10-19 - the lanes
+            drag dropped to 10 frames a second). Each frame once."""
+            top, bottom = lane.top() + 4 * ui, lane.bottom() - 4 * ui
+            drawn = set()
+            for frame in frames:
+                if not (t.v0 - 1 <= frame <= t.v1 + 1) or round(frame, 4) in drawn:
+                    continue
+                drawn.add(round(frame, 4))
+                p.drawRoundedRect(_key_rect(t, frame, top, bottom, ui, 1.0), 1.5 * ui, 1.5 * ui)
+
+        def _block(self, p, t, lane, span, ui):
+            a, b = span
+            block = QtCore.QRectF(t.x(a), lane.top() + 1.5 * ui, max(2.0, t.end(b) - t.x(a)),
+                                  lane.height() - 3 * ui)
+            p.setBrush(colour(bar.HIGHLIGHT, 0x4a))
+            p.setPen(QtGui.QPen(colour(bar.HIGHLIGHT), 1.5 * ui))
+            p.drawRoundedRect(block, 3 * ui, 3 * ui)
+            p.setPen(Qt.NoPen)
+
         def _draw(self, p, lay, t, w, h, moving):
+            """The still picture: the face, the ruler, every lane with its keys. While a key
+            drag stands, the dragged lanes' block and the keys in it are left to
+            `_draw_dragged`, drawn over the picture on every step (the picture is made once
+            a drag, not on every mouse move)."""
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             p.setPen(Qt.NoPen)
@@ -2097,63 +2184,60 @@ def _classes():
             # one lane a row, at the row's own height
             rows = pn.rows["anim"]
             well = qrect(lay.well)
+            sel = pn.lane_sel
+            dragging = pn.lane_preview is not None and bool(sel)
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
-            for i in pn._visible_rows(lay):
-                if i >= len(rows):
-                    continue
-                row = rows[i]
-                r = lay.row_at(i, pn.scroll)
-                lane = QtCore.QRectF(t.left, r[1], max(1.0, t.right - t.left), r[3])
-                scale, opacity = pn.lane_of(i) if moving else (1.0, 1.0)
-                if opacity <= 0.001:
-                    continue
+            for i, row, lane, scale, opacity in self._lanes_of(lay, t, moving):
                 scaled(p, lane, scale, opacity)
                 if L.dimmed(row, rows):
                     p.setOpacity(p.opacity() * DIM)
                 p.setPen(Qt.NoPen)
                 p.setBrush(colour(tk["field"]))
                 p.drawRoundedRect(lane, 4 * ui, 4 * ui)
-                sel, preview = pn.lane_sel, pn.lane_preview
                 mine = bool(sel) and row["name"] in sel["names"]
-                if mine:
-                    a, b = preview or (sel["a"], sel["b"])
-                    block = QtCore.QRectF(t.x(a), lane.top() + 1.5 * ui, max(2.0, t.end(b) - t.x(a)),
-                                          lane.height() - 3 * ui)
-                    p.setBrush(colour(bar.HIGHLIGHT, 0x4a))
-                    p.setPen(QtGui.QPen(colour(bar.HIGHLIGHT), 1.5 * ui))
-                    p.drawRoundedRect(block, 3 * ui, 3 * ui)
-                    p.setPen(Qt.NoPen)
-                if row.get("active"):
-                    hex_ = tk["accent"]
-                elif row.get("base"):
-                    hex_ = tk["faint"]
-                else:
-                    hex_ = tk["muted"]
-                path = QtGui.QPainterPath()
-                #  winding, and each frame once: a copy S puts down stands exactly where its
-                #  key is dragged, and two equal shapes under the default odd-even fill cancel
-                #  out - the key vanished until the release (2026-10-19)
-                path.setFillRule(Qt.WindingFill)
-                top, bottom = lane.top() + 4 * ui, lane.bottom() - 4 * ui
-                carried = look.held(pn.lane_stamped)
-                drawn = set()
-                for key in pn.keys.get(row["name"], []):
-                    if mine and preview:
-                        #  where the drag has it, and a copy S put down where it went down
-                        shown = look.shown_at(key, (sel["a"], sel["b"]), preview, carried)
-                    else:
-                        shown = [key]
-                    for frame in shown:
-                        if not (t.v0 - 1 <= frame <= t.v1 + 1) or round(frame, 4) in drawn:
-                            continue
-                        drawn.add(round(frame, 4))
-                        _key_shape(path, t, frame, top, bottom, ui, 1.0)
-                p.fillPath(path, colour(hex_))
+                if mine and not dragging:
+                    self._block(p, t, lane, (sel["a"], sel["b"]), ui)
+                keys = pn.keys.get(row["name"], [])
+                if mine and dragging:
+                    keys = [k for k in keys if not look.inside(k, (sel["a"], sel["b"]))]
+                p.setBrush(self._key_colour(row))
+                self._keys(p, t, lane, keys, ui)
                 p.restore()
             p.restore()
 
-    def _key_shape(path, t, frame, top, bottom, ui, z):
+        def _draw_dragged(self, p, lay, t, w):
+            """Over the still picture while a key drag stands: each dragged lane's block
+            where the drag has it, its keys there, and the copies S put down."""
+            pn = self.panel
+            sel, preview = pn.lane_sel, pn.lane_preview
+            if t is None or not sel or preview is None:
+                return
+            ui = pn.ui
+            rows = pn.rows["anim"]
+            span = (sel["a"], sel["b"])
+            carried = look.held(pn.lane_stamped)
+            well = qrect(lay.well)
+            p.save()
+            p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
+            for i, row, lane, _scale, _opacity in self._lanes_of(lay, t, False):
+                if row["name"] not in sel["names"]:
+                    continue
+                p.save()
+                if L.dimmed(row, rows):
+                    p.setOpacity(p.opacity() * DIM)
+                self._block(p, t, lane, preview, ui)
+                frames = []
+                for key in pn.keys.get(row["name"], []):
+                    if look.inside(key, span):
+                        #  where the drag has it, and a copy S put down where it went down
+                        frames.extend(look.shown_at(key, span, preview, carried))
+                p.setBrush(self._key_colour(row))
+                self._keys(p, t, lane, frames, ui)
+                p.restore()
+            p.restore()
+
+    def _key_rect(t, frame, top, bottom, ui, z):
         """A key's mark as the timeline draws it: its cell on a whole frame, a line
         between frames; `z` grows it about its middle (the lift under the mouse)."""
         if look.on_frame(frame) and t.cells:
@@ -2163,7 +2247,10 @@ def _classes():
             l, tp, kh = t.x(frame) - kw / 2, top, bottom - top
         cx, cy = l + kw / 2.0, tp + kh / 2.0
         kw, kh = kw * z, kh * min(z, 1.15)
-        path.addRoundedRect(QtCore.QRectF(cx - kw / 2, cy - kh / 2, kw, kh), 1.5 * ui, 1.5 * ui)
+        return QtCore.QRectF(cx - kw / 2, cy - kh / 2, kw, kh)
+
+    def _key_shape(path, t, frame, top, bottom, ui, z):
+        path.addRoundedRect(_key_rect(t, frame, top, bottom, ui, z), 1.5 * ui, 1.5 * ui)
 
     _CLASSES.append((Column, Lanes, NameField))
     return _CLASSES[0]

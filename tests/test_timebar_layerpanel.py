@@ -490,6 +490,21 @@ class Lanes(unittest.TestCase):
         self.send("MouseButtonRelease", 305, self.y[0], Qt.LeftButton, Qt.NoButton)
         self.assertIn(("lane_set_key", "A2"), self.link.log)
 
+    def test_s_over_a_lane_block_keys_every_frame_of_it(self):
+        # 2026-10-19: «При выделении массива не работает проставление ключей как на таймлайне»
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2", "A1"]}
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertIn(("lane_key_range", ["A2", "A1"], 10, 20), self.link.log)
+
+    def test_s_over_a_one_frame_lane_block_is_maya_s(self):
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.panel.lane_sel = {"a": 10, "b": 10, "names": ["A2"]}
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertNotIn("lane_key_range", [e[0] for e in self.link.log])
+
     def test_s_with_no_drag_is_maya_s(self):
         Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
         ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
@@ -543,6 +558,58 @@ class Lanes(unittest.TestCase):
     def test_a_scrub_on_the_lanes_does_not_quiet_them(self):
         self.drag(305, self.y[0], 405, self.y[0])
         self.assertEqual(self.panel.strip.quiets, 0)
+
+    def ink_at(self, frame, row=1):
+        """Whether frame `frame`'s cell on lane `row` holds a key's ink now."""
+        img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.panel.lanes.render(img)
+        x0, x1 = LaneStrip().track().cell(frame)
+        r = self.panel.column.layout_().row_at(row, 0)
+        return any(img.pixelColor(x, int(r[1] + r[3] / 2)).red() > 0x40 for x in range(int(x0) + 2, int(x1) - 1))
+
+    def test_a_drag_step_does_not_draw_the_still_picture_again(self):
+        # 2026-10-19: «очень сильно проседает быстродействие когда мы перетаскиваем ключи» -
+        # every mouse move drew every lane's every key again (93 ms a step on 12 x 200 keys)
+        Qt = QT.QtCore.Qt
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.send("MouseButtonPress", 155, self.y[0], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseMove", 175, self.y[0], Qt.NoButton, Qt.LeftButton)
+        self.panel.lanes.repaint()
+        first = self.panel.lanes.rebuilds
+        for x in range(185, 405, 10):
+            self.send("MouseMove", x, self.y[0], Qt.NoButton, Qt.LeftButton)
+            self.panel.lanes.repaint()
+        self.assertEqual(self.panel.lanes.rebuilds, first, "the dragged keys are drawn over the still picture")
+        self.send("MouseButtonRelease", 395, self.y[0], Qt.LeftButton, Qt.NoButton)
+
+    def test_the_dragged_key_is_drawn_where_the_drag_has_it_not_where_it_was(self):
+        Qt = QT.QtCore.Qt
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)   # the key at 10 on A1
+        self.send("MouseMove", 305, self.y[1], Qt.NoButton, Qt.LeftButton)
+        self.assertTrue(self.ink_at(30))
+        self.assertFalse(self.ink_at(10))
+        self.send("MouseButtonRelease", 305, self.y[1], Qt.LeftButton, Qt.NoButton)
+
+    def test_on_the_release_the_key_never_shows_at_its_old_place(self):
+        # 2026-10-19: «после перетягивания когда отпускаем ключик то сперва мигает изображение
+        # там где он был потом он ставится где должен»: the preview was cleared before the keys
+        # were read again, and Maya's time callback repaints the lanes at once in between
+        Qt = QT.QtCore.Qt
+        seen = []
+        link = self.link
+
+        def live_end(target=None):
+            seen.append(self.ink_at(10))                 # a paint inside the release, before the read
+            link.keys_by_layer = lambda names: dict((n, [0.0, 30.0] if n == "A1" else [0.0, 10.0]) for n in names)
+            return True, ""
+        link.lane_live_end = live_end
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseMove", 305, self.y[1], Qt.NoButton, Qt.LeftButton)
+        self.send("MouseButtonRelease", 305, self.y[1], Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(seen, [False], "no key at its old place while the release sets it down")
+        self.assertFalse(self.ink_at(10))
+        self.assertTrue(self.ink_at(30))
 
     def test_it_paints_the_highlight_and_a_preview(self):
         self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}

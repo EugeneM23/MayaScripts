@@ -11987,6 +11987,42 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
   the timeline's still keys (`bar._draw_static`) are `WindingFill` now (the lanes also draw each frame once), and
   the lanes add the copies to their keys on S (`Panel._add_drawn_copies`, the timeline's `add_drawn_copies`).
   Tests fail with the fill rule taken out.
+- **S over a lane block keys every frame of it** («При выделении массива не работает проставление ключей как на
+  таймлайне»): with no drag and a lane block of two frames or more standing, `LaneKeys` takes S (not into a text
+  field) and `layerscene.lane_key_range` keys every frame a..b on the block's layers - the curves' keys inserted
+  first inside their own range (shape kept, trap 267), then each frame keyed with `setKeyframe -animLayer` (the
+  base through Maya's root); one undo. Verify gates 25-28 (shape the same on every frame) and active_layer 19.
+- **A lanes drag at full speed, and no flash on the release** («очень сильно проседает быстродействие когда мы
+  перетаскиваем ключи по выдвижной панели ... после перетягивания ... сперва мигает изображение там где он был»).
+  Measured offscreen (12 layers x 200 keys, ui 1.5): **93 ms a mouse move -> 2 ms**. Two causes:
+  - every move invalidated the lanes' still picture and drew every lane's every key again; now the picture is
+    keyed without the drag's preview (made once a drag) and `Lanes._draw_dragged` paints the dragged lanes'
+    block and keys over it each step; a move redraws only when the target or highlight changed;
+  - the keys were one `QPainterPath` of rounded rects per lane: Qt fills such a path ~30x slower than drawing
+    each rect (9 ms against 0.3 ms for 200, measured); each key is its own `drawRoundedRect` now (trap 280).
+  The flash: `lane_release` cleared the preview BEFORE the keys were read again, and Maya's time callback
+  repaints the lanes synchronously inside `live_end` - the key showed at its old place for a moment; the preview
+  now stays until after the read. Tests `test_on_the_release_the_key_never_shows_at_its_old_place` (fails on the
+  old code), `test_a_drag_step_does_not_draw_the_still_picture_again`.
+
+280. **A `QPainterPath` of hundreds of rounded rects fills ~30x slower than drawing them one by one** (Qt 6.8,
+     measured 2026-10-19: 200 antialiased rounded rects - `fillPath` 9 ms, `drawRoundedRect` each 0.3 ms,
+     `drawRects` 0.13 ms; the fill rule changes nothing). Batching shapes into one path is the right call for a
+     cached picture drawn once, the wrong one for anything drawn per step.
+- Proof: `docs/superpowers/plans/verify_timebar_layers_merge.py` **18/18 mayapy standalone** (Maya's selection
+  and `$gSelectedAnimLayers`; two layers apart merged playing the same, one undo; base + a layer merged into the
+  base playing the same; on a lane: move, undo, scale, delete, copy / paste, tangents, Set key, the base's keys
+  never touched; in scene tabs: a tab's BaseAnimation + a layer merged into the tab's base playing the same, the
+  other tab untouched, the selection kept) - **23/23**; `verify_timebar_layers.py` 22/22 again; unit tests in
+  `test_timebar_layer{look,scene,panel}`. **Not seen in a GUI Maya.**
+
+279. **Maya's `animLayerMerge` knows BaseAnimation only as the layer with no parent.** In scene tabs a tab's base
+     (`tab_x:AnimLayerRoot`) hangs under `skeldarTabsLayerRoot`, so Maya's proc merged it as an ordinary layer:
+     the base was baked into a new `Merged_Layer` and the character moved (2.5 → 4.48 cm, measured). And
+     `animLayer -extractAnimation` / `-copyAnimation` into or out of a tab's root move nothing (it holds no curves
+     of its own): the base CURVES are Maya's root's (`animLayer -q -root`). MEL `animLayer -e -flagX A B` is
+     `cmds.animLayer(B, e=True, flagX=A)` - the object is the LAST argument; four of the port's calls were first
+     written the other way round.
 
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
