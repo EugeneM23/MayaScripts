@@ -1287,16 +1287,8 @@ def classes():
             return True
 
         def wheelEvent(self, event):
-            s, t = self.strip.state, self.track()
-            delta = event.angleDelta().y()
-            if not delta:
-                return
-            at = t.frame(event.position().x() if hasattr(event, "position") else event.x())
-            #  zoomed over the cells' edges, the last cell's end included
-            v0, v1 = look.zoomed(t.v0, t.v1 + 1, at, 1.15 if delta < 0 else 1 / 1.15, s["a0"], s["a1"] + 1)
-            self.view = (v0, v1 - 1)
-            self.strip.view_changed()
-            event.accept()
+            #  the wheel does not zoom the timeline (2026-10-19)
+            event.ignore()
 
         def leaveEvent(self, event):
             self.aim_key, self.aim_head = None, False

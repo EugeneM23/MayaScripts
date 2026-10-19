@@ -577,19 +577,15 @@ class Range(Strip):
 
 class Zoom(Strip):
 
-    def test_the_wheel_zooms_about_the_mouse_and_framing_goes_back(self):
+    def test_the_wheel_does_not_zoom(self):
         x = self.x(30)
-        under = self.tl.track().frame(x)
+        before = (self.tl.track().v0, self.tl.track().v1)
         local = QT.QtCore.QPointF(x, 10)
         wheel = QT.QtGui.QWheelEvent(local, QT.QtCore.QPointF(self.tl.mapToGlobal(local.toPoint())),
                                      QT.QtCore.QPoint(), QT.QtCore.QPoint(0, 120), QT.QtCore.Qt.NoButton,
                                      QT.QtCore.Qt.NoModifier, QT.QtCore.Qt.NoScrollPhase, False)
         QT.QtWidgets.QApplication.sendEvent(self.tl, wheel)
-        t = self.tl.track()
-        self.assertLess(t.v1 - t.v0, 50.0)
-        self.assertAlmostEqual(t.frame(x), under, places=3)
-        self.strip.frame_playback()
-        self.assertEqual((self.tl.track().v0, self.tl.track().v1), (10.0, 60.0))
+        self.assertEqual((self.tl.track().v0, self.tl.track().v1), before)
 
 
 class RightDouble(Strip):
