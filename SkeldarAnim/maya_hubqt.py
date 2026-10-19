@@ -246,7 +246,11 @@ def burst_parts(frame, head, root, clip, scale):
     zero = q.QtCore.QPoint(0, 0)
 
     def rect_of(widget):
-        at = widget.mapTo(frame, zero)
+        #  through global coordinates (2026-10-19): the edge rail's clip, the
+        #  hub's scroll viewport, is the card frame's ANCESTOR, and mapTo of a
+        #  non-ancestor answers nonsense - every row was cut 46 px to the
+        #  right and 311 down, the card's top an empty rectangle
+        at = frame.mapFromGlobal(widget.mapToGlobal(zero))
         return (at.x(), at.y(), widget.width(), widget.height())
 
     def kids(widget):
@@ -362,6 +366,11 @@ def icon(name, colour, size, on_colour=None):
     q = qt()
     result = q.QtGui.QIcon()
     result.addPixmap(pixmap(name, colour, size), q.QtGui.QIcon.Normal,
+        #  a list (any scroll area) is a leaf, cut into bands with its frame
+        #  (2026-10-19): split, its frame showed at once around its viewport
+        #  waiting as an empty rectangle of the card's face
+        if isinstance(widget, QtWidgets.QAbstractScrollArea):
+            return []
                      q.QtGui.QIcon.Off)
     if on_colour:
         result.addPixmap(pixmap(name, on_colour, size), q.QtGui.QIcon.Normal,

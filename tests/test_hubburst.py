@@ -126,19 +126,30 @@ class Rows(unittest.TestCase):
         tree = ((0, 0, 100, 300), [((0, 0, 100, 30), []), ((0, 30, 100, 30), [])])
         self.assertEqual(self.walk(tree), [(0, 0, 100, 30), (0, 30, 100, 30)])
 
-    def test_a_tall_leaf_stays_whole(self):
-        self.assertEqual(self.walk(((0, 0, 100, 300), [])), [(0, 0, 100, 300)])
+    def test_a_tall_leaf_is_cut_into_bands(self):
+        """2026-10-19: a list's viewport has no child widgets, and whole it was one
+        420 px row: it waited its turn as an empty rectangle of the card's face
+        («пустой прямоугольник во время анимации открытия»). Now bands no taller
+        than row_max, together exactly the leaf, each popping by its own distance."""
+        out = self.walk(((0, 10, 100, 300), []))
+        self.assertEqual(len(out), 5)
+        self.assertTrue(all(r[3] <= 64 for r in out))
+        self.assertEqual(out[0][1], 10)
+        self.assertEqual(sum(r[3] for r in out), 300)
+        for a, b in zip(out, out[1:]):
+            self.assertEqual(a[1] + a[3], b[1])
+        self.assertTrue(all((r[0], r[2]) == (0, 100) for r in out))
+
+    def test_a_leaf_at_the_depth_cap_is_cut_into_bands_too(self):
+        deep = ((0, 0, 100, 300), [])
+        for _ in range(12):
+            deep = ((0, 0, 100, 300), [deep])
+        self.assertEqual(len(self.walk(deep, depth=3)), 5)
 
     def test_rows_outside_the_clip_go_and_the_rest_are_cut(self):
         tree = ((0, 0, 100, 300), [((0, 0, 100, 30), []), ((0, 280, 100, 30), [])])
         self.assertEqual(self.walk(tree, clip=(0, 0, 100, 290)),
                          [(0, 0, 100, 30), (0, 280, 100, 10)])
-
-    def test_the_depth_is_capped(self):
-        deep = ((0, 0, 100, 300), [])
-        for _ in range(12):
-            deep = ((0, 0, 100, 300), [deep])
-        self.assertEqual(len(self.walk(deep, depth=3)), 1)
 
     def test_too_many_rows_merge_into_bands(self):
         rects = [(0, i * 10, 100, 10) for i in range(10)]

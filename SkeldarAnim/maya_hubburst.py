@@ -208,10 +208,23 @@ def _cut(rect, clip):
     return (x0, y0, x1 - x0, y1 - y0)
 
 
+def sliced(rect, row_max):
+    """`rect` cut into equal horizontal bands no taller than `row_max`, together exactly
+    `rect` (2026-10-19: a list's viewport has no child widgets, and whole it waited its
+    turn as one empty rectangle of the card's face)."""
+    x, y, w, h = rect
+    if row_max <= 0 or h <= row_max:
+        return [rect]
+    n = int(math.ceil(h / float(row_max)))
+    edges = [y + int(round(h * i / float(n))) for i in range(n + 1)]
+    return [(x, a, w, b - a) for a, b in zip(edges, edges[1:]) if b > a]
+
+
 def rows(root, kids, rect_of, row_max, clip=None, max_depth=MAX_DEPTH):
-    """The rows of `root`: a node no taller than `row_max` (or with no children, or at
-    `max_depth`) is one row; a taller one is split into its children. Every row is cut to
-    `clip`, and one outside it goes. `kids(node)` and `rect_of(node)` read the tree."""
+    """The rows of `root`: a node no taller than `row_max` is one row; a taller one is
+    split into its children, and one with no children (or at `max_depth`) into bands
+    (`sliced`). Every row is cut to `clip`, and one outside it goes. `kids(node)` and
+    `rect_of(node)` read the tree."""
     out = []
 
     def walk(node, depth):
@@ -220,13 +233,13 @@ def rows(root, kids, rect_of, row_max, clip=None, max_depth=MAX_DEPTH):
             return
         children = list(kids(node)) if rect[3] > row_max and depth < max_depth else []
         if not children:
-            out.append(rect)
+            out.extend(sliced(rect, row_max))
             return
         before = len(out)
         for child in children:
             walk(child, depth + 1)
         if len(out) == before:
-            out.append(rect)
+            out.extend(sliced(rect, row_max))
 
     walk(root, 0)
     return out

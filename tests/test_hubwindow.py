@@ -232,3 +232,52 @@ class Burst(unittest.TestCase):
         with mock.patch.object(hubmotion, "enabled", lambda: False):
             self.assertFalse(self.burster.run(True, (0, 0), lambda: None))
         self.assertFalse(self.burster.busy())
+
+
+class BurstParts(unittest.TestCase):
+    """2026-10-19: a list in the card bursts in bands with its own frame."""
+
+    def test_a_list_is_cut_into_bands_with_its_frame_never_into_its_viewport(self):
+        import maya_hubqt as hubqt
+        _app()
+        frame = QtWidgets.QWidget()
+        frame.resize(300, 600)
+        head = QtWidgets.QWidget(frame)
+        head.setGeometry(0, 0, 300, 30)
+        body = QtWidgets.QWidget(frame)
+        body.setGeometry(0, 30, 300, 560)
+        listing = QtWidgets.QListWidget(body)
+        listing.setGeometry(10, 40, 280, 400)
+        listing.addItems(["row %d" % i for i in range(40)])
+        frame.show()
+        _app().processEvents()
+        parts = hubqt.burst_parts(frame, head, body, None, 1.0)
+        mine = [p for p in parts[1:] if p[0] == 10 and p[2] == 280]
+        self.assertGreater(len(mine), 1)
+        self.assertEqual(mine[0][1], 70)
+        self.assertEqual(sum(p[3] for p in mine), 400)
+        viewport = listing.viewport()
+        inner = viewport.mapTo(frame, QtCore.QPoint(0, 0))
+        self.assertNotIn((inner.x(), inner.y(), viewport.width(), viewport.height()), parts)
+        frame.close()
+
+    def test_a_clip_that_holds_the_frame_cuts_nothing_off(self):
+        """The edge rail card: its clip, the hub scroll viewport, is the
+        frame's ANCESTOR - its rows stand where they are, uncut."""
+        import maya_hubqt as hubqt
+        _app()
+        clip = QtWidgets.QWidget()
+        clip.resize(400, 700)
+        frame = QtWidgets.QWidget(clip)
+        frame.setGeometry(0, 0, 300, 600)
+        head = QtWidgets.QWidget(frame)
+        head.setGeometry(0, 0, 300, 30)
+        body = QtWidgets.QWidget(frame)
+        body.setGeometry(0, 30, 300, 560)
+        row = QtWidgets.QWidget(body)
+        row.setGeometry(14, 10, 270, 40)
+        clip.show()
+        _app().processEvents()
+        parts = hubqt.burst_parts(frame, head, body, clip, 1.0)
+        self.assertIn((14, 40, 270, 40), parts)
+        clip.close()
