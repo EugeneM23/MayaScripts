@@ -1065,28 +1065,12 @@ class Popup(object):
 
     def _burst_parts(self):
         """The title row and the section's rows, in the frame's coordinates."""
-        q = hubqt.qt()
-        QtWidgets = q.QtWidgets
-        frame = self.frame
-        zero = q.QtCore.QPoint(0, 0)
-
-        def rect_of(widget):
-            at = widget.mapTo(frame, zero)
-            return (at.x(), at.y(), widget.width(), widget.height())
-
-        def kids(widget):
-            return [c for c in widget.children()
-                    if isinstance(c, QtWidgets.QWidget) and not c.isWindow()
-                    and c.isVisible() and c.width() > 0 and c.height() > 0]
-
-        parts = [rect_of(self.title)]
-        if self.scroll is not None and self.content is not None \
-                and self.scroll.isVisible():
-            clip = rect_of(self.scroll.viewport())
-            found = hubburst.rows(self.content, kids, rect_of,
-                                  hubstyle.px(hubburst.ROW_MAX, self.scale), clip)
-            parts.extend(hubburst.bands(found, hubburst.MAX_PARTS - 1))
-        return parts
+        rows = (self.scroll is not None and self.content is not None
+                and self.scroll.isVisible())
+        return hubqt.burst_parts(self.frame, self.title,
+                                 self.content if rows else None,
+                                 self.scroll.viewport() if rows else None,
+                                 self.scale)
 
     # ------------------------------------------------------------- drag
 

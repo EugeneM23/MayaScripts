@@ -63,8 +63,10 @@ Spec: docs/superpowers/specs/2026-10-08-hub-compact-and-edge-panel-design.md
 """
 
 import sys
+import traceback
 
 import maya_edgerules as rules
+import maya_hubburst as hubburst
 import maya_hubmotion as hubmotion
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
@@ -399,7 +401,7 @@ class Edge(object):
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
-                 rest=None, shape=None):
+                 rest=None, shape=None, burst=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -413,6 +415,13 @@ class Edge(object):
         #  host-local rects (x, y, w, h) shown beyond the rail when out - the card;
         #  None: the whole frame (2026-10-17)
         self.shape = shape
+        #  2026-10-18 (floating windows): `burst(showing, origin, done, on_shape)`
+        #  -> bool bursts the card out of a global point or folds it into one;
+        #  `on_shape((x0, y0, x1, y1))` hears the shape, host-local, each tick,
+        #  and `burst_shape` (x, y, w, h) cuts the card from the mask while it
+        #  runs. None, or a burst that cannot start: the frame's old slide.
+        self.burst = burst
+        self.burst_shape = None
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
         self.side = rules.side_of(side)
@@ -540,10 +549,15 @@ class Edge(object):
             rects = self.shape() or []
         except Exception:                                    # noqa: BLE001
             rects = []
+        cut = self.burst_shape
         for sx, sy, sw, sh in rects:
             left, right = max(sx, fx), min(sx + sw, fx + fw)
-            if right > left and sh > 0:
-                out.append((x + left, y + sy, right - left, sh))
+            top, bottom = sy, sy + sh
+            if cut is not None:                  # a burst: as far as it has grown
+                left, right = max(left, cut[0]), min(right, cut[0] + cut[2])
+                top, bottom = max(top, cut[1]), min(bottom, cut[1] + cut[3])
+            if right > left and bottom > top:
+                out.append((x + left, y + top, right - left, bottom - top))
         return out
 
     def visible_rect(self):
@@ -676,6 +690,10 @@ class Edge(object):
                 rects = self.shape() or []
             except Exception:                                # noqa: BLE001
                 rects = []
+            cut = self.burst_shape
+            if cut is not None:
+                #  a burst running: the card as far as its shape has grown
+                opened = opened.intersected(q.QtGui.QRegion(*[int(v) for v in cut]))
             for x, y, rw2, rh in rects:
                 region = region.united(opened.intersected(
                     q.QtGui.QRegion(int(x), int(y), int(rw2), int(rh))))
@@ -692,16 +710,17 @@ class Edge(object):
 
     # ------------------------------------------------------------ in, out
 
-    def reveal(self, hold=False):
+    def reveal(self, hold=False, origin=None):
         """Bring the panel out. `hold`: by command (the shelf button, a
         hotkey, a tool's show_window) - it stays until visited or a press
-        lands outside it (rules.Hold)."""
+        lands outside it (rules.Hold). `origin`: the rail's card bursts out
+        of that global point (2026-10-18; None: the frame's slide)."""
         if not self.alive():
             return
         for timer in (self.dwell, self.hide, self.retry):
             timer.stop()
         if self.rail:
-            self._rail_slide(True)
+            self._rail_slide(True, origin)
             return
         if self._shown and self._anim is None:
             self.host.raise_()
@@ -723,9 +742,10 @@ class Edge(object):
                 self.hold.enter()
         self._sync_watch()
 
-    def conceal(self):
+    def conceal(self, origin=None):
         """Send the panel back off the edge (the sensor comes back when the
-        slide ends)."""
+        slide ends). `origin`: the rail's card folds into that global point
+        (2026-10-18: the ✕, the ⧉ or the lit rail icon pressed)."""
         if not self.alive():
             return
         for timer in (self.dwell, self.hide, self.retry):
@@ -733,7 +753,7 @@ class Edge(object):
         if not self._shown:
             return
         if self.rail:
-            self._rail_slide(False)
+            self._rail_slide(False, origin)
             return
         self._shown = False
         self.hold = rules.Hold()
@@ -748,10 +768,14 @@ class Edge(object):
             self.reveal()
         return self._shown
 
-    def _rail_slide(self, showing):
+    def _rail_slide(self, showing, origin=None):
         """The rail panel: the window's frame opens from the rail to the whole
         width (out) or closes back onto it (in), from where it stands; the
-        host stays up with its rail."""
+        host stays up with its rail. With a `burst` seam and an `origin`
+        (2026-10-18, «Из точки»), the card bursts out of that point instead -
+        the frame whole at once, the mask showing the rail and the card as far
+        as the burst has grown it - or folds into it, the frame back on the
+        rail when the fold ends."""
         self._stop_anim()
         self._shown = bool(showing)
         self.place()
@@ -765,6 +789,9 @@ class Edge(object):
             moving = bool(self.motion())
         except Exception:                                    # noqa: BLE001
             moving = False
+        if moving and self.burst is not None and self._rail_burst(showing, origin):
+            return
+        self.burst_shape = None
         if showing:
             self._rest_out = True        # the grip and the frame follow at the end
             if hubqt._valid(self.grip):
@@ -777,6 +804,55 @@ class Edge(object):
         self._animate(rules.IN_MS if showing else rules.OUT_MS, span, showing,
                       start, end, self._set_frame,
                       lambda: self._rail_done(showing))
+
+    def _rail_burst(self, showing, origin):
+        """Start the card's burst out of global `origin` (or its fold into it)
+        through the `burst` seam; False when it cannot (no origin, the seam
+        refusing or raising) and nothing was changed."""
+        if origin is None:
+            return False
+        width = max(1, self.host.width())
+        if showing:
+            #  until the first tick the card shows as the burst's start box
+            #  about the point (the host-local shape replaces it then)
+            q = hubqt.qt()
+            at = self.host.mapFromGlobal(q.QtCore.QPoint(int(origin[0]),
+                                                        int(origin[1])))
+            hx = hubstyle.px(hubburst.START_HALF[0], self.scale)
+            hy = hubstyle.px(hubburst.START_HALF[1], self.scale)
+            self.burst_shape = (at.x() - hx, at.y() - hy, 2 * hx, 2 * hy)
+            self._rest_out = True
+            self._set_frame(width)
+            if hubqt._valid(self.grip):
+                self.grip.setVisible(True)
+                self.grip.raise_()
+
+        def on_shape(shape):
+            if not self.alive():
+                return
+            x0, y0, x1, y1 = shape
+            self.burst_shape = (int(round(x0)), int(round(y0)),
+                                max(0, int(round(x1 - x0))),
+                                max(0, int(round(y1 - y0))))
+            self._set_frame(self._frame)
+
+        def done():
+            self.burst_shape = None
+            if not self.alive():
+                return
+            if not showing:
+                self._shown = False
+                self._set_frame(min(width, self.rest_px()))
+            self._rail_done(showing)
+
+        try:
+            ran = bool(self.burst(showing, origin, done, on_shape))
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+            ran = False
+        if not ran:
+            self.burst_shape = None
+        return ran
 
     def _rail_done(self, showing):
         self._stop_anim()

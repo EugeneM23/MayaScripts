@@ -431,13 +431,13 @@ def _callbacks():
         "classic": lambda: set_classic(True),
         "jump": focus,
         #  the rail (2026-10-16): Ctrl+click / a middle click / the right
-        #  button's row opens the section as a popup by the cursor; ⋮ ->
+        #  button's row opens the section's window by the cursor; ⋮ ->
         #  Layout switches rail / accordion
         "popup": _press_popup,
         "layout": set_layout,
         "toggled": remember,
-        #  a card's popout button (2026-10-09): the section's copy in the
-        #  viewport opens or closes (maya_hubpop)
+        #  a card's ⧉ (2026-10-09; since 2026-10-18 the section's floating
+        #  window bursts out of the press, the edge's card folding into it)
         "popout": _press_popout,
         #  a windowed card's ✕ (the edge rail, 2026-10-18)
         "close": _press_rail_close,
@@ -521,6 +521,8 @@ def _dress_popped(skin):
         import maya_hubpop
         for key in maya_hubpop.open_keys():
             skin.set_popped(key, True)
+            #  and the rail icon's dot (2026-10-18)
+            skin.set_floating(key, True)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -940,7 +942,8 @@ def _ensure_edge():
         #  click on one of its icons brings that card out beside it
         current = he.Edge(scale=_scale(), width=_edge_width(),
                           on_width=_save_edge_width, side=edge_side(),
-                          rail=True, rest=_rail_rest, shape=_rail_shape)
+                          rail=True, rest=_rail_rest, shape=_rail_shape,
+                          burst=_rail_burst)
         he.state()["edge"] = current
         #  its cards in look B with ✕ (2026-10-18); the dock keeps ⧉ alone
         _SKIN = _build_skin(host=current.slot, kind="rail", windowed=True)
@@ -990,6 +993,69 @@ def _rail_shape():
     if current is None or not is_skinned():
         return []
     return _hubqt().card_shape(_SKIN, current.host)
+
+
+def _rail_burst(showing, origin, done, on_shape):
+    """The edge rail's card bursting out of global `origin`, or folding into it
+    (2026-10-18, spec 2026-10-18-floating-windows § 4, 5): the window's Burster
+    (maya_hubwindow) on the card's look-B frame, held on the card. `on_shape`
+    hears the shape in the edge host's coordinates. False when it cannot run:
+    the hub not skinned, no card shown, no origin, animations off, a failure
+    (the edge then slides as before)."""
+    if not is_skinned() or origin is None or _SKIN.shown not in _SKIN.cards:
+        return False
+    current = edge()
+    if current is None:
+        return False
+    import maya_hubburst
+    import maya_hubwindow
+    qt = _hubqt()
+    card = _SKIN.cards[_SKIN.shown]
+    frame, host = card.frame, current.host
+    burster = getattr(card, "burster", None)
+    if burster is None:
+        burster = maya_hubwindow.Burster(
+            frame, lambda: qt.card_parts(_SKIN, card),
+            lambda: maya_hubburst.blend(hubstyle.TOKENS["card"],
+                                        hubstyle.TOKENS["card_active"],
+                                        getattr(card.frame, "level", 0.0)),
+            _SKIN.scale)
+        card.burster = burster
+    elif burster.effect is not None:
+        #  an effect something else replaced on the frame is dead: a new one
+        try:
+            if frame.graphicsEffect() is not burster.effect:
+                burster.effect = None
+        except RuntimeError:
+            burster.effect = None
+    q = qt.qt()
+
+    def to_host(shape):
+        x0, y0, x1, y1 = shape
+        try:
+            at = frame.mapTo(host, q.QtCore.QPoint(0, 0))
+        except RuntimeError:
+            return
+        on_shape((x0 + at.x(), y0 + at.y(), x1 + at.x(), y1 + at.y()))
+
+    return burster.run(showing, origin, done, on_tick=to_host)
+
+
+def _jump_point(key):
+    """The global centre of the rail icon of section `key`, or None (2026-10-18:
+    the rail's card bursts out of the icon pressed and folds back into it)."""
+    if not is_skinned() or key is None:
+        return None
+    try:
+        button = _SKIN.jumps.get(key)
+        if button is None or not _hubqt()._valid(button) or not button.isVisible():
+            return None
+        q = _hubqt().qt()
+        at = button.mapToGlobal(q.QtCore.QPoint(button.width() // 2,
+                                                button.height() // 2))
+        return (at.x(), at.y())
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def edge_failure_text(error):
@@ -1250,9 +1316,12 @@ def _show_edge(key):
         current = _ensure_edge()
     except Exception:                                        # noqa: BLE001
         return None
-    current.reveal(hold=True)
     if key:
         expand(key)
+    #  the card bursts out of its rail icon (2026-10-18): the card first, so
+    #  the burst runs on the one that shows
+    current.reveal(hold=True,
+                   origin=_jump_point(key or getattr(_SKIN, "shown", None)))
     return current
 
 
@@ -1293,28 +1362,53 @@ def _press_hotkeys():
     return message
 
 
+def _rail_edge_out(key=None):
+    """The rail edge standing with this module object's skin, its card out -
+    on section `key` when one is named - or None."""
+    current = edge()
+    if (current is None or not getattr(current, "rail", False)
+            or not _skin_at(current) or not current.shown):
+        return None
+    if key is not None and _SKIN.shown != key:
+        return None
+    return current
+
+
 def _press_popout(key):
-    """A card's popout button (2026-10-09): the section's copy in the active
-    viewport opens or closes (maya_hubpop). The card's button is lit while
-    its popup stands (`paint_popped`, told by maya_hubpop itself)."""
+    """A card's ⧉ (2026-10-18, «карточка уходит в окно»): the section's
+    floating window bursts out of the press (maya_hubpop.present: a window
+    standing is raised and flashes, no copy made); on the edge rail the card
+    folds into the same point at the same time and the rail goes back to rest.
+    The card's ⧉ is lit while the window stands (`paint_popped`, told by
+    maya_hubpop itself)."""
     import maya_hubpop
+    point = _cursor()
+    current = _rail_edge_out(key)
     try:
-        return maya_hubpop.toggle(key)
+        opened = maya_hubpop.present(key, origin=point)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
-        say("The popup could not be opened - the Script Editor has the "
+        say("The window could not be opened - the Script Editor has the "
             "details")
         return False
+    if current is not None:
+        current.conceal(origin=point)
+    return opened
 
 
-#  The edge rail card's ✕ (2026-10-18). A placeholder: Task 7 of the floating
-#  windows plan makes it fold the card back into the rail.
-_press_rail_close = lambda key: None                        # noqa: E731
+def _press_rail_close(key):
+    """The edge rail card's ✕ (2026-10-18): the card folds into the point
+    pressed and the rail goes back to rest."""
+    current = _rail_edge_out()
+    if current is not None:
+        current.conceal(origin=_cursor())
+    return None
 
 
 def _press_popup(key):
-    """A rail icon's popup (2026-10-16): the section's copy by the cursor
-    (maya_hubpop.open_at); without a viewport there, the popout's own place."""
+    """A rail icon's window (2026-10-16; a floating window since 2026-10-18):
+    Ctrl+click, a middle click, the rail's menu. The section's window by the
+    cursor (maya_hubpop.open_at), else the ⧉'s road."""
     import maya_hubpop
     try:
         point = _cursor()
@@ -1349,6 +1443,14 @@ def paint_popped(key, on):
     of section `key` opened or closed)."""
     if is_skinned():
         _SKIN.set_popped(key, on)
+    return bool(on)
+
+
+def paint_floating(key, on):
+    """The rail icon's dot on or off (maya_hubpop told us the window of section
+    `key` opened or closed, 2026-10-18)."""
+    if is_skinned():
+        _SKIN.set_floating(key, on)
     return bool(on)
 
 
@@ -1594,12 +1696,14 @@ def focus(key):
     current = edge()
     if current is not None and getattr(current, "rail", False) and _skin_at(current):
         #  the rail at the viewport's side (2026-10-17): a click brings that
-        #  card out; the card already out, the click sends it back
+        #  card out; the card already out, the click sends it back. Since
+        #  2026-10-18 it bursts out of the icon pressed and folds back into it
+        point = _jump_point(key) or _cursor()
         if current.shown and _SKIN.shown == key:
-            current.conceal()
+            current.conceal(origin=point)
             return None
-        card = _show_on_rail(key)
-        current.reveal()
+        card = _show_on_rail(key, animate=False)       # the burst is the motion
+        current.reveal(origin=point)
         return card
     if _rail():
         return _show_on_rail(key)
@@ -1638,10 +1742,11 @@ def expand(key):
     return sec.frame
 
 
-def _show_on_rail(key):
+def _show_on_rail(key, animate=True):
     """The rail layout: card `key` the one shown, lit, remembered - no other
-    card closed and no collapse remembered (the rail has none)."""
-    card = _SKIN.show_card(key, animate=True)
+    card closed and no collapse remembered (the rail has none). `animate`: it
+    fades in (the docked rail; the edge's card bursts instead)."""
+    card = _SKIN.show_card(key, animate=animate)
     if card is None:
         return None
     _SKIN.set_active(key)

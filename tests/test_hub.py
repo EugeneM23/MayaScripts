@@ -9,6 +9,7 @@ import os
 import sys
 import types
 import unittest
+from unittest import mock
 
 import maya_hub as hub
 
@@ -660,6 +661,10 @@ class FakeSkin(object):
     def set_rail_side(self, side):
         self.rail_side = side
 
+    def set_floating(self, key, on):
+        self.floating = getattr(self, "floating", {})
+        self.floating[key] = bool(on)
+
     def paint_edge(self, on, side="left"):
         self.edge_painted.append((bool(on), side))
 
@@ -1064,17 +1069,25 @@ class FakeEdge(object):
         self.reveals = []                   # reveal(hold) as asked
         self.concealed = 0
         self.destroyed = False
+        #  the rail edge (2026-10-17) and the points its card bursts out of
+        #  and folds into (2026-10-18)
+        self.rail = bool(_seams.get("rail", False))
+        self.burst = _seams.get("burst")
+        self.reveal_origins = []
+        self.conceal_origins = []
 
     @property
     def revealed_with_hold(self):
         return True in self.reveals
 
-    def reveal(self, hold=False):
+    def reveal(self, hold=False, origin=None):
         self.reveals.append(bool(hold))
+        self.reveal_origins.append(origin)
         self.shown = True
 
-    def conceal(self):
+    def conceal(self, origin=None):
         self.concealed += 1
+        self.conceal_origins.append(origin)
         self.shown = False
 
     def set_pinned(self, on):
@@ -1194,6 +1207,115 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.layout, "rail")
         self.assertIn("close", hub._SKIN.callbacks)
         self.assertIsNone(hub._SKIN.callbacks["close"]("retarget"))
+
+    # --------------------------------------------- the rail card's burst
+
+    def _rail_edge(self, point=(5, 6), icon=None):
+        """The rail edge built, the cursor at `point`, the rail icons' centres
+        `icon` (None: not found)."""
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.set_edge(True)
+        self.fake.run_deferred()
+        real = (hub._cursor, hub._jump_point)
+        hub._cursor = lambda: point
+        hub._jump_point = lambda key: icon
+        self.addCleanup(lambda: setattr(hub, "_cursor", real[0]))
+        self.addCleanup(lambda: setattr(hub, "_jump_point", real[1]))
+        return self.edges[-1]
+
+    def test_the_edge_gets_the_burst_seam(self):
+        """2026-10-18: the rail card bursts (maya_hub._rail_burst)."""
+        edge = self._rail_edge()
+        self.assertTrue(edge.rail)
+        self.assertIs(edge.burst, hub._rail_burst)
+
+    def test_focus_bursts_the_card_out_of_the_cursor_and_folds_it_back(self):
+        edge = self._rail_edge()
+        edge.shown = False
+        hub.focus("tools")
+        self.assertEqual(edge.reveal_origins[-1], (5, 6))
+        #  no fade: the burst is the motion
+        self.assertEqual(hub._SKIN.switches[-1], ("tools", False))
+        hub.focus("tools")
+        self.assertEqual(edge.conceal_origins[-1], (5, 6))
+        self.assertFalse(edge.shown)
+
+    def test_focus_bursts_out_of_the_rail_icon_when_it_is_found(self):
+        edge = self._rail_edge(icon=(70, 80))
+        edge.shown = False
+        hub.focus("tools")
+        self.assertEqual(edge.reveal_origins[-1], (70, 80))
+
+    def test_the_close_folds_the_card_into_the_point_pressed(self):
+        edge = self._rail_edge()
+        hub.focus("tools")
+        self.assertTrue(edge.shown)
+        hub._press_rail_close("tools")
+        self.assertEqual(edge.conceal_origins, [(5, 6)])
+        hub._press_rail_close("tools")                     # nothing out now
+        self.assertEqual(edge.concealed, 1)
+        self.assertIs(hub._SKIN.callbacks["close"], hub._press_rail_close)
+
+    def _fake_hubpop(self, opened=True):
+        module = types.ModuleType("maya_hubpop")
+        module.presented = []
+
+        def present(key, origin=None):
+            module.presented.append((key, origin))
+            if opened is None:
+                raise RuntimeError("no window")
+            return opened
+        module.present = present
+        module.open_at = lambda key, point: None
+        real = sys.modules.get("maya_hubpop")
+        sys.modules["maya_hubpop"] = module
+
+        def back():
+            if real is None:
+                sys.modules.pop("maya_hubpop", None)
+            else:
+                sys.modules["maya_hubpop"] = real
+        self.addCleanup(back)
+        return module
+
+    def test_the_popout_opens_the_window_and_folds_the_card_into_the_press(self):
+        """2026-10-18, «карточка уходит в окно»."""
+        edge = self._rail_edge()
+        pop = self._fake_hubpop()
+        hub.focus("tools")
+        self.assertTrue(hub._press_popout("tools"))
+        self.assertEqual(pop.presented, [("tools", (5, 6))])
+        self.assertEqual(edge.conceal_origins, [(5, 6)])
+
+    def test_the_popout_of_another_card_leaves_the_rail_card(self):
+        edge = self._rail_edge()
+        pop = self._fake_hubpop()
+        hub.focus("tools")
+        hub._press_popout("studio")
+        self.assertEqual(pop.presented, [("studio", (5, 6))])
+        self.assertEqual(edge.concealed, 0)
+
+    def test_a_window_that_fails_leaves_the_card_and_says_so(self):
+        edge = self._rail_edge()
+        self._fake_hubpop(opened=None)
+        hub.focus("tools")
+        with mock.patch("builtins.print"):
+            self.assertFalse(hub._press_popout("tools"))
+        self.assertEqual(edge.concealed, 0)
+        self.assertIn("window could not be opened", hub._SKIN.said[-1][0])
+
+    def test_the_popup_road_falls_back_to_the_popout(self):
+        self._rail_edge()
+        pop = self._fake_hubpop()
+        hub._press_popup("studio")
+        self.assertEqual(pop.presented, [("studio", (5, 6))])
+
+    def test_paint_floating_tells_the_skin(self):
+        self._rail_edge()
+        self.assertTrue(hub.paint_floating("tools", True))
+        self.assertEqual(hub._SKIN.floating, {"tools": True})
+        self.assertFalse(hub.paint_floating("tools", False))
+        self.assertEqual(hub._SKIN.floating, {"tools": False})
 
     def test_build_skin_is_windowed_only_when_asked(self):
         self.assertFalse(hub._build_skin(host=object(), kind="rail").windowed)

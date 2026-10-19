@@ -881,3 +881,225 @@ class RailShape(unittest.TestCase):
         self.edge.reveal()
         self.assertEqual(self.edge.visible_rects(),
                          [(100, 150, 40, 700), (160, 160, 280, 200)])
+
+
+class RailBurst(unittest.TestCase):
+    """2026-10-18 (floating windows, spec § 4): the rail card bursts out of the
+    icon pressed and folds into the point the close came from; the mask shows
+    the rail at once and the card only as far as the burst has grown it."""
+
+    def setUp(self):
+        self.app = _app()
+        self.card = [(60, 10, 280, 200)]
+        self.bursts = []
+        self.done = None
+        self.shapes = [(70, 20, 110, 50)]          # host-local x0, y0, x1, y1
+        self.edges = []
+
+    def tearDown(self):
+        for edge in self.edges:
+            edge.destroy()
+
+    def burst(self, showing, origin, done, on_shape):
+        self.bursts.append((showing, origin))
+        for shape in self.shapes:
+            on_shape(shape)
+        self.done = done
+        return True
+
+    def build(self, burst=None, motion=True):
+        edge = hubedge.Edge(
+            scale=1.0, width=360, motion=lambda: motion, rail=True,
+            rest=lambda: 40, shape=lambda: self.card,
+            work_area=lambda: (100, 150, 1500, 700),
+            cursor=lambda: (800, 400), buttons=lambda: False,
+            app_active=lambda: True,
+            burst=self.burst if burst is None else burst)
+        self.edges.append(edge)
+        return edge
+
+    def test_reveal_bursts_from_the_origin_and_shows_the_frame_whole(self):
+        edge = self.build()
+        edge.reveal(origin=(140, 270))
+        self.assertEqual(self.bursts, [(True, (140, 270))])
+        self.assertTrue(edge.shown)
+        self.assertEqual(edge.frame, edge.host.width())
+        x0, y0, x1, y1 = self.shapes[-1]
+        self.assertEqual(edge.burst_shape, (x0, y0, x1 - x0, y1 - y0))
+        mask = edge.host.mask()
+        self.assertTrue(mask.contains(QtCore.QPoint(20, 600)))      # the rail at once
+        self.assertTrue(mask.contains(QtCore.QPoint(90, 30)))       # inside the shape
+        self.assertFalse(mask.contains(QtCore.QPoint(200, 150)))    # card, not grown yet
+        self.done()
+        self.assertIsNone(edge.burst_shape)
+        self.assertTrue(edge.shown)
+        self.assertTrue(edge.host.mask().contains(QtCore.QPoint(200, 150)))
+
+    def test_the_card_hides_under_the_start_box_until_the_first_tick(self):
+        self.shapes = []
+        edge = self.build()
+        edge.reveal(origin=(140, 270))              # host-local (40, 120)
+        hx, hy = hubedge.hubburst.START_HALF
+        self.assertEqual(edge.burst_shape, (40 - hx, 120 - hy, 2 * hx, 2 * hy))
+        self.assertFalse(edge.host.mask().contains(QtCore.QPoint(200, 150)))
+
+    def test_the_visible_rects_follow_the_burst(self):
+        edge = self.build()
+        edge.reveal(origin=(140, 270))
+        self.assertEqual(edge.visible_rects(),
+                         [(100, 150, 40, 700), (170, 170, 40, 30)])
+
+    def test_conceal_folds_into_its_point_then_rests_on_the_rail(self):
+        edge = self.build()
+        edge.reveal(origin=(140, 270))
+        self.done()
+        edge.conceal(origin=(300, 180))
+        self.assertEqual(self.bursts[-1], (False, (300, 180)))
+        self.assertEqual(edge.frame, edge.host.width())          # still folding
+        self.done()
+        self.assertEqual(edge.frame, min(edge.host.width(), edge.rest_px()))
+        self.assertFalse(edge.shown)
+        self.assertEqual(edge.host.mask().boundingRect().getRect(), (0, 0, 40, 700))
+        self.assertTrue(edge.host.isVisible())
+
+    def test_without_a_burst_the_old_slide_runs(self):
+        edge = self.build(burst=lambda *a: False, motion=False)
+        edge.reveal(origin=(140, 270))
+        self.assertTrue(edge.shown)
+        self.assertIsNone(edge.burst_shape)
+        self.assertTrue(edge.host.mask().contains(QtCore.QPoint(200, 150)))  # the card
+
+    def test_a_refused_or_raising_burst_slides(self):
+        def boom(*_a):
+            raise RuntimeError("no")
+        for burst in (lambda *a: False, boom):
+            edge = self.build(burst=burst)
+            with mock.patch("traceback.print_exc"):
+                edge.reveal(origin=(140, 270))
+            self.assertTrue(edge.shown)
+            self.assertIsNone(edge.burst_shape)
+
+    def test_no_origin_or_no_motion_never_asks_the_burst(self):
+        edge = self.build()
+        edge.reveal()
+        edge2 = self.build(motion=False)
+        edge2.reveal(origin=(140, 270))
+        self.assertEqual(self.bursts, [])
+        self.assertTrue(edge.shown and edge2.shown)
+
+    def test_a_reveal_during_a_fold_bursts_out_again(self):
+        edge = self.build()
+        edge.reveal(origin=(140, 270))
+        self.done()
+        edge.conceal(origin=(300, 180))
+        edge.reveal(origin=(140, 300))
+        self.assertEqual(self.bursts[-1], (True, (140, 300)))
+        self.done()
+        self.assertTrue(edge.shown)
+        self.assertEqual(edge.frame, edge.host.width())
+
+
+class RailBurstThroughTheHub(unittest.TestCase):
+    """2026-10-18: the real road - maya_hub's focus / ✕ on a real windowed Skin
+    in a real rail Edge, the Burster on the card's look-B frame telling the edge
+    its shape in host coordinates."""
+
+    def setUp(self):
+        import maya_hub as hub
+        import maya_hubqt as hubqt
+        import maya_hubstyle as style
+        from tests.uifakes import FakeUiCmds
+        self.app = _app()
+        self.hub, self.hubqt = hub, hubqt
+        self.saved = (hub.cmds, hub._SKIN, hub._cursor, hubqt.find, hubqt.path_of,
+                      list(style._LISTENERS))
+        self.style = style
+        hub.cmds = FakeUiCmds()
+        hub._cursor = lambda: (600, 500)
+        hubqt.find = lambda name, layout=False: None
+        hubqt.path_of = lambda obj: "path|" + obj.objectName()
+        self.motion = mock.patch("maya_hubmotion.enabled", lambda: True)
+        self.motion.start()
+        self.edge = hubedge.Edge(
+            scale=1.0, width=360, motion=lambda: True, rail=True,
+            rest=hub._rail_rest, shape=hub._rail_shape, burst=hub._rail_burst,
+            work_area=lambda: (100, 150, 800, 600), cursor=lambda: (600, 500),
+            buttons=lambda: False, app_active=lambda: True)
+        self.state = dict(hubedge.state())
+        hubedge.state()["edge"] = self.edge
+        skin = hubqt.Skin(self.edge.slot, scale=1.0, layout="rail", windowed=True,
+                          callbacks={"close": hub._press_rail_close})
+        skin.add_jump("alpha", "Alpha", "user", "#7fa9e6", group="scene")
+        self.card = skin.add_card("alpha", "Alpha", "user", "#7fa9e6", "#23324a",
+                                  collapsible=False)
+        for i in range(3):
+            label = QtWidgets.QLabel("row {0}".format(i))
+            label.setFixedHeight(30)
+            self.card.body_layout.addWidget(label)
+        skin.show_card("alpha")
+        hub._SKIN = self.skin = skin
+        self.edge.place()
+        self.app.processEvents()
+
+    def tearDown(self):
+        hub = self.hub
+        self.motion.stop()
+        burster = getattr(self.card, "burster", None)
+        if burster is not None:
+            burster.stop(quiet=True)
+        hub.cmds, hub._SKIN, hub._cursor, self.hubqt.find, self.hubqt.path_of, \
+            listeners = self.saved
+        self.style._LISTENERS[:] = listeners
+        hubedge.state().clear()
+        hubedge.state().update(self.state)
+        self.skin.destroy()
+        self.edge.destroy()
+
+    def finish(self):
+        """The burst to its end: the picture taken, the last tick."""
+        burster = self.card.burster
+        self.card.frame.grab()
+        burster.effect.ms = burster.effect.plan.total
+        burster.tick_now()
+
+    def test_a_rail_click_bursts_the_card_out_of_its_icon(self):
+        icon = self.skin.jumps["alpha"]
+        centre = icon.mapToGlobal(QtCore.QPoint(icon.width() // 2, icon.height() // 2))
+        self.edge._shown = False
+        self.hub.focus("alpha")
+        burster = self.card.burster
+        self.assertTrue(burster.busy())
+        self.assertEqual(burster._origin, (centre.x(), centre.y()))
+        self.assertTrue(self.edge.shown)
+        #  until the first tick the card shows as the start box about the icon
+        x, y, w, h = self.edge.burst_shape
+        at = self.edge.host.mapFromGlobal(centre)
+        self.assertTrue(x <= at.x() <= x + w and y <= at.y() <= y + h)
+        #  a tick: the shape in the host's coordinates
+        self.card.frame.grab()
+        burster.effect.ms = 60.0
+        burster.tick_now()
+        from maya_hubburst import at as state_at
+        x0, y0, x1, y1 = state_at(burster.effect.plan, 60.0).shape
+        off = self.card.frame.mapTo(self.edge.host, QtCore.QPoint(0, 0))
+        self.assertEqual(self.edge.burst_shape,
+                         (int(round(x0 + off.x())), int(round(y0 + off.y())),
+                          int(round(x1 - x0)), int(round(y1 - y0))))
+        self.finish()
+        self.assertIsNone(self.edge.burst_shape)
+        self.assertFalse(burster.busy())
+        self.assertTrue(self.edge.shown)
+
+    def test_the_close_folds_the_card_into_the_press_and_rests_on_the_rail(self):
+        self.edge._shown = False
+        self.hub.focus("alpha")
+        self.finish()
+        self.skin.cards["alpha"].close.click()
+        burster = self.card.burster
+        self.assertTrue(burster.busy())
+        self.assertEqual(burster._origin, (600, 500))
+        self.assertFalse(burster.effect.opening)
+        self.finish()
+        self.assertFalse(self.edge.shown)
+        self.assertEqual(self.edge.frame, min(self.edge.host.width(), self.edge.rest_px()))
+        self.assertIsNone(self.edge.burst_shape)

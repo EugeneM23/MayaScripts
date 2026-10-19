@@ -235,6 +235,44 @@ def card_shape(skin, host):
     return out
 
 
+def burst_parts(frame, head, root, clip, scale):
+    """The parts a burst pops in and folds out (maya_hubburst), in `frame`'s
+    coordinates (2026-10-18; shared by a section's window and the edge rail's
+    card): `head`'s rect, then `root`'s rows cut to widget `clip` (a scroll's
+    viewport) and banded to MAX_PARTS - 1. `root` None: the head alone."""
+    import maya_hubburst as hubburst
+    q = qt()
+    QtWidgets = q.QtWidgets
+    zero = q.QtCore.QPoint(0, 0)
+
+    def rect_of(widget):
+        at = widget.mapTo(frame, zero)
+        return (at.x(), at.y(), widget.width(), widget.height())
+
+    def kids(widget):
+        return [c for c in widget.children()
+                if isinstance(c, QtWidgets.QWidget) and not c.isWindow()
+                and c.isVisible() and c.width() > 0 and c.height() > 0]
+
+    parts = [rect_of(head)]
+    if root is not None:
+        cut = rect_of(clip) if clip is not None else None
+        found = hubburst.rows(root, kids, rect_of,
+                              hubstyle.px(hubburst.ROW_MAX, scale), cut)
+        parts.extend(hubburst.bands(found, hubburst.MAX_PARTS - 1))
+    return parts
+
+
+def card_parts(skin, card):
+    """The edge rail card's burst parts (2026-10-18): its title row and its
+    body's rows, cut to the skin's scroll viewport, in the card frame's
+    coordinates."""
+    scroll = getattr(skin, "scroll", None)
+    clip = scroll.viewport() if scroll is not None and _valid(scroll) else None
+    body = card.body if card.body.isVisible() else None
+    return burst_parts(card.frame, card.header, body, clip, card.scale)
+
+
 def destroy_roots_in(host):
     """Delete every skin root standing in widget `host`, NOW: the
     workspaceControl's (`destroy_roots`), or the edge panel's slot
@@ -1821,8 +1859,10 @@ class Skin(object):
             button.setStyleSheet(self._current_sheet(other) if current
                                  else "")
         self.scroll.verticalScrollBar().setValue(0)
+        #  not on the edge rail's (windowed) skin: its card bursts out of the
+        #  icon (2026-10-18), and the fade's effect would take the burst's place
         if (animate and self.animations and previous != key
-                and self.root.isVisible()):
+                and not self.windowed and self.root.isVisible()):
             self._fade_in(card)
         return card
 
@@ -1842,12 +1882,20 @@ class Skin(object):
             self.floating.discard(key)
         if button is None or not _valid(button):
             return bool(on)
-        size = self.px(16)
-        colour = self._jump_colour.get(key, hubstyle.TOKENS["muted"])
-        name = self._jump_icon.get(key, "")
-        button.setIcon(icon_with_dot(name, colour, size, self.px(5)) if on
-                       else icon(name, colour, size))
+        button.setIcon(self._jump_face(key))
         return bool(on)
+
+    def _jump_face(self, key, colour=None, fallback=""):
+        """Jump `key`'s icon in `colour` (its group's by default), with the
+        floating dot while its window stands - every repaint of a jump goes
+        through here, so none drops the dot (2026-10-18)."""
+        size = self.px(16)
+        if colour is None:
+            colour = self._jump_colour.get(key, hubstyle.TOKENS["muted"])
+        name = self._jump_icon.get(key, fallback)
+        if key in self.floating:
+            return icon_with_dot(name, colour, size, self.px(5))
+        return icon(name, colour, size)
 
     def _fade_in(self, card):
         q = qt()
@@ -1944,8 +1992,7 @@ class Skin(object):
         tokens = hubstyle.TOKENS
         colour = {"new": tokens["accent"], "ok": tokens["ok"]}.get(
             state or "", self._jump_colour.get("update", tokens["muted"]))
-        button.setIcon(icon(self._jump_icon.get("update", "refresh"), colour,
-                            self.px(16)))
+        button.setIcon(self._jump_face("update", colour, fallback="refresh"))
         repolish(button)
 
     def set_version(self, text, tooltip, state=None):
