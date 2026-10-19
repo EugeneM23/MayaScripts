@@ -90,20 +90,32 @@ def read_highlight():
 
 
 def set_highlight(selection):
-    """`selection` (first, last) highlighted, or None: cleared."""
+    """`selection` (first, last) highlighted, or None: cleared. Unrecorded, as
+    Maya's own slider highlight is: a `playbackOptions` edit is an undo step, so
+    after a key drag (which moves the highlight with the keys) the first Ctrl+Z
+    put the highlight back and left the keys moved (2026-10-19). Called only from
+    the strip's mouse events, never inside an open undo chunk (trap 145)."""
     try:
-        if selection is None:
-            cmds.playbackOptions(edit=True, selectionVisible=False)
-            return
-        first, last = selection
-        cmds.playbackOptions(edit=True, selectionStartTime=first, selectionEndTime=last,
-                             selectionVisible=True)
+        with _unrecorded():
+            if selection is None:
+                cmds.playbackOptions(edit=True, selectionVisible=False)
+                return
+            first, last = selection
+            cmds.playbackOptions(edit=True, selectionStartTime=first, selectionEndTime=last,
+                                 selectionVisible=True)
     except Exception:                                        # noqa: BLE001
         pass
 
 
 def set_time(frame):
-    cmds.currentTime(frame, edit=True)
+    """The time set, unrecorded, as Maya's own slider sets it: in a GUI Maya a
+    scripted `currentTime -e` IS an undo step, so every click, scrub step and
+    transport button put one on Ctrl+Z - and with scene tabs it made the tab look
+    worked in and buried the previous tab's history (2026-10-19, measured in a GUI
+    Maya: queue 101 -> 102, unrecorded 102 -> 102). Called from the strip's
+    presses, never inside an open undo chunk (trap 145)."""
+    with _unrecorded():
+        cmds.currentTime(frame, edit=True)
 
 
 def set_ranges(a0, a1, p0, p1):
@@ -226,8 +238,10 @@ _WAVES = {}             # (path, mtime) -> (samples, rate): a sound file read on
 
 
 def scrub_only(frame):
-    """Time moved without updating the scene (Maya's middle-drag)."""
-    cmds.currentTime(frame, edit=True, update=False)
+    """Time moved without updating the scene (Maya's middle-drag); unrecorded, as
+    `set_time`."""
+    with _unrecorded():
+        cmds.currentTime(frame, edit=True, update=False)
 
 
 def extra():
@@ -716,17 +730,21 @@ def _wanted(rec, selection, target):
 
 
 def _bring(curve, rec, wanted):
-    """The curve from what it holds (`rec["now"]`) to `wanted`, key by key."""
+    """The curve from what it holds (`rec["now"]`) to `wanted`, key by key: the new
+    keys put down FIRST, the old ones cut after. Maya deletes a curve a cut empties
+    (CLAUDE.md trap 210), so a curve whose every key was dragged - one key on a
+    channel - lost its curve on the first cut and the keys vanished (2026-10-19:
+    «ключи просто изчезают при переносе по таймлайну»)."""
     now = rec["now"]
-    for k, (t, _data) in list(now.items()):
-        if k not in wanted:
-            cmds.cutKey(curve, time=(t, t), clear=True)
-            del now[k]
     for k, (t, data) in sorted(wanted.items()):
         held = now.get(k)
         if held is None or held[1] is not data:
             _put_key(curve, t, data)
             now[k] = (t, data)
+    for k, (t, _data) in list(now.items()):
+        if k not in wanted:
+            cmds.cutKey(curve, time=(t, t), clear=True)
+            del now[k]
 
 
 def _bring_all(target):

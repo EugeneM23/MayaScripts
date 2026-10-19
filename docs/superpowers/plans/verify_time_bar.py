@@ -106,6 +106,33 @@ scene.live_begin((20, 20)); scene.live_to((3, 3)); scene.live_end(None)
 gate("live: a drag given up leaves the curve", times(cube) == start_keys
      and cmds.keyframe(cube, at="tx", q=True, valueChange=True) == start_vals, str(times(cube)))
 
+# 5c every key of a curve dragged (2026-10-19: «ключи просто изчезают при переносе по
+# таймлайну»): a cut that empties a curve deletes it in Maya, so the new keys go down
+# before the old ones are cut
+lone = cmds.polyCube(name="tbLone")[0]
+cmds.setKeyframe(lone, attribute="ty", time=10, value=3.0)
+cmds.setKeyframe(lone, attribute="tz", time=0, value=1.0)
+cmds.setKeyframe(lone, attribute="tz", time=10, value=2.0)
+cmds.select(lone)
+scene.live_begin((10, 10))
+for f in range(11, 17):
+    scene.live_to((f, f))
+scene.live_end((16, 16))
+gate("live: a lone key on its channel keeps its curve",
+     times(lone, "ty") == [16] and cmds.keyframe(lone, at="ty", q=True, valueChange=True) == [3.0],
+     str(times(lone, "ty")))
+gate("live: a curve keeps its other key", times(lone, "tz") == [0, 16], str(times(lone, "tz")))
+cmds.undo()
+gate("live: one undo puts the lone key back", times(lone, "ty") == [10], str(times(lone, "ty")))
+scene.live_begin((0, 10))
+for f in range(1, 6):
+    scene.live_to((f, 10 + f))
+scene.live_end((5, 15))
+gate("live: every key of a curve dragged", times(lone, "tz") == [5, 15] and times(lone, "ty") == [15],
+     "%s %s" % (times(lone, "tz"), times(lone, "ty")))
+cmds.delete(lone)
+cmds.select(cube)
+
 # 6 the key menu
 scene.set_time(10)
 scene.copy_keys(None, 10)
