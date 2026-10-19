@@ -50,7 +50,7 @@ import maya_hubwindow as hubwindow
 
 RESTORE_MS = 500          # a restore before Maya's main window stands waits this long
 RESTORE_TRIES = 60        # ... and gives up after this many tries (30 s)
-TITLE_H = 34              # logical px: the title row, room for a 30-tall pill (2026-10-18)
+TITLE_H = hubwindow.TITLE_H  # logical px: the title row (2026-10-18)
 FALLBACK_SCREEN = (0, 0, 1920, 1080)   # no screen known (no QGuiApplication yet)
 AT_CURSOR = rules.AT_CURSOR
 
@@ -434,7 +434,6 @@ class Popup(object):
         Qt = q.QtCore.Qt
         s = self.scale
         tag = self.scope.tag
-        tokens = hubstyle.TOKENS
         px = lambda n: hubstyle.px(n, s)                    # noqa: E731
         root = w.QWidget(_main_window(), Qt.Tool | Qt.FramelessWindowHint)
         root.setObjectName(hubstyle.POPUP_ROOT + "_" + tag)
@@ -465,16 +464,10 @@ class Popup(object):
         row.setContentsMargins(px(5), 0, 0, 0)
         row.setSpacing(px(6))
         colour = hubstyle.group(self.sec.group).colour
-        icon = w.QLabel()
-        icon.setObjectName("skeldarAnimPopupIcon_" + tag)
-        icon.setPixmap(hubqt.pixmap(self.sec.icon, colour, px(15)))
-        icon.setStyleSheet("background: transparent;")
-        name = hubqt._named(w.QLabel(self.sec.label.upper()),
-                            "skeldarAnimPopupName_" + tag)
+        icon = hubwindow.title_icon(self.sec.icon, colour, s,
+                                    "skeldarAnimPopupIcon_" + tag)
         #  the heading role's look: spaced capitals, bold, muted, at the caption size
-        name.setStyleSheet(
-            "color: {0}; font-weight: bold; letter-spacing: 1px; font-size: {1}px; "
-            "background: transparent;".format(tokens["muted"], hubstyle.px(8.5, s)))
+        name = hubwindow.title_label(self.sec.label, s, "skeldarAnimPopupName_" + tag)
         self.subtitle_slot = hubqt._named(w.QWidget(),
                                           "skeldarAnimPopupSub_" + tag)
         self.subtitle_slot.setSizePolicy(w.QSizePolicy.Ignored,

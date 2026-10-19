@@ -15,6 +15,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import maya_hubqt as hubqt
 import maya_hubstyle as style
+import maya_hubwindow as hubwindow
 
 
 def _app():
@@ -2409,6 +2410,128 @@ class HoverGlowPaint(unittest.TestCase):
         self.assertEqual(self.effect.computed, 1)
 
 
+class Windowed(unittest.TestCase):
+    """2026-10-18: the edge rail's card in look B (maya_hubwindow), with a close
+    button (spec 2026-10-18-floating-windows-design.md §2, §4). The docked hub's
+    cards keep the old frame and ⧉ alone."""
+
+    def setUp(self):
+        self.app = _app()
+        style._LISTENERS[:] = []
+        self.saved = (hubqt.find, hubqt.path_of)
+        hubqt.find = lambda name, layout=False: None
+        hubqt.path_of = lambda obj: "path|" + obj.objectName()
+        self.calls = []
+        self.host = QtWidgets.QWidget()
+        self.host_layout = QtWidgets.QVBoxLayout(self.host)
+        self.skin = hubqt.Skin(
+            self.host_layout, scale=1.0, layout="rail", windowed=True,
+            callbacks={"close": lambda k: self.calls.append(("close", k)),
+                       "popout": lambda k: self.calls.append(("popout", k))})
+        self.skin.add_jump("alpha", "Alpha", "user", "#7fa9e6", group="scene")
+        self.card = self.skin.add_card("alpha", "Alpha", "user", "#7fa9e6",
+                                       "#23324a", collapsible=False)
+        self.skin.show_card("alpha")
+        self.host.resize(360, 600)
+        self.host.show()
+
+    def tearDown(self):
+        hubqt.find, hubqt.path_of = self.saved
+        if self.skin.alive():
+            self.skin.destroy()
+        style._LISTENERS[:] = []
+        self.host.deleteLater()
+
+    def test_the_skin_knows_it_is_windowed(self):
+        self.assertTrue(self.skin.windowed)
+        holder = QtWidgets.QWidget()
+        docked = hubqt.Skin(QtWidgets.QVBoxLayout(holder), layout="rail")
+        self.assertFalse(docked.windowed)
+        docked.destroy()
+
+    def test_a_windowed_card_has_a_close_pill_and_a_float_pill(self):
+        self.assertIsInstance(self.card.close, hubwindow.pill_class())
+        self.assertIsInstance(self.card.popout, hubwindow.pill_class())
+        self.assertEqual(self.card.close.objectName(), "skeldarHubCardClose_alpha")
+        self.assertEqual(self.card.popout.objectName(), "skeldarHubCardPopout_alpha")
+        self.assertEqual(self.card.popout.icon_name, "float")
+        self.assertEqual(self.card.close.icon_name, "x")
+        self.card.close.click()
+        self.card.popout.click()
+        self.assertEqual(self.calls, [("close", "alpha"), ("popout", "alpha")])
+
+    def test_its_frame_is_look_b_and_keeps_the_card_s_name(self):
+        frame = self.card.frame
+        self.assertIsInstance(frame, hubwindow.frame_class())
+        self.assertEqual(frame.objectName(), "skeldarHubCard_alpha")
+        self.assertFalse(frame.property("skCard"))
+        self.assertEqual(frame.content.objectName(), "skeldarHubCardContent_alpha")
+        self.assertIs(self.card.body.parent(), frame.content)
+
+    def test_the_title_is_spaced_capitals_and_no_chevron_no_rule(self):
+        title = self.card.frame.findChild(QtWidgets.QLabel, "skeldarHubCardTitle_alpha")
+        self.assertEqual(title.text(), "ALPHA")
+        self.assertIn("letter-spacing", title.styleSheet())
+        self.assertIn(style.TOKENS["muted"], title.styleSheet())
+        self.assertIsNone(self.card.frame.findChild(QtWidgets.QWidget,
+                                                    "skeldarHubCardRule_alpha"))
+        self.assertIsNone(self.card.chevron)
+
+    def test_the_icon_has_no_chip(self):
+        chip = self.card.frame.findChild(QtWidgets.QLabel, "skeldarHubCardIcon_alpha")
+        self.assertNotIn("background: #", chip.styleSheet())
+
+    def test_the_hub_s_ink_glow_passes_a_pill_by(self):
+        """A pill lifts and glows by itself: no second glow from the hub."""
+        root = self.skin.root
+        self.assertTrue(hubqt.sounding(self.card.close, root))
+        self.assertFalse(hubqt.glowing(self.card.close, root))
+        self.assertFalse(hubqt.glowing(self.card.popout, root))
+
+    def test_set_popped_lights_the_float_pill(self):
+        self.card.set_popped(True)
+        self.assertTrue(self.card.popout.lit)
+        self.card.set_popped(False)
+        self.assertFalse(self.card.popout.lit)
+
+    def test_the_light_and_the_shape_still_work(self):
+        self.card.set_lit(True)
+        self.assertEqual(self.card.frame.level, 1.0)
+        self.card.pulse()
+        self.assertEqual(self.card.frame.flash, 0.0)
+        self.app.processEvents()
+        rects = hubqt.card_shape(self.skin, self.host)
+        self.assertTrue(rects)
+        self.assertEqual(self.skin.card_of(self.card.close), "alpha")
+
+    def test_the_body_path_runs_through_named_layouts(self):
+        self.assertEqual(self.card.body_layout.parentWidget(), self.card.body)
+        self.assertTrue(self.card.frame.content.layout().objectName())
+        self.assertTrue(self.card.frame.layout().objectName())
+
+    def test_a_card_on_the_rail_never_slides(self):
+        self.card.set_collapsed(True, animate=True)
+        self.card.toggle()
+        self.assertFalse(self.card.collapsed())
+
+    def test_a_docked_card_has_no_close(self):
+        holder = QtWidgets.QWidget()
+        skin = hubqt.Skin(QtWidgets.QVBoxLayout(holder), layout="rail")
+        card = skin.add_card("beta", "Beta", "user", "#7fa9e6", "#23324a",
+                             collapsible=False)
+        self.assertIsNone(card.close)
+        self.assertNotIsInstance(card.frame, hubwindow.frame_class())
+        skin.destroy()
+
+    def test_the_rail_menu_opens_a_window(self):
+        labels = [label for label, _fn in self.skin.rail_actions("alpha")]
+        self.assertEqual(labels, ["Show here", "Open in a window"])
+
+    def test_the_jump_tooltip_says_a_window(self):
+        self.assertEqual(self.skin.jumps["alpha"].toolTip(),
+                         "Alpha\nCtrl+click or middle click: a window")
+
+
 class CardShapeScroll(unittest.TestCase):
     """2026-10-17: a card taller than the rail panel scrolls, and its scroll bar
     stands outside the card's rect - the mask must show it too."""
@@ -2561,7 +2684,7 @@ class Rail(unittest.TestCase):
 
     def test_the_right_button_menu(self):
         rows = self.skin.rail_actions("c")
-        self.assertEqual([r[0] for r in rows], ["Show here", "Open as popup"])
+        self.assertEqual([r[0] for r in rows], ["Show here", "Open in a window"])
         rows[0][1]()
         rows[1][1]()
         self.assertEqual(self.calls[-2:], [("jump", "c"), ("popup", "c")])

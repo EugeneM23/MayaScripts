@@ -42,6 +42,12 @@ class TheSet(unittest.TestCase):
         self.assertTrue(paths[4].startswith("M13.803 4.56l2.184 -.53"))
         self.assertTrue(paths[4].endswith("-1.219l.133 -.041z"))
 
+    def test_the_window_pill_s_float(self):
+        """2026-10-18: Tabler's `external-link` on a card's ⧉ (a window)."""
+        self.assertEqual(icons.ICONS["float"], (
+            "M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6",
+            "M11 13l9 -9", "M15 4h5v5"))
+
     def test_the_edge_panel_icons(self):
         for name in ("pin", "pinned", "clock"):
             self.assertIn("<path", icons.svg(name))

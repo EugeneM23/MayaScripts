@@ -439,6 +439,8 @@ def _callbacks():
         #  a card's popout button (2026-10-09): the section's copy in the
         #  viewport opens or closes (maya_hubpop)
         "popout": _press_popout,
+        #  a windowed card's ✕ (the edge rail, 2026-10-18)
+        "close": _press_rail_close,
         "told": _told,
         "hover": _hover_sound,
         "sounds": set_sounds,
@@ -603,10 +605,11 @@ def _box_on():
         return None
 
 
-def _build_skin(host=None, kind=None):
+def _build_skin(host=None, kind=None, windowed=False):
     """The skinned hub - into the workspaceControl, or into `host` (the edge
     panel's slot, 2026-10-08). Deleted whole if any of it fails, then
-    re-raised."""
+    re-raised. `windowed` (the edge's, 2026-10-18): its cards in look B with
+    ✕ (maya_hubqt.Card)."""
     qt = _hubqt()
     scale = _scale()
     #  a skin an older module object built (an install purges the modules,
@@ -618,7 +621,8 @@ def _build_skin(host=None, kind=None):
         qt.destroy_roots_in(host)
     kind = kind or layout()
     rail = kind == "rail"
-    skin = qt.Skin(host, scale=scale, callbacks=_callbacks(), layout=kind)
+    skin = qt.Skin(host, scale=scale, callbacks=_callbacks(), layout=kind,
+                   windowed=windowed)
     hubstyle.set_skinning(True)
     try:
         for sec in card_sections():
@@ -938,7 +942,8 @@ def _ensure_edge():
                           on_width=_save_edge_width, side=edge_side(),
                           rail=True, rest=_rail_rest, shape=_rail_shape)
         he.state()["edge"] = current
-        _SKIN = _build_skin(host=current.slot, kind="rail")
+        #  its cards in look B with ✕ (2026-10-18); the dock keeps ⧉ alone
+        _SKIN = _build_skin(host=current.slot, kind="rail", windowed=True)
         _SKIN.set_edge_mode(True, edge_side())
         _SKIN.set_rail_side(edge_side())
         current.place()
@@ -1300,6 +1305,11 @@ def _press_popout(key):
         say("The popup could not be opened - the Script Editor has the "
             "details")
         return False
+
+
+#  The edge rail card's ✕ (2026-10-18). A placeholder: Task 7 of the floating
+#  windows plan makes it fold the card back into the rail.
+_press_rail_close = lambda key: None                        # noqa: E731
 
 
 def _press_popup(key):

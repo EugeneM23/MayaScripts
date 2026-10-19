@@ -569,8 +569,10 @@ class FakeSkin(object):
 
     fail_finish = False
 
-    def __init__(self, host, scale=1.0, callbacks=None, layout="accordion"):
+    def __init__(self, host, scale=1.0, callbacks=None, layout="accordion",
+                 windowed=False):
         self.layout = layout                # "rail" / "accordion" (2026-10-16)
+        self.windowed = windowed            # the edge's look-B cards (2026-10-18)
         self.host = host                    # maya_hubqt.Skin keeps its host
         self.shown = None
         self.switches = []                  # show_card, as asked
@@ -1182,6 +1184,21 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.fake.run_deferred()
         self.assertIn(hub.CONTROL, self.fake.deleted)
         self.assertTrue(self.edges[-1].revealed_with_hold)
+
+    def test_the_edge_s_skin_is_windowed_with_a_close_callback(self):
+        """2026-10-18: the edge rail's cards in look B with ✕; the dock's not."""
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.set_edge(True)
+        self.fake.run_deferred()
+        self.assertTrue(hub._SKIN.windowed)
+        self.assertEqual(hub._SKIN.layout, "rail")
+        self.assertIn("close", hub._SKIN.callbacks)
+        self.assertIsNone(hub._SKIN.callbacks["close"]("retarget"))
+
+    def test_build_skin_is_windowed_only_when_asked(self):
+        self.assertFalse(hub._build_skin(host=object(), kind="rail").windowed)
+        self.assertTrue(hub._build_skin(host=object(), kind="rail",
+                                        windowed=True).windowed)
 
     def test_set_edge_is_deferred(self):
         """The press comes from the menu, inside the hub it deletes (⋮)."""

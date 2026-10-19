@@ -125,6 +125,31 @@ def dress(frame, scale):
             content.setAttribute(q.QtCore.Qt.WA_StyledBackground, False)
 
 
+TITLE_H = 34             # logical px: the title row, room for a 30-tall pill (2026-10-18)
+
+
+def title_label(text, scale, name):
+    """The look-B title's name (a section window's and the edge rail card's,
+    2026-10-18): `text` in capitals, the heading role's look - spaced, bold,
+    `muted`, at the caption size - on no background, named `name`."""
+    q = hubqt.qt()
+    label = hubqt._named(q.QtWidgets.QLabel((text or "").upper()), name)
+    label.setStyleSheet(
+        "color: {0}; font-weight: bold; letter-spacing: 1px; font-size: {1}px; "
+        "background: transparent;".format(hubstyle.TOKENS["muted"],
+                                          hubstyle.px(8.5, scale)))
+    return label
+
+
+def title_icon(icon_name, colour, scale, name):
+    """The look-B title's icon: in its group colour, with no chip (15 px)."""
+    q = hubqt.qt()
+    icon = hubqt._named(q.QtWidgets.QLabel(), name)
+    icon.setPixmap(hubqt.pixmap(icon_name, colour, hubstyle.px(15, scale)))
+    icon.setStyleSheet("background: transparent;")
+    return icon
+
+
 # ------------------------------------------------------------------- the pill
 
 def pill_class():
@@ -154,6 +179,9 @@ def pill_class():
                                   hubstyle.px(PILL_H + 2 * PILL_PAD, scale))
                 self.setAutoRaise(True)
                 self.setCursor(QtCore.Qt.PointingHandCursor)
+                #  its own lift and glow: the hub's ink glow passes it by
+                #  (maya_hubqt.glowing; the edge rail card's pills stand in the hub)
+                self.setProperty("skOwnLight", True)
                 self.timer = QtCore.QTimer(self)
                 self.timer.setInterval(TICK_MS)
                 self.timer.timeout.connect(self._tick)

@@ -583,6 +583,9 @@ def glowing(widget, root):
         return False
     if widget.property("skRole") == "swatch":
         return False
+    #  a painted pill lifts and glows by itself (maya_hubwindow, 2026-10-18)
+    if widget.property("skOwnLight"):
+        return False
     effect = widget.graphicsEffect()
     return effect is None or (isinstance(effect, _glow_class())
                               and _valid(effect))
@@ -892,10 +895,20 @@ class Card(object):
 
     def __init__(self, key, label, icon_name, colour, chip, scale,
                  collapsed=False, on_toggle=None, motion=None, on_popout=None,
-                 collapsible=True):
+                 collapsible=True, windowed=False, on_close=None):
         q = qt()
         w = q.QtWidgets
         self.key = key
+        #  The edge rail's card (2026-10-18, spec 2026-10-18-floating-windows):
+        #  look B (maya_hubwindow) - the panel with its hairline, the body on
+        #  a card of its own, the title in spaced capitals, ⧉ and ✕ painted
+        #  pills, no chevron and no rule. It never collapses: the rail shows
+        #  one card, and ✕ sends it back to the rail (`on_close`).
+        self.windowed = bool(windowed)
+        if self.windowed:
+            collapsible = False
+            import maya_hubwindow as hubwindow     # lazy: it imports this module
+        self.close = None
         #  the rail layout (2026-10-16): one card shown, never collapsed - no
         #  chevron, the header's click does nothing
         self.collapsible = bool(collapsible)
@@ -922,12 +935,23 @@ class Card(object):
 
         self._light_anim = None
         self._flash_anim = None
-        self.frame = _named(_frame_class()(scale), "skeldarHubCard_" + key)
-        self.frame.setProperty("skCard", True)
+        if self.windowed:
+            #  the same name, so the skin, card_shape and the hub find it;
+            #  no skCard (the sheet's face would paint over look B's)
+            self.frame = _named(hubwindow.frame_class()(scale),
+                                "skeldarHubCard_" + key)
+        else:
+            self.frame = _named(_frame_class()(scale), "skeldarHubCard_" + key)
+            self.frame.setProperty("skCard", True)
         column = w.QVBoxLayout(self.frame)
         column.setObjectName("skeldarHubCardLayout_" + key)
-        #  compact (2026-10-08, variant B): 5 / 4 / 5 / 5, was 8 / 7 / 8 / 8
-        column.setContentsMargins(s(5), s(4), s(5), s(5))
+        if self.windowed:
+            #  the title row stands on the frame; the card 5 px in at the sides
+            #  and the bottom (maya_hubpop's window)
+            column.setContentsMargins(s(5), 0, s(5), s(5))
+        else:
+            #  compact (2026-10-08, variant B): 5 / 4 / 5 / 5, was 8 / 7 / 8 / 8
+            column.setContentsMargins(s(5), s(4), s(5), s(5))
         #  The gap under the header is the BODY's top margin (it was this
         #  column's spacing): it opens and shuts with the body instead of
         #  appearing on the first frame of a slide and vanishing on the last.
@@ -944,17 +968,27 @@ class Card(object):
                                   w.QSizePolicy.Fixed)
         row = w.QHBoxLayout(self.header)
         row.setObjectName("skeldarHubCardHeadLayout_" + key)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(s(5))
-        chip_label = _named(w.QLabel(), "skeldarHubCardIcon_" + key,
-                            "cardicon")
-        chip_label.setFixedSize(s(18), s(18))
-        chip_label.setAlignment(q.QtCore.Qt.AlignCenter)
-        chip_label.setPixmap(pixmap(icon_name, colour, s(12)))
-        chip_label.setStyleSheet("background: {0}; border-radius: {1}px;"
-                                 .format(chip, s(5)))
-        title = _named(w.QLabel(label), "skeldarHubCardTitle_" + key,
-                       "cardtitle")
+        if self.windowed:
+            self.header.setFixedHeight(s(hubwindow.TITLE_H))
+            self.header.setCursor(q.QtCore.Qt.ArrowCursor)
+            row.setContentsMargins(s(5), 0, 0, 0)
+            row.setSpacing(s(6))
+            chip_label = hubwindow.title_icon(icon_name, colour, scale,
+                                              "skeldarHubCardIcon_" + key)
+            title = hubwindow.title_label(label, scale,
+                                          "skeldarHubCardTitle_" + key)
+        else:
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(s(5))
+            chip_label = _named(w.QLabel(), "skeldarHubCardIcon_" + key,
+                                "cardicon")
+            chip_label.setFixedSize(s(18), s(18))
+            chip_label.setAlignment(q.QtCore.Qt.AlignCenter)
+            chip_label.setPixmap(pixmap(icon_name, colour, s(12)))
+            chip_label.setStyleSheet("background: {0}; border-radius: {1}px;"
+                                     .format(chip, s(5)))
+            title = _named(w.QLabel(label), "skeldarHubCardTitle_" + key,
+                           "cardtitle")
         #  Where a moved subtitle goes: takes what the title leaves and never
         #  asks for more, so a long line clips instead of widening the hub.
         self.subtitle_slot = _named(w.QWidget(), "skeldarHubCardSub_" + key)
@@ -963,19 +997,33 @@ class Card(object):
         sub = w.QHBoxLayout(self.subtitle_slot)
         sub.setObjectName("skeldarHubCardSubLayout_" + key)
         sub.setContentsMargins(0, 0, 0, 0)
-        self.chevron = _named(w.QLabel(), "skeldarHubCardChevron_" + key)
-        #  the section's popup (2026-10-09, «кнопочка прямо на разделе перед
-        #  стрелочкой раскрытия»): before the chevron, lit while it stands
-        self.popout = _named(w.QToolButton(), "skeldarHubCardPopout_" + key,
-                             "popout")
-        self.popout.setIcon(icon("picture-in-picture",
-                                 hubstyle.TOKENS["muted"], s(14)))
-        self.popout.setIconSize(q.QtCore.QSize(s(14), s(14)))
-        self.popout.setAutoRaise(True)
-        self.popout.setFixedSize(s(20), s(18))
-        self.popout.setCursor(q.QtCore.Qt.PointingHandCursor)
-        self.popout.setToolTip("Open {0} in the viewport - a copy that stays "
-                               "over the viewport window".format(label))
+        if self.windowed:
+            #  ⧉ and ✕ as painted pills (they lift and glow by themselves)
+            pill = hubwindow.pill_class()
+            self.chevron = None
+            self.popout = _named(pill("float", scale),
+                                 "skeldarHubCardPopout_" + key)
+            self.popout.setToolTip("Open {0} in a window".format(label))
+            self.close = _named(pill("x", scale), "skeldarHubCardClose_" + key)
+            self.close.setToolTip("Back to the rail")
+            if on_close is not None:
+                self.close.clicked.connect(lambda *_a, k=key: on_close(k))
+        else:
+            self.chevron = _named(w.QLabel(), "skeldarHubCardChevron_" + key)
+            #  the section's popup (2026-10-09, «кнопочка прямо на разделе
+            #  перед стрелочкой раскрытия»): before the chevron, lit while it
+            #  stands
+            self.popout = _named(w.QToolButton(), "skeldarHubCardPopout_" + key,
+                                 "popout")
+            self.popout.setIcon(icon("picture-in-picture",
+                                     hubstyle.TOKENS["muted"], s(14)))
+            self.popout.setIconSize(q.QtCore.QSize(s(14), s(14)))
+            self.popout.setAutoRaise(True)
+            self.popout.setFixedSize(s(20), s(18))
+            self.popout.setCursor(q.QtCore.Qt.PointingHandCursor)
+            self.popout.setToolTip("Open {0} in the viewport - a copy that "
+                                   "stays over the viewport window"
+                                   .format(label))
         if on_popout is not None:
             self.popout.clicked.connect(
                 lambda *_a, k=key: on_popout(k))
@@ -983,26 +1031,44 @@ class Card(object):
         row.addWidget(title)
         row.addWidget(self.subtitle_slot, 1)
         row.addWidget(self.popout)
-        row.addWidget(self.chevron)
+        if self.windowed:
+            row.addWidget(self.close)
+        else:
+            row.addWidget(self.chevron)
 
         self.body = _named(w.QWidget(), "skeldarHubBody_" + key)
         self.body_layout = w.QVBoxLayout(self.body)
         self.body_layout.setObjectName("skeldarHubBodyLayout_" + key)
-        self.body_layout.setContentsMargins(0, s(4), 0, 0)
         self.body_layout.setSpacing(0)
-        #  the head ruled off (2026-10-16, the card rules): a hairline at the
-        #  top of the body, so it opens and shuts with it
-        rule = _named(w.QFrame(self.body), "skeldarHubCardRule_" + key)
-        rule.setFixedHeight(max(1, s(1)))
-        rule.setStyleSheet("background: {0}; border: none;".format(
-            hubstyle.TOKENS["hover"]))
-        self.body_layout.addWidget(rule)
-        self.body_layout.addSpacing(s(4))
         column.addWidget(self.header)
-        column.addWidget(self.body)
+        if self.windowed:
+            #  look B: no rule; the body stands on the frame's content card,
+            #  4 px in (its layout named: a cmds path runs through it, trap 278)
+            self.body_layout.setContentsMargins(0, 0, 0, 0)
+            content = _named(w.QFrame(), "skeldarHubCardContent_" + key)
+            inner = w.QVBoxLayout(content)
+            inner.setObjectName("skeldarHubCardContentLayout_" + key)
+            inner.setContentsMargins(s(4), s(4), s(4), s(4))
+            inner.setSpacing(0)
+            inner.addWidget(self.body)
+            self.frame.content = content
+            column.addWidget(content)
+            hubwindow.dress(self.frame, scale)
+        else:
+            self.body_layout.setContentsMargins(0, s(4), 0, 0)
+            #  the head ruled off (2026-10-16, the card rules): a hairline at
+            #  the top of the body, so it opens and shuts with it
+            rule = _named(w.QFrame(self.body), "skeldarHubCardRule_" + key)
+            rule.setFixedHeight(max(1, s(1)))
+            rule.setStyleSheet("background: {0}; border: none;".format(
+                hubstyle.TOKENS["hover"]))
+            self.body_layout.addWidget(rule)
+            self.body_layout.addSpacing(s(4))
+            column.addWidget(self.body)
         self._collapsed = None
         if not self.collapsible:
-            self.chevron.setVisible(False)
+            if self.chevron is not None:
+                self.chevron.setVisible(False)
             collapsed = False
         self.set_collapsed(collapsed)
 
@@ -1023,7 +1089,10 @@ class Card(object):
     def set_popped(self, on):
         """The popout button lit while this section's popup stands
         (maya_hubpop, 2026-10-09): accent-coloured, a property the stylesheet
-        may also style, repainted."""
+        may also style, repainted. A windowed card's ⧉ is a pill: lit."""
+        if self.windowed:
+            self.popout.set_lit(on)
+            return bool(on)
         colour = hubstyle.TOKENS["accent"] if on else hubstyle.TOKENS["muted"]
         self.popout.setProperty("skPopped", bool(on))
         self.popout.setIcon(icon("picture-in-picture", colour,
@@ -1167,7 +1236,9 @@ class Card(object):
 
     def _paint_chevron(self, angle):
         """The chevron at rest (None: the right / down icons themselves) or
-        turned `angle` degrees from right."""
+        turned `angle` degrees from right. None on a windowed card."""
+        if self.chevron is None:
+            return
         size = hubstyle.px(14, self.scale)
         colour = hubstyle.TOKENS["muted"]
         if angle is None:
@@ -1275,9 +1346,13 @@ class Card(object):
 class Skin(object):
     """The whole skinned hub. `parent_layout` is the workspaceControl's."""
 
-    def __init__(self, parent, scale=1.0, callbacks=None, layout="accordion"):
+    def __init__(self, parent, scale=1.0, callbacks=None, layout="accordion",
+                 windowed=False):
         q = qt()
         w = q.QtWidgets
+        #  the edge rail's skin (2026-10-18, maya_hub._ensure_edge): its cards
+        #  in look B with ✕; the docked hub keeps ⧉ alone (✕ would close nothing)
+        self.windowed = bool(windowed)
         #  The rail layout (2026-10-16, layout C: «Вариант С мне нравится»): a
         #  column of section icons at the left, ONE card at the right
         #  (`show_card`); "accordion" is the cards stacked as before.
@@ -1646,7 +1721,9 @@ class Skin(object):
                     collapsed=collapsed, collapsible=collapsible,
                     on_toggle=lambda k, c: self._call("toggled", k, c),
                     motion=lambda: self.animations,
-                    on_popout=lambda k: self._call("popout", k))
+                    on_popout=lambda k: self._call("popout", k),
+                    windowed=self.windowed,
+                    on_close=lambda k: self._call("close", k))
         self.column.insertWidget(self.column.count() - 1, card.frame)
         self.cards[key] = card
         if self.layout == "rail" and self.shown is None:
@@ -1674,7 +1751,7 @@ class Skin(object):
         button.setAutoRaise(True)
         if self.layout == "rail":
             button.setFixedSize(self.px(26), self.px(26))
-            button.setToolTip(label + "\nCtrl+click or middle click: a popup")
+            button.setToolTip(label + "\nCtrl+click or middle click: a window")
             button.setContextMenuPolicy(q.QtCore.Qt.CustomContextMenu)
             button.customContextMenuRequested.connect(
                 lambda pos, k=key, b=button: run_menu(
@@ -1721,7 +1798,7 @@ class Skin(object):
     def rail_actions(self, key):
         """A rail icon's right-button menu: [(label, callable)]."""
         return [("Show here", lambda: self._call("jump", key)),
-                ("Open as popup", lambda: self._call("popup", key))]
+                ("Open in a window", lambda: self._call("popup", key))]
 
     def show_card(self, key, animate=False):
         """The rail layout: card `key` the one shown (every other frame
