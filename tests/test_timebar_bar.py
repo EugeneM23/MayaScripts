@@ -1197,6 +1197,27 @@ class LiveKeyDrag(Strip):
         self.assertIn(27.0, self.strip.keys, "the copy drawn where it went down")
         self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
 
+    def test_a_copy_on_the_dragged_key_s_own_cell_is_drawn_while_the_button_is_held(self):
+        # 2026-10-19: the copy S puts down stands where its key is dragged; two equal shapes
+        # under QPainterPath's default odd-even fill cancelled out until the release
+        st, t = self.strip, self.tl.track()
+        st.keys = [12.0, 30.0, 35.0]                    # 35: the copy, beside the key dragged 30 -> 35
+        carried = look.held({"curve": {"keys": [(30.0, {"breakdown": False})], "stamped": {35.0}}})
+        moving = ((30, 30), (35, 35), carried)
+        w, h = self.tl.width(), self.tl.height()
+        img = QT.QtGui.QImage(w, h, QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        painter = QT.QtGui.QPainter(img)
+        self.tl._draw_static(painter, t, float(w), float(h), True, moving)
+        painter.end()
+        accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
+
+        def key_at(frame):
+            c = img.pixelColor(int(look.key_centre(t, frame)), bar.KEY_Y)
+            return abs(c.red() - accent.red()) < 40 and abs(c.green() - accent.green()) < 40
+        self.assertTrue(key_at(12.0), "a key at rest")
+        self.assertTrue(key_at(35.0), "the dragged key and its copy in one cell: drawn, not cancelled")
+
     def test_a_drag_whose_release_never_came_is_set_down_on_the_next_press(self):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
         self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
@@ -1205,6 +1226,93 @@ class LiveKeyDrag(Strip):
         self.assertEqual(self.calls("live_end"), [("live_end", (27, 45))])
         self.mouse(self.tl, E.MouseButtonRelease, self.x(50), Qt.LeftButton, Qt.NoButton)
 
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class MovesPlayNoEffect(Strip):
+    """2026-10-19: «при переносе ключей по слоям или по таймлайну эффекты разрушения
+    ключа и вспышек не должны отыгрываться» - a key move is no key set and deleted, nor
+    are the key edits Maya reports for it a moment later."""
+
+    motion = True
+
+    def kinds(self):
+        return [i["kind"] for i in self.strip.fx.items]
+
+    def drag(self, x0, x1):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(x0), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(x1), Qt.NoButton, Qt.LeftButton)
+        before = list(self.link.k[0])
+        self.moved = ([k + (x1 - x0) if 22 <= k <= 40 else k for k in before], self.link.k[1])
+        #  read on the release, a moved lone key's curve is cut and not made again yet
+        self.link.k = ([k for k in self.moved[0] if not 22 <= k - (x1 - x0) <= 40], self.link.k[1])
+        self.strip.keys_edited = True                   # Maya's key-edit callback during the move
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(x1), Qt.LeftButton, Qt.NoButton)
+
+    def late_edit(self):
+        """Maya reports the move's key edits once more after the release, and the key read
+        then stands where it was moved to."""
+        self.link.k = self.moved
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+
+    def test_a_live_highlight_drag_plays_nothing(self):
+        self.link = LiveLink()
+        self.strip.link = self.link
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        self.strip.fx.items[:] = []
+        self.drag(30, 35)
+        self.assertEqual(self.kinds(), [])
+        self.late_edit()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.tl.reached, {})
+
+    def test_a_highlight_moved_without_the_live_drag_plays_nothing(self):
+        self.link.live_begin = lambda selection: False   # no keys to drag live: moved on the release
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        self.strip.fx.items[:] = []
+        self.drag(30, 35)
+        self.assertEqual(self.kinds(), [])
+        self.late_edit()
+        self.assertEqual(self.kinds(), [])
+
+    def test_a_key_deleted_after_the_quiet_moment_still_breaks(self):
+        self.link = LiveLink()
+        self.strip.link = self.link
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        self.drag(30, 35)
+        self.strip._quiet_until = self.strip.clock() - 1.0      # the moment has passed
+        self.strip.fx.items[:] = []
+        self.link.k = ([k for k in self.link.k[0] if k != 12.0], self.link.k[1])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.kinds(), ["delete"])
+
+    def test_a_key_set_after_the_quiet_moment_still_flashes(self):
+        self.strip.quiet_keys()
+        self.strip._quiet_until = self.strip.clock() - 1.0
+        self.strip.refresh(keys=True)                   # the quiet read
+        self.strip.fx.items[:] = []
+        self.link.k = (sorted(self.link.k[0] + [17.0]), self.link.k[1])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.kinds(), ["set"])
+
+    def test_no_key_is_read_while_the_lanes_drag_keys(self):
+        class Panel(object):
+            def lanes_moving(self):
+                return True
+
+            def is_open(self):
+                return False
+        self.strip.layer_panel = Panel()
+        before = len(self.calls("keys"))
+        self.strip.refresh(keys=True)
+        self.assertEqual(len(self.calls("keys")), before)
+        self.strip.layer_panel = None
+        self.strip.refresh(keys=True)
+        self.assertGreater(len(self.calls("keys")), before)
 
 if __name__ == "__main__":
     unittest.main()

@@ -160,5 +160,31 @@ class Rules(unittest.TestCase):
         self.assertEqual(o_near, look.burst_delay(0, 0))
 
 
+class LaneRules(unittest.TestCase):
+    """The column's selection and the lanes (2026-10-19)."""
+
+    names = ["A3", "A2", "A1", "Base"]
+
+    def test_a_plain_click_selects_alone(self):
+        self.assertEqual(L.selection_after(["A3", "A1"], "A2", "A3", False, False, self.names), (["A2"], "A2"))
+
+    def test_ctrl_toggles(self):
+        self.assertEqual(L.selection_after(["A3"], "A1", "A3", True, False, self.names), (["A3", "A1"], "A1"))
+        self.assertEqual(L.selection_after(["A3", "A1"], "A1", "A3", True, False, self.names), (["A3"], "A3"))
+
+    def test_shift_takes_the_range(self):
+        self.assertEqual(L.selection_after(["A3"], "A1", "A3", False, True, self.names),
+                         (["A3", "A2", "A1"], "A1"))
+        self.assertEqual(L.selection_after(["Base"], "A3", "A2", True, True, self.names),
+                         (["A3", "A2", "Base"], "A3"))
+
+    def test_lane_at_and_between(self):
+        lay = L.Layout(300, 268, anim_rows(3), "anim", 1.0)
+        r = lay.row_at(1, 0)
+        self.assertEqual(L.lane_at(lay, r[1] + 2, 0), 1)
+        self.assertIsNone(L.lane_at(lay, 0, 0))
+        self.assertEqual(L.lanes_between(2, 0), [0, 1, 2])
+
+
 if __name__ == "__main__":
     unittest.main()

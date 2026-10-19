@@ -11926,6 +11926,89 @@ Spec `docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md`.
   **Not seen in a GUI Maya** (the animator's to try after Check update: the pill, the column and its resize, a
   weight drag, Merge, the lanes, the burst, the bar staying out while it is open).
 
+**…Merge selected, and the lanes as a dope sheet** (2026-10-19: «Сейчас можно только делать мерж даун ... выбирать
+разные слои ... и делать мердж селектед ... выдвижная панель с ключами ... должна повторять функционал таймлайна»;
+asked: «Делай все как в стандартной мае. Множество слоев выделяем через ctrl», the lanes «как dope sheet по слоям»).
+Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
+- **The column's selection is Maya's**: a click selects one layer (as before), **Ctrl-click** toggles, **Shift-click**
+  ranges from the last clicked (`layerlook.selection_after`, pure) - BaseAnimation too. `layerscene.select_layers`
+  writes `animLayer -e -selected` / `-preferred` (the active one) and the Layer Editor's `$gSelectedAnimLayers`;
+  rows carry `selected`; every selected row wears the accent frame, the active one also its name lit. The panel
+  also keeps its own Ctrl / Shift pick (`Panel.chosen`, used while Maya reports no more than one selected and it
+  holds the active layer): seen live, the frame stood on one row after a Ctrl-click, and `select_layers` no
+  longer rebuilds Maya's Layer Editor (its treeView re-selects row by row while it rebuilds).
+- **Merge selected** (the foot's merge button with two or more selected, «Merge selected» in a row's menu;
+  `layerscene.merge_selected`): `$gSelectedAnimLayers` set, then **`_maya_merge`, Maya's `animLayerMerge`
+  (performAnimLayerMerge.mel) ported step for step** - the animator's Merge Layers options, stack order,
+  BaseAnimation in the selection merges into the base, Maya's name for the result - with the base being the
+  panel's root (trap 279). The animator's selection is put back (Maya's proc ends in `select -cl`). One undo. One
+  layer selected: the button is Merge down, as before - and **Merge down of the layer right over BaseAnimation
+  merges into the base** (`merge_selected([base, layer])`; it used to refuse, «нельзя слой смерджить с базовым»).
+- **Plain names** («странные названия слоев при создании»): a new layer is `AnimLayerN` with the lowest free N, a
+  merge's result `Merged_Layer`, else `Merged_LayerN` (`free_name`, `_named`). Measured first in a scene tab:
+  Maya named the new layer's BLEND NODES after the next free layer names (`tab_b:AnimLayer4` .. `AnimLayer14` were
+  `animBlendNode*`), so layers came out AnimLayer3, 15, 27 and the animator's scene held `Merged_Layer2408`.
+  `_named` renames such blend nodes `<layer>_blend#` first. And + Layer in a tab puts the new layer under the
+  tab's own root (it landed under `skeldarTabsLayerRoot`, out of the tab's stack, and a merge could not order
+  it). Verify gates 24-25.
+- **The lanes** act on the selection's curves in each lane's layer only (`layerscene.curves_of`): a left press
+  sends the time (a drag scrubs, Maya's scrub mode) and makes that layer active; middle drag scrubs without update;
+  **Shift-drag highlights a frame range on the lanes it sweeps** (`Panel.lane_sel` {a, b, names}); the highlight's
+  body moves and its edges scale those layers' keys (`look.key_drag` / `mapped`, a preview while dragging,
+  `layerscene.lane_move` on the release, one undo); a double click (either button) highlights the lane's keys;
+  the right button (waiting a double's window, as the timeline) is the key menu - Set key on <layer>
+  (`lane_set_key`: `setKeyframe -animLayer`), Breakdown, Cut / Copy / Paste / Delete, Tangents ▸, Snap, Highlight
+  all keys, Clear highlight (`lane_keys`) - on the highlighted lanes, else the lane under the mouse at the frame.
+- **…and the timeline's own hand** («по сути она должна дублировать функционал таймслайдера», asked: «всё как в
+  таймлайне»): a key drag is LIVE - `layerscene.lane_live_begin` fills `scene._LIVE` with the lanes' layers'
+  curves only, then the timeline's own `scene.live_to` / `live_stamp` / `live_end` move them (the viewport follows,
+  one undo for the drag); a key pressed and dragged past the start distance moves alone with no highlight
+  (`kpend`, the timeline's), a key clicked sends the time; edges count frame lines (`_lane_grip`); **S during a key
+  drag** leaves a copy (`LaneKeys`, an application filter acting only while a lanes drag stands), during a scrub
+  keys the active layer; the key under the mouse lifts x1.6 and glows (`lane_aimed`, `KEY_LIFT`); the open-hand /
+  size cursors; the playhead's frame on an accent flag over the ruler; copies S put down drawn where they went
+  (`look.shown_at` / `held`). Verify gates 19-24.
+- **Keys go into the selected layer; the Time Bar shows the active layer's keys** («Ключи ставятся не в выделенный
+  слой а в базовый ... Если выбран слой то ключик ставим в него. Ключи из других слоев на таймлайне не видно»).
+  Measured in the animator's scene: AnimLayer1-3 held another control, `Creep_Rig:Main` only `Merged_Layer`, so
+  S on Main went to Maya's best layer / the base - Maya's own rule: a key lands in the selected layer only for a
+  plug that is a member of it. Now:
+  - **`layerscene.key_hook()`** (once a session, GUI only, the `savechanges.py` pattern): a copy of Maya's
+    `performSetKeyframeArgList.mel` with its proc renamed `skeldarMayaPerformSetKeyframeArgList`, and ours over
+    it calling `layerscene.before_key()` first - the selected objects not yet in the active layer (non-base,
+    unlocked) are added to it (`animLayer -e -attribute`, their keyable plugs). S, Key > Set Key and the shelf's
+    Set Key take this road; the Channel Box's Key Selected does not. `scene.set_key` calls `before_key` too.
+  - **`scene._scope()`** = `layerscene.active_curves()`: with animation layers the strip's keys
+    (`keys()`), and its Breakdown / Cut / Copy / Paste / Delete / Tangents / Snap / move / stamp / live drag /
+    key range act on the selection's curves in the ACTIVE layer only (`_kq`, `_on`); with no layers, the
+    selection's every curve as before.
+  - Proof `verify_timebar_active_layer.py` **12/12 standalone** (L1 active shows L1's key, the base its own;
+    Delete and a move touch L1 only; the Time Bar's Set key and Maya's S through the hook key cubes not in L1
+    INTO L1, the base keeps theirs; the base active keys the base).
+- **A key MOVE plays no effect** («при переносе ключей по слоям или по таймлайну эффекты разрушения ключа и
+  вспышек не должны отыгрываться»): `Strip.quiet_keys()` (the timeline's live and plain move, the lanes' release
+  through `Panel._quiet_strip`) makes the next key read quiet AND every read for `bar.QUIET_MS` (800) after - Maya
+  reports a move's key edits a moment later, and a moved lone key's curve is cut and made again, so a read at the
+  release can miss it and the next one find it (a "delete" then a "set"). The strip reads no keys while the lanes
+  drag keys (`Strip._lanes_moving`; their every tick read the moving keys as deleted and set). Tests
+  `test_timebar_bar.MovesPlayNoEffect` (each checked failing with the fix taken out) and the lanes' quiet tests.
+- **BaseAnimation in a scene tab** («Ключи сейчас не ставятся на базовый слой»): the panel's base is the tab's
+  `AnimLayerRoot`, which Maya takes for an ordinary layer holding no curves. `layerscene._maya_root` - Maya's own
+  root - is where the base curves are read (`_layer_curves`, so the timeline and the base lane show them) and what
+  `lane_set_key` keys; with the base active S selects and prefers Maya's root for the length of the key
+  (`_base_for_the_key`) and our wrapper's `after_key` puts every layer's flags back. `KEY_HOOK_VERSION` (2) makes
+  a session holding an older wrapper source the new one. Verify `verify_timebar_active_layer.py` **19/19**
+  (gates 13-19 in a tab); `test_timebar_layerscene.TabBase` (3 of 4 fail without the fix).
+- **The lanes read no keys while they drag keys** («Ключи мигают при переносе по выдвижной панели»): a read
+  mid-drag (Maya's key-edit callback) took the keys already moved in the scene and the preview moved them again.
+  `Panel.lanes_moving()` holds the read (`_keys_stale`, read on the release); the strip asks the same.
+- **The copy S puts down mid-drag is drawn at once** («проставленный ключик не будет отрисовываться пока не
+  отпустить клавишу мышки»): the copy stands exactly where its key is dragged, and a `QPainterPath` fills
+  odd-even by default - two equal key shapes in one path cancel out to nothing. Both the lanes' key path and
+  the timeline's still keys (`bar._draw_static`) are `WindingFill` now (the lanes also draw each frame once), and
+  the lanes add the copies to their keys on S (`Panel._add_drawn_copies`, the timeline's `add_drawn_copies`).
+  Tests fail with the fill rule taken out.
+
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
      of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached

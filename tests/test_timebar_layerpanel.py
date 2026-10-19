@@ -255,7 +255,300 @@ class Presses(Panel):
         rows = self.panel.row_menu(0)
         self.assertEqual([r[0] for r in rows if r],
                          ["Additive", "Override", "Rename", "Select objects", "Add selection",
-                          "Remove selection", "Merge down", "Delete"])
+                          "Remove selection", "Merge selected", "Merge down", "Delete"])
+        merge = [r for r in rows if r and r[0] == "Merge selected"][0]
+        self.assertIsNone(merge[1])          # one layer selected: nothing to merge
+
+
+    def ctrl_click(self, i, mods):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        x, y = self.centre(L.row_parts(self.lay.row_at(i, 0), "anim", 1.0)["name"])
+        for kind, held in ((E.MouseButtonPress, Qt.LeftButton), (E.MouseButtonRelease, Qt.NoButton)):
+            p = QT.QtCore.QPointF(x, y)
+            ev = QT.QtGui.QMouseEvent(kind, p, QT.QtCore.QPointF(self.col.mapToGlobal(p.toPoint())),
+                                      Qt.LeftButton, held, mods)
+            QT.QtWidgets.QApplication.sendEvent(self.col, ev)
+
+    def test_ctrl_click_adds_a_layer_to_maya_s_selection(self):
+        self.ctrl_click(2, QT.QtCore.Qt.ControlModifier)
+        self.assertIn(("select_layers", ["A2", "Base"], "Base"), self.link.log)
+
+    def test_shift_click_selects_the_range(self):
+        self.ctrl_click(0, QT.QtCore.Qt.NoModifier)
+        self.ctrl_click(2, QT.QtCore.Qt.ShiftModifier)
+        self.assertIn(("select_layers", ["A2", "A1", "Base"], "Base"), self.link.log)
+
+    def test_merge_with_two_selected_is_merge_selected(self):
+        self.link.anim[1]["selected"] = True
+        self.panel.refresh(force=True)
+        self.lay = self.col.layout_()
+        rect = dict(self.lay.foot)["merge"]
+        self.click(self.col, *self.centre(rect))
+        self.assertIn(("merge_selected", ["A2", "A1"]), self.link.log)
+        rows = self.panel.row_menu(0)
+        merge = [r for r in rows if r and r[0] == "Merge selected"][0]
+        merge[1]()
+        self.assertEqual(self.link.log[-1], ("merge_selected", ["A2", "A1"]))
+
+    def test_every_selected_layer_wears_the_accent_frame(self):
+        self.link.anim[1]["selected"] = True
+        self.panel.refresh(force=True)
+        img = QT.QtGui.QImage(self.col.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.col.render(img)
+        accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
+
+        def framed(i):
+            x, y, w, h = self.col.layout_().row_at(i, 0)
+            c = img.pixelColor(int(x), int(y + h / 2))
+            return abs(c.red() - accent.red()) < 40 and abs(c.green() - accent.green()) < 40
+        self.assertTrue(framed(0) and framed(1))
+        self.assertFalse(framed(2))
+
+    def test_a_ctrl_pick_stays_framed_when_maya_folds_the_selection_to_one(self):
+        self.ctrl_click(1, QT.QtCore.Qt.ControlModifier)      # the fake link leaves Maya's rows as they were
+        self.assertEqual(self.panel.selected_names(), ["A2", "A1"])
+        img = QT.QtGui.QImage(self.col.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.col.render(img)
+        accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
+        x, y, w, h = self.col.layout_().row_at(1, 0)
+        c = img.pixelColor(int(x), int(y + h / 2))
+        self.assertTrue(abs(c.red() - accent.red()) < 40 and abs(c.green() - accent.green()) < 40)
+        rect = dict(self.col.layout_().foot)["merge"]
+        self.click(self.col, *self.centre(rect))
+        self.assertIn(("merge_selected", ["A2", "A1"]), self.link.log)
+
+    def test_a_plain_click_ends_the_ctrl_pick(self):
+        self.ctrl_click(1, QT.QtCore.Qt.ControlModifier)
+        self.ctrl_click(2, QT.QtCore.Qt.NoModifier)
+        self.assertEqual(self.panel.selected_names(), ["Base"])
+
+    def test_merge_with_one_selected_is_merge_down(self):
+        rect = dict(self.lay.foot)["merge"]
+        self.click(self.col, *self.centre(rect))
+        self.assertIn(("merge_down", "A2"), self.link.log)
+
+
+class LaneStrip(FakeStrip):
+
+    quiets = 0
+
+    def quiet_keys(self):
+        self.quiets += 1
+
+    def track(self):
+        from maya_timebar import look
+        return look.Track(0, 99, 0, 1000, cells=True)        # 10 px a frame
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class Lanes(unittest.TestCase):
+    """The lanes as a dope sheet of the layers (2026-10-19)."""
+
+    def setUp(self):
+        from maya_timebar import layerpanel
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        self.link = FakeLink()
+        self.link.opts = {"skeldarTimeBarLayerLanes": 1}
+        self.panel = layerpanel.Panel(LaneStrip(), self.link, 1.0, maya_hubstyle.TOKENS, False)
+        self.addCleanup(self.panel.destroy)
+        self.panel.open((1300, 815))
+        self.lay = self.panel.column.layout_()
+        self.y = [self.lay.row_at(i, 0)[1] + 10 for i in range(3)]
+
+    def send(self, kind, x, y, button, held, mods=None):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        w = self.panel.lanes
+        p = QT.QtCore.QPointF(x, y)
+        ev = QT.QtGui.QMouseEvent(getattr(E, kind), p, QT.QtCore.QPointF(w.mapToGlobal(p.toPoint())),
+                                  button, held, mods if mods is not None else Qt.NoModifier)
+        QT.QtWidgets.QApplication.sendEvent(w, ev)
+
+    def drag(self, x0, y0, x1, y1, mods=None, button=None):
+        Qt = QT.QtCore.Qt
+        button = button or Qt.LeftButton
+        self.send("MouseButtonPress", x0, y0, button, button, mods)
+        self.send("MouseMove", x1, y1, Qt.NoButton, button, mods)
+        self.send("MouseButtonRelease", x1, y1, button, Qt.NoButton, mods)
+
+    def test_the_lanes_are_shown(self):
+        self.assertTrue(self.panel.lanes.isVisible())
+
+    def test_a_press_scrubs_and_picks_the_lane_s_layer(self):
+        self.drag(205, self.y[1], 305, self.y[1])
+        names = [e[0] for e in self.link.log]
+        self.assertIn(("pick", "A1"), self.link.log)
+        self.assertIn(("set_time", 20), self.link.log)
+        self.assertIn(("set_time", 30), self.link.log)
+        self.assertEqual(names[-1], "end_scrub")
+        self.assertIn("begin_scrub", names)
+
+    def test_a_middle_drag_scrubs_without_update(self):
+        Qt = QT.QtCore.Qt
+        self.drag(205, self.y[0], 305, self.y[0], button=Qt.MiddleButton)
+        self.assertIn(("scrub_only", 30), self.link.log)
+        self.assertNotIn("set_time", [e[0] for e in self.link.log])
+
+    def test_shift_drag_highlights_across_lanes(self):
+        Qt = QT.QtCore.Qt
+        self.drag(105, self.y[0], 405, self.y[2], mods=Qt.ShiftModifier)
+        self.assertEqual(self.panel.lane_sel, {"a": 10, "b": 40, "names": ["A2", "A1", "Base"]})
+
+    def test_the_highlight_body_moves_those_layers_keys(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2", "A1"]}
+        self.drag(155, self.y[0], 255, self.y[0])
+        self.assertEqual(self.link.log[:3], [("lane_live_begin", ["A2", "A1"], (10, 20)),
+                                             ("lane_live_to", (20, 30)), ("lane_live_end", (20, 30))])
+        self.assertEqual(self.panel.lane_sel, {"a": 20, "b": 30, "names": ["A2", "A1"]})
+
+    def test_an_edge_scales(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.drag(210, self.y[0], 310, self.y[0])               # the right edge: frame 20's cell ends at x 210
+        self.assertIn(("lane_live_to", (10, 30)), self.link.log)
+        self.assertIn(("lane_live_end", (10, 30)), self.link.log)
+
+    def test_a_press_off_the_highlight_clears_it(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.drag(605, self.y[0], 605, self.y[0])
+        self.assertIsNone(self.panel.lane_sel)
+
+    def test_a_double_click_highlights_every_key_of_the_lane(self):
+        Qt = QT.QtCore.Qt
+        self.send("MouseButtonDblClick", 505, self.y[1], Qt.LeftButton, Qt.LeftButton)
+        self.assertEqual(self.panel.lane_sel, {"a": 0, "b": 10, "names": ["A1"]})
+
+    def test_the_key_menu_acts_on_the_highlighted_lanes(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2", "A1"]}
+        rows = dict((r[0], r[1]) for r in self.panel.lane_menu(self.y[0]) if r)
+        for label in ("Breakdown", "Cut", "Copy", "Paste", "Delete", "Tangents", "Snap",
+                      "Highlight all keys", "Clear highlight", "Set key on A2"):
+            self.assertIn(label, rows)
+        rows["Delete"]()
+        self.assertEqual(self.link.log[-1], ("lane_keys", "delete", ["A2", "A1"], (10, 20), 30.0, None))
+        dict((r[0], r[1]) for r in rows["Tangents"])["Linear"]()
+        self.assertEqual(self.link.log[-1][:2], ("lane_keys", "tangents"))
+        self.assertEqual(self.link.log[-1][-1], "linear")
+        rows["Set key on A2"]()
+        self.assertEqual(self.link.log[-1], ("lane_set_key", "A2"))
+
+    def test_without_a_highlight_the_menu_acts_on_the_lane_at_the_frame(self):
+        rows = dict((r[0], r[1]) for r in self.panel.lane_menu(self.y[2]) if r)
+        self.assertNotIn("Clear highlight", rows)
+        rows["Cut"]()
+        self.assertEqual(self.link.log[-1], ("lane_keys", "cut", ["Base"], None, 30.0, None))
+
+    def test_a_key_dragged_alone_moves_without_a_highlight(self):
+        #  keys of every lane at 0 and 10 (the fake link); the key at 10 on lane A1
+        self.drag(105, self.y[1], 205, self.y[1])
+        self.assertEqual(self.link.log[:3], [("lane_live_begin", ["A1"], (10, 10)),
+                                             ("lane_live_to", (20, 20)), ("lane_live_end", (20, 20))])
+        self.assertIsNone(self.panel.lane_sel)
+
+    def test_a_key_clicked_not_dragged_sends_the_time(self):
+        Qt = QT.QtCore.Qt
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseButtonRelease", 105, self.y[1], Qt.LeftButton, Qt.NoButton)
+        self.assertIn(("set_time", 10), self.link.log)
+
+    def test_s_during_a_key_drag_puts_a_copy_down(self):
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.send("MouseButtonPress", 155, self.y[0], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseMove", 255, self.y[0], Qt.NoButton, Qt.LeftButton)
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertIn(("lane_live_stamp",), self.link.log)
+        self.send("MouseButtonRelease", 255, self.y[0], Qt.LeftButton, Qt.NoButton)
+
+    def test_the_copy_s_puts_down_is_drawn_before_the_release(self):
+        # 2026-10-19: «проставленный ключик не будет отрисовываться пока не отпустить клавишу мышки»
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.link.lane_live_stamp = lambda: {"c": {"keys": [(10.0, {})], "stamped": {20.0}}}
+        self.drag_held = None
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)   # the key at 10 on A1
+        self.send("MouseMove", 205, self.y[1], Qt.NoButton, Qt.LeftButton)
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertIn(20.0, self.panel.keys["A1"], "the copy is on the lane while the button is held")
+        self.assertNotIn(20.0, self.panel.keys["A2"], "only on the lane the key came from")
+        img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.panel.lanes.render(img)
+        t = LaneStrip().track()
+        x0, x1 = t.cell(20)
+        row = self.panel.column.layout_().row_at(1, 0)
+        ink = [img.pixelColor(int(x), int(row[1] + row[3] / 2)) for x in range(int(x0), int(x1))]
+        self.assertTrue(any(c.red() > 0x40 for c in ink), "a key drawn in frame 20's cell")
+        self.send("MouseButtonRelease", 205, self.y[1], Qt.LeftButton, Qt.NoButton)
+
+    def test_s_during_a_scrub_keys_the_active_layer(self):
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.send("MouseButtonPress", 305, self.y[0], Qt.LeftButton, Qt.LeftButton)
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.send("MouseButtonRelease", 305, self.y[0], Qt.LeftButton, Qt.NoButton)
+        self.assertIn(("lane_set_key", "A2"), self.link.log)
+
+    def test_s_with_no_drag_is_maya_s(self):
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertNotIn("lane_live_stamp", [e[0] for e in self.link.log])
+
+    def test_the_key_under_the_mouse_lifts(self):
+        Qt = QT.QtCore.Qt
+        self.send("MouseMove", 104, self.y[1], Qt.NoButton, Qt.NoButton)
+        self.assertEqual(self.panel.lane_aimed, ("A1", 10.0))
+        self.assertEqual(self.panel.lanes.cursor().shape(), Qt.OpenHandCursor)
+        self.panel.lanes.repaint()
+        self.assertFalse(self.panel.lanes._failed)
+        self.send("MouseMove", 555, self.y[1], Qt.NoButton, Qt.NoButton)
+        self.assertIsNone(self.panel.lane_aimed)
+
+    def test_a_key_move_on_the_lanes_quiets_the_strip_s_effects(self):
+        # 2026-10-19: «при переносе ключей по слоям ... эффекты разрушения ключа и вспышек не
+        # должны отыгрываться»
+        self.drag(105, self.y[1], 205, self.y[1])                 # a key dragged alone
+        self.assertEqual(self.panel.strip.quiets, 1)
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.drag(155, self.y[0], 255, self.y[0])                 # the highlight's body
+        self.assertEqual(self.panel.strip.quiets, 2)
+
+    def test_the_lanes_read_no_keys_while_they_drag_keys(self):
+        # 2026-10-19: «Ключи мигают при переносе по выдвижной панели» - a read mid-drag took
+        # the keys already moved in the scene and the preview moved them again
+        reads = []
+        keys_by_layer = self.link.keys_by_layer
+        self.link.keys_by_layer = lambda names: reads.append(names) or keys_by_layer(names)
+        Qt = QT.QtCore.Qt
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.send("MouseButtonPress", 155, self.y[0], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseMove", 255, self.y[0], Qt.NoButton, Qt.LeftButton)
+        self.panel.keys_dirty()                       # Maya's key-edit callback mid-drag
+        self.panel.refresh(keys=True)
+        self.assertEqual(reads, [], "drawn from the keys read before the drag")
+        self.send("MouseButtonRelease", 255, self.y[0], Qt.LeftButton, Qt.NoButton)
+        self.assertTrue(reads, "read again on the release")
+
+    def test_a_key_pressed_but_not_yet_dragged_reads_no_keys_either(self):
+        reads = []
+        self.link.keys_by_layer = lambda names: reads.append(names) or {}
+        Qt = QT.QtCore.Qt
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
+        self.panel.refresh(keys=True)
+        self.assertEqual(reads, [])
+        self.send("MouseButtonRelease", 105, self.y[1], Qt.LeftButton, Qt.NoButton)
+
+    def test_a_scrub_on_the_lanes_does_not_quiet_them(self):
+        self.drag(305, self.y[0], 405, self.y[0])
+        self.assertEqual(self.panel.strip.quiets, 0)
+
+    def test_it_paints_the_highlight_and_a_preview(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.panel.lane_preview = (30, 40)
+        self.panel.lanes.repaint()
+        self.assertFalse(self.panel.lanes._failed)
 
 
 class Reads(Panel):

@@ -34,13 +34,42 @@ def light():
             "highlight": read_highlight()}
 
 
+def _scope():
+    """The curves the Time Bar's keys are: with animation layers, the selection's
+    curves in the ACTIVE layer only, as Maya's slider shows them (2026-10-19); None
+    without layers (the selection's every curve, Maya's default)."""
+    try:
+        from . import layerscene
+        layerscene.key_hook()
+        return layerscene.active_curves()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _kq(**flags):
+    """`keyframe -q` over the scope: the selection's, or the active layer's curves."""
+    scope = _scope()
+    if scope is None:
+        return cmds.keyframe(q=True, **flags)
+    return cmds.keyframe(scope, q=True, **flags) if scope else []
+
+
+def _on(command, **flags):
+    """A key command over the scope; nothing when the active layer holds none."""
+    scope = _scope()
+    if scope is None:
+        return command(**flags)
+    return command(scope, **flags) if scope else None
+
+
 def keys():
-    """(keys, breakdowns): the selection's key times, as Maya's slider shows them."""
+    """(keys, breakdowns): the selection's key times, as Maya's slider shows them -
+    with animation layers, those of the active layer."""
     if not cmds.ls(selection=True):
         return [], []
     try:
-        times = cmds.keyframe(q=True, timeChange=True) or []
-        broken = cmds.keyframe(q=True, breakdown=True) or []
+        times = _kq(timeChange=True) or []
+        broken = _kq(breakdown=True) or []
     except Exception:                                        # noqa: BLE001 - nothing keyable picked
         return [], []
     bd = sorted(set(round(t, 4) for t in broken))
@@ -411,7 +440,18 @@ class _chunk(object):
 
 
 def set_key():
-    cmds.setKeyframe()
+    """The key menu's Set key: into the active layer, as S (layerscene.before_key)."""
+    try:
+        from . import layerscene
+    except Exception:                                        # noqa: BLE001
+        layerscene = None
+    if layerscene is not None:
+        layerscene.before_key()
+    try:
+        cmds.setKeyframe()
+    finally:
+        if layerscene is not None:
+            layerscene.after_key()
 
 
 def run_key_command(name):
@@ -425,38 +465,38 @@ def run_key_command(name):
 def breakdown(selection, frame):
     a, b = _span(selection, frame)
     with _chunk("skeldarTimeBarBreakdown"):
-        if not cmds.keyframe(q=True, time=(a, b)):
+        if not _kq(time=(a, b)):
             cmds.setKeyframe(breakdown=True)
         else:
-            cmds.keyframe(edit=True, time=(a, b), breakdown=True)
+            _on(cmds.keyframe, edit=True, time=(a, b), breakdown=True)
 
 
 def cut_keys(selection, frame):
-    cmds.cutKey(time=_span(selection, frame), option="keys")
+    _on(cmds.cutKey, time=_span(selection, frame), option="keys")
 
 
 def copy_keys(selection, frame):
-    cmds.copyKey(time=_span(selection, frame), option="keys")
+    _on(cmds.copyKey, time=_span(selection, frame), option="keys")
 
 
 def paste_keys(selection, frame):
-    cmds.pasteKey(time=(_span(selection, frame)[0],), option="merge")
+    _on(cmds.pasteKey, time=(_span(selection, frame)[0],), option="merge")
 
 
 def delete_keys(selection, frame):
-    cmds.cutKey(time=_span(selection, frame), clear=True)
+    _on(cmds.cutKey, time=_span(selection, frame), clear=True)
 
 
 def tangents(selection, frame, kind):
     a, b = _span(selection, frame)
     if kind == "step":
-        cmds.keyTangent(time=(a, b), outTangentType="step")
+        _on(cmds.keyTangent, time=(a, b), outTangentType="step")
     else:
-        cmds.keyTangent(time=(a, b), inTangentType=kind, outTangentType=kind)
+        _on(cmds.keyTangent, time=(a, b), inTangentType=kind, outTangentType=kind)
 
 
 def snap_keys(selection, frame):
-    cmds.snapKey(time=_span(selection, frame), timeMultiple=1)
+    _on(cmds.snapKey, time=_span(selection, frame), timeMultiple=1)
 
 
 def move_keys(selection, target, only=None):
@@ -476,17 +516,19 @@ def move_keys(selection, target, only=None):
     #  the highlight's cells, [a, b + 1): a key between frames in the last cell
     #  moves too (2026-10-17, the cells drawn as Maya's slider draws them)
     span = (a, b + 1 - 1e-3)
-    curves = cmds.keyframe(q=True, time=span, name=True) or []
+    curves = _kq(time=span, name=True) or []
+    if not curves:
+        return
     with _chunk("skeldarTimeBarMoveKeys"):
         if b <= a or (nb - na) == (b - a):
-            cmds.keyframe(edit=True, time=span, relative=True, timeChange=na - a, option="over")
+            cmds.keyframe(curves, edit=True, time=span, relative=True, timeChange=na - a, option="over")
         else:
             pivot = b if nb == b else a
             factor = float(nb - na) / (b - a)
-            cmds.scaleKey(time=span, timeScale=factor, timePivot=pivot)
+            cmds.scaleKey(curves, time=span, timeScale=factor, timePivot=pivot)
             #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
             far = pivot + (b + 1 - pivot) * factor
-            cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
+            cmds.snapKey(curves, time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
         _show_now(curves)
 
 
@@ -522,7 +564,7 @@ def key_range(a, b, name):
             #  ahead of it and the "bake" would drift off the motion
             #  each inside its own keys (an insert past a curve's keys re-types the key
             #  beside it, CLAUDE.md trap 267)
-            for curve in cmds.keyframe(q=True, name=True) or []:
+            for curve in _kq(name=True) or []:
                 times = cmds.keyframe(curve, q=True, timeChange=True) or []
                 if not times:
                     continue
@@ -604,7 +646,7 @@ def stamp_keys(selection, target, only=None):
     span = (a, b + 1 - 1e-3)
     if only is None:
         only = {}
-        for curve in cmds.keyframe(q=True, time=span, name=True) or []:
+        for curve in _kq(time=span, name=True) or []:
             times = cmds.keyframe(curve, q=True, time=span, timeChange=True) or []
             if times:
                 only[curve] = {"keys": [(t, _key_data(curve, t)) for t in times],
@@ -720,7 +762,7 @@ def live_begin(selection):
     a, b = selection
     span = (a, b + 1 - 1e-3)
     curves = {}
-    for curve in cmds.keyframe(q=True, time=span, name=True) or []:
+    for curve in _kq(time=span, name=True) or []:
         keys = _curve_keys(curve)
         moved = [(t, d) for t, d in keys if look.inside(t, selection)]
         if not moved:

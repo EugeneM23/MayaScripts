@@ -171,10 +171,13 @@ class Writes(Reads):
         self.assertFalse(S.set_flag("BaseAnimation", "solo", True)[0])
         self.assertFalse(S.delete_anim("BaseAnimation")[0])
 
-    def test_nothing_to_merge_into_the_base(self):
-        ok, msg = S.merge_down("A")
-        self.assertFalse(ok)
-        self.assertIn("nothing to merge into", msg)
+    def test_merge_down_onto_the_base_merges_into_it(self):
+        seen = []
+        old = S.merge_selected
+        S.merge_selected = lambda names: seen.append(names) or (True, "")
+        self.addCleanup(setattr, S, "merge_selected", old)
+        self.assertTrue(S.merge_down("A")[0])
+        self.assertEqual(seen, [["BaseAnimation", "A"]])
 
     def test_a_second_begin_weight_closes_the_first_chunk(self):
         S._WEIGHT["open"] = False
@@ -190,6 +193,116 @@ class Writes(Reads):
         S.set_display("lay1", "type", 2)
         self.assertEqual(self.cmds.attrs["lay1.displayType"], 2)
 
+
+class Selection(Reads):
+    """Several layers selected, Merge selected, the lanes' keys (2026-10-19)."""
+
+    def test_rows_say_which_layers_are_selected(self):
+        self.cmds.selected = {"A": True, "B": True, "BaseAnimation": False}
+        rows = dict((r["name"], r) for r in S.anim_layers())
+        self.assertTrue(rows["A"]["selected"] and rows["B"]["selected"])
+        self.assertFalse(rows["BaseAnimation"]["selected"])
+
+    def test_select_layers_writes_maya_s_selection(self):
+        S.select_layers(["A", "BaseAnimation"], "A")
+        self.assertEqual(self.cmds.selected, {"A": True, "B": False, "BaseAnimation": True})
+        edits = [c for c in self.cmds.calls if c[0] == "animLayer" and "preferred" in c[2]]
+        self.assertEqual(dict((c[1], c[2]["preferred"]) for c in edits),
+                         {"BaseAnimation": False, "A": True, "B": False})
+
+    def test_merge_selected_needs_two_layers(self):
+        ok, msg = S.merge_selected(["A"])
+        self.assertFalse(ok)
+        self.assertIn("two layers", msg)
+
+    def test_the_lanes_curves_are_the_layers_curves_of_the_selection(self):
+        self.assertEqual(S.curves_of(["A", "B"]), ["A_tx", "B_tx"])
+
+    def test_a_lane_key_op_acts_on_those_curves_only(self):
+        seen = []
+        self.cmds.cutKey = lambda *a, **kw: seen.append((a, kw))
+        ok, _msg = S.lane_keys("delete", ["A"], (10, 20), 5.0)
+        self.assertTrue(ok)
+        self.assertEqual(seen[0][0], (["A_tx"],))
+        self.assertTrue(seen[0][1]["clear"])
+        self.assertAlmostEqual(seen[0][1]["time"][1], 21 - 1e-3)
+
+    def test_set_key_on_a_layer_keys_its_channels_of_the_selection(self):
+        seen = []
+        self.cmds.setKeyframe = lambda *a, **kw: seen.append((a, kw))
+        S.lane_set_key("A")
+        self.assertEqual(seen, [((["cube.translateX"],), {"animLayer": "A"})])
+
+
+class Names(unittest.TestCase):
+
+    def test_the_plainest_free_name(self):
+        self.assertEqual(S.free_name("AnimLayer", ["AnimLayer1", "AnimLayer3"]), "AnimLayer2")
+        self.assertEqual(S.free_name("Merged_Layer", [], first=0), "Merged_Layer")
+        self.assertEqual(S.free_name("Merged_Layer", ["Merged_Layer"], first=0), "Merged_Layer1")
+
+
+
+class TabCmds(FakeCmds):
+    """A scene tab: the panel's BaseAnimation is `tab_x:AnimLayerRoot`, a layer under
+    Maya's own root, and the base curves hang under Maya's root."""
+
+    def __init__(self):
+        super(TabCmds, self).__init__()
+        self.tree = {"BaseAnimation": ["tab_x:AnimLayerRoot"], "tab_x:AnimLayerRoot": ["A", "B"]}
+        self.attrs.update({"tab_x:AnimLayerRoot.mute": False, "tab_x:AnimLayerRoot.lock": False})
+        self.selected = {"A": False, "B": False, "tab_x:AnimLayerRoot": True, "BaseAnimation": False}
+        self.preferred = {"tab_x:AnimLayerRoot": True}
+        self.edges = (("blend1", "cube.translateX"),)
+        self.kinds = {"blend1": "animBlendNodeAdditiveDL", "base_tx": "animCurveTL"}
+
+    def animLayer(self, name=None, q=False, e=False, **kw):
+        if q and kw.get("preferred"):
+            return self.preferred.get(name, False)
+        if e and "preferred" in kw:
+            self.preferred[name] = kw["preferred"]
+        return super(TabCmds, self).animLayer(name, q=q, e=e, **kw)
+
+    def ls(self, *a, **kw):
+        if kw.get("type") == "animLayer":
+            return ["BaseAnimation", "tab_x:AnimLayerRoot", "A", "B"]
+        return super(TabCmds, self).ls(*a, **kw)
+
+    def objExists(self, name):
+        return True
+
+
+class TabBase(unittest.TestCase):
+    """2026-10-19: «Ключи сейчас не ставятся на базовый слой» - in a scene tab."""
+
+    def setUp(self):
+        self.cmds = TabCmds()
+        self.old = S.cmds
+        S.cmds = self.cmds
+        self.addCleanup(setattr, S, "cmds", self.old)
+        S._KEY_FLAGS.clear()
+
+    def test_the_base_is_the_tab_s_root(self):
+        self.assertEqual(S.active_layer(), ("tab_x:AnimLayerRoot", "tab_x:AnimLayerRoot"))
+
+    def test_the_base_s_curves_are_under_maya_s_root(self):
+        self.assertEqual(S.active_curves(), ["base_tx"])
+
+    def test_a_key_with_the_base_active_goes_to_maya_s_root_and_the_flags_come_back(self):
+        before = (dict(self.cmds.selected), dict(self.cmds.preferred))
+        self.assertTrue(S.before_key())
+        self.assertTrue(self.cmds.selected["BaseAnimation"] and self.cmds.preferred["BaseAnimation"])
+        self.assertFalse(self.cmds.selected["tab_x:AnimLayerRoot"] or self.cmds.preferred["tab_x:AnimLayerRoot"])
+        self.assertTrue(S.after_key())
+        self.assertEqual(self.cmds.selected, before[0])
+        self.assertEqual({k: v for k, v in self.cmds.preferred.items() if v}, {k: v for k, v in before[1].items() if v})
+
+    def test_set_key_on_the_base_lane_keys_maya_s_root(self):
+        seen = []
+        self.cmds.setKeyframe = lambda *a, **kw: seen.append(kw)
+        self.cmds.listAttr = lambda node, keyable=True: ["translateX"]
+        S.lane_set_key("tab_x:AnimLayerRoot")
+        self.assertEqual(seen, [{"animLayer": "BaseAnimation"}])
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ The data is the link's at once; only the picture moves (docs/interface-motion.md
 Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 """
 
+import math
 import sys
 import time
 import traceback
@@ -26,6 +27,7 @@ LANES_VAR = "skeldarTimeBarLayerLanes"
 PLACE_MS = 300
 STATUS_MS = 4000
 DIM = 0.42              # a muted or soloed-out layer, and its lane
+KEY_LIFT = 1.6          # the key under the mouse grows, as on the timeline
 LANE_FACE = "#141517"
 MUTE_FACE = "#3a2626"   # M lit
 SOLO_FACE = "#23324a"   # S lit
@@ -91,6 +93,14 @@ class Panel(object):
         self.rows = {"anim": [], "disp": []}
         self.picked_disp = None
         self.scroll = 0.0
+        self.anchor = None             # a Shift-click's range starts here
+        self.chosen = None             # the layers the last Ctrl / Shift click selected
+        self.lane_sel = None           # the lanes' highlight: {"a", "b", "names"}
+        self.lane_drag = None          # a press held on the lanes
+        self.lane_preview = None       # the highlight where a key drag has it now
+        self.lane_live = None          # a key drag moving the scene's keys (scene.live_*)
+        self.lane_stamped = None       # what S put down during the drag
+        self.lane_aimed = None         # (layer, key) under the mouse
         self.keys = {}
         self._keys_stale = False        # a key edit: the lanes read on the next refresh
         self.phase = "closed"
@@ -184,6 +194,18 @@ class Panel(object):
 
     def current_rows(self):
         return self.rows.get(self.tab, [])
+
+    def selected_names(self):
+        """The animation layers selected, the column's order: the panel's own Ctrl / Shift
+        pick while it still holds the active layer and Maya reports no more than one
+        selected (Maya's Layer Editor may fold a selection of several back to one), else
+        Maya's selection."""
+        names = [r["name"] for r in self.rows["anim"]]
+        maya = [r["name"] for r in self.rows["anim"] if r.get("selected") or r.get("active")]
+        chosen = self.chosen
+        if chosen and len(maya) <= 1 and self.active_name() in chosen and all(n in names for n in chosen):
+            return [n for n in names if n in set(chosen)]
+        return maya
 
     def active_name(self):
         for row in self.rows["anim"]:
@@ -361,17 +383,337 @@ class Panel(object):
             self._clamp_scroll()
             self.column.invalidate()
         if self._lanes_shown() and (keys or changed or self._keys_stale):
-            self._read_keys()
+            if self.lanes_moving():
+                #  a key drag on the lanes: drawn from the keys read before it, moved by its
+                #  preview; a read now would move the moved keys again («ключи мигают при
+                #  переносе», 2026-10-19). Read on the release.
+                self._keys_stale = True
+            else:
+                self._read_keys()
 
     def _read_keys(self):
         self._keys_stale = False
         self.keys = self._call("keys_by_layer", [r["name"] for r in self.rows["anim"]]) or {}
         self.lanes.invalidate()
 
+    def lanes_moving(self):
+        """A key drag on the lanes stands (a key pressed, a block moved or scaled)."""
+        drag = self.lane_drag
+        return bool(self.lane_live) or bool(drag and drag[0] in ("key", "kpend"))
+
     def keys_dirty(self):
         """A key edit (Maya's callback, many in a drag or a bake): read on the next
         refresh, not here."""
         self._keys_stale = True
+
+    # -- the lanes as a dope sheet (2026-10-19) ---------------------------------
+    #
+    # «выдвижная панель с ключами ... должна повторять функционал таймлайна»: each lane
+    # is the timeline for that layer's keys of the selection. A press scrubs, a
+    # Shift-drag highlights a range on the lanes it sweeps, the highlight's body moves
+    # and its edges scale those layers' keys, the right button is the key menu.
+
+    def _track(self):
+        try:
+            return self.strip.track()
+        except Exception:                                    # noqa: BLE001
+            return None
+
+    def lane_name(self, i):
+        rows = self.rows["anim"]
+        return rows[i]["name"] if i is not None and 0 <= i < len(rows) else None
+
+    def lane_index(self, y):
+        return L.lane_at(self.column.layout_(), y, self.scroll)
+
+    def lane_part(self, x, i):
+        """'h0' / 'h1' / 'hmove' over the highlight on lane `i`, else None."""
+        sel, t = self.lane_sel, self._track()
+        if not sel or t is None or self.lane_name(i) not in sel["names"]:
+            return None
+        return look.highlight_hit(t, x, (sel["a"], sel["b"]), self.ui)
+
+    def _lane_grip(self, part, x, t):
+        """The frame a highlight drag counts from (the timeline's `_grip`): an edge
+        counts frame lines, the body cells."""
+        if part in ("h0", "h1"):
+            return int(round(t.frame(x)))
+        return t.whole(x)
+
+    def lane_key_under(self, x, i):
+        """The key of lane `i` whose cell `x` is in (the timeline's `_key_under`)."""
+        t, name = self._track(), self.lane_name(i)
+        if t is None or name is None:
+            return None
+        near, best = max(3 * self.ui, t.scale / 2.0), None
+        for k in self.keys.get(name, []):
+            d = abs(look.key_centre(t, k) - x)
+            if d <= near:
+                best, near = k, d
+        return best
+
+    def _now(self):
+        try:
+            return float(self.strip.now())
+        except Exception:                                    # noqa: BLE001
+            return None
+
+    def lane_press(self, x, y, shift=False, middle=False):
+        t = self._track()
+        if t is None:
+            return
+        self._lane_end_live()
+        i = self.lane_index(y)
+        name = self.lane_name(i)
+        frame = t.whole(x)
+        if middle:
+            self.lane_drag = ("mid", frame)
+            self._call("scrub_only", frame)
+        elif shift and name is not None:
+            self.lane_sel = {"a": frame, "b": frame, "names": [name]}
+            self.lane_drag = ("hl", i, frame)
+        else:
+            part = self.lane_part(x, i)
+            key = self.lane_key_under(x, i)
+            if part:
+                sel = (self.lane_sel["a"], self.lane_sel["b"])
+                self.lane_drag = ("key", part, self._lane_grip(part, x, t), sel, False)
+                self.lane_preview, self.lane_stamped, self.lane_live = sel, None, None
+            elif key is not None and frame != self._now():
+                #  a key pressed: dragged past the start distance it moves alone, no
+                #  highlight needed; let go where it was, it is a click on the time
+                self.lane_drag = ("kpend", frame, x, key, i)
+            else:
+                self._lane_time(x, i, frame)
+        self.lanes.invalidate()
+
+    def _lane_time(self, x, i, frame):
+        name = self.lane_name(i)
+        self.lane_sel = None
+        if name is not None and not self.rows["anim"][i].get("active"):
+            self.anchor = name
+            self.chosen = [name]
+            self._write("pick", name)
+        self.lane_drag = ("scrub", frame)
+        self._call("begin_scrub")
+        self._call("set_time", frame)
+
+    def _start_distance(self):
+        try:
+            return self.q.QtWidgets.QApplication.startDragDistance()
+        except Exception:                                    # noqa: BLE001
+            return 4
+
+    def lane_move(self, x, y):
+        drag, t = self.lane_drag, self._track()
+        if not drag or t is None:
+            return
+        frame = t.whole(x)
+        if drag[0] == "kpend":
+            if abs(x - drag[2]) < self._start_distance():
+                return
+            key = int(math.floor(drag[3] + 1e-6))
+            self.lane_sel = {"a": key, "b": key, "names": [self.lane_name(drag[4])]}
+            self.lane_drag = ("key", "hmove", drag[1], (key, key), True)
+            self.lane_preview, self.lane_stamped, self.lane_live = (key, key), None, None
+            drag = self.lane_drag
+        if drag[0] in ("scrub", "mid"):
+            if frame != drag[1]:
+                self.lane_drag = (drag[0], frame)
+                self._call("set_time" if drag[0] == "scrub" else "scrub_only", frame)
+                self.lanes.repaint()
+            return
+        if drag[0] == "hl":
+            i = self.lane_index(y)
+            if i is None:
+                i = drag[1]
+            rows = self.rows["anim"]
+            names = [rows[k]["name"] for k in L.lanes_between(drag[1], min(i, len(rows) - 1))]
+            a, b = look.highlight(drag[2], frame)
+            self.lane_sel = {"a": a, "b": b, "names": names}
+        elif drag[0] == "key":
+            target = look.key_drag(drag[1], drag[3], drag[2], self._lane_grip(drag[1], x, t))
+            if target != self.lane_preview:
+                self.lane_preview = target
+                self._lane_live_to(target)
+        self.lanes.invalidate()
+
+    def _lane_live_to(self, target):
+        """The scene's keys follow the drag, as under the timeline (the viewport shows it)."""
+        if self.lane_live is None and self.lane_sel:
+            self.lane_live = bool(self._call("lane_live_begin", list(self.lane_sel["names"]),
+                                             tuple(self.lane_drag[3])))
+        if self.lane_live:
+            self._call("lane_live_to", tuple(target))
+
+    def _quiet_strip(self):
+        quiet = getattr(self.strip, "quiet_keys", None)
+        if quiet is not None:
+            try:
+                quiet()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+    def _lane_end_live(self):
+        """A live drag whose release never came: set it down where it stands."""
+        if self.lane_live:
+            self.lane_live = None
+            self._quiet_strip()
+            self._call("lane_live_end", tuple(self.lane_preview) if self.lane_preview else None)
+
+    def lane_stamp(self):
+        """S during a drag on the lanes: a key drag leaves a copy of the dragged keys
+        where they are now (the timeline's rule); a scrub keys the active layer at the
+        frame. True when it was ours."""
+        drag = self.lane_drag
+        if not drag:
+            return False
+        if drag[0] == "key":
+            if not self.lane_live:
+                self._lane_live_to(self.lane_preview or drag[3])
+            if self.lane_live:
+                got = self._call("lane_live_stamp")
+                if isinstance(got, dict) and got:
+                    self.lane_stamped = got
+                    self._add_drawn_copies(got, tuple(drag[3]), tuple(self.lane_preview or drag[3]))
+            self.lanes.invalidate()
+            return True
+        if drag[0] in ("scrub", "mid"):
+            name = self.active_name()
+            if name:
+                self._write("lane_set_key", name)
+            return True
+        return False
+
+    def _add_drawn_copies(self, stamped, selection, target):
+        """The copies S put down mid-drag, drawn on their lanes at once: the scene holds
+        them, but the lanes read keys again only on the release (2026-10-19: «проставленный
+        ключик не будет отрисовываться пока не отпустить клавишу мышки»). A copy goes on
+        every dragged lane that had the key it was copied from."""
+        names = list(self.lane_sel["names"]) if self.lane_sel else []
+        for rec in stamped.values():
+            put = set(round(t, 4) for t in rec.get("stamped", ()))
+            for t, _data in rec.get("keys", ()):
+                nt = look.mapped(t, selection, target)
+                if round(nt, 4) not in put:
+                    continue
+                for name in names:
+                    have = self.keys.setdefault(name, [])
+                    if any(abs(k - t) < 1e-4 for k in have) and not any(abs(k - nt) < 1e-4 for k in have):
+                        have.append(float(nt))
+                        have.sort()
+
+    def lane_release(self):
+        drag, self.lane_drag = self.lane_drag, None
+        if not drag:
+            return
+        if drag[0] == "kpend":
+            #  a key clicked, not dragged: the time goes there, as on the timeline
+            self._lane_time(drag[2], drag[4], drag[1])
+            drag, self.lane_drag = self.lane_drag, None
+        if drag[0] == "scrub":
+            self._call("end_scrub")
+        elif drag[0] == "key":
+            target, self.lane_preview = self.lane_preview, None
+            sel, loose = drag[3], drag[4]
+            names = list(self.lane_sel["names"]) if self.lane_sel else []
+            moved = bool(target) and tuple(target) != tuple(sel)
+            #  a move is no key set and deleted: the strip plays no effect for it
+            self._quiet_strip()
+            if self.lane_live:
+                self.lane_live = None
+                self._after_write(self._call("lane_live_end", tuple(target or sel)))
+            elif moved and names:
+                self._write("lane_move", names, sel, tuple(target))
+            self.lane_stamped = None
+            if moved and names:
+                self.lane_sel = None if loose else {"a": target[0], "b": target[1], "names": names}
+            elif loose:
+                self.lane_sel = None
+        self.lanes.invalidate()
+
+    def lane_aim(self, x, y):
+        """The key under the mouse lifts, as on the timeline. Answers what a press does
+        there: 'edge', 'grab' or 'time' (the cursor)."""
+        i = self.lane_index(y)
+        key = self.lane_key_under(x, i)
+        aim = (self.lane_name(i), key) if key is not None else None
+        if aim != self.lane_aimed:
+            self.lane_aimed = aim
+            self.lanes.update()
+        part = self.lane_part(x, i)
+        return "edge" if part in ("h0", "h1") else ("grab" if part == "hmove" or key is not None else "time")
+
+    def lane_all(self, y):
+        """Every key of the lane under `y` highlighted."""
+        name = self.lane_name(self.lane_index(y))
+        if name is None:
+            return
+        span = look.all_keys(self.keys.get(name, []))
+        self.lane_sel = {"a": span[0], "b": span[1], "names": [name]} if span else None
+        self.lanes.invalidate()
+
+    def lane_menu(self, y):
+        """The key menu's rows for a right press on the lanes at `y`."""
+        name = self.lane_name(self.lane_index(y))
+        sel = self.lane_sel
+        names = list(sel["names"]) if sel else ([name] if name else [])
+        if not names:
+            return []
+        span = (sel["a"], sel["b"]) if sel else None
+        try:
+            now = float(self.strip.now())
+        except Exception:                                    # noqa: BLE001
+            now = 0.0
+
+        def op(kind, extra=None):
+            return lambda: self._write("lane_keys", kind, names, span, now, extra)
+
+        key_layer = name if name else names[0]
+        rows = [("Set key on %s" % self._label_of(key_layer), lambda: self._write("lane_set_key", key_layer)),
+                ("Breakdown", op("breakdown")), None,
+                ("Cut", op("cut")), ("Copy", op("copy")), ("Paste", op("paste")), ("Delete", op("delete")),
+                None,
+                ("Tangents", [(label, op("tangents", kind)) for label, kind in look.TANGENTS]),
+                ("Snap", op("snap")), None,
+                ("Highlight all keys", lambda: self.lane_all(y))]
+        if sel:
+            rows.append(("Clear highlight", self.lane_clear))
+        return rows
+
+    def lane_clear(self):
+        self.lane_sel = self.lane_preview = None
+        self.lanes.invalidate()
+
+    def _label_of(self, name):
+        for row in self.rows["anim"]:
+            if row["name"] == name:
+                return row.get("label", name)
+        return name
+
+    def lane_menu_at(self, y, global_point):
+        rows = self.lane_menu(y)
+        if not rows:
+            return
+        QtWidgets = self.q.QtWidgets
+        builder = getattr(self.strip, "menu_rows", None)
+        try:
+            if builder is not None:
+                menu, picked = builder(rows, QtWidgets.QMenu(self.lanes))
+            else:
+                menu, picked = _menu_rows(QtWidgets, rows, QtWidgets.QMenu(self.lanes))
+            menu.setStyleSheet(bar.stylesheet(self.tokens, self.ui))
+            chosen = menu.exec(global_point)
+            menu.deleteLater()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+            return
+        action = picked.get(chosen)
+        if action is not None:
+            try:
+                action()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
 
     def on_time(self):
         """The lanes' playhead cell: repainted now, not on an idle (trap 269)."""
@@ -402,8 +744,9 @@ class Panel(object):
         self.column.invalidate()
 
     # -- presses -----------------------------------------------------------------
-    def press(self, hit, pos=None, gy=None):
-        """A left press on the column at `hit` (layerlook.hit)."""
+    def press(self, hit, pos=None, gy=None, ctrl=False, shift=False):
+        """A left press on the column at `hit` (layerlook.hit); Ctrl / Shift on a
+        layer's name add to or range Maya's layer selection."""
         if not hit:
             return
         lay = self.column.layout_()
@@ -430,7 +773,7 @@ class Panel(object):
             self.flashes[("foot", hit[1])] = self.clock()
             self._foot(hit[1], lay)
         elif kind == "row":
-            self._row_press(hit[1], hit[2], lay, pos)
+            self._row_press(hit[1], hit[2], lay, pos, ctrl, shift)
         self.kick()
 
     def _switch_tab(self, tab, lay):
@@ -454,7 +797,7 @@ class Panel(object):
             self._hide_lanes(burst=True)
         self.column.invalidate()
 
-    def _row_press(self, i, part, lay, pos):
+    def _row_press(self, i, part, lay, pos, ctrl=False, shift=False):
         rows = self.current_rows()
         if i >= len(rows):
             return
@@ -462,7 +805,18 @@ class Panel(object):
         name = row["name"]
         if part == "name" or part in ("mode", "swatch"):
             if self.tab == "anim":
-                self._write("pick", name)
+                if ctrl or shift:
+                    names = [r["name"] for r in rows]
+                    picked, active = L.selection_after(self.selected_names(), name, self.anchor,
+                                                       ctrl, shift, names)
+                    if not shift:
+                        self.anchor = name
+                    self.chosen = list(picked)
+                    self._write("select_layers", picked, active)
+                else:
+                    self.anchor = name
+                    self.chosen = [name]
+                    self._write("pick", name)
             else:
                 self.picked_disp = name
                 self.column.invalidate()
@@ -531,6 +885,9 @@ class Panel(object):
                 self._write("create_anim")
                 return
             target = self.active_name()
+            if name == "merge" and len(self.selected_names()) >= 2:
+                self._write("merge_selected", self.selected_names())
+                return
             calls = {"addsel": "add_selection", "remsel": "remove_selection",
                      "merge": "merge_down", "delete": "delete_anim"}
         else:
@@ -576,7 +933,7 @@ class Panel(object):
             if row.get("base"):
                 return [("Additive", None), ("Override", None), None, ("Rename", None),
                         ("Select objects", None), ("Add selection", None), ("Remove selection", None), None,
-                        ("Merge down", None), ("Delete", None)]
+                        ("Merge selected", self._merge_selected_row()), ("Merge down", None), ("Delete", None)]
             lay = self.column.layout_()
             return [("Additive", lambda: self._write("set_mode", name, "add"), row.get("mode") == "add"),
                     ("Override", lambda: self._write("set_mode", name, "ovr"), row.get("mode") == "ovr"),
@@ -586,6 +943,7 @@ class Panel(object):
                     ("Add selection", lambda: self._write("add_selection", name)),
                     ("Remove selection", lambda: self._write("remove_selection", name)),
                     None,
+                    ("Merge selected", self._merge_selected_row()),
                     ("Merge down", lambda: self._write("merge_down", name)),
                     ("Delete", lambda: self._delete("delete_anim", name, lay))]
         lay = self.column.layout_()
@@ -599,6 +957,12 @@ class Panel(object):
                 ("Remove selection", lambda: self._write("display_remove", name)),
                 None,
                 ("Delete", lambda: self._delete("delete_display", name, lay))]
+
+    def _merge_selected_row(self):
+        names = self.selected_names()
+        if len(names) < 2:
+            return None
+        return lambda: self._write("merge_selected", names)
 
     def menu_at(self, i, global_point):
         rows = self.row_menu(i)
@@ -1039,7 +1403,9 @@ def _classes():
                         pn.menu_at(h[1], QtCore.QPoint(int(g.x()), int(g.y())))
                     return
                 if event.button() == Qt.LeftButton:
-                    pn.press(h, (x, y), self._gy(event))
+                    mods = event.modifiers()
+                    pn.press(h, (x, y), self._gy(event), ctrl=bool(mods & Qt.ControlModifier),
+                             shift=bool(mods & Qt.ShiftModifier))
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
 
@@ -1105,7 +1471,7 @@ def _classes():
                 clip.addRoundedRect(shape, r, r)
                 p.setClipPath(clip)
             key = (self.width(), self.height(), ui, pn.tab, round(pn.scroll, 2),
-                   L.signature(pn.current_rows()), pn.picked_disp, pn.status, pn.lanes_on,
+                   L.signature(pn.current_rows()), tuple(pn.selected_names()), pn.picked_disp, pn.status, pn.lanes_on,
                    len(pn.rows["anim"]), len(pn.rows["disp"]), excluded)
             if key != self._cache_key or self._cache is None:
                 self.rebuilds += 1
@@ -1367,7 +1733,9 @@ def _classes():
             else:
                 dim = not row.get("visible", True)
             p.setPen(Qt.NoPen)
-            if lit:
+            #  every selected layer wears the accent frame (2026-10-19: «оранжевая рамка должна быть
+            #  ... на всех выделенных»); the active one keys go to also has its name lit
+            if lit or (tab == "anim" and row.get("name") in pn.selected_names()):
                 p.setBrush(colour(tk["card_active"]))
                 p.setPen(QtGui.QPen(colour(tk["accent"]), 1.5 * ui))
                 p.drawRoundedRect(r.adjusted(0.75 * ui, 0.75 * ui, -0.75 * ui, -0.75 * ui), 5 * ui, 5 * ui)
@@ -1457,6 +1825,32 @@ def _classes():
 
     # -- the lanes ---------------------------------------------------------------
 
+    class LaneKeys(QtCore.QObject):
+        """S during a lanes drag (the timeline's DragKeys): a held button keeps the key
+        from Maya's hotkeys, so it is caught application-wide while a drag stands."""
+
+        def __init__(self, panel, parent=None):
+            super(LaneKeys, self).__init__(parent)
+            self.panel = panel
+
+        def eventFilter(self, obj, event):
+            try:
+                kind = event.type()
+                override = kind == QtCore.QEvent.ShortcutOverride
+                if kind != QtCore.QEvent.KeyPress and not override:
+                    return False
+                if not self.panel.lane_drag or int(event.key()) != int(Qt.Key_S):
+                    return False
+                if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier):
+                    return False
+                if override or event.isAutoRepeat():
+                    event.accept()
+                    return True
+                return bool(self.panel.lane_stamp())
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                return False
+
     class Lanes(Painted):
 
         def __init__(self, panel, parent=None):
@@ -1466,6 +1860,13 @@ def _classes():
             self._cache = None
             self._cache_key = None
             self._failed = False
+            self._menu_at = None
+            self.setMouseTracking(True)
+            self.menu_wait = QtCore.QTimer(self)     # the key menu, opened once no second press came
+            self.menu_wait.setSingleShot(True)
+            self.menu_wait.timeout.connect(self._open_menu)
+            self.keys_catcher = LaneKeys(panel, self)
+            QtWidgets.QApplication.instance().installEventFilter(self.keys_catcher)
 
         def invalidate(self):
             self._cache_key = None
@@ -1477,22 +1878,87 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 return None
 
+        def _xy(self, event):
+            p = event.position() if hasattr(event, "position") else event.localPos()
+            return p.x(), p.y()
+
+        def _global(self, event):
+            g = event.globalPosition() if hasattr(event, "globalPosition") else event.screenPos()
+            return QtCore.QPoint(int(g.x()), int(g.y()))
+
+        def double_window(self):
+            try:
+                return min(QtWidgets.QApplication.doubleClickInterval(), look.RIGHT_DOUBLE_MS)
+            except Exception:                                # noqa: BLE001
+                return look.RIGHT_DOUBLE_MS
+
+        def _open_menu(self):
+            pending, self._menu_at = self._menu_at, None
+            if pending is not None:
+                self.panel.lane_menu_at(pending[0], pending[1])
+
         def mousePressEvent(self, event):
             try:
-                if event.button() != Qt.LeftButton:
-                    return
-                p = event.position() if hasattr(event, "position") else event.localPos()
+                x, y = self._xy(event)
                 pn = self.panel
-                lay = pn.column.layout_()
-                for i in pn._visible_rows(lay):
-                    r = lay.row_at(i, pn.scroll)
-                    if r[1] <= p.y() < r[1] + r[3]:
-                        rows = pn.rows["anim"]
-                        if i < len(rows):
-                            pn._write("pick", rows[i]["name"])
-                        return
+                button, mods = event.button(), event.modifiers()
+                if button == Qt.RightButton:
+                    self._menu_at = (y, self._global(event))
+                    self.menu_wait.start(self.double_window())
+                elif button == Qt.MiddleButton:
+                    pn.lane_press(x, y, middle=True)
+                elif button == Qt.LeftButton:
+                    pn.lane_press(x, y, shift=bool(mods & Qt.ShiftModifier))
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
+
+        def mouseDoubleClickEvent(self, event):
+            """A double click, left or right, highlights every key of the lane."""
+            try:
+                self.menu_wait.stop()
+                self._menu_at = None
+                pn = self.panel
+                if pn.lane_drag:
+                    pn.lane_release()
+                pn.lane_all(self._xy(event)[1])
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+        def mouseMoveEvent(self, event):
+            try:
+                x, y = self._xy(event)
+                pn = self.panel
+                if pn.lane_drag:
+                    pn.lane_move(x, y)
+                    return
+                #  the timeline's cursors: an open hand over what a press grabs
+                what = pn.lane_aim(x, y)
+                self.setCursor(Qt.OpenHandCursor if what == "grab" else Qt.SizeHorCursor)
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+        def leaveEvent(self, event):
+            try:
+                if self.panel.lane_aimed is not None:
+                    self.panel.lane_aimed = None
+                    self.update()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+        def mouseReleaseEvent(self, event):
+            try:
+                self.panel.lane_release()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+        def event(self, event):
+            if event.type() in (QtCore.QEvent.UngrabMouse, QtCore.QEvent.WindowDeactivate):
+                try:
+                    if self.panel.lane_drag:
+                        self.panel.lane_release()
+                except Exception:                            # noqa: BLE001
+                    print(traceback.format_exc())
+            return super(Lanes, self).event(event)
 
         def _shape(self, w, h, ui):
             path = QtGui.QPainterPath()
@@ -1526,8 +1992,10 @@ def _classes():
                 p.setClipPath(clip)
             tkey = (t.v0, t.v1, t.left, t.right) if t is not None else None
             keys_sig = tuple(sorted((n, tuple(v)) for n, v in pn.keys.items()))
+            sel = pn.lane_sel
+            sel_key = (sel["a"], sel["b"], tuple(sel["names"])) if sel else None
             key = (self.width(), self.height(), ui, round(pn.scroll, 2), L.signature(pn.rows["anim"]),
-                   keys_sig, tkey, b is not None)
+                   keys_sig, tkey, b is not None, sel_key, pn.lane_preview, look.held(pn.lane_stamped))
             if b is not None:
                 self._draw(p, lay, t, w, h, True)
             else:
@@ -1554,7 +2022,50 @@ def _classes():
                     p.setPen(Qt.NoPen)
                     p.setBrush(colour(tk["accent"], 255 * 0.2))
                     p.drawRect(QtCore.QRectF(x0, well[1], max(1.0, x1 - x0), well[3]))
+                    self._flag(p, lay, t, now, x0, x1, w)
+                self._aimed(p, lay, t)
             p.end()
+
+        def _flag(self, p, lay, t, now, x0, x1, w):
+            """The playhead's frame on a flag over the ruler, as on the timeline's caret."""
+            pn = self.panel
+            ui, tk = pn.ui, pn.tokens
+            f = font(self, 10 * ui, mono=True, bold=True)
+            p.setFont(f)
+            text = look.frame_text(now)
+            tw = QtGui.QFontMetricsF(f).horizontalAdvance(text) + 8 * ui
+            fh = 13 * ui
+            cx = (x0 + x1) / 2.0
+            left = max(0.0, min(w - tw, cx - tw / 2.0))
+            top = lay.head[1] + lay.head[3] - fh - 1 * ui
+            r = QtCore.QRectF(left, top, tw, fh)
+            p.setPen(Qt.NoPen)
+            p.setBrush(colour(tk["accent"]))
+            p.drawRoundedRect(r, 3 * ui, 3 * ui)
+            p.setPen(colour(tk["panel"]))
+            p.drawText(r, Qt.AlignCenter, text)
+
+        def _aimed(self, p, lay, t):
+            """The key under the mouse lifted and lit, as on the timeline."""
+            pn = self.panel
+            aim = pn.lane_aimed
+            if not aim or pn.lane_drag:
+                return
+            rows = pn.rows["anim"]
+            index = next((i for i, r in enumerate(rows) if r["name"] == aim[0]), None)
+            if index is None or index not in pn._visible_rows(lay):
+                return
+            ui, tk = pn.ui, pn.tokens
+            r = lay.row_at(index, pn.scroll)
+            top, bottom = r[1] + 4 * ui, r[1] + r[3] - 4 * ui
+            well = qrect(lay.well)
+            p.save()
+            p.setClipRect(QtCore.QRectF(0, well.top(), float(self.width()), well.height()))
+            path = QtGui.QPainterPath()
+            _key_shape(path, t, aim[1], top, bottom, ui, KEY_LIFT)
+            glow(p, path.boundingRect(), 2 * ui, tk["accent"], 1.0, ui)
+            p.fillPath(path, colour(tk["accent_text"]))
+            p.restore()
 
         def _draw(self, p, lay, t, w, h, moving):
             pn = self.panel
@@ -1603,6 +2114,16 @@ def _classes():
                 p.setPen(Qt.NoPen)
                 p.setBrush(colour(tk["field"]))
                 p.drawRoundedRect(lane, 4 * ui, 4 * ui)
+                sel, preview = pn.lane_sel, pn.lane_preview
+                mine = bool(sel) and row["name"] in sel["names"]
+                if mine:
+                    a, b = preview or (sel["a"], sel["b"])
+                    block = QtCore.QRectF(t.x(a), lane.top() + 1.5 * ui, max(2.0, t.end(b) - t.x(a)),
+                                          lane.height() - 3 * ui)
+                    p.setBrush(colour(bar.HIGHLIGHT, 0x4a))
+                    p.setPen(QtGui.QPen(colour(bar.HIGHLIGHT), 1.5 * ui))
+                    p.drawRoundedRect(block, 3 * ui, 3 * ui)
+                    p.setPen(Qt.NoPen)
                 if row.get("active"):
                     hex_ = tk["accent"]
                 elif row.get("base"):
@@ -1610,19 +2131,39 @@ def _classes():
                 else:
                     hex_ = tk["muted"]
                 path = QtGui.QPainterPath()
+                #  winding, and each frame once: a copy S puts down stands exactly where its
+                #  key is dragged, and two equal shapes under the default odd-even fill cancel
+                #  out - the key vanished until the release (2026-10-19)
+                path.setFillRule(Qt.WindingFill)
                 top, bottom = lane.top() + 4 * ui, lane.bottom() - 4 * ui
-                for frame in pn.keys.get(row["name"], []):
-                    if not (t.v0 - 1 <= frame <= t.v1 + 1):
-                        continue
-                    if look.on_frame(frame) and t.cells:
-                        l, tp, kw, kh = look.key_cell(t.x(frame), t.scale, top, bottom, ui)
-                        path.addRoundedRect(QtCore.QRectF(l, tp, kw, kh), 1.5 * ui, 1.5 * ui)
+                carried = look.held(pn.lane_stamped)
+                drawn = set()
+                for key in pn.keys.get(row["name"], []):
+                    if mine and preview:
+                        #  where the drag has it, and a copy S put down where it went down
+                        shown = look.shown_at(key, (sel["a"], sel["b"]), preview, carried)
                     else:
-                        kw = bar.KEY_W * ui * bar.DASH_W
-                        path.addRect(QtCore.QRectF(t.x(frame) - kw / 2, top, kw, bottom - top))
+                        shown = [key]
+                    for frame in shown:
+                        if not (t.v0 - 1 <= frame <= t.v1 + 1) or round(frame, 4) in drawn:
+                            continue
+                        drawn.add(round(frame, 4))
+                        _key_shape(path, t, frame, top, bottom, ui, 1.0)
                 p.fillPath(path, colour(hex_))
                 p.restore()
             p.restore()
+
+    def _key_shape(path, t, frame, top, bottom, ui, z):
+        """A key's mark as the timeline draws it: its cell on a whole frame, a line
+        between frames; `z` grows it about its middle (the lift under the mouse)."""
+        if look.on_frame(frame) and t.cells:
+            l, tp, kw, kh = look.key_cell(t.x(frame), t.scale, top, bottom, ui)
+        else:
+            kw = bar.KEY_W * ui * bar.DASH_W
+            l, tp, kh = t.x(frame) - kw / 2, top, bottom - top
+        cx, cy = l + kw / 2.0, tp + kh / 2.0
+        kw, kh = kw * z, kh * min(z, 1.15)
+        path.addRoundedRect(QtCore.QRectF(cx - kw / 2, cy - kh / 2, kw, kh), 1.5 * ui, 1.5 * ui)
 
     _CLASSES.append((Column, Lanes, NameField))
     return _CLASSES[0]

@@ -27,7 +27,7 @@ FOOT = {"anim": ("add", "addsel", "remsel", "merge", "delete"),
 FOOT_TIPS = {"add": "A new layer from the selection (empty with nothing selected)",
              "addsel": "Add the selection to the layer",
              "remsel": "Take the selection out of the layer",
-             "merge": "Merge the active layer into the one under it",
+             "merge": "Merge the selected layers (Ctrl-click to pick several); one picked: into the one under it",
              "select": "Select the layer's objects",
              "delete": "Delete the layer"}
 TYPES = ("", "T", "R")      # displayType 0 normal, 1 template, 2 reference
@@ -182,3 +182,43 @@ def schedule(parts, origin, ui):
         d = abs(dx) + abs(dy) * 1.5
         out.append((look.burst_delay(dx, dy, ui), look.fold_delay(d, ui)))
     return out
+
+
+# -- the lanes as a dope sheet (2026-10-19) ---------------------------------------------
+
+def lane_at(layout, y, scroll):
+    """The row index whose lane is under `y` (the lanes share the column's rows), or None."""
+    wx, wy, ww, wh = layout.well
+    if not (wy <= y < wy + wh):
+        return None
+    for i in range(len(layout.rows)):
+        r = layout.row_at(i, scroll)
+        if r[1] <= y < r[1] + r[3] + ROW_GAP * layout.ui:
+            return i
+    return None
+
+
+def lanes_between(i, j):
+    """The rows a shift-drag from lane `i` to lane `j` sweeps, top first."""
+    lo, hi = (i, j) if i <= j else (j, i)
+    return list(range(lo, hi + 1))
+
+
+def selection_after(selected, clicked, anchor, ctrl, shift, names):
+    """Maya's Layer Editor selection after a click on `clicked`: alone, toggled
+    (Ctrl) or the range from `anchor` (Shift, order of `names`). Answers
+    (selected names in `names`' order, active)."""
+    selected = [n for n in names if n in set(selected)]
+    if shift and anchor in names:
+        i, j = names.index(anchor), names.index(clicked)
+        lo, hi = min(i, j), max(i, j)
+        picked = set(names[lo:hi + 1])
+        if ctrl:
+            picked |= set(selected)
+        return [n for n in names if n in picked], clicked
+    if ctrl:
+        if clicked in selected:
+            rest = [n for n in selected if n != clicked]
+            return rest, (rest[-1] if rest else None)
+        return [n for n in names if n in set(selected) | {clicked}], clicked
+    return [clicked], clicked

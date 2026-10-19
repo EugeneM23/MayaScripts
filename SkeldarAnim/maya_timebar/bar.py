@@ -27,6 +27,7 @@ from . import CONTROL, look, _state
 ROOT_NAME = "skeldarTimeBarRoot"
 TIMER_MS = 250
 FRAME_MS = 16
+QUIET_MS = 800         # after a key move: the key edits Maya reports for it play no effect
 HOVER_MS = look.HOVER_MS    # the radial menu's lift (maya_timebar.look)
 FLASH_MS = look.FLASH_MS      # a press (maya_timebar.look)
 POP_MS = 200            # a toggle
@@ -994,6 +995,9 @@ def classes():
                 p.setPen(Qt.NoPen)
                 for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
                     path = QtGui.QPainterPath()
+                    #  a copy S put down stands where its key is dragged: under the default
+                    #  odd-even fill two equal shapes cancel out (2026-10-19)
+                    path.setFillRule(Qt.WindingFill)
                     for frame in frames:
                         for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
                             if t.v0 - 1 <= shown <= t.v1 + 2:
@@ -1216,7 +1220,7 @@ def classes():
                 selection, target = self.drag[3], self.preview
                 if self.live:
                     self.live = None
-                    st._quiet_keys = True
+                    st.quiet_keys()
                     st.call("live_end", tuple(target or selection))
                     if target and target != selection:
                         loose = len(self.drag) > 4 and self.drag[4] == "loose"
@@ -1225,7 +1229,7 @@ def classes():
                     self.drag, self.preview = None, None
                     st.refresh(keys=True)
                 elif target and target != selection:
-                    st._quiet_keys = True               # a move is no set and delete
+                    st.quiet_keys()                     # a move is no set and delete
                     if self.stamped:
                         st.call("move_keys", selection, target, self.stamped)
                     else:
@@ -1743,6 +1747,7 @@ def classes():
             self.fx.setGeometry(self.rect())
             self._keys_read = False     # the first read of the keys is no edit
             self._quiet_keys = False    # a key move is no set and delete
+            self._quiet_until = 0.0     # ... nor the key edits Maya reports for it a moment later
             # timers
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(TIMER_MS)
@@ -1960,7 +1965,7 @@ def classes():
             if keys:
                 self.keys_dirty = True
             read_keys = bool(self.keys_dirty and (force or not self.state.get("playing")))
-            if getattr(self.timeline, "live", None):
+            if getattr(self.timeline, "live", None) or self._lanes_moving():
                 read_keys = False       # a live key drag: drawn from the keys read before it
             if read_keys:
                 found = self.call("keys")
@@ -1968,7 +1973,7 @@ def classes():
                 if found is not None:
                     self.keys, self.breakdowns = list(found[0]), list(found[1])
                     self.keys_dirty = False
-                    if self._keys_read and not self._quiet_keys:
+                    if self._keys_read and not self._quiet_keys and self.clock() >= self._quiet_until:
                         self._key_effects(old_keys, old_bds, self.keys_edited)
                     self._keys_read, self._quiet_keys, self.keys_edited = True, False, False
                     self.keys_set = []
@@ -1998,6 +2003,21 @@ def classes():
             #  анимация когда я ставлю его копию хоткеем S» - no key read, no effect)
             for nt, bd in sorted(put.items()):
                 self.timeline.key_effect("set", nt, bd)
+
+        def quiet_keys(self):
+            """Keys MOVED (the timeline's or the layer lanes' drag, 2026-10-19: «при переносе
+            ключей по слоям или по таймлайну эффекты разрушения ключа и вспышек не должны
+            отыгрываться»): the next read plays nothing, and neither do the reads for
+            `QUIET_MS` after - Maya reports the move's key edits a moment later, and a
+            moved lone key is a curve cut and made again."""
+            self._quiet_keys = True
+            self._quiet_until = self.clock() + QUIET_MS
+            self.keys_set = []
+
+        def _lanes_moving(self):
+            """A key drag on the layer panel's lanes stands: the strip reads no keys."""
+            moving = getattr(self.layer_panel, "lanes_moving", None)
+            return bool(moving()) if moving is not None else False
 
         def selection_changed(self):
             """Another object's keys: read quietly - a key list that changed with the
