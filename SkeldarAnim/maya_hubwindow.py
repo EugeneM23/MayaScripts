@@ -10,8 +10,8 @@ It holds:
 - `frame_class()`: WindowFrame, the look-B frame, a CardFrame painting its own face, its
   `content` the card; the card's light (`level` / `flash`) over it;
 - `pill_class()`: PillButton, a QToolButton painting itself;
-- `burst_class()`: the burst effect, moved from maya_hubpop (where it stays until the popups
-  are switched over), plus `maya_hubburst.light` drawn as added light inside the shape;
+- `burst_class()`: the burst effect, moved from maya_hubpop (the popups draw it from here now);
+  plus `maya_hubburst.light` drawn as added light inside the shape;
 - `Burster`: drives that effect out of a global point or into one.
 
 Qt is imported lazily through maya_hubqt; the classes are made on first use.
@@ -27,9 +27,9 @@ import maya_hubstyle as hubstyle
 from maya_timebar import look as tlook
 
 ACCENT = hubstyle.TOKENS["accent"]
-RIM = "#fff1e2"          # maya_timebar.bar.RIM: light's hot core
-HOVER_MS = 110           # maya_timebar.bar.HOVER_MS: the radial menu's lift
-FLASH_MS = 120.0         # a press (maya_timebar.bar.FLASH_MS)
+RIM = tlook.RIM
+HOVER_MS = tlook.HOVER_MS
+FLASH_MS = float(tlook.FLASH_MS)   # a press
 TICK_MS = 16
 PILL_W, PILL_H = 24, 22  # logical px: the face
 PILL_PAD = 4             # room round the face for the lift and the first rings
@@ -135,9 +135,10 @@ def title_label(text, scale, name):
     q = hubqt.qt()
     label = hubqt._named(q.QtWidgets.QLabel((text or "").upper()), name)
     label.setStyleSheet(
-        "color: {0}; font-weight: bold; letter-spacing: 1px; font-size: {1}px; "
+        "color: {0}; font-weight: bold; letter-spacing: {2}px; font-size: {1}px; "
         "background: transparent;".format(hubstyle.TOKENS["muted"],
-                                          hubstyle.px(8.5, scale)))
+                                          hubstyle.px(8.5, scale),
+                                          hubstyle.px(1, scale)))
     return label
 
 
@@ -556,14 +557,14 @@ class Burster(object):
             if self.effect is None:
                 self.effect = burst_class()(self._plan)
                 self.frame.setGraphicsEffect(self.effect)    # held: trap 201
-            self.stop(quiet=True)
+            self.stop()
             self._origin = origin
             self._done, self._on_tick = done, on_tick
             self.effect.begin(opening)
             self.frame.update()
         except Exception:                                        # noqa: BLE001
             traceback.print_exc()
-            self.stop(quiet=True)
+            self.stop()
             return False
         q = hubqt.qt()
         anim = q.QtCore.QVariantAnimation()
@@ -597,18 +598,18 @@ class Burster(object):
             if effect.done():
                 self._finish()
         except RuntimeError:                                     # the frame is gone
-            self.stop(quiet=True)
+            self.stop()
         except Exception:                                        # noqa: BLE001
             traceback.print_exc()                                # a driver that raises stops
             self._finish()
 
     def _finish(self):
         done, self._done = self._done, None
-        self.stop(quiet=True)
+        self.stop()
         if done is not None:
             done()
 
-    def stop(self, quiet=False):
+    def stop(self):
         anim, self.anim = self.anim, None
         if anim is not None:
             self._spent = anim          # not collected while its own signal runs

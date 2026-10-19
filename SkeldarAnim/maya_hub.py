@@ -943,7 +943,7 @@ def _ensure_edge():
         current = he.Edge(scale=_scale(), width=_edge_width(),
                           on_width=_save_edge_width, side=edge_side(),
                           rail=True, rest=_rail_rest, shape=_rail_shape,
-                          burst=_rail_burst)
+                          burst=_rail_burst, burst_stop=_rail_burst_stop)
         he.state()["edge"] = current
         #  its cards in look B with ✕ (2026-10-18); the dock keeps ⧉ alone
         _SKIN = _build_skin(host=current.slot, kind="rail", windowed=True)
@@ -995,6 +995,19 @@ def _rail_shape():
     return _hubqt().card_shape(_SKIN, current.host)
 
 
+def _rail_burst_stop():
+    """Stop every rail card's burst (the edge moves without one)."""
+    if _SKIN is None:
+        return
+    for card in list(_SKIN.cards.values()):
+        running = getattr(card, "burster", None)
+        if running is not None:
+            try:
+                running.stop()
+            except RuntimeError:
+                pass
+
+
 def _rail_burst(showing, origin, done, on_shape):
     """The edge rail's card bursting out of global `origin`, or folding into it
     (2026-10-18, spec 2026-10-18-floating-windows § 4, 5): the window's Burster
@@ -1017,7 +1030,7 @@ def _rail_burst(showing, origin, done, on_shape):
         running = getattr(other, "burster", None)
         if other is not card and running is not None:
             try:
-                running.stop(quiet=True)
+                running.stop()
             except RuntimeError:
                 pass
     frame, host = card.frame, current.host

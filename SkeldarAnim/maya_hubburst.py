@@ -14,7 +14,7 @@ light (`light`): the shape's edges standing inside the card, and the card's top 
 
 Pure, stdlib only (maya_timebar's package imports no Maya and no Qt): rectangles are (x, y, w, h)
 in the card's own physical px, a shape is (x0, y0, x1, y1), times are ms; `scale` is the hub's
-(maya_hubstyle.px), so distances and the start box count in logical px. maya_hubpop draws it.
+(maya_hubstyle.px), so distances and the start box count in logical px. maya_hubwindow's burst effect draws it.
 """
 
 import collections
@@ -126,8 +126,8 @@ def plan_close(origin, size, parts, scale=1.0):
     delays = []
     for p in parts:
         cx, cy = _centre(p)
-        d = (abs(cx - o[0]) + 1.5 * abs(cy - o[1])) / scale
-        delays.append(max(0.0, 180.0 - d / 60.0 * 12.0) * tlook.BURST_SLOW)
+        d = abs(cx - o[0]) + 1.5 * abs(cy - o[1])
+        delays.append(tlook.fold_delay(d, scale))
     m0 = max([0.0] + [d + FOLD_MS + CLOSE_AFTER_MS for d in delays])
     return Plan(False, size, o, list(parts), [pivot(p, o) for p in parts], delays,
                 (0.0, 0.0, size[0], size[1]), _box(o, CLOSE_HALF, size, scale), m0,

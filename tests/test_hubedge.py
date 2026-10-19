@@ -1011,6 +1011,21 @@ class RailBurst(unittest.TestCase):
         self.assertIsNone(edge.burst_shape)
         self.assertTrue(edge.host.mask().contains(QtCore.QPoint(200, 150)))  # the card
 
+    def test_a_plain_move_stops_the_bursts_still_drawing(self):
+        stops = []
+        edge = self.build(motion=False)
+        edge.burst_stop = lambda: stops.append(1)
+        edge.reveal(origin=(140, 270))
+        edge.conceal()
+        self.assertEqual(len(stops), 2)
+
+    def test_a_burst_does_not_stop_itself(self):
+        stops = []
+        edge = self.build()
+        edge.burst_stop = lambda: stops.append(1)
+        edge.reveal(origin=(140, 270))
+        self.assertEqual(stops, [])
+
     def test_a_refused_or_raising_burst_slides(self):
         def boom(*_a):
             raise RuntimeError("no")
@@ -1092,7 +1107,7 @@ class RailBurstThroughTheHub(unittest.TestCase):
         for card in (self.card, self.beta):
             burster = getattr(card, "burster", None)
             if burster is not None:
-                burster.stop(quiet=True)
+                burster.stop()
         hub.cmds, hub._SKIN, hub._cursor, self.hubqt.find, self.hubqt.path_of, \
             listeners = self.saved
         self.style._LISTENERS[:] = listeners

@@ -162,6 +162,15 @@ class TimeBarNumbers(unittest.TestCase):
     SIZE = (300.0, 400.0)
     PARTS = [(10, 10, 280, 30), (10, 300, 280, 30)]
 
+
+    def test_the_fold_delay_is_the_time_bars_own(self):
+        for scale in (1.0, 1.5):
+            plan = burst.plan_close((20, 20), self.SIZE, self.PARTS, scale=scale)
+            for part, delay in zip(plan.parts, plan.delays):
+                x, y, w, h = part
+                dx, dy = x + w / 2.0 - plan.origin[0], y + h / 2.0 - plan.origin[1]
+                self.assertAlmostEqual(
+                    delay, tlook.fold_delay(abs(dx) + 1.5 * abs(dy), scale))
     def test_the_shape_grows_over_the_time_bars_unroll(self):
         plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
         self.assertEqual(burst.at(plan, tlook.UNROLL_MS).shape, (0.0, 0.0, 300.0, 400.0))

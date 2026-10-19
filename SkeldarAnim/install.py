@@ -104,10 +104,10 @@ _PAYLOAD = (
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
     "maya_hubedge.py",          # the edge panel's windows (2026-10-08)
     "maya_hubcopy.py",          # a section's second build: the scope its names live in (2026-10-09)
-    "maya_hubpop_rules.py",     # where a section's popup stands in its viewport (2026-10-09)
+    "maya_hubpop_rules.py",     # where a section's floating window stands (2026-10-09) (2026-10-09)
     "maya_hubwindow.py",        # the floating window's and the rail card's look and burst (2026-10-18)
-    "maya_hubpop.py",           # a section's popup over the active viewport (2026-10-09)
-    "maya_hubburst.py",         # its popups bursting out of a point (2026-10-17)
+    "maya_hubpop.py",           # a section's floating window (2026-10-09; look B since 2026-10-18) (2026-10-09)
+    "maya_hubburst.py",         # the burst's timing: windows and rail card (2026-10-17)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)

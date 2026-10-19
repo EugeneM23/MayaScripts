@@ -26,8 +26,8 @@ from . import CONTROL, look, _state
 ROOT_NAME = "skeldarTimeBarRoot"
 TIMER_MS = 250
 FRAME_MS = 16
-HOVER_MS = 110          # the radial menu's lift
-FLASH_MS = 120          # a press
+HOVER_MS = look.HOVER_MS    # the radial menu's lift (maya_timebar.look)
+FLASH_MS = look.FLASH_MS      # a press (maya_timebar.look)
 POP_MS = 200            # a toggle
 KEY_FADE_MS = 600       # a key the playhead reached
 LIFT = 0.10             # +10 % under the mouse
@@ -51,7 +51,7 @@ REC = "#e0524a"
 BREAKDOWN = "#6fb7c9"
 HIGHLIGHT = "#7fa9e6"
 WAVE = "#565a68"
-RIM = "#fff1e2"
+RIM = look.RIM
 SET_GLOW = 44       # logical px: the flash of a key set (2026-10-17: stronger, «глоу должен быть сильнее»)
 
 #  the mockup's glyphs (16 x 16 SVG paths), drawn with QtSvg in the control's colour

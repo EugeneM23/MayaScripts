@@ -1030,7 +1030,7 @@ class Popup(object):
         """The frame painted as it is again, the window taking presses."""
         if self.burster is not None:
             try:
-                self.burster.stop(quiet=True)
+                self.burster.stop()
             except RuntimeError:
                 pass
         if self.root is not None:
@@ -1126,7 +1126,7 @@ class Popup(object):
             self._stop_anim(slot)
         if self.burster is not None:
             try:
-                self.burster.stop(quiet=True)
+                self.burster.stop()
             except RuntimeError:
                 pass
 

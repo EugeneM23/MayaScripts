@@ -401,7 +401,7 @@ class Edge(object):
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
-                 rest=None, shape=None, burst=None):
+                 rest=None, shape=None, burst=None, burst_stop=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -421,6 +421,7 @@ class Edge(object):
         #  and `burst_shape` (x, y, w, h) cuts the card from the mask while it
         #  runs. None, or a burst that cannot start: the frame's old slide.
         self.burst = burst
+        self.burst_stop = burst_stop   # () stops every card's burst still drawing (2026-10-19)
         self.burst_shape = None
         self._burst_gen = 0         # each rail move's number: stale bursts are deaf
         self.scale = float(scale or 1.0)
@@ -796,6 +797,7 @@ class Edge(object):
             moving = False
         if moving and self.burst is not None and self._rail_burst(showing, origin):
             return
+        self._stop_bursts()
         self.burst_shape = None
         if showing:
             self._rest_out = True        # the grip and the frame follow at the end
@@ -809,6 +811,15 @@ class Edge(object):
         self._animate(rules.IN_MS if showing else rules.OUT_MS, span, showing,
                       start, end, self._set_frame,
                       lambda: self._rail_done(showing))
+
+    def _stop_bursts(self):
+        """A move without a burst (2026-10-19): a card's burst still drawing its
+        fold must not go on over the plain slide."""
+        if self.burst_stop is not None:
+            try:
+                self.burst_stop()
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
 
     def _rail_burst(self, showing, origin):
         """Start the card's burst out of global `origin` (or its fold into it)
