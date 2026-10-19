@@ -30,6 +30,8 @@ COUNTER = "skeldarFence"            # the counter attribute on the session node
 
 START = "Start of this tab's undo history"
 UNDER = "Start of this tab's undo history - its earlier steps are under another tab's work"
+UNDER_NAMED = "%s: start of undo here - earlier steps are under the work done in %s (Maya keeps one undo list)"
+ENTERED = "%s: earlier undo steps are under the work done in %s - Ctrl+Z here starts from now"
 
 
 # ------------------------------------------------------------------ pure
@@ -61,11 +63,23 @@ def plan_enter(fences, owner, leaving, entering, top):
     return pop, after != entering
 
 
-def blocked_message(fences, name):
+def blocked_message(fences, name, title=None):
     """What Ctrl+Z says on a fence: whether this tab's work was on the queue
-    before the fence was laid (then it lies under another tab's work)."""
+    before the fence was laid (then it lies under another tab's work, named
+    through `title(namespace)` when given)."""
     record = fences.get(name) or {}
-    return UNDER if record.get("earlier") else START
+    if not record.get("earlier"):
+        return START
+    if title and record.get("ns") and record.get("below"):
+        return UNDER_NAMED % (title(record["ns"]), title(record["below"]))
+    return UNDER
+
+
+def entered_message(record, title):
+    """What entering a tab says when its history went under another tab's work ("" otherwise)."""
+    if not record or not record.get("earlier") or not record.get("below"):
+        return ""
+    return ENTERED % (title(record["ns"]), title(record["below"]))
 
 
 def _serial(name):
@@ -150,10 +164,24 @@ def after_switch(entering, session_node, cmds=None):
         cmds.setAttr(plug, st["serial"])
     finally:
         cmds.undoInfo(closeChunk=True)
-    st["fences"][name] = {"ns": entering, "below": st["owner"], "earlier": entering in st["seen"]}
+    record = {"ns": entering, "below": st["owner"], "earlier": entering in st["seen"]}
+    st["fences"][name] = record
     st["owner"] = entering
     st["seen"].add(entering)
+    said = entered_message(record, _title)
+    if said:
+        _say(said, cmds)
     return name
+
+
+def _title(namespace):
+    """A tab's name as the bar shows it."""
+    try:
+        from . import records, session
+        item = records.tab(session.state(), namespace)
+        return records.title(dict(item, modified=False)) if item else namespace
+    except Exception:                                           # noqa: BLE001
+        return namespace
 
 
 def _active():
@@ -168,7 +196,7 @@ def _say(message, cmds):
     print(message)
     if not cmds.about(batch=True):
         try:
-            cmds.inViewMessage(assistMessage=message, position="topCenter", fade=True, fadeStayTime=1500)
+            cmds.inViewMessage(assistMessage=message, position="topCenter", fade=True, fadeStayTime=3000)
         except Exception:                                       # noqa: BLE001
             pass
 
@@ -187,7 +215,7 @@ def on_undo(*_):
         cmds.redo()
     finally:
         st["inside"] = False
-    _say(blocked_message(st["fences"], name), cmds)
+    _say(blocked_message(st["fences"], name, _title), cmds)
 
 
 def on_redo(*_):

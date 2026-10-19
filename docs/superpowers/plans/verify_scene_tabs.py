@@ -1976,7 +1976,11 @@ def phase_undo():
     gate("undo: in the film, Ctrl+Z stops at its fence - the rig's step and the film's own kept",
          session.state()["active"] == "tab_film" and cmds.getAttr(hero) == 1.0 and cmds.getAttr(shoulder) == 10.0,
          (cmds.getAttr(hero), cmds.getAttr(shoulder)))
-    gate("undo: and says its earlier steps are under another tab's work", said[-1:] == [tabundo.UNDER], said)
+    gate("undo: entering the film said its history is under the rig's work",
+         any(m.startswith("film") and "under the work done in rig" in m and "starts from now" in m for m in said),
+         said)
+    gate("undo: and Ctrl+Z says so, naming both tabs",
+         said[-1:] and said[-1].startswith("film: start of undo here") and "work done in rig" in said[-1], said)
     switching.switch("tab_rig")
     gate("undo: the film left untouched - its fence popped, no new fence for the rig",
          cmds.undoInfo(q=True, undoName=True) == "" or not tabundo.is_fence(cmds.undoInfo(q=True, undoName=True)),

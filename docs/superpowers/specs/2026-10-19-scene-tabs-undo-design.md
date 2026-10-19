@@ -47,6 +47,18 @@ State on `sys._skeldar_tabundo` (trap 111): `fences` {name: {ns, below, earlier}
 `owner`, `seen`, `serial`, the callbacks. The queue is the session's and never saved,
 so neither is this.
 
+## After first use (the same day)
+
+The animator: «перехожу обратно в другую вкладку то история пустая». Read off the
+7002 Maya's queue: JA_04's moves and keys (steps 0-6), then untitled's fence, then a
+cube and a key made in untitled, then JA_04's new fence. That is the limit, not a
+bug. Offered snapshots, or the old shared history, they kept the boundary and asked
+for a clearer word. Both messages now name the tabs, and entering a tab whose history
+went under another tab's work says so at once:
+«JA_04: earlier undo steps are under the work done in untitled - Ctrl+Z here starts from now».
+Ctrl+Z on that fence says
+«JA_04: start of undo here - earlier steps are under the work done in untitled (Maya keeps one undo list)».
+
 ## Module
 
 `SkeldarAnim/maya_scenetabs/tabundo.py`. The pure half is `fence_name`, `is_fence`,

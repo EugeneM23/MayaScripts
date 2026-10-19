@@ -67,6 +67,21 @@ class Message(unittest.TestCase):
         fences = {tabundo.fence_name("tab_a", 3): {"ns": "tab_a", "below": "tab_b", "earlier": True}}
         self.assertEqual(tabundo.blocked_message(fences, tabundo.fence_name("tab_a", 3)), tabundo.UNDER)
 
+    def test_the_message_names_both_tabs_when_it_can(self):
+        fences = {"F": {"ns": "tab_a", "below": "tab_b", "earlier": True}}
+        text = tabundo.blocked_message(fences, "F", lambda ns: ns.upper())
+        self.assertIn("TAB_A", text)
+        self.assertIn("under the work done in TAB_B", text)
+
+    def test_entering_says_whose_work_buried_the_history(self):
+        record = {"ns": "tab_a", "below": "tab_b", "earlier": True}
+        text = tabundo.entered_message(record, lambda ns: ns[4:])
+        self.assertTrue(text.startswith("a: earlier undo steps are under the work done in b"), text)
+
+    def test_entering_a_tab_for_the_first_time_says_nothing(self):
+        self.assertEqual(tabundo.entered_message({"ns": "tab_a", "below": "tab_b", "earlier": False}, str), "")
+        self.assertEqual(tabundo.entered_message(None, str), "")
+
     def test_an_unknown_fence_is_the_start(self):
         self.assertEqual(tabundo.blocked_message({}, tabundo.fence_name("tab_a", 9)), tabundo.START)
 

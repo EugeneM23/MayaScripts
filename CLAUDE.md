@@ -11122,7 +11122,10 @@ a tab's steps made before another tab's work lie under it and can never be reach
   says «Start of this tab's undo history» (+ «its earlier steps are under another tab's work»); a "Redo"
   callback undoes another tab's fence redone back;
 - a tab left untouched has its fence undone off the top as it is left, so A → empty B → A goes on;
-- `opening._quiet`'s flush calls `tabundo.reset(active)`.
+- `opening._quiet`'s flush calls `tabundo.reset(active)`;
+- after first use («перехожу обратно ... история пустая» - a cube made in the other tab lay over it; the
+  animator kept the boundary over snapshots): entering a tab whose history went under another tab's work
+  says so at once, naming both tabs, and so does Ctrl+Z on its fence.
 A popped fence is an undo, which flags the scene: the switch puts the flag back before it records the
 tab left. Proof: `verify_scene_tabs.py undo` 11/11, all **0 of 293**, `verify_tabs_scope.py` 0 of 46
 (mayapy); the gates that proved «Ctrl+Z past a switch brings the
