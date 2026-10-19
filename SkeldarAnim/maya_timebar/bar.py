@@ -1999,11 +1999,23 @@ def classes():
             for nt, bd in sorted(put.items()):
                 self.timeline.key_effect("set", nt, bd)
 
+        def selection_changed(self):
+            """Another object's keys: read quietly - a key list that changed with the
+            selection is no key set or deleted (2026-10-19, the animator: «Если мы не
+            ставим ключ или не удаляем его то и анимации эффектов ... недолжно быть»)."""
+            self._quiet_keys = True
+            self.keys_set = []
+            self.refresh(True)
+
         def _key_effects(self, old_keys, old_bds, edited=False):
             """A key set flashes, keys deleted throw sparks one after another left to
             right - a whole highlight of them when Maya reported the deletion as a key
-            edit (`edited`)."""
+            edit (`edited`). Only after a key edit: Maya's key-edited message, our own
+            Cut / Delete or a setKeyframe; any other change of the keys read (an undo of
+            a selection, a layer shown) plays nothing."""
             if not self.motion:
+                return
+            if not (edited or self.keys_set):
                 return
             gone, flashed = [], set()
             for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
@@ -2405,7 +2417,7 @@ def _drop_callbacks():
 #  opened reads everything again, forced, so the layer panel never writes to a
 #  closed scene's nodes (2026-10-18 final review)
 JOB_EVENTS = (("playbackRangeChanged", "refresh", ()),
-              ("SelectionChanged", "refresh", (True,)),
+              ("SelectionChanged", "selection_changed", ()),
               ("animLayerRefresh", "refresh", (True,)),
               ("Undo", "refresh", (True,)),
               ("Redo", "refresh", (True,)),

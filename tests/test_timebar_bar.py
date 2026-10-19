@@ -775,6 +775,7 @@ class KeyEffects(Strip):
 
     def test_a_key_set_flashes(self):
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.keys_edited = True                   # as Maya's key-edit callback says
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), ["set"])
         self.paint()
@@ -783,15 +784,36 @@ class KeyEffects(Strip):
         # 2026-10-18: «анимация сжатия ... на 30 % сильнее, при появлении ключа тоже»
         self.assertEqual(bar.KEY_PULSE, 1.3)
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.keys_edited = True
         self.strip.refresh(keys=True)
         self.assertIn(20.0, self.strip.timeline.reached)
         self.paint()
 
     def test_a_key_deleted_throws_sparks(self):
         self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
+        self.strip.keys_edited = True
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), ["delete"])
         self.paint()
+
+    def test_another_object_selected_plays_nothing(self):
+        # 2026-10-19: «Если мы не ставим ключ или не удаляем его то и анимации
+        # эффектов ... недолжно быть» - the keys read change with the selection
+        self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
+        self.strip.selection_changed()
+        self.link.k = ([0.0, 3.0, 12.0, 20.0, 40.0], [])
+        self.strip.keys_edited = True                   # even an edit not read yet
+        self.strip.selection_changed()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.strip.timeline.reached, {})
+
+    def test_keys_that_change_with_no_key_edit_play_nothing(self):
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [])
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.kinds(), [])
+
+    def test_the_selection_job_reads_quietly(self):
+        self.assertIn(("SelectionChanged", "selection_changed", ()), bar.JOB_EVENTS)
 
     def test_many_deleted_keys_play_left_to_right_the_last_starting_within_half_a_second(self):
         import time as _time
