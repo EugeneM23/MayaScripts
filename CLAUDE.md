@@ -10999,7 +10999,7 @@ The animator: «Возможно ли в maya сделать вкладки ка
 сразу несколько программ?» - then the references route: «мы нажимаем на вкладку и все объекты которые она
 референсит скрываются и деактивируются, изменяется найтройки вюпорта, открываются старые окна и показываются
 новые». Asked: tabs are for all three of working on several scenes, carrying things between them and looking
-at a scene beside the work; approach A (imports, not references); one shared undo history (switch markers since 2026-10-19, below); the bar above the
+at a scene beside the work; approach A (imports, not references); one shared undo history; the bar above the
 viewport; each tab its own whole layout. Spec `docs/superpowers/specs/2026-10-15-scene-tabs-design.md` (read
 its planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage1.md`. Stage 2, the plugin seeing only the active tab, is `2026-10-15-scene-tabs-plugin-scope-design.md` (its
 planning addendum), plan `docs/superpowers/plans/2026-10-15-scene-tabs-stage2.md` - built with stage 1: stage 1
@@ -11028,8 +11028,8 @@ alone doubles the tab's prefix on everything the plugin creates.
   restores the tabs - once, even when a SceneOpened job fires inside the open). One scene open is ordinary
   Maya; the second converts it into tab 1 (1 ms, by UUID).
 - **Switching** records the tab being left (modified flag, unit, ranges, frame, selection, views, layout) and
-  hides it (`lodVisibility`, `hiddenInOutliner`), then shows the new one - outside the undo queue since
-  2026-10-19, leaving a marker (below: one undo history for every tab).
+  hides it (`lodVisibility`, `hiddenInOutliner`), then shows the new one - ONE undo chunk, so Ctrl+Z past a
+  switch brings the tab back before undoing its step.
 - **Saving** lifts the tab into the root namespace by UUID, cuts its layer root free (written as
   `BaseAnimation`), writes its ranges into its configuration node, exports to a temp file and replaces the
   tab's file; refuses by name on a root-namespace clash; asks when the file changed on disk. A save puts back
@@ -11110,42 +11110,19 @@ held `AS_DG_ATK_JA_01.ma.skeldartmp.ma` and `…skeldartmp.ma.skeldartmp.ma`). T
      created with) and an FBX's display layer (`tab_plain:DeformationJoints`) keep the tab's prefix. Neither
      names a bone; a gate that searches a whole file for the prefix fails on them - gate the node names.
 
-**One undo history for every tab, where nothing is lost** (2026-10-19). Asked first for each tab's own
-history («Для каждой вкладки нужно реализовать свою историю действий»), a tab boundary was built; in use
-every visit buried the tab before it, because the animator moves and keys in BOTH tabs, and Maya keeps ONE
-linear queue (undo and redo strictly in order, any new step wipes redo): two histories that both go on
-after edits in the other tab are impossible in one Maya. Asked again: «Общая история, ничего не терять».
-Spec `docs/superpowers/specs/2026-10-19-scene-tabs-undo-design.md` (its sections record the boundary and
-why it went). `maya_scenetabs/tabundo.py`:
-- a switch runs unrecorded (`switching.switch`) and leaves a MARKER, a chunk
-  `skeldarTabSwitch:<from>:<to>:<serial>` holding a `setAttr` of the session node's `skeldarFence` (Maya
-  records no empty chunk; `undoInfo -q -undoName` answers a chunk's name);
-- an `MEventMessage` "Undo" callback, on a marker undone (any road: hotkey, Edit menu, a script), switches
-  to `<from>` (`switching.switch(ns, history=False)`) and undoes once more - one press, one real step,
-  «Undo in attack: move -r 1 0 0» in the viewport; "Redo" on a marker redone switches to `<to>` and redoes
-  once more. An undo or redo inside those callbacks holds (measured in mayapy and live);
-- leaving a tab, `_drop_selection` undoes its steps that only LOOKED from the top of the queue down to a
-  real step or a marker: MEL `select`/`selectKey`/`hilite` and `currentTime` (named; a viewport click is
-  MEL), the shown selection and frame put back unrecorded for `leave` to record. Then a tab that added
-  nothing has the marker that led into it popped (`plan_enter`), and a popped marker is never redone. So a
-  visit that only looked leaves nothing, and Ctrl+Z never walks into a tab for a click;
-- a boundary-build fence (`skeldarTabFence:`, left in a queue by an update mid-session) stops Ctrl+Z: what
-  lay under it may be a hidden tab's, and which one is unknown;
-- `opening._quiet`'s flush calls `tabundo.reset(active)`; a popped marker is an undo, which flags the
-  scene - the switch puts the flag back before it records the tab left.
-Learnt on the way, each measured live in the 7002 Maya:
-- **a GUI selection is a recorded MEL `select` step, and a time change is an undo step** (Python
-  `cmds.currentTime(f, edit=True)` an unnamed '' entry, MEL `currentTime -e` a named one; Maya's slider
-  records nothing). The Time Bar's `set_time` / `scrub_only` run unrecorded since (the timebar session). A
-  Python `cmds.select` / `currentTime` is unnamed ('') and stays unknown work;
-- nothing records after a switch (a command logger, the queue dumped around bar switches with idle
-  between; a 62-agent audit of every subsystem agreed). Its one candidate, the Layer Editor rebuild's
-  `treeView -selectItem`, does not fire `animLayerEditorOnSelect`;
-- **an install purges modules, never the widgets they built**: the tab bar kept the old switch (one undo
-  chunk) after the install, so Ctrl+Z switched tabs. `bar.stale` (its `actions` not this module's
-  `Actions`) makes `ensure_docked`, which the hub calls on every build, build it again (traps 49 / 102).
-Proof: `verify_scene_tabs.py undo` 15/15, all **0 of 299**, `verify_tabs_scope.py` 0 of 46 (mayapy);
-`tests/test_scenetabs_tabundo.py`. The viewport messages and a real Ctrl+Z press: not seen in a GUI Maya.
+**Per-tab undo was tried and reverted** (2026-10-19). Asked for each tab's own history, a tab boundary,
+then one shared history with switch markers (Ctrl+Z crossing into the tab of the last step) were built
+(`2fabd2d`..`80dfccd`); in the animator's hands history still went missing on a switch, and they asked to go
+back: «ВЕРНЕМСЯ К КОМИТУ ... ДО МОЕГО ЗАПРОСА О РАЗДЕЛЬНОЙ ИСТОРИИ». The switch is one undo chunk again
+(Ctrl+Z past it brings the previous tab back first). Kept: `bar.stale` - a tab bar built by modules an install
+purged is built again by `ensure_docked` (an install purges modules, never the widgets they built; the
+stale bar ran the old switch). Spec of the attempt: `docs/superpowers/specs/2026-10-19-scene-tabs-undo-design.md`.
+Facts measured on the way, still true: **in a GUI Maya a MEL selection (a viewport click) is a recorded
+`select` step, and a time change is an undo step** (Python `cmds.currentTime(f, edit=True)` an unnamed ''
+entry, MEL `currentTime -e` a named one; Maya's slider records nothing - the Time Bar's `set_time` /
+`scrub_only` run unrecorded since); a Python `cmds.select` / `currentTime` step is unnamed ('');
+`undoInfo -q -printQueue` prints to the Script Editor only (capture with `scriptEditorInfo -historyFilename`);
+an undo or redo from inside an `MEventMessage` "Undo" / "Redo" callback holds.
 
 **The Anim Layer Editor shows the active tab as a scene** (2026-10-16, the animator: «вижу какие-то
 анимационные слои даже в новой вкладке ... когда я выделяю нижний слой то ... выделяются все слои»).

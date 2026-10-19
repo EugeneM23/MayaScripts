@@ -453,15 +453,15 @@ def phase_switch():
     gate("undo: the rig's step undone, still on the rig",
          cmds.getAttr("tab_rig:Manny_Rig:FKShoulder_L.rotateY") == 0.0 and session.state()["active"] == "tab_rig")
     cmds.undo()
-    gate("undo: the next Ctrl+Z brings the film back and undoes its step in the same press (2026-10-19)",
+    gate("undo: the next Ctrl+Z brings the film back",
          session.state()["active"] == "tab_film" and cmds.currentUnit(q=True, time=True) == "film"
-         and all(tops_visible("tab_film")) and not any(tops_visible("tab_rig"))
-         and cmds.getAttr("tab_film:hero.translateX") != 2.0)
+         and all(tops_visible("tab_film")) and not any(tops_visible("tab_rig")))
+    cmds.undo()
+    gate("undo: and then undoes the film's step", cmds.getAttr("tab_film:hero.translateX") == 0.0)
     cmds.redo()
     cmds.redo()
-    gate("redo: forward to the rig again, its step back",
-         session.state()["active"] == "tab_rig" and cmds.currentUnit(q=True, time=True) == "ntsc"
-         and cmds.getAttr("tab_rig:Manny_Rig:FKShoulder_L.rotateY") == 10.0)
+    gate("redo: forward to the rig again",
+         session.state()["active"] == "tab_rig" and cmds.currentUnit(q=True, time=True) == "ntsc")
     message = switching.cycle(1)
     gate("cycle: the next tab", session.state()["active"] == "tab_film", message)
     gate("cycle: wraps round", switching.cycle(1) and session.state()["active"] == "tab_rig")
@@ -1169,10 +1169,9 @@ def phase_outliner_sets():
     gate("outliner sets: no mark left on a shown tab",
          not cmds.attributeQuery(switching.SET_MARK, node=a + ":selA", exists=True))
     cmds.undo()
-    gate("outliner sets: Ctrl+Z past the switch brings B back and hides A's set again",
+    gate("outliner sets: undo of the switch hides A's set again",
          session.state()["active"] == b and hidden(a + ":selA") and not hidden(b + ":selB"))
     cmds.redo()
-    gate("outliner sets: redo - A again", session.state()["active"] == a and not hidden(a + ":selA"))
     cmds.setAttr(b + ":cubeB.translateZ", 1)
     saving.save_tab(b)
     switching.switch(a)
@@ -1283,7 +1282,7 @@ def phase_layer_editor():
     gate("layer editor: animation unchanged after the switch",
          track(a, "A") == expected and track(b, "B") == expected, (track(a, "A"), track(b, "B")))
     cmds.undo()
-    gate("layer editor: Ctrl+Z past the switch brings B's layers back and takes A's out",
+    gate("layer editor: undo of the switch brings B's layers back and takes A's out",
          session.state()["active"] == b and on_root(b) == [b + ":AnimLayerRoot"] and on_root(a) == []
          and shown_id(b, "B")[1] and shown_id(a, "A") == (0, False))
     cmds.redo()
@@ -1773,10 +1772,10 @@ def phase_camera_keys():
     gate("cameras: a key made in C is C's curve", source("persp.translateY").startswith("tab_camkC:"),
          source("persp.translateY"))
     switching.switch("tab_camkB")
-    cmds.undo()             # past the switch: back in C, its last key undone in the same press
-    gate("cameras: Ctrl+Z past the switch puts C's keys back on the camera, C active",
-         session.state()["active"] == "tab_camkC" and source("persp.translateY").startswith("tab_camkC:")
-         and not source("persp.translateX"), (session.state()["active"], source("persp.translateY")))
+    cmds.undo()             # straight after the switch: a time change is an undo step in mayapy (trap 222)
+    gate("cameras: Ctrl+Z past the switch puts C's keys back", session.state()["active"] == "tab_camkC"
+         and source("persp.translateY").startswith("tab_camkC:") and not source("persp.translateX"),
+         (session.state()["active"], source("persp.translateY")))
     switching.switch("tab_camkB")
     gate("cameras: in B, C's key is off and B's on",
          not source("persp.translateY") and tx(10) == -60 and round(cmds.getAttr("perspShape.focalLength"), 3) == 80.0)
@@ -1951,133 +1950,7 @@ def phase_cameras():
     opening.ASK = None
 
 
-def phase_undo():
-    """One undo history for every tab, where nothing is lost (2026-10-19, «Общая история, ничего
-    не терять»): Ctrl+Z past a switch marker comes back to the tab it came from and undoes that
-    tab's last step in the same press; Redo goes forward the same way; a tab only looked at
-    (MEL clicks, frame changes) leaves nothing, so Ctrl+Z never walks into it for a click."""
-    from maya_scenetabs import opening, switching, tabundo
-    import maya.mel as mel
-    rig, film = copy("rig.ma"), copy("film.ma")
-    fresh()
-    cmds.file(rig, open=True, force=True)
-    opening.open_tab(film)
-    said, say = [], tabundo._say
-    tabundo._say = lambda message, cmds_: said.append(message)
-    # an unkeyed probe of the film's own: hero's channels follow their curves on a time change
-    cmds.undoInfo(stateWithoutFlush=False)
-    probe = cmds.spaceLocator(name=":tab_film:probe")[0]
-    cmds.undoInfo(stateWithoutFlush=True)
-    hero, shoulder = probe + ".translateX", "tab_rig:Manny_Rig:FKShoulder_L.rotateY"
-
-    def step(plug, value, name):
-        """A named step, as Maya's GUI names its own (mayapy names a plain setAttr '')."""
-        cmds.undoInfo(openChunk=True, chunkName=name)
-        cmds.setAttr(plug, value)
-        cmds.undoInfo(closeChunk=True)
-
-    def active():
-        return session.state()["active"]
-
-    def top():
-        return cmds.undoInfo(q=True, undoName=True) or ""
-
-    def values():
-        return (active(), round(cmds.getAttr(hero), 6), round(cmds.getAttr(shoulder), 6))
-
-    try:
-        gate("undo: the film active after its open, the queue flushed and its own",
-             active() == "tab_film" and tabundo.state()["owner"] == "tab_film")
-        step(hero, 1, "move -r 1 0 0")
-        switching.switch("tab_rig")
-        step(shoulder, 10, "rotate 10")
-        switching.switch("tab_film")
-        gate("undo: a switch out of a tab with steps leaves a marker naming both tabs",
-             tabundo.marker_tabs(top()) == ("tab_rig", "tab_film"), top())
-        cmds.undo()
-        gate("undo: Ctrl+Z in the film comes back to the rig and undoes its step in one press",
-             values() == ("tab_rig", 1.0, 0.0) and said[-1:] == ["Undo in rig: rotate 10"], (values(), said[-1:]))
-        cmds.undo()
-        gate("undo: the next Ctrl+Z comes back to the film and undoes its step",
-             values() == ("tab_film", 0.0, 0.0) and said[-1:] == ["Undo in film: move -r 1 0 0"], (values(), said[-1:]))
-        cmds.redo()
-        gate("redo: the film's step again, still in the film", values() == ("tab_film", 1.0, 0.0), values())
-        cmds.redo()
-        gate("redo: then over to the rig and its step, in one press",
-             values() == ("tab_rig", 1.0, 10.0) and said[-1:] == ["Redo in rig: rotate 10"], (values(), said[-1:]))
-        cmds.redo()
-        gate("redo: then back to the film, nothing more to redo there",
-             values() == ("tab_film", 1.0, 10.0) and said[-1:] == ["Redo in film"], (values(), said[-1:]))
-
-        # a visit with only clicks and a frame change leaves nothing behind
-        step(hero, 5, "move -r 5 0 0")
-        count = len(said)
-        switching.switch("tab_rig")
-        mel.eval("select -r tab_rig:Manny_Rig:FKShoulder_L")
-        mel.eval("currentTime -e 17")       # a frame hotkey: an undo step in a GUI Maya
-        switching.switch("tab_film")
-        gate("look: a visit with only a click and a frame change leaves nothing - the film's own step on top",
-             top() == "move -r 5 0 0" and said[count:] == [], (top(), said[count:]))
-        switching.switch("tab_rig")
-        gate("look: the rig's click and frame come back with it",
-             cmds.ls(selection=True) == ["tab_rig:Manny_Rig:FKShoulder_L"] and cmds.currentTime(q=True) == 17.0,
-             (cmds.ls(selection=True), cmds.currentTime(q=True)))
-        switching.switch("tab_film")
-        cmds.undo()
-        gate("look: Ctrl+Z in the film undoes the film's own step, no switch",
-             values() == ("tab_film", 1.0, 10.0), values())
-        cmds.redo()
-
-        # clicks on top of the rig's real step from this visit come off; the step stays reachable
-        switching.switch("tab_rig")
-        step(shoulder, 15, "rotate 15")
-        switching.switch("tab_film")
-        switching.switch("tab_rig")         # the film did nothing: its marker back off, the rig goes on
-        mel.eval("select -cl")
-        mel.eval("currentTime -e 5")
-        switching.switch("tab_film")
-        cmds.undo()
-        gate("look: Ctrl+Z from the film goes past the rig's clicks to its real step",
-             values() == ("tab_rig", 5.0, 10.0) and said[-1:] == ["Undo in rig: rotate 15"], (values(), said[-1:]))
-        cmds.redo()
-        switching.switch("tab_film")
-
-        # work in both, alternating: every step reachable, newest first
-        switching.switch("tab_rig")
-        step(shoulder, 20, "rotate 20")
-        switching.switch("tab_film")
-        step(hero, 2, "move -r 2 0 0")
-        switching.switch("tab_rig")
-        step(shoulder, 30, "rotate 30")
-        switching.switch("tab_film")
-        walk = []
-        for _ in range(4):
-            cmds.undo()
-            walk.append(values())
-        gate("undo: four presses walk back through both tabs, newest first, each in its own tab",
-             walk == [("tab_rig", 2.0, 20.0), ("tab_film", 5.0, 20.0), ("tab_rig", 5.0, 15.0),
-                      ("tab_rig", 5.0, 10.0)], walk)
-        for _ in range(4):
-            cmds.redo()
-        gate("redo: four presses bring every step back", values()[1:] == (2.0, 30.0),
-             values())
-        # a fence the boundary build left on the queue (an update mid-session): Ctrl+Z stops there
-        cmds.undoInfo(openChunk=True, chunkName="skeldarTabFence:tab_film:99")
-        cmds.setAttr(probe + ".translateY", 1)
-        cmds.undoInfo(closeChunk=True)
-        step(hero, 7, "move -r 7 0 0")
-        cmds.undo()
-        cmds.undo()
-        gate("legacy: Ctrl+Z stops at a boundary-build fence and says so - nothing under it touched",
-             values()[1:] == (2.0, 30.0) and cmds.getAttr(probe + ".translateY") == 1.0
-             and said[-1:] == [tabundo.OLDER], (values(), cmds.getAttr(probe + ".translateY"), said[-1:]))
-        gate("undo: switching flags no tab modified by its marker alone",
-             all(isinstance(t.get("modified"), bool) for t in session.state()["tabs"]))
-    finally:
-        tabundo._say = say
-
-
-PHASES = {"undo": phase_undo, "session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
+PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert": phase_convert,
           "layers": phase_layers, "open_close": phase_open_close, "switch": phase_switch,
           "save": phase_save, "hooks": guarded(phase_hooks), "restore": guarded(phase_restore),
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),

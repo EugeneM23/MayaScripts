@@ -1,5 +1,10 @@
 # Scene tabs: each tab its own undo history (2026-10-19)
 
+> **Reverted the same evening.** In the animator's hands history still went missing on a switch, and they
+> asked to go back to the commit before the request. The code returned to `2fabd2d~1`: the switch is one
+> undo chunk again. Kept: `bar.stale` (a tab bar built by purged modules is built again). What follows is
+> the record of the attempt.
+
 The animator: «Для каждой вкладки нужно реализовать свою историю действий сейчас одна на вссе вкладки».
 
 ## The limit
