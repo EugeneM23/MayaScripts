@@ -449,6 +449,8 @@ def _callbacks():
         "mayatheme": set_mayatheme,
         #  Maya's icons in the hub's style (2026-10-17, maya_mayaicons)
         "mayaicons": set_mayaicons,
+        #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
+        "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
         #  the side panel (2026-10-17): Maya's editors at the right edge
@@ -510,6 +512,7 @@ def _dress_header(skin):
     _dress_mayaicons(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
+    _dress_interface(skin)
     _dress_edge(skin)
     _dress_popped(skin)
 
@@ -599,6 +602,15 @@ def _dress_sidepanel(skin):
         print(traceback.format_exc())
 
 
+def _dress_interface(skin):
+    """The menu's Use Skeldar / Use Maya interface = what stands (2026-10-19)."""
+    try:
+        import maya_interface
+        skin.paint_interface(maya_interface.current())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
 def _box_on():
     try:
         import maya_channelbox
@@ -672,6 +684,7 @@ def build():
     _tabs_bar_soon()
     _time_bar_soon()
     _side_panel_soon()
+    _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
     if not _BUILT_HERE:
@@ -816,6 +829,23 @@ def _side_panel_soon():
     cmds.evalDeferred(show_panel, lowestPriority=True)
 
 
+def _hotkeys_soon():
+    """The hotkey map's newer keys bound when the map is on (2026-10-19: a Maya that quit without
+    saving its prefs lost F1-F12 and 1-0 with the map still current, and nothing bound them again).
+    Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def keys():
+        try:
+            import maya_hotkeys
+            maya_hotkeys.catch_up()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the hotkey map could not be brought up to date")
+            print(traceback.format_exc())
+    cmds.evalDeferred(keys, lowestPriority=True)
+
+
 def is_skinned():
     """A skin built by this module object stands."""
     return _SKIN is not None and _SKIN.alive()
@@ -958,6 +988,7 @@ def _ensure_edge():
         #  the edge it was never built, and Maya's own slider stayed hidden
         _time_bar_soon()
         _side_panel_soon()
+        _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
     except Exception as error:
@@ -1540,12 +1571,36 @@ def set_mayaicons(on):
     return message
 
 
+def set_interface(choice):
+    """⋮ -> Use Skeldar / Use Maya interface, and the Update card's segments
+    (2026-10-19): the Time Bar, the side panel and our Channel Box switched as
+    one; every row of the menu painted from what stands after."""
+    import maya_interface
+    message = maya_interface.use(choice)
+    repaint_interface()
+    say(message)
+    return message
+
+
+def repaint_interface():
+    """The menu's Time bar, Side panel and interface rows, and the Update card's
+    segments, painted from what stands (no callback)."""
+    if is_skinned():
+        _dress_timebar(_SKIN)
+        _dress_sidepanel(_SKIN)
+        _dress_interface(_SKIN)
+    try:
+        import maya_update
+        maya_update.paint_interface()
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def set_timebar(choice):
     """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16)."""
     import maya_timebar
     message = maya_timebar.set_on(choice)
-    if is_skinned():
-        _SKIN.paint_timebar(maya_timebar.mode())
+    repaint_interface()
     say(message)
     return message
 
@@ -1556,6 +1611,7 @@ def set_sidepanel(choice):
     message = maya_sidepanel.set_mode(choice)
     if is_skinned():
         _SKIN.paint_sidepanel(maya_sidepanel.mode(), maya_sidepanel.on_select())
+    repaint_interface()
     say(message)
     return message
 
@@ -1571,9 +1627,9 @@ def set_sidepanel_select(on):
 
 
 def repaint_sidepanel():
-    """The menu's Side panel rows painted from what stands (no callback)."""
-    if is_skinned():
-        _dress_sidepanel(_SKIN)
+    """The menu's Side panel rows painted from what stands (no callback); the
+    interface switch with them (our Channel Box is part of it)."""
+    repaint_interface()
 
 
 def set_sidepanel_box(on):

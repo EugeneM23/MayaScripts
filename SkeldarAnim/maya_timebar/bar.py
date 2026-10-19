@@ -104,6 +104,22 @@ GLYPHS.update({
 _KIT = None
 
 
+def skill_look():
+    from maya_skillbar import look as skill_look_
+    return skill_look_
+
+
+def _skills_of(link):
+    """The skill bar's model as the link gives it (Maya: the user's file), else in memory."""
+    from maya_skillbar import skills
+    try:
+        made = link.skills() if (hasattr(link, "skills") or isinstance(link, Link)) else None
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        made = None
+    return made if made is not None else skills.MemorySkills()
+
+
 def kit():
     """The strip's paint helpers for the layer panel (made with the classes)."""
     if _KIT is None:
@@ -1656,10 +1672,26 @@ def classes():
             column = QtWidgets.QVBoxLayout(self)
             column.setContentsMargins(int(6 * ui), int(1 * ui), int(6 * ui), int(3 * ui))
             column.setSpacing(0)
+            #  the skill bar (2026-10-19): the page row on top, F1 the two time rows (in one
+            #  box), F2-F12 a page of skill cells in their place
+            self.skills = _skills_of(link)
+            self.lit_aim = None
+            from maya_skillbar import grid as skillgrid
+            PageTabs, SkillGrid = skillgrid.classes()
+            self.tabs = PageTabs(self)
+            column.addWidget(self.tabs)
+            self.time_box = QtWidgets.QWidget(self)
+            self.time_box.setObjectName("skeldarTimeBarTimeBox")
+            box = QtWidgets.QVBoxLayout(self.time_box)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(0)
+            column.addWidget(self.time_box)
+            self.skill_grid = SkillGrid(self)
+            column.addWidget(self.skill_grid)
             top, bottom = QtWidgets.QHBoxLayout(), QtWidgets.QHBoxLayout()
             for row in (top, bottom):
                 row.setSpacing(int(2 * ui))
-                column.addLayout(row)
+                box.addLayout(row)
             # range row
             self.anim_start = self._field("Animation start", lambda v: self._typed_range("a0", v))
             self.play_start = self._field("Playback start", lambda v: self._typed_range("p0", v))
@@ -1748,6 +1780,7 @@ def classes():
             self._keys_read = False     # the first read of the keys is no edit
             self._quiet_keys = False    # a key move is no set and delete
             self._quiet_until = 0.0     # ... nor the key edits Maya reports for it a moment later
+            self._apply_page()
             # timers
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(TIMER_MS)
@@ -1849,7 +1882,7 @@ def classes():
                 return look.popping(age, look.burst_delay(gx - e["gx"], gy - e["gy"], self.ui))
             return look.folding(age, look.fold_delay(gx - e["gx"], self.ui))
 
-        def burst_at(self, gx, gy, opening=True, instant=False):
+        def burst_at(self, gx, gy, opening=True, instant=False, glow=True):
             """The controls - and the keys - pop in from the global point (gx, gy),
             the nearest first, or fold toward it, the farthest first (2026-10-16,
             mockup A, 1.5x slower). Returns how long it takes, ms."""
@@ -1874,7 +1907,7 @@ def classes():
                 self._fade()
                 self.update()
                 return 0.0
-            if opening:
+            if opening and glow:
                 self.fx.add("reveal", cx=float(self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy))).x()))
             for widget, _effect in self.fades:
                 c = widget.mapToGlobal(widget.rect().center())
@@ -2184,6 +2217,210 @@ def classes():
             c = self.layers_btn.mapToGlobal(self.layers_btn.rect().center())
             self.layer_panel.toggle((c.x(), c.y()))
             self.layers_btn.setChecked(self.layer_panel.is_open())
+
+        # the skill bar (2026-10-19) ---------------------------------------------------
+        def time_height(self):
+            """The two time rows' height: a skill page is as tall (F1 and F2 do not jump)."""
+            hint = self.time_box.sizeHint().height()
+            return float(max(hint, int(56 * self.ui)))
+
+        def page(self):
+            return self.skills.page()
+
+        def _apply_page(self):
+            n = self.skills.page()
+            time = not skill_look().is_skill_page(n)
+            self.time_box.setVisible(time)
+            self.skill_grid.setVisible(not time)
+            if not time:
+                self.skill_grid.setFixedHeight(self.skill_grid.wanted_height())
+            self.tabs.update()
+            self.skill_grid.update()
+            self.layout().activate()            # the size hint the host reads is the new page's
+            self.updateGeometry()
+            if hasattr(self.link, "page_height") or isinstance(self.link, Link):
+                self.call("page_height", self)
+
+        def show_page(self, n, origin=None):
+            """Page n (1 the Time Bar, 2-12 skills): shown, its parts popping in from `origin`
+            (a global point: the pressed tab, the cursor), the host sized to it."""
+            look_ = skill_look()
+            if n != look_.TIME_PAGE and not look_.is_skill_page(n):
+                return
+            before = self.skills.page()
+            self.skills.set_page(n)
+            self._apply_page()
+            if origin is None:
+                origin = self.tabs.tab_centre(n) or (0, 0)
+            gx, gy = origin
+            if n == look_.TIME_PAGE:
+                if before != n and self.motion and self.entrance is None:
+                    self.burst_at(gx, gy, True, glow=False)
+                self.refresh(keys=True)
+            else:
+                self.skill_grid.pop_from(gx, gy)
+            self.kick()
+
+        def skill_aim(self, gx, gy):
+            """("cell", n, r, c) / ("tab", n) / None under the global point (gx, gy)."""
+            point = QtCore.QPoint(int(gx), int(gy))
+            if self.tabs.isVisible():
+                local = self.tabs.mapFromGlobal(point)
+                if self.tabs.rect().contains(local):
+                    n = self.tabs.page_at(local.x())
+                    return ("tab", n) if n and skill_look().is_skill_page(n) else None
+            grid = self.skill_grid
+            if grid.isVisible():
+                local = grid.mapFromGlobal(point)
+                if grid.rect().contains(local):
+                    cell = grid.cell_at(local.x(), local.y())
+                    return ("cell", self.skills.page(), cell[0], cell[1]) if cell else None
+            return None
+
+        def light_aim(self, aim):
+            if aim != self.lit_aim:
+                self.lit_aim = aim
+                self.tabs.drop_on = aim[1] if aim and aim[0] == "tab" else None
+                self.tabs.update()
+                self.skill_grid.update()
+
+        def _cols(self):
+            return max(1, self.skill_grid.cols())
+
+        def place_skill(self, aim, item):
+            """`item` onto the aim: a cell (what was there replaced), or a tab (its first free
+            cell). Returns the line said."""
+            look_ = skill_look()
+            data = self.skills.data()
+            if not aim or not look_.valid_item(item):
+                return ""
+            label = self.skills.label(item)
+            if aim[0] == "cell":
+                data = look_.put(data, aim[1], aim[2], aim[3], item)
+                place = (aim[2], aim[3])
+                n = aim[1]
+            else:
+                n = aim[1]
+                data, place = look_.put_on_page(data, n, item, self._cols())
+                if place is None:
+                    message = "%s is full - nothing put there" % look_.fkey(n)
+                    self.skills.say(message)
+                    return message
+            self.skills.set_data(data)
+            message = "%s on %s" % (label, look_.cell_caption(n, place[0], place[1]))
+            if n == self.skills.page():
+                self.skill_grid.flash_at[place] = self.clock()
+                self.skill_grid.run_at[place] = self.clock()
+            self.tabs.update()
+            self.skill_grid.update()
+            self.kick()
+            self.skills.say(message)
+            return message
+
+        def move_skill(self, source, aim):
+            """A cell dragged: onto a cell swaps the two, onto a tab goes to that page's first
+            free cell."""
+            look_ = skill_look()
+            data = self.skills.data()
+            item = look_.item_at(data, *source)
+            if not item or not aim:
+                return ""
+            if aim[0] == "cell":
+                if tuple(aim[1:]) == tuple(source):
+                    return ""
+                self.skills.set_data(look_.swap(data, source, aim[1:]))
+                self.skill_grid.flash_at[(aim[2], aim[3])] = self.clock()
+            else:
+                if aim[1] == source[0]:
+                    return ""
+                moved, place = look_.put_on_page(look_.take(data, *source), aim[1], item, self._cols())
+                if place is None:
+                    message = "%s is full" % look_.fkey(aim[1])
+                    self.skills.say(message)
+                    return message
+                self.skills.set_data(moved)
+            self.tabs.update()
+            self.skill_grid.update()
+            self.kick()
+            return "moved"
+
+        def cell_rows(self, n, r, c):
+            look_ = skill_look()
+            item = look_.item_at(self.skills.data(), n, r, c)
+            aim = ("cell", n, r, c)
+            point = self.skill_grid.cell_centre(r, c)
+            rows = [(look_.cell_caption(n, r, c), None)]
+            if item:
+                rows += [("Run  " + self.skills.label(item), lambda: self.skill_grid.run_cell((r, c))),
+                         ("Rename...", lambda: self._rename_cell(n, r, c)),
+                         ("Change skill...", lambda: self.skills.open_library(aim, point)),
+                         ("Clear", lambda: self._clear_cell(n, r, c))]
+            else:
+                rows += [("Skill library...", lambda: self.skills.open_library(aim, point)),
+                         ("Script from the Script Editor", lambda: self._script_cell(aim))]
+            return rows + [None,
+                           ("Skill library...", lambda: self.skills.open_library(None, point))]
+
+        def page_rows(self, n):
+            look_ = skill_look()
+            point = self.tabs.tab_centre(n) or (0, 0)
+            rows = [("Show %s" % look_.fkey(n), lambda: self.show_page(n, point))]
+            if look_.is_skill_page(n):
+                rows += [("Rename page...", lambda: self._rename_page(n)),
+                         ("Clear page", (lambda: self._clear_page(n))
+                          if look_.filled(self.skills.data(), n) else None)]
+            return rows + [None,
+                           ("Skill library...", lambda: self.skills.open_library(None, point))]
+
+        def cell_menu(self, n, r, c, where):
+            self._menu(where, self.cell_rows(n, r, c))
+
+        def page_menu(self, n, where):
+            self._menu(where, self.page_rows(n))
+
+        def _ask(self, title, label, text):
+            value, ok = QtWidgets.QInputDialog.getText(self, title, label, QtWidgets.QLineEdit.Normal, text)
+            return value if ok else None
+
+        def _rename_cell(self, n, r, c):
+            look_ = skill_look()
+            item = look_.item_at(self.skills.data(), n, r, c)
+            if not item:
+                return
+            value = self._ask("Rename skill", "Name:", self.skills.label(item))
+            if value is None:
+                return
+            item = dict(item)
+            if value.strip():
+                item["label"] = value.strip()[:40]
+            else:
+                item.pop("label", None)
+            self.skills.set_data(look_.put(self.skills.data(), n, r, c, item))
+            self.skill_grid.update()
+
+        def _clear_cell(self, n, r, c):
+            self.skills.set_data(skill_look().take(self.skills.data(), n, r, c))
+            self.tabs.update()
+            self.skill_grid.update()
+
+        def _script_cell(self, aim):
+            item = self.skills.script_editor()
+            if item is None:
+                self.skills.say("The Script Editor's current tab holds no text")
+                return
+            self.place_skill(aim, item)
+
+        def _rename_page(self, n):
+            look_ = skill_look()
+            value = self._ask("Rename page", "%s name:" % look_.fkey(n), look_.page_name(self.skills.data(), n))
+            if value is not None:
+                self.skills.set_data(look_.rename_page(self.skills.data(), n, value))
+                self.tabs.update()
+
+        def _clear_page(self, n):
+            self.skills.set_data(skill_look().clear_page(self.skills.data(), n))
+            self.tabs.update()
+            self.skill_grid.update()
 
         def strip_rect(self):
             p = self.mapToGlobal(self.rect().topLeft())
@@ -2521,4 +2758,5 @@ def build():
     _state()["bar"] = widget
     _state()["host"] = "docked"
     start_jobs()
+    widget._apply_page()                # the docked control as tall as the page shown
     return widget

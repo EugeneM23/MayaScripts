@@ -174,6 +174,14 @@ def rebuild():
     return ensure_edge()
 
 
+def reload_live():
+    """After an install (2026-10-19): a panel an OLDER module built given back and
+    built again from this one (our Channel Box with it). True when it stands."""
+    if _cmds().about(batch=True) or mode() != "edge":
+        return False
+    return rebuild() is not None
+
+
 def give_back():
     """Every borrowed form back where it came from; Maya's procs again. Safe to call
     any time - it acts only on what is held."""

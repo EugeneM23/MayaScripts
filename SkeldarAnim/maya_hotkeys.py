@@ -76,7 +76,7 @@ DEFAULT_KEYS = (
     ("o", {"altModifier": True}, "editor.outliner"),
     ("c", {"altModifier": True}, "graph.overlay"),
     ("q", {"altModifier": True}, "radial.press"),
-)
+) + tuple(("F%d" % n, {}, "skills.page%d" % n) for n in range(1, 13))   + tuple((key, {}, "skills.cell%d" % (i + 1)) for i, key in enumerate("1234567890"))
 
 # A row whose key does something on RELEASE as well (2026-10-15, the radial
 # menu: hold alt+q, release over a slot). `bind_defaults` gives the key the
@@ -98,7 +98,7 @@ RELEASED_KEYS = (
 # how alt+g and alt+o reached a set that already existed, and how the
 # number keys are handed back -- and alt+c, given back on 2026-09-08 (5)
 # and taken again for the Graph Overlay on 2026-09-30 (6).
-DEFAULT_KEYS_VERSION = 7
+DEFAULT_KEYS_VERSION = 9      # 8: F1-F12, the skill bar's pages; 9: 1-0, its cells (2026-10-19)
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -227,6 +227,21 @@ def _radial(func):
     cursor, the release chooses."""
     import maya_radial
     return getattr(maya_radial, func)()
+
+
+def _skills(page):
+    """F1-F12 (2026-10-19): the Time Bar (F1) or a page of skills, said where it cannot show."""
+    import maya_skillbar
+    message = maya_skillbar.page(page)
+    return _report(message) if message else ""
+
+
+def _skill_cell(index):
+    """1-0 (2026-10-19): the skill in that cell of the page shown (typing in a field: the digit
+    goes there)."""
+    import maya_skillbar
+    message = maya_skillbar.run_number(index)
+    return _report(message) if message else ""
 
 
 def _walk_module():
@@ -787,6 +802,10 @@ def activate():
         freed = release_keys()
         displaced = bind_defaults()
         cmds.optionVar(intValue=(DEFAULT_KEYS_VAR, DEFAULT_KEYS_VERSION))
+        try:
+            cmds.savePrefs(hotkeys=True, general=True)   # a crash must not lose them
+        except Exception:                                    # noqa: BLE001
+            pass
         note = " - {0} key(s) bound".format(len(DEFAULT_KEYS))
         if displaced:
             note += ", took " + ", ".join(
@@ -799,6 +818,55 @@ def activate():
         return _report("Hotkeys: {0} created from {1}{2} - assign the "
                        "rest".format(SET, base, note))
     return _report("Hotkeys: " + SET + note)
+
+
+def catch_up():
+    """With the map on, the commands registered and DEFAULT_KEYS bound when this user has an older
+    version of them, then the prefs saved at once. The map only binds on a press of its switch, so
+    a Maya that quit without saving (the keys and the version are prefs) kept the map current with
+    the new keys gone, and nothing pressed the switch again (2026-10-19, F1-F12 «перестали
+    работать»). Returns what it did, "" for nothing."""
+    if not is_active():
+        return ""
+    if defaults_installed() >= DEFAULT_KEYS_VERSION:
+        lost = skill_keys_lost()
+        if not lost:
+            return ""
+        register()
+        for key, modifiers, row_key in lost:
+            bind_row(key, modifiers, row_key)
+        _save_prefs()
+        return "Hotkeys: {0} - {1} skill key(s) bound again".format(SET, len(lost))
+    register()
+    release_keys()
+    bind_defaults()
+    cmds.optionVar(intValue=(DEFAULT_KEYS_VAR, DEFAULT_KEYS_VERSION))
+    _save_prefs()
+    return "Hotkeys: {0} - {1} key(s) bound".format(SET, len(DEFAULT_KEYS))
+
+
+def skill_keys_lost():
+    """The skill bar's rows of DEFAULT_KEYS (F1-F12, 1-0) whose key holds nothing, or whose
+    runTimeCommand is gone (2026-10-19, «опять ломались F кнопки»): the version alone said "up to
+    date" over keys that a reset prefs file or another build's install had left dead. A key the
+    animator gave a command of their own is theirs and is not taken back."""
+    lost = []
+    for key, modifiers, row_key in DEFAULT_KEYS:
+        if not row_key.startswith("skills."):
+            continue
+        held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+        if held and held != name_command(row_key):
+            continue
+        if not held or not cmds.runTimeCommand(command_name(row_key), exists=True):
+            lost.append((key, modifiers, row_key))
+    return lost
+
+
+def _save_prefs():
+    try:
+        cmds.savePrefs(hotkeys=True, general=True)
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def deactivate():
@@ -1065,6 +1133,72 @@ _OURS = (
     ("radial.release", "Radial Menu", "Radial menu (release)",
      "The radial menu's key let go: the slot pointed at runs",
      partial(_radial, "release")),
+    ("skills.page1", "Skill Bar", "F1 Time Bar",
+     "The Time Bar's own rows (F1 of the skill bar)",
+     partial(_skills, 1)),
+    ("skills.page2", "Skill Bar", "Skill page F2",
+     "The Time Bar shows skill page F2 (it comes out at the bottom edge)",
+     partial(_skills, 2)),
+    ("skills.page3", "Skill Bar", "Skill page F3",
+     "The Time Bar shows skill page F3 (it comes out at the bottom edge)",
+     partial(_skills, 3)),
+    ("skills.page4", "Skill Bar", "Skill page F4",
+     "The Time Bar shows skill page F4 (it comes out at the bottom edge)",
+     partial(_skills, 4)),
+    ("skills.page5", "Skill Bar", "Skill page F5",
+     "The Time Bar shows skill page F5 (it comes out at the bottom edge)",
+     partial(_skills, 5)),
+    ("skills.page6", "Skill Bar", "Skill page F6",
+     "The Time Bar shows skill page F6 (it comes out at the bottom edge)",
+     partial(_skills, 6)),
+    ("skills.page7", "Skill Bar", "Skill page F7",
+     "The Time Bar shows skill page F7 (it comes out at the bottom edge)",
+     partial(_skills, 7)),
+    ("skills.page8", "Skill Bar", "Skill page F8",
+     "The Time Bar shows skill page F8 (it comes out at the bottom edge)",
+     partial(_skills, 8)),
+    ("skills.page9", "Skill Bar", "Skill page F9",
+     "The Time Bar shows skill page F9 (it comes out at the bottom edge)",
+     partial(_skills, 9)),
+    ("skills.page10", "Skill Bar", "Skill page F10",
+     "The Time Bar shows skill page F10 (it comes out at the bottom edge)",
+     partial(_skills, 10)),
+    ("skills.page11", "Skill Bar", "Skill page F11",
+     "The Time Bar shows skill page F11 (it comes out at the bottom edge)",
+     partial(_skills, 11)),
+    ("skills.page12", "Skill Bar", "Skill page F12",
+     "The Time Bar shows skill page F12 (it comes out at the bottom edge)",
+     partial(_skills, 12)),
+    ("skills.cell1", "Skill Bar", "Skill 1",
+     "The skill in cell 1 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 0)),
+    ("skills.cell2", "Skill Bar", "Skill 2",
+     "The skill in cell 2 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 1)),
+    ("skills.cell3", "Skill Bar", "Skill 3",
+     "The skill in cell 3 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 2)),
+    ("skills.cell4", "Skill Bar", "Skill 4",
+     "The skill in cell 4 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 3)),
+    ("skills.cell5", "Skill Bar", "Skill 5",
+     "The skill in cell 5 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 4)),
+    ("skills.cell6", "Skill Bar", "Skill 6",
+     "The skill in cell 6 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 5)),
+    ("skills.cell7", "Skill Bar", "Skill 7",
+     "The skill in cell 7 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 6)),
+    ("skills.cell8", "Skill Bar", "Skill 8",
+     "The skill in cell 8 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 7)),
+    ("skills.cell9", "Skill Bar", "Skill 9",
+     "The skill in cell 9 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 8)),
+    ("skills.cell10", "Skill Bar", "Skill 0",
+     "The skill in cell 0 of the skill page shown (the last one, while F1 shows) - typing in a field, the digit goes there",
+     partial(_skill_cell, 9)),
     ("window.radial", "Windows", "Radial Menu",
      "Open the Radial Menu section: what the eight slots hold",
      partial(_show, "maya_radial", "show_window")),

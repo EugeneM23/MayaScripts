@@ -240,6 +240,18 @@ class Channels(unittest.TestCase):
     def test_everything_locked_refuses(self):
         free, skipped, refusal = plan.channel_plan("obj", self._all(True), self._all(None))
         self.assertIn("no free translate or rotate channel", refusal)
+        self.assertTrue(plan.all_locked(refusal))
+
+    def test_only_an_all_locked_refusal_is_passed_over(self):
+        drivers = self._all(None)
+        drivers["ry"] = "an expression"
+        self.assertFalse(plan.all_locked(plan.channel_plan("o", self._all(False), drivers)[2]))
+        self.assertFalse(plan.all_locked("o already rides a knot"))
+        self.assertFalse(plan.all_locked(""))
+        self.assertEqual(plan.passed_over_words([]), "")
+        words = plan.passed_over_words(["A", "B", "C", "D", "E"])
+        self.assertIn("passed over 5", words)
+        self.assertIn("A, B, C, D, ...", words)
 
     def test_knot_orient_asks_for_rotates_only(self):
         locked = dict((ch, True) for ch in plan.ROTATE)

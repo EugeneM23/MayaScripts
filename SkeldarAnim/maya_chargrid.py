@@ -153,6 +153,37 @@ def _last_line(error_text):
     return lines[-1] if lines else "failed"
 
 
+# ------------------------------------------------------------------ the skill bar
+
+def _skillbar():
+    """maya_skillbar, or None (2026-10-19: a portrait dropped on the Time Bar's skill page is a
+    character skill)."""
+    try:
+        import maya_skillbar
+        return maya_skillbar
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def skill_aim(gx, gy):
+    bar = _skillbar()
+    if bar is None:
+        return None
+    try:
+        return bar.aim(gx, gy)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def skill_light(target):
+    bar = _skillbar()
+    if bar is not None:
+        try:
+            bar.light(target)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
 # ------------------------------------------------------------------ scene
 
 class Scene(object):
@@ -554,6 +585,11 @@ def _classes():
             local = self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
             if self.rect().contains(local) or self.scene.over_hub(gx, gy):
                 return self.status_text          # back on the hub: nothing
+            skill = skill_aim(gx, gy)
+            if skill:
+                skill_light(None)
+                return self._say(_skillbar().drop(gx, gy, {"kind": "character", "model": model,
+                                                          "char": self.kind}))
             aim = self.scene.target(gx, gy)
             if aim.get("kind") == "floor":
                 point, kind = aim["point"], self.kind
@@ -591,6 +627,7 @@ def _classes():
                 ghost.deleteLater()
             self._drag = None
             self._press = None
+            skill_light(None)
             end = getattr(self.scene, "end", None)
             if end is not None:
                 end()
@@ -613,6 +650,11 @@ def _classes():
                 if self.rect().contains(local) or self.scene.over_hub(gx, gy):
                     drag["ghost"].set_caption("release off the hub to place",
                                               False)
+                    return
+                skill = skill_aim(gx, gy)
+                skill_light(skill)
+                if skill:
+                    drag["ghost"].set_caption(_skillbar().caption(self._row(drag["model"]), skill), True)
                     return
                 aim = self.scene.target(gx, gy)
             except Exception:                                # noqa: BLE001

@@ -14,7 +14,7 @@ CONTROL = "skeldarTimeBar"
 LABEL = "Time Bar"
 OPTIONVAR = "skeldarTimeBar"
 MAYA_CONTROLS = ("TimeSlider", "RangeSlider")
-HEIGHT = 84                 # logical px: the range row and the time row
+HEIGHT = 106                # logical px: the page row (the skill bar, 2026-10-19), the range row, the time row
 
 
 def _state():
@@ -224,6 +224,44 @@ def ensure():
     if choice == "docked":
         return ensure_docked()
     return None
+
+
+def _stop_jobs():
+    """The strip's scriptJobs and callbacks killed (they may be an older
+    module's)."""
+    import maya.cmds as cmds
+    for job in _state().get("jobs", []):
+        try:
+            if cmds.scriptJob(exists=job):
+                cmds.scriptJob(kill=job, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
+    _state()["jobs"] = []
+    try:
+        import maya.api.OpenMaya as om
+        for cid in _state().get("callbacks", []):
+            try:
+                om.MMessage.removeCallback(cid)
+            except Exception:                                # noqa: BLE001
+                pass
+    except Exception:                                        # noqa: BLE001
+        pass
+    _state()["callbacks"] = []
+
+
+def reload_live():
+    """After an install (2026-10-19): the bar an OLDER module built - at the bottom
+    edge or docked - dropped and built again from this one, in the mode chosen.
+    The state lives on `sys`, so this module can take down what the old one made.
+    True when ours stands again."""
+    import maya.cmds as cmds
+    if cmds.about(batch=True):
+        return False
+    drop_edge()
+    _state()["bar"] = None              # a docked strip of the old classes: build again
+    _state()["host"] = None
+    _stop_jobs()
+    return ensure() is not None
 
 
 def show():

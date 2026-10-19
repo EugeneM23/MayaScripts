@@ -508,8 +508,15 @@ class BottomEdge(object):
                                       buttons=self.buttons(),
                                       popup=app.activePopupWidget() is not None,
                                       modal=app.activeModalWidget() is not None, typing=typing)
-        if getattr(self.strip.timeline, "drag", None) or getattr(self.strip.range, "drag", None):
+        if (getattr(self.strip.timeline, "drag", None) or getattr(self.strip.range, "drag", None)
+                or getattr(getattr(self.strip, "skill_grid", None), "drag", None)):
             reasons.append("dragging")
+        try:
+            from maya_skillbar import library
+            if library.is_open():
+                reasons.append("skills")          # the skill library stands on the bar (2026-10-19)
+        except Exception:                                    # noqa: BLE001
+            pass
         if self.playing():
             reasons.append("playing")             # hidden only when not in use (2026-10-17)
         if self.baking:

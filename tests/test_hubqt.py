@@ -52,6 +52,7 @@ class SeamsMixin(object):
             "mayatheme": lambda on: self.calls.append(("mayatheme", on)),
             "mayaicons": lambda on: self.calls.append(("mayaicons", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
+            "interface": lambda c: self.calls.append(("interface", c)),
             "sidepanel": lambda choice: self.calls.append(("sidepanel", choice)),
             "sidepanel_select": lambda on: self.calls.append(("sidepanel_select", on)),
             "sidepanel_box": lambda on: self.calls.append(("sidepanel_box", on)),
@@ -85,7 +86,7 @@ class FlaggedRows(SeamsMixin, unittest.TestCase):
     def test_the_rows_are_built_after_interface_animations(self):
         texts = [a.text() for a in self.skin.menu.actions()
                  if not a.isSeparator()]
-        self.assertEqual(texts[3:6], ["Interface animations", "Maya theme",
+        self.assertEqual(texts[5:8], ["Interface animations", "Maya theme",
                                       "Maya icons"])
 
     def test_the_maya_theme_row_is_a_checkbox_painted_without_a_call(self):
@@ -197,8 +198,22 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.skin.hotkeys.click()
         self.assertEqual(self.calls, ["hotkeys"])
 
+    def test_the_menu_opens_with_the_interface_switch(self):
+        """2026-10-19: Use Skeldar / Use Maya interface, two rows, at most one lit."""
+        actions = [a for a in self.skin.menu.actions() if not a.isSeparator()][:2]
+        self.assertEqual([a.text() for a in actions],
+                         ["Use Skeldar interface", "Use Maya interface"])
+        self.skin.paint_interface("maya")
+        self.assertEqual([a.isChecked() for a in actions], [False, True])
+        self.skin.paint_interface("mixed")
+        self.assertEqual([a.isChecked() for a in actions], [False, False])
+        self.assertEqual(self.calls, [])
+        actions[0].trigger()
+        actions[1].trigger()
+        self.assertEqual(self.calls, [("interface", "skeldar"), ("interface", "maya")])
+
     def test_the_menu_offers_check_update_hotkey_editor_sounds_classic(self):
-        actions = [a for a in self.skin.menu.actions() if not a.isSeparator()]
+        actions = [a for a in self.skin.menu.actions() if not a.isSeparator()][2:]
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",

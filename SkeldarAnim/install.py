@@ -98,6 +98,7 @@ _PAYLOAD = (
     "maya_hubsound.py",         # its interface sounds (2026-10-01)
     "maya_hubmotion.py",        # how its cards move (2026-10-01)
     "maya_mayatheme.py",        # Maya in the hub's colours (2026-10-17)
+    "maya_interface.py",        # Use Skeldar / Use Maya interface, one switch (2026-10-19)
     "maya_mayaicons.py",        # Maya's icons in the hub's style (2026-10-17)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
@@ -139,6 +140,7 @@ _PAYLOAD = (
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
     "maya_sidepanel",           # the side panel: Channel Box / Layer Editor and Attribute Editor at the right edge (2026-10-17)
+    "maya_skillbar",            # the skill bar: F1 the Time Bar, F2-F12 pages of skills on its strip (2026-10-19)
     "maya_channelbox",          # our Channel Box in the side panel, variant A "Rows" (2026-10-18)
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
@@ -1131,6 +1133,13 @@ def install(dropped=None, quiet=False):
     hub_open = (bool(cmds.workspaceControl(HUB_CONTROL, exists=True))
                 or _edge_standing())
     target = dest.replace("\\", "/")
+    # The Time Bar, the side panel and our Channel Box (2026-10-19, «при
+    # установки обновления наш плагин обнавлял интерфейс в реальном времени»):
+    # they stand outside the hub, built by the OLD modules - rebuilt from the
+    # new ones, deferred like the hub, and before it (the hub's edge reads where
+    # the Time Bar stands).
+    if not cmds.about(batch=True) and _interface_standing():
+        cmds.evalDeferred(lambda: rebuild_interface(target), lowestPriority=True)
     if hub_open:
         cmds.evalDeferred(lambda: rebuild_open_hub(target),
                           lowestPriority=True)
@@ -1194,6 +1203,34 @@ def rebuild_open_hub(dest, importer=None):
         print("SkeldarAnim: the open hub was not rebuilt ({0}) - press the"
               " SkeldarAnim shelf button".format(exc))
         return False
+
+
+def _interface_standing():
+    """The Time Bar or the side panel stands in this session, built by modules
+    the install has just purged (their state lives on `sys`)."""
+    for name, keys in (("_skeldar_timebar", ("bar", "edge")),
+                       ("_skeldar_sidepanel", ("edge",))):
+        state = getattr(sys, name, None) or {}
+        if any(state.get(key) is not None for key in keys):
+            return True
+    return False
+
+
+def rebuild_interface(dest, importer=None):
+    """The Time Bar and the side panel (with our Channel Box) built again from the
+    FRESH modules - the installed copy's, `dest` first on sys.path (2026-10-19).
+    What was rebuilt, as a list; a failure is printed, never raised (deferred)."""
+    if importer is None:
+        import importlib
+        importer = importlib.import_module
+    if dest not in sys.path:
+        sys.path.insert(0, dest)
+    try:
+        return importer("maya_interface").reload_live()
+    except Exception as exc:                                 # noqa: BLE001
+        print("SkeldarAnim: the Time Bar and the side panel were not rebuilt ({0}) -"
+              " restart Maya to see the new ones".format(exc))
+        return []
 
 
 def rebuild_open_poselib(dest, importer=None):

@@ -529,12 +529,19 @@ def create(kind, selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
     objs = _selection(selection)
     if not objs:
         return plan.NOTHING
-    infos = []
+    infos, kept, passed = [], [], []
     for obj in objs:
         info, refusal = _plan_object(obj, kind)
+        if refusal and len(objs) > 1 and plan.all_locked(refusal):
+            passed.append(plan.leaf(obj))
+            continue
         if refusal:
             return refusal
+        kept.append(obj)
         infos.append(info)
+    if not kept:
+        return _plan_object(objs[0], kind)[1]
+    objs = kept
     highlight = _highlight(highlight)
     made = []
     with _press("skeldarKnot"):
@@ -542,7 +549,8 @@ def create(kind, selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
             made.append((obj,) + _build(kind, obj, info, highlight, order))
         cmds.select([m[2] for m in made], replace=True)
     pairs = [(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made]
-    return plan.created_message(plan.kind(kind).label, pairs, made[0][3])
+    return (plan.created_message(plan.kind(kind).label, pairs, made[0][3])
+            + plan.passed_over_words(passed))
 
 
 def _build_snapshot(obj, highlight, choice):
@@ -744,10 +752,18 @@ def begin_aim(selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
     objs = _selection(selection)
     if not objs:
         return plan.AIM_NOTHING
+    kept, passed = [], []
     for obj in objs:
         _info, refusal = _plan_object(obj, "aim")
+        if refusal and len(objs) > 1 and plan.all_locked(refusal):
+            passed.append(plan.leaf(obj))
+            continue
         if refusal:
             return refusal
+        kept.append(obj)
+    if not kept:
+        return _plan_object(objs[0], "aim")[1]
+    objs = kept
     highlight = _highlight(highlight)
     k = plan.kind("aim")
     targets = []
@@ -777,7 +793,7 @@ def begin_aim(selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
         cmds.setToolTo("moveSuperContext")
     except Exception:                                           # batch: no tools
         pass
-    return plan.aim_begin_message([plan.leaf(o) for o in objs])
+    return plan.aim_begin_message([plan.leaf(o) for o in objs]) + plan.passed_over_words(passed)
 
 
 def _pending_up(target):

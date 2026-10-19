@@ -342,6 +342,8 @@ def drop_caption(name, aim):
         return text, True
     if kind == "folder":
         return "%s %s move to %s" % (name, DOT, aim.get("folder") or "Library"), True
+    if kind == "skill":
+        return aim.get("text") or name, True
     if kind == "walk":
         what = "walk cycle" if aim.get("well_kind") == "walk" else "pose"
         return "%s %s Walk Builder %s" % (name, DOT, what), True

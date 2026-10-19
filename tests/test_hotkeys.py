@@ -495,7 +495,8 @@ class OurRows(unittest.TestCase):
         #  + tools.fp_setup (2026-10-16, 1P Setup)
         #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
         #  + ragdoll.blend (2026-10-17)
-        self.assertEqual(len(ours), 79)                 # + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
+        #  + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
+        self.assertEqual(len(ours), 101)                # + skills.page1..12, skills.cell1..10 (2026-10-19)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -1248,9 +1249,14 @@ class TheDefaultKeys(unittest.TestCase):
         for _key, _mods, row in maya_hotkeys.DEFAULT_KEYS:
             self.assertIsNotNone(maya_hotkeys.row(row), row)
 
-    def test_they_are_all_alt(self):
-        for _key, mods, _row in maya_hotkeys.DEFAULT_KEYS:
-            self.assertEqual(mods, {"altModifier": True})
+    def test_they_are_all_alt_but_the_f_keys(self):
+        for key, mods, row in maya_hotkeys.DEFAULT_KEYS:
+            if row.startswith("skills.page"):
+                self.assertEqual((key, mods), ("F" + row[len("skills.page"):], {}))
+            elif row.startswith("skills.cell"):
+                self.assertEqual((key, mods), ("1234567890"[int(row[len("skills.cell"):]) - 1], {}))
+            else:
+                self.assertEqual(mods, {"altModifier": True})
 
     def test_binding_creates_a_namecommand_per_row(self):
         maya_hotkeys.bind_defaults()
@@ -1290,6 +1296,33 @@ class TheDefaultKeys(unittest.TestCase):
         maya_hotkeys.deactivate()
         maya_hotkeys.activate()
         self.assertNotIn(("a", True), self.fake.bindings)
+
+    def test_catch_up_binds_an_active_map_with_an_older_version(self):
+        """A Maya that quit without saving its prefs keeps the map current and loses the newer keys
+        and the version: the hub's start binds them again (2026-10-19, F1-F12)."""
+        maya_hotkeys.activate()
+        self.fake.bindings.clear()
+        self.fake.optionvars[maya_hotkeys.DEFAULT_KEYS_VAR] = 7
+        self.assertIn("bound", maya_hotkeys.catch_up())
+        self.assertEqual(self.fake.bindings[("F2", False)], maya_hotkeys.name_command("skills.page2"))
+        self.assertEqual(maya_hotkeys.defaults_installed(), maya_hotkeys.DEFAULT_KEYS_VERSION)
+        self.assertEqual(maya_hotkeys.catch_up(), "")          # up to date: nothing
+
+    def test_catch_up_binds_lost_skill_keys_when_the_version_is_current(self):
+        """A reset prefs file or another build's install left F1-F12 dead under a current version
+        (2026-10-19, «опять ломались F кнопки»): the hub's start binds the skill keys again, and
+        leaves a key the animator gave a command of their own."""
+        maya_hotkeys.activate()
+        del self.fake.bindings[("F2", False)]
+        self.fake.bindings[("F3", False)] = "MyOwnCommandName"
+        self.assertIn("bound again", maya_hotkeys.catch_up())
+        self.assertEqual(self.fake.bindings[("F2", False)], maya_hotkeys.name_command("skills.page2"))
+        self.assertEqual(self.fake.bindings[("F3", False)], "MyOwnCommandName")
+        self.assertEqual(maya_hotkeys.catch_up(), "")
+
+    def test_catch_up_leaves_the_animator_s_own_set_alone(self):
+        self.assertEqual(maya_hotkeys.catch_up(), "")
+        self.assertEqual(self.fake.bindings, {})
 
     def test_a_re_created_set_gets_them_again(self):
         maya_hotkeys.activate()
@@ -1424,7 +1457,9 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
                           ("g", "editor.graph"), ("o", "editor.outliner"),
-                          ("c", "graph.overlay"), ("q", "radial.press")])
+                          ("c", "graph.overlay"), ("q", "radial.press")]
+                         + [("F%d" % n, "skills.page%d" % n) for n in range(1, 13)]
+                         + [(k, "skills.cell%d" % (i + 1)) for i, k in enumerate("1234567890")])
 
     def test_the_version_went_up_again(self):
         self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 6)

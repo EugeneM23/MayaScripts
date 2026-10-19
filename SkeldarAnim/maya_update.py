@@ -457,6 +457,77 @@ def _press_now():
         _status("Check update failed: {0}".format(exc))
 
 
+#  2026-10-19, «в настройках нашего плагина сделаем два переключателя Use Maya
+#  interface и use Skeldar interface»: two segments, Skeldar | Maya, at most one
+#  lit (neither while the Time Bar and the side panel are mixed by hand). Check
+#  boxes, not radios: a radio cannot show "neither", and a press on the lit one
+#  must still apply (it stands the interface up again).
+INTERFACE = "skeldarUpdateInterface_"
+_INTERFACE_QUIET = {"on": False}
+
+
+def interface_box(choice):
+    return INTERFACE + choice
+
+
+def _press_interface(choice):
+    def press(*_args):
+        if _INTERFACE_QUIET["on"]:
+            return
+        try:
+            import maya_hub
+            message = maya_hub.set_interface(choice)
+        except Exception as exc:                             # noqa: BLE001
+            print(traceback.format_exc())
+            message = "The interface was not switched: {0}".format(exc)
+        paint_interface()
+        _status(message)
+    return press
+
+
+def paint_interface():
+    """The segments show the interface that stands (no callback)."""
+    try:
+        import maya_interface
+        shown = maya_interface.current()
+    except Exception:                                        # noqa: BLE001
+        return None
+    _INTERFACE_QUIET["on"] = True
+    try:
+        for choice, _label in maya_interface.LABELS:
+            name = interface_box(choice)
+            if cmds.iconTextCheckBox(name, exists=True):
+                cmds.iconTextCheckBox(name, edit=True, value=choice == shown)
+    finally:
+        _INTERFACE_QUIET["on"] = False
+    return shown
+
+
+def _interface_row():
+    import maya_hubstyle as hubstyle   # stdlib
+    import maya_interface
+    hubstyle.mark(cmds.text(label="Interface", align="left"), "label")
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    tips = {
+        maya_interface.SKELDAR: "Use Skeldar interface: our Time Bar at the bottom edge, our "
+                                "Channel Box and the Attribute Editor in the side panel at "
+                                "the right edge",
+        maya_interface.MAYA: "Use Maya interface: Maya's own time slider, Channel Box and "
+                             "Attribute Editor",
+    }
+    for choice, label in (("skeldar", "Skeldar"), ("maya", "Maya")):
+        hubstyle.mark(cmds.iconTextCheckBox(
+            interface_box(choice), style="textOnly", label=label,
+            height=hubstyle.height("segment", 24), value=False,
+            annotation=tips[choice],
+            onCommand=_press_interface(choice),
+            offCommand=_press_interface(choice)), "segment")
+    cmds.setParent("..")
+    paint_interface()
+
+
 def build_panel():
     """The installed build, the button, a status line (the hub's section)."""
     import maya_hubstyle as hubstyle   # stdlib
@@ -474,6 +545,7 @@ def build_panel():
         annotation="Compare with the latest build on github.com/{0} and "
                    "install it".format(REPO),
         command=_press), "primary", "refresh")
+    _interface_row()
     #  Three lines: the no-build refusal wraps to three in a narrow dock.
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=54), "status")

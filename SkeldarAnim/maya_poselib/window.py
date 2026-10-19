@@ -400,6 +400,24 @@ def walk_well(gx, gy):
         return None
 
 
+def skill_aim(gx, gy):
+    """The skill bar's cell or tab under the global point (maya_skillbar), or None - a card dropped
+    there is a pose / animation skill (2026-10-19)."""
+    try:
+        import maya_skillbar
+        return maya_skillbar.aim(gx, gy)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def skill_light(target):
+    try:
+        import maya_skillbar
+        maya_skillbar.light(target)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def light_well(well):
     """Only `well` lit (None: none) while a card is dragged."""
     try:
@@ -2142,6 +2160,13 @@ def _classes():
                 if card is not None and card.kind == "objects":
                     return {"kind": "none", "text": look.WALK_NOT_OBJECTS}
                 return {"kind": "walk", "well": well, "well_kind": well_kind}
+            skill = skill_aim(gx, gy)
+            skill_light(skill)
+            if skill:
+                import maya_skillbar
+                card = self._card(path)
+                return {"kind": "skill", "skill": skill,
+                        "text": maya_skillbar.caption(card.name if card else "Pose", skill)}
             if self._inside(gx, gy) or self.scene.over_window(gx, gy):
                 return {"kind": "window"}
             card = self._card(path)
@@ -2159,7 +2184,13 @@ def _classes():
             a verify can drive it without a mouse. Answers the status line."""
             aim = self.aim(gx, gy, path, snap)
             light_well(None)
+            skill_light(None)
             kind = aim.get("kind")
+            if kind == "skill":
+                import maya_skillbar
+                from maya_skillbar import run as skillrun
+                item = {"kind": "card", "path": skillrun.relative_card(path)}
+                return self._run(lambda: self.say(maya_skillbar.drop(gx, gy, item)))
             if kind == "walk":
                 well = aim["well"]
                 return self._run(lambda: self.say(well.take(path)))
@@ -2625,8 +2656,10 @@ def _classes():
             return self.say(walk.take_card(path))
 
         def drag_over(self, well=None):
-            """A drag ended (or left the wells): the walk wells unlit."""
+            """A drag ended (or left the wells): the walk wells unlit (and the skill bar's cell)."""
             light_well(well)
+            if well is None:
+                skill_light(None)
 
         def rename_card(self, path):
             card = self._card(path)

@@ -560,6 +560,101 @@ def _middle_class():
     return _CLASSES["middle"]
 
 
+def _rail_drag_class():
+    """A rail icon dragged off the rail onto the Time Bar's skill page (2026-10-19): its section
+    becomes a skill there. A press that travels past Qt's start distance is a drag (the click is
+    not sent); let go over a cell or a page tab it is placed, anywhere else nothing."""
+    if "raildrag" not in _CLASSES:
+        q = qt()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+        Qt = QtCore.Qt
+
+        def bar():
+            try:
+                import maya_skillbar
+                return maya_skillbar
+            except Exception:                                # noqa: BLE001
+                return None
+
+        class RailDrag(QtCore.QObject):
+
+            def __init__(self, key, label, pixmap, parent=None):
+                super(RailDrag, self).__init__(parent)
+                self.key, self.label, self.pixmap = key, label, pixmap
+                self.press = None
+                self.ghost = None
+
+            def _global(self, event):
+                return (event.globalPosition().toPoint() if hasattr(event, "globalPosition")
+                        else event.globalPos())
+
+            def item(self):
+                return {"kind": "section", "key": self.key}
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                kind = event.type()
+                E = QtCore.QEvent
+                if kind == E.MouseButtonPress and event.button() == Qt.LeftButton:
+                    self.press = self._global(event)
+                    return False
+                if kind == E.MouseMove and self.press is not None and event.buttons() & Qt.LeftButton:
+                    point = self._global(event)
+                    if self.ghost is None:
+                        if (point - self.press).manhattanLength() < QtWidgets.QApplication.startDragDistance():
+                            return False
+                        self._start(obj)
+                    self._follow(point)
+                    return True
+                if kind == E.MouseButtonRelease and event.button() == Qt.LeftButton:
+                    self.press = None
+                    if self.ghost is not None:
+                        point = self._global(event)
+                        self._end()
+                        try:
+                            obj.setDown(False)
+                        except Exception:                    # noqa: BLE001
+                            pass
+                        b = bar()
+                        if b is not None:
+                            b.drop(point.x(), point.y(), self.item())
+                        return True
+                return False
+
+            def _start(self, obj):
+                Ghost = ghost_class()
+                size = self.pixmap.width() if self.pixmap is not None else 32
+                self.ghost = Ghost(self.pixmap, size, size, 1.0, anchor=(0.5, 0.5),
+                                   name="skeldarSkillGhost", backdrop="field")
+                self.ghost.show()
+
+            def _follow(self, point):
+                b = bar()
+                aim = b.aim(point.x(), point.y()) if b is not None else None
+                if b is not None:
+                    b.light(aim)
+                try:
+                    self.ghost.set_caption(b.caption(self.label, aim) if aim
+                                           else "%s · drop on a skill cell" % self.label, bool(aim))
+                    self.ghost.follow(point)
+                except RuntimeError:
+                    pass
+
+            def _end(self):
+                b = bar()
+                if b is not None:
+                    b.light(None)
+                ghost, self.ghost = self.ghost, None
+                if ghost is not None:
+                    try:
+                        ghost.hide()
+                        ghost.deleteLater()
+                    except RuntimeError:
+                        pass
+
+        _CLASSES["raildrag"] = RailDrag
+    return _CLASSES["raildrag"]
+
+
 def _named(widget, name, role=None):
     widget.setObjectName(name)
     if role:
@@ -1739,6 +1834,18 @@ class Skin(object):
                                              "dots-vertical", "More")
         self.menu = w.QMenu(self.menu_button)
         self.menu.setObjectName("skeldarHubMenuPopup")
+        #  2026-10-19: one switch over the Time Bar, the Channel Box and the
+        #  Attribute Editor (maya_interface) - two rows, at most one lit
+        #  (neither while ⋮ -> Time bar / Side panel are mixed by hand)
+        self.interface_actions = {}
+        for text, choice in (("Use Skeldar interface", "skeldar"),
+                             ("Use Maya interface", "maya")):
+            action = self.menu.addAction(text)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("interface", c))
+            self.interface_actions[choice] = action
+        self.menu.addSeparator()
         for text, key in (("Check update", "check_update"),
                           ("Hotkey Editor...", "hotkey_editor"),
                           ("Interface sounds", "sounds"),
@@ -1916,6 +2023,9 @@ class Skin(object):
                     b, b.mapToGlobal(pos), self.rail_actions(k)))
             button.installEventFilter(_middle_class()(
                 lambda k=key: self._call("popup", k), button))
+            button.installEventFilter(_rail_drag_class()(
+                key, label, pixmap(icon_name, colour, self.px(28)),
+                button))
         else:
             button.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
                                  q.QtWidgets.QSizePolicy.Fixed)
@@ -2240,6 +2350,14 @@ class Skin(object):
                 row.blockSignals(True)
                 row.setChecked(bool(value))
                 row.blockSignals(False)
+
+    def paint_interface(self, choice):
+        """The menu's Use Skeldar / Use Maya interface rows show `choice`
+        ("skeldar", "maya", or "mixed": neither lit; no callback)."""
+        for key, action in getattr(self, "interface_actions", {}).items():
+            action.blockSignals(True)
+            action.setChecked(key == choice)
+            action.blockSignals(False)
 
     def paint_timebar(self, choice):
         """The menu's Time bar shows `choice` (2026-10-16; no callback). An older

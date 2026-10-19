@@ -131,6 +131,24 @@ def channel_plan(name, locked, drivers, channels=CHANNELS):
     return free, skipped, ""
 
 
+NO_FREE = " has no free "
+
+
+def all_locked(refusal):
+    """True for channel_plan's "no free channel" refusal: an object with nothing to follow (a rig's
+    FK/IK switch, its Fingers control). Among several selected it is passed over, not a reason to
+    refuse the rest (2026-10-19, «выделяю массив объектов ... узлы не создаются»)."""
+    return NO_FREE in (refusal or "") and refusal.rstrip().endswith("channel")
+
+
+def passed_over_words(names):
+    """" - passed over 2 with no free channel: FKIKLeg_L, Fingers_L" ("" for none)."""
+    if not names:
+        return ""
+    shown = ", ".join(names[:4]) + (", ..." if len(names) > 4 else "")
+    return " - passed over %d with no free channel: %s" % (len(names), shown)
+
+
 def encode_keyed(keyed):
     """The channels we keyed at creation and their values, as text."""
     return " ".join("%s=%r" % (ch, float(keyed[ch])) for ch in CHANNELS if ch in keyed)

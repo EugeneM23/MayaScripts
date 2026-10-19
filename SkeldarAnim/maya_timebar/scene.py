@@ -851,3 +851,33 @@ def live_end(target=None):
 def playback_from(selection):
     if selection:
         cmds.playbackOptions(edit=True, minTime=selection[0], maxTime=selection[1])
+
+
+# ------------------------------------------------------------ the skill bar (2026-10-19)
+
+def skills():
+    """The skill bar's model in Maya: the user's file, the runs through maya_skillbar.run."""
+    from maya_skillbar import skills as skills_module
+    return skills_module.MayaSkills()
+
+
+def page_height(strip):
+    """A page shown: the host as tall as the strip now wants (the bottom edge places itself,
+    the docked control is resized, in logical px)."""
+    import maya_timebar
+    state = maya_timebar._state()
+    edge = state.get("edge")
+    if edge is not None and getattr(edge, "strip", None) is strip:
+        try:
+            edge.place()
+        except Exception:                                    # noqa: BLE001
+            pass
+        return
+    if state.get("host") != "docked" or not cmds.workspaceControl(maya_timebar.CONTROL, exists=True):
+        return
+    ui = getattr(strip, "ui", 1.0) or 1.0
+    height = int(round(strip.sizeHint().height() / float(ui)))
+    try:
+        cmds.workspaceControl(maya_timebar.CONTROL, edit=True, resizeHeight=max(maya_timebar.HEIGHT, height))
+    except Exception:                                        # noqa: BLE001
+        pass

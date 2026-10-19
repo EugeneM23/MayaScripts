@@ -12505,3 +12505,100 @@ every task reviewed. **This replaces the viewport popup of "A section popup burs
   `docs/superpowers/plans/verify_hub_popups.py` calls the removed `_rect_of` / `popup.panel`: **history,
   do not run it**. **Not seen in a GUI Maya** (a drag across monitors, the remembered place after a
   restart, a real ⧉ press, the burst on screen - the animator's to try after Check update).
+
+## Skill bar: F1 the Time Bar, F2-F12 pages of skills (2026-10-19)
+
+The animator: «панель скилов ... как в lineage2. F1 F2 F3 и так далее до 12 становятся хоткеями
+переключения полок со скилами ... F1 - включает таймслайдер F2 - первую панель скилов ... В виде
+скилов ... наши риги и скелеты, позы из библеотеки или любой инструмент или раздел. Панель скилов
+можно настроить и сделать в 2 - 3 - 4 ряда». Mockups (https://claude.ai/artifact/8Njhv7zm48qyKasTVdbfRP):
+A, swap in place, chosen. Asked: F-keys in our hotkey set only; a hidden bottom-edge bar comes out on
+the page pressed; skills come in by all four roads; pages kept in a file per user. Spec
+`docs/superpowers/specs/2026-10-19-skill-bar-design.md`, plan beside it.
+
+- **The strip** (`maya_timebar.bar.Strip`) gained a page row on top (`PageTabs`, `skeldarSkillTabs`:
+  F1 Time, F2 <name> ... F12, the current lit `card_active` + accent outline) and holds its two time
+  rows in one box (`time_box`); F2-F12 hide the box and show `SkillGrid` (`skeldarSkillGrid`). Both
+  are moving parts of the strip (`register`), so the bottom edge's burst pops the tabs and every cell.
+  `show_page(n, origin)`: the page's cells pop in nearest the pressed tab first; F1's rows burst in
+  without the reveal glow (`burst_at(..., glow=False)`). Docked: `HEIGHT` 106 (the page row), and the
+  control is resized to the strip's size hint on every page / rows change (`scene.page_height`); the
+  bottom edge re-places itself.
+- **Cells**: ONE row of `look.SLOTS` (10) square cells, keys 1..0, centred, each as tall as the two
+  time rows (`look.cell_size(time rows' height, 1)`), so a skill page is exactly as tall as F1 (the
+  animator, the same evening: «Скилы сейчас сильно маленькие ... только 10 а по высоте бар скилов был
+  как наш таймлайн»; the first build had 2..4 rows of as many small cells as fit, and a Rows menu,
+  now gone with `set_rows`). An older file's cells past the ten fold into the free ones
+  (`look.normalised`), the rest dropped. A cell shows its picture (a Tabler icon in `run.ROW_ICONS` / the radial's, a portrait, a pose
+  card's still, a weapon icon, a shelf button's image, else letters), its short name (`run.short`)
+  and a tag (rig / skel / pose / anim / py / mel). Click runs (the key set's round glow), an empty cell
+  opens the library; right click: Run, Rename..., Change skill..., Clear, Script from the Script
+  Editor, Skill library...; a drag swaps cells or sends one to a tab's first free cell; text dropped on
+  the grid is a script. A two-step tool waiting (Aim, Knot Offset) is filled accent, tag «fin».
+- **Items** (`maya_skillbar/look.py`, stdlib): section{key}, cmd{key} (a hotkey row), character{model,
+  char}, card{path under the Pose Library root}, weapon{key}, maya{command}, script / shelf{lang, code};
+  `label` optional. Running (`run.py`) reuses every road we have: the radial menu's (a section's window
+  by the cursor, a tool row and its Finish popup), Add Character, the Pose Library's Apply with its
+  remembered paste options, Inventory's Equip, `mel.eval`, Python in `__main__`.
+- **The file**: `<userAppDir>/SkeldarSkills/skills.json` (`store.py`): defaults on first use (F2
+  Animate - our tools; F3 Characters), a broken file moved aside, atomic writes.
+- **The library** (`library.py`, `skeldarSkillLibrary`): a drawer over the bar as wide as it, search +
+  `[All | Sections | Tools | Characters | Poses | Weapons | Maya | Shelves | Scripts]` (`sources.py`;
+  Maya = an animator's runTimeCommands, the search reaches all; Shelves = every Maya shelf button;
+  Scripts = the Script Editor's current tab). A chip clicked fills the cell it was opened for, dragged
+  goes where it is let go. Its chips pop in from the point and fold back; the bottom edge does not hide
+  while it is open (blocker «skills»), nor during a cell drag.
+- **F1-F12**: hotkey rows `skills.page1..12` (category Skill Bar) bound with no modifier in
+  `DEFAULT_KEYS`, `DEFAULT_KEYS_VERSION` 8 - our set only. `maya_skillbar.page(n)`: the bar hidden at
+  the bottom edge comes out on that page (`edge.key_set`), out it shows the page and its hide wait
+  starts again; Maya's own slider mode says «The skill bar lives in the Time Bar - ⋮ -> Time bar».
+- **Drags from our panels**: `maya_skillbar.aim / light / drop / caption`, asked first by the
+  Animation Setup portraits (`maya_chargrid`), Pose Library cards (`maya_poselib.window`, aim kind
+  `skill`), Inventory weapon tiles (`maya_inventory`) and the hub rail's icons (`maya_hubqt`
+  `_rail_drag_class`: a press past Qt's start distance is a drag, no click sent). The ghost names
+  «skill F3 · cell 4».
+- The strip reaches the model through its link (`Link.skills()` -> `skills.MayaSkills`); a link
+  without one gets `skills.MemorySkills` (the tests, the filmstrip).
+- **1-0, pressed twice** (the same evening: «скилы применялись по двойному клику на хоткей»): the
+  hotkey rows `skills.cell1..10` (no modifier) run the first-row cell of the skill page shown (F1
+  shown: the last skill page). The first press arms the cell (`maya_skillbar.second_tap`, state on
+  `sys`; `SkillGrid.arm` lights and flashes it), a second press of the same number within Qt's
+  double-click interval (250..450 ms) runs it, another number arms itself. Off screen the first
+  press says «Aim - press 3 again». A focused text field takes the digit instead.
+- **Any skill dragged off the bar into a viewport** (`run.SceneDrag`): a character to the floor or
+  a swap, a card onto a character or the floor, a weapon into the hand under the cursor or onto the
+  floor (the Inventory's `Scene.target`), anything else RUNS there as its click would
+  (`droptarget.Viewport.at`, deferred one idle); on the hub or off every viewport nothing.
+- **The keys are bound again at the hub's start** (`maya_hotkeys.catch_up`, `maya_hub._hotkeys_soon`):
+  a Maya that quit without saving its prefs kept the SkeldarAnim set current and lost F1-F12, 1-0
+  and the version (measured: v7 after a restart, F2 back on Maya's), and only a press of the map's
+  switch binds. Every bind now saves the prefs at once (`savePrefs -hotkeys -general`).
+
+Proof: `tests/test_skillbar_look.py`, `_run.py`, `_grid.py`, `_library.py` (offscreen: pages, heights,
+clicks, menus, drags, text drops, the library, the burst and the pop, `page` / `aim` / `drop`), the
+hotkey tests' new keys; `docs/superpowers/plans/render_skill_bar.py` -> `skill_bar.png`. **Not seen in a
+GUI Maya** (the F-keys, the edge coming out on a page, real drags from the panels, a Maya shelf read):
+the animator's to try after Check update.
+
+## Use Skeldar interface / Use Maya interface, and a live update (2026-10-19)
+
+The animator: «в настройках нашего плагина сделаем два переключателя Use Maya interface и use Skeldar
+interface ... таймслайдер ченелбокс и атрибут эдитор станут нашими. Еще ... при установки обновления наш
+плагин обнавлял интерфейс в реальном времени».
+- **`SkeldarAnim/maya_interface.py`** (stdlib at import, a payload row): `use("skeldar")` = the Time Bar
+  ours (the standing docked/edge, else the last, else the bottom edge), the side panel at the right edge,
+  our Channel Box on; `use("maya")` = Maya's slider and Maya's side editors. `current()` / `state_of`
+  (pure) answers skeldar / maya / mixed (⋮ -> Time bar / Side panel set by hand: neither lit).
+- **Where**: the first two rows of ⋮ (`Skin.interface_actions`, `paint_interface`, callback
+  "interface" -> `maya_hub.set_interface`) and the Update card's `Interface [Skeldar | Maya]` segments
+  (`maya_update._interface_row`, iconTextCheckBoxes `skeldarUpdateInterface_<choice>`, a press on the lit
+  one applies again). `maya_hub.repaint_interface()` repaints both after any Time bar / Side panel / Our
+  Channel Box change.
+- **Live after an install**: `install.install` schedules `rebuild_interface(dest)` (deferred, lowest
+  priority, before the hub's rebuild) when a Time Bar or side panel stands (`_interface_standing`, their
+  state on `sys`); it imports the FRESH `maya_interface.reload_live()` -> `maya_sidepanel.reload_live()`
+  (given back and rebuilt, our Channel Box with it) and `maya_timebar.reload_live()` (the edge dropped,
+  a docked strip built again, the old jobs and callbacks killed, the chosen mode stood up). Check update
+  runs the downloaded install.py, so it takes the same road.
+Proof: `tests/test_interface.py`, the menu tests in `test_hubqt`; 7673 unit tests OK. **Not seen in a GUI
+Maya** (the switch, a real install rebuilding the bar and the panel): the animator's to try.

@@ -127,7 +127,7 @@ def functions():
     groups = []
     index = {}
     for key, category, label, _note, _action in _hotkeys().COMMANDS:
-        if key.startswith(("window.", "radial.")):
+        if key.startswith(("window.", "radial.", "skills.")):
             continue
         name = category.split(".", 1)[-1]
         if name not in index:

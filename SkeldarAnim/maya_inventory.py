@@ -114,6 +114,33 @@ def grip_of(values):
 
 # ------------------------------------------------------------------ scene
 
+def _skillbar():
+    """maya_skillbar, or None (2026-10-19: a weapon tile dropped on the Time Bar's skill page is a
+    weapon skill - Equip into the picked hand)."""
+    try:
+        import maya_skillbar
+        return maya_skillbar
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def skill_aim(gx, gy):
+    bar = _skillbar()
+    try:
+        return bar.aim(gx, gy) if bar is not None else None
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def skill_light(target):
+    bar = _skillbar()
+    if bar is not None:
+        try:
+            bar.light(target)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
 class Scene(object):
     """The real scene: what the panel asks and what it does to it."""
 
@@ -623,6 +650,10 @@ def _classes():
                 if what and what[0] in ("tiles", "tile") and kind == "slot":
                     return self._act(lambda: self.scene.take_off(self.root, arg))
                 return self.status_text        # a tile among the tiles: nothing
+            skill = skill_aim(gx, gy) if kind == "tile" else None
+            if skill:
+                skill_light(None)
+                return self._say(_skillbar().drop(gx, gy, {"kind": "weapon", "key": key}))
             snap = self._drag["snap"] if self._drag else self.scene.snapshot()
             freed = (self.root, arg) if kind == "slot" else None
             aim = self.scene.target(gx, gy, snap, freed)
@@ -674,6 +705,7 @@ def _classes():
                 ghost.deleteLater()
             self._drag = None
             self._press = None
+            skill_light(None)
             try:
                 self.releaseKeyboard()
             except Exception:                                # noqa: BLE001
@@ -696,6 +728,12 @@ def _classes():
                 else:
                     drag["ghost"].set_caption("", True)
                 self.update()
+                return
+            skill = skill_aim(point.x(), point.y()) if source[0] == "tile" else None
+            skill_light(skill)
+            if skill:
+                entry = catalog.by_key(source[1])
+                drag["ghost"].set_caption(_skillbar().caption(entry.label if entry else source[1], skill), True)
                 return
             if not force and self._clock.elapsed() < THROTTLE_MS:
                 return
