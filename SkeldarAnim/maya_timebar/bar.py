@@ -641,7 +641,13 @@ def classes():
                 #  ставятся при переносе»)
                 event.accept()
                 return True
-            if action[0] == "stamp":
+            if action[0] == "stamp" and tl.live:
+                #  the keys stand on the target already: their copies stay there
+                got = self.strip.call("live_stamp")
+                if got:
+                    tl.stamped = got
+                    self.strip.add_drawn_copies(got, action[1], action[2])
+            elif action[0] == "stamp":
                 got = self.strip.call("stamp_keys", action[1], action[2], tl.stamped)
                 if tl.stamped is None and got:
                     tl.stamped = got            # the keys dragged: the release moves only them
@@ -671,6 +677,7 @@ def classes():
             self.view = None            # (v0, v1) after a zoom; None follows the playback range
             self.preview = None         # the highlight's target while keys are dragged
             self.stamped = None         # {curve: [times]} once S put copies down in a drag
+            self.live = None            # a key drag moving the scene's keys (None: not begun)
             self.aim_key = None         # the key under the mouse
             self.aim_head = False
             self.key_lift = {}          # key -> 0..1, eased
@@ -1105,6 +1112,11 @@ def classes():
         def mousePressEvent(self, event):
             st, s = self.strip, self.strip.state
             x, t = self._x(event), self.track()
+            if self.live:
+                #  a drag whose release never came (focus taken away): set it down
+                self.live = None
+                st.call("live_end", tuple(self.preview) if self.preview else None)
+                st.refresh(keys=True)
             if event.button() == Qt.RightButton:
                 st.key_menu(event, self._frame(x, t))
                 return
@@ -1123,7 +1135,7 @@ def classes():
             part = look.highlight_hit(t, x, s.get("highlight"), st.ui)
             if part:
                 self.drag = (part, self._grip(part, x, t), t, tuple(s["highlight"]))
-                self.stamped = None
+                self.stamped, self.live = None, None
                 self.preview = tuple(s["highlight"])
                 return
             key = self._key_under(x, t)
@@ -1155,7 +1167,7 @@ def classes():
                     return
                 frame = int(math.floor(self.drag[4] + 1e-6))
                 self.drag = ("hmove", start, t, (frame, frame), "loose")
-                self.stamped = None
+                self.stamped, self.live = None, None
                 self.preview = (frame, frame)
                 kind = "hmove"
             if kind in ("now", "mid"):
@@ -1167,7 +1179,18 @@ def classes():
                 target = look.key_drag(kind, self.drag[3], start, self._grip(kind, x, t))
                 if target != self.preview:
                     self.preview = target
+                    self._live_to(target)
                     self.update()
+
+        def _live_to(self, target):
+            """The scene's keys follow the drag, as under Maya's own slider (2026-10-19:
+            «во время переноса анимация во вьюпорте не обновляется»). The strip keeps
+            drawing the keys it read before the drag; it reads them again on the release."""
+            st = self.strip
+            if self.live is None:
+                self.live = bool(st.call("live_begin", tuple(self.drag[3])))
+            if self.live:
+                st.call("live_to", tuple(target))
 
         def mouseReleaseEvent(self, event):
             if not self.drag:
@@ -1186,7 +1209,17 @@ def classes():
                 st.call("set_highlight", s["highlight"])
             elif kind in ("hmove", "h0", "h1"):
                 selection, target = self.drag[3], self.preview
-                if target and target != selection:
+                if self.live:
+                    self.live = None
+                    st._quiet_keys = True
+                    st.call("live_end", tuple(target or selection))
+                    if target and target != selection:
+                        loose = len(self.drag) > 4 and self.drag[4] == "loose"
+                        s["highlight"] = None if loose else target
+                        st.call("set_highlight", s["highlight"])
+                    self.drag, self.preview = None, None
+                    st.refresh(keys=True)
+                elif target and target != selection:
                     st._quiet_keys = True               # a move is no set and delete
                     if self.stamped:
                         st.call("move_keys", selection, target, self.stamped)
@@ -1888,6 +1921,8 @@ def classes():
             if keys:
                 self.keys_dirty = True
             read_keys = bool(self.keys_dirty and (force or not self.state.get("playing")))
+            if getattr(self.timeline, "live", None):
+                read_keys = False       # a live key drag: drawn from the keys read before it
             if read_keys:
                 found = self.call("keys")
                 old_keys, old_bds = self.keys, self.breakdowns
@@ -1907,6 +1942,17 @@ def classes():
             #  jobs and the tick reach it; its lanes' keys only when the strip read keys
             if self.layer_panel is not None and self.layer_panel.is_open():
                 self.layer_panel.refresh(keys=read_keys, force=force)
+
+        def add_drawn_copies(self, stamped, selection, target):
+            """The copies S put down in a live drag, drawn where they went down: the
+            scene holds them, but the strip reads keys again only on the release."""
+            keys, bds = set(self.keys), set(self.breakdowns)
+            for rec in stamped.values():
+                for t, data in rec.get("keys", ()):
+                    nt = round(look.mapped(t, selection, target), 4)
+                    if round(nt, 4) in rec.get("stamped", ()):
+                        (bds if data.get("breakdown") else keys).add(nt)
+            self.keys, self.breakdowns = sorted(keys), sorted(bds)
 
         def _key_effects(self, old_keys, old_bds, edited=False):
             """A key set flashes, keys deleted throw sparks one after another left to

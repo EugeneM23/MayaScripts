@@ -620,6 +620,174 @@ def stamp_keys(selection, target, only=None):
     return only
 
 
+# the live key drag ---------------------------------------------------------------
+#
+# 2026-10-19, «во время переноса анимация во вьюпорте не обновляется»: Maya's own
+# slider moves the keys while they are dragged, ours moved them on the release. Now
+# the keys go where the drag has them on every step, unrecorded (a drag of forty
+# steps is no forty undo steps); the release puts the curves back as they were and
+# makes the whole move again inside one undo chunk, so one Ctrl+Z takes the drag.
+# Each step touches only the keys that change: a dense curve costs what its dragged
+# keys cost, not what its length does.
+
+_LIVE = {}
+
+
+def _curve_keys(curve):
+    """[(time, data)] of every key on `curve`, read in a few queries."""
+    times = cmds.keyframe(curve, q=True, timeChange=True) or []
+    if not times:
+        return []
+    n = len(times)
+
+    def each(values):
+        values = list(values or [])
+        return values if len(values) == n else [None] * n
+
+    def tangent(**flag):
+        return each(cmds.keyTangent(curve, q=True, **flag))
+
+    values = each(cmds.keyframe(curve, q=True, valueChange=True))
+    broken = set(round(t, 4) for t in (cmds.keyframe(curve, q=True, breakdown=True) or []))
+    itt, ott = tangent(inTangentType=True), tangent(outTangentType=True)
+    ia, oa = tangent(inAngle=True), tangent(outAngle=True)
+    iw, ow = tangent(inWeight=True), tangent(outWeight=True)
+    lock = tangent(lock=True)
+    weighted = bool((cmds.keyTangent(curve, q=True, weightedTangents=True) or [False])[0])
+    return [(t, {"value": values[i] if values[i] is not None else 0.0,
+                 "breakdown": round(t, 4) in broken,
+                 "itt": itt[i], "ott": ott[i], "ia": ia[i], "oa": oa[i],
+                 "iw": iw[i], "ow": ow[i], "lock": lock[i], "weighted": weighted})
+            for i, t in enumerate(times)]
+
+
+def _wanted(rec, selection, target):
+    """{round(time): (time, data)} the curve should hold with the drag on `target`:
+    the keys that stay, the copies S put down, the dragged keys on their places
+    (over whatever stood there)."""
+    out = dict(rec["fixed"])
+    for t, data in rec["moved"]:
+        nt = look.mapped(t, selection, target)
+        nt = float(nt) if abs(nt - round(nt)) > 1e-6 else float(round(nt))
+        out[round(nt, 4)] = (nt, data)
+    return out
+
+
+def _bring(curve, rec, wanted):
+    """The curve from what it holds (`rec["now"]`) to `wanted`, key by key."""
+    now = rec["now"]
+    for k, (t, _data) in list(now.items()):
+        if k not in wanted:
+            cmds.cutKey(curve, time=(t, t), clear=True)
+            del now[k]
+    for k, (t, data) in sorted(wanted.items()):
+        held = now.get(k)
+        if held is None or held[1] is not data:
+            _put_key(curve, t, data)
+            now[k] = (t, data)
+
+
+def _bring_all(target):
+    changed = []
+    for curve, rec in _LIVE["curves"].items():
+        if not cmds.objExists(curve):
+            continue
+        wanted = (dict(rec["start"]) if target is None
+                  else _wanted(rec, _LIVE["selection"], target))
+        if set(wanted) != set(rec["now"]) or any(
+                rec["now"][k][1] is not wanted[k][1] for k in wanted):
+            _bring(curve, rec, wanted)
+            changed.append(curve)
+    return changed
+
+
+class _unrecorded(object):
+    def __enter__(self):
+        self.was = cmds.undoInfo(q=True, state=True)
+        if self.was:
+            cmds.undoInfo(stateWithoutFlush=False)
+
+    def __exit__(self, *_exc):
+        if self.was:
+            cmds.undoInfo(stateWithoutFlush=True)
+        return False
+
+
+def live_begin(selection):
+    """A key drag of the highlight `selection` begins: what each curve holds, read
+    once. True when there are keys to drag."""
+    _LIVE.clear()
+    a, b = selection
+    span = (a, b + 1 - 1e-3)
+    curves = {}
+    for curve in cmds.keyframe(q=True, time=span, name=True) or []:
+        keys = _curve_keys(curve)
+        moved = [(t, d) for t, d in keys if look.inside(t, selection)]
+        if not moved:
+            continue
+        start = dict((round(t, 4), (t, d)) for t, d in keys)
+        fixed = dict((round(t, 4), (t, d)) for t, d in keys if not look.inside(t, selection))
+        curves[curve] = {"start": start, "now": dict(start), "fixed": fixed,
+                         "moved": moved, "stamped": set()}
+    if not curves:
+        return False
+    _LIVE.update(selection=tuple(selection), target=tuple(selection), curves=curves)
+    return True
+
+
+def live_to(target):
+    """The dragged keys where the drag has them now, the viewport showing it."""
+    if not _LIVE:
+        return
+    target = tuple(target)
+    if target == _LIVE["target"]:
+        return
+    with _unrecorded():
+        changed = _bring_all(target)
+        _LIVE["target"] = target
+        _show_now(changed)
+
+
+def live_stamp():
+    """S in the drag: the dragged keys' copies stay where they are now. Answers what
+    `stamp_keys` answers ({curve: {"keys": the dragged keys as they were,
+    "stamped": the copies' times}}), so the strip draws it alike."""
+    if not _LIVE:
+        return None
+    selection, target = _LIVE["selection"], _LIVE["target"]
+    out = {}
+    for curve, rec in _LIVE["curves"].items():
+        for k, (t, data) in _wanted(rec, selection, target).items():
+            if any(data is d for _t, d in rec["moved"]):
+                copy = dict(data)                    # a key of its own, not the dragged one
+                rec["fixed"][k] = (t, copy)
+                rec["now"][k] = (t, copy)           # it stands there already
+                rec["stamped"].add(k)
+        out[curve] = {"keys": list(rec["moved"]), "stamped": set(rec["stamped"])}
+    return out
+
+
+def live_end(target=None):
+    """The drag let go on `target` (None: given up, the keys back where they were).
+    The curves go back to what they held, unrecorded, and the move is made again in
+    one undo chunk."""
+    if not _LIVE:
+        return
+    try:
+        with _unrecorded():
+            _bring_all(None)
+        if target is not None:
+            for rec in _LIVE["curves"].values():
+                rec["now"] = dict(rec["start"])
+            with _chunk("skeldarTimeBarMoveKeys"):
+                changed = _bring_all(tuple(target))
+                _show_now(changed)
+        else:
+            _show_now(list(_LIVE["curves"]))
+    finally:
+        _LIVE.clear()
+
+
 def playback_from(selection):
     if selection:
         cmds.playbackOptions(edit=True, minTime=selection[0], maxTime=selection[1])
