@@ -471,10 +471,12 @@ def move_keys(selection, target, only=None):
     if only:
         with _chunk("skeldarTimeBarMoveKeys"):
             _move_only(only, selection, target)
+            _show_now(list(only))
         return
     #  the highlight's cells, [a, b + 1): a key between frames in the last cell
     #  moves too (2026-10-17, the cells drawn as Maya's slider draws them)
     span = (a, b + 1 - 1e-3)
+    curves = cmds.keyframe(q=True, time=span, name=True) or []
     with _chunk("skeldarTimeBarMoveKeys"):
         if b <= a or (nb - na) == (b - a):
             cmds.keyframe(edit=True, time=span, relative=True, timeChange=na - a, option="over")
@@ -485,6 +487,22 @@ def move_keys(selection, target, only=None):
             #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
             far = pivot + (b + 1 - pivot) * factor
             cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
+        _show_now(curves)
+
+
+def _show_now(curves):
+    """The scene shown at the current frame from the curves just edited. A key
+    edit made by command leaves a GUI Maya's viewport on the old values until the
+    time changes (2026-10-19, «переношу ключи по таймслайдеру ... анимация не
+    обновляется во вьюпорте»; mayapy reads the new value at once, so only the
+    animator's Maya shows it): the edited curves dirtied, the frame evaluated
+    again. Never raises - the keys moved either way."""
+    try:
+        if curves:
+            cmds.dgdirty(curves)
+        cmds.currentTime(cmds.currentTime(q=True), update=True)
+    except Exception:                                        # noqa: BLE001 - a redraw only
+        pass
 
 
 def key_range(a, b, name):
@@ -598,6 +616,7 @@ def stamp_keys(selection, target, only=None):
             for nt, data in placed:
                 _put_key(curve, nt, data)
                 only[curve]["stamped"].add(round(nt, 4))
+        _show_now(list(only))
     return only
 
 
