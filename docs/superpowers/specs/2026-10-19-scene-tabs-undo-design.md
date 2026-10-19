@@ -59,6 +59,24 @@ went under another tab's work says so at once:
 Ctrl+Z on that fence says
 «JA_04: start of undo here - earlier steps are under the work done in untitled (Maya keeps one undo list)».
 
+## Selection steps do not bury a tab (the same evening)
+
+«История скидывается после переключения между вкладками». Measured in the 7002 Maya
+with a command logger and the queue dumped around switches made through the bar's own
+action, with idle between: no step is recorded by the switch or by anything that runs after it
+(hub cards, Time Bar, side panel: queries and UI only, and an unrecorded `select` stays
+unrecorded). The real cause was a click: a selection in a GUI Maya is a recorded `select`
+step. So looking at a tab and clicking in it laid steps on its fence, the tab counted as worked,
+and the tab before it was buried on the way back.
+
+Now `_drop_selection` runs as a tab is left. While the queue's top is a MEL selection step
+(`select`, `selectKey`, `hilite` by undo name - a viewport, Outliner or Graph Editor click is
+MEL and named), it undoes it, down to the leaving tab's newest fence. The fence is then popped
+as usual. On the first step that is not a selection, every step undone is redone, and the queue
+is as it was. The selection the tab shows is put back unrecorded before `leave` records it.
+A Python `cmds.select` (the plugin's own presses) has an empty undo name and stays unknown
+work.
+
 ## Module
 
 `SkeldarAnim/maya_scenetabs/tabundo.py`. The pure half is `fence_name`, `is_fence`,

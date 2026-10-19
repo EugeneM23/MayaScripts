@@ -2016,6 +2016,44 @@ def phase_undo():
         cmds.undo()
     gate("undo: four Ctrl+Z in a row stay in the rig",
          session.state()["active"] == "tab_rig" and cmds.getAttr(shoulder) == 0.0 and cmds.getAttr(hero) == 1.0)
+
+    # a tab only looked at and clicked in: its selection steps (MEL, named, as a viewport click
+    # makes them) come off with its fence, and the tab before it goes on (2026-10-19)
+    import maya.mel as mel
+    cmds.undoInfo(openChunk=True, chunkName="move -r 0 7 0")
+    cmds.setAttr(shoulder, 7)
+    cmds.undoInfo(closeChunk=True)
+    switching.switch("tab_film")
+    mel.eval("select -r tab_film:probe")
+    mel.eval("select -add tab_film:hero")
+    count = len(said)
+    switching.switch("tab_rig")
+    gate("select: back from a tab only clicked in - no fence, no word of burying",
+         not tabundo.is_fence(cmds.undoInfo(q=True, undoName=True) or "")
+         and not any(m.startswith("rig") for m in said[count:]),
+         (cmds.undoInfo(q=True, undoName=True), said[count:]))
+    cmds.undo()
+    gate("select: the rig's history goes on under the film's clicks - its step undone",
+         session.state()["active"] == "tab_rig" and cmds.getAttr(shoulder) == 0.0, cmds.getAttr(shoulder))
+    cmds.redo()
+    switching.switch("tab_film")
+    gate("select: the film's selection comes back with it",
+         sorted(cmds.ls(selection=True)) == ["tab_film:hero", "tab_film:probe"], cmds.ls(selection=True))
+    mel.eval("select -r tab_film:probe")
+    cmds.undoInfo(openChunk=True, chunkName="move -r 3 0 0")
+    cmds.setAttr(hero, 3)
+    cmds.undoInfo(closeChunk=True)
+    mel.eval("select -cl")
+    switching.switch("tab_rig")
+    gate("select: a real edit among the clicks keeps the film's steps - the rig gets a fence",
+         cmds.getAttr(hero) == 3.0 and tabundo.fence_tab(cmds.undoInfo(q=True, undoName=True) or "") == "tab_rig",
+         (cmds.getAttr(hero), cmds.undoInfo(q=True, undoName=True)))
+    switching.switch("tab_film")
+    cmds.undo()
+    first = (cmds.ls(selection=True), cmds.getAttr(hero))
+    cmds.undo()
+    gate("select: the film's own steps are all still there - its clear undone, then its edit",
+         first == (["tab_film:probe"], 3.0) and cmds.getAttr(hero) == 1.0, (first, cmds.getAttr(hero)))
     tabundo._say = say
 
 

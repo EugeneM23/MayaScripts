@@ -58,6 +58,24 @@ class PlanEnter(unittest.TestCase):
         self.assertEqual(tabundo.plan_enter(fences, "tab_a", "tab_b", "tab_a", "F:a:1"), (False, False))
 
 
+class Selection(unittest.TestCase):
+    def test_mel_selection_steps_are_selection(self):
+        for name in ("select -r tab_a:cube", "select -cl  ", "select -add b", "select -tgl a",
+                     "selectKey -clear", "hilite -r x"):
+            self.assertTrue(tabundo.is_selection(name), name)
+
+    def test_anything_else_is_not(self):
+        for name in ("", None, "move -r 1 0 0", "SetKey", "selectMode -o", "skeldarTabFence:tab_a:1",
+                     "skeldarTimeBarLayers", "selection"):
+            self.assertFalse(tabundo.is_selection(name), name)
+
+    def test_the_latest_fence_of_a_tab(self):
+        fences = {tabundo.fence_name("tab_a", 1): {"ns": "tab_a"}, tabundo.fence_name("tab_b", 2): {"ns": "tab_b"},
+                  tabundo.fence_name("tab_a", 10): {"ns": "tab_a"}}
+        self.assertEqual(tabundo.latest_fence(fences, "tab_a"), tabundo.fence_name("tab_a", 10))
+        self.assertEqual(tabundo.latest_fence(fences, "tab_c"), "")
+
+
 class Message(unittest.TestCase):
     def test_a_first_fence_is_the_start(self):
         fences = {tabundo.fence_name("tab_a", 1): {"ns": "tab_a", "below": None, "earlier": False}}

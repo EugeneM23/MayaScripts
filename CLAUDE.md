@@ -11129,7 +11129,13 @@ a tab's steps made before another tab's work lie under it and can never be reach
 - then «возврат переключает меня в предыдущую вкладку»: the tab bar, built before the install, kept the
   purged modules' classes and with them the OLD switch (one undo chunk). `bar.stale` (the widget's
   `actions` not this module's `Actions`) makes `ensure_docked`, which the hub calls on every build,
-  build the bar again. Trap 49 / 102's family: an install purges modules, never the widgets they built.
+  build the bar again. Trap 49 / 102's family: an install purges modules, never the widgets they built;
+- then «История скидывается после переключения»: measured live (a command logger, the queue dumped around
+  bar switches with idle between), nothing is recorded by the switch or what follows it - a CLICK is: a
+  GUI selection is a recorded MEL `select` step, so a tab only clicked in buried the one before it.
+  `_drop_selection` undoes the MEL selection steps (`select`/`selectKey`/`hilite`, named) lying on the
+  leaving tab's fence before popping it, redoing them all if a real step sits among them; the shown
+  selection is put back unrecorded for `leave` to record. A Python `cmds.select` is unnamed ('') - unknown.
 A popped fence is an undo, which flags the scene: the switch puts the flag back before it records the
 tab left. Proof: `verify_scene_tabs.py undo` 11/11, all **0 of 293**, `verify_tabs_scope.py` 0 of 46
 (mayapy); the gates that proved «Ctrl+Z past a switch brings the

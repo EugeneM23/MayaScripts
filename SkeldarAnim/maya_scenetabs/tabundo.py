@@ -51,6 +51,22 @@ def fence_tab(name):
     return str(name)[len(PREFIX):].rsplit(":", 1)[0]
 
 
+SELECTION = ("select", "selectKey", "hilite")
+
+
+def is_selection(name):
+    """A MEL selection step (a click in a viewport, the Outliner, the Graph Editor)
+    by its undo name. A Python `cmds.select` is unnamed (''), and stays unknown."""
+    words = str(name or "").split(None, 1)
+    return bool(words) and words[0] in SELECTION
+
+
+def latest_fence(fences, namespace):
+    """The newest fence of `namespace` still on the books ("" when none)."""
+    names = [n for n, r in fences.items() if r.get("ns") == namespace]
+    return max(names, key=_serial) if names else ""
+
+
 def plan_enter(fences, owner, leaving, entering, top):
     """(pop, lay) for a switch from `leaving` to `entering` with `top` the
     queue's top name: pop the leaving tab's fence when nothing was done on it
@@ -131,7 +147,7 @@ def before_switch(leaving, entering, cmds=None):
         return False
     install(cmds)
     st = state()
-    top = cmds.undoInfo(q=True, undoName=True) or ""
+    top = _drop_selection(leaving, cmds)
     pop, lay = plan_enter(st["fences"], st["owner"], leaving, entering, top)
     if pop:
         record = st["fences"].pop(top)
@@ -148,6 +164,47 @@ def before_switch(leaving, entering, cmds=None):
     if not lay:
         st["entry_top"] = cmds.undoInfo(q=True, undoName=True) or ""
     return lay
+
+
+def _drop_selection(leaving, cmds):
+    """The queue's top after taking off the selection steps that lie on the
+    leaving tab's fence, when those are all it holds (2026-10-19, «История
+    скидывается после переключения между вкладками»: a click in a tab is a
+    `select` step, so a tab only looked at buried the tab before it). The steps
+    are undone from the top while each is a selection (`is_selection`); on a
+    step that is not, every one is redone and the queue is as it was. The
+    selection shown is put back unrecorded: `switching.leave` records it."""
+    st = state()
+    top = cmds.undoInfo(q=True, undoName=True) or ""
+    target = latest_fence(st["fences"], leaving)
+    if not target or top == target or st["owner"] != leaving or not is_selection(top):
+        return top
+    shown = cmds.ls(selection=True, long=True) or []
+    undone = 0
+    st["inside"] = True
+    try:
+        while True:
+            name = cmds.undoInfo(q=True, undoName=True) or ""
+            if name == target:
+                break
+            if not is_selection(name):
+                for _ in range(undone):
+                    cmds.redo()
+                undone = 0
+                break
+            cmds.undo()
+            undone += 1
+    finally:
+        st["inside"] = False
+    if undone:
+        was = cmds.undoInfo(q=True, stateWithoutFlush=True)
+        cmds.undoInfo(stateWithoutFlush=False)
+        try:
+            found = cmds.ls(shown, long=True) or []
+            cmds.select(found, replace=True) if found else cmds.select(clear=True)
+        finally:
+            cmds.undoInfo(stateWithoutFlush=was)
+    return cmds.undoInfo(q=True, undoName=True) or ""
 
 
 def after_switch(entering, session_node, cmds=None):
