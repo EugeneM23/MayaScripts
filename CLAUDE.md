@@ -11125,7 +11125,11 @@ a tab's steps made before another tab's work lie under it and can never be reach
 - `opening._quiet`'s flush calls `tabundo.reset(active)`;
 - after first use («перехожу обратно ... история пустая» - a cube made in the other tab lay over it; the
   animator kept the boundary over snapshots): entering a tab whose history went under another tab's work
-  says so at once, naming both tabs, and so does Ctrl+Z on its fence.
+  says so at once, naming both tabs, and so does Ctrl+Z on its fence;
+- then «возврат переключает меня в предыдущую вкладку»: the tab bar, built before the install, kept the
+  purged modules' classes and with them the OLD switch (one undo chunk). `bar.stale` (the widget's
+  `actions` not this module's `Actions`) makes `ensure_docked`, which the hub calls on every build,
+  build the bar again. Trap 49 / 102's family: an install purges modules, never the widgets they built.
 A popped fence is an undo, which flags the scene: the switch puts the flag back before it records the
 tab left. Proof: `verify_scene_tabs.py undo` 11/11, all **0 of 293**, `verify_tabs_scope.py` 0 of 46
 (mayapy); the gates that proved «Ctrl+Z past a switch brings the
