@@ -3210,6 +3210,10 @@ def _apply_mark(mark, card, scale, size):
         #  the placeholder under a list becomes its height grip, kept over
         #  it; the list shows its remembered rows (else 10)
         cover = _grip_class()(mark.target, scale, widget)
+        #  Maya's separator fills its background: in a floating window (translucent)
+        #  that fill, painted alone, punched a hole to whatever stood behind the
+        #  window (2026-10-19, under Animation Setup's list)
+        widget.setAutoFillBackground(False)
         #  the leaf: a builder marks the full path cmds answered
         cover.setObjectName(_leaf(mark.name) + "_grip")
         widget.installEventFilter(_fill_class()(cover, cover))

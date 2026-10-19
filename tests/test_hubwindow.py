@@ -168,6 +168,39 @@ class Burst(unittest.TestCase):
         self.burster.tick_now()
         self.assertEqual(ended, [1])
 
+    def test_rows_that_move_after_the_picture_are_taken_again(self):
+        """2026-10-19: a window's layout settles after its first paint (a portrait
+        grid fits its width on the first resize): the picture and plan taken then
+        were drawn for the whole burst, the rows that moved popping in at its end.
+        A tick that finds the rows moved takes both again, at the same ms."""
+        rows = [[(5, 5, 230, 24), (5, 120, 230, 30)]]
+        self.burster.parts = lambda: rows[0]
+        origin = self.frame.mapToGlobal(QtCore.QPoint(10, 10))
+        self.burster.run(True, (origin.x(), origin.y()), lambda: None)
+        self.frame.grab()
+        effect = self.burster.effect
+        effect.ms = 40.0
+        self.burster.tick_now()
+        self.assertIsNotNone(effect.pix)
+        rows[0] = [(5, 5, 230, 24), (5, 60, 230, 30)]
+        effect.ms = 60.0
+        self.burster.tick_now()
+        self.assertEqual(effect.plan.parts, rows[0])
+        self.assertIsNone(effect.pix)
+        self.frame.grab()
+        self.assertIsNotNone(effect.pix)
+        self.assertEqual(effect.ms, 60.0)
+
+    def test_still_rows_keep_the_picture(self):
+        origin = self.frame.mapToGlobal(QtCore.QPoint(10, 10))
+        self.burster.run(True, (origin.x(), origin.y()), lambda: None)
+        self.frame.grab()
+        effect = self.burster.effect
+        pix = effect.pix
+        effect.ms = 40.0
+        self.burster.tick_now()
+        self.assertIs(effect.pix, pix)
+
     def test_the_light_is_added_inside_the_shape(self):
         origin = self.frame.mapToGlobal(QtCore.QPoint(120, 80))
         self.burster.run(True, (origin.x(), origin.y()), lambda: None)

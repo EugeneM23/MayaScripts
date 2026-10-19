@@ -592,6 +592,13 @@ class Burster(object):
                 #  it yet (a frame masked down to nothing may never be painted;
                 #  review 2026-10-18). The effect's first paint makes the same.
                 effect.plan, effect.face = self._plan(effect.opening)
+            elif self._moved(effect.plan):
+                #  the window laid itself out again after the picture (2026-10-19:
+                #  Animation Setup's portrait grid fits its width on the first
+                #  resize, which a hidden window gets only once shown): the plan
+                #  again now, the picture at the next paint, the same ms
+                effect.plan, effect.face = self._plan(effect.opening)
+                effect.pix = None
             self.frame.update()
             if self._on_tick is not None and effect.plan is not None:
                 self._on_tick(hubburst.at(effect.plan, ms).shape)
@@ -602,6 +609,14 @@ class Burster(object):
         except Exception:                                        # noqa: BLE001
             traceback.print_exc()                                # a driver that raises stops
             self._finish()
+
+    def _moved(self, plan):
+        """Whether the frame's rows or size are no longer the ones `plan` was made for
+        (0.2 ms on Animation Setup's window)."""
+        size = (float(self.frame.width()), float(self.frame.height()))
+        if size != tuple(plan.size):
+            return True
+        return [tuple(r) for r in self.parts()] != [tuple(r) for r in plan.parts]
 
     def _finish(self):
         done, self._done = self._done, None

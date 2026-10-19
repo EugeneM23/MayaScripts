@@ -1351,6 +1351,14 @@ class ListGrip(SeamsMixin, unittest.TestCase):
                                       "theList")], self.card, 1.0)
         return self.placeholder.findChild(QtWidgets.QWidget, "theGrip_grip")
 
+    def test_the_placeholder_fills_no_background(self):
+        """2026-10-19: Maya's separator fills its background; in a floating window
+        (translucent) a fill painted alone punches a hole down to what is behind
+        the window - the strip under Animation Setup's list read the viewport."""
+        self.placeholder.setAutoFillBackground(True)
+        self._apply()
+        self.assertFalse(self.placeholder.autoFillBackground())
+
     def test_ten_rows_by_default(self):
         grip = self._apply()
         self.assertIsNotNone(grip)
