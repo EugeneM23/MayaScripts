@@ -10923,7 +10923,7 @@ SkeldarAnim hotkey set, an editor card, 8 slots and no submenus. Spec
     (auto-repeat) or never (focus elsewhere).
   - The overlay: a frameless translucent `Qt.Tool` over the cursor's whole screen (alpha 1, so a click
     anywhere lands on it), never taking focus.
-  - A section opens its popup by the cursor (**`maya_hubpop.open_at`**: the viewport under the point;
+  - A section opens its window by the cursor (**`maya_hubpop.open_at`**: a floating window since 2026-10-18, free of the viewport, standing at the cursor;
     one already open is closed and reopened there, unrolled). A header-only section opens the hub.
   - A function runs through `maya_hotkeys.run`. A two-step one left waiting gets the **Finish popup**
     (Finish runs the row again; X leaves the tool waiting; it closes itself when nothing waits); its slot
@@ -12191,10 +12191,14 @@ every task reviewed. **This replaces the viewport popup of "A section popup burs
 - **Proof**: unit tests only - 7376 run, all pass but two timing-flaky ones under the load of the
   whole suite (`test_hubqt.CardMotion.test_the_header_keeps_its_height_while_sliding`,
   `test_timebar_edge.EdgeMotion.test_play_bursts_it_out_frame_by_frame`), both green alone (30 tests
-  OK). `docs/superpowers/plans/render_floating_window.py` -> `floating_window.png`, the burst at
-  0..900 ms offscreen at 150 %: the racing edges at 40-90 ms, the whole window at 520 ms with the top
-  light fading, plain at 900 ms (no stripe, no orange on the top). **A burst's paint measured
-  offscreen at 90 ms, 450 x 390 px: median 1.04 ms, worst 2.17 ms** (30 grabs; budget ~8 ms).
+  OK). `docs/superpowers/plans/render_floating_window.py` -> `floating_window.png`: two rows, the
+  real look-B window (title row with icon, name, roll and close pills, hub-styled card) and a real
+  windowed `Skin` rail card, each bursting out of a point (the rail card out of its rail icon) at
+  20..900 ms and folding into its close pill at 60 / 160 ms, offscreen at 150 % in Segoe UI. Seen:
+  the racing edges at 20-90 ms, the rows popping at 150-230 ms, plain at 900 ms (no stripe, no
+  orange along the top). The plan's open total, read from the real burster: 780 ms. **A burst's
+  paint per tick at 90 ms, from the real plan: window 450 x 420 px median 0.90 ms (worst 4.55),
+  rail card 422 x 323 px median 0.58 ms (worst 3.54)**, 30 grabs each (budget ~8 ms).
   `docs/superpowers/plans/verify_hub_popups.py` calls the removed `_rect_of` / `popup.panel`: **history,
   do not run it**. **Not seen in a GUI Maya** (a drag across monitors, the remembered place after a
   restart, a real ⧉ press, the burst on screen - the animator's to try after Check update).
