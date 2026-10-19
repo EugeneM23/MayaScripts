@@ -56,6 +56,9 @@ class FakeLink(object):
         self._log("set_time", frame)
         self.s["now"] = float(frame)
 
+    def run_key_command(self, name):
+        self._log("run_key_command", name)
+
     def scrub_only(self, frame):
         self._log("scrub_only", frame)
         self.s["now"] = float(frame)
@@ -74,8 +77,15 @@ class FakeLink(object):
         self._log("set_highlight", sel)
         self.s["highlight"] = sel
 
-    def move_keys(self, selection, target):
-        self._log("move_keys", selection, target)
+    def move_keys(self, selection, target, only=None):
+        self._log("move_keys", selection, target, *([only] if only else []))
+
+    def stamp_keys(self, selection, target, only=None):
+        self._log("stamp_keys", selection, target, *([only] if only else []))
+        return {"curve": {"keys": [(float(selection[0]), {})], "stamped": set()}}
+
+    def key_range(self, a, b, name):
+        self._log("key_range", a, b, name)
 
     def step_key(self, forward, known):
         frame = look.neighbour_key(known, self.s["now"], forward)
@@ -107,6 +117,9 @@ class FakeLink(object):
     def layer_label(self):
         return "Layer1"
 
+    def layer_state(self):
+        return "Layer1", len(self.layers())
+
     def pick_layer(self, name):
         self._log("pick_layer", name)
 
@@ -127,9 +140,6 @@ class FakeLink(object):
 
     def add_bookmark(self, sel):
         self._log("add_bookmark", sel)
-
-    def step_bookmark(self, forward):
-        self._log("step_bookmark", forward)
 
     def preferences(self):
         self._log("preferences")
@@ -218,9 +228,9 @@ class Shows(Strip):
 class Time(Strip):
 
     def test_a_press_scrubs_in_maya_s_scrub_mode(self):
-        self.drag(self.tl, self.x(40.3), self.x(44.6))
-        #  a frame is a cell (2026-10-17): 44.6 is inside frame 44's
-        self.assertEqual(self.calls("set_time"), [("set_time", 40), ("set_time", 44)])
+        self.drag(self.tl, self.x(41.3), self.x(44.6))
+        #  a frame is a cell (2026-10-17): 44.6 is inside frame 44's (41: no key there)
+        self.assertEqual(self.calls("set_time"), [("set_time", 41), ("set_time", 44)])
         names = [e[0] for e in self.link.log if e[0] in ("begin_scrub", "set_time", "end_scrub")]
         self.assertEqual((names[0], names[-1]), ("begin_scrub", "end_scrub"))
         self.assertEqual(self.strip.field.text(), "44")
@@ -231,14 +241,41 @@ class Time(Strip):
         self.tl.paintEvent = lambda e: (painted.append(self.strip.state["now"]), real(e))
         self.link.set_time = lambda f: seen.append(list(painted))
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(self.tl, E.MouseButtonPress, self.x(40), Qt.LeftButton, Qt.LeftButton)
-        self.assertEqual(seen and seen[0][-1:], [40])
+        self.mouse(self.tl, E.MouseButtonPress, self.x(41), Qt.LeftButton, Qt.LeftButton)
+        self.assertEqual(seen and seen[0][-1:], [41])
 
     def test_a_middle_drag_moves_time_without_updating_the_scene(self):
         Qt = QT.QtCore.Qt
         self.drag(self.tl, self.x(20), self.x(25), Qt.MiddleButton)
         self.assertEqual(self.calls("scrub_only"), [("scrub_only", 20), ("scrub_only", 25)])
         self.assertFalse(self.calls("set_time"))
+
+    def key(self, code, mods=None, repeat=False):
+        Qt = QT.QtCore.Qt
+        event = QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, code, mods or Qt.NoModifier, "", repeat)
+        target = QT.QtWidgets.QWidget()
+        self.addCleanup(target.deleteLater)
+        QT.QtWidgets.QApplication.sendEvent(target, event)
+        return event
+
+    def test_s_sets_a_key_while_the_playhead_is_dragged(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.key(Qt.Key_S)
+        self.assertFalse(self.calls("run_key_command"), "no drag, Maya's hotkey's")
+        for button in (Qt.LeftButton, Qt.MiddleButton):
+            self.link.log[:] = []
+            self.mouse(self.tl, E.MouseButtonPress, self.x(20), button, button)
+            self.key(Qt.Key_S)
+            self.key(Qt.Key_S, repeat=True)
+            self.key(Qt.Key_W, Qt.ShiftModifier)
+            self.key(Qt.Key_W)
+            self.key(Qt.Key_S, Qt.ControlModifier)
+            self.assertEqual(len(self.calls("keys")), 2, "the keys read again at once, mid-drag")
+            self.mouse(self.tl, E.MouseButtonRelease, self.x(20), button, Qt.NoButton)
+            self.assertEqual(self.calls("run_key_command"),
+                             [("run_key_command", "SetKey"), ("run_key_command", "SetKeyTranslate")])
+            self.key(Qt.Key_S)
+            self.assertEqual(len(self.calls("run_key_command")), 2, "released: Maya's again")
 
     def test_the_transport_buttons(self):
         st = self.strip
@@ -317,7 +354,7 @@ class Meter(Strip):
         state.pop("meter", None)
         self.drag(self.tl, self.x(20), self.x(22))
         state["meter"] = {"stamps": [], "ours": [], "mayas": [], "seconds": 10.0}
-        self.drag(self.tl, self.x(30), self.x(33))
+        self.drag(self.tl, self.x(31), self.x(33))
         meter = state["meter"]
         self.assertEqual(len(meter["ours"]), 2)
         self.assertTrue(all(ms >= 0 for ms in meter["ours"] + meter["mayas"]))
@@ -365,6 +402,80 @@ class Highlight(Strip):
         S = QT.QtCore.Qt.ShiftModifier
         self.drag(self.tl, self.x(30), self.x(30), mods=S)
         self.assertEqual(self.link.s["highlight"], (30, 30))
+
+    def test_s_over_a_highlight_keys_every_frame_of_it(self):
+        Qt = QT.QtCore.Qt
+        press = lambda: QT.QtWidgets.QApplication.sendEvent(               # noqa: E731
+            QT.QtWidgets.QApplication.instance(),
+            QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_S, Qt.NoModifier, "s"))
+        self.strip.state["highlight"] = (20, 24)
+        press()
+        self.assertEqual(self.calls("key_range"), [("key_range", 20, 24, "SetKey")])
+        field = QT.QtWidgets.QLineEdit()
+        self.addCleanup(field.deleteLater)
+        field.show()
+        field.setFocus()
+        self.app.processEvents()
+        if QT.QtWidgets.QApplication.focusWidget() is field:
+            press()
+            self.assertEqual(len(self.calls("key_range")), 1, "typing in a field is typing")
+        field.clearFocus()
+        field.hide()
+        self.strip.state["highlight"] = (20, 20)
+        press()
+        self.strip.state["highlight"] = None
+        press()
+        self.assertEqual(len(self.calls("key_range")), 1, "one frame or none: Maya's S")
+        self.assertFalse(self.calls("run_key_command"))
+
+    def test_a_key_dragged_without_a_highlight_moves_and_leaves_none(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = None
+        self.drag(self.tl, self.x(30), self.x(34))
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (30, 30), (34, 34))])
+        self.assertIsNone(self.link.s["highlight"])
+        self.assertFalse(self.calls("set_time"), "a key drag is no scrub")
+
+    def test_a_key_clicked_without_moving_sets_the_time_there(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(30), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("set_time"), [("set_time", 30)])
+        self.assertFalse(self.calls("move_keys"))
+
+    def test_the_playhead_on_a_key_is_grabbed_not_the_key(self):
+        self.link.s["now"] = self.strip.state["now"] = 30.0
+        self.drag(self.tl, self.x(30), self.x(34))
+        self.assertFalse(self.calls("move_keys"))
+        self.assertEqual(self.calls("set_time")[-1], ("set_time", 34))
+
+    def test_s_during_a_key_drag_takes_maya_s_shortcut_away(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        override = QT.QtGui.QKeyEvent(E.ShortcutOverride, Qt.Key_S, Qt.NoModifier, "s")
+        override.ignore()
+        QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), override)
+        self.assertTrue(override.isAccepted(), "the shortcut must not fire")
+        self.assertFalse(self.calls("stamp_keys"), "the override only claims the key")
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+
+    def test_s_while_dragging_keys_puts_a_copy_of_them_down(self):
+        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        press = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), press)
+        # the copy goes where the block is being dragged to (2026-10-18: «когда мы переносим
+        # ключик и нажимаем хотей S то мы должны проставлять этот ключик»), not on the playhead
+        self.assertEqual(self.calls("stamp_keys"), [("stamp_keys", (22, 40), (27, 45))])
+        self.assertFalse(self.calls("run_key_command"), "no transform key")
+        self.mouse(self.tl, E.MouseMove, self.x(40), Qt.NoButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(40), Qt.LeftButton, Qt.NoButton)
+        # the release moves only the keys that were dragged, not the copies S put down
+        self.assertEqual(self.calls("move_keys"),
+                         [("move_keys", (22, 40), (32, 50), {"curve": {"keys": [(22.0, {})], "stamped": set()}})])
 
     def test_dragging_the_highlight_moves_its_keys_once_on_release(self):
         self.strip.state["highlight"] = (22, 40)
@@ -444,7 +555,6 @@ class Menus(Strip):
     def test_the_chips_menus_are_checked_where_the_scene_is(self):
         self.assertEqual([r[2] for r in self.strip.fps_rows()], [False, False, True, False, False, False])
         self.assertTrue(self.strip.speed_rows()[0][2])
-        self.assertEqual(self.labels(self.strip.layer_rows()), ["BaseAnimation", "Layer1"])
         self.assertEqual(self.labels(self.strip.character_rows()), ["No Character Set", "hero"])
         self.assertEqual(self.labels(self.strip.sound_rows()), ["No sound", "audio1", "Show on the timeline"])
 
@@ -454,10 +564,47 @@ class Menus(Strip):
         self.assertFalse(self.strip.loop.isChecked())
         self.strip.cache.click()
         self.assertFalse(self.link.x["cache"])
-        self.strip.bm_add.click()
-        self.assertEqual(self.calls("add_bookmark"), [("add_bookmark", None)])
-        self.strip.bm_next.click()
-        self.assertEqual(self.calls("step_bookmark"), [("step_bookmark", True)])
+
+    def test_no_bookmark_pills_and_a_layers_pill_on_the_right(self):
+        for gone in ("bm_prev", "bm_add", "bm_next"):
+            self.assertFalse(hasattr(self.strip, gone))
+        btn = self.strip.layers_btn
+        self.assertGreater(btn.x(), self.strip.auto.x())
+        self.assertLess(btn.x(), self.strip.prefs.x())
+        self.assertTrue(btn.isCheckable())
+
+    def test_the_badge_counts_the_layers_and_is_absent_with_none(self):
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "2")
+        self.link.layer_state = lambda: ("", 0)
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "")
+        self.strip.layers_btn.grab()                    # painting with and without the badge
+        self.link.layer_state = lambda: ("Layer1", 3)
+        self.strip.refresh()
+        self.assertEqual(self.strip.layers_btn.badge, "3")
+        self.strip.layers_btn.grab()
+
+    def test_the_time_change_reaches_the_layer_panel(self):
+        seen = []
+
+        class Panel:
+            def on_time(self):
+                seen.append(1)
+
+            def is_open(self):
+                return False
+        self.strip.layer_panel = Panel()
+        self.link.now = lambda: 17.0
+        self.strip.on_time()
+        self.assertEqual(seen, [1])
+
+    def test_the_pill_and_the_chip_open_the_panel(self):
+        opened = []
+        self.strip.toggle_layers = lambda *a: opened.append(True)
+        self.strip.layers_btn.click()
+        self.strip.layer.click()
+        self.assertEqual(len(opened), 2)
 
 
 class Motion(Strip):
@@ -500,6 +647,14 @@ class KeyEffects(Strip):
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
         self.strip.refresh(keys=True)
         self.assertEqual(self.kinds(), ["set"])
+        self.paint()
+
+    def test_a_key_set_swells_as_a_reached_one_does_30_percent_more_than_a_hover(self):
+        # 2026-10-18: «анимация сжатия ... на 30 % сильнее, при появлении ключа тоже»
+        self.assertEqual(bar.KEY_PULSE, 1.3)
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.refresh(keys=True)
+        self.assertIn(20.0, self.strip.timeline.reached)
         self.paint()
 
     def test_a_key_deleted_throws_sparks(self):
@@ -734,6 +889,83 @@ class CellKeys(Strip):
         self.tl.key_lift[12.0] = 1.0
         self.tl.grab()
         self.assertFalse(getattr(self.tl, "_failed", False))
+
+
+class LayerPanelReads(Strip):
+    """The open layer panel re-reads with the strip (2026-10-18 final review): the
+    jobs (animLayerRefresh, SelectionChanged, Undo, Redo, a scene opened) and the
+    tick reach it; the lanes' keys only on a keys read."""
+
+    def setUp(self):
+        super(LayerPanelReads, self).setUp()
+        from maya_timebar import layerpanel
+        from tests.test_timebar_layerpanel import FakeLink as LayerLink
+        self.ll = LayerLink()
+        self.ll.opts[layerpanel.LANES_VAR] = 1
+        self.reads = {"anim": 0, "keys": 0}
+        anim, keys = self.ll.anim_layers, self.ll.keys_by_layer
+
+        def counted_anim():
+            self.reads["anim"] += 1
+            return anim()
+
+        def counted_keys(names):
+            self.reads["keys"] += 1
+            return keys(names)
+        self.ll.anim_layers, self.ll.keys_by_layer = counted_anim, counted_keys
+        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS, False)
+        self.addCleanup(self.panel.destroy)
+        self.strip.layer_panel = self.panel
+        self.panel.open((1300, 815))
+
+    def test_the_strip_refresh_reads_the_open_panel_again(self):
+        before = self.reads["anim"]
+        self.strip.refresh(keys=True)                   # what the animLayerRefresh job runs
+        self.assertGreater(self.reads["anim"], before)
+
+    def test_an_undo_shows_the_new_rows(self):
+        self.ll.anim[0]["weight"] = 0.2                 # a fake Ctrl+Z took a weight back
+        self.strip.refresh(keys=True)
+        self.assertAlmostEqual(self.panel.rows["anim"][0]["weight"], 0.2)
+
+    def test_the_tick_reads_rows_not_keys(self):
+        self.assertTrue(self.panel.lanes.isVisible())
+        before = self.reads["keys"]
+        self.strip.tick()
+        self.assertEqual(self.reads["keys"], before)
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.reads["keys"], before + 1)
+
+    def test_a_key_edit_reads_the_lanes_once_on_the_next_refresh(self):
+        before = self.reads["keys"]
+        state = bar._state()
+        old = state.get("bar")
+        state["bar"] = self.strip
+        self.addCleanup(state.__setitem__, "bar", old)
+        bar._keys_edited()
+        bar._keys_edited()
+        self.assertEqual(self.reads["keys"], before)    # not on the callback itself
+        self.strip.tick()
+        self.assertEqual(self.reads["keys"], before + 1)
+
+    def test_a_forced_strip_refresh_forces_the_panel(self):
+        seen = []
+        real = self.panel.refresh
+        self.panel.refresh = lambda **kw: seen.append(kw) or real(**kw)
+        self.strip.refresh(keys=True, force=True)
+        self.assertEqual(seen[-1], {"keys": True, "force": True})
+
+    def test_a_scene_opened_job_reads_with_force(self):
+        events = {e: args for e, method, args in bar.JOB_EVENTS if method == "refresh"}
+        self.assertEqual(events.get("SceneOpened"), (True, True))
+        self.assertEqual(events.get("NewSceneOpened"), (True, True))
+
+    def test_a_closed_panel_is_not_read(self):
+        self.panel.close()
+        before = self.reads["anim"]
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.reads["anim"], before)
+
 
 if __name__ == "__main__":
     unittest.main()

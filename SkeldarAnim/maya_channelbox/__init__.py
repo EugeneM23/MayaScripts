@@ -1,12 +1,12 @@
 """Our Channel Box (2026-10-18), variant A "Rows": a painted Channel Box in the side
-panel's Channels tab, above Maya's Layer Editor. Mounted while the side panel holds
-Maya's Channels forms (right edge mode) and the switch is on (⋮ -> Side panel ▸ Our
-Channel Box, optionVar skeldarChannelBoxOurs, on by default).
+panel's Channels tab, alone, the whole height (no Layer Editor: «нужно убрать окно
+слоев»). Mounted while the side panel holds Maya's Channels forms (right edge mode)
+and the switch is on (⋮ -> Side panel ▸ Our Channel Box, optionVar
+skeldarChannelBoxOurs, on by default).
 
-Maya's own Channel Box half is hidden in place - combined: its pane layout shows
-only the Layer Editor; separate: its form hidden in our page - and given back as it
-was. It stays alive: its object lists are read and ours writes the selected channels
-into it, so the Graph Editor and every tool reading the Channel Box keep working.
+Maya's own Channels forms (Channel Box / Layer Editor) are kept hidden in our page
+and given back as they were. Its Channel Box stays alive: ours writes the selected
+channels into it, so the Graph Editor and every tool reading it keep working.
 
 Nothing heavy at import. The state lives on `sys` (trap 111); every Maya widget is
 found again by name when used (trap 135).
@@ -17,21 +17,13 @@ import sys
 import traceback
 
 VAR = "skeldarChannelBoxOurs"
-SPLIT_VAR = "skeldarChannelBoxSplit"        # the box's share of the Channels page, %
-PANE = "ChannelsLayersPaneLayout"           # initChannelsLayers.mel
-BOX_FORM = "ChannelBoxForm"
-LAYER_FORM = "LayerEditorForm"
-COMBINED = "MainChannelsLayersLayout"
-SEPARATE_BOX = "MainChannelBoxLayout"
-SPLIT = "skeldarSidePanelChannelBoxSplit"
-LAYERS = "skeldarSidePanelChannelBoxLayers"
-DEFAULT_SPLIT = 70
+HOLDER = "skeldarSidePanelChannelBoxKept"   # Maya's Channels forms, hidden, alive
 
 
 def _state():
     state = getattr(sys, "_skeldar_channelbox", None)
     if state is None:
-        state = {"box": None, "split": None, "page": None, "pane": None,
+        state = {"box": None, "holder": None, "page": None,
                  "callbacks": [], "node_callbacks": [], "pending": None}
         sys._skeldar_channelbox = state
     return state
@@ -84,44 +76,10 @@ def current():
     return None
 
 
-def _hide_maya_box(combined):
-    """Maya's Channel Box half out of sight, in place."""
-    cmds = _cmds()
-    if combined:
-        if cmds.paneLayout(PANE, exists=True):
-            cmds.paneLayout(PANE, edit=True, configuration="single", setPane=[(LAYER_FORM, 1)])
-            return "combined"
-        return None
-    from maya_sidepanel import holder
-    w = holder.widget(SEPARATE_BOX)
-    if w is not None:
-        w.hide()
-        return "separate"
-    return None
-
-
-def _show_maya_box(how):
-    cmds = _cmds()
-    if how == "combined":
-        try:
-            if cmds.paneLayout(PANE, exists=True):
-                size = cmds.optionVar(q="channelsLayersPaneSize") if cmds.optionVar(
-                    exists="channelsLayersPaneSize") else 50
-                cmds.paneLayout(PANE, edit=True, configuration="horizontal2",
-                                setPane=[(BOX_FORM, 1), (LAYER_FORM, 2)],
-                                paneSize=[(1, 100, int(size or 50))])
-        except Exception:                                    # noqa: BLE001
-            print(traceback.format_exc())
-    elif how == "separate":
-        from maya_sidepanel import holder
-        w = holder.widget(SEPARATE_BOX)
-        if w is not None:
-            w.show()
-
-
 def mount(panel, records, ui=1.0):
-    """Ours over Maya's Layer Editor in `panel`'s Channels page; `records` the side
-    panel's borrowed Channels forms (already in that page). The box, or None."""
+    """Ours alone in `panel`'s Channels page; `records` the side panel's borrowed
+    Channels forms (already in that page), moved into a hidden holder where Maya's
+    Channel Box stays alive. The box, or None."""
     if not enabled():
         return None
     unmount()
@@ -129,46 +87,24 @@ def mount(panel, records, ui=1.0):
     import maya_hubstyle
     from maya_sidepanel import holder
     from . import box as box_module, scene
-    q = maya_hubqt.qt()
-    QtCore, QtWidgets = q.QtCore, q.QtWidgets
-    forms = [r["form"] for r in records]
-    widgets = [holder.widget(name) for name in forms]
+    QtWidgets = maya_hubqt.qt().QtWidgets
+    widgets = [holder.widget(r["form"]) for r in records]
     widgets = [w for w in widgets if w is not None]
     if not widgets:
         return None
     page_layout = panel.pages["channels"]
     page = page_layout.parentWidget()
-    how = _hide_maya_box(COMBINED in forms)
-    split = QtWidgets.QSplitter(QtCore.Qt.Vertical, page)
-    split.setObjectName(SPLIT)
-    split.setChildrenCollapsible(False)
-    split.setHandleWidth(max(3, int(round(5 * ui))))
-    box = box_module.make(scene, ui, maya_hubstyle.TOKENS, parent=split)
-    layers = QtWidgets.QWidget(split)
-    layers.setObjectName(LAYERS)
-    lay = QtWidgets.QVBoxLayout(layers)
-    lay.setObjectName(LAYERS + "Layout")             # trap 278: no unnamed layout above Maya's
+    kept = QtWidgets.QWidget(page)
+    kept.setObjectName(HOLDER)
+    lay = QtWidgets.QVBoxLayout(kept)
+    lay.setObjectName(HOLDER + "Layout")             # trap 278: no unnamed layout above Maya's
     lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(0)
     for w in widgets:
         lay.addWidget(w)
-    split.addWidget(box)
-    split.addWidget(layers)
-    page_layout.addWidget(split)
-    share = DEFAULT_SPLIT
-    try:
-        cmds = _cmds()
-        if cmds.optionVar(exists=SPLIT_VAR):
-            share = int(cmds.optionVar(q=SPLIT_VAR))
-    except Exception:                                        # noqa: BLE001
-        pass
-    share = max(20, min(90, share))
-    split.setStretchFactor(0, share)
-    split.setStretchFactor(1, 100 - share)
-    split.setSizes([share * 10, (100 - share) * 10])
-    split.splitterMoved.connect(lambda *_a: _remember_split())
-    state = _state()
-    state.update(box=box, split=split, page=page, pane=how)
+    kept.hide()
+    box = box_module.make(scene, ui, maya_hubstyle.TOKENS, parent=page)
+    page_layout.addWidget(box)
+    _state().update(box=box, holder=kept, page=page)
     _start_callbacks()
     try:
         box.refresh(effects=False)
@@ -177,42 +113,31 @@ def mount(panel, records, ui=1.0):
     return box
 
 
-def _remember_split():
-    split = _state().get("split")
-    try:
-        sizes = split.sizes()
-        total = float(sum(sizes)) or 1.0
-        _cmds().optionVar(intValue=(SPLIT_VAR, int(round(100 * sizes[0] / total))))
-    except Exception:                                        # noqa: BLE001
-        pass
-
-
 def unmount():
-    """Maya's forms back in the page as they came, Maya's Channel Box half shown
-    again, ours gone. Safe to call any time."""
+    """Maya's forms back in the page as they came, ours gone. Safe to call any time."""
     state = _state()
     _stop_callbacks()
-    split, page, how = state.get("split"), state.get("page"), state.get("pane")
-    state.update(box=None, split=None, page=None, pane=None)
-    if how:
-        _show_maya_box(how)
-    if split is None:
-        return False
+    box, kept, page = state.get("box"), state.get("holder"), state.get("page")
+    state.update(box=None, holder=None, page=None)
     try:
         import maya_hubqt
         q = maya_hubqt.qt()
-        if not q.shiboken.isValid(split):
-            return False
-        layers = split.findChild(q.QtWidgets.QWidget, LAYERS)
-        if layers is not None and page is not None and q.shiboken.isValid(page):
-            for w in [layers.layout().itemAt(i).widget() for i in range(layers.layout().count())]:
-                if w is not None:
-                    page.layout().addWidget(w)       # out of ours BEFORE ours goes
-        split.setParent(None)
-        split.deleteLater()
+        if kept is not None and q.shiboken.isValid(kept):
+            if page is not None and q.shiboken.isValid(page):
+                lay = kept.layout()
+                for w in [lay.itemAt(i).widget() for i in range(lay.count())]:
+                    if w is not None:
+                        page.layout().addWidget(w)   # out of ours BEFORE ours goes
+                        w.show()
+            kept.setParent(None)
+            kept.deleteLater()
+        if box is not None and q.shiboken.isValid(box):
+            box.setParent(None)
+            box.deleteLater()
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
-    return True
+        return False
+    return box is not None
 
 
 def _shown():

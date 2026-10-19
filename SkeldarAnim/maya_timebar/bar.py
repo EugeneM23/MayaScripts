@@ -20,6 +20,7 @@ Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 import math
 import time
 import traceback
+import types
 
 from . import CONTROL, look, _state
 
@@ -32,6 +33,8 @@ POP_MS = 200            # a toggle
 KEY_FADE_MS = 600       # a key the playhead reached
 LIFT = 0.10             # +10 % under the mouse
 KEY_LIFT = 0.6          # a key grows 60 % (under the mouse or reached)
+KEY_PULSE = 1.3         # ... and a key reached or just set swells and shrinks back 30 % more
+                        # (2026-10-18: «анимация сжатия должна быть на 30 % сильнее»)
 PAD = 10                # logical px either side of the timeline's frames
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
@@ -80,6 +83,28 @@ GLYPHS = {
               "L9 15H7l-.4-1.8-1.4-.6-1.6 1-1.4-1.4 1-1.6-.6-1.4L1 9V7l1.8-.4.6-1.4-1-1.6 1.4-1.4 1.6 1 1.4-.6z"
               "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"),
 }
+
+#  the layer panel's glyphs (2026-10-18)
+GLYPHS.update({
+    "layers": "M8 1.2l7 3.6-7 3.6-7-3.6zM2.4 7.3L8 10.2l5.6-2.9 1.4.7L8 11.6 1 8zM2.4 10.5L8 13.4l5.6-2.9 1.4.7L8 14.8 1 11.2z",
+    "lanes": "M1 3h4v2H1zM6 3h9v2H6zM1 7h7v2H1zM9 7h6v2H9zM1 11h3v2H1zM5 11h10v2H5z",
+    "lock": "M4.5 7V5a3.5 3.5 0 0 1 7 0v2H13v7H3V7zm1.6 0h3.8V5a1.9 1.9 0 0 0-3.8 0z",
+    "plus": "M7 2h2v5h5v2H9v5H7V9H2V7h5z",
+    "addsel": "M2 2h6v2H4v8h4v2H2zM9 7h3V4l3.5 4-3.5 4V9H9z",
+    "remsel": "M8 2h6v12H8v-2h4V4H8zM10 7H6.5V4L3 8l3.5 4V9H10z",
+    "merge": "M3 2h2v4c0 1.2 1 2 3 2s3-.8 3-2V2h2v4c0 2-1.4 3.4-4 3.9V12h2.2L8 15l-3.2-3H7V9.9C4.4 9.4 3 8 3 6z",
+    "select": "M3 1.5l9.5 7.2-4.2.6 2.5 4.6-1.9 1-2.5-4.7L3 13z",
+    "trash": "M6 1h4v1.5h4V4H2V2.5h4zM3.5 5h9l-.8 10H4.3z",
+})
+
+_KIT = None
+
+
+def kit():
+    """The strip's paint helpers for the layer panel (made with the classes)."""
+    if _KIT is None:
+        classes()
+    return _KIT
 
 
 class Link(object):
@@ -273,6 +298,7 @@ def classes():
             self.goal = 0.0
             self.flash_at = None
             self.pop_at = None
+            self.badge = ""             # a small round count at the top-right (2026-10-18)
             self._was_busy = False
             self.index = strip.register(self)
             self._fit()
@@ -300,6 +326,12 @@ def classes():
             if text != self.text():
                 self.setText(text)
                 self._fit()
+                self.update()
+
+        def set_badge(self, text):
+            text = str(text) if text else ""
+            if text != self.badge:
+                self.badge = text
                 self.update()
 
         def enterEvent(self, event):
@@ -395,7 +427,25 @@ def classes():
                                Qt.AlignVCenter | Qt.AlignLeft, self.text())
                 else:
                     p.drawText(base, Qt.AlignCenter, self.text())
+            if self.badge:
+                self._paint_badge(p, base, on)
             p.end()
+
+        def _paint_badge(self, p, base, on):
+            """The count: card_active face and text2 ink (accent and on_accent while the pill is on),
+            a 1 px panel border."""
+            tk, ui = self.strip.tokens, self.strip.ui
+            font = QtGui.QFont("Consolas")
+            font.setPixelSize(max(7, int(9 * ui)))
+            p.setFont(font)
+            w = max(13 * ui, QtGui.QFontMetrics(font).horizontalAdvance(self.badge) + 7 * ui)
+            h = 13 * ui
+            box = QtCore.QRectF(base.right() - w + 4 * ui, base.top() - 3 * ui, w, h)
+            p.setPen(QtGui.QPen(colour(tk["panel"]), max(1.0, ui)))
+            p.setBrush(colour(tk["accent"] if on else tk["card_active"]))
+            p.drawRoundedRect(box, h / 2.0, h / 2.0)
+            p.setPen(colour(tk["on_accent"] if on else tk["text2"]))
+            p.drawText(box, Qt.AlignCenter, self.badge)
 
     # -- the range block -------------------------------------------------------
 
@@ -538,6 +588,70 @@ def classes():
                 self.goal[k] = 0.0
             self.strip.kick()
 
+    # -- keys during a drag ------------------------------------------------------
+
+    TEXT_INPUTS = (QtWidgets.QLineEdit, QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit,
+                   QtWidgets.QAbstractSpinBox)
+
+    class DragKeys(QtCore.QObject):
+        """S (Shift+W/E/R) on the strip (`look.key_action`): during a timeline drag a
+        held button keeps the key from Maya's hotkeys, so we catch it application-wide
+        and run Maya's own command (`look.DRAG_KEYS`), or put a copy of a dragged key
+        block where the drag has it now (only the selected keys, none in the gaps);
+        with no drag and a highlight standing, the key goes on every frame of the
+        highlight. Installed for the strip's life."""
+
+        def __init__(self, strip):
+            super(DragKeys, self).__init__(strip)
+            self.strip = strip
+
+        def _plain_key(self):
+            """Not typing into a field: only then is S the strip's. The strip may be
+            hidden at the bottom edge - a highlight set, the mouse gone to the
+            viewport, S pressed there is still the highlight's."""
+            focus = QtWidgets.QApplication.focusWidget()
+            return not (focus is not None and isinstance(focus, TEXT_INPUTS))
+
+        def eventFilter(self, obj, event):
+            kind = event.type()
+            override = kind == QtCore.QEvent.ShortcutOverride
+            if kind != QtCore.QEvent.KeyPress and not override:
+                return False
+            tl = self.strip.timeline
+            if event.isAutoRepeat():
+                return bool(tl.drag) and int(event.key()) in (83, 87, 69, 82)   # S W E R held down
+            mods, code = event.modifiers(), int(event.key())
+            letter = chr(code) if 65 <= code <= 90 else ""          # Qt.Key_A .. Key_Z
+            name = look.drag_key(letter,
+                                 bool(mods & Qt.ShiftModifier), bool(mods & Qt.ControlModifier),
+                                 bool(mods & Qt.AltModifier))
+            if not name:
+                return False
+            if not tl.drag and not self._plain_key():
+                return False
+            action = look.key_action(name, tl.drag, self.strip.state.get("highlight"), tl.preview)
+            if action is None:
+                return False
+            if override:
+                #  Maya's own S is a shortcut: taking the override keeps it from
+                #  firing, and the key press then comes here (2026-10-18: «ключи не
+                #  ставятся при переносе»)
+                event.accept()
+                return True
+            if action[0] == "stamp":
+                got = self.strip.call("stamp_keys", action[1], action[2], tl.stamped)
+                if tl.stamped is None and got:
+                    tl.stamped = got            # the keys dragged: the release moves only them
+            elif action[0] == "range":
+                self.strip.call("key_range", action[1], action[2], name)
+            else:
+                self.strip.call("run_key_command", name)
+            #  the strip's tick reads no keys while the playhead is dragged: the key
+            #  and its flash show now, not on the release (2026-10-18)
+            self.strip.refresh(keys=True)
+            self.strip.timeline.repaint()
+            return True
+
     # -- the timeline ------------------------------------------------------------
 
     class Timeline(QtWidgets.QWidget):
@@ -553,6 +667,7 @@ def classes():
             self.drag = None            # (kind, start frame, the track at the press[, the highlight])
             self.view = None            # (v0, v1) after a zoom; None follows the playback range
             self.preview = None         # the highlight's target while keys are dragged
+            self.stamped = None         # {curve: [times]} once S put copies down in a drag
             self.aim_key = None         # the key under the mouse
             self.aim_head = False
             self.key_lift = {}          # key -> 0..1, eased
@@ -653,6 +768,11 @@ def classes():
             cx, cy, rect = self._key_place(frame)
             timing.setdefault("rect", rect)
             st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"], **timing)
+            if kind == "set":
+                # the key itself swells and shrinks back, as one the playhead reaches
+                # (2026-10-18: «при появлении ключа тоже»)
+                self.reached[frame] = st.clock()
+                st.kick()
             return True
 
         def _key_place(self, frame):
@@ -681,7 +801,6 @@ def classes():
                 return
             groups = look.shard_groups(len(shown))
             delays, life = look.delete_plan(len(groups))
-            pieces = look.SHARDS[0] if len(shown) > look.SMALL_CHANGE else None   # a big wave: 3 each
             for (a, b), delay in zip(groups, delays):
                 # neighbours too dense to tell apart break as one block of their keys
                 rects = [self._key_place(f)[2] for f, _bd in shown[a:b]]
@@ -691,7 +810,7 @@ def classes():
                 frame, bd = shown[a]
                 # the keys stay drawn where they stood until they break (`ghosts`): the data
                 # is gone already, the picture of each key waits for its turn
-                self.key_effect("delete", frame, bd, delay=delay, life=life, pieces=pieces,
+                self.key_effect("delete", frame, bd, delay=delay, life=life,
                                 rect=(left, top, right - left, h), ghosts=rects, quiet=True)
             if shown:
                 self.strip.fx.raise_()
@@ -730,7 +849,8 @@ def classes():
             w, h = float(self.width()), float(self.height())
             scale, opacity = st.opening_of(self.index)
             entrance = st.entrance is not None
-            moving = (self.drag[3], self.preview) if (self.preview and self.drag and len(self.drag) > 3) else None
+            moving = ((self.drag[3], self.preview, look.held(self.stamped))
+                      if (self.preview and self.drag and len(self.drag) > 3) else None)
             key = self._static_key(t, w, h, not entrance, moving)
             if key != self._static_for or self._static is None:
                 dpr = max(1.0, float(self.devicePixelRatioF()))
@@ -860,9 +980,9 @@ def classes():
                 for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
                     path = QtGui.QPainterPath()
                     for frame in frames:
-                        shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
-                        if t.v0 - 1 <= shown <= t.v1 + 2:
-                            add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
+                        for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
+                            if t.v0 - 1 <= shown <= t.v1 + 2:
+                                add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
                     p.fillPath(path, colour(hex_))
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
@@ -881,13 +1001,14 @@ def classes():
                 keys, bds = set(st.keys), set(st.breakdowns)
                 frames = [(f, tk["accent"] if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
             plain = {}
-            for frame, hex_ in frames:
-                shown = look.mapped(frame, moving[0], moving[1]) if moving else frame
+            for frame, hex_, shown in [(f, c, x) for f, c in frames
+                                       for x in (look.shown_at(f, *moving) if moving else (f,))]:
                 if not (t.v0 - 1 <= shown <= t.v1 + 1):
                     continue
                 lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
                 lift = max(self.key_lift.get(frame, 0.0), lit)
-                z = 1.0 + KEY_LIFT * lift
+                swell = max(self.key_lift.get(frame, 0.0), lit * KEY_PULSE)
+                z = 1.0 + KEY_LIFT * swell
                 burst = 1.0
                 if entrance:
                     g = self.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, shown)), int(KEY_Y * ui)))
@@ -896,13 +1017,13 @@ def classes():
                 x = t.x(shown)
                 whole = look.on_frame(shown)
                 top, bottom = key_span(h, ui)
-                kw = KEY_W * ui * min(z, 1.6)
+                kw = KEY_W * ui * min(z, 1.0 + KEY_LIFT * KEY_PULSE)
                 grow = 0.0
                 if whole:
                     #  the cell, grown a little when lit and squeezed toward its middle
                     #  while it pops in
                     l, tp, cw, ch = look.key_cell(x, t.scale, top, bottom, ui)
-                    grow = 1.5 * ui * lift
+                    grow = 1.5 * ui * swell
                     if z < 1.0:
                         cx, cy = l + cw / 2.0, tp + ch / 2.0
                         cw, ch = cw * max(z, 0.05), ch * max(z, 0.05)
@@ -1001,8 +1122,20 @@ def classes():
             part = look.highlight_hit(t, x, s.get("highlight"), st.ui)
             if part:
                 self.drag = (part, self._grip(part, x, t), t, tuple(s["highlight"]))
+                self.stamped = None
                 self.preview = tuple(s["highlight"])
                 return
+            key = self._key_under(x, t)
+            if key is not None and self._frame(x, t) != s["now"]:      # the playhead's own cell scrubs
+                #  a key pressed: dragged past Qt's start distance it moves on its own,
+                #  no highlight needed; let go where it was, it is a click on the time
+                #  (2026-10-18: «перетаскивать ключи без обязательного выделения»)
+                self.drag = ("kpend", self._frame(x, t), t, x, key)
+                return
+            self._press_time(x, t)
+
+        def _press_time(self, x, t):
+            st, s = self.strip, self.strip.state
             self.drag = ("now", None, t)
             st.call("begin_scrub")
             if s.get("highlight"):
@@ -1016,6 +1149,14 @@ def classes():
                 self._aim(x)
                 return
             kind, start, t = self.drag[0], self.drag[1], self.drag[2]
+            if kind == "kpend":
+                if abs(x - self.drag[3]) < QtWidgets.QApplication.startDragDistance():
+                    return
+                frame = int(math.floor(self.drag[4] + 1e-6))
+                self.drag = ("hmove", start, t, (frame, frame), "loose")
+                self.stamped = None
+                self.preview = (frame, frame)
+                kind = "hmove"
             if kind in ("now", "mid"):
                 self._scrub(x, update=(kind == "now"))
             elif kind == "hl":
@@ -1032,6 +1173,10 @@ def classes():
                 return
             kind = self.drag[0]
             st, s = self.strip, self.strip.state
+            if kind == "kpend":
+                #  a key clicked, not dragged: the time goes there, as on the track
+                self._press_time(self.drag[3], self.drag[2])
+                kind = "now"
             if kind == "now":
                 st.call("end_scrub")
             elif kind == "mid":
@@ -1042,9 +1187,13 @@ def classes():
                 selection, target = self.drag[3], self.preview
                 if target and target != selection:
                     st._quiet_keys = True               # a move is no set and delete
-                    st.call("move_keys", selection, target)
-                    s["highlight"] = target
-                    st.call("set_highlight", target)
+                    if self.stamped:
+                        st.call("move_keys", selection, target, self.stamped)
+                    else:
+                        st.call("move_keys", selection, target)
+                    loose = len(self.drag) > 4 and self.drag[4] == "loose"
+                    s["highlight"] = None if loose else target
+                    st.call("set_highlight", s["highlight"])
                     self.drag, self.preview = None, None
                     st.refresh(keys=True)
             self.drag = None
@@ -1082,10 +1231,22 @@ def classes():
                     best, near = k, d
             head = abs(t.x(self.strip.state["now"]) - x) < 8 * ui
             part = look.highlight_hit(t, x, self.strip.state.get("highlight"), ui)
-            self.setCursor(Qt.OpenHandCursor if part == "hmove" else Qt.SizeHorCursor)
+            grab = part == "hmove" or (not part and self._key_under(x, t) is not None)
+            self.setCursor(Qt.OpenHandCursor if grab else Qt.SizeHorCursor)
             if best != self.aim_key or head != self.aim_head:
                 self.aim_key, self.aim_head = best, head
                 self.strip.kick()
+
+        def _key_under(self, x, t):
+            """The key whose cell the press is in (a key between frames: within half a
+            cell, at least 3 px, of its line); None off every key."""
+            near = max(3 * self.strip.ui, t.scale / 2.0)
+            best = None
+            for k in self.strip.keys + self.strip.breakdowns:
+                d = abs(look.key_centre(t, k) - x)
+                if d <= near:
+                    best, near = k, d
+            return best
 
         def _scrub(self, x, update=True):
             """The playhead drawn on the new frame at once, then Maya sent there:
@@ -1212,15 +1373,14 @@ def classes():
 
         @staticmethod
         def _paint_shards(p, broken, ui):
-            """A deleted key broken into 3..5 pieces that together were the key, each
-            flying off spinning and falling (2026-10-17: «ключик сломался и разлетелся»).
+            """A deleted key broken into three cubes, each flying off spinning and falling
+            (2026-10-17: «ключик сломался и разлетелся»; cubes since 2026-10-18).
             A piece is a fillRect under its own transform: the cheapest rotated rectangle
             measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
             for i, age in broken:
                 body = QtGui.QColor(i["hex"])
                 for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
-                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui,
-                                                              pieces=i.get("pieces")):
+                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui):
                     body.setAlphaF(alpha)
                     move = QtGui.QTransform()
                     move.translate(cx, cy)
@@ -1276,20 +1436,11 @@ def classes():
             top.addWidget(self.play_end)
             top.addWidget(self.anim_end)
             top.addWidget(self._sep())
-            self.bm_prev = Pill(self, "bm_prev", tip="Previous bookmark")
-            self.bm_add = Pill(self, "bm_add", tip="Add a bookmark over the highlight", accent_glyph=True)
-            self.bm_next = Pill(self, "bm_next", tip="Next bookmark")
-            self.bm_prev.clicked.connect(lambda *_a: self._bookmark(False))
-            self.bm_next.clicked.connect(lambda *_a: self._bookmark(True))
-            self.bm_add.clicked.connect(lambda *_a: self._add_bookmark())
-            for b in (self.bm_prev, self.bm_add, self.bm_next):
-                top.addWidget(b)
-            top.addWidget(self._sep())
             self.character = Pill(self, text="No Character Set", tip="Character set", style="chip")
             self.layer = Pill(self, text="BaseAnimation", tip="The animation layer keys go to", style="chip")
             self.fps = Pill(self, text="30 fps", tip="Frame rate", style="chip")
             self.character.clicked.connect(lambda *_a: self._character_menu())
-            self.layer.clicked.connect(lambda *_a: self._layer_menu())
+            self.layer.clicked.connect(lambda *_a: self.toggle_layers())
             self.fps.clicked.connect(lambda *_a: self._fps_menu())
             for b in (self.character, self.layer, self.fps):
                 top.addWidget(b)
@@ -1300,6 +1451,10 @@ def classes():
             self.sound = Pill(self, "sound", tip="Sound under the frames", toggle=True)
             self.auto = Pill(self, "auto", tip="Auto key", style="rec", toggle=True)
             self.prefs = Pill(self, "prefs", tip="Time slider preferences")
+            #  the layer panel's pill (2026-10-18), in place of the bookmark pills
+            self.layers_btn = Pill(self, "layers", tip="Animation and display layers", toggle=True)
+            self.layers_btn.clicked.connect(lambda *_a: self.toggle_layers())
+            self.layer_panel = None
             self.loop.clicked.connect(lambda *_a: self._do("cycle_loop"))
             self.cache.clicked.connect(lambda *_a: self._do("toggle_cache"))
             self.speed.clicked.connect(lambda *_a: self._speed_menu())
@@ -1311,7 +1466,10 @@ def classes():
             self.pin = Pill(self, "pin", tip="Keep the time bar out", toggle=True)
             self.pin.clicked.connect(lambda checked=False: self.edge and self.edge.set_pinned(self.pin.isChecked()))
             self.pin.setVisible(False)
-            for b in (self.loop, self.cache, self.speed, self.sound, self.auto, self.prefs, self.pin):
+            for b in (self.loop, self.cache, self.speed, self.sound, self.auto):
+                top.addWidget(b)
+            top.addWidget(self._sep())
+            for b in (self.layers_btn, self.prefs, self.pin):
                 top.addWidget(b)
             # time row
             self.timeline = Timeline(self)
@@ -1354,6 +1512,11 @@ def classes():
             self.anim = QtCore.QTimer(self)
             self.anim.setInterval(FRAME_MS)
             self.anim.timeout.connect(self._animate)
+            # S on the strip: during a drag, and over a highlight (2026-10-18)
+            self.drag_keys = DragKeys(self)
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self.drag_keys)
             self.refresh(keys=True, force=True)     # read once even if Maya is playing
             self.timer.start()
             self.opened = self.clock()
@@ -1558,7 +1721,8 @@ def classes():
                 self.state.update(extra)
             if keys:
                 self.keys_dirty = True
-            if self.keys_dirty and (force or not self.state.get("playing")):
+            read_keys = bool(self.keys_dirty and (force or not self.state.get("playing")))
+            if read_keys:
                 found = self.call("keys")
                 old_keys, old_bds = self.keys, self.breakdowns
                 if found is not None:
@@ -1573,6 +1737,10 @@ def classes():
             self._paint_widgets()
             self.timeline.update()
             self.range.update()
+            #  the open layer panel reads with the strip (2026-10-18 final review): the
+            #  jobs and the tick reach it; its lanes' keys only when the strip read keys
+            if self.layer_panel is not None and self.layer_panel.is_open():
+                self.layer_panel.refresh(keys=read_keys, force=force)
 
         def _key_effects(self, old_keys, old_bds, edited=False):
             """A key set flashes, keys deleted throw sparks one after another left to
@@ -1634,6 +1802,8 @@ def classes():
                 #  in several (2026-10-16)
                 self.timeline.repaint()
                 self.field.repaint()
+                if self.layer_panel is not None:
+                    self.layer_panel.on_time()
 
         def tick(self):
             try:
@@ -1673,8 +1843,10 @@ def classes():
             label = next((t for t, v in look.SPEEDS if abs(v - speed) < 1e-6), "%gx" % speed)
             self.speed.set_label(label + u" ▾")
             self.character.set_label((s.get("character") or "No Character Set") + u" ▾")
-            layer = self.call("layer_label") or ""
+            layer, count = self.call("layer_state") or ("", 0)
             self.layer.set_label((layer + u" ▾") if layer else "No layers")
+            self.layers_btn.set_badge(count if count else "")
+            self.layers_btn.setChecked(bool(self.layer_panel and self.layer_panel.is_open()))
 
         # presses ---------------------------------------------------------------
         def _typed(self):
@@ -1708,13 +1880,50 @@ def classes():
             self.refresh()
             self.timeline.reach(before, self.state["now"])
 
-        def _bookmark(self, forward):
-            self.call("step_bookmark", forward)
-            self.refresh()
+        def toggle_layers(self):
+            """The layers pill or the chip: the layer panel opened or closed out of the pill."""
+            from . import layerpanel
+            if self.layer_panel is None:
+                parent = None
+                try:
+                    from . import edge as _edge
+                    parent = _edge.main_window()
+                except Exception:                            # noqa: BLE001
+                    parent = None
+                self.layer_panel = layerpanel.Panel(self, self.link.layer_link(), self.ui, self.tokens,
+                                                    self.motion, parent)
+            c = self.layers_btn.mapToGlobal(self.layers_btn.rect().center())
+            self.layer_panel.toggle((c.x(), c.y()))
+            self.layers_btn.setChecked(self.layer_panel.is_open())
 
-        def _add_bookmark(self):
-            self.call("add_bookmark", self.state.get("highlight"))
-            self.refresh(keys=True)
+        def strip_rect(self):
+            p = self.mapToGlobal(self.rect().topLeft())
+            return (p.x(), p.y(), self.width(), self.height())
+
+        def timeline_rect(self):
+            t = self.timeline
+            p = t.mapToGlobal(t.rect().topLeft())
+            return (p.x(), p.y(), t.width(), t.height())
+
+        def top_room(self):
+            """From the strip's top to the top of Maya's viewport area (else the screen)."""
+            top = None
+            try:
+                import maya_hubedge
+                area = maya_hubedge._viewport_area("right")
+                top = area[1] if area else None
+            except Exception:                                # noqa: BLE001
+                top = None
+            if top is None:
+                screen = self.screen().availableGeometry() if self.screen() else None
+                top = screen.y() if screen is not None else 0
+            return self.strip_rect()[1] - top
+
+        def track(self):
+            return self.timeline.track()
+
+        def now(self):
+            return self.state.get("now", 0.0)
 
         def menu_rows(self, rows, menu=None):
             """A QMenu of `rows`: (label, callable | None [, checked]), None for a
@@ -1762,12 +1971,6 @@ def classes():
             return [(text, (lambda v=value: self.call("set_speed", v)), abs(speed - value) < 1e-6)
                     for text, value in look.SPEEDS]
 
-        def layer_rows(self):
-            found = self.call("layers") or []
-            if not found:
-                return [("No animation layers", None)]
-            return [(label, (lambda n=name: self.call("pick_layer", n)), sel) for name, label, sel in found]
-
         def character_rows(self):
             current = self.state.get("character") or ""
             rows = [("No Character Set", (lambda: self.call("pick_character", "")), not current)]
@@ -1813,9 +2016,6 @@ def classes():
         def _speed_menu(self):
             self._menu(self.speed, self.speed_rows())
 
-        def _layer_menu(self):
-            self._menu(self.layer, self.layer_rows())
-
         def _character_menu(self):
             self._menu(self.character, self.character_rows())
 
@@ -1826,6 +2026,9 @@ def classes():
             point = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
             self._menu(point, self.key_rows(frame))
 
+    global _KIT
+    _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph, glow=glow,
+                                 halo=halo, soft_dot=soft_dot)
     return Strip, Timeline, RangeBlock, Pill
 
 
@@ -1883,6 +2086,8 @@ def _keys_edited(*_args):
     if widget is not None:
         widget.keys_dirty = True
         widget.keys_edited = True       # a deletion of many keys plays as a wave, not a reload
+        if widget.layer_panel is not None:
+            widget.layer_panel.keys_dirty()
 
 
 def _command(command, *_args):
@@ -1931,6 +2136,23 @@ def _drop_callbacks():
     state["callbacks"] = []
 
 
+#  (event, the strip's method, its arguments); refresh's are (keys, force). A scene
+#  opened reads everything again, forced, so the layer panel never writes to a
+#  closed scene's nodes (2026-10-18 final review)
+JOB_EVENTS = (("playbackRangeChanged", "refresh", ()),
+              ("SelectionChanged", "refresh", (True,)),
+              ("animLayerRefresh", "refresh", (True,)),
+              ("Undo", "refresh", (True,)),
+              ("Redo", "refresh", (True,)),
+              ("SceneOpened", "refresh", (True, True)),
+              ("NewSceneOpened", "refresh", (True, True)),
+              ("displayLayerChange", "refresh", ()),
+              ("displayLayerManagerChange", "refresh", ()),
+              ("displayLayerAdded", "refresh", ()),
+              ("displayLayerDeleted", "refresh", ()),
+              ("displayLayerVisibilityChanged", "refresh", ()))
+
+
 def start_jobs():
     """The jobs and callbacks that keep the live strip current - one set, whichever
     host it stands in (the docked control or the bottom edge): the old ones killed
@@ -1944,11 +2166,7 @@ def start_jobs():
         except Exception:                                    # noqa: BLE001
             pass
     jobs = []
-    for event, method, args in (("playbackRangeChanged", "refresh", ()),
-                                ("SelectionChanged", "refresh", (True,)),
-                                ("animLayerRefresh", "refresh", (True,)),
-                                ("Undo", "refresh", (True,)),
-                                ("Redo", "refresh", (True,))):
+    for event, method, args in JOB_EVENTS:
         try:
             jobs.append(cmds.scriptJob(event=[event, partial(_job, method, *args)]))
         except Exception:                                    # noqa: BLE001 - an event this Maya lacks
@@ -1992,6 +2210,11 @@ def build():
     host = maya_hubqt.host_widget(CONTROL) if q is not None else None
     if host is None:
         return None
+    try:
+        from . import layerpanel
+        layerpanel.destroy_all()
+    except Exception:                                        # noqa: BLE001
+        pass
     for old in host.findChildren(q.QtWidgets.QWidget, ROOT_NAME):
         old.setParent(None)
         old.deleteLater()

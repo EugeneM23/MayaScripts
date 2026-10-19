@@ -114,7 +114,7 @@ class SideEdge(object):
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
                  on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
-                 playing=None, timebar=None, bar_top=None):
+                 playing=None, timebar=None, bar_top=None, share=1.0, on_height=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
@@ -124,6 +124,7 @@ class SideEdge(object):
         self._over_maya = over_maya
         self._on_tab = on_tab
         self._on_width = on_width
+        self._on_height = on_height
         self._tick = tick
         self._on_reveal = on_reveal
         self._capture = capture        # a seam: (host) -> QPixmap, for the tests
@@ -140,6 +141,8 @@ class SideEdge(object):
         self.width = look.clamp_width(width)
         self.least = 0                # physical px Maya's borrowed forms ask for
         self._width0 = None
+        self.share = look.clamp_share(share)     # of the area's height, from its top (2026-10-19)
+        self._share0 = None
         self.pinned = False
         self.shown = False
         self.dwelt = 0.0
@@ -162,6 +165,8 @@ class SideEdge(object):
         close = getattr(self.panel, "close_button", None)
         if close is not None:
             close.clicked.connect(lambda checked=False: self.close_by_hand())
+        if getattr(self.panel, "on_height", "absent") is None:
+            self.panel.on_height = self._height_grip
         layout.addWidget(self.panel)
         from . import panel as panel_module
         panel_module.name_layouts(host)
@@ -357,15 +362,15 @@ class SideEdge(object):
                 self.above_bar = False
             else:
                 window = look.cut_above(window, top)
-        rect = (tuple(window), self.width, self.least)
+        rect = (tuple(window), self.width, self.least, self.share)
         if rect == self._rect:
             return
         self._rect = rect
-        x, y, w, h = look.side_band(window, self.width, self.scale, self.least)
+        x, y, w, h = look.side_band(window, self.width, self.scale, self.least, self.share)
         self.host.setGeometry(x, y, w, h)
         if self._slide is None:
             self._full_mask()
-        sx, sy, sw, sh = look.sensor_band(window, look.SENSOR_PX)
+        sx, sy, sw, sh = look.sensor_band(window, look.SENSOR_PX, self.share, self.scale)
         self.sensor.setGeometry(sx, sy, sw, sh)
 
     def place_tick(self):
@@ -373,10 +378,18 @@ class SideEdge(object):
         if self._tick is not None:
             self._tick(self)
 
+    def _rest_radius(self):
+        """The corners at rest (2026-10-18, the animator: «не скругленные края у нашего
+        окна а острые (кстати это баг)»): the hub's card radius."""
+        return look.RADIUS * getattr(self.panel, "ui", 1.0)
+
     def _full_mask(self):
         q = hubqt.qt()
-        self.host.setMask(q.QtGui.QRegion(0, 0, max(1, self.host.width()),
-                                          max(1, self.host.height())))
+        w, h = max(1, self.host.width()), max(1, self.host.height())
+        path = q.QtGui.QPainterPath()
+        r = self._rest_radius()
+        path.addRoundedRect(q.QtCore.QRectF(0, 0, w, h), r, r)
+        self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
         self.host.update()
 
     def _host_rect(self):
@@ -393,6 +406,26 @@ class SideEdge(object):
             if self._on_width is not None:
                 self._on_width(self.width)
 
+    def _height_grip(self, dy, done):
+        """The bottom edge dragged (2026-10-19, «в два раза короче с возможностью
+        растянуть»): the share of the area's height, remembered on the release."""
+        window = self._window_rect()
+        if not window:
+            return
+        if self.above_bar:
+            top = self.bar_top()
+            if top is not None:
+                window = look.cut_above(window, top)
+        if self._share0 is None:
+            self._share0 = self.share
+        self.share = look.dragged_share(self._share0, dy, window[3])
+        self.place()
+        if done:
+            self._share0 = None
+            if self._on_height is not None:
+                self._on_height(self.share)
+            nudge_timebar()
+
     def _tab_picked(self, tab):
         if self._on_tab is not None:
             self._on_tab(tab)
@@ -408,7 +441,7 @@ class SideEdge(object):
         window = self._window_rect()
         if not window:
             return
-        zone = look.zone_band(window, self.scale)
+        zone = look.zone_band(window, self.scale, self.share)
         inside = rules.contains(zone, self.cursor())
         if self._waits_after_close(zone):
             inside = False
@@ -422,10 +455,10 @@ class SideEdge(object):
 
     def dwell_done(self):
         window = self._window_rect()
-        if not window or not rules.contains(look.sensor_band(window, look.SENSOR_PX), self.cursor(),
+        if not window or not rules.contains(look.sensor_band(window, look.SENSOR_PX, self.share, self.scale), self.cursor(),
                                             margin=2):
             return
-        if self._waits_after_close(look.zone_band(window, self.scale)):
+        if self._waits_after_close(look.zone_band(window, self.scale, self.share)):
             return
         if rules.may_reveal(True, self.shown, self.buttons(), self.app_active()):
             self.reveal()
@@ -589,7 +622,8 @@ class SideEdge(object):
         if y1 - y0 >= h - 0.5:
             self._full_mask()
             return
-        radius = 12 * getattr(self.panel, "ui", 1.0) * (1 - (y1 - y0) / float(max(h, 1)))
+        radius = max(self._rest_radius(),
+                     12 * getattr(self.panel, "ui", 1.0) * (1 - (y1 - y0) / float(max(h, 1))))
         path = q.QtGui.QPainterPath()
         path.addRoundedRect(q.QtCore.QRectF(0, y0, w, y1 - y0), radius, radius)
         self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))

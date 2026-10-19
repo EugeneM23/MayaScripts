@@ -413,24 +413,21 @@ class DeleteWaveTests(unittest.TestCase):
             self.assertLessEqual(delays[-1], look.DELETE_START_MS + 1e-6)
         self.assertEqual(look.delete_plan(7)[0][1], look.DELETE_STEP_MS)   # a few: one step apart
 
-    def test_a_key_breaks_into_three_to_five_pieces_that_are_the_key(self):
-        rect = (100.0, 20.0, 12.0, 40.0)
-        counts = set()
-        for seed in range(1, 60):
-            cuts = look.shard_cuts(seed, 40.0)
-            counts.add(len(cuts))
-            self.assertAlmostEqual(cuts[0][0], 0.0)
-            self.assertAlmostEqual(cuts[-1][1], 40.0)
-            for (a, b), (c, _d) in zip(cuts, cuts[1:]):
-                self.assertAlmostEqual(b, c)            # no gap, no overlap
-            start = look.shards(seed, rect, 0, 700, 260, 900)
-            self.assertEqual(len(start), len(cuts))
-            for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
-                self.assertAlmostEqual(cx, 106.0)       # at age 0 each piece sits in the key
-                self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
-                self.assertEqual((w, angle, alpha), (12.0, 0.0, 1.0))
-                self.assertAlmostEqual(h, b - a)
-        self.assertEqual(counts, {3, 4, 5})
+    def test_a_key_always_breaks_into_three_cubes_stacked_down_it(self):
+        # 2026-10-18: «из 3 кубиков (всегда кубики разлетаются)»
+        cuts = look.shard_cuts(42.0)
+        self.assertEqual(cuts, [(0.0, 14.0), (14.0, 28.0), (28.0, 42.0)])
+        for rect in ((100.0, 20.0, 12.0, 42.0), (100.0, 20.0, 2.0, 42.0), (100.0, 20.0, 60.0, 42.0)):
+            for seed in range(1, 60):
+                start = look.shards(seed, rect, 0, 700, 260, 900)
+                self.assertEqual(len(start), 3)
+                for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
+                    self.assertAlmostEqual(cx, rect[0] + rect[2] / 2.0)   # down the key's middle
+                    self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
+                    self.assertEqual((w, h, angle, alpha), (14.0, 14.0, 0.0, 1.0))   # a square
+                for age in (100, 400, 650):
+                    for _cx, _cy, w, h, _a, _al in look.shards(seed, rect, age, 700, 260, 900):
+                        self.assertEqual(w, h)
 
     def test_the_pieces_fly_apart_fall_and_fade(self):
         rect = (100.0, 20.0, 12.0, 40.0)
@@ -544,3 +541,40 @@ class FreeSpanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DragKeys(unittest.TestCase):
+
+    def test_maya_s_set_key_commands_for_a_drag(self):
+        self.assertEqual(look.drag_key("s"), "SetKey")
+        self.assertEqual(look.drag_key("S"), "SetKey")
+        self.assertEqual(look.drag_key("w", shift=True), "SetKeyTranslate")
+        self.assertEqual(look.drag_key("e", shift=True), "SetKeyRotate")
+        self.assertEqual(look.drag_key("r", shift=True), "SetKeyScale")
+        for args in (("w",), ("s", True), ("s", False, True), ("s", False, False, True), ("",), ("x",)):
+            self.assertIsNone(look.drag_key(*args), args)
+
+    def test_what_s_does_on_the_strip(self):
+        self.assertIsNone(look.key_action(None, None, (1, 5), 3.0))
+        drag = ("hmove", 30, None, (22, 40))
+        self.assertEqual(look.key_action("SetKey", drag, None, (27, 45)),
+                         ("stamp", (22, 40), (27, 45)))          # where the block is dragged to
+        self.assertEqual(look.key_action("SetKey", ("h1", 40, None, (22, 40)), None, (22, 50)),
+                         ("stamp", (22, 40), (22, 50)))          # an edge drag: scaled
+        self.assertIsNone(look.key_action("SetKeyRotate", drag, None, (27, 45)))
+        self.assertIsNone(look.key_action("SetKey", ("hl", 3, None), None))
+        self.assertEqual(look.key_action("SetKey", ("now", None, None), (1, 5), 3.0), ("run",))
+        self.assertEqual(look.key_action("SetKey", None, (4.0, 9.0), 3.0), ("range", 4, 9))
+        self.assertIsNone(look.key_action("SetKey", None, (4, 4), 3.0))
+        self.assertIsNone(look.key_action("SetKey", None, None, 3.0))
+
+    def test_copies_s_put_down_stay_where_they_went_down_while_the_block_moves(self):
+        self.assertIsNone(look.held(None))
+        stamped = {"c": {"keys": [(22.0, {}), (30.0, {}), (40.0, {})], "stamped": {27.0, 35.0, 45.0}}}
+        carried = look.held(stamped)
+        self.assertEqual(carried, (frozenset({22.0, 30.0, 40.0}), frozenset({27.0, 35.0, 45.0})))
+        self.assertEqual(look.shown_at(30, (22, 40), (32, 50), carried), [40])     # dragged
+        self.assertEqual(look.shown_at(35, (22, 40), (32, 50), carried), [35])     # a copy stays
+        self.assertEqual(look.shown_at(35, (22, 40), (32, 50)), [45])              # before any S
+        both = look.held({"c": {"keys": [(30.0, {})], "stamped": {30.0}}})
+        self.assertEqual(sorted(look.shown_at(30, (30, 30), (34, 34), both)), [30, 34])

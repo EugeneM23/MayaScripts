@@ -10,9 +10,17 @@ DEFAULT_MODE = "maya"       # opt-in until it has been seen in a GUI Maya
 TABS = ("channels", "attributes")
 TAB_LABELS = (("Channels", "channels"), ("Attributes", "attributes"))
 
-WIDTH, MIN_WIDTH, MAX_WIDTH = 340, 260, 700     # logical px
+#  logical px; the least was 260 until 2026-10-19 («мы должны иметь возможность
+#  сжать окошко в 3 раза сильнее»)
+WIDTH, MIN_WIDTH, MAX_WIDTH = 340, 86, 700
+#  the share of the viewport's height the panel takes from its top (2026-10-19:
+#  «Сейчас наше меню растягивается до самого низа. Можно сделать его в два раза
+#  короче с возможностью растянуть»), a grip on its bottom edge drags it
+SHARE, MIN_SHARE, MAX_SHARE = 0.5, 0.12, 1.0
+MIN_HEIGHT = 120        # logical px: never shorter, whatever the share
 HEADER = 30             # logical px: the tabs and the pin
 GRIP = 5                # logical px: the width grip on the inner (left) side
+RADIUS = 8              # logical px: the window's corners (the hub's card radius, 2026-10-18)
 #  logical px along the right edge the cursor may rest in (2026-10-17: 14, then
 #  48 - «как и у таймслайдера не нужно было вести мышку до самого края»)
 ZONE_PX = 62     # 48, then 30 % wider (2026-10-17, «зону срабатывания увеличим на 30%»)
@@ -60,25 +68,43 @@ def cut_above(rect, top):
     return x, y, w, max(1, min(h, int(top) - y))
 
 
-def side_band(window, width, scale=1.0, least=0):
-    """(x, y, w, h): the panel against the right of Maya's window `window`, its
-    full height, `width` logical px wide - at least `least` physical px - and
-    never wider than the window."""
+def clamp_share(share):
+    try:
+        share = float(share)
+    except (TypeError, ValueError):
+        share = SHARE
+    return max(MIN_SHARE, min(MAX_SHARE, share))
+
+
+def panel_height(h, share=1.0, scale=1.0):
+    """The panel's height in physical px out of the area's `h`: `share` of it, at
+    least MIN_HEIGHT logical px, never taller than the area."""
+    least = MIN_HEIGHT * float(scale or 1.0)
+    return int(max(1, min(int(h), round(max(least, clamp_share(share) * float(h))))))
+
+
+def side_band(window, width, scale=1.0, least=0, share=1.0):
+    """(x, y, w, h): the panel against the right of Maya's window `window`, from its
+    top down `share` of its height, `width` logical px wide - at least `least`
+    physical px - and never wider than the window."""
     x, y, w, h = window
     pw = int(min(w, max(int(least), round(clamp_width(width) * float(scale or 1.0)))))
-    return int(x + w - pw), int(y), pw, int(h)
+    return int(x + w - pw), int(y), pw, panel_height(h, share, scale)
 
 
-def sensor_band(window, px=SENSOR_PX):
+def sensor_band(window, px=SENSOR_PX, share=1.0, scale=1.0):
+    """The sensor along the right edge, as tall as the panel (2026-10-19: below a
+    shorter panel the cursor would bring it straight back after it hid)."""
     x, y, w, h = window
-    return int(x + w - px), int(y), int(px), int(h)
+    return int(x + w - px), int(y), int(px), panel_height(h, share, scale)
 
 
-def zone_band(window, scale=1.0):
-    """The strip along the right edge where resting the cursor brings the panel out."""
+def zone_band(window, scale=1.0, share=1.0):
+    """The strip along the right edge where resting the cursor brings the panel out,
+    as tall as the panel."""
     x, y, w, h = window
     zw = int(round(ZONE_PX * float(scale or 1.0)))
-    return int(x + w - zw), int(y), zw, int(h)
+    return int(x + w - zw), int(y), zw, panel_height(h, share, scale)
 
 
 def unroll(u, cy, height, showing):
@@ -140,6 +166,12 @@ def dragged_width(width0, dx, scale=1.0):
     """The width after the grip on the panel's LEFT side moved `dx` physical px
     (left = wider)."""
     return clamp_width(width0 - float(dx) / float(scale or 1.0))
+
+
+def dragged_share(share0, dy, area_h):
+    """The share after the grip on the panel's BOTTOM edge moved `dy` physical px
+    (down = taller) over an area `area_h` px tall."""
+    return clamp_share(clamp_share(share0) + float(dy) / float(max(1, area_h)))
 
 
 def channel_forms(separate):

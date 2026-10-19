@@ -132,6 +132,11 @@ def ensure_edge():
     _hide_control()
     from . import bar, edge as edge_module
     edge_module.destroy_all()
+    try:
+        from . import layerpanel
+        layerpanel.destroy_all()
+    except Exception:                                        # noqa: BLE001
+        pass
     ui = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
     controller = edge_module.BottomEdge(lambda parent: bar.make(bar.Link(), ui, parent=parent))
     _state()["edge"] = controller
@@ -144,6 +149,11 @@ def ensure_edge():
 
 def drop_edge():
     edge = _state().pop("edge", None)
+    try:
+        from . import layerpanel
+        layerpanel.destroy_all()
+    except Exception:                                        # noqa: BLE001
+        pass
     if edge is not None:
         try:
             edge.destroy()

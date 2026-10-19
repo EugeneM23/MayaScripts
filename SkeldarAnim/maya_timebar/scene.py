@@ -171,6 +171,13 @@ def layer_label(found=None):
     return picked[-1] if picked else "BaseAnimation"
 
 
+def layer_state():
+    """(the chip's text, the number of animation layers - the root counted) from ONE read of the
+    layers: ('', 0) without any."""
+    found = layers()
+    return layer_label(found), len(found)
+
+
 def pick_layer(name):
     for other, _label_, _sel in layers():
         try:
@@ -305,14 +312,10 @@ def add_bookmark(selection):
     return node
 
 
-def step_bookmark(forward):
-    """The time to the next (or previous) bookmark's start; False with none."""
-    starts = [b[0] for b in bookmarks()]
-    frame = look.neighbour_key(starts, now(), forward)
-    if frame is None:
-        return False
-    set_time(frame)
-    return True
+def layer_link():
+    """The layer panel's road into Maya."""
+    from . import layerscene
+    return layerscene
 
 
 # sound -------------------------------------------------------------------------------
@@ -411,6 +414,14 @@ def set_key():
     cmds.setKeyframe()
 
 
+def run_key_command(name):
+    """One of Maya's Set Key runtime commands (`look.DRAG_KEYS`), as its hotkey runs it."""
+    if name not in look.DRAG_KEYS.values():
+        raise ValueError("not a key command: %r" % (name,))
+    import maya.mel as mel
+    mel.eval(name)
+
+
 def breakdown(selection, frame):
     a, b = _span(selection, frame)
     with _chunk("skeldarTimeBarBreakdown"):
@@ -448,12 +459,18 @@ def snap_keys(selection, frame):
     cmds.snapKey(time=_span(selection, frame), timeMultiple=1)
 
 
-def move_keys(selection, target):
+def move_keys(selection, target, only=None):
     """The selection's keys in `selection` moved or scaled onto `target`, on
-    whole frames: one undo step."""
+    whole frames: one undo step. `only` ({curve: [times]}, what `stamp_keys`
+    answered) after S during the drag: those keys alone move, and the copies S
+    put down inside the block stay where they are."""
     a, b = selection
     na, nb = target
     if (na, nb) == (a, b):
+        return
+    if only:
+        with _chunk("skeldarTimeBarMoveKeys"):
+            _move_only(only, selection, target)
         return
     #  the highlight's cells, [a, b + 1): a key between frames in the last cell
     #  moves too (2026-10-17, the cells drawn as Maya's slider draws them)
@@ -468,6 +485,120 @@ def move_keys(selection, target):
             #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
             far = pivot + (b + 1 - pivot) * factor
             cmds.snapKey(time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
+
+
+def key_range(a, b, name):
+    """`name` (a Set Key runtime command, `look.DRAG_KEYS`) on every whole frame
+    from `a` to `b`, as if S were pressed on each: a highlight standing and S
+    pressed («такая себе версия бейка»). One undo step; the time put back."""
+    if name not in look.DRAG_KEYS.values():
+        raise ValueError("not a key command: %r" % (name,))
+    import maya.mel as mel
+    now = cmds.currentTime(q=True)
+    frames = range(int(a), int(b) + 1)
+    with _chunk("skeldarTimeBarKeyRange"):
+        cmds.refresh(suspend=True)
+        try:
+            #  the curves that stand get their keys first, inserted (the shape kept):
+            #  keyed one frame after another, each new key would reshape the spline
+            #  ahead of it and the "bake" would drift off the motion
+            #  each inside its own keys (an insert past a curve's keys re-types the key
+            #  beside it, CLAUDE.md trap 267)
+            for curve in cmds.keyframe(q=True, name=True) or []:
+                times = cmds.keyframe(curve, q=True, timeChange=True) or []
+                if not times:
+                    continue
+                for frame in frames:
+                    if min(times) < frame < max(times):
+                        cmds.setKeyframe(curve, insert=True, time=(frame,))
+            for frame in frames:
+                cmds.currentTime(frame, update=True)
+                mel.eval(name)
+        finally:
+            cmds.currentTime(now, update=True)
+            cmds.refresh(suspend=False)
+
+
+def _key_data(curve, t):
+    """One key as it stands: value, tangents, breakdown - enough to write it again."""
+    span = (t, t)
+    one = lambda **flag: (cmds.keyTangent(curve, q=True, time=span, **flag) or [None])[0]
+    return {
+        "value": (cmds.keyframe(curve, q=True, time=span, valueChange=True) or [0.0])[0],
+        "breakdown": bool(cmds.keyframe(curve, q=True, time=span, breakdown=True)),
+        "itt": one(inTangentType=True), "ott": one(outTangentType=True),
+        "ia": one(inAngle=True), "oa": one(outAngle=True),
+        "iw": one(inWeight=True), "ow": one(outWeight=True), "lock": one(lock=True),
+        "weighted": bool((cmds.keyTangent(curve, q=True, weightedTangents=True) or [False])[0]),
+    }
+
+
+def _put_key(curve, t, data):
+    """`data` (`_key_data`) written at `t`, replacing a key standing there."""
+    span = (t, t)
+    cmds.setKeyframe(curve, time=(t,), value=data["value"], breakdown=data["breakdown"])
+    cmds.keyTangent(curve, edit=True, time=span, lock=False)
+    for key, flag in (("itt", "inTangentType"), ("ott", "outTangentType")):
+        if data[key]:
+            cmds.keyTangent(curve, edit=True, time=span, **{flag: data[key]})
+    if data["itt"] == "fixed" and data["ia"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, inAngle=data["ia"])
+    if data["ott"] == "fixed" and data["oa"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, outAngle=data["oa"])
+    if data["weighted"] and data["iw"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, inWeight=data["iw"], outWeight=data["ow"])
+    if data["lock"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, lock=bool(data["lock"]))
+
+
+def _place(only, selection, target):
+    """{curve: [(new time, data)]} - every dragged key at its place on `target`."""
+    return dict((curve, [(float(round(look.mapped(t, selection, target))), data)
+                         for t, data in rec["keys"]])
+                for curve, rec in only.items() if cmds.objExists(curve))
+
+
+def _move_only(only, selection, target):
+    """The dragged keys (`only`, read by the first S) set down on `target` from what
+    they were, replacing what stands there (a copy S put down); where they stood
+    nothing is left but the copies S put there."""
+    for curve, placed in _place(only, selection, target).items():
+        rec = only[curve]
+        for t, _data in rec["keys"]:
+            if round(t, 4) not in rec["stamped"]:
+                cmds.cutKey(curve, time=(t, t), clear=True)
+        for nt, data in placed:
+            _put_key(curve, nt, data)
+
+
+def stamp_keys(selection, target, only=None):
+    """A copy of each selected key in `selection` put down where the drag has it
+    now (`target`, moved or scaled by an edge: `look.mapped`), value and tangents
+    with it; nothing in the gaps between them, the originals stay («когда мы
+    переносим массив ключей и нажимаем s то мы должны проставлять все ключи которые
+    у нас выделены, ключи в пробелах массива проставлять не нужно»). One undo step.
+
+    Answers the dragged keys as they were ({curve: {"keys": [(time, data)],
+    "stamped": {times}}}); the strip hands it back on the next S of the same drag
+    (`only`: copies are written from it, never copied again) and on the release
+    (`move_keys`)."""
+    a, b = selection
+    span = (a, b + 1 - 1e-3)
+    if only is None:
+        only = {}
+        for curve in cmds.keyframe(q=True, time=span, name=True) or []:
+            times = cmds.keyframe(curve, q=True, time=span, timeChange=True) or []
+            if times:
+                only[curve] = {"keys": [(t, _key_data(curve, t)) for t in times],
+                               "stamped": set()}
+    if tuple(target) == tuple(selection):
+        return only
+    with _chunk("skeldarTimeBarStampKeys"):
+        for curve, placed in _place(only, selection, target).items():
+            for nt, data in placed:
+                _put_key(curve, nt, data)
+                only[curve]["stamped"].add(round(nt, 4))
+    return only
 
 
 def playback_from(selection):
