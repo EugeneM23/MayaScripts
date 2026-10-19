@@ -254,6 +254,11 @@ def burst_parts(frame, head, root, clip, scale):
         return (at.x(), at.y(), widget.width(), widget.height())
 
     def kids(widget):
+        #  a list (any scroll area) is a leaf, cut into bands with its frame
+        #  (2026-10-19): split, its frame showed at once around its viewport
+        #  waiting as an empty rectangle of the card's face
+        if isinstance(widget, QtWidgets.QAbstractScrollArea):
+            return []
         return [c for c in widget.children()
                 if isinstance(c, QtWidgets.QWidget) and not c.isWindow()
                 and c.isVisible() and c.width() > 0 and c.height() > 0]
@@ -366,11 +371,6 @@ def icon(name, colour, size, on_colour=None):
     q = qt()
     result = q.QtGui.QIcon()
     result.addPixmap(pixmap(name, colour, size), q.QtGui.QIcon.Normal,
-        #  a list (any scroll area) is a leaf, cut into bands with its frame
-        #  (2026-10-19): split, its frame showed at once around its viewport
-        #  waiting as an empty rectangle of the card's face
-        if isinstance(widget, QtWidgets.QAbstractScrollArea):
-            return []
                      q.QtGui.QIcon.Off)
     if on_colour:
         result.addPixmap(pixmap(name, on_colour, size), q.QtGui.QIcon.Normal,
