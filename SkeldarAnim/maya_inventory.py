@@ -480,10 +480,22 @@ def _classes():
 
         def _queue_refresh(self, *_args):
             try:
-                if q.shiboken.isValid(self):
-                    QtCore.QTimer.singleShot(0, self.refresh)
+                if not q.shiboken.isValid(self):
+                    return
+                if not self.isVisible():
+                    #  a card (or tab) nobody sees re-reads the scene when it is
+                    #  shown (2026-10-17, the performance pass)
+                    self._stale = True
+                    return
+                QtCore.QTimer.singleShot(0, self.refresh)
             except Exception:                                # noqa: BLE001
                 pass
+
+        def showEvent(self, event):                          # noqa: N802
+            QtWidgets.QWidget.showEvent(self, event)
+            if getattr(self, "_stale", False):
+                self._stale = False
+                QtCore.QTimer.singleShot(0, self.refresh)
 
         def _say(self, text):
             self.status_text = text or ""

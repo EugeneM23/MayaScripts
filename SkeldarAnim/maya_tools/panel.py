@@ -706,7 +706,10 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:                                    # noqa: BLE001
             pass
-    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", refresh], parent=STATUS)
+    import maya_hubqt
+    #  a hidden card refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen)
+    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", maya_hubqt.seen_only(STATUS, refresh)],
+                                      parent=STATUS)
 
 
 def is_open():

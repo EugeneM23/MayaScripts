@@ -12199,6 +12199,88 @@ on FKWrist_R swapped for a skeleton: the knot's turn in the take 0.0000 cm, the 
 Creep rig asked once, limbs pointing as before to 0.58 deg; Cancel leaving the Creep and 0 nodes);
 `tests/test_scenesetup_swap.py`; 7247 unit tests. **Not seen in a GUI Maya** (a real drag).
 
+## The performance pass: what the interface costs, measured (2026-10-17)
+
+The animator: «Давай проверим весь наш новый интерфейс на быстродействие хочу быть уверенным что у нас
+нет проблем с оптимизацией». Measured in their own Maya on port 7001 (they lent it; the installed build
+f277c33 - rail + Time Bar at the bottom edge + side panel - on an untitled scene holding a torus), with
+cProfile enabled on Maya's main thread across Qt-timer-driven workloads (idle, 12 selection changes, a
+60-frame scrub, playback); the rig-heavy half headless in mayapy (0/1/3 rigs). The scripts live in the
+session scratchpad only; the method: a runner exec'd over the port enables `cProfile.Profile()`, the
+workload runs on QTimers (so Maya idles and its scriptJobs run between steps), a last timer dumps the
+entry points called from Maya/Qt (pstats rows with no Python caller) - that is each callback's cost.
+
+**Measured and fine, left as they are:**
+- the hub skin's application-wide event filter: ~1 µs an event (3.7 k events/s idle, 0.4 %);
+- `maya_hubcopy`'s wrapper on every `maya.cmds` function: 0.3 µs a call (5-10 % of a cheap query);
+- idle: the polls (Time Bar and side panel zones every 50 ms, the rail's follow every 150 ms, the
+  places every 300 ms, the strip's tick every 250 ms) about 1 % of one core together;
+- playback: real-time 24 fps holds with the Time Bar out; unlocked, the Time Bar costs ~0.5 ms a
+  frame while it shows (its synchronous repaint, 0.3 ms; nothing while hidden). Merging its two
+  repaints into one region measured no gain (0.31 against 0.29 ms) and was not done.
+
+**Found and fixed:**
+1. **Every card refreshed on every selection, seen or not** - ~20 cards on the rail, one shown: 15-20
+   ms a click on the torus, and with three rigs the cards' own reads reached 0.5 s for 40 controls
+   selected. `maya_hubqt.when_seen(name, fn)` / `seen_only(name, fn)`: a card on screen refreshes now;
+   a hidden one (another card on the rail, an accordion card shut, the Inventory's other tab) once,
+   when it is next shown - a `SeenWatch` filter on the nearest not-explicitly-hidden widget above
+   control `name` (the skin hides a card's status line, which then gets no Show event; its column
+   does) runs the last refresh asked for on its Show event. Wired into Tools, Tail Builder, Walk,
+   Center of Mass, Ragdoll, Camera Shake (its Anim Layer Editor pick still followed always),
+   Connections, the Armor tiles (watched through `mayaSceneSetupArmorTiles`, so the Weapon tab skips
+   them) and the Inventory panel (a QWidget: `isVisible` + `showEvent`). A new card's jobs go through
+   `seen_only` too.
+2. **Ragdoll's subtitle read the scene's characters on every time change** (its timeChanged job: 1.6
+   ms a scrub frame with no rig, ~30 ms with three): `refresh` reads the rig on a selection
+   (`described`, kept per card in `_DESCRIBED`), `refresh_time` only moves the frames.
+3. **`weaponspace.owner_for` asked every ancestor of every selected path for a marker** - an
+   attributeQuery per ancestor, 1498 of them for 40 rig controls, 175 ms in `skeleton.current_root`
+   (and through it the Inventory and Armor cards): one `cmds.ls` of the ancestors' plug names (a node
+   without the attribute answers nothing). And `current_root` answers a rig's own node by `rig_of`
+   (pure) before any weapon or armour walk (the poselib rule), and scans the scene's skeletons only
+   when neither the selection nor the rigs decide.
+4. **`maya_rigs.skeleton_root_of` listed a rig's ~330 joints on every `rigs()`** (3 ms a rig; a card
+   asks `rigs()` up to five times a refresh): the answer is kept per (namespace, group) and checked
+   (`_still_root`: exists, a constrained joint of the namespace outside the group, no such joint
+   above it) instead of looked for.
+5. **`marked_near_top` / `active.armor_groups` asked every node of three DAG levels with
+   attributeQuery** (6 ms beside three rigs): one `ls` of plugs and one `listRelatives` a level (1.1
+   ms). A recursive `ls("*.marker", recursive=True)` measured SLOWER (12 ms) than either walk.
+6. **The side panel recoloured both pages' widgets on every selection**: the page on show only (a tab
+   switch refreshes, and so recolours, the page it brings).
+
+Headless, three rigs (Manny, Manny, Creep), 40 controls selected, before -> after: `current_root` 175
+-> 3.6 ms; the Inventory card's read 186 -> 5 ms; Armor 190 -> 12 ms; Ragdoll 60 -> 30 ms; `rigs()` 7.5
+-> 1.5 ms; a hidden card 0. Timings on this machine swing ±50 % run to run while the animator's Maya
+and peers' mayapy work (compare within one run). Tests: `test_hubqt.WhenSeen`,
+`test_ragdoll_panel`, `test_rigs.SkeletonRootKept` / `MarkedNearTop`; 7271 unit tests.
+
+**Live, the same Maya with the fixes loaded** (HEAD + the fixes from a scratch snapshot, NOT installed: a
+restart brings the installed build back): our callbacks per selection on the torus scene ~18 -> ~4.7 ms
+(left: the side panel's Attribute Editor refresh 2.8, the Time Bar's key read 1.4, the gates 0.06 ms a
+card); a scrub frame lost Ragdoll's 1.6 ms; and the mechanism itself - the hidden Tail Builder card kept
+«pTorus1: A at 150 ...» through a cleared selection and showed «Select objects with three keys ...» the
+moment it was shown (`_show_on_rail`), the card and the selection put back. **Not measured live: a scene
+with rigs** (the animator's working scene was not open during the pass) - the headless numbers above are
+the rig case.
+
+Loading a snapshot into a running Maya over the port (no install): the Time Bar's and the side panel's
+edges are dropped FIRST (`drop_edge` - their objects live on `sys`, and `ensure()` hands the old one
+back), then every module whose root is in the snapshot's `install.module_names()` purged, the snapshot
+first on `sys.path`, and - deferred, outside the port command - `maya_hub.rebuild()` (the rail edge
+rebuilds by name, trap 102) and `maya_timebar.ensure()` / `maya_sidepanel.ensure()`.
+
+Measuring traps, each cost a run:
+- `MAnimControl` is in `maya.api.OpenMayaAnim`, not `OpenMaya`: a time-change callback written with
+  `om.MAnimControl` raised silently on every call and the probe read "0 frames of playback" - it looked
+  like the callbacks did not fire during playback.
+- A plain `QEvent` of a mouse type sent to a QWidget crashes mayapy (Qt casts it); a filter benchmark
+  sends to a bare QObject.
+- `GetProcessTimes` through ctypes without argtypes answered 0 CPU (the pseudo-handle truncated).
+- A widget's `repaint()` while it is hidden costs nothing: the Time Bar measured 0.000 ms a repaint
+  until it was brought out.
+
 ## Our Channel Box in the side panel, variant A "Rows" (2026-10-18)
 
 The animator: «Давай попробуем сделать свое меню для Chenel box. Предложи несколько вариантов в стиле

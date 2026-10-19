@@ -1474,9 +1474,14 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:                                    # noqa: BLE001
             pass
+    import maya_hubqt
     jobs = []
-    for event, work in (("SelectionChanged", refresh), ("animLayerRefresh", from_editor),
-                        ("Undo", after_undo), ("Redo", after_undo)):
+    #  a hidden card refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen); the
+    #  editor's pick is followed whatever shows - the next Apply acts on it
+    for event, work in (("SelectionChanged", maya_hubqt.seen_only(STATUS, refresh)),
+                        ("animLayerRefresh", from_editor),
+                        ("Undo", maya_hubqt.seen_only(STATUS, after_undo)),
+                        ("Redo", maya_hubqt.seen_only(STATUS, after_undo))):
         try:
             jobs.append(cmds.scriptJob(event=[event, work], parent=STATUS))
         except Exception:                                    # noqa: BLE001 - an event this Maya lacks

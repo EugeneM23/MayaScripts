@@ -2737,3 +2737,83 @@ class Rail(unittest.TestCase):
         self.assertIsNotNone(skin.header)
         skin.destroy()
         host.deleteLater()
+
+
+class WhenSeen(unittest.TestCase):
+    """2026-10-17, the performance pass: a card's refresh runs while the card is on
+    screen, else once when it is next shown (maya_hubqt.when_seen)."""
+
+    def setUp(self):
+        self.app = _app()
+        self.saved = (hubqt.find, hubqt.available)
+        hubqt.available = lambda: True
+        self.top = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(self.top)
+        self.card = QtWidgets.QWidget()
+        column = QtWidgets.QVBoxLayout(self.card)
+        lay.addWidget(self.card)
+        self.subtitle = QtWidgets.QLabel("subtitle")
+        self.status = QtWidgets.QLabel("status")
+        column.addWidget(self.subtitle)
+        column.addWidget(self.status)
+        self.status.setVisible(False)            # the skin hides a card's status line
+        self.controls = {"subtitle": self.subtitle, "status": self.status}
+        hubqt.find = lambda name, layout=False: self.controls.get(name)
+        self.top.show()
+        self.app.processEvents()
+        self.runs = []
+
+    def tearDown(self):
+        hubqt.find, hubqt.available = self.saved
+        self.top.deleteLater()
+        self.app.processEvents()
+
+    def _flush(self):
+        for _ in range(3):
+            self.app.processEvents()
+
+    def test_a_card_on_screen_refreshes_now(self):
+        self.assertEqual(hubqt.when_seen("subtitle", lambda: self.runs.append(1) or "done"), "done")
+        self.assertEqual(self.runs, [1])
+
+    def test_a_hidden_card_waits_and_refreshes_once_when_shown(self):
+        self.card.hide()
+        self.assertIsNone(hubqt.when_seen("subtitle", lambda: self.runs.append("a")))
+        self.assertIsNone(hubqt.when_seen("subtitle", lambda: self.runs.append("b")))
+        self._flush()
+        self.assertEqual(self.runs, [])
+        self.card.show()
+        self._flush()
+        self.assertEqual(self.runs, ["b"])               # the last one asked for, once
+        self.card.hide()
+        self.card.show()
+        self._flush()
+        self.assertEqual(self.runs, ["b"])
+
+    def test_a_status_line_the_skin_hides_is_watched_through_its_column(self):
+        self.card.hide()
+        hubqt.when_seen("status", lambda: self.runs.append("status"))
+        self.card.show()
+        self._flush()
+        self.assertEqual(self.runs, ["status"])
+        #  the card on screen, its hidden status line counts as on screen too
+        hubqt.when_seen("status", lambda: self.runs.append("again"))
+        self.assertEqual(self.runs, ["status", "again"])
+
+    def test_without_maya_s_ui_or_a_control_it_runs_now(self):
+        hubqt.available = lambda: False
+        self.card.hide()
+        hubqt.when_seen("subtitle", lambda: self.runs.append("no ui"))
+        hubqt.available = lambda: True
+        hubqt.when_seen("nothing by that name", lambda: self.runs.append("no control"))
+        self.assertEqual(self.runs, ["no ui", "no control"])
+
+    def test_seen_only_hands_a_job_its_refresh(self):
+        job = hubqt.seen_only("subtitle", lambda: self.runs.append("job"))
+        self.card.hide()
+        job()
+        self.assertEqual(self.runs, [])
+        self.card.show()
+        self._flush()
+        self.assertEqual(self.runs, ["job"])
+        self.assertEqual(job._skeldar_seen[0], "subtitle")

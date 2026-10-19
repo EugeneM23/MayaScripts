@@ -103,13 +103,18 @@ def holding_hand(node):
 
 
 def owner_for(path, marker):
-    """The bone behind a selected path inside a space carrying `marker`, or None."""
+    """The bone behind a selected path inside a space carrying `marker`, or None: the deepest
+    marked ancestor's. One `ls` asks every ancestor at once - a plug name of a node without the
+    attribute answers nothing (2026-10-17, the performance pass: an attributeQuery per ancestor
+    cost 175 ms a selection change for 40 rig controls beside three rigs)."""
     parts = [p for p in (path or "").split("|") if p]
-    for i in range(len(parts), 0, -1):
-        node = "|" + "|".join(parts[:i])
-        if is_marked(node, marker):
-            return bone_of(node)
-    return None
+    if not parts:
+        return None
+    plugs = ["|" + "|".join(parts[:i]) + "." + marker for i in range(1, len(parts) + 1)]
+    marked = cmds.ls(plugs, objectsOnly=True, long=True) or []
+    if not marked:
+        return None
+    return bone_of(max(marked, key=len))
 
 
 def hand_for(path):

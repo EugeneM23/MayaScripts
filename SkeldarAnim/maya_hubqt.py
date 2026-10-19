@@ -29,6 +29,7 @@ exists, and its `setWordWrap` raises AttributeError (measured).
 Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 """
 
+import functools
 import time
 import types
 import zlib
@@ -137,6 +138,117 @@ def find(name, layout=False):
         if not q.shiboken.isValid(widget):
             return None
     return widget
+
+
+# --------------------------------------------------- a refresh nobody sees
+
+#  2026-10-17, the performance pass («проверим весь наш новый интерфейс на
+#  быстродействие»): every card's SelectionChanged job refreshed its card on
+#  every click - twenty cards on the rail and one of them shown: 15-20 ms a
+#  click in a near-empty scene, growing with every rig (the cards read the
+#  scene's characters, walkers, knots). A card nobody sees is refreshed once,
+#  when it is next shown (a Show event on it: Qt sends one to every widget
+#  under an ancestor that is shown, unless that widget was hidden itself).
+SEEN_WATCH = "skeldarSeenWatch"
+_SEEN = {}
+
+
+def seen_only(name, fn):
+    """`fn` as a card hands it to a scriptJob: run through `when_seen(name, fn)`."""
+
+    @functools.wraps(fn)
+    def run(*_args):
+        return when_seen(name, fn)
+
+    run._skeldar_seen = (name, fn)
+    return run
+
+
+def when_seen(name, fn):
+    """Run `fn()` now while the card holding control `name` is on screen; while
+    it is hidden (the rail shows one card, an accordion card shut), once, the
+    next time it is shown - the last one asked for wins. Now without Maya's UI,
+    for a control Qt cannot find, or when anything about the widgets goes
+    wrong: a refresh is never lost."""
+    host = None
+    try:
+        if available():
+            widget = find(name)
+            if widget is not None:
+                host = _shown_host(widget)
+                if host is not None and host.isVisible():
+                    host = None
+    except Exception:                                        # noqa: BLE001
+        host = None
+    if host is None:
+        return fn()
+    try:
+        _seen_watch(host).pending = hubcopy.wrap(fn)
+    except Exception:                                        # noqa: BLE001
+        return fn()
+    return None
+
+
+def _shown_host(widget):
+    """`widget`, or its nearest ancestor not hidden on purpose: a card's status
+    line is hidden by the skin (its text goes to the hub's message line) and
+    gets no Show event; its column does."""
+    while widget is not None and widget.isHidden():
+        widget = widget.parentWidget()
+    return widget
+
+
+def _seen_watch(host):
+    """The watch standing on `host` (one per widget), made the first time."""
+    q = qt()
+    key = int(q.shiboken.getCppPointer(host)[0])
+    watch = _SEEN.get(key)
+    if watch is not None and _valid(watch):
+        try:
+            if watch.parent() is not None and \
+                    int(q.shiboken.getCppPointer(watch.parent())[0]) == key:
+                return watch
+        except RuntimeError:
+            pass
+    watch = _seen_class()(host)
+    _SEEN[key] = watch
+    return watch
+
+
+def _seen_class():
+    if "seen" not in _CLASSES:
+        q = qt()
+        shown = q.QtCore.QEvent.Show
+
+        class SeenWatch(q.QtCore.QObject):
+            """On a hidden card's widget: the refresh put off while nobody saw
+            it, run once (after the show is done) when the widget is shown."""
+
+            def __init__(self, parent):
+                super(SeenWatch, self).__init__(parent)
+                self.setObjectName(SEEN_WATCH)
+                self.pending = None
+                parent.installEventFilter(self)
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                try:
+                    if self.pending is not None and event.type() == shown:
+                        fn, self.pending = self.pending, None
+                        q.QtCore.QTimer.singleShot(0, self, lambda: _quietly(fn))
+                except Exception:                            # noqa: BLE001
+                    pass
+                return False
+
+        _CLASSES["seen"] = SeenWatch
+    return _CLASSES["seen"]
+
+
+def _quietly(fn):
+    try:
+        fn()
+    except Exception:                                        # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
 
 
 def on_hub(gx, gy, control="skeldarAnimHub"):

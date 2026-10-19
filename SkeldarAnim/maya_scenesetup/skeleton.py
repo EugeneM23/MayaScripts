@@ -126,19 +126,28 @@ def current_root():
     # A weapon lives in a space OUTSIDE the skeleton since 2026-09-24; selected,
     # it still names its character -- through the hand the space follows.
     # An armor piece (2026-10-01) the same way, through the bone its space follows.
+    # A rig's own node names its rig at once (`maya_rigs.rig_of`, pure): its weapons and armour
+    # stand in its group and are answered the same - the walks are for a bare skeleton's
+    # (2026-10-17, the performance pass: 40 rig controls selected cost 175 ms here).
     from maya_scenesetup import armor
     from maya_scenesetup import weaponspace
-    selection = [weaponspace.hand_for(path) or armor.bone_for(path) or path
+    selection = [path if maya_rigs.rig_of(path, rigs_) is not None
+                 else (weaponspace.hand_for(path) or armor.bone_for(path) or path)
                  for path in selection]
     # A skeleton's character group (2026-10-02), or anything in it that is not a bone (a mesh, the
     # camera, a weapon on the floor), names the skeleton its message link names.
     selection = [_group_root(path, rigs_) or path for path in selection]
+    selected = selection_roots(selection, rigs_, top_joint)
+    rig_roots = [rig.skeleton_root for rig in rigs_]
     # The rigs' own deformation joints have no joint parent and would count
     # as skeletons of their own; the game skeletons they drive are the ones.
-    scene_roots = [root for root in builder.character_roots()
-                   if not any(inside(root, rig.group) for rig in rigs_)]
-    root = choose_root(selection_roots(selection, rigs_, top_joint),
-                       [rig.skeleton_root for rig in rigs_], scene_roots)
+    # Asked only when neither the selection nor the rigs decide (`choose_root`):
+    # a scan of every skeleton, 8-13 ms beside three rigs (2026-10-17).
+    scene_roots = []
+    if not any(selected) and not any(rig_roots):
+        scene_roots = [root for root in builder.character_roots()
+                       if not any(inside(root, rig.group) for rig in rigs_)]
+    root = choose_root(selected, rig_roots, scene_roots)
     active.set_root(root)
     return root
 

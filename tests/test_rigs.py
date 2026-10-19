@@ -192,5 +192,121 @@ class CharacterGroup(unittest.TestCase):
         self.assertTrue(maya_rigs.under(C.skeleton_root, C.character))
 
 
+class SkeletonRootKept(unittest.TestCase):
+    """2026-10-17, the performance pass: the root found once is checked, not looked for again -
+    listing a rig's ~330 joints cost 3 ms a rig on every `rigs()`."""
+
+    class Scene(object):
+        def __init__(self, joints, constrained):
+            self.joints = list(joints)
+            self.constrained = set(constrained)
+            self.scans = 0
+
+        def ls(self, what, type=None, long=False, **_kw):     # noqa: A002
+            if isinstance(what, str):                         # a namespace pattern: a scan
+                self.scans += 1
+                return list(self.joints)
+            return [p for p in what if p in self.joints]
+
+        def objExists(self, path):                            # noqa: N802
+            return path in self.joints
+
+        def objectType(self, path):                           # noqa: N802
+            return "joint"
+
+        def listRelatives(self, path, children=False, type=None, **_kw):   # noqa: A002
+            return ["c"] if path in self.constrained else []
+
+    ROOT = "|Manny_Rig_Character|Manny_Rig:root"
+    PELVIS = ROOT + "|Manny_Rig:pelvis"
+    GROUP = "|Manny_Rig_Character|Manny_Rig:Group"
+
+    def setUp(self):
+        self.saved = maya_rigs.cmds
+        self.scene = self.Scene([self.ROOT, self.PELVIS, self.GROUP + "|Manny_Rig:Root_M"],
+                                [self.ROOT, self.PELVIS])
+        maya_rigs.cmds = self.scene
+        maya_rigs._SKELETON_ROOTS.clear()
+
+    def tearDown(self):
+        maya_rigs.cmds = self.saved
+        maya_rigs._SKELETON_ROOTS.clear()
+
+    def test_the_root_is_found_once_and_then_kept(self):
+        for _ in range(3):
+            self.assertEqual(maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP), self.ROOT)
+        self.assertEqual(self.scene.scans, 1)
+
+    def test_a_root_gone_or_no_longer_constrained_is_looked_for_again(self):
+        maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP)
+        self.scene.constrained.discard(self.ROOT)
+        self.assertEqual(maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP), self.PELVIS)
+        self.scene.joints.remove(self.ROOT)
+        self.scene.joints.remove(self.PELVIS)
+        self.assertEqual(maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP), "")
+        self.assertEqual(self.scene.scans, 3)
+
+    def test_a_joint_of_the_rig_above_the_kept_root_is_looked_for_again(self):
+        top = "|Manny_Rig:top"
+        root = top + "|Manny_Rig:root"
+        self.scene.joints = [root, root + "|Manny_Rig:pelvis"]
+        self.scene.constrained = {root, top}
+        self.assertEqual(maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP), root)
+        self.assertTrue(maya_rigs._still_root(root, "Manny_Rig", self.GROUP))
+        self.scene.joints.insert(0, top)               # a constrained joint of the rig above it
+        self.assertFalse(maya_rigs._still_root(root, "Manny_Rig", self.GROUP))
+        self.assertEqual(maya_rigs.skeleton_root_of("Manny_Rig", self.GROUP), top)
+
+
+class MarkedNearTop(unittest.TestCase):
+    """2026-10-17: the marker groups near the top found with one `ls` of plugs and one
+    listRelatives a level, not an attributeQuery a node."""
+
+    class Scene(object):
+        def __init__(self, children, marked):
+            self.children = children          # path -> [child paths]
+            self.marked = set(marked)
+            self.calls = []
+
+        def ls(self, what=None, assemblies=False, long=False, objectsOnly=False, **_kw):  # noqa: N803
+            self.calls.append("ls")
+            if assemblies:
+                return list(self.children.get("", []))
+            return [plug.rsplit(".", 1)[0] for plug in what if plug.rsplit(".", 1)[0] in self.marked]
+
+        def listRelatives(self, nodes, children=False, type=None, fullPath=False):   # noqa: A002,N802
+            self.calls.append("listRelatives")
+            out = []
+            for node in nodes:
+                out += self.children.get(node, [])
+            return out
+
+        def attributeQuery(self, *a, **k):                    # noqa: N802
+            raise AssertionError("one ls a level, not an attributeQuery a node")
+
+    def setUp(self):
+        self.saved = maya_rigs.cmds
+        top = "|Manny_Rig_Character"
+        group = top + "|Manny_Rig:Group"
+        self.scene = self.Scene({"": [top, "|ArmorSpaces"],
+                                 top: [group, top + "|Manny_Rig:root"],
+                                 group: [group + "|ArmorSpaces", group + "|Manny_Rig:Geometry"],
+                                 group + "|ArmorSpaces": [group + "|ArmorSpaces|deeper"]},
+                                {"|ArmorSpaces", group + "|ArmorSpaces", group + "|ArmorSpaces|deeper"})
+        maya_rigs.cmds = self.scene
+
+    def tearDown(self):
+        maya_rigs.cmds = self.saved
+
+    def test_three_levels_two_calls_each(self):
+        found = maya_rigs.marked_near_top("mayaArmorSpaces")
+        self.assertEqual(found, ["|ArmorSpaces", "|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces"])
+        self.assertEqual(self.scene.calls.count("listRelatives"), 2)
+        self.assertEqual(self.scene.calls.count("ls"), 4)          # the assemblies + one a level
+
+    def test_depth_two_stops_a_level_higher(self):
+        self.assertEqual(maya_rigs.marked_near_top("m", depth=2), ["|ArmorSpaces"])
+
+
 if __name__ == "__main__":
     unittest.main()

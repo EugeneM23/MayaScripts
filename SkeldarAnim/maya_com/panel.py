@@ -295,7 +295,9 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:
             pass
-    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", refresh],
+    import maya_hubqt
+    #  a hidden card refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen)
+    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", maya_hubqt.seen_only(STATUS, refresh)],
                                       parent=STATUS)
 
 

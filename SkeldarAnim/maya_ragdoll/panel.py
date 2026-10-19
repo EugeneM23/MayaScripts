@@ -157,30 +157,55 @@ def status(text):
     return text
 
 
-def subtitle():
-    """What the press would do now."""
+def described():
+    """The selection's rig and its impulses, as the subtitle names them: {"label", "tail"},
+    or {"text"} - a refusal or nothing to name."""
     try:
         ref = rd._ref(cmds.ls(selection=True, long=True) or [])
     except rd.Refused as refusal:
-        return str(refusal)
+        return {"text": str(refusal)}
     except Exception:                                      # noqa: BLE001
-        return rd.NOTHING
-    s = remembered()
-    a, b = rd.plan.span(rd._highlight(), cmds.currentTime(query=True), s["length"])
+        return {"text": rd.NOTHING}
     from maya_ragdoll import impulse
     try:
         count = len([p for p in impulse.arrows(ref.rig) if cmds.getAttr(p + ".enabled")])
     except Exception:                                      # noqa: BLE001
         count = 0
     tail = (", %d impulse%s" % (count, "" if count == 1 else "s")) if count else ""
+    return {"label": ref.label, "tail": tail}
+
+
+def subtitle(described_now=None):
+    """What the press would do now (`described_now`: the rig as `described` read it)."""
+    d = described() if described_now is None else described_now
+    if "text" in d:
+        return d["text"]
+    s = remembered()
+    a, b = rd.plan.span(rd._highlight(), cmds.currentTime(query=True), s["length"])
     if s["mode"] == "blend":
-        return "%s blends with physics from frame %d to %d%s" % (ref.label, a, b, tail)
-    return "%s falls from frame %d to %d%s" % (ref.label, a, b, tail)
+        return "%s blends with physics from frame %d to %d%s" % (d["label"], a, b, d["tail"])
+    return "%s falls from frame %d to %d%s" % (d["label"], a, b, d["tail"])
+
+
+#  the rig the last selection named, per card (2026-10-17, the performance pass: the subtitle
+#  read the scene's characters on every frame of a scrub, 1.6 ms a frame with no rig at all)
+_DESCRIBED = {}
 
 
 def refresh(*_):
     if cmds.text(SUBTITLE, exists=True):
-        cmds.text(SUBTITLE, edit=True, label=subtitle())
+        d = described()
+        _DESCRIBED[_card_key()] = d
+        cmds.text(SUBTITLE, edit=True, label=subtitle(d))
+
+
+def refresh_time(*_):
+    """A time change moves only the frames: the rig and its impulses as the selection read them."""
+    if cmds.text(SUBTITLE, exists=True):
+        d = _DESCRIBED.get(_card_key())
+        if d is None:
+            return refresh()
+        cmds.text(SUBTITLE, edit=True, label=subtitle(d))
 
 
 def press_fall(*_):
@@ -414,10 +439,13 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:                                  # noqa: BLE001
             pass
+    import maya_hubqt
     jobs = []
-    for event in ("SelectionChanged", "timeChanged"):
+    #  a hidden card refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen)
+    for event, work in (("SelectionChanged", refresh), ("timeChanged", refresh_time)):
         try:
-            jobs.append(cmds.scriptJob(event=[event, refresh], parent=STATUS))
+            jobs.append(cmds.scriptJob(event=[event, maya_hubqt.seen_only(STATUS, work)],
+                                       parent=STATUS))
         except Exception:                                  # noqa: BLE001
             pass
     JOB[_card_key()] = jobs

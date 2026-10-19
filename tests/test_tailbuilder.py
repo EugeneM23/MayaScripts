@@ -652,7 +652,10 @@ class CardTests(unittest.TestCase):
     def test_one_selection_job_per_card(self):
         ps.build_panel()
         first = ps.JOB[""]
-        self.assertEqual(self.fake.jobs[first], (["SelectionChanged", ps.refresh], ps.STATUS))
+        (event, job), parent = self.fake.jobs[first]
+        self.assertEqual((event, parent), ("SelectionChanged", ps.STATUS))
+        #  the refresh, run only while the card is on screen (maya_hubqt.when_seen)
+        self.assertEqual(job._skeldar_seen, (ps.STATUS, ps.refresh))
         ps.build_panel()
         self.assertEqual(self.fake.killed, [first])
         self.assertEqual(len(self.fake.jobs), 1)

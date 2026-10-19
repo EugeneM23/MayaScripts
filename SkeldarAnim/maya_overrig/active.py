@@ -77,14 +77,16 @@ def armor_groups():
     parent -- without this it would count as one more character in the scene. Three levels deep
     since the character groups (2026-10-02): `|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`."""
     found, level = [], scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
-    for _ in range(3):
-        nxt = []
-        for node in level:
-            if cmds.attributeQuery(ARMOR_GROUP_MARKER, node=node, exists=True):
-                found.append(node)
-            nxt += cmds.listRelatives(node, children=True, type="transform",
-                                      fullPath=True) or []
-        level = nxt
+    #  a level in one `ls` of its nodes' plugs and one listRelatives (2026-10-17, the
+    #  performance pass: an attributeQuery per node, 6 ms beside three rigs, every refresh)
+    for i in range(3):
+        if not level:
+            break
+        found += cmds.ls([node + "." + ARMOR_GROUP_MARKER for node in level],
+                         objectsOnly=True, long=True) or []
+        if i < 2:
+            level = cmds.listRelatives(level, children=True, type="transform",
+                                       fullPath=True) or []
     return found
 
 

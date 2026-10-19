@@ -1364,8 +1364,10 @@ def start():
                 cmds.scriptJob(kill=old, force=True)
         except Exception:                                    # noqa: BLE001
             pass
-    JOB[_card_key()] = [cmds.scriptJob(event=[event, _on_scene_event], parent=STATUS)
-                        for event in EVENTS]
+    import maya_hubqt
+    #  a hidden card refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen)
+    job = maya_hubqt.seen_only(STATUS, _on_scene_event)
+    JOB[_card_key()] = [cmds.scriptJob(event=[event, job], parent=STATUS) for event in EVENTS]
 
 
 def show_window():

@@ -280,11 +280,14 @@ def _skin(edge, ui):
 
 def _recolor(edge):
     """Maya's filled greys swapped again - the Attribute Editor builds new widgets
-    for every node it shows."""
+    for every node it shows. The page on show only (2026-10-17, the performance pass:
+    every selection walked both pages' widgets); a tab switch refreshes, and so
+    recolours, the page it brings."""
     try:
         import maya_hubqt
         from . import skin
-        skin.recolor(edge.panel.stack, maya_hubqt.qt().QtGui)
+        stack = edge.panel.stack
+        skin.recolor(stack.currentWidget() or stack, maya_hubqt.qt().QtGui)
     except Exception:                                        # noqa: BLE001
         pass
 

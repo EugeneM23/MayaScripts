@@ -268,8 +268,10 @@ def watch():
     """After the card's line exists: the pills and the subtitle follow the
     selection through a job the line owns (it dies with the card); the line
     itself is left to the presses."""
+    import maya_hubqt
+    #  a hidden card (or tab) refreshes when it is next shown (2026-10-17, maya_hubqt.when_seen)
     cmds.scriptJob(event=["SelectionChanged",
-                          lambda: _quiet(lambda: refresh(say=False))],
+                          maya_hubqt.seen_only(_TILES, lambda: _quiet(lambda: refresh(say=False)))],
                    parent=_STATUS)
     _quiet(lambda: refresh(say=False))
 

@@ -198,13 +198,15 @@ def marked_near_top(marker, depth=3):
     character group (a bare skeleton's), or in a rig's AdvancedSkeleton group -- which is one
     level deeper since the character groups (`|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`)."""
     found, level = [], scope.active_only(cmds.ls(assemblies=True, long=True) or [], cmds)
-    for _ in range(depth):
-        nxt = []
-        for node in level:
-            if cmds.attributeQuery(marker, node=node, exists=True):
-                found.append(node)
-            nxt += cmds.listRelatives(node, children=True, type="transform", fullPath=True) or []
-        level = nxt
+    #  a level asked in one `ls` of its nodes' plugs (a node without the attribute answers
+    #  nothing) and one listRelatives: an attributeQuery per node cost 6 ms beside three
+    #  rigs on every refresh (2026-10-17, the performance pass)
+    for i in range(depth):
+        if not level:
+            break
+        found += cmds.ls([node + "." + marker for node in level], objectsOnly=True, long=True) or []
+        if i + 1 < depth:
+            level = cmds.listRelatives(level, children=True, type="transform", fullPath=True) or []
     return found
 
 
@@ -236,6 +238,12 @@ def _constrained_joints(namespace):
     return out
 
 
+#  (namespace, group) -> the skeleton root found last (2026-10-17, the performance pass:
+#  listing a rig's ~330 joints cost 3 ms a rig on every `rigs()`, and a card's refresh asks
+#  `rigs()` up to five times). Kept only while `_still_root` says it is still the answer.
+_SKELETON_ROOTS = {}
+
+
 def skeleton_root_of(namespace, group):
     """The rig's game skeleton root: the shallowest constrained joint of its
     namespace outside its group, or "".
@@ -243,14 +251,42 @@ def skeleton_root_of(namespace, group):
     The namespace's joints are asked for alone and tried shallowest first, so the
     answer (`shallowest` of the constrained ones) costs a listRelatives or two: a
     listRelatives on every joint of the scene ran for every rig, many times on each
-    selection change (2026-10-16)."""
+    selection change (2026-10-16). The answer is kept and checked again next time
+    (`_still_root`), not looked for."""
+    key = (namespace, group)
+    known = _SKELETON_ROOTS.get(key)
+    if known and _still_root(known, namespace, group):
+        return known
     pattern = (":" + namespace + ":*") if namespace else ":*"
     joints = [j for j in cmds.ls(pattern, type="joint", long=True) or []
               if namespace_of(j) == namespace and not under(j, group)]
     for joint in sorted(joints, key=lambda p: (p.count("|"), p)):
         if cmds.listRelatives(joint, children=True, type="constraint"):
+            _SKELETON_ROOTS[key] = joint
             return joint
+    _SKELETON_ROOTS.pop(key, None)
     return ""
+
+
+def _still_root(joint, namespace, group):
+    """Whether `joint` (a root found before) is still the rig's skeleton root: it stands at
+    that path, a constrained joint of the namespace outside the group, and no joint of the
+    namespace (outside the group) stands above it."""
+    try:
+        if not cmds.objExists(joint) or cmds.objectType(joint) != "joint":
+            return False
+        if namespace_of(joint) != namespace or under(joint, group):
+            return False
+        if not cmds.listRelatives(joint, children=True, type="constraint"):
+            return False
+        parts = [p for p in joint.split("|") if p]
+        above = ["|" + "|".join(parts[:i]) for i in range(1, len(parts))]
+        for path in (cmds.ls(above, type="joint", long=True) if above else []) or []:
+            if namespace_of(path) == namespace and not under(path, group):
+                return False
+        return True
+    except Exception:                                        # noqa: BLE001
+        return False
 
 
 def rigs():
