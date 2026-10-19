@@ -13,6 +13,7 @@ import traceback
 MODE_VAR = "skeldarSidePanelMode"
 TAB_VAR = "skeldarSidePanelTab"
 WIDTH_VAR = "skeldarSidePanelWidth"
+HEIGHT_VAR = "skeldarSidePanelHeight"     # the share of the viewport's height (2026-10-19)
 HIDDEN_VAR = "skeldarSidePanelHidden"   # Maya's controls we hid, shown again on Maya's mode
 SELECT_VAR = "skeldarSidePanelOnSelect"  # 1 (default): a selection brings it out, keeps it
 
@@ -92,6 +93,10 @@ def _remember_tab(value):
 
 def _remember_width(width):
     _cmds().optionVar(intValue=(WIDTH_VAR, int(width)))
+
+
+def _remember_share(share):
+    _cmds().optionVar(floatValue=(HEIGHT_VAR, float(share)))
 
 
 def _remember_hidden(names):
@@ -242,7 +247,8 @@ def ensure_edge():
     from . import holder
     controller = edge_module.SideEdge(make, width=_var(WIDTH_VAR, look.WIDTH), scale=ui,
                                       on_tab=on_tab, on_width=_remember_width, tick=_maya_wants,
-                                      on_reveal=refresh, selected=_has_selection)
+                                      on_reveal=refresh, selected=_has_selection,
+                                      share=_var(HEIGHT_VAR, look.SHARE), on_height=_remember_share)
     controller.panel.set_tab(tab())
     _state()["edge"] = controller
     try:
@@ -284,17 +290,29 @@ def _recolor(edge):
 
 
 def _fit(edge):
-    """The panel at least as wide as Maya's borrowed forms ask now - the Attribute
-    Editor asks more once it shows a node (308 px empty, 648 px on a mesh, live)."""
+    """The panel at least as wide as the SHOWN tab's Maya forms ask now - the
+    Attribute Editor asks more once it shows a node (308 px empty, 648 px on a mesh,
+    live). Read again each time and only for the tab on show (2026-10-19, «я не могу
+    сжать окошко»: the least only ever grew, so one look at the Attribute Editor
+    held the Channels tab at 648 px); our Channel Box mounted asks nothing - Maya's
+    forms then wait hidden."""
     from . import holder, look
+    tab = getattr(edge.panel, "tab", None)
     widths = []
-    for records in (_state().get("held") or {}).values():
-        for record in records:
+    ours = False
+    if tab == "channels":
+        try:
+            import maya_channelbox
+            ours = maya_channelbox.current() is not None
+        except Exception:                                    # noqa: BLE001
+            ours = False
+    if not ours:
+        for record in (_state().get("held") or {}).get(tab) or []:
             w = holder.widget(record["form"])
             if w is not None:
                 widths.append(w.minimumSizeHint().width())
-    least = look.min_width_px(widths, getattr(edge.panel, "ui", 1.0))
-    if least > edge.least:
+    least = look.min_width_px(widths, getattr(edge.panel, "ui", 1.0)) if widths else 0
+    if least != edge.least:
         edge.least = least
         edge.place()
 

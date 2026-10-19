@@ -124,6 +124,29 @@ class Look(unittest.TestCase):
         self.assertEqual(look.blockers(pinned=True, typing=True, dragging=True),
                          ["pinned", "typing", "dragging"])
 
+    def test_half_the_height_from_the_top_by_default(self):
+        """2026-10-19: «в два раза короче с возможностью растянуть»."""
+        self.assertEqual(look.side_band(WINDOW, 340, 1.0, share=look.SHARE), (1360, 50, 340, 450))
+        self.assertEqual(look.side_band(WINDOW, 340, 1.0, share=0.01)[3], look.MIN_HEIGHT)
+        self.assertEqual(look.side_band(WINDOW, 340, 1.5, share=0.01)[3], 180)
+        self.assertEqual(look.side_band(WINDOW, 340, 1.0, share=5)[3], 900)
+        self.assertEqual(look.clamp_share("junk"), look.SHARE)
+
+    def test_the_bottom_grip_drags_the_share(self):
+        self.assertAlmostEqual(look.dragged_share(0.5, 90, 900), 0.6)
+        self.assertAlmostEqual(look.dragged_share(0.5, -900, 900), look.MIN_SHARE)
+        self.assertAlmostEqual(look.dragged_share(0.5, 900, 900), 1.0)
+
+    def test_the_zone_and_sensor_are_as_tall_as_the_panel(self):
+        self.assertEqual(look.zone_band(WINDOW, 1.0, 0.5)[3], 450)
+        self.assertEqual(look.sensor_band(WINDOW, 2, 0.5)[3], 450)
+        self.assertEqual(look.zone_band(WINDOW, 1.0)[3], 900)
+
+    def test_it_narrows_three_times_further_than_before(self):
+        """2026-10-19: «сжать окошко в 3 раза сильнее» - the least was 260."""
+        self.assertLessEqual(look.MIN_WIDTH * 3, 260)
+        self.assertEqual(look.dragged_width(340, 1000, 1.0), look.MIN_WIDTH)
+
 
 class Holds(unittest.TestCase):
 
@@ -564,6 +587,18 @@ class Edge(unittest.TestCase):
         self.edge.slide_tick()
         self.assertIsNone(self.edge._slide)
         self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
+
+    def test_a_shorter_panel_and_its_bottom_grip(self):
+        shares = []
+        self.edge._on_height = shares.append
+        self.edge.share = 0.5
+        self.edge.place()
+        self.assertEqual(self.geometry(self.edge.host), (1360, 50, 340, 450))
+        self.edge.panel.on_height(180, False)
+        self.assertEqual(self.geometry(self.edge.host)[3], 630)
+        self.edge.panel.on_height(180, True)
+        self.assertAlmostEqual(shares[-1], 0.7)
+        self.assertEqual(self.geometry(self.edge.sensor)[3], 630)
 
 
 @unittest.skipIf(QT is None, "no Qt")

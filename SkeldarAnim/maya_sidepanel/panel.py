@@ -16,6 +16,7 @@ HEADER = "skeldarSidePanelHeader"
 PIN = "skeldarSidePanelPin"
 CLOSE = "skeldarSidePanelClose"
 GRIP = "skeldarSidePanelGrip"
+HEIGHT_GRIP = "skeldarSidePanelHeightGrip"
 
 
 def tab_name(tab):
@@ -41,7 +42,10 @@ QWidget#{header} QPushButton:checked {{
 QPushButton#{pin}:checked {{ background: {accent_tint}; color: {accent_text}; border-color: {accent}; }}
 QPushButton#{close}:hover {{ background: {danger_tint}; color: {danger}; }}
 QWidget#{grip} {{ background: transparent; border-left: 1px solid {inset_line}; }}
-""".format(panel=PANEL, header=HEADER, pin=PIN, close=CLOSE, grip=GRIP, panel_c=t["panel"], line=t["line"],
+QWidget#{hgrip} {{ background: transparent; border-top: 1px solid {inset_line}; }}
+QWidget#{hgrip}:hover {{ background: {accent_tint}; }}
+""".format(panel=PANEL, header=HEADER, pin=PIN, close=CLOSE, grip=GRIP, hgrip=HEIGHT_GRIP,
+           panel_c=t["panel"], line=t["line"],
            danger=t["danger"], danger_tint=t["danger_tint"],
            track=t["track"], track_edge=t["track_edge"], muted=t["muted"], hover=t["hover"],
            text=t["text"], thumb=t["thumb"], accent=t["accent"], accent_tint=t["accent_tint"],
@@ -72,30 +76,42 @@ def name_layouts(root, prefix="skeldarSidePanelLayout"):
     return named
 
 
-def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_width=None):
+def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_width=None,
+         on_height=None):
     q = hubqt.qt()
     QtCore, QtWidgets = q.QtCore, q.QtWidgets
     tokens = tokens or hubstyle.TOKENS
 
     class Grip(QtWidgets.QWidget):
-        def __init__(self, owner):
+        """The width grip (left edge, x) or the height grip (bottom edge, y). The
+        handler is looked up at each move: the edge may set the height's later."""
+        def __init__(self, owner, vertical=False):
             QtWidgets.QWidget.__init__(self, owner)
-            self.setObjectName(GRIP)
+            self.vertical = bool(vertical)
+            self.setObjectName(HEIGHT_GRIP if vertical else GRIP)
             self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
-            self.setCursor(QtCore.Qt.SizeHorCursor)
+            self.setCursor(QtCore.Qt.SizeVerCursor if vertical else QtCore.Qt.SizeHorCursor)
             self.start = None
+
+        def _at(self, event):
+            p = event.globalPosition().toPoint()
+            return p.y() if self.vertical else p.x()
+
+        def _call(self, event, done):
+            owner = self.parentWidget()
+            handler = getattr(owner, "on_height", None) if self.vertical else on_width
+            if self.start is not None and handler is not None:
+                handler(self._at(event) - self.start, done)
 
         def mousePressEvent(self, event):
             if event.button() == QtCore.Qt.LeftButton:
-                self.start = event.globalPosition().toPoint().x()
+                self.start = self._at(event)
 
         def mouseMoveEvent(self, event):
-            if self.start is not None and on_width is not None:
-                on_width(event.globalPosition().toPoint().x() - self.start, False)
+            self._call(event, False)
 
         def mouseReleaseEvent(self, event):
-            if self.start is not None and on_width is not None:
-                on_width(event.globalPosition().toPoint().x() - self.start, True)
+            self._call(event, True)
             self.start = None
 
     class SidePanel(QtWidgets.QWidget):
@@ -166,6 +182,10 @@ def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_
                 self.stack.addWidget(page)
                 self.pages[tab] = layout
             column.addWidget(self.stack, 1)
+            self.on_height = on_height
+            self.height_grip = Grip(self, vertical=True)
+            self.height_grip.setFixedHeight(max(3, int(round(look.GRIP * self.ui))))
+            column.addWidget(self.height_grip)
             self.tab = None
             self.set_tab(look.TABS[0])
 

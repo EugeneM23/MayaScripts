@@ -678,7 +678,7 @@ def classes():
             self.timer.setInterval(look.FRAME_MS)
             self.timer.timeout.connect(self._animate)
             self._last = None
-            self.setMinimumWidth(int(220 * self.ui))
+            self.setMinimumWidth(int(60 * self.ui))      # the side panel narrows to 86 (2026-10-19)
 
         # time and motion -----------------------------------------------------------
         def clock(self):
