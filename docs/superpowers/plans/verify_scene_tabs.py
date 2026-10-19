@@ -1968,7 +1968,10 @@ def phase_undo():
     hero, shoulder = probe + ".translateX", "tab_rig:Manny_Rig:FKShoulder_L.rotateY"
     gate("undo: the film active after its open, the queue flushed and its own",
          session.state()["active"] == "tab_film" and tabundo.state()["owner"] == "tab_film")
+    # a named step, as Maya's GUI names its own (mayapy names a plain setAttr '')
+    cmds.undoInfo(openChunk=True, chunkName="move -r 1 0 0")
     cmds.setAttr(hero, 1)
+    cmds.undoInfo(closeChunk=True)
     switching.switch("tab_rig")
     cmds.setAttr(shoulder, 10)
     switching.switch("tab_film")
@@ -2003,6 +2006,11 @@ def phase_undo():
          and tabundo.fence_tab(top) != "tab_film", top)
     cmds.undo()
     gate("undo: the rig's step still the next undo", cmds.getAttr(shoulder) == 0.0)
+    count = len(said)
+    switching.switch("tab_film")
+    switching.switch("tab_rig")
+    gate("undo: back from a tab that did nothing, no word of burying (2026-10-19)",
+         not any(m.startswith("rig") for m in said[count:]), said[count:])
     cmds.setAttr(shoulder, 5)
     for _ in range(4):
         cmds.undo()

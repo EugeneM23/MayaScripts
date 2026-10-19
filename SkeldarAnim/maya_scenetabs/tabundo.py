@@ -106,7 +106,8 @@ def reset(owner):
     st = state()
     st["fences"] = {}
     st["owner"] = owner
-    st["seen"] = {owner} if owner else set()
+    st["seen"] = set()          # the tabs that left steps of their own on the queue
+    st["entry_top"] = ""        # the queue's top when the active tab was entered
 
 
 # ------------------------------------------------------------------ the scene
@@ -140,6 +141,12 @@ def before_switch(leaving, entering, cmds=None):
         finally:
             st["inside"] = False
         st["owner"] = record["below"]
+        if not record.get("earlier"):
+            st["seen"].discard(leaving)     # nothing of its own under that fence either
+    elif st["owner"] == leaving and top != st.get("entry_top", ""):
+        st["seen"].add(leaving)             # it leaves steps of its own on the queue
+    if not lay:
+        st["entry_top"] = cmds.undoInfo(q=True, undoName=True) or ""
     return lay
 
 
@@ -167,7 +174,7 @@ def after_switch(entering, session_node, cmds=None):
     record = {"ns": entering, "below": st["owner"], "earlier": entering in st["seen"]}
     st["fences"][name] = record
     st["owner"] = entering
-    st["seen"].add(entering)
+    st["entry_top"] = name
     said = entered_message(record, _title)
     if said:
         _say(said, cmds)
