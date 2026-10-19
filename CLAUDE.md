@@ -11702,6 +11702,16 @@ same run on the previous build through `TIMEBAR_PLUGIN`):
   and keeps its fraction (`mapped`, `scene.move_keys`); an edge drag counts frame lines (`Timeline._grip`);
 - the playback range's dimming starts after p1's cell; `passed` lights the keys in the playhead's cell.
 
+**A caret line over the numbers** (2026-10-19, «над цифрами таймлайна ... дополнительную линию с
+корректкой»; mockups https://claude.ai/artifact/FmvzYAkQFxfEzLA3Hi4qwB, they chose B1, «более компактным»):
+`bar.CaretLine` (`skeldarTimeBarCaret`, `CARET_H` 15 logical px) stands over the timeline in its column - a
+hairline, a division on every frame's middle (`look.ticks`: 5 / 3.5 / 2 px), and the caret: an 11.5 px flag
+with the current frame and a stem down to the line. The frame's number left the playhead's cell for it. A
+press anywhere on the line sends the time there and a drag scrubs (the timeline's own `_press_time` /
+`_scrub`: `begin_scrub` ... `end_scrub`), the middle button without updating the scene; the flag lifts and
+glows under the mouse and while dragged. `Timeline.update` / `repaint` repaint the caret too, so playback and
+scrubbing move it with the playhead. Tests `test_timebar_bar.CaretLine`. Not seen in a GUI Maya.
+
 **Two key effects, the rest of the mockup taken back** (2026-10-17). The whole effects mockup went in
 (`6c76e6b`: a playhead glide, a scrub trail, play / loop / move / bookmark effects, button ripples, morphs and
 sparks); the same day the animator: «откатив все эффекты вернем как было. Только одно исключение оставим вспышку

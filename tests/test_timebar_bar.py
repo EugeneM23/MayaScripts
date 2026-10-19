@@ -221,7 +221,10 @@ class Shows(Strip):
         mid = look.key_centre(self.tl.track(), 30.0)
         self.assertTrue(near(image.pixelColor(int(mid), bar.KEY_Y)), "a key")
         self.assertFalse(near(image.pixelColor(int(self.tl.track().x(30.0)), bar.KEY_Y)), "the gap beside it")
-        self.assertTrue(near(image.pixelColor(int(self.x(12)), self.tl.height() - 6)), "the playhead")
+        #  the playhead's cell: its accent edge at the bottom (its number rides the caret line)
+        edge = image.pixelColor(int(self.x(12)), self.tl.height() - 2)
+        bare = image.pixelColor(int(self.x(50)), self.tl.height() - 2)
+        self.assertGreater(edge.red() - edge.blue(), (bare.red() - bare.blue()) + 60, "the playhead")
         self.assertFalse(near(image.pixelColor(int(self.x(50)), bar.KEY_Y)))
 
 
@@ -322,6 +325,58 @@ class Time(Strip):
         self.link.set_time = boom
         self.strip.field.setText("5")
         self.strip.field.returnPressed.emit()        # printed, not raised
+
+
+class CaretLine(Strip):
+    """The line with divisions over the timeline's numbers, its caret the current
+    frame's flag (2026-10-19, B1)."""
+
+    def caret_x(self, frame):
+        """frame's cell middle, in the caret line."""
+        c0, c1 = self.tl.track().cell(frame)
+        g = self.tl.mapToGlobal(QT.QtCore.QPoint(int((c0 + c1) / 2.0), 0))
+        return float(self.strip.caret.mapFromGlobal(g).x())
+
+    def test_it_stands_over_the_timeline_in_its_column(self):
+        c, tl = self.strip.caret, self.tl
+        self.assertEqual(c.width(), tl.width())
+        self.assertEqual(c.x(), tl.x())
+        self.assertLessEqual(c.geometry().bottom(), tl.geometry().top())
+
+    def test_the_flag_stands_over_the_current_frame(self):
+        flag, x, _line = self.strip.caret.flag_rect()
+        self.assertAlmostEqual(x, self.caret_x(12), delta=1.0)
+        self.assertTrue(flag.left() <= x <= flag.right())
+
+    def test_it_paints_the_flag_in_the_accent(self):
+        c = self.strip.caret
+        image = QT.QtGui.QImage(c.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        c.render(image)
+        flag = c.flag_rect()[0]
+        px = image.pixelColor(int(flag.left() + 2), int(flag.center().y()))
+        accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
+        self.assertLess(abs(px.red() - accent.red()) + abs(px.green() - accent.green()), 40)
+
+    def test_dragging_the_caret_scrubs(self):
+        self.drag(self.strip.caret, self.caret_x(20), self.caret_x(33))
+        self.assertEqual(self.calls("set_time"), [("set_time", 20), ("set_time", 33)])
+        names = [e[0] for e in self.link.log if e[0] in ("begin_scrub", "set_time", "end_scrub")]
+        self.assertEqual((names[0], names[-1]), ("begin_scrub", "end_scrub"))
+        self.assertIsNone(self.tl.drag)
+        self.assertEqual(self.strip.field.text(), "33")
+
+    def test_a_middle_drag_on_it_moves_time_without_updating_the_scene(self):
+        Qt = QT.QtCore.Qt
+        self.drag(self.strip.caret, self.caret_x(20), self.caret_x(25), Qt.MiddleButton)
+        self.assertEqual(self.calls("scrub_only"), [("scrub_only", 20), ("scrub_only", 25)])
+        self.assertFalse(self.calls("set_time"))
+
+    def test_a_timeline_repaint_repaints_the_caret(self):
+        seen = []
+        self.strip.caret.paintEvent = lambda e: seen.append(1)
+        self.tl.repaint()
+        self.assertTrue(seen)
 
 
 class TimeCallback(Strip):

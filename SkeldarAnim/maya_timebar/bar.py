@@ -44,6 +44,9 @@ KEY_W = 2.0             # a key's mark, logical px wide (2026-10-17: a line, as 
 DASH_W = 0.8            # a key between frames: its dashes this share of a mark's width
 DASH, DASH_GAP = 3.0, 2.0
 HEAD_FILL = 70          # the playhead's cell, its fill's alpha
+CARET_H = 15            # logical px: the caret line over the timeline's numbers (2026-10-19, B1)
+CARET_FLAG_H = 11.5     # the caret's flag
+CARET_MIN_W = 20
 
 
 def key_span(h, ui):
@@ -1069,22 +1072,20 @@ def classes():
             p.setBrush(head)
             p.drawRect(QtCore.QRectF(cx, 0, cw, 1.5 * ui))
             p.drawRect(QtCore.QRectF(cx, h - 1.5 * ui, cw, 1.5 * ui))
-            fz = 1.0 + 0.12 * self.head_lift
-            bold = QtGui.QFont("Consolas")
-            bold.setBold(True)
-            bold.setPixelSize(max(8, int(10 * ui * fz)))
-            p.setFont(bold)
-            text = look.frame_text(s["now"])
-            tw = QtGui.QFontMetricsF(bold).horizontalAdvance(text) + 10 * ui * fz
-            th = 14 * ui * fz
-            fx = min(max(x - tw / 2, 1), w - tw - 1)
-            flag = QtCore.QRectF(fx, h - th, tw, th)          # at the bottom, as Maya's
-            glow(p, flag, 3 * ui, head.name(), self.head_lift * 0.8, ui)
-            p.setPen(Qt.NoPen)
-            p.setBrush(head)
-            p.drawRoundedRect(flag, 3 * ui, 3 * ui)
-            p.setPen(colour(tk["on_accent"]))
-            p.drawText(flag, Qt.AlignCenter, text)
+            #  the frame's number rides the caret line above (2026-10-19, B1)
+
+        # the caret line above follows whatever repaints the timeline -------------
+        def update(self, *args):
+            super(Timeline, self).update(*args)
+            caret = getattr(self.strip, "caret", None)
+            if caret is not None:
+                caret.update()
+
+        def repaint(self, *args):
+            super(Timeline, self).repaint(*args)
+            caret = getattr(self.strip, "caret", None)
+            if caret is not None:
+                caret.repaint()
 
         # input ------------------------------------------------------------
         def _x(self, event):
@@ -1269,6 +1270,165 @@ def classes():
             if meter is not None:          # the scrub meter: our work, then Maya's frame change
                 meter["ours"].append((t1 - t0) * 1000.0)
                 meter["mayas"].append((time.perf_counter() - t1) * 1000.0)
+
+    # -- the caret line over the timeline's numbers --------------------------------
+
+    class CaretLine(QtWidgets.QWidget):
+        """A hairline with a division on every frame above the timeline, and a caret
+        - a flag with the current frame - riding it; a press anywhere on it sends the
+        time there, a drag scrubs (2026-10-19, mockup B1: «линия с делениями и
+        кареткой ... двигать таймслайдер за каретку»). Its x is the timeline's: the
+        same column, the same track."""
+
+        def __init__(self, strip):
+            super(CaretLine, self).__init__(strip)
+            self.strip = strip
+            self.setObjectName("skeldarTimeBarCaret")
+            self.setFixedHeight(int(CARET_H * strip.ui))
+            self.setCursor(Qt.SizeHorCursor)
+            self.setMouseTracking(True)
+            self.aim = False            # the mouse over the flag
+            self.lift = 0.0
+            self._was_busy = False
+            self.index = strip.register(self)
+
+        def busy(self, _now):
+            return abs(self.lift - (1.0 if self.aim or self._dragging() else 0.0)) > 0.005
+
+        def step(self, dt):
+            goal = 1.0 if self.aim or self._dragging() else 0.0
+            self.lift = look.approach(self.lift, goal, dt, HOVER_MS) if self.strip.motion else goal
+
+        def _dragging(self):
+            drag = self.strip.timeline.drag
+            return bool(drag and drag[0] in ("now", "mid") and getattr(self, "_own", False))
+
+        def _x_on_timeline(self, x):
+            tl = self.strip.timeline
+            g = self.mapToGlobal(QtCore.QPoint(int(round(x)), 0))
+            return float(tl.mapFromGlobal(g).x()) + (x - round(x))
+
+        def flag_rect(self, t=None):
+            """The caret's flag, in this widget (clamped inside it)."""
+            st, ui = self.strip, self.strip.ui
+            t = t or st.timeline.track()
+            c0, c1 = t.cell(st.state["now"])
+            x = (c0 + c1) / 2.0 - self._x_on_timeline(0.0)
+            z = 1.0 + LIFT * self.lift
+            metrics = QtGui.QFontMetricsF(self._font(z))
+            tw = max(CARET_MIN_W * ui, metrics.horizontalAdvance(look.frame_text(st.state["now"])) + 8 * ui) * z
+            th = CARET_FLAG_H * ui * z
+            fx = min(max(x - tw / 2.0, 1.0), self.width() - tw - 1.0)
+            line = self.height() - 1.5 * ui
+            return QtCore.QRectF(fx, line - 1.5 * ui - th, tw, th), x, line
+
+        def _font(self, z=1.0):
+            font = QtGui.QFont("Consolas")
+            font.setBold(True)
+            font.setPixelSize(max(7, int(round(9 * self.strip.ui * z))))
+            return font
+
+        # painting -------------------------------------------------------------
+        def paintEvent(self, _event):
+            try:
+                self._paint()
+            except Exception:                                # noqa: BLE001
+                if not getattr(self, "_failed", False):
+                    print(traceback.format_exc())
+                self._failed = True
+
+        def _paint(self):
+            st = self.strip
+            tk, ui = st.tokens, st.ui
+            t = st.timeline.track()
+            w, h = float(self.width()), float(self.height())
+            scale, opacity = st.opening_of(self.index)
+            p = QtGui.QPainter(self)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setOpacity(opacity)
+            p.translate(0, h / 2)
+            p.scale(1.0, scale)
+            p.translate(0, -h / 2)
+            p.setPen(Qt.NoPen)
+            off = self._x_on_timeline(0.0)
+            flag, x, line = self.flag_rect(t)
+            # the hairline, then a division on every frame's middle
+            p.setBrush(colour(tk["line"]))
+            p.drawRect(QtCore.QRectF(t.left - off, line, t.right - t.left, max(1.0, ui)))
+            tall_of = {"label": 5.0 * ui, "mid": 3.5 * ui, "tick": 2.0 * ui}
+            tick_w = max(1.0, ui * 0.75)
+            for frame, kind in look.ticks(t, ui):
+                c0, c1 = t.cell(frame)
+                cx = round((c0 + c1) / 2.0 - off)
+                if cx < 0 or cx > w:
+                    continue
+                p.setBrush(colour(tk["muted"] if kind == "label" else tk["line"]))
+                tall = tall_of[kind]
+                p.drawRect(QtCore.QRectF(cx, line - tall, tick_w, tall))
+            # the caret: a flag with the frame, a stem down to the line
+            drag = st.timeline.drag
+            head = colour(HIGHLIGHT if drag and drag[0] == "mid" else
+                          (tk["accent_text"] if self.lift > 0.5 else tk["accent"]))
+            glow(p, flag, 3 * ui, head.name(), self.lift * 0.8, ui)
+            p.setPen(Qt.NoPen)
+            p.setBrush(head)
+            p.drawRoundedRect(flag, 3 * ui, 3 * ui)
+            stem = 1.5 * ui
+            p.drawRect(QtCore.QRectF(x - stem / 2.0, flag.bottom() - 0.5, stem, line - flag.bottom() + 1.5 * ui))
+            p.setFont(self._font(1.0 + LIFT * self.lift))
+            p.setPen(colour(tk["on_accent"]))
+            p.drawText(flag, Qt.AlignCenter, look.frame_text(st.state["now"]))
+            p.end()
+
+        # input ----------------------------------------------------------------
+        def _x(self, event):
+            return event.position().x() if hasattr(event, "position") else event.x()
+
+        def mousePressEvent(self, event):
+            tl = self.strip.timeline
+            x = self._x_on_timeline(self._x(event))
+            if event.button() == Qt.LeftButton:
+                self._own = True
+                tl._press_time(x, tl.track())
+            elif event.button() == Qt.MiddleButton:
+                self._own = True
+                tl.drag = ("mid", None, tl.track())
+                tl._scrub(x, update=False)
+            else:
+                return
+            self.setCursor(Qt.ClosedHandCursor)
+            self.strip.kick()
+
+        def mouseMoveEvent(self, event):
+            tl = self.strip.timeline
+            if getattr(self, "_own", False) and tl.drag and tl.drag[0] in ("now", "mid"):
+                tl._scrub(self._x_on_timeline(self._x(event)), update=(tl.drag[0] == "now"))
+                return
+            over = self.flag_rect()[0].adjusted(-3, -3, 3, 3).contains(QtCore.QPointF(self._x(event), self.height() / 2.0))
+            self.setCursor(Qt.OpenHandCursor if over else Qt.SizeHorCursor)
+            if over != self.aim:
+                self.aim = over
+                self.strip.kick()
+
+        def mouseReleaseEvent(self, event):
+            tl, st = self.strip.timeline, self.strip
+            if not getattr(self, "_own", False):
+                return
+            self._own = False
+            kind = tl.drag[0] if tl.drag else None
+            tl.drag = None
+            if kind == "now":
+                st.call("end_scrub")
+            elif kind == "mid":
+                st.refresh()
+            self.setCursor(Qt.OpenHandCursor if self.aim else Qt.SizeHorCursor)
+            tl.update()
+            st.kick()
+
+        def leaveEvent(self, event):
+            if self.aim:
+                self.aim = False
+                self.strip.kick()
 
     # -- the key effects' overlay -------------------------------------------------
 
@@ -1473,7 +1633,13 @@ def classes():
                 top.addWidget(b)
             # time row
             self.timeline = Timeline(self)
-            bottom.addWidget(self.timeline, 1)
+            self.caret = CaretLine(self)
+            stack = QtWidgets.QVBoxLayout()
+            stack.setContentsMargins(0, 0, 0, 0)
+            stack.setSpacing(0)
+            stack.addWidget(self.caret)
+            stack.addWidget(self.timeline)
+            bottom.addLayout(stack, 1)
             bottom.addSpacing(int(4 * ui))
             self.field = QtWidgets.QLineEdit(self)
             self.field.setObjectName("skeldarTimeBarFrame")
