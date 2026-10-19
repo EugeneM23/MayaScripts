@@ -60,6 +60,8 @@ def ensure_docked():
         cmds.deleteUI(CONTROL, control=True)        # made with a tab: made again without one
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
+        if stale(_state()["bar"]):
+            build()         # built by modules an install purged: their code stays live (2026-10-19)
     else:
         #  actLikeMayaUIElement: no tab and no title above the tabs - a plain strip,
         #  as Maya's own Status Line and Shelf sit (2026-10-16)
@@ -68,6 +70,15 @@ def ensure_docked():
                               initialHeight=HEIGHT, actLikeMayaUIElement=True,
                               uiScript=uiscript(plugin_root()))
     return CONTROL
+
+
+def stale(widget):
+    """True when a standing bar was built by an older module object than this one.
+    An install purges our modules from `sys.modules`, but the bar's widget keeps
+    the old classes, and through them the old code: after the 2026-10-19 install
+    a switch still ran as one undo chunk, so Ctrl+Z switched tabs back."""
+    actions = getattr(widget, "actions", None) if widget is not None else None
+    return actions is not None and type(actions) is not Actions
 
 
 def _headerless(cmds):

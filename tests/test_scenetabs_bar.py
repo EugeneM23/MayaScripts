@@ -213,3 +213,29 @@ class Headerless(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Stale(unittest.TestCase):
+    """A bar built by an older module object (an install purged the modules) is built again."""
+
+    def setUp(self):
+        try:
+            from maya_scenetabs import bar
+        except Exception as exc:                                 # noqa: BLE001
+            self.skipTest("maya_scenetabs.bar does not import here: %s" % exc)
+        self.bar = bar
+
+    def test_a_bar_with_the_current_actions_is_not_stale(self):
+        widget = type("W", (), {})()
+        widget.actions = self.bar.Actions()
+        self.assertFalse(self.bar.stale(widget))
+
+    def test_a_bar_with_an_older_modules_actions_is_stale(self):
+        class Actions(object):          # the same name, another class: an older module's
+            pass
+        widget = type("W", (), {})()
+        widget.actions = Actions()
+        self.assertTrue(self.bar.stale(widget))
+
+    def test_no_bar_is_not_stale(self):
+        self.assertFalse(self.bar.stale(None))
