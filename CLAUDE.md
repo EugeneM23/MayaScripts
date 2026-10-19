@@ -7556,7 +7556,8 @@ header row, the jump strip and collapsing cards is now the accordion's (⋮ → 
     shows `current()`;
   - `focus` / `expand` on the rail are `_show_on_rail` (show, light, remember; nothing closed,
     no collapse remembered);
-  - `_press_popup` is `maya_hubpop.open_at(key, cursor)`, falling back to the popout toggle.
+  - `_press_popup` is `maya_hubpop.open_at(key, cursor)`, falling back to the popout toggle. Since
+    2026-10-18 that opens a FLOATING WINDOW, not a viewport popup (see "Floating windows ..." at the end).
 - The edge panel builds the same skin and follows the layout. Classic look is untouched.
 
 Proof:
@@ -7619,6 +7620,8 @@ The animator: «Давай сделаем так что бы наши поапы
 live variants (https://claude.ai/artifact/AQZc8xz9Bys9kXzXiFgZ2z); they chose **D, from the point**.
 Spec `docs/superpowers/specs/2026-10-17-popup-burst-design.md`. **This replaces the 2026-10-09 fade and
 rise of `maya_hubpop`'s open and close**; that fade remains only as the fallback when a burst cannot start.
+**Since 2026-10-18 the burst's numbers are the Time Bar's and the drawing lives in `maya_hubwindow`
+(the popup is a floating window, no longer held in a viewport): see "Floating windows ..." at the end.**
 
 - **The point**: a popup opens from the global point it was called from and closes into the point the
   close came from.
@@ -12142,3 +12145,56 @@ edge light (the mockup's v2 drops it too). Spec `docs/superpowers/specs/2026-10-
   `test_channelbox_scene.py` 5 (fake cmds); the hub menu test; 7311 tests OK. Picture
   `docs/superpowers/plans/channel_box.png` (`render_channel_box.py`). **Not seen in a GUI Maya**: the
   hidden pane, the `-select` sync, the callbacks, the real fonts and sizes in the panel.
+
+## Floating windows in place of the viewport popups (2026-10-18)
+
+The animator: «Попапы которые живут исключительно в рамках вьюпорта нам больше не нужны. Давай наш
+плагин будет теперь открывать обычные окна. Окошки которые открывает реил в них нужно добавить кнопку
+закрыть (кнопка которая создавала попап теперь пускай создает плавающие окно). Так же давай перерисуем
+наши окна и сделаем новые анимации в стиле таймслайдера»; and the bug: «в тех окнах которые есть
+сейчас у нас есть какая-то мусорная полоска с левого края и сверху. Полоска цвета опции ... она не
+нужна». Live mockup https://claude.ai/artifact/2oSCA43qWv64YxqQmHhZhW; chosen: look **B** (the Time
+Bar's), motion **1** (out of a point), ⧉ on a rail card **takes the card into the window**. Spec
+`docs/superpowers/specs/2026-10-18-floating-windows-design.md`, plan beside it
+(`2026-10-18-floating-windows.md`). Built in a worktree (`feature/floating-windows`), task by task,
+every task reviewed. **This replaces the viewport popup of "A section popup bursts out of a point".**
+
+- **`maya_hubpop`** (name kept: the payload, hub, radial menu and install import it): the window is
+  free of the viewport. A frameless `Qt.Tool` window owned by Maya's main window; the 20 Hz follow
+  timer, `_rect_of(panel)` and hiding with the panel are gone. Dragged by its title row anywhere, kept
+  wholly on the screen under the cursor (`rules.screen_for`, `place_by_point`, `place_on_screens`) so it
+  crosses monitors and is never lost. Its place is the optionVar **`skeldarHubWindowPos_<key>`**
+  (`WINDOW_POS_VAR`; the old `skeldarHubPopupPos_<key>` held an offset from a viewport and is not read);
+  a place whose title row falls on no screen is dropped; with none the window stands `AT_CURSOR`
+  (18, 14) up-left of the point it came from. `MAX_HEIGHT` 560 (was 320). One window a section:
+  ⧉ on a section whose window stands raises it and flashes (`present(key, origin)`); the radial
+  menu's `open_at` still reopens it at the cursor. Restore at startup waits for Maya's main window only.
+- **`maya_hubwindow`** (new, a payload row): `WindowFrame` (look B: the panel face, a rounded border,
+  the title row with the section's icon and name), `PillButton` 32 x 30 (⧉ ✕, lifting and glowing by
+  themselves; they carry `skOwnLight`, which `hubqt.glowing` skips), `Burster` and the burst effect
+  moved here from `maya_hubpop`. `title_label`, `title_icon`, `TITLE_H` serve the rail card too.
+- **The burst on the Time Bar's numbers** (`maya_hubburst`): the shape unrolls out of the pressed point,
+  the parts pop in nearest first, and the TWO EDGES race outward carrying the accent light
+  (`light(age, ...)`: a band `EDGE_GLOW` each side, a core, fading as the edges slow; the top edge
+  stays lit behind them and fades), clipped by the rounded path, added light. Folding is the reverse into
+  the point the close came from (✕, ⧉ or the icon). Plan total 780 ms. The Burster builds its plan on
+  the first tick without a paint (a frame masked to nothing may never paint).
+- **The stripe is gone everywhere**: the group-colour bar down every card's left edge (a rail icon
+  no longer carries one either; `Skin.icon_with_dot`) and the popup's 2 px accent along its top. The
+  window's panel face shows round the card.
+- **The edge rail's card** (`Skin(windowed=True)`): look B with a ✕ (back to the rail) and a ⧉ (take
+  the card into a window: the rail card folds into the ⧉ point and the window bursts out of it). It
+  bursts out of its icon's centre and folds into the ✕ / ⧉ / icon point pressed (an edge generation
+  counter makes a stale burst deaf). The rail icon of a section that stands in a window shows a dot
+  (`Skin.set_floating`, `paint_floating`). The popout tooltip everywhere: «Open {name} in a floating
+  window». `maya_radial` docstring and `docs/interface-motion.md` now say windows.
+- **Proof**: unit tests only - 7376 run, all pass but two timing-flaky ones under the load of the
+  whole suite (`test_hubqt.CardMotion.test_the_header_keeps_its_height_while_sliding`,
+  `test_timebar_edge.EdgeMotion.test_play_bursts_it_out_frame_by_frame`), both green alone (30 tests
+  OK). `docs/superpowers/plans/render_floating_window.py` -> `floating_window.png`, the burst at
+  0..900 ms offscreen at 150 %: the racing edges at 40-90 ms, the whole window at 520 ms with the top
+  light fading, plain at 900 ms (no stripe, no orange on the top). **A burst's paint measured
+  offscreen at 90 ms, 450 x 390 px: median 1.04 ms, worst 2.17 ms** (30 grabs; budget ~8 ms).
+  `docs/superpowers/plans/verify_hub_popups.py` calls the removed `_rect_of` / `popup.panel`: **history,
+  do not run it**. **Not seen in a GUI Maya** (a drag across monitors, the remembered place after a
+  restart, a real ⧉ press, the burst on screen - the animator's to try after Check update).

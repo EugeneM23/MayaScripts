@@ -33,7 +33,7 @@ the Time Bar's numbers. Spec of the original:
   changed only when the animator asks:
   - the hub cards' slide and light (`maya_hubmotion`);
   - the controls' ink glow (`maya_hubglow`);
-  - the section popups' burst (`maya_hubburst`);
+  - the section windows' burst (2026-10-18: the Time Bar's numbers, `maya_hubburst`);
   - the radial menu (`maya_radial_rules`).
 
   All of them are already the same family: a back ease, nearest first, accent light.

@@ -1041,7 +1041,7 @@ class Card(object):
             self.chevron = None
             self.popout = _named(pill("float", scale),
                                  "skeldarHubCardPopout_" + key)
-            self.popout.setToolTip("Open {0} in a window".format(label))
+            self.popout.setToolTip("Open {0} in a floating window".format(label))
             self.close = _named(pill("x", scale), "skeldarHubCardClose_" + key)
             self.close.setToolTip("Back to the rail")
             if on_close is not None:
@@ -1059,8 +1059,7 @@ class Card(object):
             self.popout.setAutoRaise(True)
             self.popout.setFixedSize(s(20), s(18))
             self.popout.setCursor(q.QtCore.Qt.PointingHandCursor)
-            self.popout.setToolTip("Open {0} in the viewport - a copy that "
-                                   "stays over the viewport window"
+            self.popout.setToolTip("Open {0} in a floating window"
                                    .format(label))
         if on_popout is not None:
             self.popout.clicked.connect(

@@ -11,7 +11,7 @@ Spec: docs/superpowers/specs/2026-10-15-radial-menu-design.md. The animator: «�
   over another window) or come early (auto-repeat), so it only acts when the keys really are up.
 - The overlay is a frameless, see-through Qt.Tool window over the whole screen the cursor is on
   (alpha 1 everywhere, so a click anywhere lands on it), never taking focus.
-- A section opens its popup by the cursor (`maya_hubpop.open_at`); a function runs through
+- A section opens its window by the cursor (`maya_hubpop.open_at`); a function runs through
   `maya_hotkeys.run`; a two-step function that is left waiting gets the Finish popup.
 - `build_panel()` is the hub's Radial Menu card, the editor of the slots and of how many there are
   (2..12, eight by default; 2026-10-16: «возможность указывать количество разделов»).
