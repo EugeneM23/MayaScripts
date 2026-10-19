@@ -77,6 +77,16 @@ is as it was. The selection the tab shows is put back unrecorded before `leave` 
 A Python `cmds.select` (the plugin's own presses) has an empty undo name and stays unknown
 work.
 
+**Time changes too.** Measured live: in a GUI Maya a time change is an undo step. A Python
+`cmds.currentTime(f, edit=True)` adds an unnamed entry, and MEL `currentTime -e` (Maya's
+frame hotkeys) a named one, while Maya's own slider records nothing. So `currentTime` joined
+the looking steps that come off as a tab is left, and the frame shown is put back with the
+selection. The Time Bar's `set_time` / `scrub_only` (unnamed, so unknown to the tabs) were
+asked to run unrecorded, as Maya's slider does, in `maya_timebar/scene.py`.
+A code audit by agents (62 agents, every subsystem that reacts to a switch) found nothing else
+recording after a switch. Its one candidate, the Layer Editor rebuild's `treeView -selectItem`,
+was refuted by the live command log: it ran, and no `animLayer -edit` and no step followed.
+
 ## Module
 
 `SkeldarAnim/maya_scenetabs/tabundo.py`. The pure half is `fence_name`, `is_fence`,

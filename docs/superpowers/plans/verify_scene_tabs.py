@@ -2025,6 +2025,7 @@ def phase_undo():
     cmds.undoInfo(closeChunk=True)
     switching.switch("tab_film")
     mel.eval("select -r tab_film:probe")
+    mel.eval("currentTime -e 17")         # a frame hotkey: an undo step in a GUI Maya
     mel.eval("select -add tab_film:hero")
     count = len(said)
     switching.switch("tab_rig")
@@ -2037,8 +2038,9 @@ def phase_undo():
          session.state()["active"] == "tab_rig" and cmds.getAttr(shoulder) == 0.0, cmds.getAttr(shoulder))
     cmds.redo()
     switching.switch("tab_film")
-    gate("select: the film's selection comes back with it",
-         sorted(cmds.ls(selection=True)) == ["tab_film:hero", "tab_film:probe"], cmds.ls(selection=True))
+    gate("select: the film's selection comes back with it, and its frame",
+         sorted(cmds.ls(selection=True)) == ["tab_film:hero", "tab_film:probe"] and cmds.currentTime(q=True) == 17.0,
+         (cmds.ls(selection=True), cmds.currentTime(q=True)))
     mel.eval("select -r tab_film:probe")
     cmds.undoInfo(openChunk=True, chunkName="move -r 3 0 0")
     cmds.setAttr(hero, 3)

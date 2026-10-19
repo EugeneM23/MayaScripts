@@ -51,12 +51,14 @@ def fence_tab(name):
     return str(name)[len(PREFIX):].rsplit(":", 1)[0]
 
 
-SELECTION = ("select", "selectKey", "hilite")
+SELECTION = ("select", "selectKey", "hilite", "currentTime")
 
 
 def is_selection(name):
-    """A MEL selection step (a click in a viewport, the Outliner, the Graph Editor)
-    by its undo name. A Python `cmds.select` is unnamed (''), and stays unknown."""
+    """A step that only LOOKS: a MEL selection (a click in a viewport, the Outliner,
+    the Graph Editor) or a time change (`currentTime -e`, Maya's frame hotkeys -
+    measured 2026-10-19: in a GUI Maya a time change is an undo step), by its undo
+    name. A Python `cmds.select` / `cmds.currentTime` is unnamed (''), and stays unknown."""
     words = str(name or "").split(None, 1)
     return bool(words) and words[0] in SELECTION
 
@@ -173,13 +175,15 @@ def _drop_selection(leaving, cmds):
     `select` step, so a tab only looked at buried the tab before it). The steps
     are undone from the top while each is a selection (`is_selection`); on a
     step that is not, every one is redone and the queue is as it was. The
-    selection shown is put back unrecorded: `switching.leave` records it."""
+    selection and the frame shown are put back unrecorded: `switching.leave`
+    records them. Time steps count too: a time change is an undo step."""
     st = state()
     top = cmds.undoInfo(q=True, undoName=True) or ""
     target = latest_fence(st["fences"], leaving)
     if not target or top == target or st["owner"] != leaving or not is_selection(top):
         return top
     shown = cmds.ls(selection=True, long=True) or []
+    frame = cmds.currentTime(q=True)
     undone = 0
     st["inside"] = True
     try:
@@ -202,6 +206,8 @@ def _drop_selection(leaving, cmds):
         try:
             found = cmds.ls(shown, long=True) or []
             cmds.select(found, replace=True) if found else cmds.select(clear=True)
+            if cmds.currentTime(q=True) != frame:
+                cmds.currentTime(frame, edit=True)
         finally:
             cmds.undoInfo(stateWithoutFlush=was)
     return cmds.undoInfo(q=True, undoName=True) or ""

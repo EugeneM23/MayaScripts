@@ -11136,6 +11136,9 @@ a tab's steps made before another tab's work lie under it and can never be reach
   `_drop_selection` undoes the MEL selection steps (`select`/`selectKey`/`hilite`, named) lying on the
   leaving tab's fence before popping it, redoing them all if a real step sits among them; the shown
   selection is put back unrecorded for `leave` to record. A Python `cmds.select` is unnamed ('') - unknown.
+  **A time change is an undo step in a GUI Maya** (measured: Python `cmds.currentTime(f, edit=True)` adds an
+  unnamed entry, MEL `currentTime -e` a named one; Maya's slider records nothing): `currentTime` steps come off
+  with the clicks, the frame put back too; the Time Bar's own time changes should run unrecorded.
 A popped fence is an undo, which flags the scene: the switch puts the flag back before it records the
 tab left. Proof: `verify_scene_tabs.py undo` 11/11, all **0 of 293**, `verify_tabs_scope.py` 0 of 46
 (mayapy); the gates that proved «Ctrl+Z past a switch brings the

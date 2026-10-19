@@ -61,7 +61,7 @@ class PlanEnter(unittest.TestCase):
 class Selection(unittest.TestCase):
     def test_mel_selection_steps_are_selection(self):
         for name in ("select -r tab_a:cube", "select -cl  ", "select -add b", "select -tgl a",
-                     "selectKey -clear", "hilite -r x"):
+                     "selectKey -clear", "hilite -r x", "currentTime -e 36.0"):
             self.assertTrue(tabundo.is_selection(name), name)
 
     def test_anything_else_is_not(self):
