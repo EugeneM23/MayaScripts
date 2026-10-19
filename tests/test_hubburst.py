@@ -170,7 +170,7 @@ class TimeBarNumbers(unittest.TestCase):
                 x, y, w, h = part
                 dx, dy = x + w / 2.0 - plan.origin[0], y + h / 2.0 - plan.origin[1]
                 self.assertAlmostEqual(
-                    delay, tlook.fold_delay(abs(dx) + 1.5 * abs(dy), scale))
+                    delay, tlook.fold_delay(abs(dx) + 1.5 * abs(dy), scale) / burst.CLOSE_SPEED)
     def test_the_shape_grows_over_the_time_bars_unroll(self):
         plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
         self.assertEqual(burst.at(plan, tlook.UNROLL_MS).shape, (0.0, 0.0, 300.0, 400.0))
@@ -191,14 +191,24 @@ class TimeBarNumbers(unittest.TestCase):
 
     def test_the_close_starts_its_shape_after_the_last_fold(self):
         plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
-        last = max(plan.delays) + tlook.FOLD_MS
-        self.assertAlmostEqual(plan.m0, last + tlook.CLOSE_AFTER_MS, delta=0.5)
-        self.assertAlmostEqual(plan.total, plan.m0 + tlook.CLOSE_MS, delta=0.5)
+        last = max(plan.delays) + tlook.FOLD_MS / 2.0
+        self.assertAlmostEqual(plan.m0, last + tlook.CLOSE_AFTER_MS / 2.0, delta=0.5)
+        self.assertAlmostEqual(plan.total, plan.m0 + tlook.CLOSE_MS / 2.0, delta=0.5)
+
+    def test_a_close_runs_twice_the_time_bars_speed(self):
+        plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
+        far = max(range(len(self.PARTS)), key=lambda i: plan.delays[i])
+        cx, cy = burst._centre(self.PARTS[far])
+        o = plan.origin
+        slow = tlook.fold_delay(abs(cx - o[0]) + 1.5 * abs(cy - o[1]), 1.0)
+        self.assertAlmostEqual(plan.delays[far], slow / 2.0, delta=0.01)
+        slow_total = slow + tlook.FOLD_MS + tlook.CLOSE_AFTER_MS + tlook.CLOSE_MS
+        self.assertAlmostEqual(plan.total, slow_total / 2.0, delta=0.5)
 
     def test_a_folded_part_ends_at_the_start_scale_and_gone(self):
         plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
         d = plan.delays[0]
-        self.assertEqual(burst.at(plan, d + tlook.FOLD_MS).parts[0], (0.0, tlook.START_SCALE))
+        self.assertEqual(burst.at(plan, d + tlook.FOLD_MS / 2.0).parts[0], (0.0, tlook.START_SCALE))
 
 
 class Light(unittest.TestCase):

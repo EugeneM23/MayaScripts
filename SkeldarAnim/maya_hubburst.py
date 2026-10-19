@@ -34,12 +34,14 @@ PART_FROM = tlook.START_SCALE
 REVEAL_MS = tlook.REVEAL_MS         # the light's whole length
 EDGE_GLOW, EDGE_CORE, TOP_GLOW = tlook.EDGE_GLOW, tlook.EDGE_CORE, tlook.TOP_GLOW
 
-#  closing
-FOLD_MS = tlook.FOLD_MS             # a part folds (back_in to START_SCALE)
-CLOSE_SHAPE_MS = tlook.CLOSE_MS     # the shape closes (ease_in_quint)
-CLOSE_AFTER_MS = tlook.CLOSE_AFTER_MS   # after the last fold ends
+#  closing - twice the Time Bar's speed (2026-10-19, the animator: «Скорость анимации закрытия
+#  окон стоит ускорить в 2 раза»): every closing time, the folds' delays too, over CLOSE_SPEED
+CLOSE_SPEED = 2.0
+FOLD_MS = tlook.FOLD_MS / CLOSE_SPEED             # a part folds (back_in to START_SCALE)
+CLOSE_SHAPE_MS = tlook.CLOSE_MS / CLOSE_SPEED     # the shape closes (ease_in_quint)
+CLOSE_AFTER_MS = tlook.CLOSE_AFTER_MS / CLOSE_SPEED   # after the last fold ends
 CLOSE_HALF = (12, 9)
-FACE_OUT_MS = 80
+FACE_OUT_MS = 80 / CLOSE_SPEED
 
 #  the rows
 ROW_MAX = 64              # logical px: a taller widget is split into its children
@@ -127,7 +129,7 @@ def plan_close(origin, size, parts, scale=1.0):
     for p in parts:
         cx, cy = _centre(p)
         d = abs(cx - o[0]) + 1.5 * abs(cy - o[1])
-        delays.append(tlook.fold_delay(d, scale))
+        delays.append(tlook.fold_delay(d, scale) / CLOSE_SPEED)
     m0 = max([0.0] + [d + FOLD_MS + CLOSE_AFTER_MS for d in delays])
     return Plan(False, size, o, list(parts), [pivot(p, o) for p in parts], delays,
                 (0.0, 0.0, size[0], size[1]), _box(o, CLOSE_HALF, size, scale), m0,
