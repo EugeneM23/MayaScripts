@@ -334,6 +334,7 @@ def set_up_camera(bone):
     bone's keys, as the button; the line to say, "" when it is already set up or None."""
     if not bone or not cmds.objExists(bone) or _camera_of(bone):
         return ""
+    selection = cmds.ls(selection=True, long=True) or []
     try:
         from maya_scenesetup import camera
         start, end = _span(bone)
@@ -341,4 +342,12 @@ def set_up_camera(bone):
     except Exception as error:      # never fails the press that keyed the pose
         return CAMERA_FAILED % (_leaf(bone), str(error).strip().splitlines()[0] if str(error)
                                 else type(error).__name__)
+    finally:
+        # Camera Setup leaves its camera selected: the animator's selection back (a floor drop's
+        # «the selection as before», the verify)
+        kept = [node for node in selection if cmds.objExists(node)]
+        if kept:
+            cmds.select(kept, replace=True)
+        else:
+            cmds.select(clear=True)
     return CAMERA_SET % _leaf(bone)

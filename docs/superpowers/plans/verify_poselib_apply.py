@@ -452,6 +452,14 @@ def worst_of(rows):
     return deg[1], cm[2], deg[0], cm[0]
 
 
+def camera_driven(plug):
+    """A plug of a camera_root our Camera Setup drives now: a press that keyed a free camera_root
+    sets the camera up after its keys (2026-10-20), and its keys go onto the camera."""
+    from maya_scenesetup import camera
+    node = plug.rsplit(".", 1)[0]
+    return node.split("|")[-1].split(":")[-1] == camera.BONE and bool(camera.camera_for(node))
+
+
 def target_members(data, ch, mirror=False):
     source, members = data["bones"], data["members"]
     if mirror:
@@ -1012,6 +1020,7 @@ def phase_blend():
     text = blend.finish()
     say("   blend finish: %s" % text)
     mixed = ap.mix(current, final, 0.3, ap.rotations_of(final))
+    mixed = dict((p, v) for p, v in mixed.items() if not camera_driven(p))
     # the press re-evaluated its frame; a time change here would take the Ctrl+Z below
     off = max(abs(float(cmds.getAttr(p)) - v) for p, v in mixed.items())
     keyed = [p for p in mixed if cmds.keyframe(p, query=True, time=(4, 4), keyframeCount=True)]
@@ -1207,6 +1216,8 @@ def phase_partial():
     say("   partial skeleton: %s" % text)
     evaluate()
     members, _pairs, bones = target_members(card, s)
+    from maya_poselib import helpers
+    members = helpers.members_with(members, bones)     # the hand's weapon bone (2026-10-20)
     allowed = set(bones[leaf]["path"] for leaf in members)
     changed = sorted(set(p.rsplit(".", 1)[0] for p in s.plugs
                          if abs(before[p] - float(cmds.getAttr(p))) > 1e-9))
@@ -1881,6 +1892,8 @@ def phase_layers():
     say("   no layers: %s" % text)
     on_base = []
     for plug, value in plan.values.items():
+        if camera_driven(plug):
+            continue
         curves = cmds.listConnections(plug, source=True, destination=False,
                                       type="animCurve") or []
         got = cmds.keyframe(curves[0], query=True, time=(3, 3), valueChange=True) if curves \

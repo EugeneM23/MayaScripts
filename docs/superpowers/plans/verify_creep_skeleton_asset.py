@@ -3,7 +3,7 @@
     mayapy verify_creep_skeleton_asset.py
 
 An empty scene: «Creep [skeleton]», then «Creep [rig]» beside it, then a second skeleton.
-The skeleton arrives with plain names (no namespace, like every skeleton row), 91 joints at
+The skeleton arrives with plain names (no namespace, like every skeleton row), 93 joints at
 world level, five skins at their bind, painted, with no constraint on a bone, no node of
 AdvancedSkeleton's network and no script node, weapon_r and weapon_l and no sword; the rig beside it
 is still the only rig and still drives its own skeleton; a second press renames only the top
@@ -48,7 +48,7 @@ gate(1, entry.label in catalog.character_labels() and text.startswith("Creep [sk
 #  since 2026-09-28 in the layout of the Creep's own FBX: `root` under the Null `Armature`, the meshes at the top
 root = cmds.ls("|Creep_Skeleton_Character|Armature|root", type="joint", long=True)
 joints = ([root[0]] + cmds.listRelatives(root[0], ad=True, type="joint", fullPath=True)) if root else []
-gate(2, len(joints) == 91 and not [n for n in new if ":" in n], "91 joints under |Armature|root, plain names (%d namespaced nodes)" % len([n for n in new if ":" in n]))
+gate(2, len(joints) == 93 and not [n for n in new if ":" in n], "93 joints (the camera bones since 2026-10-20) under |Armature|root, plain names (%d namespaced nodes)" % len([n for n in new if ":" in n]))
 worst, skins = 0.0, cmds.ls(type="skinCluster")
 for sc in skins:
     for idx in cmds.getAttr(sc + ".matrix", multiIndices=True) or []:
