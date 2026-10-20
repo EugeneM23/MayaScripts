@@ -623,6 +623,30 @@ class SpanLabelTests(unittest.TestCase):
         self.assertEqual((a, b), (95, None))
 
 
+class IngotTests(unittest.TestCase):
+    """Steel keys as ingots (2026-10-20, the mockup's «фаска»)."""
+
+    def test_the_face_is_lit_at_the_top_and_shaded_at_the_bottom(self):
+        top, mid, bottom = look.ingot_shades(look.STEEL)
+        self.assertEqual(mid, look.STEEL)
+        self.assertGreater(sum(look._rgb(top)), sum(look._rgb(mid)))
+        self.assertLess(sum(look._rgb(bottom)), sum(look._rgb(mid)))
+
+    def test_steel_is_darker_than_the_flat_key_was(self):
+        self.assertLess(sum(look._rgb(look.STEEL)), sum(look._rgb("#b8c0ca")))
+
+    def test_the_side_faces_stay_between_three_quarters_and_two_px(self):
+        self.assertEqual(look.ingot_side(1.0), 0.75)
+        self.assertEqual(look.ingot_side(100.0), 2.0)
+        self.assertAlmostEqual(look.ingot_side(10.0), 1.4)
+
+    def test_the_glow_grows_with_heat_and_a_little_with_a_lift(self):
+        self.assertEqual(look.steel_glow(0.0, 0.0), 0.0)
+        self.assertAlmostEqual(look.steel_glow(1.0, 0.0), look.STEEL_GLOW)
+        self.assertAlmostEqual(look.steel_glow(0.0, 1.0), look.STEEL_GLOW * look.STEEL_GLOW_LIFT)
+        self.assertAlmostEqual(look.steel_glow(1.0, 1.0), look.STEEL_GLOW)
+
+
 class CoolingTests(unittest.TestCase):
     """Steel keys (2026-10-20): a key set glows hot and cools into steel."""
 

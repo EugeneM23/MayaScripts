@@ -12121,6 +12121,23 @@ Filmstrip `time_bar_steel_plate.png` (`render_time_bar_steel.py`). Tests
 `test_timebar_look.CoolingTests`, `test_timebar_bar.SteelKeys`, the hub menu test; filmstrip
 `render_time_bar_steel.py` -> `time_bar_steel.png`. Not seen in a GUI Maya.
 
+**…steel keys are ingots** (2026-10-20, «более похожим на стальные слитки. Добавим им какого-то объема
+и можем сделаем не такими светлыми»; six live mockups, https://claude.ai/artifact/Nyi43XCgehZfSv15cMq3ww,
+they chose **B, «фаска»**, «глоу тут хороший»). With Steel keys a key on a whole frame is a bevelled bar
+(`bar.ingot`, on the kit for the lanes):
+- a soft shadow under it on the track;
+- the face lit at its top (`INGOT_TOP` 0.28 toward white), its colour at `INGOT_MID` 0.35 and shaded to
+  its bottom (`INGOT_BOTTOM` 0.40 toward black);
+- a light left face and a dark right one (`ingot_side`: a seventh of the key, 0.75..2 px);
+- a light top edge and a dark bottom edge.
+`look.STEEL` is darker: #8a929c (was #b8c0ca); the cooling ends there. A hot, hovered or reached
+steel key glows as the mockup did (`bar.ingot_glow`): a round radial light in its colour, added, its
+radius `STEEL_GLOW_REACH` 1.4 times the key's longer side, strength `look.steel_glow(heat, lift)`. The
+plain halo is gone for those keys. The orange keys, breakdowns off steel, and a key between frames (a
+dashed line) are unchanged; breakdowns become ingots in cyan with Steel keys on. The layer panel's
+ACTIVE lane draws its keys as ingots too (`Lanes._ingot_hex`). Tests `test_timebar_look.IngotTests`,
+`SteelKeys.test_a_steel_key_is_an_ingot...` / `..._light_left_face...`. Not seen in a GUI Maya.
+
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
      of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached

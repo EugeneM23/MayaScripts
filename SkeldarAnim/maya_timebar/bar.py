@@ -282,6 +282,55 @@ def classes():
             halos[key] = picture
         return picture
 
+    def ingot(p, rect, hex_, ui, shadow=True):
+        """A steel key on a whole frame (2026-10-20, the mockup's «фаска»): a bevelled bar -
+        a soft shadow under it, the face lit at its top and shaded to its bottom, a light
+        left face and a dark right one, a light top edge and a dark bottom edge."""
+        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        if w <= 0 or h <= 0:
+            return
+        r = min(2.0 * ui, w * 0.2)
+        p.setPen(Qt.NoPen)
+        if shadow:
+            p.setBrush(colour("#000000", 255 * look.INGOT_SHADOW * 0.35))
+            p.drawRoundedRect(rect.translated(ui, 2 * ui).adjusted(-0.5 * ui, -0.5 * ui, 0.5 * ui, 0.5 * ui),
+                              r + 0.5 * ui, r + 0.5 * ui)
+            p.setBrush(colour("#000000", 255 * look.INGOT_SHADOW * 0.6))
+            p.drawRoundedRect(rect.translated(ui, 2 * ui), r, r)
+        top, mid, bottom = look.ingot_shades(hex_)
+        g = QtGui.QLinearGradient(0.0, y, 0.0, y + h)
+        g.setColorAt(0.0, colour(top))
+        g.setColorAt(look.INGOT_MID, colour(mid))
+        g.setColorAt(1.0, colour(bottom))
+        p.setBrush(QtGui.QBrush(g))
+        p.drawRoundedRect(rect, r, r)
+        side = look.ingot_side(w, ui)
+        line = max(1.0, 0.75 * ui)
+        if h > 2 * line:
+            p.fillRect(QtCore.QRectF(x, y + line, side, h - 2 * line),
+                       colour("#ffffff", 255 * look.INGOT_SIDE[0]))
+            p.fillRect(QtCore.QRectF(x + w - side, y + line, side, h - 2 * line),
+                       colour("#000000", 255 * look.INGOT_SIDE[1]))
+        if w > side * 1.2:
+            p.fillRect(QtCore.QRectF(x + side * 0.6, y, w - side * 1.2, line),
+                       colour("#ffffff", 255 * look.INGOT_EDGE[0]))
+            p.fillRect(QtCore.QRectF(x + side * 0.5, y + h - line, w - side, line),
+                       colour("#000000", 255 * look.INGOT_EDGE[1]))
+
+    def ingot_glow(p, rect, hex_, level):
+        """A steel key's glow (the mockup's): a round soft light in its colour, as added
+        light, `level` its strength (look.steel_glow)."""
+        if level <= 0.01:
+            return
+        c = rect.center()
+        reach = max(rect.width(), rect.height()) * look.STEEL_GLOW_REACH
+        g = QtGui.QRadialGradient(c, reach)
+        g.setColorAt(0.0, colour(hex_, 255 * min(1.0, level)))
+        g.setColorAt(1.0, colour(hex_, 0))
+        p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+        p.fillRect(QtCore.QRectF(c.x() - reach, c.y() - reach, 2 * reach, 2 * reach), QtGui.QBrush(g))
+        p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+
     def add_key(path, x, h, ui, whole, width=None, cell=None, grow=0.0):
         """A key's mark into `path`: on a whole frame its frame's cell filled, with a
         gap between neighbours (`cell`, px a frame; the animator's mockup, 2026-10-17),
@@ -1105,11 +1154,21 @@ def classes():
                     #  a copy S put down stands where its key is dragged: under the default
                     #  odd-even fill two equal shapes cancel out (2026-10-19)
                     path.setFillRule(Qt.WindingFill)
+                    bars = []                    # Steel keys: each whole-frame key an ingot
+                    top, bottom = key_span(h, ui)
                     for frame in frames:
                         for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
                             if t.v0 - 1 <= shown <= t.v1 + 2:
-                                add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
+                                whole = look.on_frame(shown)
+                                if st.steel and whole and t.cells:
+                                    bars.append(QtCore.QRectF(
+                                        *look.key_cell(t.x(shown), t.scale, top, bottom, ui)))
+                                else:
+                                    add_key(path, t.x(shown), h, ui, whole, cell=t.scale)
                     p.fillPath(path, colour(hex_))
+                    for rect in bars:
+                        ingot(p, rect, hex_, ui)
+                    p.setPen(Qt.NoPen)
             # the highlight's first and last frame, over the ruler (2026-10-20)
             if sel:
                 draw_span_labels(p, t, sel, 1.5 * ui, w, ui, tk)
@@ -1208,6 +1267,13 @@ def classes():
                     rect = QtCore.QRectF(l - grow, tp - grow, cw + 2 * grow, ch + 2 * grow)
                 else:
                     rect = QtCore.QRectF(x - kw / 2, top, kw, bottom - top)
+                if st.steel and whole:
+                    #  a steel ingot: the mockup's round glow, then the bevelled bar
+                    p.setOpacity(opacity * burst)
+                    ingot_glow(p, rect, hex_, look.steel_glow(heat, max(self.key_lift.get(frame, 0.0), lit)))
+                    face = hex_ if tint <= 0.01 else blend(hex_, RIM, tint * 0.7).name()
+                    ingot(p, rect, face, ui, shadow=False)
+                    continue
                 if lift > 0.01:
                     picture = halo(hex_, ui)
                     grow = 4.5 * ui * z / (1.0 + KEY_LIFT)
@@ -2781,7 +2847,7 @@ def classes():
 
     global _KIT
     _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph, glow=glow,
-                                 halo=halo, soft_dot=soft_dot,
+                                 halo=halo, soft_dot=soft_dot, ingot=ingot, ingot_glow=ingot_glow,
                                  draw_span_labels=draw_span_labels)
     return Strip, Timeline, RangeBlock, Pill
 

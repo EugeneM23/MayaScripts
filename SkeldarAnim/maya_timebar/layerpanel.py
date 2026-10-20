@@ -2329,7 +2329,14 @@ def _classes():
                 return colour(tk["faint"])
             return colour(tk["muted"])
 
-        def _keys(self, p, t, lane, frames, ui):
+        def _ingot_hex(self, row):
+            """The active lane's colour when its keys are steel ingots (Steel keys,
+            2026-10-20), else None."""
+            if row.get("active") and getattr(self.panel.strip, "steel", False):
+                return self._active_hex()
+            return None
+
+        def _keys(self, p, t, lane, frames, ui, ingot_hex=None):
             """Each key its own rounded rect: one path of hundreds of rounded rects fills
             ~30x slower in Qt (9 ms against 0.3 for 200 keys, measured 2026-10-19 - the lanes
             drag dropped to 10 frames a second). Each frame once."""
@@ -2339,7 +2346,13 @@ def _classes():
                 if not (t.v0 - 1 <= frame <= t.v1 + 1) or round(frame, 4) in drawn:
                     continue
                 drawn.add(round(frame, 4))
-                p.drawRoundedRect(_key_rect(t, frame, top, bottom, ui, 1.0), 1.5 * ui, 1.5 * ui)
+                rect = _key_rect(t, frame, top, bottom, ui, 1.0)
+                if ingot_hex and t.cells and look.on_frame(frame):
+                    brush = p.brush()
+                    k.ingot(p, rect, ingot_hex, ui)
+                    p.setBrush(brush)
+                    continue
+                p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
 
         def _block(self, p, t, lane, span, ui):
             a, b = span
@@ -2404,7 +2417,7 @@ def _classes():
                 if carried:                      # drawn where the drag has them, over the picture
                     keys = [k for k in keys if not look.inside(k, view["span"])]
                 p.setBrush(self._key_colour(row))
-                self._keys(p, t, lane, keys, ui)
+                self._keys(p, t, lane, keys, ui, self._ingot_hex(row))
                 wkeys = row.get("weight_keys") or ()
                 if mine and dragging:            # a dragged L key moves with the block
                     wkeys = [k for k in wkeys if not look.inside(k, (sel["a"], sel["b"]))]
@@ -2464,7 +2477,7 @@ def _classes():
                         #  where the drag has it, and a copy S put down where it went down
                         frames.extend(look.shown_at(key, span, preview, carried))
                 p.setBrush(self._key_colour(row))
-                self._keys(p, t, lane, frames, ui)
+                self._keys(p, t, lane, frames, ui, self._ingot_hex(row))
                 p.restore()
             p.restore()
 

@@ -1447,6 +1447,36 @@ class SteelKeys(Strip):
         self.strip.set_steel(False)
         self.assertTrue(self.near(self.pixel(30.0), maya_hubstyle.TOKENS["accent"]))
 
+    def column(self, frame):
+        """The key's middle column, top to bottom, inside its own span."""
+        t = self.tl.track()
+        image = self.tl.grab().toImage()
+        x = int(t.x(frame) + t.scale / 2.0)
+        top, bottom = bar.key_span(self.tl.height(), 1.0)
+        return [image.pixelColor(x, y) for y in range(int(top) + 2, int(bottom) - 2)]
+
+    def test_a_steel_key_is_an_ingot_lit_at_its_top_and_shaded_to_its_bottom(self):
+        flat = self.column(30.0)
+        self.assertEqual(len({c.rgb() for c in flat}), 1, "the accent key is flat")
+        self.strip.set_steel(True)
+        col = self.column(30.0)
+        upper, lower = col[1], col[-2]
+        self.assertGreater(upper.lightness(), lower.lightness() + 25, "lit top, shaded bottom")
+        self.assertGreater(len({c.rgb() for c in col}), 4, "a gradient, not one colour")
+
+    def test_a_steel_key_has_a_light_left_face_and_a_dark_right_one(self):
+        self.strip.set_steel(True)
+        t = self.tl.track()
+        image = self.tl.grab().toImage()
+        top, bottom = bar.key_span(self.tl.height(), 1.0)
+        l, tp, w, h = look.key_cell(t.x(30.0), t.scale, top, bottom, 1.0)
+        y = int(tp + h * 0.5)
+        #  a pixel inside each edge (the edge pixel itself is antialiased into the track)
+        left, mid = image.pixelColor(int(l) + 1, y), image.pixelColor(int(l + w / 2.0), y)
+        right = image.pixelColor(int(l + w) - 1, y)
+        self.assertGreater(left.lightness(), mid.lightness() + 5)
+        self.assertLess(right.lightness(), mid.lightness() - 15)
+
     def set_key(self):
         self.strip.set_steel(True)
         start = self.strip.clock()

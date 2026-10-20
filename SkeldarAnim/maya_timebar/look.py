@@ -891,7 +891,7 @@ def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):
 # cools into steel, as forged steel does: white heat, yellow, orange, cherry red, a dark
 # temper, then the cold metal.
 STEEL_VAR = "skeldarTimeBarSteelKeys"
-STEEL = "#b8c0ca"
+STEEL = "#8a929c"       # a darker steel since the ingots (was #b8c0ca, flat)
 COOL_MS = 1800          # a key set is steel again after this
 COOL_STEPS = 48         # the cooling in this many colours (the key glow caches one picture each)
 HEAT = ((0.00, "#fff6e4"),      # white heat
@@ -967,3 +967,41 @@ def cooling(age_ms, steel=STEEL, cool_ms=COOL_MS):
         hex_ = steel
     heat = max(0.0, 1.0 - u / 0.7) ** 1.5
     return hex_, heat
+
+
+# Steel ingots (2026-10-20, «ключи ... более похожим на стальные слитки ... объема ... не
+# такими светлыми»; the mockup's variant B, «фаска»): with Steel keys a key on a whole frame is
+# a bevelled bar - its face lit at the top and shaded to the bottom, a light left face and a
+# dark right one, a light top edge and a dark bottom edge, a soft shadow under it on the track -
+# and a hot or lit key glows round, as added light.
+INGOT_TOP = 0.28        # the face's top: lightened this much toward white
+INGOT_MID = 0.35        # ... the plain colour this far down
+INGOT_BOTTOM = 0.40     # ... its bottom: darkened this much toward black
+INGOT_SIDE = (0.10, 0.28)       # the left face's white, the right face's black (alpha)
+INGOT_EDGE = (0.50, 0.50)       # the top edge's white, the bottom edge's black (alpha)
+INGOT_SHADOW = 0.55     # the shadow's black under a key (alpha), 1 px right and 2 down
+STEEL_GLOW = 0.55       # a glow's strength at heat 1
+STEEL_GLOW_REACH = 1.4  # its radius, the key's longer side times this
+STEEL_GLOW_LIFT = 0.18  # a key under the mouse or reached glows as at this much heat
+
+
+def toward(hex_, other, u):
+    """`hex_` moved `u` of the way to `other` (both '#rrggbb')."""
+    a, b = _rgb(hex_), _rgb(other)
+    u = max(0.0, min(1.0, u))
+    return "#%02x%02x%02x" % tuple(int(round(x + (y - x) * u)) for x, y in zip(a, b))
+
+
+def ingot_shades(hex_):
+    """(top, middle, bottom) colours of an ingot's face of colour `hex_`."""
+    return (toward(hex_, "#ffffff", INGOT_TOP), hex_, toward(hex_, "#000000", INGOT_BOTTOM))
+
+
+def ingot_side(width, ui=1.0):
+    """The width of an ingot's side faces: a seventh of the key, 0.75..2 logical px."""
+    return max(0.75 * ui, min(2.0 * ui, width * 0.14))
+
+
+def steel_glow(heat, lift):
+    """A steel key's glow strength: its heat, plus a little when under the mouse or reached."""
+    return STEEL_GLOW * min(1.0, max(0.0, heat) + STEEL_GLOW_LIFT * max(0.0, lift))
