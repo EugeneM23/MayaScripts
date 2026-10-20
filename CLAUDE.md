@@ -12786,4 +12786,15 @@ server only through it (and `session.api` for the friends and group presses).
   list, send → clock → ✓ → ✓✓, Shift+Enter, ↑/Esc, reply, delete, retry, entering, one column,
   memory, panes, notify), hub/hubqt/hotkeys tests; picture `docs/superpowers/plans/chat_window.png`
   (`render_chat_window.py`). **Not seen in a GUI Maya**; avatars (upload) not built; the server is
-  still staging (plan 4).
+  production since 2026-10-20 (below).
+
+## Chat on the production Worker (2026-10-20)
+
+Plan 4 of the messenger: `deploy.py production` uploaded `skeldar-chat`
+(https://skeldar-chat.skeldar.workers.dev; the first try answered Cloudflare's own transient
+«10500 Internal authentication error», the retry deployed), and `maya_chat.SERVER` points at it.
+The client's cache is per host (`SkeldarChat/<host>/`), so an account made on staging is not on
+production: sign up again. Proof against production: `verify_chat_server.py all` **0 of 61**,
+`verify_chat_client.py` **19/19**, both deleting their test accounts; 110 chat unit tests. Still the
+animator's to do: roll the Cloudflare token that was pasted into a chat (dashboard → My Profile →
+API Tokens → Roll), then `deploy.py keys` with the new one. Not seen in a GUI Maya.

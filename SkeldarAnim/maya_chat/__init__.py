@@ -4,9 +4,9 @@ Imports nothing heavy: the session and the window are loaded when asked for.
 """
 import sys
 
-# The chat server. Staging until the production Worker exists (plan 3); the optionVar
-# skeldarChatServer overrides it.
-SERVER = "https://skeldar-chat-staging.skeldar.workers.dev"
+# The chat server, production since 2026-10-20 (staging is skeldar-chat-staging); the
+# optionVar skeldarChatServer overrides it.
+SERVER = "https://skeldar-chat.skeldar.workers.dev"
 OPTION = "skeldarChatServer"
 
 
