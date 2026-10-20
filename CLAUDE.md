@@ -12929,3 +12929,50 @@ The animator: «Давай сделем так что бы у нас было в
   the relation, presence, a stranger's presence heard), `verify_chat_client.py` **19/19**; 129
   chat unit tests (People, Toasts: placement, stacking, replace, stay, click, ink). **Not seen in a
   GUI Maya.**
+
+## Chat: everybody without friends, emoji and reactions, avatars, a message chime (2026-10-20)
+
+The animator: «Давай реализуем в нашем чате эмоджи, звуковое сообщение, возможность добавить
+аватарку ... я видел всех пользователей добавлять в друзья не нужно мы просто сразу всех видим».
+Asked: the "sound message" is **a notification sound**, not a recording; emoji = **a picker and
+reactions**; friends **gone entirely**; the avatar **from a file**. Spec
+`docs/superpowers/specs/2026-10-20-chat-everyone-emoji-avatars-design.md`. **This replaces the
+Friends and «Все пользователи» panes of the sections above.**
+- **Server**: no friendship asked anywhere (a dm, a group, a member with anybody; a dm stays
+  writable); `register` emits a global `user` event (everybody's list gains the newcomer); table
+  `reactions (chat, msg, uid, emoji, at)`, the socket frame `react {chat, id, emoji, on}` (a member,
+  a live message, 1-16 characters with no ASCII letter/digit/space, at most 8 a person a message)
+  emitting the seq event `reaction`; a message's view carries `reactions {emoji: [uid...]}` in
+  reaction order; a delete takes them. The friends routes stay for an older client.
+- **Client**: `records.reactions` / `toggled`, the `reaction` event; `session.react` (toggles mine,
+  applied at once), `_on_reaction`, `set_avatar(bytes)`, `resync` reads the people (not the
+  friends), `_on_user` adds a newcomer; `api.raw` / `put_avatar` / `avatar`.
+- **The list** (`look.directory`): every chat newest first, then a «ВСЕ ПОЛЬЗОВАТЕЛИ · n в сети из m»
+  head and everybody I have no dm with (online first); a person row's click opens the dm. New chat
+  and Members pick from everybody (`look.everybody`, a search field in New chat).
+- **The online dot** (asked by a peer session the same hour): `window.paint_avatar(..., online)`
+  draws an `ok` dot ringed in `panel` at the bottom-right - dm and person rows, the chat header,
+  Members / New chat rows (`AvatarDot` widgets), toasts; live from `state.online`, the user's own
+  `online` the fallback (`is_online`). A group gets none.
+- **Avatars** (`maya_chat/avatars.py`): `<store>/avatars/<uid>_<v>.jpg`, fetched on a thread once a
+  version (a failure not asked again), drawn as a round cached pixmap wherever the initials stood;
+  the window repaints on its 1 s tick when one came (`take_changed`). Settings: the picture and
+  «Выбрать картинку…» (`QFileDialog`, the window's one dialog) -> `prepare` (cropped square by its
+  centre, 256 px, JPEG <= 256 KB) -> `set_avatar_from`.
+- **Emoji** (`maya_chat/emoji.py`, stdlib): seven categories, `QUICK` 👍 ❤️ 😂 😮 😢 🔥, recently used
+  in `skeldarChatEmojiRecent`, `only_emoji` (1-3 alone are drawn at 30 px). The picker
+  (`window.picker_class`, a Qt.Popup of tabs over a painted 10 x 9 grid): from the composer's smiley
+  it inserts at the cursor, from a message's «Реакция…» it reacts. A message's right-button menu
+  opens with the six quick reactions (mine lit). The feed draws reactions as pills under the bubble
+  («👍 2», mine accent-outlined, a new count pops); a click toggles mine. Fonts fall back to Segoe UI
+  Emoji (`setFamilies`).
+- **The chime**: `maya_hubsound.SOUNDS["message"]` (E5 then B5 90 ms later, -12 dBFS, 0.46 s; a
+  partial may carry an onset now), shipped as `assets/sounds/message.wav`; `play(name, force=True)`
+  plays whatever the hub's interface-sounds switch says. `notify.ring` plays it at most once in
+  `RING_GAP` 1.5 s; the chat's Sound setting is **on by default**.
+- Proof: staging deployed, `verify_chat_server.py all` **0 of 73** (new phases `react`, `newcomer`;
+  the friendship gates now prove no friendship is asked), `verify_chat_client.py <staging>` **23/23**
+  (B in A's people with no request, a reaction both ways, a picture heard and read); unit tests
+  `test_chat_extras` and the window's `Everybody`, `Reactions`, `Avatar`; picture
+  `docs/superpowers/plans/chat_extras.png` (`render_chat_extras.py`). Note the verifies print emoji:
+  run them with `PYTHONIOENCODING=utf-8` (cp1252 raises). **Not seen in a GUI Maya.**

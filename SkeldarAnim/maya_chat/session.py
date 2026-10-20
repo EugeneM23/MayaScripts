@@ -205,7 +205,10 @@ class Session(object):
             st.messages[cid] = records.merge(st.messages.get(cid, []), fresh)
             self.store.set_messages(cid, st.messages[cid])
         self._save_chats()
-        self._read_friends()
+        try:
+            self.read_people(tell=False)
+        except _api.ChatError:
+            pass
         seq = int(answer.get("seq") or 0)
         if self.protocol is not None:
             self.protocol.since = max(self.protocol.since, seq)
@@ -221,15 +224,17 @@ class Session(object):
             if "online" in u:
                 st.online[u["id"]] = {"online": u["online"], "last_seen": u["last_seen"]}
 
-    def read_people(self):
-        """Everybody in the studio but me, with presence and how they stand to me."""
-        self._need()
+    def read_people(self, tell=True):
+        """Everybody in the studio but me, with presence."""
+        if self.api is None or self.state.me is None:
+            raise _api.ChatError("signed_out", "Sign in first")
         st = self.state
         st.people = [records.user(u) for u in self.api.people()]
         for u in st.people:
             if "online" in u:
                 st.online[u["id"]] = {"online": u["online"], "last_seen": u["last_seen"]}
-        self.tell("people")
+        if tell:
+            self.tell("people")
         return st.people
 
     # ---------------------------------------------------------------- events
@@ -361,6 +366,8 @@ class Session(object):
             for i, x in enumerate(lst):
                 if x["id"] == u["id"]:
                     lst[i] = dict(x, **u)
+        if (st.me is None or st.me["id"] != u["id"])                 and not any(x["id"] == u["id"] for x in st.people):
+            st.people.append(dict(u))           # a newcomer: everybody sees everybody
         for c in st.chats.values():
             for i, x in enumerate(c["members"]):
                 if x["id"] == u["id"]:
@@ -376,6 +383,48 @@ class Session(object):
             for i, x in enumerate(lst):
                 if x["id"] == e["user_id"]:
                     lst[i] = dict(x, **seen)
+
+    def _on_reaction(self, e):
+        self._react_local(e["chat_id"], e["id"], e["emoji"], e["user_id"], e["on"])
+
+    def _react_local(self, chat, mid, emoji, user_id, on):
+        st = self.state
+        msgs = st.messages.get(chat, [])
+        for i, m in enumerate(msgs):
+            if m["id"] == mid:
+                msgs[i] = dict(m, reactions=records.toggled(m.get("reactions"), emoji, user_id, on))
+                self.store.set_messages(chat, msgs)
+                c = st.chats.get(chat)
+                if c is not None and (c.get("last") or {}).get("id") == mid:
+                    c["last"] = msgs[i]
+                return msgs[i]
+        return None
+
+    def react(self, chat, message_id, emoji):
+        """My reaction on a message toggled; answers whether it is on now (None offline)."""
+        self._need()
+        m = next((x for x in self.state.messages.get(chat, []) if x["id"] == message_id), None)
+        if m is None or m.get("deleted"):
+            return None
+        me = self.state.me["id"]
+        on = me not in (m.get("reactions") or {}).get(emoji, [])
+        if not self.protocol.push({"type": "react", "chat": chat, "id": message_id,
+                                   "emoji": emoji, "on": on}):
+            return None
+        self._react_local(chat, message_id, emoji, me, on)
+        self.tell("reaction", {"chat_id": chat, "id": message_id, "user_id": me,
+                               "emoji": emoji, "on": on, "local": True})
+        return on
+
+    def set_avatar(self, data, content_type="image/jpeg"):
+        """My picture uploaded; the server's user event brings avatar_v to everybody."""
+        self._need()
+        me = records.user(self.api.put_avatar(data, content_type))
+        self.state.me = dict(self.state.me, **me)
+        self.store.set_me(self.state.me)
+        self._on_user({"user": me})
+        self.tell("user", {"user": me})
+        return me
 
     def _on_typing(self, e):
         self.state.typing.setdefault(e["chat_id"], {})[e["user_id"]] = time.monotonic()

@@ -1,4 +1,4 @@
-"""The chat's notifications: the rail badge, a viewport message, a sound (off by default).
+"""The chat's notifications: the rail badge, a viewport message, a sound (a chime, on by default).
 
 Listens to the session (one listener a Maya, kept on sys - trap 111).
 """
@@ -8,7 +8,8 @@ import traceback
 from . import look
 
 OPTIONS = {"viewport": ("skeldarChatNotifyViewport", True),
-           "sound": ("skeldarChatNotifySound", False)}
+           "sound": ("skeldarChatNotifySound", True)}
+RING_GAP = 1.5      # s: a burst of messages rings once
 _VARS = {}
 PREVIEW = 80
 
@@ -114,12 +115,22 @@ def say(head, text, message=None, user=None):
         return False
 
 
-def ring():
+def ring(now=None):
+    """The message chime (assets/sounds/message.wav), whatever the hub's interface sounds say;
+    not again within RING_GAP."""
+    import time
+    now = time.monotonic() if now is None else now
+    last = getattr(sys, "_skeldar_chat_rang", None)
+    if last is not None and now - last < RING_GAP:
+        return False
     try:
         import maya_hubsound
-        return bool(maya_hubsound.play("hover"))
+        played = bool(maya_hubsound.play("message", force=True))
     except Exception:                                        # noqa: BLE001
         return False
+    if played:
+        sys._skeldar_chat_rang = now
+    return played
 
 
 def heard(session, kind, data, out=None):

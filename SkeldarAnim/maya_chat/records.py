@@ -12,7 +12,7 @@ TRAILING = ".,;:!?)]}'\""
 # Events that carry a global seq, and the ones that never do.
 SEQ_KINDS = ("message", "edited", "deleted", "read", "chat", "member_added", "member_removed",
              "friend_request", "request_sent", "friend_added", "friend_removed",
-             "request_cancelled", "user")
+             "request_cancelled", "user", "reaction")
 LIVE_KINDS = ("typing", "presence", "ack", "error", "resync", "caught_up")
 
 
@@ -67,6 +67,23 @@ def user(d):
     return out
 
 
+def reactions(value):
+    """{emoji: [user id, ...]} - anything not that shape is dropped, an empty list too."""
+    out = {}
+    if not isinstance(value, dict):
+        return out
+    for emoji, people in value.items():
+        if not isinstance(emoji, str) or not emoji or not isinstance(people, list):
+            continue
+        ids = []
+        for uid in people:
+            if isinstance(uid, str) and uid and uid not in ids:
+                ids.append(uid)
+        if ids:
+            out[emoji] = ids
+    return out
+
+
 def message(d):
     d = _dict(d)
     edited = d.get("edited_at")
@@ -76,7 +93,8 @@ def message(d):
             "seq": _int(d, "seq"), "from_id": _str(d, "from_id", empty=False),
             "cid": _opt_str(d, "cid"), "text": _str(d, "text"),
             "reply_to": _opt_str(d, "reply_to"), "at": _int(d, "at"),
-            "edited_at": edited, "deleted": bool(d.get("deleted"))}
+            "edited_at": edited, "deleted": bool(d.get("deleted")),
+            "reactions": reactions(d.get("reactions"))}
 
 
 def chat(d):
@@ -132,6 +150,10 @@ def event(d):
             out["user_id"] = _str(d, "user_id", False)
         elif kind == "request_cancelled":
             out.update(from_id=_str(d, "from_id", False), to_id=_str(d, "to_id", False))
+        elif kind == "reaction":
+            out.update(chat_id=_str(d, "chat_id", False), id=_str(d, "id", False),
+                       user_id=_str(d, "user_id", False), emoji=_str(d, "emoji", False),
+                       on=bool(d.get("on", True)))
         elif kind == "typing":
             out.update(chat_id=_str(d, "chat_id", False), user_id=_str(d, "user_id", False))
         elif kind == "presence":
@@ -146,6 +168,21 @@ def event(d):
         return out
     except Bad:
         return None
+
+
+def toggled(reacts, emoji, user_id, on):
+    """A copy of {emoji: [ids]} with user_id put on or taken off emoji (no-op when already so)."""
+    out = dict((k, list(v)) for k, v in (reacts or {}).items())
+    ids = out.get(emoji, [])
+    if on and user_id not in ids:
+        out[emoji] = ids + [user_id]
+    elif not on and user_id in ids:
+        ids = [u for u in ids if u != user_id]
+        if ids:
+            out[emoji] = ids
+        else:
+            out.pop(emoji, None)
+    return out
 
 
 def merge(old, new):

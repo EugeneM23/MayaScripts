@@ -120,7 +120,8 @@ class Start(Base):
         self.assertEqual(ses.state.me["id"], "me")
         self.assertEqual(list(ses.state.chats), ["dm"])
         self.assertEqual([m["id"] for m in ses.state.messages["dm"]], ["m1"])
-        self.assertEqual(ses.state.friends["friends"][0]["id"], "bob")
+        self.assertEqual([u["id"] for u in ses.state.people], ["bob", "carl"])
+        self.assertEqual(ses.state.online["bob"]["online"], True)
         self.assertEqual(ses.protocol.since, 20)
         self.assertEqual(self.store.since(), 20)
         self.assertTrue(ses.link.started)
@@ -265,21 +266,48 @@ class Events(Base):
                                                              "name": "Karl", "avatar_v": 0}})
         self.assertEqual(ses.state.people[1]["name"], "Karl")
 
-    def test_friends_and_presence(self):
+    def test_everybody_follows_presence_names_and_newcomers(self):
         ses = self.session()
-        ann = {"id": "ann", "nick": "ann", "name": "Ann", "avatar_v": 0}
-        self.frame(ses, {"seq": 21, "kind": "friend_request", "user": ann})
-        self.assertEqual(ses.state.friends["incoming"][0]["id"], "ann")
-        self.frame(ses, {"seq": 22, "kind": "friend_added", "user": ann})
-        self.assertEqual(ses.state.friends["incoming"], [])
-        self.assertEqual({u["id"] for u in ses.state.friends["friends"]}, {"bob", "ann"})
-        self.frame(ses, {"seq": 23, "kind": "friend_removed", "user_id": "ann"})
-        self.assertEqual([u["id"] for u in ses.state.friends["friends"]], ["bob"])
         self.frame(ses, {"kind": "presence", "user_id": "bob", "online": False, "last_seen": 9})
         self.assertEqual(ses.state.online["bob"], {"online": False, "last_seen": 9})
-        self.assertFalse(ses.state.friends["friends"][0]["online"])
+        self.assertFalse(ses.state.people[0]["online"])
         self.frame(ses, {"seq": 24, "kind": "user", "user": dict(BOB, name="Robert")})
         self.assertEqual(ses.state.chats["dm"]["members"][1]["name"], "Robert")
+        self.assertEqual(ses.state.people[0]["name"], "Robert")
+        dan = {"id": "dan", "nick": "dan", "name": "Dan", "avatar_v": 0, "online": False,
+               "last_seen": 0}
+        self.frame(ses, {"seq": 25, "kind": "user", "user": dan})
+        self.assertEqual([u["id"] for u in ses.state.people], ["bob", "carl", "dan"])
+        self.frame(ses, {"seq": 26, "kind": "user", "user": dict(ME, name="Me again")})
+        self.assertNotIn("me", [u["id"] for u in ses.state.people])
+
+    def test_a_reaction_is_toggled_locally_and_by_the_server(self):
+        ses = self.session()
+        ses.protocol.opened()
+        self.assertTrue(ses.react("dm", "m1", "👍"))
+        self.assertEqual(ses.state.messages["dm"][0]["reactions"], {"👍": ["me"]})
+        sent = [f for f in ses.link.frames() if f.get("type") == "react"]
+        self.assertEqual(sent[-1], {"type": "react", "chat": "dm", "id": "m1", "emoji": "👍",
+                                    "on": True})
+        self.frame(ses, {"seq": 27, "kind": "reaction", "chat_id": "dm", "id": "m1",
+                         "user_id": "me", "emoji": "👍", "on": True})
+        self.frame(ses, {"seq": 28, "kind": "reaction", "chat_id": "dm", "id": "m1",
+                         "user_id": "bob", "emoji": "👍", "on": True})
+        self.assertEqual(ses.state.messages["dm"][0]["reactions"], {"👍": ["me", "bob"]})
+        self.assertFalse(ses.react("dm", "m1", "👍"))
+        self.assertEqual(ses.state.messages["dm"][0]["reactions"], {"👍": ["bob"]})
+        self.frame(ses, {"seq": 29, "kind": "reaction", "chat_id": "dm", "id": "m1",
+                         "user_id": "bob", "emoji": "👍", "on": False})
+        self.assertEqual(ses.state.messages["dm"][0]["reactions"], {})
+        self.assertIsNone(ses.react("dm", "nope", "👍"))
+
+    def test_an_avatar_is_uploaded_and_bumps_me(self):
+        ses = self.session()
+        ses.api.put_avatar = lambda data, kind: dict(ME, avatar_v=3)
+        me = ses.set_avatar(bytes([0xff, 0xd8, 0xff]))
+        self.assertEqual(me["avatar_v"], 3)
+        self.assertEqual(ses.state.me["avatar_v"], 3)
+        self.assertEqual(ses.state.chats["dm"]["members"][0]["avatar_v"], 3)
 
     def test_resync_reads_again(self):
         ses = self.session()

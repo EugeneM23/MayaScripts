@@ -60,10 +60,9 @@ def main():
         gate("both signed in", bool(ma and mb), "%s %s" % (ma["nick"], mb["nick"]))
         gate("both online", wait(lambda: a.state.status == "online" and b.state.status == "online") is not None)
 
-        a.api.request(mb["nick"])
-        b.api.answer("accept", ma["id"])
-        gate("friends by events", wait(lambda: any(u["id"] == mb["id"] for u in a.state.friends["friends"])
-                                       and any(u["id"] == ma["id"] for u in b.state.friends["friends"])) is not None)
+        # everybody sees everybody (2026-10-20): B's newcomer event put B in A's people
+        gate("A sees B with no friend request", wait(lambda: any(u["id"] == mb["id"] for u in a.state.people))
+             is not None)
         dm = a.open_dm(mb["id"])
         gate("the dm reaches B", wait(lambda: dm in b.state.chats) is not None, dm)
 
@@ -119,6 +118,23 @@ def main():
                                     ) is not None)
         a.delete(dm, mid)
         gate("B sees the delete", wait(lambda: has(b, dm, lambda m: m["id"] == mid and m["deleted"])) is not None)
+
+        # 5b. a reaction, both ways; my picture
+        rid = [m for m in a.state.messages[dm] if m["cid"] == cid2][0]["id"]
+        b.react(dm, rid, "\U0001F525")
+        gate("A sees B's reaction", wait(lambda: has(a, dm, lambda m: m["id"] == rid and
+                                                     m["reactions"].get("\U0001F525") == [mb["id"]]))
+             is not None)
+        b.react(dm, rid, "\U0001F525")
+        gate("A sees it taken off", wait(lambda: has(a, dm, lambda m: m["id"] == rid and not m["reactions"]))
+             is not None)
+        png = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                            "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+        me = a.set_avatar(png, "image/png")
+        gate("B hears A's new picture", wait(lambda: any(m.get("avatar_v") == me["avatar_v"]
+                                                         for m in b.state.chats[dm]["members"]
+                                                         if m["id"] == ma["id"])) is not None)
+        gate("B reads it", b.api.avatar(ma["id"]) == png)
 
         # 6. a refusal: too long
         cid4 = a.send(dm, "x" * 5000)

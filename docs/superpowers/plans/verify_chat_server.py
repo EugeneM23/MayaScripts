@@ -160,13 +160,13 @@ def phase_chats():
     A, B, C, D = (Users.make(x) for x in ("ca", "cb", "cc", "cd"))
     friends_of((A, B), (A, C))
     status, doc = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": D[1]["id"]})
-    gate("a dm with a stranger is refused", status == 403 and doc.get("error") == "not_friend", doc)
+    gate("a dm with anybody, no friendship asked (2026-10-20)", status == 200 and doc["kind"] == "dm", doc)
     status, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
     gate("a dm with a friend", status == 200 and dm["kind"] == "dm" and len(dm["members"]) == 2, dm)
     status, again = jcall("POST", "/v1/chats", B[0], {"kind": "dm", "with": A[1]["id"]})
     gate("the same dm from the other side, never a second", again.get("id") == dm["id"], again)
     status, doc = jcall("POST", "/v1/chats", A[0], {"kind": "group", "name": "G", "members": [D[1]["id"]]})
-    gate("a group with a stranger is refused", status == 403 and doc.get("error") == "not_friend", doc)
+    gate("a group with anybody", status == 200 and len(doc["members"]) == 2, doc)
     status, g = jcall("POST", "/v1/chats", A[0], {"kind": "group", "name": " Crypt anim ", "members": [B[1]["id"]]})
     gate("a group, its creator the admin", status == 200 and g["admin"] == A[1]["id"] and g["name"] == "Crypt anim", g)
     status, doc = jcall("PATCH", "/v1/chats/" + g["id"], B[0], {"name": "Mine"})
@@ -265,8 +265,9 @@ def phase_live():
     time.sleep(11)
     wa.events(0.5)
     wa.send({"type": "send", "chat": dm["id"], "cid": "c9", "text": "still?"})
-    err, _ = wa.until(lambda e: e["kind"] == "error")
-    gate("a dm stops when they are no longer friends", err and err["code"] == "not_friend", err)
+    err, seen9 = wa.until(lambda e: e["kind"] in ("error", "ack"))
+    err = err if err and err["kind"] == "error" else None
+    gate("a dm keeps going without friendship", err is None, err)
     for w in (wa, wb, ws_s):
         w.close()
 
@@ -311,9 +312,60 @@ def phase_people():
     wa.close()
 
 
+def phase_react():
+    A, B, C = Users.make("ra"), Users.make("rb"), Users.make("rc")
+    status, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
+    wa, wb = ws(A[0]), ws(B[0])
+    for w, t in ((wa, A[0]), (wb, B[0])):
+        w.send({"type": "hello", "since": jcall("GET", "/v1/chats", t)[1]["seq"]})
+        w.until(lambda e: e["kind"] == "caught_up")
+    wa.send({"type": "send", "chat": dm["id"], "cid": "r1", "text": "react to me"})
+    ack, _ = wa.until(lambda e: e["kind"] == "ack")
+    wb.send({"type": "react", "chat": dm["id"], "id": ack["id"], "emoji": "👍", "on": True})
+    ev, _ = wa.until(lambda e: e["kind"] == "reaction")
+    gate("a reaction reaches the other, with a seq", ev and ev["emoji"] == "👍" and ev["on"]
+         and ev["user_id"] == B[1]["id"] and isinstance(ev.get("seq"), int), ev)
+    wa.send({"type": "react", "chat": dm["id"], "id": ack["id"], "emoji": "👍", "on": True})
+    wa.until(lambda e: e["kind"] == "reaction" and e["user_id"] == A[1]["id"])
+    msgs = jcall("GET", "/v1/chats/%s/messages" % dm["id"], A[0])[1]["messages"]
+    gate("history carries the reactions in order", msgs[-1].get("reactions") ==
+         {"👍": [B[1]["id"], A[1]["id"]]}, msgs[-1].get("reactions"))
+    wb.send({"type": "react", "chat": dm["id"], "id": ack["id"], "emoji": "👍", "on": False})
+    off, _ = wa.until(lambda e: e["kind"] == "reaction" and not e["on"])
+    msgs = jcall("GET", "/v1/chats/%s/messages" % dm["id"], A[0])[1]["messages"]
+    gate("a reaction taken off", off and msgs[-1]["reactions"] == {"👍": [A[1]["id"]]}, msgs[-1])
+    wb.send({"type": "react", "chat": dm["id"], "id": ack["id"], "emoji": "ok", "on": True})
+    err, _ = wb.until(lambda e: e["kind"] == "error")
+    gate("a word is not a reaction", err and err["code"] == "bad_emoji", err)
+    wc = ws(C[0])
+    wc.send({"type": "react", "chat": dm["id"], "id": ack["id"], "emoji": "🔥", "on": True})
+    err, _ = wc.until(lambda e: e["kind"] == "error")
+    gate("someone outside the chat cannot react", err and err["code"] == "not_member", err)
+    wa.send({"type": "delete", "chat": dm["id"], "id": ack["id"]})
+    wa.until(lambda e: e["kind"] == "deleted")
+    msgs = jcall("GET", "/v1/chats/%s/messages" % dm["id"], A[0])[1]["messages"]
+    gate("a deleted message loses its reactions", msgs[-1]["reactions"] == {}, msgs[-1])
+    for w in (wa, wb, wc):
+        w.close()
+
+
+def phase_newcomer():
+    A = Users.make("na")
+    wa = ws(A[0])
+    wa.send({"type": "hello", "since": jcall("GET", "/v1/chats", A[0])[1]["seq"]})
+    wa.until(lambda e: e["kind"] == "caught_up")
+    B = Users.make("nb")
+    ev, _ = wa.until(lambda e: e["kind"] == "user" and e["user"]["id"] == B[1]["id"])
+    gate("a new account reaches everybody at once", ev is not None and "seq" in ev, ev)
+    wa.close()
+    status, a = jcall("PUT", "/v1/me/avatar", A[0], raw=PNG, ctype="image/png")
+    status2, data, ctype = call("GET", "/v1/avatar/u/" + A[1]["id"], B[0])
+    gate("anybody reads my picture", status == 200 and a["avatar_v"] == 1 and data == PNG, (status, status2))
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
-          "people": phase_people}
+          "people": phase_people, "react": phase_react, "newcomer": phase_newcomer}
 
 
 def main(argv):

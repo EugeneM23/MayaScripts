@@ -35,7 +35,8 @@ import wave
 
 RATE = 48000
 
-#  partials: ((frequency Hz, relative level, decay time constant s), ...);
+#  partials: ((frequency Hz, relative level, decay time constant s[, onset s]), ...);
+#  a partial with an onset is silent before it and rings from it (a chime's second note);
 #  attack and fade are raised-cosine ramps (s); peak is the loudest sample
 #  (1.0 = full scale).
 Tone = collections.namedtuple("Tone", "partials attack length fade peak")
@@ -45,6 +46,11 @@ SOUNDS = {
     #  the octave dying first; −15 dBFS, heard rather than noticed.
     "hover": Tone(partials=((1318.51, 1.0, 0.016), (2637.02, 0.2, 0.007)),
                   attack=0.0015, length=0.080, fade=0.015, peak=0.178),
+    #  A chat message (2026-10-20, «сообщение со звуком оповещения»): a soft two-note chime,
+    #  E5 then B5 90 ms later, each with a quiet octave; −12 dBFS, under half a second.
+    "message": Tone(partials=((659.26, 1.0, 0.16, 0.0), (1318.51, 0.18, 0.06, 0.0),
+                              (987.77, 0.9, 0.22, 0.09), (1975.53, 0.15, 0.07, 0.09)),
+                    attack=0.003, length=0.46, fade=0.06, peak=0.25),
 }
 
 OPTIONVAR = "skeldarAnimHub_sounds"
@@ -72,9 +78,17 @@ def synth(tone, rate=RATE):
     for i in range(n):
         t = i / float(rate)
         value = 0.0
-        for freq, level, decay in tone.partials:
-            value += (level * math.exp(-t / decay)
-                      * math.sin(2.0 * math.pi * freq * t))
+        for partial in tone.partials:
+            freq, level, decay = partial[:3]
+            onset = partial[3] if len(partial) > 3 else 0.0
+            u = t - onset
+            if u < 0:
+                continue
+            #  a note starting late gets the same raised-cosine attack, so it does not click
+            ramp = 1.0 if onset <= 0 or u >= tone.attack else (
+                0.5 - 0.5 * math.cos(math.pi * u / tone.attack))
+            value += (ramp * level * math.exp(-u / decay)
+                      * math.sin(2.0 * math.pi * freq * u))
         if i < attack:
             value *= 0.5 - 0.5 * math.cos(math.pi * i / attack)
         tail = n - 1 - i
@@ -274,12 +288,13 @@ def preload(name="hover"):
         return False
 
 
-def play(name, now=None):
+def play(name, now=None, force=False):
     """Play sound `name` unless the sounds are off, the last sound was less
-    than MIN_GAP ago, or there is nothing to play it with. Never raises;
-    answers whether it played."""
+    than MIN_GAP ago, or there is nothing to play it with. `force` plays it
+    whatever the interface-sounds switch says (a chat message: its own
+    setting decides). Never raises; answers whether it played."""
     try:
-        if not enabled():
+        if not force and not enabled():
             return False
         state = _state()
         now = time.monotonic() if now is None else now

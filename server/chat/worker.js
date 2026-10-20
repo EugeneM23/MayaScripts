@@ -63,7 +63,13 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, uid TEXT,
      kind TEXT NOT NULL, payload TEXT NOT NULL, at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS events_at ON events (at)`,
+  `CREATE TABLE IF NOT EXISTS reactions (chat TEXT NOT NULL, msg TEXT NOT NULL, uid TEXT NOT NULL,
+     emoji TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (msg, uid, emoji))`,
+  `CREATE INDEX IF NOT EXISTS reactions_chat ON reactions (chat)`,
 ];
+const REACTIONS_EACH = 8;
+// An emoji: 1-16 UTF-16 units, no ASCII letter, digit or space.
+const EMOJI = /^[^A-Za-z0-9\s]{1,16}$/u;
 
 export class Studio extends DurableObject {
   constructor(ctx, env) {
@@ -184,7 +190,10 @@ export class Studio extends DurableObject {
     const name = clean(b.name, NAME_MAX) || nick;
     this.sql.exec("INSERT INTO users (id, nick, name, token_hash, created) VALUES (?, ?, ?, ?, ?)",
       id, nick, name, await sha256(token), Date.now());
-    return json({ token, user: { id, nick, name, avatar_v: 0 } });
+    const user = { id, nick, name, avatar_v: 0 };
+    // Everybody's list gains the newcomer at once (there are no friends to ask).
+    this.emit({ kind: "user", payload: { user: { ...user, online: false, last_seen: 0 } } });
+    return json({ token, user });
   }
 
   getMe({ me }) { return json(this.user(me)); }
@@ -198,6 +207,7 @@ export class Studio extends DurableObject {
     for (const ws of this.ctx.getWebSockets(uid)) { try { ws.close(1000, "account deleted"); } catch { /* gone */ } }
     for (const r of this.sql.exec("SELECT chat FROM members WHERE uid = ?", uid).toArray()) this.leave(r.chat, uid);
     this.sql.exec("DELETE FROM friends WHERE a = ? OR b = ?", uid, uid);
+    this.sql.exec("DELETE FROM reactions WHERE uid = ?", uid);
     this.sql.exec("DELETE FROM requests WHERE from_id = ? OR to_id = ?", uid, uid);
     this.sql.exec("DELETE FROM users WHERE id = ?", uid);
   }
@@ -338,9 +348,30 @@ export class Studio extends DurableObject {
     return row;
   }
 
-  messageView(r) {
-    return { id: r.id, chat: r.chat, seq: r.seq, from_id: r.from_id, cid: r.cid,
-             text: r.deleted ? "" : r.text, reply_to: r.reply_to, at: r.at, edited_at: r.edited_at, deleted: !!r.deleted };
+  messageView(r, reactions) {
+    const out = { id: r.id, chat: r.chat, seq: r.seq, from_id: r.from_id, cid: r.cid,
+                  text: r.deleted ? "" : r.text, reply_to: r.reply_to, at: r.at, edited_at: r.edited_at,
+                  deleted: !!r.deleted };
+    out.reactions = reactions ? (reactions.get(r.id) || {}) : this.reactionsOf([r.id]).get(r.id) || {};
+    return out;
+  }
+
+  // {message id: {emoji: [user id, ...]}} for these messages, each emoji's people in reaction order.
+  reactionsOf(ids) {
+    const out = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90);
+      if (!part.length) continue;
+      const rows = this.sql.exec(
+        `SELECT msg, uid, emoji FROM reactions WHERE msg IN (${part.map(() => "?").join(",")}) ORDER BY at, uid`,
+        ...part).toArray();
+      for (const r of rows) {
+        const m = out.get(r.msg) || {};
+        (m[r.emoji] = m[r.emoji] || []).push(r.uid);
+        out.set(r.msg, m);
+      }
+    }
+    return out;
   }
 
   shared(chat) {
@@ -375,7 +406,6 @@ export class Studio extends DurableObject {
     if (b.kind === "dm") {
       const other = this.userById(String(b.with ?? ""));
       if (other.id === me.id) refuse("self", "That is you");
-      if (!this.areFriends(me.id, other.id)) refuse("not_friend", "Add them as a friend first", 403);
       const id = "dm_" + [me.id, other.id].sort().join("_");
       if (!this.sql.exec("SELECT 1 FROM chats WHERE id = ?", id).toArray().length) {
         this.sql.exec("INSERT INTO chats (id, kind, created) VALUES (?, 'dm', ?)", id, Date.now());
@@ -390,10 +420,7 @@ export class Studio extends DurableObject {
     if (!name) refuse("bad_name", "Name the group");
     const others = [...new Set((b.members || []).map(String))].filter((id) => id !== me.id);
     if (others.length + 1 > GROUP_MAX) refuse("too_big", "A group holds at most " + GROUP_MAX + " people", 413);
-    for (const id of others) {
-      this.userById(id);
-      if (!this.areFriends(me.id, id)) refuse("not_friend", "Only friends can be added", 403);
-    }
+    for (const id of others) this.userById(id);
     const id = "g_" + randomHex(8);
     this.sql.exec("INSERT INTO chats (id, kind, name, admin, created) VALUES (?, 'group', ?, ?, ?)", id, name, me.id, Date.now());
     this.addMember(id, me.id);
@@ -437,7 +464,6 @@ export class Studio extends DurableObject {
     const chat = params[0];
     this.adminOf(chat, me);
     const user = this.userById(String((await this.body(request)).user ?? ""));
-    if (!this.areFriends(me.id, user.id)) refuse("not_friend", "Only friends can be added", 403);
     if (this.memberIds(chat).length >= GROUP_MAX) refuse("too_big", "A group holds at most " + GROUP_MAX + " people", 413);
     this.addMember(chat, user.id);
     this.emit({ chat, kind: "member_added", payload: { chat_id: chat, user: this.withPresence(user) } });
@@ -457,6 +483,7 @@ export class Studio extends DurableObject {
     this.sql.exec("DELETE FROM members WHERE chat = ? AND uid = ?", chat, uid);
     if (!this.memberIds(chat).length) {
       this.sql.exec("DELETE FROM messages WHERE chat = ?", chat);
+      this.sql.exec("DELETE FROM reactions WHERE chat = ?", chat);
       this.sql.exec("DELETE FROM chats WHERE id = ?", chat);
     }
   }
@@ -478,7 +505,8 @@ export class Studio extends DurableObject {
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit")) || 50));
     const rows = this.sql.exec("SELECT * FROM messages WHERE chat = ? AND seq < ? ORDER BY seq DESC LIMIT ?",
       params[0], before, limit).toArray();
-    return json({ messages: rows.reverse().map((r) => this.messageView(r)) });
+    const reactions = this.reactionsOf(rows.map((r) => r.id));
+    return json({ messages: rows.reverse().map((r) => this.messageView(r, reactions)) });
   }
 
   // ---------------------------------------------------------------- the live connection
@@ -506,7 +534,7 @@ export class Studio extends DurableObject {
       msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
       const me = this.userById(uid);
       const handler = { hello: this.onHello, send: this.onSend, edit: this.onEdit, delete: this.onDelete,
-                        read: this.onRead, typing: this.onTyping }[msg.type];
+                        read: this.onRead, typing: this.onTyping, react: this.onReact }[msg.type];
       if (!handler) refuse("bad_request", "Unknown message " + msg.type);
       handler.call(this, ws, me, msg);
     } catch (e) {
@@ -552,9 +580,8 @@ export class Studio extends DurableObject {
   writable(chat, me) {
     const row = this.chatRow(chat);
     this.member(chat, me.id);
-    if (row.kind === "dm") {
-      const other = this.memberIds(chat).find((id) => id !== me.id);
-      if (!other || !this.areFriends(me.id, other)) refuse("not_friend", "You are no longer friends", 403);
+    if (row.kind === "dm" && !this.memberIds(chat).some((id) => id !== me.id)) {
+      refuse("no_user", "The other person has left", 403);
     }
     return row;
   }
@@ -611,6 +638,7 @@ export class Studio extends DurableObject {
     const chat = String(msg.chat ?? "");
     const row = this.own(chat, msg.id, me);
     this.sql.exec("UPDATE messages SET deleted = 1, text = '' WHERE id = ?", row.id);
+    this.sql.exec("DELETE FROM reactions WHERE msg = ?", row.id);
     this.emit({ chat, kind: "deleted", payload: { chat_id: chat, id: row.id } });
   }
 
@@ -622,6 +650,30 @@ export class Studio extends DurableObject {
     if (upto <= mine.read_upto) return;
     this.sql.exec("UPDATE members SET read_upto = ? WHERE chat = ? AND uid = ?", upto, chat, me.id);
     this.emit({ chat, kind: "read", payload: { chat_id: chat, user_id: me.id, upto } });
+  }
+
+  onReact(ws, me, msg) {
+    const chat = String(msg.chat ?? "");
+    this.member(chat, me.id);
+    const id = String(msg.id ?? "");
+    const row = this.sql.exec("SELECT * FROM messages WHERE chat = ? AND id = ?", chat, id).toArray()[0];
+    if (!row || row.deleted) refuse("no_message", "No such message", 404);
+    const emoji = String(msg.emoji ?? "");
+    if (!EMOJI.test(emoji)) refuse("bad_emoji", "A reaction is one emoji");
+    const on = msg.on !== false;
+    const had = this.sql.exec("SELECT 1 FROM reactions WHERE msg = ? AND uid = ? AND emoji = ?", id, me.id, emoji)
+      .toArray().length > 0;
+    if (on === had) return;
+    this.limit(me.id + ":react", 30);
+    if (on) {
+      const n = this.sql.exec("SELECT COUNT(*) AS n FROM reactions WHERE msg = ? AND uid = ?", id, me.id).one().n;
+      if (n >= REACTIONS_EACH) refuse("too_many", "At most " + REACTIONS_EACH + " reactions on one message");
+      this.sql.exec("INSERT INTO reactions (chat, msg, uid, emoji, at) VALUES (?, ?, ?, ?, ?)",
+        chat, id, me.id, emoji, Date.now());
+    } else {
+      this.sql.exec("DELETE FROM reactions WHERE msg = ? AND uid = ? AND emoji = ?", id, me.id, emoji);
+    }
+    this.emit({ chat, kind: "reaction", payload: { chat_id: chat, id, user_id: me.id, emoji, on } });
   }
 
   onTyping(ws, me, msg) {

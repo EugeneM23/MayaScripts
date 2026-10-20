@@ -3,7 +3,7 @@ docs/superpowers/specs/2026-10-19-chat-messenger-design.md "The window").
 
 A floating hub window in look B: drawn by our own widgets and QPainter from the session's
 state, listening to it. The window never talks to the server but through the session
-(and its `api` for the friends and group presses). No modal dialog anywhere.
+(and its `api` for the group presses). No modal dialog but the picture file picker.
 """
 import html
 import math
@@ -129,21 +129,87 @@ def pop_scale(age_ms):
     return 1.0 + 0.25 * math.sin(math.pi * age_ms / float(POP_MS))
 
 
-def paint_avatar(p, rect, user, scale):
-    """A user's circle: their colour and initials."""
+def _picture(user, rect):
+    """A user's round picture for `rect`, or None (none set, not fetched yet, no cache)."""
+    try:
+        from . import avatars
+        held = getattr(sys, avatars._ATTR, None)
+        if held is None:
+            return None
+        return held.pixmap(user, int(round(rect.width() * 2)))
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def is_online(user, online):
+    """Live from the session's presence, the user's own `online` the fallback."""
+    user = user or {}
+    seen = (online or {}).get(user.get("id"), {})
+    return bool(seen.get("online", user.get("online")))
+
+
+def paint_avatar(p, rect, user, scale, online=None):
+    """A user's circle: their picture, else their colour and initials. `online` True draws the
+    green dot at the bottom-right (ringed in the panel colour)."""
     q = _q()
     p.save()
     p.setRenderHint(q.QtGui.QPainter.Antialiasing)
+    p.setRenderHint(q.QtGui.QPainter.SmoothPixmapTransform)
     p.setPen(q.QtCore.Qt.NoPen)
-    p.setBrush(q.QtGui.QColor(look.user_colour((user or {}).get("id"))))
-    p.drawEllipse(rect)
-    font = q.QtGui.QFont(p.font())
-    font.setBold(True)
-    font.setPixelSize(max(6, int(rect.height() * 0.38)))
-    p.setFont(font)
-    p.setPen(q.QtGui.QColor("#ffffff"))
-    p.drawText(rect, q.QtCore.Qt.AlignCenter, look.initials(user))
+    picture = _picture(user, rect)
+    if picture is not None:
+        p.drawPixmap(rect, picture, q.QtCore.QRectF(picture.rect()))
+    else:
+        p.setBrush(q.QtGui.QColor(look.user_colour((user or {}).get("id"))))
+        p.drawEllipse(rect)
+        font = q.QtGui.QFont(p.font())
+        font.setBold(True)
+        font.setPixelSize(max(6, int(rect.height() * 0.38)))
+        p.setFont(font)
+        p.setPen(q.QtGui.QColor("#ffffff"))
+        p.drawText(rect, q.QtCore.Qt.AlignCenter, look.initials(user))
+    if online:
+        d = max(5.0, rect.width() * 0.3)
+        ring = max(1.0, scale * 1.5)
+        dot = q.QtCore.QRectF(rect.right() - d + ring * 0.3, rect.bottom() - d + ring * 0.3, d, d)
+        p.setPen(q.QtCore.Qt.NoPen)
+        p.setBrush(q.QtGui.QColor(hubstyle.TOKENS["panel"]))
+        p.drawEllipse(dot)
+        p.setBrush(q.QtGui.QColor(hubstyle.TOKENS["ok"]))
+        p.drawEllipse(dot.adjusted(ring, ring, -ring, -ring))
     p.restore()
+
+
+def avatar_widget_class():
+    """AvatarDot(window, user, side): a painted avatar for a widget row (Members, New chat,
+    the settings' preview, the chat header)."""
+    if "avatar" not in _CLASSES:
+        q = _q()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+
+        class AvatarDot(QtWidgets.QWidget):
+            def __init__(self, win, user, side, dot=True, parent=None):
+                super(AvatarDot, self).__init__(parent)
+                self.win, self.user, self.dot = win, user, dot
+                self.setFixedSize(int(side), int(side))
+
+            def set_user(self, user, dot=True):
+                self.user, self.dot = user, dot
+                self.update()
+
+            def paintEvent(self, event):                   # noqa: N802
+                p = QtGui.QPainter(self)
+                try:
+                    online = self.dot and is_online(self.user, self.win.session.state.online)
+                    paint_avatar(p, QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1),
+                                 self.user, self.win.scale, online)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                finally:
+                    p.end()
+
+        _CLASSES["avatar"] = AvatarDot
+    return _CLASSES["avatar"]
 
 
 def _font(base, px_size, bold=False):
@@ -189,25 +255,37 @@ def list_class():
                 self.setMouseTracking(True)
                 self.setObjectName("skeldarChatList")
 
-            def row_h(self):
+            def row_h(self, row=None):
+                if row is not None and row.get("kind") == "head":
+                    return hubstyle.px(24, self.win.scale)
                 return hubstyle.px(54, self.win.scale)
+
+            def tops(self):
+                out, y = [], 0
+                for r in self.rows:
+                    out.append(y)
+                    y += self.row_h(r)
+                return out, y
 
             def set_rows(self, rows):
                 now = _now_ms()
                 for r in rows:
                     before = self._unread.get(r["id"])
-                    if before is not None and before != r["unread"] and r["unread"]:
+                    if before is not None and before != r.get("unread") and r.get("unread"):
                         self.pops[r["id"]] = now
-                    self._unread[r["id"]] = r["unread"]
+                    self._unread[r["id"]] = r.get("unread")
                 self.rows = rows
-                self.setMinimumHeight(max(1, len(rows) * self.row_h()))
+                self.setMinimumHeight(max(1, int(self.tops()[1])))
                 if self.pops:
                     self.win.animate()
                 self.update()
 
             def index_at(self, y):
-                i = int(y // self.row_h())
-                return i if 0 <= i < len(self.rows) else -1
+                tops, _total = self.tops()
+                for i, top in enumerate(tops):
+                    if top <= y < top + self.row_h(self.rows[i]):
+                        return -1 if self.rows[i].get("kind") == "head" else i
+                return -1
 
             def mouseMoveEvent(self, event):              # noqa: N802
                 i = self.index_at(event.position().y() if hasattr(event, "position")
@@ -225,7 +303,11 @@ def list_class():
                 pos = event.position() if hasattr(event, "position") else event.pos()
                 i = self.index_at(pos.y())
                 if i >= 0 and event.button() == QtCore.Qt.LeftButton:
-                    self.win.open_chat(self.rows[i]["id"])
+                    row = self.rows[i]
+                    if row.get("kind") == "person":
+                        self.win.write_to(row["user"]["id"])
+                    else:
+                        self.win.open_chat(row["id"])
 
             def tick(self, dt):
                 busy = False
@@ -260,11 +342,22 @@ def list_class():
                 s = self.win.scale
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
-                h = self.row_h()
                 w = self.width()
                 now = _now_ms()
+                tops, _total = self.tops()
+                online = self.win.session.state.online
                 for i, r in enumerate(self.rows):
-                    top = i * h
+                    top = tops[i]
+                    h = self.row_h(r)
+                    if r.get("kind") == "head":
+                        p.setFont(_font(self.font(), px(9), True))
+                        p.setPen(_colour("faint"))
+                        p.drawText(QtCore.QRectF(px(12), top, w - px(24), h),
+                                   QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, r["title"])
+                        p.setPen(QtGui.QPen(_colour("line"), 1))
+                        p.drawLine(QtCore.QPointF(px(12), top + px(2)),
+                                   QtCore.QPointF(w - px(12), top + px(2)))
+                        continue
                     rect = QtCore.QRectF(px(4), top + px(2), w - px(8), h - px(4))
                     glow = self.glow.get(r["id"], 0.0)
                     if r["id"] == self.selected:
@@ -280,7 +373,8 @@ def list_class():
                         p.drawRoundedRect(rect.translated(0, -glow * s), px(6), px(6))
                     lift = -glow * s
                     av = QtCore.QRectF(px(10), top + (h - px(38)) / 2.0 + lift, px(38), px(38))
-                    paint_avatar(p, av, r["user"], s)
+                    dot = r.get("kind") == "person" or (r.get("chat") or {}).get("kind") == "dm"
+                    paint_avatar(p, av, r["user"], s, dot and is_online(r["user"], online))
                     x0 = av.right() + px(10)
                     right = w - px(12)
                     p.setFont(_font(self.font(), px(11.5), True))
@@ -299,7 +393,7 @@ def list_class():
                     p.setFont(_font(self.font(), px(10)))
                     pfm = QtGui.QFontMetrics(p.font())
                     badge_w = 0
-                    if r["unread"]:
+                    if r.get("unread"):
                         text = look.count_text(r["unread"])
                         bf = _font(self.font(), px(9), True)
                         bfm = QtGui.QFontMetrics(bf)
@@ -315,7 +409,9 @@ def list_class():
                         p.setPen(QtGui.QColor(hubstyle.TOKENS.get("on_accent", "#1b1c1f")))
                         p.drawText(badge, QtCore.Qt.AlignCenter, text)
                         p.setFont(_font(self.font(), px(10)))
-                    p.setPen(_colour("accent_text" if r["typing"] else "muted"))
+                    p.setPen(_colour("accent_text" if r.get("typing")
+                                     else ("ok" if r.get("kind") == "person" and r.get("online")
+                                           else "muted")))
                     sub = pfm.elidedText(r["preview"], QtCore.Qt.ElideRight,
                                          int(right - x0 - badge_w - px(6)))
                     p.drawText(QtCore.QPointF(x0, top + px(41) + lift), sub)
@@ -343,7 +439,7 @@ def look_approach(value, goal, dt_ms, ms):
 class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
-                 "meta_at", "failed_rect", "height")
+                 "meta_at", "failed_rect", "height", "pills")
 
     def __init__(self, item):
         self.item = item
@@ -357,6 +453,7 @@ class Box(object):
         self.meta_at = None
         self.failed_rect = None
         self.height = 0.0
+        self.pills = []          # [(rect, emoji, count, mine)] under the bubble
 
 
 def feed_class():
@@ -377,6 +474,8 @@ def feed_class():
                 self.entering = {}        # key -> started
                 self.flashing = {}        # key -> started
                 self.folding = []         # [(y, height, started)]
+                self.pill_pops = {}       # (message id, emoji) -> started
+                self._counts = {}         # (message id, emoji) -> count last seen
                 self._known = None
                 self._laid_w = -1
                 self.setObjectName("skeldarChatFeed")
@@ -404,12 +503,22 @@ def feed_class():
                         if k and k not in keys and not box.item.pending \
                                 and k in ctx.get("deleted", ()):
                             self.folding.append((box.rect.top(), box.height, now))
+                counts = {}
+                for i in items:
+                    if i.kind == "msg" and not i.pending:
+                        for e, ids in (i.message.get("reactions") or {}).items():
+                            counts[(i.message.get("id"), e)] = len(ids)
+                if self._known is not None and animate and hubmotion.enabled():
+                    for k, n in counts.items():
+                        if n > self._counts.get(k, 0):
+                            self.pill_pops[k] = now
+                self._counts = counts
                 self._known = {"keys": set(keys),
                                "pending": set(i.key() for i in items if i.pending)}
                 self.items = items
                 self.ctx = ctx
                 self.relayout()
-                if self.entering or self.flashing or self.folding:
+                if self.entering or self.flashing or self.folding or self.pill_pops:
                     self.win.animate()
 
             def relayout(self):
@@ -428,9 +537,13 @@ def feed_class():
                 key = (item.key(), item.text, int(width))
                 doc = self.docs.get(key)
                 if doc is None:
+                    from . import emoji as _emoji
                     doc = QtGui.QTextDocument()
                     doc.setDocumentMargin(0)
-                    doc.setDefaultFont(_font(self.font(), hubstyle.px(11, self.win.scale)))
+                    big = _emoji.only_emoji(item.text)
+                    font = _font(self.font(), hubstyle.px(30 if big else 11, self.win.scale))
+                    font.setFamilies([font.family(), _emoji.FONT])
+                    doc.setDefaultFont(font)
                     doc.setDefaultStyleSheet("a {{ color: {0}; }}".format(
                         hubstyle.TOKENS["accent_text"]))
                     doc.setHtml('<span style="color:{0}">{1}</span>'.format(
@@ -526,11 +639,49 @@ def feed_class():
                     if item.tick == "failed":
                         box.failed_rect = QtCore.QRectF(x, y + bh + px(2), bw, sfm.height() + px(2))
                         h += sfm.height() + px(4)
+                    if not item.pending:
+                        h += self._lay_pills(box, x, y + h, bw, max_w, item.mine)
                     box.rect = QtCore.QRectF(0, y, width, h)
                     box.height = h
                     boxes.append(box)
                     y += h
                 return boxes
+
+            def _pill_font(self):
+                from . import emoji as _emoji
+                f = _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
+                f.setFamilies([f.family(), _emoji.FONT])
+                return f
+
+            def _lay_pills(self, box, x, top, bw, max_w, mine):
+                """The reactions' pills under a bubble, wrapped to the bubble's side; the height
+                they take."""
+                from . import emoji as _emoji
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                pills = _emoji.pills(box.item.message.get("reactions"), self.win.me_id())
+                if not pills:
+                    return 0
+                fm = QtGui.QFontMetrics(self._pill_font())
+                ph, gap = px(22), px(4)
+                width = max(bw, min(max_w, px(260)))
+                rows, row, used = [], [], 0
+                for e, n, me in pills:
+                    w = fm.horizontalAdvance("%s %d" % (e, n)) + px(14)
+                    if row and used + gap + w > width:
+                        rows.append(row)
+                        row, used = [], 0
+                    row.append((w, e, n, me))
+                    used += (gap if used else 0) + w
+                rows.append(row)
+                y = top + px(3)
+                for row in rows:
+                    total = sum(w for w, _e, _n, _m in row) + gap * (len(row) - 1)
+                    cx = (x + bw - total) if mine else x
+                    for w, e, n, me in row:
+                        box.pills.append((QtCore.QRectF(cx, y, w, ph), e, n, me))
+                        cx += w + gap
+                    y += ph + gap
+                return y - top
 
             # ---------------------------------------------------------- motion
             def tick(self, dt):
@@ -540,7 +691,10 @@ def feed_class():
                         if now - start >= ms:
                             del store[k]
                 self.folding = [f for f in self.folding if now - f[2] < FOLD_MS]
-                busy = bool(self.entering or self.flashing or self.folding)
+                for k, start in list(self.pill_pops.items()):
+                    if now - start >= POP_MS:
+                        del self.pill_pops[k]
+                busy = bool(self.entering or self.flashing or self.folding or self.pill_pops)
                 self.update()
                 return busy
 
@@ -650,6 +804,23 @@ def feed_class():
                     else:
                         p.setPen(_colour("muted"))
                     p.drawText(box.meta_at, box.meta)
+                    if box.pills:
+                        p.setFont(self._pill_font())
+                        for rect, e, n, me in box.pills:
+                            k = pop_scale(now - self.pill_pops.get(
+                                (item.message.get("id"), e), -10 ** 9))
+                            r = QtCore.QRectF(rect)
+                            if k != 1.0:
+                                c = r.center()
+                                r.setSize(r.size() * k)
+                                r.moveCenter(c)
+                            p.setPen(QtGui.QPen(_colour("accent"), max(1.0, s)) if me
+                                     else QtCore.Qt.NoPen)
+                            p.setBrush(_colour("accent_tint" if me else "field"))
+                            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+                            p.setPen(_colour("accent_text" if me else "text2"))
+                            p.drawText(r, QtCore.Qt.AlignCenter, "%s %d" % (e, n))
+                        p.setFont(small)
                     if box.failed_rect is not None:
                         p.setPen(_colour("danger"))
                         p.drawText(box.failed_rect,
@@ -661,6 +832,9 @@ def feed_class():
             # ---------------------------------------------------------- input
             def box_at(self, point):
                 for box in self.boxes:
+                    for rect, e, _n, _me in box.pills:
+                        if rect.contains(point):
+                            return box, "pill:" + e
                     if box.bubble is not None and box.bubble.contains(point):
                         return box, "bubble"
                     if box.failed_rect is not None and box.failed_rect.contains(point):
@@ -682,6 +856,9 @@ def feed_class():
                 if where == "failed":
                     self.win.retry(box.item)
                     return
+                if where.startswith("pill:"):
+                    self.win.react(box.item.message, where[5:])
+                    return
                 if box.quote is not None and box.quote[0].contains(pos):
                     self.win.scroll_to_message(box.quote[1])
                     return
@@ -694,8 +871,8 @@ def feed_class():
             def mouseMoveEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
                 box, _where = self.box_at(pos)
-                link = False
-                if box is not None and box.doc is not None:
+                link = _where.startswith("pill:")
+                if box is not None and box.doc is not None and not link:
                     link = bool(box.doc.documentLayout().anchorAt(pos - box.doc_at))
                     link = link or (box.quote is not None and box.quote[0].contains(pos))
                 self.setCursor(QtCore.Qt.PointingHandCursor if link else QtCore.Qt.ArrowCursor)
@@ -708,6 +885,140 @@ def feed_class():
 
         _CLASSES["feed"] = Feed
     return _CLASSES["feed"]
+
+
+# ------------------------------------------------------------------ the emoji picker
+
+PICK_COLS = 10
+PICK_ROWS = 9
+PICK_CELL = 30
+
+
+def picker_class():
+    """EmojiPicker(window, picked): a popup of tabs over a painted grid; a click calls
+    picked(emoji) and closes it."""
+    if "picker" not in _CLASSES:
+        q = _q()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+        from . import emoji as _emoji
+
+        class EmojiPicker(QtWidgets.QWidget):
+
+            def __init__(self, win, picked, parent=None):
+                super(EmojiPicker, self).__init__(parent or win.root,
+                                                  QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
+                self.win, self.picked = win, picked
+                self.setObjectName("skeldarChatEmojiPicker")
+                self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+                self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+                self.setMouseTracking(True)
+                recent = _emoji.recent(get_var(_emoji.RECENT_VAR))
+                self.tabs = [("recent", "🕘", "Недавние", tuple(recent))] + list(_emoji.CATEGORIES)
+                self.tab = 0 if get_var(_emoji.RECENT_VAR) else 1
+                self.hover = None
+                px = win.px
+                self.pad = px(8)
+                self.cell = px(PICK_CELL)
+                self.setFixedSize(2 * self.pad + PICK_COLS * self.cell,
+                                  2 * self.pad + self.cell + px(6) + PICK_ROWS * self.cell)
+                self.font_ = QtGui.QFont(self.font())
+                self.font_.setFamilies([self.font_.family(), _emoji.FONT])
+                self.font_.setPixelSize(px(19))
+
+            def items(self):
+                return self.tabs[self.tab][3][:PICK_COLS * PICK_ROWS]
+
+            def hit(self, pos):
+                """("tab", i) | ("emoji", e) | None at a point."""
+                x, y = pos.x() - self.pad, pos.y() - self.pad
+                if x < 0 or y < 0:
+                    return None
+                col = int(x // self.cell)
+                if y < self.cell:
+                    return ("tab", col) if col < len(self.tabs) else None
+                y -= self.cell + self.win.px(6)
+                if y < 0 or col >= PICK_COLS:
+                    return None
+                i = int(y // self.cell) * PICK_COLS + col
+                items = self.items()
+                return ("emoji", items[i]) if 0 <= i < len(items) else None
+
+            def mouseMoveEvent(self, event):              # noqa: N802
+                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                h = self.hit(pos)
+                if h != self.hover:
+                    self.hover = h
+                    self.update()
+
+            def mousePressEvent(self, event):              # noqa: N802
+                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                if not self.rect().contains(pos.toPoint()):
+                    self.close()
+                    return
+                h = self.hit(pos)
+                if h is None:
+                    return
+                if h[0] == "tab":
+                    self.tab = h[1]
+                    self.update()
+                    return
+                self.close()
+                try:
+                    self.picked(h[1])
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+
+            def pick(self, e):
+                """A test's click."""
+                self.close()
+                self.picked(e)
+
+            def paintEvent(self, event):                   # noqa: N802
+                p = QtGui.QPainter(self)
+                try:
+                    self._paint(p)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                finally:
+                    p.end()
+
+            def _paint(self, p):
+                px = self.win.px
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setPen(QtGui.QPen(_colour("line"), 1))
+                p.setBrush(_colour("panel"))
+                p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                  px(8), px(8))
+                p.setFont(self.font_)
+                c = self.cell
+                for i, tab in enumerate(self.tabs):
+                    r = QtCore.QRectF(self.pad + i * c, self.pad, c, c)
+                    if i == self.tab:
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("card_active"))
+                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
+                        p.setPen(QtGui.QPen(_colour("accent"), 1.5))
+                        p.drawLine(QtCore.QPointF(r.left() + px(6), r.bottom() - 1),
+                                   QtCore.QPointF(r.right() - px(6), r.bottom() - 1))
+                    elif self.hover == ("tab", i):
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("hover"))
+                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
+                    p.setPen(_colour("text"))
+                    p.drawText(r, QtCore.Qt.AlignCenter, tab[1])
+                top = self.pad + c + px(6)
+                for i, e in enumerate(self.items()):
+                    r = QtCore.QRectF(self.pad + (i % PICK_COLS) * c,
+                                      top + (i // PICK_COLS) * c, c, c)
+                    if self.hover == ("emoji", e):
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("hover"))
+                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
+                    p.setPen(_colour("text"))
+                    p.drawText(r, QtCore.Qt.AlignCenter, e)
+
+        _CLASSES["picker"] = EmojiPicker
+    return _CLASSES["picker"]
 
 
 # ------------------------------------------------------------------ the composer
@@ -806,7 +1117,7 @@ class ChatWindow(object):
         self.session = session
         self.scale = float(scale or _scale())
         self.chat = None             # the open chat's id
-        self.pane = "chat"           # chat | friends | new | settings | members
+        self.pane = "chat"           # chat | new | settings | members
         self.single = "list"         # in one column: list | right
         self.reply_to = None         # a message id
         self.editing = None          # a message id
@@ -817,6 +1128,12 @@ class ChatWindow(object):
         self._last_tick = None
         self.root = None
         self.burster = None
+        self.avatars = None
+        try:
+            from . import avatars
+            self.avatars = avatars.cache(session)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
         self._build()
         self.session.listen(self._heard)
         self.refresh()
@@ -1000,16 +1317,11 @@ class ChatWindow(object):
         self.list_area = self._scroll(self.list, "skeldarChatListArea")
         lv.addWidget(self.list_area, 1)
         foot = w.QHBoxLayout()
+        self.me_avatar = avatar_widget_class()(self, {}, px(22), False)
+        self.me_avatar.setObjectName("skeldarChatMeAvatar")
+        foot.addWidget(self.me_avatar)
         self.me_label = _label("", "label", "skeldarChatMe")
         foot.addWidget(self.me_label, 1)
-        self.friends_button = _button("", "tool", "users", "skeldarChatFriendsButton", self.scale,
-                                      "Друзья")
-        self.friends_button.clicked.connect(lambda *_a: self.show_pane("friends"))
-        foot.addWidget(self.friends_button)
-        people = _button("", "tool", "world", "skeldarChatPeopleButton", self.scale,
-                         "Все пользователи")
-        people.clicked.connect(lambda *_a: self.show_pane("people"))
-        foot.addWidget(people)
         settings = _button("", "tool", "settings", "skeldarChatSettingsButton", self.scale,
                            "Настройки")
         settings.clicked.connect(lambda *_a: self.show_pane("settings"))
@@ -1028,7 +1340,6 @@ class ChatWindow(object):
         self.right.setObjectName("skeldarChatRight")
         self.right_pages = {}
         for key, builder in (("empty", self._build_empty), ("chat", self._build_chat),
-                             ("friends", self._build_friends), ("people", self._build_people),
                              ("new", self._build_new),
                              ("settings", self._build_settings),
                              ("members", self._build_members)):
@@ -1078,6 +1389,9 @@ class ChatWindow(object):
         self.chat_back = _button("", "tool", "arrow-left", "skeldarChatBack", self.scale, "К списку")
         self.chat_back.clicked.connect(lambda *_a: self.back())
         head.addWidget(self.chat_back)
+        self.chat_avatar = avatar_widget_class()(self, {}, px(30))
+        self.chat_avatar.setObjectName("skeldarChatHeadAvatar")
+        head.addWidget(self.chat_avatar)
         texts = w.QVBoxLayout()
         texts.setSpacing(0)
         self.chat_title = _label("", None, "skeldarChatTitleText")
@@ -1117,6 +1431,10 @@ class ChatWindow(object):
         lay.addWidget(self.bar)
 
         row = w.QHBoxLayout()
+        self.emoji_button = _button("", "tool", "mood-smile", "skeldarChatEmoji", self.scale,
+                                    "Эмоджи")
+        self.emoji_button.clicked.connect(lambda *_a: self.pick_emoji())
+        row.addWidget(self.emoji_button, 0, Qt.AlignBottom)
         self.composer = composer_class()(self)
         self.composer.textChanged.connect(self._typed)
         row.addWidget(self.composer, 1)
@@ -1130,57 +1448,17 @@ class ChatWindow(object):
         lay.addWidget(self.line)
         return page
 
-    def _build_friends(self):
-        q = _q()
-        w = q.QtWidgets
-        page, lay = self._pane_box("Друзья", "skeldarChatFriends")
-        add = w.QHBoxLayout()
-        self.friend_field = w.QLineEdit()
-        self.friend_field.setObjectName("skeldarChatFriendNick")
-        self.friend_field.setPlaceholderText("@ник друга")
-        self.friend_field.returnPressed.connect(self.request_friend)
-        add.addWidget(self.friend_field, 1)
-        go = _button("Добавить", "primary", "plus", "skeldarChatFriendAdd", self.scale)
-        go.clicked.connect(lambda *_a: self.request_friend())
-        add.addWidget(go)
-        lay.addLayout(add)
-        self.friends_line = _label("", "status", "skeldarChatFriendsLine", wrap=True)
-        lay.addWidget(self.friends_line)
-        self.friends_body = w.QWidget()
-        self.friends_body.setObjectName("skeldarChatFriendsBody")
-        self.friends_rows = w.QVBoxLayout(self.friends_body)
-        self.friends_rows.setContentsMargins(0, 0, 0, 0)
-        self.friends_rows.setSpacing(self.px(3))
-        lay.addWidget(self._scroll(self.friends_body, "skeldarChatFriendsArea"), 1)
-        return page
-
-    def _build_people(self):
-        q = _q()
-        w = q.QtWidgets
-        page, lay = self._pane_box("Все пользователи", "skeldarChatPeople")
-        self.people_field = w.QLineEdit()
-        self.people_field.setObjectName("skeldarChatPeopleSearch")
-        self.people_field.setPlaceholderText("Имя или @ник")
-        self.people_field.textChanged.connect(lambda *_a: self._fill_people())
-        lay.addWidget(self.people_field)
-        self.people_count = _label("", "label", "skeldarChatPeopleCount")
-        lay.addWidget(self.people_count)
-        self.people_line = _label("", "status", "skeldarChatPeopleLine", wrap=True)
-        lay.addWidget(self.people_line)
-        self.people_body = w.QWidget()
-        self.people_body.setObjectName("skeldarChatPeopleBody")
-        self.people_rows = w.QVBoxLayout(self.people_body)
-        self.people_rows.setContentsMargins(0, 0, 0, 0)
-        self.people_rows.setSpacing(self.px(3))
-        lay.addWidget(self._scroll(self.people_body, "skeldarChatPeopleArea"), 1)
-        return page
-
     def _build_new(self):
         q = _q()
         w = q.QtWidgets
         page, lay = self._pane_box("Новый чат", "skeldarChatNewPane")
-        lay.addWidget(_label("Личный чат: нажмите на друга. Группа: отметьте друзей и назовите её.",
+        lay.addWidget(_label("Личный чат: «Написать». Группа: отметьте людей и назовите её.",
                              "note", wrap=True))
+        self.new_search = w.QLineEdit()
+        self.new_search.setObjectName("skeldarChatNewSearch")
+        self.new_search.setPlaceholderText("Имя или @ник")
+        self.new_search.textChanged.connect(lambda *_a: self._fill_new())
+        lay.addWidget(self.new_search)
         name = w.QHBoxLayout()
         self.group_name = w.QLineEdit()
         self.group_name.setObjectName("skeldarChatGroupName")
@@ -1205,6 +1483,16 @@ class ChatWindow(object):
         q = _q()
         w = q.QtWidgets
         page, lay = self._pane_box("Настройки", "skeldarChatSettings")
+        pic = w.QHBoxLayout()
+        self.settings_avatar = avatar_widget_class()(self, {}, self.px(56), False)
+        self.settings_avatar.setObjectName("skeldarChatSettingsAvatar")
+        pic.addWidget(self.settings_avatar)
+        choose = _button("Выбрать картинку…", None, "photo", "skeldarChatAvatarChoose", self.scale,
+                         "PNG или JPG: обрежется в квадрат по центру")
+        choose.clicked.connect(lambda *_a: self.choose_avatar())
+        pic.addWidget(choose)
+        pic.addStretch(1)
+        lay.addLayout(pic)
         lay.addWidget(_label("Имя", "label"))
         row = w.QHBoxLayout()
         self.name_field = w.QLineEdit()
@@ -1232,7 +1520,7 @@ class ChatWindow(object):
         self.notify_box.setObjectName("skeldarChatNotifyBox")
         self.notify_box.toggled.connect(lambda on: self._set_notify("viewport", on))
         lay.addWidget(self.notify_box)
-        self.sound_box = w.QCheckBox("Звук")
+        self.sound_box = w.QCheckBox("Звук нового сообщения")
         self.sound_box.setObjectName("skeldarChatSoundBox")
         self.sound_box.toggled.connect(lambda on: self._set_notify("sound", on))
         lay.addWidget(self.sound_box)
@@ -1300,31 +1588,34 @@ class ChatWindow(object):
             return
         me = st.me
         self.me_label.setText(look.display_name(me))
-        incoming = len(st.friends.get("incoming", []))
-        self.friends_button.setText(look.count_text(incoming) if incoming else "")
+        self.me_avatar.set_user(me, dot=False)
         now = time.monotonic()
         rows = []
-        for c in look.ordered(self.chats()):
-            if not look.matches(c, self.query, me["id"]):
-                continue
+        chats, persons = look.directory(self.chats(), getattr(st, "people", []), me["id"],
+                                        st.online, self.query, _now_ms())
+        for c in chats:
             last = c.get("last") or {}
-            rows.append({"id": c["id"], "chat": c, "title": look.chat_title(c, me["id"]),
+            rows.append({"id": c["id"], "kind": "chat", "chat": c,
+                         "title": look.chat_title(c, me["id"]),
                          "preview": look.preview(c, me["id"], st.typing, now),
                          "time": look.clock(last.get("at"), _now_ms()) if last else "",
                          "unread": int(c.get("unread") or 0),
                          "user": look.other(c, me["id"]) or {"id": c["id"], "name": c.get("name")},
                          "typing": bool(look.typers(st.typing, c["id"], me["id"], now))})
+        if persons:
+            rows.append({"id": "head:people", "kind": "head",
+                         "title": "ВСЕ ПОЛЬЗОВАТЕЛИ · " + look.people_count(persons)})
+        for u in persons:
+            rows.append({"id": "person:" + u["id"], "kind": "person", "user": u,
+                         "title": look.display_name(u), "preview": u["line"], "time": "",
+                         "unread": 0, "typing": False, "online": u["online"]})
         self.list.selected = self.chat
         self.list.set_rows(rows)
         if self.chat is not None and self.chat not in st.chats:
             self.chat = None
         self._layout_columns()
         self._refresh_chat()
-        if self.pane == "friends":
-            self._fill_friends()
-        elif self.pane == "people":
-            self._fill_people()
-        elif self.pane == "new":
+        if self.pane == "new":
             self._fill_new()
         elif self.pane == "members":
             self._fill_members()
@@ -1354,6 +1645,9 @@ class ChatWindow(object):
             return
         me_id = self.me_id()
         self.chat_title.setText(look.chat_title(c, me_id))
+        partner = look.other(c, me_id)
+        self.chat_avatar.set_user(partner or {"id": c["id"], "name": c.get("name")},
+                                  dot=partner is not None)
         self.chat_sub.setText(look.presence(c, me_id, st.online, st.typing, time.monotonic(),
                                             _now_ms()))
         self.members_button.setVisible(c.get("kind") == "group")
@@ -1507,15 +1801,18 @@ class ChatWindow(object):
     def show_pane(self, pane):
         self.pane = pane
         self.single = "right"
-        if pane == "people":
+        if pane in ("new", "members"):
             self.read_people()
         self.refresh()
 
     def read_people(self):
-        """Asks the server for everybody again (the pane is opened, a friend press answered)."""
+        """Asks the server for everybody again (New chat, Members opened)."""
         fn = getattr(self.session, "read_people", None)
         if fn is not None:
-            self._call(fn, self.people_line)
+            try:
+                fn()
+            except Exception:                                # noqa: BLE001
+                pass
 
     def say(self, text, where=None):
         label = where or self.line
@@ -1604,6 +1901,9 @@ class ChatWindow(object):
         q = _q()
         menu = q.QtWidgets.QMenu(self.root)
         menu.setObjectName("skeldarChatMenu")
+        if not item.pending:
+            menu.addAction(self._quick_reactions(menu, item.message))
+            menu.addSeparator()
         for label, fn in rows:
             act = menu.addAction(label)
             act.triggered.connect(lambda *_a, f=fn: f())
@@ -1617,12 +1917,115 @@ class ChatWindow(object):
             rows.append(("Повторить", lambda: self.retry(item)))
             rows.append(("Удалить", lambda: (self.session.discard(m.get("cid")), self.refresh())))
             return rows
+        rows.append(("Реакция…", lambda: self.pick_emoji(m)))
         rows.append(("Ответить", lambda: self.start_reply(m)))
         rows.append(("Скопировать", lambda: self.copy_text(m.get("text") or "")))
         if item.mine:
             rows.append(("Изменить", lambda: self.start_edit(m)))
             rows.append(("Удалить", lambda: self.delete_message(m)))
         return rows
+
+    def _quick_reactions(self, menu, message):
+        """The menu's first row: the six quick reactions, mine lit."""
+        q = _q()
+        from . import emoji as _emoji
+        holder = q.QtWidgets.QWidget(menu)
+        holder.setObjectName("skeldarChatQuickReactions")
+        lay = q.QtWidgets.QHBoxLayout(holder)
+        lay.setContentsMargins(self.px(6), self.px(2), self.px(6), self.px(2))
+        lay.setSpacing(self.px(2))
+        mine = message.get("reactions") or {}
+        font = q.QtGui.QFont(holder.font())
+        font.setFamilies([font.family(), _emoji.FONT])
+        font.setPixelSize(self.px(17))
+        for e in _emoji.QUICK:
+            b = q.QtWidgets.QToolButton(holder)
+            b.setText(e)
+            b.setFont(font)
+            b.setAutoRaise(True)
+            b.setCursor(q.QtCore.Qt.PointingHandCursor)
+            b.setFixedSize(self.px(30), self.px(30))
+            if self.me_id() in mine.get(e, []):
+                b.setStyleSheet("QToolButton {{ background: {0}; border-radius: {1}px; }}".format(
+                    hubstyle.TOKENS["accent_tint"], self.px(6)))
+
+            def go(*_a, e=e):
+                menu.close()
+                self.react(message, e)
+            b.clicked.connect(go)
+            lay.addWidget(b)
+        action = q.QtWidgets.QWidgetAction(menu)
+        action.setDefaultWidget(holder)
+        return action
+
+    def react(self, message, emoji_text):
+        """Mine toggled on a message; the emoji becomes recently used."""
+        if self.chat is None or not message:
+            return None
+        from . import emoji as _emoji
+        try:
+            on = self.session.react(self.chat, message["id"], emoji_text)
+        except Exception as exc:                             # noqa: BLE001
+            self.say(getattr(exc, "text", str(exc)))
+            return None
+        if on is None:
+            self.say("Нет связи - реакция не отправлена")
+            return None
+        if on:
+            set_var(_emoji.RECENT_VAR, _emoji.used(get_var(_emoji.RECENT_VAR), emoji_text))
+        self.refresh()
+        return on
+
+    def pick_emoji(self, message=None, at=None):
+        """The picker: into the composer, or a reaction on `message`."""
+        from . import emoji as _emoji
+
+        def picked(e):
+            if message is not None:
+                self.react(message, e)
+                return
+            set_var(_emoji.RECENT_VAR, _emoji.used(get_var(_emoji.RECENT_VAR), e))
+            self.composer.insertPlainText(e)
+            self.composer.setFocus()
+
+        picker = picker_class()(self, picked)
+        if at is None:
+            if message is None:
+                corner = self.emoji_button.mapToGlobal(self.emoji_button.rect().topLeft())
+                at = (corner.x(), corner.y() - picker.height() - self.px(4))
+            else:
+                at = _cursor()
+        picker.move(int(at[0]), int(at[1]))
+        picker.show()
+        self._picker = picker
+        return picker
+
+    def choose_avatar(self):
+        q = _q()
+        path, _filter = q.QtWidgets.QFileDialog.getOpenFileName(
+            self.root, "Аватарка", "", "Картинки (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if path:
+            self.set_avatar_from(path)
+
+    def set_avatar_from(self, path):
+        """The picture at `path` made square, uploaded, and shown at once."""
+        from . import avatars
+        try:
+            data = avatars.prepare(path)
+            me = self.session.set_avatar(data)
+        except Exception as exc:                             # noqa: BLE001
+            self.say(getattr(exc, "text", str(exc)), self.settings_line)
+            return None
+        if self.avatars is not None:
+            try:
+                self.avatars.put(me["id"], me["avatar_v"], data)
+            except Exception:                                # noqa: BLE001
+                pass
+        self.say("Аватарка обновлена", self.settings_line)
+        self.refresh()
+        for widget in self.root.findChildren(avatar_widget_class()):
+            widget.update()
+        return me
 
     def copy_text(self, text):
         q = _q()
@@ -1649,7 +2052,7 @@ class ChatWindow(object):
     def empty_list_text(self):
         if self.query:
             return "Ничего не найдено"
-        return "Пока нет чатов. Добавьте друга 👤"
+        return "Пока здесь никого, кроме вас"
 
     # ---------------------------------------------------------- sign-in
     def _nick_typed(self, text):
@@ -1693,7 +2096,7 @@ class ChatWindow(object):
         self.single = "list"
         self.refresh()
 
-    # ---------------------------------------------------------- friends, groups, settings
+    # ---------------------------------------------------------- groups, settings
     def _call(self, fn, line):
         try:
             result = fn()
@@ -1704,8 +2107,7 @@ class ChatWindow(object):
         return result
 
     def _after_people(self):
-        for name in ("_read_friends", "_refresh_chats") + (("read_people",)
-                                                            if self.pane == "people" else ()):
+        for name in ("_refresh_chats", "read_people"):
             fn = getattr(self.session, name, None)
             if fn is not None:
                 try:
@@ -1714,31 +2116,9 @@ class ChatWindow(object):
                     pass
         self.refresh()
 
-    def request_friend(self, nick=None, line=None):
-        typed = nick is None
-        nick = (self.friend_field.text() if typed else nick).strip().lstrip("@").lower()
-        line = line or self.friends_line
-        if not nick:
-            return
-        if self._call(lambda: self.session.api.request(nick), line) is not None:
-            if typed:
-                self.friend_field.clear()
-            self.say("Запрос отправлен @" + nick, line)
-            self._after_people()
-
-    def _pane_line(self):
-        return self.people_line if self.pane == "people" else self.friends_line
-
-    def answer(self, verb, user_id):
-        if self._call(lambda: self.session.api.answer(verb, user_id), self._pane_line()) is not None:
-            self._after_people()
-
-    def unfriend(self, user_id):
-        if self._call(lambda: self.session.api.unfriend(user_id), self.friends_line) is not None:
-            self._after_people()
-
     def write_to(self, user_id):
-        chat_id = self._call(lambda: self.session.open_dm(user_id), self._pane_line())
+        line = self.new_line if self.pane == "new" else self.line
+        chat_id = self._call(lambda: self.session.open_dm(user_id), line)
         if chat_id:
             self.open_chat(chat_id)
 
@@ -1748,7 +2128,7 @@ class ChatWindow(object):
             self.say("Назовите группу", self.new_line)
             return
         if not self.picked:
-            self.say("Отметьте хотя бы одного друга", self.new_line)
+            self.say("Отметьте хотя бы одного человека", self.new_line)
             return
         made = self._call(lambda: self.session.api.group(name, sorted(self.picked)), self.new_line)
         if made:
@@ -1818,10 +2198,12 @@ class ChatWindow(object):
         row = w.QWidget()
         lay = w.QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
-        online = self.session.state.online.get(user.get("id"), {}).get("online", user.get("online"))
-        dot = "● " if online else "○ "
-        name = _label(dot + look.display_name(user) + "  @" + str(user.get("nick") or ""), None)
+        online = is_online(user, self.session.state.online)
+        lay.addWidget(avatar_widget_class()(self, user, self.px(26)))
+        name = _label(look.display_name(user) + "  @" + str(user.get("nick") or ""), None)
         name.setStyleSheet("color: {0};".format(hubstyle.TOKENS["text" if online else "text2"]))
+        if not online:
+            name.setToolTip(look.last_seen(user.get("last_seen"), _now_ms()))
         lay.addWidget(name, 1)
         for text, role, fn in buttons:
             b = _button(text, role, None, None, self.scale)
@@ -1829,65 +2211,19 @@ class ChatWindow(object):
             lay.addWidget(b)
         return row
 
-    def _fill_friends(self):
-        self._clear(self.friends_rows)
-        fr = self.session.state.friends
-        for title, users, buttons in (
-                ("Входящие запросы", fr.get("incoming", []),
-                 lambda u: [("Принять", "primary", lambda: self.answer("accept", u["id"])),
-                            ("Отклонить", None, lambda: self.answer("decline", u["id"]))]),
-                ("Отправленные", fr.get("outgoing", []),
-                 lambda u: [("Отменить", None, lambda: self.answer("cancel", u["id"]))]),
-                ("Друзья", fr.get("friends", []),
-                 lambda u: [("Написать", "primary", lambda: self.write_to(u["id"])),
-                            ("Удалить", "danger", lambda: self.unfriend(u["id"]))])):
-            if not users:
-                continue
-            self.friends_rows.addWidget(_label(title, "heading"))
-            for u in users:
-                self.friends_rows.addWidget(self._person_row(u, buttons(u)))
-        if not any(fr.get(k) for k in ("incoming", "outgoing", "friends")):
-            self.friends_rows.addWidget(_label("Пока никого. Добавьте друга по его нику.", "note"))
-        self.friends_rows.addStretch(1)
-
-    def _people_buttons(self, u):
-        line = self.people_line
-        rel = u.get("relation")
-        if rel == "friend":
-            return [("Написать", "primary", lambda: self.write_to(u["id"]))]
-        if rel == "incoming":
-            return [("Принять", "primary", lambda: self.answer("accept", u["id"]))]
-        if rel == "outgoing":
-            return [("Отменить запрос", None, lambda: self.answer("cancel", u["id"]))]
-        return [("В друзья", None, lambda: self.request_friend(u.get("nick"), line))]
-
-    def _fill_people(self):
-        st = self.session.state
-        self._clear(self.people_rows)
-        rows = look.people_rows(getattr(st, "people", []), st.friends, st.online,
-                                self.people_field.text())
-        self.people_count.setText(look.people_count(rows) if rows else "")
-        for u in rows:
-            row = self._person_row(u, self._people_buttons(u))
-            if not u["online"]:
-                row.setToolTip(look.last_seen(u.get("last_seen"), _now_ms()))
-            self.people_rows.addWidget(row)
-        if not rows:
-            text = ("Никого не нашли" if self.people_field.text().strip()
-                    else "Пока здесь никого, кроме вас")
-            self.people_rows.addWidget(_label(text, "note"))
-        self.people_rows.addStretch(1)
-
     def _fill_new(self):
         q = _q()
         self._clear(self.new_rows)
-        friends = self.session.state.friends.get("friends", [])
-        if not friends:
-            self.new_rows.addWidget(_label("Сначала добавьте друзей 👤", "note"))
-        for u in friends:
+        people = look.everybody(getattr(self.session.state, "people", []), self.me_id(),
+                                self.new_search.text())
+        if not people:
+            self.new_rows.addWidget(_label("Никого не нашли" if self.new_search.text().strip()
+                                           else "Пока здесь никого, кроме вас", "note"))
+        for u in people:
             row = q.QtWidgets.QWidget()
             lay = q.QtWidgets.QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
+            lay.addWidget(avatar_widget_class()(self, u, self.px(26)))
             box = q.QtWidgets.QCheckBox(look.display_name(u) + "  @" + u.get("nick", ""))
             box.setChecked(u["id"] in self.picked)
             box.toggled.connect(lambda on, uid=u["id"]: (self.picked.add(uid) if on
@@ -1916,9 +2252,10 @@ class ChatWindow(object):
                 buttons.append(("Выйти", "danger", lambda uid=u["id"]: self.remove_member(uid)))
             self.members_rows.addWidget(self._person_row(u, buttons))
         if admin:
-            more = [u for u in self.session.state.friends.get("friends", []) if u["id"] not in ids]
+            more = [u for u in look.everybody(getattr(self.session.state, "people", []),
+                                              self.me_id()) if u["id"] not in ids]
             if more:
-                self.members_rows.addWidget(_label("Добавить друга", "heading"))
+                self.members_rows.addWidget(_label("Добавить", "heading"))
             for u in more:
                 self.members_rows.addWidget(self._person_row(
                     u, [("Добавить", "primary", lambda uid=u["id"]: self.add_member(uid))]))
@@ -1926,6 +2263,7 @@ class ChatWindow(object):
 
     def _fill_settings(self):
         me = self.session.state.me or {}
+        self.settings_avatar.set_user(me, dot=False)
         if not self.name_field.hasFocus():
             self.name_field.setText(me.get("name") or "")
         try:
@@ -1974,6 +2312,12 @@ class ChatWindow(object):
         if any(now - t < look.TYPING_S + 1.5 for marks in st.typing.values()
                for t in marks.values()) or any(st.pending.values()):
             self.refresh()
+        cache = self.avatars
+        if cache is not None and cache.take_changed():
+            for widget in self.root.findChildren(avatar_widget_class()):
+                widget.update()
+            self.list.update()
+            self.feed.update()
 
     # ---------------------------------------------------------- place, size, show
     def _grab(self, point):

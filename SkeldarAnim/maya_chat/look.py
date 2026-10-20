@@ -378,3 +378,54 @@ def toast_look(age_ms, leaving_ms=None):
 def toast_text(text, limit=90):
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# ------------------------------------------------------------------ everybody in the list
+# 2026-10-20, «добавлять в друзья не нужно мы просто сразу всех видим»: the left column holds
+# every chat, then everybody I have no dm with yet; a click on a person opens the dm.
+
+def dm_partners(chats, me_id):
+    """The ids I already have a dm with."""
+    out = set()
+    for c in chats or []:
+        o = other(c, me_id)
+        if o is not None:
+            out.add(o.get("id"))
+    return out
+
+
+def person_matches(user, query):
+    q = str(query or "").strip().lower().lstrip("@")
+    if not q:
+        return True
+    return q in display_name(user).lower() or q in str(user.get("nick") or "").lower()
+
+
+def person_line(user, online, now_ms):
+    """A person row's second line: «в сети» or when last seen, then the nick."""
+    seen = (online or {}).get(user.get("id"), {})
+    on = bool(seen.get("online", user.get("online")))
+    state = "в сети" if on else last_seen(seen.get("last_seen", user.get("last_seen", 0)), now_ms)
+    return "@%s · %s" % (user.get("nick") or "?", state), on
+
+
+def directory(chats, people, me_id, online, query, now_ms):
+    """(chat rows' chats, person rows) for the left column: chats newest first, then everybody
+    without a dm - online first, then by name."""
+    shown = [c for c in ordered(chats or []) if matches(c, query, me_id)]
+    have = dm_partners(chats, me_id)
+    persons = []
+    for u in people or []:
+        if u.get("id") == me_id or u.get("id") in have or not person_matches(u, query):
+            continue
+        line, on = person_line(u, online, now_ms)
+        persons.append(dict(u, online=on, line=line))
+    persons.sort(key=lambda r: (not r["online"], display_name(r).lower(), r.get("nick") or ""))
+    return shown, persons
+
+
+def everybody(people, me_id, query=""):
+    """Everybody but me (New chat, a group's Add), filtered, by name."""
+    rows = [u for u in people or [] if u.get("id") != me_id and person_matches(u, query)]
+    rows.sort(key=lambda r: (display_name(r).lower(), r.get("nick") or ""))
+    return rows

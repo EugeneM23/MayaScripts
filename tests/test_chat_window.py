@@ -320,29 +320,117 @@ class ListAndChat(Base):
         self.assertGreater(painted, 10)
 
 
-class PeoplePane(Base):
-    def buttons(self):
-        return [b.text() for b in self.win.people_body.findChildren(QtWidgets.QPushButton)]
+class Everybody(Base):
+    """Everybody is in the list (2026-10-20): no friends, a click on a person opens the dm."""
 
-    def test_opening_it_reads_everybody(self):
-        self.ses.state.friends = {"friends": [BOB], "incoming": [], "outgoing": []}
-        self.win.show_pane("people")
-        self.assertIn(("read_people",), self.ses.calls)
-        self.assertEqual(self.win.people_count.text(), "1 в сети из 2")
-        self.assertEqual(self.buttons(), ["Написать", "В друзья"])
+    def setUp(self):
+        Base.setUp(self)
+        self.ses.read_people()
+        self.win.refresh()
 
-    def test_a_stranger_is_asked_to_be_a_friend(self):
-        self.win.show_pane("people")
-        add = [b for b in self.win.people_body.findChildren(QtWidgets.QPushButton)
-               if b.text() == "В друзья"]
-        add[-1].click()
-        self.assertIn(("request", "carl"), self.ses.api.calls)
-        self.assertIn("@carl", self.win.people_line.text())
+    def kinds(self):
+        return [(r["kind"], r["title"]) for r in self.win.list.rows]
 
-    def test_the_search_filters(self):
-        self.win.show_pane("people")
-        self.win.people_field.setText("carl")
-        self.assertEqual(self.buttons(), ["В друзья"])
+    def test_the_list_has_the_chats_then_everybody_without_a_dm(self):
+        rows = self.kinds()
+        self.assertEqual(rows[0][0], "chat")
+        self.assertEqual(rows[-2][0], "head")
+        self.assertIn("в сети", rows[-2][1])
+        self.assertEqual(rows[-1], ("person", "Carl"))     # Bob has a dm already
+        self.assertNotIn(("person", "Bob"), rows)
+
+    def test_a_click_on_a_person_opens_the_dm(self):
+        tops, _total = self.win.list.tops()
+        y = tops[-1] + 5
+        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(20, y),
+                                  QtCore.QPointF(20, y), QtCore.Qt.LeftButton,
+                                  QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        self.win.list.mousePressEvent(event)
+        self.assertIn(("open_dm", "carl"), self.ses.calls)
+
+    def test_the_search_reaches_people(self):
+        self.win.search.setText("carl")
+        self.assertEqual([k for k, _t in self.kinds()], ["head", "person"])
+
+    def test_no_friends_pane_or_button(self):
+        self.assertFalse(hasattr(self.win, "friends_button"))
+        self.assertNotIn("friends", self.win.right_pages)
+        self.assertNotIn("people", self.win.right_pages)
+
+    def test_new_chat_and_members_offer_everybody(self):
+        self.win.show_pane("new")
+        boxes = [b.text() for b in self.win.new_body.findChildren(QtWidgets.QCheckBox)]
+        self.assertEqual(len(boxes), 2)
+        self.win.new_search.setText("carl")
+        boxes = [b.text() for b in self.win.new_body.findChildren(QtWidgets.QCheckBox)]
+        self.assertEqual(len(boxes), 1)
+
+    def test_an_online_person_gets_the_dot(self):
+        self.assertTrue(W.is_online({"id": "bob"}, self.ses.state.online)
+                        or W.is_online(dict(BOB, online=True), {}))
+        self.assertFalse(W.is_online({"id": "x", "online": False}, {}))
+        self.assertTrue(W.is_online({"id": "x", "online": False}, {"x": {"online": True}}))
+
+
+class Reactions(Base):
+    def setUp(self):
+        Base.setUp(self)
+        self.reacted = []
+
+        def react(chat, mid, e):
+            self.reacted.append((chat, mid, e))
+            for m in self.ses.state.messages[chat]:
+                if m["id"] == mid:
+                    m["reactions"] = {e: ["me", "bob"]}
+            return True
+        self.ses.react = react
+        self.win.open_chat("dm")
+
+    def test_a_reaction_shows_as_a_pill_and_a_click_toggles(self):
+        self.win.react(self.ses.state.messages["dm"][0], "👍")
+        self.assertEqual(self.reacted, [("dm", "m1", "👍")])
+        box = next(b for b in self.win.feed.boxes if b.pills)
+        rect, e, n, mine = box.pills[0]
+        self.assertEqual((e, n, mine), ("👍", 2, True))
+        found, where = self.win.feed.box_at(rect.center())
+        self.assertEqual(where, "pill:👍")
+
+    def test_the_menu_offers_a_reaction(self):
+        item = next(b.item for b in self.win.feed.boxes if b.item.kind == "msg")
+        self.assertIn("Реакция…", [label for label, _fn in self.win.menu_rows(item)])
+
+    def test_the_picker_puts_an_emoji_in_the_composer(self):
+        picker = self.win.pick_emoji()
+        self.assertTrue(len(picker.items()) > 0)
+        picker.pick("🔥")
+        self.assertEqual(self.win.composer.toPlainText(), "🔥")
+
+    def test_the_picker_reacts_from_a_message(self):
+        picker = self.win.pick_emoji(self.ses.state.messages["dm"][0], at=(10, 10))
+        picker.pick("😂")
+        self.assertEqual(self.reacted[-1], ("dm", "m1", "😂"))
+
+
+class Avatar(Base):
+    def test_a_picture_is_cut_square_and_uploaded(self):
+        import tempfile
+        from maya_chat import avatars
+        path = os.path.join(tempfile.mkdtemp(), "p.png")
+        image = QtGui.QImage(400, 200, QtGui.QImage.Format_RGB32)
+        image.fill(QtGui.QColor("#ff0000"))
+        image.save(path)
+        sent = []
+
+        def set_avatar(data):
+            sent.append(data)
+            return dict(ME, avatar_v=1)
+        self.ses.set_avatar = set_avatar
+        self.win.avatars = avatars.Cache(tempfile.mkdtemp(), lambda: None)
+        self.win.set_avatar_from(path)
+        self.assertEqual(sent[0][:3], bytes([0xff, 0xd8, 0xff]))
+        back = QtGui.QImage.fromData(sent[0])
+        self.assertEqual((back.width(), back.height()), (256, 256))
+        self.assertIn("обновлена", self.win.settings_line.text())
 
 
 class Toasts(unittest.TestCase):
@@ -465,20 +553,11 @@ class Layout(Base):
         self.assertLess(self.win.root.x(), 1920)
 
     def test_the_panes(self):
-        self.ses.state.friends = {"friends": [BOB], "incoming": [ANN], "outgoing": []}
-        self.win.refresh()
-        self.assertEqual(self.win.friends_button.text(), "1")
-        self.win.show_pane("friends")
-        texts = [w.text() for w in self.win.friends_body.findChildren(QtWidgets.QPushButton)]
-        self.assertIn("Принять", texts)
-        self.assertIn("Написать", texts)
-        self.win.friend_field.setText("@Carl")
-        self.win.request_friend()
-        self.assertIn(("request", "carl"), self.ses.api.calls)
+        self.ses.read_people()
         self.win.show_pane("new")
         self.win.group_name.setText("Аним")
         self.win.make_group()
-        self.assertIn("друга", self.win.new_line.text())
+        self.assertIn("человека", self.win.new_line.text())
         self.win.picked = {"bob"}
         self.win.make_group()
         self.assertIn(("group", "Аним", ["bob"]), self.ses.api.calls)
@@ -509,6 +588,7 @@ class Notify(unittest.TestCase):
         self.assertTrue(badge.called)
 
     def test_mine_and_switched_off_say_nothing(self):
+        notify.set_option("sound", False)
         with mock.patch.object(notify, "say", return_value=True), \
                 mock.patch.object(notify, "paint", return_value=0):
             self.assertEqual(notify.heard(self.ses, "message",
@@ -517,8 +597,14 @@ class Notify(unittest.TestCase):
             self.assertEqual(notify.heard(self.ses, "message", {"message": msg("b", 2)}),
                              [("badge", 0)])
 
-    def test_the_sound_is_off_by_default(self):
-        self.assertFalse(notify.option("sound"))
+    def test_the_sound_is_on_by_default_and_rings_the_chime(self):
+        self.assertTrue(notify.option("sound"))
+        with mock.patch.object(notify, "say", return_value=True), \
+                mock.patch.object(notify, "paint", return_value=0), \
+                mock.patch.object(notify, "ring", return_value=True) as ring:
+            done = notify.heard(self.ses, "message", {"message": msg("c", 3)})
+        self.assertIn(("sound",), done)
+        self.assertTrue(ring.called)
         self.assertTrue(notify.option("viewport"))
 
     def test_the_unread_total(self):

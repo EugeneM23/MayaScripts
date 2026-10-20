@@ -28,6 +28,27 @@ class Api(object):
         self.token = token
         self.opener = opener
 
+    def raw(self, method, path, data=None, content_type="application/octet-stream"):
+        """Bytes out and bytes back (avatars). A refusal is a ChatError as for call()."""
+        headers = {"User-Agent": AGENT}
+        if data is not None:
+            headers["Content-Type"] = content_type
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        req = urllib.request.Request(self.server + path, data=data, method=method, headers=headers)
+        try:
+            with self.opener(req, timeout=TIMEOUT) as answer:
+                return answer.read()
+        except urllib.error.HTTPError as exc:
+            raw, status = exc.read(), exc.code
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            raise ChatError("offline", "The chat server did not answer (%s)" % getattr(exc, "reason", exc))
+        try:
+            doc = json.loads(raw.decode("utf-8") or "{}")
+        except ValueError:
+            doc = {}
+        raise ChatError(doc.get("error") or "server", doc.get("text") or "Refused", status)
+
     def call(self, method, path, body=None):
         headers = {"User-Agent": AGENT}
         data = None
@@ -63,6 +84,14 @@ class Api(object):
 
     def rename(self, name):
         return self.call("PATCH", "/v1/me", {"name": name})
+
+    def put_avatar(self, data, content_type="image/jpeg"):
+        """My picture (JPEG or PNG, at most 256 KB); answers me."""
+        raw = self.raw("PUT", "/v1/me/avatar", bytes(data), content_type)
+        return json.loads(raw.decode("utf-8") or "{}")
+
+    def avatar(self, user_id):
+        return self.raw("GET", "/v1/avatar/u/" + user_id)
 
     def delete_me(self):
         return self.call("DELETE", "/v1/me")
