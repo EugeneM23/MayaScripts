@@ -173,14 +173,14 @@ def _base_curves(root, nodes):
 
 
 def keys_by_layer(names):
-    """{layer: [times]} of the selection's keys in each layer of `names`."""
+    """{layer: [times]} of the selection's keys in each layer of `names`, the layer's
+    own weight keys among them (they move and delete with the lane's keys)."""
     nodes = _selected_nodes()
     out = {}
-    if not nodes:
-        return out
     root, _layers = _anim_names()
     for name in names:
-        curves = _layer_curves(name, nodes, root)
+        curves = _layer_curves(name, nodes, root) if nodes else []
+        curves = curves + _weights_of([name], root)
         out[name] = sorted(set(cmds.keyframe(curves, q=True, timeChange=True) or [])) if curves else []
     return out
 
@@ -211,15 +211,28 @@ def _layer_curves(name, nodes, root):
     return sorted(set(curves))
 
 
-def curves_of(names):
-    """Every time curve of the selection in the layers `names` (the lanes' keys)."""
-    nodes = _selected_nodes()
-    if not nodes:
-        return []
-    root, _layers = _anim_names()
-    out = set()
+def _weights_of(names, root):
+    """The weight curves of the layers `names` (the L keys on their lanes, 2026-10-20:
+    «ключи слоя нельзя передвигать и удалять» - drawn, but no move, delete or menu
+    reached them). Whatever is selected: they are the layer's own."""
+    out = []
     for name in names:
-        out.update(_layer_curves(name, nodes, root))
+        if name != root:
+            curve = _weight_curve(name)
+            if curve:
+                out.append(curve)
+    return out
+
+
+def curves_of(names, weights=True):
+    """Every time curve of the selection in the layers `names` (the lanes' keys), and
+    with `weights` the layers' own weight curves."""
+    root, _layers = _anim_names()
+    out = set(_weights_of(names, root)) if weights else set()
+    nodes = _selected_nodes()
+    if nodes:
+        for name in names:
+            out.update(_layer_curves(name, nodes, root))
     return sorted(out)
 
 
@@ -967,7 +980,7 @@ def lane_key_range(names, a, b):
         try:
             #  inside each curve's own keys only (an insert past them re-types the key
             #  beside it, CLAUDE.md trap 267)
-            for curve in curves_of(names):
+            for curve in curves_of(names, weights=False):     # S keys no weight
                 times = cmds.keyframe(curve, q=True, timeChange=True) or []
                 if not times:
                     continue

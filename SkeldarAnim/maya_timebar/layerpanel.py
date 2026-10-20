@@ -2282,7 +2282,10 @@ def _classes():
                     keys = [k for k in keys if not look.inside(k, (sel["a"], sel["b"]))]
                 p.setBrush(self._key_colour(row))
                 self._keys(p, t, lane, keys, ui)
-                self._weight_keys(p, t, lane, row.get("weight_keys") or (), ui)
+                wkeys = row.get("weight_keys") or ()
+                if mine and dragging:            # a dragged L key moves with the block
+                    wkeys = [k for k in wkeys if not look.inside(k, (sel["a"], sel["b"]))]
+                self._weight_keys(p, t, lane, wkeys, ui)
                 p.restore()
             p.restore()
 
