@@ -115,9 +115,13 @@ away on a wrist answered 360 away, the same rotation.
 3. **Main** onto the game root's target, only for an animation's travel (`Solver(main=True)`
    and the root in `wanted`) - first of all, the whole rig hangs below it; then **RootX_M**
    from the pelvis (translate + rotate) when the pelvis is a member - every chain hangs below
-   it;
+   it; then, the spine SHOWN in IK and a bone the spline carries posed, the **IK spine**
+   fitted onto the pose (`_ik_spine`, Connections' `fkikspine.fit_pose`: the IK root and
+   IKXSpine1..4 on their targets) - Spine5 and all above it hang below the deformation Spine4;
 4. level by level down the game skeleton: each member's FK control onto `L^-1 . S*` against its
-   parent read now (rotate channels only - lengths are the rig's) - and each HELD bone's
+   parent read now (rotate channels; a member whose place is the pose's too - `placed`, a
+   twin's card - is then MOVED until its game bone stands on its target's place, `_place`) -
+   and each HELD bone's
    (`held_bones`): a bone no member of the pose that a member's solve would move off its rigid
    follow, the neck's in-between (a card with one neck - Mixamo's, the UE4 Mannequin's - posing
    neck_01 put neck_02 28.9 deg off it, task 7's verify); **at a limb's END level** (the
@@ -140,11 +144,12 @@ away on a wrist answered 360 away, the same rotation.
      default, only when the limb's UPPER or MIDDLE bone is a member: a hand alone moves neither
      the elbow nor the plane, and keying the pole or zeroing an animated swivel there would move
      the elbow;
-   - a limb whose `stretchy`, `antiPop`, pole `follow*` or `lock` is off its default
-     (`fkik.off_default`) keeps its IK half unposed, named;
+   - a limb whose `antiPop`, pole `follow*` or `lock` is off its default (`fkik.off_default`)
+     keeps its IK half unposed, named - `stretchy` no longer (2026-10-20): the end goes where the
+     FK chain puts it, within its reach;
 5. measure every member against its target (`worst`: directions for the four unrolled limb
    bones - an IK elbow is a hinge and AdvancedSkeleton moves their roll into the twist joints -
-   full rotations for the rest, the pelvis's position, the one place a solve sets) and, off by
+   full rotations for the rest, the pelvis's position and the `placed` members') and, off by
    more than 0.01 deg / 0.01 cm, solve again from the new state, at most `PASSES` times; what is
    still off is named;
 6. read every value written (`values`, the FINAL channel values), put every temporary write back
@@ -165,7 +170,13 @@ outer chunk and on a solve that raises half way: one Ctrl+Z leaves every control
 keys, autoKey, the evaluation mode and the time as found, redo too, and the second takes the
 marker back.
 
-The spine in IK (`FKIKSpine_M` not 0) takes the pose on its FK half, said so. A limb in IK whose
+The spine in IK (`FKIKSpine_M` not 0) takes the pose on BOTH halves (2026-10-20, «позы не
+совпадают» - Hold_Combo's spine showed IK, its FK took the pose, the spine 14-32 deg off and all
+above it 6 cm): the spline's joints follow its curve and their twist is the ends' and the middle
+control's, so an FK spine twisted vertebra by vertebra lands at the root and the top and only
+near in the middle - measured on the animator's take 3.5, 7, 17.4 deg at spine_01..03, the same
+with the turns weighted ten times - and that is said (`SPINE_SPLINE`); a spine whose IK channels
+cannot be written keeps the old rule, named. A limb in IK whose
 FK forearm / calf is twisted about its own bone loses that twist (an IK elbow is a hinge) - the
 angle is measured after the IK is set and said, as the Connections FK / IK switch does.
 
@@ -198,7 +209,7 @@ import maya.cmds as cmds
 
 import maya_asretarget as asr
 import maya_rigs
-from maya_scenesetup import fkik
+from maya_scenesetup import fkik, fkikspine
 
 from maya_poselib import keys
 from maya_poselib import posemath as pm
@@ -234,8 +245,11 @@ LIMBS = OrderedDict([
                  "IKLeg", "PoleLeg", "AlignIKToAnkle", "IKToes", ("roll", "rock"), ("swivel",))),
 ])
 GAME_SIDES = {"_l": "L", "_r": "R"}
-# attributes that must sit at their defaults for the IK half to be posed (fkik's refusal)
-IK_GUARD = ("stretchy", "antiPop")
+# attributes that must sit at their defaults for the IK half to be posed. Not `stretchy`
+# (2026-10-20): the IK end goes where the FK chain the pose turned puts it, within the
+# chain's reach, and a stretchy chain stretches only past it - Hold_Combo's legs carried
+# stretchy 10 and the shown IK leg was left unposed, its ball 177 deg off the card
+IK_GUARD = ("antiPop",)
 POLE_GUARD_PREFIX = ("follow", "lock")
 
 PELVIS = "pelvis"
@@ -251,6 +265,9 @@ UNDO_CHUNK = "skeldarPoseSolve"   # the one undo step a solve's round trip makes
 PASSES = 3                 # solve, measure, solve again - at most
 TOL_DEG = 0.01
 TOL_CM = 0.01
+PLACE_TOL = 0.005          # cm: a placed bone this close to its place is not moved (no key)
+PLACE_ROUNDS = 4           # moves a placed bone may take (the neck's in-between follows a share)
+PLACE_RESPONSE = 0.05      # a bone following less of its control's move than this is not placed
 HINGE_DEG = fkik.TOLERANCE_DEG
 STRAIGHT = 1e-4            # of the limb: an elbow nearer its line than this has no plane
 NUMERIC_ROUNDS = 6
@@ -265,7 +282,11 @@ NAMED = 4
 DRIVEN_PHRASE = "member(s) are driven on a rig (twist and helper bones)"
 DRIVEN = "%d " + DRIVEN_PHRASE + ": %s"
 NO_CONTROL = "%d member(s) have no control on %s: %s"
-SPINE_IK = "the spine shows IK - its FK took the pose"
+SPINE_IK = "the spine shows IK - its FK took the pose (%s)"
+SPINE_SPLINE = ("the IK spine is a spline and cannot hold the pose's twist: %g deg at %s "
+                "(shown in FK it lands)")
+# the spine bones the IK spline holds (Spine1..4 are blended, Spine5 follows the FK chain)
+SPINE_FIT = ("spine_01", "spine_02", "spine_03", "spine_04")
 IK_KEPT = "%s: the IK half is not posed - %s off the default"
 NO_SIDE = "%s: the IK pole stands on the limb's line - no bend plane to read, the pole kept"
 HINGE = "the FK %s twist is lost on %s (an IK %s is a hinge): %g deg"
@@ -666,6 +687,17 @@ class _Session(object):
                 return False
         return True
 
+    def writable(self, plugs):
+        """True when every plug can be written - asked as `allowed` asks, but a refusal is NOT
+        recorded: a place the pose would like but the control cannot take is no skipped plug
+        (its turn is keyed; the measure says where the bone landed)."""
+        for plug in plugs:
+            if plug not in self._writable:
+                self._writable[plug] = keys.writable(plug)
+            if not self._writable[plug][0]:
+                return False
+        return True
+
     def set(self, plug, value):
         if plug not in self.original:
             self.original[plug] = float(cmds.getAttr(plug))
@@ -738,7 +770,7 @@ class Solver(object):
     travel asks for `main`: then a frame whose `wanted` holds the game root turns and moves Main
     onto it FIRST (`_Job._main`), and everything below solves against the moved Main."""
 
-    def __init__(self, rig, members, main=False):
+    def __init__(self, rig, members, main=False, placed=()):
         self.rig = rig
         self.game = game_bones(rig)
         self.bases = bases(rig)
@@ -769,9 +801,17 @@ class Solver(object):
                       if b.fk and b.fkx and not _analytic(b))
         controlled = set(leaf for leaf, b in self.bases.items() if b.fk)
         self.held_all = held_bones(self.members, _children(self.game), numeric, controlled)
+        # the IK spine's nodes (2026-10-20), read once when the pose holds a bone the spline
+        # carries; a frame whose spine SHOWS IK fits them (`_Job._ik_spine`)
+        self.spine_posed = any(leaf in self.members for leaf in SPINE_FIT)
+        self.spine_nodes, self.spine_missing = fkikspine.spine(rig) if self.spine_posed \
+            else (None, "")
         self.main_asked = bool(main)
         self.main = _main_path(rig) if main else None
         self.spelled = {}          # {control path: its short name}, the seed's spelling
+        # the members whose PLACE is the pose's too (`posemath.Transfer.placed`: a twin's
+        # card, 2026-10-20): their FK controls are moved as well as turned (`_Job._place`)
+        self.placed = set(_plain(placed)) & set(self.members)
 
     def solve(self, wanted, seed=None):
         """Solution for one frame - exactly `solve(rig, wanted, members)`'s, the structure
@@ -786,7 +826,7 @@ class Solver(object):
     def measure(self, wanted):
         """`measure(rig, wanted, members)`, the structure reused."""
         wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
-        return worst(_rows(self.rig, self.bases, self.game, wanted, self.leaves))
+        return worst(_rows(self.rig, self.bases, self.game, wanted, self.leaves, self.placed))
 
     def controls(self):
         """`controls_for(rig, members)`: the controls a press would key, in solve order - Main
@@ -808,11 +848,27 @@ class Solver(object):
             if how["pole"]:
                 nodes.append(pole)
             out.extend(n for n in nodes if n and n not in out)
+        if self.spine_nodes is not None and _spine_weight(self.rig) > HALF_EDGE:
+            out.extend(n for n in fkikspine._ik_controls(self.spine_nodes) if n not in out)
         return out
+
+
+def _spine_weight(rig):
+    """The spine's FK/IK blend as a weight (0 FK, 1 IK); 0 for a rig without the switch."""
+    node = _one(rig, SPINE_SWITCH)
+    if not node:
+        return 0.0
+    return float(cmds.getAttr(node + "." + BLEND)) / fkik.BLEND[fkik.IK]
 
 
 class _Job(object):
     """One frame's solve on a `Solver`'s structure: the samples, the targets and the writes."""
+
+    # what `__init__` / `sample` set, as defaults for a job built without them
+    spine = None
+    spine_posed = False
+    spine_seeded = False
+    placed = frozenset()
 
     def __init__(self, solver, wanted, seed=None):
         self.rig, self.game, self.bases, self.root = solver.rig, solver.game, solver.bases, \
@@ -825,12 +881,17 @@ class _Job(object):
         self.held_all = solver.held_all
         # the held bones with a target this frame solve with the members
         self.held = [leaf for leaf in self.held_all if leaf in self.wanted]
+        self.placed = solver.placed
         self.members = solver.members + self.held
         self.member_set = set(self.members)
         # Main carries the travel when asked and this frame says where the game root goes
         self.main = solver.main
         self.main_wanted = solver.main_asked and self.root in self.game and \
             self.root in self.wanted
+        self.spine_nodes, self.spine_missing = solver.spine_nodes, solver.spine_missing
+        self.spine_posed = solver.spine_posed
+        self.spine = None          # the spine's nodes when this frame fits its IK half
+        self.spine_seeded = False  # the seed's IK spine values taken once, by the first pass
         self.session = _Session()
 
     # ---- sampling
@@ -867,6 +928,15 @@ class _Job(object):
         self.ik = {}
         for key in self.limbs:
             self.ik[key] = self._sample_limb(*key)
+        # the spine SHOWN in IK (any of it) with a bone the spline carries posed: its IK half
+        # takes the pose too (`_ik_spine`) - the first build posed the FK half only and the
+        # spine showed the take, 14-32 deg off, everything above it 6 cm (2026-10-20)
+        self.notes.pop("spine", None)
+        if self.spine_posed and _spine_weight(self.rig) > HALF_EDGE:
+            if self.spine_nodes is None:
+                self.notes["spine"] = SPINE_IK % self.spine_missing
+            else:
+                self.spine = self.spine_nodes
 
     def _remember(self, control):
         """The control's rotate order, rotateAxis and the rotate values its eulers are taken
@@ -1097,6 +1167,63 @@ class _Job(object):
         if self._turn(base.fk, aim):
             self._move(base.fk, pm.position(aim))
 
+    def _spine_twist(self):
+        """(worst degrees, its leaf) of the spine members the spline carries against their
+        targets as the rig now stands - the turn a spline cannot take (its joints follow the
+        curve, their twist is the ends' and the middle control's)."""
+        out = (0.0, None)
+        for leaf in SPINE_FIT:
+            if leaf not in self.member_set or leaf not in self.wanted or leaf not in self.game:
+                continue
+            deg = pm.angle(pm.rigid(_world(self.game[leaf])), self.wanted[leaf])
+            if deg > out[0]:
+                out = (deg, leaf)
+        return out
+
+    def _ik_spine(self):
+        """The IK spine onto the pose (the spine shown in IK): the spline's controls fitted as
+        Connections' FK -> IK switch fits a frame (`fkikspine.fit_pose`) - the IK root on the
+        deformation root's target, IKXSpine1..4 on the deformation joints' (a bone the pose
+        does not hold where it shows now). Every channel the fit moves is recorded in the
+        session first, so it is put back and its last value keyed; a channel that cannot be
+        written leaves the IK half as it is, named. After `_root` (the IK root rides RootX_M)
+        and before the levels (Spine5, the neck, the clavicles hang below the deformation
+        Spine4)."""
+        sp = self.spine
+        names = [node + "." + ch for node, ch in fkikspine._cv_plugs(sp)]
+        if not self.session.allowed(names):
+            plug = next(p for p in names if p in self.session.skipped)
+            self.notes["spine"] = SPINE_IK % ("%s %s" % (
+                plug.split("|")[-1], self.session.skipped[plug]))
+            self.spine = None
+            return
+        for name in names:
+            self.session.set(name, self.session.get(name))   # its original, before the fit
+        root_base = self.bases.get(PELVIS)
+        root = self.target(PELVIS)
+        if root is None and root_base is not None and root_base.deform:
+            root = pm.rigid(_world(root_base.deform))
+        joints = []
+        for leaf in SPINE_FIT:
+            base = self.bases.get(leaf)
+            aim = self.target(leaf) if leaf in self.wanted else None
+            if aim is None and base is not None and base.deform:
+                aim = pm.rigid(_world(base.deform))
+            joints.append(aim)
+        if root is None or any(aim is None for aim in joints):
+            return
+        start = None
+        if not self.spine_seeded and self.seed:
+            # an animation's frame: the IK spine from the frame before, as the FK controls are
+            start = dict((name, self.seed.get(_name(name.rsplit(".", 1)[0]) + "." +
+                                              name.rsplit(".", 1)[1])) for name in names)
+            if any(value is None for value in start.values()):
+                start = None
+        self.spine_seeded = True
+        values, _worst, _root_worst = fkikspine.fit_pose(sp, root, joints, start)
+        for name, value in values.items():
+            self.session.set(name, value)
+
     def _fk(self, leaf):
         """The member's FK control onto its target. Its FKX joint below it and its deformation
         joint standing with that joint: analytic (`L^-1 . S*`). Otherwise numeric, on the
@@ -1109,6 +1236,7 @@ class _Job(object):
             return
         if leaf in self.in_control and base.base not in SHARE_FROM:
             self._turn(base.fk, self.in_control[leaf].inverse() * aim)
+            self._place(leaf)
             return
         joint = base.deform or base.fkx
         if not joint:
@@ -1117,6 +1245,59 @@ class _Job(object):
                  if b.base == SHARE_FROM.get(base.base) and b.side == base.side
                  and other in self.member_set and other in self.in_control]
         self._numeric(base.fk, joint, pm.rotation(aim), after)
+        self._place(leaf, after)
+
+    def _shows_fk(self, leaf):
+        """Does the member's game bone follow its FK half - its limb, or the spine for
+        Spine1..4, shown in FK? A half shown in IK is placed by the IK (the end on the FK chain,
+        the spline's fit), never by its FK control's move."""
+        base = self.bases[leaf]
+        if base.limb:
+            return _blend(self.rig, base.limb, base.side) <= HALF_EDGE
+        if leaf in SPINE_FIT:
+            return _spine_weight(self.rig) <= HALF_EDGE
+        return True
+
+    def _place(self, leaf, after=()):
+        """A member whose place is the pose's (`placed`: a twin's card) - its FK control MOVED
+        until its GAME bone stands on its target's place, measured on the bone itself after the
+        turn: the bone a target's model would put there wanders (Manny_Rig's game calf, point-
+        constrained to AdvancedSkeleton's knee with an offset, 0.06 cm from pose to pose), and a
+        move aimed at a model put a twin's calf that far off and keyed a translate for it. A
+        control rigid over its bone moves it one to one and lands in one step; the neck's in-
+        between follows by the bias's share, so a move is scaled by the response the step
+        before measured (`PLACE_ROUNDS` at most); the members `after` (the head under the neck)
+        re-solved after every move. Within `PLACE_TOL` nothing moves - no translate key for a
+        bone the turns already put there. A control whose translate cannot be written, or a
+        bone its move does not reach, keeps its place quietly: its turn is keyed, the measure
+        says where the bone stands."""
+        if leaf not in self.placed or leaf not in self.wanted or leaf not in self.game or \
+                not self._shows_fk(leaf):
+            return
+        control, bone = self.bases[leaf].fk, self.game[leaf]
+        point = pm.position(self.wanted[leaf])
+        plugs = [control + "." + ch for ch in TRANSLATE]
+        if not self.session.writable(plugs):
+            return
+        gain = 1.0
+        for _ in range(PLACE_ROUNDS):
+            here = pm.position(_world(bone))
+            error = om.MVector(point) - here
+            if error.length() <= PLACE_TOL:
+                return
+            step = error / gain
+            self._move(control, pm.position(_world(control)) + step)
+            for other in after:
+                self._fk(other)
+            moved = pm.position(_world(bone)) - here
+            response = (moved * error.normal()) / step.length()
+            if response < PLACE_RESPONSE:
+                # the bone does not follow its control's move: the move taken back
+                self._move(control, pm.position(_world(control)) - step)
+                for other in after:
+                    self._fk(other)
+                return
+            gain = min(response, 1.0)
 
     def _numeric(self, control, joint, aim, after=()):
         """The control turned until `joint` stands on `aim` - damped least squares
@@ -1263,6 +1444,8 @@ class _Job(object):
             self._main()                          # first: everything hangs below Main
         if PELVIS in self.members:
             self._root()
+        if self.spine is not None:
+            self._ik_spine()                      # before Spine5 and all above read Spine4
         members = set(self.members)
         for level in self.levels:
             for leaf in level:
@@ -1273,7 +1456,7 @@ class _Job(object):
                     self._ik_limb(key)
 
     def rows(self):
-        return _rows(self.rig, self.bases, self.game, self.wanted, self.members)
+        return _rows(self.rig, self.bases, self.game, self.wanted, self.members, self.placed)
 
     def run(self):
         #  no time change to "settle" the rig first: under DG a read after a write is fresh, and
@@ -1288,22 +1471,18 @@ class _Job(object):
                 measured = worst(self.rows())
                 if measured[0] <= TOL_DEG and measured[1] <= TOL_CM:
                     break
+            twist = self._spine_twist() if self.spine is not None else (0.0, None)
             values = self.session.values()
         if measured[0] > TOL_DEG or measured[1] > TOL_CM:
             self.notes["off"] = OFF % measured
-        if any(self._spine(leaf) for leaf in self.members):
-            node = _one(self.rig, SPINE_SWITCH)
-            if node and abs(float(cmds.getAttr(node + "." + BLEND))) > fkik.CONSTANT:
-                self.notes["spine"] = SPINE_IK
+        if twist[0] > HINGE_DEG and "spine" not in self.notes:
+            self.notes["spine"] = SPINE_SPLINE % (round(twist[0], 1), twist[1])
         skipped = OrderedDict((_Session._spelled(plug), why)
                               for plug, why in self.session.skipped.items())
         return Solution(values, list(self.notes.values()), skipped)
 
-    def _spine(self, leaf):
-        return self.bases[leaf].base.startswith("Spine")
 
-
-def _rows(rig, all_bases, game, wanted, members):
+def _rows(rig, all_bases, game, wanted, members, placed=()):
     """`worst`'s rows for the members as the rig stands now: the four unrolled limb bones by
     their drive (`_drive`) and by where they point, every other member by its game bone's whole
     turn; the pelvis by its place too - the one bone a solve places (RootX_M). Every other bone
@@ -1329,11 +1508,12 @@ def _rows(rig, all_bases, game, wanted, members):
             offset = (pm.position(shown(child)) - pm.position(actual)) * \
                 pm.rotation(actual).inverse()
             direction = (offset.x, offset.y, offset.z)
-        rows.append((leaf, actual, pm.matrix(wanted[leaf]), direction, leaf == PELVIS))
+        rows.append((leaf, actual, pm.matrix(wanted[leaf]), direction,
+                     leaf == PELVIS or leaf in placed))
     return rows
 
 
-def solve(rig, wanted, members):
+def solve(rig, wanted, members, placed=()):
     """Solution: the FINAL channel values of the rig's controls that put the `members` (game
     leaves) on `wanted` ({game leaf: matrix} for every target bone - `posemath.targets`, the six
     unrolled bones in drive form). The scene is left exactly as found - the animator's unkeyed
@@ -1342,7 +1522,7 @@ def solve(rig, wanted, members):
     (`UNDO_CHUNK`) that changes nothing when undone, nested in a caller's own chunk when there
     is one. `skipped` names the plugs that could not be written (`keys.writable`), `notes` what
     the line should say. One frame on a `Solver` - an animation keeps the Solver for its walk."""
-    return Solver(rig, members).solve(wanted)
+    return Solver(rig, members, placed=placed).solve(wanted)
 
 
 def controls_for(rig, members, main=False):
@@ -1355,8 +1535,8 @@ def controls_for(rig, members, main=False):
     return Solver(rig, members, main).controls()
 
 
-def measure(rig, wanted, members):
+def measure(rig, wanted, members, placed=()):
     """(worst degrees, worst cm, worst leaf) of the members against `wanted` as the rig stands
     now (after the keys): the four unrolled limb bones by where they point (read in drive
     form), the rest by their whole rotation, the pelvis's position (`_rows`)."""
-    return Solver(rig, members).measure(wanted)
+    return Solver(rig, members, placed=placed).measure(wanted)

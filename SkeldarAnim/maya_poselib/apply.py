@@ -155,7 +155,7 @@ Plan = namedtuple("Plan", "ref values current notes skipped")
 Result = namedtuple("Result", "name target count noun layer frame worst notes alpha mirror")
 # what the measure after the keys needs: the targets, the target members, the target's bones;
 # `label` names an objects pose's target (a character's comes from its ref)
-Extra = namedtuple("Extra", "wanted members bones label")
+Extra = namedtuple("Extra", "wanted members bones label placed", defaults=((),))
 
 UNDO_CHUNK = "skeldarPoseApply"
 NATIVE_PREFIX = "pose_"             # the namespace a native card's skeleton is rebuilt in
@@ -648,6 +648,16 @@ def only_selected(values, only, noun):
 
 # ------------------------------------------------------------------ the plan
 
+def _places(ref):
+    """Does a twin's card bring its bone PLACES onto `ref` (`posemath.Transfer`'s `places`)?
+    A skeleton, and a rig whose game bones follow its joints' places - not the Creep's or the
+    Orc D's, which take orientation only (`maya_asretarget.rotation_mode`)."""
+    if ref is None or ref.kind != "rig" or ref.rig is None:
+        return True
+    import maya_asretarget
+    return not maya_asretarget.rotation_mode(ref.rig)
+
+
 def _plan(data, ref, mirror=False, only=None):
     """(Plan, Extra) for one target - the module's step 3. Writes nothing. `only` (long paths,
     or None): Selected only - the solve is the whole card's, so each selected control takes the
@@ -661,16 +671,22 @@ def _plan(data, ref, mirror=False, only=None):
         source, members = pm.mirror(source, members)
     pairs = pm.pairs(source, bones)
     scale = pm.scale_between(source, bones, pairs)
-    wanted = pm.targets(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
-                        scale=scale)
+    # onto the same body (a twin) the card's bone PLACES come too - a slid spine, a shrugged
+    # clavicle - so a pose made on one Manny lands on another as it was (2026-10-20); a rig
+    # whose game bones take orientation only (the Creep, the Orc D) cannot show them, and a
+    # mirrored card's places are not mirrored (`posemath.mirror` reflects turns, the pelvis)
+    transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
+                           scale=scale, places=_places(ref) and not mirror)
+    wanted = transfer.frame()
+    placed = sorted(transfer.placed)
     members_t = target_members(bones, pairs, members)
     missing = unpaired_note(unpaired(members, pairs, source), target_label(ref))
     if missing:
         notes.append(missing)
     if ref.kind == "rig":
-        solution = rigsolve.solve(ref.rig, wanted, members_t)
+        solution = rigsolve.solve(ref.rig, wanted, members_t, placed=placed)
     else:
-        solution = skelsolve.solve(ref, bones, wanted, members_t)
+        solution = skelsolve.solve(ref, bones, wanted, members_t, placed=placed)
     values = OrderedDict(solution.values)
     full = len(values)
     values, note = only_selected(values, only, _noun(ref))
@@ -680,7 +696,7 @@ def _plan(data, ref, mirror=False, only=None):
         members_t = []                      # partly keyed members: nothing to measure
     plan = Plan(ref, values, keys.current(values), notes + list(solution.notes),
                 dict(solution.skipped))
-    return plan, Extra(wanted, members_t, bones, None)
+    return plan, Extra(wanted, members_t, bones, None, placed if len(values) == full else ())
 
 
 def plan_for(data, ref, mirror=False):
@@ -702,7 +718,7 @@ def _measure(plan, extra):
     if ref is None or extra is None or not extra.members:
         return None
     if ref.kind == "rig":
-        return rigsolve.measure(ref.rig, extra.wanted, extra.members)
+        return rigsolve.measure(ref.rig, extra.wanted, extra.members, extra.placed)
     root = skelsolve.root_leaf(ref, extra.bones) if pm.has_root(extra.bones) else None
     worst = (0.0, 0.0, None)
     for leaf in extra.members:

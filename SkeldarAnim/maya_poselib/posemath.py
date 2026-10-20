@@ -722,11 +722,12 @@ def drive_bones(source, target, pairs, use_drive=False):
     return out
 
 
-def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="pelvis"):
+def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="pelvis",
+            places=False):
     """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
     (unchanged bones at their current world) - a pose card's transfer: one `Transfer`, its one
     frame. The rule is `Transfer.frame`'s."""
-    return Transfer(source, target, pairs, members, use_drive, scale, pelvis).frame()
+    return Transfer(source, target, pairs, members, use_drive, scale, pelvis, places).frame()
 
 
 class Transfer(object):
@@ -745,14 +746,17 @@ class Transfer(object):
     Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md"""
 
     def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
-                 pelvis="pelvis"):
+                 pelvis="pelvis", places=False):
         """Everything `targets` computes before its loop, once: the alignment (read off `source`
         AS GIVEN - for an animation the FIRST pasted frame's bones), the target root, `rooted`,
         the target pelvis, `drive_bones`, the root offset, the order, each member's paired
-        ancestor."""
+        ancestor. `places` (2026-10-20): onto a `twin` - the same body - a member bone takes the
+        card's PLACE on its parent too (`frame`), not only its turn; `placed` names them."""
         self.source, self.target, self.pairs = source, target, pairs
         self.members = set(members or ())
         self.use_drive, self.scale = use_drive, scale
+        self.places = bool(places) and twin(pairs, source, target)
+        self.placed = set()
         self.align = alignments(pairs, source, target)
         self.target_root = root_of(target)
         self.rooted = has_root(target)
@@ -879,7 +883,9 @@ class Transfer(object):
         other bone follows its parent rigidly, `W[x] = (T_now[x] · T_now[parent]⁻¹) ·
         W[parent]`, so a non-member between two members, and every descendant, moves with what
         moved. Positions: every bone keeps its own local translation, `local_translation(t) ·
-        W[parent]`. The PELVIS (the target bone playing `pelvis`, paired with a member) takes the
+        W[parent]` - but with `places` onto a twin a member takes the card's,
+        `local_translation(rigid(P[s]) · rigid(P[s_parent])⁻¹) · W[parent]` (named in `placed`).
+        The PELVIS (the target bone playing `pelvis`, paired with a member) takes the
         pose's offset from the source's ROOT FRAME into the target's, scaled:
 
             d_local = (pos(P[s_pelvis]) - pos(P_root)) · rotation(P_root)⁻¹
@@ -948,6 +954,7 @@ class Transfer(object):
         root_world = place if root_world is None else om.MMatrix(root_world)
 
         out = {}
+        placed = set()
         for leaf in self.order:
             parent = target[leaf].get("parent")
             top = parent not in target
@@ -976,11 +983,21 @@ class Transfer(object):
                 point = position(root_world) + d_t * rotation(root_world)
             else:
                 t = position(local)
+                s_parent = source[s].get("parent")
+                if self.places and not top and s_parent in source and \
+                        self.pairs.get(parent) == s_parent:
+                    # the card's place on its parent (a twin: the same bones, the same rests):
+                    # a slid spine, a shrugged clavicle land where the card has them - kept to
+                    # the target's own lengths, Hold_Combo's spine stood 5 cm longer than the
+                    # card's and its chest 9 cm off (2026-10-20)
+                    t = position(rigid(pose(s)) * rigid(pose(s_parent)).inverse()) * self.scale
+                    placed.add(leaf)
                 point = om.MPoint(t.x, t.y, t.z) * parent_world
             if top:
                 turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world,
                                          steadied)
             out[leaf] = _placed(turn, point)
+        self.placed = placed
         return out
 
     def travel(self, source_now, source_first, flip=False, roots=None):

@@ -41,6 +41,18 @@ card, independently of the solver's own `measure`.
             (no hand) onto Manny's left arm in another pose, shown in IK and in FK: the arm
             points as the card's on its clavicle, the IK hand keeps its turn on the forearm's
             drive, and the FK-shown arm's keys switched to IK show the hand where FK showed it.
+  ik-spine  (2026-10-20, Hold_Combo's state) Manny's full pose onto Manny_Rig standing elsewhere
+            with its SPINE shown in IK and its right leg in IK, both legs' `stretchy` at 10: the
+            spine's top (spine_04, spine_05) and every other member on the pose to 0.01 deg /
+            0.01 cm, the spine's middle within the spline's reach (an FK spine twisted vertebra
+            by vertebra is out of it: printed, 2.5 deg) and its twist said, the right leg - IK,
+            stretchy on - on the pose to 0.05, neither the old spine-in-IK nor IK-not-posed
+            note; switched to FK the spine and the leg show the same pose to 0.01.
+  places    (2026-10-20) a card whose FK spine and left clavicle are SLID (Idle_Dagger's
+            slides) through `apply.apply` onto Manny_Rig standing elsewhere with slides of its
+            own (Hold_Combo's) and onto the Manny skeleton: every member on the card's place
+            and turn to 0.01 cm / 0.01 deg (the same body: the card's places come with it);
+            mirrored, the target's slides kept.
   neck      a neck pose made on the Manny SKELETON (neck_01, neck_02 and head turned by their
             joints, the head turned about its own neck axis too - NeckPart1_M takes half of
             that turn) onto Manny_Rig standing in another pose, at FKNeck_M.bias 0 and at 10:
@@ -124,11 +136,11 @@ import maya_skeletonmap as skelmap  # noqa: E402
 from maya_scenesetup import catalog, character  # noqa: E402
 from maya_uebridge import skeletonimport  # noqa: E402
 
-from maya_poselib import capture, keys, rigsolve, scene, skelsolve  # noqa: E402
+from maya_poselib import apply, capture, keys, rigsolve, scene, skelsolve  # noqa: E402
 from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
-    "POSELIB_PHASES", "save,rig-twin,ik,neck,cross,skeleton,partial").split(",") if p.strip()]
+    "POSELIB_PHASES", "save,rig-twin,ik,ik-spine,places,neck,cross,skeleton,partial").split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
 
@@ -728,6 +740,175 @@ def ik_arm_card():
     ch.reset()
 
 
+SPINE_BONES = ("spine_01", "spine_02", "spine_03", "spine_04", "spine_05")
+
+
+def phase_ik_spine():
+    """The target as Hold_Combo stood (2026-10-20, «позы не совпадают»): its spine shown in IK
+    (`FKIKSpine_M` 10), its right leg in IK, both legs' `stretchy` at 10. The first build posed
+    the spine's FK half only and left an IK half with stretchy on unposed: the spine 14-32 deg
+    off and everything above it 6 cm, the right ball 177 deg. Gated: every member but the twist
+    bones on the card (the spine within the spline fit's reach), the right leg - shown in IK,
+    stretchy on - on the pose, neither old note said; switched to FK the spine and the leg show
+    the same pose (both halves posed)."""
+    ch, pose = CH["Manny_Rig"], POSES["Manny_Rig"]
+    ch.reset()
+    set_values(elsewhere(pose["values"]))
+    cmds.setAttr(ch.node("FKIKSpine_M") + ".FKIKBlend", 10.0)
+    cmds.setAttr(ch.node("FKIKLeg_R") + ".FKIKBlend", 10.0)
+    for side in ("_L", "_R"):
+        cmds.setAttr(ch.node("IKLeg" + side) + ".stretchy", 10.0)
+    evaluate()
+    main_before = W(ch.rig.main)
+    wanted, members_t, _b, _p, _s = transfer(pose["full"], ch)
+    t0 = time.time()
+    solution, count, key_notes = solve_and_key(ch, wanted, members_t)
+    say("   ik-spine: %d values in %.2f s, notes %s" % (
+        len(solution.values), time.time() - t0, solution.notes))
+    captured = captured_worlds(pose["full"])
+    game_now = scene_worlds(ch)
+    rows = [(leaf,) + bone_error(leaf, game_now[leaf], captured[leaf], game_now, captured)
+            for leaf in members_t if leaf in game_now and not pm.is_twist(leaf)]
+    spine = [r for r in rows if r[0] in SPINE_BONES]
+    say("   ik-spine spine bones: " + ", ".join("%s %.4f deg %.4f cm" % r for r in spine))
+    # the spline's joints follow its curve and their twist is its ends' and its middle
+    # control's: an FK spine twisted vertebra by vertebra is out of its reach in the middle
+    # (AdvancedSkeleton's own switch: «Target might not fully Align») - the top and the root
+    # are held exact, the middle as near as the fit gets (this pose: 0.9, 1.8 deg)
+    top = [r for r in spine if r[0] in ("spine_04", "spine_05")]
+    deg, cm, at_deg, at_cm = worst_of(top)
+    gate("ik-spine the spine's top shown in IK on the pose", top and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s)" % (deg, at_deg, cm, at_cm))
+    middle = [r for r in spine if r not in top]
+    deg, cm, at_deg, at_cm = worst_of(middle)
+    gate("ik-spine the spine's middle within the spline's reach", middle and deg <= 2.5
+         and cm <= 0.2, "%.6f deg (%s) %.6f cm (%s)" % (deg, at_deg, cm, at_cm))
+    rest = [r for r in rows if r[0] not in SPINE_BONES]
+    deg, cm, at_deg, at_cm = worst_of(rest)
+    gate("ik-spine every other member on the pose", rest and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s), %d bones" % (deg, at_deg, cm, at_cm, len(rest)))
+    leg = [r for r in rows if limb_kind(r[0]) == ("leg", "r")]
+    deg, cm, at_deg, at_cm = worst_of(leg)
+    gate("ik-spine the right leg - IK, stretchy on - on the pose", leg and deg <= 0.05
+         and cm <= 0.05, "%.6f deg (%s) %.6f cm (%s)" % (deg, at_deg, cm, at_cm))
+    old = [n for n in solution.notes if "spine shows IK" in n or "IK half is not posed" in n]
+    gate("ik-spine neither the spine-in-IK nor the IK-not-posed note", not old, "%s" % old)
+    said = [n for n in solution.notes if "IK spine is a spline" in n]
+    gate("ik-spine the spline's twist said", said, "%s" % said)
+    gate("ik-spine every value keyed", count == len(solution.values) and not key_notes,
+         "%d of %d %s" % (count, len(solution.values), key_notes))
+    gate("ik-spine Main unmoved", matrix_diff(main_before, W(ch.rig.main)) < 1e-9)
+    # both halves posed: switched to FK, the spine and the leg show the same pose
+    cmds.setAttr(ch.node("FKIKSpine_M") + ".FKIKBlend", 0.0)
+    cmds.setAttr(ch.node("FKIKLeg_R") + ".FKIKBlend", 0.0)
+    evaluate()
+    game_now = scene_worlds(ch)
+    rows = [(leaf,) + bone_error(leaf, game_now[leaf], captured[leaf], game_now, captured)
+            for leaf in members_t if leaf in game_now and not pm.is_twist(leaf)
+            and (leaf in SPINE_BONES or limb_kind(leaf) == ("leg", "r"))]
+    deg, cm, at_deg, at_cm = worst_of(rows)
+    gate("ik-spine switched to FK: the spine and the right leg on the pose",
+         rows and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s)" % (deg, at_deg, cm, at_cm))
+    ch.reset()
+
+
+# the slides of the two takes: Idle_Dagger's (the card) and Hold_Combo's (the target), 2026-10-20
+CARD_SLIDES = {"FKSpine1_M": (-0.04, 0.31, -0.08), "FKSpine2_M": (-0.06, 0.09, 0.03),
+               "FKSpine4_M": (0.02, -0.77, -0.19), "FKScapula_L": (-2.26, -15.11, 4.14),
+               "FKHip_R": (-0.26, 0.0, 0.01)}
+TARGET_SLIDES = {"FKSpine1_M": (0.56, 0.06, -0.02), "FKSpine2_M": (1.72, 0.0, -0.02),
+                 "FKSpine3_M": (1.96, -0.31, -0.06), "FKSpine4_M": (1.03, -0.15, 0.0),
+                 "FKScapula_L": (2.29, -7.43, 0.30)}
+
+
+def slide(ch, slides):
+    for control, values in slides.items():
+        for channel, value in zip(TR, values):
+            cmds.setAttr(ch.node(control) + "." + channel, value)
+
+
+def placed_rows(data, target, members_t=None):
+    """(leaf, deg, cm) of every non-twist member's game bone against the card's world."""
+    captured = captured_worlds(data)
+    game = scene_worlds(target)
+    leaves = members_t if members_t is not None else data["members"]
+    return [(leaf, pm.angle(game[leaf], captured[leaf]),
+             (pm.position(game[leaf]) - pm.position(captured[leaf])).length())
+            for leaf in leaves if leaf in game and leaf in captured and not pm.is_twist(leaf)]
+
+
+def phase_places():
+    """A card whose bones carry PLACES - Manny_Rig posed with its FK spine and left clavicle
+    SLID, as a twin retarget of a UE clip keys them (Idle_Dagger's slides) - applied through
+    `apply.apply` onto the same rig standing elsewhere with slides of its own (Hold_Combo's:
+    its spine 5 cm longer) and onto the Manny skeleton: every member's game bone on the card's
+    world, place AND turn, to 0.01 cm / 0.01 deg (the same body: the card's places come with
+    it, 2026-10-20 - before, every bone kept the target's own lengths and the chest stood 9 cm
+    off). Mirrored, the places stay the target's (a mirrored card's places are not mirrored)."""
+    ch = CH["Manny_Rig"]
+    ch.reset()
+    values = pose_values(ch)
+    set_values(values)
+    slide(ch, CARD_SLIDES)
+    evaluate()
+    card, note = capture.build_pose([ch.rig.main])
+    say("   places: the card %s" % note)
+    ch.reset()
+    set_values(elsewhere(values))
+    slide(ch, TARGET_SLIDES)
+    evaluate()
+    before = placed_rows(card, ch)
+    deg, cm, at_deg, at_cm = worst_of(before)
+    say("   places: before the press %.3f deg (%s) %.3f cm (%s)" % (deg, at_deg, cm, at_cm))
+    ok, text = apply.apply(card, selection=[ch.rig.main])
+    ch.keyed.update(ch.plugs)
+    evaluate()
+    say("   places: %s" % text)
+    rows = placed_rows(card, ch)
+    deg, cm, at_deg, at_cm = worst_of(rows)
+    gate("places onto the rig: every member on the card's place and turn",
+         ok and rows and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s), %d bones" % (deg, at_deg, cm, at_cm, len(rows)))
+    gate("places onto the rig: the pose lands, nothing said off", ok and "lands within" not in
+         text, text)
+    ch.reset()
+    # the Manny skeleton: a twin of the rig's game skeleton
+    sk = CH["Manny"]
+    sk.reset()
+    ok, text = apply.apply(card, selection=[sk.root])
+    sk.keyed.update(sk.plugs)
+    evaluate()
+    say("   places on the skeleton: %s" % text)
+    rows = placed_rows(card, sk)
+    root_now = W(sk.root)
+    root_card = pm.matrix(card["bones"]["root"]["world"])
+    rows = [(leaf, pm.angle(rel(scene_worlds(sk)[leaf], root_now),
+                            rel(captured_worlds(card)[leaf], root_card)),
+             (pm.position(rel(scene_worlds(sk)[leaf], root_now)) -
+              pm.position(rel(captured_worlds(card)[leaf], root_card))).length())
+            for leaf, _d, _c in rows]
+    deg, cm, at_deg, at_cm = worst_of(rows)
+    gate("places onto the skeleton: every member on the card's place and turn (on its root)",
+         ok and rows and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s), %d bones" % (deg, at_deg, cm, at_cm, len(rows)))
+    sk.reset()
+    # mirrored onto the rig: its own places kept - no translate key on a slid control
+    ch.reset()
+    set_values(elsewhere(values))
+    slide(ch, TARGET_SLIDES)
+    evaluate()
+    slid = [ch.node(c) + "." + t for c in TARGET_SLIDES for t in TR]
+    held = values_of([long_plug(p) for p in slid])
+    ok, text = apply.apply(card, selection=[ch.rig.main], mirror=True)
+    ch.keyed.update(ch.plugs)
+    evaluate()
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in held.items())
+    gate("places mirrored: the target's slides kept", ok and moved <= 1e-6,
+         "%.6f (%s)" % (moved, text))
+    ch.reset()
+
+
 def _joint(ch, leaf):
     return scene.bone_path(ch.ref, leaf)
 
@@ -1081,7 +1262,9 @@ def run():
     t0 = time.time()
     say("plugin %s (posemath from %s)" % (PLUGIN, os.path.dirname(pm.__file__)))
     phase_save()
-    for name, fn in (("rig-twin", phase_rig_twin), ("ik", phase_ik), ("neck", phase_neck),
+    for name, fn in (("rig-twin", phase_rig_twin), ("ik", phase_ik),
+                     ("ik-spine", phase_ik_spine), ("places", phase_places),
+                     ("neck", phase_neck),
                      ("cross", phase_cross), ("skeleton", phase_skeleton),
                      ("partial", phase_partial)):
         if name not in PHASES:

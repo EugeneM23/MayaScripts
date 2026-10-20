@@ -69,7 +69,7 @@ Spec: docs/superpowers/specs/2026-10-10-legs-spine-fkik-design.md
 """
 
 import math
-from collections import namedtuple
+from collections import OrderedDict, namedtuple
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
@@ -369,6 +369,97 @@ def _as_seed(sp, plugs, offsets, root, top, previous):
     return x
 
 
+def _fit_frame(sp, plugs, x, targets, offsets):
+    """One frame's fit (`_fit_ik`'s, and `fit_pose`'s): the `plugs` (`_cv_plugs`) from the
+    values `x` that put the IK root and the blended IK joints Spine1..4 on `targets` (the root,
+    then Spine1..4; world matrices), and - with `offsets` (`_align_offsets`) - from
+    AdvancedSkeleton's own placement too, the better kept. The controls are left on it (setAttr)
+    and the values returned. A Levenberg-Marquardt step per try (`gauss_newton_step`)."""
+    joints = (sp.root_ik,) + tuple(sp.ikx[:BLENDED])
+
+    def place(values):
+        for (node, ch), v in zip(plugs, values):
+            cmds.setAttr(node + "." + ch, v)
+
+    def residual(values):
+        place(values)
+        return weighted(fkik.joint_residual([_world(node) for node in joints], targets),
+                        top=TOP_WEIGHT if offsets is not None else 1.0)
+
+    def fit(x):
+        r = residual(x)
+        damp = fkik.FIT_DAMP
+        for _try in range(FIT_TRIES):
+            if math.sqrt(sum(v * v for v in r) / len(r)) <= FIT_TOLERANCE:
+                break
+            jacobian = [[0.0] * len(plugs) for _ in range(len(r))]
+            for i in range(len(plugs)):
+                probe = list(x)
+                probe[i] += FIT_STEP
+                rp = residual(probe)
+                for k in range(len(r)):
+                    jacobian[k][i] = (rp[k] - r[k]) / FIT_STEP
+            # Levenberg-Marquardt: a step that does not lower the residual is retried
+            # with more damping (the same Jacobian), not abandoned
+            accepted = False
+            for _attempt in range(LM_ATTEMPTS):
+                dx = gauss_newton_step(jacobian, r, damp=damp)
+                if dx is None:
+                    break
+                trial = [a + d for a, d in zip(x, dx)]
+                rt = residual(trial)
+                if sum(v * v for v in rt) < sum(v * v for v in r):
+                    x, r = trial, rt
+                    damp = max(damp / 3.0, 1e-9)
+                    accepted = True
+                    break
+                damp *= 10.0
+            if not accepted:
+                break
+        return x, sum(v * v for v in r)
+
+    x, cost = fit(list(x))
+    if offsets is not None:
+        # a second start, where AdvancedSkeleton's own switch puts the spline - the root
+        # and the top exact - and the better fit kept: started only from the frame
+        # before, a chest the spline cannot follow (moved 12 cm, turned 140 deg) dragged
+        # the fit frame after frame 29 cm and 167 deg off its top (2026-10-15)
+        other, other_cost = fit(_as_seed(sp, plugs, offsets, targets[0], targets[-1], x))
+        if other_cost < cost:
+            x = other
+    place(x)
+    return x
+
+
+def fit_pose(sp, root, spine, start=None):
+    """The IK spine onto a pose at the CURRENT frame (the Pose Library, 2026-10-20): the
+    spline's controls that put the IK root on `root` and the blended IK joints Spine1..4 on
+    `spine` (world matrices, Spine1 first), fitted as a switch fits one frame (`_fit_frame`),
+    from `start` ({plug: value} for every `_cv_plugs` plug) or the controls as they stand. The
+    controls are LEFT on the fit (setAttr - the caller records and puts back what it must);
+    returns ({"node.channel": value} in `_cv_plugs` order, worst {"cm", "deg"} of the four
+    joints, worst {"cm", "deg"} of the root)."""
+    plugs = _cv_plugs(sp)
+    names = [node + "." + ch for node, ch in plugs]
+    if start is not None and all(name in start for name in names):
+        x = [float(start[name]) for name in names]
+    else:
+        x = [float(cmds.getAttr(name)) for name in names]
+    targets = [root] + list(spine[:BLENDED])
+    offsets = _align_offsets(sp) if sp.align_root and sp.align_top else None
+    x = _fit_frame(sp, plugs, x, targets, offsets)
+    joints = (sp.root_ik,) + tuple(sp.ikx[:BLENDED])
+    worst = {"cm": 0.0, "deg": 0.0}
+    root_worst = {"cm": 0.0, "deg": 0.0}
+    for i, (node, goal) in enumerate(zip(joints, targets)):
+        current = _world(node)
+        into = root_worst if i == 0 else worst
+        into["cm"] = max(into["cm"], (_pos(current) - _pos(goal)).length())
+        into["deg"] = max(into["deg"],
+                          math.degrees(fkik.rotation_vector(goal, current).length()))
+    return OrderedDict(zip(names, x)), worst, root_worst
+
+
 def _fit_ik(sp, frames, samples, span):
     """The spline's controls, frame by frame, that put the IK root and the blended
     IK joints Spine1..4 on the shown root and joints - their places AND their turns,
@@ -384,64 +475,12 @@ def _fit_ik(sp, frames, samples, span):
     out = dict(((node, ch), []) for node, ch in plugs)
     worst = {"cm": 0.0, "deg": 0.0, "root_cm": 0.0, "root_deg": 0.0}
     joints = (sp.root_ik,) + tuple(sp.ikx[:BLENDED])
-
-    def place(values):
-        for (node, ch), v in zip(plugs, values):
-            cmds.setAttr(node + "." + ch, v)
-
     offsets = _align_offsets(sp) if sp.align_root and sp.align_top else None
-
-    def residual(values, targets):
-        place(values)
-        return weighted(fkik.joint_residual([_world(node) for node in joints], targets),
-                        top=TOP_WEIGHT if offsets is not None else 1.0)
-
-    def fit(x, targets):
-        r = residual(x, targets)
-        damp = fkik.FIT_DAMP
-        for _try in range(FIT_TRIES):
-            if math.sqrt(sum(v * v for v in r) / len(r)) <= FIT_TOLERANCE:
-                break
-            jacobian = [[0.0] * len(plugs) for _ in range(len(r))]
-            for i in range(len(plugs)):
-                probe = list(x)
-                probe[i] += FIT_STEP
-                rp = residual(probe, targets)
-                for k in range(len(r)):
-                    jacobian[k][i] = (rp[k] - r[k]) / FIT_STEP
-            # Levenberg-Marquardt: a step that does not lower the residual is retried
-            # with more damping (the same Jacobian), not abandoned
-            accepted = False
-            for _attempt in range(LM_ATTEMPTS):
-                dx = gauss_newton_step(jacobian, r, damp=damp)
-                if dx is None:
-                    break
-                trial = [a + d for a, d in zip(x, dx)]
-                rt = residual(trial, targets)
-                if sum(v * v for v in rt) < sum(v * v for v in r):
-                    x, r = trial, rt
-                    damp = max(damp / 3.0, 1e-9)
-                    accepted = True
-                    break
-                damp *= 10.0
-            if not accepted:
-                break
-        return x, sum(v * v for v in r)
 
     for frame in frames:
         fkik._goto(frame)
         targets = [samples["root"][frame]] + list(samples["shown"][frame][:BLENDED])
-        x, cost = fit(x, targets)
-        if offsets is not None:
-            # a second start, where AdvancedSkeleton's own switch puts the spline - the root
-            # and the top exact - and the better fit kept: started only from the frame
-            # before, a chest the spline cannot follow (moved 12 cm, turned 140 deg) dragged
-            # the fit frame after frame 29 cm and 167 deg off its top (2026-10-15)
-            other, other_cost = fit(_as_seed(sp, plugs, offsets, targets[0], targets[-1], x),
-                                    targets)
-            if other_cost < cost:
-                x = other
-        place(x)
+        x = _fit_frame(sp, plugs, x, targets, offsets)
         matrices = [_world(node) for node in joints]
         for i, (current, goal) in enumerate(zip(matrices, targets)):
             cm = (_pos(current) - _pos(goal)).length()

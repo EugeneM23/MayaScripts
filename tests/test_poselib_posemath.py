@@ -630,6 +630,66 @@ class Twins(unittest.TestCase):
             self.assertFalse(pm.twin(pm.pairs(a, t), a, t), off)
 
 
+class Places(unittest.TestCase):
+    """`places` (2026-10-20, «позы не совпадают»): onto a twin a member takes the card's PLACE on
+    its parent too - Idle_Dagger's card had its left clavicle slid 15 cm, Hold_Combo's spine
+    stood 5 cm longer, and kept to the target's own lengths the chest landed 9 cm off."""
+
+    SLID = {"spine_01": (0.0, -0.8, 0.3), "upperarm_l": (2.0, -7.0, 1.5), "calf_l": (0.0, 0.0, 0.5)}
+    LONGER = {"spine_01": (0.0, 2.5, 0.0), "upperarm_l": (-1.0, 3.0, 0.0)}
+
+    def setUp(self):
+        self.source = standing(POSE, off=self.SLID)
+        self.target = standing(off=self.LONGER)
+        self.members = [b for b in self.source if b != "root"]
+        self.pairs = pm.pairs(self.source, self.target)
+
+    def transfer(self, places=True, target=None):
+        return pm.Transfer(self.source, target or self.target, self.pairs, self.members,
+                           places=places)
+
+    def test_onto_a_twin_every_member_lands_on_the_card_place_and_turn(self):
+        transfer = self.transfer()
+        out = transfer.frame()
+        for leaf in self.members:
+            want = pm.matrix(self.source[leaf]["world"])
+            self.assertLess(pm.angle(out[leaf], want), 1e-6, leaf)
+            self.assertLess((pm.position(out[leaf]) - pm.position(want)).length(), 1e-6, leaf)
+        # the pelvis has its own rule (the root offset), every other member is placed
+        self.assertEqual(transfer.placed, set(self.members) - {"pelvis"})
+
+    def test_without_places_the_target_keeps_its_own_lengths(self):
+        transfer = self.transfer(places=False)
+        out = transfer.frame()
+        self.assertEqual(transfer.placed, set())
+        moved = (pm.position(out["spine_01"]) - pm.position(out["pelvis"])).length()
+        own = (pm.position(pm.matrix(self.target["spine_01"]["world"])) -
+               pm.position(pm.matrix(self.target["pelvis"]["world"]))).length()
+        self.assertAlmostEqual(moved, own, 6)
+
+    def test_no_twin_no_places(self):
+        bigger = skeleton(scale=1.2)
+        pairs = pm.pairs(self.source, bigger)
+        transfer = pm.Transfer(self.source, bigger, pairs, self.members, places=True)
+        transfer.frame()
+        self.assertFalse(transfer.places)
+        self.assertEqual(transfer.placed, set())
+
+    def test_a_bone_that_is_no_member_keeps_its_place(self):
+        members = ["hand_l", "middle_01_l"]
+        transfer = pm.Transfer(self.source, self.target, self.pairs, members, places=True)
+        out = transfer.frame()
+        self.assertEqual(transfer.placed, set(members))
+        for leaf in ("spine_01", "upperarm_l", "calf_l"):
+            self.assertLess((pm.position(out[leaf]) -
+                             pm.position(pm.matrix(self.target[leaf]["world"]))).length(), 1e-6)
+
+    def test_targets_passes_places_through(self):
+        out = pm.targets(self.source, self.target, self.pairs, self.members, places=True)
+        want = pm.matrix(self.source["upperarm_l"]["world"])
+        self.assertLess((pm.position(out["upperarm_l"]) - pm.position(want)).length(), 1e-6)
+
+
 class AsItStands(unittest.TestCase):
     """Where a bone points is read from where its child STANDS, on both skeletons (trap 171): a
     source standing off its bind points where its child is, not where the bind put it."""

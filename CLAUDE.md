@@ -10924,6 +10924,47 @@ takes A's camera's values, `shot:shotCam` its values and focal length by name, t
 camera untouched, one undo each; B alone - the shot camera not searched for, said; the camera alone -
 B untouched; the animation's curves and focal length on all three, one undo); `tests/test_poselib_objects.py`.
 
+## The Pose Library: a pose lands on the same rig as it was made (2026-10-20)
+
+The animator, two scene tabs in a Maya on port 7003: «Я делаю позу через нашу библиотеку поз в первом
+кадре в сцене Idle_Dagger, переношу её на персонажа во вкладке Hold_Combo тоже в 1 кадр и в итоге позы не
+совпадают». Both are Manny_Rig. Read over the port, nothing written; the press reproduced in mayapy
+standalone on the tab's own file with the tab's FK/IK state. Spec
+`docs/superpowers/specs/2026-10-20-pose-library-ik-spine-and-places-design.md`. **This replaces «the spine
+in IK takes the pose on its FK half», the `stretchy` guard and «every bone keeps the target's own length»
+(for a pose onto a twin) in the Pose Library sections above.**
+- **What was wrong** (78 of 79 members off, 6-9 cm, up to 177 deg):
+  - the target's spine showed IK and only its FK half was posed;
+  - its right leg in IK carried `stretchy` 10, so its IK half was left unposed;
+  - the card's bone places were never carried: both takes come from twin retargets that slide FK
+    controls (Idle_Dagger's left clavicle 15.8 cm, Hold_Combo's 7.8; Hold_Combo's spine 5 cm longer).
+- **The IK spine takes the pose** (`rigsolve._Job._ik_spine`, Connections' fit pulled out as
+  `fkikspine.fit_pose` / `_fit_frame`, the switch unchanged): after RootX_M, before the level walk; its
+  channels in the solve's session; `controls_for` names them; the FK half posed as before. A spline
+  cannot take an FK spine's twist vertebra by vertebra: root and top exact, the middle as near as the fit
+  gets (the animator's take 3.5 / 7 / 17.4 deg at spine_01..03, the turns weighted ten times changed
+  nothing), said: «the IK spine is a spline and cannot hold the pose's twist: 17.4 deg at spine_03 (shown
+  in FK it lands)».
+- **`stretchy` no longer keeps an IK half unposed** (`IK_GUARD` = `antiPop`): the end goes where the FK
+  chain puts it, within its reach.
+- **Onto a twin the card's PLACES come too** (`posemath.Transfer(places=True)`, `placed`; `apply._plan`
+  only - not animations, not mirrored, not the Creep / Orc D, whose game bones take orientation only).
+  - On a rig a placed member's FK control is MOVED after its turn until its GAME bone stands on its
+    place (`rigsolve._Job._place`). Measured on the bone, not on a model of it: aimed at the model,
+    Manny_Rig's calf (point-constrained with an offset) landed 0.06 cm off and keyed a translate.
+  - Within `PLACE_TOL` 0.005 cm nothing moves and no translate is keyed. A half shown in IK is placed
+    by the IK. The measure reads placed members' places.
+  - On a skeleton `skelsolve(placed=)` writes the translate.
+- **The `Dagger/Pose` card itself is a skeleton card**: saved at 13:52 from a bare Manny UE5 skeleton
+  (`tab_Idle_Dagger:root`, gone since); the cards before it are rig cards, and a card saved from the rig now
+  is one. A skeleton card holds no drive: on a rig the forearms', calves' and twists' roll comes out 7-20
+  deg off. Not built: a skeleton card's roll onto a rig.
+Proof: `verify_poselib_solve.py` **122/122** (new phases `ik-spine`, `places`; before the change `ik-spine`
+failed 5 of 9: the spine 55 deg, the leg 64), `verify_poselib_apply.py` **117/117**, `verify_poselib_anim.py`
+**113/113**, `verify_fkik_spine_take.py` **36/36** (Connections' fit, refactored); the animator's card on
+their target: 8 of 79 off - the spine's middle and the right calf's roll (an IK knee is a hinge), both said;
+`tests/test_poselib_posemath.Places`; 8001 unit tests OK. Not seen in the animator's Maya.
+
 ## The radial menu: hold alt+q, point, let go (2026-10-15)
 
 The animator: «я зажимаю какую-то клавишу появляется радиальное меню ... можно поместить как и раздел так

@@ -58,6 +58,7 @@ Solution = namedtuple("Solution", "values notes skipped")
 ROTATE = ("rotateX", "rotateY", "rotateZ")
 TRANSLATE = ("translateX", "translateY", "translateZ")
 PELVIS = "pelvis"
+PLACE_TOL = 1e-4           # cm: a placed joint this close to its place keeps its translate
 
 NOT_IN = "%d member(s) not in the skeleton: %s"
 NAMED = 4
@@ -153,7 +154,7 @@ def _seeded(plugs, seed):
     return [float(value) for value in found]
 
 
-def solve(ref, bones, wanted, members, seed=None, root=False):
+def solve(ref, bones, wanted, members, seed=None, root=False, placed=()):
     """Solution for a bare skeleton: the FINAL rotate channels of every member joint (and the
     pelvis's translate) that put it on `wanted`.
 
@@ -174,7 +175,12 @@ def solve(ref, bones, wanted, members, seed=None, root=False):
     channels is not writable is left where it stands, named in `skipped[root]`, and the bones
     below, solved against the root's target, keep the clip's pose about it in place (the pose
     rule). Without it the root is never written (the pose rule: the character stays where it
-    stands)."""
+    stands).
+
+    `placed` (`posemath.Transfer.placed`: a twin's card, 2026-10-20): those members' translate
+    is written too - the card's place on the parent - when it differs from the joint's own by
+    more than `PLACE_TOL`; a translate that cannot be written keeps the joint's own quietly."""
+    placed = set(placed or ())
     wanted = dict((leaf, pm.matrix(m)) for leaf, m in (wanted or {}).items())
     # a root of its own is written only for the travel (`root`); a top joint that is no root
     # (Mixamo's Hips: its pelvis) is a member like any other - `posemath.targets` keeps its
@@ -243,6 +249,13 @@ def solve(ref, bones, wanted, members, seed=None, root=False):
                 name = path
                 for channel, value in zip(TRANSLATE, (t.x, t.y, t.z)):
                     values["%s.%s" % (name, channel)] = value
+        elif leaf in placed:
+            t_plugs, t_why = _blocked(path, TRANSLATE)
+            t = pm.position(local)
+            now = om.MVector(*[float(cmds.getAttr(p)) for p in t_plugs])
+            if not t_why and (t - now).length() > PLACE_TOL:
+                for channel, value in zip(TRANSLATE, (t.x, t.y, t.z)):
+                    values["%s.%s" % (path, channel)] = value
     if missing:
         notes.append(NOT_IN % (len(missing), _named(missing)))
     return Solution(values, notes, skipped)
