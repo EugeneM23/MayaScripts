@@ -13047,3 +13047,80 @@ The animator: «Сейчас наши анимационные слои неко
   there): a non-linear warp, the take compared at the scene frames whose warped time is whole -
   Layer, Knot + Bake, Snapshot, To world, Merge 0.00000 cm / deg, FK -> IK 0.0003 cm, 1P Setup
   0.00000; one Ctrl+Z after a Layer press leaves the warp on. `tests/test_timewarp.py`.
+
+## The camera and the weapon bones are part of the character (2026-10-20)
+
+The animator: «Наша библиотека поз должна воспринимать камеру и оружие как часть рига и анимация
+должна сохраняться для камеры и оружия автоматически. Если у нас в каких-то ригах нету камеры то ее
+нужно добавить ... переподвязывать камеру если это нужно. То же самое для оружия, мы не должны
+запоминать какое именно оружие у нас в руках ... все делать через наши weapon_bone». Asked, all the
+recommendation: the bones AND the camera (the Creep gets camera bones; a card carrying the camera onto
+a character with no Camera Setup sets one up); the UE4 Mannequin left alone; the helpers go with
+their part; the road A, key what drives the bone. Spec
+`docs/superpowers/specs/2026-10-20-camera-and-weapon-bones-design.md`, plan beside it.
+**This replaces "helper bones are never members" and "the Camera Setup camera is an object" in the
+Pose Library sections above.**
+
+- **Which helpers an Apply writes** (`maya_poselib/helpers.py`, `members_with`, at APPLY on the card's
+  members, so every card made before applies them): `weapon_r` with `hand_r`, `weapon_l` with
+  `hand_l`, `camera_root` / `camera_bone` with a whole-body card (`scene.whole_body`). `ik_*`,
+  `interaction`, `center_of_mass` unchanged. The body solvers never see them (`helpers.split`).
+- **Their rest is their bind** (`scene.rests`): a helper the bind pose lists rests at its bind-pose
+  local on its parent's rest; one it does not list (Manny's `camera_bone`, in no shipped bind pose)
+  at its channels' zero (`_unlisted_helpers`: rotate 0, translate as it stands). Read as it stood
+  at Save, a weapon bone's motion in its hand read as no motion. The bind pose is now read for every
+  skinned skeleton (the root, else a helper, names it), not only one with an unskinned top joint.
+- **The transfer** (`posemath.Transfer._helper_place`): the turn the members' rule (relative to its
+  paired parent through the rests, the parent's alignment); the place onto a twin with `places`
+  the card's; else the target's OWN rest local (its socket) + the card's displacement from its rest
+  `· rot(O_parent)⁻¹ · scale`.
+- **The writing** (`helpers.Writer`, once per target; `solve` per frame, merged after the body's):
+  a free helper its own joint channels against its parent's target; one our weapon drives
+  (`bonedrive.driving_weapon`: in a hand or on the floor) keys the WEAPON at `K⁻¹ · W_wanted`
+  (`K = W_bone · W_weapon⁻¹` read at the press, the link's constant offset; its parent carried by the
+  hand its weapon space follows, `weaponspace.holding_hand`; channels with its pivots, shear, scale and
+  rotateAxis kept, `driver_channels`); one our camera drives keys the Camera Setup camera the same way;
+  the hands riding the weapon (Connections) skip it, said; anything else drives it, skipped and named.
+  Which weapon is in the hand is never written into a card. Lines: «weapon_r keyed through
+  SpearMesh», «camera set up on camera_root».
+- **The camera set up after** (`Extra.camera`, `_key_entries`; `animapply._Target.camera`, in the
+  press's chunk): a press that keyed a free `camera_root` runs Camera Setup over the playback range and
+  the bone's keys (`helpers.set_up_camera`, never fails the press). Not on a Blend preview.
+- **The Camera Setup camera is the body** (`scene._kind`: `camera.MARKER` is an accessory, as a weapon):
+  never an object of a card; an old card's record of it is dropped by `_not_characters`.
+- **The Creep has camera bones**: `docs/superpowers/plans/make_creep_camera_bones.py` (mayapy, in place,
+  idempotent, the Creep pipeline's last step after `make_creep_textured_assets.py`) added
+  `camera_root` (Manny's local (0, 0, 164)) and `camera_bone` to `Creep_Rig.ma` and
+  `Creep_Skeleton.ma`, the bind pose saved again whole (94 members), every other joint and vertex
+  0.0, the skins at their bind, the bones following the root through Main / RootX_M; the images given
+  their relative paths back after the open (trap 284), saved beside the asset and moved over it once
+  checked. `character_skeletons.json` rewritten (93 bones). The rig retarget (`carry_helpers`) now gives
+  the Creep its camera.
+- **The skeleton road** (`skeletonimport`): `drive_for` answers `"relative"` for `weapon_*` /
+  `camera_*` onto another body (the rig retarget's `_parent_space_driver`); `_transfer` tears a
+  standing Camera Setup down first (`_camera_down`) and sets it up after (`_camera_up`) when one stood
+  or the clip carries a `camera_root` - the line says so (`result["camera"]`); `onto_refusal` no
+  longer refuses our camera.
+- Proof: `docs/superpowers/plans/verify_camera_weapon_bones.py` **24/24 mayapy standalone** (a Manny
+  skeleton keyed - weapon_r sliding and turning in the hand, camera_root rising and turning,
+  camera_bone turning - with a Long Sword in the hand and a Camera Setup: the whole card onto
+  Manny_Rig holding a Spear and onto a bare Manny skeleton, the three helpers on the card's places
+  on their parents to 1e-5, the spear still driving weapon_r, a Camera Setup after; onto Creep_Rig
+  the helpers turned and moved from their rests as the card's (15.000 / 3.000, 7.500 / 5.000); the
+  hand card leaving the camera alone; mirrored onto weapon_l; one Ctrl+Z taking the keys and the
+  camera; an animation card onto a skeleton (1.0e-5 every frame) and onto Manny_Rig with a spear
+  (4.2e-6, the spear keyed on every frame); the skeleton road onto a Creep skeleton carrying a Camera
+  Setup, torn down and set up again, camera_root and weapon_r on the clip's places to 1.0e-5).
+  Unit tests `test_poselib_helpers.py`, `HelperPlace`, `PlanHelpers`, `CameraIsBody`, the rests and
+  `drive_for` tests; 8023 unit tests. Re-run green: verify_poselib_apply 117/117, verify_poselib_solve
+  122/122, verify_poselib_anim 113/113 (their gates now know a hand card brings its weapon bone and a
+  whole card sets the camera up), verify_rig_pipeline 30/30, verify_many_rigs 32/32,
+  verify_creep_rig_asset 16/16, verify_creep_skeleton_asset 9/9 (93 joints). **Not seen in a GUI
+  Maya** (the animator's live checks).
+
+284. **Opening a shipped textured asset stores its images ABSOLUTE.** The open resolves each file node's
+     relative path against the .ma's own folder and the saved file then holds this machine's path
+     (`C:/!!!Work/.../assets/Creep/...`), which the banned-word check caught. An in-place asset edit gives
+     every node carrying `colour.ASSET_IMAGE` its relative path back after the open, from an empty working
+     folder (trap 119), its colour space kept, and saves beside the asset, moving it over only once checked
+     - the first try saved in place and left the asset broken until `git checkout`.
