@@ -10,7 +10,8 @@ One press on any part of a rig, in one undo chunk:
 - Tools > Layer: the lower body and the knot onto `_3P_Lower_Body`, the upper body onto
   `_3P_Upper_Body` - the base keeps the first frame's pose - then the knot's turn moved from
   Lower to Upper (both add by component, so the sum is the take exactly);
-- Camera Setup on `camera_root`, the camera parented under the knot with no keys of its own.
+- Camera Setup on `camera_root`, the camera parented under the knot, its motion kept as
+  local keys in the knot's space (2026-10-20).
 
 Maya will not start a node name with a digit (`3P_...` becomes `P_...`), hence the `_`.
 Spec: docs/superpowers/specs/2026-10-16-tools-1p-setup-design.md.
@@ -174,9 +175,13 @@ def _view_on(rig):
 
 
 def _camera(bone, knot):
-    """Camera Setup on `bone`, then the camera into `knot`, standing where it stood at the take's
-    first frame, no keys of its own. The words for the line."""
+    """Camera Setup on `bone`, then the camera into `knot` with its motion kept: its world track
+    re-expressed in the knot's space and keyed on the camera itself (Tools > Inside's road,
+    `reparent._rebake`). With both layers on the camera plays the take; with Upper muted it rides
+    the steadied chest and keeps its own motion relative to it (2026-10-20, the animator: the
+    first build cut the camera's keys and its animation was lost). The words for the line."""
     from maya_scenesetup import bonedrive, camera
+    from maya_tools import reparent
     keys = cmds.keyframe(bone, query=True, timeChange=True) or []
     start, end = bonedrive.union_range(cmds.playbackOptions(query=True, min=True),
                                        cmds.playbackOptions(query=True, max=True), keys)
@@ -184,12 +189,18 @@ def _camera(bone, knot):
     cam = camera.camera_for(bone)
     if not cam:
         return "no camera made"
-    cmds.currentTime(start)
-    matrix = cmds.xform(cam, query=True, matrix=True, worldSpace=True)
-    cmds.cutKey(cam, attribute=list(camera.CHANNELS), clear=True)
-    cam = cmds.ls(cmds.parent(cam, knot)[0], long=True)[0]
-    cmds.xform(cam, matrix=matrix, worldSpace=True)
-    return "camera %s in the knot, %s follows it" % (leaf(cam), CAMERA_BONE)
+    span = (start, end)
+    scales, refusal = reparent._scale_plans([(cam, knot)], span)
+    if refusal:          # a camera's scale is its own: left as it stands rather than refused
+        scales = {knots._uuid(cam): ("keep", 1.0, [], {})}
+    knot_uuid = knots._uuid(knot)
+
+    def operate(uuids):
+        for uuid in uuids:
+            cmds.parent(knots._by_uuid(uuid), knots._by_uuid(knot_uuid))
+
+    cam = reparent._rebake([cam], span, operate, scales)[0]
+    return "camera %s in the knot with its motion, %s follows it" % (leaf(cam), CAMERA_BONE)
 
 
 @maya_timewarp.wrapped

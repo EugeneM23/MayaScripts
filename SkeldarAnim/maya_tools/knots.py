@@ -1086,13 +1086,47 @@ def _with_riders(tops):
 
 
 def _release_children(top):
-    """The animator's own nodes parented under a knot, out to world level, so deleting the knot
-    keeps them."""
+    """The nodes parented under a knot (the animator's, or 1P Setup's camera) out of it, so
+    deleting the knot keeps them - and keeps their motion: a child with keys is moved by Tools >
+    World's road (its world track baked back in its new space, `reparent._rebake`), else a plain
+    parent (2026-10-20: 1P Setup's camera, keyed in the knot's space, stood 190 cm off after a
+    Bake). They go where the knot's group stands - the character group, else world level."""
+    group = _parent(top)
+    home = _parent(group) if group else None
     for node in [top] + [c for c in _children(top) if _has(c, plan.INNER_MARKER)]:
         for child in _children(node):
             if cmds.objectType(child, isAType="constraint") or _has(child, plan.INNER_MARKER):
                 continue
-            cmds.parent(child, world=True)
+            _move_out(child, home)
+
+
+def _move_out(child, home):
+    """`child` under `home` (None: world level), its motion kept when it has keys and its
+    translate / rotate are free."""
+    def operate(uuids):
+        for uuid in uuids:
+            node = _by_uuid(uuid)
+            if not node or _parent(node) == home:
+                continue
+            if home:
+                cmds.parent(node, home)
+            else:
+                cmds.parent(node, world=True)
+
+    keyed = cmds.keyframe(child, attribute=list(plan.CHANNELS), query=True, keyframeCount=True)
+    locked, _drivers = _channels(child, plan.CHANNELS, layers=True)
+    if keyed and not any(locked.values()):
+        from maya_tools import reparent
+        try:
+            span = reparent._take([child], [home])
+            scales, refusal = reparent._scale_plans([(child, home)], span)
+            layer, layer_refusal = reparent._layer_for([child])
+            if not refusal and not layer_refusal:
+                reparent._rebake([child], span, operate, scales, layer)
+                return
+        except Exception:                   # never stop a Bake / Remove over a passenger
+            pass
+    operate([_uuid(child)])
 
 
 def _delete_knot(top):

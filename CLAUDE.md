@@ -11403,6 +11403,33 @@ only; the camera under the knot, unkeyed, camera_root following it; a second pre
 unit tests. Not seen live (the animator's checks). Custom attributes (IK foot roll, swivel) stay on
 the base: Layer bakes translate / rotate / scale.
 
+**The camera keeps its motion** (2026-10-20, «камера перемещается в парент узла из-за чего
+анимация не переносится»; asked, «Делай без слоя»). This replaces «keys cut ... where it stood at
+the take's first frame» above: `firstperson._camera` moves the camera under the knot by Tools >
+Inside's road (`reparent._rebake`: its world track on a temporary locator, the move, the track
+baked back as LOCAL keys on the camera itself; a refused scale left as it stands). With both
+layers on the camera plays the take exactly; with Upper muted it rides the steadied chest with its
+own motion. The Creep has camera bones since the same day, so it gets a camera too. Proof:
+`verify_1p_setup.py` **14/14** on Manny_Rig and Creep_Rig (`AS_Longsword_Attack_Back_Light_Combo_1_3P`;
+the verify keys a camera motion of its own first, trap 83): camera_root's world track through the
+press 0.0000 cm / deg; the build before lost 17 cm of it.
+
+**…and through a Bake of the knot** (the same day: «а если я сделал сетап а потом удалил слои и
+все перепек?»). Merging both layers into the base moves nothing; but Tools > Bake / Remove released
+a knot's children with a plain `parent -world`, so the camera's keys (now in the knot's space) were
+read in world: **190 cm off** (the build before, unkeyed: 26 cm). `knots._release_children` /
+`_move_out` now take a keyed child out by Tools > World's road (`reparent._rebake`), into the
+knot group's parent - the character group, else world level; a plain parent only for a child with
+no keys or locked channels, or when the rebake refuses. After the Bake a Pose Library animation
+lands on the camera and the chest exactly (0.000: `FKSpine3_M` is free again). `verify_1p_setup.py`
+**19/19** on Manny_Rig and Creep_Rig (merge, Bake, the camera in the character group, its world
+track and the body 0.0000, one undo / redo); `verify_knots.py` 90/90.
+
+Measured on the way, NOT fixed: after 1P Setup a Pose Library animation applies onto the camera
+(camera_root on the card's to 0.06 deg, on every active layer), but **not onto the chest**: the
+knot drives `FKSpine3_M` through a pairBlend, the solve skips it («1 not posed (driven by
+pairBlend1)»), and a card moving the chest lands spine_03 35 deg and the head 5 deg off.
+
 ## Ragdoll: a fall out of the take, simulated and baked (2026-10-16)
 
 The animator: «ТЫ можешь настроить регдол для наших ригов? что бы персонажи падали по физике». Asked:

@@ -8,7 +8,8 @@ A rig added, the clip retargeted through the button, then the press:
 - both muted: every frame stands in the first frame's pose;
 - Lower alone: pelvis and feet as before, spine_03's world turn the first frame's;
 - the knot's turn on Upper only, its travel on Lower only; Main.view 1;
-- the camera under the knot, no keys, camera_root following it;
+- the camera under the knot, keyed: its world track and camera_root's as before the press
+  (2026-10-20: it used to lose its keys), camera_root following it;
 - a second press refused.
 """
 
@@ -106,6 +107,15 @@ bones = [N(b) for b in ("pelvis", "foot_l", "foot_r", "spine_03", "spine_05", "h
                         "hand_r", "hand_l", "calf_l")]
 legs = [N(b) for b in ("pelvis", "foot_l", "foot_r", "calf_l")]
 raw = track(bones, frames)
+BONE0 = cmds.ls(maya_rigs.node(rig, "camera_root"), long=True)
+CAM0 = camera.camera_for(BONE0[0]) if BONE0 else None
+if CAM0:   # no UE clip moves camera_root (trap 83): a motion of the camera's own, keyed
+    import math
+    for f in range(first, last + 1, 3):
+        for ch, amp in (("translateY", 6.0), ("rotateX", 12.0)):
+            v = cmds.keyframe(CAM0, attribute=ch, query=True, eval=True, time=(f, f))[0]
+            cmds.setKeyframe(CAM0, attribute=ch, time=f, value=v + amp * math.sin(f * 0.4))
+cam_raw = track([BONE0[0]], frames) if CAM0 else None
 pose0 = track(bones, [first])[first]
 
 cmds.currentTime(first + 7)
@@ -167,8 +177,12 @@ if not HAS_CAM:
 bone = N("camera_root") if HAS_CAM else None
 cam = camera.camera_for(bone) if HAS_CAM else None
 parent = cmds.listRelatives(cam, parent=True, fullPath=True) if cam else None
-HAS_CAM and gate(bool(cam) and parent and parent[0] == knot and not cmds.keyframe(cam, query=True),
-     "camera %s under the knot, no keys" % cam)
+HAS_CAM and gate(bool(cam) and parent and parent[0] == knot and bool(cmds.keyframe(cam, query=True)),
+     "camera %s under the knot, keyed" % cam)
+if HAS_CAM and cam_raw:
+    cm, deg = worst(cam_raw, track([bone], frames))
+    gate(cm < 0.01 and deg < 0.01, "camera_root keeps its world track through the press "
+         "(%.4f cm, %.4f deg)" % (cm, deg))
 offs = []
 for f in (frames if HAS_CAM else []):
     cmds.currentTime(f)
@@ -179,6 +193,31 @@ nodes = len(cmds.ls())
 again = fp.setup([N("Main")])
 gate(again.startswith("1P Setup:") and "already" in again and len(cmds.ls()) == nodes,
      "a second press refused: %s" % again[:70])
+
+#  the layers merged into the base, then the knot baked off (2026-10-20, the animator: «а если я
+#  сделал сетап а потом удалил слои и все перепек?»): the camera leaves the knot with its motion
+if HAS_CAM:
+    from maya_timebar import layerscene
+    before = track(bones + [bone], frames)
+    base = cmds.animLayer(query=True, root=True)
+    ok, mline = layerscene.merge_selected([base, lower, upper])
+    gate(ok and cmds.ls(type="animLayer") == [base], "layers merged into the base: %s" % mline)
+    cm, deg = worst(before, track(bones + [bone], frames))
+    gate(cm < 0.02 and deg < 0.05, "after the merge: body and camera_root as before (%.4f cm, "
+         "%.4f deg)" % (cm, deg))
+    bline = knots.bake([knots.knots()[0]])
+    cmds.undo()               # straight after the press (trap 222)
+    back = len(knots.knots()) == 1
+    cmds.redo()
+    gate(back and not knots.knots(), "one undo brings the knot back, redo bakes it again")
+    cam2 = camera.camera_for(bone)
+    home = cmds.listRelatives(cam2, parent=True, fullPath=True) if cam2 else None
+    gate(not knots.knots() and bool(cam2) and bool(home)
+         and home[0] == maya_rigs.group_of(N("Main")),
+         "knot baked off (%s), camera in %s" % (bline, home))
+    cm, deg = worst(before, track(bones + [bone], frames))
+    gate(cm < 0.02 and deg < 0.05, "after the knot's Bake: body and camera_root as before (%.4f cm, "
+         "%.4f deg)" % (cm, deg))
 
 print("%d gates, %d failed" % (COUNT[0], len(FAILS)))
 for f in FAILS:
