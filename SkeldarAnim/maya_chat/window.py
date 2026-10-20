@@ -6,6 +6,7 @@ state, listening to it. The window never talks to the server but through the ses
 (and its `api` for the friends and group presses). No modal dialog anywhere.
 """
 import html
+import math
 import sys
 import time
 import traceback
@@ -728,10 +729,26 @@ def composer_class():
                 self._grow()
 
             def _grow(self):
+                # Every line plus what stands around them: the document's own
+                # margin (top and bottom) and the frame, border and padding the
+                # stylesheet gives (contentsMargins). Leaving the document margin
+                # out clipped the one line by 8 px at the bottom.
                 lines = max(1, min(look.MAX_LINES, int(self.document().size().height())))
                 fm = self.fontMetrics()
-                pad = hubstyle.px(10, self.win.scale)
-                self.setFixedHeight(int(lines * fm.lineSpacing() + pad))
+                m = self.contentsMargins()
+                v = self.viewportMargins()
+                doc = 2 * self.document().documentMargin()
+                frame = m.top() + m.bottom() + v.top() + v.bottom()
+                self.setFixedHeight(int(math.ceil(lines * fm.lineSpacing() + doc + frame)))
+
+            def changeEvent(self, event):                  # noqa: N802
+                super(Composer, self).changeEvent(event)
+                if event.type() in (QtCore.QEvent.StyleChange, QtCore.QEvent.FontChange):
+                    self._grow()
+
+            def showEvent(self, event):                    # noqa: N802
+                super(Composer, self).showEvent(event)
+                self._grow()
 
             def keyPressEvent(self, event):                # noqa: N802
                 key = event.key()

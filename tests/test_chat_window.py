@@ -418,6 +418,18 @@ class Toasts(unittest.TestCase):
 
 class Layout(Base):
 
+    def test_the_composer_shows_its_whole_line(self):
+        self.win.open_chat("dm")
+        QtWidgets.QApplication.processEvents()
+        c = self.win.composer
+        line = c.fontMetrics().lineSpacing()
+        inner = c.viewport().height() - 2 * c.document().documentMargin()
+        self.assertGreaterEqual(inner, line)
+        c.setPlainText("a\nb\nc")
+        QtWidgets.QApplication.processEvents()
+        inner = c.viewport().height() - 2 * c.document().documentMargin()
+        self.assertGreaterEqual(inner, 3 * line)
+
     def test_narrow_is_one_column(self):
         self.win.root.resize(540, 400)
         self.win.resized()
