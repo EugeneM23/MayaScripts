@@ -291,3 +291,90 @@ def find(messages, message_id):
 
 def total_unread(chats):
     return sum(int(c.get("unread") or 0) for c in chats)
+
+
+def relation(user_id, friends):
+    """friend | incoming | outgoing | None, read from the friend lists (fresher than the server's
+    answer to /v1/people, which only the next read would update)."""
+    for key in ("friends", "incoming", "outgoing"):
+        if any(u.get("id") == user_id for u in (friends or {}).get(key, [])):
+            return "friend" if key == "friends" else key
+    return None
+
+
+def people_rows(people, friends, online, query=""):
+    """The People pane: everybody but me, filtered by name or nick, online first, then by name."""
+    q = str(query or "").strip().lower().lstrip("@")
+    rows = []
+    for u in people or []:
+        name = display_name(u)
+        if q and q not in name.lower() and q not in str(u.get("nick") or "").lower():
+            continue
+        seen = (online or {}).get(u.get("id"), {})
+        on = bool(seen.get("online", u.get("online")))
+        rows.append(dict(u, online=on, last_seen=int(seen.get("last_seen", u.get("last_seen")) or 0),
+                         relation=relation(u.get("id"), friends)))
+    rows.sort(key=lambda r: (not r["online"], display_name(r).lower(), r.get("nick") or ""))
+    return rows
+
+
+def people_count(rows):
+    on = sum(1 for r in rows if r["online"])
+    return "%d в сети из %d" % (on, len(rows))
+
+
+# ------------------------------------------------------------------ the message toasts
+# A message heard while the chat window is shut shows as a small card at the viewport's
+# bottom-left, just above the Time Bar (2026-10-20, «с левой части экрана над таймслайдером»).
+TOAST_W = 300            # logical px
+TOAST_H = 56
+TOAST_GAP = 6
+TOAST_MARGIN = 10
+TOAST_MAX = 3            # the oldest goes when a fourth comes
+TOAST_IN_MS = 280        # unrolls out of its left edge
+TOAST_FLASH_MS = 520     # the accent ring's flash, a key set's
+TOAST_STAY_MS = 6000     # held while the mouse is over it
+TOAST_OUT_MS = 220
+TOAST_MOVE_MS = 180      # a card moving up when a newer one comes under it
+
+
+def toast_left(area, obstacles, margin):
+    """The cards' left edge: past anything of ours standing on the viewport's left
+    (the hub's rail) whose span reaches the area's bottom."""
+    x, y, w, h = area
+    left = x
+    for ox, oy, ow, oh in obstacles or ():
+        if ox <= x + margin and ox + ow > left and oy < y + h and oy + oh > y + h * 0.5:
+            left = ox + ow
+    return left + margin
+
+
+def toast_rect(area, left, size, index, margin, gap):
+    """Card `index` (0 the newest, at the bottom) in global px."""
+    x, y, w, h = area
+    tw, th = size
+    bottom = y + h - margin
+    return (int(left), int(bottom - (index + 1) * th - index * gap), int(tw), int(th))
+
+
+def ease_out(u, power=5):
+    u = max(0.0, min(1.0, u))
+    return 1.0 - (1.0 - u) ** power
+
+
+def toast_look(age_ms, leaving_ms=None):
+    """(reveal 0..1 of the width, opacity, flash 0..1, slide px left) at an age."""
+    reveal = ease_out(age_ms / float(TOAST_IN_MS))
+    opacity = min(1.0, max(0.0, age_ms / (TOAST_IN_MS * 0.6)))
+    flash = max(0.0, 1.0 - age_ms / float(TOAST_FLASH_MS)) ** 1.5 if age_ms >= 0 else 0.0
+    slide = 0.0
+    if leaving_ms is not None:
+        u = max(0.0, min(1.0, leaving_ms / float(TOAST_OUT_MS)))
+        opacity *= 1.0 - u
+        slide = 14.0 * u * u
+    return reveal, opacity, flash, slide
+
+
+def toast_text(text, limit=90):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"

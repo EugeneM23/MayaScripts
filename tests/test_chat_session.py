@@ -63,6 +63,11 @@ class FakeApi(object):
     def dm(self, user_id):
         return chat("dm_new", members=(ME, BOB))
 
+    def people(self):
+        return [dict(BOB, online=True, last_seen=0, relation="friend"),
+                {"id": "carl", "nick": "carl", "name": "Carl", "avatar_v": 0, "online": False,
+                 "last_seen": 5, "relation": None}]
+
 
 class FakeLink(object):
     def __init__(self, server, token, protocol):
@@ -247,6 +252,18 @@ class Events(Base):
                          "admin": None})
         self.assertNotIn("dm", ses.state.chats)
         self.assertEqual(self.store.chats(), [])
+
+    def test_people_are_read_and_follow_presence_and_names(self):
+        ses = self.session()
+        people = ses.read_people()
+        self.assertEqual([u["id"] for u in people], ["bob", "carl"])
+        self.assertIn("people", self.told)
+        self.assertEqual(ses.state.online["carl"], {"online": False, "last_seen": 5})
+        self.frame(ses, {"kind": "presence", "user_id": "carl", "online": True, "last_seen": 5})
+        self.assertTrue(ses.state.people[1]["online"])
+        self.frame(ses, {"seq": 30, "kind": "user", "user": {"id": "carl", "nick": "carl",
+                                                             "name": "Karl", "avatar_v": 0}})
+        self.assertEqual(ses.state.people[1]["name"], "Karl")
 
     def test_friends_and_presence(self):
         ses = self.session()

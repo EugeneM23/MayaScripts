@@ -68,6 +68,13 @@ class FakeSession(object):
                                                           at=NOW - 10 ** 7)), unread=3)}
             self.state.messages = {"dm": [m1, m2], "dm2": [msg("x", 1, frm="ann", chat="dm2")]}
 
+    def read_people(self):
+        self.calls.append(("read_people",))
+        self.state.people = [dict(BOB, online=True, last_seen=0),
+                             {"id": "carl", "nick": "carl", "name": "Carl", "avatar_v": 0,
+                              "online": False, "last_seen": 0}]
+        return self.state.people
+
     def listen(self, fn):
         self.listeners.append(fn)
 
@@ -313,6 +320,102 @@ class ListAndChat(Base):
         self.assertGreater(painted, 10)
 
 
+class PeoplePane(Base):
+    def buttons(self):
+        return [b.text() for b in self.win.people_body.findChildren(QtWidgets.QPushButton)]
+
+    def test_opening_it_reads_everybody(self):
+        self.ses.state.friends = {"friends": [BOB], "incoming": [], "outgoing": []}
+        self.win.show_pane("people")
+        self.assertIn(("read_people",), self.ses.calls)
+        self.assertEqual(self.win.people_count.text(), "1 в сети из 2")
+        self.assertEqual(self.buttons(), ["Написать", "В друзья"])
+
+    def test_a_stranger_is_asked_to_be_a_friend(self):
+        self.win.show_pane("people")
+        add = [b for b in self.win.people_body.findChildren(QtWidgets.QPushButton)
+               if b.text() == "В друзья"]
+        add[-1].click()
+        self.assertIn(("request", "carl"), self.ses.api.calls)
+        self.assertIn("@carl", self.win.people_line.text())
+
+    def test_the_search_filters(self):
+        self.win.show_pane("people")
+        self.win.people_field.setText("carl")
+        self.assertEqual(self.buttons(), ["В друзья"])
+
+
+class Toasts(unittest.TestCase):
+    def setUp(self):
+        _app()
+        from maya_chat import toast
+        self.toast = toast
+        toast.clear()
+
+    def tearDown(self):
+        self.toast.clear()
+        QtWidgets.QApplication.processEvents()
+
+    def test_a_message_shows_one_card_and_the_same_chat_replaces_it(self):
+        a = self.toast.show("dm", BOB, "Bob", "hi")
+        b = self.toast.show("dm", BOB, "Bob", "again")
+        self.assertIs(a, b)
+        self.assertEqual(a.text, "again")
+        self.assertEqual(len(self.toast.cards()), 1)
+
+    def test_the_newest_stands_at_the_bottom_and_a_fourth_drops_the_oldest(self):
+        cards = [self.toast.show("c%d" % i, BOB, "Bob", "m") for i in range(4)]
+        live = self.toast.cards()
+        self.assertEqual(live, cards[1:])
+        self.toast._layout(animate=False)
+        self.assertLess(cards[2].y(), cards[3].y())
+        self.assertEqual(cards[2].x(), cards[3].x())
+
+    def test_it_stands_at_the_bottom_left_of_its_area(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi")
+        self.toast._layout(animate=False)
+        (x, y, w, h), _o = self.toast.area()
+        margin = look.TOAST_MARGIN * card.scale
+        self.assertAlmostEqual(card.x(), x + margin, delta=1)
+        self.assertAlmostEqual(card.y() + card.height(), y + h - margin, delta=1)
+
+    def test_a_click_opens_the_chat_and_the_card_leaves(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi")
+        with mock.patch.object(self.toast, "open_chat") as opened:
+            event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(40, 20),
+                                      QtCore.QPointF(40, 20), QtCore.Qt.LeftButton,
+                                      QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+            card.mousePressEvent(event)
+        opened.assert_called_once_with("dm")
+        self.assertEqual(self.toast.cards(), [])
+
+    def test_it_goes_by_itself_after_its_stay(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi")
+        card.stay_left = 0
+        card.last -= 20
+        self.toast._tick()
+        self.assertIsNotNone(card.leaving)
+        card.leaving -= look.TOAST_OUT_MS + 1
+        self.toast._tick()
+        self.assertEqual(self.toast._state()["cards"], [])
+
+    def test_the_card_paints_ink(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi there")
+        card.born -= 10000
+        card.flash_at -= 10000
+        image = QtGui.QImage(card.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        card.render(image)
+        inked = sum(1 for x in range(0, image.width(), 3) for y in range(0, image.height(), 3)
+                    if image.pixelColor(x, y).alpha() > 0)
+        self.assertGreater(inked, 100)
+
+    def test_opening_its_chat_takes_its_card_away(self):
+        self.toast.show("dm", BOB, "Bob", "hi")
+        self.toast.dismiss_chat("dm")
+        self.assertEqual(self.toast.cards(), [])
+
+
 class Layout(Base):
 
     def test_narrow_is_one_column(self):
@@ -387,7 +490,8 @@ class Notify(unittest.TestCase):
             done = notify.heard(self.ses, "message", {"message": m})
         self.assertEqual(done[0], ("badge", 3))
         self.assertEqual(done[1][0], "viewport")
-        head, text = said.call_args[0]
+        head, text = said.call_args[0][:2]
+        self.assertEqual(said.call_args[0][3]["id"], "bob")
         self.assertEqual(head, "Bob")
         self.assertLessEqual(len(text), notify.PREVIEW)
         self.assertTrue(badge.called)

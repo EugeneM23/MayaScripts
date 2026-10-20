@@ -291,8 +291,29 @@ def phase_presence():
     wa.close()
 
 
+
+def phase_people():
+    A, B, C = Users.make("qa"), Users.make("qb"), Users.make("qc")
+    friends_of((A, B))
+    status, doc = jcall("GET", "/v1/people", A[0])
+    mine = {u["nick"]: u for u in doc.get("users", []) if u["nick"].startswith("zzt_%s_q" % RUN)}
+    gate("people lists everybody but me", status == 200 and sorted(mine) == sorted([B[1]["nick"], C[1]["nick"]]), sorted(mine))
+    gate("people says who is a friend", mine.get(B[1]["nick"], {}).get("relation") == "friend"
+         and mine.get(C[1]["nick"], {}).get("relation") is None, mine)
+    gate("people carries presence", all("online" in u and "last_seen" in u for u in mine.values()), mine)
+    wa = ws(A[0])
+    wa.send({"type": "hello", "since": jcall("GET", "/v1/chats", A[0])[1]["seq"]})
+    wa.until(lambda e: e["kind"] == "caught_up")
+    wc = ws(C[0])
+    on, _ = wa.until(lambda e: e["kind"] == "presence" and e["user_id"] == C[1]["id"])
+    gate("a stranger coming online is heard too", on and on["online"] is True, on)
+    wc.close()
+    wa.close()
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
-          "chats": phase_chats, "live": phase_live, "presence": phase_presence}
+          "chats": phase_chats, "live": phase_live, "presence": phase_presence,
+          "people": phase_people}
 
 
 def main(argv):

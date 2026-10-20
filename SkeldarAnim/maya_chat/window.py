@@ -989,6 +989,10 @@ class ChatWindow(object):
                                       "Друзья")
         self.friends_button.clicked.connect(lambda *_a: self.show_pane("friends"))
         foot.addWidget(self.friends_button)
+        people = _button("", "tool", "world", "skeldarChatPeopleButton", self.scale,
+                         "Все пользователи")
+        people.clicked.connect(lambda *_a: self.show_pane("people"))
+        foot.addWidget(people)
         settings = _button("", "tool", "settings", "skeldarChatSettingsButton", self.scale,
                            "Настройки")
         settings.clicked.connect(lambda *_a: self.show_pane("settings"))
@@ -1007,7 +1011,8 @@ class ChatWindow(object):
         self.right.setObjectName("skeldarChatRight")
         self.right_pages = {}
         for key, builder in (("empty", self._build_empty), ("chat", self._build_chat),
-                             ("friends", self._build_friends), ("new", self._build_new),
+                             ("friends", self._build_friends), ("people", self._build_people),
+                             ("new", self._build_new),
                              ("settings", self._build_settings),
                              ("members", self._build_members)):
             widget = builder()
@@ -1130,6 +1135,27 @@ class ChatWindow(object):
         self.friends_rows.setContentsMargins(0, 0, 0, 0)
         self.friends_rows.setSpacing(self.px(3))
         lay.addWidget(self._scroll(self.friends_body, "skeldarChatFriendsArea"), 1)
+        return page
+
+    def _build_people(self):
+        q = _q()
+        w = q.QtWidgets
+        page, lay = self._pane_box("Все пользователи", "skeldarChatPeople")
+        self.people_field = w.QLineEdit()
+        self.people_field.setObjectName("skeldarChatPeopleSearch")
+        self.people_field.setPlaceholderText("Имя или @ник")
+        self.people_field.textChanged.connect(lambda *_a: self._fill_people())
+        lay.addWidget(self.people_field)
+        self.people_count = _label("", "label", "skeldarChatPeopleCount")
+        lay.addWidget(self.people_count)
+        self.people_line = _label("", "status", "skeldarChatPeopleLine", wrap=True)
+        lay.addWidget(self.people_line)
+        self.people_body = w.QWidget()
+        self.people_body.setObjectName("skeldarChatPeopleBody")
+        self.people_rows = w.QVBoxLayout(self.people_body)
+        self.people_rows.setContentsMargins(0, 0, 0, 0)
+        self.people_rows.setSpacing(self.px(3))
+        lay.addWidget(self._scroll(self.people_body, "skeldarChatPeopleArea"), 1)
         return page
 
     def _build_new(self):
@@ -1279,6 +1305,8 @@ class ChatWindow(object):
         self._refresh_chat()
         if self.pane == "friends":
             self._fill_friends()
+        elif self.pane == "people":
+            self._fill_people()
         elif self.pane == "new":
             self._fill_new()
         elif self.pane == "members":
@@ -1438,6 +1466,11 @@ class ChatWindow(object):
         self.chat = chat_id
         self.pane = "chat"
         self.single = "right"
+        try:
+            from . import toast
+            toast.dismiss_chat(chat_id)
+        except Exception:                                    # noqa: BLE001
+            pass
         self.feed._known = None
         self._pending_scroll = ("bottom", 0)
         self.refresh()
@@ -1457,7 +1490,15 @@ class ChatWindow(object):
     def show_pane(self, pane):
         self.pane = pane
         self.single = "right"
+        if pane == "people":
+            self.read_people()
         self.refresh()
+
+    def read_people(self):
+        """Asks the server for everybody again (the pane is opened, a friend press answered)."""
+        fn = getattr(self.session, "read_people", None)
+        if fn is not None:
+            self._call(fn, self.people_line)
 
     def say(self, text, where=None):
         label = where or self.line
@@ -1646,7 +1687,8 @@ class ChatWindow(object):
         return result
 
     def _after_people(self):
-        for name in ("_read_friends", "_refresh_chats"):
+        for name in ("_read_friends", "_refresh_chats") + (("read_people",)
+                                                            if self.pane == "people" else ()):
             fn = getattr(self.session, name, None)
             if fn is not None:
                 try:
@@ -1655,17 +1697,23 @@ class ChatWindow(object):
                     pass
         self.refresh()
 
-    def request_friend(self):
-        nick = self.friend_field.text().strip().lstrip("@").lower()
+    def request_friend(self, nick=None, line=None):
+        typed = nick is None
+        nick = (self.friend_field.text() if typed else nick).strip().lstrip("@").lower()
+        line = line or self.friends_line
         if not nick:
             return
-        if self._call(lambda: self.session.api.request(nick), self.friends_line) is not None:
-            self.friend_field.clear()
-            self.say("Запрос отправлен @" + nick, self.friends_line)
+        if self._call(lambda: self.session.api.request(nick), line) is not None:
+            if typed:
+                self.friend_field.clear()
+            self.say("Запрос отправлен @" + nick, line)
             self._after_people()
 
+    def _pane_line(self):
+        return self.people_line if self.pane == "people" else self.friends_line
+
     def answer(self, verb, user_id):
-        if self._call(lambda: self.session.api.answer(verb, user_id), self.friends_line) is not None:
+        if self._call(lambda: self.session.api.answer(verb, user_id), self._pane_line()) is not None:
             self._after_people()
 
     def unfriend(self, user_id):
@@ -1673,7 +1721,7 @@ class ChatWindow(object):
             self._after_people()
 
     def write_to(self, user_id):
-        chat_id = self._call(lambda: self.session.open_dm(user_id), self.friends_line)
+        chat_id = self._call(lambda: self.session.open_dm(user_id), self._pane_line())
         if chat_id:
             self.open_chat(chat_id)
 
@@ -1784,6 +1832,34 @@ class ChatWindow(object):
         if not any(fr.get(k) for k in ("incoming", "outgoing", "friends")):
             self.friends_rows.addWidget(_label("Пока никого. Добавьте друга по его нику.", "note"))
         self.friends_rows.addStretch(1)
+
+    def _people_buttons(self, u):
+        line = self.people_line
+        rel = u.get("relation")
+        if rel == "friend":
+            return [("Написать", "primary", lambda: self.write_to(u["id"]))]
+        if rel == "incoming":
+            return [("Принять", "primary", lambda: self.answer("accept", u["id"]))]
+        if rel == "outgoing":
+            return [("Отменить запрос", None, lambda: self.answer("cancel", u["id"]))]
+        return [("В друзья", None, lambda: self.request_friend(u.get("nick"), line))]
+
+    def _fill_people(self):
+        st = self.session.state
+        self._clear(self.people_rows)
+        rows = look.people_rows(getattr(st, "people", []), st.friends, st.online,
+                                self.people_field.text())
+        self.people_count.setText(look.people_count(rows) if rows else "")
+        for u in rows:
+            row = self._person_row(u, self._people_buttons(u))
+            if not u["online"]:
+                row.setToolTip(look.last_seen(u.get("last_seen"), _now_ms()))
+            self.people_rows.addWidget(row)
+        if not rows:
+            text = ("Никого не нашли" if self.people_field.text().strip()
+                    else "Пока здесь никого, кроме вас")
+            self.people_rows.addWidget(_label(text, "note"))
+        self.people_rows.addStretch(1)
 
     def _fill_new(self):
         q = _q()

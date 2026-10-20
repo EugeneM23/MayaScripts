@@ -262,6 +262,12 @@ export class Studio extends DurableObject {
     return json({ users: rows.map((r) => ({ ...this.user(r), relation: this.relation(me.id, r.id) })) });
   }
 
+  // Everybody in the studio but me: who they are, whether they are online, and how they stand to me.
+  people({ me }) {
+    const rows = this.sql.exec("SELECT * FROM users WHERE id != ? ORDER BY nick LIMIT 2000", me.id).toArray();
+    return json({ users: rows.map((r) => ({ ...this.withPresence(r), relation: this.relation(me.id, r.id) })) });
+  }
+
   friends({ me }) {
     const pick = (sql, ...args) => this.sql.exec(sql, ...args).toArray().map((r) => this.withPresence(r));
     return json({
@@ -489,7 +495,8 @@ export class Studio extends DurableObject {
 
   announce(uid, online) {
     const row = this.userById(uid);
-    this.deliver({ kind: "presence", user_id: uid, online, last_seen: row.last_seen }, this.friendIds(uid));
+    // Everybody online hears it: the People list shows the whole studio, not only friends.
+    this.deliver({ kind: "presence", user_id: uid, online, last_seen: row.last_seen }, null);
   }
 
   async webSocketMessage(ws, raw) {
@@ -634,6 +641,7 @@ const ROUTES = [
   ["PUT", /^\/v1\/me\/avatar$/, "putMyAvatar"],
   ["GET", /^\/v1\/avatar\/u\/([0-9a-f]{16})$/, "userAvatar"],
   ["GET", /^\/v1\/users$/, "searchUsers"],
+  ["GET", /^\/v1\/people$/, "people"],
   ["GET", /^\/v1\/friends$/, "friends"],
   ["POST", /^\/v1\/friends\/request$/, "requestFriend"],
   ["POST", /^\/v1\/friends\/(accept|decline|cancel)$/, "answerRequest"],

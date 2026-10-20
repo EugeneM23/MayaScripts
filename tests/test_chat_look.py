@@ -189,5 +189,60 @@ class Pure(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
 
+class People(unittest.TestCase):
+    PEOPLE = [{"id": "z", "nick": "zed", "name": "Zed", "online": False, "last_seen": 1},
+              {"id": "b", "nick": "bob", "name": "Bob", "online": False, "last_seen": 0},
+              {"id": "a", "nick": "ann", "name": "Ann", "online": True, "last_seen": 0}]
+    FRIENDS = {"friends": [{"id": "b"}], "incoming": [{"id": "z"}], "outgoing": []}
+
+    def test_online_first_then_by_name(self):
+        rows = look.people_rows(self.PEOPLE, self.FRIENDS, {})
+        self.assertEqual([r["id"] for r in rows], ["a", "b", "z"])
+
+    def test_live_presence_wins_over_the_list(self):
+        rows = look.people_rows(self.PEOPLE, self.FRIENDS, {"z": {"online": True, "last_seen": 9}})
+        self.assertEqual([r["id"] for r in rows], ["a", "z", "b"])
+        self.assertEqual(look.people_count(rows), "2 в сети из 3")
+
+    def test_relation_comes_from_the_friend_lists(self):
+        rows = {r["id"]: r["relation"] for r in look.people_rows(self.PEOPLE, self.FRIENDS, {})}
+        self.assertEqual(rows, {"a": None, "b": "friend", "z": "incoming"})
+
+    def test_filter_by_name_or_nick(self):
+        self.assertEqual([r["id"] for r in look.people_rows(self.PEOPLE, {}, {}, "@ze")], ["z"])
+        self.assertEqual([r["id"] for r in look.people_rows(self.PEOPLE, {}, {}, "an")], ["a"])
+
+
+class Toast(unittest.TestCase):
+    def test_left_edge_passes_the_rail(self):
+        area = (0, 100, 1000, 600)
+        self.assertEqual(look.toast_left(area, [], 10), 10)
+        self.assertEqual(look.toast_left(area, [(0, 100, 48, 600)], 10), 58)
+        #  a rail card out on the right of the screen, or above the bottom half, is not in the way
+        self.assertEqual(look.toast_left(area, [(900, 100, 48, 600)], 10), 10)
+        self.assertEqual(look.toast_left(area, [(0, 100, 300, 200)], 10), 10)
+
+    def test_cards_stack_up_from_the_bottom(self):
+        area = (0, 100, 1000, 600)
+        r0 = look.toast_rect(area, 10, (300, 56), 0, 10, 6)
+        r1 = look.toast_rect(area, 10, (300, 56), 1, 10, 6)
+        self.assertEqual(r0, (10, 634, 300, 56))
+        self.assertEqual(r1[1], 634 - 62)
+
+    def test_the_look_over_time(self):
+        reveal, opacity, flash, slide = look.toast_look(0)
+        self.assertEqual((reveal, opacity, slide), (0.0, 0.0, 0.0))
+        self.assertEqual(flash, 1.0)
+        reveal, opacity, flash, slide = look.toast_look(10000)
+        self.assertEqual((reveal, opacity, flash), (1.0, 1.0, 0.0))
+        _r, opacity, _f, slide = look.toast_look(10000, look.TOAST_OUT_MS)
+        self.assertEqual(opacity, 0.0)
+        self.assertGreater(slide, 0)
+
+    def test_long_text_is_cut(self):
+        self.assertTrue(look.toast_text("a " * 200).endswith("…"))
+        self.assertEqual(look.toast_text("a\n b"), "a b")
+
+
 if __name__ == "__main__":
     unittest.main()

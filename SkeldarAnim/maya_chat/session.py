@@ -30,6 +30,7 @@ class State(object):
         self.messages = {}              # chat id -> [message] by seq
         self.pending = {}               # chat id -> [local message, "state" sending | failed]
         self.friends = {"friends": [], "incoming": [], "outgoing": []}
+        self.people = []                # everybody but me, read by read_people()
         self.online = {}                # user id -> {"online", "last_seen"}
         self.typing = {}                # chat id -> {user id: monotonic time}
         self.reads = {}                 # chat id -> {user id: upto}
@@ -220,6 +221,17 @@ class Session(object):
             if "online" in u:
                 st.online[u["id"]] = {"online": u["online"], "last_seen": u["last_seen"]}
 
+    def read_people(self):
+        """Everybody in the studio but me, with presence and how they stand to me."""
+        self._need()
+        st = self.state
+        st.people = [records.user(u) for u in self.api.people()]
+        for u in st.people:
+            if "online" in u:
+                st.online[u["id"]] = {"online": u["online"], "last_seen": u["last_seen"]}
+        self.tell("people")
+        return st.people
+
     # ---------------------------------------------------------------- events
     def _event(self, e):
         handler = getattr(self, "_on_" + e["kind"], None)
@@ -345,7 +357,7 @@ class Session(object):
         if st.me is not None and st.me["id"] == u["id"]:
             st.me = dict(st.me, **u)
             self.store.set_me(st.me)
-        for lst in st.friends.values():
+        for lst in list(st.friends.values()) + [st.people]:
             for i, x in enumerate(lst):
                 if x["id"] == u["id"]:
                     lst[i] = dict(x, **u)
@@ -359,7 +371,8 @@ class Session(object):
         st = self.state
         seen = {"online": e["online"], "last_seen": e["last_seen"]}
         st.online[e["user_id"]] = seen
-        for lst in list(st.friends.values()) + [c["members"] for c in st.chats.values()]:
+        for lst in (list(st.friends.values()) + [st.people]
+                    + [c["members"] for c in st.chats.values()]):
             for i, x in enumerate(lst):
                 if x["id"] == e["user_id"]:
                     lst[i] = dict(x, **seen)

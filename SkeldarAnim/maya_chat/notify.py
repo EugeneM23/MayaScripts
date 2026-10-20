@@ -74,6 +74,12 @@ def _seen(chat_id):
         return False
 
 
+def sender(session, message):
+    c = session.state.chats.get(message.get("chat")) or {}
+    return next((u for u in c.get("members", []) if u.get("id") == message.get("from_id")),
+                {"id": message.get("from_id"), "nick": "?"})
+
+
 def message_text(session, message):
     c = session.state.chats.get(message["chat"]) or {}
     who = next((m for m in c.get("members", []) if m.get("id") == message.get("from_id")),
@@ -87,15 +93,22 @@ def message_text(session, message):
     return head, text
 
 
-def say(head, text):
-    """A viewport message (Maya's own inViewMessage)."""
+def say(head, text, message=None, user=None):
+    """A card at the viewport's bottom-left above the Time Bar (toast.py); where Qt cannot
+    stand, Maya's own inViewMessage there."""
+    try:
+        from . import toast
+        if toast.show((message or {}).get("chat"), user or {"nick": "?"}, head, text) is not None:
+            return True
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
     cmds = _cmds()
     if cmds is None:
         return False
     try:
         safe = lambda t: t.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
         cmds.inViewMessage(assistMessage="<hl>{0}</hl>  {1}".format(safe(head), safe(text)),
-                           position="topRight", fade=True, fadeStayTime=3500)
+                           position="botLeft", fade=True, fadeStayTime=3500)
         return True
     except Exception:                                        # noqa: BLE001
         return False
@@ -121,7 +134,7 @@ def heard(session, kind, data, out=None):
     if m.get("from_id") == me or _seen(m.get("chat")):
         return done
     head, text = message_text(session, m)
-    if option("viewport") and say(head, text):
+    if option("viewport") and say(head, text, m, sender(session, m)):
         done.append(("viewport", head, text))
     if option("sound") and ring():
         done.append(("sound",))

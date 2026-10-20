@@ -71,6 +71,9 @@ class Api(object):
     def users(self, q):
         return self.call("GET", "/v1/users?q=" + urllib.parse.quote(q))["users"]
 
+    def people(self):
+        return self.call("GET", "/v1/people")["users"]
+
     def friends(self):
         return self.call("GET", "/v1/friends")
 

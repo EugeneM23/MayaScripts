@@ -12819,3 +12819,35 @@ production: sign up again. Proof against production: `verify_chat_server.py all`
 `verify_chat_client.py` **19/19**, both deleting their test accounts; 110 chat unit tests. Still the
 animator's to do: roll the Cloudflare token that was pasted into a chat (dashboard → My Profile →
 API Tokens → Roll), then `deploy.py keys` with the new one. Not seen in a GUI Maya.
+
+## Chat: every user, and message cards over the viewport (2026-10-20)
+
+The animator: «Давай сделем так что бы у нас было видно всех пользовотелей в чате», then «При
+свернутом окне чата сообщения давай показывать в активном окне маи с левой части экрана над
+таймслайдером».
+- **Server**: `GET /v1/people` (`people`) - everybody but me, with presence and `relation`
+  (friend / incoming / outgoing / null), by nick, at most 2000. **Presence goes to everybody
+  online now** (`announce` delivers to all sockets, was friends only), so the list stays live.
+  A dm or a group still needs friendship.
+- **Client**: `api.people()`, `Session.read_people()` -> `state.people` (told "people"); presence
+  and name events update it. `look.people_rows` (online first, then name; filter by name or @nick;
+  the relation read from the friend lists, fresher than the server's) and `people_count`.
+- **Window**: a globe button in the list's foot opens the pane «Все пользователи»
+  (`skeldarChatPeople`): a search field, «N в сети из M», one row a person with Написать / Принять /
+  Отменить запрос / В друзья; opening it reads the list again, and so does a friend press there.
+  Errors go to the shown pane's line (`_pane_line`).
+- **Message cards** (`maya_chat/toast.py`): a message not seen (the window shut, or another chat in
+  it) shows as a painted card at the viewport's bottom-left (`maya_hubedge._viewport_area`),
+  ending above the Time Bar's band (`_above_timebar`) and right of the hub's rail
+  (`look.toast_left`). Frameless Qt.Tool windows owned by Maya's window, never taking the focus;
+  the newest at the bottom, at most 3 (`look.TOAST_*`), the same chat's card replaced; it unrolls
+  out of its left edge with the accent ring flashing (added light), stays 6 s (held under the
+  mouse), fades to the left; a click opens the chat window on that chat, the cross or the right
+  button dismisses; opening the chat takes its card away. One 16 ms timer, stopped at rest;
+  Interface animations off: at once. State on `sys._skeldar_chat_toasts`. Where Qt cannot stand,
+  `inViewMessage` at `botLeft`. The option is still `skeldarChatNotifyViewport`.
+- Proof: production deployed (the first verify after the upload timed out on the cold Worker, the
+  rerun passed), `verify_chat_server.py all` **0 of 65** (a new phase `people`: everybody but me,
+  the relation, presence, a stranger's presence heard), `verify_chat_client.py` **19/19**; 129
+  chat unit tests (People, Toasts: placement, stacking, replace, stay, click, ink). **Not seen in a
+  GUI Maya.**
