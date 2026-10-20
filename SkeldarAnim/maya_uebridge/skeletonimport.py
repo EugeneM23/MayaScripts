@@ -36,6 +36,7 @@ from maya_uebridge import rigimport
 TWIN_TOLERANCE = 0.01     # the median bone within 1 % of the clip's makes a twin
 SHORTEST = 1.0            # cm: shorter bones do not vote
 HELPERS = "ik_"           # helper bones a body of its own leaves at rest
+CARRIED = ("weapon_", "camera_")   # carried on their parent onto another body (2026-10-20)
 UE4_SPINE = {"spine_01": "spine_02", "spine_02": "spine_04", "spine_03": "spine_05"}
 NO_FILE = "no skeleton file - {0} is missing from assets/"
 SHOWN = 6                 # bone names a status line lists
@@ -154,6 +155,11 @@ def drive_for(name, is_root, twin, mode=None):
         return "parent"
     if name.startswith(HELPERS):
         return None
+    if name.startswith(CARRIED):
+        # the weapon and camera bones: the clip bone's pose on ITS parent, on the target bone's
+        # parent (the rig retarget's `relative` rule, 2026-10-20) - by world orientation the
+        # camera stood at the target's own head height turned the clip's way
+        return "relative"
     if mode == "stretch":
         return "orient+scaled"
     if is_root or name == "pelvis":
@@ -237,6 +243,8 @@ def result_line(name, label, top, result, info):
         parts.append("not in the clip: " + _names(result["missing"]))
     if result.get("skipped"):
         parts.append("at rest: " + _names(result["skipped"]))
+    if result.get("camera"):
+        parts.append(result["camera"])
     return "  |  ".join(parts)
 
 
@@ -381,8 +389,11 @@ def onto_refusal(root):
     rig of somebody's) - the transfer would fight it."""
     from maya_uebridge import animimport
     joints = _joints(root)
-    foreign = animimport.foreign_constrained(
-        animimport.constrained_joints(joints), [bone for bone, _w in _links(root)])
+    ours = [bone for bone, _w in _links(root)]
+    camera, bone = _camera_bone(root)
+    if bone is not None and camera.camera_for(bone):
+        ours.append(bone)       # our Camera Setup: torn down and set up again (2026-10-20)
+    foreign = animimport.foreign_constrained(animimport.constrained_joints(joints), ours)
     if not foreign:
         return ""
     return ("{0}: {1} bone(s) under a constraint that is not ours (e.g. {2}) - "
@@ -597,6 +608,11 @@ def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=N
         _cut_time_keys(dst)
         if how == "parent":
             constraints += cmds.parentConstraint(src, dst, maintainOffset=False)
+        elif how == "relative":
+            import maya_rig_retarget
+            driver, made = maya_rig_retarget._parent_space_driver(src, dst)
+            temp.extend(made)
+            constraints += cmds.parentConstraint(driver, dst, maintainOffset=False)
         else:
             constraints += cmds.orientConstraint(src, dst, maintainOffset=False)
             if how == "orient+point":
@@ -982,11 +998,58 @@ def discard_new(root):
 
 
 def _transfer(source, root, start, end, decision):
-    """`transfer` with the decided version (the legacy call without one)."""
+    """`transfer` with the decided version (the legacy call without one), the camera round
+    trip around it (`_camera_down` / `_camera_up`, 2026-10-20): its line in `result["camera"]`."""
+    had = _camera_down(root, start, end)
     if decision is not None and decision.mode:
-        return transfer(source, root, start, end, mode=decision.mode,
-                        twin=getattr(decision, "twin", None))
-    return transfer(source, root, start, end)
+        result = transfer(source, root, start, end, mode=decision.mode,
+                          twin=getattr(decision, "twin", None))
+    else:
+        result = transfer(source, root, start, end)
+    result["camera"] = _camera_up(source, root, start, end, had)
+    return result
+
+
+def _camera_bone(root):
+    try:
+        from maya_scenesetup import camera
+    except ImportError:
+        return None, None
+    try:
+        joints = _joints(root)
+    except (AttributeError, RuntimeError, ValueError):   # a skeleton gone, a scene with no DAG
+        return camera, None
+    for joint in joints:
+        if leaf(joint) == camera.BONE:
+            return camera, joint
+    return camera, None
+
+
+def _camera_down(root, start, end):
+    """A Camera Setup standing on the skeleton's camera_root torn down before the transfer (the
+    bone baked back first, `camera.teardown`) - its constraint would fight the transfer's. Did one
+    stand?"""
+    camera, bone = _camera_bone(root)
+    if bone is None or not camera.camera_for(bone):
+        return False
+    return bool(camera.teardown(bone, start, end))
+
+
+def _camera_up(source, root, start, end, had):
+    """Camera Setup on the skeleton's camera_root when one stood before the transfer, or when the
+    clip carries a camera_root of its own (2026-10-20: the camera is part of the character, as the
+    rig retarget always set it up). The line, or ""."""
+    camera, bone = _camera_bone(root)
+    if bone is None or camera.camera_for(bone):
+        return ""
+    carried = any(leaf(j) == camera.BONE for j in _joints(source))
+    if not (had or carried):
+        return ""
+    try:
+        camera.setup(bone, start, end)
+    except Exception as error:                     # never fails the import
+        return "camera not set up on %s: %s" % (leaf(bone), str(error).strip()[:80])
+    return "camera set up on %s" % leaf(bone)
 
 
 def _with_reason(line, decision):

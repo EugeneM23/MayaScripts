@@ -117,6 +117,21 @@ class Drive(unittest.TestCase):
         self.assertIsNone(si.drive_for("ik_hand_gun", False, False))
         self.assertIsNone(si.drive_for("ik_foot_l", False, False))
 
+    def test_another_body_carries_the_weapon_and_camera_bones_on_their_parents(self):
+        # 2026-10-20: by world orientation the camera stood at the target's own head height, its
+        # turn the clip's - relative to the parent, as the rig retarget carries them
+        for name in ("weapon_r", "weapon_l", "camera_root", "camera_bone"):
+            self.assertEqual(si.drive_for(name, False, False), "relative")
+            self.assertEqual(si.drive_for(name, False, False, "stretch"), "relative")
+            self.assertEqual(si.drive_for(name, False, True, "rotation"), "relative")
+            self.assertEqual(si.drive_for(name, False, True), "parent")
+
+    def test_the_line_says_the_camera(self):
+        result = dict(twin=True, moved=93, skipped=[], missing=[],
+                      camera="camera set up on camera_root")
+        self.assertTrue(si.result_line("A", "Manny UE5 [skeleton]", "root", result, {})
+                        .endswith("  |  camera set up on camera_root"))
+
 
 class Words(unittest.TestCase):
 
