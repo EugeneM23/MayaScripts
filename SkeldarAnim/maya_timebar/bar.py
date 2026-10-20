@@ -202,6 +202,32 @@ def classes():
                             int(ca.green() + (cb.green() - ca.green()) * u),
                             int(ca.blue() + (cb.blue() - ca.blue()) * u))
 
+    def draw_span_labels(p, t, span, top, width, ui, tk):
+        """A highlight's first and last frame on blue pills at its edges (inside the
+        block when both fit, else beyond them) - the same on the timeline and the lanes."""
+        a, b = span
+        font = QtGui.QFont("Consolas")
+        font.setPixelSize(max(8, int(10 * ui)))
+        font.setBold(True)
+        p.setFont(font)
+        metrics = QtGui.QFontMetricsF(font)
+        pad, ph = 3 * ui, metrics.height() + 1 * ui
+        single = abs(b - a) < 1e-6
+        texts = [look.frame_text(a)] + ([] if single else [look.frame_text(b)])
+        widths = [metrics.horizontalAdvance(s) + 2 * pad for s in texts]
+        lefts = look.span_labels(t.x(a), t.end(b), widths[0], widths[-1], width,
+                                 look.SPAN_GAP * ui, single)
+        for text, tw, left in zip(texts, widths, lefts):
+            if left is None:
+                continue
+            r = QtCore.QRectF(left, top, tw, ph)
+            p.setPen(Qt.NoPen)
+            p.setBrush(colour(HIGHLIGHT))
+            p.drawRoundedRect(r, 3 * ui, 3 * ui)
+            p.setPen(colour(tk["panel"]))
+            p.drawText(r, Qt.AlignCenter, text)
+        p.setPen(Qt.NoPen)
+
     def draw_glyph(p, name, rect, colour_):
         path = GLYPHS.get(name)
         if not path:
@@ -1019,6 +1045,9 @@ def classes():
                             if t.v0 - 1 <= shown <= t.v1 + 2:
                                 add_key(path, t.x(shown), h, ui, look.on_frame(shown), cell=t.scale)
                     p.fillPath(path, colour(hex_))
+            # the highlight's first and last frame, over the ruler (2026-10-20)
+            if sel:
+                draw_span_labels(p, t, sel, 1.5 * ui, w, ui, tk)
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
             """Over the picture: the keys that are lit or lifted, bigger and glowing -
@@ -2562,7 +2591,8 @@ def classes():
 
     global _KIT
     _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph, glow=glow,
-                                 halo=halo, soft_dot=soft_dot)
+                                 halo=halo, soft_dot=soft_dot,
+                                 draw_span_labels=draw_span_labels)
     return Strip, Timeline, RangeBlock, Pill
 
 

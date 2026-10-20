@@ -445,6 +445,30 @@ class Cache(Strip):
 
 class Highlight(Strip):
 
+    def test_a_highlight_shows_its_first_and_last_frame(self):
+        """2026-10-20: «номер кадра в начале и в конце рамки выделения»."""
+        blue = QT.QtGui.QColor(bar.HIGHLIGHT)
+
+        def pills(sel):
+            self.strip.state["highlight"] = sel
+            self.tl._static = None
+            image = QT.QtGui.QImage(self.tl.size(), QT.QtGui.QImage.Format_ARGB32)
+            image.fill(0)
+            self.tl.render(image)
+            y = 6
+            return [x for x in range(image.width())
+                    if all(abs(a - b) < 12 for a, b in (
+                        (image.pixelColor(x, y).red(), blue.red()),
+                        (image.pixelColor(x, y).green(), blue.green()),
+                        (image.pixelColor(x, y).blue(), blue.blue())))]
+        self.assertFalse(pills(None))
+        xs = pills((20, 40))
+        t = self.tl.track()
+        self.assertGreater(len([x for x in xs if t.x(20) <= x < t.x(20) + 40]), 8, "the start label")
+        self.assertGreater(len([x for x in xs if t.end(40) - 40 < x <= t.end(40)]), 8, "the end label")
+        self.assertFalse([x for x in xs if t.x(28) < x < t.x(32)], "nothing in the middle")
+
+
     def test_a_shift_drag_highlights_and_a_click_clears_it(self):
         S = QT.QtCore.Qt.ShiftModifier
         self.drag(self.tl, self.x(40), self.x(22), mods=S)

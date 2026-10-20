@@ -597,3 +597,27 @@ class AllKeysTests(unittest.TestCase):
         self.assertFalse(look.right_double(None, 1000.0, 300))
         self.assertTrue(look.right_double(1000.0, 1250.0, 300))
         self.assertFalse(look.right_double(1000.0, 1301.0, 300))
+
+
+class SpanLabelTests(unittest.TestCase):
+    """A highlight's frame labels (2026-10-20)."""
+
+    def test_inside_the_block_when_both_fit(self):
+        a, b = look.span_labels(100, 300, 20, 24, 1000)
+        self.assertEqual((a, b), (103, 273))
+
+    def test_outside_the_edges_when_the_block_is_narrow(self):
+        a, b = look.span_labels(100, 130, 20, 24, 1000)
+        self.assertEqual((a, b), (77, 133))
+
+    def test_kept_on_the_track_and_apart(self):
+        a, b = look.span_labels(0, 10, 20, 24, 1000)
+        self.assertEqual(a, 0.0)
+        self.assertGreaterEqual(b, a + 20 + look.SPAN_GAP)
+        a, b = look.span_labels(990, 1000, 20, 24, 1000)
+        self.assertEqual(b + 24, 1000)
+        self.assertLessEqual(a + 20 + look.SPAN_GAP, b)
+
+    def test_one_frame_shows_one_label_centred(self):
+        a, b = look.span_labels(100, 110, 20, 20, 1000, single=True)
+        self.assertEqual((a, b), (95, None))

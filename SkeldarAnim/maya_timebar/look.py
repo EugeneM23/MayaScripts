@@ -201,6 +201,33 @@ def frame_text(frame):
     return ("%.2f" % frame).rstrip("0").rstrip(".")
 
 
+SPAN_GAP = 3.0          # logical px between a highlight's frame label and its edge
+
+
+def span_labels(x0, x1, wa, wb, width, gap=SPAN_GAP, single=False):
+    """Where a highlight's two frame labels stand (2026-10-20, «номер кадра в начале и в
+    конце рамки выделения»): the left x of the start label and of the end label (None
+    for a one-frame highlight, which shows one label centred on it). Inside the block,
+    at its edges, when both fit there; else outside it, each beyond its own edge. Kept
+    on the track [0, width] and never over each other."""
+    if single:
+        a = (x0 + x1) / 2.0 - wa / 2.0
+        return max(0.0, min(a, width - wa)), None
+    if x1 - x0 >= wa + wb + 3 * gap:
+        a, b = x0 + gap, x1 - gap - wb
+    else:
+        a, b = x0 - gap - wa, x1 + gap
+    a = max(0.0, min(a, width - wa))
+    b = max(0.0, min(b, width - wb))
+    if b < a + wa + gap:                    # pushed together at an end of the track
+        if a + wa + gap + wb <= width:
+            b = a + wa + gap
+        else:
+            b = width - wb
+            a = max(0.0, b - gap - wa)
+    return a, b
+
+
 # -- the full bar (2026-10-16, the second mockup) -------------------------------------
 
 SPEEDS = (("Real-time", 1.0), ("Every frame", 0.0), ("Half", 0.5), ("Twice", 2.0))

@@ -2048,6 +2048,10 @@ def _classes():
                     self.rebuilds += 1
                 p.drawPixmap(0, 0, self._cache)
                 self._draw_dragged(p, lay, t, w)
+            # the highlight's first and last frame over the ruler (2026-10-20)
+            if t is not None and sel:
+                span = pn.lane_preview if dragging else (sel["a"], sel["b"])
+                k.draw_span_labels(p, t, span, lay.head[1], w, ui, pn.tokens)
             # the playhead's cell through every lane
             if t is not None:
                 try:

@@ -372,6 +372,27 @@ class Lanes(unittest.TestCase):
         self.send("MouseMove", x1, y1, Qt.NoButton, button, mods)
         self.send("MouseButtonRelease", x1, y1, button, Qt.NoButton, mods)
 
+    def test_a_lane_highlight_shows_its_first_and_last_frame(self):
+        """2026-10-20: the frame numbers at the block's edges, over the ruler."""
+        from maya_timebar import bar
+        blue = QT.QtGui.QColor(bar.HIGHLIGHT)
+
+        def pills(sel):
+            self.panel.lane_sel = sel
+            img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
+            img.fill(0)
+            self.panel.lanes.render(img)
+            y = int(self.lay.head[1] + 6)
+            return [x for x in range(img.width())
+                    if all(abs(a - b) < 12 for a, b in ((img.pixelColor(x, y).red(), blue.red()),
+                                                         (img.pixelColor(x, y).green(), blue.green()),
+                                                         (img.pixelColor(x, y).blue(), blue.blue())))]
+        self.assertFalse(pills(None))
+        t = LaneStrip().track()
+        xs = pills({"a": 10, "b": 40, "names": ["A2"]})
+        self.assertTrue([x for x in xs if t.x(10) <= x < t.x(10) + 30], "the start label")
+        self.assertTrue([x for x in xs if t.end(40) - 30 < x <= t.end(40)], "the end label")
+
     def test_the_lanes_are_shown(self):
         self.assertTrue(self.panel.lanes.isVisible())
 

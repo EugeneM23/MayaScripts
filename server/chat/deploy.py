@@ -72,7 +72,11 @@ def _credentials(env):
     for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
         if not env.get(name):
             raise DeployError("Set %s in the environment first (server/chat/README.md)" % name)
-    return env["CLOUDFLARE_API_TOKEN"], env["CLOUDFLARE_ACCOUNT_ID"]
+        value = env[name].strip()
+        if any(c in value for c in "<> \t") or not value.isascii():
+            raise DeployError("%s still holds a placeholder or spaces - put the real value there "
+                              "(the value itself is not printed)" % name)
+    return env["CLOUDFLARE_API_TOKEN"].strip(), env["CLOUDFLARE_ACCOUNT_ID"].strip()
 
 
 def check(env=os.environ, opener=urllib.request.urlopen):
