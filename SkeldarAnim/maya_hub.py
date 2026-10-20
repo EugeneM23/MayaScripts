@@ -459,6 +459,8 @@ def _callbacks():
         "mayatheme": set_mayatheme,
         #  Maya's icons in the hub's style (2026-10-17, maya_mayaicons)
         "mayaicons": set_mayaicons,
+        #  the viewport's menu and icon bar in our look (2026-10-20, maya_viewportbar)
+        "viewportbar": set_viewportbar,
         #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
@@ -521,6 +523,7 @@ def _dress_header(skin):
     _dress_animations(skin)
     _dress_mayatheme(skin)
     _dress_mayaicons(skin)
+    _dress_viewportbar(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
     _dress_interface(skin)
@@ -592,6 +595,15 @@ def _dress_mayaicons(skin):
     try:
         import maya_mayaicons
         skin.paint_mayaicons(maya_mayaicons.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_viewportbar(skin):
+    """The menu's Viewport bar row = the switch (on by default)."""
+    try:
+        import maya_viewportbar
+        skin.paint_viewportbar(maya_viewportbar.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -696,6 +708,7 @@ def build():
     _tabs_bar_soon()
     _time_bar_soon()
     _side_panel_soon()
+    _viewport_bar_soon()
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
@@ -841,6 +854,22 @@ def _time_bar_soon():
             print("SkeldarAnim: the time bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _viewport_bar_soon():
+    """The viewport's menu and icon bar in our look (2026-10-20) while it is on,
+    else every bar we skinned given back. Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def skin_bars():
+        try:
+            import maya_viewportbar
+            maya_viewportbar.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the viewport bar could not be skinned")
+            print(traceback.format_exc())
+    cmds.evalDeferred(skin_bars, lowestPriority=True)
 
 
 def _side_panel_soon():
@@ -1018,6 +1047,7 @@ def _ensure_edge():
         #  the edge it was never built, and Maya's own slider stayed hidden
         _time_bar_soon()
         _side_panel_soon()
+        _viewport_bar_soon()
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
@@ -1656,6 +1686,17 @@ def set_mayaicons(on):
     return message
 
 
+def set_viewportbar(on):
+    """⋮ -> Viewport bar (2026-10-20): every viewport's menu and icon bar in our
+    look at once, or Maya's."""
+    import maya_viewportbar
+    message = maya_viewportbar.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_viewportbar(maya_viewportbar.enabled())
+    say(message)
+    return message
+
+
 def set_interface(choice):
     """⋮ -> Use Skeldar / Use Maya interface, and the Update card's segments
     (2026-10-19): the Time Bar, the side panel and our Channel Box switched as
@@ -1673,6 +1714,7 @@ def repaint_interface():
     if is_skinned():
         _dress_timebar(_SKIN)
         _dress_sidepanel(_SKIN)
+        _dress_viewportbar(_SKIN)
         _dress_interface(_SKIN)
     try:
         import maya_update

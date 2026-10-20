@@ -54,11 +54,12 @@ class ReloadLive(unittest.TestCase):
             return m
 
         fakes = {"maya_sidepanel": module("maya_sidepanel", RuntimeError("x")),
-                 "maya_timebar": module("maya_timebar", True)}
+                 "maya_timebar": module("maya_timebar", True),
+                 "maya_viewportbar": module("maya_viewportbar", 4)}
         with mock.patch.dict(sys.modules, fakes), mock.patch("builtins.print"):
             done = mi.reload_live()
-        self.assertEqual(calls, ["maya_sidepanel", "maya_timebar"])
-        self.assertEqual(done, ["maya_timebar"])
+        self.assertEqual(calls, ["maya_sidepanel", "maya_timebar", "maya_viewportbar"])
+        self.assertEqual(done, ["maya_timebar", "maya_viewportbar"])
 
 
 class Purity(unittest.TestCase):

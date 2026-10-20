@@ -11,6 +11,10 @@ One switch over three things that already exist:
   Editor, and our Channel Box in it;
 - Maya: Maya's own time slider, Channel Box and Attribute Editor.
 
+The viewport's menu and icon bar in our look (maya_viewportbar, 2026-10-20)
+goes with it: on with Skeldar, Maya's with Maya. It is a look only, so it does
+not decide which interface reads as standing.
+
 Anything else mixed by hand in ⋮ -> Time bar / Side panel reads "mixed": no row
 of the switch is lit. `reload_live()` stands the chosen interface up again from
 the modules on disk - an install calls it, so an update shows at once.
@@ -27,8 +31,8 @@ CHOICES = (SKELDAR, MAYA)
 LABELS = ((SKELDAR, "Use Skeldar interface"), (MAYA, "Use Maya interface"))
 
 MESSAGES = {
-    SKELDAR: "Skeldar interface: our Time Bar, Channel Box and Attribute Editor",
-    MAYA: "Maya interface: Maya's time slider, Channel Box and Attribute Editor",
+    SKELDAR: "Skeldar interface: our Time Bar, Channel Box, Attribute Editor and viewport bar",
+    MAYA: "Maya interface: Maya's time slider, Channel Box, Attribute Editor and viewport bar",
 }
 
 
@@ -95,6 +99,12 @@ def use(choice):
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
         problems.append("the side panel")
+    try:
+        import maya_viewportbar
+        maya_viewportbar.set_enabled(choice == SKELDAR)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+        problems.append("the viewport bar")
     message = MESSAGES[choice]
     if problems:
         message += " - not switched: " + ", ".join(problems) + " (see the Script Editor)"
@@ -107,7 +117,7 @@ def reload_live():
     install, 2026-10-19: «при установки обновления наш плагин обнавлял интерфейс
     в реальном времени»). Never raises; returns what was rebuilt."""
     done = []
-    for name in ("maya_sidepanel", "maya_timebar"):
+    for name in ("maya_sidepanel", "maya_timebar", "maya_viewportbar"):
         try:
             module = __import__(name)
             if module.reload_live():

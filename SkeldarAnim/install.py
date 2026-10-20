@@ -100,6 +100,7 @@ _PAYLOAD = (
     "maya_mayatheme.py",        # Maya in the hub's colours (2026-10-17)
     "maya_interface.py",        # Use Skeldar / Use Maya interface, one switch (2026-10-19)
     "maya_mayaicons.py",        # Maya's icons in the hub's style (2026-10-17)
+    "maya_viewportbar.py",      # the viewport's menu and icon bar in our look (2026-10-20)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
@@ -1212,7 +1213,8 @@ def _interface_standing():
     """The Time Bar or the side panel stands in this session, built by modules
     the install has just purged (their state lives on `sys`)."""
     for name, keys in (("_skeldar_timebar", ("bar", "edge")),
-                       ("_skeldar_sidepanel", ("edge",))):
+                       ("_skeldar_sidepanel", ("edge",)),
+                       ("_skeldar_viewportbar", ("timer",))):
         state = getattr(sys, name, None) or {}
         if any(state.get(key) is not None for key in keys):
             return True

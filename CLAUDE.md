@@ -13124,3 +13124,48 @@ Pose Library sections above.**
      every node carrying `colour.ASSET_IMAGE` its relative path back after the open, from an empty working
      folder (trap 119), its colour space kept, and saves beside the asset, moving it over only once checked
      - the first try saved in place and left the asset broken until `git checkout`.
+
+## The viewport bar reskinned: Maya's menu and icon bar in the hub's look (2026-10-20)
+
+The animator, with a picture of the View / Shading / Lighting / Show / Renderer / Panels row and its
+icon bar: «эту стандартную меню от вьюпорта камеры мы можем заменить на наш дизайн?». Three mockups of
+a bar of our own (https://claude.ai/artifact/GYCpRQVn57ijR2YtVXdpkA), then: «Давай сделаем просто
+рескин стандартного меню»; asked, **colours and icons**. Maya's bar itself is kept: every button, field
+and menu is Maya's, only its look changes. `SkeldarAnim/maya_viewportbar.py` (a payload row).
+
+**A model panel, measured in a GUI Maya 2027.2**: `modelPanelN` (QmayaLayoutWidget) holds a
+`QmodelPanelMenuBar` and `modelEditorIconBar`, a frameLayout over a `flowLayoutN` of 13 px collapse
+handles (`iconTextButtonNN`, image `ShortOpenBar.png`) and `formLayoutNN` groups of
+`QmayaIconTextButton` / `QmayaIconTextCheckBox` (28 px; `CameraBtn`, `GridBtn`, `ShadedBtn`, ...),
+the last group exposure / gamma (`QmayaFloatField`), the colour-management `symbolCheckBox`
+(`rvViewingPipelineOn/Off.png`) and its `QmayaOptionMenu`.
+- **The panel's sheet** (`sheet(scale)`, every rule under the panel's Qt property `skeldarVpBar`,
+  physical px, trap 98): the bar and menu bar on `panel`, menu titles muted and lit on `hover`,
+  buttons rounded with a `hover` face, a toggle that is on `#3a2a1f` with an accent edge, the fields
+  and the drop-down on `track` with our chevron (`skeldarVpChevron.png`, drawn).
+- **A group's well** is the group's OWN sheet by its name (`group_sheet`: `card`, rounded) plus
+  `WA_StyledBackground`: the panel's sheet did not reach those plain QWidgets.
+- **The icons**: the images the bar's buttons carry (every size Maya has, `:/name.png` / `_150` /
+  `_200`) recoloured once by `maya_mayaicons.qimage_recoloured` into
+  `<userAppDir>/<version>/SkeldarViewportIcons`, the buttons pointed there by full path (a file in
+  prefs/icons never reaches Maya's buttons) - Maya's shapes, our greys, the blue accents orange.
+- **Maya's drop-down menus stay Maya's**: their rows are drawn by Maya's own code in fixed greys - a
+  style sheet changed only their padding, a palette only their left gutter, and Maya empties a menu's
+  sheet as it builds its rows (measured). A half-recoloured menu read worse; left alone.
+- **A watch** (1.5 s): a panel Maya built later or a bar it rebuilt (its flowLayout names change,
+  `signature` / `stale`) is skinned again; an idle tick 4 ms with four views, a whole pass 25 ms.
+- ⋮ -> **Viewport bar** (optionVar `skeldarViewportBar`, **on by default**); Use Skeldar interface
+  turns it on, Use Maya interface off (it does not decide which interface reads as standing); the
+  hub's build calls `ensure()` deferred; an install's `rebuild_interface` reloads it. Off gives every
+  sheet and image back.
+
+Proof: `tests/test_viewportbar.py` (sheets scoped, scale, the toggle's edge, group wells, separators,
+images pointed and given back, a stand-in panel offscreen); in a disposable GUI Maya (port 7061, scratch
+`MAYA_APP_DIR`, killed after): on in 0.3 s for four panels, 103 recoloured files, the four-view layout,
+off back to Maya's images and sheets; picture `docs/superpowers/plans/viewport_bar_reskin.png` (Maya's
+above, ours below). Not seen: hover and press in a real hand, a torn-off panel.
+
+285. **Maya's panel menus ignore a style sheet's colours and a palette's but for the gutter**, and Maya
+     clears a menu's sheet when it fills it (an `aboutToShow` sheet was gone at the Show). And
+     `toggleModelEditorBarsInAllPanels` takes no argument that sets a state: `0` then `1` toggled the
+     icon bars twice... and left them hidden in a fresh Maya. Read the bar's state before toggling it.
