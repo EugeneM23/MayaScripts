@@ -54,6 +54,17 @@ S.begin_weight(); S.set_weight(first, 0.25); S.set_weight(first, 0.4); S.end_wei
 gate(abs(cmds.getAttr(first + ".weight") - 0.4) < 1e-6, "weight dragged to 0.4")
 cmds.undo()
 gate(abs(cmds.getAttr(first + ".weight") - 1.0) < 1e-6, "the whole drag is one undo")
+# a KEYED weight dragged reads back (and acts) at once, no time change (2026-10-20:
+# «ползунок силы слоя всегда возвращается в исходное значение и слой не анимируется»)
+_now = cmds.currentTime(q=True)
+cmds.setKeyframe(first, attribute="weight", time=(_now - 5, _now - 5), value=0.3)
+S.begin_weight(); S.set_weight(first, 0.7); S.end_weight()
+gate(abs(cmds.getAttr(first + ".weight") - 0.7) < 1e-6, "a keyed weight dragged reads 0.7 at once")
+gate(_now in S.weight_keys(first), "the drag keyed the weight at the current frame")
+cmds.undo()
+for _c in cmds.listConnections(first + ".weight", source=True, destination=False, type="animCurve") or []:
+    cmds.delete(_c)
+cmds.setAttr(first + ".weight", 1.0)
 S.set_mode(first, "ovr")
 gate(cmds.getAttr(first + ".override"), "override")
 S.set_mode(first, "add")

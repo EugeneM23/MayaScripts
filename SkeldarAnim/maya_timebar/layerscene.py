@@ -418,10 +418,16 @@ def begin_weight():
 
 
 def set_weight(name, value):
-    """While dragging: a keyed weight is keyed at the current frame, else set."""
+    """While dragging: a keyed weight is keyed at the current frame, else set. A key
+    set at the current frame is not evaluated until the time moves (trap 14): the
+    weight read back (the release's refresh) and the layer's effect stayed the old
+    value, the slider snapping back (2026-10-20: «ползунок силы слоя всегда
+    возвращается в исходное значение и слой не анимируется») - its curve is dirtied."""
     value = max(0.0, min(1.0, float(value)))
-    if cmds.listConnections(name + ".weight", source=True, destination=False, type="animCurve"):
+    curve = _weight_curve(name)
+    if curve:
         cmds.setKeyframe(name, attribute="weight", value=value)
+        cmds.dgdirty(curve)
     else:
         cmds.setAttr(name + ".weight", value)
     return True, ""
