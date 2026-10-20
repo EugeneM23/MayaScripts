@@ -696,6 +696,27 @@ class Lanes(unittest.TestCase):
         self.assertFalse(self.ink_at(10))
         self.assertTrue(self.ink_at(30))
 
+    def test_after_the_release_the_key_aimed_at_the_press_is_not_lit_there(self):
+        # 2026-10-20: «в момент отпускания мышки в том месте где мы его взяли на пару кадров
+        # появится изображение ключа»: the key under the mouse when the drag began stayed
+        # aimed, and its lifted picture came back at the old frame once the drag ended -
+        # until the next mouse move aimed again
+        Qt = QT.QtCore.Qt
+        link = self.link
+
+        def live_end(target=None):
+            link.keys_by_layer = lambda names: dict((n, [0.0, 30.0] if n == "A1" else [0.0, 10.0]) for n in names)
+            return True, ""
+        link.lane_live_end = live_end
+        self.send("MouseMove", 105, self.y[1], Qt.NoButton, Qt.NoButton)        # hover: aims the key at 10
+        self.assertIsNotNone(self.panel.lane_aimed)
+        self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
+        self.send("MouseMove", 305, self.y[1], Qt.NoButton, Qt.LeftButton)
+        QT.QtWidgets.QApplication.processEvents()
+        self.send("MouseButtonRelease", 305, self.y[1], Qt.LeftButton, Qt.NoButton)
+        self.assertFalse(self.ink_at(10), "no key lit at the frame it was taken from")
+        self.assertTrue(self.ink_at(30))
+
     def test_it_paints_the_highlight_and_a_preview(self):
         self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
         self.panel.lane_preview = (30, 40)

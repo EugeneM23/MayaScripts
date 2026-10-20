@@ -649,6 +649,11 @@ class Panel(object):
             sel, loose = drag[3], drag[4]
             names = list(self.lane_sel["names"]) if self.lane_sel else []
             moved = bool(target) and tuple(target) != tuple(sel)
+            #  the key aimed when the drag began is not under the mouse any more: aimed
+            #  still, it was drawn lifted at the frame it was taken from until the next move
+            #  (2026-10-20: «в том месте где мы его взяли на пару кадров появится изображение
+            #  ключа»)
+            self.lane_aimed = None
             #  a move is no key set and deleted: the strip plays no effect for it
             self._quiet_strip()
             if self.lane_live:
