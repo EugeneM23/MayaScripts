@@ -41,7 +41,15 @@ def file_path():
 def data():
     """The model (read once a session; a test may hand in `use_memory`)."""
     st = _state()
+    if st["data"] is not None and st.get("by") is not look:
+        # read by the modules an update purged (the state outlives them on sys, trap 226): read
+        # the file again, so a new build's model (a default page it adds) reaches this session
+        if file_path():
+            st["data"] = None
+        else:
+            st["data"], st["by"] = look.normalised(st["data"]), look
     if st["data"] is None:
+        st["by"] = look
         path = file_path()
         if path:
             st["data"], st["note"] = store.read(path)
@@ -53,7 +61,7 @@ def data():
 def set_data(new):
     """Keep `new` and write it to the file; answers the model kept."""
     st = _state()
-    st["data"] = look.normalised(new)
+    st["data"], st["by"] = look.normalised(new), look
     path = file_path()
     if path:
         try:
@@ -68,6 +76,7 @@ def use_memory(model=None):
     st = _state()
     st["path"] = ""
     st["data"] = look.normalised(model) if model is not None else look.defaults()
+    st["by"] = look
 
 
 def current_page():

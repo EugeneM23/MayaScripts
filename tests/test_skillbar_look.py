@@ -257,6 +257,35 @@ class EditorsPage(unittest.TestCase):
         self.assertEqual(list(page["cells"]), ["0.0"])
 
 
+class AfterAnUpdate(unittest.TestCase):
+    """A model read before an update (by the purged modules) is read again from the file."""
+
+    def setUp(self):
+        import maya_skillbar
+        self.bar = maya_skillbar
+        self.kept = getattr(sys, "_skeldar_skillbar", None)
+        self.dir = tempfile.mkdtemp()
+        self.path = store.path_in(self.dir)
+        store.write(self.path, look.defaults())
+        old = look.blank()
+        sys._skeldar_skillbar = {"data": old, "path": self.path, "page": look.TIME_PAGE,
+                                 "note": "", "memory": None}          # no "by": an older build's
+
+    def tearDown(self):
+        if self.kept is None:
+            del sys._skeldar_skillbar
+        else:
+            sys._skeldar_skillbar = self.kept
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_the_file_is_read_again(self):
+        self.assertEqual(look.page_of(self.bar.data(), 4)["name"], "Editors")
+
+    def test_then_the_model_is_kept(self):
+        first = self.bar.data()
+        self.assertIs(self.bar.data(), first)
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_store_import_with_the_stdlib_alone(self):
