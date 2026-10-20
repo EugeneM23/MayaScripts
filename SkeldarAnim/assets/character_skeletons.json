@@ -50,6 +50,18 @@
 36.2609,
 1.4027
 ],
+"camera_bone": [
+"camera_root",
+0.0016,
+164.0,
+2.4013
+],
+"camera_root": [
+"root",
+0.0016,
+164.0,
+2.4013
+],
 "center_of_mass": [
 "root",
 0.0017,
@@ -552,7 +564,7 @@ null,
 "file": "Creep_Skeleton.ma",
 "kind": "skeleton",
 "model": "Creep",
-"sha1": "7e1d157bdbe8ab736c2d30f1740481e7c4d1b601"
+"sha1": "14dbaf1dd2c273e2f5e04f6dfdf01d540aa604d0"
 },
 "Creep_Rig": {
 "bones": {
@@ -603,6 +615,18 @@ null,
 -12.9545,
 36.2609,
 1.4027
+],
+"camera_bone": [
+"camera_root",
+0.0016,
+164.0,
+2.4013
+],
+"camera_root": [
+"root",
+0.0016,
+164.0,
+2.4013
 ],
 "center_of_mass": [
 "root",
@@ -1106,7 +1130,7 @@ null,
 "file": "Creep_Rig.ma",
 "kind": "rig",
 "model": "Creep",
-"sha1": "cb8b3ec47b759b5c607240cc11d870719be361aa"
+"sha1": "74ecb83065d97d78d66393eb80d298858376fade"
 },
 "Manny": {
 "bones": {

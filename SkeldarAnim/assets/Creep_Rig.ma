@@ -1,6 +1,6 @@
 //Maya ASCII 2027 scene
 //Name: Creep_Rig.new.ma
-//Last modified: Wed, Sep 30, 2026 01:03:23 PM
+//Last modified: Tue, Oct 20, 2026 03:03:41 PM
 //Codeset: 1252
 requires maya "2027";
 requires -nodeType "UsdDefaultSettings" -dataType "pxrUsdStageData" "mayaUsdPlugin" "0.37.0";
@@ -12,7 +12,7 @@ fileInfo "product" "Maya 2027";
 fileInfo "version" "2027";
 fileInfo "cutIdentifier" "202607171511-52c21617ee";
 fileInfo "osv" "Windows 11 Pro v2009 (Build: 26200)";
-fileInfo "UUID" "C867EAAF-47E6-61C1-C59B-438668A62ACB";
+fileInfo "UUID" "20932751-4834-015F-8095-50BC4647649B";
 createNode transform -s -n "persp";
 	rename -uid "4483D383-45BF-C018-E0D4-29823F6AD478";
 	setAttr ".v" no;
@@ -4976,15 +4976,15 @@ createNode nurbsCurve -n "FKScapula_RShape" -p "FKScapula_R";
 		3 18 0 no 3
 		23 0 0 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 18 18
 		21
-		1.4516250406899267 -14.516250198283009 -4.264897464633819e-15
+		1.4516250406899267 -14.516250198283009 -4.2648974646338187e-15
 		1.4516250406899267 -14.516250198283009 -3.7034188078180117
 		1.4516250406899267 -11.375102689951735 -11.419243386674257
 		1.4516250406899267 -5.1337715944141996e-14 -16.064753604087386
 		1.4516250406899267 11.375102689951735 -11.419243386674257
 		1.4516250406899267 14.516250198283009 -3.7034188078180117
-		1.4516250406899267 14.516250198283009 -7.598051999511307e-16
-		1.4516250406899267 14.516250198283009 -7.598051999511307e-16
-		1.4516250406899267 14.516250198283009 -7.598051999511307e-16
+		1.4516250406899267 14.516250198283009 -7.5980519995113075e-16
+		1.4516250406899267 14.516250198283009 -7.5980519995113075e-16
+		1.4516250406899267 14.516250198283009 -7.5980519995113075e-16
 		-1.4516250406899267 14.516250198283009 -1.4044562172696852e-15
 		-1.4516250406899267 14.516250198283009 -1.4044562172696852e-15
 		-1.4516250406899267 14.516250198283009 -1.4044562172696852e-15
@@ -4993,10 +4993,10 @@ createNode nurbsCurve -n "FKScapula_RShape" -p "FKScapula_R";
 		-1.4516250406899267 -5.1337715944141996e-14 -16.064753604087386
 		-1.4516250406899267 -11.375102689951735 -11.419243386674257
 		-1.4516250406899267 -14.516250198283009 -3.7034188078180117
-		-1.4516250406899267 -14.516250198283009 -4.909548620918717e-15
-		-1.4516250406899267 -14.516250198283009 -4.909548620918717e-15
-		-1.4516250406899267 -14.516250198283009 -4.909548620918717e-15
-		1.4516250406899267 -14.516250198283009 -4.264897464633819e-15
+		-1.4516250406899267 -14.516250198283009 -4.9095486209187174e-15
+		-1.4516250406899267 -14.516250198283009 -4.9095486209187174e-15
+		-1.4516250406899267 -14.516250198283009 -4.9095486209187174e-15
+		1.4516250406899267 -14.516250198283009 -4.2648974646338187e-15
 		
 
 		"gtag" 1
@@ -5070,17 +5070,17 @@ createNode nurbsCurve -n "FKShoulder_RShape" -p "FKShoulder_R";
 		3 8 2 no 3
 		13 -2 -1 0 1 2 3 4 5 6 7 8 9 10
 		11
-		-5.455559229516522e-15 -14.64276368927712 14.64276368927712
-		-5.861977695341451e-15 2.362576327777882e-15 20.7079948560829
-		-6.2683961611663795e-15 14.64276368927712 14.64276368927712
-		1.8616219791146505e-15 20.7079948560829 5.7216861663873326e-15
-		-6.2683961611663795e-15 14.64276368927712 -14.64276368927712
-		-5.861977695341451e-15 6.9730808744800586e-15 -20.7079948560829
-		-5.455559229516522e-15 -14.64276368927712 -14.64276368927712
-		-1.3585577020396453e-14 -20.7079948560829 -1.1855008754600293e-14
-		-5.455559229516522e-15 -14.64276368927712 14.64276368927712
-		-5.861977695341451e-15 2.362576327777882e-15 20.7079948560829
-		-6.2683961611663795e-15 14.64276368927712 14.64276368927712
+		-5.4555592295165221e-15 -14.642763689277119 14.642763689277119
+		-5.8619776953414508e-15 2.3625763277778819e-15 20.707994856082902
+		-6.2683961611663795e-15 14.642763689277119 14.642763689277119
+		1.8616219791146505e-15 20.707994856082902 5.7216861663873326e-15
+		-6.2683961611663795e-15 14.642763689277119 -14.642763689277119
+		-5.8619776953414508e-15 6.9730808744800586e-15 -20.707994856082902
+		-5.4555592295165221e-15 -14.642763689277119 -14.642763689277119
+		-1.3585577020396453e-14 -20.707994856082902 -1.1855008754600293e-14
+		-5.4555592295165221e-15 -14.642763689277119 14.642763689277119
+		-5.8619776953414508e-15 2.3625763277778819e-15 20.707994856082902
+		-6.2683961611663795e-15 14.642763689277119 14.642763689277119
 		
 
 		"gtag" 1
@@ -5416,10 +5416,10 @@ createNode nurbsCurve -n "FKScapula_LShape" -p "FKScapula_L";
 		3 18 0 no 3
 		23 0 0 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 18 18
 		21
-		-1.4516250406899267 14.516250198283009 4.678657338164575e-15
+		-1.4516250406899267 14.516250198283009 4.6786573381645746e-15
 		-1.4516250406899267 14.516250198283009 3.7034188078180117
 		-1.4516250406899267 11.375102689951735 11.419243386674257
-		-1.4516250406899267 1.599726998340884e-15 16.064753604087386
+		-1.4516250406899267 1.5997269983408839e-15 16.064753604087386
 		-1.4516250406899267 -11.375102689951735 11.419243386674257
 		-1.4516250406899267 -14.516250198283009 3.7034188078180117
 		-1.4516250406899267 -14.516250198283009 1.123201586091843e-15
@@ -5430,13 +5430,13 @@ createNode nurbsCurve -n "FKScapula_LShape" -p "FKScapula_L";
 		1.4516250406899267 -14.516250198283009 1.7678525570882829e-15
 		1.4516250406899267 -14.516250198283009 3.7034188078180117
 		1.4516250406899267 -11.375102689951735 11.419243386674257
-		1.4516250406899267 1.599726998340884e-15 16.064753604087386
+		1.4516250406899267 1.5997269983408839e-15 16.064753604087386
 		1.4516250406899267 11.375102689951735 11.419243386674257
 		1.4516250406899267 14.516250198283009 3.7034188078180117
-		1.4516250406899267 14.516250198283009 5.323308494449473e-15
-		1.4516250406899267 14.516250198283009 5.323308494449473e-15
-		1.4516250406899267 14.516250198283009 5.323308494449473e-15
-		-1.4516250406899267 14.516250198283009 4.678657338164575e-15
+		1.4516250406899267 14.516250198283009 5.3233084944494733e-15
+		1.4516250406899267 14.516250198283009 5.3233084944494733e-15
+		1.4516250406899267 14.516250198283009 5.3233084944494733e-15
+		-1.4516250406899267 14.516250198283009 4.6786573381645746e-15
 		
 
 		"gtag" 1
@@ -5509,17 +5509,17 @@ createNode nurbsCurve -n "FKShoulder_LShape" -p "FKShoulder_L";
 		3 8 2 no 3
 		13 -2 -1 0 1 2 3 4 5 6 7 8 9 10
 		11
-		0.0 14.64276368927712 -14.64276368927712
-		0.0 -2.362576327777882e-15 -20.7079948560829
-		0.0 -14.64276368927712 -14.64276368927712
-		-8.298362035207302e-15 -20.7079948560829 -6.4185107525956325e-15
-		0.0 -14.64276368927712 14.64276368927712
-		0.0 -6.9730808744800586e-15 20.7079948560829
-		0.0 14.64276368927712 14.64276368927712
-		8.298362035207302e-15 20.7079948560829 1.1086339615775425e-14
-		0.0 14.64276368927712 -14.64276368927712
-		0.0 -2.362576327777882e-15 -20.7079948560829
-		0.0 -14.64276368927712 -14.64276368927712
+		0 14.642763689277119 -14.642763689277119
+		0 -2.3625763277778819e-15 -20.707994856082902
+		0 -14.642763689277119 -14.642763689277119
+		-8.2983620352073022e-15 -20.707994856082902 -6.4185107525956325e-15
+		0 -14.642763689277119 14.642763689277119
+		0 -6.9730808744800586e-15 20.707994856082902
+		0 14.642763689277119 14.642763689277119
+		8.2983620352073022e-15 20.707994856082902 1.1086339615775425e-14
+		0 14.642763689277119 -14.642763689277119
+		0 -2.3625763277778819e-15 -20.707994856082902
+		0 -14.642763689277119 -14.642763689277119
 		
 
 		"gtag" 1
@@ -7226,7 +7226,7 @@ createNode transform -n "IKXOffsetShoulder_L" -p "IKParentConstraintShoulder_L";
 	setAttr ".s" -type "double3" 1.0000000000000002 0.99999999999999978 0.99999999999999978 ;
 createNode joint -n "IKXShoulder_L" -p "IKXOffsetShoulder_L";
 	rename -uid "F311771E-47C6-7B65-F507-F09ECE6B2084";
-	setAttr ".r" -type "double3" -2.2593607721069798e-14 6.3465276858590919e-14 -1.7075472925031863e-06 ;
+	setAttr ".r" -type "double3" -8.0432530896936238e-07 -2.8633937274689248e-07 -1.2074182717355663e-06 ;
 	setAttr ".ro" 5;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -7236,7 +7236,7 @@ createNode transform -n "IKX2Shoulder_L" -p "IKXShoulder_L";
 createNode joint -n "IKXElbow_L" -p "IKXShoulder_L";
 	rename -uid "AA3F82A6-4A86-B428-4271-65AFB2FD1C10";
 	setAttr ".t" -type "double3" -34.813892364501953 1.3322676295501878e-14 2.8421709430404007e-14 ;
-	setAttr ".r" -type "double3" -4.1002251622564037e-21 -8.55024428397345e-21 2.5953607949320272e-06 ;
+	setAttr ".r" -type "double3" -4.1002238300841168e-21 -8.550241505980042e-21 2.595359951693525e-06 ;
 	setAttr ".ro" 5;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -7286,7 +7286,7 @@ createNode transform -n "IKXOffsetHip_L" -p "IKParentConstraintHip_L";
 createNode joint -n "IKXHip_L" -p "IKXOffsetHip_L";
 	rename -uid "BB6453FA-4A9C-7E7C-C5F3-40BAC793C015";
 	setAttr ".t" -type "double3" 0 1.7763568394002505e-15 0 ;
-	setAttr ".r" -type "double3" 8.5298064995035141e-07 -3.678958829266801e-08 -2.7384927243016933e-16 ;
+	setAttr ".r" -type "double3" 8.529806499503513e-07 -3.6789588292671464e-08 -2.7384927243019502e-16 ;
 	setAttr ".ro" 2;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -7296,7 +7296,7 @@ createNode transform -n "IKX2Hip_L" -p "IKXHip_L";
 createNode joint -n "IKXKnee_L" -p "IKXHip_L";
 	rename -uid "F4BB4E50-48CE-7969-E59D-E88ED07D999F";
 	setAttr ".t" -type "double3" -43.341300964355469 -2.7533531010703882e-14 -1.7763568394002505e-14 ;
-	setAttr ".r" -type "double3" 3.9229613074969152e-23 -7.5305011610264076e-22 6.5621935705529654e-08 ;
+	setAttr ".r" -type "double3" 3.9044161972868249e-23 -7.5193452731124225e-22 6.5621435926521489e-08 ;
 	setAttr ".ro" 2;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -7387,7 +7387,7 @@ createNode transform -n "IKX2Hip_R" -p "IKXHip_R";
 createNode joint -n "IKXKnee_R" -p "IKXHip_R";
 	rename -uid "3900FD05-4180-7FF0-DAC7-889FCFA629DD";
 	setAttr ".t" -type "double3" 43.341316223144531 1.6481038755955524e-11 7.5322720682891031e-07 ;
-	setAttr ".r" -type "double3" -3.0058321330868775e-16 -8.3615170726757027e-17 1.7645759093686017e-08 ;
+	setAttr ".r" -type "double3" -3.0058321677956051e-16 -8.3615131124085207e-17 1.7645759093598945e-08 ;
 	setAttr ".ro" 2;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -429114,6 +429114,13 @@ createNode parentConstraint -n "root_parentConstraint1" -p "root";
 	setAttr ".rsrr" -type "double3" -1.2722218725854064e-14 -6.0664266232748336e-21 
 		6.7350865143587592e-37 ;
 	setAttr -k on ".w0";
+createNode joint -n "camera_root" -p "root";
+	rename -uid "7B5BCEF2-4DDF-92F0-4B23-EFADCF56801E";
+	setAttr ".t" -type "double3" 0 0 164 ;
+	setAttr ".radi" 3;
+createNode joint -n "camera_bone" -p "camera_root";
+	rename -uid "1AAF604F-4F96-F956-DA15-949862D7B765";
+	setAttr ".radi" 3;
 createNode UsdDefaultSettings -n "UsdDefaultRenderSettings";
 	rename -uid "10227B9A-4981-9FDD-891D-A39C0BD5D0C2";
 	setAttr ".srl" -type "string" "#usda 1.0\n(\n    renderSettingsPrimPath = \"/Render/SceneRenderSettings\"\n)\n\ndef Scope \"Render\"\n{\n    def RenderSettings \"SceneRenderSettings\"\n    {\n        custom string adskUsd:externalCamera = \"|persp\" (\n            displayName = \"External Camera\"\n        )\n        rel products = </Render/BeautyProduct>\n    }\n\n    def RenderVar \"color\"\n    {\n        uniform string sourceName = \"color\"\n    }\n\n    def RenderProduct \"BeautyProduct\"\n    {\n        rel orderedVars = </Render/color>\n        token productName = \"./default.png\"\n    }\n}\n\n";
@@ -429169,22 +429176,22 @@ createNode UsdDefaultSettings -n "UsdDefaultRenderSettings8";
 	setAttr ".asp" -type "string" "UsdDefaultRenderSettings,/Render/SceneRenderSettings";
 lockNode -l 1 ;
 createNode lightLinker -s -n "lightLinker1";
-	rename -uid "E9DA73D3-4165-8367-66CA-5BB937E288DD";
-	setAttr -s 8 ".lnk";
-	setAttr -s 8 ".slnk";
+	rename -uid "BFC607F4-4751-AECC-C35C-6DA5E622A4A7";
+	setAttr -s 5 ".lnk";
+	setAttr -s 5 ".slnk";
 createNode shapeEditorManager -n "shapeEditorManager";
-	rename -uid "DC55E026-4A17-3CB3-08F8-7AB9728BC376";
+	rename -uid "1EBE063A-4225-9E51-39AF-49A88B650952";
 createNode poseInterpolatorManager -n "poseInterpolatorManager";
-	rename -uid "EC99FE1B-40F8-921B-D96B-5A95CFEAB685";
+	rename -uid "5EDC4AAB-4611-8B4D-72C8-0BA6E3286543";
 createNode displayLayerManager -n "layerManager";
-	rename -uid "9910E3B2-4E80-9DFB-F39B-8B8E9944F395";
+	rename -uid "71CB3D05-47B4-DB9F-1A4D-B6B100215DD7";
 	setAttr -s 4 ".dli[1:3]"  1 2 3;
 	setAttr -s 2 ".dli";
 createNode displayLayer -n "defaultLayer";
 	rename -uid "A02F999F-478B-3ED7-C1F5-B7A024BB405E";
 	setAttr ".ufem" -type "stringArray" 0  ;
 createNode renderLayerManager -n "renderLayerManager";
-	rename -uid "72D6EC7B-4F12-A561-9411-D4BB0D7C3EBE";
+	rename -uid "E9A4FEAE-4E7D-37B1-A78E-CB897D72F5B2";
 createNode renderLayer -n "defaultRenderLayer";
 	rename -uid "553DED98-458D-6389-9EF0-32B61AD3FD79";
 	setAttr ".g" yes;
@@ -523363,9 +523370,115 @@ createNode unitConversion -n "bwSDKFKThumbFinger3_L_rotateY_outputUC";
 createNode unitConversion -n "SDKFKThumbFinger3_L_rotateY_outputUC";
 	rename -uid "41756F56-4492-1F49-796E-198EA275BA86";
 	setAttr ".cf" 57.295779513082323;
+createNode phong -n "skeldarTexture_Creep_Body";
+	rename -uid "974B4020-41BB-7AEC-D0AC-648A8DB6BDAF";
+	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
+	setAttr ".dc" 1;
+	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
+	setAttr ".rfl" 0;
+	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Body_Color.jpg";
+createNode file -n "Creep_Body_color";
+	rename -uid "51C990E0-421E-1CE9-AE8A-67B2385B0D07";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ftn" -type "string" "Creep/Creep_Body_Color.jpg";
+	setAttr ".cs" -type "string" "sRGB";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Body_Color.jpg";
+createNode place2dTexture -n "Creep_Body_color_place2d";
+	rename -uid "D46786D9-4DC5-C2BA-1B67-368D0CF27089";
+createNode shadingEngine -n "skeldarTexture_Creep_BodySG";
+	rename -uid "78C6EB6C-4AAC-1CCC-70B8-15A724BFA80F";
+	setAttr ".ihi" 0;
+	setAttr ".ro" yes;
+createNode materialInfo -n "materialInfo18";
+	rename -uid "B85DCCBA-407E-9BFF-1A1C-CF9447B296E6";
+createNode file -n "Creep_Body_normal";
+	rename -uid "66F12C67-4D6E-6E28-3AA3-A4947CD2C455";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ail" yes;
+	setAttr ".ftn" -type "string" "Creep/Creep_Body_Normal.jpg";
+	setAttr ".cs" -type "string" "Raw";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Body_Normal.jpg";
+createNode place2dTexture -n "Creep_Body_normal_place2d";
+	rename -uid "081737CD-44FC-B049-7F35-CF9E856994D8";
+createNode bump2d -n "Creep_Body_bump";
+	rename -uid "92136FA2-429C-5A2E-D291-E59DD438D284";
+	setAttr ".bi" 1;
+createNode phong -n "skeldarTexture_Creep_Face";
+	rename -uid "DE6A1781-4924-19F6-A37B-688B05E92C79";
+	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
+	setAttr ".dc" 1;
+	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
+	setAttr ".rfl" 0;
+	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Face_Color.jpg";
+createNode file -n "Creep_Face_color";
+	rename -uid "F86E65C5-4E03-CD8E-3C39-ADBB3E92580B";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ftn" -type "string" "Creep/Creep_Face_Color.jpg";
+	setAttr ".cs" -type "string" "sRGB";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Face_Color.jpg";
+createNode place2dTexture -n "Creep_Face_color_place2d";
+	rename -uid "7B24E3F7-4F57-70D2-52C1-EDBA173585C1";
+createNode shadingEngine -n "skeldarTexture_Creep_FaceSG";
+	rename -uid "ACF25BFA-46CD-D37C-09D0-1B9DEDC43F45";
+	setAttr ".ihi" 0;
+	setAttr ".ro" yes;
+createNode materialInfo -n "materialInfo19";
+	rename -uid "21EC1EEA-4FE8-D013-6A59-FA8F3F004071";
+createNode file -n "Creep_Face_normal";
+	rename -uid "3E99C249-4505-963A-62DD-EDAF15018694";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ail" yes;
+	setAttr ".ftn" -type "string" "Creep/Creep_Face_Normal.jpg";
+	setAttr ".cs" -type "string" "Raw";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Face_Normal.jpg";
+createNode place2dTexture -n "Creep_Face_normal_place2d";
+	rename -uid "6058B8CB-4DB0-2B89-A97E-A7B267B9FFA3";
+createNode bump2d -n "Creep_Face_bump";
+	rename -uid "0DA294A5-41D0-C1CE-3692-0497C252A8D2";
+	setAttr ".bi" 1;
+createNode phong -n "skeldarTexture_Creep_Limbs";
+	rename -uid "9F207DD6-4349-EBC4-1263-D3B75201A339";
+	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
+	setAttr ".dc" 1;
+	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
+	setAttr ".rfl" 0;
+	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Limbs_Color.jpg";
+createNode file -n "Creep_Limbs_color";
+	rename -uid "910D797A-402D-29C9-6DD9-429B4EE22684";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ftn" -type "string" "Creep/Creep_Limbs_Color.jpg";
+	setAttr ".cs" -type "string" "sRGB";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Limbs_Color.jpg";
+createNode place2dTexture -n "Creep_Limbs_color_place2d";
+	rename -uid "8BDC7A61-40C7-9498-6B85-1D9D91437EBE";
+createNode shadingEngine -n "skeldarTexture_Creep_LimbsSG";
+	rename -uid "47A59A48-4D25-6437-2985-6098D1DB7993";
+	setAttr ".ihi" 0;
+	setAttr -s 3 ".dsm";
+	setAttr ".ro" yes;
+createNode materialInfo -n "materialInfo20";
+	rename -uid "038FE528-42FA-1DCD-A03A-44888EC85B8B";
+createNode file -n "Creep_Limbs_normal";
+	rename -uid "1E104005-4F09-D885-4148-329B3B0727C8";
+	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
+	setAttr ".ail" yes;
+	setAttr ".ftn" -type "string" "Creep/Creep_Limbs_Normal.jpg";
+	setAttr ".cs" -type "string" "Raw";
+	setAttr ".ifr" yes;
+	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Limbs_Normal.jpg";
+createNode place2dTexture -n "Creep_Limbs_normal_place2d";
+	rename -uid "6528CFB9-4ECB-BBDD-C506-1D958A0F51F5";
+createNode bump2d -n "Creep_Limbs_bump";
+	rename -uid "955FE067-4352-39FA-2874-C0ABA2D4A965";
+	setAttr ".bi" 1;
 createNode dagPose -n "bindPose1";
-	rename -uid "9C22B8D9-45F9-A1AE-E94A-C8BF14585FBA";
-	setAttr -s 177 ".wm";
+	rename -uid "753759B8-4FE0-8FFF-E8B8-95A955561B25";
+	setAttr -s 179 ".wm";
 	setAttr ".wm[0]" -type "matrix" 1 0 0 0 0 0 -1 0 0 1 0 0 0 0 0 1;
 	setAttr ".wm[1]" -type "matrix" 0.9999999999996102 7.4315308229280785e-07 4.7683736539758429e-07 0
 		 4.7683706852705337e-07 3.9947439045562305e-07 -0.99999999999980649 0 -7.4315327277697998e-07 0.99999999999964406 3.9947403609253008e-07 0
@@ -523386,7 +523499,7 @@ createNode dagPose -n "bindPose1";
 		 -1.2961999995965049e-05 -0.099514298965652975 -0.99503613207428865 0 -0.9999999999108512 4.480985219624319e-06 1.2578515984050504e-05 0
 		 0.00031981800000368621 121.94278726200005 3.3739097779999927 1;
 	setAttr ".wm[7]" -type "matrix" -2.7355999988967342e-05 0.99106344960873005 -0.13339129694733751 0
-		 0.00020886799999445468 -0.13339128842486392 -0.99106342912374357 0 -0.99999997781290406 -5.4972704566268963e-05 -0.00020335238850269672 0
+		 0.00020886799999445468 -0.13339128842486392 -0.99106342912374357 0 -0.99999997781290406 -5.497270456626897e-05 -0.00020335238850269672 0
 		 -0.0005337239999924666 141.40805535000007 1.3875657849999914 1;
 	setAttr ".wm[8]" -type "matrix" 4.9190000000221565e-06 0.97115809400421516 0.2384364830010349 0
 		 -4.7050000023363776e-06 0.23843648302375675 -0.97115809399969732 0 -0.99999999997683353 3.6552830112919306e-06 5.7421678945627954e-06 0
@@ -523737,7 +523850,7 @@ createNode dagPose -n "bindPose1";
 		 -0.045884926498204512 -0.0036062660814640849 0.99894022261855309 0 0.15258911258877142 -0.98828372497357253 0.0034411730166555607 0
 		 -1.4287421039999895 146.33885584000001 -1.3206798810000053 1;
 	setAttr ".wm[124]" -type "matrix" -2.7355999988967342e-05 0.99106344960873005 -0.13339129694733751 0
-		 0.00020886799999445468 -0.13339128842486392 -0.99106342912374357 0 -0.99999997781290406 -5.4972704566268963e-05 -0.00020335238850269672 0
+		 0.00020886799999445468 -0.13339128842486392 -0.99106342912374357 0 -0.99999997781290406 -5.497270456626897e-05 -0.00020335238850269672 0
 		 -0.0005337239999924666 141.40805535000007 1.3875657849999914 1;
 	setAttr ".wm[125]" -type "matrix" 3.207000000673464e-06 0.99503613214862441 -0.099514299014863972 0
 		 -1.2961999995965049e-05 -0.099514298965652975 -0.99503613207428865 0 -0.9999999999108512 4.480985219624319e-06 1.2578515984050504e-05 0
@@ -523895,10 +524008,16 @@ createNode dagPose -n "bindPose1";
 	setAttr ".wm[176]" -type "matrix" 0.9999999999996102 7.4315308229280785e-07 4.7683736539758429e-07 0
 		 4.7683706852705337e-07 3.9947439045562305e-07 -0.99999999999980649 0 -7.4315327277697998e-07 0.99999999999964406 3.9947403609253008e-07 0
 		 0.001690635 -9.9999999999999995e-08 2.4012358200000001 1;
-	setAttr -s 177 ".xm";
+	setAttr ".wm[177]" -type "matrix" 0.9999999999996102 7.4315308229280785e-07 4.7683736539758429e-07 0
+		 4.7683706852705337e-07 3.9947439045562305e-07 -0.99999999999980649 0 -7.4315327277697998e-07 0.99999999999964406 3.9947403609253008e-07 0
+		 0.0015687578632645753 163.99999989994163 2.4013013337419191 1;
+	setAttr ".wm[178]" -type "matrix" 0.9999999999996102 7.4315308229280785e-07 4.7683736539758429e-07 0
+		 4.7683706852705337e-07 3.9947439045562305e-07 -0.99999999999980649 0 -7.4315327277697998e-07 0.99999999999964406 3.9947403609253008e-07 0
+		 0.0015687578632645753 163.99999989994163 2.4013013337419191 1;
+	setAttr -s 179 ".xm";
 	setAttr ".xm[0]" -type "matrix" "xform" 1 1 1 -1.5707963267948966 0 0 0 0 0
 		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
-	setAttr ".xm[1]" -type "matrix" "xform" 1 1 1 1.0092715203890206e-16 2.4062908181882403e-23
+	setAttr ".xm[1]" -type "matrix" "xform" 1 1 1 1.0092715203890206e-16 2.40629081818824e-23
 		 -3.7502169755168252e-23 0 0.001690635 -2.4012358200000001 -9.9999999999999995e-08 0
 		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1.9973710663706168e-07 -3.7157658876749047e-07 -2.3841860848118737e-07 0.99999999999988254 1
 		 1 1 no;
@@ -524237,7 +524356,7 @@ createNode dagPose -n "bindPose1";
 		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
 	setAttr ".xm[134]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
-	setAttr ".xm[135]" -type "matrix" "xform" 1 1 1 -8.0056708618576314e-05 0.0045061201030030511
+	setAttr ".xm[135]" -type "matrix" "xform" 1 1 1 -8.00567086185763e-05 0.0045061201030030511
 		 0.046501755327352831 0 14.072649955815862 1.723132636577418e-09 0.037728806335268317 0
 		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
 	setAttr ".xm[136]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -524282,7 +524401,7 @@ createNode dagPose -n "bindPose1";
 		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
 	setAttr ".xm[152]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
-	setAttr ".xm[153]" -type "matrix" "xform" 1 1 1 4.7888802331684767e-05 0.0090107157640255571
+	setAttr ".xm[153]" -type "matrix" "xform" 1 1 1 4.788880233168476e-05 0.0090107157640255571
 		 0.093004234065622041 0 -28.145290374976913 -5.0774243613826986e-05 -0.075632106884670591 0
 		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
 	setAttr ".xm[154]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -524337,115 +524456,13 @@ createNode dagPose -n "bindPose1";
 		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
 	setAttr ".xm[176]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
-	setAttr -s 92 ".m";
-	setAttr -s 92 ".p";
+	setAttr ".xm[177]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 164 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[178]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr -s 94 ".m";
+	setAttr -s 94 ".p";
 	setAttr ".bp" yes;
-createNode phong -n "skeldarTexture_Creep_Body";
-	rename -uid "974B4020-41BB-7AEC-D0AC-648A8DB6BDAF";
-	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
-	setAttr ".dc" 1;
-	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
-	setAttr ".rfl" 0;
-	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Body_Color.jpg";
-createNode file -n "Creep_Body_color";
-	rename -uid "51C990E0-421E-1CE9-AE8A-67B2385B0D07";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ftn" -type "string" "Creep/Creep_Body_Color.jpg";
-	setAttr ".cs" -type "string" "sRGB";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Body_Color.jpg";
-createNode place2dTexture -n "Creep_Body_color_place2d";
-	rename -uid "D46786D9-4DC5-C2BA-1B67-368D0CF27089";
-createNode shadingEngine -n "skeldarTexture_Creep_BodySG";
-	rename -uid "78C6EB6C-4AAC-1CCC-70B8-15A724BFA80F";
-	setAttr ".ihi" 0;
-	setAttr ".ro" yes;
-createNode materialInfo -n "materialInfo18";
-	rename -uid "B85DCCBA-407E-9BFF-1A1C-CF9447B296E6";
-createNode file -n "Creep_Body_normal";
-	rename -uid "66F12C67-4D6E-6E28-3AA3-A4947CD2C455";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ail" yes;
-	setAttr ".ftn" -type "string" "Creep/Creep_Body_Normal.jpg";
-	setAttr ".cs" -type "string" "Raw";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Body_Normal.jpg";
-createNode place2dTexture -n "Creep_Body_normal_place2d";
-	rename -uid "081737CD-44FC-B049-7F35-CF9E856994D8";
-createNode bump2d -n "Creep_Body_bump";
-	rename -uid "92136FA2-429C-5A2E-D291-E59DD438D284";
-	setAttr ".bi" 1;
-createNode phong -n "skeldarTexture_Creep_Face";
-	rename -uid "DE6A1781-4924-19F6-A37B-688B05E92C79";
-	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
-	setAttr ".dc" 1;
-	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
-	setAttr ".rfl" 0;
-	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Face_Color.jpg";
-createNode file -n "Creep_Face_color";
-	rename -uid "F86E65C5-4E03-CD8E-3C39-ADBB3E92580B";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ftn" -type "string" "Creep/Creep_Face_Color.jpg";
-	setAttr ".cs" -type "string" "sRGB";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Face_Color.jpg";
-createNode place2dTexture -n "Creep_Face_color_place2d";
-	rename -uid "7B24E3F7-4F57-70D2-52C1-EDBA173585C1";
-createNode shadingEngine -n "skeldarTexture_Creep_FaceSG";
-	rename -uid "ACF25BFA-46CD-D37C-09D0-1B9DEDC43F45";
-	setAttr ".ihi" 0;
-	setAttr ".ro" yes;
-createNode materialInfo -n "materialInfo19";
-	rename -uid "21EC1EEA-4FE8-D013-6A59-FA8F3F004071";
-createNode file -n "Creep_Face_normal";
-	rename -uid "3E99C249-4505-963A-62DD-EDAF15018694";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ail" yes;
-	setAttr ".ftn" -type "string" "Creep/Creep_Face_Normal.jpg";
-	setAttr ".cs" -type "string" "Raw";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Face_Normal.jpg";
-createNode place2dTexture -n "Creep_Face_normal_place2d";
-	rename -uid "6058B8CB-4DB0-2B89-A97E-A7B267B9FFA3";
-createNode bump2d -n "Creep_Face_bump";
-	rename -uid "0DA294A5-41D0-C1CE-3692-0497C252A8D2";
-	setAttr ".bi" 1;
-createNode phong -n "skeldarTexture_Creep_Limbs";
-	rename -uid "9F207DD6-4349-EBC4-1263-D3B75201A339";
-	addAttr -ci true -sn "skeldarTexture" -ln "skeldarTexture" -dt "string";
-	setAttr ".dc" 1;
-	setAttr ".sc" -type "float3" 0.2 0.2 0.2 ;
-	setAttr ".rfl" 0;
-	setAttr ".skeldarTexture" -type "string" "Creep/Creep_Limbs_Color.jpg";
-createNode file -n "Creep_Limbs_color";
-	rename -uid "910D797A-402D-29C9-6DD9-429B4EE22684";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ftn" -type "string" "Creep/Creep_Limbs_Color.jpg";
-	setAttr ".cs" -type "string" "sRGB";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Limbs_Color.jpg";
-createNode place2dTexture -n "Creep_Limbs_color_place2d";
-	rename -uid "8BDC7A61-40C7-9498-6B85-1D9D91437EBE";
-createNode shadingEngine -n "skeldarTexture_Creep_LimbsSG";
-	rename -uid "47A59A48-4D25-6437-2985-6098D1DB7993";
-	setAttr ".ihi" 0;
-	setAttr -s 3 ".dsm";
-	setAttr ".ro" yes;
-createNode materialInfo -n "materialInfo20";
-	rename -uid "038FE528-42FA-1DCD-A03A-44888EC85B8B";
-createNode file -n "Creep_Limbs_normal";
-	rename -uid "1E104005-4F09-D885-4148-329B3B0727C8";
-	addAttr -ci true -sn "skeldarAssetImage" -ln "skeldarAssetImage" -dt "string";
-	setAttr ".ail" yes;
-	setAttr ".ftn" -type "string" "Creep/Creep_Limbs_Normal.jpg";
-	setAttr ".cs" -type "string" "Raw";
-	setAttr ".ifr" yes;
-	setAttr ".skeldarAssetImage" -type "string" "Creep/Creep_Limbs_Normal.jpg";
-createNode place2dTexture -n "Creep_Limbs_normal_place2d";
-	rename -uid "6528CFB9-4ECB-BBDD-C506-1D958A0F51F5";
-createNode bump2d -n "Creep_Limbs_bump";
-	rename -uid "955FE067-4352-39FA-2874-C0ABA2D4A965";
-	setAttr ".bi" 1;
 select -ne :time1;
 	setAttr -av -k on ".cch";
 	setAttr -av -k on ".fzn";
@@ -530930,6 +530947,8 @@ connectAttr "Main.ro" "root_parentConstraint1.tg[0].tro";
 connectAttr "Main.s" "root_parentConstraint1.tg[0].ts";
 connectAttr "Main.pm" "root_parentConstraint1.tg[0].tpm";
 connectAttr "root_parentConstraint1.w0" "root_parentConstraint1.tg[0].tw";
+connectAttr "Creep_Skeleton.di" "camera_root.do";
+connectAttr "Creep_Skeleton.di" "camera_bone.do";
 relationship "link" ":lightLinker1" ":initialShadingGroup.message" ":defaultLightSet.message";
 relationship "link" ":lightLinker1" ":initialParticleSE.message" ":defaultLightSet.message";
 relationship "link" ":lightLinker1" "skeldarTexture_Creep_BodySG.message" ":defaultLightSet.message";
@@ -536170,190 +536189,6 @@ connectAttr "bwSDKFKThumbFinger3_L_rotateY.o" "bwSDKFKThumbFinger3_L_rotateY_out
 		;
 connectAttr "SDKFKThumbFinger3_L_rotateY.o" "SDKFKThumbFinger3_L_rotateY_outputUC.i"
 		;
-connectAttr "Armature.msg" "bindPose1.m[0]";
-connectAttr "root.msg" "bindPose1.m[1]";
-connectAttr "pelvis.msg" "bindPose1.m[2]";
-connectAttr "spine_01.msg" "bindPose1.m[3]";
-connectAttr "spine_02.msg" "bindPose1.m[4]";
-connectAttr "spine_03.msg" "bindPose1.m[5]";
-connectAttr "spine_04.msg" "bindPose1.m[6]";
-connectAttr "spine_05.msg" "bindPose1.m[7]";
-connectAttr "neck_01.msg" "bindPose1.m[8]";
-connectAttr "neck_02.msg" "bindPose1.m[9]";
-connectAttr "head.msg" "bindPose1.m[10]";
-connectAttr "clavicle_l.msg" "bindPose1.m[14]";
-connectAttr "upperarm_l.msg" "bindPose1.m[15]";
-connectAttr "lowerarm_l.msg" "bindPose1.m[16]";
-connectAttr "lowerarm_twist_02_l.msg" "bindPose1.m[17]";
-connectAttr "lowerarm_twist_01_l.msg" "bindPose1.m[19]";
-connectAttr "hand_l.msg" "bindPose1.m[21]";
-connectAttr "index_metacarpal_l.msg" "bindPose1.m[22]";
-connectAttr "index_01_l.msg" "bindPose1.m[23]";
-connectAttr "index_02_l.msg" "bindPose1.m[24]";
-connectAttr "index_03_l.msg" "bindPose1.m[25]";
-connectAttr "middle_metacarpal_l.msg" "bindPose1.m[30]";
-connectAttr "middle_01_l.msg" "bindPose1.m[31]";
-connectAttr "middle_02_l.msg" "bindPose1.m[32]";
-connectAttr "middle_03_l.msg" "bindPose1.m[33]";
-connectAttr "thumb_01_l.msg" "bindPose1.m[38]";
-connectAttr "thumb_02_l.msg" "bindPose1.m[39]";
-connectAttr "thumb_03_l.msg" "bindPose1.m[40]";
-connectAttr "pinky_metacarpal_l.msg" "bindPose1.m[44]";
-connectAttr "pinky_01_l.msg" "bindPose1.m[45]";
-connectAttr "pinky_02_l.msg" "bindPose1.m[46]";
-connectAttr "pinky_03_l.msg" "bindPose1.m[47]";
-connectAttr "ring_metacarpal_l.msg" "bindPose1.m[52]";
-connectAttr "ring_01_l.msg" "bindPose1.m[53]";
-connectAttr "ring_02_l.msg" "bindPose1.m[54]";
-connectAttr "ring_03_l.msg" "bindPose1.m[55]";
-connectAttr "weapon_l.msg" "bindPose1.m[60]";
-connectAttr "upperarm_twist_01_l.msg" "bindPose1.m[63]";
-connectAttr "upperarm_twist_02_l.msg" "bindPose1.m[65]";
-connectAttr "clavicle_r.msg" "bindPose1.m[69]";
-connectAttr "upperarm_r.msg" "bindPose1.m[70]";
-connectAttr "lowerarm_r.msg" "bindPose1.m[71]";
-connectAttr "lowerarm_twist_02_r.msg" "bindPose1.m[72]";
-connectAttr "lowerarm_twist_01_r.msg" "bindPose1.m[74]";
-connectAttr "hand_r.msg" "bindPose1.m[76]";
-connectAttr "weapon_r.msg" "bindPose1.m[77]";
-connectAttr "pinky_metacarpal_r.msg" "bindPose1.m[78]";
-connectAttr "pinky_01_r.msg" "bindPose1.m[79]";
-connectAttr "pinky_02_r.msg" "bindPose1.m[80]";
-connectAttr "pinky_03_r.msg" "bindPose1.m[81]";
-connectAttr "ring_metacarpal_r.msg" "bindPose1.m[86]";
-connectAttr "ring_01_r.msg" "bindPose1.m[87]";
-connectAttr "ring_02_r.msg" "bindPose1.m[88]";
-connectAttr "ring_03_r.msg" "bindPose1.m[89]";
-connectAttr "middle_metacarpal_r.msg" "bindPose1.m[94]";
-connectAttr "middle_01_r.msg" "bindPose1.m[95]";
-connectAttr "middle_02_r.msg" "bindPose1.m[96]";
-connectAttr "middle_03_r.msg" "bindPose1.m[97]";
-connectAttr "index_metacarpal_r.msg" "bindPose1.m[102]";
-connectAttr "index_01_r.msg" "bindPose1.m[103]";
-connectAttr "index_02_r.msg" "bindPose1.m[104]";
-connectAttr "index_03_r.msg" "bindPose1.m[105]";
-connectAttr "thumb_01_r.msg" "bindPose1.m[110]";
-connectAttr "thumb_02_r.msg" "bindPose1.m[111]";
-connectAttr "thumb_03_r.msg" "bindPose1.m[112]";
-connectAttr "upperarm_twist_01_r.msg" "bindPose1.m[118]";
-connectAttr "upperarm_twist_02_r.msg" "bindPose1.m[120]";
-connectAttr "thigh_r.msg" "bindPose1.m[129]";
-connectAttr "calf_r.msg" "bindPose1.m[130]";
-connectAttr "foot_r.msg" "bindPose1.m[131]";
-connectAttr "ball_r.msg" "bindPose1.m[132]";
-connectAttr "calf_twist_02_r.msg" "bindPose1.m[135]";
-connectAttr "calf_twist_01_r.msg" "bindPose1.m[137]";
-connectAttr "thigh_twist_01_r.msg" "bindPose1.m[140]";
-connectAttr "thigh_twist_02_r.msg" "bindPose1.m[142]";
-connectAttr "thigh_l.msg" "bindPose1.m[145]";
-connectAttr "calf_l.msg" "bindPose1.m[146]";
-connectAttr "foot_l.msg" "bindPose1.m[147]";
-connectAttr "ball_l.msg" "bindPose1.m[148]";
-connectAttr "calf_twist_02_l.msg" "bindPose1.m[151]";
-connectAttr "calf_twist_01_l.msg" "bindPose1.m[153]";
-connectAttr "thigh_twist_01_l.msg" "bindPose1.m[156]";
-connectAttr "thigh_twist_02_l.msg" "bindPose1.m[158]";
-connectAttr "ik_foot_root.msg" "bindPose1.m[163]";
-connectAttr "ik_foot_l.msg" "bindPose1.m[164]";
-connectAttr "ik_foot_r.msg" "bindPose1.m[166]";
-connectAttr "ik_hand_root.msg" "bindPose1.m[168]";
-connectAttr "ik_hand_gun.msg" "bindPose1.m[169]";
-connectAttr "ik_hand_l.msg" "bindPose1.m[170]";
-connectAttr "ik_hand_r.msg" "bindPose1.m[172]";
-connectAttr "interaction.msg" "bindPose1.m[174]";
-connectAttr "center_of_mass.msg" "bindPose1.m[175]";
-connectAttr "bindPose1.w" "bindPose1.p[0]";
-connectAttr "bindPose1.m[0]" "bindPose1.p[1]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[2]";
-connectAttr "bindPose1.m[2]" "bindPose1.p[3]";
-connectAttr "bindPose1.m[3]" "bindPose1.p[4]";
-connectAttr "bindPose1.m[4]" "bindPose1.p[5]";
-connectAttr "bindPose1.m[5]" "bindPose1.p[6]";
-connectAttr "bindPose1.m[6]" "bindPose1.p[7]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[8]";
-connectAttr "bindPose1.m[8]" "bindPose1.p[9]";
-connectAttr "bindPose1.m[9]" "bindPose1.p[10]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[14]";
-connectAttr "bindPose1.m[14]" "bindPose1.p[15]";
-connectAttr "bindPose1.m[15]" "bindPose1.p[16]";
-connectAttr "bindPose1.m[16]" "bindPose1.p[17]";
-connectAttr "bindPose1.m[16]" "bindPose1.p[19]";
-connectAttr "bindPose1.m[16]" "bindPose1.p[21]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[22]";
-connectAttr "bindPose1.m[22]" "bindPose1.p[23]";
-connectAttr "bindPose1.m[23]" "bindPose1.p[24]";
-connectAttr "bindPose1.m[24]" "bindPose1.p[25]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[30]";
-connectAttr "bindPose1.m[30]" "bindPose1.p[31]";
-connectAttr "bindPose1.m[31]" "bindPose1.p[32]";
-connectAttr "bindPose1.m[32]" "bindPose1.p[33]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[38]";
-connectAttr "bindPose1.m[38]" "bindPose1.p[39]";
-connectAttr "bindPose1.m[39]" "bindPose1.p[40]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[44]";
-connectAttr "bindPose1.m[44]" "bindPose1.p[45]";
-connectAttr "bindPose1.m[45]" "bindPose1.p[46]";
-connectAttr "bindPose1.m[46]" "bindPose1.p[47]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[52]";
-connectAttr "bindPose1.m[52]" "bindPose1.p[53]";
-connectAttr "bindPose1.m[53]" "bindPose1.p[54]";
-connectAttr "bindPose1.m[54]" "bindPose1.p[55]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[60]";
-connectAttr "bindPose1.m[15]" "bindPose1.p[63]";
-connectAttr "bindPose1.m[15]" "bindPose1.p[65]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[69]";
-connectAttr "bindPose1.m[69]" "bindPose1.p[70]";
-connectAttr "bindPose1.m[70]" "bindPose1.p[71]";
-connectAttr "bindPose1.m[71]" "bindPose1.p[72]";
-connectAttr "bindPose1.m[71]" "bindPose1.p[74]";
-connectAttr "bindPose1.m[71]" "bindPose1.p[76]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[77]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[78]";
-connectAttr "bindPose1.m[78]" "bindPose1.p[79]";
-connectAttr "bindPose1.m[79]" "bindPose1.p[80]";
-connectAttr "bindPose1.m[80]" "bindPose1.p[81]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[86]";
-connectAttr "bindPose1.m[86]" "bindPose1.p[87]";
-connectAttr "bindPose1.m[87]" "bindPose1.p[88]";
-connectAttr "bindPose1.m[88]" "bindPose1.p[89]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[94]";
-connectAttr "bindPose1.m[94]" "bindPose1.p[95]";
-connectAttr "bindPose1.m[95]" "bindPose1.p[96]";
-connectAttr "bindPose1.m[96]" "bindPose1.p[97]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[102]";
-connectAttr "bindPose1.m[102]" "bindPose1.p[103]";
-connectAttr "bindPose1.m[103]" "bindPose1.p[104]";
-connectAttr "bindPose1.m[104]" "bindPose1.p[105]";
-connectAttr "bindPose1.m[76]" "bindPose1.p[110]";
-connectAttr "bindPose1.m[110]" "bindPose1.p[111]";
-connectAttr "bindPose1.m[111]" "bindPose1.p[112]";
-connectAttr "bindPose1.m[70]" "bindPose1.p[118]";
-connectAttr "bindPose1.m[70]" "bindPose1.p[120]";
-connectAttr "bindPose1.m[2]" "bindPose1.p[129]";
-connectAttr "bindPose1.m[129]" "bindPose1.p[130]";
-connectAttr "bindPose1.m[130]" "bindPose1.p[131]";
-connectAttr "bindPose1.m[131]" "bindPose1.p[132]";
-connectAttr "bindPose1.m[130]" "bindPose1.p[135]";
-connectAttr "bindPose1.m[130]" "bindPose1.p[137]";
-connectAttr "bindPose1.m[129]" "bindPose1.p[140]";
-connectAttr "bindPose1.m[129]" "bindPose1.p[142]";
-connectAttr "bindPose1.m[2]" "bindPose1.p[145]";
-connectAttr "bindPose1.m[145]" "bindPose1.p[146]";
-connectAttr "bindPose1.m[146]" "bindPose1.p[147]";
-connectAttr "bindPose1.m[147]" "bindPose1.p[148]";
-connectAttr "bindPose1.m[146]" "bindPose1.p[151]";
-connectAttr "bindPose1.m[146]" "bindPose1.p[153]";
-connectAttr "bindPose1.m[145]" "bindPose1.p[156]";
-connectAttr "bindPose1.m[145]" "bindPose1.p[158]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[163]";
-connectAttr "bindPose1.m[163]" "bindPose1.p[164]";
-connectAttr "bindPose1.m[163]" "bindPose1.p[166]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[168]";
-connectAttr "bindPose1.m[168]" "bindPose1.p[169]";
-connectAttr "bindPose1.m[169]" "bindPose1.p[170]";
-connectAttr "bindPose1.m[169]" "bindPose1.p[172]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[174]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[175]";
 connectAttr "Creep_Body_color.oc" "skeldarTexture_Creep_Body.c";
 connectAttr "Creep_Body_bump.o" "skeldarTexture_Creep_Body.n";
 connectAttr ":defaultColorMgtGlobals.cme" "Creep_Body_color.cme";
@@ -536506,6 +536341,194 @@ connectAttr "Creep_Limbs_normal_place2d.vc1" "Creep_Limbs_normal.vc1";
 connectAttr "Creep_Limbs_normal_place2d.o" "Creep_Limbs_normal.uv";
 connectAttr "Creep_Limbs_normal_place2d.ofs" "Creep_Limbs_normal.fs";
 connectAttr "Creep_Limbs_normal.oa" "Creep_Limbs_bump.bv";
+connectAttr "Armature.msg" "bindPose1.m[0]";
+connectAttr "root.msg" "bindPose1.m[1]";
+connectAttr "pelvis.msg" "bindPose1.m[2]";
+connectAttr "spine_01.msg" "bindPose1.m[3]";
+connectAttr "spine_02.msg" "bindPose1.m[4]";
+connectAttr "spine_03.msg" "bindPose1.m[5]";
+connectAttr "spine_04.msg" "bindPose1.m[6]";
+connectAttr "spine_05.msg" "bindPose1.m[7]";
+connectAttr "neck_01.msg" "bindPose1.m[8]";
+connectAttr "neck_02.msg" "bindPose1.m[9]";
+connectAttr "head.msg" "bindPose1.m[10]";
+connectAttr "clavicle_l.msg" "bindPose1.m[14]";
+connectAttr "upperarm_l.msg" "bindPose1.m[15]";
+connectAttr "lowerarm_l.msg" "bindPose1.m[16]";
+connectAttr "lowerarm_twist_02_l.msg" "bindPose1.m[17]";
+connectAttr "lowerarm_twist_01_l.msg" "bindPose1.m[19]";
+connectAttr "hand_l.msg" "bindPose1.m[21]";
+connectAttr "index_metacarpal_l.msg" "bindPose1.m[22]";
+connectAttr "index_01_l.msg" "bindPose1.m[23]";
+connectAttr "index_02_l.msg" "bindPose1.m[24]";
+connectAttr "index_03_l.msg" "bindPose1.m[25]";
+connectAttr "middle_metacarpal_l.msg" "bindPose1.m[30]";
+connectAttr "middle_01_l.msg" "bindPose1.m[31]";
+connectAttr "middle_02_l.msg" "bindPose1.m[32]";
+connectAttr "middle_03_l.msg" "bindPose1.m[33]";
+connectAttr "thumb_01_l.msg" "bindPose1.m[38]";
+connectAttr "thumb_02_l.msg" "bindPose1.m[39]";
+connectAttr "thumb_03_l.msg" "bindPose1.m[40]";
+connectAttr "pinky_metacarpal_l.msg" "bindPose1.m[44]";
+connectAttr "pinky_01_l.msg" "bindPose1.m[45]";
+connectAttr "pinky_02_l.msg" "bindPose1.m[46]";
+connectAttr "pinky_03_l.msg" "bindPose1.m[47]";
+connectAttr "ring_metacarpal_l.msg" "bindPose1.m[52]";
+connectAttr "ring_01_l.msg" "bindPose1.m[53]";
+connectAttr "ring_02_l.msg" "bindPose1.m[54]";
+connectAttr "ring_03_l.msg" "bindPose1.m[55]";
+connectAttr "weapon_l.msg" "bindPose1.m[60]";
+connectAttr "upperarm_twist_01_l.msg" "bindPose1.m[63]";
+connectAttr "upperarm_twist_02_l.msg" "bindPose1.m[65]";
+connectAttr "clavicle_r.msg" "bindPose1.m[69]";
+connectAttr "upperarm_r.msg" "bindPose1.m[70]";
+connectAttr "lowerarm_r.msg" "bindPose1.m[71]";
+connectAttr "lowerarm_twist_02_r.msg" "bindPose1.m[72]";
+connectAttr "lowerarm_twist_01_r.msg" "bindPose1.m[74]";
+connectAttr "hand_r.msg" "bindPose1.m[76]";
+connectAttr "weapon_r.msg" "bindPose1.m[77]";
+connectAttr "pinky_metacarpal_r.msg" "bindPose1.m[78]";
+connectAttr "pinky_01_r.msg" "bindPose1.m[79]";
+connectAttr "pinky_02_r.msg" "bindPose1.m[80]";
+connectAttr "pinky_03_r.msg" "bindPose1.m[81]";
+connectAttr "ring_metacarpal_r.msg" "bindPose1.m[86]";
+connectAttr "ring_01_r.msg" "bindPose1.m[87]";
+connectAttr "ring_02_r.msg" "bindPose1.m[88]";
+connectAttr "ring_03_r.msg" "bindPose1.m[89]";
+connectAttr "middle_metacarpal_r.msg" "bindPose1.m[94]";
+connectAttr "middle_01_r.msg" "bindPose1.m[95]";
+connectAttr "middle_02_r.msg" "bindPose1.m[96]";
+connectAttr "middle_03_r.msg" "bindPose1.m[97]";
+connectAttr "index_metacarpal_r.msg" "bindPose1.m[102]";
+connectAttr "index_01_r.msg" "bindPose1.m[103]";
+connectAttr "index_02_r.msg" "bindPose1.m[104]";
+connectAttr "index_03_r.msg" "bindPose1.m[105]";
+connectAttr "thumb_01_r.msg" "bindPose1.m[110]";
+connectAttr "thumb_02_r.msg" "bindPose1.m[111]";
+connectAttr "thumb_03_r.msg" "bindPose1.m[112]";
+connectAttr "upperarm_twist_01_r.msg" "bindPose1.m[118]";
+connectAttr "upperarm_twist_02_r.msg" "bindPose1.m[120]";
+connectAttr "thigh_r.msg" "bindPose1.m[129]";
+connectAttr "calf_r.msg" "bindPose1.m[130]";
+connectAttr "foot_r.msg" "bindPose1.m[131]";
+connectAttr "ball_r.msg" "bindPose1.m[132]";
+connectAttr "calf_twist_02_r.msg" "bindPose1.m[135]";
+connectAttr "calf_twist_01_r.msg" "bindPose1.m[137]";
+connectAttr "thigh_twist_01_r.msg" "bindPose1.m[140]";
+connectAttr "thigh_twist_02_r.msg" "bindPose1.m[142]";
+connectAttr "thigh_l.msg" "bindPose1.m[145]";
+connectAttr "calf_l.msg" "bindPose1.m[146]";
+connectAttr "foot_l.msg" "bindPose1.m[147]";
+connectAttr "ball_l.msg" "bindPose1.m[148]";
+connectAttr "calf_twist_02_l.msg" "bindPose1.m[151]";
+connectAttr "calf_twist_01_l.msg" "bindPose1.m[153]";
+connectAttr "thigh_twist_01_l.msg" "bindPose1.m[156]";
+connectAttr "thigh_twist_02_l.msg" "bindPose1.m[158]";
+connectAttr "ik_foot_root.msg" "bindPose1.m[163]";
+connectAttr "ik_foot_l.msg" "bindPose1.m[164]";
+connectAttr "ik_foot_r.msg" "bindPose1.m[166]";
+connectAttr "ik_hand_root.msg" "bindPose1.m[168]";
+connectAttr "ik_hand_gun.msg" "bindPose1.m[169]";
+connectAttr "ik_hand_l.msg" "bindPose1.m[170]";
+connectAttr "ik_hand_r.msg" "bindPose1.m[172]";
+connectAttr "interaction.msg" "bindPose1.m[174]";
+connectAttr "center_of_mass.msg" "bindPose1.m[175]";
+connectAttr "camera_root.msg" "bindPose1.m[177]";
+connectAttr "camera_bone.msg" "bindPose1.m[178]";
+connectAttr "bindPose1.w" "bindPose1.p[0]";
+connectAttr "bindPose1.m[0]" "bindPose1.p[1]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[2]";
+connectAttr "bindPose1.m[2]" "bindPose1.p[3]";
+connectAttr "bindPose1.m[3]" "bindPose1.p[4]";
+connectAttr "bindPose1.m[4]" "bindPose1.p[5]";
+connectAttr "bindPose1.m[5]" "bindPose1.p[6]";
+connectAttr "bindPose1.m[6]" "bindPose1.p[7]";
+connectAttr "bindPose1.m[7]" "bindPose1.p[8]";
+connectAttr "bindPose1.m[8]" "bindPose1.p[9]";
+connectAttr "bindPose1.m[9]" "bindPose1.p[10]";
+connectAttr "bindPose1.m[7]" "bindPose1.p[14]";
+connectAttr "bindPose1.m[14]" "bindPose1.p[15]";
+connectAttr "bindPose1.m[15]" "bindPose1.p[16]";
+connectAttr "bindPose1.m[16]" "bindPose1.p[17]";
+connectAttr "bindPose1.m[16]" "bindPose1.p[19]";
+connectAttr "bindPose1.m[16]" "bindPose1.p[21]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[22]";
+connectAttr "bindPose1.m[22]" "bindPose1.p[23]";
+connectAttr "bindPose1.m[23]" "bindPose1.p[24]";
+connectAttr "bindPose1.m[24]" "bindPose1.p[25]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[30]";
+connectAttr "bindPose1.m[30]" "bindPose1.p[31]";
+connectAttr "bindPose1.m[31]" "bindPose1.p[32]";
+connectAttr "bindPose1.m[32]" "bindPose1.p[33]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[38]";
+connectAttr "bindPose1.m[38]" "bindPose1.p[39]";
+connectAttr "bindPose1.m[39]" "bindPose1.p[40]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[44]";
+connectAttr "bindPose1.m[44]" "bindPose1.p[45]";
+connectAttr "bindPose1.m[45]" "bindPose1.p[46]";
+connectAttr "bindPose1.m[46]" "bindPose1.p[47]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[52]";
+connectAttr "bindPose1.m[52]" "bindPose1.p[53]";
+connectAttr "bindPose1.m[53]" "bindPose1.p[54]";
+connectAttr "bindPose1.m[54]" "bindPose1.p[55]";
+connectAttr "bindPose1.m[21]" "bindPose1.p[60]";
+connectAttr "bindPose1.m[15]" "bindPose1.p[63]";
+connectAttr "bindPose1.m[15]" "bindPose1.p[65]";
+connectAttr "bindPose1.m[7]" "bindPose1.p[69]";
+connectAttr "bindPose1.m[69]" "bindPose1.p[70]";
+connectAttr "bindPose1.m[70]" "bindPose1.p[71]";
+connectAttr "bindPose1.m[71]" "bindPose1.p[72]";
+connectAttr "bindPose1.m[71]" "bindPose1.p[74]";
+connectAttr "bindPose1.m[71]" "bindPose1.p[76]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[77]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[78]";
+connectAttr "bindPose1.m[78]" "bindPose1.p[79]";
+connectAttr "bindPose1.m[79]" "bindPose1.p[80]";
+connectAttr "bindPose1.m[80]" "bindPose1.p[81]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[86]";
+connectAttr "bindPose1.m[86]" "bindPose1.p[87]";
+connectAttr "bindPose1.m[87]" "bindPose1.p[88]";
+connectAttr "bindPose1.m[88]" "bindPose1.p[89]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[94]";
+connectAttr "bindPose1.m[94]" "bindPose1.p[95]";
+connectAttr "bindPose1.m[95]" "bindPose1.p[96]";
+connectAttr "bindPose1.m[96]" "bindPose1.p[97]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[102]";
+connectAttr "bindPose1.m[102]" "bindPose1.p[103]";
+connectAttr "bindPose1.m[103]" "bindPose1.p[104]";
+connectAttr "bindPose1.m[104]" "bindPose1.p[105]";
+connectAttr "bindPose1.m[76]" "bindPose1.p[110]";
+connectAttr "bindPose1.m[110]" "bindPose1.p[111]";
+connectAttr "bindPose1.m[111]" "bindPose1.p[112]";
+connectAttr "bindPose1.m[70]" "bindPose1.p[118]";
+connectAttr "bindPose1.m[70]" "bindPose1.p[120]";
+connectAttr "bindPose1.m[2]" "bindPose1.p[129]";
+connectAttr "bindPose1.m[129]" "bindPose1.p[130]";
+connectAttr "bindPose1.m[130]" "bindPose1.p[131]";
+connectAttr "bindPose1.m[131]" "bindPose1.p[132]";
+connectAttr "bindPose1.m[130]" "bindPose1.p[135]";
+connectAttr "bindPose1.m[130]" "bindPose1.p[137]";
+connectAttr "bindPose1.m[129]" "bindPose1.p[140]";
+connectAttr "bindPose1.m[129]" "bindPose1.p[142]";
+connectAttr "bindPose1.m[2]" "bindPose1.p[145]";
+connectAttr "bindPose1.m[145]" "bindPose1.p[146]";
+connectAttr "bindPose1.m[146]" "bindPose1.p[147]";
+connectAttr "bindPose1.m[147]" "bindPose1.p[148]";
+connectAttr "bindPose1.m[146]" "bindPose1.p[151]";
+connectAttr "bindPose1.m[146]" "bindPose1.p[153]";
+connectAttr "bindPose1.m[145]" "bindPose1.p[156]";
+connectAttr "bindPose1.m[145]" "bindPose1.p[158]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[163]";
+connectAttr "bindPose1.m[163]" "bindPose1.p[164]";
+connectAttr "bindPose1.m[163]" "bindPose1.p[166]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[168]";
+connectAttr "bindPose1.m[168]" "bindPose1.p[169]";
+connectAttr "bindPose1.m[169]" "bindPose1.p[170]";
+connectAttr "bindPose1.m[169]" "bindPose1.p[172]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[174]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[175]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[177]";
+connectAttr "bindPose1.m[177]" "bindPose1.p[178]";
 connectAttr "skeldarTexture_Creep_BodySG.pa" ":renderPartition.st" -na;
 connectAttr "skeldarTexture_Creep_FaceSG.pa" ":renderPartition.st" -na;
 connectAttr "skeldarTexture_Creep_LimbsSG.pa" ":renderPartition.st" -na;
