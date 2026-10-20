@@ -1061,3 +1061,70 @@ class SelectedOnlyPress(Press):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlanHelpers(unittest.TestCase):
+    """2026-10-20: `_plan` adds the camera and weapon bones the card's parts bring, hands the
+    body solver the members WITHOUT them, and merges what a `helpers.Writer` writes for them."""
+
+    def setUp(self):
+        from maya_poselib import helpers as real_helpers
+        from maya_poselib import posemath as real_pm
+        from maya_poselib import skelsolve as real_skelsolve
+        self.saved = [(ap.scene, "skeleton", ap.scene.skeleton),
+                      (real_pm, "Transfer", real_pm.Transfer),
+                      (real_skelsolve, "solve", real_skelsolve.solve),
+                      (real_helpers, "Writer", real_helpers.Writer),
+                      (ap.keys, "current", ap.keys.current)]
+        ap.keys.current = lambda plugs: dict((p, 0.0) for p in plugs)
+        self.saved += [(real_pm, "pairs", real_pm.pairs),
+                       (real_pm, "scale_between", real_pm.scale_between)]
+        real_pm.pairs = lambda s, t: dict((k, k) for k in t if k in s)
+        real_pm.scale_between = lambda s, t, p: 1.0
+        self.log = {}
+        bones = dict((leaf, {"parent": parent, "path": "|s|" + leaf}) for leaf, parent in (
+            ("root", None), ("pelvis", "root"), ("hand_r", "pelvis"), ("weapon_r", "hand_r"),
+            ("camera_root", "root")))
+        ap.scene.skeleton = lambda ref, notes=None: (bones, None)
+        log = self.log
+
+        class Transfer(object):
+            def __init__(self, source, target, pairs, members, **kwargs):
+                log["transfer"] = list(members)
+                self.placed = {"hand_r", "weapon_r"}
+
+            def frame(self):
+                return {"hand_r": om.MMatrix(), "weapon_r": om.MMatrix()}
+
+        def solve(ref_, bones_, wanted, members, placed=()):
+            log["solver"] = (list(members), list(placed))
+            return real_skelsolve.Solution({"|s|hand_r.rotateX": 1.0}, ["body"], {})
+
+        class Writer(object):
+            def __init__(self, ref_, bones_, leaves):
+                log["writer"] = list(leaves)
+
+            def solve(self, wanted, seed=None):
+                return real_skelsolve.Solution({"|g|Sword.rotateX": 2.0},
+                                               ["weapon_r keyed through Sword"], {})
+
+            def camera_to_set_up(self):
+                return None
+        real_pm.Transfer, real_skelsolve.solve, real_helpers.Writer = Transfer, solve, Writer
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_the_weapon_goes_to_the_writer_and_never_to_the_body_solver(self):
+        card = {"bones": dict((leaf, {"parent": None}) for leaf in
+                              ("root", "pelvis", "hand_r", "weapon_r", "camera_root")),
+                "members": ["hand_r"]}
+        plan, extra = ap._plan(card, ref("Manny", kind="skeleton"))
+        self.assertEqual(self.log["transfer"], ["hand_r", "weapon_r"])
+        self.assertEqual(self.log["solver"], (["hand_r"], ["hand_r"]))
+        self.assertEqual(self.log["writer"], ["weapon_r"])
+        self.assertEqual(dict(plan.values), {"|s|hand_r.rotateX": 1.0, "|g|Sword.rotateX": 2.0})
+        self.assertIn("weapon_r keyed through Sword", plan.notes)
+        self.assertEqual(extra.members, ["hand_r"])
+        self.assertIsNone(extra.camera)

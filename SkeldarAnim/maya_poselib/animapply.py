@@ -154,6 +154,7 @@ import maya.cmds as cmds
 
 from maya_poselib import animdata
 from maya_poselib import apply as ap
+from maya_poselib import helpers
 from maya_poselib import keys
 from maya_poselib import look
 from maya_poselib import objects as objs
@@ -609,7 +610,11 @@ class _Target(object):
         self.bones = scene.skeleton(ref, found)[0]
         self.pairs = pm.pairs(source, self.bones)
         scale = pm.scale_between(source, self.bones, self.pairs)
-        self.members = ap.target_members(self.bones, self.pairs, members)
+        # the camera and the weapon bones the card's parts bring (2026-10-20): keyed by a
+        # `helpers.Writer` - on the bone, or on the weapon / camera driving it - never by the body
+        members = helpers.members_with(members, source)
+        self.members, helper_t = helpers.split(
+            ap.target_members(self.bones, self.pairs, members))
         missing = ap.unpaired_note(ap.unpaired(members, self.pairs, source),
                                    ap.target_label(ref))
         self.carry, self.root_node, kept = _carry(ref, self.bones, travel)
@@ -619,6 +624,7 @@ class _Target(object):
         self.place = self.transfer.place(self.bones)
         self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry) \
             if self.rig else None
+        self.writer = helpers.Writer(ref, self.bones, helper_t)
         # the DRY solve of the first frame, as it will be keyed: which plugs, and the seed
         wanted = self.transfer.frame(source, self.bones, self.place if self.carry else None,
                                      source_root=first_root)
@@ -663,8 +669,19 @@ class _Target(object):
 
     def _solve(self, bones, wanted, seed):
         if self.rig:
-            return self.solver.solve(wanted, seed)
-        return skelsolve.solve(self.ref, bones, wanted, self.members, seed=seed, root=self.carry)
+            body = self.solver.solve(wanted, seed)
+        else:
+            body = skelsolve.solve(self.ref, bones, wanted, self.members, seed=seed,
+                                   root=self.carry)
+        return helpers.merged(body, self.writer.solve(wanted, seed))
+
+    def camera(self):
+        """camera_root's path when this paste keyed it free (`helpers.Writer.camera_to_set_up`),
+        else None."""
+        bone = self.writer.camera_to_set_up()
+        if bone and any(plug.startswith(bone + ".") for plug in self.plugs):
+            return bone
+        return None
 
     def _measure(self, wanted, values, skipped, bones):
         if self.rig:
@@ -869,6 +886,13 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 if not cancelled or not recording:
                     for state in states:
                         keys.put_curve_state(state, layer)
+                # a card that brought the camera onto a character with no Camera Setup sets
+                # one up (2026-10-20), in the press's chunk
+                if not cancelled:
+                    for target in targets:
+                        bone = target.camera() if target.nodes else None
+                        if bone:
+                            target._note([helpers.set_up_camera(bone)])
         except BaseException:
             _undo_failed(recording and steps.recorded, walk)
             raise

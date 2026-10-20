@@ -138,6 +138,7 @@ import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
 import maya_rigs
+from maya_poselib import helpers
 from maya_poselib import keys
 from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
@@ -155,7 +156,7 @@ Plan = namedtuple("Plan", "ref values current notes skipped")
 Result = namedtuple("Result", "name target count noun layer frame worst notes alpha mirror")
 # what the measure after the keys needs: the targets, the target members, the target's bones;
 # `label` names an objects pose's target (a character's comes from its ref)
-Extra = namedtuple("Extra", "wanted members bones label placed", defaults=((),))
+Extra = namedtuple("Extra", "wanted members bones label placed camera", defaults=((), None))
 
 UNDO_CHUNK = "skeldarPoseApply"
 NATIVE_PREFIX = "pose_"             # the namespace a native card's skeleton is rebuilt in
@@ -669,6 +670,8 @@ def _plan(data, ref, mirror=False, only=None):
     members = list(data.get("members") or ())
     if mirror:
         source, members = pm.mirror(source, members)
+    # the camera and the weapon bones the card's parts bring (2026-10-20, `helpers`)
+    members = helpers.members_with(members, source)
     pairs = pm.pairs(source, bones)
     scale = pm.scale_between(source, bones, pairs)
     # onto the same body (a twin) the card's bone PLACES come too - a slid spine, a shrugged
@@ -678,8 +681,10 @@ def _plan(data, ref, mirror=False, only=None):
     transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
                            scale=scale, places=_places(ref) and not mirror)
     wanted = transfer.frame()
-    placed = sorted(transfer.placed)
-    members_t = target_members(bones, pairs, members)
+    # the body solvers never see our helper bones: a `helpers.Writer` keys them, or what drives
+    # them (a weapon in the hand, the Camera Setup camera)
+    members_t, helper_t = helpers.split(target_members(bones, pairs, members))
+    placed = sorted(p for p in transfer.placed if not helpers.is_helper(p))
     missing = unpaired_note(unpaired(members, pairs, source), target_label(ref))
     if missing:
         notes.append(missing)
@@ -687,6 +692,8 @@ def _plan(data, ref, mirror=False, only=None):
         solution = rigsolve.solve(ref.rig, wanted, members_t, placed=placed)
     else:
         solution = skelsolve.solve(ref, bones, wanted, members_t, placed=placed)
+    writer = helpers.Writer(ref, bones, helper_t)
+    solution = helpers.merged(solution, writer.solve(wanted))
     values = OrderedDict(solution.values)
     full = len(values)
     values, note = only_selected(values, only, _noun(ref))
@@ -696,7 +703,11 @@ def _plan(data, ref, mirror=False, only=None):
         members_t = []                      # partly keyed members: nothing to measure
     plan = Plan(ref, values, keys.current(values), notes + list(solution.notes),
                 dict(solution.skipped))
-    return plan, Extra(wanted, members_t, bones, None, placed if len(values) == full else ())
+    camera = writer.camera_to_set_up()
+    if camera and not any(plug.startswith(camera + ".") for plug in values):
+        camera = None                       # Selected only left it out
+    return plan, Extra(wanted, members_t, bones, None, placed if len(values) == full else (),
+                       camera)
 
 
 def plan_for(data, ref, mirror=False):
@@ -808,6 +819,14 @@ def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
         results.append(Result(name, label, nodes, _noun(plan.ref),
                               layer.name if layer is not None else None, frame,
                               worst[:2] if worst else None, lines, alpha, mirror))
+    # a card that brought the camera onto a character with no Camera Setup sets one up
+    # (2026-10-20: «если у нас в каких-то ригах нету камеры то ее нужно добавить»), after the
+    # measure - its bake must not move what was measured
+    for index, (_plan_, extra, _plugs, count, _notes) in enumerate(keyed):
+        if count and extra is not None and getattr(extra, "camera", None):
+            line = helpers.set_up_camera(extra.camera)
+            if line:
+                results[index].notes.append(line)
     return results
 
 
