@@ -27,7 +27,7 @@ def gate(name, ok, detail=""):
 
 
 def call(method, path, token=None, body=None, raw=None, ctype=None):
-    headers = {}
+    headers = {"user-agent": "skeldar-chat-verify/1"}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -202,7 +202,13 @@ def phase_live():
     done, _ = wb.until(lambda e: e["kind"] == "caught_up")
     gate("hello answers caught_up", done is not None and done["seq"] >= seq0, done)
     wa.send_text("ping")
-    gate("ping answers pong", wa.recv_text(5) == "pong")
+    seen, deadline = [], time.time() + 5  # a presence event can arrive first
+    while time.time() < deadline and "pong" not in seen:
+        try:
+            seen.append(wa.recv_text(max(0.05, deadline - time.time())))
+        except OSError:
+            break
+    gate("ping answers pong", "pong" in seen, seen[-3:])
     t0 = time.time()
     wa.send({"type": "send", "chat": dm["id"], "cid": "c1", "text": "hello  "})
     ack, _ = wa.until(lambda e: e["kind"] == "ack")

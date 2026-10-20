@@ -12642,3 +12642,27 @@ interface ... таймслайдер ченелбокс и атрибут эди
   runs the downloaded install.py, so it takes the same road.
 Proof: `tests/test_interface.py`, the menu tests in `test_hubqt`; 7673 unit tests OK. **Not seen in a GUI
 Maya** (the switch, a real install rebuilding the bar and the panel): the animator's to try.
+
+## Chat server: one Worker, one SQLite Durable Object (2026-10-19)
+
+The messenger's server (spec `docs/superpowers/specs/2026-10-19-chat-messenger-design.md`, plan
+`docs/superpowers/plans/2026-10-19-chat-server.md`; the client and the window are plans 2 and 3).
+`server/chat/worker.js` forwards `/v1/*` to one `Studio` Durable Object (SQLite: users, friends,
+requests, chats, members, messages, events) that also holds every WebSocket (Hibernation API; the
+text frame `ping` is answered `pong` without waking it). `server/chat/deploy.py check|staging|production|keys`
+uploads it through Cloudflare's HTTP API (no Node here); credentials only from
+`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`. `server/` never ships.
+Proof: `verify_chat_server.py all` against `skeldar-chat-staging` (https://skeldar-chat-staging.skeldar.workers.dev) -
+0 of 61 gates failed, twice in a row, 2026-10-20. Delivery of a message to the other socket 0.07-0.5 s.
+What the first real deploy found:
+- the account had no workers.dev subdomain: `PUT /accounts/<id>/workers/subdomain {"subdomain": "skeldar"}`
+  made it, and the migration went in on the first upload (no retry);
+- the address answered at once;
+- **Cloudflare refuses Python-urllib's default User-Agent with 403 "error code: 1010"**: every
+  client (the verify, the WebSocket client, plan 2's Maya client) sends its own User-Agent;
+- the verify's ping gate read the first frame, which was a presence event: it reads until `pong`.
+- **The Claude app's processes see another HKCU than a terminal opened outside it**: user variables
+  set from a PowerShell window never reached `deploy.py` run by Claude (trap 44's family).
+  `deploy.py keys` (the token asked hidden, the account found by `GET /accounts`) keeps both in
+  the registry AND in `~/.skeldar/cloudflare.json` (plain text, the user's profile), and `deploy.py`
+  reads the environment, then the registry, then that file.
