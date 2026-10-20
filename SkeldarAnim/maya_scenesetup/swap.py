@@ -15,6 +15,7 @@ from __future__ import absolute_import
 import math
 
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_rigs
 from maya_scenesetup import catalog
@@ -260,7 +261,7 @@ def bake_copy(root, start, end):
     temporary = []
     for joint, copy in zip(joints, made):
         temporary += cmds.parentConstraint(joint, copy, maintainOffset=False)
-    cmds.bakeResults(made, time=(start, end), simulation=True, sampleBy=1,
+    maya_timewarp.call(cmds.bakeResults, made, time=(start, end), simulation=True, sampleBy=1,
                      attribute=list(TRANSFORM_ATTRS), disableImplicitControl=True,
                      preserveOutsideKeys=False, sparseAnimCurveBake=False)
     cmds.delete([c for c in temporary if cmds.objExists(c)])
@@ -437,7 +438,7 @@ def _bake_object(obj, start, end):
     attrs = [a for a in TRANSFORM_ATTRS
              if cmds.getAttr("{0}.{1}".format(obj, a), settable=True)
              or cmds.listConnections("{0}.{1}".format(obj, a), source=True, destination=False)]
-    cmds.bakeResults(obj, time=(start, end), simulation=True, sampleBy=1,
+    maya_timewarp.call(cmds.bakeResults, obj, time=(start, end), simulation=True, sampleBy=1,
                      attribute=attrs or list(TRANSFORM_ATTRS), disableImplicitControl=True,
                      preserveOutsideKeys=True, sparseAnimCurveBake=False)
 
@@ -486,6 +487,7 @@ def rebind_all(found, old_char, new_root, new_rig, weapons, start, end):
 
 # ------------------------------------------------------------------ the press
 
+@maya_timewarp.wrapped
 def swap(entry, root):
     """The character standing at `root` swapped for a new `entry`. Returns the status line."""
     import maya_retargetmode

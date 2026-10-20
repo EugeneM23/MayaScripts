@@ -101,6 +101,7 @@ import math
 import traceback
 
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
@@ -673,7 +674,7 @@ def _bake_onto(source, proxy, span):
     """The source's world track onto the proxy's channels (in its parent's
     space), then the still channels un-keyed."""
     temporary = cmds.parentConstraint(source, proxy, maintainOffset=False)[0]
-    cmds.bakeResults([proxy], attribute=list(CHANNELS),
+    maya_timewarp.call(cmds.bakeResults, [proxy], attribute=list(CHANNELS),
                      time=(span[0], span[1]), simulation=True, sampleBy=1)
     cmds.delete(temporary)
     for channel in CHANNELS:
@@ -723,7 +724,7 @@ def detach_from_proxy(obj, span):
     cons = our_constraints(obj)
     if not cons:
         return 0
-    cmds.bakeResults([obj], attribute=list(CHANNELS),
+    maya_timewarp.call(cmds.bakeResults, [obj], attribute=list(CHANNELS),
                      time=(span[0], span[1]), simulation=True, sampleBy=1,
                      preserveOutsideKeys=True)
     removed = 0

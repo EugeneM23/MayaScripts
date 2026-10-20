@@ -25,6 +25,7 @@ import math
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_scenetabs import scope
 
@@ -201,7 +202,7 @@ def our_constraints(bone):
 
 
 def _bake(node, start, end):
-    cmds.bakeResults(node, time=(start, end), attribute=list(CHANNELS),
+    maya_timewarp.call(cmds.bakeResults, node, time=(start, end), attribute=list(CHANNELS),
                      simulation=False, sampleBy=1,
                      disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)

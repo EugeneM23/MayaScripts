@@ -34,6 +34,7 @@ import maya.api.OpenMaya as om
 import maya.api.OpenMayaAnim as oma
 import maya.cmds as cmds
 
+import maya_timewarp
 from maya_poselib import keys
 
 
@@ -74,9 +75,14 @@ class Walk(object):
         self.tweaks = None
         self._here = None
         self._evaluating = None
+        self._unwarped = None
 
     def __enter__(self):
         self.tweaks = keys.Tweaks()
+        #  a Scene Time Warp off for the walk (`maya_timewarp`): the frames walked are the
+        #  curve times keyed. After the tweaks are read - the switch re-evaluates the scene
+        self._unwarped = maya_timewarp.unwarped()
+        self._unwarped.__enter__()
         self._here = oma.MAnimControl.currentTime()
         cmds.refresh(suspend=True)
         if self.fresh:
@@ -87,6 +93,7 @@ class Walk(object):
                 evaluating.__enter__()
             except BaseException:
                 cmds.refresh(suspend=False)
+                self._unwarped.__exit__(None, None, None)
                 raise
             self._evaluating = evaluating
         return self
@@ -141,6 +148,9 @@ class Walk(object):
                 failed.append(problem)
 
         attempt(oma.MAnimControl.setCurrentTime, self._here)
+        if self._unwarped is not None:
+            unwarping, self._unwarped = self._unwarped, None
+            attempt(unwarping.__exit__, None, None, None)
         attempt(_resume)
         if self._evaluating is not None:
             evaluating, self._evaluating = self._evaluating, None

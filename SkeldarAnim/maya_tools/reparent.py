@@ -22,6 +22,7 @@ Spec: docs/superpowers/specs/2026-10-12-tools-parent-design.md
 """
 
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_tools import knotplan as plan
 from maya_tools import knots
@@ -199,7 +200,7 @@ def _rebake(nodes, span, operate, scales, layer=None):
         cmds.setAttr(loc + ".rotateOrder", cmds.getAttr(node + ".rotateOrder"))
         temps.append(knots._constrain(cmds.parentConstraint, node, loc, maintainOffset=False))
         locators.append(loc)
-    cmds.bakeResults(locators, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+    maya_timewarp.call(cmds.bakeResults, locators, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
                      simulation=True, sampleBy=1, disableImplicitControl=True)
     cmds.delete([t for t in temps if cmds.objExists(t)])
     operate(uuids)
@@ -214,7 +215,7 @@ def _rebake(nodes, span, operate, scales, layer=None):
     first, last = int(round(span[0])), int(round(span[1]))
     shown = layered.read(stacked, plan.CHANNELS, range(first, last + 1)) if stacked else {}
     if plain:
-        cmds.bakeResults(plain, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+        maya_timewarp.call(cmds.bakeResults, plain, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
                          simulation=True, sampleBy=1, preserveOutsideKeys=True,
                          disableImplicitControl=True)
     cmds.delete([c for c in cons if cmds.objExists(c)])

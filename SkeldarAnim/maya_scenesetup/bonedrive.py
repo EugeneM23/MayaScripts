@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 # The weapon marker. Defined here (the leaf) and re-exported by `attach`, so
 # every existing `attach.MARKER` reader keeps working.
@@ -262,7 +263,7 @@ def _cut(node):
 
 
 def _bake(node, start, end):
-    cmds.bakeResults(node, time=(start, end), attribute=list(CHANNELS),
+    maya_timewarp.call(cmds.bakeResults, node, time=(start, end), attribute=list(CHANNELS),
                      simulation=False, sampleBy=1,
                      disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)

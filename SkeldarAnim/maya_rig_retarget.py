@@ -26,6 +26,7 @@ rig's constrained game skeleton -- UE names (`pelvis`, `spine_05`) mean the Mann
 `maya_pmretarget`. Anything else is refused by name.
 """
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_hubstyle as hubstyle
 import maya_rigs
@@ -256,7 +257,7 @@ def transfer_bone(src, dst, start, end, relative=False):
     cmds.cutKey(dst, attribute=_CHANNELS, clear=True)
     driver, temp = (_parent_space_driver(src, dst) if relative else (src, []))
     constraint = cmds.parentConstraint(driver, dst)[0]
-    cmds.bakeResults(dst, time=(start, end), attribute=_CHANNELS, simulation=False,
+    maya_timewarp.call(cmds.bakeResults, dst, time=(start, end), attribute=_CHANNELS, simulation=False,
                      sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)
     # the relative driver's decomposed rotation wraps, so the bake keeps a

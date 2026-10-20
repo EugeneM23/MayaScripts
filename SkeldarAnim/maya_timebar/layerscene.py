@@ -19,6 +19,7 @@ Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 import sys
 
 import maya.cmds as cmds
+import maya_timewarp
 
 
 CHUNK = "skeldarTimeBarLayers"
@@ -772,7 +773,7 @@ def _maya_merge(layers, root):
         if opts["animLayerMergeSmartBake"]:
             flags["smart"] = (True, opts["animLayerMergeSmartFidelityDelta"]) \
                 if opts["animLayerMergeSmartFidelity"] else True
-        cmds.bakeResults(kept, **flags)
+        maya_timewarp.call(cmds.bakeResults, kept, **flags)
         cmds.animLayer(dest, e=True, mute=False)
     if opts["animLayerMergeDeleteLayers"]:
         doomed = list(layers)

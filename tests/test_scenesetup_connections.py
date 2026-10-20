@@ -963,6 +963,9 @@ class Boundaries(unittest.TestCase):
         names = [node.func.attr for node in ast.walk(tree)
                  if isinstance(node, ast.Call)
                  and isinstance(node.func, ast.Attribute)]
+        #  a bake goes through maya_timewarp.call(cmds.bakeResults, ...) (2026-10-20)
+        names += [node.attr for node in ast.walk(tree)
+                  if isinstance(node, ast.Attribute) and node.attr == "bakeResults"]
         for wanted in ("parentConstraint", "parent_out", "parent_in",
                        "bakeResults", "unlink", "spaceLocator"):
             self.assertIn(wanted, names, wanted)

@@ -16,6 +16,7 @@ nothing of the simulation is left.
 import json
 
 import maya.cmds as cmds
+import maya_timewarp
 import numpy as np
 
 from maya_ragdoll import fall as rd
@@ -290,6 +291,7 @@ def _zones_line(state):
     return "; ".join(parts)
 
 
+@maya_timewarp.wrapped
 def blend(selection=None, given=None, progress=None):
     """(ok, line): the press."""
     s = rd.settings(given)

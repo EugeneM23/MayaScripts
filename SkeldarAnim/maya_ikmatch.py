@@ -41,6 +41,7 @@ from collections import namedtuple
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_rigs
 
@@ -343,6 +344,7 @@ def frames_of(start, end):
     return out
 
 
+@maya_timewarp.wrapped
 def carry(rig, start, end):
     """The IK limbs take the FK limbs' shape over start..end (`frame_values` on every frame).
     Returns a line for the status, '' when every IK limb stood as its FK already."""

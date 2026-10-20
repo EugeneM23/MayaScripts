@@ -12976,3 +12976,33 @@ Friends and «Все пользователи» panes of the sections above.**
   `test_chat_extras` and the window's `Everybody`, `Reactions`, `Avatar`; picture
   `docs/superpowers/plans/chat_extras.png` (`render_chat_extras.py`). Note the verifies print emoji:
   run them with `PYTHONIOENCODING=utf-8` (cp1252 raises). **Not seen in a GUI Maya.**
+
+## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
+
+The animator: «Сейчас наши анимационные слои некорректно работают с scene time warp давай
+исправим и протестируем все» (asked what breaks: «проверь всё»).
+- **What a warp is** (`sceneTimeWarp.mel`, measured): an animCurveTT `timewarp` into
+  `time1.timewarpIn_Raw`, on while `time1.enableTimewarp`. At scene frame f every time curve is
+  evaluated at w(f) (`time1.outTime`); keys stay in curve time - Maya's own `setKeyframe` at frame
+  f keys curve time f, `getAttr(time=t)` / `keyframe -eval` read curve time t. Maya's layers
+  themselves evaluate right under it.
+- **The bug**: whatever moved the time to READ the scene and keyed the frames it walked read w(f)
+  and keyed f - our `timewalk.Walk`, every `cmds.currentTime` walk, and **Maya's own
+  `bakeResults -simulation`** (20.8 cm off; without `-simulation` it reads curve time and is
+  right). Measured: Tools > Layer 83 deg off, Knot + Bake 42, Snapshot 39, To world 29 cm,
+  Merge 21 cm, FK -> IK 14 cm, 1P Setup 39 cm.
+- **`SkeldarAnim/maya_timewarp.py`** (a payload row): `unwarped()` switches the warp off through
+  the API (`MPlug.setBool`, no undo step - an undo of the press must not switch it) and evaluates
+  the frame, back on and evaluated after; re-entrant (state on `sys`), nothing without a warp.
+  `call(fn, ...)`, `wrapped` (a decorator). Wired: `timewalk.Walk` (after it reads the tweaks),
+  every `cmds.bakeResults` of the plugin (`maya_timewarp.call(cmds.bakeResults, ...)`: retargets'
+  `vendor_bake`, `transfer_bone`, bonedrive, camera, Connections, swap, the Time Bar's merge,
+  knots, reparent, skeleton transfer), and the presses that walk with `currentTime` themselves:
+  `fkik.switch`, `fkikspine.switch`, `maya_ikmatch.carry`, the ragdoll's `fall` / `blend`,
+  `firstperson.setup`, `swap.swap`. A new tool that bakes or walks the time to write keys goes
+  through it. Display-only walks (the CoM trail) are left in scene time.
+- Proof: `docs/superpowers/plans/verify_timewarp.py` **10/10** in mayapy standalone and in a GUI
+  Maya (port 7002), each tool also run with the fix switched off as the control (all fail
+  there): a non-linear warp, the take compared at the scene frames whose warped time is whole -
+  Layer, Knot + Bake, Snapshot, To world, Merge 0.00000 cm / deg, FK -> IK 0.0003 cm, 1P Setup
+  0.00000; one Ctrl+Z after a Layer press leaves the warp on. `tests/test_timewarp.py`.

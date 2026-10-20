@@ -26,6 +26,7 @@ Remove delete it (Bake skipped it until 2026-10-15). Spec: docs/superpowers/spec
 import contextlib
 
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_tools import knotplan as plan
 
@@ -408,7 +409,7 @@ def _filter_euler(node, channels):
 def _bake_node(node, channels, span):
     """`node`'s channels baked on every frame of the span, rotates euler-filtered (trap 108), a
     still channel a plain value."""
-    cmds.bakeResults(node, attribute=list(channels), time=(span[0], span[1]),
+    maya_timewarp.call(cmds.bakeResults, node, attribute=list(channels), time=(span[0], span[1]),
                      simulation=True, sampleBy=1, disableImplicitControl=True)
     _filter_euler(node, channels)
     for ch in channels:
@@ -1059,7 +1060,7 @@ def _bake_one(top, obj, mine, layer=None):
     if baked:
         if region[2]:
             _protect(obj, channels, region[0], region[1])
-        cmds.bakeResults(obj, attribute=channels, time=(region[0], region[1]),
+        maya_timewarp.call(cmds.bakeResults, obj, attribute=channels, time=(region[0], region[1]),
                          simulation=True, sampleBy=1, preserveOutsideKeys=True,
                          disableImplicitControl=True)
     cmds.delete(mine)

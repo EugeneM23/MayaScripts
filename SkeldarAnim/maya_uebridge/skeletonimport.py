@@ -27,6 +27,7 @@ Spec: docs/superpowers/specs/2026-10-01-uebridge-many-animations-design.md
 import os
 
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_scenetabs import scope
 
@@ -606,7 +607,7 @@ def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=N
                 constraints += cmds.pointConstraint(follower, dst, maintainOffset=False)
         driven.append(dst)
     if driven:
-        cmds.bakeResults(driven, time=(start, end), simulation=True,
+        maya_timewarp.call(cmds.bakeResults, driven, time=(start, end), simulation=True,
                          sampleBy=1, disableImplicitControl=True,
                          preserveOutsideKeys=False, sparseAnimCurveBake=False,
                          attribute=list(CHANNELS))
@@ -874,7 +875,7 @@ def transfer_foreign(source_root, target_root, start, end, mode=None):
                 " (%s never moves)" % leaf(found.mapping["root"])
                 if "root" in found.mapping else "")
         driven.append(target_root)
-        cmds.bakeResults(driven, time=(start, end), simulation=True, sampleBy=1,
+        maya_timewarp.call(cmds.bakeResults, driven, time=(start, end), simulation=True, sampleBy=1,
                          disableImplicitControl=True, preserveOutsideKeys=False,
                          sparseAnimCurveBake=False, attribute=list(CHANNELS))
     finally:

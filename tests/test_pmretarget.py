@@ -410,8 +410,9 @@ class TestNames(unittest.TestCase):
         # evaluates MEL, so a session without AdvancedSkeleton sourced works.
         with open(pm.__file__.replace(".pyc", ".py"), encoding="utf-8") as fh:
             src = fh.read()
-        self.assertEqual(src.count("cmds.bakeResults("), 1)
-        self.assertIn("cmds.bakeResults(", src.split("def vendor_bake")[1]
+        self.assertEqual(src.count("cmds.bakeResults"), 1)
+        #  read in curve time under a Scene Time Warp (2026-10-20): through maya_timewarp
+        self.assertIn("maya_timewarp.call(cmds.bakeResults,", src.split("def vendor_bake")[1]
                       .split("\ndef ")[0])
         self.assertNotIn("mel.eval(", src)
         self.assertNotIn("PySide", src)

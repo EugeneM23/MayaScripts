@@ -20,6 +20,7 @@ import math
 from collections import OrderedDict
 
 import maya.cmds as cmds
+import maya_timewarp
 import numpy as np
 
 from maya_ragdoll import plan, sim
@@ -414,6 +415,7 @@ def _cut_after(ref, members, b):
         cmds.cutKey(controls, time=(b + 0.5, 10 ** 7), clear=True)
 
 
+@maya_timewarp.wrapped
 def fall(selection=None, given=None, progress=None):
     """(ok, line): the press."""
     s = settings(given)

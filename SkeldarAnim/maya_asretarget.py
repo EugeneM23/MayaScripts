@@ -49,6 +49,7 @@ import math
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_scenetabs import scope
 
@@ -1082,7 +1083,7 @@ def vendor_bake(start, end, rig=None):
             controls.append(driven[0])
     if not controls:
         return []
-    cmds.bakeResults(*controls, simulation=True, time=(start, end), sampleBy=1,
+    maya_timewarp.call(cmds.bakeResults, *controls, simulation=True, time=(start, end), sampleBy=1,
                      disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False, removeBakedAttributeFromLayer=False,
                      bakeOnOverrideLayer=False, controlPoints=False, shape=False)

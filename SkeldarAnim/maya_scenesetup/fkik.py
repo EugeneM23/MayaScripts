@@ -87,6 +87,7 @@ from collections import namedtuple
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_ikmatch
 import maya_rigs
@@ -1308,6 +1309,7 @@ def _fit_toes(arm, frames, samples, span):
     return out, worst
 
 
+@maya_timewarp.wrapped
 def switch(arm, mode, span, every_frame=False):
     """Bring `arm` to `mode` over `span` keeping what it shows - on the
     frames something moving it is keyed on (`key_plan`), or on every frame

@@ -73,6 +73,7 @@ from collections import namedtuple
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya_timewarp
 
 import maya_rigs
 from maya_scenesetup import fkik
@@ -508,6 +509,7 @@ def refusal(sp, mode, span):
     return ""
 
 
+@maya_timewarp.wrapped
 def switch(sp, mode, span, every_frame=False):
     """The spine to `mode` over `span`, keeping what it shows, keyed on the frames
     the shown spine is keyed on (`key_plan`), or on every frame (`every_frame`).

@@ -17,6 +17,7 @@ Spec: docs/superpowers/specs/2026-10-16-tools-1p-setup-design.md.
 """
 
 import maya.cmds as cmds
+import maya_timewarp
 
 from maya_tools import knotplan as plan
 from maya_tools import knots
@@ -191,6 +192,7 @@ def _camera(bone, knot):
     return "camera %s in the knot, %s follows it" % (leaf(cam), CAMERA_BONE)
 
 
+@maya_timewarp.wrapped
 def setup(selection=None):
     """The 1P Setup press. The line."""
     import maya_rigs

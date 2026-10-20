@@ -138,6 +138,7 @@ _PAYLOAD = (
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
     "maya_camradial.py",        # Space: the camera menu in place of the hotbox (2026-10-20)
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
+    "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
     "maya_sidepanel",           # the side panel: Channel Box / Layer Editor and Attribute Editor at the right edge (2026-10-17)
