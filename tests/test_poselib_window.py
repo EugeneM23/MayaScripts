@@ -447,6 +447,22 @@ class Workspace(unittest.TestCase):
         self.assertEqual(self.built, ["build"])
         self.assertTrue(self.cmds.workspace[pw.CONTROL]["edits"][-1]["restore"])
 
+    def test_a_rail_press_opens_the_window_straight_away(self):
+        """2026-10-20: the rail's icon opens the library itself, no card in between."""
+        self.assertTrue(pw.toggle())
+        self.assertIn(pw.CONTROL, self.cmds.workspace)
+
+    def test_a_rail_press_on_a_shown_window_closes_it(self):
+        self.cmds.workspace[pw.CONTROL] = {"visible": True}
+        self.assertFalse(pw.toggle())
+        self.assertTrue(self.cmds.workspace[pw.CONTROL]["edits"][-1]["close"])
+
+    def test_a_hidden_dock_tab_is_raised_not_closed(self):
+        self.cmds.workspace[pw.CONTROL] = {"visible": False}
+        pw._BUILT_HERE = True
+        self.assertTrue(pw.toggle())
+        self.assertTrue(self.cmds.workspace[pw.CONTROL]["edits"][-1]["restore"])
+
     def test_the_hub_card_is_a_note_and_the_primary_open_button(self):
         pw.build_panel()
         marks = hubstyle.take_marks()

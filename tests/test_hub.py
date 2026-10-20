@@ -118,7 +118,8 @@ class TheTable(unittest.TestCase):
         self.assertEqual((sec.label, sec.module, sec.builder, sec.frame, sec.group, sec.icon),
                          ("Chat", "maya_chat.panel", "build_panel", "skeldarHubFrameChat",
                           "scene", "message-circle"))
-        self.assertEqual(hub.WINDOW_SECTIONS, {"chat": "maya_chat"})
+        self.assertEqual(hub.WINDOW_SECTIONS["chat"], "maya_chat")
+        self.assertEqual(hub.WINDOW_SECTIONS["poses"], "maya_poselib.window")
         keys = [s.key for s in hub.SECTIONS]
         self.assertEqual(keys.index("chat"), keys.index("stash") + 1)
 

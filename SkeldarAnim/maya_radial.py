@@ -309,6 +309,9 @@ def _open_section(key, point):
         return _report("No section '{0}' - set this slot again".format(key))
     if sec.key in hub.HEADER_ONLY:
         return hub.show(sec.key)
+    if sec.key in getattr(hub, "WINDOW_SECTIONS", {}):
+        hub.open_window(sec.key, point)
+        return sec.label
     import maya_hubpop as hubpop
     try:
         popup = hubpop.open_at(sec.key, point)

@@ -204,8 +204,9 @@ _BY_KEY = dict((s.key, s) for s in SECTIONS)
 ALIASES = {"uebridge": "characters", "armor": "weapons"}
 
 #  Sections that are their own window (2026-10-20, the chat): a jump's press opens the
-#  window out of the icon - or folds it back into it - instead of showing a card.
-WINDOW_SECTIONS = {"chat": "maya_chat"}
+#  window out of the icon - or folds it back into it - instead of showing a card. The Pose
+#  Library too (2026-10-20, «переводил нас сразу в библиотеку поз а не на промежуточную кнопку»).
+WINDOW_SECTIONS = {"chat": "maya_chat", "poses": "maya_poselib.window"}
 
 
 # ------------------------------------------------------------------- pure
@@ -1492,6 +1493,8 @@ def _press_popup(key):
     """A rail icon's window (2026-10-16; a floating window since 2026-10-18):
     Ctrl+click, a middle click, the rail's menu. The section's window by the
     cursor (maya_hubpop.open_at), else the ⧉'s road."""
+    if key in WINDOW_SECTIONS:
+        return open_window(key)
     import maya_hubpop
     try:
         point = _cursor()
@@ -1534,6 +1537,17 @@ def _toggle_window(key):
     import importlib
     module = importlib.import_module(WINDOW_SECTIONS[key])
     return module.toggle(_jump_point(key) or _cursor())
+
+
+def open_window(key, point=None):
+    """A window section opened, never closed (the radial menu, a Ctrl-click on the rail): a
+    window already shown stays; else its toggle opens it out of `point`."""
+    import importlib
+    module = importlib.import_module(WINDOW_SECTIONS[key])
+    shown = getattr(module, "shown", None)
+    if shown is not None and shown():
+        return True
+    return module.toggle(point or _cursor())
 
 
 def paint_badge(key, count):

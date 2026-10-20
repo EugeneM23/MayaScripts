@@ -2993,6 +2993,27 @@ def show_window():
                               uiScript=uiscript(plugin_root()))
 
 
+def shown():
+    """The window stands and can be seen (not closed, not a hidden dock tab)."""
+    cmds = _cmds()
+    if not is_open():
+        return False
+    try:
+        return bool(cmds.workspaceControl(CONTROL, query=True, visible=True))
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def toggle(origin=None):
+    """A rail press on Pose Library (2026-10-20, «вызов меню pose library переводил нас сразу в
+    библиотеку поз а не на промежуточную кнопку»): the window opens, or closes when it is shown."""
+    if shown():
+        _cmds().workspaceControl(CONTROL, edit=True, close=True)
+        return False
+    show_window()
+    return True
+
+
 def build_panel():
     """The hub card (Animation): one line and Open Pose Library - the window itself is too big
     for an accordion card."""
