@@ -32,6 +32,29 @@ FOOT_TIPS = {"add": "A new layer from the selection (empty with nothing selected
              "delete": "Delete the layer"}
 TYPES = ("", "T", "R")      # displayType 0 normal, 1 template, 2 reference
 MODES = {"add": "ADD", "ovr": "OVR", "base": "BASE"}
+WKEY_W = 14         # the weight's key cell column
+WKEY_CELL = (7, 13) # the cell itself, the Channel Box's
+WKEY_LETTER = "L"   # a layer's weight key on its lane
+
+
+def weight_state(row, now, tol=1e-3):
+    """The weight's key cell: 'onkey' (a key at `now`), 'keyed' (keys elsewhere),
+    'plain', or None for BaseAnimation (it has no weight)."""
+    if row.get("base"):
+        return None
+    keys = row.get("weight_keys") or ()
+    if not keys:
+        return "plain"
+    if now is not None and any(abs(float(k) - float(now)) < tol for k in keys):
+        return "onkey"
+    return "keyed"
+
+
+def wkey_cell(rect, ui):
+    """The key cell (x, y, w, h) centred in its column."""
+    x, y, w, h = rect
+    cw, ch = WKEY_CELL[0] * ui, WKEY_CELL[1] * ui
+    return x + (w - cw) / 2.0, y + (h - ch) / 2.0, cw, ch
 
 
 def clamp_height(h, room):
@@ -114,6 +137,10 @@ def row_parts(rect, tab, ui, base=False):
             right -= 34 * u
             out["weight"] = (right - 60 * u, y + (h - 14 * u) / 2.0, 60 * u, 14 * u)
             right -= 64 * u
+            #  the weight's key cell, the Channel Box's (2026-10-20: «нельзя проанимировать
+            #  силу анимационного слоя»)
+            out["wkey"] = (right - WKEY_W * u, y, WKEY_W * u, h)
+            right -= (WKEY_W + 2) * u
         out["mode"] = (x + 7 * u, y + (h - 16 * u) / 2.0, 32 * u, 16 * u)
         name_x = x + 45 * u
     else:

@@ -102,16 +102,16 @@ def anim_layers():
     selected = set(picked)
     rows = []
     for name in reversed(names):
+        wkeys = weight_keys(name)
         rows.append({"name": name, "label": _label(name),
                      "mode": "ovr" if _get(name + ".override", False) else "add",
                      "weight": float(_get(name + ".weight", 1.0)),
-                     "weight_keyed": bool(cmds.listConnections(name + ".weight", source=True,
-                                                               destination=False, type="animCurve")),
+                     "weight_keyed": bool(wkeys), "weight_keys": wkeys,
                      "mute": bool(_get(name + ".mute", False)), "solo": bool(_get(name + ".solo", False)),
                      "lock": bool(_get(name + ".lock", False)), "active": name == active,
                      "selected": name in selected, "base": False})
     rows.append({"name": root, "label": "BaseAnimation", "mode": "base", "weight": 1.0,
-                 "weight_keyed": False, "mute": bool(_get(root + ".mute", False)), "solo": False,
+                 "weight_keyed": False, "weight_keys": (), "mute": bool(_get(root + ".mute", False)), "solo": False,
                  "lock": bool(_get(root + ".lock", False)), "active": root == active,
                  "selected": root in selected, "base": True})
     return rows
@@ -425,6 +425,44 @@ def set_weight(name, value):
     else:
         cmds.setAttr(name + ".weight", value)
     return True, ""
+
+
+def _weight_curve(name):
+    curves = cmds.listConnections(name + ".weight", source=True, destination=False,
+                                  type="animCurve") or []
+    curves = cmds.ls(curves, type=TIME_CURVES) or []
+    return curves[0] if curves else None
+
+
+def weight_keys(name):
+    """The times a layer's weight is keyed at (a tuple; () unkeyed)."""
+    curve = _weight_curve(name)
+    if not curve:
+        return ()
+    return tuple(sorted(set(cmds.keyframe(curve, q=True, timeChange=True) or [])))
+
+
+def toggle_weight_key(name):
+    """The weight's key cell: a key at the current frame taken off, else the weight
+    keyed there at the value it shows. One undo step."""
+    if _is_root(name):
+        return False, "BaseAnimation has no weight"
+    now = cmds.currentTime(q=True)
+    curve = _weight_curve(name)
+    label = _label(name)
+    with _chunk():
+        if curve and cmds.keyframe(curve, q=True, time=(now, now), keyframeCount=True):
+            value = cmds.getAttr(name + ".weight")
+            cmds.cutKey(curve, time=(now, now), option="keys", clear=True)
+            if not cmds.objExists(curve):            # trap 210: the last key took the curve
+                cmds.setAttr(name + ".weight", value)
+            return True, "%s: weight key removed at %s" % (label, _frame(now))
+        cmds.setKeyframe(name, attribute="weight", time=(now, now))
+    return True, "%s: weight keyed at %s" % (label, _frame(now))
+
+
+def _frame(t):
+    return ("%d" % t) if abs(t - round(t)) < 1e-6 else ("%.2f" % t)
 
 
 def end_weight():

@@ -78,7 +78,7 @@ class Layouts(unittest.TestCase):
 
     def test_a_row_has_its_controls_left_to_right(self):
         parts = L.row_parts((0, 0, 360, 30), "anim", 1.0)
-        order = ["mode", "name", "weight", "wnum", "mute", "solo", "lock"]
+        order = ["mode", "name", "wkey", "weight", "wnum", "mute", "solo", "lock"]
         xs = [parts[n][0] for n in order]
         self.assertEqual(xs, sorted(xs))
         disp = L.row_parts((0, 0, 360, 30), "disp", 1.0)
@@ -87,7 +87,17 @@ class Layouts(unittest.TestCase):
     def test_the_base_row_has_no_weight_and_no_solo(self):
         parts = L.row_parts((0, 0, 360, 30), "anim", 1.0, base=True)
         self.assertNotIn("weight", parts)
+        self.assertNotIn("wkey", parts)
         self.assertNotIn("solo", parts)
+
+    def test_the_weight_key_cell_s_state(self):
+        """2026-10-20: the weight's key cell, the Channel Box's."""
+        self.assertIsNone(L.weight_state({"base": True}, 10))
+        self.assertEqual(L.weight_state({"weight_keys": ()}, 10), "plain")
+        self.assertEqual(L.weight_state({"weight_keys": (0.0, 10.0)}, 10), "onkey")
+        self.assertEqual(L.weight_state({"weight_keys": (0.0, 10.0)}, 5), "keyed")
+        cx, cy, cw, ch = L.wkey_cell((100, 0, 14, 30), 1.0)
+        self.assertEqual((cx + cw / 2.0, cy + ch / 2.0), (107.0, 15.0))
 
 
 class Hits(unittest.TestCase):

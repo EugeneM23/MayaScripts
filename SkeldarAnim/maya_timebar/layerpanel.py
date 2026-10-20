@@ -32,7 +32,7 @@ LANE_FACE = "#141517"
 MUTE_FACE = "#3a2626"   # M lit
 SOLO_FACE = "#23324a"   # S lit
 BOX = (28, 20)          # logical px: the shape a burst unrolls from
-TOGGLES = ("mute", "solo", "lock", "visible", "playback", "type")
+TOGGLES = ("mute", "solo", "lock", "visible", "playback", "type", "wkey")
 FOOT_GLYPHS = {"add": "plus", "addsel": "addsel", "remsel": "remsel", "merge": "merge",
                "select": "select", "delete": "trash"}
 #  Maya's display layer palette: the colour index a layer takes (1..31)
@@ -103,6 +103,7 @@ class Panel(object):
         self.lane_aimed = None         # (layer, key) under the mouse
         self.keys = {}
         self._keys_stale = False        # a key edit: the lanes read on the next refresh
+        self._wstates = ()              # the weight key cells the column last drew
         self.phase = "closed"
         self.age_override = None        # tests only: the age of a running burst, ms
         self.burst = None               # the column's: {"t0", "open", "origin", "delays", "close_at", "ends"}
@@ -733,9 +734,27 @@ class Panel(object):
                 print(traceback.format_exc())
 
     def on_time(self):
-        """The lanes' playhead cell: repainted now, not on an idle (trap 269)."""
+        """The lanes' playhead cell: repainted now, not on an idle (trap 269); the
+        column when a weight's key cell turned on or off this frame."""
         if self._lanes_shown():
             self.lanes.repaint()
+        try:
+            if self.is_open() and self.weight_states() != self._wstates:
+                self.column.repaint()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+
+    def now(self):
+        try:
+            return float(self.strip.now())
+        except Exception:                                    # noqa: BLE001
+            return None
+
+    def weight_states(self):
+        """Each layer's weight key cell at the current frame (the column's picture is
+        drawn again when one changes)."""
+        now = self.now()
+        return tuple(L.weight_state(r, now) for r in self.rows.get("anim", []))
 
     def _clamp_scroll(self):
         lay = self.column.layout_()
@@ -846,6 +865,10 @@ class Panel(object):
         elif part == "type":
             self.pops[("ctl", i, part)] = self.clock()
             self._write("set_display", name, "type", L.step_type(row.get("type", 0)))
+        elif part == "wkey":
+            #  the weight's key cell: keyed / unkeyed at the current frame (2026-10-20)
+            self.pops[("ctl", i, part)] = self.clock()
+            self._write("toggle_weight_key", name)
         elif part in ("weight", "wnum"):
             rect = L.row_parts(lay.row_at(i, self.scroll), self.tab, self.ui, base=row.get("base"))["weight"]
             self.drag = ("weight", name, rect)
@@ -1489,8 +1512,9 @@ def _classes():
                 p.setClipPath(clip)
             key = (self.width(), self.height(), ui, pn.tab, round(pn.scroll, 2),
                    L.signature(pn.current_rows()), tuple(pn.selected_names()), pn.picked_disp, pn.status, pn.lanes_on,
-                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded)
+                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded, pn.weight_states())
             if key != self._cache_key or self._cache is None:
+                pn._wstates = pn.weight_states()
                 self.rebuilds += 1
                 self._cache = self._picture(lay, excluded)
                 self._cache_key = key
@@ -1786,6 +1810,8 @@ def _classes():
                     p.setFont(font(self, 10 * ui, mono=True))
                     p.setPen(colour(tk["accent_text"] if row.get("weight_keyed") else tk["text2"]))
                     p.drawText(qrect(parts["wnum"]), Qt.AlignCenter, "%.2f" % weight)
+                if "wkey" in parts:
+                    self._wkey(p, i, parts["wkey"], L.weight_state(row, pn.now()), moving)
                 for name in ("mute", "solo", "lock"):
                     if name in parts:
                         self._toggle(p, i, name, qrect(parts[name]), bool(row.get(name)), moving)
@@ -1809,6 +1835,33 @@ def _classes():
                 y = nr.center().y() + 0.5 * ui
                 p.setPen(QtGui.QPen(colour(tk["text"]), max(1.0, ui)))
                 p.drawLine(QtCore.QPointF(nr.left(), y), QtCore.QPointF(nr.left() + metrics.horizontalAdvance(text), y))
+            p.restore()
+
+        def _wkey(self, p, i, rect, state, moving):
+            """The weight's key cell, the Channel Box's: filled on a key at this frame,
+            outlined when the weight has keys elsewhere, an empty well unkeyed."""
+            pn = self.panel
+            ui, tk = pn.ui, pn.tokens
+            uid = ("ctl", i, "wkey")
+            level = pn.hover.get(uid, 0.0) if moving else 0.0
+            pop = pn.pop_of(uid) if moving else 1.0
+            cell = qrect(L.wkey_cell(rect, ui))
+            z = pop * (1.0 + 0.35 * level)
+            scaled(p, cell, z, 1.0)
+            r = 2 * ui
+            if state == "onkey":
+                p.setPen(Qt.NoPen)
+                p.setBrush(colour(tk["accent"]))
+                p.drawRoundedRect(cell, r, r)
+            elif state == "keyed":
+                p.setPen(QtGui.QPen(colour(tk["accent"]), 1.5 * ui))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(cell.adjusted(0.75 * ui, 0.75 * ui, -0.75 * ui, -0.75 * ui), r, r)
+            else:
+                p.setBrush(colour(tk["track"]))
+                p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
+                p.drawRoundedRect(cell, r, r)
+            glow(p, cell, r, tk["accent"], level, ui)
             p.restore()
 
         def _toggle(self, p, i, name, rect, on, moving, row=None):
@@ -2207,7 +2260,34 @@ def _classes():
                     keys = [k for k in keys if not look.inside(k, (sel["a"], sel["b"]))]
                 p.setBrush(self._key_colour(row))
                 self._keys(p, t, lane, keys, ui)
+                self._weight_keys(p, t, lane, row.get("weight_keys") or (), ui)
                 p.restore()
+            p.restore()
+
+        def _weight_keys(self, p, t, lane, frames, ui):
+            """The layer's own weight keys on its lane, each a key marked L (2026-10-20:
+            «ключик в котором проанимирован слой будем отмечать буквой L»)."""
+            if not frames:
+                return
+            tk = self.panel.tokens
+            f = font(self, 9 * ui, bold=True)
+            fm = QtGui.QFontMetricsF(f)
+            least = fm.horizontalAdvance(L.WKEY_LETTER) + 4 * ui
+            top, bottom = lane.top() + 4 * ui, lane.bottom() - 4 * ui
+            p.save()
+            p.setFont(f)
+            for frame in sorted(set(round(float(k), 4) for k in frames)):
+                if not (t.v0 - 1 <= frame <= t.v1 + 1):
+                    continue
+                rect = _key_rect(t, frame, top, bottom, ui, 1.0)
+                if rect.width() < least:
+                    c = rect.center()
+                    rect = QtCore.QRectF(c.x() - least / 2.0, rect.top(), least, rect.height())
+                p.setPen(Qt.NoPen)
+                p.setBrush(colour(tk["accent_text"]))
+                p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
+                p.setPen(colour(tk["on_accent"]))
+                p.drawText(rect, Qt.AlignCenter, L.WKEY_LETTER)
             p.restore()
 
         def _draw_dragged(self, p, lay, t, w):

@@ -160,6 +160,29 @@ class Presses(Panel):
         self.click(self.col, *self.centre(L.row_parts(rect, "anim", 1.0)["mute"]))
         self.assertIn(("set_flag", "A2", "mute", True), self.link.log)
 
+    def test_the_weight_key_cell_toggles_a_key(self):
+        """2026-10-20: «нельзя проанимировать силу анимационного слоя»."""
+        rect = L.row_parts(self.lay.row_at(0, 0), "anim", 1.0)["wkey"]
+        self.click(self.col, *self.centre(rect))
+        self.assertIn(("toggle_weight_key", "A2"), self.link.log)
+        self.assertNotIn("begin_weight", [e[0] for e in self.link.log])
+
+    def test_the_cell_follows_the_frame(self):
+        self.link.anim[0]["weight_keys"] = (30.0,)
+        self.panel.refresh(force=True)
+        self.assertEqual(self.panel.weight_states()[0], "onkey")
+        img = QT.QtGui.QImage(self.col.size(), QT.QtGui.QImage.Format_ARGB32)
+        self.col.render(img)
+        self.assertFalse(self.col._failed)
+        painted = []
+        self.col.repaint = lambda: painted.append(1)
+        self.panel.on_time()
+        self.assertFalse(painted, "the same frame: the cell stands")
+        self.panel.strip.now = lambda: 12.0
+        self.assertEqual(self.panel.weight_states()[0], "keyed")
+        self.panel.on_time()
+        self.assertTrue(painted, "off the key: the column drawn again")
+
     def test_a_weight_drag_is_one_chunk(self):
         rect = L.row_parts(self.lay.row_at(0, 0), "anim", 1.0)["weight"]
         self.click(self.col, rect[0] + rect[2] * 0.25, rect[1] + 4)
@@ -392,6 +415,26 @@ class Lanes(unittest.TestCase):
         xs = pills({"a": 10, "b": 40, "names": ["A2"]})
         self.assertTrue([x for x in xs if t.x(10) <= x < t.x(10) + 30], "the start label")
         self.assertTrue([x for x in xs if t.end(40) - 30 < x <= t.end(40)], "the end label")
+
+    def test_a_layer_s_weight_keys_are_marked_l_on_its_lane(self):
+        """2026-10-20: «ключик в котором проанимирован слой будем отмечать буквой L»."""
+        from maya_hubstyle import TOKENS
+        mark = QT.QtGui.QColor(TOKENS["accent_text"])
+
+        def marked(x0, x1, y):
+            img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
+            img.fill(0)
+            self.panel.lanes.render(img)
+            return [x for x in range(x0, x1)
+                    if all(abs(a - b) < 12 for a, b in ((img.pixelColor(x, y).red(), mark.red()),
+                                                         (img.pixelColor(x, y).green(), mark.green()),
+                                                         (img.pixelColor(x, y).blue(), mark.blue())))]
+        y = int(self.y[0] + 2)
+        self.assertFalse(marked(495, 515, y))
+        self.link.anim[0]["weight_keys"] = (50.0,)
+        self.panel.refresh(force=True)
+        self.assertTrue(marked(495, 515, y))
+        self.assertFalse(self.panel.lanes._failed)
 
     def test_the_lanes_are_shown(self):
         self.assertTrue(self.panel.lanes.isVisible())
