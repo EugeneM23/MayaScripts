@@ -179,9 +179,31 @@ def _schedule(kind):
         _run_pending()
 
 
+def _dragging_keys():
+    """A Time Bar key drag stands (its timeline or its lanes): the keys move on every
+    step of it, read through `scene._LIVE` without importing the Time Bar."""
+    scene = sys.modules.get("maya_timebar.scene")
+    return bool(scene is not None and getattr(scene, "_LIVE", None))
+
+
+def _key_edited(*_args):
+    """Keys edited. In a Time Bar key drag a full read on every step cost 17 ms with
+    11 controls selected and 121 ms with a whole rig (2026-10-20, «ключи сильно
+    задерживаются за курсором»): the values only then - the drag's own frame change
+    reads the key cells (`on_time`) - and one full read once the drag is let go."""
+    if _dragging_keys():
+        _state()["after_drag"] = True
+        _schedule("values")
+    else:
+        _schedule("full")
+
+
 def _run_pending():
     state = _state()
     kind, state["pending"] = state.get("pending"), None
+    if state.get("after_drag") and not _dragging_keys():
+        state["after_drag"] = False
+        kind = "full"                   # the drag let go: everything read again, once
     box = current()
     if box is None or not _shown():
         return
@@ -262,7 +284,7 @@ def _start_callbacks():
             except Exception:                                # noqa: BLE001
                 pass
         out.append(om.MDGMessage.addTimeChangeCallback(_time_changed))
-        out.append(oma.MAnimMessage.addAnimKeyframeEditedCallback(lambda *_a: _schedule("full")))
+        out.append(oma.MAnimMessage.addAnimKeyframeEditedCallback(_key_edited))
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
     _state()["callbacks"] = out

@@ -684,6 +684,8 @@ def classes():
                 #  ставятся при переносе»)
                 event.accept()
                 return True
+            if action[0] == "stamp":
+                tl.flush_live()                 # a step still waiting: the keys where they are drawn
             if action[0] == "stamp" and tl.live:
                 #  the keys stand on the target already: their copies stay there
                 got = self.strip.call("live_stamp")
@@ -721,6 +723,14 @@ def classes():
             self.preview = None         # the highlight's target while keys are dragged
             self.stamped = None         # {curve: [times]} once S put copies down in a drag
             self.live = None            # a key drag moving the scene's keys (None: not begun)
+            #  the scene's step of a key drag: the drag painted first, then one step to the
+            #  NEWEST target on the next event-loop turn (2026-10-20, «ключи сильно
+            #  задерживаются за курсором»: the keys were drawn only after each step, and a
+            #  step a mouse move could queue behind a slow one)
+            self.live_timer = QtCore.QTimer(self)
+            self.live_timer.setSingleShot(True)
+            self.live_timer.setInterval(0)
+            self.live_timer.timeout.connect(self._flush_live)
             self.aim_key = None         # the key under the mouse
             self.aim_head = False
             self.key_lift = {}          # key -> 0..1, eased
@@ -1166,6 +1176,7 @@ def classes():
         def mousePressEvent(self, event):
             st, s = self.strip, self.strip.state
             x, t = self._x(event), self.track()
+            self.flush_live()                   # a drag whose release never came: its last step
             if self.live:
                 #  a drag whose release never came (focus taken away): set it down
                 self.live = None
@@ -1233,8 +1244,25 @@ def classes():
                 target = look.key_drag(kind, self.drag[3], start, self._grip(kind, x, t))
                 if target != self.preview:
                     self.preview = target
-                    self._live_to(target)
-                    self.update()
+                    self.repaint()                  # the keys under the cursor at once
+                    if not self.live_timer.isActive():
+                        self.live_timer.start()     # the scene follows on the next turn, newest only
+
+        def _flush_live(self):
+            """The scene's keys to the NEWEST target of the drag: every move handled
+            since the last step costs nothing, one step for all of them."""
+            if not self.drag or self.drag[0] not in ("hmove", "h0", "h1") or self.preview is None:
+                return
+            self._live_to(self.preview)
+
+        def flush_live(self):
+            """A step still waiting, made now (S in the drag: the copies where the keys are drawn)."""
+            if self.live_timer.isActive():
+                self.live_timer.stop()
+                self._flush_live()
+
+        def live_waiting(self):
+            return self.live_timer.isActive()
 
         def _live_to(self, target):
             """The scene's keys follow the drag, as under Maya's own slider (2026-10-19:
@@ -1247,6 +1275,9 @@ def classes():
                 st.call("live_to", tuple(target))
 
         def mouseReleaseEvent(self, event):
+            #  a step still waiting is not made: the release sets the keys down on the
+            #  preview itself (live_end, or move_keys when no step was made)
+            self.live_timer.stop()
             if not self.drag:
                 return
             kind = self.drag[0]
@@ -2027,7 +2058,8 @@ def classes():
             if keys:
                 self.keys_dirty = True
             read_keys = bool(self.keys_dirty and (force or not self.state.get("playing")))
-            if getattr(self.timeline, "live", None) or self._lanes_moving():
+            if (getattr(self.timeline, "live", None) or self.timeline.live_waiting()
+                    or self._lanes_moving()):
                 read_keys = False       # a live key drag: drawn from the keys read before it
             if read_keys:
                 found = self.call("keys")

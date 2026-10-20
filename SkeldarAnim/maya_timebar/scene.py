@@ -527,23 +527,12 @@ def move_keys(selection, target, only=None):
             _move_only(only, selection, target)
             _show_now(list(only))
         return
-    #  the highlight's cells, [a, b + 1): a key between frames in the last cell
-    #  moves too (2026-10-17, the cells drawn as Maya's slider draws them)
-    span = (a, b + 1 - 1e-3)
-    curves = _kq(time=span, name=True) or []
-    if not curves:
-        return
-    with _chunk("skeldarTimeBarMoveKeys"):
-        if b <= a or (nb - na) == (b - a):
-            cmds.keyframe(curves, edit=True, time=span, relative=True, timeChange=na - a, option="over")
-        else:
-            pivot = b if nb == b else a
-            factor = float(nb - na) / (b - a)
-            cmds.scaleKey(curves, time=span, timeScale=factor, timePivot=pivot)
-            #  half a frame wider: a scaled key lands a hair past the edge (50.0000002)
-            far = pivot + (b + 1 - pivot) * factor
-            cmds.snapKey(curves, time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
-        _show_now(curves)
+    #  the live drag's begin and release, one undo step (the highlight's cells, a key
+    #  between frames in the last cell too): a key standing where a moved one lands
+    #  goes - `keyframe -option over` left both, or parked the moved one at
+    #  x.9999998 - and breakdowns keep their frames (2026-10-20, `_shift_all`)
+    if live_begin(selection):
+        live_end(tuple(target))
 
 
 def _show_now(curves):
@@ -619,8 +608,13 @@ def _put_key(curve, t, data):
         cmds.keyTangent(curve, edit=True, time=span, inAngle=data["ia"])
     if data["ott"] == "fixed" and data["oa"] is not None:
         cmds.keyTangent(curve, edit=True, time=span, outAngle=data["oa"])
-    if data["weighted"] and data["iw"] is not None:
-        cmds.keyTangent(curve, edit=True, time=span, inWeight=data["iw"], outWeight=data["ow"])
+    # a weight only on a fixed side: Maya works an auto / spline / linear side's weight
+    # out from the neighbours, and a weight written on it turns it fixed (measured
+    # 2026-10-20: an auto key on a weighted curve came back fixed, its angle 0)
+    if data["weighted"] and data["itt"] == "fixed" and data["iw"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, inWeight=data["iw"])
+    if data["weighted"] and data["ott"] == "fixed" and data["ow"] is not None:
+        cmds.keyTangent(curve, edit=True, time=span, outWeight=data["ow"])
     if data["lock"] is not None:
         cmds.keyTangent(curve, edit=True, time=span, lock=bool(data["lock"]))
 
@@ -717,14 +711,19 @@ def _curve_keys(curve):
             for i, t in enumerate(times)]
 
 
+def _placed(t, selection, target):
+    """A dragged key's time with the drag on `target` (a whole frame when it is one)."""
+    nt = look.mapped(t, selection, target)
+    return float(nt) if abs(nt - round(nt)) > 1e-6 else float(round(nt))
+
+
 def _wanted(rec, selection, target):
     """{round(time): (time, data)} the curve should hold with the drag on `target`:
     the keys that stay, the copies S put down, the dragged keys on their places
     (over whatever stood there)."""
     out = dict(rec["fixed"])
     for t, data in rec["moved"]:
-        nt = look.mapped(t, selection, target)
-        nt = float(nt) if abs(nt - round(nt)) > 1e-6 else float(round(nt))
+        nt = _placed(t, selection, target)
         out[round(nt, 4)] = (nt, data)
     return out
 
@@ -747,7 +746,126 @@ def _bring(curve, rec, wanted):
             del now[k]
 
 
-def _bring_all(target):
+def _shift_of(selection, prev, goal):
+    """Frames the dragged keys move going from `prev` to `goal` (targets of the drag)
+    when the step is one shift of them all - the block's body dragged, or a key
+    alone; None for an edge (a scale lands each key on its own rounded frame)."""
+    length = selection[1] - selection[0]
+    if selection[1] <= selection[0] or (prev[1] - prev[0] == length and goal[1] - goal[0] == length):
+        return goal[0] - prev[0]
+    return None
+
+
+def _shift_all(target, prev, change, full=False):
+    """The step from `prev` to `target` (None: back to the start) as one shift of the
+    dragged keys (2026-10-20, «ключи сильно задерживаются за курсором»: writing every
+    dragged key again cost 190 ms a step for a 40-frame block on 48 curves). Per curve:
+    the keys in the way cut first - Maya moves a key onto one that stands there and
+    leaves TWO keys on that frame -, the dragged keys moved by one `keyframe -relative
+    -option over` (which passes keys standing between them, tangents kept), curves
+    with the same keys moved together, and only what the block uncovered put back.
+    Breakdowns are plain keys for the length of the move: Maya slides a breakdown
+    to keep its place between neighbours that move (measured: 45 -> 45.5).
+
+    A step of the drag touches only the block's two places, where it stood and
+    where it lands: everywhere else a curve is as it was (a key the block once
+    covered was cut then, and stands under it still). `full` (back to the start,
+    and the release's move from there) looks at every key: from the start, the
+    copies S put down stand where the curve holds its own keys. The shared key times of a rig's
+    curves are placed once a step; the cuts, like the moves, are one command for
+    the curves that want the same frames (2026-10-20: 1100 ms a step on Manny_Rig
+    keyed on every frame before the shift, 107 after it, 522 curves)."""
+    selection = _LIVE["selection"]
+    goal = target if target is not None else selection
+    spots, cuts, groups, puts, changed, plain, again = {}, {}, {}, [], [], {}, {}
+    alive = set(cmds.ls(list(_LIVE["curves"])) or [])
+    for curve, rec in _LIVE["curves"].items():
+        if curve not in alive:
+            continue
+        times = rec.get("times")
+        if times is None:
+            times = rec["times"] = tuple(t for t, _data in rec["moved"])
+        spot = spots.get(times)
+        if spot is None:
+            old = [_placed(t, selection, prev) for t in times]
+            new = [_placed(t, selection, goal) for t in times]
+            spot = spots[times] = (tuple(sorted(set(old))), new,
+                                   set(round(t, 4) for t in old), set(round(t, 4) for t in new))
+        cur, new, here, there = spot
+        now = rec["now"]
+        if full:                             # S's copies may stand anywhere: every key looked at
+            wanted = rec["start"] if target is None else _wanted(rec, selection, target)
+            cut = [t for k, (t, data) in now.items() if k not in here and (
+                k in there or k not in wanted or wanted[k][1] is not data)]
+            gone = set(round(t, 4) for t in cut)
+            back = [(t, data) for k, (t, data) in sorted(wanted.items())
+                    if k not in there and not (k in now and k not in here and k not in gone)]
+        else:
+            fixed = rec["fixed"]
+            cut = [now[k][0] for k in there if k in now and k not in here]
+            gone = set(round(t, 4) for t in cut)
+            back = [fixed[k] for k in sorted(here) if k not in there and k in fixed]
+        broken = rec.get("bd")
+        if broken is None:
+            broken = rec["bd"] = any(data.get("breakdown") for _t, data in rec["start"].values())
+        off = ([t for k, (t, data) in now.items() if data.get("breakdown") and k not in gone]
+               if broken and change and cur else [])
+        if full:
+            now = rec["now"] = dict(wanted)
+        else:
+            for k in here:
+                now.pop(k, None)
+            for k in gone:
+                now.pop(k, None)
+            for nt, (_t, data) in zip(new, rec["moved"]):
+                now[round(nt, 4)] = (nt, data)
+            for t, data in back:
+                now[round(t, 4)] = (t, data)
+        if off:
+            put = set(round(t, 4) for t, _data in back)
+            plain[curve] = off
+            again[curve] = [t for k, (t, data) in now.items()
+                            if data.get("breakdown") and k not in put]
+        puts.extend((curve, t, data) for t, data in back)
+        if cut:
+            cuts[curve] = cut
+        if change and cur:
+            groups.setdefault(cur, []).append(curve)
+        if cut or back or (change and cur):
+            changed.append(curve)
+    for times, curves in _grouped(cuts).items():
+        cmds.cutKey(curves, time=[(t, t) for t in times], clear=True)
+    for times, curves in _grouped(plain).items():
+        cmds.keyframe(curves, edit=True, time=[(t, t) for t in times], breakdown=False)
+    for cur, curves in groups.items():
+        cmds.keyframe(curves, edit=True, time=[(t, t) for t in cur], relative=True,
+                      timeChange=change, option="over")
+    for times, curves in _grouped(again).items():
+        if times:
+            cmds.keyframe(curves, edit=True, time=[(t, t) for t in times], breakdown=True)
+    for curve, t, data in puts:
+        _put_key(curve, t, data)
+    return changed
+
+
+def _grouped(per_curve):
+    """{frames: [curves]} - one command for the curves that want the same frames."""
+    out = {}
+    for curve, times in per_curve.items():
+        out.setdefault(tuple(times), []).append(curve)
+    return out
+
+
+def _bring_all(target, prev=None):
+    """The curves from the drag on `prev` (None: the selection, where they started)
+    to `target` (None: back to the start). A move of the block is one shift of its
+    keys (`_shift_all`); an edge drag writes the keys that change one by one."""
+    full = target is None or prev is None
+    prev = tuple(prev) if prev is not None else _LIVE["selection"]
+    goal = tuple(target) if target is not None else _LIVE["selection"]
+    change = _shift_of(_LIVE["selection"], prev, goal)
+    if change is not None:
+        return _shift_all(target, prev, change, full)
     changed = []
     for curve, rec in _LIVE["curves"].items():
         if not cmds.objExists(curve):
@@ -803,7 +921,7 @@ def live_to(target):
     if target == _LIVE["target"]:
         return
     with _unrecorded():
-        changed = _bring_all(target)
+        changed = _bring_all(target, _LIVE["target"])
         _LIVE["target"] = target
         _show_now(changed)
 
@@ -835,12 +953,12 @@ def live_end(target=None):
         return
     try:
         with _unrecorded():
-            _bring_all(None)
+            _bring_all(None, _LIVE["target"])
         if target is not None:
             for rec in _LIVE["curves"].values():
                 rec["now"] = dict(rec["start"])
             with _chunk("skeldarTimeBarMoveKeys"):
-                changed = _bring_all(tuple(target))
+                changed = _bring_all(tuple(target), None)
                 _show_now(changed)
         else:
             _show_now(list(_LIVE["curves"]))

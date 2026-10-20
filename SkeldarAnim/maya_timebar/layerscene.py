@@ -855,20 +855,13 @@ def lane_move(names, selection, target):
     na, nb = target
     if (na, nb) == (a, b):
         return True, ""
-    curves = curves_of(names)
-    span = _cells(selection)
-    curves = [c for c in curves if cmds.keyframe(c, q=True, time=span, keyframeCount=True)]
-    if not curves:
+    #  the live drag's begin and release, one undo step: a key standing where a moved
+    #  one lands goes (`keyframe -option over` left both, or parked the moved one at
+    #  x.9999998), breakdowns keep their frames (2026-10-20, scene._shift_all)
+    from . import scene
+    if not lane_live_begin(names, selection):
         return False, "no keys there"
-    with _chunk():
-        if b <= a or (nb - na) == (b - a):
-            cmds.keyframe(curves, edit=True, time=span, relative=True, timeChange=na - a, option="over")
-        else:
-            pivot = b if nb == b else a
-            factor = float(nb - na) / (b - a)
-            cmds.scaleKey(curves, time=span, timeScale=factor, timePivot=pivot)
-            far = pivot + (b + 1 - pivot) * factor
-            cmds.snapKey(curves, time=(min(na, a) - 0.5, max(nb, b, far) + 0.5), timeMultiple=1)
+    scene.live_end(tuple(target))
     return True, ""
 
 

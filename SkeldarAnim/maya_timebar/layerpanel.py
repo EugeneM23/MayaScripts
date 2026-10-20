@@ -131,6 +131,12 @@ class Panel(object):
         self.status_timer.setSingleShot(True)
         self.status_timer.setInterval(STATUS_MS)
         self.status_timer.timeout.connect(self._clear_status)
+        #  a lanes key drag's scene step: the lanes painted first, then one step to the
+        #  newest target on the next event-loop turn (the timeline's live_timer, 2026-10-20)
+        self.lane_timer = q.QtCore.QTimer(self.column)
+        self.lane_timer.setSingleShot(True)
+        self.lane_timer.setInterval(0)
+        self.lane_timer.timeout.connect(self._flush_lane_live)
         live_panels().append(self)
 
     # -- the link ----------------------------------------------------------------
@@ -539,8 +545,23 @@ class Panel(object):
             target = look.key_drag(drag[1], drag[3], drag[2], self._lane_grip(drag[1], x, t))
             if target != self.lane_preview:
                 self.lane_preview = target
-                self._lane_live_to(target)
-                self.lanes.update()             # the still picture stays; the dragged part moves
+                self.lanes.repaint()            # the still picture stays; the dragged part moves now
+                if not self.lane_timer.isActive():
+                    self.lane_timer.start()     # the scene follows on the next turn, newest only
+
+    def _flush_lane_live(self):
+        """The scene's keys to the NEWEST target of the lanes drag (the timeline's
+        `_flush_live`): one step for every move handled since the last."""
+        drag = self.lane_drag
+        if not drag or drag[0] != "key" or self.lane_preview is None:
+            return
+        self._lane_live_to(self.lane_preview)
+
+    def flush_lane_live(self):
+        """A step still waiting, made now (S in the drag, a press after a lost release)."""
+        if self.lane_timer.isActive():
+            self.lane_timer.stop()
+            self._flush_lane_live()
 
     def _lane_live_to(self, target):
         """The scene's keys follow the drag, as under the timeline (the viewport shows it)."""
@@ -560,6 +581,7 @@ class Panel(object):
 
     def _lane_end_live(self):
         """A live drag whose release never came: set it down where it stands."""
+        self.flush_lane_live()
         if self.lane_live:
             self.lane_live = None
             self._quiet_strip()
@@ -573,6 +595,7 @@ class Panel(object):
         if not drag:
             return False
         if drag[0] == "key":
+            self.flush_lane_live()              # a step still waiting: the keys where they are drawn
             if not self.lane_live:
                 self._lane_live_to(self.lane_preview or drag[3])
             if self.lane_live:
@@ -632,6 +655,9 @@ class Panel(object):
         return True
 
     def lane_release(self):
+        #  a step still waiting is not made: the release sets the keys down on the preview
+        #  itself (lane_live_end, or lane_move when no step was made)
+        self.lane_timer.stop()
         drag, self.lane_drag = self.lane_drag, None
         if not drag:
             return
@@ -1200,7 +1226,7 @@ class Panel(object):
             self._end_drag()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
-        for timer in (self.driver, self.placer, self.status_timer):
+        for timer in (self.driver, self.placer, self.status_timer, self.lane_timer):
             try:
                 timer.stop()
             except RuntimeError:

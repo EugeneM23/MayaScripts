@@ -393,7 +393,22 @@ class Lanes(unittest.TestCase):
         button = button or Qt.LeftButton
         self.send("MouseButtonPress", x0, y0, button, button, mods)
         self.send("MouseMove", x1, y1, Qt.NoButton, button, mods)
+        QT.QtWidgets.QApplication.processEvents()      # a real drag's turn: the scene's step
         self.send("MouseButtonRelease", x1, y1, button, Qt.NoButton, mods)
+
+    def test_moves_with_no_turn_between_make_one_step_to_the_newest(self):
+        # 2026-10-20: the lanes drawn at once, the scene following once, to the newest target
+        Qt = QT.QtCore.Qt
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.send("MouseButtonPress", 155, self.y[0], Qt.LeftButton, Qt.LeftButton)
+        for x in (185, 215, 255):
+            self.send("MouseMove", x, self.y[0], Qt.NoButton, Qt.LeftButton)
+        self.assertNotIn("lane_live_to", [e[0] for e in self.link.log])
+        self.assertEqual(self.panel.lane_preview, (20, 30))
+        QT.QtWidgets.QApplication.processEvents()
+        self.assertEqual([e for e in self.link.log if e[0] == "lane_live_to"], [("lane_live_to", (20, 30))])
+        self.send("MouseButtonRelease", 255, self.y[0], Qt.LeftButton, Qt.NoButton)
+        self.assertIn(("lane_live_end", (20, 30)), self.link.log)
 
     def test_a_lane_highlight_shows_its_first_and_last_frame(self):
         """2026-10-20: the frame numbers at the block's edges, on its top lane (not
@@ -691,6 +706,7 @@ class Lanes(unittest.TestCase):
         link.lane_live_end = live_end
         self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
         self.send("MouseMove", 305, self.y[1], Qt.NoButton, Qt.LeftButton)
+        QT.QtWidgets.QApplication.processEvents()      # the scene's step
         self.send("MouseButtonRelease", 305, self.y[1], Qt.LeftButton, Qt.NoButton)
         self.assertEqual(seen, [False], "no key at its old place while the release sets it down")
         self.assertFalse(self.ink_at(10))

@@ -12009,6 +12009,45 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
      measured 2026-10-19: 200 antialiased rounded rects - `fillPath` 9 ms, `drawRoundedRect` each 0.3 ms,
      `drawRects` 0.13 ms; the fill rule changes nothing). Batching shapes into one path is the right call for a
      cached picture drawn once, the wrong one for anything drawn per step.
+- **A key drag keeps up with the cursor** (2026-10-20, «ключи сильно задерживаются за курсором», the timeline and the
+  lanes alike). Measured by a five-agent workflow and checked by a skeptic: since the live drag (5657317) every mouse
+  move wrote EVERY dragged key again (`_put_key`: a setKeyframe and four keyTangent each) - 220-300 ms a step for a
+  40-frame block of 63 dense curves, 1.1 s on a whole Manny_Rig keyed on every frame (522 curves, 8874 keys); in a
+  scene tab c1c0db9 made the timeline drag the dense base curves too. Now:
+  - a step that moves the block's body (or one key) is ONE shift (`scene._shift_all`): the keys standing where it
+    lands cut first (trap 281), breakdowns plain for the move (trap 282), the dragged keys moved by one `keyframe
+    -edit -relative -option over` for every curve that holds the same key times, only what the block uncovered put
+    back. A drag step touches only the block's two places (a key it once covered was cut then and stands under it
+    still); going back to the start and the release's move from there look at every key (S's copies). An edge
+    (scale) step keeps the per-key writes;
+  - the drag is painted at once and the scene follows on a 0 ms timer to the NEWEST target (`Timeline.live_timer`,
+    `Panel.lane_timer`): S makes a waiting step first, a release or a press after a lost release set the keys down on
+    the preview; the non-live `move_keys` / `lane_move` are that same begin + release in one chunk (they used to
+    leave duplicate keys on a dense curve, 7-16 of them, the curve up to 8.9 off);
+  - `_put_key` writes a weight only on a FIXED side (trap 283);
+  - our Channel Box reads only the values on a key edit while a Time Bar drag stands (its full read cost 17-121 ms a
+    step) and everything once after the release (`maya_channelbox._key_edited`).
+  Measured on Manny_Rig (mayapy, the real strip driven by mouse events): every frame keyed, **1100 → 60-75 ms a
+  step**; a key every 4 frames, **330 → 35-50 ms**; 48 curves x 40 keys **209 → 7 ms**. What is left is Maya's: the
+  rig's dirty propagation on the first edit after an evaluation (an OpenMaya `MFnAnimCurve.remove` cost 21 ms a
+  step against cutKey's 25 inside a real drag, though 2.4 against 13 in a probe of removes back to back), and the
+  frame evaluated again. The Center of Mass engine's curve callback costs nothing measurable once a step is one
+  command. Proof: `docs/superpowers/plans/verify_timebar_live_shift.py` **36/36 mayapy standalone** - every scenario
+  dragged through the shift and through the per-key writes, every key and every quarter frame compared, and the pure
+  moves against Maya's own one-shot move from the scene as it was; give up, one undo, redo; `move_keys` and
+  `lane_move` over standing keys; on HEAD before this, 13 gates fail; with the breakdown protection taken out, 6.
+  Unit tests `StepCost`, `StampThenDrag`, `BreakdownsAndWeights`, `test_moves_with_no_turn_between_make_one_step_to_the_newest`
+  (timeline and lanes), `tests/test_channelbox_drag.py`. **Not seen in a GUI Maya.**
+
+281. **`keyframe -edit -relative -option over` onto a frame that holds a key outside the moved group leaves TWO keys
+     there** (measured 2026-10-20: 28 → 30 beside a key at 30 read (30.0, 2.0), (30.0, 30.0); the skeptic saw the
+     moved key parked at 12.9999998 beside a key at 13 instead). It does pass keys standing between the moved
+     ones and their destinations. Cut the destination first.
+282. **A relative key move slides the BREAKDOWNS beside it**: Maya keeps a breakdown's place between its neighbours,
+     so moving a key next to one re-times the breakdown (45 → 45.5, 26 → 31.6667 after a drag passed it; the
+     curve 4.9 off). Set the breakdown flags off for the move and back on after.
+283. **A weight written on an auto / spline / linear side of a weighted curve turns that side FIXED** (its angle 0):
+     Maya works those weights out from the neighbours. Write a weight only on a side that is fixed.
 - Proof: `docs/superpowers/plans/verify_timebar_layers_merge.py` **18/18 mayapy standalone** (Maya's selection
   and `$gSelectedAnimLayers`; two layers apart merged playing the same, one undo; base + a layer merged into the
   base playing the same; on a lane: move, undo, scale, delete, copy / paste, tangents, Set key, the base's keys

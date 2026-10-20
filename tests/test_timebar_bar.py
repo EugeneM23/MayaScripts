@@ -1184,11 +1184,17 @@ class LiveKeyDrag(Strip):
         press = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
         QT.QtWidgets.QApplication.sendEvent(QT.QtWidgets.QApplication.instance(), press)
 
+    def turn(self):
+        """An event-loop turn, which a real drag has between two mouse moves."""
+        QT.QtWidgets.QApplication.processEvents()
+
     def test_every_step_of_the_drag_moves_the_scene_s_keys(self):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
         self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
         self.mouse(self.tl, E.MouseMove, self.x(33), Qt.NoButton, Qt.LeftButton)
+        self.turn()
         self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.turn()
         self.assertEqual(self.calls("live_begin"), [("live_begin", (22, 40))])
         self.assertEqual(self.calls("live_to"), [("live_to", (25, 43)), ("live_to", (27, 45))])
         self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
@@ -1196,6 +1202,42 @@ class LiveKeyDrag(Strip):
         self.assertFalse(self.calls("move_keys"), "the live drag set its keys down itself")
         self.assertEqual(self.link.s["highlight"], (27, 45))
         self.assertIsNone(self.tl.live)
+
+    def test_moves_with_no_turn_between_make_one_step_to_the_newest(self):
+        # 2026-10-20, «ключи сильно задерживаются за курсором»: a step per mouse move, the
+        # keys drawn only after it; the drag is drawn at once and the scene follows once
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        for frame in (31, 33, 35):
+            self.mouse(self.tl, E.MouseMove, self.x(frame), Qt.NoButton, Qt.LeftButton)
+        self.assertFalse(self.calls("live_to"), "the scene waits for the next turn")
+        self.assertEqual(self.tl.preview, (27, 45), "the drag is drawn where the cursor has it")
+        self.turn()
+        self.assertEqual(self.calls("live_to"), [("live_to", (27, 45))])
+        self.turn()
+        self.assertEqual(len(self.calls("live_to")), 1, "no step left behind")
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(self.calls("live_end"), [("live_end", (27, 45))])
+
+    def test_a_release_before_the_step_still_moves_the_keys_once(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
+        self.turn()
+        self.assertFalse(self.calls("live_to"), "no step after the release")
+        self.assertEqual(self.calls("move_keys"), [("move_keys", (22, 40), (27, 45))])
+        self.assertFalse(self.tl.live_waiting())
+
+    def test_s_makes_a_waiting_step_first(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
+        self.press_s()
+        names = [c[0] for c in self.link.log if c[0] in ("live_begin", "live_to", "live_stamp")]
+        self.assertEqual(names, ["live_begin", "live_to", "live_stamp"])
+        self.assertEqual(self.calls("live_stamp"), [("live_stamp", (27, 45))])
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
 
     def test_no_key_is_read_while_the_drag_moves_them(self):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
