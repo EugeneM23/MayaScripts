@@ -611,6 +611,19 @@ class Rests(unittest.TestCase):
         self.assertAlmostEqual(at_0[self.CAMERA][13], 164.0)
         self.assertAlmostEqual(at_0[self.WEAPON][13], 90.0)
 
+    def test_an_unskinned_helper_listed_in_the_bind_pose_rests_at_its_bind_local(self):
+        # 2026-10-20: read as it stands, a weapon bone's motion in its hand was its rest, and no
+        # card ever carried it - the bind pose holds where it rests in the hand
+        posed = {self.HAND: _at(-40, 100, 5, 30.0), self.WEAPON: _at(-48, 92, 5, 30.0)}
+        out = scene.rests(self.PATHS, self.binds(), self.now(-150.0), posed)
+        self.close(out[self.WEAPON], _at(-48, 92, 5, 30.0))
+        moved = dict(posed)
+        moved[self.HAND] = _at(-20, 100, 5, 30.0)      # a pose saved 20 cm aside: its relation
+        out = scene.rests(self.PATHS, self.binds(), self.now(-150.0), moved)
+        self.close(out[self.WEAPON], _at(-68, 92, 5, 30.0))
+        unlisted = scene.rests(self.PATHS, self.binds(), self.now(-150.0), {})
+        self.close(unlisted[self.WEAPON], _at(-45, 90, 5, 30.0))
+
     def crouched(self, dy):
         # the hips crouched 35 and turned 30 against the root: the pelvis moves against the root
         now = self.now(dy)

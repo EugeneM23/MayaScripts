@@ -636,6 +636,13 @@ def rests(paths, binds, now, posed=None):
             out[path] = list(binds[path])
             continue
         parent = parents.get(path)
+        if parent is not None and parent in out and path in posed and parent in posed:
+            # a helper the bind pose lists (weapon_r, camera_root - 2026-10-20): its bind local
+            # in the hand, so a card carries what it does in the hand from there
+            out[path] = posemath.flat(posemath.matrix(posed[path]) *
+                                      posemath.matrix(posed[parent]).inverse() *
+                                      posemath.matrix(out[parent]))
+            continue
         if parent is not None and parent in out:
             out[path] = posemath.flat(posemath.matrix(now[path]) *
                                       posemath.matrix(now[parent]).inverse() *
@@ -705,7 +712,15 @@ def skeleton(ref, notes=None):
     parents = skelmap.parent_map(paths)
     top_unskinned = [p for p in paths if p not in binds and parents.get(p) is None] \
         if binds else []
-    posed = bind_pose(top_unskinned[0], paths) if top_unskinned else {}
+    # the bind pose: the one listing an unskinned top joint, else the root, else a helper (whose
+    # bind local `rests` takes - 2026-10-20)
+    posed = {}
+    if binds:
+        helpers_ = [p for p in paths if p not in binds and posemath.is_helper(leaf(p))]
+        for top in top_unskinned + paths[:1] + helpers_[:1]:
+            posed = bind_pose(top, paths)
+            if posed:
+                break
     rest = rests(paths, binds, now, posed)
     result = skelmap.recognize(paths, dict((p, tuple(m[12:15])) for p, m in rest.items()))
     names = canonical_names(paths, result.mapping, bool(result.refusal))
