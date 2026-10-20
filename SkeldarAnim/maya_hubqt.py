@@ -30,6 +30,7 @@ Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 """
 
 import functools
+import math
 import time
 import types
 import zlib
@@ -507,6 +508,48 @@ def icon_with_dot(name, colour, size, dot):
                                           dot + 2.0, dot + 2.0))
         painter.setBrush(QtGui.QColor(hubstyle.TOKENS["accent"]))
         painter.drawEllipse(QtCore.QRectF(size - dot - 0.5, 0.5, dot, dot))
+    finally:
+        painter.end()
+    return QtGui.QIcon(pix)
+
+
+BADGE_POP_MS = 200
+
+
+def badge_pop(age_ms):
+    """A count's pop: 1 -> 1.3 -> 1 over BADGE_POP_MS."""
+    if age_ms < 0 or age_ms >= BADGE_POP_MS:
+        return 1.0
+    return 1.0 + 0.3 * math.sin(math.pi * age_ms / float(BADGE_POP_MS))
+
+
+def badge_text(count):
+    return "99+" if count > 99 else str(int(count))
+
+
+def icon_with_badge(name, colour, size, count, grow=1.0, dot=False):
+    """The icon `name` with an accent pill at its top right reading `count` (the chat's
+    unread on its rail icon, 2026-10-20); `grow` scales the pill (its pop)."""
+    q = qt()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    pix = QtGui.QPixmap(pixmap(name, colour, size))
+    painter = QtGui.QPainter(pix)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        text = badge_text(count)
+        font = QtGui.QFont(painter.font())
+        font.setBold(True)
+        font.setPixelSize(max(6, int(size * 0.42)))
+        painter.setFont(font)
+        fm = QtGui.QFontMetrics(font)
+        h = size * 0.55 * grow
+        w = max(h, (fm.horizontalAdvance(text) + size * 0.2) * grow)
+        rect = QtCore.QRectF(size - w, 0.0, w, h)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QColor(hubstyle.TOKENS["accent"]))
+        painter.drawRoundedRect(rect, h / 2.0, h / 2.0)
+        painter.setPen(QtGui.QColor(hubstyle.TOKENS["on_accent"]))
+        painter.drawText(rect, QtCore.Qt.AlignCenter, text)
     finally:
         painter.end()
     return QtGui.QIcon(pix)
@@ -1631,6 +1674,10 @@ class Skin(object):
         self._jump_colour = {}
         self._jump_icon = {}
         self.floating = set()
+        #  an unread count on a jump (the chat, 2026-10-20) and its pop
+        self.badges = {}
+        self._badge_pop = {}
+        self._badge_timer = None
         #  ⋮ -> Interface animations (2026-10-01): the cards slide, a jump
         #  glides (maya_hub sets it from maya_hubmotion's optionVar)
         self.animations = True
@@ -2115,6 +2162,50 @@ class Skin(object):
         button.setIcon(self._jump_face(key))
         return bool(on)
 
+    def set_badge(self, key, count):
+        """Jump `key`'s icon with a count (the chat's unread, 2026-10-20); 0 takes it
+        off. A count that changes pops (BADGE_POP_MS) while animations are on."""
+        count = max(0, int(count or 0))
+        before = self.badges.get(key, 0)
+        if count:
+            self.badges[key] = count
+        else:
+            self.badges.pop(key, None)
+        if count and count != before and self.animations:
+            self._badge_pop[key] = time.monotonic()
+            self._badge_tick_soon()
+        self._paint_jump(key)
+        return count
+
+    def _paint_jump(self, key):
+        button = self.jumps.get(key) if isinstance(self.jumps, dict) else None
+        if button is not None and _valid(button):
+            button.setIcon(self._jump_face(key))
+
+    def _badge_tick_soon(self):
+        q = qt()
+        if self._badge_timer is None:
+            self._badge_timer = q.QtCore.QTimer(self.root)
+            self._badge_timer.setInterval(16)
+            self._badge_timer.timeout.connect(self._badge_tick)
+        if not self._badge_timer.isActive():
+            self._badge_timer.start()
+
+    def _badge_tick(self):
+        now = time.monotonic()
+        for key, start in list(self._badge_pop.items()):
+            if (now - start) * 1000.0 >= BADGE_POP_MS:
+                del self._badge_pop[key]
+            self._paint_jump(key)
+        if not self._badge_pop and self._badge_timer is not None:
+            self._badge_timer.stop()
+
+    def badge_grow(self, key):
+        start = self._badge_pop.get(key)
+        if start is None:
+            return 1.0
+        return badge_pop((time.monotonic() - start) * 1000.0)
+
     def _jump_face(self, key, colour=None, fallback=""):
         """Jump `key`'s icon in `colour` (its group's by default), with the
         floating dot while its window stands - every repaint of a jump goes
@@ -2123,6 +2214,9 @@ class Skin(object):
         if colour is None:
             colour = self._jump_colour.get(key, hubstyle.TOKENS["muted"])
         name = self._jump_icon.get(key, fallback)
+        if self.badges.get(key):
+            return icon_with_badge(name, colour, size, self.badges[key],
+                                   self.badge_grow(key), key in self.floating)
         if key in self.floating:
             return icon_with_dot(name, colour, size, self.px(5))
         return icon(name, colour, size)

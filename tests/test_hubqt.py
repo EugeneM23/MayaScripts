@@ -2644,6 +2644,27 @@ class Rail(unittest.TestCase):
         self.skin.set_floating("a", False)
         self.assertNotIn("a", self.skin.floating)
 
+    def test_a_count_on_a_jump_pops_and_goes(self):
+        """2026-10-20: the chat's unread on its rail icon."""
+        self.assertEqual(self.skin.set_badge("a", 4), 4)
+        self.assertEqual(self.skin.badges, {"a": 4})
+        self.assertIn("a", self.skin._badge_pop, "a new count pops")
+        self.assertGreaterEqual(self.skin.badge_grow("a"), 1.0)
+        self.skin.set_badge("a", 0)
+        self.assertEqual(self.skin.badges, {})
+
+    def test_a_count_pops_up_and_back(self):
+        self.assertEqual(hubqt.badge_pop(0), 1.0)
+        self.assertGreater(hubqt.badge_pop(hubqt.BADGE_POP_MS / 2.0), 1.25)
+        self.assertEqual(hubqt.badge_pop(hubqt.BADGE_POP_MS), 1.0)
+        self.assertEqual(hubqt.badge_text(140), "99+")
+
+    def test_the_count_changes_the_icon_pixels(self):
+        size = self.skin.px(16)
+        plain = hubqt.icon("tool", "#f0a26b", size).pixmap(size, size).toImage()
+        counted = hubqt.icon_with_badge("tool", "#f0a26b", size, 3).pixmap(size, size).toImage()
+        self.assertNotEqual(plain, counted)
+
     def test_the_dot_changes_the_icon_pixels(self):
         size = self.skin.px(16)
         plain = hubqt.icon("tool", "#f0a26b", size).pixmap(size, size).toImage()

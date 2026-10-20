@@ -54,6 +54,7 @@ Specs: docs/superpowers/specs/2026-09-17-skeldar-hub-design.md,
 
 import collections
 import os
+import sys
 import traceback
 
 import maya.cmds as cmds
@@ -130,6 +131,10 @@ SECTIONS = (
     Section("stash", "Stash", "maya_stash",
             "build_panel", "skeldarHubFrameStash",
             "scene", "archive"),
+    #  2026-10-20: the messenger - its own window; a rail press opens it (WINDOW_SECTIONS).
+    Section("chat", "Chat", "maya_chat.panel",
+            "build_panel", "skeldarHubFrameChat",
+            "scene", "message-circle"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget",
             "animation", "arrows-exchange"),
@@ -197,6 +202,10 @@ _BY_KEY = dict((s.key, s) for s in SECTIONS)
 #  hotkey row, a flagged shelf button, an older uiScript or verify run)
 #  opens the card the section lives in now.
 ALIASES = {"uebridge": "characters", "armor": "weapons"}
+
+#  Sections that are their own window (2026-10-20, the chat): a jump's press opens the
+#  window out of the icon - or folds it back into it - instead of showing a card.
+WINDOW_SECTIONS = {"chat": "maya_chat"}
 
 
 # ------------------------------------------------------------------- pure
@@ -515,6 +524,7 @@ def _dress_header(skin):
     _dress_interface(skin)
     _dress_edge(skin)
     _dress_popped(skin)
+    _dress_badges(skin)
 
 
 def _dress_popped(skin):
@@ -687,6 +697,7 @@ def build():
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
+    _chat_soon()
     if not _BUILT_HERE:
         #  A fresh module object (Maya's start, an install): the popups an
         #  older one opened are destroyed, the remembered ones come back
@@ -794,6 +805,23 @@ def _maya_theme_soon():
             print("SkeldarAnim: the Maya theme could not be applied")
             print(traceback.format_exc())
     cmds.evalDeferred(theme, lowestPriority=True)
+
+
+def _chat_soon():
+    """The chat at Maya's start (2026-10-20): with a token on disk its session connects,
+    so the rail shows the unread count before the window was ever opened. Deferred and
+    guarded: the chat never costs the hub."""
+    if cmds.about(batch=True):
+        return
+
+    def connect():
+        try:
+            import maya_chat
+            maya_chat.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the chat could not connect")
+            print(traceback.format_exc())
+    cmds.evalDeferred(connect, lowestPriority=True)
 
 
 def _time_bar_soon():
@@ -991,6 +1019,7 @@ def _ensure_edge():
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
+        _chat_soon()
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")
@@ -1499,6 +1528,47 @@ def paint_popped(key, on):
     return bool(on)
 
 
+def _toggle_window(key):
+    """A window section's jump (the chat): its window out of the icon, or back into it."""
+    import importlib
+    module = importlib.import_module(WINDOW_SECTIONS[key])
+    return module.toggle(_jump_point(key) or _cursor())
+
+
+def paint_badge(key, count):
+    """The rail icon's count (the chat's unread, 2026-10-20), kept for a skin built later."""
+    _badges()[key] = int(count or 0)
+    if is_skinned():
+        _SKIN.set_badge(key, count)
+    return int(count or 0)
+
+
+def _badges():
+    held = getattr(sys, "_skeldar_hub_badges", None)
+    if held is None:
+        held = {}
+        sys._skeldar_hub_badges = held
+    return held
+
+
+def _dress_badges(skin):
+    try:
+        for key, count in _badges().items():
+            if count:
+                skin.set_badge(key, count)
+        #  a window section standing keeps its rail dot in a skin built later
+        held = getattr(sys, "_skeldar_chat_window", None)
+        win = held.get("win") if held else None
+        if win is not None and getattr(win, "root", None) is not None:
+            try:
+                if win.root.isVisible():
+                    skin.set_floating("chat", True)
+            except RuntimeError:
+                pass
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
 def paint_floating(key, on):
     """The rail icon's dot on or off (maya_hubpop told us the window of section
     `key` opened or closed, 2026-10-18)."""
@@ -1767,6 +1837,8 @@ def focus(key):
     панели должны закрыться и открыться только нужная»), remembered so, lit,
     scrolled to. Outside the skin it is `expand`."""
     key = ALIASES.get(key, key)
+    if key in WINDOW_SECTIONS and is_skinned():
+        return _toggle_window(key)
     if not is_skinned():
         return expand(key)
     if key not in _SKIN.cards:

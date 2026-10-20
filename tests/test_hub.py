@@ -96,7 +96,7 @@ class TheTable(unittest.TestCase):
         same day, after Walk Builder; Ragdoll (a fall by physics) on 2026-10-16, after Camera Shake."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
-                          "Stash", "Retarget", "Graph Overlay",
+                          "Stash", "Chat", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
                           "Walk Builder", "Camera Shake", "Ragdoll", "Studio", "Colour", "Radial Menu", "Hotkeys",
                           "Update"])
@@ -110,6 +110,31 @@ class TheTable(unittest.TestCase):
                           "skeldarHubFramePoses", "animation", "books"))
         keys = [s.key for s in hub.SECTIONS]
         self.assertEqual(keys.index("poses"), keys.index("com") + 1)
+
+    def test_the_chat_is_its_own_window(self):
+        """2026-10-20: the messenger - a card with Open Chat, and on the rail a press on its
+        icon opens the window itself."""
+        sec = hub.section("chat")
+        self.assertEqual((sec.label, sec.module, sec.builder, sec.frame, sec.group, sec.icon),
+                         ("Chat", "maya_chat.panel", "build_panel", "skeldarHubFrameChat",
+                          "scene", "message-circle"))
+        self.assertEqual(hub.WINDOW_SECTIONS, {"chat": "maya_chat"})
+        keys = [s.key for s in hub.SECTIONS]
+        self.assertEqual(keys.index("chat"), keys.index("stash") + 1)
+
+    def test_a_window_section_s_jump_toggles_its_window(self):
+        from unittest import mock
+        with mock.patch.object(hub, "is_skinned", return_value=True), \
+                mock.patch.object(hub, "_toggle_window", return_value="toggled") as toggled:
+            self.assertEqual(hub.focus("chat"), "toggled")
+        toggled.assert_called_once_with("chat")
+
+    def test_a_badge_is_kept_for_a_skin_built_later(self):
+        from unittest import mock
+        with mock.patch.object(hub, "is_skinned", return_value=False):
+            self.assertEqual(hub.paint_badge("chat", 5), 5)
+        self.assertEqual(hub._badges()["chat"], 5)
+        hub._badges().clear()
 
     def test_the_ue_bridge_is_an_alias_of_characters(self):
         """2026-10-01: no section of its own; its key opens the card it
@@ -133,7 +158,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual(groups, [
             ("characters", "scene"), ("weapons", "scene"),
             ("connections", "scene"), ("shared", "scene"),
-            ("stash", "scene"),
+            ("stash", "scene"), ("chat", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("tools", "animation"),
@@ -158,7 +183,7 @@ class TheTable(unittest.TestCase):
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
-                          "stash", "retarget", "graphoverlay", "com", "poses",
+                          "stash", "chat", "retarget", "graphoverlay", "com", "poses",
                           "tools", "tailbuilder", "walk", "camshake", "ragdoll", "studio", "colour",
                           "radial", "update"])
 
@@ -169,6 +194,7 @@ class TheTable(unittest.TestCase):
             "connections": ("maya_scenesetup.connections", "build_panel"),
             "shared": ("maya_share", "build_panel"),
             "stash": ("maya_stash", "build_panel"),
+            "chat": ("maya_chat.panel", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
             "graphoverlay": ("maya_graphoverlay.mode", "build_panel"),
             "com": ("maya_com.panel", "build_panel"),
@@ -734,7 +760,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.order, [
             ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
-            ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
+            ("card", "chat"), ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
             ("card", "walk"), ("card", "camshake"), ("card", "ragdoll"), ("card", "studio"),
             ("card", "colour"), ("card", "radial"), ("card", "update")])

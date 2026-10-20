@@ -12747,3 +12747,43 @@ Proof: `tests/test_chat_records.py`, `_api`, `_store`, `_link`, `_session` (54);
 and deleted): a message live in 0.117 s, catch-up by `since` with no resync, an offline outbox sent on
 reconnect, one message for one cid sent twice, read marks, typing, edit, delete, a refused send
 failed, presence, a restart from the cache. Not seen inside a GUI Maya.
+
+## Chat window and rail (2026-10-20)
+
+Plan 3 of the messenger (`docs/superpowers/plans/2026-10-20-chat-window.md`, spec
+`2026-10-19-chat-messenger-design.md`). The window draws the session of plan 2 and talks to the
+server only through it (and `session.api` for the friends and group presses).
+- **`maya_chat/look.py`** (stdlib, pinned): initials and a user's colour, row times, day labels,
+  «был(а) в…», the title state, a dm's / group's presence and typing (`TYPING_S` 5), previews,
+  order and search, `feed()` → items (day separators, runs of one sender within 5 min, deleted
+  left out, pending last) with ticks clock / ✓ / ✓✓ (any other member's read mark) / failed (a
+  failed send or one unsent 10 min).
+- **`maya_chat/window.py`** (Qt): a frameless `Qt.Tool` root over `maya_hubwindow`'s look-B
+  frame (`skeldarChatWindow`), title «CHAT» + the connection state + ✕ (no ⧉: it is already a
+  window). Pages: sign-in (nick format checked live; «free/taken» is answered by the press, since
+  `GET /v1/users` needs a token; login code) and main: a painted chat list (hover glow, the
+  selected row lit, unread pills that pop), the right column a chat / Friends / New chat / Settings
+  / group Members. The feed is painted (`QTextDocument` per bubble for wrapping and links): mine
+  `#5a3922` on the right, names and avatars in groups, a reply's quote (a click scrolls to it),
+  `изм.`, ticks, «не отправлено — повторить»; history 50 at a time at the top; ↓ with the count.
+  Composer: Enter sends, Shift+Enter a new line, ↑ edits my last, Esc cancels the bar. Motion: a
+  new message rises with an overshoot, a sent one flashes, a deleted one folds, one 16 ms timer that
+  stops at rest; animations off → instant. Below 600 logical px one column with a back button.
+  Place/size `skeldarChatWindowPos` / `skeldarChatWindowSize` (760×520, least 520×360), dragged by
+  the title, resized by a QSizeGrip. It bursts out of the rail icon and folds back into it
+  (`maya_hubwindow.Burster`). The window lives on `sys._skeldar_chat_window`.
+- **`maya_chat/notify.py`**: the unread total onto the rail (`maya_hub.paint_badge`), a viewport
+  message for another's message unless that chat is open and active (`skeldarChatNotifyViewport`,
+  on), a sound (`skeldarChatNotifySound`, off). One listener a Maya on `sys._skeldar_chat_notify`.
+- **The hub**: `Section("chat", "Chat", "maya_chat.panel", ..., "scene", "message-circle")` after
+  Stash; `WINDOW_SECTIONS = {"chat": "maya_chat"}` - a jump's press toggles the window instead of a
+  card (`_toggle_window`); the card itself is one line + Open Chat. `Skin.set_badge(key, n)` /
+  `icon_with_badge` (an accent pill, «99+», a 200 ms pop), kept on `sys._skeldar_hub_badges` for a
+  skin built later. `_chat_soon()` at the hub's build: `maya_chat.ensure()` connects only when a
+  token is on disk. Hotkey row `window.chat`. Icons message-circle, pencil, users, settings,
+  arrow-left, arrow-down.
+- Proof: `test_chat_look` (19), `test_chat_window` (23, offscreen on a fake session: sign-in,
+  list, send → clock → ✓ → ✓✓, Shift+Enter, ↑/Esc, reply, delete, retry, entering, one column,
+  memory, panes, notify), hub/hubqt/hotkeys tests; picture `docs/superpowers/plans/chat_window.png`
+  (`render_chat_window.py`). **Not seen in a GUI Maya**; avatars (upload) not built; the server is
+  still staging (plan 4).

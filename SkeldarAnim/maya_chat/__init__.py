@@ -2,6 +2,7 @@
 
 Imports nothing heavy: the session and the window are loaded when asked for.
 """
+import sys
 
 # The chat server. Staging until the production Worker exists (plan 3); the optionVar
 # skeldarChatServer overrides it.
@@ -19,6 +20,40 @@ def server():
     except Exception:
         pass
     return SERVER
+
+
+def show(origin=None):
+    """The chat window up, out of the global point `origin` (the rail icon)."""
+    from . import window
+    win = window.show(origin)
+    _notify()
+    return win
+
+
+def toggle(origin=None):
+    """A rail press: the window out of the icon, or back into it."""
+    from . import window
+    done = window.toggle(origin)
+    _notify()
+    return done
+
+
+def ensure():
+    """At Maya's start (the hub's build, deferred): with a token on disk the session connects
+    at once, so the rail shows the unread count before the window was ever opened."""
+    from . import session as _session
+    from . import store as _store
+    url = server()
+    if getattr(sys, "_skeldar_chat", None) is None:
+        if not _store.Store.for_server(_session._base(), url).token():
+            return False
+    _notify()
+    return True
+
+
+def _notify():
+    from . import notify
+    notify.install(current())
 
 
 def current():

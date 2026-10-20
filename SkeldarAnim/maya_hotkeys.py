@@ -1021,6 +1021,8 @@ _OURS = (
      partial(_show, "maya_com.panel", "show_window")),
     ("window.poses", "Windows", "Pose Library", "Open the Pose Library",
      partial(_show, "maya_poselib.window", "show_window")),
+    ("window.chat", "Windows", "Chat", "Open the chat window, or close it",
+     partial(_show, "maya_chat", "toggle")),
     ("window.tools", "Windows", "Tools",
      "Open the Tools section: knots and double knots",
      partial(_show, "maya_tools.panel", "show_window")),
