@@ -224,7 +224,7 @@ def object_records(nodes, own=()):
 def build_pose(selection=None, regions=None, frame=None):
     """(data, note): the pose the selection makes at `frame` (the current frame when None) - a
     character pose when its BODY parts touch exactly one character (`scene.split`), holding
-    the objects selected beside it (a camera, a prop, the rig's own SceneSetup camera) in its
+    the objects selected beside it (a camera, a prop - not the Camera Setup camera, the body's) in its
     `objects`; else an objects pose of its transforms, else (None, "select a character or
     objects"). Two characters: (None, "pick one character for a pose")."""
     with _at(frame):

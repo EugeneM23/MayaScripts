@@ -1118,7 +1118,8 @@ def _not_characters(paths):
     rig's Main, a control, a joint, a weapon in a hand are left out of it - selected beside a
     prop, or alone (the final review: a one-object card applied right after Add Character, which
     selects the new rig's Main, keyed Main's translate, rotate and scale by selection order). A
-    camera or a knot standing in a character's group is an object."""
+    camera or a knot standing in a character's group is an object - the Camera Setup camera is
+    not (2026-10-20: the card's `camera_root` keys it, `helpers`)."""
     if not paths:
         return [], ""
     loose, parts = [], OrderedDict()

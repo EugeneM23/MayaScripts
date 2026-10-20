@@ -9,9 +9,10 @@ The animator: «объекты которые не относятся к риг�
 
 **Body or object** (`scene.is_body`): the body is a joint, anything under a rig's AdvancedSkeleton
 `Group` (its controls, meshes, weapon spaces), a skinned mesh, a group holding the skeleton or the
-rig (the character group, the Creep's `Armature`), a weapon or an armour piece (Inventory's). Any
-other node is an OBJECT - a camera (the rig's own SceneSetup camera too), a knot, a locator, a
-prop - whoever's group it stands in. `scene.split` divides a selection so.
+rig (the character group, the Creep's `Armature`), a weapon or an armour piece (Inventory's), the
+Camera Setup camera (since 2026-10-20: its motion is `camera_root`'s, which the card holds - `helpers`).
+Any other node is an OBJECT - another camera, a knot, a locator, a prop - whoever's group it stands
+in. `scene.split` divides a selection so.
 
 **A record** - `{"name": leaf without namespace, "path", "attrs": {attr: payload}, "shape":
 {attr: payload}, "own": bool}` - `attrs` the transform's keyable scalar unlocked attributes,

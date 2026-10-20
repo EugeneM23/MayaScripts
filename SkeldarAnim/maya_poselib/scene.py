@@ -556,8 +556,8 @@ def is_body(path, ref):
     """Is `path` (a long DAG path) part of the character `ref`'s BODY rather than an object beside
     it? The body: a joint, anything under a rig's AdvancedSkeleton `Group` (its controls, meshes,
     weapon spaces), a group holding the skeleton or the rig, a skinned mesh, a weapon or an armour
-    piece. Anything else - a camera (Camera Setup's, in the rig's namespace), a knot, a prop - is
-    an OBJECT beside it (`maya_poselib.objects`). A node of no character is an object."""
+    piece, the Camera Setup camera (2026-10-20: `camera_root` on the card is its motion). Anything
+    else - another camera, a knot, a prop - is an OBJECT beside it (`maya_poselib.objects`). A node of no character is an object."""
     if ref is None:
         return False
     if cmds.nodeType(path) == "joint":
@@ -814,11 +814,11 @@ def _kind(path, ref=None):
     character `ref`'s own nodes (`_own`) are asked only for those markers of their own, never
     walked up: a rig's 187 controls walked cost 0.8 s on every selection change (the final
     review)."""
-    from maya_scenesetup import armor, bonedrive, weaponspace
+    from maya_scenesetup import armor, bonedrive, camera, weaponspace
     walked = not _own(ref, path) and (weaponspace.hand_for(path) or armor.bone_for(path))
     if walked or any(
             cmds.attributeQuery(marker, node=path, exists=True)
-            for marker in (bonedrive.MARKER, armor.MARKER)):
+            for marker in (bonedrive.MARKER, armor.MARKER, camera.MARKER)):
         return ACCESSORY
     kind = cmds.nodeType(path)
     if kind != "joint" and cmds.listRelatives(path, shapes=True, type="mesh", fullPath=True):

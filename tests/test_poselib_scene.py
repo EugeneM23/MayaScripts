@@ -747,3 +747,30 @@ class RefreshWorld(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CameraIsBody(unittest.TestCase):
+    """2026-10-20: the Camera Setup camera is part of its character (an accessory, as a weapon in
+    a hand), never an object of a card - the card's camera_root is its motion."""
+
+    def test_the_camera_setup_camera_is_an_accessory(self):
+        from maya_scenesetup import armor, camera, weaponspace
+
+        class Cmds(object):
+            def attributeQuery(self, attr, node=None, exists=False):
+                return attr == camera.MARKER and node == "|Manny_Rig_Character|SceneSetup_camera"
+
+            def nodeType(self, path):
+                return "transform"
+
+            def listRelatives(self, *args, **kwargs):
+                return []
+        saved = (scene.cmds, weaponspace.hand_for, armor.bone_for)
+        scene.cmds = Cmds()
+        weaponspace.hand_for = armor.bone_for = lambda path: None
+        try:
+            self.assertEqual(scene._kind("|Manny_Rig_Character|SceneSetup_camera"),
+                             scene.ACCESSORY)
+            self.assertEqual(scene._kind("|shotCam"), "transform")
+        finally:
+            scene.cmds, weaponspace.hand_for, armor.bone_for = saved
