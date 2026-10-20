@@ -907,6 +907,19 @@ def _rgb(hex_):
     return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4))
 
 
+SET_FLASH_MAX = 8       # keys set at once beyond this: the round flash on this many only
+
+
+def spread(n, most):
+    """Indices of `most` of `n` items spread evenly along them (all of them when fewer),
+    the first and the last always among them."""
+    if n <= most:
+        return list(range(n))
+    if most <= 1:
+        return [0]
+    return sorted({int(round(i * (n - 1) / float(most - 1))) for i in range(most)})
+
+
 def cooling(age_ms, steel=STEEL, cool_ms=COOL_MS):
     """(colour hex, heat 0..1) of a key `age_ms` after it was set hot: the colour along
     HEAT (its last stop `steel`), the heat its glow - 1 at once, gone by 70 % of the way."""

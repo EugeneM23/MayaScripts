@@ -709,6 +709,10 @@ def classes():
                     tl.stamped = got            # the keys dragged: the release moves only them
             elif action[0] == "range":
                 self.strip.call("key_range", action[1], action[2], name)
+                #  every key of the highlight was set: each flashes (and, steel, cools) -
+                #  not only the current frame's (2026-10-20: «при простановке ключей на
+                #  массив все ключи которые проставлены должны остывать»)
+                self.strip.mark_set(action[1], action[2])
             else:
                 self.strip.call("run_key_command", name)
             #  the strip's tick reads no keys while the playhead is dragged: the key
@@ -842,9 +846,10 @@ def classes():
             p.setPen(QtGui.QPen(colour(st.tokens["accent"], 255 * (1.0 - u)), 1 + 2.5 * ui * (1.0 - u)))
             p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), 6 * ui, 6 * ui)
 
-        def key_effect(self, kind, frame, breakdown=False, **timing):
+        def key_effect(self, kind, frame, breakdown=False, glow=True, **timing):
             """A key set ("set": a round glow) or deleted ("delete": sparks) at `frame`;
-            `timing` the delay, life and spark count of a key in a wave."""
+            `timing` the delay, life and spark count of a key in a wave. `glow` False: a
+            key set swells (and cools) without its round flash - one of many set at once."""
             st = self.strip
             t = self.track()
             if not st.motion or not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
@@ -852,7 +857,8 @@ def classes():
             cx, cy, rect = self._key_place(frame)
             timing.setdefault("rect", rect)
             hex_ = BREAKDOWN if breakdown else (st.tokens["accent"] if kind == "set" else st.key_hex())
-            st.fx.add(kind, cx=cx, cy=cy, hex=hex_, **timing)
+            if glow or kind != "set":
+                st.fx.add(kind, cx=cx, cy=cy, hex=hex_, **timing)
             if kind == "set" and st.steel and not breakdown:
                 # forged steel: the key is set hot and cools (2026-10-20)
                 self.cooling[frame] = st.clock()
@@ -2033,6 +2039,11 @@ def classes():
             g = widget.mapTo(self, QtCore.QPoint(int(round(x)), int(round(y))))
             return float(g.x()), float(g.y())
 
+        def mark_set(self, a, b, breakdown=False):
+            """Keys were set on every whole frame a..b (S over a highlight, over a lane
+            block): the next read flashes each of them, however many."""
+            self.keys_set.extend((float(f), bool(breakdown)) for f in range(int(a), int(b) + 1))
+
         def key_hex(self):
             """The keys' colour: steel with ⋮ -> Time bar ▸ Steel keys, else the accent."""
             return look.STEEL if self.steel else self.tokens["accent"]
@@ -2215,23 +2226,27 @@ def classes():
                 return
             if not (edited or self.keys_set):
                 return
-            gone, flashed = [], set()
+            gone, sets = [], {}
             for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
                 added, removed, _snapped = look.key_changes(old, new, edited)
                 for k in added:
-                    self.timeline.key_effect("set", k, bd)
-                    flashed.add(k)
+                    sets[k] = bd
                 gone.extend((k, bd) for k in removed)
             if gone:
                 self.timeline.delete_wave(gone)
-            # a key set over one that stood: no key time changed, it flashes all the same
+            # a key set over one that stood: no key time changed, it flashes all the same;
+            # a highlight keyed at once (`mark_set`): every key of it, however many
+            keys, bds = set(self.keys), set(self.breakdowns)
             for frame, _bd in self.keys_set:
                 frame = self.state.get("now", 0.0) if frame is None else frame
-                if frame in flashed:
-                    continue
-                if frame in self.keys or frame in self.breakdowns:
-                    self.timeline.key_effect("set", frame, frame in self.breakdowns)
-                    flashed.add(frame)
+                if frame not in sets and (frame in keys or frame in bds):
+                    sets[frame] = frame in bds
+            # many at once: each swells and cools, the round flash on a few of them spread
+            # along (200 flashes cost 100 ms a frame, measured 2026-10-20)
+            order = sorted(sets)
+            lit = set(look.spread(len(order), look.SET_FLASH_MAX))
+            for i, frame in enumerate(order):
+                self.timeline.key_effect("set", frame, sets[frame], glow=i in lit)
 
         def _sound(self):
             s, t = self.state, self.timeline.track()

@@ -729,6 +729,11 @@ class Panel(object):
         sel = self.keys_block()
         if sel is None:
             return False
+        if self.active_name() in sel["names"]:
+            #  the timeline shows the active layer: its keys of the block flash (and cool)
+            mark = getattr(self.strip, "mark_set", None)
+            if mark is not None:
+                mark(sel["a"], sel["b"])
         self._write("lane_key_range", list(sel["names"]), int(sel["a"]), int(sel["b"]))
         return True
 

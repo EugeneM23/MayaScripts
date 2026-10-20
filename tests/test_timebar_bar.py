@@ -1485,6 +1485,27 @@ class SteelKeys(Strip):
         self.strip.refresh(keys=True)
         self.assertEqual(self.tl.cooling, {})
 
+    def test_s_over_a_highlight_cools_every_key_it_set(self):
+        # 2026-10-20: «при простановке ключей на массив все ключи ... должны остывать» -
+        # ten keys at once were a reload (no effect), and only the current frame flashed
+        Qt = QT.QtCore.Qt
+        self.strip.set_steel(True)
+        self.strip.state["highlight"] = (10, 19)
+        frames = [float(f) for f in range(10, 20)]
+        self.link.k = (sorted(set([0.0, 6.0, 12.0, 30.0, 40.0] + frames)), [9.0])
+
+        def key_range(a, b, name):
+            self.link._log("key_range", a, b, name)
+            self.strip.keys_edited = True
+        self.link.key_range = key_range
+        QT.QtWidgets.QApplication.sendEvent(
+            QT.QtWidgets.QApplication.instance(),
+            QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_S, Qt.NoModifier, "s"))
+        self.assertEqual(self.calls("key_range"), [("key_range", 10, 19, "SetKey")])
+        self.assertEqual(sorted(self.tl.cooling), frames)     # 12 stood already: it cools too
+        self.assertNotIn(9.0, self.tl.cooling)
+        self.assertNotIn(30.0, self.tl.cooling)
+
     def test_cooling_keeps_the_strip_animating_until_it_is_steel(self):
         start = self.set_key()
         self.strip.clock = (lambda: start + 1000)

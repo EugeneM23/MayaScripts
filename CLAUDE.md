@@ -12105,7 +12105,13 @@ found by `ROOT_NAME`). On, the timeline's keys and the active layer lane's keys 
 (`Strip.key_hex`; breakdowns stay cyan); the set flash stays the accent orange, a deleted key breaks in steel.
 A key set (not a breakdown) goes into `Timeline.cooling` and is drawn by `look.cooling(age)` along `HEAT`:
 white heat, yellow, orange, cherry red, a dark temper, then steel over `COOL_MS` 1800, its glow the heat
-(gone by 70 %), in `COOL_STEPS` 48 colours so each halo is cached once. No motion: steel at once. Tests
+(gone by 70 %), in `COOL_STEPS` 48 colours so each halo is cached once. No motion: steel at once.
+**Every key of an array cools** (the same day, «при простановке ключей на массив все ключи ... должны
+остывать»): S over a highlight (`key_range`) and over a lane block holding the active layer call
+`Strip.mark_set(a, b)`, so the next read sets every frame a..b, however many (more than `SMALL_CHANGE`
+used to read as a reload, and only the current frame flashed). Past `SET_FLASH_MAX` 8 keys the round flash
+plays on 8 of them spread along (`look.spread`); every key still swells and cools - 200 keys: 104 -> 24 ms
+on the first frame, 8 ms after. Tests
 `test_timebar_look.CoolingTests`, `test_timebar_bar.SteelKeys`, the hub menu test; filmstrip
 `render_time_bar_steel.py` -> `time_bar_steel.png`. Not seen in a GUI Maya.
 

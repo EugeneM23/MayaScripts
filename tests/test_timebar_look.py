@@ -646,3 +646,15 @@ class CoolingTests(unittest.TestCase):
 
     def test_the_last_stop_is_the_steel_asked_for(self):
         self.assertEqual(look.cooling(look.COOL_MS, steel="#808080")[0], "#808080")
+
+
+class SpreadTests(unittest.TestCase):
+    """Many keys set at once: the round flash on a few of them, spread along."""
+
+    def test_all_when_few_else_spread_with_both_ends(self):
+        self.assertEqual(look.spread(5, 8), [0, 1, 2, 3, 4])
+        got = look.spread(200, 8)
+        self.assertEqual(len(got), 8)
+        self.assertEqual((got[0], got[-1]), (0, 199))
+        self.assertEqual(got, sorted(got))
+        self.assertEqual(look.spread(3, 1), [0])
