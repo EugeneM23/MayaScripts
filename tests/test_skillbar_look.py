@@ -215,6 +215,48 @@ class Store(unittest.TestCase):
         self.assertEqual(len([n for n in os.listdir(os.path.dirname(self.path)) if "broken" in n]), 1)
 
 
+class EditorsPage(unittest.TestCase):
+    """F4 Editors (2026-10-20): a default page, and given to a file made before it."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = store.path_in(self.dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _old_file(self, page4=None):
+        data = look.defaults()
+        data.pop("seeded")
+        data["pages"]["4"] = page4 or {"name": "", "cells": {}}
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data))
+
+    def test_defaults_hold_the_four_editors_on_f4(self):
+        page = look.page_of(look.defaults(), 4)
+        self.assertEqual(page["name"], "Editors")
+        self.assertEqual([page["cells"]["0.%d" % i]["key"] for i in range(4)],
+                         ["editor.script", "editor.graph", "editor.outliner", "editor.component"])
+
+    def test_an_older_file_gets_f4_once_and_keeps_it(self):
+        self._old_file()
+        data = store.read(self.path)[0]
+        self.assertEqual(look.page_of(data, 4)["name"], "Editors")
+        self.assertEqual(look.page_of(data, 2), look.page_of(look.defaults(), 2))
+        cleared = json.loads(look.encode(data))
+        cleared["pages"]["4"] = {"name": "", "cells": {}}
+        store.write(self.path, cleared)
+        self.assertEqual(look.page_of(store.read(self.path)[0], 4)["cells"], {})
+
+    def test_an_f4_of_the_animator_s_own_is_left(self):
+        own = {"name": "Mine", "cells": {"0.0": {"kind": "cmd", "key": "tools.aim"}}}
+        self._old_file(own)
+        page = look.page_of(store.read(self.path)[0], 4)
+        self.assertEqual(page["name"], "Mine")
+        self.assertEqual(list(page["cells"]), ["0.0"])
+
+
 class Purity(unittest.TestCase):
 
     def test_look_and_store_import_with_the_stdlib_alone(self):

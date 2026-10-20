@@ -66,7 +66,15 @@ DEFAULT_PAGES = {
         {"kind": "section", "key": "characters"},
         {"kind": "section", "key": "weapons"},
     ]),
+    4: ("Editors", [                    # 2026-10-20
+        {"kind": "cmd", "key": "editor.script"},
+        {"kind": "cmd", "key": "editor.graph"},
+        {"kind": "cmd", "key": "editor.outliner"},
+        {"kind": "cmd", "key": "editor.component"},
+    ]),
 }
+# The default pages a file written before `seeded` existed had already been given.
+FIRST_SEEDED = (2, 3)
 
 
 # ----------------------------------------------------------------- items
@@ -157,7 +165,7 @@ def _old_key(key):
 # ------------------------------------------------------------------ model
 
 def blank():
-    return {"version": VERSION, "rows": DEFAULT_ROWS,
+    return {"version": VERSION, "rows": DEFAULT_ROWS, "seeded": [],
             "pages": dict((str(n), {"name": "", "cells": {}}) for n in range(2, PAGES + 1))}
 
 
@@ -168,7 +176,26 @@ def defaults():
         page["name"] = name
         for i, item in enumerate(items):
             page["cells"][cell_key(0, i)] = dict(item)
+    data["seeded"] = sorted(DEFAULT_PAGES)
     return data
+
+
+def seed_new(data):
+    """(data, changed): a default page added since this file was made goes onto its F-key when
+    that page is still empty and unnamed; a page once seeded is never given again (the animator
+    may have cleared it)."""
+    changed = False
+    for n, (name, items) in sorted(DEFAULT_PAGES.items()):
+        if n in data["seeded"]:
+            continue
+        page = data["pages"][str(n)]
+        if not page["name"] and not page["cells"]:
+            page["name"] = name
+            for i, item in enumerate(items):
+                page["cells"][cell_key(0, i)] = dict(item)
+        data["seeded"] = sorted(set(data["seeded"]) | {n})
+        changed = True
+    return data, changed
 
 
 def normalised(data):
@@ -176,6 +203,9 @@ def normalised(data):
     out = blank()
     if not isinstance(data, dict):
         return out
+    seeded = data.get("seeded", list(FIRST_SEEDED))
+    if isinstance(seeded, list):
+        out["seeded"] = sorted(set(n for n in seeded if isinstance(n, int) and n in DEFAULT_PAGES))
     pages = data.get("pages")
     if not isinstance(pages, dict):
         return out

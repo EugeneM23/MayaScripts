@@ -12577,7 +12577,11 @@ the page pressed; skills come in by all four roads; pages kept in a file per use
   by the cursor, a tool row and its Finish popup), Add Character, the Pose Library's Apply with its
   remembered paste options, Inventory's Equip, `mel.eval`, Python in `__main__`.
 - **The file**: `<userAppDir>/SkeldarSkills/skills.json` (`store.py`): defaults on first use (F2
-  Animate - our tools; F3 Characters), a broken file moved aside, atomic writes.
+  Animate - our tools; F3 Characters; F4 Editors - Script Editor, Graph Editor, Outliner, Component
+  Editor, the hotkey rows `editor.script` / `editor.graph` / `editor.outliner` / `editor.component`),
+  a broken file moved aside, atomic writes. A default page added later reaches an existing file once
+  (`look.seed_new`, the file's `seeded` list; a file without one counts F2/F3 as given): only onto
+  an empty, unnamed page, and a page once given is never given again.
 - **The library** (`library.py`, `skeldarSkillLibrary`): a drawer over the bar as wide as it, search +
   `[All | Sections | Tools | Characters | Poses | Weapons | Maya | Shelves | Scripts]` (`sources.py`;
   Maya = an animator's runTimeCommands, the search reaches all; Shelves = every Maya shelf button;

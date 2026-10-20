@@ -1,6 +1,7 @@
 """The skill bar's file (2026-10-19): `<userAppDir>/SkeldarSkills/skills.json`, one per user. Stdlib.
 
-`read` answers the defaults on first use; a file that is not ours is moved aside
+`read` answers the defaults on first use, and gives a file a default page added since it was
+made (`look.seed_new`: F4 Editors, 2026-10-20); a file that is not ours is moved aside
 (`skills.broken-<stamp>.json`) and the defaults read; `write` is atomic (a temp file replaced).
 """
 
@@ -24,7 +25,14 @@ def read(path):
         return look.defaults(), ""
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            return look.decode(handle.read()), ""
+            data = look.decode(handle.read())
+        data, changed = look.seed_new(data)
+        if changed:
+            try:
+                write(path, data)
+            except OSError:
+                pass
+        return data, ""
     except (ValueError, OSError, UnicodeDecodeError) as error:
         aside = "%s.broken-%s.json" % (path[:-5] if path.endswith(".json") else path,
                                         time.strftime("%Y%m%d_%H%M%S"))

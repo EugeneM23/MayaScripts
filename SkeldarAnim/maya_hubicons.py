@@ -285,6 +285,16 @@ ICONS = {
         "M11.5 3a17 17 0 0 0 0 18",
         "M12.5 3a17 17 0 0 1 0 18",
     ),
+    "code": (                             # skill bar: the Script Editor (2026-10-20)
+        "M7 8l-4 4l4 4",
+        "M17 8l4 4l-4 4",
+        "M14 4l-4 16",
+    ),
+    "table": (                            # skill bar: the Component Editor (2026-10-20)
+        "M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14z",
+        "M3 10h18",
+        "M10 3v18",
+    ),
 }
 
 NAMES = tuple(sorted(ICONS))

@@ -28,6 +28,7 @@ ROW_ICONS = {
     "tools.fp_setup": "camera", "tools.attach_0": "unlink", "tools.attach_1": "link",
     "time.prev": "arrow-back-up", "time.insert": "plus", "time.remove": "x",
     "editor.graph": "chart-line", "editor.outliner": "picture-in-picture",
+    "editor.script": "code", "editor.component": "table",
     "graph.overlay": "chart-line", "scene.weapon": "sword", "scene.remove_weapon": "sword",
     "retarget.run": "arrows-exchange", "connections.connect": "hand-grab",
     "connections.disconnect": "unlink",
@@ -38,6 +39,7 @@ SHORT = {
     "tools.bake": "Bake", "tools.inside": "Inside", "tools.world": "To world",
     "tools.fp_setup": "1P Setup", "time.insert": "Insert", "time.remove": "Remove",
     "time.prev": "Back", "time.next": "Forward", "editor.graph": "Graph", "editor.outliner": "Outliner",
+    "editor.script": "Script", "editor.component": "Component",
     "graph.overlay": "Overlay", "scene.weapon": "Equip", "scene.remove_weapon": "Unequip",
     "retarget.run": "Retarget", "connections.connect": "Connect", "connections.disconnect": "Release",
 }
