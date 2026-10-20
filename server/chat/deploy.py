@@ -73,6 +73,9 @@ def request(method, url, token, body=None, ctype=None, opener=urllib.request.url
 
 
 NAMES_ENV = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
+# A file beside the registry: the Claude app's processes can see a different HKCU than a
+# terminal opened outside it (measured 2026-10-20 - keys written by one were absent in the other).
+KEYS_FILE = os.path.join(os.path.expanduser("~"), ".skeldar", "cloudflare.json")
 
 
 def saved(names=NAMES_ENV):
@@ -91,10 +94,20 @@ def saved(names=NAMES_ENV):
                     pass
     except OSError:
         pass
+    try:
+        with open(KEYS_FILE, encoding="utf-8") as handle:
+            for name, value in json.load(handle).items():
+                if name in names and value and name not in found:
+                    found[name] = str(value)
+    except (OSError, ValueError, AttributeError):
+        pass
     return found
 
 
 def save(values):
+    os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
+    with open(KEYS_FILE, "w", encoding="utf-8") as handle:
+        json.dump(values, handle)
     import ctypes
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
