@@ -10,7 +10,7 @@ Spec: docs/superpowers/specs/2026-10-19-skill-bar-design.md
 import time
 import traceback
 
-from . import look
+from . import look, status
 
 HOVER_MS = 110
 FLASH_MS = 120
@@ -89,6 +89,12 @@ def classes():
             self.drop_on = None         # a drag over this tab
             self._was_busy = False
             self.index = strip.register(self)
+            #  Maya's status-line tools at the row's right (2026-10-20)
+            self.tools = StatusTools(self)
+
+        def resizeEvent(self, event):
+            super(PageTabs, self).resizeEvent(event)
+            self.tools.place()
 
         def texts(self):
             data = self.strip.skills.data()
@@ -103,7 +109,8 @@ def classes():
             def measure(text):
                 return (km if text[:1] == "F" and text[1:].isdigit() else nm).horizontalAdvance(text)
             rects = look.tab_rects(texts, measure, ui, x0=2 * ui)
-            if rects and rects[-1][0] + rects[-1][1] > self.width():      # no room: keys only
+            room = self.width() - self.tools.room()
+            if rects and rects[-1][0] + rects[-1][1] > room:              # no room: keys only
                 rects = look.tab_rects([(k, "") for k, _n in texts], measure, ui, x0=2 * ui)
             return rects
 
@@ -214,6 +221,277 @@ def classes():
                              else k.blend(tk["faint"], tk["text"], max(lift, 1.0 if lit else 0.0)))
                     p.drawText(QtCore.QRectF(left + kw + 5 * ui, top, w, h), Qt.AlignVCenter | Qt.AlignLeft, name)
                 p.setOpacity(opacity)
+                p.restore()
+            p.end()
+
+    # -- Maya's status-line tools ------------------------------------------------------
+
+    def status_of(strip):
+        """The tools' model: the strip's own when it carries one, Maya's for the real link,
+        else in memory (the strip's tests)."""
+        given = getattr(strip, "status_model", None)
+        if given is not None:
+            return given
+        if isinstance(getattr(strip, "link", None), timebar.Link):
+            from . import statusscene
+            return statusscene.MayaStatus()
+        return status.MemoryStatus()
+
+    class StatusTools(QtWidgets.QWidget):
+        """The selection masks of the current mode, Lock / Highlight, the snaps and Make Live
+        at the right of the page row (mockup A): click runs the status line's command, the
+        right button a mask's own types or Make Live's add / remove. The state is read again
+        every TIMER_MS while shown and after every press; only a change repaints."""
+
+        TIMER_MS = 250
+        POP_MS = 200
+
+        def __init__(self, tabs):
+            super(StatusTools, self).__init__(tabs)
+            self.tabs = tabs
+            self.strip = tabs.strip
+            self.setObjectName("skeldarSkillStatusTools")
+            self.setMouseTracking(True)
+            self.model = status_of(self.strip)
+            self.state = self._read()
+            self.hover = {}             # (group, key) -> 0..1
+            self.under = None
+            self.flash_at = {}
+            self.pop_at = {}
+            self._was_busy = False
+            self.index = self.strip.register(self)
+            self.timer = QtCore.QTimer(self)
+            self.timer.setInterval(self.TIMER_MS)
+            self.timer.timeout.connect(self.poll)
+            self.timer.start()
+            self.place()
+
+        # the model ---------------------------------------------------------------
+        def _read(self):
+            try:
+                return self.model.read()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                return status.blank_state()
+
+        def poll(self):
+            if not self.isVisible():
+                return
+            st = self._read()
+            if st != self.state:
+                mode_changed = st.get("mode") != self.state.get("mode")
+                self.state = dict(st, masks=dict(st["masks"]), snaps=dict(st["snaps"]))
+                if mode_changed:
+                    self.place()
+                    self.tabs.update()
+                self.update()
+
+        # geometry ----------------------------------------------------------------
+        def mode(self):
+            return self.state.get("mode", status.OBJECT)
+
+        def room(self):
+            """What the tabs must leave free, px: the tools and a gap."""
+            ui = self.strip.ui
+            return status.width_of(self.mode(), ui) + status.TABS_GAP * ui
+
+        def place(self):
+            w = int(round(status.width_of(self.mode(), self.strip.ui)))
+            self.setGeometry(max(0, self.tabs.width() - w), 0, w, self.tabs.height())
+
+        def rects(self):
+            return status.layout(self.width(), self.mode(), self.strip.ui)
+
+        def button_at(self, x):
+            return status.hit(x, self.rects())
+
+        # motion ------------------------------------------------------------------
+        def busy(self, now):
+            for b, v in self.hover.items():
+                if abs(v - (1.0 if b == self.under else 0.0)) > 0.005:
+                    return True
+            if self.under is not None and self.hover.get(self.under, 0.0) < 0.995:
+                return True
+            return (any(now - t < FLASH_MS for t in self.flash_at.values())
+                    or any(now - t < self.POP_MS for t in self.pop_at.values()))
+
+        def step(self, dt):
+            for b in set(list(self.hover) + ([self.under] if self.under else [])):
+                goal = 1.0 if b == self.under else 0.0
+                cur = self.hover.get(b, 0.0)
+                self.hover[b] = tlook.approach(cur, goal, dt, HOVER_MS) if self.strip.motion else goal
+
+        # the mouse ---------------------------------------------------------------
+        def mouseMoveEvent(self, event):
+            under = self.button_at(local_xy(event)[0])
+            if under != self.under:
+                self.under = under
+                self.setToolTip(self._tip(under))
+                self.strip.kick()
+
+        def leaveEvent(self, event):
+            self.under = None
+            self.strip.kick()
+            super(StatusTools, self).leaveEvent(event)
+
+        def _tip(self, button):
+            if button is None:
+                return ""
+            for group, key, label, _icon in status.buttons(self.mode()):
+                if (group, key) == button:
+                    return label
+            return ""
+
+        def mousePressEvent(self, event):
+            button = self.button_at(local_xy(event)[0])
+            if button is None:
+                return
+            now = self.strip.clock()
+            self.flash_at[button] = now
+            self.strip.kick()
+            if event.button() == Qt.RightButton:
+                self.context_menu(button, QtCore.QPoint(*global_xy(event)))
+                return
+            if event.button() == Qt.LeftButton:
+                self.press(*button)
+
+        def press(self, group, key):
+            before = status.lit(group, key, self.state)
+            try:
+                st = self.model.press(group, key)
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                st = self._read()
+            self.state = dict(st, masks=dict(st["masks"]), snaps=dict(st["snaps"]))
+            if status.lit(group, key, self.state) != before and self.strip.motion:
+                self.pop_at[(group, key)] = self.strip.clock()
+            self.place()
+            self.tabs.update()
+            self.update()
+            self.strip.kick()
+
+        def menu_rows(self, group, key):
+            try:
+                return self.model.menu(group, key) or []
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                return []
+
+        def context_menu(self, button, point):
+            rows = self.menu_rows(*button)
+            if not rows:
+                return None
+            menu = QtWidgets.QMenu(self)
+            picks = []
+            for label, checked, command in rows:
+                action = menu.addAction(label)
+                if command and "#1" in command:
+                    action.setCheckable(True)
+                    action.setChecked(bool(checked))
+                picks.append((action, command, checked if command and "#1" in command else None))
+            try:
+                picked = self.exec_menu(menu, point)
+            finally:
+                menu.deleteLater()
+            for action, command, checked in picks:
+                if picked is action:
+                    self.model.run(command, checked)
+                    self.poll()
+                    self.update()
+                    return command
+            return None
+
+        def exec_menu(self, menu, point):
+            """The menu shown (a seam: the tests answer it)."""
+            return menu.exec(point)
+
+        # paint -------------------------------------------------------------------
+        def paintEvent(self, _event):
+            try:
+                self._paint()
+            except Exception:                                # noqa: BLE001
+                if not getattr(self, "_failed", False):
+                    print(traceback.format_exc())
+                self._failed = True
+
+        def _icon(self, name, ink, side):
+            key = ("status", name, ink, int(side))
+            pix = pictures.get(key)
+            if pix is None:
+                data = QtCore.QByteArray(status.svg(name, ink).encode("utf-8"))
+                renderer = q.QtSvg.QSvgRenderer(data)
+                pix = QtGui.QPixmap(int(side), int(side))
+                pix.fill(Qt.transparent)
+                pp = QtGui.QPainter(pix)
+                pp.setRenderHint(QtGui.QPainter.Antialiasing)
+                renderer.render(pp)
+                pp.end()
+                pictures[key] = pix
+            return pix
+
+        def _paint(self):
+            s, tk, ui, k = self.strip, self.strip.tokens, self.strip.ui, kit()
+            p = QtGui.QPainter(self)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            now = s.clock()
+            h = look.TAB_H * ui
+            top = (self.height() - h) / 2.0
+            rects = self.rects()
+            p.setPen(QtGui.QPen(k.colour(tk["line"]), max(1.0, ui)))
+            for x in status.dividers(rects):
+                p.drawLine(QtCore.QPointF(x, top + 3 * ui), QtCore.QPointF(x, top + h - 3 * ui))
+            icons = dict(((g, key), icon) for g, key, _l, icon in status.buttons(self.mode()))
+            side = int(round(14 * ui))
+            for group, key, x, w in rects:
+                button = (group, key)
+                rect = QtCore.QRectF(x, top, w, h)
+                c = rect.center()
+                if s.entrance is not None:
+                    g = self.mapToGlobal(QtCore.QPoint(int(c.x()), int(c.y())))
+                    scale, opacity = s.entrance_of(g.x(), g.y())
+                else:
+                    scale, opacity = s.opening_of(self.index)
+                lift = self.hover.get(button, 0.0)
+                flash = 0.0
+                t = self.flash_at.get(button)
+                if t is not None and s.motion and now - t < FLASH_MS:
+                    flash = 1.0 - (now - t) / float(FLASH_MS)
+                pop = 1.0
+                t = self.pop_at.get(button)
+                if t is not None and s.motion and now - t < self.POP_MS:
+                    pop = 0.85 + 0.15 * tlook.back_out((now - t) / float(self.POP_MS))
+                z = scale * pop * (1.0 + LIFT * lift) * (1.0 - 0.06 * flash)
+                on = status.lit(group, key, self.state)
+                part = group == "mask" and self.state["masks"].get(key) == "part"
+                p.save()
+                p.setOpacity(opacity)
+                p.translate(c)
+                p.scale(z, z)
+                p.translate(-c)
+                if on and not part:
+                    face = k.colour(tk["card_active"])
+                else:
+                    face = k.colour(tk["hover"], 255 * lift)
+                if flash > 0:
+                    face = k.blend(face.name(), tk["accent"], flash * 0.6)
+                p.setPen(QtGui.QPen(k.colour(tk["accent"]), 1.5 * ui) if on and not part else Qt.NoPen)
+                p.setBrush(face)
+                p.drawRoundedRect(rect, 5 * ui, 5 * ui)
+                if lift > 0.01 and not (on and not part):
+                    k.glow(p, rect, 5 * ui, tk["accent"], lift * 0.6, ui)
+                if on and not part:
+                    ink = tk["accent_text"]
+                elif part or lift > 0.5:
+                    ink = tk["text"]
+                else:
+                    ink = tk["faint"]
+                pix = self._icon(icons[button], ink, side)
+                p.drawPixmap(QtCore.QPointF(c.x() - side / 2.0, c.y() - side / 2.0), pix)
+                if part:
+                    r = 2.4 * ui
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(k.colour(tk["accent"]))
+                    p.drawEllipse(QtCore.QPointF(rect.right() - 3.5 * ui, rect.bottom() - 3.5 * ui), r, r)
                 p.restore()
             p.end()
 

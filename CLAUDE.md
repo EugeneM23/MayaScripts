@@ -12672,6 +12672,27 @@ hotkey tests' new keys; `docs/superpowers/plans/render_skill_bar.py` -> `skill_b
 GUI Maya** (the F-keys, the edge coming out on a page, real drags from the panels, a Maya shelf read):
 the animator's to try after Check update.
 
+## Skill bar: Maya's status-line tools at the right of the F row (2026-10-20)
+
+The animator, with a screenshot of Maya's status line: «давай реализуем интерфейс и функционал этой
+панели самостоятельно и перенесем ее на наш тайм бар горячих клавиш F». Asked: on the F row at its
+right; mockups https://claude.ai/artifact/1KJ721Rcme6cgJAAqz6xoM, they chose **A, inline icons**.
+Spec `docs/superpowers/specs/2026-10-20-skill-bar-status-tools-design.md`.
+- **What**: the selection masks of the current mode (object 8, component 8, hierarchy Root / Leaf /
+  Template), Lock and Highlight selection, the five snaps (grid, curve, point, view plane, projected
+  centre), Make Live; on every page, the bar's height unchanged, the tabs folding to keys first.
+- **Maya's own state and commands** (`maya_skillbar/statusscene.py`): a mask reads Maya's status-line
+  control (`iconTextCheckBox -q -v / -image1`, `*Partial.png` = partial - Maya's permanent scriptJobs
+  keep those current, hidden or not); without a status line, the group's primary `selectType` flags.
+  A click runs the control's own command (`setObjectPickMask "Joint" 0` ...); the right button on a mask
+  fills Maya's own popup (`createMaskPopup`) and shows its rows, checked, as ours.
+- `maya_skillbar/status.py` (stdlib): the table, the icons (24-grid, drawn for this), the layout, the
+  rules, `MemoryStatus`. `grid.StatusTools`: a child of `PageTabs` at the row's right, polled every
+  250 ms while shown, repainting on a change; look and motion the Time Bar's.
+- Proof: `tests/test_skillbar_status.py` (26); `render_skill_bar_status.py` -> `skill_bar_status.png`.
+  **mayapy cannot prove the scene half**: `selectType -q`, `snapMode -q`, `selectMode -q` answer None
+  without a UI. **Not seen in a GUI Maya.**
+
 ## Use Skeldar interface / Use Maya interface, and a live update (2026-10-19)
 
 The animator: «в настройках нашего плагина сделаем два переключателя Use Maya interface и use Skeldar
