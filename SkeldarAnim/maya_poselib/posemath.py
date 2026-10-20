@@ -850,6 +850,21 @@ class Transfer(object):
 
     # -------------------------------------------------------- the transfer
 
+    def _helper_place(self, leaf, parent, s, s_parent, source, pose):
+        """A helper member's local translation on its parent (2026-10-20, `weapon_r` in its
+        hand, `camera_root` on the root): the target's OWN rest local - its socket - plus the
+        card's displacement from the card's own rest, carried into the target parent's axes and
+        scaled: `t_rest_t + (t_s - t_rest_s) · rot(O_parent)⁻¹ · scale`, the source locals read
+        in the source parent's rigid frame (a vector in the partner's frame maps by `O⁻¹`, the
+        frame rule's own factor)."""
+        target = self.target
+        rest_t = position(rigid(matrix(target[leaf]["rest"])) *
+                          rigid(matrix(target[parent]["rest"])).inverse())
+        now_s = position(rigid(pose(s)) * rigid(pose(s_parent)).inverse())
+        rest_s = position(rigid(matrix(source[s]["rest"])) *
+                          rigid(matrix(source[s_parent]["rest"])).inverse())
+        return rest_t + (now_s - rest_s) * rotation(self._offset(parent)).inverse() * self.scale
+
     def place(self, target=None):
         """The target's root frame as it stands (`target`'s world, default the one given to
         `__init__`): its root bone's world, or - rootless - its ground frame (`_ground`).
@@ -992,6 +1007,9 @@ class Transfer(object):
                     # card's and its chest 9 cm off (2026-10-20)
                     t = position(rigid(pose(s)) * rigid(pose(s_parent)).inverse()) * self.scale
                     placed.add(leaf)
+                elif is_helper(leaf) and not top and above == parent and \
+                        s_parent in source and self.pairs.get(parent) == s_parent:
+                    t = self._helper_place(leaf, parent, s, s_parent, source, pose)
                 point = om.MPoint(t.x, t.y, t.z) * parent_world
             if top:
                 turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world,

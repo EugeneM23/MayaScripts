@@ -804,6 +804,71 @@ def root_moved(bones, place):
     return out
 
 
+def with_weapon(bones, rest_local, local=None):
+    """A copy with `weapon_r` under `hand_r`: its socket `rest_local` at the bind, `local` in the
+    hand as it stands (the socket by default)."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    hand = bones["hand_r"]
+    local = rest_local if local is None else local
+    out["weapon_r"] = {"parent": "hand_r", "canonical": None,
+                       "rest": pm.flat(rest_local * pm.matrix(hand["rest"])),
+                       "world": pm.flat(local * pm.matrix(hand["world"]))}
+    return out
+
+
+def in_hand(out):
+    return out["weapon_r"] * out["hand_r"].inverse()
+
+
+class HelperPlace(unittest.TestCase):
+    """2026-10-20: a helper member (`weapon_r` in its hand) lands on the target's OWN socket at
+    the card's rest, and carries the card's displacement from its rest, scaled."""
+
+    SOCKET_S = trs((-8, -3, 1), (0, 0, 10))
+    SOCKET_T = trs((-6, -2, 1), (0, 0, 10))
+
+    def run_(self, source, target, places=False):
+        pairs = pm.pairs(source, target)
+        members = [b for b in source if b != "root"]
+        scale = pm.scale_between(source, target, pairs)
+        return pm.Transfer(source, target, pairs, members, scale=scale, places=places).frame(), \
+            scale
+
+    def test_onto_a_twin_with_places_the_card_s_own_place(self):
+        moved = trs((-3, -3, 1), (0, 20, 10))
+        source = with_weapon(skeleton(POSE), self.SOCKET_S, moved)
+        target = with_weapon(skeleton(), self.SOCKET_S)
+        out, _ = self.run_(source, target, places=True)
+        same(self, in_hand(out), moved, 1e-9, "weapon_r in its hand")
+
+    def test_at_the_card_s_rest_the_target_s_own_socket(self):
+        source = with_weapon(skeleton(POSE), self.SOCKET_S)
+        target = with_weapon(skeleton(scale=1.2), self.SOCKET_T)
+        out, _ = self.run_(source, target)
+        same(self, in_hand(out), self.SOCKET_T, 1e-9, "weapon_r on the target's socket")
+
+    def test_the_card_s_displacement_carried_and_scaled(self):
+        moved = om.MMatrix(self.SOCKET_S)
+        moved[12] += 5.0                                   # 5 cm along the hand's X
+        source = with_weapon(skeleton(POSE), self.SOCKET_S, moved)
+        target = with_weapon(skeleton(scale=1.2), self.SOCKET_T)
+        out, scale = self.run_(source, target)
+        self.assertGreater(scale, 1.1)
+        got = pm.position(in_hand(out))
+        self.assertAlmostEqual(got.x, -6.0 + 5.0 * scale, 6)
+        self.assertAlmostEqual(got.y, -2.0, 6)
+        self.assertAlmostEqual(got.z, 1.0, 6)
+
+    def test_a_helper_that_is_no_member_rides_its_hand(self):
+        moved = trs((-3, -3, 1), (0, 20, 10))
+        source = with_weapon(skeleton(POSE), self.SOCKET_S, moved)
+        target = with_weapon(skeleton(scale=1.2), self.SOCKET_T, trs((-1, 0, 0)))
+        pairs = pm.pairs(source, target)
+        members = [b for b in source if b not in ("root", "weapon_r")]
+        out = pm.Transfer(source, target, pairs, members).frame()
+        same(self, in_hand(out), trs((-1, 0, 0)), 1e-9, "weapon_r kept")
+
+
 class TransferFrames(unittest.TestCase):
 
     def fixtures(self):
