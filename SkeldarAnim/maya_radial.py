@@ -237,16 +237,20 @@ def is_up():
     return menu is not None and menu.alive()
 
 
-def press():
+def press(kind="slots"):
     """The menu's key went down: the menu under the cursor. Nothing while it is already up (the
-    key's auto-repeat)."""
+    key's auto-repeat). `kind` "cameras" is Space's camera menu (maya_camradial, 2026-10-20)."""
     if is_up():
         return ""
     q = _qt()
     if q is None:
         return _report("The radial menu needs Maya's Qt UI")
     drop_leaving()
-    menu = Menu(q)
+    spec = None
+    if kind == "cameras":
+        import maya_camradial
+        spec = maya_camradial.spec()
+    menu = Menu(q, spec)
     _state()["menu"] = menu
     menu.show(keys_down())
     return ""
@@ -292,6 +296,9 @@ def run_item(item, point):
         return _open_section(key, point)
     if kind == "cmd":
         return _run_command(key, point)
+    if kind == "camera":
+        import maya_camradial
+        return maya_camradial.look_through(key)
     return ""
 
 
@@ -394,16 +401,28 @@ class Menu(object):
     (2026-10-16): `phase` is "open" (opening or up), "fired" (a chosen pill flashing) or
     "leaving" (going back into the centre)."""
 
-    def __init__(self, q):
+    def __init__(self, q, spec=None):
         self.q = q
         self.window = None
         self.timer = None
         self.keys = []
         self.mode = "hold"            # "hold" while the key is down, "click" after a tap
         self.hover = None
-        self.count = count()
-        self.items = slots()[:self.count]
-        self.texts = [slot_text(item) for item in self.items]
+        # a spec (the camera menu): its own items, labels, marked slot, axes, tap and release rule
+        spec = spec or {}
+        if spec.get("items") is not None:
+            self.items = list(spec["items"])
+            self.count = len(self.items)
+            self.texts = list(spec.get("texts") or [""] * self.count)
+        else:
+            self.count = count()
+            self.items = slots()[:self.count]
+            self.texts = [slot_text(item) for item in self.items]
+        self.marked = set(spec.get("marked") or ())
+        self.axes = list(spec.get("axes") or [{}] * self.count)
+        self.on_tap = spec.get("on_tap")
+        self.release_rule = spec.get("release") or rules.release_action
+        self.centre_icon = spec.get("centre")
         self.scale = _scale()
         self.centre = (0, 0)          # global
         self.origin = (0, 0)          # the window's global top-left
@@ -564,7 +583,12 @@ class Menu(object):
             return
         slot = self.pointed()
         filled = slot is not None and bool(rules.parse(self.items[slot])[0])
-        action = rules.release_action(slot, filled, time.time() - self.started)
+        action = self.release_rule(slot, filled, time.time() - self.started)
+        if action == rules.TAP:
+            close_menu()
+            if self.on_tap is not None:
+                _call_later(self.q, self.on_tap)
+            return
         if action == rules.KEEP:
             self.mode = "click"
             self.window.update()
@@ -681,6 +705,11 @@ class Menu(object):
         p.setFont(font)
         p.drawText(QtCore.QRectF(cx - dead, cy - dead, 2 * dead, 2 * dead),
                    QtCore.Qt.AlignCenter, "click" if self.mode == "click" else "")
+        if self.centre_icon:
+            size = int(self.px(16) * ring_k)
+            if size > 2:
+                p.drawPixmap(int(round(cx - size / 2.0)), int(round(cy - size / 2.0)),
+                             self._icon(self.centre_icon, t["muted"], size))
         # the pills, the lit one last so its glow lies over its neighbours
         font.setPixelSize(int(self.px(12)))
         font.setBold(False)
@@ -715,7 +744,8 @@ class Menu(object):
         finish = text.startswith("Finish ")
         icon_px = int(self.px(16))
         h = self.px(30)
-        w = metrics.horizontalAdvance(text) + icon_px + self.px(26)
+        current = i in self.marked
+        w = metrics.horizontalAdvance(text) + icon_px + self.px(26) + (self.px(12) if current else 0)
         # the pill's own centre in its place, then carried out of the menu's centre
         fx = cx + dx - w * rules.pill_anchor(i, self.count) + w / 2.0
         fy = cy + dy
@@ -758,6 +788,14 @@ class Menu(object):
         p.drawRoundedRect(rect, h / 2.0, h / 2.0)
         name = item_icon(self.items[i])
         left = rect.left() + self.px(10)
+        seen = self.axes[i] if i < len(self.axes) else {}
+        if seen:
+            name = None
+            _paint_axes(QtCore, QtGui, p, seen, left + icon_px / 2.0, 0.0, self.px(7))
+        if current:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(fg if fired else t["accent"]))
+            p.drawEllipse(QtCore.QPointF(rect.right() - self.px(12), 0.0), self.px(3), self.px(3))
         if name:
             colour = fg if fired else (t["accent_text"] if lift > 0.5 else t["muted"])
             p.drawPixmap(int(round(left)), int(round(-icon_px / 2.0)),
@@ -769,6 +807,26 @@ class Menu(object):
         p.restore()
 
 
+AXIS_COLOURS = {"x": "#e5534b", "y": "#6cc76c", "z": "#5b9cf0"}
+
+
+def _paint_axes(QtCore, QtGui, p, seen, x, y, size):
+    """The world axes as a camera sees them (`rules.axes_seen`), a dot for one seen end on."""
+    for name in ("x", "y", "z"):
+        sx, sy = seen.get(name, (0.0, 0.0))
+        colour = QtGui.QColor(AXIS_COLOURS[name])
+        if (sx * sx + sy * sy) ** 0.5 < 0.15:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(colour)
+            p.drawEllipse(QtCore.QPointF(x, y), size * 0.3, size * 0.3)
+            continue
+        pen = QtGui.QPen(colour)
+        pen.setWidthF(max(1.0, size * 0.23))
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        p.setPen(pen)
+        p.drawLine(QtCore.QPointF(x, y), QtCore.QPointF(x + sx * size, y + sy * size))
+
+
 def _mix(QtGui, a, b, k):
     """Colour `a` toward `b` by `k` (0..1)."""
     ca, cb = QtGui.QColor(a), QtGui.QColor(b)
@@ -776,6 +834,17 @@ def _mix(QtGui, a, b, k):
     return QtGui.QColor(int(round(ca.red() + (cb.red() - ca.red()) * k)),
                         int(round(ca.green() + (cb.green() - ca.green()) * k)),
                         int(round(ca.blue() + (cb.blue() - ca.blue()) * k)))
+
+
+def _call_later(q, func):
+    """Call `func` once the event loop turns."""
+    def later():
+        try:
+            func()
+        except Exception as error:                           # noqa: BLE001
+            traceback.print_exc()
+            _report("Radial menu: {0}".format(error))
+    q.QtCore.QTimer.singleShot(0, later)
 
 
 def _run_later(q, item, point):

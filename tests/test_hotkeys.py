@@ -496,7 +496,7 @@ class OurRows(unittest.TestCase):
         #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
         #  + ragdoll.blend (2026-10-17)
         #  + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
-        self.assertEqual(len(ours), 104)                # + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
+        self.assertEqual(len(ours), 106)                # + radial.cameras / _release (2026-10-20, Space); + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -1255,6 +1255,8 @@ class TheDefaultKeys(unittest.TestCase):
                 self.assertEqual((key, mods), ("F" + row[len("skills.page"):], {}))
             elif row.startswith("skills.cell"):
                 self.assertEqual((key, mods), ("1234567890"[int(row[len("skills.cell"):]) - 1], {}))
+            elif row == "radial.cameras":
+                self.assertEqual((key, mods), (" ", {}))      # Space, the camera menu
             else:
                 self.assertEqual(mods, {"altModifier": True})
 
@@ -1457,12 +1459,23 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
                           ("g", "editor.graph"), ("o", "editor.outliner"),
-                          ("c", "graph.overlay"), ("q", "radial.press")]
+                          ("c", "graph.overlay"), ("q", "radial.press"),
+                          (" ", "radial.cameras")]
                          + [("F%d" % n, "skills.page%d" % n) for n in range(1, 13)]
                          + [(k, "skills.cell%d" % (i + 1)) for i, k in enumerate("1234567890")])
 
     def test_the_version_went_up_again(self):
         self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 6)
+
+    def test_space_binds_the_camera_menu_and_its_release(self):
+        """Space holds the camera menu in place of the hotbox (2026-10-20)."""
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 10)
+        maya_hotkeys.bind_row(" ", {}, "radial.cameras")
+        self.assertEqual(self.fake.bindings[(" ", False)],
+                         maya_hotkeys.name_command("radial.cameras"))
+        self.assertEqual(self.fake.releases[(" ", False)],
+                         maya_hotkeys.name_command("radial.cameras_release"))
+        self.assertEqual(maya_hotkeys._key_label(" ", {}), "Space")
 
     def test_the_radial_key_binds_its_release_too(self):
         """alt+q holds the radial menu (2026-10-15): the press row on the

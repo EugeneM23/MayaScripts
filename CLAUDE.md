@@ -10993,6 +10993,27 @@ the run, no veil while leaving, off = at once); 6782 unit tests OK;
      pixel as ink. Use `image.pixelColor(x, y).alpha()`. And `widget.render()` of a never-shown
      translucent window fills its background: draw on the image through the paint code instead.
 
+**Space: the camera menu in place of Maya's hotbox** (2026-10-20, «В мае при нажатии на пробел
+вылазит круговое меню. Давай его заменим на такое же как у нас ... Пока ... только переключения
+между камерами»; mockups https://claude.ai/artifact/KwFA1yyBpPPTrJSQjoaZe1, the animator chose
+B). `SkeldarAnim/maya_camradial.py` (a payload row) is the scene half; the menu is
+`maya_radial.Menu(q, spec)` - the radial menu's look, keys and motion, its items from a spec.
+- **One ring of eight** (`rules.camera_slots`): Top N, Side E, Front S, Persp W (the startup
+  cameras, `camera -q -startupCamera`, read by leaf name), the scene's own cameras on the
+  diagonals, at most four, Camera Setup's first (`mayaSceneSetupCamera`, `rules.scene_order`),
+  the active scene tab's only; an empty diagonal a dot. Each pill draws the world axes as that
+  camera sees them (`rules.axes_seen` from its world matrix, `_paint_axes`), the camera the
+  panel looks through carries an accent dot, the centre a camera icon.
+- **Hold Space**: the menu under the cursor (`maya_radial.press("cameras")`); the model panel
+  under the cursor (else the focused one) is read at the press. **Let go on a pill**: `lookThru`
+  that panel. **A quick tap** (`TAP_S`) in the centre: Maya's own tap, single / four views
+  (`panePopAt`'s `doSwitchPanes`, `rules.camera_release` -> `TAP`). Esc / right button close.
+- Hotkey rows `radial.cameras` / `radial.cameras_release` on `" "` in our set only
+  (`DEFAULT_KEYS_VERSION` 10; `_key_label` spells it «Space»); Maya's own sets keep the hotbox.
+- Proof: `tests/test_camradial.py` (rules, the scene on a fake cmds, the shared Menu offscreen:
+  tap, release on a camera, the axes drawn); `render_camera_radial.py` -> `camera_radial_menu.png`.
+  **Not seen in a GUI Maya** (the Space hold and release, lookThru): after Check update.
+
 ## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
 
 The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать

@@ -76,12 +76,15 @@ DEFAULT_KEYS = (
     ("o", {"altModifier": True}, "editor.outliner"),
     ("c", {"altModifier": True}, "graph.overlay"),
     ("q", {"altModifier": True}, "radial.press"),
+    (" ", {}, "radial.cameras"),
 ) + tuple(("F%d" % n, {}, "skills.page%d" % n) for n in range(1, 13))   + tuple((key, {}, "skills.cell%d" % (i + 1)) for i, key in enumerate("1234567890"))
 
 # A row whose key does something on RELEASE as well (2026-10-15, the radial
 # menu: hold alt+q, release over a slot). `bind_defaults` gives the key the
 # release row's nameCommand as its releaseName.
-RELEASE_ROWS = {"radial.press": "radial.release"}
+RELEASE_ROWS = {"radial.press": "radial.release",
+                # Space: the camera menu in place of Maya's hotbox (2026-10-20)
+                "radial.cameras": "radial.cameras_release"}
 
 # Keys DEFAULT_KEYS used to hold and does not any more. They are given back
 # on the version bump -- unbound, and only while they still hold the very
@@ -98,7 +101,7 @@ RELEASED_KEYS = (
 # how alt+g and alt+o reached a set that already existed, and how the
 # number keys are handed back -- and alt+c, given back on 2026-09-08 (5)
 # and taken again for the Graph Overlay on 2026-09-30 (6).
-DEFAULT_KEYS_VERSION = 9      # 8: F1-F12, the skill bar's pages; 9: 1-0, its cells (2026-10-19)
+DEFAULT_KEYS_VERSION = 10     # 8: F1-F12, the skill bar's pages; 9: 1-0, its cells (2026-10-19); 10: Space, the camera menu (2026-10-20)
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -222,11 +225,11 @@ def _tailbuilder(func):
     return message if module.is_open() else _report(message)
 
 
-def _radial(func):
+def _radial(func, *args):
     """The radial menu's key (2026-10-15): the press puts it up under the
-    cursor, the release chooses."""
+    cursor, the release chooses. Space's camera menu passes "cameras"."""
     import maya_radial
-    return getattr(maya_radial, func)()
+    return getattr(maya_radial, func)(*args)
 
 
 def _skills(page):
@@ -670,7 +673,7 @@ def _key_label(key, modifiers):
     """`alt+a`, for a message the animator can read."""
     parts = [name[:-8] for name in ("ctrlModifier", "altModifier",
                                     "shiftModifier") if modifiers.get(name)]
-    return "+".join(parts + [key])
+    return "+".join(parts + ["Space" if key == " " else key])
 
 
 def defaults_installed():
@@ -1142,6 +1145,13 @@ _OURS = (
      partial(_radial, "press")),
     ("radial.release", "Radial Menu", "Radial menu (release)",
      "The radial menu's key let go: the slot pointed at runs",
+     partial(_radial, "release")),
+    ("radial.cameras", "Radial Menu", "Camera menu (press)",
+     "Hold Space for the camera menu under the cursor; release over a camera to look through "
+     "it, tap for single / four views",
+     partial(_radial, "press", "cameras")),
+    ("radial.cameras_release", "Radial Menu", "Camera menu (release)",
+     "Space let go: the viewport looks through the camera pointed at",
      partial(_radial, "release")),
     ("skills.page1", "Skill Bar", "F1 Time Bar",
      "The Time Bar's own rows (F1 of the skill bar)",

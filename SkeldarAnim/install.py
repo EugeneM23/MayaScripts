@@ -136,6 +136,7 @@ _PAYLOAD = (
     "maya_scenetabs",           # scene tabs: several scenes in one Maya (2026-10-15)
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
+    "maya_camradial.py",        # Space: the camera menu in place of the hotbox (2026-10-20)
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)

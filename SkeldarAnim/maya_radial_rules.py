@@ -27,6 +27,7 @@ RADIUS = 112              # logical px: the ring the pills stand on (eight slots
 
 SECTION = "section:"
 COMMAND = "cmd:"
+CAMERA = "camera:"           # the Space menu's items (2026-10-20): a camera to look through
 
 # The set a first press finds (the animator's ask: sections and single functions alike).
 DEFAULTS = (
@@ -58,6 +59,8 @@ def parse(item):
         return "section", item[len(SECTION):]
     if item.startswith(COMMAND) and len(item) > len(COMMAND):
         return "cmd", item[len(COMMAND):]
+    if item.startswith(CAMERA) and len(item) > len(CAMERA):
+        return "camera", item[len(CAMERA):]
     return None, None
 
 
@@ -256,3 +259,64 @@ def approach(current, target, dt_ms, ms=HOVER_MS):
 
 def lifted_scale(lift):
     return 1.0 + (HOVER_SCALE - 1.0) * ease_out(lift)
+
+
+# ------------------------------------------------------- the camera menu (2026-10-20)
+#
+# «В мае при нажатии на пробел вылазит круговое меню. Давай его заменим на такое же как у нас ...
+# Пока в этом меню давай сделаем только переключения между камерами». Variant B of the mockups:
+# one ring of eight, Maya's four views on the compass points, the scene's own cameras on the
+# diagonals (Camera Setup's first), an empty diagonal a dot.
+
+CAMERA_SLOTS = 8
+VIEW_SLOTS = (("top", 0), ("side", 2), ("front", 4), ("persp", 6))   # (startup camera, slot)
+SCENE_SLOTS = (1, 3, 5, 7)
+VIEW_LABELS = {"persp": "Persp", "top": "Top", "front": "Front", "side": "Side"}
+
+
+def camera_item(path):
+    return CAMERA + path
+
+
+def camera_slots(views, scene):
+    """The eight items: `views` {startup name: path} on the compass points, `scene` (paths, in
+    order) on the diagonals, at most four; "" where nothing stands."""
+    items = [""] * CAMERA_SLOTS
+    for name, slot in VIEW_SLOTS:
+        if views.get(name):
+            items[slot] = camera_item(views[name])
+    for slot, path in zip(SCENE_SLOTS, list(scene)[:len(SCENE_SLOTS)]):
+        items[slot] = camera_item(path)
+    return items
+
+
+def scene_order(cameras, marked):
+    """The scene's cameras in the menu's order: those Camera Setup made first, then by name."""
+    marked = set(marked)
+    return sorted(cameras, key=lambda c: (c not in marked, c.rsplit("|", 1)[-1].lower(), c))
+
+
+def axes_seen(matrix):
+    """The world axes as a camera sees them: {"x": (sx, sy), ...}, screen units (y down), from
+    its 16-number world matrix (row vectors: row 0 its right, row 1 its up)."""
+    right, up = matrix[0:3], matrix[4:7]
+    def unit(v):
+        n = math.sqrt(sum(c * c for c in v)) or 1.0
+        return [c / n for c in v]
+    right, up = unit(right), unit(up)
+    out = {}
+    for name, axis in (("x", (1, 0, 0)), ("y", (0, 1, 0)), ("z", (0, 0, 1))):
+        out[name] = (sum(a * b for a, b in zip(axis, right)),
+                     -sum(a * b for a, b in zip(axis, up)))
+    return out
+
+
+def camera_release(slot, filled, elapsed, tap=TAP_S):
+    """What letting Space go does: RUN the camera pointed at, TAP (Maya's single / four views)
+    for a quick press in the centre, else CLOSE."""
+    if slot is not None:
+        return RUN if filled else CLOSE
+    return TAP if elapsed < tap else CLOSE
+
+
+TAP = "tap"
