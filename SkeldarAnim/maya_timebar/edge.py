@@ -111,12 +111,62 @@ def _free_span(window, height):
     return look.free_span(window, height, pane, _obstacles())
 
 
+RESERVE_PROP = "skeldarTimeBarBaseMargin"   # the pane's own bottom margin, kept on it
+
+
+def _main_pane():
+    """The viewport area (Maya's MainPane workspaceControl), or None. Never kept."""
+    if not hubqt._maya_ui_ok():
+        return None
+    try:
+        from maya_sidepanel import holder
+        w = holder.widget("MainPane")
+        if w is not None and w.isVisible() and w.width() > 0:
+            return w
+    except Exception:                                        # noqa: BLE001
+        pass
+    return None
+
+
+def reserve_px(pane, band):
+    """How far the viewport pane (x, y, w, h) reaches down into the bar's band
+    (x, y, w, h): what the viewport gives up while the bar is out. Pure."""
+    if not pane or not band:
+        return 0
+    return max(0, int(pane[1] + pane[3] - band[1]))
+
+
+def set_reserve(widget, px):
+    """The viewport's bottom margin: its own plus `px` (0 gives it back). Its own is
+    kept as a property of the widget itself, so a module purged while the bar is out
+    (an install) still puts it back."""
+    if widget is None:
+        return
+    try:
+        m = widget.contentsMargins()
+        base = widget.property(RESERVE_PROP)
+        if base is None:
+            if px <= 0:
+                return
+            base = m.bottom()
+            widget.setProperty(RESERVE_PROP, int(base))
+        want = int(base) + max(0, int(px))
+        if m.bottom() != want:
+            widget.setContentsMargins(m.left(), m.top(), m.right(), want)
+        if px <= 0:
+            widget.setProperty(RESERVE_PROP, None)
+    except RuntimeError:
+        pass
+
+
 def destroy_all():
     """Every host and sensor of ours standing, found by name (an older module
-    object's too - trap 102). Returns how many."""
+    object's too - trap 102), and the viewport given its bottom back. Returns how
+    many windows."""
     q = hubqt.qt()
     if q is None:
         return 0
+    set_reserve(_main_pane(), 0)
     gone = 0
     for widget in list(q.QtWidgets.QApplication.topLevelWidgets()):
         try:
@@ -135,11 +185,13 @@ class BottomEdge(object):
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
                  app_active=None, motion=None, over_maya=None, playing=None, suspended=None,
-                 span=None):
+                 span=None, pane=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
         self._span = span or _free_span        # (window, height) -> (x0, x1), 2026-10-17
+        self._pane = pane or _main_pane        # the viewport the bar pushes up, 2026-10-20
+        self.reserved = 0                      # px of the viewport's bottom given to the bar
         self._cursor = cursor
         self._buttons = buttons
         self._app_active = app_active
@@ -292,6 +344,22 @@ class BottomEdge(object):
         if self._slide is None:
             self._mask()
         self.sensor.setGeometry(*sensor)
+        if self.shown:
+            self._reserve(True)
+
+    def _reserve(self, on):
+        """While the bar is out the viewport ends above it (2026-10-20, «таймслайдер
+        перекрывает часть вьюпорта ... мы должны изменить границы вьюпорта»): the
+        MainPane's bottom margin takes what of it stands in the band. The pane's own
+        rect does not move with its margin, so the overlap reads the same out or in."""
+        pane = self._pane()
+        px = 0
+        if on and pane is not None:
+            px = reserve_px(_rect_of(pane), self._host_rect())
+        if px == self.reserved:
+            return
+        set_reserve(pane, px)
+        self.reserved = px
 
     def _bands(self, window):
         """(band, sensor): the bottom band and the 2 px sensor, both cut to the stretch
@@ -396,6 +464,7 @@ class BottomEdge(object):
         self.sensor.hide()
         self.host.show()
         self.host.raise_()
+        self._reserve(True)
         self._start_slide(True, instant=instant, on_row=on_row)
         self.watch.start()
 
@@ -484,6 +553,7 @@ class BottomEdge(object):
         if showing and panel is not None and panel.is_open():
             panel.place()                         # on the bar where the slide ended, not 300 ms on
         if not showing:
+            self._reserve(False)
             self.host.hide()
             self.sensor.show()
             self.sensor.raise_()
@@ -552,6 +622,10 @@ class BottomEdge(object):
             self.hide_timer.start()
 
     def destroy(self):
+        try:
+            self._reserve(False)
+        except Exception:                                    # noqa: BLE001
+            pass
         for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone,
                   self.idle):
             try:

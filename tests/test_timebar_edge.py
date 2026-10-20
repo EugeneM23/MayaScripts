@@ -381,3 +381,60 @@ class EdgeMotion(Edge):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class ViewportGivesWay(Edge):
+    """2026-10-20, «таймслайдер сейчас перекрывает часть вьюпорта ... мы должны
+    изменить границы вьюпорта когда открываем тайм слайдер»: while the bar is out the
+    viewport (MainPane) ends above it; hidden, it has its bottom back."""
+
+    def setUp(self):
+        super(ViewportGivesWay, self).setUp()
+        self.pane = QT.QtWidgets.QWidget()
+        self.pane.setContentsMargins(0, 0, 0, 3)
+        self.pane.setGeometry(*self.window)               # the viewport down to the bottom
+        self.pane.show()
+        self.addCleanup(self.pane.deleteLater)
+        self.edge._pane = lambda: self.pane
+
+    def bottom(self):
+        return self.pane.contentsMargins().bottom()
+
+    def test_reserve_is_how_far_the_pane_reaches_into_the_band(self):
+        edge = edge_module()
+        self.assertEqual(edge.reserve_px((0, 100, 50, 400), (0, 450, 50, 80)), 50)
+        self.assertEqual(edge.reserve_px((0, 100, 50, 300), (0, 450, 50, 80)), 0)
+        self.assertEqual(edge.reserve_px(None, (0, 450, 50, 80)), 0)
+
+    def test_out_the_viewport_ends_above_the_bar_and_gets_its_bottom_back(self):
+        self.edge.reveal()
+        band = self.edge._host_rect()
+        g = self.pane.geometry()
+        want = g.y() + g.height() - band[1]
+        self.assertGreater(want, 0)
+        self.assertEqual(self.bottom(), 3 + want)
+        self.edge.conceal()
+        self.assertEqual(self.bottom(), 3)
+        self.assertIsNone(self.pane.property(edge_module().RESERVE_PROP))
+
+    def test_a_pane_that_stops_above_the_band_is_not_touched(self):
+        x, y, w, h = self.window
+        self.pane.setGeometry(x, y, w, h // 2)
+        self.edge.reveal()
+        self.assertEqual(self.bottom(), 3)
+
+    def test_destroying_the_bar_gives_the_bottom_back(self):
+        self.edge.reveal()
+        self.assertGreater(self.bottom(), 3)
+        self.edge.destroy()
+        self.assertEqual(self.bottom(), 3)
+
+    def test_a_purged_module_still_puts_the_pane_back(self):
+        edge = edge_module()
+        edge.set_reserve(self.pane, 40)
+        self.assertEqual(self.bottom(), 43)
+        edge.set_reserve(self.pane, 60)                    # never stacks on itself
+        self.assertEqual(self.bottom(), 63)
+        edge.set_reserve(self.pane, 0)
+        self.assertEqual(self.bottom(), 3)
