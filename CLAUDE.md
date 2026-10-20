@@ -12113,7 +12113,7 @@ used to read as a reload, and only the current frame flashed). **They play as ON
 «растянуть какую-то плашку и проиграть анимацию на плашке»): `Timeline.plate(a, b)` / `plates`, drawn by
 `_draw_plates` over the keys' cells a..b - `look.plate(age, steel, key_hex)`: Steel, the cooling's colour
 and heat over `COOL_MS`; else a white-hot flash into the keys' colour over `PLATE_MS` 700; opaque, fading out
-over its last `PLATE_FADE` 0.3 onto the keys, a small swell at once; the glow three soft rings, added light.
+over its last `PLATE_FADE` 0.3 onto the keys (twice as fast as one key since the same day: `PLATE_COOL_MS` 900, `PLATE_MS` 350), a small swell at once; the glow three soft rings, added light.
 The keys under it play nothing of their own (`_plated`). 200 keys: 104 ms a frame (a flash each) -> 15 on the
 first frame (the timeline's own redraw), 3 after; the cost no longer grows with the keys. Many keys added
 WITHOUT a plate (a paste) still flash, the round flash on `SET_FLASH_MAX` 8 of them (`look.spread`).

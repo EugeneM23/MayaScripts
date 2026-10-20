@@ -907,12 +907,13 @@ def _rgb(hex_):
     return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4))
 
 
-PLATE_MS = 700          # a plate flashing without Steel keys
+PLATE_MS = 350          # a plate flashing without Steel keys (2026-10-20: 700, then twice as fast)
+PLATE_COOL_MS = 900     # a plate cooling into steel: twice as fast as one key (COOL_MS)
 PLATE_FADE = 0.3        # the last share of its life the plate fades out over its keys
 
 
 def plate_ms(steel):
-    return COOL_MS if steel else PLATE_MS
+    return PLATE_COOL_MS if steel else PLATE_MS
 
 
 def plate(age_ms, steel, key_hex):
@@ -925,7 +926,7 @@ def plate(age_ms, steel, key_hex):
         return None
     u = age_ms / float(ms)
     if steel:
-        hex_, heat = cooling(age_ms, key_hex)
+        hex_, heat = cooling(age_ms, key_hex, PLATE_COOL_MS)
     else:
         s = min(1.0, u / 0.6)
         a, b = _rgb(RIM), _rgb(key_hex)
