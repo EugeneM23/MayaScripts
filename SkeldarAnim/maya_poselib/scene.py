@@ -66,8 +66,10 @@ Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Save", "What a 
 """
 
 import collections
+import math
 import re
 
+import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
 import maya_rigs
@@ -684,6 +686,27 @@ def bind_pose(top, paths):
     return out
 
 
+def _unlisted_helpers(paths, parents, posed):
+    """`posed` with every helper joint the bind pose does not list but whose parent it does
+    (2026-10-20: Manny's `camera_bone`, listed in no shipped bind pose) at its channels' REST on
+    that parent - rotate zero (`rotateAxis · jointOrient`), its translate as it stands. Read as it
+    stands, a camera_bone turned in the take rested turned, and no card carried its turn."""
+    out = dict(posed or {})
+    for path in paths:
+        parent = parents.get(path)
+        if path in out or parent not in out or not posemath.is_helper(leaf(path)):
+            continue
+        ra = [math.radians(v) for v in cmds.getAttr(path + ".rotateAxis")[0]]
+        jo = [math.radians(v) for v in cmds.getAttr(path + ".jointOrient")[0]] \
+            if cmds.attributeQuery("jointOrient", node=path, exists=True) else [0.0, 0.0, 0.0]
+        local = om.MEulerRotation(*ra).asMatrix() * om.MEulerRotation(*jo).asMatrix()
+        t = cmds.getAttr(path + ".translate")[0]
+        values = [float(v) for v in local]
+        values[12:15] = [float(v) for v in t]
+        out[path] = posemath.flat(om.MMatrix(values) * posemath.matrix(out[parent]))
+    return out
+
+
 def _bind(path):
     """The joint's bind (`maya_retargetmode.rest_world`) when a skinCluster holds it, else None."""
     if not cmds.listConnections(path + ".worldMatrix[0]", source=False, destination=True,
@@ -721,6 +744,7 @@ def skeleton(ref, notes=None):
             posed = bind_pose(top, paths)
             if posed:
                 break
+        posed = _unlisted_helpers(paths, parents, posed)
     rest = rests(paths, binds, now, posed)
     result = skelmap.recognize(paths, dict((p, tuple(m[12:15])) for p, m in rest.items()))
     names = canonical_names(paths, result.mapping, bool(result.refusal))
