@@ -752,6 +752,7 @@ def classes():
             self.head_lift = 0.0
             self.reached = {}           # key -> clock() when the playhead reached it
             self.cooling = {}           # key -> clock() when it was set hot (Steel keys)
+            self.plates = []            # [(a, b, clock())]: a highlight keyed at once, one hot plate
             self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
             self.play_at = None         # Play pressed: a frame closes in round the bar
             self.right_at = None        # ms of a right press whose key menu waits for a second one
@@ -784,6 +785,8 @@ def classes():
                 return True
             if any(now - t0 < look.COOL_MS for t0 in self.cooling.values()):
                 return True
+            if any(now - t0 < look.plate_ms(self.strip.steel) for _a, _b, t0 in self.plates):
+                return True
             return any(now - t0 < KEY_FADE_MS for t0 in self.reached.values())
 
         def step(self, dt):
@@ -803,6 +806,7 @@ def classes():
                 del self.reached[k]
             for k in [k for k, t0 in self.cooling.items() if now - t0 >= look.COOL_MS or not self.strip.steel]:
                 del self.cooling[k]
+            self.plates = [pl for pl in self.plates if now - pl[2] < look.plate_ms(self.strip.steel)]
             self._prune_trail(now)
 
         def _prune_trail(self, now):
@@ -968,6 +972,8 @@ def classes():
             if st.motion and self.trail:
                 self._draw_trail(p, t, h)
             self._draw_moving_keys(p, t, entrance, moving, opacity)
+            if self.plates and not entrance:
+                self._draw_plates(p, t, h, opacity)
             self._draw_playhead(p, t, w, h)
             if st.motion and self.play_at is not None:
                 self._draw_play_frame(p, w, h)
@@ -1107,6 +1113,47 @@ def classes():
             # the highlight's first and last frame, over the ruler (2026-10-20)
             if sel:
                 draw_span_labels(p, t, sel, 1.5 * ui, w, ui, tk)
+
+        def plate(self, a, b):
+            """Keys set on every frame a..b at once: one plate over them flashes and (Steel
+            keys) cools, in place of a flash on each key (2026-10-20: «растянуть какую-то
+            плашку и проиграть анимацию на плашке»)."""
+            st = self.strip
+            if not st.motion:
+                return False
+            self.plates = [pl for pl in self.plates if not (pl[0] >= a and pl[1] <= b)]
+            self.plates.append((float(a), float(b), st.clock()))
+            st.kick()
+            return True
+
+        def _draw_plates(self, p, t, h, opacity):
+            """Each plate: a bar over its keys' cells, hot and glowing, cooling into the
+            keys' own colour, then gone - the keys under it already are that colour."""
+            st = self.strip
+            ui, now = st.ui, st.clock()
+            top, bottom = key_span(h, ui)
+            for a, b, t0 in self.plates:
+                if b < t.v0 - 1 or a > t.v1 + 1:
+                    continue
+                look_ = look.plate(now - t0, st.steel, st.key_hex())
+                if look_ is None:
+                    continue
+                hex_, heat, alpha, swell = look_
+                la = look.key_cell(t.x(a), t.scale, top, bottom, ui)
+                lb = look.key_cell(t.x(b), t.scale, top, bottom, ui)
+                grow = 2.0 * ui * swell
+                rect = QtCore.QRectF(la[0] - grow, la[1] - grow,
+                                     lb[0] + lb[2] - la[0] + 2 * grow, la[3] + 2 * grow)
+                if heat > 0.01:
+                    # the glow: a few soft rings round the plate, added light
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                    for i, spread in enumerate((7.0, 4.5, 2.5)):
+                        g = spread * ui
+                        p.setBrush(colour(hex_, 255 * 0.16 * heat * opacity))
+                        p.drawRoundedRect(rect.adjusted(-g, -g, g, g), 3 * ui + g, 3 * ui + g)
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+                p.setBrush(colour(hex_, 255 * alpha * opacity))
+                p.drawRoundedRect(rect, 2 * ui, 2 * ui)
 
         def _draw_moving_keys(self, p, t, entrance, moving, opacity):
             """Over the picture: the keys that are lit or lifted, bigger and glowing -
@@ -2041,8 +2088,15 @@ def classes():
 
         def mark_set(self, a, b, breakdown=False):
             """Keys were set on every whole frame a..b (S over a highlight, over a lane
-            block): the next read flashes each of them, however many."""
-            self.keys_set.extend((float(f), bool(breakdown)) for f in range(int(a), int(b) + 1))
+            block): one plate over them flashes and cools (`Timeline.plate`); a single
+            frame is an ordinary key set."""
+            a, b = int(a), int(b)
+            if b <= a:
+                self.keys_set.append((float(a), bool(breakdown)))
+                return
+            self._plated = (float(a), float(b))
+            self.timeline.plate(a, b)
+            self.timeline.update()
 
         def key_hex(self):
             """The keys' colour: steel with ⋮ -> Time bar ▸ Steel keys, else the accent."""
@@ -2224,7 +2278,7 @@ def classes():
             a selection, a layer shown) plays nothing."""
             if not self.motion:
                 return
-            if not (edited or self.keys_set):
+            if not (edited or self.keys_set or getattr(self, "_plated", None)):
                 return
             gone, sets = [], {}
             for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
@@ -2237,6 +2291,11 @@ def classes():
             # a key set over one that stood: no key time changed, it flashes all the same;
             # a highlight keyed at once (`mark_set`): every key of it, however many
             keys, bds = set(self.keys), set(self.breakdowns)
+            plated = getattr(self, "_plated", None)
+            self._plated = None
+            if plated is not None:
+                # the keys under a plate play nothing of their own
+                sets = {k: v for k, v in sets.items() if not (plated[0] <= k <= plated[1])}
             for frame, _bd in self.keys_set:
                 frame = self.state.get("now", 0.0) if frame is None else frame
                 if frame not in sets and (frame in keys or frame in bds):

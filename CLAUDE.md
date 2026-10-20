@@ -12109,9 +12109,15 @@ white heat, yellow, orange, cherry red, a dark temper, then steel over `COOL_MS`
 **Every key of an array cools** (the same day, «при простановке ключей на массив все ключи ... должны
 остывать»): S over a highlight (`key_range`) and over a lane block holding the active layer call
 `Strip.mark_set(a, b)`, so the next read sets every frame a..b, however many (more than `SMALL_CHANGE`
-used to read as a reload, and only the current frame flashed). Past `SET_FLASH_MAX` 8 keys the round flash
-plays on 8 of them spread along (`look.spread`); every key still swells and cools - 200 keys: 104 -> 24 ms
-on the first frame, 8 ms after. Tests
+used to read as a reload, and only the current frame flashed). **They play as ONE plate** (minutes later:
+«растянуть какую-то плашку и проиграть анимацию на плашке»): `Timeline.plate(a, b)` / `plates`, drawn by
+`_draw_plates` over the keys' cells a..b - `look.plate(age, steel, key_hex)`: Steel, the cooling's colour
+and heat over `COOL_MS`; else a white-hot flash into the keys' colour over `PLATE_MS` 700; opaque, fading out
+over its last `PLATE_FADE` 0.3 onto the keys, a small swell at once; the glow three soft rings, added light.
+The keys under it play nothing of their own (`_plated`). 200 keys: 104 ms a frame (a flash each) -> 15 on the
+first frame (the timeline's own redraw), 3 after; the cost no longer grows with the keys. Many keys added
+WITHOUT a plate (a paste) still flash, the round flash on `SET_FLASH_MAX` 8 of them (`look.spread`).
+Filmstrip `time_bar_steel_plate.png` (`render_time_bar_steel.py`). Tests
 `test_timebar_look.CoolingTests`, `test_timebar_bar.SteelKeys`, the hub menu test; filmstrip
 `render_time_bar_steel.py` -> `time_bar_steel.png`. Not seen in a GUI Maya.
 

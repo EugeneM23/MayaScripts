@@ -1502,9 +1502,32 @@ class SteelKeys(Strip):
             QT.QtWidgets.QApplication.instance(),
             QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_S, Qt.NoModifier, "s"))
         self.assertEqual(self.calls("key_range"), [("key_range", 10, 19, "SetKey")])
-        self.assertEqual(sorted(self.tl.cooling), frames)     # 12 stood already: it cools too
-        self.assertNotIn(9.0, self.tl.cooling)
-        self.assertNotIn(30.0, self.tl.cooling)
+        # one plate over the ten, not ten flashes (2026-10-20: «растянуть какую-то плашку»)
+        self.assertEqual([pl[:2] for pl in self.tl.plates], [(10.0, 19.0)])
+        self.assertEqual(self.tl.cooling, {})
+        self.assertEqual([i for i in self.strip.fx.items if i["kind"] == "set"], [])
+        start = self.tl.plates[0][2]
+        self.strip.clock = (lambda: start)
+        hot = self.pixel(15.0)
+        self.assertGreater(hot.red(), 230)
+        self.assertGreater(hot.green(), 170)
+        self.strip.clock = (lambda: start + look.COOL_MS * 0.45)
+        red = self.pixel(15.0)
+        self.assertGreater(red.red(), red.green() + 80)
+        self.strip.clock = (lambda: start + look.COOL_MS + 1)
+        self.tl.step(16)
+        self.assertEqual(self.tl.plates, [])
+        self.assertTrue(self.near(self.pixel(15.0), look.STEEL))
+
+    def test_without_steel_the_plate_flashes_into_orange(self):
+        self.strip.mark_set(10, 19)
+        start = self.tl.plates[0][2]
+        self.strip.clock = (lambda: start + 50)
+        hot = self.pixel(15.0)
+        self.assertGreater(hot.green(), 200)                     # white-hot at first
+        self.strip.clock = (lambda: start + look.PLATE_MS + 1)
+        self.tl.step(16)
+        self.assertEqual(self.tl.plates, [])
 
     def test_cooling_keeps_the_strip_animating_until_it_is_steel(self):
         start = self.set_key()

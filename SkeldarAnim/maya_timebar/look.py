@@ -907,6 +907,35 @@ def _rgb(hex_):
     return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4))
 
 
+PLATE_MS = 700          # a plate flashing without Steel keys
+PLATE_FADE = 0.3        # the last share of its life the plate fades out over its keys
+
+
+def plate_ms(steel):
+    return COOL_MS if steel else PLATE_MS
+
+
+def plate(age_ms, steel, key_hex):
+    """A plate over keys set at once, `age_ms` old: (colour, heat, alpha, swell), or None
+    when it is over. Steel: the cooling's colour and heat. Else a white-hot flash into
+    the keys' own colour. Opaque, then fading out over the last PLATE_FADE of its life;
+    a small swell at once that settles."""
+    ms = plate_ms(steel)
+    if age_ms < 0 or age_ms >= ms:
+        return None
+    u = age_ms / float(ms)
+    if steel:
+        hex_, heat = cooling(age_ms, key_hex)
+    else:
+        s = min(1.0, u / 0.6)
+        a, b = _rgb(RIM), _rgb(key_hex)
+        hex_ = "#%02x%02x%02x" % tuple(int(round(x + (y - x) * s)) for x, y in zip(a, b))
+        heat = max(0.0, 1.0 - u / 0.6) ** 1.5
+    alpha = 1.0 if u < 1.0 - PLATE_FADE else (1.0 - u) / PLATE_FADE
+    swell = (1.0 - min(1.0, u / 0.25)) ** 2
+    return hex_, heat, alpha, swell
+
+
 SET_FLASH_MAX = 8       # keys set at once beyond this: the round flash on this many only
 
 
