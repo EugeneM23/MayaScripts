@@ -12966,7 +12966,7 @@ Friends and «Все пользователи» panes of the sections above.**
   opens with the six quick reactions (mine lit). The feed draws reactions as pills under the bubble
   («👍 2», mine accent-outlined, a new count pops); a click toggles mine. Fonts fall back to Segoe UI
   Emoji (`setFamilies`).
-- **The chime**: `maya_hubsound.SOUNDS["message"]` (E5 then B5 90 ms later, -12 dBFS, 0.46 s; a
+- **The chime**: `maya_hubsound.SOUNDS["message"]` («в духе ICQ» since the same evening: G4 110 ms then D4 220 ms, voice-like harmonics, -12 dBFS - ICQ's own «uh-oh» is theirs and the repo is public; a partial may carry an onset and a length; was E5 then B5 90 ms later, a
   partial may carry an onset now), shipped as `assets/sounds/message.wav`; `play(name, force=True)`
   plays whatever the hub's interface-sounds switch says. `notify.ring` plays it at most once in
   `RING_GAP` 1.5 s; the chat's Sound setting is **on by default**.

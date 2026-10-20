@@ -35,7 +35,7 @@ import wave
 
 RATE = 48000
 
-#  partials: ((frequency Hz, relative level, decay time constant s[, onset s]), ...);
+#  partials: ((frequency Hz, relative level, decay time constant s[, onset s[, length s]]), ...);
 #  a partial with an onset is silent before it and rings from it (a chime's second note);
 #  attack and fade are raised-cosine ramps (s); peak is the loudest sample
 #  (1.0 = full scale).
@@ -46,12 +46,20 @@ SOUNDS = {
     #  the octave dying first; −15 dBFS, heard rather than noticed.
     "hover": Tone(partials=((1318.51, 1.0, 0.016), (2637.02, 0.2, 0.007)),
                   attack=0.0015, length=0.080, fade=0.015, peak=0.178),
-    #  A chat message (2026-10-20, «сообщение со звуком оповещения»): a soft two-note chime,
-    #  E5 then B5 90 ms later, each with a quiet octave; −12 dBFS, under half a second.
-    "message": Tone(partials=((659.26, 1.0, 0.16, 0.0), (1318.51, 0.18, 0.06, 0.0),
-                              (987.77, 0.9, 0.22, 0.09), (1975.53, 0.15, 0.07, 0.09)),
-                    attack=0.003, length=0.46, fade=0.06, peak=0.25),
+    #  A chat message (2026-10-20): «в духе ICQ» - its «о-оу», not its recording (that one is
+    #  ICQ's, and this repository is public): two short sung syllables falling a fourth,
+    #  G4 for 110 ms then D4 for 220 ms after a 40 ms breath, each a voice-like stack of
+    #  harmonics weighted toward an «у» and then an «о»; −12 dBFS.
+    "message": Tone(partials=(
+        (392.00, 1.00, 0.40, 0.00, 0.11), (784.00, 0.55, 0.30, 0.00, 0.11),
+        (1176.0, 0.22, 0.20, 0.00, 0.11), (1568.0, 0.08, 0.15, 0.00, 0.11),
+        (293.66, 1.00, 0.45, 0.15, 0.22), (587.33, 0.75, 0.35, 0.15, 0.22),
+        (880.99, 0.40, 0.25, 0.15, 0.22), (1174.7, 0.12, 0.18, 0.15, 0.22)),
+        attack=0.012, length=0.44, fade=0.04, peak=0.25),
 }
+
+#  a partial with a length ends there over this release (s)
+RELEASE = 0.025
 
 OPTIONVAR = "skeldarAnimHub_sounds"
 
@@ -87,6 +95,11 @@ def synth(tone, rate=RATE):
             #  a note starting late gets the same raised-cosine attack, so it does not click
             ramp = 1.0 if onset <= 0 or u >= tone.attack else (
                 0.5 - 0.5 * math.cos(math.pi * u / tone.attack))
+            if len(partial) > 4:
+                if u >= partial[4] + RELEASE:
+                    continue
+                if u > partial[4]:
+                    ramp *= 0.5 + 0.5 * math.cos(math.pi * (u - partial[4]) / RELEASE)
             value += (ramp * level * math.exp(-u / decay)
                       * math.sin(2.0 * math.pi * freq * u))
         if i < attack:
