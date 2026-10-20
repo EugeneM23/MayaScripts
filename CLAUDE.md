@@ -12695,7 +12695,9 @@ Spec `docs/superpowers/specs/2026-10-20-skill-bar-status-tools-design.md`.
   fills Maya's own popup (`createMaskPopup`) and shows its rows, checked, as ours.
 - `maya_skillbar/status.py` (stdlib): the table, the icons (24-grid, drawn for this), the layout, the
   rules, `MemoryStatus`. `grid.StatusTools`: a child of `PageTabs` at the row's right, polled every
-  250 ms while shown, repainting on a change; look and motion the Time Bar's.
+  250 ms while shown, repainting on a change; look and motion the Time Bar's. **It stands right after
+  F12** (a `TABS_GAP` between; «ближе к F клавишам», the same day), never past the row's right edge;
+  `PageTabs._paint` places it again when the tabs' end moves.
 - Proof: `tests/test_skillbar_status.py` (26); `render_skill_bar_status.py` -> `skill_bar_status.png`.
   **mayapy cannot prove the scene half**: `selectType -q`, `snapMode -q`, `selectMode -q` answer None
   without a UI. **Not seen in a GUI Maya.**

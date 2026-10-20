@@ -257,10 +257,11 @@ class Widget(unittest.TestCase):
     def test_a_fake_link_reads_in_memory(self):
         self.assertIsInstance(self.model, status.MemoryStatus)
 
-    def test_the_tools_stand_at_the_row_s_right_and_the_tabs_leave_them_room(self):
+    def test_the_tools_stand_right_after_the_last_tab(self):
         tabs = self.strip.tabs
-        self.assertEqual(self.tools.geometry().right() + 1, tabs.width())
         last = tabs.rects()[-1]
+        self.assertEqual(self.tools.x(), int(round(last[0] + last[1] + status.TABS_GAP)))
+        self.assertLess(self.tools.geometry().right() + 1, tabs.width())
         self.assertLessEqual(last[0] + last[1], tabs.width() - self.tools.room() + 0.5)
 
     def test_narrow_the_tabs_fold_to_keys(self):
@@ -268,6 +269,7 @@ class Widget(unittest.TestCase):
         self.app.processEvents()
         rects = self.strip.tabs.rects()
         self.assertLessEqual(rects[-1][0] + rects[-1][1], self.strip.tabs.width() - self.tools.room() + 0.5)
+        self.assertLessEqual(self.tools.geometry().right() + 1, self.strip.tabs.width())
 
     def test_a_click_presses_its_button(self):
         self.click(self.centre_of("snap", "grid"))
@@ -295,7 +297,8 @@ class Widget(unittest.TestCase):
         self.model.state = status.blank_state(status.HIERARCHY)
         self.tools.poll()
         self.assertLess(self.tools.width(), wide)
-        self.assertEqual(self.tools.geometry().right() + 1, self.strip.tabs.width())
+        last = self.strip.tabs.rects()[-1]
+        self.assertEqual(self.tools.x(), int(round(last[0] + last[1] + status.TABS_GAP)))
 
     def test_it_paints_a_lit_button_in_the_accent(self):
         self.model.state["snaps"]["point"] = True

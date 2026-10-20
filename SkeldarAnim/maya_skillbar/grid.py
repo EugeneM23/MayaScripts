@@ -170,6 +170,7 @@ def classes():
                 self._failed = True
 
         def _paint(self):
+            self.tools.place()              # a page renamed moves the tabs' end
             s, tk, ui, k = self.strip, self.strip.tokens, self.strip.ui, kit()
             scale, opacity = s.opening_of(self.index)
             p = QtGui.QPainter(self)
@@ -264,7 +265,6 @@ def classes():
             self.timer.setInterval(self.TIMER_MS)
             self.timer.timeout.connect(self.poll)
             self.timer.start()
-            self.place()
 
         # the model ---------------------------------------------------------------
         def _read(self):
@@ -296,8 +296,15 @@ def classes():
             return status.width_of(self.mode(), ui) + status.TABS_GAP * ui
 
         def place(self):
+            """Right after the last F tab (2026-10-20: «ближе к F клавишам»), a gap between;
+            never past the row's right edge."""
             w = int(round(status.width_of(self.mode(), self.strip.ui)))
-            self.setGeometry(max(0, self.tabs.width() - w), 0, w, self.tabs.height())
+            rects = self.tabs.rects()
+            x = rects[-1][0] + rects[-1][1] + status.TABS_GAP * self.strip.ui if rects else 0
+            x = int(round(min(x, self.tabs.width() - w)))
+            geo = QtCore.QRect(max(0, x), 0, w, self.tabs.height())
+            if self.geometry() != geo:
+                self.setGeometry(geo)
 
         def rects(self):
             return status.layout(self.width(), self.mode(), self.strip.ui)

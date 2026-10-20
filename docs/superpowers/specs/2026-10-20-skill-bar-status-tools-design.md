@@ -32,8 +32,8 @@ At the right of the page row (F1..F12), on every page, the bar's height unchange
   permanent scriptJobs keep those in step, so the state is Maya's own reckoning. No status line:
   the group's primary `selectType` flags. `press` runs the control's command; `menu` / `run` the
   right button's rows (`#1` replaced by the row's new value).
-- `maya_skillbar/grid.py`: `StatusTools`, a child of `PageTabs` sized to its buttons at the row's
-  right; the tabs leave it `room()` (they fold to keys first). It reads the model every 250 ms
+- `maya_skillbar/grid.py`: `StatusTools`, a child of `PageTabs` sized to its buttons, standing right
+  after the last F tab (moved there the same day: «Сдвинь новые иконки ближе к F клавишам»); the tabs leave it `room()` (they fold to keys first). It reads the model every 250 ms
   while shown and after each press, repainting only on a change; a mode change places it again.
   The model: the strip's `status_model` if any, `MayaStatus` for the real `Link`, else memory.
 - Look and motion are the Time Bar's (`docs/interface-motion.md`): a lit button is the current
