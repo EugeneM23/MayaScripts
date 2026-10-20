@@ -252,6 +252,58 @@ class BoxTests(unittest.TestCase):
         self.app.processEvents()
         self.assertAlmostEqual(dict([e for e in self.link.log if e[0] == "write"][-1][1])["IKLeg_L.rotateX"], 45.0)
 
+    def sweep_down(self, first, last, part="name", mods=None):
+        _, a = self.row_of(first)
+        _, b = self.row_of(last)
+        pa, pb = self.point(a[part]), self.point(b[part])
+        self.mouse("press", pa, mods)
+        for t in (0.3, 0.7, 1.0):
+            self.mouse("move", QT.QtCore.QPointF(pa.x(), pa.y() + (pb.y() - pa.y()) * t), mods)
+        self.mouse("release", pb, mods)
+
+    def test_a_drag_down_the_rows_selects_them_and_writes_nothing(self):
+        self.sweep_down("translateX", "rotateX")
+        self.assertEqual(self.box.selected, {"translateX", "translateY", "rotateX"})
+        self.assertFalse([e for e in self.link.log if e[0] in ("write", "open")])
+        self.assertEqual(self.link.log[-1][0], "sync")
+
+    def test_a_ctrl_sweep_adds_to_the_selection(self):
+        self.box.selected = {"visibility"} if "visibility" in self.box.order() else {self.box.order()[-1]}
+        kept = set(self.box.selected)
+        self.sweep_down("translateX", "translateY", mods=QT.QtCore.Qt.ControlModifier)
+        self.assertEqual(self.box.selected, kept | {"translateX", "translateY"})
+
+    def test_a_typed_value_lands_on_every_selected_channel(self):
+        self.sweep_down("translateX", "rotateX", part="value")
+        self.box.canvas.setFocus()
+        ev = QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, QT.QtCore.Qt.Key_0, QT.QtCore.Qt.NoModifier, "0")
+        QT.QtWidgets.QApplication.sendEvent(self.box.canvas, ev)
+        editor = self.box.canvas.editor
+        self.assertIsNotNone(editor)
+        self.assertEqual(editor.text(), "0")
+        editor.returnPressed.emit()
+        self.app.processEvents()
+        values = dict([e for e in self.link.log if e[0] == "write"][-1][1])
+        for plug in ("IKLeg_L.translateX", "IKLeg_R.translateX", "IKLeg_L.translateY",
+                     "IKLeg_L.rotateX"):
+            self.assertEqual(values[plug], 0.0)
+
+    def test_a_double_click_keeps_a_sweep_and_types_onto_all_of_it(self):
+        self.sweep_down("translateX", "rotateX", part="value")
+        _, parts = self.row_of("translateY")
+        p = self.point(parts["value"])
+        self.mouse("press", p)
+        self.mouse("release", p)
+        self.mouse("double", p)
+        self.assertEqual(self.box.selected, {"translateX", "translateY", "rotateX"})
+        editor = self.box.canvas.editor
+        editor.setText("2")
+        editor.returnPressed.emit()
+        self.app.processEvents()
+        values = dict([e for e in self.link.log if e[0] == "write"][-1][1])
+        self.assertEqual(values["IKLeg_L.translateX"], 2.0)
+        self.assertEqual(values["IKLeg_L.rotateX"], 2.0)
+
     def test_the_key_cell_keys_or_unkeys_and_the_refresh_flashes_or_breaks(self):
         _, ty = self.row_of("translateY")
         self.mouse("press", self.point(look.cell_rect(ty["mark"])))

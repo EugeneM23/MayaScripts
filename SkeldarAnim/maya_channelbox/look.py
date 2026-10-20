@@ -231,6 +231,26 @@ def select(order, selected, anchor, clicked, ctrl=False, shift=False):
     return {clicked}, clicked
 
 
+def sweep(order, base, start, end):
+    """The selection a drag down the rows from `start` to `end` (channel keys)
+    leaves: the run between them, added to `base` (the selection Ctrl kept)."""
+    selected = set(base)
+    if start in order and end in order:
+        a, b = order.index(start), order.index(end)
+        selected.update(order[min(a, b):max(a, b) + 1])
+    elif start in order:
+        selected.add(start)
+    return selected
+
+
+TYPE_KEYS = "0123456789.-+=*/"
+
+
+def starts_typing(text):
+    """True when a key's text begins a value the way Maya's Channel Box takes it."""
+    return bool(text) and len(text) == 1 and text in TYPE_KEYS
+
+
 STEP = {"distance": 0.1, "angle": 1.0, "scale": 0.01, "number": 0.1, "int": 0.2}
 
 

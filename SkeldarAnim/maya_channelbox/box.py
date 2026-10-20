@@ -326,7 +326,7 @@ def classes():
     # -- the value editor --------------------------------------------------------------
 
     class Edit(QtWidgets.QLineEdit):
-        def __init__(self, canvas, channel, rect):
+        def __init__(self, canvas, channel, rect, text=None):
             super(Edit, self).__init__(canvas)
             self.canvas, self.channel, self.done = canvas, channel, False
             self.setObjectName(EDIT)
@@ -342,9 +342,12 @@ def classes():
                                   channel.get("names")))
             self.returnPressed.connect(lambda: self.finish(True))
             self.editingFinished.connect(lambda: self.finish(True))
+            if text is not None:                     # typed straight onto the rows
+                self.setText(text)
             self.show()
             self.setFocus()
-            self.selectAll()
+            if text is None:
+                self.selectAll()
 
         def keyPressEvent(self, event):
             if event.key() == Qt.Key_Escape:
@@ -376,6 +379,8 @@ def classes():
             self.editor = None
             self.press = None
             self.aim = None
+            self.before = set()                      # the selection the last press found
+            self.setFocusPolicy(Qt.ClickFocus)       # typing onto the selected channels
 
         def resizeEvent(self, event):
             self.fx.setGeometry(self.rect())
@@ -572,10 +577,34 @@ def classes():
         def _hit(self, pos):
             return look.hit(self.box.placed, self.box.rows, pos.x(), pos.y())
 
+        def _row_at(self, y):
+            """The channel row nearest y (a sweep past the ends keeps the last row)."""
+            best, gap = None, None
+            for i, (ry, rh, _parts) in enumerate(self.box.placed):
+                if self.box.rows[i]["kind"] != "channel":
+                    continue
+                d = 0.0 if ry <= y < ry + rh else min(abs(y - ry), abs(y - ry - rh))
+                if gap is None or d < gap:
+                    best, gap = i, d
+            return best
+
         def mouseMoveEvent(self, event):
             pos = event.position()
-            if self.press is not None:
-                self.box.drag(self.press, pos.x(), event.modifiers())
+            press = self.press
+            if press is not None:
+                if press.get("mode") is None:
+                    dx, dy = pos.x() - press["x"], pos.y() - press["y"]
+                    if max(abs(dx), abs(dy)) < 3 * self.box.ui:
+                        return
+                    # down the rows: a sweep selects them, as Maya's; across: the slider
+                    press["mode"] = "sweep" if abs(dy) > abs(dx) else "slide"
+                if press["mode"] == "sweep":
+                    press["moved"] = True
+                    i = self._row_at(pos.y())
+                    if i is not None:
+                        self.box.sweep(press, self.box.rows[i]["channel"]["key"])
+                    return
+                self.box.drag(press, pos.x(), event.modifiers())
                 return
             i, part = self._hit(pos)
             self.box.aim_at(i, part)
@@ -599,14 +628,21 @@ def classes():
                 self.box.flash(("mark", i))
                 self.box.toggle_key(ch)
                 return
-            self.press = {"index": i, "part": part, "x": event.position().x(), "moved": False,
-                          "channel": ch, "mods": event.modifiers()}
+            self.before = set(self.box.selected)
+            mods = event.modifiers()
+            self.press = {"index": i, "part": part, "x": event.position().x(),
+                          "y": event.position().y(), "moved": False, "mode": None,
+                          "channel": ch, "mods": mods,
+                          "base": set(self.box.selected) if mods & Qt.ControlModifier else set()}
             if part == "value":
                 self.box.flash(("value", i))
 
         def mouseReleaseEvent(self, event):
             press, self.press = self.press, None
             if press is None:
+                return
+            if press.get("mode") == "sweep":
+                self.box.sync()
                 return
             if press["moved"]:
                 self.box.drag_done(press)
@@ -627,9 +663,29 @@ def classes():
             ch = self.box.rows[i]["channel"]
             if ch["kind"] in ("bool", "enum") or look.state_of(ch)[0] == "locked":
                 return
+            if ch["key"] in self.before and len(self.before) > 1:
+                # the first click of the double collapsed a sweep: Maya keeps it
+                self.box.selected = set(self.before)
+                self.box.sync()
+                self.update()
+            self.open_editor(i)
+
+        def open_editor(self, i, text=None):
             if self.editor is not None:
                 self.editor.finish(False)
-            self.editor = Edit(self, ch, self.box.placed[i][2]["value"])
+            ch = self.box.rows[i]["channel"]
+            self.editor = Edit(self, ch, self.box.placed[i][2]["value"], text)
+
+        def keyPressEvent(self, event):
+            """A digit (or - . + = * /) typed with channels selected starts the value
+            on the last of them; Enter applies it to every one, as in Maya."""
+            text = event.text()
+            if self.editor is None and look.starts_typing(text):
+                i = self.box.typing_row()
+                if i is not None:
+                    self.open_editor(i, text)
+                    return
+            super(Canvas, self).keyPressEvent(event)
 
         def contextMenuEvent(self, event):
             i, part = self._hit(event.pos())
@@ -857,6 +913,27 @@ def classes():
                                                      ch["key"], ctrl, shift)
             self.sync()
             self.canvas.update()
+
+        def sweep(self, press, key):
+            """A drag down the rows: the run from the pressed channel to `key`."""
+            start = press["channel"]["key"]
+            chosen = look.sweep(self.order(), press.get("base") or set(), start, key)
+            if chosen != self.selected:
+                self.selected, self.anchor = chosen, start
+                self.canvas.update()
+
+        def typing_row(self):
+            """The row a value typed onto the selection opens on: the last selected
+            channel that takes a typed number."""
+            found = None
+            for i, r in enumerate(self.rows):
+                if r["kind"] != "channel":
+                    continue
+                ch = r["channel"]
+                if (ch["key"] in self.selected and ch["kind"] not in ("bool", "enum")
+                        and look.state_of(ch)[0] != "locked"):
+                    found = i
+            return found
 
         def sync(self):
             try:

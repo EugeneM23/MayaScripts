@@ -12523,6 +12523,13 @@ edge light (the mockup's v2 drops it too). Spec `docs/superpowers/specs/2026-10-
   double-click a value types (relative too); a bool's value toggles, an enum's opens its names; the
   key cell keys / unkeys this frame; the right button Key / Breakdown / Delete keys at the frame,
   Mute, Lock, Select / Break connections, Copy / Paste values, Channel Speed Slow / Medium / Fast.
+- **A value onto many channels, as Maya** (2026-10-20, «обвести все каналы и сразу вписать ... 0»): a
+  drag DOWN the rows (vertical first) sweeps a selection (`look.sweep`, Ctrl adds to what stood), a drag
+  ACROSS stays the slider; with channels selected a digit or `- . + = * /` typed on the box (it takes
+  click focus) opens the editor on the last selected one with that text (`look.starts_typing`,
+  `Box.typing_row`), and a double click on a channel of a sweep keeps the sweep (`Canvas.before`).
+  Enter writes the value to every selected channel of every object (`typed`). Tests in
+  `test_channelbox_box`. Not seen in a GUI Maya.
 - **Motion** (docs/interface-motion.md): hover lift + glow 110 ms on the cell and the well, press
   flash 120, bool pop 200; a key that came onto the frame flashes (520), one that left breaks (700,
   the wave); a key the playhead passes does NOT light (taken out 2026-10-19: «когда двигаем
