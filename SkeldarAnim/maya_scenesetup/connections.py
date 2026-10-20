@@ -598,7 +598,13 @@ def proxies():
 
 
 def proxy_of(rig, side):
-    """The side's proxy locator, or None."""
+    """The side's proxy locator, or None: the one the hand's own constraint
+    rides first, then the one tagged for the side."""
+    control = _control(rig, side)
+    for con in our_constraints(control) if control else []:
+        proxy = proxy_for(con)
+        if proxy:
+            return proxy
     tag = "%s:%s" % (rig.namespace, side)
     for node in proxies():
         if cmds.getAttr(node + "." + PROXY_MARKER) == tag:
@@ -608,13 +614,19 @@ def proxy_of(rig, side):
 
 def orphan_proxies():
     """Proxies no constraint of ours points at any more - debris a bake
-    left behind (the first build lost them behind a namespace colon)."""
+    left behind (the first build lost them behind a namespace colon).
+    Pointed at = a target of our constraint (`proxy_for`), never only the
+    stored UUID: a scene saved from a tab and opened again gives the proxy
+    another UUID, and a proxy read as an orphan then was deleted with the
+    hand still riding it - Maya took the constraint along and the hidden
+    IK control stayed hidden (2026-10-20)."""
     pointed = set()
     for con in cmds.ls(type="parentConstraint", long=True) or []:
         if cmds.attributeQuery(MARKER, node=con, exists=True):
-            pointed.add(cmds.getAttr(con + "." + MARKER))
-    return [node for node in proxies()
-            if cmds.ls(node, uuid=True)[0] not in pointed]
+            proxy = proxy_for(con)
+            if proxy:
+                pointed.add(proxy)
+    return [node for node in proxies() if node not in pointed]
 
 
 def sweep_orphans():
@@ -628,7 +640,17 @@ def sweep_orphans():
 
 
 def proxy_for(constraint):
-    """The proxy our constraint points at (its UUID is the mark), or None."""
+    """The proxy our constraint points at, or None: its target carrying our
+    proxy mark (a connection survives a save and a re-import), else the
+    node of the UUID the mark stored."""
+    try:
+        targets = cmds.parentConstraint(constraint, query=True, targetList=True) or []
+    except (RuntimeError, ValueError):
+        targets = []
+    for target in targets:
+        found = cmds.ls(target, long=True) or []
+        if found and cmds.attributeQuery(PROXY_MARKER, node=found[0], exists=True):
+            return found[0]
     uuid = cmds.getAttr(constraint + "." + MARKER)
     found = cmds.ls(uuid, long=True) if uuid else []
     return found[0] if found else None
