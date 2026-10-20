@@ -131,3 +131,36 @@ class NeverShips(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Keys(unittest.TestCase):
+    def test_keeps_the_token_and_finds_the_one_account(self):
+        opener = Opener({("GET", "/accounts?per_page=50"): {"success": True, "result": [
+            {"id": "a1b2", "name": "Studio"}]}})
+        kept = {}
+        name = deploy.keys(ask=lambda: " tok123 ", opener=opener, store=kept.update)
+        self.assertEqual(name, "Studio")
+        self.assertEqual(kept, {"CLOUDFLARE_API_TOKEN": "tok123", "CLOUDFLARE_ACCOUNT_ID": "a1b2"})
+        self.assertEqual(opener.calls[0][3].get("Authorization"), "Bearer tok123")
+
+    def test_several_accounts_are_chosen_from(self):
+        opener = Opener({("GET", "/accounts?per_page=50"): {"success": True, "result": [
+            {"id": "a1", "name": "One"}, {"id": "a2", "name": "Two"}]}})
+        kept = {}
+        deploy.keys(ask=lambda: "tok", choose=lambda: 2, opener=opener, store=kept.update)
+        self.assertEqual(kept["CLOUDFLARE_ACCOUNT_ID"], "a2")
+
+    def test_a_placeholder_is_refused_before_any_request(self):
+        opener = Opener({})
+        with self.assertRaises(deploy.DeployError):
+            deploy.keys(ask=lambda: "<токен>", opener=opener, store=lambda v: None)
+        self.assertEqual(opener.calls, [])
+
+    def test_saved_variables_fill_the_process_environment(self):
+        original = deploy.saved
+        deploy.saved = lambda names=deploy.NAMES_ENV: {"CLOUDFLARE_API_TOKEN": "t",
+                                                       "CLOUDFLARE_ACCOUNT_ID": "a"}
+        try:
+            self.assertEqual(deploy._credentials(os.environ), ("t", "a"))
+        finally:
+            deploy.saved = original

@@ -6,7 +6,9 @@ It never ships with the plugin.
 ## Once (the animator)
 1. A Cloudflare account (free); open Workers & Pages once and accept the workers.dev subdomain.
 2. An API token: Account · Workers Scripts · Edit, Account · Account Settings · Read.
-3. User environment variables CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; restart the Claude app.
+3. `deploy.py keys` in a terminal: paste the token (hidden). It finds the account and keeps both as
+   the user variables CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID; deploy.py reads them from there
+   too, so no restart is needed.
 
 ## Deploy
     & 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' server/chat/deploy.py check

@@ -3,8 +3,12 @@
     mayapy server/chat/deploy.py check        the token works; prints the workers.dev subdomain
     mayapy server/chat/deploy.py staging      uploads skeldar-chat-staging; prints "URL <url>"
     mayapy server/chat/deploy.py production   uploads skeldar-chat
+    mayapy server/chat/deploy.py keys         asks for the API token (hidden), finds the account
+                                              and keeps both as user environment variables
 
-Credentials come only from CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+Credentials come only from CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID: the process
+environment first, then the user's saved variables (so no restart is needed after `keys`).
+Nothing here ever prints a credential.
 """
 import json
 import os
@@ -68,7 +72,75 @@ def request(method, url, token, body=None, ctype=None, opener=urllib.request.url
     return doc.get("result")
 
 
+NAMES_ENV = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
+
+
+def saved(names=NAMES_ENV):
+    """The user's saved environment variables (the registry's HKCU Environment key), {} off Windows."""
+    try:
+        import winreg
+    except ImportError:
+        return {}
+    found = {}
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            for name in names:
+                try:
+                    found[name] = str(winreg.QueryValueEx(key, name)[0])
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return found
+
+
+def save(values):
+    import ctypes
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        for name, value in values.items():
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+    try:  # tell running programs the environment changed (as setx does)
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x1A, 0, "Environment", 2, 2000, None)
+    except Exception:
+        pass
+
+
+def _environment(env):
+    if env is not os.environ:
+        return env
+    merged = dict(saved())
+    merged.update({k: v for k, v in env.items() if k in NAMES_ENV and v})
+    return merged
+
+
+def accounts(token, opener=urllib.request.urlopen):
+    return request("GET", API + "/accounts?per_page=50", token, opener=opener) or []
+
+
+def keys(ask=None, choose=None, opener=urllib.request.urlopen, store=save):
+    """Ask the token once, find the account it reaches, keep both. Returns the account's name."""
+    if ask is None:
+        import getpass
+        ask = lambda: getpass.getpass("Cloudflare API token (not shown as you type): ")
+    token = (ask() or "").strip()
+    if not token or any(c in token for c in "<> \t") or not token.isascii():
+        raise DeployError("That is not a token - paste the token Cloudflare showed you")
+    found = accounts(token, opener)
+    if not found:
+        raise DeployError("The token reaches no account - give it Account > Workers Scripts > Edit")
+    if len(found) > 1:
+        if choose is None:
+            for i, acc in enumerate(found, 1):
+                print("  %d  %s" % (i, acc.get("name")))
+            choose = lambda: int(input("Which account (number): "))
+        found = [found[choose() - 1]]
+    store({"CLOUDFLARE_API_TOKEN": token, "CLOUDFLARE_ACCOUNT_ID": found[0]["id"]})
+    return found[0].get("name") or "the account"
+
+
 def _credentials(env):
+    env = _environment(env)
     for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
         if not env.get(name):
             raise DeployError("Set %s in the environment first (server/chat/README.md)" % name)
@@ -112,11 +184,13 @@ def deploy(target, env=os.environ, opener=urllib.request.urlopen):
 
 
 def main(argv):
-    if len(argv) != 2 or argv[1] not in ("check", "staging", "production"):
+    if len(argv) != 2 or argv[1] not in ("check", "staging", "production", "keys"):
         print(__doc__)
         return 2
     try:
-        if argv[1] == "check":
+        if argv[1] == "keys":
+            print("KEPT for %s - now run: deploy.py check" % keys())
+        elif argv[1] == "check":
             print("SUBDOMAIN " + check())
         else:
             print("URL " + deploy(argv[1]))
