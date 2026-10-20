@@ -562,6 +562,19 @@ class Lanes(unittest.TestCase):
         QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
         self.assertIn(("lane_key_range", ["A2", "A1"], 10, 20), self.link.log)
 
+    def test_s_over_a_one_frame_block_on_several_lanes_keys_each_lane(self):
+        # 2026-10-20: «при груповом выделении сразу на нескольких таймлайнах сейчас не
+        # работает проставление ключей через хоткей s»
+        Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
+        self.panel.lane_sel = {"a": 12, "b": 12, "names": ["A2", "A1"]}
+        override = QT.QtGui.QKeyEvent(E.ShortcutOverride, Qt.Key_S, Qt.NoModifier, "s")
+        override.ignore()
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, override)
+        self.assertTrue(override.isAccepted(), "Maya's S must not fire")
+        ev = QT.QtGui.QKeyEvent(E.KeyPress, Qt.Key_S, Qt.NoModifier, "s")
+        QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
+        self.assertIn(("lane_key_range", ["A2", "A1"], 12, 12), self.link.log)
+
     def test_s_over_a_one_frame_lane_block_is_maya_s(self):
         Qt, E = QT.QtCore.Qt, QT.QtCore.QEvent
         self.panel.lane_sel = {"a": 10, "b": 10, "names": ["A2"]}

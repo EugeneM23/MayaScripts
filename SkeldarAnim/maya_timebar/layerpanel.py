@@ -607,12 +607,26 @@ class Panel(object):
                         have.append(float(nt))
                         have.sort()
 
-    def lane_key_range(self):
-        """S with a lane block of two frames or more standing and no drag: a key on every
-        frame of it on its lanes' layers (the timeline's rule for a highlight). True when
-        it was ours."""
+    def keys_block(self):
+        """The lane block S keys with no drag: any block over several lanes, one frame
+        too (2026-10-20: «при груповом выделении сразу на нескольких таймлайнах сейчас не
+        работает проставление ключей через хоткей s» - a column shift-dragged down the
+        lanes went to Maya's S, which keys the active layer alone, at the current frame);
+        on one lane, two frames or more (one cell on one lane is Maya's S, the
+        timeline's rule)."""
         sel = self.lane_sel
-        if self.lane_drag or not sel or sel["b"] <= sel["a"] or not self._lanes_shown():
+        if self.lane_drag or not sel or not sel.get("names") or not self._lanes_shown():
+            return None
+        if sel["b"] <= sel["a"] and len(sel["names"]) < 2:
+            return None
+        return sel
+
+    def lane_key_range(self):
+        """S with a lane block standing (`keys_block`) and no drag: a key on every frame
+        of it on its lanes' layers (the timeline's rule for a highlight). True when it
+        was ours."""
+        sel = self.keys_block()
+        if sel is None:
             return False
         self._write("lane_key_range", list(sel["names"]), int(sel["a"]), int(sel["b"]))
         return True
@@ -1920,10 +1934,9 @@ def _classes():
                         event.accept()
                         return True
                     return bool(pn.lane_stamp())
-                #  no drag: a lane block of two frames or more takes S, as a timeline
-                #  highlight does - unless the key goes into a text field
-                sel = pn.lane_sel
-                if not sel or sel["b"] <= sel["a"] or not pn._lanes_shown():
+                #  no drag: a lane block takes S (`keys_block`), as a timeline highlight
+                #  does - unless the key goes into a text field
+                if pn.keys_block() is None:
                     return False
                 focus = QtWidgets.QApplication.focusWidget()
                 if focus is not None and isinstance(focus, (QtWidgets.QLineEdit, QtWidgets.QTextEdit,
