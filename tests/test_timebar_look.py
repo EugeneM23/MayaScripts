@@ -682,3 +682,9 @@ class SpreadTests(unittest.TestCase):
         self.assertEqual((got[0], got[-1]), (0, 199))
         self.assertEqual(got, sorted(got))
         self.assertEqual(look.spread(3, 1), [0])
+
+
+class SteelDefaultTests(unittest.TestCase):
+    def test_steel_keys_are_the_default(self):
+        # 2026-10-20: «стальные ключи сделаем ключами по умолчанию»
+        self.assertTrue(look.STEEL_DEFAULT)

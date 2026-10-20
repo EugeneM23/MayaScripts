@@ -160,14 +160,16 @@ def animations_on():
 
 
 def steel_on():
-    """⋮ -> Time bar ▸ Steel keys (off where it cannot be asked)."""
+    """⋮ -> Time bar ▸ Steel keys: the animator's choice, else on - the default since
+    2026-10-20 («стальные ключи сделаем ключами по умолчанию»); off where Maya cannot
+    be asked (the tests)."""
     try:
         import maya.cmds as cmds
         if cmds.optionVar(exists=look.STEEL_VAR):
             return bool(cmds.optionVar(q=look.STEEL_VAR))
+        return look.STEEL_DEFAULT
     except Exception:                                        # noqa: BLE001
-        pass
-    return False
+        return False
 
 
 def stylesheet(tokens, ui):

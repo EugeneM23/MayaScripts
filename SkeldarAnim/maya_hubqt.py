@@ -2402,6 +2402,7 @@ class Skin(object):
         # 2026-10-20 «заменить оранжевые ключи на серебряные ... остывание стали»: not in the group
         self.timebar_steel_action = sub.addAction("Steel keys")
         self.timebar_steel_action.setCheckable(True)
+        self.timebar_steel_action.setChecked(True)          # the default since 2026-10-20
         self.timebar_steel_action.triggered.connect(
             lambda checked=False: self._call("timebar_steel", bool(checked)))
 

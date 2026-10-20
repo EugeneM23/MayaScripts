@@ -12099,8 +12099,8 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
 
 **Steel keys: a key set glows hot and cools into steel** (2026-10-20, «опцию в настройках которая
 позволит заменить оранжевые ключи на серебряные ... похоже на остывание стали при ковке»).
-⋮ -> Time bar ▸ **Steel keys** (a checkbox outside the mode group; optionVar `skeldarTimeBarSteelKeys`, off
-by default; `maya_hub.set_timebar_steel` -> `maya_timebar.set_steel`, which repaints every standing strip
+⋮ -> Time bar ▸ **Steel keys** (a checkbox outside the mode group; optionVar `skeldarTimeBarSteelKeys`, **on
+by default since the same day** - `look.STEEL_DEFAULT`, the animator's own off kept; `maya_hub.set_timebar_steel` -> `maya_timebar.set_steel`, which repaints every standing strip
 found by `ROOT_NAME`). On, the timeline's keys and the active layer lane's keys are `look.STEEL` #b8c0ca
 (`Strip.key_hex`; breakdowns stay cyan); the set flash stays the accent orange, a deleted key breaks in steel.
 A key set (not a breakdown) goes into `Timeline.cooling` and is drawn by `look.cooling(age)` along `HEAT`:

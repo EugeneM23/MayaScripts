@@ -891,6 +891,7 @@ def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):
 # cools into steel, as forged steel does: white heat, yellow, orange, cherry red, a dark
 # temper, then the cold metal.
 STEEL_VAR = "skeldarTimeBarSteelKeys"
+STEEL_DEFAULT = True    # steel unless the animator turned it off (2026-10-20)
 STEEL = "#8a929c"       # a darker steel since the ingots (was #b8c0ca, flat)
 COOL_MS = 1800          # a key set is steel again after this
 COOL_STEPS = 48         # the cooling in this many colours (the key glow caches one picture each)

@@ -240,15 +240,15 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.skin.paint_timebar("docked")
         self.assertTrue(rows[1].isChecked())
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
-        #  Steel keys (2026-10-20): a checkbox, painted without a call
+        #  Steel keys (2026-10-20): a checkbox, on by default, painted without a call
         steel = rows[-1]
-        self.assertTrue(steel.isCheckable() and not steel.isChecked())
+        self.assertTrue(steel.isCheckable() and steel.isChecked())
         steel.trigger()
-        self.assertEqual(self.calls[-1], ("timebar_steel", True))
-        self.skin.paint_timebar("docked", False)
-        self.assertFalse(steel.isChecked())
+        self.assertEqual(self.calls[-1], ("timebar_steel", False))
+        self.skin.paint_timebar("docked", True)
+        self.assertTrue(steel.isChecked())
         self.assertTrue(rows[1].isChecked())
-        self.assertEqual(self.calls[-1], ("timebar_steel", True))
+        self.assertEqual(self.calls[-1], ("timebar_steel", False))
         #  the side panel (2026-10-17): Maya's / Right edge
         self.assertEqual(actions[5].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[5].menu().actions()
