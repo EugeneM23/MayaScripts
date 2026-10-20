@@ -917,8 +917,7 @@ def classes():
             w, h = float(self.width()), float(self.height())
             scale, opacity = st.opening_of(self.index)
             entrance = st.entrance is not None
-            moving = ((self.drag[3], self.preview, look.held(self.stamped))
-                      if (self.preview and self.drag and len(self.drag) > 3) else None)
+            moving = self.moving()
             key = self._static_key(t, w, h, not entrance, moving)
             if key != self._static_for or self._static is None:
                 dpr = max(1.0, float(self.devicePixelRatioF()))
@@ -947,6 +946,29 @@ def classes():
             if st.motion and self.play_at is not None:
                 self._draw_play_frame(p, w, h)
             p.end()
+
+        def own_moving(self):
+            """(selection, target, carried) of this timeline's own key drag, else None."""
+            if self.preview and self.drag and len(self.drag) > 3:
+                return (tuple(self.drag[3]), tuple(self.preview), look.held(self.stamped))
+            return None
+
+        def moving(self):
+            """The keys drawn moved: this timeline's own drag, else a drag on the layer
+            panel's lanes that holds the active layer - the layer these keys are
+            (2026-10-20: «ключи должны перемещаться при переносе и на таймслайдере и на
+            выдвижной панели слоев не важно где я их перемещаю»)."""
+            own = self.own_moving()
+            if own is not None:
+                return own
+            view = getattr(self.strip.layer_panel, "active_lane_drag", None)
+            if view is None:
+                return None
+            try:
+                return view()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+                return None
 
         def _static_key(self, t, w, h, with_keys, moving):
             """What the cached picture shows; a new one is drawn when this changes."""
@@ -1245,6 +1267,7 @@ def classes():
                 if target != self.preview:
                     self.preview = target
                     self.repaint()                  # the keys under the cursor at once
+                    self.strip.lanes_follow()       # and on the active layer's lane
                     if not self.live_timer.isActive():
                         self.live_timer.start()     # the scene follows on the next turn, newest only
 
@@ -1405,23 +1428,8 @@ def classes():
             """The playhead drawn on the new frame at once, then Maya sent there:
             `currentTime` evaluates the scene before it returns, and a paint left
             to the event loop waited for it - the playhead jumped frames."""
-            t0 = time.perf_counter()
-            s, t = self.strip.state, self.drag[2] if self.drag else self.track()
-            frame = self._frame(x, t)
-            if frame == s["now"]:
-                return
-            before = s["now"]
-            s["now"] = frame
-            self.reach(before, frame)
-            self.leave(before)
-            self.strip.show_now()
-            self.repaint()
-            t1 = time.perf_counter()
-            self.strip.call("set_time" if update else "scrub_only", frame)
-            meter = _state().get("meter")
-            if meter is not None:          # the scrub meter: our work, then Maya's frame change
-                meter["ours"].append((t1 - t0) * 1000.0)
-                meter["mayas"].append((time.perf_counter() - t1) * 1000.0)
+            t = self.drag[2] if self.drag else self.track()
+            self.strip.scrub_to(self._frame(x, t), update)
 
     # -- the caret line over the timeline's numbers --------------------------------
 
@@ -2107,6 +2115,39 @@ def classes():
             self._quiet_keys = True
             self._quiet_until = self.clock() + QUIET_MS
             self.keys_set = []
+
+        def scrub_to(self, frame, update=True):
+            """One playhead for the timeline and the layer lanes, whichever is dragged
+            (2026-10-20: «Каретка должна бегать одинаково»): drawn on the new frame at
+            once on both, then Maya sent there - `currentTime` evaluates the scene before
+            it returns, and a paint left to the event loop waited for it."""
+            t0 = time.perf_counter()
+            s, tl = self.state, self.timeline
+            if frame == s["now"]:
+                return
+            before = s["now"]
+            s["now"] = frame
+            tl.reach(before, frame)
+            tl.leave(before)
+            self.show_now()
+            tl.repaint()
+            self.field.repaint()
+            self.lanes_follow()
+            t1 = time.perf_counter()
+            self.call("set_time" if update else "scrub_only", frame)
+            meter = _state().get("meter")
+            if meter is not None:          # the scrub meter: our work, then Maya's frame change
+                meter["ours"].append((t1 - t0) * 1000.0)
+                meter["mayas"].append((time.perf_counter() - t1) * 1000.0)
+
+        def lanes_follow(self):
+            """The layer lanes repainted now: the playhead or a timeline key drag moved."""
+            on_time = getattr(self.layer_panel, "on_time", None)
+            if on_time is not None:
+                try:
+                    on_time()
+                except Exception:                            # noqa: BLE001
+                    print(traceback.format_exc())
 
         def _lanes_moving(self):
             """A key drag on the layer panel's lanes stands: the strip reads no keys."""

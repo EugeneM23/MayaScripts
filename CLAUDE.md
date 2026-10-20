@@ -12005,6 +12005,19 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
   now stays until after the read. Tests `test_on_the_release_the_key_never_shows_at_its_old_place` (fails on the
   old code), `test_a_drag_step_does_not_draw_the_still_picture_again`.
 
+- **One drag and one playhead on both views** (2026-10-20, «НАш тайм слайдер основной должен в точности
+  реагировать на действия на выдвижной панели слоев ... каретка должна бегать одинаково и ключи должны
+  перемещаться ... не важно где я их перемещаю»). The timeline shows the ACTIVE layer's keys, so: a lanes
+  key drag whose lanes hold the active layer draws its moved keys on the timeline too
+  (`Panel.active_lane_drag` -> `Timeline.moving()`, the timeline repainted on each step,
+  `Panel._timeline_follow`); a timeline key drag draws them on the active layer's lane
+  (`Panel.drag_view`, which `Lanes._draw` / `_draw_dragged` read in place of the lanes' own drag; the
+  lanes read no keys meanwhile, `_timeline_dragging`). One scrub for both: `Strip.scrub_to(frame,
+  update)` moves the strip's playhead, its frame field and the lanes' playhead at once, then Maya;
+  `Timeline._scrub` and the lanes' scrub and middle scrub (`Panel._scrub`) both go through it (a
+  timeline scrub used to leave the lanes' playhead behind: `on_time` found the state already moved).
+  Tests `tests/test_timebar_lanes_sync.py` (11, pixels on both views). Not seen in a GUI Maya.
+
 280. **A `QPainterPath` of hundreds of rounded rects fills ~30x slower than drawing them one by one** (Qt 6.8,
      measured 2026-10-19: 200 antialiased rounded rects - `fillPath` 9 ms, `drawRoundedRect` each 0.3 ms,
      `drawRects` 0.13 ms; the fill rule changes nothing). Batching shapes into one path is the right call for a

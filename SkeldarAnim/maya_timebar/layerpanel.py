@@ -390,7 +390,7 @@ class Panel(object):
             self._clamp_scroll()
             self.column.invalidate()
         if self._lanes_shown() and (keys or changed or self._keys_stale):
-            if self.lanes_moving():
+            if self.lanes_moving() or self._timeline_dragging():
                 #  a key drag on the lanes: drawn from the keys read before it, moved by its
                 #  preview; a read now would move the moved keys again («ключи мигают при
                 #  переносе», 2026-10-19). Read on the release.
@@ -412,6 +412,83 @@ class Panel(object):
         """A key edit (Maya's callback, many in a drag or a bake): read on the next
         refresh, not here."""
         self._keys_stale = True
+
+    # -- one drag on both views (2026-10-20) --------------------------------------
+    #
+    # «НАш тайм слайдер основной должен в точности реагировать на действия на
+    # выдвижной панели слоев ... ключи должны перемещаться при переносе и на
+    # таймслайдере и на выдвижной панели слоев не важно где я их перемещаю если слой
+    # соответствует таймлайну мы должны видеть что происходит»: the timeline shows the
+    # ACTIVE layer's keys, so a drag of them on the lanes moves them on the timeline,
+    # and a drag on the timeline moves them on the active layer's lane.
+
+    def _timeline_moving(self):
+        """The timeline's own key drag: (selection, target, carried), else None."""
+        own = getattr(getattr(self.strip, "timeline", None), "own_moving", None)
+        if own is None:
+            return None
+        try:
+            return own()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+            return None
+
+    def _timeline_dragging(self):
+        """A key drag on the timeline stands (its own preview, or its live step):
+        the lanes read no keys, they draw it from the keys read before it."""
+        tl = getattr(self.strip, "timeline", None)
+        return self._timeline_moving() is not None or bool(getattr(tl, "live", None))
+
+    def _own_drag(self):
+        sel = self.lane_sel
+        if self.lane_preview is None or not sel:
+            return None
+        return {"names": list(sel["names"]), "span": (sel["a"], sel["b"]),
+                "target": tuple(self.lane_preview), "carried": look.held(self.lane_stamped)}
+
+    def drag_view(self):
+        """The keys the lanes draw moved: their own key drag, else the timeline's on
+        the active layer's lane. {names, span, target, carried} or None."""
+        own = self._own_drag()
+        if own is not None:
+            return own
+        moving = self._timeline_moving()
+        name = self.active_name()
+        if moving is None or name is None:
+            return None
+        return {"names": [name], "span": tuple(moving[0]), "target": tuple(moving[1]),
+                "carried": moving[2]}
+
+    def active_lane_drag(self):
+        """For the timeline: (selection, target, carried) of a lanes key drag that holds
+        the active layer, else None."""
+        own = self._own_drag()
+        if own is None or self.active_name() not in own["names"]:
+            return None
+        return (own["span"], own["target"], own["carried"])
+
+    def _timeline_follow(self):
+        """The timeline repainted now when the lanes drag moves the active layer's keys."""
+        if self.active_lane_drag() is None:
+            return
+        tl = getattr(self.strip, "timeline", None)
+        if tl is not None:
+            try:
+                tl.repaint()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+
+    def _scrub(self, frame, update=True):
+        """The lanes' scrub: the strip's playhead moved with it at once (one playhead
+        for both views), else straight to Maya."""
+        scrub_to = getattr(self.strip, "scrub_to", None)
+        if scrub_to is not None:
+            try:
+                scrub_to(frame, update)
+                return
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
+        self._call("set_time" if update else "scrub_only", frame)
 
     # -- the lanes as a dope sheet (2026-10-19) ---------------------------------
     #
@@ -475,7 +552,7 @@ class Panel(object):
         frame = t.whole(x)
         if middle:
             self.lane_drag = ("mid", frame)
-            self._call("scrub_only", frame)
+            self._scrub(frame, update=False)
         elif shift and name is not None:
             self.lane_sel = {"a": frame, "b": frame, "names": [name]}
             self.lane_drag = ("hl", i, frame)
@@ -503,7 +580,7 @@ class Panel(object):
             self._write("pick", name)
         self.lane_drag = ("scrub", frame)
         self._call("begin_scrub")
-        self._call("set_time", frame)
+        self._scrub(frame)
 
     def _start_distance(self):
         try:
@@ -527,7 +604,7 @@ class Panel(object):
         if drag[0] in ("scrub", "mid"):
             if frame != drag[1]:
                 self.lane_drag = (drag[0], frame)
-                self._call("set_time" if drag[0] == "scrub" else "scrub_only", frame)
+                self._scrub(frame, update=(drag[0] == "scrub"))
                 self.lanes.repaint()
             return
         if drag[0] == "hl":
@@ -546,6 +623,7 @@ class Panel(object):
             if target != self.lane_preview:
                 self.lane_preview = target
                 self.lanes.repaint()            # the still picture stays; the dragged part moves now
+                self._timeline_follow()         # and on the timeline, when it is the active layer
                 if not self.lane_timer.isActive():
                     self.lane_timer.start()     # the scene follows on the next turn, newest only
 
@@ -2126,8 +2204,10 @@ def _classes():
             sel = pn.lane_sel
             sel_key = (sel["a"], sel["b"], tuple(sel["names"])) if sel else None
             dragging = pn.lane_preview is not None and bool(sel)
+            view = pn.drag_view()
+            view_key = (tuple(view["names"]), tuple(view["span"])) if view else None
             key = (self.width(), self.height(), ui, round(pn.scroll, 2), L.signature(pn.rows["anim"]),
-                   keys_sig, tkey, b is not None, sel_key, dragging)
+                   keys_sig, tkey, b is not None, sel_key, dragging, view_key)
             if b is not None:
                 self._draw(p, lay, t, w, h, True)
                 self._draw_dragged(p, lay, t, w)
@@ -2296,6 +2376,7 @@ def _classes():
             well = qrect(lay.well)
             sel = pn.lane_sel
             dragging = pn.lane_preview is not None and bool(sel)
+            view = pn.drag_view()                # a key drag here, or the timeline's
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
             for i, row, lane, scale, opacity in self._lanes_of(lay, t, moving):
@@ -2306,11 +2387,12 @@ def _classes():
                 p.setBrush(colour(tk["field"]))
                 p.drawRoundedRect(lane, 4 * ui, 4 * ui)
                 mine = bool(sel) and row["name"] in sel["names"]
+                carried = bool(view) and row["name"] in view["names"]
                 if mine and not dragging:
                     self._block(p, t, lane, (sel["a"], sel["b"]), ui)
                 keys = pn.keys.get(row["name"], [])
-                if mine and dragging:
-                    keys = [k for k in keys if not look.inside(k, (sel["a"], sel["b"]))]
+                if carried:                      # drawn where the drag has them, over the picture
+                    keys = [k for k in keys if not look.inside(k, view["span"])]
                 p.setBrush(self._key_colour(row))
                 self._keys(p, t, lane, keys, ui)
                 wkeys = row.get("weight_keys") or ()
@@ -2350,18 +2432,17 @@ def _classes():
             """Over the still picture while a key drag stands: each dragged lane's block
             where the drag has it, its keys there, and the copies S put down."""
             pn = self.panel
-            sel, preview = pn.lane_sel, pn.lane_preview
-            if t is None or not sel or preview is None:
+            view = pn.drag_view()                # a key drag here, or the timeline's
+            if t is None or not view:
                 return
             ui = pn.ui
             rows = pn.rows["anim"]
-            span = (sel["a"], sel["b"])
-            carried = look.held(pn.lane_stamped)
+            span, preview, carried = view["span"], view["target"], view["carried"]
             well = qrect(lay.well)
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
             for i, row, lane, _scale, _opacity in self._lanes_of(lay, t, False):
-                if row["name"] not in sel["names"]:
+                if row["name"] not in view["names"]:
                     continue
                 p.save()
                 if L.dimmed(row, rows):
