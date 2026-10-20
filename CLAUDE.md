@@ -12699,7 +12699,10 @@ the page pressed; skills come in by all four roads; pages kept in a file per use
   remembered paste options, Inventory's Equip, `mel.eval`, Python in `__main__`.
 - **The file**: `<userAppDir>/SkeldarSkills/skills.json` (`store.py`): defaults on first use (F2
   Animate - our tools; F3 Characters; F4 Editors - Script Editor, Graph Editor, Outliner, Component
-  Editor, the hotkey rows `editor.script` / `editor.graph` / `editor.outliner` / `editor.component`),
+  Editor, Motion Trail Editor, the hotkey rows `editor.script` / `editor.graph` / `editor.outliner` /
+  `editor.component` / `editor.motiontrail` - Maya's `OpenMotionTrailEditor`, control
+  `motionTrailEditor`; a cell added to a default page later reaches an existing page once, still
+  under its default name, into its first free cell: `look.ADDED_CELLS`, the file's `added` list),
   a broken file moved aside, atomic writes. A default page added later reaches an existing file once
   (`look.seed_new`, the file's `seeded` list; a file without one counts F2/F3 as given): only onto
   an empty, unnamed page, and a page once given is never given again.

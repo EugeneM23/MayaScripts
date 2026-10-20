@@ -496,7 +496,7 @@ class OurRows(unittest.TestCase):
         #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
         #  + ragdoll.blend (2026-10-17)
         #  + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
-        self.assertEqual(len(ours), 106)                # + radial.cameras / _release (2026-10-20, Space); + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
+        self.assertEqual(len(ours), 107)                # + editor.motiontrail (2026-10-20); + radial.cameras / _release (2026-10-20, Space); + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""
@@ -1405,7 +1405,8 @@ class EditorToggles(unittest.TestCase):
         self.assertIn("layout", self.fake.messages[-1])
 
     def test_both_rows_are_in_the_editors_category(self):
-        for key in ("editor.graph", "editor.outliner", "editor.script", "editor.component"):
+        for key in ("editor.graph", "editor.outliner", "editor.script", "editor.component",
+                    "editor.motiontrail"):
             self.assertEqual(maya_hotkeys.row(key)[1], "SkeldarAnim.Editors")
 
 

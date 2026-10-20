@@ -233,11 +233,42 @@ class EditorsPage(unittest.TestCase):
         with open(self.path, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(data))
 
-    def test_defaults_hold_the_four_editors_on_f4(self):
+    def test_defaults_hold_the_editors_on_f4(self):
         page = look.page_of(look.defaults(), 4)
         self.assertEqual(page["name"], "Editors")
-        self.assertEqual([page["cells"]["0.%d" % i]["key"] for i in range(4)],
-                         ["editor.script", "editor.graph", "editor.outliner", "editor.component"])
+        self.assertEqual([page["cells"]["0.%d" % i]["key"] for i in range(5)],
+                         ["editor.script", "editor.graph", "editor.outliner", "editor.component",
+                          "editor.motiontrail"])
+
+    def _editors_before_the_trail(self, cells=None, name="Editors"):
+        data = look.defaults()
+        data.pop("added")
+        four = {"0.%d" % i: {"kind": "cmd", "key": k} for i, k in enumerate(
+            ["editor.script", "editor.graph", "editor.outliner", "editor.component"])}
+        data["pages"]["4"] = {"name": name, "cells": cells if cells is not None else four}
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data))
+
+    def test_an_editors_page_from_before_gets_the_motion_trail_once(self):
+        self._editors_before_the_trail()
+        data = store.read(self.path)[0]
+        self.assertEqual(look.page_of(data, 4)["cells"]["0.4"]["key"], "editor.motiontrail")
+        cleared = json.loads(look.encode(data))
+        del cleared["pages"]["4"]["cells"]["0.4"]
+        store.write(self.path, cleared)
+        self.assertNotIn("0.4", look.page_of(store.read(self.path)[0], 4)["cells"])
+
+    def test_the_trail_takes_the_first_free_cell(self):
+        self._editors_before_the_trail({"0.0": {"kind": "cmd", "key": "editor.script"},
+                                        "0.2": {"kind": "cmd", "key": "editor.graph"}})
+        cells = look.page_of(store.read(self.path)[0], 4)["cells"]
+        self.assertEqual(cells["0.1"]["key"], "editor.motiontrail")
+
+    def test_a_renamed_page_does_not_get_the_trail(self):
+        self._editors_before_the_trail(name="Mine")
+        cells = look.page_of(store.read(self.path)[0], 4)["cells"]
+        self.assertNotIn("editor.motiontrail", [c["key"] for c in cells.values()])
 
     def test_an_older_file_gets_f4_once_and_keeps_it(self):
         self._old_file()

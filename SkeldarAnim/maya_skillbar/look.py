@@ -71,8 +71,15 @@ DEFAULT_PAGES = {
         {"kind": "cmd", "key": "editor.graph"},
         {"kind": "cmd", "key": "editor.outliner"},
         {"kind": "cmd", "key": "editor.component"},
+        {"kind": "cmd", "key": "editor.motiontrail"},
     ]),
 }
+# A cell added to a default page after files holding that page were made: (page, item), given once
+# to a page still under its default name, into its first free cell («добавь во вкладку editors
+# моушен треил эдитор», 2026-10-20). Remembered by the item's key in the file's `added`.
+ADDED_CELLS = (
+    (4, {"kind": "cmd", "key": "editor.motiontrail"}),
+)
 # The default pages a file written before `seeded` existed had already been given.
 FIRST_SEEDED = (2, 3)
 
@@ -165,7 +172,7 @@ def _old_key(key):
 # ------------------------------------------------------------------ model
 
 def blank():
-    return {"version": VERSION, "rows": DEFAULT_ROWS, "seeded": [],
+    return {"version": VERSION, "rows": DEFAULT_ROWS, "seeded": [], "added": [],
             "pages": dict((str(n), {"name": "", "cells": {}}) for n in range(2, PAGES + 1))}
 
 
@@ -177,6 +184,7 @@ def defaults():
         for i, item in enumerate(items):
             page["cells"][cell_key(0, i)] = dict(item)
     data["seeded"] = sorted(DEFAULT_PAGES)
+    data["added"] = sorted(item["key"] for _n, item in ADDED_CELLS)
     return data
 
 
@@ -195,6 +203,17 @@ def seed_new(data):
                 page["cells"][cell_key(0, i)] = dict(item)
         data["seeded"] = sorted(set(data["seeded"]) | {n})
         changed = True
+    for n, item in ADDED_CELLS:
+        if item["key"] in data["added"]:
+            continue
+        page = data["pages"][str(n)]
+        held = [c for c in page["cells"].values() if c.get("key") == item["key"]]
+        if not held and page["name"] == DEFAULT_PAGES[n][0]:
+            free = [c for c in range(SLOTS) if cell_key(0, c) not in page["cells"]]
+            if free:
+                page["cells"][cell_key(0, free[0])] = dict(item)
+        data["added"] = sorted(set(data["added"]) | {item["key"]})
+        changed = True
     return data, changed
 
 
@@ -206,6 +225,10 @@ def normalised(data):
     seeded = data.get("seeded", list(FIRST_SEEDED))
     if isinstance(seeded, list):
         out["seeded"] = sorted(set(n for n in seeded if isinstance(n, int) and n in DEFAULT_PAGES))
+    added = data.get("added", [])
+    known = set(item["key"] for _n, item in ADDED_CELLS)
+    if isinstance(added, list):
+        out["added"] = sorted(set(k for k in added if k in known))
     pages = data.get("pages")
     if not isinstance(pages, dict):
         return out

@@ -967,6 +967,10 @@ _OURS = (
      "Open the Component Editor, or close it if it is already up",
      partial(toggle_workspace_editor, "Component Editor", "componentEditorPanel1Window",
              "ComponentEditor")),
+    ("editor.motiontrail", "Editors", "Toggle Motion Trail Editor",
+     "Open the Motion Trail Editor, or close it if it is already up",
+     partial(toggle_workspace_editor, "Motion Trail Editor", "motionTrailEditor",
+             "OpenMotionTrailEditor")),
     ("graph.overlay", "Editors", "Graph Overlay",
      "Maya's Graph Editor over the viewport with its background taken out; "
      "alt+mouse is the camera. The same key leaves it",
