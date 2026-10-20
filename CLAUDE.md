@@ -13145,10 +13145,18 @@ the last group exposure / gamma (`QmayaFloatField`), the colour-management `symb
   and the drop-down on `track` with our chevron (`skeldarVpChevron.png`, drawn).
 - **A group's well** is the group's OWN sheet by its name (`group_sheet`: `card`, rounded) plus
   `WA_StyledBackground`: the panel's sheet did not reach those plain QWidgets.
-- **The icons**: the images the bar's buttons carry (every size Maya has, `:/name.png` / `_150` /
-  `_200`) recoloured once by `maya_mayaicons.qimage_recoloured` into
-  `<userAppDir>/<version>/SkeldarViewportIcons`, the buttons pointed there by full path (a file in
-  prefs/icons never reaches Maya's buttons) - Maya's shapes, our greys, the blue accents orange.
+- **The icons are Maya's, redrawn** (the same evening: «перерисовать максимально точно», «В наших
+  цветах»; mockups https://claude.ai/artifact/L7EykZu2Dh6GvcnYzSYTYT): `maya_viewportbar_art.py`
+  (a payload row) holds all 31 of the bar's icons (`ICONS`, keyed by Maya's image stem) as vectors on
+  Maya's 32-unit grid, each measured off Maya 2027's `name_200.png` pixel by pixel. Same shapes,
+  Maya's dark ring round every shape (`halo_of`: the alpha grown 1.35 units, numpy, padded, no wrap),
+  the dark inside of the gates. In our colours (`PALETTE`): light grey, the accent in three shades for
+  the cube's faces, ring #141517. `render(name, px)` draws each at Maya's own size of that image (16,
+  24, 32) into `<userAppDir>/<version>/SkeldarViewportIcons`. The buttons are pointed there by full
+  path (a file in prefs/icons never reaches Maya's buttons). The separator and the colour-management
+  toggle keep Maya's image recoloured (`maya_mayaicons.qimage_recoloured`). A folder from an older
+  drawing is emptied once (`skeldarVpArt.txt` = `art.VERSION`; **raise VERSION when a drawing
+  changes**). QtSvg has no `clipPath`: a drawing cuts with shapes in the face colour.
 - **Maya's drop-down menus stay Maya's**: their rows are drawn by Maya's own code in fixed greys - a
   style sheet changed only their padding, a palette only their left gutter, and Maya empties a menu's
   sheet as it builds its rows (measured). A half-recoloured menu read worse; left alone.
@@ -13160,10 +13168,11 @@ the last group exposure / gamma (`QmayaFloatField`), the colour-management `symb
   sheet and image back.
 
 Proof: `tests/test_viewportbar.py` (sheets scoped, scale, the toggle's edge, group wells, separators,
-images pointed and given back, a stand-in panel offscreen); in a disposable GUI Maya (port 7061, scratch
+images pointed and given back, a stand-in panel offscreen, every bar icon redrawn, the ring, the
+folder refreshed by version); in a disposable GUI Maya (port 7061, scratch
 `MAYA_APP_DIR`, killed after): on in 0.3 s for four panels, 103 recoloured files, the four-view layout,
-off back to Maya's images and sheets; picture `docs/superpowers/plans/viewport_bar_reskin.png` (Maya's
-above, ours below). Not seen: hover and press in a real hand, a torn-off panel.
+off back to Maya's images and sheets; pictures `docs/superpowers/plans/viewport_bar_reskin.png`
+(recoloured) and `viewport_bar_icons.png` (redrawn; Maya's above, ours below). Not seen: hover and press in a real hand, a torn-off panel.
 
 285. **Maya's panel menus ignore a style sheet's colours and a palette's but for the gutter**, and Maya
      clears a menu's sheet when it fills it (an `aboutToShow` sheet was gone at the Show). And

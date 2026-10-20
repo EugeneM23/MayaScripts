@@ -19,9 +19,10 @@ What a model panel is made of (measured 2026-10-20 in a GUI Maya 2027.2):
 
 So the reskin is a style sheet on each panel's widget (scoped to the bar's
 classes, never a blanket QWidget rule - trap 98) and Maya's own icons of that
-bar recoloured into a folder of ours, its buttons pointed there by full path
-(maya_mayaicons' way: a file in prefs/icons never reaches Maya's buttons). The
-icons keep Maya's shapes. Off gives every sheet and image back.
+bar drawn into a folder of ours, its buttons pointed there by full path
+(maya_mayaicons' way: a file in prefs/icons never reaches Maya's buttons): our
+vector redrawing of Maya's icon (maya_viewportbar_art) where there is one, Maya's
+own recoloured otherwise. Off gives every sheet and image back.
 
     enabled() / set_enabled(on)   ⋮ -> Viewport bar (on by default), at once
     ensure()                      at the hub's build: skin the panels, watch
@@ -257,12 +258,50 @@ def _images(controls):
     return names
 
 
+SIZE_PX = {"": 16, "_150": 24, "_200": 32}      # Maya's icon at each display scale
+STAMP = "skeldarVpArt.txt"
+
+
+def drawn_size(stem, size, image):
+    """The pixel size our drawing of `stem` takes at `size` (pure): Maya's own
+    image's, else the nominal one."""
+    if image is not None and not image.isNull():
+        return max(image.width(), image.height())
+    return SIZE_PX.get(size, 16)
+
+
+def _fresh_folder(dest):
+    """Our files written by an older drawing (or the first build's recolours)
+    taken out, so the next pass draws them again."""
+    import maya_viewportbar_art as art
+    path = os.path.join(dest, STAMP)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            if handle.read().strip() == str(art.VERSION):
+                return False
+    except Exception:                                        # noqa: BLE001
+        pass
+    for name in os.listdir(dest):
+        if name.lower().endswith(".png") and name != CHEVRON:
+            try:
+                os.remove(os.path.join(dest, name))
+            except Exception:                                # noqa: BLE001
+                pass
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(str(art.VERSION))
+    return True
+
+
 def write_icons(names, dest):
-    """Each of Maya's icons `names` (every size it has) recoloured into
-    `dest`, once (a file already there is kept). Answers the files there."""
+    """Each of the bar's icons `names` into `dest` at every size Maya has,
+    once (a file already there is kept): our redrawing where there is one
+    (maya_viewportbar_art, 2026-10-20), else Maya's own recoloured. Answers
+    the files there."""
     import maya_mayaicons
+    import maya_viewportbar_art as art
     _, QtGui, _ = _qt()                                      # noqa: N806
     os.makedirs(dest, exist_ok=True)
+    _fresh_folder(dest)
     for name in sorted(names):
         ext = os.path.splitext(name)[1]
         stem = maya_mayaicons.base_stem(name)[0]
@@ -272,11 +311,14 @@ def write_icons(names, dest):
             if os.path.exists(path):
                 continue
             image = QtGui.QImage(":/" + filename)
-            if image.isNull():
-                continue
             try:
-                data = maya_mayaicons.png_bytes(
-                    maya_mayaicons.qimage_recoloured(image, filename))
+                if stem in art.ICONS:
+                    new = art.render(stem, drawn_size(stem, size, image))
+                elif image.isNull():
+                    continue
+                else:
+                    new = maya_mayaicons.qimage_recoloured(image, filename)
+                data = maya_mayaicons.png_bytes(new)
             except Exception:                                # noqa: BLE001
                 continue
             with open(path, "wb") as handle:

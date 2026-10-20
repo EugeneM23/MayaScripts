@@ -101,6 +101,7 @@ _PAYLOAD = (
     "maya_interface.py",        # Use Skeldar / Use Maya interface, one switch (2026-10-19)
     "maya_mayaicons.py",        # Maya's icons in the hub's style (2026-10-17)
     "maya_viewportbar.py",      # the viewport's menu and icon bar in our look (2026-10-20)
+    "maya_viewportbar_art.py",  # its icons redrawn as vectors, Maya's shapes in our colours
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)

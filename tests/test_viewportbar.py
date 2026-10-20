@@ -221,6 +221,91 @@ class OnAStandInPanel(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(dest)), before)
 
 
+#  every icon of the bar Maya 2027 draws (read off a GUI Maya, 2026-10-20) but
+#  the two the redraw leaves to Maya's recolour: the separator, the CM toggle
+BAR_STEMS = ("Camera CameraLock CameraAE Bookmark ImagePlane PanZoom BluePencil "
+             "Grid FilmGate ResolutionGate GateMask FieldChart SafeAction SafeTitle "
+             "WireFrame Shaded UseDefaultMaterial WireFrameOnShaded Textured Light "
+             "Shadows SSAO MotionBlur MultisampleAA DepthOfField IsolateSelected "
+             "XRay XRayActiveComponents XRayJoints Exposure Gamma").split()
+
+
+class Art(unittest.TestCase):
+    def setUp(self):
+        import maya_viewportbar_art as art
+        self.art = art
+
+    def test_every_icon_of_the_bar_is_redrawn(self):
+        self.assertEqual(sorted(self.art.ICONS), sorted(BAR_STEMS))
+
+    def test_a_drawing_is_a_whole_svg_in_our_colours(self):
+        for name in self.art.ICONS:
+            text = self.art.svg(name)
+            self.assertTrue(text.startswith("<svg "), name)
+            self.assertNotIn('class="', text, name)
+            self.assertNotIn('d=""', text, name)
+        self.assertIn(hubstyle.TOKENS["accent"], self.art.svg("ResolutionGate"))
+        self.assertNotIn("#48aeb9", "".join(self.art.svg(n) for n in self.art.ICONS))
+
+    def test_a_cut_out_shows_the_face_it_is_drawn_for(self):
+        self.assertIn('fill="#123456"', self.art.svg("CameraAE", face="#123456"))
+
+    def test_the_gear_has_its_teeth(self):
+        self.assertEqual(self.art.gear().count("L") + 1, 32)
+
+    def test_the_ring_grows_a_shape_and_stays_inside_the_picture(self):
+        import numpy as np
+        alpha = np.zeros((10, 10), np.float32)
+        alpha[4:6, 4:6] = 1
+        ring = self.art.halo_of(alpha, 1.5)
+        self.assertEqual(ring.shape, alpha.shape)
+        self.assertEqual(float(ring[3, 4]), 1.0)
+        self.assertEqual(float(ring[0, 0]), 0.0)
+        edge = np.zeros((6, 6), np.float32)
+        edge[:, 5] = 1
+        self.assertEqual(float(self.art.halo_of(edge, 1.0)[0, 0]), 0.0)   # no wrap round
+
+    @unittest.skipIf(_qt() is None, "no PySide6")
+    def test_render_draws_ink_and_the_ring(self):
+        _qt().QApplication.instance() or _qt().QApplication([])
+        image = self.art.render("Bookmark", 32)
+        self.assertEqual((image.width(), image.height()), (32, 32))
+        inside = image.pixelColor(16, 10)
+        self.assertEqual(inside.name(), self.art.PALETTE["g"])
+        ring = image.pixelColor(9, 10)                      # just left of the ribbon
+        self.assertGreater(ring.alpha(), 120)
+        self.assertLess(ring.lightness(), 60)
+        self.assertEqual(image.pixelColor(1, 1).alpha(), 0)
+
+    def test_a_size_follows_mayas_image_else_the_scale(self):
+        class Img(object):
+            def isNull(self):
+                return False
+
+            def width(self):
+                return 20
+
+            def height(self):
+                return 20
+        self.assertEqual(vb.drawn_size("Camera", "_150", Img()), 20)
+        self.assertEqual(vb.drawn_size("Camera", "_150", None), 24)
+        self.assertEqual(vb.drawn_size("Camera", "_200", None), 32)
+
+
+class FreshFolder(unittest.TestCase):
+    def test_an_older_drawing_is_taken_out_once(self):
+        import maya_viewportbar_art as art
+        dest = tempfile.mkdtemp()
+        for name in ("Camera.png", vb.CHEVRON):
+            open(os.path.join(dest, name), "w").close()
+        self.assertTrue(vb._fresh_folder(dest))
+        self.assertEqual(sorted(os.listdir(dest)), sorted([vb.CHEVRON, vb.STAMP]))
+        open(os.path.join(dest, "Camera.png"), "w").close()
+        self.assertFalse(vb._fresh_folder(dest))
+        self.assertIn("Camera.png", os.listdir(dest))
+        self.assertEqual(open(os.path.join(dest, vb.STAMP)).read(), str(art.VERSION))
+
+
 class HubMenu(unittest.TestCase):
     def test_the_hub_routes_the_row_and_dresses_it(self):
         import maya_hub
@@ -232,6 +317,7 @@ class HubMenu(unittest.TestCase):
     def test_it_ships_and_an_install_rebuilds_it(self):
         import install
         self.assertIn("maya_viewportbar.py", install.payload())
+        self.assertIn("maya_viewportbar_art.py", install.payload())
         import maya_interface
         source = open(maya_interface.__file__, encoding="utf-8").read()
         self.assertIn('"maya_viewportbar"', source)
