@@ -17,6 +17,9 @@ At the right of the page row (F1..F12), on every page, the bar's height unchange
   off). A group partly on is drawn unlit with an accent dot. The right button lists the group's
   own types with their check marks (Maya's `createMaskPopup`, filled into Maya's popup and read
   back, so the rows are Maya's own);
+- **Deselect all types** (added the same day): ahead of the masks in object / component mode, Maya's
+  mask menu's `setObjectPickMask "All" 0` (`setComponentPickMask`); a click turns every type off,
+  or all on when all are off; the right button All types on / All types off;
 - **Lock selection** (`selectPref -xformNoSelect`) and **Highlight selection**
   (`selectPref -allowHiliteSelection`, pressed while highlighting is OFF, as in Maya);
 - **the snaps**: grid, curve, point, view plane, projected center (`snapMode`);

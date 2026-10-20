@@ -85,7 +85,11 @@ class MayaStatus(object):
         cmds, mel = _cmds(), _mel()
         st = self.read()
         try:
-            if group == "mask":
+            if group == "all":
+                command = status.all_command(st["mode"], st["masks"])
+                if command:
+                    mel.eval(command)
+            elif group == "mask":
                 for k, _label, _icon, _control, command, _popup, _flags in status.masks(st["mode"]):
                     if k == key:
                         if st["mode"] == status.HIERARCHY:
@@ -110,7 +114,10 @@ class MayaStatus(object):
 
     def menu(self, group, key):
         """The right button's rows [(label, checked, command)]: a mask's own types (Maya's
-        createMaskPopup, read back off its popup), Make Live's add / remove."""
+        createMaskPopup, read back off its popup), Make Live's add / remove, the all button's
+        all on / all off."""
+        if group == "all":
+            return status.all_rows(mode())
         if group == "live":
             return [("Add selection to live", False, "statusLineAddSelToLive"),
                     ("Remove selection from live", False, "statusLineRemoveSelFromLive"),

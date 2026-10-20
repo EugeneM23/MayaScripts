@@ -12693,6 +12693,10 @@ Spec `docs/superpowers/specs/2026-10-20-skill-bar-status-tools-design.md`.
   keep those current, hidden or not); without a status line, the group's primary `selectType` flags.
   A click runs the control's own command (`setObjectPickMask "Joint" 0` ...); the right button on a mask
   fills Maya's own popup (`createMaskPopup`) and shows its rows, checked, as ours.
+- **Deselect all types** (the same day, «кнопочку как в мае Deselect all для типов выделения»): a button
+  ahead of the masks in object and component mode (Maya's mask menu: `setObjectPickMask "All" 0/1`,
+  `setComponentPickMask "All" 0/1`). A click turns every type off while any is on, else every type on;
+  the right button All types on / All types off. Never lit; none in hierarchy mode, as in Maya.
 - `maya_skillbar/status.py` (stdlib): the table, the icons (24-grid, drawn for this), the layout, the
   rules, `MemoryStatus`. `grid.StatusTools`: a child of `PageTabs` at the row's right, polled every
   250 ms while shown, repainting on a change; look and motion the Time Bar's. **It stands right after

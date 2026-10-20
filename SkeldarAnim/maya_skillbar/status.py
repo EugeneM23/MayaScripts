@@ -77,6 +77,17 @@ SNAPS = (
 
 LIVE = ("live", "Make live (right button: add / remove)", "live")
 
+#  the masks' own "all on / all off" (Maya's ObjectMaskPopup / ComponentMaskPopup), a button
+#  ahead of the masks (2026-10-20: «кнопочку как в мае Deselect all для типов выделения»):
+#  a click turns every type off, or every type on when all are off already
+ALL = ("all", "Deselect all types (right button: all on / all off)", "maskAll")
+ALL_COMMANDS = {OBJECT: 'setObjectPickMask "All" %d', COMPONENT: 'setComponentPickMask "All" %d'}
+
+
+def _joined(a, b):
+    """Two neighbouring groups that stand together, a gap and no hairline between."""
+    return (a, b) in (("snap", "live"), ("all", "mask"))
+
 #  geometry, logical px
 BUTTON_W = 20
 BUTTON_GAP = 1
@@ -115,6 +126,8 @@ ICONS = {
               "M4.4 15a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0"),
     "hTemplate": ("M4 6v-1a1 1 0 0 1 1 -1h1M10 4h4M18 4h1a1 1 0 0 1 1 1v1M20 10v4M20 18v1a1 1 0 0 1 -1 1h-1M14 20h-4"
                   "M6 20h-1a1 1 0 0 1 -1 -1v-1M4 14v-4", "M9 9h6M9 13h4"),
+    "maskAll": ("M4 6v-1a1 1 0 0 1 1 -1h1M10 4h4M18 4h1a1 1 0 0 1 1 1v1M20 10v4M20 18v1a1 1 0 0 1 -1 1h-1"
+                "M14 20h-4M6 20h-1a1 1 0 0 1 -1 -1v-1M4 14v-4", "M9 9l6 6M15 9l-6 6"),
     "lock": ("M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z", "M8 11v-3a4 4 0 0 1 8 0v3"),
     "hilite": ("M3 7v-2a2 2 0 0 1 2 -2h2M11 3h2M3 11v2M16 7v2", "M11 11l9 3.5l-4 1.5l-1.5 4z"),
     "sGrid": (_MAGNET, "M13 16h9M13 20h9M16 13v9M20 13v9"),
@@ -142,7 +155,8 @@ def masks(mode):
 
 def buttons(mode):
     """[(group, key, label, icon)] left to right; a group change stands a divider between."""
-    out = [("mask", m[0], m[1], m[2]) for m in masks(mode)]
+    out = [ALL[:1] + ALL] if mode in ALL_COMMANDS else []
+    out += [("mask", m[0], m[1], m[2]) for m in masks(mode)]
     out += [("select", k, label, icon) for k, label, icon in SELECT]
     out += [("snap", k, label, icon) for k, label, icon, _f in SNAPS]
     out.append(("live",) + LIVE)
@@ -157,14 +171,14 @@ def layout(width, mode, ui=1.0):
     prev = None
     for group, *_rest in items:
         if prev is not None:
-            total += div if group != prev and not (prev == "snap" and group == "live") else gap
+            total += div if group != prev and not _joined(prev, group) else gap
         total += bw
         prev = group
     x = width - END_PAD * ui - total
     out, prev = [], None
     for group, key, _label, _icon in items:
         if prev is not None:
-            x += div if group != prev and not (prev == "snap" and group == "live") else gap
+            x += div if group != prev and not _joined(prev, group) else gap
         out.append((group, key, x, bw))
         x += bw
         prev = group
@@ -181,7 +195,7 @@ def dividers(rects):
     """The x of the hairline between two groups (the middle of the gap)."""
     out = []
     for a, b in zip(rects, rects[1:]):
-        if a[0] != b[0] and not (a[0] == "snap" and b[0] == "live"):
+        if a[0] != b[0] and not _joined(a[0], b[0]):
             out.append((a[2] + a[3] + b[2]) / 2.0)
     return out
 
@@ -215,8 +229,26 @@ def pressed(command, state):
     return command.replace("#1", "0" if state else "1")
 
 
+def all_command(mode, masks_state):
+    """What the all button runs: every type off while any is on, else every type on."""
+    command = ALL_COMMANDS.get(mode)
+    if command is None:
+        return None
+    return command % (0 if any(masks_state.values()) else 1)
+
+
+def all_rows(mode):
+    """The all button's right button rows [(label, checked, command)]."""
+    command = ALL_COMMANDS.get(mode)
+    if command is None:
+        return []
+    return [("All types on", False, command % 1), ("All types off", False, command % 0)]
+
+
 def lit(group, key, st):
     """Is the button drawn pressed in state `st` (MayaStatus.read / MemoryStatus.read)?"""
+    if group == "all":
+        return False                        # an action, never held in
     if group == "mask":
         return bool(st["masks"].get(key))
     if group == "select":
@@ -256,7 +288,11 @@ class MemoryStatus(object):
     def press(self, group, key):
         st = self.state
         self.log.append(("press", group, key))
-        if group == "mask":
+        if group == "all":
+            on = not any(st["masks"].values())
+            for k in st["masks"]:
+                st["masks"][k] = "on" if on else ""
+        elif group == "mask":
             if st["mode"] == HIERARCHY:
                 for k in st["masks"]:
                     st["masks"][k] = "on" if k == key else ""
@@ -275,6 +311,8 @@ class MemoryStatus(object):
 
     def menu(self, group, key):
         self.log.append(("menu", group, key))
+        if group == "all":
+            return all_rows(self.state["mode"])
         if group == "live":
             return [("Add selection to live", False, "statusLineAddSelToLive"),
                     ("Remove selection from live", False, "statusLineRemoveSelFromLive")]

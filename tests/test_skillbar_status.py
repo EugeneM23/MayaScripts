@@ -36,6 +36,8 @@ class Pure(unittest.TestCase):
 
     def test_the_object_mode_reads_as_the_status_line(self):
         keys = [(g, k) for g, k, _l, _i in status.buttons(status.OBJECT)]
+        self.assertEqual(keys[0], ("all", "all"))
+        keys = keys[1:]
         self.assertEqual(keys[:8], [("mask", k) for k in ("Marker", "Joint", "Curve", "Surface", "Deformer",
                                                           "Dynamic", "Rendering", "Other")])
         self.assertEqual(keys[8:10], [("select", "lock"), ("select", "hilite")])
@@ -57,6 +59,23 @@ class Pure(unittest.TestCase):
         hier = status.layout(500.0, status.HIERARCHY)
         self.assertLess(status.width_of(status.HIERARCHY), status.width_of(status.OBJECT))
         self.assertEqual(len(status.dividers(hier)), 2)
+
+    def test_the_all_button_leads_the_masks_with_no_hairline(self):
+        rects = status.layout(500.0, status.OBJECT)
+        self.assertEqual(rects[0][:2], ("all", "all"))
+        self.assertLess(status.dividers(rects)[0], rects[9][2])     # the first hairline after the masks
+        self.assertNotIn("all", [g for g, _k, _l, _i in status.buttons(status.HIERARCHY)])
+
+    def test_the_all_button_turns_every_type_off_or_all_back_on(self):
+        self.assertEqual(status.all_command(status.OBJECT, {"Joint": "on", "Curve": ""}),
+                         'setObjectPickMask "All" 0')
+        self.assertEqual(status.all_command(status.OBJECT, {"Joint": "part"}), 'setObjectPickMask "All" 0')
+        self.assertEqual(status.all_command(status.COMPONENT, {"Point": "", "Line": ""}),
+                         'setComponentPickMask "All" 1')
+        self.assertIsNone(status.all_command(status.HIERARCHY, {}))
+        self.assertEqual([r[2] for r in status.all_rows(status.OBJECT)],
+                         ['setObjectPickMask "All" 1', 'setObjectPickMask "All" 0'])
+        self.assertFalse(status.lit("all", "all", status.blank_state()))
 
     def test_hit(self):
         rects = status.layout(500.0, status.OBJECT)
@@ -197,6 +216,12 @@ class Scene(unittest.TestCase):
         st = model.read()
         self.assertTrue(st["snaps"]["grid"] and st["lock"] and not st["hilite"])
 
+    def test_the_all_button_runs_maya_s_all_off(self):
+        self.cmds.controls = {"objSelJointBtn": (True, "pickJointObj.png")}
+        statusscene.MayaStatus().press("all", "all")
+        self.assertEqual(self.mel.ran, ['setObjectPickMask "All" 0'])
+        self.assertEqual(len(statusscene.MayaStatus().menu("all", "all")), 2)
+
     def test_make_live_runs_maya_s_proc(self):
         statusscene.MayaStatus().press("live", "live")
         self.assertEqual(self.mel.ran, ["statusLineSetMakeLive"])
@@ -291,6 +316,12 @@ class Widget(unittest.TestCase):
         self.assertEqual(seen["labels"], ["Type A", "Type B"])
         self.assertEqual(seen["checked"], [True, False])
         self.assertIn(("run", "selectType -b #1", False), self.model.log)
+
+    def test_the_all_button_clears_every_type_then_turns_them_back_on(self):
+        self.click(self.centre_of("all", "all"))
+        self.assertFalse(any(self.tools.state["masks"].values()))
+        self.click(self.centre_of("all", "all"))
+        self.assertTrue(all(v == "on" for v in self.tools.state["masks"].values()))
 
     def test_a_mode_change_read_by_the_poll_places_the_tools_again(self):
         wide = self.tools.width()
