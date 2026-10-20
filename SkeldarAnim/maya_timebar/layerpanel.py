@@ -2120,18 +2120,9 @@ def _classes():
                 p.drawPixmap(0, 0, self._cache)
                 self._draw_dragged(p, lay, t, w)
             # the highlight's first and last frame over the ruler (2026-10-20)
-            #  at the block's edges, on its top lane, as on the timeline (2026-10-20:
-            #  «там же где и на таймлайне возле концов рамки а не там где корректа»)
             if t is not None and sel:
-                tops = [lane.top() for _i, row, lane, _s, _o in self._lanes_of(lay, t, False)
-                        if row["name"] in sel["names"]]
-                if tops:
-                    span = pn.lane_preview if dragging else (sel["a"], sel["b"])
-                    well = qrect(lay.well)
-                    p.save()
-                    p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
-                    k.draw_span_labels(p, t, span, min(tops) + 2.5 * ui, w, ui, pn.tokens)
-                    p.restore()
+                span = pn.lane_preview if dragging else (sel["a"], sel["b"])
+                k.draw_span_labels(p, t, span, lay.head[1], w, ui, pn.tokens)
             # the playhead's cell through every lane
             if t is not None:
                 try:
