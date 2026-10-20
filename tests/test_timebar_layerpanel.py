@@ -396,7 +396,8 @@ class Lanes(unittest.TestCase):
         self.send("MouseButtonRelease", x1, y1, button, Qt.NoButton, mods)
 
     def test_a_lane_highlight_shows_its_first_and_last_frame(self):
-        """2026-10-20: the frame numbers at the block's edges, over the ruler."""
+        """2026-10-20: the frame numbers at the block's edges, on its top lane (not
+        over the ruler, where the playhead's flag is)."""
         from maya_timebar import bar
         blue = QT.QtGui.QColor(bar.HIGHLIGHT)
 
@@ -405,7 +406,7 @@ class Lanes(unittest.TestCase):
             img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
             img.fill(0)
             self.panel.lanes.render(img)
-            y = int(self.lay.head[1] + 6)
+            y = int(self.lay.row_at(0, 0)[1] + 8)
             return [x for x in range(img.width())
                     if all(abs(a - b) < 12 for a, b in ((img.pixelColor(x, y).red(), blue.red()),
                                                          (img.pixelColor(x, y).green(), blue.green()),
@@ -415,6 +416,13 @@ class Lanes(unittest.TestCase):
         xs = pills({"a": 10, "b": 40, "names": ["A2"]})
         self.assertTrue([x for x in xs if t.x(10) <= x < t.x(10) + 30], "the start label")
         self.assertTrue([x for x in xs if t.end(40) - 30 < x <= t.end(40)], "the end label")
+        head = int(self.lay.head[1] + 6)
+        img = QT.QtGui.QImage(self.panel.lanes.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.panel.lanes.render(img)
+        self.assertFalse([x for x in range(img.width())
+                          if abs(img.pixelColor(x, head).blue() - blue.blue()) < 12
+                          and abs(img.pixelColor(x, head).red() - blue.red()) < 12], "nothing over the ruler")
 
     def test_a_layer_s_weight_keys_are_marked_l_on_its_lane(self):
         """2026-10-20: «ключик в котором проанимирован слой будем отмечать буквой L»."""
