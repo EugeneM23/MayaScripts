@@ -880,3 +880,43 @@ def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):
         dy = math.sin(angle) * v * t + 0.5 * gravity * t * t
         out.append((dx, dy, 1.0 - age_ms / float(ms)))
     return out
+
+
+# Steel keys (2026-10-20, «заменить оранжевые ключи на серебряные ... эффект остывания стали»):
+# ⋮ -> Time bar ▸ Steel keys draws the keys in steel, and a key just set glows hot and
+# cools into steel, as forged steel does: white heat, yellow, orange, cherry red, a dark
+# temper, then the cold metal.
+STEEL_VAR = "skeldarTimeBarSteelKeys"
+STEEL = "#b8c0ca"
+COOL_MS = 1800          # a key set is steel again after this
+COOL_STEPS = 48         # the cooling in this many colours (the key glow caches one picture each)
+HEAT = ((0.00, "#fff6e4"),      # white heat
+        (0.08, "#ffd47a"),      # yellow
+        (0.22, "#ff9a3c"),      # orange
+        (0.45, "#d8432a"),      # cherry red
+        (0.70, "#7a4a44"),      # the dark temper
+        (1.00, STEEL))
+
+
+def _rgb(hex_):
+    hex_ = hex_.lstrip("#")
+    return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def cooling(age_ms, steel=STEEL, cool_ms=COOL_MS):
+    """(colour hex, heat 0..1) of a key `age_ms` after it was set hot: the colour along
+    HEAT (its last stop `steel`), the heat its glow - 1 at once, gone by 70 % of the way."""
+    u = max(0.0, min(1.0, age_ms / float(cool_ms)))
+    u = round(u * COOL_STEPS) / float(COOL_STEPS)      # a few dozen colours: each glow is cached
+    stops = HEAT[:-1] + ((1.0, steel),)
+    for (u0, a), (u1, b) in zip(stops, stops[1:]):
+        if u <= u1:
+            s = (u - u0) / (u1 - u0) if u1 > u0 else 1.0
+            s = s * s * (3.0 - 2.0 * s)
+            ca, cb = _rgb(a), _rgb(b)
+            hex_ = "#%02x%02x%02x" % tuple(int(round(x + (y - x) * s)) for x, y in zip(ca, cb))
+            break
+    else:
+        hex_ = steel
+    heat = max(0.0, 1.0 - u / 0.7) ** 1.5
+    return hex_, heat

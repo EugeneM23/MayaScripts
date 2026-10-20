@@ -284,3 +284,26 @@ def set_on(on):
 
 def toggle():
     return hide() if wanted() and active() else show()
+
+
+def steel():
+    """⋮ -> Time bar ▸ Steel keys: the keys in steel, a key set glowing hot and cooling."""
+    from . import bar
+    return bar.steel_on()
+
+
+def set_steel(on):
+    """Steel keys on or off (2026-10-20, «эффект остывания стали»): remembered, and every
+    standing strip repainted at once."""
+    import maya.cmds as cmds
+    from . import bar, look
+    cmds.optionVar(intValue=(look.STEEL_VAR, 1 if on else 0))
+    try:
+        from PySide6 import QtWidgets
+        for w in QtWidgets.QApplication.allWidgets():
+            if w.objectName() == bar.ROOT_NAME and hasattr(w, "set_steel"):
+                w.set_steel(on)
+    except Exception:                                        # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
+    return "Steel keys: a key set glows hot and cools into steel" if on else "Keys in the accent orange"

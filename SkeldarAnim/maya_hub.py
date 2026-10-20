@@ -462,6 +462,7 @@ def _callbacks():
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
+        "timebar_steel": set_timebar_steel,
         #  the side panel (2026-10-17): Maya's editors at the right edge
         "sidepanel": set_sidepanel,
         "sidepanel_select": set_sidepanel_select,
@@ -598,7 +599,7 @@ def _dress_timebar(skin):
     """The menu's Time bar row = the animator's choice (on by default)."""
     try:
         import maya_timebar
-        skin.paint_timebar(maya_timebar.mode())
+        skin.paint_timebar(maya_timebar.mode(), maya_timebar.steel())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -1671,6 +1672,17 @@ def set_timebar(choice):
     import maya_timebar
     message = maya_timebar.set_on(choice)
     repaint_interface()
+    say(message)
+    return message
+
+
+def set_timebar_steel(on):
+    """⋮ -> Time bar ▸ Steel keys (2026-10-20): the keys in steel, a key set glowing
+    hot and cooling into steel."""
+    import maya_timebar
+    message = maya_timebar.set_steel(on)
+    if is_skinned():
+        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel())
     say(message)
     return message
 

@@ -1382,3 +1382,75 @@ class MovesPlayNoEffect(Strip):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SteelKeys(Strip):
+    """⋮ -> Time bar ▸ Steel keys (2026-10-20, «заменить оранжевые ключи на серебряные ...
+    эффект остывания стали»): the keys in steel, a key set hot and cooling into steel."""
+
+    motion = True
+
+    def setUp(self):
+        super(SteelKeys, self).setUp()
+        self.strip.opened = -100000.0           # past the opening burst
+
+    def pixel(self, frame):
+        t = self.tl.track()
+        image = self.tl.grab().toImage()
+        return image.pixelColor(int(t.x(frame) + t.scale / 2.0), int(bar.KEY_Y))
+
+    def near(self, colour, hex_, tol=24):
+        want = QT.QtGui.QColor(hex_)
+        return max(abs(colour.red() - want.red()), abs(colour.green() - want.green()),
+                   abs(colour.blue() - want.blue())) <= tol
+
+    def test_off_the_keys_are_the_accent_on_they_are_steel(self):
+        self.assertTrue(self.near(self.pixel(30.0), maya_hubstyle.TOKENS["accent"]))
+        self.strip.set_steel(True)
+        self.assertEqual(self.strip.key_hex(), look.STEEL)
+        self.assertTrue(self.near(self.pixel(30.0), look.STEEL))
+        self.strip.set_steel(False)
+        self.assertTrue(self.near(self.pixel(30.0), maya_hubstyle.TOKENS["accent"]))
+
+    def set_key(self):
+        self.strip.set_steel(True)
+        start = self.strip.clock()
+        self.strip.clock = (lambda: start)
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        return start
+
+    def test_a_key_set_is_hot_then_cherry_red_then_steel(self):
+        start = self.set_key()
+        self.assertIn(20.0, self.tl.cooling)
+        self.assertEqual(self.strip.fx.items[-1]["hex"], maya_hubstyle.TOKENS["accent"])
+        hot = self.pixel(20.0)
+        self.assertGreater(hot.red(), 230)
+        self.assertGreater(hot.green(), 170)                   # white-yellow heat
+        self.strip.clock = (lambda: start + look.COOL_MS * 0.45)
+        red = self.pixel(20.0)
+        self.assertGreater(red.red(), red.green() + 80)          # cherry red
+        self.assertTrue(self.near(self.pixel(30.0), look.STEEL))  # the others stay steel
+        self.strip.clock = (lambda: start + look.COOL_MS + 1)
+        self.tl.step(16)
+        self.assertNotIn(20.0, self.tl.cooling)
+        self.assertTrue(self.near(self.pixel(20.0), look.STEEL))
+
+    def test_without_steel_a_key_set_does_not_cool(self):
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.tl.cooling, {})
+
+    def test_a_breakdown_set_stays_cyan(self):
+        self.strip.set_steel(True)
+        self.link.k = ([0.0, 6.0, 12.0, 30.0, 40.0], [9.0, 15.0])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual(self.tl.cooling, {})
+
+    def test_cooling_keeps_the_strip_animating_until_it_is_steel(self):
+        start = self.set_key()
+        self.strip.clock = (lambda: start + 1000)
+        self.assertTrue(self.tl.busy(start + 1000))

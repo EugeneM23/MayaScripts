@@ -52,6 +52,7 @@ class SeamsMixin(object):
             "mayatheme": lambda on: self.calls.append(("mayatheme", on)),
             "mayaicons": lambda on: self.calls.append(("mayaicons", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
+            "timebar_steel": lambda on: self.calls.append(("timebar_steel", on)),
             "interface": lambda c: self.calls.append(("interface", c)),
             "sidepanel": lambda choice: self.calls.append(("sidepanel", choice)),
             "sidepanel_select": lambda on: self.calls.append(("sidepanel_select", on)),
@@ -232,12 +233,22 @@ class TheShell(SeamsMixin, unittest.TestCase):
                          ["check_update", "hotkey_editor", ("sounds", False),
                           ("animations", False), "classic"])
         rows = actions[4].menu().actions()
-        self.assertEqual([a.text() for a in rows], ["Maya's", "Docked", "Bottom edge"])
+        self.assertEqual([a.text() for a in rows if not a.isSeparator()],
+                         ["Maya's", "Docked", "Bottom edge", "Steel keys"])
         rows[2].trigger()
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
         self.skin.paint_timebar("docked")
         self.assertTrue(rows[1].isChecked())
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
+        #  Steel keys (2026-10-20): a checkbox, painted without a call
+        steel = rows[-1]
+        self.assertTrue(steel.isCheckable() and not steel.isChecked())
+        steel.trigger()
+        self.assertEqual(self.calls[-1], ("timebar_steel", True))
+        self.skin.paint_timebar("docked", False)
+        self.assertFalse(steel.isChecked())
+        self.assertTrue(rows[1].isChecked())
+        self.assertEqual(self.calls[-1], ("timebar_steel", True))
         #  the side panel (2026-10-17): Maya's / Right edge
         self.assertEqual(actions[5].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[5].menu().actions()

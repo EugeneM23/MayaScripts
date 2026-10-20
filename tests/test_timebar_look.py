@@ -621,3 +621,28 @@ class SpanLabelTests(unittest.TestCase):
     def test_one_frame_shows_one_label_centred(self):
         a, b = look.span_labels(100, 110, 20, 20, 1000, single=True)
         self.assertEqual((a, b), (95, None))
+
+
+class CoolingTests(unittest.TestCase):
+    """Steel keys (2026-10-20): a key set glows hot and cools into steel."""
+
+    def test_white_hot_then_cherry_red_then_steel(self):
+        hot, heat = look.cooling(0)
+        self.assertEqual((hot, heat), (look.HEAT[0][1], 1.0))
+        red, _ = look.cooling(look.COOL_MS * 0.45)
+        r, g, b = look._rgb(red)
+        self.assertGreater(r, g + 100)
+        self.assertEqual(look.cooling(look.COOL_MS), (look.STEEL, 0.0))
+        self.assertEqual(look.cooling(look.COOL_MS * 3)[0], look.STEEL)
+
+    def test_the_heat_only_falls_and_is_gone_before_the_end(self):
+        heats = [look.cooling(t)[1] for t in range(0, look.COOL_MS + 1, 30)]
+        self.assertEqual(heats, sorted(heats, reverse=True))
+        self.assertEqual(look.cooling(look.COOL_MS * 0.75)[1], 0.0)
+
+    def test_a_handful_of_colours_so_each_glow_is_cached_once(self):
+        colours = {look.cooling(t)[0] for t in range(0, look.COOL_MS + 1)}
+        self.assertLessEqual(len(colours), look.COOL_STEPS + 1)
+
+    def test_the_last_stop_is_the_steel_asked_for(self):
+        self.assertEqual(look.cooling(look.COOL_MS, steel="#808080")[0], "#808080")

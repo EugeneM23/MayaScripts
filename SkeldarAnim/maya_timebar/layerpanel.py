@@ -2207,7 +2207,7 @@ def _classes():
             view = pn.drag_view()
             view_key = (tuple(view["names"]), tuple(view["span"])) if view else None
             key = (self.width(), self.height(), ui, round(pn.scroll, 2), L.signature(pn.rows["anim"]),
-                   keys_sig, tkey, b is not None, sel_key, dragging, view_key)
+                   keys_sig, tkey, b is not None, sel_key, dragging, view_key, self._active_hex())
             if b is not None:
                 self._draw(p, lay, t, w, h, True)
                 self._draw_dragged(p, lay, t, w)
@@ -2311,10 +2311,15 @@ def _classes():
                     out.append((i, rows[i], lane, scale, opacity))
             return out
 
+        def _active_hex(self):
+            """The active lane's keys: the Time Bar's own colour (steel with Steel keys)."""
+            key_hex = getattr(self.panel.strip, "key_hex", None)
+            return key_hex() if key_hex is not None else self.panel.tokens["accent"]
+
         def _key_colour(self, row):
             tk = self.panel.tokens
             if row.get("active"):
-                return colour(tk["accent"])
+                return colour(self._active_hex())
             if row.get("base"):
                 return colour(tk["faint"])
             return colour(tk["muted"])

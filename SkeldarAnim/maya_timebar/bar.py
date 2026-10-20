@@ -159,6 +159,17 @@ def animations_on():
         return True
 
 
+def steel_on():
+    """⋮ -> Time bar ▸ Steel keys (off where it cannot be asked)."""
+    try:
+        import maya.cmds as cmds
+        if cmds.optionVar(exists=look.STEEL_VAR):
+            return bool(cmds.optionVar(q=look.STEEL_VAR))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return False
+
+
 def stylesheet(tokens, ui):
     px = lambda v: "%dpx" % max(1, int(round(v * ui)))              # noqa: E731
     return (
@@ -736,6 +747,7 @@ def classes():
             self.key_lift = {}          # key -> 0..1, eased
             self.head_lift = 0.0
             self.reached = {}           # key -> clock() when the playhead reached it
+            self.cooling = {}           # key -> clock() when it was set hot (Steel keys)
             self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
             self.play_at = None         # Play pressed: a frame closes in round the bar
             self.right_at = None        # ms of a right press whose key menu waits for a second one
@@ -766,6 +778,8 @@ def classes():
                 return True
             if self.play_at is not None and look.progress(now - self.play_at, "play") is not None:
                 return True
+            if any(now - t0 < look.COOL_MS for t0 in self.cooling.values()):
+                return True
             return any(now - t0 < KEY_FADE_MS for t0 in self.reached.values())
 
         def step(self, dt):
@@ -783,6 +797,8 @@ def classes():
             now = self.strip.clock()
             for k in [k for k, t0 in self.reached.items() if now - t0 >= KEY_FADE_MS]:
                 del self.reached[k]
+            for k in [k for k, t0 in self.cooling.items() if now - t0 >= look.COOL_MS or not self.strip.steel]:
+                del self.cooling[k]
             self._prune_trail(now)
 
         def _prune_trail(self, now):
@@ -835,7 +851,11 @@ def classes():
                 return False
             cx, cy, rect = self._key_place(frame)
             timing.setdefault("rect", rect)
-            st.fx.add(kind, cx=cx, cy=cy, hex=BREAKDOWN if breakdown else st.tokens["accent"], **timing)
+            hex_ = BREAKDOWN if breakdown else (st.tokens["accent"] if kind == "set" else st.key_hex())
+            st.fx.add(kind, cx=cx, cy=cy, hex=hex_, **timing)
+            if kind == "set" and st.steel and not breakdown:
+                # forged steel: the key is set hot and cools (2026-10-20)
+                self.cooling[frame] = st.clock()
             if kind == "set":
                 # the key itself swells and shrinks back, as one the playhead reaches
                 # (2026-10-18: «при появлении ключа тоже»)
@@ -976,7 +996,8 @@ def classes():
             return (int(w), int(h), st.ui, round(t.v0, 4), round(t.v1, 4), s["p0"], s["p1"],
                     bool(s.get("sound_shown")), id(st.wave), len(st.wave), tuple(st.marks),
                     self.preview or s.get("highlight"), moving, with_keys,
-                    hash(tuple(st.keys)), hash(tuple(st.breakdowns)), self.devicePixelRatioF())
+                    hash(tuple(st.keys)), hash(tuple(st.breakdowns)), self.devicePixelRatioF(),
+                    st.key_hex())
 
         def _draw_static(self, p, t, w, h, with_keys, moving):
             st = self.strip
@@ -1067,7 +1088,7 @@ def classes():
             # the keys at rest
             if with_keys:
                 p.setPen(Qt.NoPen)
-                for frames, hex_ in ((st.keys, tk["accent"]), (st.breakdowns, BREAKDOWN)):
+                for frames, hex_ in ((st.keys, st.key_hex()), (st.breakdowns, BREAKDOWN)):
                     path = QtGui.QPainterPath()
                     #  a copy S put down stands where its key is dragged: under the default
                     #  odd-even fill two equal shapes cancel out (2026-10-19)
@@ -1089,20 +1110,27 @@ def classes():
             h = float(self.height())
             now = st.clock()
             if entrance:
-                frames = [(f, tk["accent"]) for f in st.keys] + [(f, BREAKDOWN) for f in st.breakdowns]
+                frames = [(f, st.key_hex()) for f in st.keys] + [(f, BREAKDOWN) for f in st.breakdowns]
             else:
-                live = set(self.reached) | set(k for k, v in self.key_lift.items() if v > 0.005)
+                live = (set(self.reached) | set(self.cooling)
+                        | set(k for k, v in self.key_lift.items() if v > 0.005))
                 if not live:
                     return
                 keys, bds = set(st.keys), set(st.breakdowns)
-                frames = [(f, tk["accent"] if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
+                frames = [(f, st.key_hex() if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
             plain = {}
+            keys_now = set(st.keys)
             for frame, hex_, shown in [(f, c, x) for f, c in frames
                                        for x in (look.shown_at(f, *moving) if moving else (f,))]:
                 if not (t.v0 - 1 <= shown <= t.v1 + 1):
                     continue
                 lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
-                lift = max(self.key_lift.get(frame, 0.0), lit)
+                heat, tint = 0.0, lit
+                if frame in self.cooling and frame in keys_now:
+                    #  forged steel: hot white to orange to cherry red, then cold steel
+                    hex_, heat = look.cooling(now - self.cooling[frame], st.key_hex())
+                    tint = 0.0          # the colour is the heat: no RIM over it
+                lift = max(self.key_lift.get(frame, 0.0), lit, heat)
                 swell = max(self.key_lift.get(frame, 0.0), lit * KEY_PULSE)
                 z = 1.0 + KEY_LIFT * swell
                 burst = 1.0
@@ -1134,8 +1162,8 @@ def classes():
                     p.drawPixmap(rect.adjusted(-grow, -grow, grow, grow), picture,
                                  QtCore.QRectF(picture.rect()))
                 p.setOpacity(opacity * burst)
-                if lit > 0.01:
-                    p.setBrush(blend(hex_, RIM, lit * 0.7))
+                if tint > 0.01:
+                    p.setBrush(blend(hex_, RIM, tint * 0.7))
                 else:
                     brush = plain.get(hex_)
                     if brush is None:
@@ -1720,6 +1748,7 @@ def classes():
             self.link, self.ui = link, float(ui)
             self.tokens = tokens or _tokens()
             self.motion = animations_on() if motion is None else bool(motion)
+            self.steel = steel_on()          # ⋮ -> Time bar ▸ Steel keys (2026-10-20)
             self.state = {"now": 0.0, "a0": 0.0, "a1": 120.0, "p0": 0.0, "p1": 120.0,
                           "unit": "ntsc", "auto": False, "playing": False, "highlight": None,
                           "loop": "continuous", "speed": 1.0, "cache": False, "sound": "",
@@ -2003,6 +2032,20 @@ def classes():
             """(x, y) in `widget` as a point of the strip (the overlay's)."""
             g = widget.mapTo(self, QtCore.QPoint(int(round(x)), int(round(y))))
             return float(g.x()), float(g.y())
+
+        def key_hex(self):
+            """The keys' colour: steel with ⋮ -> Time bar ▸ Steel keys, else the accent."""
+            return look.STEEL if self.steel else self.tokens["accent"]
+
+        def set_steel(self, on):
+            """Steel keys on or off: the keys repaint at once (a key cooling just goes on)."""
+            self.steel = bool(on)
+            if not self.steel:
+                self.timeline.cooling.clear()
+            self.timeline.update()
+            lanes = getattr(self.layer_panel, "lanes", None)
+            if lanes is not None:
+                lanes.update()
 
         def kick(self):
             if not self.anim.isActive():

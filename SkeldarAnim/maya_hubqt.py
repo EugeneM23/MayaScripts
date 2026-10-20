@@ -2398,6 +2398,12 @@ class Skin(object):
             action.triggered.connect(
                 lambda checked=False, c=choice: self._call("timebar", c))
             self.timebar_actions[choice] = action
+        sub.addSeparator()
+        # 2026-10-20 «заменить оранжевые ключи на серебряные ... остывание стали»: not in the group
+        self.timebar_steel_action = sub.addAction("Steel keys")
+        self.timebar_steel_action.setCheckable(True)
+        self.timebar_steel_action.triggered.connect(
+            lambda checked=False: self._call("timebar_steel", bool(checked)))
 
     def _build_sidepanel_menu(self, text):
         """⋮ -> Side panel ▸ Maya's / Right edge (2026-10-17): exclusive rows; a
@@ -2453,9 +2459,15 @@ class Skin(object):
             action.setChecked(key == choice)
             action.blockSignals(False)
 
-    def paint_timebar(self, choice):
-        """The menu's Time bar shows `choice` (2026-10-16; no callback). An older
-        caller's True / False reads as Docked / Maya's."""
+    def paint_timebar(self, choice, steel=None):
+        """The menu's Time bar shows `choice` (2026-10-16; no callback) and, given,
+        whether the keys are steel. An older caller's True / False reads as Docked /
+        Maya's."""
+        row = getattr(self, "timebar_steel_action", None)
+        if row is not None and steel is not None:
+            row.blockSignals(True)
+            row.setChecked(bool(steel))
+            row.blockSignals(False)
         if choice is True:
             choice = "docked"
         elif choice is False:

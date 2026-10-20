@@ -12097,6 +12097,18 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
      `cmds.animLayer(B, e=True, flagX=A)` - the object is the LAST argument; four of the port's calls were first
      written the other way round.
 
+**Steel keys: a key set glows hot and cools into steel** (2026-10-20, «опцию в настройках которая
+позволит заменить оранжевые ключи на серебряные ... похоже на остывание стали при ковке»).
+⋮ -> Time bar ▸ **Steel keys** (a checkbox outside the mode group; optionVar `skeldarTimeBarSteelKeys`, off
+by default; `maya_hub.set_timebar_steel` -> `maya_timebar.set_steel`, which repaints every standing strip
+found by `ROOT_NAME`). On, the timeline's keys and the active layer lane's keys are `look.STEEL` #b8c0ca
+(`Strip.key_hex`; breakdowns stay cyan); the set flash stays the accent orange, a deleted key breaks in steel.
+A key set (not a breakdown) goes into `Timeline.cooling` and is drawn by `look.cooling(age)` along `HEAT`:
+white heat, yellow, orange, cherry red, a dark temper, then steel over `COOL_MS` 1800, its glow the heat
+(gone by 70 %), in `COOL_STEPS` 48 colours so each halo is cached once. No motion: steel at once. Tests
+`test_timebar_look.CoolingTests`, `test_timebar_bar.SteelKeys`, the hub menu test; filmstrip
+`render_time_bar_steel.py` -> `time_bar_steel.png`. Not seen in a GUI Maya.
+
 271. **Python painting element by element costs more than the drawing.** The Time Bar's paint called
      drawRect / drawRoundedRect ~1700 times a frame (a waveform bin, a tick, a key each) and cProfile put 2.6
      of its 6 ms in the Python loop itself. What does not change between two frames belongs in a cached
