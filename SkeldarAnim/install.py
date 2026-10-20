@@ -142,6 +142,7 @@ _PAYLOAD = (
     "maya_sidepanel",           # the side panel: Channel Box / Layer Editor and Attribute Editor at the right edge (2026-10-17)
     "maya_skillbar",            # the skill bar: F1 the Time Bar, F2-F12 pages of skills on its strip (2026-10-19)
     "maya_channelbox",          # our Channel Box in the side panel, variant A "Rows" (2026-10-18)
+    "maya_chat",                # the messenger's client core: records, api, store, link, session (2026-10-20)
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh

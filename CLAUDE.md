@@ -12666,3 +12666,32 @@ What the first real deploy found:
   `deploy.py keys` (the token asked hidden, the account found by `GET /accounts`) keeps both in
   the registry AND in `~/.skeldar/cloudflare.json` (plain text, the user's profile), and `deploy.py`
   reads the environment, then the registry, then that file.
+
+## Chat client core: records, api, store, link, session (2026-10-20)
+
+Plan 2 of the messenger (spec `docs/superpowers/specs/2026-10-19-chat-messenger-design.md`, plan
+`docs/superpowers/plans/2026-10-20-chat-client.md`): the client without its window. Package
+`SkeldarAnim/maya_chat/` (a payload row); the window and the rail are plan 3.
+- `records` (stdlib): the nick rule, users / messages / chats parsed strictly (a wrong type raises
+  `Bad`), `event()` None for anything malformed or unknown, `merge` (by seq, one per id, the later
+  wins), `unread`, `runs` (text and links). A message's `seq` is its CHAT's; an event's `seq` is the
+  server's global one (what `since` counts).
+- `api`: `Api(server, token)` over urllib, every call with the User-Agent `skeldar-chat/1`; a
+  refusal is `ChatError(code, text, status)` with the server's code, no answer is code "offline".
+- `store`: `<userAppDir>/SkeldarChat/<host>/` - token, me, chats, `messages/<chat>.jsonl` (the last
+  500), outbox, since; atomic writes, a broken file reads empty, `forget()` keeps the history.
+- `link`: a pure `Protocol` (hello `{since}` then the outbox in order; an ack or an error naming a
+  cid drops its send; seq events and caught_up move since; reconnect 1, 2, 4, 8, 16, 30 s; "ping"
+  every 25 s, a socket quiet 70 s is dead) and `QtLink` over PySide6's QWebSocket (Maya 2027 ships
+  it).
+- `session`: `Session(server, store)` applies every event to `state` (me, chats, messages, pending,
+  friends, online, typing, reads) and the cache and tells `listen`ers fn(kind, data). A send shows at
+  once as pending (in the outbox on disk too) and becomes the server's message; a refused one is
+  "failed" with the server's text (`retry`, `discard`). `resync()` reads everything over HTTP. One
+  per Maya on `sys._skeldar_chat` (`get()` / `close()`; `maya_chat.current()` - not `session()`,
+  which would shadow the submodule). HTTP runs on the calling thread.
+Proof: `tests/test_chat_records.py`, `_api`, `_store`, `_link`, `_session` (54);
+`docs/superpowers/plans/verify_chat_client.py` **19/19 against staging** headless (two accounts made
+and deleted): a message live in 0.117 s, catch-up by `since` with no resync, an offline outbox sent on
+reconnect, one message for one cid sent twice, read marks, typing, edit, delete, a refused send
+failed, presence, a restart from the cache. Not seen inside a GUI Maya.
