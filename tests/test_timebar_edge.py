@@ -131,6 +131,16 @@ class Edge(unittest.TestCase):
         self.edge.hide_due()
         self.assertFalse(self.edge.shown)
 
+    def test_a_pin_press_is_remembered_and_set_pinned_lights_the_pin(self):
+        said = []
+        self.edge._on_pinned = said.append
+        self.edge.strip.pin.click()
+        self.edge.strip.pin.click()
+        self.assertEqual(said, [True, False])
+        self.edge.set_pinned(True)                  # from code (Maya's start): the pin lit, not remembered
+        self.assertTrue(self.edge.strip.pin.isChecked())
+        self.assertEqual(said, [True, False])
+
     def test_a_drag_in_the_strip_keeps_it_out(self):
         self.at_edge()
         self.edge.dwell_done()

@@ -114,8 +114,10 @@ class SideEdge(object):
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
                  cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
                  on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
-                 playing=None, timebar=None, bar_top=None, share=1.0, on_height=None):
+                 playing=None, timebar=None, bar_top=None, share=1.0, on_height=None,
+                 on_pinned=None):
         q = hubqt.qt()
+        self._on_pinned = on_pinned    # (on) the 📌 pressed: remembered (2026-10-20)
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
         self._cursor = cursor
@@ -161,7 +163,7 @@ class SideEdge(object):
         #  than the band, and a host that grew outran its mask (2026-10-17, live)
         layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
         self.host = host
-        self.panel = make_panel(host, self._tab_picked, self.set_pinned, self._grip)
+        self.panel = make_panel(host, self._tab_picked, self.pin_pressed, self._grip)
         close = getattr(self.panel, "close_button", None)
         if close is not None:
             close.clicked.connect(lambda checked=False: self.close_by_hand())
@@ -702,6 +704,13 @@ class SideEdge(object):
         self.panel.set_pinned(self.pinned)
         if not on and self.shown:
             self.hide_timer.start()
+
+    def pin_pressed(self, on):
+        """The 📌 pressed by the animator: pinned or not, and remembered (the close
+        button unpins for the session only)."""
+        self.set_pinned(on)
+        if self._on_pinned is not None:
+            self._on_pinned(self.pinned)
 
     def destroy(self):
         for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone):

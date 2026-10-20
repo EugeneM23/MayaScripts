@@ -1950,7 +1950,8 @@ def classes():
             #  the 📌 of the bottom edge (2026-10-16): only shown there
             self.edge = None
             self.pin = Pill(self, "pin", tip="Keep the time bar out", toggle=True)
-            self.pin.clicked.connect(lambda checked=False: self.edge and self.edge.set_pinned(self.pin.isChecked()))
+            self.pin.clicked.connect(lambda checked=False: self.edge and getattr(
+                self.edge, "pin_pressed", self.edge.set_pinned)(self.pin.isChecked()))
             self.pin.setVisible(False)
             for b in (self.loop, self.cache, self.speed, self.sound, self.auto):
                 top.addWidget(b)

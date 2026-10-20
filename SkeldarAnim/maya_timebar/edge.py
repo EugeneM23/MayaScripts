@@ -185,8 +185,9 @@ class BottomEdge(object):
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
                  app_active=None, motion=None, over_maya=None, playing=None, suspended=None,
-                 span=None, pane=None):
+                 span=None, pane=None, on_pinned=None):
         q = hubqt.qt()
+        self._on_pinned = on_pinned            # (on) the 📌 pressed: remembered (2026-10-20)
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         self._window_rect = window_rect or _window_rect
         self._span = span or _free_span        # (window, height) -> (x0, x1), 2026-10-17
@@ -618,8 +619,21 @@ class BottomEdge(object):
 
     def set_pinned(self, on):
         self.pinned = bool(on)
+        pin = getattr(self.strip, "pin", None)
+        if pin is not None and pin.isChecked() != self.pinned:
+            blocked = pin.blockSignals(True)
+            pin.setChecked(self.pinned)
+            pin.blockSignals(blocked)
+            pin.update()
         if not on and self.shown:
             self.hide_timer.start()
+
+    def pin_pressed(self, on):
+        """The 📌 pressed by the animator: pinned or not, and remembered."""
+        self.set_pinned(on)
+        if self._on_pinned is not None:
+            self._on_pinned(self.pinned)
+
 
     def destroy(self):
         try:

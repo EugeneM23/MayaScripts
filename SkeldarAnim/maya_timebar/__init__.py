@@ -9,6 +9,7 @@ Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 
 import os
 import sys
+import traceback
 
 CONTROL = "skeldarTimeBar"
 LABEL = "Time Bar"
@@ -37,6 +38,7 @@ def uiscript(root):
 
 MODE_VAR = "skeldarTimeBarMode"          # maya | docked | edge (2026-10-16)
 LAST_VAR = "skeldarTimeBarLastMode"      # the last of docked / edge, for the switch back
+PIN_VAR = "skeldarTimeBarPinned"        # 1 (default): the bottom edge's 📌 on (2026-10-20)
 DEFAULTS_VAR = "skeldarTimeBarDefaults"  # the DEFAULT_VERSION this Maya has had
 
 
@@ -138,13 +140,34 @@ def ensure_edge():
     except Exception:                                        # noqa: BLE001
         pass
     ui = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
-    controller = edge_module.BottomEdge(lambda parent: bar.make(bar.Link(), ui, parent=parent))
+    controller = edge_module.BottomEdge(lambda parent: bar.make(bar.Link(), ui, parent=parent),
+                                        on_pinned=remember_pinned)
     _state()["edge"] = controller
     _state()["bar"] = controller.strip
     _state()["host"] = "edge"
     bar.start_jobs()
     maya_slider(False)
+    if pinned():
+        try:
+            controller.set_pinned(True)
+            controller.reveal(instant=True)
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
     return controller
+
+
+def pinned():
+    """The bottom edge's 📌 - on by default (2026-10-20, «таймслайдер и ченел бокс
+    по умолчанию были закреплены»); the animator's last press remembered."""
+    import maya.cmds as cmds
+    if not cmds.optionVar(exists=PIN_VAR):
+        return True
+    return bool(cmds.optionVar(q=PIN_VAR))
+
+
+def remember_pinned(on):
+    import maya.cmds as cmds
+    cmds.optionVar(intValue=(PIN_VAR, 1 if on else 0))
 
 
 def drop_edge():

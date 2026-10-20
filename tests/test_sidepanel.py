@@ -424,6 +424,17 @@ class Edge(unittest.TestCase):
         self.edge.panel.pin.click()
         self.assertTrue(self.edge.pinned)
 
+    def test_a_pin_press_is_remembered_the_close_button_is_not(self):
+        said = []
+        self.edge._on_pinned = said.append
+        self.edge.panel.pin.click()
+        self.assertEqual(said, [True])
+        self.edge.reveal()
+        self.cursor[:] = [600, 400]
+        self.edge.panel.close_button.click()
+        self.assertFalse(self.edge.pinned)
+        self.assertEqual(said, [True])
+
     def test_the_cursor_over_it_keeps_it(self):
         self.edge.reveal()
         self.cursor[:] = [1500, 400]

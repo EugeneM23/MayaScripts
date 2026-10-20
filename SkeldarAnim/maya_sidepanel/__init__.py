@@ -15,6 +15,7 @@ TAB_VAR = "skeldarSidePanelTab"
 WIDTH_VAR = "skeldarSidePanelWidth"
 HEIGHT_VAR = "skeldarSidePanelHeight"     # the share of the viewport's height (2026-10-19)
 HIDDEN_VAR = "skeldarSidePanelHidden"   # Maya's controls we hid, shown again on Maya's mode
+PIN_VAR = "skeldarSidePanelPinned"      # 1 (default): the 📌 on, out at Maya's start (2026-10-20)
 SELECT_VAR = "skeldarSidePanelOnSelect"  # 1 (default): a selection brings it out, keeps it
 
 
@@ -85,6 +86,19 @@ def _has_selection():
         return bool(_cmds().ls(selection=True, head=1))
     except Exception:                                        # noqa: BLE001
         return False
+
+
+def pinned():
+    """The side panel's 📌 - on by default (2026-10-20, «таймслайдер и ченел бокс по
+    умолчанию были закреплены»); the animator's last press remembered."""
+    try:
+        return bool(_var(PIN_VAR, 1))
+    except Exception:                                        # noqa: BLE001
+        return True
+
+
+def _remember_pinned(on):
+    _cmds().optionVar(intValue=(PIN_VAR, 1 if on else 0))
 
 
 def _remember_tab(value):
@@ -256,7 +270,8 @@ def ensure_edge():
     controller = edge_module.SideEdge(make, width=_var(WIDTH_VAR, look.WIDTH), scale=ui,
                                       on_tab=on_tab, on_width=_remember_width, tick=_maya_wants,
                                       on_reveal=refresh, selected=_has_selection,
-                                      share=_var(HEIGHT_VAR, look.SHARE), on_height=_remember_share)
+                                      share=_var(HEIGHT_VAR, look.SHARE), on_height=_remember_share,
+                                      on_pinned=_remember_pinned)
     controller.panel.set_tab(tab())
     _state()["edge"] = controller
     try:
@@ -264,6 +279,9 @@ def ensure_edge():
         _skin(controller, ui)
         _fit(controller)
         _start_job()
+        if pinned():
+            controller.set_pinned(True)
+            controller.reveal(instant=True)
         controller.selection_changed()          # something selected already: out
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")
