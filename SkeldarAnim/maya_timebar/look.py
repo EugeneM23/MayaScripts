@@ -608,6 +608,10 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    удаления ключа ... одни частицы») -----------------------------------------
 
 EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420, "reveal": REVEAL_MS}
+# a deleted key breaking into shards: switched off for now (2026-10-20, «пока выключим
+# эффект разлета частиц при удалении ключа ... пусть он останется в проекте»); True brings
+# it back as it was
+DELETE_SHARDS = False
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 

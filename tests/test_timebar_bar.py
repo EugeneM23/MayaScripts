@@ -785,10 +785,41 @@ class Motion(Strip):
         self.assertEqual(self.strip.opening_of(5), (1.0, 1.0))
 
 
+def shards_on(test):
+    """The key-delete shards are switched off for now (look.DELETE_SHARDS); the tests of
+    the effect itself switch them on for their own length."""
+    test.addCleanup(setattr, look, "DELETE_SHARDS", look.DELETE_SHARDS)
+    look.DELETE_SHARDS = True
+
+
+class DeleteShardsOff(Strip):
+    """2026-10-20: «пока выключим эффект разлета частиц при удалении ключа» - a key deleted
+    plays nothing, a key set still flashes."""
+
+    motion = True
+
+    def test_a_deleted_key_breaks_into_nothing(self):
+        self.assertFalse(look.DELETE_SHARDS)
+        self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual([i["kind"] for i in self.strip.fx.items], [])
+
+    def test_a_key_set_still_flashes(self):
+        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
+        self.strip.keys_edited = True
+        self.strip.refresh(keys=True)
+        self.assertEqual([i["kind"] for i in self.strip.fx.items], ["set"])
+
+
 class KeyEffects(Strip):
     """A key set flashes a round glow, a key deleted throws sparks (2026-10-17)."""
 
     motion = True
+
+    def setUp(self):
+        super(KeyEffects, self).setUp()
+        shards_on(self)
 
     def kinds(self):
         return [i["kind"] for i in self.strip.fx.items]
@@ -1301,6 +1332,10 @@ class MovesPlayNoEffect(Strip):
     are the key edits Maya reports for it a moment later."""
 
     motion = True
+
+    def setUp(self):
+        super(MovesPlayNoEffect, self).setUp()
+        shards_on(self)
 
     def kinds(self):
         return [i["kind"] for i in self.strip.fx.items]

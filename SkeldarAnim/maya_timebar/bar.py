@@ -885,7 +885,7 @@ def classes():
             already gone."""
             t = self.track()
             shown = sorted(r for r in removed if t.v0 - 0.5 <= r[0] <= t.v1 + 1.5)
-            if not self.strip.motion or not shown:
+            if not look.DELETE_SHARDS or not self.strip.motion or not shown:
                 return
             groups = look.shard_groups(len(shown))
             delays, life = look.delete_plan(len(groups))
