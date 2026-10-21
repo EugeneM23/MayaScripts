@@ -153,6 +153,7 @@ _PAYLOAD = (
     "maya_share.py",            # the section
     "maya_stashstore.py",       # Stash (2026-10-09): the local folder's rules, pure
     "maya_stash.py",            # the Stash section: drafts on this machine
+    "maya_filedrag.py",         # Stash / Shared rows dragged between them and into the scene (2026-10-21)
     "plug-ins",                 # the startup plug-in: the edge panel from Maya's start (2026-10-08)
     "install.py",
     "README_INSTALL.txt",
