@@ -192,6 +192,39 @@ def is_torso(bones, leaf):
     return name in TORSO or name.startswith(TORSO_PREFIX)
 
 
+def torso_gaps(bones, members):
+    """The torso bones the members leave out between two posed bones (2026-10-21), in the
+    members' order: from a posed bone whose parent is an unposed torso bone, down through
+    unposed torso bones to a POSED torso bone - those passed. Pure.
+
+    An animation saved off a rig in 1P (its FKSpine1/2 hidden in 1P Setup's lower layer) came
+    out with the pelvis, the chest, the arms and the head but not spine_01/02/04/05: onto a clean
+    rig with 1P upper body off, the target's own spine_04/05 stood between the card's chest and
+    its head - «с отклонениями ... в груди и голове», 15.7 deg. The card holds those bones."""
+    have = set(members or ())
+    out = []
+    for leaf in members or ():
+        chain, node, seen = [], (bones.get(leaf) or {}).get("parent"), set()
+        while node in bones and node not in seen and node not in have and \
+                is_torso(bones, node):
+            seen.add(node)
+            chain.append(node)
+            node = bones[node].get("parent")
+        if chain and node in have and is_torso(bones, node):
+            out.extend(b for b in reversed(chain) if b not in out)
+    return out
+
+
+def with_torso(bones, members):
+    """`members` with their `torso_gaps` posed too, in the bones' order (a member the bones do
+    not hold kept at the end); the very list when there is no gap. Pure."""
+    gaps = torso_gaps(bones, members)
+    if not gaps:
+        return members
+    keep = set(members) | set(gaps)
+    return [leaf for leaf in bones if leaf in keep] + [m for m in members if m not in bones]
+
+
 _SWAP = {"l": "r", "r": "l", "L": "R", "R": "L", "left": "right", "right": "left",
          "Left": "Right", "Right": "Left", "LEFT": "RIGHT", "RIGHT": "LEFT"}
 # the side tokens a game studio meets (maya_skeletonmap's conventions), tried in order

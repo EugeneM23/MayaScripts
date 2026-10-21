@@ -678,7 +678,11 @@ def _plan(data, ref, mirror=False, only=None):
     notes = []
     bones, _convention = scene.skeleton(ref, notes)
     source = data.get("bones") or {}
-    members = list(data.get("members") or ())
+    # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21); where the
+    # camera rides is read off the card's own members, gap and all (`upper.anchors_for`)
+    card_members = list(data.get("members") or ())
+    anchors = upper.anchors_for(source, card_members)
+    members = pm.with_torso(source, card_members)
     if mirror:
         source, members = pm.mirror(source, members)
     # the camera and the weapon bones the card's parts bring (2026-10-20, `helpers`)
@@ -693,8 +697,7 @@ def _plan(data, ref, mirror=False, only=None):
     # body card, 2026-10-21 - `upper.anchors_for`, derived from the members, not stored)
     transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
                            scale=scale, places=_places(ref) and not mirror,
-                           anchors=upper.target_anchors(upper.anchors_for(source, members),
-                                                        pairs))
+                           anchors=upper.target_anchors(anchors, pairs))
     wanted = transfer.frame()
     # the body solvers never see our helper bones: a `helpers.Writer` keys them, or what drives
     # them (a weapon in the hand, the Camera Setup camera)
@@ -1293,7 +1296,8 @@ def select_objects(data, selection=None):
     for ref in refs:
         bones, _convention = scene.skeleton(ref)
         pairs = pm.pairs(data["bones"], bones)
-        members_t = target_members(bones, pairs, data.get("members"))
+        members_t = target_members(bones, pairs, pm.with_torso(data["bones"],
+                                                               list(data.get("members") or ())))
         if ref.kind == "rig":
             found = rigsolve.controls_for(ref.rig, members_t)
         else:

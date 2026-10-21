@@ -11054,6 +11054,19 @@ beside it. **This replaces «the chest stays the target's» and «a Tools knot i
   `steady` (`rigsolve.Solver(steady=True)`: `_place` / `_knot_place` write a placed translate already
   on its place, `_hold_translate`; `skelsolve.solve(steady=True)`), and `animapply._Target.key` keys
   a planned plug this frame's solve left at what it shows. A pose press is unchanged.
+- **A gap in a card's spine is posed from the card** (`posemath.torso_gaps` / `with_torso`, at
+  every press: `apply._plan`, Select objects, `animapply._press_refs`). The same evening: «записали
+  анимацию с рига который был в 1p моде и ставим ее без галочки ... с отклонениями ... в груди и
+  голове».
+  - Their two cards off the 1P rig held the pelvis, the chest, the legs, the arms and the head,
+    but not spine_01/02/04/05. FKSpine1/2 are hidden in 1P Setup's lower layer; how spine_04/05
+    left the selection is not known.
+  - Onto a clean rig with the option off, the target's spine_04/05 stood at rest under the card's
+    head and arms: 15.7 deg off.
+  - Now a torso bone between a posed bone and a posed torso bone under it is posed too: the two
+    cards land to 0.0002 deg on the animator's scene (a copy).
+  - Nothing is filled for an upper-body card (nothing posed under the chest), a hand card or a gap
+    in an arm.
 - Proof:
   - `docs/superpowers/plans/verify_poselib_1p_transfer.py <source clip> <target clip>` **43/43 mayapy
     standalone** (HoleCombo as A, `AS_Dg_Atk_Cmb_L_Lt_2_3P` as B), each card onto B in 3P and after

@@ -1442,6 +1442,57 @@ class Torso(unittest.TestCase):
                                      self.card_rel(frame, "spine_03", "root")), 1e-6, turn)
 
 
+class TorsoGaps(unittest.TestCase):
+    """2026-10-21, the animator: an animation saved off a rig in 1P - its FKSpine1/2 hidden in 1P
+    Setup's lower layer - came out with the pelvis, the chest, the legs, the arms and the head but
+    not spine_01/02/04/05, and onto a clean rig with 1P upper body OFF «с отклонениями ... в груди
+    и голове»: the target's own spine_04/05 stood between the card's chest and its head (15.7 deg).
+    A torso bone the card holds between two posed bones - a posed bone over it, a posed torso
+    bone under it - is posed too (`with_torso`)."""
+
+    LEFT_OUT = ["spine_01", "spine_02", "spine_04"]
+
+    def card(self):
+        return torso(CARD_POSE)
+
+    def members(self, *drop):
+        return [leaf for leaf in self.card() if leaf != "root" and leaf not in drop]
+
+    def test_the_spine_between_a_posed_chest_and_its_posed_neighbours_is_posed(self):
+        card = self.card()
+        got = pm.with_torso(card, self.members(*self.LEFT_OUT))
+        self.assertEqual(got, self.members())
+        self.assertEqual(pm.torso_gaps(card, self.members(*self.LEFT_OUT)), self.LEFT_OUT)
+
+    def test_such_a_card_lands_as_the_whole_card(self):
+        card, target = self.card(), torso(TWISTED, place=Torso.PLACE)
+        whole = pm.targets(card, target, pm.pairs(card, target), self.members())
+        gapped = pm.targets(card, target, pm.pairs(card, target),
+                            pm.with_torso(card, self.members(*self.LEFT_OUT)))
+        for leaf in ("spine_03", "spine_04", "head", "hand_l"):
+            self.assertLess(pm.angle(gapped[leaf], whole[leaf]), 1e-9, leaf)
+
+    def test_an_upper_body_card_gets_no_lower_spine(self):
+        # the chest and above: nothing posed under the chest, nothing to fill
+        self.assertEqual(pm.torso_gaps(self.card(), UPPER_BODY), [])
+        gapped = [leaf for leaf in UPPER_BODY if leaf != "spine_04"]
+        self.assertEqual(pm.with_torso(self.card(), gapped), UPPER_BODY)
+
+    def test_a_hand_card_or_an_arm_over_a_gap_fills_nothing_but_torso(self):
+        card = self.card()
+        self.assertEqual(pm.torso_gaps(card, ["hand_l", "middle_01_l"]), [])
+        # the arm is not the torso: a hand over an unposed arm on a posed chest fills no arm
+        self.assertEqual(pm.torso_gaps(card, ["spine_03", "hand_l"]), [])
+
+    def test_a_card_without_a_posed_torso_bone_under_the_gap_fills_nothing(self):
+        # the head and the arms over an unposed spine, no pelvis: the spine stays the target's
+        self.assertEqual(pm.torso_gaps(self.card(), ["head", "upperarm_l", "upperarm_r"]), [])
+
+    def test_nothing_to_fill_is_the_members_as_given(self):
+        members = self.members()
+        self.assertIs(pm.with_torso(self.card(), members), members)
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):

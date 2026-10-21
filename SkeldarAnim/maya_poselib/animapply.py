@@ -822,7 +822,12 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
     alpha = ap._clamp(alpha)
     if alpha <= 0.0:
         return False, ap.BLEND_ZERO
-    members = list(header.get("members") or ())
+    # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21): saved off
+    # a rig in 1P, spine_01/02/04/05 were left out and the head and arms rode the target's spine
+    # where the camera rides is read off the card's own members, gap and all (`upper.anchors_for`)
+    card_members = list(header.get("members") or ())
+    anchors = upper.anchors_for(header.get("bones") or {}, card_members)
+    members = pm.with_torso(header.get("bones") or {}, card_members)
     name = header.get("name") or "Animation"
     recording = bool(cmds.undoInfo(query=True, state=True))
     with timewalk.Walk(fresh=True) as walk:
@@ -838,7 +843,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only) for ref in refs]
+                               first_root, only, anchors) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)

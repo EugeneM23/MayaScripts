@@ -146,6 +146,16 @@ while the cut curve interpolated from the key at 8 to the key at 17. Fixed twice
 
 A pose press is unchanged.
 
+**A card with a gap in its spine** (the same evening, after the push: «записали анимацию с рига
+который был в 1p моде и ставим ее без галочки ... с отклонениями ... в груди и голове»). The
+animator's scene: a clean Manny_Rig and a Manny_Rig1 in 1P. Their cards off Manny_Rig1 held 75
+bones: the pelvis, the chest, the legs, the arms, the head, but not spine_01/02/04/05 (FKSpine1/2
+hidden in 1P Setup's lower layer). With the option off, the clean rig's spine_04/05 stayed at rest
+between the card's chest and its head: the head and the arms 15.7 deg off. With the option on,
+`restrict` takes every bone above the chest, so it worked. `posemath.with_torso` now poses, at every
+press, a torso bone the members leave out between a posed bone and a posed torso bone under it -
+the card holds it. Measured on a copy of their scene: both cards to 0.0002 deg.
+
 ## Not built
 
 A stabilized chest's PLACE (the place is the target's); 1P Setup's world-constant stabilization of a

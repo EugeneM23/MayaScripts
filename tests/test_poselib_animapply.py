@@ -410,6 +410,7 @@ class FakePm(object):
 
     _find = staticmethod(real_pm._find)
     is_twist = staticmethod(real_pm.is_twist)
+    with_torso = staticmethod(real_pm.with_torso)
     ue_named = staticmethod(real_pm.ue_named)
 
 
@@ -697,6 +698,26 @@ class Order(Base):
         self.assertEqual(self.world.log[first_write + 1],
                          ("dirty", ["curve:" + p for p in self.writes()[0][1]]))
         self.assertLess(first_write + 1, names.index("measure"))
+
+
+class TorsoGap(Base):
+    """A card with a gap in its spine (2026-10-21: saved off a rig in 1P, spine_01/02/04/05 left
+    out) is pasted with the gap posed from the card - the members the transfer is given."""
+
+    def test_the_spine_between_posed_bones_is_handed_to_the_transfer(self):
+        names = ("root", "pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "head")
+        parents = (None, "root", "pelvis", "spine_01", "spine_02", "spine_03", "spine_04")
+        bones = OrderedDict()
+        for name, parent in zip(names, parents):
+            bones[name] = {"parent": parent, "canonical": name, "rest": ident(), "rotateOrder": 0}
+        self.header["bones"] = bones
+        self.header["members"] = ["pelvis", "spine_03", "head"]
+        world = [sum((q7(i, 10 * k) for k in range(len(names))), []) for i in range(6)]
+        self.frames = {"bones": list(names), "world": world, "drive": {}}
+        self.press()
+        handed = self.world.entries("transfer")[0][3]
+        self.assertEqual(handed, sorted(["pelvis", "spine_01", "spine_02", "spine_03",
+                                         "spine_04", "head"]))
 
 
 class EveryPlanned(Base):
