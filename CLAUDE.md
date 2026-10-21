@@ -11240,6 +11240,51 @@ B). `SkeldarAnim/maya_camradial.py` (a payload row) is the scene half; the menu 
   tap, release on a camera, the axes drawn); `render_camera_radial.py` -> `camera_radial_menu.png`.
   **Not seen in a GUI Maya** (the Space hold and release, lookThru): after Check update.
 
+**…and the switch flies** (2026-10-21, «переключение между камерами ... не мгновенное а с
+анимацией ... скрипт создает подмену камеры и анимирует 0.3 сек полет»; asked, both the
+recommendation: ortho views flattened into smoothly, the flight orbits what is looked at). Spec
+`docs/superpowers/specs/2026-10-21-camera-flight-design.md`.
+- `SkeldarAnim/maya_camflight_rules.py` (stdlib, pinned) and `maya_camflight.py` (payload rows).
+  `look_through` calls `maya_camflight.fly(panel, target)`. True: a substitute camera
+  `:skeldarCameraFlight` (marked `skeldarCameraFlight`, hidden in the Outliner) now stands in the
+  panel. False: the panel switches at once. That is when Interface animations are off, the panel
+  shows something that is not a camera, the target is the camera already shown, or the flight
+  fails to start.
+- **A camera's view**, read for the panel's aspect (`MFnCamera.getViewingFrustum(aspect, True,
+  True, True)`: film fit, overscan and film offset included):
+  - its pivot (position + forward × coi) and its rotation;
+  - the frame's half height at the pivot, and the tan of its half angle (an ortho camera at
+    `TAN_FLAT`, tan 0.1°);
+  - the film offset in half heights, and the clip planes measured from the pivot.
+- **The flight** is 0.3 s, cubic in-out, on the wall clock:
+  - the pivot lerps, the rotation slerps, the frame size moves in log space, tan lerps (so
+    flattening reads even);
+  - the substitute stands `half / tan` back from the pivot along its axis;
+  - an ortho end keeps its own depth range about the pivot.
+- **The substitute's lens**: an aperture with the panel's aspect, film fit Vertical, focal
+  `12.7 / tan` mm (kept within Maya's 0.5..100000 by resizing the aperture).
+- **Live ends**: both cameras are read again every tick (an animated character camera is
+  followed). A new target mid-flight starts from where the substitute stands, on the same
+  substitute.
+- **The driver**: a 16 ms Qt timer, plus `MDGMessage.addTimeChangeCallback`, since playback turns
+  no timer (trap 269). Each tick redraws the panel (`M3dView.refresh(False, True)`).
+- **Nothing recorded**: the substitute is made and deleted with the undo queue off and moved
+  through the API (no undo step, no autoKey). A clean scene is set clean again. The first flight
+  sweeps away a substitute a crash or a mid-flight save left behind.
+- The Space menu leaves the substitute out and marks the flight's target as the camera shown.
+- Proof:
+  - `tests/test_camflight_rules.py`, `tests/test_camflight.py` (`Flights` on a fake scene and
+    clock), the Space menu's new tests;
+  - `docs/superpowers/plans/verify_camera_flight.py` **28/28 mayapy standalone** (the panel faked).
+    27 points are projected through the substitute and each end. persp at the start 8.8e-7; a
+    character camera with a 16:9 lens, overscan 1.3 and a film offset at the end 1.9e-6. The
+    pivot stays on the axis mid-flight (5e-15). Into Top flat to 0.1 % of the frame, out of it
+    the same. Also covered: chaining, the time callback driving it and letting go, the marker
+    step still on top of the undo queue, the clean flag, a tab's namespace, a stale substitute
+    swept.
+- **Not seen in a GUI Maya**: the flight on screen, its frame rate on a heavy scene, during
+  playback.
+
 ## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
 
 The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать

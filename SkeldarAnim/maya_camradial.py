@@ -14,6 +14,10 @@ is marked.
   menu's. Only the scene half lives here.
 - Bound on Space in the SkeldarAnim hotkey set only (`maya_hotkeys.DEFAULT_KEYS`); Maya's own sets
   keep the hotbox.
+- Since 2026-10-21 the switch FLIES (`maya_camflight`): a substitute camera goes 0.3 s from the
+  panel's view to the chosen one, orbiting what is looked at and flattening into an ortho view;
+  instant with Interface animations off. The substitute is left out of the menu, and the camera a
+  flight goes to is the one marked.
 """
 
 import sys
@@ -21,6 +25,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_camflight_rules as flight_rules
 import maya_radial_rules as rules
 
 STARTUP = ("persp", "top", "front", "side")
@@ -63,6 +68,8 @@ def cameras():
         parent = (cmds.listRelatives(shape, parent=True, fullPath=True) or [None])[0]
         if not parent:
             continue
+        if cmds.objExists(parent + "." + flight_rules.MARKER):
+            continue                                          # a flight's substitute
         try:
             startup = bool(cmds.camera(parent, query=True, startupCamera=True))
         except Exception:                                    # noqa: BLE001
@@ -133,7 +140,7 @@ def spec():
     _state()["panel"] = panel
     views, scene = cameras()
     items = rules.camera_slots(views, scene)
-    current = current_camera(panel)
+    current = _flying_to(panel) or current_camera(panel)
     texts, seen, marked = [], [], set()
     for i, item in enumerate(items):
         kind, path = rules.parse(item)
@@ -157,11 +164,30 @@ def look_through(path):
     if not cmds.objExists(path):
         return _say("Space: {0} is gone".format(_leaf(path)))
     try:
-        cmds.lookThru(panel, path)
+        if not _fly(panel, path):
+            cmds.lookThru(panel, path)
     except Exception as error:                               # noqa: BLE001
         traceback.print_exc()
         return _say("Space: {0}".format(error))
     return label(path)
+
+
+def _fly(panel, path):
+    """True when a flight took the switch over (maya_camflight); False: switch at once."""
+    try:
+        import maya_camflight
+        return bool(maya_camflight.fly(panel, path))
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        return False
+
+
+def _flying_to(panel):
+    try:
+        import maya_camflight
+        return maya_camflight.target_of(panel) or ""
+    except Exception:                                        # noqa: BLE001
+        return ""
 
 
 def tap():

@@ -140,6 +140,8 @@ _PAYLOAD = (
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
     "maya_camradial.py",        # Space: the camera menu in place of the hotbox (2026-10-20)
+    "maya_camflight.py",        # Space's switch flies between cameras (2026-10-21)
+    "maya_camflight_rules.py",
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)

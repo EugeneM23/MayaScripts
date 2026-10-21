@@ -12,6 +12,7 @@ except ImportError:
     HAVE_MAYA = False
 
 if HAVE_MAYA:
+    import maya_camflight
     import maya_camradial
     import maya_radial
 
@@ -66,6 +67,7 @@ class FakeCmds(object):
         self.looked = []
         self.messages = []
         self.panel_cam = "|persp"
+        self.subs = set()
 
     def ls(self, *args, **kw):
         if kw.get("type") == "camera":
@@ -96,6 +98,8 @@ class FakeCmds(object):
         return list(IDENTITY)
 
     def objExists(self, node):
+        if node.endswith(".skeldarCameraFlight"):
+            return node.rsplit(".", 1)[0] in self.subs
         return node in self.cams
 
     def lookThru(self, panel, cam):
@@ -112,6 +116,14 @@ class Scene(unittest.TestCase):
         saved = maya_camradial.cmds
         maya_camradial.cmds = self.fake
         self.addCleanup(setattr, maya_camradial, "cmds", saved)
+        self.flown, self.taking, self.flying_to = [], False, None
+        for name, fn in (("fly", self._fly), ("target_of", lambda panel: self.flying_to)):
+            self.addCleanup(setattr, maya_camflight, name, getattr(maya_camflight, name))
+            setattr(maya_camflight, name, fn)
+
+    def _fly(self, panel, path):
+        self.flown.append((panel, path))
+        return self.taking
 
     def test_cameras(self):
         views, scene = maya_camradial.cameras()
@@ -131,6 +143,31 @@ class Scene(unittest.TestCase):
         maya_camradial.spec()
         maya_camradial.look_through("|shotCam")
         self.assertEqual(self.fake.looked, [("modelPanel4", "|shotCam")])
+
+    def test_a_flight_takes_the_switch_over(self):
+        self.taking = True
+        maya_camradial.spec()
+        maya_camradial.look_through("|shotCam")
+        self.assertEqual(self.flown, [("modelPanel4", "|shotCam")])
+        self.assertEqual(self.fake.looked, [])
+
+    def test_without_a_flight_the_panel_switches_at_once(self):
+        maya_camradial.spec()
+        maya_camradial.look_through("|shotCam")
+        self.assertEqual(self.flown, [("modelPanel4", "|shotCam")])
+        self.assertEqual(self.fake.looked, [("modelPanel4", "|shotCam")])
+
+    def test_a_flight_s_substitute_is_not_in_the_menu(self):
+        self.fake.cams["|skeldarCameraFlight"] = False
+        self.fake.subs.add("|skeldarCameraFlight")
+        views, scene = maya_camradial.cameras()
+        self.assertNotIn("|skeldarCameraFlight", scene)
+
+    def test_mid_flight_the_target_is_the_camera_marked(self):
+        self.fake.panel_cam = "|skeldarCameraFlight"
+        self.flying_to = "|shotCam"
+        spec = maya_camradial.spec()
+        self.assertEqual(spec["marked"], {spec["items"].index("camera:|shotCam")})
 
     def test_a_gone_camera_is_said(self):
         maya_camradial.spec()
