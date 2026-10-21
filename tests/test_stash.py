@@ -836,5 +836,14 @@ class Dropped(_Base):
         self.assertIn("Sending draft.ma | Sending clip.fbx", message)
 
 
+    def test_a_drop_leaves_a_typed_name_alone(self):
+        import maya_share
+        self.fake.fields[stash.NAME_FIELD] = "typed"
+        stash.stash_file(self.scene_path, "given.ma")
+        self.assertEqual(self.fake.fields[stash.NAME_FIELD], "typed")
+        stash.stash_file(self.scene_path)
+        self.assertEqual(self.fake.fields[stash.NAME_FIELD], "")
+
+
 if __name__ == "__main__":
     unittest.main()

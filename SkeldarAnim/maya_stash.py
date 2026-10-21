@@ -288,7 +288,8 @@ def stash_file(path=None, name=None):
     _makedirs()
     target = store.unique_name(base, _taken())
     shutil.copy2(path, _path(target))
-    _clear_name()
+    if name is None:
+        _clear_name()        # a name a caller gave is not the field's
     refresh()
     return _status("Stashed {0} - {1}.".format(target, records.size_text(
         os.path.getsize(_path(target)))))

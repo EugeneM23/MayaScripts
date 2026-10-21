@@ -291,7 +291,8 @@ def send_scene(name=None):
         record["fps"] = fps
     record["range"] = [cmds.playbackOptions(query=True, minTime=True),
                        cmds.playbackOptions(query=True, maxTime=True)]
-    return _send(record, path, records.left_behind_note(_foreign_textures()))
+    return _send(record, path, records.left_behind_note(_foreign_textures()),
+                 clear_name=name is None)
 
 
 def _pick_file():
@@ -321,17 +322,17 @@ def send_file(path=None, name=None):
     #  it, and "you" rows open like any other.
     shutil.copy2(path, local)
     record["bytes"] = os.path.getsize(local)
-    return _send(record, local, "")
+    return _send(record, local, "", clear_name=name is None)
 
 
-def _send(record, path, note):
+def _send(record, path, note, clear_name=True):
     st = state()
     rid = record["id"]
     st["entries"][rid] = {"record": record, "local": path}
     st["transfers"][rid] = {"progress": 0.0, "error": ""}
     save_history()
     #  a name is one upload's: the next send is called what it is again
-    if cmds.textField(FILE_NAME_FIELD, exists=True):
+    if clear_name and cmds.textField(FILE_NAME_FIELD, exists=True):
         cmds.textField(FILE_NAME_FIELD, edit=True, text="")
     refresh()
     message = _status("Sending {0} ({1}){2}".format(
@@ -647,6 +648,7 @@ def _fetch_work(record, path):
 def _fetched(rid, path):
     if _gone(rid):
         #  deleted while its last bytes came in
+        state().get("after_fetch", {}).pop(rid, None)
         _forget_local(path)
         return _transfer_done(rid)
     st = state()
@@ -663,6 +665,7 @@ def _fetched(rid, path):
 
 def _fetch_failed(rid, reason, path=None):
     if _gone(rid):
+        state().get("after_fetch", {}).pop(rid, None)
         _prune(path)
         return _transfer_done(rid)
     st = state()
@@ -720,10 +723,12 @@ def _local_or_fetch(rid):
         record["name"])
 
 
-def when_local(rid, fn):
+def when_local(rid, fn, kind=None):
     """`fn(path)` for `rid`'s file: now when it is on this disk, else once its
     download lands (2026-10-21, a drop from the list). A row being fetched gets
-    `fn` queued; one that cannot be had answers why. Returns what to say."""
+    `fn` queued (once per `kind`: a second drop of the same row does not queue
+    the same action again); one that cannot be had answers why. Returns what to
+    say."""
     path, why = _local_or_fetch(rid)
     if path:
         return fn(path)
@@ -732,24 +737,31 @@ def when_local(rid, fn):
     entry = st["entries"].get(rid)
     if entry is not None and transfer is not None and not transfer.get("error") \
             and entry["record"]["state"] == "ready":
-        st.setdefault("after_fetch", {}).setdefault(rid, []).append(fn)
+        waiting = st.setdefault("after_fetch", {}).setdefault(rid, [])
+        if kind is None or all(k != kind for k, _job in waiting):
+            #  the line is written in the scope the drop came from
+            waiting.append((kind, hubcopy.wrap(lambda path: _after(fn, path))))
         return "{0} is downloading - it follows when it lands.".format(
             entry["record"]["name"])
     return why
 
 
+def _after(fn, path):
+    try:
+        _status(fn(path))
+    except Exception as exc:                                 # noqa: BLE001
+        print(traceback.format_exc())
+        _status("Shared failed: {0}".format(exc))
+
+
 def _run_after_fetch(rid, path):
-    for fn in state().get("after_fetch", {}).pop(rid, []):
-        try:
-            _status(fn(path))
-        except Exception as exc:                             # noqa: BLE001
-            print(traceback.format_exc())
-            _status("Shared failed: {0}".format(exc))
+    for _kind, job in state().get("after_fetch", {}).pop(rid, []):
+        job(path)
 
 
 def drop_import(rids):
     """Rows dropped on a viewport: each imported as the Import button does."""
-    lines = [when_local(rid, lambda _path, r=rid: import_entry(r)) for rid in rids]
+    lines = [when_local(rid, lambda _path, r=rid: import_entry(r), "import") for rid in rids]
     return _status(" | ".join(line for line in lines if line))
 
 
@@ -760,7 +772,7 @@ def drop_to_stash(rids):
     def copy(rid):
         name = state()["entries"][rid]["record"]["name"]
         return lambda path: maya_stash.stash_file(path, name)
-    lines = [when_local(rid, copy(rid)) if rid in state()["entries"]
+    lines = [when_local(rid, copy(rid), "stash") if rid in state()["entries"]
              else "That file is no longer in the list." for rid in rids]
     return _status(" | ".join(line for line in lines if line))
 

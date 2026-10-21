@@ -8,6 +8,11 @@ import tempfile
 import time
 import zipfile
 
+if not os.environ.get("MAYA_APP_DIR"):
+    print("refused: set MAYA_APP_DIR to a scratch folder first - this verify "
+          "writes into the stash folder of the app dir")
+    sys.exit(2)
+
 import maya.standalone
 maya.standalone.initialize()
 import maya.cmds as cmds
@@ -51,7 +56,8 @@ message = maya_stash.drop_import(["draft.ma", "clip.fbx"])
 gate(1, cmds.objExists("draftCube"), "the scene came in: %s" % message)
 gate(2, any(j.endswith("clipRoot") for j in (cmds.ls(type="joint") or [])),
      "the FBX came in as a skeleton")
-gate(3, " | " in (message or ""), "one line naming both")
+gate(3, " | " in (message or "") and "draft.ma" in message and "clip.fbx" in message,
+     "one line naming both")
 
 
 class Net(object):

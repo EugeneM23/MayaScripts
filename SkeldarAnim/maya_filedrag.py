@@ -171,6 +171,10 @@ class FileScene(object):
             self._light(None)
         return hub
 
+    def ended(self):
+        """The drag is over, wherever it ended: no icon stays lit."""
+        self._light(None)
+
     def caption(self, records, aim):
         return caption(records, aim)
 

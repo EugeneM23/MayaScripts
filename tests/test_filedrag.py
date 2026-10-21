@@ -188,6 +188,29 @@ class OnAList(unittest.TestCase):
         self.drag.drop_at(target.x(), target.y())
         self.assertEqual(self.acted, [("send", ["A.fbx"])])
 
+    def test_back_over_its_own_list_the_icon_goes_out(self):
+        from unittest import mock
+        calls = []
+        port = self.source.viewport()
+        start = self.source.visualItemRect(self.source.item(0)).center()
+        other_pt = self.other.mapToGlobal(self.other.rect().center())
+        E, L, N = QT.QtCore.QEvent, QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
+
+        def send(kind, local, button, buttons):
+            g = port.mapToGlobal(local)
+            ev = QT.QtGui.QMouseEvent(kind, QT.QtCore.QPointF(local), QT.QtCore.QPointF(g),
+                                      button, buttons, QT.QtCore.Qt.NoModifier)
+            QT.QtWidgets.QApplication.sendEvent(port, ev)
+        with mock.patch.object(fd, "light", lambda section, on: calls.append((section, on))):
+            send(E.MouseButtonPress, start, L, L)
+            send(E.MouseMove, start + QT.QtCore.QPoint(40, 0), N, L)
+            self.drag.caption_at(other_pt, force=True)
+            self.assertEqual(calls, [("shared", True)])
+            self.drag.caption_at(port.mapToGlobal(start), force=True)
+            send(E.MouseButtonRelease, start, L, N)
+        self.assertEqual(calls[-1], ("shared", False))
+        self.assertEqual(self.acted, [])
+
 
 if __name__ == "__main__":
     unittest.main()

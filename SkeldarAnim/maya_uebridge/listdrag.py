@@ -455,6 +455,12 @@ def _classes():
                 ghost.deleteLater()
             self._drag = None
             self._press = None
+            ended = getattr(self.scene, "ended", None)
+            if callable(ended):
+                try:
+                    ended()
+                except Exception:                            # noqa: BLE001
+                    pass
             try:
                 self.list.releaseKeyboard()
             except Exception:                                # noqa: BLE001

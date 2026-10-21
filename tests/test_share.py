@@ -1031,6 +1031,61 @@ class Dropped(_Base):
         self.assertTrue(copied[0][0].endswith("Longsword.fbx"))
         self.assertIn("Stashed Longsword.fbx", message)
 
+    def test_a_drop_leaves_a_typed_name_alone_the_button_clears_it(self):
+        src = self._source("clip.fbx")
+        self.fake.fields[share.FILE_NAME_FIELD] = "typed"
+        share.send_file(src, "clip.fbx")
+        self.assertEqual(self.fake.fields[share.FILE_NAME_FIELD], "typed")
+        share.send_file(src)
+        self.assertEqual(self.fake.fields[share.FILE_NAME_FIELD], "")
+
+    def test_a_drop_of_the_same_row_twice_queues_one_action(self):
+        rec = self._colleague()
+        held = []
+        share._spawn = lambda fn: held.append(fn)
+        share.receive(rec)
+        ran = []
+        first = share.when_local(rec["id"], lambda p: ran.append(p) or "done", "import")
+        again = share.when_local(rec["id"], lambda p: ran.append(p) or "done", "import")
+        other = share.when_local(rec["id"], lambda p: ran.append(p) or "done", "stash")
+        self.assertIn("downloading", first)
+        self.assertEqual(again, first)
+        self.assertEqual(len(share.state()["after_fetch"][rec["id"]]), 2)
+        for fn in held:
+            fn()
+        self.assertEqual(len(ran), 2)
+
+    def test_the_line_is_written_in_the_scope_of_the_drop(self):
+        rec = self._colleague()
+        held = []
+        share._spawn = lambda fn: held.append(fn)
+        share.receive(rec)
+        seen = []
+        saved = share.hubcopy.wrap
+        share.hubcopy.wrap = lambda fn: (lambda *a: seen.append("scoped") or fn(*a))
+        try:
+            share.when_local(rec["id"], lambda p: "done")
+        finally:
+            share.hubcopy.wrap = saved
+        for fn in held:
+            fn()
+        self.assertEqual(seen, ["scoped"])
+        self.assertIn("done", self.statuses[-1])
+
+    def test_a_row_deleted_mid_download_drops_its_queued_action(self):
+        rec = self._colleague()
+        held = []
+        share._spawn = lambda fn: held.append(fn)
+        share.receive(rec)
+        ran = []
+        share.when_local(rec["id"], lambda p: ran.append(p) or "done", "import")
+        entry = share.state()["entries"][rec["id"]]
+        entry["record"] = records.with_state(entry["record"], "deleted")
+        for fn in held:
+            fn()
+        self.assertEqual(ran, [])
+        self.assertNotIn(rec["id"], share.state().get("after_fetch", {}))
+
 
 class Registered(unittest.TestCase):
     """The section in the hub, its icon, its payload rows, its hotkey row."""
