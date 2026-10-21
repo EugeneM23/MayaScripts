@@ -43,7 +43,6 @@ LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
 # target's distance out
 UP_SHARE = 0.25
 LINE_MARKER = "skeldarWeaponAimLine"  # on a line from the weapon to a controller: its role
-LINE_NAME = "{0}_aimLine_{1}"
 
 NO_WEAPON = "no weapon in the scene - Inventory > Equip first"
 ALREADY = "%s is in Aim Mode already - Default first"
@@ -248,27 +247,9 @@ def _control(name, parent, points, colour):
     return node
 
 
-def _line(name, parent, start, end, colour):
-    """A line from `start`'s pivot to `end`'s in world (2026-10-21: «векторы от оружия к нашим
-    контролам эйма что бы мы не путались»): a two-point curve whose points read the two nodes'
-    world positions, under `parent` (an identity group), unselectable (reference display)."""
-    node = _control(name, parent, [(0, 0, 0), (0, 0, 1)], colour)
-    shape = cmds.listRelatives(node, shapes=True, fullPath=True)[0]
-    for index, source in enumerate((start, end)):
-        decompose = cmds.createNode("decomposeMatrix", name=_leaf(node) + "_p%d" % index,
-                                    skipSelect=True)
-        cmds.connectAttr(source + ".worldMatrix[0]", decompose + ".inputMatrix")
-        cmds.connectAttr(decompose + ".outputTranslate", "%s.controlPoints[%d]" % (shape, index))
-    cmds.setAttr(node + ".overrideEnabled", 1)
-    cmds.setAttr(node + ".overrideDisplayType", 2)
-    cmds.setAttr(shape + ".lineWidth", 1.0)
-    for attr in ("translate", "rotate", "scale"):
-        cmds.setAttr(node + "." + attr, lock=True)
-    return node
-
-
 def _drop_lines(group):
-    """The lines' decomposeMatrix nodes deleted (the group takes the lines themselves)."""
+    """A group made by 45012f1..2026-10-21 holds two lines (gone since: «векторы ... не нужны»):
+    their decomposeMatrix nodes deleted (the group takes the lines themselves)."""
     for child in cmds.listRelatives(group, children=True, fullPath=True, type="transform") or []:
         if not cmds.attributeQuery(LINE_MARKER, node=child, exists=True):
             continue
@@ -293,18 +274,30 @@ def _make_controls(weapon, group_parent, size_target, size_up):
     made = {}
     for role, name, points, colour in (
             ("target", TARGET_NAME, diamond(size_target), TARGET_COLOUR),
-            ("up", UP_NAME, square(size_up), UP_COLOUR)):
+            ("up", UP_NAME, diamond(size_up), UP_COLOUR)):
         ctrl = _control(name.format(label), group, points, colour)
         cmds.addAttr(ctrl, longName=CTRL_MARKER, dataType="string")
         cmds.setAttr(ctrl + "." + CTRL_MARKER, role, type="string")
         for attr in LOCKED:
             cmds.setAttr(ctrl + "." + attr, lock=True, keyable=False, channelBox=False)
         made[role] = _uuid(ctrl)
-    for role, colour in (("target", TARGET_COLOUR), ("up", UP_COLOUR)):
-        line = _line(LINE_NAME.format(label, role), _long(uuid), weapon, _long(made[role]), colour)
-        cmds.addAttr(line, longName=LINE_MARKER, dataType="string")
-        cmds.setAttr(line + "." + LINE_MARKER, role, type="string")
     return _long(uuid), dict((r, _long(u)) for r, u in made.items())
+
+
+def home_of(weapon):
+    """Where the weapon's aim group lives outside 1P (2026-10-21, the animator: «Aim контролы для
+    оружия должны быть в паранте главного контрола если мы не в 1P моде»): its rig's Main - the
+    rig found from the weapon or from the hand holding it - else None (its character group)."""
+    try:
+        from maya_scenesetup import weaponspace
+        rigs = maya_rigs.rigs()
+        for node in (weapon, weaponspace.holding_hand(weapon)):
+            rig = maya_rigs.rig_of(node, rigs) if node else None
+            if rig is not None and rig.main and cmds.objExists(rig.main):
+                return _long(rig.main)
+    except Exception:                                        # noqa: BLE001 - a bare skeleton
+        pass
+    return None
 
 
 def _park(group, weapon):
@@ -312,9 +305,24 @@ def _park(group, weapon):
         from maya_scenesetup import chargroup
         rig = maya_rigs.rig_of(weapon, maya_rigs.rigs())
         owner = rig if rig is not None else weapon
-        return chargroup.park(group, owner)
+        group = chargroup.park(group, owner) or group
+        main = home_of(weapon)
+        if main:
+            uuid = _uuid(group)
+            cmds.parent(group, main, relative=True)
+            group = _long(uuid)
+        return group
     except Exception:                                        # noqa: BLE001 - legacy: stays
         return group
+
+
+def _local(point, spaces, frame):
+    """A world point in the group's space at `frame` (the group stands at identity under Main,
+    whose world `spaces` holds per frame); as it is without one."""
+    if not spaces:
+        return point
+    p = om.MPoint(*point) * spaces[frame].inverse()
+    return (p.x, p.y, p.z)
 
 
 def _write_series(node, frames, points, span, tangents):
@@ -345,7 +353,9 @@ def enter(weapon):
             sample, keys, tangents = fkik.own_keys([weapon], [], span)
             fkik._suspend(True)
             try:
+                home = home_of(_long(weapon_uuid))
                 worlds = _walk(sample, lambda: _world(_long(weapon_uuid)))
+                spaces = _walk(sample, lambda: _world(home)) if home else None
             finally:
                 fkik._suspend(False)
             size = max(d_aim, d_up) * 0.06
@@ -356,8 +366,8 @@ def enter(weapon):
             made = controllers(group)
             frames = list(sample)
             if keys:
-                targets = [point_of(worlds[f], aim_v, d_aim) for f in frames]
-                ups = [point_of(worlds[f], up_v, d_up) for f in frames]
+                targets = [_local(point_of(worlds[f], aim_v, d_aim), spaces, f) for f in frames]
+                ups = [_local(point_of(worlds[f], up_v, d_up), spaces, f) for f in frames]
                 _write_series(made["target"], frames, targets, span, tangents)
                 _write_series(made["up"], frames, ups, span, tangents)
             else:

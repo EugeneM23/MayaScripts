@@ -169,24 +169,30 @@ def main():
     gate("enter: the sword's rotate driven, no rotate keys",
          not key_times(sword, ("rotateX", "rotateY", "rotateZ")) and
          bool(cmds.listConnections(sword + ".rotateX", source=True, destination=False)))
-    gate("enter: the group in the character's group",
-         "_Character|" in group or "Manny_Rig_Character" in group, group)
+    gate("enter: the group under the rig's Main (2026-10-21)",
+         cmds.listRelatives(group, parent=True, fullPath=True)[0] == weaponaim.home_of(sword),
+         group)
     gate("enter: the sword's frame said in the card", weaponaim.is_aimed(sword))
-    lines = [c for c in cmds.listRelatives(weaponaim.group_of(sword), children=True,
-                                           fullPath=True) or []
-             if cmds.attributeQuery(weaponaim.LINE_MARKER, node=c, exists=True)]
     ctrls = weaponaim.controllers(weaponaim.group_of(sword))
+    gate("enter: no lines (2026-10-21), both controllers diamonds",
+         not [c for c in cmds.listRelatives(weaponaim.group_of(sword), children=True,
+                                            fullPath=True) or []
+              if cmds.attributeQuery(weaponaim.LINE_MARKER, node=c, exists=True)]
+         and all(len(cmds.getAttr(cmds.listRelatives(c, shapes=True, fullPath=True)[0]
+                                  + ".cv[*]")) == len(weaponaim.diamond(1.0))
+                 for c in ctrls.values()))
+    #  Main moved: the controllers ride it
     evaluate(8)
-    worst = 0.0
-    for line in lines:
-        role = cmds.getAttr(line + "." + weaponaim.LINE_MARKER)
-        shape = cmds.listRelatives(line, shapes=True, fullPath=True)[0]
-        a = om.MVector(*cmds.pointPosition(shape + ".cv[0]", world=True))
-        b = om.MVector(*cmds.pointPosition(shape + ".cv[1]", world=True))
-        worst = max(worst, (a - om.MVector(pm.position(W(sword)))).length(),
-                    (b - om.MVector(pm.position(W(ctrls[role])))).length())
-    gate("enter: a line from the sword to each controller", len(lines) == 2 and worst < TOL,
-         "%d lines, %.2e" % (len(lines), worst))
+    main = weaponaim.home_of(sword)
+    t0 = cmds.xform(ctrls["target"], query=True, worldSpace=True, translation=True)
+    was = cmds.getAttr(main + ".translateX")
+    cmds.setAttr(main + ".translateX", was + 10)
+    evaluate(8)
+    t1 = cmds.xform(ctrls["target"], query=True, worldSpace=True, translation=True)
+    cmds.setAttr(main + ".translateX", was)
+    evaluate(8)
+    gate("enter: Main +10 moves the target 10", abs(t1[0] - t0[0] - 10) < 1e-3,
+         "%.4f" % (t1[0] - t0[0]))
     up_local = om.MPoint(*cmds.xform(ctrls["up"], query=True, worldSpace=True,
                                      translation=True)) * W(sword).inverse()
     gate("enter: the up close beside the sword",
@@ -215,8 +221,7 @@ def main():
     text = connections.aim_mode(rig, sword, on=False)
     say("   leave:", text)
     gate("leave: nothing of the aim left", weaponaim.group_of(sword) is None and
-         not cmds.ls(type="aimConstraint") and
-         not [n for n in cmds.ls(type="decomposeMatrix") if "_aimLine_" in n])
+         not cmds.ls(type="aimConstraint"))
     gate("leave: the rotate keyed on the controllers' keys",
          key_times(sword, ("rotateX", "rotateY", "rotateZ")) == list(KEYS),
          key_times(sword, ("rotateX", "rotateY", "rotateZ")))

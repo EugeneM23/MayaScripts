@@ -13327,11 +13327,14 @@ Aim); a parent change in Aim Mode automatic; `[Body | Weapon]`. Spec
   one («bake its layers first»), no geometry, already aimed; a target past the blade's tip and an
   up on the OTHER side of the next longest axis, `UP_SHARE` (a quarter) of the target's distance
   out (`aim.placement`, `vectors`; the animator, after using it: «с другой стороны оружия и не так
-  далеко»), curve controls `<w>_aimTarget` (diamond) / `<w>_aimUp` (square), rotate and scale
-  locked, a reference-display line from the weapon to each (`_line`: a two-point curve fed by
-  decomposeMatrix nodes, which `leave` deletes), in `<w>_aim` (marked
-  `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) parked in the character
-  group; keyed in world on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
+  далеко»), curve controls `<w>_aimTarget` / `<w>_aimUp`, both diamonds since 2026-10-21 (the
+  up was a square; the reference lines from the weapon to them went the same day, «векторы ...
+  не нужны» - `_drop_lines` still cleans a group made with them), rotate and scale locked, in
+  `<w>_aim` (marked `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) under the
+  rig's **Main** (`home_of`: the rig from the weapon or the hand holding it; a bare skeleton: the
+  character group; 2026-10-21, «в паранте главного контрола если мы не в 1P моде» - in 1P the
+  chest, see 1P Setup), the keys written in Main's space (`_local`, Main's world sampled with the
+  weapon's); keyed on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
   the current frame); the weapon's rotate keys cut and `aimConstraint` with NO offset (marked
   `skeldarWeaponAimOf` - not the group's marker: a constraint is a transform and `groups()` would
   find it). `leave` - the weapon's local rotate (`helpers.driver_channels`, rotateAxis kept) on
