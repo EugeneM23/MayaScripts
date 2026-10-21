@@ -13152,6 +13152,72 @@ Pose Library sections above.**
      folder (trap 119), its colour space kept, and saves beside the asset, moving it over only once checked
      - the first try saved in place and left the asset broken until `git checkout`.
 
+## The camera's control, the Root control, 1P Setup's chest control (2026-10-21)
+
+The animator: «нужно изменить создание узла на создание нормального контроллера (квадратной формы
+красного цвета) ... камеру всегда держать в паренте главного контроллера для персонажа, а
+управление камерой совершать через специальный контроллер камеры который уже будет иметь
+возможность смены парентов ... Для кости Root давай сделаем отдельный контроллер в паренте
+главного». **This replaces "the camera parented under the knot" and "the camera in the
+character group" in the 1P Setup and Camera Setup sections above.**
+- **`maya_scenesetup/curvectrl.py`**: a control = a transform with one degree-1 nurbsCurve,
+  RGB-override coloured, 2 px (`square`, `root_arrow`, `camera_body`, `make`, `reshape`,
+  `local_box`).
+- **The camera** (`camera.setup`): `<ns>:Camera_ctrl` (cyan, drawn as a camera through the axis
+  turn), marked `mayaSceneSetupCameraControl`, under the rig's **Main** (a bare skeleton: its
+  character group), standing on the bone and baked from it; the camera (`MARKER` as before) is its
+  child at `AXIS_OFFSET`, unkeyed, t/r locked; camera_root follows the camera as before
+  (`camera_for` unchanged). `teardown` deletes the control with its camera. `keyed_node(bone)`:
+  the control, else an older camera itself. **Parent switching** (`set_parent(bone, choice)`,
+  `PARENTS` Main / Root / Chest / World, one undo chunk): the control moved by Tools > Inside's
+  road (`move_control` → `reparent._rebake`), its world track kept on every frame; the choice on
+  `skeldarCameraParent`. Chest needs 1P Setup, Main / Root a rig. `go_home(control)`: back under
+  Main - `knots._release_children` calls it when a knot it rides goes (the chest baked off).
+  Tools > 1P has four buttons **Main / Root / Chest / World** under 1P Setup
+  (`firstperson.camera_parent`).
+- **The Root control** (`maya_scenesetup/rootcontrol.py`): `<ns>:Root_ctrl` (yellow, a square
+  with an arrow on the floor) under Main at identity, in the ControlSet; the game root's
+  `root ← Main` parentConstraint made again from it (offset kept: nothing moves). Made on Add
+  Character (`character.add_root_control`) and by 1P Setup on an older rig; `ensure` idempotent.
+  The retarget still drives Main (root motion); Root_ctrl stays at zero unless animated, and
+  moving it moves the root and not the camera. 1P Setup puts it with the lower body.
+- **1P Setup's chest**: the knot on FKSpine3_M is reshaped into a red square
+  (`firstperson.chest_square`: FKSpine3_M's drawing's widest plane × 1.35) and renamed
+  `Chest_1P_ctrl`, marked `skeldar1PChest` = the rig's namespace (`chest_of`); still a knot to
+  Tools. The camera: an existing control is kept (a retarget made it), else Camera Setup first;
+  then the control moved under the chest with its motion.
+- **Display layers and stabilized by default** (the same day: «слои отображения с контроллерами
+  верхней и нижней части тела ... по умолчанию ... выключим контроллер нижней части тела и
+  отключим анимационный слой верхней части тела»): 1P Setup makes `<rig>_1P_Lower_Controls`
+  (hidden) and `<rig>_1P_Upper_Controls` (the chest and the camera control with it), marked
+  `skeldarFirstPerson` (`display_layers_of`), and mutes `_3P_Upper_Body`. Members are the
+  controls' SHAPES: AS nests its FK spine (FKSpine3/4 under FKSpine1/2, all under FKRoot_M), so a
+  hidden lower transform would hide upper controls. Trap 286 below: each shape's colour is moved
+  to its object colour first (`keep_colour`).
+- **The Pose Library** keys the camera's control (`helpers._camera_of` → `keyed_node`), its
+  parent carried by the `root` when it stands under Main or Root_ctrl (`_camera_carrier`), so an
+  animation card's travel on Main still lands camera_root.
+- Proof: `docs/superpowers/plans/verify_camera_control.py <clip> [rig]` **29/29 on Manny_Rig,
+  Creep_Rig and Orc_D_Rig** standalone (Root_ctrl, the retarget's camera, Main → Root → World →
+  Main and back from the 1P rig 0.0000 cm, undo of a switch, teardown and setup again, 1P with no
+  camera, Upper muted, the chest baked off back to Main, a skeleton in World, Delete);
+  `verify_1p_setup.py` **21/21** Manny and Creep; re-run green: rig_pipeline 30/30, many_rigs
+  32/32, camera_weapon_bones 24/24, delete_character 82/82, character_swap, knots 90/90,
+  poselib_apply 117/117, fkik_switch 21/21. Unit tests in `test_tools_firstperson`,
+  `test_tools_panel.CameraParent`, `test_poselib_helpers`. `verify_1p_setup.py` **30/30** on all
+  three rigs with the layers (members, hidden / shown, colours kept, muted by default); a
+  disposable GUI Maya's playblast: the lower controls gone, every colour as before, Main's ring
+  (0, 65, 153) before and after.
+
+286. **A display layer takes over its members' drawing override, colour included.** Measured in a
+     GUI Maya 2027: a curve coloured by index or RGB override - on the shape or on its transform -
+     drew Maya's default once the shape or the transform was in a layer. The object colour
+     (`useObjectColor` 2 + `wireColorRGB`) is not part of the override and survives; but it is in
+     RENDERING space: with colour management on (ACES) the index's colour written as is drew
+     (0, 119, 182) for the index's (0, 65, 153). Invert the view transform
+     (`colorManagementConvert -toDisplaySpace`, per-channel bisection): exact. `colorIndex -q`
+     answers None in batch: a table of Maya's 32 default index colours.
+
 ## The viewport bar reskinned: Maya's menu and icon bar in the hub's look (2026-10-20)
 
 The animator, with a picture of the View / Shading / Lighting / Show / Renderer / Panels row and its

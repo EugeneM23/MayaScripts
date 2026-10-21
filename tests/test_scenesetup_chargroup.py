@@ -134,7 +134,7 @@ class Wiring(unittest.TestCase):
 
     def test_the_camera_floor_weapon_and_lift_are_parked(self):
         from maya_scenesetup import camera, connections, floor
-        self.assertIn("chargroup.park(", self._source(camera, "setup"))
+        self.assertIn("home_of(", self._source(camera, "setup"))     # Main, else the group (2026-10-21)
         self.assertIn("chargroup.park(", self._source(floor, "drop"))
         self.assertIn("chargroup.park(", self._source(connections, "apply"))
 

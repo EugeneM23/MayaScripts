@@ -21,7 +21,9 @@ How a helper is written (`Writer`, prepared once per target, `solve` per frame):
   at `K⁻¹ · W_bone_wanted`, under its parent carried by the hand its weapon space follows
   (`P · W_hand_now⁻¹ · W_hand_wanted`) or standing still (the floor). Its channels keep its pivots,
   shear and scale (`driver_channels`);
-- **our camera drives it** (`camera.camera_for`, Camera Setup): the camera is keyed the same way;
+- **our camera drives it** (`camera.camera_for`, Camera Setup): the camera's CONTROL is keyed the
+  same way (2026-10-21; an older camera without one, the camera itself), its parent carried by the
+  `root` when it stands under Main or the Root control (a travel moves Main);
 - **the hands ride that weapon** (Connections, `connections.followers_of`): skipped and said -
   keying the weapon would move the hands;
 - **anything else drives it**: skipped and named (`keys.writable`).
@@ -180,11 +182,29 @@ def _weapon_of(path):
 
 
 def _camera_of(path):
+    """What holds the camera's motion for bone `path`: its control (2026-10-21), else an older
+    camera itself."""
     try:
         from maya_scenesetup import camera
     except ImportError:
         return None
-    return camera.camera_for(path)
+    return camera.keyed_node(path)
+
+
+def _camera_carrier(driver):
+    """The game bone that carries a camera control's parent rigidly: `root` when it stands under
+    the rig's Main or its Root control (the root follows them), else None (a chest, the world)."""
+    try:
+        from maya_scenesetup import camera, rootcontrol
+    except ImportError:
+        return None
+    if not camera.is_control(driver):
+        return None
+    parents = cmds.listRelatives(driver, parent=True, fullPath=True) or []
+    if parents and (camera.is_main(parents[0]) or cmds.attributeQuery(
+            rootcontrol.MARKER, node=parents[0], exists=True)):
+        return "root"
+    return None
 
 
 def _aim_of(weapon):
@@ -262,7 +282,8 @@ class Writer(object):
                 self.skipped[leaf] = "%s %s" % (_leaf(driver), why)
                 return None
             carrier = _carrier_of(driver) if weapon else None
-            carrier_leaf = _leaf(carrier) if carrier else None
+            carrier_leaf = _leaf(carrier) if carrier else (None if weapon
+                                                           else _camera_carrier(driver))
             if carrier_leaf not in self.bones:
                 carrier_leaf = None
             K = _world(path) * _world(driver).inverse()

@@ -842,7 +842,8 @@ def _kind(path, ref=None):
     walked = not _own(ref, path) and (weaponspace.hand_for(path) or armor.bone_for(path))
     if walked or weaponaim.is_controller(path) or any(
             cmds.attributeQuery(marker, node=path, exists=True)
-            for marker in (bonedrive.MARKER, armor.MARKER, camera.MARKER)):
+            for marker in (bonedrive.MARKER, armor.MARKER, camera.MARKER,
+                           camera.CONTROL_MARKER)):
         return ACCESSORY
     kind = cmds.nodeType(path)
     if kind != "joint" and cmds.listRelatives(path, shapes=True, type="mesh", fullPath=True):

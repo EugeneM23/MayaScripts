@@ -6,12 +6,15 @@ The animator: «мы нажимаем кнопку и у нас все расп�
 
 One press on any part of a rig, in one undo chunk:
 - the rig's geometry to 1P (`Main.view` = 1) where it has the switch;
-- a knot on `FKSpine3_M` (Tools > Knot), so the chest lives on its own;
+- a knot on `FKSpine3_M` (Tools > Knot), so the chest lives on its own - drawn since 2026-10-21
+  as the chest control `Chest_1P_ctrl`, a red square;
+- the rig's Root control made when it has none (`rootcontrol`);
 - Tools > Layer: the lower body and the knot onto `_3P_Lower_Body`, the upper body onto
   `_3P_Upper_Body` - the base keeps the first frame's pose - then the knot's turn moved from
   Lower to Upper (both add by component, so the sum is the take exactly);
-- Camera Setup on `camera_root`, the camera parented under the knot, its motion kept as
-  local keys in the knot's space (2026-10-20).
+- Camera Setup on `camera_root` when it has none; the camera's control (`Camera_ctrl`, under
+  Main) moved under the chest control, its motion kept as local keys in the chest's space
+  (2026-10-20, through the control since 2026-10-21). A Bake of the chest sends it back to Main.
 
 Maya will not start a node name with a digit (`3P_...` becomes `P_...`), hence the `_`.
 Spec: docs/superpowers/specs/2026-10-16-tools-1p-setup-design.md.
@@ -34,8 +37,24 @@ CAMERA_BONE = "camera_root"
 
 #  The lower body: these controls, and every control whose name holds a leg word (2026-10-16,
 #  asked: Spine1-2 with the hips - Spine3 rides its knot, so they cannot move the chest).
-LOWER_EXACT = frozenset(("Main", "RootX_M", "FKRoot_M", "HipSwinger_M", "FKSpine1_M",
-                         "FKSpine2_M"))
+LOWER_EXACT = frozenset(("Main", "Root_ctrl", "RootX_M", "FKRoot_M", "HipSwinger_M",
+                         "FKSpine1_M", "FKSpine2_M"))
+
+#  The chest control (2026-10-21, the animator: «нужно изменить создание узла на создание
+#  нормального контроллера (квадратной формы красного цвета)»): the knot on FKSpine3_M drawn as a
+#  red square around the chest, named for what it is. Still a knot to Tools (Bake, Remove,
+#  Attach): only its drawing and its name changed.
+#  The controls' display layers (2026-10-21, the animator: «слои отображения с контроллерами
+#  верхней и нижней части тела ... по умолчанию мы сразу выключим контроллер нижней части тела
+#  и отключим анимационный слой верхней части тела что бы он был стабилизирован»).
+LOWER_CONTROLS = "_1P_Lower_Controls"
+UPPER_CONTROLS = "_1P_Upper_Controls"
+DEFAULTS_WORDS = "stabilized: %s muted, %s hidden"
+
+CHEST_NAME = "Chest_1P_ctrl"
+CHEST_MARKER = "skeldar1PChest"          # the rig's namespace
+CHEST_GROW = 1.35                        # the square over FKSpine3_M's drawing
+CHEST_LEAST = 8.0                        # cm, half side when the control draws nothing
 LOWER_WORDS = ("Hip_", "Knee", "Ankle", "Toes", "Heel", "Leg", "Foot", "IKSpine")
 
 NO_RIG = "1P Setup: select any part of a rig"
@@ -72,11 +91,26 @@ def message(rig, view, lower, upper, camera, notes):
     parts = ["1P Setup on %s" % rig,
              "1P mesh on" if view == "on" else ("1P mesh already on" if view == "already"
                                                 else "no 1P mesh on this rig"),
-             "%s on a knot" % KNOT_CONTROL,
-             "%s: %d control%s + the knot's travel" % (LOWER, lower, "" if lower == 1 else "s"),
-             "%s: %d control%s + the knot's turn" % (UPPER, upper, "" if upper == 1 else "s"),
+             "%s on %s" % (KNOT_CONTROL, CHEST_NAME),
+             "%s: %d control%s + the chest's travel" % (LOWER, lower, "" if lower == 1 else "s"),
+             "%s: %d control%s + the chest's turn" % (UPPER, upper, "" if upper == 1 else "s"),
              camera]
     return " | ".join(parts + list(notes))
+
+
+def chest_square(box, grow=CHEST_GROW, least=CHEST_LEAST):
+    """The chest control's curve (pure): a square in the plane FKSpine3_M's drawing is widest in
+    (`box` its CVs' (min, max) in its own space), about the drawing's centre, `grow` times its
+    larger half extent; a plain square of half side `least` in XZ without a box."""
+    from maya_scenesetup import curvectrl
+    if not box:
+        return curvectrl.square(least, ("x", "z"))
+    lo, hi = box
+    extents = [hi[i] - lo[i] for i in range(3)]
+    axes = curvectrl.plane_of(extents)
+    half = max(extents[curvectrl.AXES[axes[0]]], extents[curvectrl.AXES[axes[1]]]) / 2.0
+    centre = tuple((lo[i] + hi[i]) / 2.0 for i in range(3))
+    return curvectrl.square(max(half * grow, 1e-3), axes, centre)
 
 
 # ------------------------------------------------------------------- scene
@@ -85,6 +119,176 @@ def setup_layers(namespace):
     """Our 1P layers standing for the rig in `namespace`."""
     return [layer for layer in cmds.ls(type="animLayer") or []
             if knots._has(layer, MARKER) and knots._get(layer, MARKER) == namespace]
+
+
+def chest_of(rig):
+    """The rig's 1P chest control (a knot of ours marked with its namespace), long path, or
+    None."""
+    for top in knots.knots():
+        if knots._has(top, CHEST_MARKER) and knots._get(top, CHEST_MARKER) == rig.namespace:
+            return top
+    return None
+
+
+def display_layer_names(rig_name):
+    """(lower, upper) display layer names for the rig (pure)."""
+    base = (rig_name or "Rig").split(":")[-1]
+    return ("%s%s" % (base, LOWER_CONTROLS), "%s%s" % (base, UPPER_CONTROLS))
+
+
+def camera_control(bone):
+    from maya_scenesetup import camera
+    return camera.control_for(bone)
+
+
+def _curve_shapes(paths):
+    """The drawn shapes of `paths` (a control's own curves - never its transform: AS nests its FK
+    controls, and a hidden spine control's transform would hide the chest's under it)."""
+    out = []
+    for path in paths:
+        if not path or not cmds.objExists(path):
+            continue
+        for shape in cmds.listRelatives(path, shapes=True, fullPath=True,
+                                        noIntermediate=True) or []:
+            if cmds.nodeType(shape) in ("nurbsCurve", "locator") and shape not in out:
+                out.append(shape)
+    return out
+
+
+#  Maya's default index colours (Window > Settings > Colour > Index), for `colorIndex -q`, which
+#  answers None in batch mode.
+INDEX_RGB = (
+    (0.47, 0.47, 0.47), (0.0, 0.0, 0.0), (0.25, 0.25, 0.25), (0.6, 0.6, 0.6),
+    (0.608, 0.0, 0.157), (0.0, 0.016, 0.376), (0.0, 0.0, 1.0), (0.0, 0.275, 0.098),
+    (0.149, 0.0, 0.263), (0.784, 0.0, 0.784), (0.541, 0.282, 0.2), (0.247, 0.137, 0.122),
+    (0.6, 0.149, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.255, 0.6),
+    (1.0, 1.0, 1.0), (1.0, 1.0, 0.0), (0.392, 0.863, 1.0), (0.263, 1.0, 0.639),
+    (1.0, 0.69, 0.69), (0.894, 0.675, 0.475), (1.0, 1.0, 0.388), (0.0, 0.6, 0.329),
+    (0.631, 0.416, 0.188), (0.62, 0.631, 0.188), (0.408, 0.631, 0.188), (0.188, 0.631, 0.365),
+    (0.188, 0.631, 0.631), (0.188, 0.404, 0.631), (0.435, 0.188, 0.631), (0.631, 0.188, 0.416))
+
+
+def override_rgb(enabled, use_rgb, rgb, index, index_rgb=None):
+    """The colour a drawing override shows (pure): its RGB, else its index's colour; None when
+    it is off or index 0 (Maya's default)."""
+    if not enabled:
+        return None
+    if use_rgb:
+        return tuple(rgb)
+    if not index:
+        return None
+    if index_rgb:
+        return tuple(index_rgb)
+    return INDEX_RGB[index] if 0 <= index < len(INDEX_RGB) else None
+
+
+def _own_colour(node):
+    try:
+        index = cmds.getAttr(node + ".overrideColor")
+        index_rgb = None
+        try:
+            index_rgb = cmds.colorIndex(index, query=True) if index else None
+        except Exception:                                        # noqa: BLE001
+            index_rgb = None
+        return override_rgb(cmds.getAttr(node + ".overrideEnabled"),
+                            cmds.getAttr(node + ".overrideRGBColors"),
+                            cmds.getAttr(node + ".overrideColorRGB")[0], index, index_rgb)
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+_RENDERING = {}
+
+
+def invert(to_display, target, rounds=3, steps=24):
+    """The colour `to_display` maps onto `target` (pure): per channel, bisection on [0, 1] with
+    the others held, a few rounds (a view transform is monotonic per channel, nearly separable)."""
+    rgb = list(target)
+    for _ in range(rounds):
+        for i in range(3):
+            lo, hi = 0.0, 1.0
+            for _ in range(steps):
+                mid = (lo + hi) / 2.0
+                probe = list(rgb)
+                probe[i] = mid
+                if to_display(probe)[i] < target[i]:
+                    lo = mid
+                else:
+                    hi = mid
+            rgb[i] = (lo + hi) / 2.0
+    return tuple(rgb)
+
+
+def _rendering(rgb):
+    """`rgb` as the display shows an index colour, in the rendering space the object colour is
+    read in (2026-10-21, measured: with colour management on, ACES, a wireColorRGB equal to the
+    index's colour drew (0, 119, 182) where the index drew (0, 65, 153)). Unmanaged: as it is."""
+    if rgb in _RENDERING:
+        return _RENDERING[rgb]
+    out = rgb
+    try:
+        if cmds.colorManagementPrefs(query=True, cmEnabled=True):
+            out = invert(lambda c: cmds.colorManagementConvert(toDisplaySpace=list(c)), rgb)
+    except Exception:                                            # noqa: BLE001
+        out = rgb
+    _RENDERING[rgb] = out
+    return out
+
+
+def keep_colour(shape):
+    """A display layer drives its members' drawing override, colour included: a control in one
+    loses its colour (measured 2026-10-21, a GUI Maya: index and RGB overrides alike, on the shape
+    or its transform). The object colour (`useObjectColor` 2, `wireColorRGB`) is not part of the
+    override and survives the layer - the shape's colour moved there first. The RGB or None."""
+    parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+    rgb = _own_colour(shape) or (_own_colour(parents[0]) if parents else None)
+    if rgb is None:
+        return None
+    rgb = _rendering(tuple(rgb))
+    cmds.setAttr(shape + ".wireColorRGB", *rgb)
+    cmds.setAttr(shape + ".useObjectColor", 2)
+    return rgb
+
+
+def _display_layers(rig, lower, upper):
+    """The two display layers of the 1P controls (2026-10-21): the lower body's controls and the
+    upper body's (the chest and the camera control with them), by their SHAPES, the lower one
+    hidden. Marked with the rig's namespace. Their names."""
+    import maya_rigs
+    names = display_layer_names(maya_rigs.label(rig))
+    made = []
+    for name, paths, visible in ((names[0], lower, 0), (names[1], upper, 1)):
+        layer = cmds.createDisplayLayer(name=name, empty=True, noRecurse=True)
+        shapes = _curve_shapes(paths)
+        for shape in shapes:
+            keep_colour(shape)
+        if shapes:
+            cmds.editDisplayLayerMembers(layer, shapes, noRecurse=True)
+        cmds.setAttr(layer + ".visibility", visible)
+        knots._set_string(layer, MARKER, rig.namespace)
+        made.append(layer)
+    return made
+
+
+def display_layers_of(namespace):
+    """Our 1P display layers standing for the rig in `namespace`."""
+    return [layer for layer in cmds.ls(type="displayLayer") or []
+            if knots._has(layer, MARKER) and knots._get(layer, MARKER) == namespace]
+
+
+def _make_chest(knot, control, namespace):
+    """The knot on FKSpine3_M made the chest control: a red square around the chest, its name,
+    its marker. Its long path."""
+    from maya_scenesetup import curvectrl
+    uuid = knots._uuid(knot)
+    curvectrl.reshape(knot, chest_square(curvectrl.local_box(control)), curvectrl.RED)
+    cmds.rename(knots._by_uuid(uuid), CHEST_NAME)
+    knot = knots._by_uuid(uuid)
+    for shape in cmds.listRelatives(knot, shapes=True, fullPath=True) or []:
+        cmds.rename(shape, knot.split("|")[-1] + "Shape")
+    knot = knots._by_uuid(uuid)
+    knots._set_string(knot, CHEST_MARKER, namespace)
+    return knot
 
 
 def _controls(rig):
@@ -174,33 +378,62 @@ def _view_on(rig):
     return "on"
 
 
-def _camera(bone, knot):
-    """Camera Setup on `bone`, then the camera into `knot` with its motion kept: its world track
-    re-expressed in the knot's space and keyed on the camera itself (Tools > Inside's road,
-    `reparent._rebake`). With both layers on the camera plays the take; with Upper muted it rides
-    the steadied chest and keeps its own motion relative to it (2026-10-20, the animator: the
-    first build cut the camera's keys and its animation was lost). The words for the line."""
+def _camera(bone, chest):
+    """The camera's control under the chest control with its motion kept (`camera.move_control`:
+    its world track re-expressed in the chest's space, Tools > Inside's road). A camera already
+    set up with its control is kept as it is (a retarget made it, or the animator); one without
+    a control (made before 2026-10-21), or none, is set up first (Camera Setup: the control under
+    Main). With both layers on the camera plays the take; with Upper muted it rides the steadied
+    chest and keeps its own motion relative to it. The words for the line."""
     from maya_scenesetup import bonedrive, camera
-    from maya_tools import reparent
-    keys = cmds.keyframe(bone, query=True, timeChange=True) or []
-    start, end = bonedrive.union_range(cmds.playbackOptions(query=True, min=True),
-                                       cmds.playbackOptions(query=True, max=True), keys)
-    camera.setup(bone, start, end)
-    cam = camera.camera_for(bone)
-    if not cam:
+    control = camera.control_for(bone)
+    if not control:
+        keys = cmds.keyframe(bone, query=True, timeChange=True) or []
+        start, end = bonedrive.union_range(cmds.playbackOptions(query=True, min=True),
+                                           cmds.playbackOptions(query=True, max=True), keys)
+        camera.setup(bone, start, end)
+        control = camera.control_for(bone)
+    if not control:
         return "no camera made"
-    span = (start, end)
-    scales, refusal = reparent._scale_plans([(cam, knot)], span)
-    if refusal:          # a camera's scale is its own: left as it stands rather than refused
-        scales = {knots._uuid(cam): ("keep", 1.0, [], {})}
-    knot_uuid = knots._uuid(knot)
+    control = camera.move_control(control, chest, "Chest")
+    return "%s follows %s with its motion, %s follows the camera" % (
+        leaf(control), CHEST_NAME, CAMERA_BONE)
 
-    def operate(uuids):
-        for uuid in uuids:
-            cmds.parent(knots._by_uuid(uuid), knots._by_uuid(knot_uuid))
 
-    cam = reparent._rebake([cam], span, operate, scales)[0]
-    return "camera %s in the knot with its motion, %s follows it" % (leaf(cam), CAMERA_BONE)
+def _selected_bone(selection=None):
+    """(camera_root of the character the selection names, refusal): a rig's, else a bare
+    skeleton's."""
+    import maya_rigs
+    rig, refusal = maya_rigs.current_rig(selection)
+    if rig is not None and not refusal:
+        bone = _camera_bone(rig)
+        return (bone, "") if bone else (None, "no %s on %s" % (CAMERA_BONE,
+                                                               maya_rigs.label(rig)))
+    from maya_scenesetup import skeleton
+    root = skeleton.current_root()
+    if not root:
+        return None, refusal or "select any part of a character"
+    joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                          fullPath=True) or [])
+    found = [j for j in joints if leaf(j) == CAMERA_BONE]
+    return (found[0], "") if len(found) == 1 else (None, "no %s under %s"
+                                                   % (CAMERA_BONE, leaf(root)))
+
+
+@maya_timewarp.wrapped
+def camera_parent(choice, selection=None):
+    """Camera parent (2026-10-21): the selected character's camera control under Main / Root /
+    Chest / World, its motion kept. The line."""
+    from maya_scenesetup import camera
+    bone, refusal = _selected_bone(selection)
+    if refusal:
+        return "Camera parent: " + refusal
+    keep = cmds.ls(selection=True, long=True) or []
+    line = camera.set_parent(bone, choice)
+    kept = [n for n in keep if cmds.objExists(n)]
+    if kept:
+        cmds.select(kept, replace=True)
+    return "Camera parent: " + line
 
 
 @maya_timewarp.wrapped
@@ -222,7 +455,8 @@ def setup(selection=None):
     if switch:
         return SPINE_IK % (name, leaf(switch))
     rigs = maya_rigs.rigs()
-    lower, upper = split(_controls(rig))
+    all_lower, all_upper = split(_controls(rig))
+    lower, upper = list(all_lower), list(all_upper)
     lower, refusal = _layered(lower, rigs)
     if refusal:
         return refusal
@@ -236,8 +470,10 @@ def setup(selection=None):
     notes = []
     with knots._press("skeldar1PSetup"):
         view = _view_on(rig)
+        from maya_scenesetup import rootcontrol
+        rootcontrol.ensure(rig)            # a rig added before 2026-10-21 has none
         knots.create("knot", [control], highlight=None)
-        knot = knots._knots_driving(control)[0]
+        knot = _make_chest(knots._knots_driving(control)[0], control, rig.namespace)
         before = set(cmds.ls(type="animLayer") or [])
         #  inside this press's chunk: Layer neither shows its window nor undoes anything itself
         line = layerbake.bake(lower + [knot], highlight=None, name=LOWER, cancellable=False)
@@ -261,5 +497,11 @@ def setup(selection=None):
             words = _camera(bone, knot)
         else:
             words = "no %s on this rig - no camera" % CAMERA_BONE
+        layers = _display_layers(rig, all_lower, all_upper + [knot, control]
+                                 + ([camera_control(bone)] if bone else []))
+        #  stabilized by default (2026-10-21): the upper body's 3P motion muted, the lower
+        #  body's controls hidden - the animator works the chest and the arms
+        cmds.setAttr(upper_layer + ".mute", 1)
+        notes.append(DEFAULTS_WORDS % (UPPER, layers[0]))
         cmds.select(knot, replace=True)
     return message(name, view, len(lower), len(upper), words, notes)

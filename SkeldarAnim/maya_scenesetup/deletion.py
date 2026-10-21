@@ -463,9 +463,10 @@ def _drivers(joints):
                                   fullPath=True) or []:
         for target in cmds.parentConstraint(con, query=True, targetList=True) or []:
             path = (cmds.ls(target, long=True) or [None])[0]
-            if path and (_marked(path, bonedrive.MARKER) or _marked(path, camera.MARKER)) \
-                    and path not in out:
-                out.append(path)
+            if path and (_marked(path, bonedrive.MARKER) or _marked(path, camera.MARKER)):
+                path = camera.control_of(path) or path      # the camera's control with it
+                if path not in out:
+                    out.append(path)
     return out
 
 

@@ -108,7 +108,8 @@ class FakeScene(object):
                  "_weapon_of": lambda p: self.weapons.get(p),
                  "_camera_of": lambda p: self.cameras.get(p),
                  "_followers": lambda w: self.followers.get(w, []),
-                 "_carrier_of": lambda d: self.carriers.get(d)}
+                 "_carrier_of": lambda d: self.carriers.get(d),
+                 "_camera_carrier": lambda d: self.carriers.get(d)}
         for name, fn in seams.items():
             saved[name] = getattr(helpers, name)
             setattr(helpers, name, fn)
@@ -200,6 +201,31 @@ class WriterTests(unittest.TestCase):
         self.scene.unwritable[self.WEAPON] = "driven by someConstraint"
         writer = helpers.Writer(None, self.bones, ["weapon_r"])
         self.assertIn("driven by someConstraint", writer.skipped["weapon_r"])
+
+    def test_the_camera_control_under_main_rides_the_root_s_travel(self):
+        """2026-10-21: the camera's CONTROL is keyed, its parent (Main) carried by the root - an
+        animation card moves Main by the travel, and the camera must land on camera_root
+        anyway."""
+        bones = bones_of({"root": "|r", "camera_root": "|r|camera_root"})
+        ctrl, main = "|Main|Camera_ctrl", "|Main"
+        root_now = trs((0, 0, 0))
+        main_now = trs((0, 0, 0))
+        K = trs((0, 0, 0), (0, 0, 0))          # the camera_root stands on the control
+        bone_now = trs((5, 164, 2), (-90, 0, 0))
+        self.scene.worlds.update({"|r": root_now, "|r|camera_root": bone_now,
+                                  ctrl: K.inverse() * bone_now})
+        self.scene.parents[ctrl] = main_now
+        self.scene.cameras["|r|camera_root"] = ctrl
+        self.scene.carriers[ctrl] = "root"
+        writer = helpers.Writer(None, bones, ["camera_root"])
+        self.assertEqual(writer.notes, ["camera_root keyed through Camera_ctrl"])
+        root_wanted = trs((50, 0, -20), (0, 30, 0))
+        wanted_bone = trs((60, 150, -10), (-80, 20, 0))
+        out = writer.solve({"root": root_wanted, "camera_root": wanted_bone})
+        local = trs([out.values[ctrl + ".translate" + a] for a in "XYZ"],
+                    [out.values[ctrl + ".rotate" + a] for a in "XYZ"])
+        main_new = main_now * root_now.inverse() * root_wanted       # Main moved with the root
+        close(self, K * local * main_new, wanted_bone, 1e-6, "camera_root lands")
 
     def test_the_camera_to_set_up_is_a_free_camera_root(self):
         bones = bones_of({"camera_root": "|root|camera_root"})

@@ -99,6 +99,10 @@ TRANSLATE_VAR = "skeldarAcrossTranslate"
 AIM_BTN = "skeldarToolsAim"
 SNAPSHOT_BTN = "skeldarToolsSnapshot"
 FP_BTN = "skeldarTools1PSetup"
+#  The camera's parent (2026-10-21): its control under Main / Root / Chest / World.
+CAMPARENT_CAPTION = "skeldarToolsCameraParentCaption"
+CAMPARENT_BTN = dict((c, "skeldarToolsCameraParent" + c)
+                     for c in ("Main", "Root", "Chest", "World"))
 OVERLAP_NAMES = "skeldarToolsOverlapNames"
 OVERLAP_FIELDS = "skeldarToolsOverlapFields"
 SOFT_LABEL = "skeldarToolsSoftnessLabel"
@@ -187,11 +191,14 @@ TIPS = {
     "total": "Overlap: Lag is the whole chain's, shared over its links",
     "edges": "Overlap: the first and last poses stay as they are - the overlap fades in over "
              "the first fifth and out over the last",
-    "fp_setup": "1P Setup - select any part of a rig: its geometry to 1P, a knot on FKSpine3_M, "
-                "the lower body and the knot's travel onto layer _3P_Lower_Body, the upper body "
-                "and the knot's turn onto _3P_Upper_Body (the base keeps the first frame), and "
-                "the camera set up inside the knot. Lower alone: the legs with a stable top; "
-                "both: the 3P take as it was",
+    "fp_setup": "1P Setup - select any part of a rig: its geometry to 1P, the chest control "
+                "Chest_1P_ctrl (a red square) on FKSpine3_M, the lower body and the chest's "
+                "travel onto layer _3P_Lower_Body, the upper body and the chest's turn onto "
+                "_3P_Upper_Body (the base keeps the first frame), and the camera's control "
+                "under the chest. Lower alone: the legs with a stable top; both: the 3P take as "
+                "it was",
+    "camparent": "The selected character's camera control (Camera_ctrl) under %s - its "
+                 "motion kept on every frame",
     "overlap": "Overlap - select a chain's root (Hierarchy) or its members top to bottom: each "
                "link trails its own motion, keyed on a new additive layer 'Overlap' (mute, "
                "weight or delete it; pressing again replaces it). A highlighted range overlaps "
@@ -217,7 +224,7 @@ HINTS = {
     SWAP_BTN: "child takes parent's place",
     ACROSS_BTN: "rides the last selected",
     OVERLAP_BTN: "trail onto a new layer",
-    FP_BTN: "layers, knot, 1P camera",
+    FP_BTN: "layers, chest, 1P camera",
 }
 
 
@@ -473,6 +480,15 @@ def fp_setup():
     return _press(firstperson.setup)
 
 
+def camera_parent(choice):
+    """The camera's control under `choice` (Main / Root / Chest / World), 2026-10-21."""
+    return _press(lambda: firstperson.camera_parent(choice))
+
+
+def _camera_parent(choice):
+    return lambda: camera_parent(choice)
+
+
 def overlap_settings():
     """The Overlap's settings as the card (or the memory) holds them."""
     d = overlapplan.DEFAULTS
@@ -645,6 +661,12 @@ def _overlap_body():
 
 def _firstperson_body():
     _row(FP_BTN, "1P Setup", "camera", TIPS["fp_setup"], fp_setup)
+    _caption(CAMPARENT_CAPTION, "Camera parent, motion kept")
+    _fill_row(4)
+    for choice in ("Main", "Root", "Chest", "World"):
+        _button(CAMPARENT_BTN[choice], choice, None, TIPS["camparent"] % choice,
+                _camera_parent(choice))
+    cmds.setParent("..")
 
 
 _BODIES = {"knots": _knots_body, "parent": _parent_body, "overlap": _overlap_body,

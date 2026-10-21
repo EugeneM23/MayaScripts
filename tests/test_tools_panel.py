@@ -246,6 +246,8 @@ class Card(_Base):
             panel.LAG_FIELD, panel.EASE_FIELD, panel.HIER_CHIP, panel.CYCLE_CHIP,
             panel.TOTAL_CHIP, panel.EDGES_CHIP, panel.OVERLAP_BTN,
             panel.HEAD["firstperson"], panel.BODY["firstperson"], panel.FP_BTN,
+            panel.CAMPARENT_CAPTION] + [panel.CAMPARENT_BTN[c] for c in ("Main", "Root", "Chest",
+                                                                 "World")] + [
             panel.FOOTER, panel.FOOTER_CAPTION, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
             panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN, panel.STATUS])
 
@@ -271,7 +273,8 @@ class Card(_Base):
         self.assertEqual(sorted(n for n, r in roles.items() if r == "secondary"),
                          sorted((panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
                                  panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
-                                 panel.BAKE_BTN, panel.LAYER_BTN)))
+                                 panel.BAKE_BTN, panel.LAYER_BTN)
+                                + tuple(panel.CAMPARENT_BTN.values())))
         self.assertEqual(roles[panel.REMOVE_BTN], "danger")
         self.assertEqual(roles[panel.FOOTER], "inset")
         self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
@@ -283,7 +286,8 @@ class Card(_Base):
                          sorted(panel.ORDER_SEG.values()))
         self.assertEqual(sorted(n for n, r in roles.items() if r == "caption"),
                          sorted((panel.PAIRS_CAPTION, panel.FOOTER_CAPTION, panel.SOFT_LABEL,
-                                 panel.LAG_LABEL, panel.EASE_LABEL)))
+                                 panel.LAG_LABEL, panel.EASE_LABEL,
+                                 panel.CAMPARENT_CAPTION)))
         self.assertEqual(sorted(n for n, r in roles.items() if r == "columns"),
                          sorted((panel.OVERLAP_NAMES, panel.OVERLAP_FIELDS)))
         self.assertNotIn("note", roles.values())        # the skin hides a note (trap 226)
@@ -613,6 +617,38 @@ class Snapshot(_Base):
         marks = dict((m.name, m) for m in hubstyle.take_marks())
         self.assertEqual(marks[panel.SNAPSHOT_BTN].icon, "camera")
         self.assertIn("every frame", panel.TIPS["snapshot"])
+
+
+class CameraParent(_Base):
+    """2026-10-21: four buttons under 1P Setup put the camera's control under Main / Root /
+    Chest / World."""
+
+    def setUp(self):
+        _Base.setUp(self)
+        self.saved_fp = panel.firstperson
+        calls = self.calls = []
+
+        class _FP(object):
+            @staticmethod
+            def camera_parent(choice):
+                calls.append(choice)
+                return "Camera parent: Camera_ctrl follows %s now" % choice
+
+            setup = staticmethod(lambda: "1P")
+        panel.firstperson = _FP()
+
+    def tearDown(self):
+        panel.firstperson = self.saved_fp
+        _Base.tearDown(self)
+
+    def test_each_button_presses_its_parent(self):
+        panel.build_panel()
+        for choice in ("Main", "Root", "Chest", "World"):
+            self.fake.commands[panel.CAMPARENT_BTN[choice]]()
+        self.assertEqual(self.calls, ["Main", "Root", "Chest", "World"])
+
+    def test_the_press_answers_its_line(self):
+        self.assertIn("follows Chest", panel.camera_parent("Chest"))
 
 
 class Registration(unittest.TestCase):

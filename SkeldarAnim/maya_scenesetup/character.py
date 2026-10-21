@@ -233,6 +233,20 @@ def select_rig(namespace):
     return True
 
 
+def add_root_control(namespace):
+    """The new rig's Root control (`rootcontrol.ensure`, 2026-10-21); best effort: the rig is
+    what the press is for, and it has arrived. The words, "" when none was made."""
+    try:
+        import maya_rigs
+        from maya_scenesetup import rootcontrol
+        for rig in maya_rigs.rigs():
+            if rig.namespace == namespace:
+                return rootcontrol.ensure(rig)[1]
+    except Exception as exc:                                     # noqa: BLE001
+        print("Add Character: no Root control ({0})".format(exc))
+    return ""
+
+
 def connect(root):
     """Hand the new character to the picker. True when one took it.
 
@@ -685,6 +699,8 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
             deletion.record_import(root, new, entry.label)
         except Exception as exc:                                 # noqa: BLE001
             print("Add Character: no record for Delete ({0})".format(exc))
+    if namespace:
+        add_root_control(namespace)
     connected = connect(root)
     selected = select_rig(namespace) if namespace else False
 

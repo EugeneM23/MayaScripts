@@ -37,6 +37,16 @@ BONE = "camera_root"
 MARKER = "mayaSceneSetupCamera"
 CAMERA_NAME = "SceneSetup_camera"
 
+# The camera's control (2026-10-21): the camera stands under it, the control carries the motion
+# and lives under the rig's Main; its parent can be switched with the motion kept (`set_parent`).
+CONTROL_MARKER = "mayaSceneSetupCameraControl"
+CONTROL_NAME = "Camera_ctrl"
+PARENT_MARKER = "skeldarCameraParent"       # which of PARENTS it stands under
+PARENTS = ("Main", "Root", "Chest", "World")
+PARENT_LINE = "%s follows %s now - its motion kept"
+CONTROL_WORDS = " - animate %s (under %s)"
+CONTROL_SIZE = 9.0                          # cm: the drawing's half width is 0.6 of it
+
 # The turn between camera1 and camera_bone, measured in the user's scene.
 AXIS_OFFSET = (-1.0, 0.0, 0.0, 0.0,
                0.0, 0.0, 1.0, 0.0,
@@ -155,6 +165,27 @@ def camera_name_for(bone):
     return namespace + ":" + CAMERA_NAME if namespace else CAMERA_NAME
 
 
+def control_name_for(bone):
+    """The camera control's name, in the bone's own namespace. Pure."""
+    short = (bone or "").split("|")[-1]
+    namespace = short.rsplit(":", 1)[0] if ":" in short else ""
+    return namespace + ":" + CONTROL_NAME if namespace else CONTROL_NAME
+
+
+def is_main(node):
+    """Is `node` a rig's Main (its leaf)?"""
+    return leaf(node) == "Main"
+
+
+def _filter(node):
+    curves = []
+    for axis in "XYZ":
+        curves += cmds.listConnections("%s.rotate%s" % (node, axis), source=True,
+                                       destination=False, type="animCurve") or []
+    if curves:
+        cmds.filterCurve(curves, filter="euler")
+
+
 def camera_for(bone):
     """The camera of ours driving THIS bone, or None -- never "any of ours"."""
     for node in our_constraints(bone):
@@ -219,6 +250,7 @@ def teardown(bone, start, end):
     tearing down "any camera of ours" would take the other rig's away.
     """
     camera_node = camera_for(bone)
+    control = control_of(camera_node)
     constraints = our_constraints(bone)
     if not camera_node and not constraints:
         return False
@@ -226,9 +258,163 @@ def teardown(bone, start, end):
     if constraints:
         _bake(bone, start, end)
         cmds.delete(constraints)
-    if camera_node:
+    if control:
+        cmds.delete(control)            # its camera with it
+    elif camera_node:
         cmds.delete(camera_node)
     return True
+
+
+# ------------------------------------------------------------ the camera's control
+
+def control_of(camera_node):
+    """The control carrying `camera_node` (its parent, marked), or None - a camera made before
+    2026-10-21 stands alone."""
+    if not camera_node or not cmds.objExists(camera_node):
+        return None
+    parents = cmds.listRelatives(camera_node, parent=True, fullPath=True) or []
+    if parents and cmds.attributeQuery(CONTROL_MARKER, node=parents[0], exists=True):
+        return parents[0]
+    return None
+
+
+def control_for(bone):
+    """The control of the camera of ours driving `bone`, or None."""
+    return control_of(camera_for(bone))
+
+
+def is_control(node):
+    return bool(node) and cmds.objExists(node) and cmds.attributeQuery(
+        CONTROL_MARKER, node=node, exists=True)
+
+
+def keyed_node(bone):
+    """What holds the camera's motion for `bone`: its control, else the camera itself (an older
+    one), else None."""
+    camera_node = camera_for(bone)
+    return control_of(camera_node) or camera_node
+
+
+def _rig_of(bone):
+    try:
+        import maya_rigs
+        return maya_rigs.rig_of(bone, maya_rigs.rigs())
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def home_of(bone):
+    """Where the camera's control lives by default: the bone's rig's Main, else its character
+    group (None: world level). The animator: «всегда держать камеру в паренте главного
+    контроллера для персонажа»."""
+    rig = _rig_of(bone)
+    main = getattr(rig, "main", None) if rig else None
+    if main and cmds.objExists(main):
+        return (cmds.ls(main, long=True) or [main])[0]
+    from maya_scenesetup import chargroup
+    return chargroup.group_of(bone)
+
+
+def go_home(control):
+    """The control back under its default parent (its rig's Main, else its character group, else
+    world level), its motion kept - a knot it rode is going (1P Setup's chest baked off). Its
+    long path."""
+    rig = _rig_of(control)
+    main = getattr(rig, "main", None) if rig else None
+    if main and cmds.objExists(main):
+        return move_control(control, (cmds.ls(main, long=True) or [main])[0], "Main")
+    from maya_scenesetup import chargroup
+    group = chargroup.group_of(control)
+    return move_control(control, group if group != control else None, "World")
+
+
+def parent_target(bone, choice):
+    """(the node the control would stand under for `choice`, refusal). World: the character
+    group (None: world level)."""
+    rig = _rig_of(bone)
+    if choice == "World":
+        from maya_scenesetup import chargroup
+        return chargroup.group_of(bone), ""
+    if not rig:
+        return None, "%s: no rig - the camera can follow the world only" % choice
+    if choice == "Main":
+        return (cmds.ls(rig.main, long=True) or [rig.main])[0], ""
+    if choice == "Root":
+        from maya_scenesetup import rootcontrol
+        ctrl, words = rootcontrol.ensure(rig)
+        return (ctrl, "") if ctrl else (None, "Root: " + words)
+    if choice == "Chest":
+        from maya_tools import firstperson
+        chest = firstperson.chest_of(rig)
+        return (chest, "") if chest else (None, "Chest: no 1P Setup on %s"
+                                          % rig.namespace.split(":")[-1])
+    return None, "no parent called %s" % choice
+
+
+def parent_choice(control):
+    """Which of PARENTS the control stands under (its marker), "" when unknown."""
+    if not is_control(control) or not cmds.attributeQuery(PARENT_MARKER, node=control,
+                                                          exists=True):
+        return ""
+    return cmds.getAttr(control + "." + PARENT_MARKER) or ""
+
+
+def _mark_parent(control, choice):
+    if not cmds.attributeQuery(PARENT_MARKER, node=control, exists=True):
+        cmds.addAttr(control, longName=PARENT_MARKER, dataType="string")
+    cmds.setAttr(control + "." + PARENT_MARKER, lock=False)
+    cmds.setAttr(control + "." + PARENT_MARKER, choice, type="string")
+    cmds.setAttr(control + "." + PARENT_MARKER, lock=True)
+
+
+def move_control(control, parent, choice):
+    """The control under `parent` (None: world level) with its motion kept: its world track
+    baked back in its new space (Tools > Inside's road, `reparent._rebake`). Its long path."""
+    from maya_tools import knots, reparent
+    current = cmds.listRelatives(control, parent=True, fullPath=True)
+    current = current[0] if current else None
+    if current == parent:
+        _mark_parent(control, choice)
+        return control
+    span = reparent._take([control], [parent])
+    scales, refusal = reparent._scale_plans([(control, parent)], span)
+    if refusal:            # a camera's scale is its own: left as it stands rather than refused
+        scales = {knots._uuid(control): ("keep", 1.0, [], {})}
+    parent_uuid = knots._uuid(parent) if parent else None
+
+    def operate(uuids):
+        for uuid in uuids:
+            node = knots._by_uuid(uuid)
+            if parent_uuid:
+                cmds.parent(node, knots._by_uuid(parent_uuid))
+            else:
+                cmds.parent(node, world=True)
+
+    control = reparent._rebake([control], span, operate, scales)[0]
+    _mark_parent(control, choice)
+    return control
+
+
+def set_parent(bone, choice):
+    """The camera's control for `bone` under the parent `choice` names, its motion kept. The
+    line."""
+    control = control_for(bone)
+    if not control:
+        return "no camera with a control on %s - press Camera Setup first" % leaf(bone)
+    target, refusal = parent_target(bone, choice)
+    if refusal:
+        return refusal
+    from maya_tools import knots
+    with knots._press("skeldarCameraParent"):       # one undo step, autoKey off
+        control = move_control(control, target, choice)
+    return PARENT_LINE % (leaf(control), choice)
+
+
+def _control_points(size):
+    """The control's curve: a camera drawn in the control's space (the camera stands in it at
+    the axis turn, so it is drawn through that turn)."""
+    from maya_scenesetup import curvectrl
+    return curvectrl.transformed(curvectrl.camera_body(size), rotation_only(AXIS_OFFSET))
 
 
 def lens(shape):
@@ -250,30 +436,51 @@ def setup(bone, start, end):
         offset = rotation_only(AXIS_OFFSET)
         teardown(bone, start, end)
 
+        # The camera's CONTROL (2026-10-21, the animator: «держать камеру в паренте главного
+        # контроллера для персонажа, а управление камерой совершать через специальный
+        # контроллер камеры который уже будет иметь возможность смены парентов»): under the
+        # rig's Main (a bare skeleton: its character group), standing on the bone. The camera
+        # is its child at the axis turn and is never keyed: the control carries the motion.
+        from maya_scenesetup import curvectrl
+        name = camera_name_for(bone)
+        home = home_of(bone)
+        if not home:
+            from maya_scenesetup import chargroup
+            home = chargroup.group_of(bone)
+        control = curvectrl.make(scope.as_created(control_name_for(bone)), home,
+                                 _control_points(CONTROL_SIZE), curvectrl.CYAN)
+        control_uuid = cmds.ls(control, uuid=True)[0]
+        cmds.addAttr(control, longName=CONTROL_MARKER, attributeType="bool", defaultValue=True)
+        _mark_parent(control, "Main" if home and is_main(home) else "World")
+        for attr in ("scaleX", "scaleY", "scaleZ", "visibility"):
+            cmds.setAttr(control + "." + attr, keyable=False, channelBox=False)
+
         # Created then renamed: `cmds.camera(name=...)` leaves a numbered
         # transform, and the animator picks this camera out of a menu by name.
         transform, _shape = cmds.camera()
-        name = camera_name_for(bone)
         transform = cmds.ls(cmds.rename(transform, scope.as_created(name)), long=True)[0]
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
         shape = cmds.rename(shape, scope.as_created(name + "Shape"))
         lens(shape)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)
-        # In the bone's character group (2026-10-02), not loose at world level; an identity
-        # parent, so the placement below is the same either way.
-        from maya_scenesetup import chargroup
-        transform = chargroup.park(transform, bone) or transform
+        uuid = cmds.ls(transform, uuid=True)[0]
+        cmds.parent(transform, cmds.ls(control_uuid, long=True)[0], relative=True)
+        transform = cmds.ls(uuid, long=True)[0]
+        control = cmds.ls(control_uuid, long=True)[0]
+        cmds.xform(transform, matrix=offset, objectSpace=True)
+        for attr in CHANNELS:
+            cmds.setAttr(transform + "." + attr, lock=True)
 
-        cmds.xform(transform, matrix=placed_matrix(world_matrix(bone), offset),
-                   worldSpace=True)
+        cmds.xform(control, matrix=world_matrix(bone), worldSpace=True)
 
-        # Follow the bone and bake, then stand alone. The camera is already in
+        # Follow the bone and bake, then stand alone. The control is already in
         # the right place, so the offset maintainOffset captures is ours.
-        temporary = cmds.parentConstraint(bone, transform,
+        temporary = cmds.parentConstraint(bone, control,
                                           maintainOffset=True)[0]
-        _bake(transform, start, end)
+        _bake(control, start, end)
         cmds.delete(temporary)
+        _filter(control)
 
         # Invert the drive. Order is load-bearing: constraining first and
         # cutting the curves after leaves a pairBlend nobody asked for, and
@@ -286,7 +493,8 @@ def setup(bone, start, end):
         cmds.parentConstraint(transform, bone, maintainOffset=True)
 
         frames = int(round(end - start)) + 1
-        return setup_message(leaf(transform), frames)
+        return setup_message(leaf(transform), frames) + CONTROL_WORDS % (
+            leaf(control), leaf(home) if home else "the world")
     finally:
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=autokey)

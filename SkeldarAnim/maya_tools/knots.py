@@ -1097,7 +1097,22 @@ def _release_children(top):
         for child in _children(node):
             if cmds.objectType(child, isAType="constraint") or _has(child, plan.INNER_MARKER):
                 continue
+            if _camera_control(child):      # the camera's control goes back under Main
+                try:
+                    from maya_scenesetup import camera
+                    camera.go_home(child)
+                    continue
+                except Exception:           # never stop a Bake / Remove over a passenger
+                    pass
             _move_out(child, home)
+
+
+def _camera_control(node):
+    try:
+        from maya_scenesetup import camera
+    except ImportError:
+        return False
+    return camera.is_control(node)
 
 
 def _move_out(child, home):

@@ -108,7 +108,7 @@ bones = [N(b) for b in ("pelvis", "foot_l", "foot_r", "spine_03", "spine_05", "h
 legs = [N(b) for b in ("pelvis", "foot_l", "foot_r", "calf_l")]
 raw = track(bones, frames)
 BONE0 = cmds.ls(maya_rigs.node(rig, "camera_root"), long=True)
-CAM0 = camera.camera_for(BONE0[0]) if BONE0 else None
+CAM0 = camera.keyed_node(BONE0[0]) if BONE0 else None
 if CAM0:   # no UE clip moves camera_root (trap 83): a motion of the camera's own, keyed
     import math
     for f in range(first, last + 1, 3):
@@ -118,6 +118,11 @@ if CAM0:   # no UE clip moves camera_root (trap 83): a motion of the camera's ow
 cam_raw = track([BONE0[0]], frames) if CAM0 else None
 pose0 = track(bones, [first])[first]
 
+_sh0 = cmds.listRelatives(N("FKShoulder_R"), shapes=True, fullPath=True)[0]
+SHOULDER_RGB = fp.override_rgb(cmds.getAttr(_sh0 + ".overrideEnabled"),
+                               cmds.getAttr(_sh0 + ".overrideRGBColors"),
+                               cmds.getAttr(_sh0 + ".overrideColorRGB")[0],
+                               cmds.getAttr(_sh0 + ".overrideColor"))
 cmds.currentTime(first + 7)
 cmds.select(N("FKElbow_R"))
 line = fp.setup()
@@ -129,6 +134,7 @@ gate(len(lower) == 1 and len(upper) == 1, "two layers made: %s / %s" % (lower, u
 cmds.undo()
 HAS_VIEW = cmds.attributeQuery("view", node=N("Main"), exists=True)
 gate(not fp.setup_layers(rig.namespace) and not knots.knots()
+     and not fp.display_layers_of(rig.namespace)
      and (not HAS_VIEW or cmds.getAttr(N("Main") + ".view") == 0),
      "one undo: no layer, no knot, Main.view 0")
 cmds.redo()
@@ -141,6 +147,19 @@ else:
     gate("no 1P mesh" in line, "no Main.view: said on the line")
 
 knot = knots.knots()[0]
+shapes = cmds.listRelatives(knot, shapes=True, fullPath=True) or []
+gate(len(shapes) == 1 and cmds.nodeType(shapes[0]) == "nurbsCurve"
+     and cmds.getAttr(shapes[0] + ".wireColorRGB")[0][0] > 0.8
+     and cmds.getAttr(shapes[0] + ".useObjectColor") == 2
+     and len(cmds.getAttr(shapes[0] + ".cv[*]")) == 5 and knot.endswith(fp.CHEST_NAME)
+     and fp.chest_of(rig) == knot,
+     "the chest control: %s, a red square curve, found by its marker" % knot.split("|")[-1])
+from maya_scenesetup import rootcontrol  # noqa: E402
+rc = rootcontrol.find(rig)
+con = cmds.listRelatives(N("root"), children=True, type="parentConstraint", fullPath=True) or []
+gate(bool(rc) and con and [cmds.ls(t, long=True)[0] for t in
+                          cmds.parentConstraint(con[0], q=True, targetList=True)] == [rc],
+     "the root bone follows the Root control under Main (%s)" % rc)
 rot_up = all(cmds.animLayer(upper, query=True, findCurveForPlug=knot + "." + c)
              for c in ("rotateX", "rotateY", "rotateZ"))
 rot_lo = any(cmds.animLayer(lower, query=True, findCurveForPlug=knot + "." + c)
@@ -148,6 +167,56 @@ rot_lo = any(cmds.animLayer(lower, query=True, findCurveForPlug=knot + "." + c)
 tr_lo = any(cmds.animLayer(lower, query=True, findCurveForPlug=knot + "." + c)
             for c in ("translateX", "translateY", "translateZ"))
 gate(rot_up and not rot_lo and tr_lo, "knot's turn on Upper only, travel on Lower")
+
+#  2026-10-21: the controls' display layers, and stabilized by default
+dls = fp.display_layers_of(rig.namespace)
+low_dl = [d for d in dls if d.endswith(fp.LOWER_CONTROLS)]
+up_dl = [d for d in dls if d.endswith(fp.UPPER_CONTROLS)]
+
+
+def members(layer):
+    return set(cmds.ls(cmds.editDisplayLayerMembers(layer, query=True, fullNames=True) or [],
+                       long=True) or [])
+
+
+def shape_in(ctrl, layer):
+    shapes = cmds.listRelatives(ctrl, shapes=True, fullPath=True, noIntermediate=True) or []
+    return bool(shapes) and set(shapes) <= members(layer)
+
+
+gate(len(low_dl) == 1 and len(up_dl) == 1, "two display layers: %s / %s" % (low_dl, up_dl))
+if low_dl and up_dl:
+    lo, up = low_dl[0], up_dl[0]
+    gate(cmds.getAttr(lo + ".visibility") == 0 and cmds.getAttr(up + ".visibility") == 1,
+         "the lower controls' layer hidden, the upper's shown")
+    gate(shape_in(N("Main"), lo) and shape_in(N("IKLeg_L"), lo) and shape_in(N("FKSpine1_M"), lo)
+         and shape_in(knot, up) and shape_in(N("FKShoulder_R"), up) and shape_in(N("FKHead_M"), up),
+         "lower: Main, IK leg, Spine1; upper: the chest, shoulder, head (their shapes)")
+    gate(not any(cmds.nodeType(m) == "transform" for m in members(lo) | members(up)),
+         "only shapes in the layers (AS nests its FK controls)")
+    sh = cmds.listRelatives(N("FKShoulder_R"), shapes=True, fullPath=True)[0]
+    gate(cmds.getAttr(sh + ".useObjectColor") == 2
+         and max(abs(a - b) for a, b in zip(cmds.getAttr(sh + ".wireColorRGB")[0],
+                                            fp._rendering(SHOULDER_RGB))) < 1e-3,
+         "the shoulder keeps its colour through the layer (%s)" % (SHOULDER_RGB,))
+    cam_c = camera.control_for(N("camera_root")) if cmds.ls(maya_rigs.node(rig, "camera_root")) \
+        else None
+    if cam_c:
+        gate(shape_in(cam_c, up), "the camera's control in the upper layer")
+    cmds.currentTime(first + 3)
+    vis = cmds.listRelatives(N("FKShoulder_R"), shapes=True, fullPath=True)[0]
+    gate(om.MDagPath.getAPathTo(om.MSelectionList().add(vis).getDependNode(0)).isVisible()
+         and not om.MDagPath.getAPathTo(om.MSelectionList().add(
+             cmds.listRelatives(N("IKLeg_L"), shapes=True, fullPath=True)[0]).getDependNode(0)
+         ).isVisible(), "a shoulder control visible, a leg control hidden")
+gate(cmds.getAttr(upper + ".mute") == 1 and cmds.getAttr(lower + ".mute") == 0,
+     "by default %s muted (stabilized), %s on" % (upper, lower))
+sp0 = N("spine_03")
+stab = track([sp0], frames)
+turn0 = max(apart(stab[f][sp0], pose0[sp0])[1] for f in frames)
+gate(turn0 < 0.05, "stabilized by default: spine_03 keeps the first frame's turn (%.4f deg)"
+     % turn0)
+cmds.setAttr(upper + ".mute", 0)
 
 both = track(bones, frames)
 cm, deg = worst(raw, both)
@@ -176,9 +245,11 @@ if not HAS_CAM:
     gate("no camera_root" in line, "no camera_root: said on the line")
 bone = N("camera_root") if HAS_CAM else None
 cam = camera.camera_for(bone) if HAS_CAM else None
-parent = cmds.listRelatives(cam, parent=True, fullPath=True) if cam else None
-HAS_CAM and gate(bool(cam) and parent and parent[0] == knot and bool(cmds.keyframe(cam, query=True)),
-     "camera %s under the knot, keyed" % cam)
+ctrl = camera.control_of(cam) if cam else None
+parent = cmds.listRelatives(ctrl, parent=True, fullPath=True) if ctrl else None
+HAS_CAM and gate(bool(ctrl) and parent and parent[0] == knot and bool(cmds.keyframe(ctrl, query=True))
+     and not cmds.keyframe(cam, query=True),
+     "camera control %s under the chest control, keyed (the camera itself not)" % ctrl)
 if HAS_CAM and cam_raw:
     cm, deg = worst(cam_raw, track([bone], frames))
     gate(cm < 0.01 and deg < 0.01, "camera_root keeps its world track through the press "
@@ -210,11 +281,11 @@ if HAS_CAM:
     back = len(knots.knots()) == 1
     cmds.redo()
     gate(back and not knots.knots(), "one undo brings the knot back, redo bakes it again")
-    cam2 = camera.camera_for(bone)
+    cam2 = camera.control_for(bone)
     home = cmds.listRelatives(cam2, parent=True, fullPath=True) if cam2 else None
-    gate(not knots.knots() and bool(cam2) and bool(home)
-         and home[0] == maya_rigs.group_of(N("Main")),
-         "knot baked off (%s), camera in %s" % (bline, home))
+    gate(not knots.knots() and bool(cam2) and bool(home) and home[0] == N("Main")
+         and camera.parent_choice(cam2) == "Main",
+         "chest baked off (%s), camera control back under Main (%s)" % (bline, home))
     cm, deg = worst(before, track(bones + [bone], frames))
     gate(cm < 0.02 and deg < 0.05, "after the knot's Bake: body and camera_root as before (%.4f cm, "
          "%.4f deg)" % (cm, deg))
