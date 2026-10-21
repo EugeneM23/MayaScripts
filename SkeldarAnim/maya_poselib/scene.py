@@ -838,9 +838,9 @@ def _kind(path, ref=None):
     character `ref`'s own nodes (`_own`) are asked only for those markers of their own, never
     walked up: a rig's 187 controls walked cost 0.8 s on every selection change (the final
     review)."""
-    from maya_scenesetup import armor, bonedrive, camera, weaponspace
+    from maya_scenesetup import armor, bonedrive, camera, weaponaim, weaponspace
     walked = not _own(ref, path) and (weaponspace.hand_for(path) or armor.bone_for(path))
-    if walked or any(
+    if walked or weaponaim.is_controller(path) or any(
             cmds.attributeQuery(marker, node=path, exists=True)
             for marker in (bonedrive.MARKER, armor.MARKER, camera.MARKER)):
         return ACCESSORY

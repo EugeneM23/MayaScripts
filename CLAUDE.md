@@ -13205,3 +13205,43 @@ off back to Maya's images and sheets; pictures `docs/superpowers/plans/viewport_
      clears a menu's sheet when it fills it (an `aboutToShow` sheet was gone at the Show). And
      `toggleModelEditorBarsInAllPanels` takes no argument that sets a state: `0` then `1` toggled the
      icon bars twice... and left them hidden in a fresh Maya. Read the bar's state before toggling it.
+
+## Connections: a Weapon tab and the weapon's Aim Mode (2026-10-21)
+
+The animator: «дополнительную вкладку в connection для оружия перенесем в эту вкладку парент оружия
+и добавим новый инструмент aim ... вместо локаторов мы должны создавать контроллеры. Запекание
+ключей ... умным по ключам ... 2 кнопки Aim Mode и Default ... позы и анимации сохраняются и
+загружаются на любой мод». Asked: the controllers in the WORLD; the rotation only (as Tools >
+Aim); a parent change in Aim Mode automatic; `[Body | Weapon]`. Spec
+`docs/superpowers/specs/2026-10-21-connections-weapon-aim-design.md`.
+- **The card**: `[Body | Weapon]` segments under the subtitle (`skeldarConnectionsTab`, the
+  columns `skeldarConnectionsBodyTab` / `WeaponTab` managed one at a time, `show_tab`). Body:
+  FK / IK and Any object; Weapon: Acts on, the three parent rows, Apply all, the caption «Aim»,
+  **Aim Mode** (primary) + **Default**. The subtitle ends «- Aim Mode» while it stands. Hotkey
+  rows `connections.aim` / `connections.default`.
+- **`maya_scenesetup/weaponaim.py`**: `enter` - refused on a locked or driven rotate, a layered
+  one («bake its layers first»), no geometry, already aimed; a target past the blade's tip and an
+  up on the next longest axis (`aim.placement`, `vectors`), curve controls `<w>_aimTarget`
+  (diamond) / `<w>_aimUp` (square), rotate and scale locked, in `<w>_aim` (marked
+  `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) parked in the character
+  group; keyed in world on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
+  the current frame); the weapon's rotate keys cut and `aimConstraint` with NO offset (marked
+  `skeldarWeaponAimOf` - not the group's marker: a constraint is a transform and `groups()` would
+  find it). `leave` - the weapon's local rotate (`helpers.driver_channels`, rotateAxis kept) on
+  the keys of the controllers and its translate, the constraint and group deleted. One undo chunk
+  each, the warp off.
+- **A lift or a hang in Aim Mode** (`connections.apply`): `leave`, the steps, `enter` in the
+  press's chunk («Aim Mode kept»). Not proven headless (OverRig's parent_in/out need a GUI Maya).
+- **The Pose Library** (`helpers.Writer`): a weapon in Aim Mode is entry mode `aimed`
+  (`Entry.aim`, `_aim_of`): its translate and the two controllers' translate keyed (the wanted
+  weapon matrix's aim and up points); the controllers are the body (`scene._kind` ACCESSORY).
+  Saving reads the bones, whatever drives them.
+- **The cost**: between the weapon's keys the world controllers interpolate on their own, so a hand
+  that moves where the weapon has no key turns it differently (the FK/IK switch's keys-only cost).
+- Proof: `docs/superpowers/plans/verify_weapon_aim_mode.py` **21/21 mayapy standalone** (Manny_Rig,
+  a Long Sword keyed on 0/8/20 under a turning shoulder: Aim Mode keeps it on every key to 8.5e-14,
+  the controllers keyed on exactly 0/8/20, one Ctrl+Z gives the rotate curves back; the moved target
+  0.0000 deg off the blade; Default keyed on 0/8/20 to 1.7e-14; a card saved in Default loaded in
+  Aim Mode and the other way round, weapon_r on the card's place to 2.6e-5; an animation onto a
+  second rig in Aim Mode 1.7e-5 every frame); `tests/test_scenesetup_weaponaim.py`. Not seen in a
+  GUI Maya.

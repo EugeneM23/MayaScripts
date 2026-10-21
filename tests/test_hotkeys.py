@@ -496,7 +496,7 @@ class OurRows(unittest.TestCase):
         #  + window.timebar (2026-10-16), + ragdoll.impulse (2026-10-16)
         #  + ragdoll.blend (2026-10-17)
         #  + window.sidepanel, sidepanel.channels / .attributes (2026-10-17)
-        self.assertEqual(len(ours), 107)                # + editor.motiontrail (2026-10-20); + radial.cameras / _release (2026-10-20, Space); + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
+        self.assertEqual(len(ours), 109)                # + connections.aim / .default (2026-10-21); + editor.motiontrail (2026-10-20); + radial.cameras / _release (2026-10-20, Space); + skills.page1..12, skills.cell1..10 (2026-10-19); editor.script, editor.component, window.chat (2026-10-20)
 
     def test_the_scene_tabs_rows(self):
         """Scene Tabs (2026-10-15): the bar's opener and next / previous tab."""

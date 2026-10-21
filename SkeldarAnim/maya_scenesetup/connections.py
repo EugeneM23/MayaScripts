@@ -113,6 +113,7 @@ from maya_scenesetup import catalog
 from maya_scenesetup import fkik
 from maya_scenesetup import fkikspine
 from maya_scenesetup import skeleton
+from maya_scenesetup import weaponaim
 from maya_scenesetup import weaponspace
 
 HUB_SECTION = "connections"
@@ -124,7 +125,16 @@ ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
 # The card's sections (2026-10-16, the card rules): a caption over each.
 CAPTION = {"limbs": "skeldarConnectionsCapLimbs",
            "weapon": "skeldarConnectionsCapWeapon",
+           "aim": "skeldarConnectionsCapAim",
            "any": "skeldarConnectionsCapAny"}
+# [Body | Weapon] (2026-10-21, «дополнительную вкладку в connection для оружия»): one column a
+# tab, one managed at a time, the pick remembered
+TABS = (("body", "Body"), ("weapon", "Weapon"))
+TAB_COLLECTION = "skeldarConnectionsTabs"
+TAB_COLUMN = {"body": "skeldarConnectionsBodyTab", "weapon": "skeldarConnectionsWeaponTab"}
+TAB_OPTIONVAR = "skeldarConnectionsTab"
+AIM_BUTTON = "skeldarConnectionsAimMode"
+DEFAULT_BUTTON = "skeldarConnectionsAimDefault"
 
 
 def _caption(key, text):
@@ -834,8 +844,14 @@ def apply(wanted, rig=None, weapon=None):
 
     uuid = cmds.ls(weapon, uuid=True)[0]
     notes = []
+    # a parent change in Aim Mode (2026-10-21, asked: automatically): Default, the steps, Aim
+    # Mode again - the weapon's own motion re-baked by the parent change is what the aim takes
+    aimed = weaponaim.is_aimed(weapon) and any(step in ("lift", "hang") for step, _ in steps)
     cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
+        if aimed:
+            weaponaim.leave(weapon)
+            weapon = cmds.ls(uuid, long=True)[0]
         sweep_orphans()
         span = _span(weapon, [_control(rig, side) for side in SIDES])
         for step, side in steps:
@@ -872,6 +888,9 @@ def apply(wanted, rig=None, weapon=None):
                 if note:
                     notes.append(note)
         weapon = cmds.ls(uuid, long=True)[0]
+        if aimed:
+            again = weaponaim.enter(weapon)
+            notes.append("Aim Mode kept" if " in Aim Mode" in again else again)
         return applied_message(steps, read_scheme(rig, bones, weapon)) + \
             "".join(" | " + note for note in notes)
     finally:
@@ -1289,6 +1308,8 @@ def refresh(*_args):
                                         "Spine mixed FK/IK (keyed)" if spine_mixed else "")
                       if part)
     text = header_text(rig, weapon, scheme, others, mixed)
+    if weapon and weaponaim.is_aimed(weapon):
+        text += " - Aim Mode"
     cmds.text(HEADER, edit=True, label=text)
     return text
 
@@ -1456,6 +1477,71 @@ def _press_spine(mode):
     return go
 
 
+def aim_mode(rig=None, weapon=None, on=True):
+    """Aim Mode (`on`) or Default on the chosen weapon of the rig (2026-10-21,
+    `weaponaim`). The status line."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
+        return RETARGETING
+    bones = bones_of(rig)
+    weapon = weapon or chosen_weapon(rig, bones)
+    if not weapon:
+        return NO_WEAPON
+    return weaponaim.enter(weapon) if on else weaponaim.leave(weapon)
+
+
+def current_tab():
+    value = cmds.optionVar(query=TAB_OPTIONVAR) if cmds.optionVar(exists=TAB_OPTIONVAR) else ""
+    return value if value in TAB_COLUMN else "body"
+
+
+def tab_segment(tab):
+    return "skeldarConnectionsTab_" + tab
+
+
+_TAB_BUSY = [False]
+
+
+def show_tab(tab):
+    """Show the card's tab `tab` and hide the other (its column managed, its segment lit,
+    remembered). Safe before the card is built - it only remembers."""
+    if tab not in TAB_COLUMN or _TAB_BUSY[0]:
+        return
+    _TAB_BUSY[0] = True
+    try:
+        cmds.optionVar(stringValue=(TAB_OPTIONVAR, tab))
+        for each, column in TAB_COLUMN.items():
+            if cmds.columnLayout(column, exists=True):
+                cmds.columnLayout(column, edit=True, manage=each == tab)
+        segment = tab_segment(tab)
+        if cmds.iconTextRadioButton(segment, exists=True):
+            cmds.iconTextRadioButton(segment, edit=True, select=True)
+    finally:
+        _TAB_BUSY[0] = False
+
+
+def _tab_changed(tab):
+    def go(*_args):
+        show_tab(tab)
+    return go
+
+
+def _press_aim(on):
+    def go(*_args):
+        return _run(lambda: aim_mode(on=on))
+    return go
+
+
+def _press_aim_mode(*_args):
+    return _press_aim(True)()
+
+
+def _press_aim_default(*_args):
+    return _press_aim(False)()
+
+
 def _press_connect(*_args):
     return _run(lambda: connect())
 
@@ -1514,6 +1600,28 @@ def _spine_row():
     cmds.setParent("..")
 
 
+
+def _any_object_rows():
+    """BakeAcross and Release - any object, not the weapon - under their caption."""
+    _caption("any", "Any object")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.button(
+        label="BakeAcross", height=hubstyle.height("button", 28),
+        annotation="Select the objects, then the parent LAST: each object "
+                   "rides a proxy locator inside the parent with its own "
+                   "track baked onto it, and is hidden. Key the proxies.",
+        command=_press_bake_across), "secondary", "link")
+    hubstyle.mark(cmds.button(
+        label="Release", height=hubstyle.height("button", 28),
+        width=hubstyle.pick(78, 90),
+        annotation="Selected objects (or their proxies) baked where the "
+                   "proxies carried them, proxies removed, objects shown "
+                   "again",
+        command=_press_release_across), "secondary", "unlink")
+    cmds.setParent("..")
+
+
 def build_panel():
     """The scene's state line (the card's subtitle in the skin), Arm R / Arm L
     FK|IK on one row, the "Acts on" chooser (a row shown only while two
@@ -1538,11 +1646,31 @@ def build_panel():
     #  the skin's segments leave their tracks for a row of ours, so Arm L's
     #  track is as wide as its column is given: about half (ARM_L_WIDTH);
     #  the classic hub's track holds its buttons and sizes itself
+    #  [Body | Weapon] (2026-10-21): one column a tab, one managed at a time
+    tab = current_tab()
+    segments = cmds.rowLayout(numberOfColumns=len(TABS),
+                              columnAttach=[(i + 1, "both", 1) for i in range(len(TABS))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(TAB_COLLECTION)
+    for each, label in TABS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            tab_segment(each), style="textOnly", label=label,
+            height=hubstyle.height("segment", 24), select=each == tab,
+            annotation=("FK / IK of the arms, legs and spine; any object across"
+                        if each == "body" else "The weapon's parent and its Aim Mode"),
+            onCommand=_tab_changed(each)), "segment")
+    cmds.setParent("..")
+    cmds.columnLayout(TAB_COLUMN["body"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6), manage=tab == "body")
     _caption("limbs", "FK / IK")
     _fkik_row(fkik.ARM)
     #  the legs (2026-10-10): the same row under the arms, one per leg
     _fkik_row(fkik.LEG)
     _spine_row()
+    _any_object_rows()
+    cmds.setParent("..")
+    cmds.columnLayout(TAB_COLUMN["weapon"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6), manage=tab == "weapon")
     _caption("weapon", "Weapon in hands")
     #  Which of two weapons the rows act on (2026-09-29): the selection names
     #  one too. Two fixed segments - labels written by refresh, an empty slot
@@ -1605,22 +1733,22 @@ def build_panel():
         backgroundColor=(0.45, 0.70, 0.50),
         annotation="bring the scene to all three parents",
         command=_press_apply_all), "primary", "check")
-    _caption("any", "Any object")
+    _caption("aim", "Aim")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 3)])
     hubstyle.mark(cmds.button(
-        label="BakeAcross", height=hubstyle.height("button", 28),
-        annotation="Select the objects, then the parent LAST: each object "
-                   "rides a proxy locator inside the parent with its own "
-                   "track baked onto it, and is hidden. Key the proxies.",
-        command=_press_bake_across), "secondary", "link")
+        AIM_BUTTON, label="Aim Mode", height=hubstyle.height("button", 32),
+        annotation="The weapon's rotation aims at two world controllers (a target past "
+                   "the tip, an up beside it), keyed on the weapon's own keys - it stands "
+                   "where it stood on every key. Animate the controllers.",
+        command=_press_aim(True)), "primary", "target")
     hubstyle.mark(cmds.button(
-        label="Release", height=hubstyle.height("button", 28),
-        width=hubstyle.pick(78, 90),
-        annotation="Selected objects (or their proxies) baked where the "
-                   "proxies carried them, proxies removed, objects shown "
-                   "again",
-        command=_press_release_across), "secondary", "unlink")
+        DEFAULT_BUTTON, label="Default", height=hubstyle.height("button", 32),
+        width=hubstyle.pick(90, 96),
+        annotation="The aim baked back onto the weapon's rotation on the controllers' "
+                   "keys, the controllers removed",
+        command=_press_aim(False)), "secondary", "rotate")
+    cmds.setParent("..")
     cmds.setParent("..")
     #  three lines (2026-09-30): an Apply plus the FK/IK switch it made first
     #  is longer than two - a wordWrap text keeps the height it is given

@@ -1233,6 +1233,12 @@ _OURS = (
     ("connections.disconnect", "Connections", "Disconnect hands",
      "Bake the hands where the weapon carried them, weapon back in the hand",
      partial(_connections, "_press_disconnect")),
+    ("connections.aim", "Connections", "Weapon Aim Mode",
+     "The chosen weapon's rotation aims at two world controllers, keyed on its own keys",
+     partial(_connections, "_press_aim_mode")),
+    ("connections.default", "Connections", "Weapon Default",
+     "The aim baked back onto the weapon's rotation, the controllers removed",
+     partial(_connections, "_press_aim_default")),
     # Connect Arms / Disconnect Arms / Add Aim / Camera Setup left Scene
     # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
     # camera setup happens inside the retarget's Bake now.

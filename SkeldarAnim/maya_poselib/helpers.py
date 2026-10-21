@@ -55,7 +55,11 @@ CAMERA_SET = "camera set up on %s"
 CAMERA_FAILED = "camera not set up on %s: %s"
 
 # leaf, path, mode ("joint" | "driver"), driver path, K (W_bone · W_driver⁻¹), carrier leaf
-Entry = namedtuple("Entry", "leaf path mode driver K carrier")
+Entry = namedtuple("Entry", "leaf path mode driver K carrier aim")
+Entry.__new__.__defaults__ = (None,)
+# a weapon in Connections' Aim Mode (2026-10-21): its rotation aims at two world controllers, so
+# its translate and theirs are keyed - (target path, up path, aim vector, up vector, distances)
+Aim = namedtuple("Aim", "target up aim_v up_v d_aim d_up")
 
 
 def _bare(leaf):
@@ -183,6 +187,27 @@ def _camera_of(path):
     return camera.camera_for(path)
 
 
+def _aim_of(weapon):
+    """An `Aim` when `weapon` stands in Connections' Aim Mode, else None."""
+    try:
+        from maya_scenesetup import weaponaim
+    except ImportError:
+        return None
+    group = weaponaim.group_of(weapon)
+    if group is None:
+        return None
+    made = weaponaim.controllers(group)
+    if "target" not in made or "up" not in made:
+        return None
+    aim_v, up_v, d_aim, d_up = weaponaim.stored_vectors(group)
+    return Aim(made["target"], made["up"], aim_v, up_v, d_aim, d_up)
+
+
+def _point(matrix, direction, distance):
+    p = om.MPoint(*[v * distance for v in direction]) * om.MMatrix(matrix)
+    return (p.x, p.y, p.z)
+
+
 def _followers(weapon):
     try:
         from maya_scenesetup import connections
@@ -226,7 +251,13 @@ class Writer(object):
                 self.notes.append(FOLLOWED % (leaf, _leaf(weapon)))
                 self.skipped[leaf] = "the hands ride %s" % _leaf(weapon)
                 return None
-            why = self._unwritable(driver)
+            aimed = _aim_of(weapon) if weapon else None
+            if aimed:
+                why = (self._unwritable(driver, TRANSLATE) or
+                       self._unwritable(aimed.target, TRANSLATE) or
+                       self._unwritable(aimed.up, TRANSLATE))
+            else:
+                why = self._unwritable(driver)
             if why:
                 self.skipped[leaf] = "%s %s" % (_leaf(driver), why)
                 return None
@@ -235,8 +266,10 @@ class Writer(object):
             if carrier_leaf not in self.bones:
                 carrier_leaf = None
             K = _world(path) * _world(driver).inverse()
-            self.notes.append(THROUGH % (leaf, _leaf(driver)))
-            return Entry(leaf, path, "driver", driver, K, carrier_leaf)
+            self.notes.append(THROUGH % (leaf, _leaf(driver) + (" (Aim Mode: its controllers)"
+                                                                if aimed else "")))
+            return Entry(leaf, path, "aimed" if aimed else "driver", driver, K, carrier_leaf,
+                         aimed)
         why = self._unwritable(path)
         if why:
             self.skipped[leaf] = why
@@ -244,8 +277,8 @@ class Writer(object):
         return Entry(leaf, path, "joint", None, None, None)
 
     @staticmethod
-    def _unwritable(node):
-        for channel in ROTATE + TRANSLATE:
+    def _unwritable(node, channels=ROTATE + TRANSLATE):
+        for channel in channels:
             ok, why = keys.writable("%s.%s" % (node, channel))
             if not ok:
                 return "%s %s" % (channel, why)
@@ -302,6 +335,18 @@ class Writer(object):
                 plugs = ["%s.%s" % (node, ch) for ch in ROTATE]
                 rotate, translate = driver_channels(local, _attrs(node),
                                                     self._current(plugs, seed))
+            if entry.mode == "aimed":
+                # the weapon's place keyed, its turn through the two controllers in world
+                aim = entry.aim
+                for ctrl, direction, distance in ((aim.target, aim.aim_v, aim.d_aim),
+                                                  (aim.up, aim.up_v, aim.d_up)):
+                    point = om.MPoint(*_point(target, direction, distance))
+                    point = point * _parent_world(ctrl).inverse()
+                    for channel, value in zip(TRANSLATE, (point.x, point.y, point.z)):
+                        values["%s.%s" % (ctrl, channel)] = value
+                for channel, value in zip(TRANSLATE, translate):
+                    values["%s.%s" % (node, channel)] = value
+                continue
             for channel, value in zip(ROTATE, rotate):
                 values["%s.%s" % (node, channel)] = value
             for channel, value in zip(TRANSLATE, translate):

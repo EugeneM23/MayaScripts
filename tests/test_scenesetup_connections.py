@@ -298,9 +298,11 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels_of("R"), ["Free", "Weapon"])
         self.assertEqual(labels_of("L"), ["Free", "Weapon"])
         self.assertEqual(labels_of("W"), ["World", "Hand R", "Hand L"])
+        #  2026-10-21: [Body | Weapon] - the body tab (BakeAcross, Release) first, then the
+        #  weapon tab's rows, Apply all and Aim Mode / Default
         self.assertEqual([c[2]["label"] for c in self._buttons()],
-                         ["Apply", "Apply", "Apply", "Apply all",
-                          "BakeAcross", "Release"])
+                         ["BakeAcross", "Release", "Apply", "Apply", "Apply", "Apply all",
+                          "Aim Mode", "Default"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand R", "Hand L", "Weapon"):
@@ -314,7 +316,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
         #  + the legs' two labels and the spine (2026-10-10), the three
         #  captions (2026-10-16)
-        self.assertEqual(len(labels), 14)
+        self.assertEqual(len(labels), 15)          # + the caption «Aim» (2026-10-21)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -326,7 +328,7 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 9)      # the chooser's, FK/IK's too, legs' and the spine's too
+        self.assertEqual(len(segment_rows), 10)     # the chooser's, FK/IK's too, legs' and the spine's too, the tabs
         for side in ("R", "L"):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
@@ -352,8 +354,8 @@ class Panel(unittest.TestCase):
         cx.bake_across = lambda selection=None: asked.append("bake") or "done"
         cx.release_across = lambda selection=None: asked.append("release") or "done"
         try:
-            self._buttons()[4][2]["command"]()
-            self._buttons()[5][2]["command"]()
+            self._buttons()[0][2]["command"]()
+            self._buttons()[1][2]["command"]()
         finally:
             cx.bake_across, cx.release_across = saved
         self.assertEqual(asked, ["bake", "release"])
@@ -384,7 +386,7 @@ class Panel(unittest.TestCase):
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
             cx._set_menus({"L": "Weapon"})
-            self._buttons()[1][2]["command"]()          # Hand_L's Apply
+            self._buttons()[3][2]["command"]()          # Hand_L's Apply
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, H)])
@@ -395,7 +397,7 @@ class Panel(unittest.TestCase):
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
             cx._set_menus({"R": "Weapon", "L": "Weapon", "W": "World"})
-            self._buttons()[3][2]["command"]()          # Apply all
+            self._buttons()[5][2]["command"]()          # Apply all
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, F)])
@@ -560,14 +562,13 @@ class Panel(unittest.TestCase):
         order = [c[1][0] if c[1] else c[2].get("label")
                  for c in self.fake.calls if c[0] in ("text", "button")
                  and not c[2].get("edit")]
-        self.assertLess(order.index("Apply all"), order.index(cx.CAPTION["any"]))
         self.assertLess(order.index(cx.CAPTION["any"]), order.index("BakeAcross"))
         #  and their marks stay what they were: the section's one primary,
         #  then the two secondaries
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "secondary")]
-        self.assertEqual(sorted(roles), [("primary", "check"),
-                                         ("secondary", "link"),
+        self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "target"),
+                                         ("secondary", "link"), ("secondary", "rotate"),
                                          ("secondary", "unlink")])
 
     def test_the_status_tells_the_hub(self):
@@ -761,8 +762,8 @@ class PanelCompact(unittest.TestCase):
             self.assertTrue(heights)
             self.assertEqual(set(heights), {22}, kind)
         buttons = [c[2] for c in fake.calls if c[0] == "button"]
-        apply_rows, apply_all, bake, release = (
-            buttons[:3], buttons[3], buttons[4], buttons[5])
+        bake, release, apply_rows, apply_all = (
+            buttons[0], buttons[1], buttons[2:5], buttons[5])
         for button in apply_rows:                  # icon only, small
             self.assertEqual((button["label"], button["width"],
                               button["height"]), ("", 30, 22))
