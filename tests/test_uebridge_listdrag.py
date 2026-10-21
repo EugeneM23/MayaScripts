@@ -483,3 +483,50 @@ class Boundary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeamScene(FakeScene):
+    """A scene with its own caption, drops and icon (Stash / Shared, 2026-10-21)."""
+
+    drops = ("send",)
+    icon = "send"
+
+    def __init__(self):
+        FakeScene.__init__(self)
+        self.aim = dict(kind="send", text="send to Shared")
+
+    def caption(self, records, aim):
+        return "%d · %s" % (len(records), aim["text"]), True
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class SceneSeams(unittest.TestCase):
+    # borrows the Drag helpers, not its tests (they speak of rigs)
+    row, mouse, far, acts = Drag.row, Drag.mouse, Drag.far, Drag.acts
+
+    def setUp(self):
+        Drag.setUp(self)
+        self.scene = SeamScene()
+        self.drag = listdrag.attach_widget(self.list, lambda: list(self.records), self.scene)
+
+    def test_the_scene_s_own_drop_kind_drops(self):
+        start = self.row(0)
+        self.mouse(self.E.MouseButtonPress, start, self.L, self.L)
+        self.mouse(self.E.MouseMove, self.far(start), self.N, self.L)
+        self.mouse(self.E.MouseButtonRelease, self.far(start), self.L, self.N)
+        self.assertEqual(self.acts("drop"), [("drop", "A_Jump", "send")])
+
+    def test_the_ghost_says_the_scene_s_caption(self):
+        start = self.row(0)
+        self.mouse(self.E.MouseButtonPress, start, self.L, self.L)
+        self.mouse(self.E.MouseMove, self.far(start), self.N, self.L)
+        self.drag.caption_at(self.list.viewport().mapToGlobal(self.far(start)), force=True)
+        self.assertEqual(self.drag.ghost().caption_text(), "1 · send to Shared")
+        self.mouse(self.E.MouseButtonRelease, self.far(start), self.L, self.N)
+
+    def test_a_bound_scene_hands_its_seams_on(self):
+        import maya_hubcopy
+        bound = maya_hubcopy.bind(self.scene)
+        self.assertEqual(getattr(bound, "drops", None), ("send",))
+        self.assertEqual(getattr(bound, "icon", "run"), "send")
+        self.assertEqual(getattr(maya_hubcopy.bind(FakeScene()), "icon", "run"), "run")

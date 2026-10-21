@@ -385,7 +385,7 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 return self._say(_last_line(traceback.format_exc()))
-            if aim.get("kind") in DROPS:
+            if aim.get("kind") in getattr(self.scene, "drops", DROPS):
                 return self._act(lambda: self.scene.drop(records, aim))
             return self._say(aim.get("text") or "no target")
 
@@ -432,7 +432,8 @@ def _classes():
             size = int(GHOST * self.k)
             try:
                 pixmap = maya_hubqt.pixmap(
-                    "run", maya_hubqt.hubstyle.TOKENS["accent"], size)
+                    getattr(self.scene, "icon", "run"),
+                    maya_hubqt.hubstyle.TOKENS["accent"], size)
             except Exception:                                # noqa: BLE001
                 pixmap = QtGui.QPixmap()
             ghost = Ghost(pixmap, size, size, self.k, anchor=(0.5, 0.5),
@@ -459,6 +460,12 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 pass
 
+        def _caption(self, records, aim):
+            own = getattr(self.scene, "caption", None)
+            if callable(own):
+                return own(list(records), aim)
+            return caption([r.name for r in records], aim)
+
         def caption_at(self, point, force=False):
             """The ghost's caption for the global `point` (throttled)."""
             drag = self._drag
@@ -476,7 +483,7 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 aim = dict(kind="none",
                            text=_last_line(traceback.format_exc()))
-            text, good = caption([r.name for r in drag["records"]], aim)
+            text, good = self._caption(drag["records"], aim)
             drag["ghost"].set_caption(text, good)
 
         def _cancel(self):

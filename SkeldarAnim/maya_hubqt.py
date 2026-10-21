@@ -2918,6 +2918,9 @@ def ghost_class():
                 width = max(self.icon_w, self._caption_width())
                 self.resize(width, self.icon_h + int(26 * self.k))
 
+            def caption_text(self):
+                return self.text
+
             def set_caption(self, text, good):
                 if (text, good) != (self.text, self.good):
                     self.text, self.good = text, good
