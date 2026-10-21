@@ -6682,6 +6682,28 @@ trash 58 ≥ 55) and the classic hub (Delete 96 ≥ 61). 3054 unit tests.
      channel must be idempotent and may run in either order — `_deleted` asks the entry, not its
      own `_apply_delete`'s answer, whether the copy was kept.
 
+## Stash and Shared: rows dragged between them and into the scene (2026-10-21)
+
+The animator: «драг энд дроп того что находится в сташе и в шаре между этими
+папками и на сцену». Spec `docs/superpowers/specs/2026-10-21-stash-shared-drag-design.md`.
+- A row (every picked row) pressed and carried: onto a viewport = Import as the
+  card's button (`maya_stash.drop_import`, `maya_share.drop_import`); Stash onto
+  Shared = Send file, no question (`drop_to_share`); Shared onto Stash = a copy
+  under its name (`drop_to_stash`). A section is its list (hub card or popup
+  copy) or its rail icon, shown pressed while a drag is over it.
+- A Shared file not downloaded yet is fetched first: `maya_share.when_local`
+  queues the action on `state()["after_fetch"]`, run by `_fetched`, dropped
+  (and said) by `_fetch_failed`.
+- The drag is the UE Bridge list's (`maya_uebridge.listdrag`): a scene may now
+  bring `caption`, `drops` and `icon`. `maya_filedrag` holds the pure rules
+  (`section_under`, `aim_for`, `caption`) and `FileScene`.
+- Proof: `tests/test_filedrag.py`, the `Dropped` classes of test_share /
+  test_stash, `verify_stash_share_drag.py` 4/4 standalone (a scratch
+  `MAYA_APP_DIR`: a stashed scene and FBX imported in one line, a shared file
+  fetched by a fake net and copied into the stash); 8110 unit tests, the one
+  failure the known `test_chat_deploy.Keys` (the animator's saved Cloudflare keys).
+  Not seen in a GUI Maya: the real mouse, the rail icon pressed.
+
 ## Open scene on the right button: a portrait's or a weapon's own file (2026-09-30)
 
 The animator, having asked whether Maya allows a context menu on the icons at all: «Давай сделаем так
