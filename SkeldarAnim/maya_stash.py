@@ -622,6 +622,13 @@ def _run(action):
         return _status("Stash failed: {0}".format(exc))
 
 
+def _attach_drag():
+    """The list's rows drag into a viewport or onto Shared (2026-10-21)."""
+    import maya_filedrag
+    maya_filedrag.attach("stash", lambda: [
+        maya_filedrag.Item(name, "stash", name) for name in _view()["rows"]])
+
+
 def build_panel():
     """The Name field, Stash scene / Stash file..., the list (several rows
     can be picked), Open / Import / icons for Save to..., Show folder and
@@ -707,6 +714,7 @@ def build_panel():
     cmds.setParent("..")
     _view()["rows"] = []
     refresh()
+    _attach_drag()
     #  the folder's timer is the hub's to start: a popup copy's build leaves a
     #  standing one alone (2026-10-09), it restarts nothing (H6)
     if hubcopy.current() is None or state().get("timer") is None:

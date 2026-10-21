@@ -1160,6 +1160,18 @@ def _run(action):
         return _status("Shared failed: {0}".format(exc))
 
 
+def _attach_drag():
+    """The list's rows drag into a viewport or onto Stash (2026-10-21)."""
+    import maya_filedrag
+
+    def items():
+        entries = state()["entries"]
+        return [maya_filedrag.Item(
+            entries[rid]["record"]["name"] if rid in entries else rid,
+            "shared", rid) for rid in _view()["rows"]]
+    maya_filedrag.attach("shared", items)
+
+
 def build_panel():
     """The author, the upload's name, Send scene / Send file..., the list
     (several rows can be picked), Open / Import / Save to... / Delete, a
@@ -1268,6 +1280,7 @@ def build_panel():
     view["texts"], view["rows"] = [], []
     load_history()
     refresh()
+    _attach_drag()
     #  The subscriber is the hub's to start (2026-10-09, H6): a copy's build would
     #  restart it - a second connection, a gap in what arrives. A copy starts one
     #  only when none stands (the hub never built, say).

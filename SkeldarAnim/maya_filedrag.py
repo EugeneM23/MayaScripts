@@ -63,3 +63,133 @@ def caption(items, aim):
         return aim.get("text") or NOWHERE, False
     what = items[0].name if len(items) == 1 else "%d files" % len(items)
     return "%s %s %s" % (what, DOT, aim["text"]), True
+
+
+# ------------------------------------------------------------------ the scene
+
+def _names_at(gx, gy):
+    """The object names of the widget under the global point, then its
+    parents'. Read afresh every time: a widget is never kept (trap 135)."""
+    import maya_hubqt
+    q = maya_hubqt.qt()
+    widget = q.QtWidgets.QApplication.widgetAt(q.QtCore.QPoint(int(gx), int(gy)))
+    names = []
+    while widget is not None:
+        names.append(widget.objectName())
+        widget = widget.parentWidget()
+    return names
+
+
+def _viewport_at(gx, gy):
+    from maya_scenesetup import droptarget
+    view, _local = droptarget.Viewport.at(gx, gy)
+    return view is not None
+
+
+def _act(kind, items):
+    """The release's action, one idle later (the ghost gone first)."""
+    keys = [item.key for item in items]
+    source = items[0].section
+    if source == "stash":
+        import maya_stash as module
+        verb = {"import": module.drop_import, "send": module.drop_to_share}[kind]
+    else:
+        import maya_share as module
+        verb = {"import": module.drop_import, "stash": module.drop_to_stash}[kind]
+    import maya.utils
+    import maya_hubcopy as hubcopy
+    maya.utils.executeDeferred(hubcopy.wrap(lambda: module._run(lambda: verb(keys))))
+    return ""
+
+
+def light(section, on):
+    """The rail icon of `section` shown pressed while a drag is over it."""
+    try:
+        import maya_hubqt
+        q = maya_hubqt.qt()
+        for top in q.QtWidgets.QApplication.topLevelWidgets():
+            for button in top.findChildren(q.QtWidgets.QToolButton, JUMP + section):
+                button.setDown(bool(on))
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+class FileScene(object):
+    """The listdrag scene of one section's list (`source`)."""
+
+    drops = DROPS
+
+    def __init__(self, source, names_at=None, viewport_at=None, act=None):
+        self.source = source
+        self.icon = ICONS[source]
+        self._names_at = names_at or _names_at
+        self._viewport_at = viewport_at or _viewport_at
+        self._act = act or _act
+        self._lit = None
+
+    def scale(self):
+        try:
+            import maya.cmds as cmds
+            return float(cmds.mayaDpiSetting(query=True, realScaleValue=True) or 1.0)
+        except Exception:                                    # noqa: BLE001
+            return 1.0
+
+    def snapshot(self):
+        return None
+
+    def _light(self, section):
+        if section == self._lit:
+            return
+        if self._lit:
+            light(self._lit, False)
+        if section:
+            light(section, True)
+        self._lit = section
+
+    def target(self, gx, gy, snap):
+        under = section_under(self._names_at(gx, gy))
+        aim = aim_for(self.source, under, under is None and self._viewport_at(gx, gy))
+        self._light(aim.get("section"))
+        return aim
+
+    def over_hub(self, gx, gy):
+        """The hub stops a drop - but not the other section's list or icon."""
+        under = section_under(self._names_at(gx, gy))
+        if under and under != self.source:
+            return False
+        if under == self.source:
+            return True
+        try:
+            import maya_hubqt
+            return maya_hubqt.on_hub(gx, gy)
+        except Exception:                                    # noqa: BLE001
+            return False
+
+    def caption(self, records, aim):
+        return caption(records, aim)
+
+    def drop(self, records, aim):
+        self._light(None)
+        self._act(aim["kind"], list(records))
+        return caption(records, aim)[0] + "..."
+
+    def say(self, text):
+        self._light(None)
+        module = __import__("maya_stash" if self.source == "stash" else "maya_share")
+        try:
+            module._status(text)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def attach(source, records_of):
+    """The drag on `source`'s list in the card being built (the hub's or a
+    popup copy's: listdrag resolves the name in the current scope). Where Qt
+    cannot stand the list stays the list it was."""
+    try:
+        from maya_uebridge import listdrag
+        import maya_hubcopy as hubcopy
+        listdrag.attach(LISTS[source], hubcopy.wrap(records_of), FileScene(source))
+    except Exception:                                        # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
