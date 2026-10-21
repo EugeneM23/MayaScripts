@@ -55,10 +55,12 @@ class ReloadLive(unittest.TestCase):
 
         fakes = {"maya_sidepanel": module("maya_sidepanel", RuntimeError("x")),
                  "maya_timebar": module("maya_timebar", True),
-                 "maya_viewportbar": module("maya_viewportbar", 4)}
+                 "maya_viewportbar": module("maya_viewportbar", 4),
+                 "maya_mainbar": module("maya_mainbar", False)}
         with mock.patch.dict(sys.modules, fakes), mock.patch("builtins.print"):
             done = mi.reload_live()
-        self.assertEqual(calls, ["maya_sidepanel", "maya_timebar", "maya_viewportbar"])
+        self.assertEqual(calls, ["maya_sidepanel", "maya_timebar", "maya_viewportbar",
+                                 "maya_mainbar"])
         self.assertEqual(done, ["maya_timebar", "maya_viewportbar"])
 
 

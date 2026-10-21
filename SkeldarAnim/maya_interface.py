@@ -31,8 +31,8 @@ CHOICES = (SKELDAR, MAYA)
 LABELS = ((SKELDAR, "Use Skeldar interface"), (MAYA, "Use Maya interface"))
 
 MESSAGES = {
-    SKELDAR: "Skeldar interface: our Time Bar, Channel Box, Attribute Editor and viewport bar",
-    MAYA: "Maya interface: Maya's time slider, Channel Box, Attribute Editor and viewport bar",
+    SKELDAR: "Skeldar interface: our Time Bar, Channel Box, Attribute Editor, viewport bar and main bar",
+    MAYA: "Maya interface: Maya's time slider, Channel Box, Attribute Editor, viewport bar and main bar",
 }
 
 
@@ -105,6 +105,12 @@ def use(choice):
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
         problems.append("the viewport bar")
+    try:
+        import maya_mainbar
+        maya_mainbar.set_enabled(choice == SKELDAR)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+        problems.append("the main bar")
     message = MESSAGES[choice]
     if problems:
         message += " - not switched: " + ", ".join(problems) + " (see the Script Editor)"
@@ -117,7 +123,8 @@ def reload_live():
     install, 2026-10-19: «при установки обновления наш плагин обнавлял интерфейс
     в реальном времени»). Never raises; returns what was rebuilt."""
     done = []
-    for name in ("maya_sidepanel", "maya_timebar", "maya_viewportbar"):
+    for name in ("maya_sidepanel", "maya_timebar", "maya_viewportbar",
+                 "maya_mainbar"):
         try:
             module = __import__(name)
             if module.reload_live():

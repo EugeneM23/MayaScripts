@@ -461,6 +461,8 @@ def _callbacks():
         "mayaicons": set_mayaicons,
         #  the viewport's menu and icon bar in our look (2026-10-20, maya_viewportbar)
         "viewportbar": set_viewportbar,
+        #  Maya's title and menu bar in our colours (2026-10-21, maya_mainbar)
+        "mainbar": set_mainbar,
         #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
@@ -524,6 +526,7 @@ def _dress_header(skin):
     _dress_mayatheme(skin)
     _dress_mayaicons(skin)
     _dress_viewportbar(skin)
+    _dress_mainbar(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
     _dress_interface(skin)
@@ -595,6 +598,15 @@ def _dress_mayaicons(skin):
     try:
         import maya_mayaicons
         skin.paint_mayaicons(maya_mayaicons.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_mainbar(skin):
+    """The menu's Main bar row = the switch (on by default)."""
+    try:
+        import maya_mainbar
+        skin.paint_mainbar(maya_mainbar.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -709,6 +721,7 @@ def build():
     _time_bar_soon()
     _side_panel_soon()
     _viewport_bar_soon()
+    _main_bar_soon()
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
@@ -854,6 +867,22 @@ def _time_bar_soon():
             print("SkeldarAnim: the time bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
+
+
+def _main_bar_soon():
+    """Maya's title and menu bar in our colours (2026-10-21) while it is on,
+    else back to Maya's. Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def paint():
+        try:
+            import maya_mainbar
+            maya_mainbar.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the main bar could not be painted")
+            print(traceback.format_exc())
+    cmds.evalDeferred(paint, lowestPriority=True)
 
 
 def _viewport_bar_soon():
@@ -1048,6 +1077,7 @@ def _ensure_edge():
         _time_bar_soon()
         _side_panel_soon()
         _viewport_bar_soon()
+        _main_bar_soon()
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
@@ -1697,6 +1727,17 @@ def set_viewportbar(on):
     return message
 
 
+def set_mainbar(on):
+    """⋮ -> Main bar (2026-10-21): Maya's title and menu bar in our colours at
+    once, or Maya's."""
+    import maya_mainbar
+    message = maya_mainbar.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_mainbar(maya_mainbar.enabled())
+    say(message)
+    return message
+
+
 def set_interface(choice):
     """⋮ -> Use Skeldar / Use Maya interface, and the Update card's segments
     (2026-10-19): the Time Bar, the side panel and our Channel Box switched as
@@ -1715,6 +1756,7 @@ def repaint_interface():
         _dress_timebar(_SKIN)
         _dress_sidepanel(_SKIN)
         _dress_viewportbar(_SKIN)
+        _dress_mainbar(_SKIN)
         _dress_interface(_SKIN)
     try:
         import maya_update

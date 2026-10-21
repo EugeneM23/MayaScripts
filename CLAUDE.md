@@ -13426,3 +13426,23 @@ Aim); a parent change in Aim Mode automatic; `[Body | Weapon]`. Spec
   Aim Mode and the other way round, weapon_r on the card's place to 2.6e-5; an animation onto a
   second rig in Aim Mode 1.7e-5 every frame); `tests/test_scenesetup_weaponaim.py`. Not seen in a
   GUI Maya.
+
+## Main bar: Maya's title and menu bar in the hub's colours (2026-10-21)
+
+The animator, with a picture of Maya's top (the light Windows title bar, File / Edit / ..., Workspace):
+«Давай перекрасим главную панель в цвета нашего дизайна». `SkeldarAnim/maya_mainbar.py` (a payload row):
+- **the title bar** through DWM (`DwmSetWindowAttribute` 35 caption `panel`, 36 text `text2`, 34 border
+  `line`; `DWMWA_COLOR_DEFAULT` gives Windows' back), on Maya's main window's HWND; Windows 11 only;
+- **the menu bar**: a sheet on Maya's main `QMenuBar` alone, under its property `skeldarMainBar`
+  (titles muted, lit `hover`; a QLabel / QComboBox / QToolButton in it - the Workspace selector, if it
+  lives there - in the hub's look); colours, borders and radii only. Maya's drop-down menus stay
+  Maya's (trap 285). Off puts the bar's old sheet back;
+- a 2 s watch puts both back when Maya re-creates its window or empties the sheet;
+- ⋮ -> **Main bar** (optionVar `skeldarMainBar`, on by default), on with Use Skeldar interface, off
+  with Use Maya interface; the hub's build calls `ensure()` deferred; an install's
+  `rebuild_interface` reloads it.
+Proof: `tests/test_mainbar.py` (the sheet scoped, the caption's COLORREFs, a stand-in main window
+offscreen skinned / given back / re-skinned by the watch), the menu tests; 8201 of 8202 unit tests
+(the known `test_chat_deploy.Keys`). Seen live on port 7003: DWM took the caption, the bar dark (Maya's main
+window wraps as a QWidget - no `menuBar()`; the bar is its QMenuBar child, `workspaceSelectorLayout` is
+its right corner widget).
