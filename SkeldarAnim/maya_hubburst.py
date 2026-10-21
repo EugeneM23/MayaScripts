@@ -22,16 +22,18 @@ import math
 
 from maya_timebar import look as tlook
 
-#  opening
-SHAPE_MS = tlook.UNROLL_MS          # the shape unrolls (ease_out_quint)
-FACE_IN_MS = 60                     # the card's face comes up under it
+#  opening - twice the Time Bar's speed too (2026-10-21, the animator: «ускорим скорость
+#  проигрывания анимации при открытии окон в два раза»): every opening time and delay over OPEN_SPEED
+OPEN_SPEED = 2.0
+SHAPE_MS = tlook.UNROLL_MS / OPEN_SPEED   # the shape unrolls (ease_out_quint)
+FACE_IN_MS = 60 / OPEN_SPEED                  # the card's face comes up under it
 START_HALF = (14, 10)               # logical px: the shape at the start, about the origin
 START_RADIUS = 10
 CARD_RADIUS = 8                     # the popup's own outline (maya_hubpop._paint_outline)
 ORIGIN_PAD = 12                     # a point outside the card is pulled this far inside it
-PART_MS = tlook.POP_OPEN_MS         # a part pops (back_out from START_SCALE)
+PART_MS = tlook.POP_OPEN_MS / OPEN_SPEED      # a part pops (back_out from START_SCALE)
 PART_FROM = tlook.START_SCALE
-REVEAL_MS = tlook.REVEAL_MS         # the light's whole length
+REVEAL_MS = tlook.REVEAL_MS / OPEN_SPEED      # the light's whole length
 EDGE_GLOW, EDGE_CORE, TOP_GLOW = tlook.EDGE_GLOW, tlook.EDGE_CORE, tlook.TOP_GLOW
 
 #  closing - twice the Time Bar's speed (2026-10-19, the animator: «Скорость анимации закрытия
@@ -114,7 +116,7 @@ def plan_open(origin, size, parts, scale=1.0):
     delays = []
     for p in parts:
         cx, cy = _centre(p)
-        delays.append(tlook.burst_delay((cx - o[0]) / scale, (cy - o[1]) / scale))
+        delays.append(tlook.burst_delay((cx - o[0]) / scale, (cy - o[1]) / scale) / OPEN_SPEED)
     total = max([SHAPE_MS, REVEAL_MS] + [d + PART_MS for d in delays])
     return Plan(True, size, o, list(parts), [pivot(p, o) for p in parts], delays,
                 _box(o, START_HALF, size, scale), (0.0, 0.0, size[0], size[1]), 0.0,

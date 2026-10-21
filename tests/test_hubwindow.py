@@ -205,10 +205,10 @@ class Burst(unittest.TestCase):
         origin = self.frame.mapToGlobal(QtCore.QPoint(120, 80))
         self.burster.run(True, (origin.x(), origin.y()), lambda: None)
         self.frame.grab()
-        self.burster.effect.ms = 30.0
+        self.burster.effect.ms = 15.0
         image = self.frame.grab().toImage()
         plan = self.burster.effect.plan
-        edge = [e for e in hubburst.light(plan, 30.0).edges if e[0] == "x"][0]
+        edge = [e for e in hubburst.light(plan, 15.0).edges if e[0] == "x"][0]
         lit = image.pixelColor(int(edge[1]), 80)
         self.assertGreater(lit.red(), 120)
 

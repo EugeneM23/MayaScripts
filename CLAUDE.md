@@ -12782,7 +12782,7 @@ every task reviewed. **This replaces the viewport popup of "A section popup burs
   the parts pop in nearest first, and the TWO EDGES race outward carrying the accent light
   (`light(age, ...)`: a band `EDGE_GLOW` each side, a core, fading as the edges slow; the top edge
   stays lit behind them and fades), clipped by the rounded path, added light. Folding is the reverse into
-  the point the close came from (✕, ⧉ or the icon). Plan total 780 ms. The Burster builds its plan on
+  the point the close came from (✕, ⧉ or the icon). Both run at twice the Time Bar's speed (`CLOSE_SPEED` 2026-10-19, `OPEN_SPEED` 2026-10-21): an opening's plan totals 390 ms. The Burster builds its plan on
   the first tick without a paint (a frame masked to nothing may never paint).
 - **The stripe is gone everywhere**: the group-colour bar down every card's left edge (a rail icon
   no longer carries one either; `Skin.icon_with_dot`) and the popup's 2 px accent along its top. The

@@ -59,7 +59,7 @@ class Open(unittest.TestCase):
         d = self.plan.delays
         self.assertLess(d[0], d[2])
         self.assertLess(d[2], d[3])
-        self.assertAlmostEqual(d[0], tlook.burst_delay(130, 2), delta=0.5)
+        self.assertAlmostEqual(d[0], tlook.burst_delay(130, 2) / burst.OPEN_SPEED, delta=0.5)
 
     def test_distances_count_in_logical_pixels(self):
         big = burst.plan_open((30, 15), (450, 600), [(6, 540, 438, 36)], scale=1.5)
@@ -184,21 +184,21 @@ class TimeBarNumbers(unittest.TestCase):
                     delay, tlook.fold_delay(abs(dx) + 1.5 * abs(dy), scale) / burst.CLOSE_SPEED)
     def test_the_shape_grows_over_the_time_bars_unroll(self):
         plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
-        self.assertEqual(burst.at(plan, tlook.UNROLL_MS).shape, (0.0, 0.0, 300.0, 400.0))
-        mid = burst.at(plan, tlook.UNROLL_MS / 2.0).shape
+        self.assertEqual(burst.at(plan, burst.SHAPE_MS).shape, (0.0, 0.0, 300.0, 400.0))
+        mid = burst.at(plan, burst.SHAPE_MS / 2.0).shape
         self.assertLess(mid[2], 300.0)
 
     def test_a_part_pops_from_the_time_bars_start_scale(self):
         plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
         d = plan.delays[0]
-        op, sc = burst.at(plan, d + 1.0).parts[0]
+        op, sc = burst.at(plan, d + 0.5).parts[0]
         self.assertAlmostEqual(sc, tlook.START_SCALE, delta=0.02)
-        self.assertEqual(burst.at(plan, d + tlook.POP_OPEN_MS).parts[0], (1.0, 1.0))
+        self.assertEqual(burst.at(plan, d + burst.PART_MS).parts[0], (1.0, 1.0))
 
     def test_the_nearest_part_starts_by_the_time_bars_delay(self):
         plan = burst.plan_open((20, 20), self.SIZE, self.PARTS)
         self.assertLess(plan.delays[0], plan.delays[1])
-        self.assertAlmostEqual(plan.delays[0], tlook.burst_delay(130, 5), delta=0.5)
+        self.assertAlmostEqual(plan.delays[0], tlook.burst_delay(130, 5) / burst.OPEN_SPEED, delta=0.5)
 
     def test_the_close_starts_its_shape_after_the_last_fold(self):
         plan = burst.plan_close((20, 20), self.SIZE, self.PARTS)
@@ -237,19 +237,19 @@ class Light(unittest.TestCase):
     def test_the_edge_light_fades_as_the_edges_slow(self):
         plan = burst.plan_open((150, 200), self.SIZE, self.PARTS)
         early = max(e[2] for e in burst.light(plan, 20.0).edges)
-        later = max(e[2] for e in burst.light(plan, 200.0).edges)
+        later = max(e[2] for e in burst.light(plan, 100.0).edges)
         self.assertGreater(early, later)
 
     def test_an_edge_on_the_card_border_carries_none(self):
         plan = burst.plan_open((150, 200), self.SIZE, self.PARTS)
-        self.assertEqual(burst.light(plan, tlook.UNROLL_MS).edges, [])
+        self.assertEqual(burst.light(plan, burst.SHAPE_MS).edges, [])
 
     def test_the_top_lights_once_the_shape_reaches_it_and_fades(self):
         plan = burst.plan_open((150, 390), self.SIZE, self.PARTS)
         self.assertEqual(burst.light(plan, 1.0).top, 0.0)
-        reached = burst.light(plan, tlook.UNROLL_MS).top
+        reached = burst.light(plan, burst.SHAPE_MS).top
         self.assertGreater(reached, 0.0)
-        self.assertEqual(burst.light(plan, tlook.REVEAL_MS).top, 0.0)
+        self.assertEqual(burst.light(plan, burst.REVEAL_MS).top, 0.0)
 
     def test_a_close_carries_no_light(self):
         plan = burst.plan_close((150, 200), self.SIZE, self.PARTS)
