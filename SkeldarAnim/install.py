@@ -144,6 +144,7 @@ _PAYLOAD = (
     "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
+    "maya_atbar",               # the AT bar: animBot's tools, native, a bar on top of the Time Bar (2026-10-21)
     "maya_sidepanel",           # the side panel: Channel Box / Layer Editor and Attribute Editor at the right edge (2026-10-17)
     "maya_skillbar",            # the skill bar: F1 the Time Bar, F2-F12 pages of skills on its strip (2026-10-19)
     "maya_channelbox",          # our Channel Box in the side panel, variant A "Rows" (2026-10-18)

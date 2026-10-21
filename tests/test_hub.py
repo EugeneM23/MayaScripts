@@ -2029,6 +2029,7 @@ class RailLayout(FakeToolsMixin, unittest.TestCase):
         callbacks = hub._callbacks()
         self.assertIs(callbacks["layout"], hub.set_layout)
         self.assertIs(callbacks["popup"], hub._press_popup)
+        self.assertIs(callbacks["timebar_at"], hub.set_timebar_at)
 
     def test_an_accordion_skin_is_as_before(self):
         self.fake.optionvars[hub.LAYOUT_VAR] = "accordion"

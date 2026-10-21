@@ -2470,6 +2470,11 @@ class Skin(object):
         self.timebar_steel_action.setChecked(True)          # the default since 2026-10-20
         self.timebar_steel_action.triggered.connect(
             lambda checked=False: self._call("timebar_steel", bool(checked)))
+        # 2026-10-21 «зроби галочку на АТ в панельці налаштувань Timebar»: the AT bar above it
+        self.timebar_at_action = sub.addAction("AT bar")
+        self.timebar_at_action.setCheckable(True)
+        self.timebar_at_action.triggered.connect(
+            lambda checked=False: self._call("timebar_at", bool(checked)))
 
     def _build_sidepanel_menu(self, text):
         """⋮ -> Side panel ▸ Maya's / Right edge (2026-10-17): exclusive rows; a
@@ -2525,15 +2530,16 @@ class Skin(object):
             action.setChecked(key == choice)
             action.blockSignals(False)
 
-    def paint_timebar(self, choice, steel=None):
+    def paint_timebar(self, choice, steel=None, at=None):
         """The menu's Time bar shows `choice` (2026-10-16; no callback) and, given,
-        whether the keys are steel. An older caller's True / False reads as Docked /
-        Maya's."""
-        row = getattr(self, "timebar_steel_action", None)
-        if row is not None and steel is not None:
-            row.blockSignals(True)
-            row.setChecked(bool(steel))
-            row.blockSignals(False)
+        whether the keys are steel and whether the AT bar is on. An older caller's
+        True / False reads as Docked / Maya's."""
+        for row, value in ((getattr(self, "timebar_steel_action", None), steel),
+                           (getattr(self, "timebar_at_action", None), at)):
+            if row is not None and value is not None:
+                row.blockSignals(True)
+                row.setChecked(bool(value))
+                row.blockSignals(False)
         if choice is True:
             choice = "docked"
         elif choice is False:

@@ -55,6 +55,7 @@ class SeamsMixin(object):
             "mainbar": lambda on: self.calls.append(("mainbar", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "timebar_steel": lambda on: self.calls.append(("timebar_steel", on)),
+            "timebar_at": lambda on: self.calls.append(("timebar_at", on)),
             "interface": lambda c: self.calls.append(("interface", c)),
             "sidepanel": lambda choice: self.calls.append(("sidepanel", choice)),
             "sidepanel_select": lambda on: self.calls.append(("sidepanel_select", on)),
@@ -249,14 +250,14 @@ class TheShell(SeamsMixin, unittest.TestCase):
                           ("animations", False), ("viewportbar", True), ("mainbar", True), "classic"])
         rows = actions[6].menu().actions()
         self.assertEqual([a.text() for a in rows if not a.isSeparator()],
-                         ["Maya's", "Docked", "Bottom edge", "Steel keys"])
+                         ["Maya's", "Docked", "Bottom edge", "Steel keys", "AT bar"])
         rows[2].trigger()
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
         self.skin.paint_timebar("docked")
         self.assertTrue(rows[1].isChecked())
         self.assertEqual(self.calls[-1], ("timebar", "edge"))
         #  Steel keys (2026-10-20): a checkbox, on by default, painted without a call
-        steel = rows[-1]
+        steel = [a for a in rows if a.text() == "Steel keys"][0]
         self.assertTrue(steel.isCheckable() and steel.isChecked())
         steel.trigger()
         self.assertEqual(self.calls[-1], ("timebar_steel", False))
@@ -264,6 +265,15 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertTrue(steel.isChecked())
         self.assertTrue(rows[1].isChecked())
         self.assertEqual(self.calls[-1], ("timebar_steel", False))
+        #  the AT bar (2026-10-21): a checkbox, off by default, painted without a call
+        at = rows[-1]
+        self.assertTrue(at.isCheckable() and not at.isChecked())
+        at.trigger()
+        self.assertEqual(self.calls[-1], ("timebar_at", True))
+        self.skin.paint_timebar("docked", True, False)
+        self.assertFalse(at.isChecked())
+        self.assertTrue(steel.isChecked())
+        self.assertEqual(self.calls[-1], ("timebar_at", True))
         #  the side panel (2026-10-17): Maya's / Right edge
         self.assertEqual(actions[7].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[7].menu().actions()

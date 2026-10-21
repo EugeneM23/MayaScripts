@@ -468,6 +468,8 @@ def _callbacks():
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
         "timebar": set_timebar,
         "timebar_steel": set_timebar_steel,
+        #  the AT bar above it (2026-10-21, maya_atbar)
+        "timebar_at": set_timebar_at,
         #  the side panel (2026-10-17): Maya's editors at the right edge
         "sidepanel": set_sidepanel,
         "sidepanel_select": set_sidepanel_select,
@@ -624,7 +626,7 @@ def _dress_timebar(skin):
     """The menu's Time bar row = the animator's choice (on by default)."""
     try:
         import maya_timebar
-        skin.paint_timebar(maya_timebar.mode(), maya_timebar.steel())
+        skin.paint_timebar(maya_timebar.mode(), maya_timebar.steel(), _at_on())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -865,6 +867,13 @@ def _time_bar_soon():
             maya_timebar.ensure()
         except Exception:                                    # noqa: BLE001
             print("SkeldarAnim: the time bar could not be shown")
+            print(traceback.format_exc())
+        #  the AT bar (2026-10-21) docks on top of the Time Bar: after it, when the animator left it on
+        try:
+            import maya_atbar
+            maya_atbar.ensure_wanted()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the AT bar could not be shown")
             print(traceback.format_exc())
     cmds.evalDeferred(show_bar, lowestPriority=True)
 
@@ -1780,7 +1789,28 @@ def set_timebar_steel(on):
     import maya_timebar
     message = maya_timebar.set_steel(on)
     if is_skinned():
-        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel())
+        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel(), _at_on())
+    say(message)
+    return message
+
+
+def _at_on():
+    """⋮ -> Time bar ▸ AT bar as the animator left it, or None (the module cannot be read)."""
+    try:
+        import maya_atbar
+        return maya_atbar.wanted()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def set_timebar_at(on):
+    """⋮ -> Time bar ▸ AT bar (2026-10-21): animBot's tools as a bar of their own on top of the
+    Time Bar (maya_atbar)."""
+    import maya_atbar
+    import maya_timebar
+    message = maya_atbar.set_on(on)
+    if is_skinned():
+        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel(), maya_atbar.wanted())
     say(message)
     return message
 
