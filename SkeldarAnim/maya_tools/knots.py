@@ -1130,7 +1130,11 @@ def _carry_group_out(group, home):
     from maya_scenesetup import weaponaim
     from maya_tools import firstperson
     uuid = _uuid(group)
-    home = weaponaim.home_of(weaponaim.weapon_of_group(group)) or home   # Main, outside 1P
+    weapon = weaponaim.weapon_of_group(group)
+    from maya_scenesetup import weaponspace
+    if weapon and weaponspace.holding_hand(weapon):        # in a hand: back under Main
+        home = weaponaim.home_of(weapon, chest=False) or home
+    #  out of the hands it repeats the weapon, which leaves the chest for `home` too
 
     def move():
         node = _by_uuid(uuid)

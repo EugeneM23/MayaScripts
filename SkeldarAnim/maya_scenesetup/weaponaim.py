@@ -284,20 +284,51 @@ def _make_controls(weapon, group_parent, size_target, size_up):
     return _long(uuid), dict((r, _long(u)) for r, u in made.items())
 
 
-def home_of(weapon):
-    """Where the weapon's aim group lives outside 1P (2026-10-21, the animator: «Aim контролы для
-    оружия должны быть в паранте главного контрола если мы не в 1P моде»): its rig's Main - the
-    rig found from the weapon or from the hand holding it - else None (its character group)."""
+WORLD = "world"          # home_of's answer for the world level
+
+
+def home_of(weapon, chest=True):
+    """Where the weapon's aim group lives (2026-10-21): it repeats the weapon's parent (the
+    animator: «если мы делаем перенос оружия в world в нашем connection то и контроллеры aim mode
+    тоже должны быть в world они всегда должны повторять парент оружия»).
+    - out of the hands (Connections' World, the floor): the weapon's own parent - its character
+      group, the 1P chest - or WORLD;
+    - in a hand: the rig's Main («в паранте главного контрола если мы не в 1P моде»), its 1P
+      chest when it has one and `chest`; a hand of no rig: the weapon's character group.
+    The rig is found from the weapon or from the hand holding it."""
     try:
         from maya_scenesetup import weaponspace
+        hand = weaponspace.holding_hand(weapon)
+        if not hand:
+            parents = cmds.listRelatives(weapon, parent=True, fullPath=True) or []
+            return parents[0] if parents else WORLD
         rigs = maya_rigs.rigs()
-        for node in (weapon, weaponspace.holding_hand(weapon)):
+        for node in (weapon, hand):
             rig = maya_rigs.rig_of(node, rigs) if node else None
             if rig is not None and rig.main and cmds.objExists(rig.main):
+                if chest:
+                    from maya_tools import firstperson
+                    found = firstperson.chest_of(rig)
+                    if found:
+                        return found
                 return _long(rig.main)
     except Exception:                                        # noqa: BLE001 - a bare skeleton
         pass
     return None
+
+
+def _put(group, home):
+    """`group` under `home` (WORLD: the world level; None: where it stands), relative. Its path."""
+    if not home:
+        return group
+    uuid = _uuid(group)
+    parents = cmds.listRelatives(group, parent=True, fullPath=True) or []
+    if home == WORLD:
+        if parents:
+            cmds.parent(group, world=True, relative=True)
+    elif not parents or parents[0] != home:
+        cmds.parent(group, home, relative=True)
+    return _long(uuid)
 
 
 def _park(group, weapon):
@@ -306,14 +337,27 @@ def _park(group, weapon):
         rig = maya_rigs.rig_of(weapon, maya_rigs.rigs())
         owner = rig if rig is not None else weapon
         group = chargroup.park(group, owner) or group
-        main = home_of(weapon)
-        if main:
-            uuid = _uuid(group)
-            cmds.parent(group, main, relative=True)
-            group = _long(uuid)
-        return group
+        return _put(group, home_of(weapon))
     except Exception:                                        # noqa: BLE001 - legacy: stays
         return group
+
+
+def rehome(weapon):
+    """The weapon's aim group moved where `home_of` says, its controllers' world motion kept
+    (`firstperson.carry_into`). The words, "" when it stands there already or there is none."""
+    group = group_of(weapon)
+    if not group:
+        return ""
+    home = home_of(weapon)
+    parents = cmds.listRelatives(group, parent=True, fullPath=True) or []
+    here = parents[0] if parents else WORLD
+    if not home or here == home:
+        return ""
+    from maya_tools import firstperson
+    uuid = _uuid(group)
+    firstperson.carry_into(list(controllers(group).values()), None if home == WORLD else home,
+                           lambda: _put(_long(uuid), home))
+    return "the aim follows %s" % ("the world" if home == WORLD else _leaf(home))
 
 
 def _local(point, spaces, frame):
@@ -355,7 +399,8 @@ def enter(weapon):
             try:
                 home = home_of(_long(weapon_uuid))
                 worlds = _walk(sample, lambda: _world(_long(weapon_uuid)))
-                spaces = _walk(sample, lambda: _world(home)) if home else None
+                spaces = (_walk(sample, lambda: _world(home)) if home and home != WORLD
+                          else None)
             finally:
                 fkik._suspend(False)
             size = max(d_aim, d_up) * 0.06

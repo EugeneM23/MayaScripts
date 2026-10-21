@@ -743,7 +743,10 @@ def aim_into_chest(weapon):
         if owner is not None:
             break
     chest = chest_of(owner) if owner is not None else None
-    if not chest or not aim_group_into(group, chest):
+    if not chest:
+        return ""
+    parents = cmds.listRelatives(group, parent=True, fullPath=True) or []
+    if (not parents or parents[0] != chest) and not aim_group_into(group, chest):
         return ""
     return "the aim in %s (1P)" % CHEST_NAME
 

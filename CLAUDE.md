@@ -13342,11 +13342,15 @@ Aim); a parent change in Aim Mode automatic; `[Body | Weapon]`. Spec
   далеко»), curve controls `<w>_aimTarget` / `<w>_aimUp`, both diamonds since 2026-10-21 (the
   up was a square; the reference lines from the weapon to them went the same day, «векторы ...
   не нужны» - `_drop_lines` still cleans a group made with them), rotate and scale locked, in
-  `<w>_aim` (marked `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) under the
-  rig's **Main** (`home_of`: the rig from the weapon or the hand holding it; a bare skeleton: the
-  character group; 2026-10-21, «в паранте главного контрола если мы не в 1P моде» - in 1P the
-  chest, see 1P Setup), the keys written in Main's space (`_local`, Main's world sampled with the
-  weapon's); keyed on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
+  `<w>_aim` (marked `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) where
+  `home_of` says - it repeats the weapon's parent (2026-10-21, «они всегда должны повторять парент
+  оружия»): a weapon OUT of the hands (Connections' World, the floor, a 1P chest) - the weapon's
+  own parent (`WORLD` at world level); a weapon IN a hand - the rig's **Main** («в паранте главного
+  контрола если мы не в 1P моде»), its 1P chest when there is one (the rig from the weapon or the
+  hand holding it; a hand of no rig: the character group). Connections' parent change in Aim Mode
+  already leaves and re-enters, so the group follows; `rehome(weapon)` moves it with the
+  controllers' motion kept. The keys written in that parent's space (`_local`, its world sampled
+  with the weapon's); keyed on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
   the current frame); the weapon's rotate keys cut and `aimConstraint` with NO offset (marked
   `skeldarWeaponAimOf` - not the group's marker: a constraint is a transform and `groups()` would
   find it). `leave` - the weapon's local rotate (`helpers.driver_channels`, rotateAxis kept) on

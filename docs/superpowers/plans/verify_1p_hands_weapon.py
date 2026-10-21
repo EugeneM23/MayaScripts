@@ -149,6 +149,38 @@ for f in range(first, last + 1, 4):
     v = cmds.getAttr(DAGGER + ".translateY", time=f)
     cmds.setKeyframe(DAGGER, attribute="translateY", time=f, value=v + 8 * math.sin(f * 0.5))
 gate(not weaponspace.holding_hand(DAGGER), "the dagger out of the hand, its bone following it")
+gate(parent_of(weaponaim.group_of(SWORD)) == N("Main"), "the sword in a hand: its aim under Main")
+print("   ", weaponaim.enter(DAGGER))
+gate(parent_of(weaponaim.group_of(DAGGER)) == parent_of(DAGGER),
+     "the dagger out in the world: its aim repeats the dagger's parent (%s)"
+     % (parent_of(DAGGER) or "").split("|")[-1])
+#  the dagger moved under Main by hand (a parent change), its aim follows it, motion kept
+dctl = lambda: weaponaim.controllers(weaponaim.group_of(cmds.ls(dag_uuid, long=True)[0]))  # noqa
+probe = list(range(first, last + 1, 5))
+before_t = {}
+for f_ in probe:
+    cmds.currentTime(f_)
+    before_t[f_] = cmds.xform(dctl()["target"], q=True, ws=True, t=True)
+loc2 = cmds.spaceLocator()[0]
+c2 = cmds.parentConstraint(cmds.ls(dag_uuid, long=True)[0], loc2)[0]
+cmds.bakeResults(loc2, time=(first, last), simulation=True)
+cmds.delete(c2)
+cmds.parent(cmds.ls(dag_uuid, long=True)[0], N("Main"))
+c2 = cmds.pointConstraint(loc2, cmds.ls(dag_uuid, long=True)[0])[0]
+cmds.bakeResults(cmds.ls(dag_uuid, long=True)[0], time=(first, last), simulation=True,
+                 attribute=["tx", "ty", "tz"])
+cmds.delete(c2, loc2)
+print("   ", weaponaim.rehome(cmds.ls(dag_uuid, long=True)[0]))
+moved = 0.0
+for f_ in probe:
+    cmds.currentTime(f_)
+    t = cmds.xform(dctl()["target"], q=True, ws=True, t=True)
+    moved = max(moved, max(abs(a - b) for a, b in zip(t, before_t[f_])))
+gate(parent_of(weaponaim.group_of(cmds.ls(dag_uuid, long=True)[0])) == N("Main") and moved < 0.01,
+     "rehome: the dagger under Main, its aim follows, the target where it was (%.4f cm)" % moved)
+cmds.parent(cmds.ls(dag_uuid, long=True)[0], rig.character)
+weaponaim.rehome(cmds.ls(dag_uuid, long=True)[0])
+DAGGER = cmds.ls(dag_uuid, long=True)[0]
 
 aim = weaponaim.controllers(weaponaim.group_of(SWORD))
 G = {"hand_r": lambda: N("hand_r"), "pole_r": lambda: N("PoleArm_R"), "pole_l": lambda: N("PoleArm_L"), "elbow_r": lambda: N("lowerarm_r"), "elbow_l": lambda: N("lowerarm_l"), "hand_l": lambda: N("hand_l"),
@@ -274,6 +306,8 @@ gate(not fp.chest_of(rig) and not knots.knots() and not fp.arm_constraints() and
      "the chest baked off, the IK arms' knots in it with it")
 gate(parent_of(weaponaim.group_of(G["sword"]())) == weaponaim.home_of(G["sword"]())
      == N("Main"), "the aim group back under Main")
+gate(parent_of(weaponaim.group_of(G["dagger"]())) == parent_of(G["dagger"]()) == rig.character,
+     "the world dagger and its aim back in the character group")
 cm, deg = worst(raw, track(G, frames), ["dagger", "target", "up", "weapon_l", "hand_r"])
 gate(cm < 0.05 and deg < 0.1, "after the Bake: dagger, aim, hand_r as before (%.4f cm, %.4f deg)"
      % (cm, deg))
