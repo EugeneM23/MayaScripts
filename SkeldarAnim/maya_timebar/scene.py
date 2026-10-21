@@ -981,7 +981,7 @@ def skills():
 
 def page_height(strip):
     """A page shown: the host as tall as the strip now wants (the bottom edge places itself,
-    the docked control is resized, in logical px)."""
+    the docked control is resized, in logical px) - and the rows on top of it (the AT bar)."""
     import maya_timebar
     state = maya_timebar._state()
     edge = state.get("edge")
@@ -996,6 +996,7 @@ def page_height(strip):
     ui = getattr(strip, "ui", 1.0) or 1.0
     height = int(round(strip.sizeHint().height() / float(ui)))
     try:
-        cmds.workspaceControl(maya_timebar.CONTROL, edit=True, resizeHeight=max(maya_timebar.HEIGHT, height))
+        cmds.workspaceControl(maya_timebar.CONTROL, edit=True,
+                              resizeHeight=max(maya_timebar.HEIGHT, height) + maya_timebar.extra_height())
     except Exception:                                        # noqa: BLE001
         pass

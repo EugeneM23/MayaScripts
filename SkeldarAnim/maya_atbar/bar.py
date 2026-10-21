@@ -13,7 +13,7 @@ except ImportError:
     from PySide2 import QtCore, QtGui, QtSvg, QtWidgets
     from shiboken2 import wrapInstance
 
-from . import CONTROL, core, glyphs
+from . import CONTROL, TIMEBAR, core, glyphs
 
 BAR_NAME = "skeldarATBarRoot"
 NUDGE_OPT = "skeldarATBarFrames"
@@ -484,10 +484,10 @@ def _group(title, colour, widgets, ui=1.0, spacing=0):
     return box
 
 
-def _style(ui):
+def _style(ui, embedded=False):
     px = lambda v: int(round(v * ui))                         # noqa: E731 - Qt stylesheet pixels are physical
     return """
-QWidget#{root} {{ background: {panel}; border-bottom: 1px solid {track}; }}
+QWidget#{root} {{ background: {panel}; border: none; {edge} }}
 QSpinBox {{ background: {field}; color: {text}; border: 1px solid {line}; border-radius: {r}px;
             font-family: Consolas; font-size: {f}px; padding: 0; selection-background-color: {accent}; }}
 QSpinBox:hover {{ border-color: {accent}; }}
@@ -496,17 +496,20 @@ QMenu::item {{ padding: {ipy}px {ipx}px; border-radius: {r}px; }}
 QMenu::item:selected {{ background: {hover}; color: {accent_text}; }}
 QMenu::separator {{ height: 1px; background: {line}; margin: {pad}px {ipx}px; }}
 QToolTip {{ background: {card}; color: {text2}; border: 1px solid {line}; padding: {pad}px {ipy}px; }}
-""".format(root=BAR_NAME, panel=PANEL, track=TRACK, field=FIELD, text=TEXT, text2=TEXT2, line=LINE, card=CARD, hover=HOVER,
+""".format(root=BAR_NAME, edge="" if embedded else "border-bottom: 1px solid %s;" % TRACK, panel=PANEL, track=TRACK, field=FIELD, text=TEXT, text2=TEXT2, line=LINE, card=CARD, hover=HOVER,
            accent=ACCENT, accent_text=ACCENT_TEXT, r=px(5), f=px(12), pad=px(4), ipy=px(5), ipx=px(12))
 
 
 class ATBar(QtWidgets.QWidget):
-    def __init__(self, parent=None):
+    """`embedded`: the Time Bar's top row, inside its control - one surface with it, no edge of our own."""
+
+    def __init__(self, parent=None, embedded=False):
         super(ATBar, self).__init__(parent)
         self.setObjectName(BAR_NAME)
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.embedded = embedded
         self.ui = _ui()
-        self.setStyleSheet(_style(self.ui))
+        self.setStyleSheet(_style(self.ui, embedded))
         self.driver = Driver(self)
         self._recovery_timer = QtCore.QTimer(self)
         self._recovery_timer.timeout.connect(_safe(core.save_recovery))
@@ -525,17 +528,29 @@ class ATBar(QtWidgets.QWidget):
         self._sync_timer.start(1000)
 
     def needed_height(self, width=None):
-        return self.layout().heightForWidth(width or max(self.width(), 1))
+        if not width:
+            #  not laid out yet (1 px wide): its host's width, else a row as wide as Maya's window
+            host = self.parentWidget()
+            width = self.width() if self.width() > 200 else (host.width() if host is not None and host.width() > 200
+                                                             else int(1920 * self.ui))
+        return self.layout().heightForWidth(width)
+
+    def logical_height(self):
+        return int(round(self.needed_height() / self.ui))
 
     def resizeEvent(self, e):
         super(ATBar, self).resizeEvent(e)
         QtCore.QTimer.singleShot(0, self.fit_dock)
 
     def fit_dock(self):
-        """The dock as tall as the bar's rows at its current width (it wraps when narrow)."""
+        """The dock as tall as the bar's rows at its current width (it wraps when narrow): the Time Bar's
+        control when we are its top row, else our own."""
         want = self.needed_height()
         if self.minimumHeight() != want:
             self.setMinimumHeight(want)
+        if self.embedded:
+            _fit_timebar()
+            return
         host = self.parentWidget()
         if host is None or host.height() >= want:
             return
@@ -822,17 +837,61 @@ class ATBar(QtWidgets.QWidget):
 
 # ---------------------------------------------------------------- workspace control
 
-def _control_widget():
+def _control_widget(control=CONTROL):
     import maya.OpenMayaUI as omui
-    ptr = omui.MQtUtil.findControl(CONTROL)
+    ptr = omui.MQtUtil.findControl(control)
     return wrapInstance(int(ptr), QtWidgets.QWidget) if ptr else None
 
 
-def current():
-    """The live strip, or None."""
-    host = _control_widget()
+def _strip_in(host):
     found = host.findChildren(QtWidgets.QWidget, BAR_NAME) if host is not None else []
     return found[0] if found else None
+
+
+def embedded():
+    """The strip standing as the Time Bar's top row, or None."""
+    return _strip_in(_control_widget(TIMEBAR))
+
+
+def current():
+    """The live strip - in our own control, else in the Time Bar's - or None."""
+    return _strip_in(_control_widget()) or embedded()
+
+
+def _fit_timebar():
+    """The Time Bar's control as tall as its page and our row on top of it."""
+    try:
+        from maya_timebar import bar as timebar, scene
+        strip = timebar.current()
+        if strip is not None:
+            scene.page_height(strip)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def attach(host):
+    """The strip as the Time Bar's top row, inside its control `host`: one surface, no splitter line
+    between them. The strip."""
+    strip = _strip_in(host)
+    if strip is None:
+        strip = ATBar(embedded=True)
+        host.layout().insertWidget(0, strip)
+    #  the host's own spacing (Maya's style default, 6 px) showed its grey between the two rows
+    host.layout().setSpacing(0)
+    strip.show()
+    QtCore.QTimer.singleShot(0, strip.fit_dock)
+    return strip
+
+
+def detach():
+    """The strip out of the Time Bar, which shrinks back to its page. True when one was there."""
+    strip = embedded()
+    if strip is None:
+        return False
+    strip.setParent(None)
+    strip.deleteLater()
+    _fit_timebar()
+    return True
 
 
 def build():

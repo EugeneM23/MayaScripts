@@ -6,6 +6,7 @@ Its glyphs, where it docks, the ⋮ -> Time bar ▸ AT bar switch, and the smoot
 import os
 import re
 import sys
+import types
 import unittest
 import xml.etree.ElementTree as ElementTree
 from unittest import mock
@@ -115,6 +116,50 @@ class Switch(unittest.TestCase):
             self.cmds.optionvars[maya_atbar.OPTIONVAR] = 1
             self.assertEqual(maya_atbar.ensure_wanted(), "skeldarATBar")
             ensure.assert_called_once_with()
+
+
+class InsideTheTimeBar(unittest.TestCase):
+    """2026-10-21, «прибери ще сірі роздєлітєльні лінії»: a control of its own stood behind Maya's splitter
+    line, so on a docked Time Bar the strip is its top row - and the Time Bar's height counts it."""
+
+    def test_no_row_no_height_and_nothing_imported_for_it(self):
+        with mock.patch.dict(sys.modules):
+            sys.modules.pop("maya_atbar.bar", None)
+            self.assertEqual(maya_atbar.docked_height(), 0)
+            self.assertNotIn("maya_atbar.bar", sys.modules)
+
+    def test_the_time_bar_asks_the_at_bar(self):
+        import maya_timebar
+        with mock.patch.object(maya_atbar, "docked_height", return_value=57):
+            self.assertEqual(maya_timebar.extra_height(), 57)
+        with mock.patch.object(maya_atbar, "docked_height", side_effect=RuntimeError("no Qt")):
+            self.assertEqual(maya_timebar.extra_height(), 0)
+
+    def test_a_page_shown_sizes_the_control_for_the_page_and_the_row(self):
+        import maya_timebar
+        from maya_timebar import scene
+
+        class Cmds(object):
+            def __init__(self):
+                self.edits = []
+
+            def workspaceControl(self, name, exists=False, edit=False, **kwargs):
+                if exists:
+                    return True
+                self.edits.append((name, kwargs))
+
+        class Strip(object):
+            ui = 1.0
+
+            def sizeHint(self):
+                return types.SimpleNamespace(height=lambda: 130)
+
+        fake = Cmds()
+        state = {"bar": None, "jobs": [], "callbacks": [], "host": "docked"}
+        with mock.patch.object(scene, "cmds", fake), mock.patch.object(sys, "_skeldar_timebar", state, create=True), \
+                mock.patch.object(maya_timebar, "extra_height", return_value=57):
+            scene.page_height(Strip())
+        self.assertEqual(fake.edits, [(maya_timebar.CONTROL, {"resizeHeight": 130 + 57})])
 
 
 class Smoothing(unittest.TestCase):

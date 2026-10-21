@@ -1778,6 +1778,12 @@ def set_timebar(choice):
     """⋮ -> Time bar ▸ Maya's / Docked / Bottom edge (2026-10-16)."""
     import maya_timebar
     message = maya_timebar.set_on(choice)
+    #  the AT bar follows (2026-10-21): the docked Time Bar's top row, else a control of its own
+    try:
+        import maya_atbar
+        maya_atbar.ensure_wanted()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
     repaint_interface()
     say(message)
     return message

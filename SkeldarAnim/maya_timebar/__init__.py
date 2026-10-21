@@ -82,6 +82,17 @@ def highlight():
     return look.range_array(scene.read_highlight())
 
 
+def extra_height():
+    """Logical px of the rows other modules put on top of the docked strip, in its own control: the AT
+    bar (2026-10-21, «прибери сірі роздєлітєльні лінії» - a control of its own stood behind a splitter
+    line). 0 when there are none."""
+    try:
+        import maya_atbar
+        return int(maya_atbar.docked_height())
+    except Exception:                                        # noqa: BLE001
+        return 0
+
+
 def ensure_docked():
     """The bar made (or restored) beside Maya's Time Slider, and Maya's two hidden."""
     import maya.cmds as cmds
@@ -90,7 +101,7 @@ def ensure_docked():
     drop_edge()
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
-        for flags in ({"actLikeMayaUIElement": True}, {"resizeHeight": HEIGHT}):
+        for flags in ({"actLikeMayaUIElement": True}, {"resizeHeight": HEIGHT + extra_height()}):
             try:                    # a control the first build made: no tab, two rows tall
                 cmds.workspaceControl(CONTROL, edit=True, **flags)
             except Exception:                                # noqa: BLE001

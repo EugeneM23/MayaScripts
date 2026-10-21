@@ -2,10 +2,12 @@
 
 The animator: «в пустій сцені з відкритим портом 7001 я хочу щоб ти мені зробив аналог кнопок анімботу»,
 then «а зроби не полку, а окреме меню такого ж типу як таймслайдер і зроби галочку на АТ в панельці
-налаштувань Timebar». So it stands as the Time Bar does: a workspaceControl `skeldarATBar` with no tab and
-no title, docked on top of the Time Bar (else on top of Maya's Time Slider, else at the bottom of Maya's
-window). ⋮ -> Time bar ▸ AT bar turns it on and off (optionVar skeldarATBar, off by default). Nothing heavy
-at import.
+налаштувань Timebar». While the Time Bar stands docked the strip is its TOP ROW, inside the Time Bar's own
+control (then «прибери ще сірі роздєлітєльні лінії»: a control of its own stood behind Maya's splitter
+line); the Time Bar's height counts it (`maya_timebar.extra_height`). Without a docked Time Bar it is a
+workspaceControl `skeldarATBar` of its own, with no tab and no title, docked where the Time Bar would be.
+⋮ -> Time bar ▸ AT bar turns it on and off (optionVar skeldarATBar, off by default). Nothing heavy at
+import.
 
 Its look is layout B of the mockups (https://claude.ai/artifact/FG74SWkoW6u2UoQ2Xw6Ak4): every animBot icon
 redrawn 1:1 in our line style (`glyphs`), a caption over each group in its colour, the Time Bar's controls
@@ -15,6 +17,7 @@ and motion (`bar`). The tools are `core`.
 import os
 
 CONTROL = "skeldarATBar"
+TIMEBAR = "skeldarTimeBar"
 LABEL = "AT"
 OPTIONVAR = "skeldarATBar"
 HEIGHT = 57                 # logical px: the caption row and one row of 24 px controls
@@ -63,11 +66,32 @@ def _visible(name):
     return bool(cmds.workspaceControl(name, q=True, visible=True))
 
 
+def _timebar_host():
+    """The docked Time Bar's control widget while it stands docked and shows, else None."""
+    try:
+        import maya_hubqt
+        import maya_timebar
+    except Exception:                                        # noqa: BLE001
+        return None
+    if maya_timebar._state().get("host") != "docked" or not _exists(TIMEBAR) or not _visible(TIMEBAR):
+        return None
+    return maya_hubqt.host_widget(TIMEBAR)
+
+
 def ensure():
-    """The bar standing: the control made (or restored) and the bar built in it. The control's name."""
+    """The bar standing: the Time Bar's top row while it stands docked (our own control deleted), else
+    our own control made (or restored) with the strip in it. Where it stands."""
     import maya.cmds as cmds
     if cmds.about(batch=True):
         return ""
+    from . import bar
+    host = _timebar_host()
+    if host is not None:
+        if _exists(CONTROL):
+            cmds.deleteUI(CONTROL)
+        bar.attach(host)
+        return TIMEBAR
+    bar.detach()
     if _exists(CONTROL):
         cmds.workspaceControl(CONTROL, edit=True, restore=True, visible=True)
     else:
@@ -76,25 +100,29 @@ def ensure():
         flag, value = dock_target(_exists, _visible)
         options[flag] = value
         cmds.workspaceControl(CONTROL, **options)
-    from . import bar
     if bar.current() is None:
         bar.build()
     return CONTROL
 
 
 def hide():
+    """The strip out of the Time Bar and our own control hidden."""
     import maya.cmds as cmds
-    if not cmds.about(batch=True) and _exists(CONTROL):
+    if cmds.about(batch=True):
+        return
+    from . import bar
+    bar.detach()
+    if _exists(CONTROL):
         cmds.workspaceControl(CONTROL, edit=True, visible=False)
 
 
-def active():
-    """The bar shows. False wherever there is no UI."""
-    try:
-        import maya.cmds as cmds
-        return (not cmds.about(batch=True)) and _exists(CONTROL) and _visible(CONTROL)
-    except Exception:                                        # noqa: BLE001
-        return False
+def docked_height():
+    """Logical px of the strip as the Time Bar's top row; 0 when it is not there
+    (`maya_timebar.extra_height`). Imports nothing that is not loaded already."""
+    import sys
+    bar = sys.modules.get(__name__ + ".bar")
+    strip = bar.embedded() if bar is not None else None
+    return strip.logical_height() if strip is not None else 0
 
 
 def set_on(on):
