@@ -326,11 +326,15 @@ def card_shape(skin, host):
         return r
 
     try:
-        message = getattr(skin, "message", None)
-        if message is not None and _valid(message) and message.isVisible():
-            out.append(rect_of(message).getRect())
         card = skin.cards.get(getattr(skin, "shown", None))
         scroll = getattr(skin, "scroll", None)
+        message = getattr(skin, "message", None)
+        if message is not None and _valid(message) and message.isVisible():
+            #  under the card, inside the scroll since 2026-10-21: cut to it too
+            clip = rect_of(scroll.viewport()) if scroll is not None else None
+            r = rect_of(message, clip)
+            if not r.isEmpty():
+                out.append(r.getRect())
         if card is not None and scroll is not None and _valid(card.frame) \
                 and card.frame.isVisible():
             view = rect_of(scroll.viewport())
@@ -1710,8 +1714,11 @@ class Skin(object):
         if parent_layout is not None:
             parent_layout.addWidget(self.root)
 
+        #  the message line stands UNDER the open card, inside the column
+        #  (2026-10-21, «показывать под открытым окошком. Сейчас выезд этого
+        #  сообщения вызывает дергание окна»): above the scroll its showing
+        #  pushed every card down. `_place_message` moves it after the card.
         self.message = self._build_message()
-        top.addWidget(self.message)
 
         self.scroll = _named(w.QScrollArea(), hubstyle.SCROLL)
         self.scroll.setWidgetResizable(True)
@@ -1723,6 +1730,7 @@ class Skin(object):
         self.column.setObjectName("skeldarHubColumnLayout")
         self.column.setContentsMargins(0, 0, s(2), 0)
         self.column.setSpacing(s(3))
+        self.column.addWidget(self.message)
         self.column.addStretch(1)
         self.scroll.setWidget(self.content)
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
@@ -2132,6 +2140,7 @@ class Skin(object):
                 each.frame.setVisible(False)
         card.frame.setVisible(True)
         self.shown = key
+        self._place_message()
         for other, button in self.jumps.items():
             current = other == key
             button.setProperty("skCurrent", current)
@@ -2285,9 +2294,46 @@ class Skin(object):
         self._message_source = source if text else None
         self.message.setProperty("skTone", hubstyle.tone(text))
         repolish(self.message)
+        if text:
+            self._place_message(source)
         self.message.setVisible(bool(text))
         if state is not None:
             self.set_state(state)
+
+    def _message_card(self, source=None):
+        """The card the message line stands under: on the rail the card that
+        is shown, else the card that said it while open, else the pinned one,
+        else the last open card. None: at the column's end."""
+        if self.shown is not None:
+            return self.cards.get(self.shown)
+        open_cards = [c for c in self.cards.values()
+                      if _valid(c.frame) and not c.frame.isHidden()]
+        for key in (source, self.pinned):
+            card = self.cards.get(key) if key else None
+            if card is not None and card in open_cards \
+                    and not card.collapsed():
+                return card
+        return open_cards[-1] if open_cards else None
+
+    def _place_message(self, source=None):
+        """Move the message line right after its card in the column (only the
+        line moves: nothing above it shifts)."""
+        if not _valid(self.message) or not _valid(self.content):
+            return
+        card = self._message_card(source)
+        column = self.column
+        current = column.indexOf(self.message)
+        if card is not None and _valid(card.frame):
+            at = column.indexOf(card.frame)
+            if at < 0:
+                return
+            if current == at + 1:
+                return
+            column.removeWidget(self.message)
+            column.insertWidget(column.indexOf(card.frame) + 1, self.message)
+        elif current != column.count() - 2:
+            column.removeWidget(self.message)
+            column.insertWidget(column.count() - 1, self.message)
 
     def _told(self, control, text, viewport):
         """The relay: a section's status control said `text`

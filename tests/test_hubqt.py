@@ -554,10 +554,25 @@ class Cards(SeamsMixin, unittest.TestCase):
         column = self.skin.column
         names = [column.itemAt(i).widget().objectName()
                  for i in range(column.count()) if column.itemAt(i).widget()]
+        names.remove("skeldarHubMessage")
         self.assertEqual(names, ["skeldarHubGroup_scene",
                                  "skeldarHubCard_characters",
                                  "skeldarHubGroup_look",
                                  "skeldarHubCard_colour"])
+
+    def test_the_message_line_stands_under_the_card_that_said_it(self):
+        #  2026-10-21: above the scroll its showing pushed every card down
+        self.skin.add_card("characters", "Characters", "user", "#f0a26b",
+                           "#4a3322")
+        self.skin.add_card("colour", "Colour", "palette", "#c89be8",
+                           "#3a2a4a")
+        column = self.skin.column
+        self.skin.say("Added Manny", source="characters")
+        at = column.indexOf(self.skin.cards["characters"].frame)
+        self.assertEqual(column.indexOf(self.skin.message), at + 1)
+        self.skin.say("Painted", source="colour")
+        at = column.indexOf(self.skin.cards["colour"].frame)
+        self.assertEqual(column.indexOf(self.skin.message), at + 1)
 
     def test_collapse_hides_the_body(self):
         card = self.skin.add_card("colour", "Colour", "palette", "#c89be8",
