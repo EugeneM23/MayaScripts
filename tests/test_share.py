@@ -965,6 +965,73 @@ class PanelSkin(_Base):
         self.assertEqual(by_role["status"][0].name, share.STATUS)
 
 
+class Dropped(_Base):
+    """Rows dropped from the list (2026-10-21)."""
+
+    def test_a_local_file_imports_at_once(self):
+        rec = self._colleague()
+        share.receive(rec)                     # fetched at once: _spawn runs inline
+        done = []
+        saved = share.import_entry
+        share.import_entry = lambda rid: done.append(rid) or "Imported %s" % rid
+        try:
+            message = share.drop_import([rec["id"]])
+        finally:
+            share.import_entry = saved
+        self.assertEqual(done, [rec["id"]])
+        self.assertIn("Imported", message)
+
+    def test_a_file_still_downloading_follows_when_it_lands(self):
+        rec = self._colleague()
+        held = []
+        share._spawn = lambda fn: held.append(fn)     # the download waits
+        share.receive(rec)
+        ran = []
+        answer = share.when_local(rec["id"], lambda path: ran.append(path) or "done")
+        self.assertIn("downloading", answer)
+        self.assertEqual(ran, [])
+        for fn in held:
+            fn()
+        self.assertEqual(len(ran), 1)
+        self.assertTrue(ran[0].endswith("Longsword.fbx"))
+        self.assertIn("done", self.statuses[-1])
+
+    def test_a_failed_download_drops_the_waiting_action(self):
+        rec = self._colleague()
+        held = []
+        share._spawn = lambda fn: held.append(fn)
+        share.receive(rec)
+        ran = []
+        share.when_local(rec["id"], lambda path: ran.append(path) or "done")
+        self.net.store.clear()                         # the download fails
+        for fn in held:
+            fn()
+        self.assertEqual(ran, [])
+        self.assertIn("did not download", self.statuses[-1])
+
+    def test_a_row_still_being_sent_is_refused_by_name(self):
+        rec = self._colleague()
+        sending = records.with_state(rec, "sending")
+        del sending["url"], sending["zip"]
+        share.receive(sending)
+        self.assertIn("still being sent", share.drop_import([rec["id"]]))
+
+    def test_to_stash_copies_the_file_under_its_name(self):
+        import maya_stash
+        rec = self._colleague()
+        share.receive(rec)
+        copied = []
+        saved = maya_stash.stash_file
+        maya_stash.stash_file = lambda path, name: copied.append((path, name)) or "Stashed " + name
+        try:
+            message = share.drop_to_stash([rec["id"]])
+        finally:
+            maya_stash.stash_file = saved
+        self.assertEqual(copied[0][1], "Longsword.fbx")
+        self.assertTrue(copied[0][0].endswith("Longsword.fbx"))
+        self.assertIn("Stashed Longsword.fbx", message)
+
+
 class Registered(unittest.TestCase):
     """The section in the hub, its icon, its payload rows, its hotkey row."""
 

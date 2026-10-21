@@ -658,6 +658,7 @@ def _fetched(rid, path):
     refresh()
     if entry is not None:
         each_card(lambda: _refresh_details(rid))
+    _run_after_fetch(rid, path)
 
 
 def _fetch_failed(rid, reason, path=None):
@@ -671,6 +672,10 @@ def _fetch_failed(rid, reason, path=None):
     if entry is not None:
         _say_all("Downloading {0} failed: {1} - Open tries again.".format(
             entry["record"]["name"], reason))
+    waiting = st.get("after_fetch", {}).pop(rid, [])
+    if waiting and entry is not None:
+        _say_all("{0} did not download - the drop was not done.".format(
+            entry["record"]["name"]))
 
 
 # ----------------------------------------------------------------- actions
@@ -713,6 +718,51 @@ def _local_or_fetch(rid):
     fetch(rid)
     return None, "{0} is downloading - Open it when it says ready.".format(
         record["name"])
+
+
+def when_local(rid, fn):
+    """`fn(path)` for `rid`'s file: now when it is on this disk, else once its
+    download lands (2026-10-21, a drop from the list). A row being fetched gets
+    `fn` queued; one that cannot be had answers why. Returns what to say."""
+    path, why = _local_or_fetch(rid)
+    if path:
+        return fn(path)
+    st = state()
+    transfer = st["transfers"].get(rid)
+    entry = st["entries"].get(rid)
+    if entry is not None and transfer is not None and not transfer.get("error") \
+            and entry["record"]["state"] == "ready":
+        st.setdefault("after_fetch", {}).setdefault(rid, []).append(fn)
+        return "{0} is downloading - it follows when it lands.".format(
+            entry["record"]["name"])
+    return why
+
+
+def _run_after_fetch(rid, path):
+    for fn in state().get("after_fetch", {}).pop(rid, []):
+        try:
+            _status(fn(path))
+        except Exception as exc:                             # noqa: BLE001
+            print(traceback.format_exc())
+            _status("Shared failed: {0}".format(exc))
+
+
+def drop_import(rids):
+    """Rows dropped on a viewport: each imported as the Import button does."""
+    lines = [when_local(rid, lambda _path, r=rid: import_entry(r)) for rid in rids]
+    return _status(" | ".join(line for line in lines if line))
+
+
+def drop_to_stash(rids):
+    """Rows dropped on Stash: each file copied into the stash, its own name."""
+    import maya_stash
+
+    def copy(rid):
+        name = state()["entries"][rid]["record"]["name"]
+        return lambda path: maya_stash.stash_file(path, name)
+    lines = [when_local(rid, copy(rid)) if rid in state()["entries"]
+             else "That file is no longer in the list." for rid in rids]
+    return _status(" | ".join(line for line in lines if line))
 
 
 def _save_changes():

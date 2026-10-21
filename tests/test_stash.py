@@ -799,5 +799,42 @@ class Registered(unittest.TestCase):
             opener.CANCELLED, "Open scene cancelled - nothing changed.")
 
 
+class Dropped(_Base):
+
+    def setUp(self):
+        _Base.setUp(self)
+        self.scene_path = self.stashed("draft.ma", b"//Maya ASCII")
+        self.fbx_path = self.stashed("clip.fbx", b"FBX" * 100)
+        stash.refresh()
+
+    def test_import_each_in_turn_one_status(self):
+        self.fake_import_clip({"nodes": ["a"], "joints": 3, "curves": 9})
+        message = stash.drop_import(["draft.ma", "clip.fbx"])
+        imports = [k for _a, k in self.fake.file_calls if k.get("i")]
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(len(self.imports), 1)
+        self.assertIn("draft.ma", message)
+        self.assertIn("clip.fbx", message)
+        self.assertIn(" | ", message)
+        self.assertEqual(self.statuses[-1], message)
+
+    def test_a_file_gone_from_the_folder_is_named(self):
+        os.remove(self.fbx_path)
+        self.assertIn("clip.fbx is no longer in the stash", stash.drop_import(["clip.fbx"]))
+
+    def test_to_share_sends_each_with_its_own_name(self):
+        import maya_share
+        sent = []
+        saved = maya_share.send_file
+        maya_share.send_file = lambda path, name: sent.append((path, name)) or "Sending " + name
+        try:
+            message = stash.drop_to_share(["draft.ma", "clip.fbx"])
+        finally:
+            maya_share.send_file = saved
+        self.assertEqual([n for _p, n in sent], ["draft.ma", "clip.fbx"])
+        self.assertEqual(sent[0][0], self.scene_path)
+        self.assertIn("Sending draft.ma | Sending clip.fbx", message)
+
+
 if __name__ == "__main__":
     unittest.main()

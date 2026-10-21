@@ -380,6 +380,32 @@ def import_selected(*_args):
     return _status(_import_scene(path, name))
 
 
+def _drop_one(name, verb):
+    path = _path(name)
+    if not os.path.isfile(path):
+        return "{0} is no longer in the stash.".format(name)
+    return verb(path, name)
+
+
+def drop_import(names):
+    """Files dropped on a viewport (2026-10-21): each imported in turn, as the
+    Import button does. One status line names each result."""
+    def one(path, name):
+        return _import_fbx(path, name) if _is_fbx(name) else _import_scene(path, name)
+    lines = [_drop_one(name, one) for name in names]
+    refresh()
+    return _status(" | ".join(lines))
+
+
+def drop_to_share(names):
+    """Files dropped on Shared: each sent to everybody under its own name,
+    with no question (Send file's road)."""
+    import maya_share
+    lines = [_drop_one(name, lambda path, n: maya_share.send_file(path, n))
+             for name in names]
+    return _status(" | ".join(line for line in lines if line))
+
+
 def save_selected(*_args):
     """A copy of the picked stash file where the animator picks."""
     name, why = _one_picked("save")
