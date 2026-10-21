@@ -153,17 +153,23 @@ class FileScene(object):
         return aim
 
     def over_hub(self, gx, gy):
-        """The hub stops a drop - but not the other section's list or icon."""
+        """The hub stops a drop - but not the other section's list or icon.
+        Where it does, listdrag asks nothing more (no target, no say), so the
+        icon lit before must go out here."""
         under = section_under(self._names_at(gx, gy))
         if under and under != self.source:
             return False
         if under == self.source:
-            return True
-        try:
-            import maya_hubqt
-            return maya_hubqt.on_hub(gx, gy)
-        except Exception:                                    # noqa: BLE001
-            return False
+            hub = True
+        else:
+            try:
+                import maya_hubqt
+                hub = bool(maya_hubqt.on_hub(gx, gy))
+            except Exception:                                # noqa: BLE001
+                hub = False
+        if hub:
+            self._light(None)
+        return hub
 
     def caption(self, records, aim):
         return caption(records, aim)

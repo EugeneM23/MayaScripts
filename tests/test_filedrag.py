@@ -107,6 +107,21 @@ class Scene(unittest.TestCase):
         scene, _ = self.make("stash", ["skeldarStashList"])
         self.assertTrue(scene.over_hub(0, 0))
 
+    def test_the_icon_goes_out_when_the_cursor_comes_back_to_the_hub(self):
+        calls = []
+        real = fd.light
+        fd.light = lambda section, on: calls.append((section, on))
+        self.addCleanup(setattr, fd, "light", real)
+        names = ["skeldarShareList"]
+        scene = fd.FileScene("stash", names_at=lambda gx, gy: list(names),
+                             viewport_at=lambda gx, gy: False, act=lambda k, i: "")
+        scene.target(0, 0, None)
+        self.assertEqual(calls, [("shared", True)])
+        names[:] = ["skeldarStashList"]
+        self.assertTrue(scene.over_hub(0, 0))
+        self.assertEqual(calls[-1], ("shared", False))
+        self.assertIsNone(scene._lit)
+
     def test_a_viewport_imports(self):
         scene, acted = self.make("shared", ["modelPanel4"], viewport=True)
         aim = scene.target(0, 0, None)
