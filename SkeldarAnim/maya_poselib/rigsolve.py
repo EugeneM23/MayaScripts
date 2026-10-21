@@ -751,6 +751,43 @@ def _children(game):
     return out
 
 
+#  a Tools knot (2026-10-21): 1P Setup's chest is a plain knot (`Chest_1P_ctrl`) driving FKSpine3_M
+#  through our parentConstraint and Maya's pairBlend; the control's own channels are not
+#  writable, the knot's are (`maya_tools.knotplan`'s markers, spelled here: rigsolve imports no
+#  Tools module)
+KNOT_KIND = "skeldarKnot"
+KNOT_OF = "skeldarKnotOf"
+KNOT_ATTACH = "attach"
+KNOT_FULL = 0.999          # attach at least this: the control follows the knot alone
+
+
+def knot_driver(control):
+    """The plain knot (kind "knot") that drives `control` through our one parentConstraint - its
+    long path - else None (no knot, another kind, several)."""
+    try:
+        if not control or not cmds.objExists(control):
+            return None
+        return _knot_driver(control)
+    except (AttributeError, RuntimeError, ValueError):     # nothing to ask: no knot
+        return None
+
+
+def _knot_driver(control):
+    cons = [c for c in cmds.listRelatives(control, children=True, type="parentConstraint",
+                                          fullPath=True) or []
+            if cmds.attributeQuery(KNOT_OF, node=c, exists=True)]
+    if len(cons) != 1:
+        return None
+    tops = cmds.ls(cmds.getAttr(cons[0] + "." + KNOT_OF) or "", long=True) or []
+    if len(tops) != 1 or not cmds.attributeQuery(KNOT_KIND, node=tops[0], exists=True) or \
+            cmds.getAttr(tops[0] + "." + KNOT_KIND) != "knot":
+        return None
+    targets = cmds.parentConstraint(cons[0], query=True, targetList=True) or []
+    if [cmds.ls(t, long=True)[0] for t in targets if cmds.ls(t, long=True)] != tops:
+        return None
+    return tops[0]
+
+
 def _main_path(rig):
     """The long path of the rig's `Main` (`rig.main`, else its namespace's `Main`), or None when
     it is missing or ambiguous."""
@@ -812,6 +849,24 @@ class Solver(object):
         # the members whose PLACE is the pose's too (`posemath.Transfer.placed`: a twin's
         # card, 2026-10-20): their FK controls are moved as well as turned (`_Job._place`)
         self.placed = set(_plain(placed)) & set(self.members)
+        # FK controls a Tools knot drives (1P Setup's chest, 2026-10-21): the knot is written in
+        # their place (`_Job._turn` / `_move`) - else the chest was «not posed» and the 1P body
+        # kept its take's torso under every card
+        self.knots = {}
+        for leaf, base in self.bases.items():
+            knot = knot_driver(base.fk) if base.fk else None
+            if not knot:
+                continue
+            self.knots[base.fk] = knot
+            # a knot drives its control in world: it does NOT follow a posed ancestor (the
+            # pelvis), so it is held on its target like a bone that would not follow rigidly
+            # (Pose with the pelvis and no chest: the chest stood 92 deg off where the
+            # pelvis put it, and the arms with it)
+            path = self.game.get(leaf)
+            if leaf not in self.members and leaf not in self.held_all and path and any(
+                    path.startswith(self.game[m] + "|") for m in self.members
+                    if m in self.game):
+                self.held_all.append(leaf)
 
     def solve(self, wanted, seed=None):
         """Solution for one frame - exactly `solve(rig, wanted, members)`'s, the structure
@@ -835,6 +890,7 @@ class Solver(object):
         member_set = set(self.members)
         for leaf in self.members + [h for h in self.held_all if h not in member_set]:
             control = self.bases[leaf].fk
+            control = self.knots.get(control, control)
             if control and control not in out:
                 out.append(control)
         for (kind, side), how in self.limbs.items():
@@ -892,6 +948,8 @@ class _Job(object):
         self.spine_posed = solver.spine_posed
         self.spine = None          # the spine's nodes when this frame fits its IK half
         self.spine_seeded = False  # the seed's IK spine values taken once, by the first pass
+        self.knots = getattr(solver, "knots", {}) or {}
+        self.knot_offset = {}      # {control: its rigid world in its knot's}, sampled
         self.session = _Session()
 
     # ---- sampling
@@ -921,6 +979,14 @@ class _Job(object):
                 self.in_control[leaf] = pm.rigid(_world(base.fkx)) * \
                     pm.rigid(_world(control)).inverse()
             self._remember(control)
+            knot = self.knots.get(control)
+            if knot and float(cmds.getAttr(knot + "." + KNOT_ATTACH)
+                              if cmds.attributeQuery(KNOT_ATTACH, node=knot, exists=True)
+                              else 1.0) >= KNOT_FULL:
+                # the control stands at `offset . W_knot` (our parentConstraint, the offset kept)
+                self.knot_offset[control] = pm.rigid(_world(control)) * \
+                    pm.rigid(_world(knot)).inverse()
+                self._remember(knot)
         if PELVIS in self.members:
             self.root_offset = pm.rigid(_world(self.bases[PELVIS].fk)) * \
                 pm.rigid(_world(self.game[PELVIS])).inverse()
@@ -1104,6 +1170,11 @@ class _Job(object):
     def _turn(self, node, world_turn):
         """The node's rotate channels for its world rotation to be `world_turn`, its parent read
         now; nearest the values it had before the solve."""
+        if node in self.knot_offset:
+            # a knot drives it: the knot turned so the control stands at `world_turn` - about
+            # the control's own place (the knot keeps its position: `_move` moves it)
+            here = pm._placed(pm.rotation(world_turn), pm.position(_world(node)))
+            return self._turn(self.knots[node], self.knot_offset[node].inverse() * here)
         plugs = [node + "." + ch for ch in ROTATE]
         if not self.session.allowed(plugs):
             return False
@@ -1118,6 +1189,11 @@ class _Job(object):
         """The node's translate channels for its world position to be `point`: the world
         difference brought into the parent's frame - exact whatever the pivots and the parent's
         scale, a translate moves its node linearly."""
+        if node in self.knot_offset:
+            # a knot carries it rigidly: the knot moved by the same world step
+            knot = self.knots[node]
+            delta = om.MVector(point) - pm.position(_world(node))
+            return self._move(knot, pm.position(_world(knot)) + delta)
         plugs = [node + "." + ch for ch in TRANSLATE]
         if not self.session.allowed(plugs):
             return False
@@ -1237,6 +1313,7 @@ class _Job(object):
         if leaf in self.in_control and base.base not in SHARE_FROM:
             self._turn(base.fk, self.in_control[leaf].inverse() * aim)
             self._place(leaf)
+            self._knot_place(leaf)
             return
         joint = base.deform or base.fkx
         if not joint:
@@ -1246,6 +1323,18 @@ class _Job(object):
                  and other in self.member_set and other in self.in_control]
         self._numeric(base.fk, joint, pm.rotation(aim), after)
         self._place(leaf, after)
+
+    def _knot_place(self, leaf):
+        """A member a Tools knot drives (1P Setup's chest): its knot moved so the bone stands at
+        its target's place too - the knot carries it in WORLD, so a posed pelvis swings no chest
+        along (59.6 cm off with the turn alone, 2026-10-21). A `placed` member was moved already."""
+        control = self.bases[leaf].fk
+        if control not in self.knot_offset or leaf in self.placed or leaf not in self.wanted \
+                or leaf not in self.game:
+            return
+        error = pm.position(self.wanted[leaf]) - pm.position(_world(self.game[leaf]))
+        if error.length() > PLACE_TOL:
+            self._move(control, pm.position(_world(control)) + error)
 
     def _shows_fk(self, leaf):
         """Does the member's game bone follow its FK half - its limb, or the spine for
@@ -1276,7 +1365,8 @@ class _Job(object):
             return
         control, bone = self.bases[leaf].fk, self.game[leaf]
         point = pm.position(self.wanted[leaf])
-        plugs = [control + "." + ch for ch in TRANSLATE]
+        mover = self.knots[control] if control in self.knot_offset else control
+        plugs = [mover + "." + ch for ch in TRANSLATE]
         if not self.session.writable(plugs):
             return
         gain = 1.0

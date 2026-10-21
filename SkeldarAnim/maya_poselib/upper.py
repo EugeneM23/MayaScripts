@@ -12,13 +12,16 @@ held `spine_03`, which 1P Setup's chest knot drives - «1 not posed», the measu
 
 `restrict(data)` (pure) cuts a card down before any press reads it:
 
-- the members are the card's bones strictly BELOW its chest (`CHEST`, the bone whose canonical or
-  leaf name is `spine_03`): spine_04/05, neck, head, clavicles, arms, hands, fingers, arm twists.
-  The chest itself, the spine under it, the pelvis, the legs and the root are not members: the
-  target keeps them - in 1P the chest is the stabilized `Chest_1P_ctrl` the camera rides;
-- so every member's turn is taken against the target's chest as it stands (`posemath.Transfer`:
-  a member relative to its nearest paired ancestor, the chest a non-member that stays) - what the
-  hands do in front of the 1P camera is what the card's hands did in front of its chest;
+- the members are the card's chest (`CHEST`, the bone whose canonical or leaf name is
+  `spine_03`) and EVERY bone of the card below it, selected at its save or not: spine_04/05,
+  neck, head, clavicles, arms, hands, fingers, arm twists (a card holds every bone's world - one
+  saved without spine_04/05 hung its arms on the target's own spine, 53 deg off the chest). The spine under the chest, the pelvis, the legs and the root are not
+  members: the target keeps them - after 1P Setup the lower body. The chest turns on the target's
+  spine_02 as the card's on its own; in 1P it is written through `Chest_1P_ctrl` (`rigsolve`'s
+  knot redirect, 2026-10-21 - the first build left the chest out and the torso kept the take's
+  turn: «разворот корпуса не верный»);
+- every member above it takes its turn against the chest as posed - what the hands do in front
+  of the 1P camera is what the card's hands did in front of its chest;
 - the weapon bones come with the hands (`helpers.members_with`), keyed through the weapon that
   drives them, a weapon in the hand or one 1P Setup moved into the chest;
 - the camera bones are members, `camera_root` ANCHORED on the chest (`ANCHORS`, the Transfer's
@@ -32,8 +35,11 @@ character card: Apply, Blend, a drop, the skill bar. An objects card is left alo
 
 CHEST = "spine_03"
 CAMERA = ("camera_root", "camera_bone")
+# a card's other helpers never become members on their own (the weapon bones come with the hands,
+# `helpers.members_with`; ik_* and the rest are export helpers)
+HELPER_PREFIXES = ("weapon_", "ik_", "interaction", "center_of_mass")
 ANCHORS = {"camera_root": CHEST}
-NOTE = "1P upper body: %d of %d bones above %s (the chest, the legs and the pelvis kept)"
+NOTE = "1P upper body: %d bones from %s up (the spine below, the legs and the pelvis kept)"
 NO_CHEST = "1P upper body: the card has no %s - nothing to carry the upper body on" % CHEST
 NO_UPPER = "1P upper body: the card holds nothing above %s" % CHEST
 
@@ -80,9 +86,16 @@ def restrict(data):
         return None, NO_CHEST
     upper = below(bones, chest)
     members = list(data.get("members") or ())
-    kept = [m for m in members if m in upper and _bare(m) not in CAMERA]
-    if not kept:
+    # the chest and EVERY bone of the card above it (2026-10-21: «разворот корпуса не верный»):
+    # a card saved with spine_04/05 unselected hung the clavicles on the target's own spine, and
+    # the hands stood 31 cm / 53 deg off the chest - so off the 1P camera. A card holds every
+    # bone's world, its members only say what was selected. In 1P the solve writes the chest
+    # through Chest_1P_ctrl
+    if not any(m in upper or m == chest for m in members):
         return None, NO_UPPER
+    kept = [m for m in members if (m in upper or m == chest) and _bare(m) not in CAMERA]
+    kept += [leaf for leaf in bones if (leaf in upper or leaf == chest) and leaf not in kept
+             and _bare(leaf) not in CAMERA and not _bare(leaf).startswith(HELPER_PREFIXES)]
     anchors = {}
     for leaf in bones:
         bare = _bare(leaf)
@@ -94,7 +107,7 @@ def restrict(data):
     out["members"] = kept
     out["anchors"] = anchors
     out["upper_1p"] = True
-    return out, NOTE % (len([m for m in kept if _bare(m) not in CAMERA]), len(members), chest)
+    return out, NOTE % (len([m for m in kept if _bare(m) not in CAMERA]), chest)
 
 
 def target_anchors(anchors, pairs):

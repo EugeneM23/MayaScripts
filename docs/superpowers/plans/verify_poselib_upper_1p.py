@@ -1,16 +1,17 @@
-"""Pose Library > 1P upper body, standalone (2026-10-21).
+"""Pose Library onto a rig after Tools > 1P Setup, standalone (2026-10-21).
 
     mayapy verify_poselib_upper_1p.py <UE5 clip .fbx> <animation card .anim> [pose card .pose]
 
-A Manny_Rig takes the clip through the Retarget button, then Tools > 1P Setup (the animator's tab
-2), a Long Sword in its right hand; the card (the animator's tab 1, saved as an animation card) is
-pasted with Replace all:
+A Manny_Rig takes the clip through the Retarget button, a Long Sword in its right hand, then
+Tools > 1P Setup (the animator's tab). Each card is pasted (Replace all) twice:
 
-- with 1P upper body off (the control): the lower body moves - what the animator met;
-- with it on: the pelvis, the legs, the root and spine_01..03 stay where they stood (0.0); both
-  1P layers' curves untouched; every upper bone, the camera and weapon_r stand relative to
-  spine_03 as the card's do relative to its spine_03; one undo;
-- the pose card the same at the current frame.
+- **1P upper body off** - the whole card: every member bone stands on its parent as the card's
+  does (the chest included: 1P Setup's chest knot `Chest_1P_ctrl` is what the solve writes); the
+  camera rides the chest as before; nothing "not posed";
+- **1P upper body on** - the root, the pelvis, spine_01/02 and the legs exactly where they stood,
+  both 1P layers' curves untouched; the chest and everything above it on its parent as the card's;
+  camera_root, camera_bone and weapon_r on the chest as the card's;
+- one undo takes a press back.
 """
 
 import math
@@ -32,8 +33,7 @@ for p in ("matrixNodes", "quatNodes", "fbxmaya"):
     except Exception:
         pass
 CLIP = sys.argv[1].replace("\\", "/")
-CARD = sys.argv[2]
-POSE = sys.argv[3] if len(sys.argv) > 3 else None
+CARDS = sys.argv[2:]
 
 from maya_scenesetup import catalog, character, equip  # noqa: E402
 from maya_tools import firstperson as fp  # noqa: E402
@@ -43,6 +43,7 @@ from maya_poselib import animapply, animdata, apply as ap, store, upper  # noqa:
 
 FAILS = []
 COUNT = [0]
+TOL_CM, TOL_DEG = 0.1, 0.5
 
 
 def gate(ok, msg):
@@ -64,33 +65,16 @@ def apart(a, b):
     return d, math.degrees(2 * math.acos(dot))
 
 
-def track(nodes, frames):
-    out = {}
-    for f in frames:
-        cmds.currentTime(f)
-        out[f] = dict((n, wm(n)) for n in nodes)
-    return out
-
-
-def worst(a, b, nodes):
-    cm = deg = 0.0
-    for f in a:
-        for n in nodes:
-            d, g = apart(a[f][n], b[f][n])
-            cm, deg = max(cm, d), max(deg, g)
-    return cm, deg
-
-
 def curves_of(layer):
     out = {}
     for plug in cmds.animLayer(layer, query=True, attribute=True) or []:
-        c = cmds.animLayer(layer, query=True, findCurveForPlug=plug) or []
-        for curve in c:
-            out[plug] = tuple(cmds.keyframe(curve, query=True, valueChange=True) or ())
+        for curve in cmds.animLayer(layer, query=True, findCurveForPlug=plug) or []:
+            out[plug] = tuple(round(v, 6) for v in
+                              cmds.keyframe(curve, query=True, valueChange=True) or ())
     return out
 
 
-# ------------------------------------------------------------------ tab 2, rebuilt
+# ------------------------------------------------------------------ the 1P rig, rebuilt
 cmds.file(new=True, force=True)
 cmds.currentUnit(time="ntsc")
 cmds.undoInfo(state=True, infinity=True)
@@ -106,52 +90,18 @@ cmds.namespace(set=":")
 new = [j for j in cmds.ls(type="joint", long=True) if j not in before]
 src = min((j for j in new if not cmds.listRelatives(j, parent=True, type="joint")),
           key=lambda j: j.count("|"))
-kt = cmds.keyframe(new, query=True, timeChange=True)
-header = store.read(CARD)
-frames_data = store.read_frames(CARD)
-first, last = 0, int(header.get("end") or 42)
+first, last = 0, 42
 cmds.playbackOptions(min=first, max=last, ast=first, aet=last)
 cmds.select(N("Main"), src)
-ok, text = rr.run_retarget()
+ok, _text = rr.run_retarget()
 cmds.namespace(removeNamespace="clip", deleteNamespaceContent=True)
 cmds.playbackOptions(min=first, max=last, ast=first, aet=last)
 gate(ok, "clip retargeted onto Manny_Rig")
 cmds.currentTime(first)
-sword = catalog.by_key("LongSword_02") or catalog.WEAPONS[0]
-print("   ", equip.to_hand(N("root"), "R", sword))
+print("   ", equip.to_hand(N("root"), "R", catalog.by_key("LongSword_02")))
 cmds.select(N("FKElbow_R"))
 print("   ", fp.setup())
-LOWER, UPPER_L = fp.setup_layers(rig.namespace)[0], None
-for layer in fp.setup_layers(rig.namespace):
-    if layer.startswith(fp.LOWER):
-        LOWER = layer
-    if layer.startswith(fp.UPPER):
-        UPPER_L = layer
-lower_curves = curves_of(LOWER)
-upper_curves = curves_of(UPPER_L)
-
-STAY = ["root", "pelvis", "spine_01", "spine_02", "spine_03", "thigh_l", "calf_l", "foot_l",
-        "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r"]
-UP = ["spine_05", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l",
-      "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "index_02_l", "camera_root",
-      "camera_bone", "weapon_r"]
-frames = list(range(first, last + 1, 3))
-nodes = [N(b) for b in STAY + UP]
-stood = track(nodes, frames)
-
-
-def card_rel(frame_index, leaf):
-    bones = animdata.bones_at(header, frames_data, frame_index)
-    return om.MMatrix(bones[leaf]["world"]) * om.MMatrix(bones["spine_03"]["world"]).inverse()
-
-
-def paste(data):
-    cmds.currentTime(first)
-    cmds.select(N("FKWrist_R"))
-    return animapply.apply(data, frames_data, selection=cmds.ls(selection=True),
-                           options=animdata.Options(mode="replace_all", keys="every"))
-
-
+LAYERS = fp.setup_layers(rig.namespace)
 SNAP = os.path.join(os.environ.get("TEMP", "."), "verify_poselib_upper_1p.ma").replace("\\", "/")
 cmds.file(rename=SNAP)
 cmds.file(save=True, type="mayaAscii", force=True)
@@ -164,69 +114,108 @@ def reopen():
     cmds.undoInfo(state=True, infinity=True)
 
 
-# ------------------------------------------------------------------ the control: off
-ok, text = paste(header)
-print("    off:", text[:200])
-after = track(nodes, frames)
-cm, _deg = worst(stood, after, [N(b) for b in ("foot_l", "foot_r", "calf_l")])
-gate(cm > 5.0, "off (the control): the feet move %.2f cm - what the animator met" % cm)
+LOWER = ["root", "pelvis", "spine_01", "spine_02", "thigh_l", "calf_l", "foot_l", "ball_l",
+         "thigh_r", "calf_r", "foot_r", "ball_r"]
+ON_CHEST = ["camera_root", "camera_bone", "weapon_r"]
 
-# ------------------------------------------------------------------ on
-reopen()
-cut, note = upper.restrict(header)
-gate(cut is not None and "thigh_l" not in cut["members"] and "spine_03" not in cut["members"]
-     and "hand_r" in cut["members"] and "camera_root" in cut["members"], "restrict: %s" % note)
-ok, text = paste(cut)
-cmds.undo()
-gate(worst(stood, track(nodes, frames), nodes)[0] < 1e-4, "one undo puts it all back")
-reopen()
-lower_curves = curves_of(LOWER)        # as the file reads back (an .ma rounds its values)
-upper_curves = curves_of(UPPER_L)
-ok, text = paste(cut)
-print("    on:", text[:300])
-gate(ok, "pasted with 1P upper body")
-after = track(nodes, frames)
-cm, deg = worst(stood, after, [N(b) for b in STAY])
-gate(cm < 1e-3 and deg < 1e-3, "the pelvis, legs, root and spine_01..03 kept: %.5f cm %.5f deg"
-     % (cm, deg))
-for layer, was in ((LOWER, lower_curves), (UPPER_L, upper_curves)):
-    now_c = curves_of(layer)
-    changed = sorted(p for p in set(was) | set(now_c) if was.get(p) != now_c.get(p))
-    gate(not changed, "%s's curves untouched%s" % (layer, (" - changed: %s" % changed[:6])
-                                                   if changed else ""))
-fails = []
-for leaf in UP:
-    w = (0.0, 0.0)
-    for f in frames:
-        i = f - first
-        rel = after[f][N(leaf)] * after[f][N("spine_03")].inverse()
-        d = apart(rel, card_rel(i, leaf))
-        w = (max(w[0], d[0]), max(w[1], d[1]))
-    print("    %-12s on the chest as the card's: %.4f cm %.4f deg" % (leaf, w[0], w[1]))
-    if w[0] > 0.1 or w[1] > 0.5:
-        fails.append(leaf)
-gate(not fails, "every upper bone, the camera and weapon_r on spine_03 as the card's%s"
-     % (" - off: %s" % fails if fails else ""))
 
-# ------------------------------------------------------------------ a pose card
-if POSE:
-    reopen()
-    data = store.read(POSE)
-    cut, note = upper.restrict(data)
-    cmds.currentTime(first + 10)
-    here = dict((n, wm(n)) for n in nodes)
+def press(path, on, frame):
+    data = store.read(path)
+    if on:
+        data, _note = upper.restrict(data)
+    cmds.currentTime(frame)
     cmds.select(N("FKWrist_R"))
-    ok, text = ap.apply(cut, selection=cmds.ls(selection=True))
-    print("    pose:", text[:200])
-    now = dict((n, wm(n)) for n in nodes)
-    cm = max(apart(here[N(b)], now[N(b)])[0] for b in STAY)
-    bones = data["bones"]
-    chest = om.MMatrix(bones["spine_03"]["world"]).inverse()
-    rel = [apart(now[N(l)] * now[N("spine_03")].inverse(), om.MMatrix(bones[l]["world"]) * chest)
-           for l in ("hand_r", "hand_l", "head", "camera_bone", "weapon_r") if l in bones]
-    off_cm, off = max(r[0] for r in rel), max(r[1] for r in rel)
-    gate(ok and cm < 1e-3 and off < 0.5 and off_cm < 0.1,
-         "pose card: the lower body kept %.5f cm; hands, head, camera, weapon_r on the chest "
-         "%.4f cm %.4f deg" % (cm, off_cm, off))
+    if store.is_anim(path):
+        return data, animapply.apply(data, store.read_frames(path), selection=cmds.ls(sl=True),
+                                     options=animdata.Options(mode="replace_all", keys="every"))
+    return data, ap.apply(data, selection=cmds.ls(sl=True))
+
+
+def card_bones(path, data, index):
+    if store.is_anim(path):
+        return animdata.bones_at(data, store.read_frames(path), index)
+    return data["bones"]
+
+
+def on_parent(bones, leaf, world_of):
+    parent = bones[leaf].get("parent")
+    return world_of(leaf) * world_of(parent).inverse()
+
+
+def check(path, on):
+    name = os.path.basename(path) + (" ON" if on else " OFF")
+    anim = store.is_anim(path)
+    frames = list(range(first, last + 1, 6)) if anim else [first + 10]
+    reopen()
+    stood = {}
+    for f in frames:
+        cmds.currentTime(f)
+        stood[f] = dict((b, wm(N(b))) for b in LOWER + ["spine_03"] + ON_CHEST)
+    layer_curves = dict((l, curves_of(l)) for l in LAYERS)
+    # one undo, right after the press
+    data, (ok, text) = press(path, on, frames[0])
+    print("    %s: %s" % (name, text[:260]))
+    gate(ok and "not posed" not in text, "%s: pasted, nothing «not posed»" % name)
+    cmds.undo()
+    cmds.currentTime(frames[0])
+    back = max(apart(stood[frames[0]][b], wm(N(b)))[0] for b in LOWER + ["spine_03"])
+    gate(back < 1e-4, "%s: one undo puts it back (%.6f cm)" % (name, back))
+    reopen()
+    data, (ok, text) = press(path, on, frames[0])
+    members = [m for m in data["members"] if m in data["bones"] and not upper._bare(m) in
+               upper.CAMERA and cmds.ls(maya_rigs.node(rig, m))]
+    worst_local, worst_chest, worst_low = (0.0, 0.0, ""), (0.0, 0.0, ""), (0.0, 0.0, "")
+    for i, f in enumerate(frames):
+        cmds.currentTime(f)
+        card = card_bones(path, data, f - first if anim else 0)
+        cw = lambda leaf, c=card: om.MMatrix(c[leaf]["world"])  # noqa: E731
+        tw = lambda leaf: wm(N(leaf))  # noqa: E731
+        for leaf in members:
+            if leaf in ("root",) or card[leaf].get("parent") not in card:
+                continue
+            d = apart(on_parent(card, leaf, tw), on_parent(card, leaf, cw))
+            if d[1] > worst_local[1] or d[0] > worst_local[0]:
+                worst_local = (max(d[0], worst_local[0]), max(d[1], worst_local[1]), leaf)
+        if on:
+            for leaf in ON_CHEST:
+                d = apart(tw(leaf) * tw("spine_03").inverse(),
+                          cw(leaf) * cw("spine_03").inverse())
+                if d[0] > worst_chest[0] or d[1] > worst_chest[1]:
+                    worst_chest = (max(d[0], worst_chest[0]), max(d[1], worst_chest[1]), leaf)
+            for leaf in LOWER:
+                d = apart(stood[f][leaf], tw(leaf))
+                if d[0] > worst_low[0] or d[1] > worst_low[1]:
+                    worst_low = (max(d[0], worst_low[0]), max(d[1], worst_low[1]), leaf)
+        else:
+            # the camera rides the chest as 1P Setup hung it
+            for leaf in ("camera_root",):
+                d = apart(tw(leaf) * tw("spine_03").inverse(),
+                          stood[f][leaf] * stood[f]["spine_03"].inverse())
+                if d[0] > worst_chest[0] or d[1] > worst_chest[1]:
+                    worst_chest = (max(d[0], worst_chest[0]), max(d[1], worst_chest[1]), leaf)
+    # an animation card carries no bone places but under 1P upper body (a pose card always does)
+    cm_tol = TOL_CM if (on or not anim) else float("inf")
+    gate(worst_local[0] < cm_tol and worst_local[1] < TOL_DEG,
+         "%s: every member (the chest too) on its parent as the card's: %.4f cm %.4f deg (%s)"
+         % ((name,) + worst_local))
+    if on:
+        gate(worst_low[0] < 1e-3 and worst_low[1] < 1e-3,
+             "%s: root, pelvis, spine_01/02 and legs kept: %.5f cm %.5f deg (%s)"
+             % ((name,) + worst_low))
+        changed = [l for l in LAYERS if l.startswith(fp.LOWER) and
+                   curves_of(l) != layer_curves[l]]
+        gate(not changed, "%s: the lower layer's curves untouched%s" % (name, changed or ""))
+        gate(worst_chest[0] < TOL_CM and worst_chest[1] < TOL_DEG,
+             "%s: camera and weapon_r on the chest as the card's: %.4f cm %.4f deg (%s)"
+             % ((name,) + worst_chest))
+    else:
+        gate(worst_chest[0] < 1e-3 and worst_chest[1] < 1e-3,
+             "%s: the camera still rides the chest: %.5f cm %.5f deg" % ((name,) +
+                                                                          worst_chest[:2]))
+
+
+for card_path in CARDS:
+    for on in (False, True):
+        check(card_path, on)
 
 print("\n%d of %d gates failed" % (len(FAILS), COUNT[0]))

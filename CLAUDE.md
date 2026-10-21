@@ -10971,13 +10971,35 @@ The animator, a Maya on 7003 with two tabs - an old take, and a new rig after To
   (`places`, `Solver(placed=)`, as a pose card always did): a twin retarget slides the clavicles
   10-12 cm, which put the hands that far off in front of the camera.
 - Keys go to the active layer as ever - in 1P with Upper muted that is BaseAnimation, which shows.
-- Proof: `docs/superpowers/plans/verify_poselib_upper_1p.py <clip> <anim card> [pose card]`
-  **10/10 mayapy standalone** on HoleCombo + their `Anim` / `Pose 2`: off, the feet 48.45 cm (the
-  control); on, the pelvis, legs, root, spine_01..03 0.00000 cm / deg, both 1P layers' curves
-  untouched, every upper bone, camera_root / camera_bone and weapon_r (a Long Sword in the hand) on
-  spine_03 as the card's to 0.0001 cm / 0.0007 deg, one undo; the pose card the same.
-  `tests/test_poselib_upper.py`; 8165 unit tests (the known `test_chat_deploy.Keys` aside).
-  **Not seen in the animator's Maya** (it runs the installed build).
+
+**…and the 1P chest itself, option on or off** (the same afternoon, cards `DG_Idle_1P` / `Pose`
+from an Idle_Dagger tab: «разворот корпуса не верный ... если мы не включили опцию ... но наш риг
+в режиме 1p то анимация и позы все равно должны перенестись корректно»). This replaces «the chest
+not a member» above. Three causes, each measured on the rebuilt tab:
+- **The chest was never posed**: `FKSpine3_M` is driven by 1P Setup's knot (pairBlend), so the
+  solve skipped it («1 not posed»). `rigsolve.knot_driver(control)`: a plain Tools knot (kind
+  `knot`) driving a control through our one parentConstraint; `Solver.knots`; with attach 1
+  (`KNOT_FULL`) `_Job._turn` / `_move` write the KNOT (`W_ctrl = O . W_knot`, O sampled) and
+  `_knot_place` moves it so the bone stands on its target's place too (a knot carries in world:
+  a posed pelvis swings no chest along - 59.6 cm off with the turn alone). A knotted bone under a
+  posed member is HELD (`held_all`): a card with the pelvis and no chest left the chest 92 deg off
+  where the pelvis put it. The camera control, the IK arms and a weapon / Aim Mode group under the
+  chest follow it (`helpers.under_chest`: carried by `spine_03` as it will stand).
+- **The option now takes the chest and EVERY card bone above it**, selected at save or not:
+  `DG_Idle_1P` was saved without spine_04/05, so the arms hung on the target's own spine, 31 cm /
+  53 deg off the chest.
+- **Animation cards carry a twin's bone PLACES always** (as pose cards did): without it the
+  clavicles' slide left the hands 15 cm off. `verify_poselib_anim.py`'s two gates that encoded the
+  old rule now say so (a placed translate agrees to `PLACE_TOL`; a twin skeleton's lengths are the
+  card's within 0.1 cm).
+- Proof: `docs/superpowers/plans/verify_poselib_upper_1p.py <clip> <cards...>` **31/31 mayapy
+  standalone** on HoleCombo + `DG_Idle_1P`, `Pose` and the trash copy of `Anim`, each OFF and ON:
+  nothing «not posed», one undo; OFF every member (the chest too) on its parent as the card's to
+  0.0017 cm / 0.0007 deg, the camera still riding the chest; ON the root, pelvis, spine_01/02 and
+  legs 0.00000, the lower layer untouched, the chest and above on their parents as the card's,
+  camera and weapon_r on the chest to 0.0002 cm. `verify_poselib_anim.py` 113/113,
+  `verify_poselib_apply.py` 117/117, `verify_poselib_solve.py` 122/122,
+  `verify_camera_weapon_bones.py` 24/24. `tests/test_poselib_upper.py`.
 
 ## The Pose Library: a pose lands on the same rig as it was made (2026-10-20)
 

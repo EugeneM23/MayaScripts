@@ -620,10 +620,14 @@ class _Target(object):
                                    ap.target_label(ref))
         self.carry, self.root_node, kept = _carry(ref, self.bones, travel)
         self._note(found + [missing, kept])
-        # 1P upper body (`upper`, 2026-10-21): onto a twin the card's bone PLACES come too - a
-        # twin retarget slides the clavicles 10-15 cm, and in front of the 1P camera that is the
-        # hands' place (the pose card's rule, `apply._places`); never mirrored
-        places = bool(anchors is not None and source is first and ap._places(ref))
+        # onto a twin the card's bone PLACES come too (2026-10-21, a pose card's rule since
+        # 2026-10-20, `apply._places`): a twin retarget slides the clavicles 10-15 cm, and in
+        # front of the 1P camera that is the hands' place («анимация ... должна перенестись
+        # корректно»); never mirrored (`posemath.mirror` reflects turns, not places)
+        try:
+            places = bool(source is first and ap._places(ref))
+        except Exception:                       # noqa: BLE001 - a rig not ours: turns only
+            places = False
         self.transfer = pm.Transfer(first, self.bones, self.pairs, members,
                                     use_drive=self.rig, scale=scale, places=places,
                                     anchors=upper.target_anchors(anchors, self.pairs))

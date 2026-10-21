@@ -191,9 +191,29 @@ def _camera_of(path):
     return camera.keyed_node(path)
 
 
+#  1P Setup's chest knot (`maya_tools.firstperson.CHEST_MARKER`, spelled here): what stands under
+#  it rides `spine_03` rigidly - the camera control, a weapon out of the hands, an Aim Mode group
+CHEST_MARKER = "skeldar1PChest"
+CHEST_BONE = "spine_03"
+
+
+def under_chest(node):
+    """Does `node` stand below a 1P chest knot (any ancestor marked `CHEST_MARKER`)?"""
+    try:
+        parents = cmds.listRelatives(node, parent=True, fullPath=True) or []
+        while parents:
+            if cmds.attributeQuery(CHEST_MARKER, node=parents[0], exists=True):
+                return True
+            parents = cmds.listRelatives(parents[0], parent=True, fullPath=True) or []
+    except (AttributeError, RuntimeError, ValueError):      # no DAG to ask: not in a chest
+        return False
+    return False
+
+
 def _camera_carrier(driver):
     """The game bone that carries a camera control's parent rigidly: `root` when it stands under
-    the rig's Main or its Root control (the root follows them), else None (a chest, the world)."""
+    the rig's Main or its Root control (the root follows them), `spine_03` under 1P Setup's chest
+    (2026-10-21: a card that turns the chest turns the camera with it), else None (the world)."""
     try:
         from maya_scenesetup import camera, rootcontrol
     except ImportError:
@@ -204,6 +224,8 @@ def _camera_carrier(driver):
     if parents and (camera.is_main(parents[0]) or cmds.attributeQuery(
             rootcontrol.MARKER, node=parents[0], exists=True)):
         return "root"
+    if under_chest(driver):
+        return CHEST_BONE
     return None
 
 
@@ -282,8 +304,9 @@ class Writer(object):
                 self.skipped[leaf] = "%s %s" % (_leaf(driver), why)
                 return None
             carrier = _carrier_of(driver) if weapon else None
-            carrier_leaf = _leaf(carrier) if carrier else (None if weapon
-                                                           else _camera_carrier(driver))
+            carrier_leaf = _leaf(carrier) if carrier else (
+                (CHEST_BONE if under_chest(driver) else None) if weapon
+                else _camera_carrier(driver))
             if carrier_leaf not in self.bones:
                 carrier_leaf = None
             K = _world(path) * _world(driver).inverse()
@@ -362,7 +385,13 @@ class Writer(object):
                 for ctrl, direction, distance in ((aim.target, aim.aim_v, aim.d_aim),
                                                   (aim.up, aim.up_v, aim.d_up)):
                     point = om.MPoint(*_point(target, direction, distance))
-                    point = point * _parent_world(ctrl).inverse()
+                    ctrl_parent = _parent_world(ctrl)
+                    if CHEST_BONE in self.bones and CHEST_BONE in wanted and under_chest(ctrl):
+                        # in 1P its group rides the chest: carried as the chest will stand
+                        ctrl_parent = carried_parent(ctrl_parent,
+                                                     _world(self.bones[CHEST_BONE]["path"]),
+                                                     wanted[CHEST_BONE])
+                    point = point * ctrl_parent.inverse()
                     for channel, value in zip(TRANSLATE, (point.x, point.y, point.z)):
                         values["%s.%s" % (ctrl, channel)] = value
                 for channel, value in zip(TRANSLATE, translate):

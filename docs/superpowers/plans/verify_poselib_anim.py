@@ -1550,7 +1550,10 @@ def phase_options():
     # starts from (`dependence`, the plain paste from two poses, measured this run) - tied to
     # it, twice it with a floor of 1e-4 (the final review, S16: the solver's whole tolerance,
     # 0.01, would let a Connect off by 25x the measured dependence pass)
-    bound, bound_cm = max(2.0 * dependence.value, 1e-4), max(2.0 * dependence_cm.value, 1e-4)
+    # a twin's card brings its bone PLACES since 2026-10-21 (`rigsolve._place`): a placed bone is
+    # moved until it stands within PLACE_TOL of its place, so a translate agrees to that
+    bound, bound_cm = max(2.0 * dependence.value, 1e-4), \
+        max(2.0 * dependence_cm.value, rigsolve.PLACE_TOL)
     gate("options Connect: every later key the plain paste's plus one constant per channel "
          "(within twice the solve's own dependence on its start)",
          steady.value <= bound and steady_cm.value <= bound_cm and
@@ -1645,8 +1648,11 @@ def phase_cross():
                  "%s deg over %d members (before the paste %.3f at %s); against the source's "
                  "children as they stand %s deg - the card's own children wander up to %s deg "
                  "in their parents' frames" % (rows, len(members_t), d0, at0, actual, wander))
-        gate("cross %s: lengths unchanged (pelvis, root and helpers aside)" % name,
-             lens.value <= 1e-4, "%s cm" % lens)
+        # onto a twin the card's bone places come too (2026-10-21): its lengths are the card's,
+        # within a twin's (the source's own fit, a few hundredths); onto another body kept exactly
+        gate("cross %s: lengths %s (pelvis, root and helpers aside)"
+             % (name, "the card's, a twin's" if twin else "unchanged"),
+             lens.value <= (0.1 if twin else 1e-4), "%s cm" % lens)
         rcm, rdeg = root_rows(ch, card, span, 0, place, scale)
         go(AT + count - 1)
         moved = (pm.position(target_place(ch)) - pm.position(place)).length()

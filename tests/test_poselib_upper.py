@@ -28,9 +28,11 @@ class Restrict(unittest.TestCase):
     def test_only_the_bones_above_the_chest_stay_members(self):
         card, note = upper.restrict({"kind": "character", "bones": BONES, "members": MEMBERS})
         kept = [m for m in card["members"] if m not in upper.CAMERA]
-        self.assertEqual(kept, ["spine_04", "spine_05", "head", "clavicle_r", "upperarm_r",
-                                "hand_r"])
-        self.assertIn("6 of 11", note)
+        # the card's own selection first, then every other bone above the chest it holds (the
+        # neck was not selected: a card holds every bone); the weapon bone comes with the hand
+        self.assertEqual(kept, ["spine_03", "spine_04", "spine_05", "head", "clavicle_r",
+                                "upperarm_r", "hand_r", "neck_01"])
+        self.assertIn("8 bones", note)
 
     def test_the_camera_comes_anchored_on_the_chest(self):
         card, _note = upper.restrict({"kind": "character", "bones": BONES, "members": MEMBERS})
