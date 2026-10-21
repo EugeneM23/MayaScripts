@@ -754,11 +754,11 @@ class ATBar(QtWidgets.QWidget):
 
     def _sets_menu(self):
         sets = core.selection_sets()
-        entries = [(s[len(core.SELSET_PREFIX):], (lambda s=s: core.select_set(s, add=_shift()))) for s in sets]
+        entries = [(label, (lambda s=node: core.select_set(s, add=_shift()))) for label, node in sets]
         entries += [None, ("Create set from selection...", core.create_selection_set)]
         if sets:
-            entries.append(("Delete set", [(s[len(core.SELSET_PREFIX):], (lambda s=s: core.delete_selection_set(s)))
-                                           for s in sets]))
+            entries.append(("Delete set", [(label, (lambda s=node: core.delete_selection_set(s)))
+                                           for label, node in sets]))
         return entries
 
     def _paste_anim_menu(self):

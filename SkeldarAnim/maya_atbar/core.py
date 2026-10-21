@@ -1119,12 +1119,32 @@ def bake_selection():
 
 # ---------------------------------------------------------------- selection sets
 
+def set_label(node):
+    """`L_fingers` for `tab_x:AT_sel_L_fingers`: the set's name without its namespace and our prefix. Pure."""
+    leaf = node.split("|")[-1].split(":")[-1]
+    return leaf[len(SELSET_PREFIX):] if leaf.startswith(SELSET_PREFIX) else leaf
+
+
+def sets_in(nodes, namespace):
+    """[(label, node)] of our select sets among `nodes` that live in `namespace` (":" the root), by label. Pure."""
+    wanted = (namespace or ":").strip(":")
+    found = []
+    for node in nodes:
+        leaf = node.split(":")[-1]
+        if leaf.startswith(SELSET_PREFIX) and node[:-len(leaf)].strip(":") == wanted:
+            found.append((set_label(node), node))
+    return sorted(found)
+
+
 def selection_sets():
-    return sorted(cmds.ls(SELSET_PREFIX + "*", type="objectSet") or [])
+    """Our select sets in the current namespace - the active scene tab's. 2026-10-21: a set made in a tab
+    went into the tab's namespace, and listing `AT_sel_*` at the root showed none of them."""
+    return sets_in(cmds.ls(type="objectSet") or [], cmds.namespaceInfo(currentNamespace=True))
 
 
 @undoable
 def create_selection_set():
+    """A set of the selection under a name asked for; a name already used updates that set."""
     sel = cmds.ls(sl=True) or []
     if not sel:
         return warn("select objects for the set")
@@ -1132,8 +1152,15 @@ def create_selection_set():
                             defaultButton="OK", cancelButton="Cancel", dismissString="Cancel")
     if res != "OK":
         return
-    name = re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip()) or "set"
-    cmds.sets(sel, name=SELSET_PREFIX + name)
+    label = re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip()) or "set"
+    same = [node for name, node in selection_sets() if name == label]
+    if same:
+        cmds.sets(clear=same[0])
+        cmds.sets(sel, add=same[0])
+        message("select set %s updated: %d objects" % (label, len(sel)))
+    else:
+        cmds.sets(sel, name=SELSET_PREFIX + label)
+        message("select set %s saved: %d objects" % (label, len(sel)))
 
 
 def select_set(name, add=False):

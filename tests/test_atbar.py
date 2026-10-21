@@ -162,6 +162,26 @@ class InsideTheTimeBar(unittest.TestCase):
         self.assertEqual(fake.edits, [(maya_timebar.CONTROL, {"resizeHeight": 130 + 57})])
 
 
+class SelectSets(unittest.TestCase):
+    """2026-10-21: a set made in a scene tab went into the tab's namespace, and the menu, listing
+    `AT_sel_*` at the root, showed none - «не зберігається нічого»."""
+
+    TAB = "tab_AS_Dagger_Attack_Cbm_L_R_1p_Full_with3p_1"
+
+    def test_a_set_in_the_tab_s_namespace_is_listed_by_its_own_name(self):
+        nodes = [self.TAB + ":AT_sel_L_fingers", self.TAB + ":defaultObjectSet", "AT_sel_root_only",
+                 "tab_other:AT_sel_elsewhere", self.TAB + ":Manny_Rig1:AT_sel_inside_the_rig"]
+        self.assertEqual(core.sets_in(nodes, self.TAB), [("L_fingers", self.TAB + ":AT_sel_L_fingers")])
+
+    def test_the_root_namespace_lists_the_root_s_sets(self):
+        nodes = ["AT_sel_hands", self.TAB + ":AT_sel_L_fingers", "AT_sel_feet", "lightLinker1"]
+        self.assertEqual(core.sets_in(nodes, ":"), [("feet", "AT_sel_feet"), ("hands", "AT_sel_hands")])
+        self.assertEqual(core.sets_in(nodes, ""), core.sets_in(nodes, ":"))
+
+    def test_a_label_is_the_name_without_namespace_and_prefix(self):
+        self.assertEqual(core.set_label(self.TAB + ":AT_sel_L_fingers1"), "L_fingers1")
+
+
 class Smoothing(unittest.TestCase):
     """The SM slider (2026-10-21): left smooths - gradually, pass by pass - right roughens."""
 
