@@ -65,7 +65,8 @@ switches and the FK/IK align read it. So:
   carries the hand (the animator, 2026-09-18: «сейчас мы теряем
   возможность анимировать объект, который был приконстрейнен … через
   прокси-локатор внутри родителя, перепечь на него анимацию и уже потом
-  констрейнить»). Releasing bakes the control (`cmds.bakeResults`),
+  констрейнить»). Releasing bakes the control (`cmds.bakeResults`; on
+  animation layers what it shows keyed onto the active layer, 2026-10-21),
   deletes only OUR constraint (its `skeldarHandLink` attribute) and the
   proxy (its `skeldarHandProxy` attribute).
 - **The drive bone follows the holding hand** (the animator's ruling): in
@@ -115,6 +116,8 @@ from maya_scenesetup import fkikspine
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponaim
 from maya_scenesetup import weaponspace
+from maya_tools import knotplan
+from maya_tools import layered
 
 HUB_SECTION = "connections"
 STATUS = "skeldarConnectionsStatus"
@@ -728,15 +731,35 @@ def attach_to_proxy(obj, parent, span, name, tag):
     return proxy, con
 
 
+def release_refusal(obj):
+    """'' or why `obj` cannot leave its proxy: on animation layers it is keyed
+    onto the active layer, which must take exact final values (`layered`)."""
+    if not obj or not our_constraints(obj) or not layered.is_layered(obj):
+        return ""
+    layer, refusal = layered.target()
+    return refusal or layered.check_target(layer, knotplan.CHANNELS)
+
+
 def detach_from_proxy(obj, span):
     """Bake `obj` where its proxy carried it, drop our constraint, delete the
-    proxy, show the object again. Returns the number of proxies removed."""
+    proxy, show the object again. Returns the number of proxies removed.
+
+    On animation layers (2026-10-21) it is not baked: `bakeResults` lands in the
+    layers' blend node, and a hand on an additive layer came off the dagger 33 cm
+    away. What it shows is read on every frame and keyed onto the active layer as
+    final values, as Tools' re-parent does (`layered`); the other layers kept."""
     cons = our_constraints(obj)
     if not cons:
         return 0
-    maya_timewarp.call(cmds.bakeResults, [obj], attribute=list(CHANNELS),
-                     time=(span[0], span[1]), simulation=True, sampleBy=1,
-                     preserveOutsideKeys=True)
+    stacked = layered.is_layered(obj)
+    if stacked:
+        layer, _refusal = layered.target()
+        first, last = int(math.floor(span[0])), int(math.ceil(span[1]))
+        shown = layered.read([obj], knotplan.CHANNELS, range(first, last + 1))[obj]
+    else:
+        maya_timewarp.call(cmds.bakeResults, [obj], attribute=list(CHANNELS),
+                           time=(span[0], span[1]), simulation=True, sampleBy=1,
+                           preserveOutsideKeys=True)
     removed = 0
     visible = True
     for con in cons:
@@ -748,6 +771,8 @@ def detach_from_proxy(obj, span):
         if proxy and cmds.objExists(proxy):
             cmds.delete(proxy)
             removed += 1
+    if stacked:
+        layered.key_shown(obj, knotplan.CHANNELS, first, last, shown, layer)
     _set_visible(obj, visible)
     return removed
 
@@ -828,6 +853,10 @@ def apply(wanted, rig=None, weapon=None):
         if step == "hang" and not (bones[side][0] and bones[side][1]):
             return "%s: no %s bone (or its hand) on this rig" % (
                 SIDE_LABEL[side], WEAPON_BONE[side])
+        if step == "release":
+            text = release_refusal(_control(rig, side))
+            if text:
+                return "%s: %s" % (SIDE_LABEL[side], text)
         if step == "follow":
             if not _control(rig, side):
                 return "%s: %s not found in %s" % (SIDE_LABEL[side],
@@ -996,6 +1025,10 @@ def release_across(selection=None):
                         riders.append(rider)
     if not riders:
         return "nothing selected rides a proxy of ours"
+    for node in riders:
+        text = release_refusal(node)
+        if text:
+            return "%s: %s" % (node.split("|")[-1], text)
     keys = []
     for node in riders:
         keys.extend(cmds.keyframe(node, query=True, timeChange=True) or [])
@@ -1098,7 +1131,7 @@ def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM):
             return fkik.ALREADY % (label, "IK (it follows %s)" % weapon_label(rides))
         return "%s follows %s - set it Free first" % (ROW_LABEL[side],
                                                       weapon_label(rides))
-    text = fkik.refusal(arm, mode, span)
+    text = fkik.refusal(arm, mode, span) or (release_refusal(_control(rig, side)) if rides else "")
     if text:
         return text
     notes = []

@@ -835,7 +835,8 @@ class SwitchArm(unittest.TestCase):
         self.done = []
         self.saved = dict((name, getattr(cx, name)) for name in
                           ("cmds", "_rig", "following", "_release", "_span",
-                           "sweep_orphans", "_control", "weapon_label"))
+                           "sweep_orphans", "_control", "weapon_label",
+                           "release_refusal"))
         self.saved_fkik = dict((name, getattr(cx.fkik, name)) for name in
                                ("limb", "whole_take", "refusal", "switch",
                                 "blend_values"))
@@ -858,6 +859,7 @@ class SwitchArm(unittest.TestCase):
         cx.sweep_orphans = lambda: 0
         cx._control = lambda rig, side: "|IKArm_" + side
         cx.weapon_label = lambda weapon: "Long Sword 02"
+        cx.release_refusal = lambda obj: ""
         cx.fkik.limb = lambda rig, side: ("arm_" + side, "")
         cx.fkik.whole_take = lambda arm: (0.0, 24.0)
         cx.fkik.refusal = lambda arm, mode, span, ignore=(): ""
@@ -888,6 +890,15 @@ class SwitchArm(unittest.TestCase):
         self.assertEqual([d[0] for d in self.done],
                          ["undo", "release", "switch", "undo"])
         self.assertIn("Hand_R released from Long Sword 02", text)
+
+    def test_fk_on_a_hand_its_layer_cannot_take_moves_nothing(self):
+        """2026-10-21: the release keys the active layer; a layer that cannot
+        take the keys refuses the press before the release or the switch."""
+        cx.following = lambda rig, side: "|sword"
+        cx.release_refusal = lambda obj: "the animation layer L is locked"
+        text = cx.switch_arm("R", "FK", highlight=False)
+        self.assertEqual(text, "the animation layer L is locked")
+        self.assertEqual(self.done, [])
 
     def test_ik_on_a_following_hand_is_already_ik(self):
         cx.following = lambda rig, side: "|sword"
@@ -1184,3 +1195,81 @@ class TwoWeapons(unittest.TestCase):
         text = cx.header_text(rig, "|a|LongSwordMesh", scheme(right=H),
                               "Dagger 01 in the left hand")
         self.assertIn("also Dagger 01 in the left hand", text)
+
+
+class LayeredRelease(unittest.TestCase):
+    """2026-10-21: a hand on an animation layer released from the dagger came
+    off 33 cm away - `bakeResults` lands in the layers' blend node. A layered
+    rider is read on every frame while it still rides, freed, and keyed onto
+    the active layer as final values; a plain one is baked as before."""
+
+    def setUp(self):
+        self.done = []
+        self.saved = (cx.cmds, cx.layered, cx.maya_timewarp, cx.our_constraints,
+                      cx.proxy_for, cx._set_visible)
+        test = self
+
+        class Cmds(object):
+            def objExists(self, name):
+                return True
+
+            def delete(self, name):
+                test.done.append(("delete", name))
+
+            def attributeQuery(self, *args, **kwargs):
+                return False
+
+            def bakeResults(self, *args, **kwargs):
+                test.done.append(("bakeResults",))
+
+        self.stacked = True
+        self.layer = ("Upper", "")
+        cx.cmds = Cmds()
+        cx.maya_timewarp = types.SimpleNamespace(
+            call=lambda fn, *a, **k: fn(*a, **k))
+        cx.layered = types.SimpleNamespace(
+            is_layered=lambda obj, *a: self.stacked,
+            target=lambda: self.layer,
+            check_target=lambda layer, channels: "",
+            read=lambda objs, channels, frames: self.done.append(
+                ("read", tuple(channels), list(frames))) or {objs[0]: {"shown": True}},
+            key_shown=lambda obj, channels, first, last, shown, layer: self.done.append(
+                ("key", obj, first, last, shown, layer)))
+        cx.our_constraints = lambda obj: ["|IKArm_R|link"]
+        cx.proxy_for = lambda con: "|sword|handProxy_R"
+        cx._set_visible = lambda node, visible: self.done.append(("visible", visible))
+
+    def tearDown(self):
+        (cx.cmds, cx.layered, cx.maya_timewarp, cx.our_constraints,
+         cx.proxy_for, cx._set_visible) = self.saved
+
+    def test_a_layered_rider_is_read_freed_then_keyed_on_the_active_layer(self):
+        removed = cx.detach_from_proxy("|IKArm_R", (0.0, 61.0))
+        self.assertEqual(removed, 1)
+        self.assertEqual([d[0] for d in self.done],
+                         ["read", "delete", "delete", "key", "visible"])
+        self.assertEqual(self.done[0][2], list(range(0, 62)))
+        self.assertEqual(self.done[3], ("key", "|IKArm_R", 0, 61, {"shown": True}, "Upper"))
+        self.assertNotIn(("bakeResults",), self.done)
+
+    def test_a_plain_rider_is_baked_as_before(self):
+        self.stacked = False
+        cx.detach_from_proxy("|IKArm_R", (0.0, 61.0))
+        self.assertEqual([d[0] for d in self.done],
+                         ["bakeResults", "delete", "delete", "visible"])
+
+    def test_a_hand_that_rides_nothing_is_left_alone(self):
+        cx.our_constraints = lambda obj: []
+        self.assertEqual(cx.detach_from_proxy("|IKArm_R", (0.0, 61.0)), 0)
+        self.assertEqual(cx.release_refusal("|IKArm_R"), "")
+        self.assertEqual(self.done, [])
+
+    def test_the_release_refusal_is_the_active_layers(self):
+        self.assertEqual(cx.release_refusal("|IKArm_R"), "")
+        self.layer = (None, "the animation layer Upper is locked")
+        self.assertEqual(cx.release_refusal("|IKArm_R"), "the animation layer Upper is locked")
+        self.layer = ("Upper", "")
+        cx.layered.check_target = lambda layer, channels: "adds rotation as quaternions"
+        self.assertEqual(cx.release_refusal("|IKArm_R"), "adds rotation as quaternions")
+        self.stacked = False
+        self.assertEqual(cx.release_refusal("|IKArm_R"), "")
