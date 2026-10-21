@@ -1168,9 +1168,68 @@ def select_set(name, add=False):
     cmds.select(members, add=add)
 
 
+def deselect_set(name):
+    members = cmds.sets(name, q=True) or []
+    if members:
+        cmds.select(members, deselect=True)
+
+
+def set_size(name):
+    return len(cmds.sets(name, q=True) or [])
+
+
 def delete_selection_set(name):
     if cmds.objExists(name):
         cmds.delete(name)
+
+
+@undoable
+def update_selection_set(name):
+    """The set holds the selection now."""
+    sel = cmds.ls(sl=True) or []
+    if not sel:
+        return warn("select the objects the set should hold")
+    cmds.sets(clear=name)
+    cmds.sets(sel, add=name)
+    message("select set %s updated: %d objects" % (set_label(name), len(sel)))
+
+
+@undoable
+def rename_selection_set(name):
+    """A new name asked for; the set stays in its namespace. The set's new name, or None."""
+    res = cmds.promptDialog(title="AT Select Set", message="Name:", text=set_label(name),
+                            button=["OK", "Cancel"], defaultButton="OK", cancelButton="Cancel",
+                            dismissString="Cancel")
+    if res != "OK":
+        return None
+    label = re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip())
+    if not label or label == set_label(name):
+        return None
+    namespace = name.rpartition(":")[0]
+    return cmds.rename(name, (namespace + ":" if namespace else "") + SELSET_PREFIX + label)
+
+
+SET_COLOUR_ATTR = "skeldarATColour"
+
+
+def set_colour(name):
+    """The colour the animator gave the set's cell, or None."""
+    if cmds.attributeQuery(SET_COLOUR_ATTR, node=name, exists=True):
+        return cmds.getAttr(name + "." + SET_COLOUR_ATTR) or None
+    return None
+
+
+@undoable
+def paint_set(name, colour):
+    if not cmds.attributeQuery(SET_COLOUR_ATTR, node=name, exists=True):
+        cmds.addAttr(name, longName=SET_COLOUR_ATTR, dataType="string")
+    cmds.setAttr(name + "." + SET_COLOUR_ATTR, colour, type="string")
+
+
+def sets_grid(count, columns=4):
+    """[(row, column)] of `count` cells, `columns` wide at most and no wider than they need. Pure."""
+    width = max(1, min(columns, count))
+    return [(i // width, i % width) for i in range(count)]
 
 
 # ---------------------------------------------------------------- anim recovery

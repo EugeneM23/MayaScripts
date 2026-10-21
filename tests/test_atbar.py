@@ -181,6 +181,13 @@ class SelectSets(unittest.TestCase):
     def test_a_label_is_the_name_without_namespace_and_prefix(self):
         self.assertEqual(core.set_label(self.TAB + ":AT_sel_L_fingers1"), "L_fingers1")
 
+    def test_the_cells_fill_four_columns_then_wrap(self):
+        """2026-10-21, «окремі ячейки щоб вони спливали»: the pop-up's grid."""
+        self.assertEqual(core.sets_grid(1), [(0, 0)])
+        self.assertEqual(core.sets_grid(3), [(0, 0), (0, 1), (0, 2)])
+        self.assertEqual(core.sets_grid(6), [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)])
+        self.assertEqual(core.sets_grid(0), [])
+
 
 class Smoothing(unittest.TestCase):
     """The SM slider (2026-10-21): left smooths - gradually, pass by pass - right roughens."""

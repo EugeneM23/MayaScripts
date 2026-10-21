@@ -400,6 +400,257 @@ class BlendSlider(QtWidgets.QWidget):
         self.update()
 
 
+SET_COLOURS = (("Purple", POSE), ("Blue", KEYS), ("Cyan", BLEND), ("Orange", SPACE), ("Pink", TIME),
+               ("Grey", TOOLS))
+POP_OPEN_MS, START_SCALE = 240.0, 0.3                        # the Time Bar's burst: a part popping in
+
+
+class SetCell(QtWidgets.QAbstractButton):
+    """A select set's cell: its colour bar, its name, how many it holds - or, `new`, the cell that makes a
+    set of the selection. Hover lifts and lights it, a press flashes the accent, it pops in when the panel
+    opens (nearest the Select Sets button first)."""
+
+    def __init__(self, label, node, colour, size, popup, new=False):
+        super(SetCell, self).__init__(popup)
+        self.label, self.node, self.colour, self.count, self.popup, self.new = label, node, colour, size, popup, new
+        ui = popup.ui
+        self.setFixedSize(int(round(156 * ui)), int(round(34 * ui)))
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setAccessibleName(label)
+        self.setToolTip("Make a select set of the selection" if new else
+                        "%s: %d objects\nClick: select, Shift: add, Ctrl: remove\nRight click: update, rename, "
+                        "colour, delete" % (label, size or 0))
+        self._hover = self._goal = 0.0
+        self._last = self._flash_t = self._born = None
+        self._delay = 0.0
+        if not new:
+            self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.customContextMenuRequested.connect(lambda pos: popup.cell_menu(self, self.mapToGlobal(pos)))
+        self.clicked.connect(lambda *_a: popup.picked(self))
+
+    def pop_in(self, now, delay):
+        self._born, self._delay = now, delay
+
+    def enterEvent(self, e):
+        self._goal = 1.0
+        self.popup.driver.kick(self)
+        super(SetCell, self).enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._goal = 0.0
+        self.popup.driver.kick(self)
+        super(SetCell, self).leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.LeftButton:
+            self._flash_t = _now()
+            self.popup.driver.kick(self)
+        super(SetCell, self).mousePressEvent(e)
+
+    def step(self, now):
+        dt = now - (self._last if self._last is not None else now)
+        self._last = now
+        if self._hover != self._goal:
+            self._hover += (self._goal - self._hover) * (1.0 - math.exp(-3.0 * dt / HOVER_MS))
+            if abs(self._goal - self._hover) < 0.005:
+                self._hover = self._goal
+        busy = (self._hover != self._goal
+                or (self._flash_t is not None and now - self._flash_t < FLASH_MS)
+                or (self._born is not None and now - self._born - self._delay < POP_OPEN_MS))
+        if not busy:
+            self._last = None
+        return busy
+
+    def paintEvent(self, _):
+        ui, now = self.popup.ui, _now()
+        appear = 1.0
+        if self._born is not None:
+            u = (now - self._born - self._delay) / POP_OPEN_MS
+            if u <= 0:
+                return
+            appear = min(1.0, u)
+        scale = START_SCALE + (1.0 - START_SCALE) * _back_out(appear) if appear < 1.0 else 1.0
+        flash = max(0.0, 1.0 - (now - self._flash_t) / FLASH_MS) if self._flash_t is not None else 0.0
+        scale *= (1.0 + 0.04 * self._hover) * (1.0 - 0.04 * flash)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setOpacity(min(1.0, appear * 1.6))
+        c = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
+        p.translate(c)
+        p.scale(scale, scale)
+        m = 3 * ui
+        face = QtCore.QRectF(-self.width() / 2.0 + m, -self.height() / 2.0 + m, self.width() - 2 * m,
+                             self.height() - 2 * m)
+        radius = 6 * ui
+        fill = _mix(FIELD, HOVER, self._hover)
+        if flash > 0:
+            fill = _mix(fill, ACCENT, flash)
+        edge = QtGui.QPen(_mix(LINE, ACCENT, self._hover), 1)
+        if self.new and self._hover < 0.5:
+            edge.setStyle(QtCore.Qt.DashLine)
+        p.setPen(edge)
+        p.setBrush(fill)
+        p.drawRoundedRect(face.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        ink = QtGui.QColor(ON_ACCENT) if flash > 0.5 else None
+        f = QtGui.QFont(self.font())
+        f.setPixelSize(int(round(12 * ui)))
+        if self.new:
+            p.setPen(ink or _mix(MUTED, TEXT, self._hover))
+            p.setFont(f)
+            p.drawText(face, QtCore.Qt.AlignCenter, "+   New from selection")
+            p.end()
+            return
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(self.colour))
+        p.drawRoundedRect(QtCore.QRectF(face.left() + 5 * ui, face.top() + 6 * ui, 3 * ui, face.height() - 12 * ui),
+                          1.5 * ui, 1.5 * ui)
+        text = face.adjusted(14 * ui, 0, -8 * ui, 0)
+        count = QtGui.QFont("Consolas")
+        count.setPixelSize(int(round(11 * ui)))
+        p.setFont(count)
+        p.setPen(ink or QtGui.QColor(FAINT))
+        p.drawText(text, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter, str(self.count or 0))
+        p.setFont(f)
+        p.setPen(ink or _mix(TEXT2, TEXT, self._hover))
+        name = QtGui.QFontMetrics(f).elidedText(self.label, QtCore.Qt.ElideRight, int(text.width() - 26 * ui))
+        p.drawText(text, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
+        p.end()
+
+
+class SetsPopup(QtWidgets.QWidget):
+    """The select sets' cells, out of the Select Sets button (2026-10-21, «окремі ячейки щоб вони спливали при
+    нажатті кнопки селекшн сет»): click a cell to select its set (Shift adds, Ctrl removes), right click for
+    update / rename / colour / delete, the last cell makes a set of the selection. Esc or a click outside
+    closes it."""
+
+    COLUMNS = 4
+
+    def __init__(self, anchor, ui):
+        super(SetsPopup, self).__init__(anchor, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint
+                                        | QtCore.Qt.NoDropShadowWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.anchor, self.ui = anchor, ui
+        self.setStyleSheet(_style(ui))
+        self.driver = Driver(self)
+        self.pad = int(round(10 * ui))
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(self.pad, self.pad, self.pad, self.pad)
+        lay.setSpacing(int(round(6 * ui)))
+        head = QtWidgets.QHBoxLayout()
+        head.setContentsMargins(int(round(3 * ui)), 0, int(round(3 * ui)), 0)
+        head.addWidget(self._label("SELECT SETS", POSE, 10, bold=True))
+        head.addStretch(1)
+        head.addWidget(self._label("click: select    shift: add    ctrl: remove    right click: more", FAINT, 10))
+        lay.addLayout(head)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        self.cells = []
+        for i, (label, node) in enumerate(core.selection_sets()):
+            colour = core.set_colour(node) or SET_COLOURS[i % len(SET_COLOURS)][1]
+            self.cells.append(SetCell(label, node, colour, core.set_size(node), self))
+        self.cells.append(SetCell("New from selection", None, MUTED, None, self, new=True))
+        for cell, (row, column) in zip(self.cells, core.sets_grid(len(self.cells), self.COLUMNS)):
+            grid.addWidget(cell, row, column)
+        lay.addLayout(grid)
+
+    def _label(self, text, colour, size, bold=False):
+        label = QtWidgets.QLabel(text)
+        f = label.font()
+        f.setPixelSize(int(round(size * self.ui)))
+        f.setBold(bold)
+        if bold:
+            f.setLetterSpacing(QtGui.QFont.PercentageSpacing, 108)
+        label.setFont(f)
+        label.setStyleSheet("color: %s; background: transparent;" % colour)
+        return label
+
+    def paintEvent(self, _):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtGui.QPen(QtGui.QColor(LINE), 1))
+        p.setBrush(QtGui.QColor(CARD))
+        r = 8 * self.ui
+        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), r, r)
+        p.end()
+
+    def open_at(self):
+        """Shown above the Select Sets button (below it when there is no room), the cells popping in."""
+        self.adjustSize()
+        a, ui = self.anchor, self.ui
+        corner = a.mapToGlobal(QtCore.QPoint(0, 0))
+        screen = (a.screen() or QtWidgets.QApplication.primaryScreen()).availableGeometry()
+        x = max(screen.left(), min(corner.x() - self.pad, screen.right() - self.width()))
+        y = corner.y() - self.height() - int(round(4 * ui))
+        if y < screen.top():
+            y = corner.y() + a.height() + int(round(4 * ui))
+        self.move(x, y)
+        self.show()
+        origin = a.mapToGlobal(a.rect().center())
+        now = _now()
+        for cell in self.cells:
+            centre = cell.mapToGlobal(cell.rect().center())
+            far = math.hypot(centre.x() - origin.x(), 1.5 * (centre.y() - origin.y())) / ui
+            cell.pop_in(now, 48.0 + 21.6 * far / 60.0)
+            self.driver.kick(cell)
+        return self
+
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.close()
+            return
+        super(SetsPopup, self).keyPressEvent(e)
+
+    def picked(self, cell):
+        if cell.new:
+            return self._after(core.create_selection_set)
+        mods = QtWidgets.QApplication.keyboardModifiers()
+        if mods & QtCore.Qt.ControlModifier:
+            _safe(core.deselect_set, cell.node)()
+        else:
+            _safe(core.select_set, cell.node, add=bool(mods & QtCore.Qt.ShiftModifier))()
+
+    def cell_menu(self, cell, where):
+        node = cell.node
+        m = QtWidgets.QMenu(self)
+        m.addAction("Select").triggered.connect(_safe(core.select_set, node))
+        m.addAction("Add to selection").triggered.connect(_safe(core.select_set, node, add=True))
+        m.addAction("Remove from selection").triggered.connect(_safe(core.deselect_set, node))
+        m.addSeparator()
+        m.addAction("Update from selection").triggered.connect(
+            lambda *_a: self._after(lambda: core.update_selection_set(node)))
+        m.addAction("Rename...").triggered.connect(lambda *_a: self._after(lambda: core.rename_selection_set(node)))
+        colours = m.addMenu("Colour")
+        for name, colour in SET_COLOURS:
+            swatch = QtGui.QPixmap(12, 12)
+            swatch.fill(QtGui.QColor(colour))
+            colours.addAction(QtGui.QIcon(swatch), name).triggered.connect(
+                lambda *_a, c=colour: self._after(lambda: core.paint_set(node, c)))
+        m.addSeparator()
+        m.addAction("Delete").triggered.connect(lambda *_a: self._after(lambda: core.delete_selection_set(node)))
+        m.exec_(where) if hasattr(m, "exec_") else m.exec(where)
+
+    def _after(self, fn):
+        """A change that asks a question or changes the cells: the panel closes, `fn` runs, a fresh panel
+        opens out of the same button."""
+        anchor, ui = self.anchor, self.ui
+        self.close()
+
+        def run():
+            _safe(fn)()
+            try:
+                if anchor.isVisible():
+                    open_sets(anchor, ui)
+            except RuntimeError:                             # the bar was rebuilt meanwhile
+                pass
+        QtCore.QTimer.singleShot(0, run)
+
+
+def open_sets(anchor, ui):
+    return SetsPopup(anchor, ui).open_at()
+
+
 class FlowLayout(QtWidgets.QLayout):
     def __init__(self, parent=None, spacing=6, margins=(4, 3, 4, 3)):
         super(FlowLayout, self).__init__(parent)
@@ -661,9 +912,11 @@ class ATBar(QtWidgets.QWidget):
                          (self.temp_pivot_btn, core.temp_pivot_active),
                          (self.trail_btn, core.motion_trails_exist)]
         ui = self.ui
+        self.sets_btn = b("select_sets", POSE, "Select Sets: click for the sets' cells\nRight click: the sets as a menu",
+                          lambda: open_sets(self.sets_btn, self.ui), menu=self._sets_menu)
         return [
             _group("POSE", POSE, [
-                b("select_sets", POSE, "Select Sets (right click: create / delete)", "menu", menu=self._sets_menu),
+                self.sets_btn,
                 b("copy_anim", POSE, "Copy Animation of the selected controls", core.copy_animation),
                 b("paste_anim", POSE, "Paste Animation at the current frame (matched by name, else by selection order)\n"
                                       "Right click: insert at the current frame, or replace at the copied frames",
