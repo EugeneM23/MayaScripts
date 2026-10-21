@@ -1178,9 +1178,11 @@ def set_size(name):
     return len(cmds.sets(name, q=True) or [])
 
 
+@undoable
 def delete_selection_set(name):
     if cmds.objExists(name):
         cmds.delete(name)
+        message("select set %s deleted - Ctrl+Z brings it back" % set_label(name))
 
 
 @undoable

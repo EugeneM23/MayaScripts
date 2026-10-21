@@ -24,6 +24,7 @@ PANEL, CARD, FIELD, LINE, HOVER = "#1f2023", "#2a2c30", "#1b1c1f", "#45474d", "#
 TRACK, TRACK_EDGE, DOT = "#17181a", "#26282c", "#6a6c72"
 TEXT, TEXT2, MUTED, FAINT = "#e4e4e6", "#c9cacf", "#9a9ca3", "#77797f"
 ACCENT, ACCENT_TEXT, ON_ACCENT, ACCENT_TINT = "#e07a36", "#f0a26b", "#2a1405", "#3a2a1f"
+DANGER, DANGER_TINT = "#e39a93", "#3a2626"
 KEYS, BLEND, POSE, SPACE, TIME, TOOLS = "#7fa9e6", "#6fb7c9", "#c89be8", "#f0a26b", "#e39a93", "#c9cacf"
 HOVER_MS, FLASH_MS, POP_MS, LIFT, FRAME_MS = 110.0, 120.0, 200.0, 0.10, 16
 
@@ -418,11 +419,13 @@ class SetCell(QtWidgets.QAbstractButton):
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setAccessibleName(label)
         self.setToolTip("Make a select set of the selection" if new else
-                        "%s: %d objects\nClick: select, Shift: add, Ctrl: remove\nRight click: update, rename, "
-                        "colour, delete" % (label, size or 0))
+                        "%s: %d objects\nClick: select, Shift: add, Ctrl: remove, x: delete the set\n"
+                        "Right click: update, rename, colour, delete" % (label, size or 0))
+        self.setMouseTracking(True)
         self._hover = self._goal = 0.0
         self._last = self._flash_t = self._born = None
         self._delay = 0.0
+        self._on_x = self._x_down = False
         if not new:
             self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             self.customContextMenuRequested.connect(lambda pos: popup.cell_menu(self, self.mapToGlobal(pos)))
@@ -438,14 +441,46 @@ class SetCell(QtWidgets.QAbstractButton):
 
     def leaveEvent(self, e):
         self._goal = 0.0
+        self._on_x = False
         self.popup.driver.kick(self)
         super(SetCell, self).leaveEvent(e)
 
+    def x_rect(self):
+        """The delete ×, in the painter's centred coordinates (unscaled)."""
+        ui = self.popup.ui
+        right = self.width() / 2.0 - 3 * ui - 8 * ui
+        return QtCore.QRectF(right - 14 * ui, -7 * ui, 14 * ui, 14 * ui)
+
+    def _over_x(self, e):
+        if self.new:
+            return False
+        pos = e.position() if hasattr(e, "position") else QtCore.QPointF(e.pos())
+        return self.x_rect().translated(self.width() / 2.0, self.height() / 2.0).adjusted(-3, -3, 3, 3).contains(pos)
+
+    def mouseMoveEvent(self, e):
+        on = self._over_x(e)
+        if on != self._on_x:
+            self._on_x = on
+            self.update()
+        super(SetCell, self).mouseMoveEvent(e)
+
     def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.LeftButton and self._over_x(e):
+            self._x_down = True                               # the ×: no click, no flash
+            self.update()
+            return
         if e.button() == QtCore.Qt.LeftButton:
             self._flash_t = _now()
             self.popup.driver.kick(self)
         super(SetCell, self).mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._x_down:
+            self._x_down = False
+            if self._over_x(e):
+                self.popup.remove(self)
+            return
+        super(SetCell, self).mouseReleaseEvent(e)
 
     def step(self, now):
         dt = now - (self._last if self._last is not None else now)
@@ -505,6 +540,20 @@ class SetCell(QtWidgets.QAbstractButton):
         p.drawRoundedRect(QtCore.QRectF(face.left() + 5 * ui, face.top() + 6 * ui, 3 * ui, face.height() - 12 * ui),
                           1.5 * ui, 1.5 * ui)
         text = face.adjusted(14 * ui, 0, -8 * ui, 0)
+        if self._hover > 0.01:                               # the delete ×, out on hover; soft red under the cursor
+            x = self.x_rect()
+            hot = self._on_x or self._x_down
+            if hot:
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(QtGui.QColor(DANGER_TINT))
+                p.drawEllipse(x.adjusted(-2 * ui, -2 * ui, 2 * ui, 2 * ui))
+            pen = QtGui.QPen(_alpha(DANGER if hot else _mix(FAINT, TEXT2, self._hover).name(), self._hover),
+                             1.5 * ui, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap)
+            p.setPen(pen)
+            inset = 3.5 * ui
+            p.drawLine(QtCore.QPointF(x.left() + inset, x.top() + inset), QtCore.QPointF(x.right() - inset, x.bottom() - inset))
+            p.drawLine(QtCore.QPointF(x.right() - inset, x.top() + inset), QtCore.QPointF(x.left() + inset, x.bottom() - inset))
+            text = text.adjusted(0, 0, -(x.width() + 6 * ui) * self._hover, 0)
         count = QtGui.QFont("Consolas")
         count.setPixelSize(int(round(11 * ui)))
         p.setFont(count)
@@ -543,17 +592,38 @@ class SetsPopup(QtWidgets.QWidget):
         head.addStretch(1)
         head.addWidget(self._label("click: select    shift: add    ctrl: remove    right click: more", FAINT, 10))
         lay.addLayout(head)
-        grid = QtWidgets.QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(0)
+        self.grid = QtWidgets.QGridLayout()
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(0)
         self.cells = []
         for i, (label, node) in enumerate(core.selection_sets()):
             colour = core.set_colour(node) or SET_COLOURS[i % len(SET_COLOURS)][1]
             self.cells.append(SetCell(label, node, colour, core.set_size(node), self))
         self.cells.append(SetCell("New from selection", None, MUTED, None, self, new=True))
+        self._place_cells()
+        lay.addLayout(self.grid)
+        self._above = True
+
+    def _place_cells(self):
+        while self.grid.count():
+            self.grid.takeAt(0)
         for cell, (row, column) in zip(self.cells, core.sets_grid(len(self.cells), self.COLUMNS)):
-            grid.addWidget(cell, row, column)
-        lay.addLayout(grid)
+            self.grid.addWidget(cell, row, column)
+
+    def remove(self, cell):
+        """The set deleted from its cell's ×: the cell goes, the others close up, the panel stays open and
+        keeps its edge on the button."""
+        _safe(core.delete_selection_set, cell.node)()
+        if cmds.objExists(cell.node):
+            return
+        self.cells.remove(cell)
+        cell.setParent(None)
+        cell.deleteLater()
+        self._place_cells()
+        edge = self.geometry().bottom() if self._above else self.geometry().top()
+        self.layout().activate()
+        self.adjustSize()
+        self.move(self.x(), edge - self.height() + 1 if self._above else edge)
 
     def _label(self, text, colour, size, bold=False):
         label = QtWidgets.QLabel(text)
@@ -583,7 +653,8 @@ class SetsPopup(QtWidgets.QWidget):
         screen = (a.screen() or QtWidgets.QApplication.primaryScreen()).availableGeometry()
         x = max(screen.left(), min(corner.x() - self.pad, screen.right() - self.width()))
         y = corner.y() - self.height() - int(round(4 * ui))
-        if y < screen.top():
+        self._above = y >= screen.top()
+        if not self._above:
             y = corner.y() + a.height() + int(round(4 * ui))
         self.move(x, y)
         self.show()
