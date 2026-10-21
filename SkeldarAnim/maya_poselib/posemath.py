@@ -23,7 +23,11 @@ holds it, with the roll AdvancedSkeleton moves into the twist joints put back (t
 - `targets` the world matrix of EVERY target bone: each member takes its partner's rotation
   RELATIVE TO ITS NEAREST PAIRED ANCESTOR, carried through the two rests, so a hand pose lands
   on the arm as it stands and a full pose on a character standing elsewhere keeps its place and
-  facing; lengths are the target's, only the pelvis takes the pose's offset from the root;
+  facing; lengths are the target's, only the pelvis takes the pose's offset from the root. The
+  TORSO (the pelvis and the spine, `is_torso`) keeps the card's own relations: a member turns
+  against the nearest torso bone below it the card poses, else against the root frame
+  (2026-10-21) - an upper-body card's chest stays as stabilized as the card's on a target whose
+  hips and spine twist, and a full card is what it was;
 - `Transfer` the same prepared once and run per frame (an animation card, 2026-10-03): the
   alignment read off the first pasted frame, each frame's pose onto the target as that frame
   finds it, its root frame moved by the clip's `travel`;
@@ -72,6 +76,11 @@ ROOT = "root"              # the canonical name of a root standing at the floor 
 # `their_floor` for such a source (maya_skeletonmap.size_ratio)
 FLOOR = 0.0
 EPS = 1e-9
+# the TORSO (2026-10-21, `is_torso`): the bones playing these - the pelvis and every spine bone -
+# keep the card's own relations: a member turns against the nearest torso member below it, else
+# the root frame, never the target's in-between spine (`Transfer._torso_anchor`)
+TORSO = ("pelvis",)
+TORSO_PREFIX = "spine_"
 # degrees: a top joint turned further than this off upright (its swing in the swing-twist split
 # about +Y) has an ill-conditioned heading - near upside down a 2 deg side tilt reads as up to a
 # half turn of yaw. An ANIMATION's rootless travel holds its heading steady across such frames
@@ -174,6 +183,13 @@ def is_twist(leaf):
     """A twist bone (`upperarm_twist_01_l` ...): it rides with its limb and is never a member,
     nor a direction child, on its own."""
     return "_twist_" in leaf
+
+
+def is_torso(bones, leaf):
+    """Is the bone part of the TORSO - its canonical name (else its leaf, the namespace dropped)
+    `pelvis` or a `spine_*`? (`TORSO`.)"""
+    name = ((bones.get(leaf) or {}).get("canonical") or leaf or "").split(":")[-1]
+    return name in TORSO or name.startswith(TORSO_PREFIX)
 
 
 _SWAP = {"l": "r", "r": "l", "L": "R", "R": "L", "left": "right", "right": "left",
@@ -790,6 +806,14 @@ class Transfer(object):
         anchor = self.target_root if self.rooted else None
         self.above = dict((leaf, _paired_ancestor(target, leaf, pairs, source, anchor))
                           for leaf in self.order)
+        # the torso keeps the card's own relations (2026-10-21, the animator: an upper body saved
+        # stabilized «даже на риге с анимацией в которой есть провороты она должна остаться
+        # стабилизированой»): a posed pelvis or spine bone turns against the nearest torso bone
+        # below it the card poses too, else against the root frame - so an upper-body card's chest
+        # keeps its turn against the character whatever the target's hips and lower spine do
+        for leaf in self.order:
+            if is_torso(target, leaf) and self._posed(leaf):
+                self.above[leaf] = self._torso_anchor(leaf, anchor)
         self.anchored = {}
         for leaf, onto in (anchors or {}).items():
             if leaf in target and onto in target and leaf != onto and pairs.get(onto) in source:
@@ -806,6 +830,26 @@ class Transfer(object):
             self.order = [l for l in self.order if l not in moved] + \
                 [l for l in self.order if l in moved]
         self._offsets = {}
+
+    def _posed(self, leaf):
+        """Does the transfer pose this target bone - its partner a member the source holds?"""
+        s = self.pairs.get(leaf)
+        return s in self.members and s in self.source
+
+    def _torso_anchor(self, leaf, frame):
+        """What a posed TORSO bone turns against (2026-10-21): the nearest torso bone below it the
+        transfer poses as well, else the ROOT FRAME - the rooted target's root, `frame` (None, a
+        rootless target's ground) past its top. Never a torso bone the card does not pose: that is
+        the target's own, and its twist would come up into everything the card holds above."""
+        node, seen = self.target[leaf].get("parent"), set()
+        while node in self.target and node not in seen:
+            seen.add(node)
+            if self.rooted and node == self.target_root:
+                return node
+            if is_torso(self.target, node) and self._posed(node):
+                return node
+            node = self.target[node].get("parent")
+        return frame
 
     # -------------------------------------------------------- reading the two skeletons
 
@@ -907,7 +951,9 @@ class Transfer(object):
         hand). A skeleton's bone without a drive plays its drive: the bone with its roll, the
         drive's very definition.
         Parents first, a target bone `t` that is a member's partner (`pairs[t] in members`), with
-        `tp` its nearest paired ancestor, `s = pairs[t]`, `sp = pairs[tp]`, takes the rotation
+        `tp` its nearest paired ancestor - a TORSO bone's the nearest torso bone below it that is
+        posed too, else the root frame (`_torso_anchor`, 2026-10-21) -, `s = pairs[t]`,
+        `sp = pairs[tp]`, takes the rotation
 
             O_t  = rigid(T_rest[t]) · A[t] · rigid(S_rest[s])⁻¹
             O_tp = rigid(T_rest[tp]) · A[tp] · rigid(S_rest[sp])⁻¹

@@ -45,6 +45,10 @@ Which bones a selection MEANS (`members_from_selection`, pure, the spec's Save r
   (a weapon in a hand or on the floor, an armour piece) are never members on their own - selected
   beside a control they add nothing, selected alone they leave nothing, and nothing means the
   whole body;
+- the Camera Setup control (or an older camera of ours) names the camera bones, `camera_root`
+  and `camera_bone` (kind `CAMERA`, 2026-10-21): a 1P card saved with it carries the camera;
+- a Tools knot of ours stands for the object it drives (`stand_in`, 2026-10-21): 1P Setup's
+  `Chest_1P_ctrl` is FKSpine3_M, so spine_03 - never an object beside the character;
 - twist bones RIDE with their limb: a member brings the twist bones (and, on a skeleton whose
   names are not Unreal's, the unnamed bones - a finger's end joint) whose nearest named ancestor it
   is, and a rider selected names its carrier;
@@ -79,6 +83,22 @@ from maya_poselib import posemath
 CharacterRef = collections.namedtuple("CharacterRef", "kind root rig label key model namespace")
 
 ACCESSORY = "accessory"     # a weapon or an armour piece: the selection kind members_of hands down
+# the Camera Setup control (and an older camera of ours): the selection kind that names the
+# camera bones (2026-10-21 - it was an accessory naming nothing, so a 1P card saved with the
+# camera control selected carried no camera)
+CAMERA = "camera"
+CAMERA_BONES = ("camera_root", "camera_bone")      # `helpers.CAMERA`, pinned by a test
+# Tools knots of ours (`maya_tools.knotplan`'s markers, spelled here - the Pose Library imports no
+# Tools module; a test pins them equal): a selected knot STANDS FOR the object it drives
+# (`stand_in`, 2026-10-21 - 1P Setup's Chest_1P_ctrl was «not part of our rig»: an object)
+KNOT_KIND = "skeldarKnot"
+KNOT_SOURCE = "skeldarKnotSource"
+KNOT_INNER = "skeldarKnotInner"
+KNOT_PENDING = "skeldarKnotPending"
+KNOT_PENDING_SPACE = "skeldarKnotPendingSpace"
+KNOT_MARKERS = (KNOT_KIND, KNOT_INNER, KNOT_PENDING, KNOT_PENDING_SPACE)
+SNAPSHOT = "snapshot"       # the knot kind that drives nothing: it stands for itself
+KNOT_DEPTH = 8              # knots on knots followed at most this far
 MANY = "pick one character for a pose"
 NOTHING = "select a character or objects"
 DUPLICATE = "%s carries %d bones named %s - the first is kept"
@@ -342,9 +362,11 @@ def _rig_joint_bones(name, bones):
 
 def _item_bones(ref, name, kind, bones, root):
     """What one selected item names: a list of bones, `_WHOLE`, or [] (a helper, an
-    accessory)."""
+    accessory). The camera names the camera bones the skeleton holds."""
     if kind == ACCESSORY:
         return []
+    if kind == CAMERA:
+        return [b for b in bones if leaf(b) in CAMERA_BONES]
     if kind == "joint":
         if name in bones:
             if name == root:
@@ -361,8 +383,9 @@ def _item_bones(ref, name, kind, bones, root):
 def members_from_selection(ref, selection, bones):
     """The member bones a selection names, in skeleton order (the spec's Save rules - the module
     docstring). `selection` is a list of `(name, kind)`: the node's name or path (namespaces
-    ignored) and `joint` / `transform` / `mesh` / `accessory` (`members_of` builds it from the
-    scene). Nothing named, or the whole body named by any item, gives `whole_body(bones)`."""
+    ignored) and `joint` / `transform` / `mesh` / `accessory` / `camera` (`members_of` builds
+    it from the scene). Nothing named, or the whole body named by any item, gives
+    `whole_body(bones)`."""
     root = posemath.root_of(bones)
     riders = _riders(bones)
     chosen = set()
@@ -504,15 +527,81 @@ def _cached(refs, key, make):
     return refs[key]
 
 
+def _by_uuid(uuid):
+    found = cmds.ls(uuid, long=True) if uuid else []
+    return found[0] if found else None
+
+
+def _knotted(paths):
+    """The `paths` that carry one of our knot markers - ONE `ls` of their plugs (a node without
+    the attribute answers nothing: a selection with no knot of ours costs that call, the
+    `owner_for` way)."""
+    plugs = [path + "." + marker for path in paths for marker in KNOT_MARKERS]
+    return set(cmds.ls(plugs, objectsOnly=True, long=True) or []) if plugs else set()
+
+
+def _knot_object(path):
+    """One step of `stand_in`: a double knot's or an aim's inner node -> its top; a knot's top ->
+    the object it drives (`skeldarKnotSource`); a waiting pivot or its space -> its object; a
+    snapshot (it drives nothing), or nothing found -> None."""
+    def value(attr):
+        if cmds.attributeQuery(attr, node=path, exists=True):
+            return cmds.getAttr(path + "." + attr)
+        return None
+
+    inner = value(KNOT_INNER)
+    if inner:
+        return _by_uuid(inner)
+    kind = value(KNOT_KIND)
+    if kind is not None:
+        return None if kind == SNAPSHOT else _by_uuid(value(KNOT_SOURCE))
+    return _by_uuid(value(KNOT_PENDING) or value(KNOT_PENDING_SPACE))
+
+
+def _followed(path):
+    seen = set()
+    while path and path not in seen and len(seen) < KNOT_DEPTH:
+        seen.add(path)
+        step = _knot_object(path)
+        if not step:
+            return path
+        path = step
+    return path
+
+
+def stand_ins(paths):
+    """{path: what it stands for} of `paths` (long DAG paths) - `stand_in`'s rule, every path
+    asked in one `ls` first."""
+    marked = _knotted(list(paths or ()))
+    return dict((path, _followed(path) if path in marked else path) for path in paths or ())
+
+
+def stand_in(path):
+    """What a selected DAG node STANDS FOR (2026-10-21, the animator: «наша система не распознает
+    контроллер chest ... как часть нашего рига»): a Tools knot of ours - its top, a double knot's
+    or an aim's inner node, a waiting pivot or its space - the OBJECT it drives, a knot on a knot
+    followed down; so 1P Setup's `Chest_1P_ctrl` is FKSpine3_M (spine_03), a knot on a wrist is
+    the wrist, an across knot riding a prop is the prop. Anything else - a snapshot, which drives
+    nothing, too - itself. Before this a knot was an OBJECT beside its character: saved alone it
+    made an objects card of its raw world-space curves, beside the shoulders it named no bone."""
+    return stand_ins([path]).get(path, path) if path else path
+
+
 def resolve(selection=None):
-    """[(the selected DAG transform, its CharacterRef or None)] in selection order, repeats
-    dropped. `selection` defaults to Maya's."""
+    """[(the selected DAG transform - a knot of ours as the object it stands for, `stand_in` - its
+    CharacterRef or None)] in selection order, repeats dropped. `selection` defaults to Maya's."""
     if selection is None:
         selection = cmds.ls(selection=True, long=True) or []
-    objects = []
+    paths = []
     for item in selection:
         path = dag_object(item)
-        if path is not None and path not in objects:
+        if path is not None and path not in paths:
+            paths.append(path)
+    stood = stand_ins(paths)
+    objects = []
+    for path in paths:
+        path = stood.get(path) or path
+        if path not in objects:
             objects.append(path)
     if not objects:
         return []
@@ -558,8 +647,16 @@ def is_body(path, ref):
     """Is `path` (a long DAG path) part of the character `ref`'s BODY rather than an object beside
     it? The body: a joint, anything under a rig's AdvancedSkeleton `Group` (its controls, meshes,
     weapon spaces), a group holding the skeleton or the rig, a skinned mesh, a weapon or an armour
-    piece, the Camera Setup camera (2026-10-20: `camera_root` on the card is its motion). Anything
-    else - another camera, a knot, a prop - is an OBJECT beside it (`maya_poselib.objects`). A node of no character is an object."""
+    piece, the Camera Setup camera and its control (2026-10-20: `camera_root` on the card is its
+    motion), a Tools knot of ours whose object is (`stand_in`, 2026-10-21: 1P Setup's
+    Chest_1P_ctrl). Anything else - another camera, a prop, a snapshot - is an OBJECT beside it
+    (`maya_poselib.objects`). A node of no character is an object."""
+    stood = stand_in(path)
+    return _is_body(stood or path, ref)
+
+
+def _is_body(path, ref):
+    """`is_body` of a path that stands for itself (`stand_in`)."""
     if ref is None:
         return False
     if cmds.nodeType(path) == "joint":
@@ -571,7 +668,7 @@ def is_body(path, ref):
         return True                                  # a group holding the body
     if _skinned(path):
         return True
-    return _kind(path, ref) == ACCESSORY
+    return _kind(path, ref) in (ACCESSORY, CAMERA)
 
 
 def split(selection=None):
@@ -579,8 +676,8 @@ def split(selection=None):
     order, each once; `body` the body nodes; `loose` [(path, owner ref or None)] the objects -
     the nodes of no character and a character's own objects (`is_body`)."""
     refs, body, loose = [], [], []
-    for path, ref in resolve(selection):
-        if ref is not None and is_body(path, ref):
+    for path, ref in resolve(selection):            # a knot already its object (`stand_in`)
+        if ref is not None and _is_body(path, ref):
             body.append(path)
             if all(r.root != ref.root for r in refs):
                 refs.append(ref)
@@ -839,11 +936,13 @@ def _kind(path, ref=None):
     walked up: a rig's 187 controls walked cost 0.8 s on every selection change (the final
     review)."""
     from maya_scenesetup import armor, bonedrive, camera, weaponaim, weaponspace
+    if any(cmds.attributeQuery(marker, node=path, exists=True)
+           for marker in (camera.MARKER, camera.CONTROL_MARKER)):
+        return CAMERA                                # the camera bones (2026-10-21)
     walked = not _own(ref, path) and (weaponspace.hand_for(path) or armor.bone_for(path))
     if walked or weaponaim.is_controller(path) or any(
             cmds.attributeQuery(marker, node=path, exists=True)
-            for marker in (bonedrive.MARKER, armor.MARKER, camera.MARKER,
-                           camera.CONTROL_MARKER)):
+            for marker in (bonedrive.MARKER, armor.MARKER)):
         return ACCESSORY
     kind = cmds.nodeType(path)
     if kind != "joint" and cmds.listRelatives(path, shapes=True, type="mesh", fullPath=True):

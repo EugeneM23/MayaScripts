@@ -15,19 +15,28 @@ held `spine_03`, which 1P Setup's chest knot drives - «1 not posed», the measu
 - the members are the card's chest (`CHEST`, the bone whose canonical or leaf name is
   `spine_03`) and EVERY bone of the card below it, selected at its save or not: spine_04/05,
   neck, head, clavicles, arms, hands, fingers, arm twists (a card holds every bone's world - one
-  saved without spine_04/05 hung its arms on the target's own spine, 53 deg off the chest). The spine under the chest, the pelvis, the legs and the root are not
-  members: the target keeps them - after 1P Setup the lower body. The chest turns on the target's
-  spine_02 as the card's on its own; in 1P it is written through `Chest_1P_ctrl` (`rigsolve`'s
-  knot redirect, 2026-10-21 - the first build left the chest out and the torso kept the take's
-  turn: «разворот корпуса не верный»);
+  saved without spine_04/05 hung its arms on the target's own spine, 53 deg off the chest). The
+  spine under the chest, the pelvis, the legs and the root are not members: the target keeps
+  them - after 1P Setup the lower body. The chest takes the card's turn against the ROOT
+  (`posemath`'s torso rule, below), standing on the target's own spine; in 1P it is written
+  through `Chest_1P_ctrl` (`rigsolve`'s knot redirect - the first build left the chest out and
+  the torso kept the take's turn: «разворот корпуса не верный»);
 - every member above it takes its turn against the chest as posed - what the hands do in front
   of the 1P camera is what the card's hands did in front of its chest;
 - the weapon bones come with the hands (`helpers.members_with`), keyed through the weapon that
   drives them, a weapon in the hand or one 1P Setup moved into the chest;
-- the camera bones are members, `camera_root` ANCHORED on the chest (`ANCHORS`, the Transfer's
-  `anchors`): its turn and place relative to the chest, as 1P Setup hangs the camera control under
-  `Chest_1P_ctrl`. Keyed through the Camera Setup control when there is one (`helpers.Writer`).
+- the camera bones are members, `camera_root` ANCHORED on the chest (`anchors_for`, the
+  Transfer's `anchors`): its turn and place relative to the chest, as 1P Setup hangs the camera
+  control under `Chest_1P_ctrl`. Keyed through the Camera Setup control when there is one
+  (`helpers.Writer`).
 - no pelvis member, so no travel and no Main.
+
+The chest's TURN is the card's against the character's root - `posemath`'s torso rule, 2026-10-21
+(«... даже на риге с анимацией в которой есть провороты она должна остаться стабилизированой»):
+measured on a 1P card whose chest stood still against its root onto a combo whose torso twists,
+the chest had come 78 deg off the card's and turned 112.7 deg on the target's spine_02. The rule is
+the card's members', so a card saved with only its upper body selected lands the same with the
+option off; the option cuts a FULL card down to that.
 
 The window's check box «1P upper body» (`window.UPPER_VAR`) applies it to every press of a
 character card: Apply, Blend, a drop, the skill bar. An objects card is left alone.
@@ -38,7 +47,11 @@ CAMERA = ("camera_root", "camera_bone")
 # a card's other helpers never become members on their own (the weapon bones come with the hands,
 # `helpers.members_with`; ik_* and the rest are export helpers)
 HELPER_PREFIXES = ("weapon_", "ik_", "interaction", "center_of_mass")
-ANCHORS = {"camera_root": CHEST}
+# the bones that ride the chest in an upper-body card (`anchors_for`)
+ON_CHEST = ("camera_root",)
+# the torso, as `posemath.is_torso` reads it (restated: this module is pure)
+TORSO = ("pelvis",)
+TORSO_PREFIX = "spine_"
 NOTE = "1P upper body: %d bones from %s up (the spine below, the legs and the pelvis kept)"
 NO_CHEST = "1P upper body: the card has no %s - nothing to carry the upper body on" % CHEST
 NO_UPPER = "1P upper body: the card holds nothing above %s" % CHEST
@@ -96,18 +109,43 @@ def restrict(data):
     kept = [m for m in members if (m in upper or m == chest) and _bare(m) not in CAMERA]
     kept += [leaf for leaf in bones if (leaf in upper or leaf == chest) and leaf not in kept
              and _bare(leaf) not in CAMERA and not _bare(leaf).startswith(HELPER_PREFIXES)]
-    anchors = {}
     for leaf in bones:
-        bare = _bare(leaf)
-        if bare in CAMERA and leaf not in kept:
+        if _bare(leaf) in CAMERA and leaf not in kept:
             kept.append(leaf)
-        if bare in ANCHORS:
-            anchors[leaf] = chest
     out = dict(data)
+    out.pop("anchors", None)               # derived at every press (`anchors_for`)
     out["members"] = kept
-    out["anchors"] = anchors
     out["upper_1p"] = True
     return out, NOTE % (len([m for m in kept if _bare(m) not in CAMERA]), chest)
+
+
+def _torso(bones, leaf):
+    name = _bare((bones.get(leaf) or {}).get("canonical") or leaf)
+    return name in TORSO or name.startswith(TORSO_PREFIX)
+
+
+def anchors_for(bones, members):
+    """{camera_root leaf: the chest leaf} (pure): the camera rides the chest - its turn and place
+    against it, `posemath.Transfer`'s `anchors` - whenever the members POSE the chest but not the
+    whole torso under it (an upper-body card, cut by the option or saved so in 1P; a card with a
+    gap in its spine): the chest then stands on the target's own spine (`posemath`'s torso rule),
+    as 1P Setup hangs the camera control under `Chest_1P_ctrl`. {} else - a whole torso keeps its
+    camera on the root, as it was."""
+    bones = bones or {}
+    have = set(members or ())
+    chest = chest_of(bones)
+    if chest is None or chest not in have:
+        return {}
+    node, seen, gap = (bones[chest] or {}).get("parent"), set(), False
+    while node in bones and node not in seen:
+        seen.add(node)
+        if _torso(bones, node) and node not in have:
+            gap = True
+            break
+        node = (bones[node] or {}).get("parent")
+    if not gap:
+        return {}
+    return dict((leaf, chest) for leaf in bones if _bare(leaf) in ON_CHEST)
 
 
 def target_anchors(anchors, pairs):

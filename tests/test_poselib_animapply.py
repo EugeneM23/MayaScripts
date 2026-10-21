@@ -114,6 +114,8 @@ class World(object):
         self.auto_query_fails = False    # autoKeyframe -q raising (the chunk's first question)
         self.cut_count = 0               # the keys keys.cut answers it removed (a call)
         self.shift_count = 0             # the keys keys.shift answers it moved (a call)
+        self.extra = {}                  # plug -> the solve numbers that answer it (-number)
+        self.steady = None               # what the press built its solve with
 
     def value(self, plug, frame):
         found = self.values.get(plug, 0.0)
@@ -423,8 +425,9 @@ class FakeRigsolve(object):
         outer = self
 
         class Solver(object):
-            def __init__(self, rig, members, main=False):
+            def __init__(self, rig, members, main=False, placed=(), steady=False):
                 outer.world.log.append(("solver", list(members), main))
+                outer.world.steady = steady
                 self.main = MAIN if main else None
 
             def solve(self, wanted, seed=None):
@@ -435,6 +438,9 @@ class FakeRigsolve(object):
                 outer.world.log.append(("solve", wanted["index"],
                                         None if seed is None else dict(seed)))
                 values = OrderedDict([(WRIST, n)])
+                for plug, solves in outer.world.extra.items():
+                    if outer.world.calls in solves:
+                        values[plug] = -n
                 if self.main:
                     for k, plug in enumerate(MAIN_PLUGS):
                         values[plug] = 100.0 * n + k
@@ -452,14 +458,19 @@ class FakeSkelsolve(object):
     def __init__(self, world):
         self.world = world
 
-    def solve(self, ref, bones, wanted, members, seed=None, root=False):
+    def solve(self, ref, bones, wanted, members, seed=None, root=False, placed=(),
+              steady=False):
         self.world.calls += 1
         if self.world.fail_at == self.world.calls:
             raise RuntimeError("solve failed")
         n = float(self.world.calls)
+        self.world.steady = steady
         self.world.log.append(("skel", wanted["index"], None if seed is None else dict(seed),
                                root, list(members)))
         values = OrderedDict([(HAND + ".rotateX", n)])
+        for plug, solves in self.world.extra.items():
+            if self.world.calls in solves:
+                values[plug] = -n
         if root or self.world.top_member:
             values[SKEL_ROOT + ".translateX"] = 10.0 * n
         return Solution(values, [], {})
@@ -686,6 +697,42 @@ class Order(Base):
         self.assertEqual(self.world.log[first_write + 1],
                          ("dirty", ["curve:" + p for p in self.writes()[0][1]]))
         self.assertLess(first_write + 1, names.index("measure"))
+
+
+class EveryPlanned(Base):
+    """Every plug the first frame's dry solve plans is keyed on EVERY pasted frame (2026-10-21):
+    the solves are built `steady` (a placed bone already on its place still writes its
+    translate), and a frame whose solve still leaves a planned plug where it stands keys it at
+    what it shows. Unkeyed, the curve carried the keys either side across the frame:
+    Combo_3.anim's clavicle went 3 cm off between the keys at 8 and 17."""
+
+    CLAV = "Manny_Rig1:FKScapula_R.translateY"
+
+    def test_the_rig_solve_is_built_steady(self):
+        self.press()
+        self.assertIs(self.world.steady, True)
+
+    def test_the_skeleton_solve_is_steady(self):
+        aa._targets = lambda selection, prefer=None: ([self.skel], "")
+        self.press()
+        self.assertIs(self.world.steady, True)
+
+    def test_a_planned_plug_a_frame_leaves_is_keyed_at_what_it_shows(self):
+        # the dry solve (1) plans it, frame 12's (2) and frame 15's (5) write it, the rest leave it
+        self.world.extra = {self.CLAV: {1, 2, 5}}
+        self.world.values[self.CLAV] = lambda frame: 100.0 + frame
+        ok, text = self.press()
+        self.assertTrue(ok, text)
+        got = dict((frame, values.get(self.CLAV)) for _, values, frame in self.writes())
+        self.assertEqual(got, {12: -2.0, 13: 113.0, 14: 114.0, 15: -5.0, 16: 116.0,
+                               17: 117.0})
+
+    def test_a_plug_the_dry_solve_did_not_plan_is_not_added(self):
+        self.world.extra = {self.CLAV: {5}}
+        self.world.values[self.CLAV] = lambda frame: 100.0 + frame
+        self.press()
+        got = dict((frame, values.get(self.CLAV)) for _, values, frame in self.writes())
+        self.assertEqual(got, {12: None, 13: None, 14: None, 15: -5.0, 16: None, 17: None})
 
 
 class Travel(Base):
@@ -923,7 +970,7 @@ class UndoMark(Base):
     def test_no_planned_plug_no_mark(self):
         aa.rigsolve = FakeRigsolve(self.world)
         empty = type("Solver", (object,), {
-            "__init__": lambda s, rig, members, main=False: None,
+            "__init__": lambda s, rig, members, main=False, placed=(), steady=False: None,
             "solve": lambda s, wanted, seed=None: Solution(OrderedDict(), [], {}),
             "measure": lambda s, wanted: (0.0, 0.0, None)})
         aa.rigsolve.Solver = empty

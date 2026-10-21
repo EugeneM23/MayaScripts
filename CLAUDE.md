@@ -11001,6 +11001,101 @@ not a member» above. Three causes, each measured on the rebuilt tab:
   `verify_poselib_apply.py` 117/117, `verify_poselib_solve.py` 122/122,
   `verify_camera_weapon_bones.py` 24/24. `tests/test_poselib_upper.py`.
 
+## The Pose Library: bones first, the same in 3P and 1P, the chest stabilized (2026-10-21)
+
+The animator, a Maya on 7003 for me: «Нам нужно пересмотреть всю нашу систему переноса анимаций и
+поз, взаимодействие плагина с 1P модом рига ... спуститься на уровень костной анимации ... не важно в
+каком режиме я ее загружаю в 3p или 1p ... 1 - ... upper body ... на нее начинает действовать нижняя
+часть. 2 - наша система не распознает контроллер chest ... как часть нашего рига ... даже на риге с
+анимацией в которой есть провороты она должна остаться стабилизированой». Asked when the chest loads
+stabilized: «Всегда» - whenever a card poses the chest without the spine under it, with the option or
+not. Spec `docs/superpowers/specs/2026-10-21-pose-library-bones-and-1p-design.md` (its addendum), plan
+beside it. **This replaces «the chest stays the target's» and «a Tools knot is an object» above.**
+- **Measured first** (mayapy, Manny_Rig + HoleCombo + 1P Setup as A, a second Manny_Rig on a combo
+  whose torso twists as B):
+  - the cards already hold bones, every bone's world a frame. In A's card the chest against the root
+    is still to 0.000 deg while it turns 109.4 deg against its spine_02: the stabilization, in bones;
+  - the target's mode already changed nothing (3P against 1P 0.0006 cm);
+  - problem 1 was the chest's RULE: a member turns against its nearest paired ancestor, so B's lower
+    spine came up into the whole upper body (B's chest against its root 78.09 deg off the card's,
+    turning 112.74 deg over the take);
+  - problem 2 was the CLASSIFICATION: `scene.is_body` called `Chest_1P_ctrl` an object (a knot), so
+    saved alone it made «1 object» of its raw curves.
+- **The torso rule** (`posemath.Transfer`, `is_torso`, `_torso_anchor`): a TORSO member (the
+  pelvis, a `spine_*`, by canonical name else leaf) turns against the nearest torso member BELOW it,
+  else against the root frame (the root, a rootless target's ground). Its place is unchanged.
+  - A full card: nothing changes.
+  - An upper-body card: the chest's turn is the card's against the root - stabilized whatever the
+    target's pelvis and lower spine do (Unreal's mesh-space rotation blend), standing on the
+    target's own spine_02.
+  - A card with the pelvis and the chest only (`DG_Idle_1P`): the chest against the card's pelvis.
+  - Limbs, the neck, the head and the fingers keep the old rule.
+- **The camera rides the chest of an upper-body card** (`upper.anchors_for(bones, members)`: the
+  chest a member, a torso bone under it not), with the option or not. It is derived at every press
+  (`apply._plan`, `animapply._Target`), so an older card needs nothing; `restrict` no longer stores
+  anchors.
+- **Our nodes on the rig are the rig** (`scene.stand_ins` / `stand_in`, one `ls` of the knot markers):
+  - a Tools knot stands for the object it drives (`skeldarKnotSource`, followed down a knot on a
+    knot): its top, a double knot's or an aim's inner, a waiting pivot or its space. So
+    `Chest_1P_ctrl` is spine_03: a character card, never «1 object»;
+  - a snapshot stays itself;
+  - the Camera Setup control (and an older camera of ours) is kind `camera`, naming camera_root and
+    camera_bone;
+  - every caller of `resolve` / `split` / `characters` gets it.
+- **Selected only reaches the chest** (`apply.selected_nodes`): a selected control a plain knot
+  drives brings the knot (the solve writes the knot), and a selected knot brings what it stands for.
+- **1P Setup put part of the lower body on the upper layer** (`firstperson.is_lower`), found by the
+  verify: a card saved off the upper display layer's controls named the pelvis, and the lower body
+  moved 155-175 cm. AdvancedSkeleton's Extra groups (`FKExtraRoot_M`, `RootExtraX_M`,
+  `FKExtraSpine1/2_M`) and the IK spine's controls (`IKhybridSpine*`, `IKcvSpine*`, `IKExtraSpine*`)
+  read as upper. An Extra group now reads as its control (`EXTRA`); the IK spine's controls are lower
+  (`LOWER_PREFIXES`).
+- **An animation paste keys every planned plug on every frame** (trap 287): the walk's solves are
+  `steady` (`rigsolve.Solver(steady=True)`: `_place` / `_knot_place` write a placed translate already
+  on its place, `_hold_translate`; `skelsolve.solve(steady=True)`), and `animapply._Target.key` keys
+  a planned plug this frame's solve left at what it shows. A pose press is unchanged.
+- Proof:
+  - `docs/superpowers/plans/verify_poselib_1p_transfer.py <source clip> <target clip>` **43/43 mayapy
+    standalone** (HoleCombo as A, `AS_Dg_Atk_Cmb_L_Lt_2_3P` as B), each card onto B in 3P and after
+    B's own 1P Setup:
+    - the card's chest still against its root (0.0000 deg) while its spine_02 turns 109.4 deg;
+    - `Chest_1P_ctrl` alone saves a character card of spine_03; the controls the upper display
+      layer draws name the chest and above, and no object;
+    - B's chest against its root as the card's to 0.00001 deg in every case: the whole card cut by
+      the option, the upper selection with the option off, the whole card off, an upper pose card;
+    - spine_04, the head, the hands and the camera on the chest to 0.0008 cm / 0.00014 deg, the
+      lower body as it stood to 0.000003;
+    - B in 3P and in 1P land the same bones to 0.0005 cm;
+    - Selected only with FKSpine3_M keys the chest; one undo.
+  - The same verify **42/42 in the animator's Maya on 7003** (a GUI Maya, the parallel EM; the undo
+    gate skipped there, trap 222), in 212 s, before trap 287's fix.
+  - `verify_poselib_upper_1p.py` **41/41**, gating every frame of an animation now: the `Combo_3`,
+    `DG_Idle_1P`, `Pose` and trash `Anim` cards, the option off and on.
+  - `verify_poselib_apply.py` 117/117, `_solve.py` 122/122, `_anim.py` 113/113, `_selected_only.py`
+    13/13, `verify_camera_weapon_bones.py` 24/24, `verify_1p_setup.py` 30/30,
+    `verify_1p_hands_weapon.py` 37/37, `verify_camera_control.py` 29/29.
+  - `verify_poselib_objects.py` fails the same way on HEAD: stale since the camera became the body
+    (2026-10-20) and its translate locked under its control (2026-10-21) - it expects
+    `SceneSetup_camera` as an object and sets its translateX.
+  - 8213 unit tests, the known `test_chat_deploy.Keys` failing. New: `test_poselib_posemath.Torso`,
+    `test_poselib_upper.AnchorsFor`, `test_poselib_scene.StandIn` / `CameraIsBody`, the Selected
+    only knot, `test_poselib_solve.SteadyPlace` / `SkeletonSteadyPlace`,
+    `test_poselib_animapply.EveryPlanned`, `test_tools_firstperson.Split`.
+- **Not exercised in a GUI Maya with trap 287's fix**: it was installed into the 7003 Maya's
+  SkeldarAnim folder for the animator's test (HEAD d79316c and this change, from a snapshot; its
+  `version.json` says so, the 31 local cards kept), no paste run there by us.
+
+287. **A frame walk that keys only what each frame's solve wrote leaves holes, and the curve fills
+     them.** An animation paste keys «every frame», but the rig solve leaves a placed bone already
+     within `PLACE_TOL` alone - right for a pose, where it means no translate key for a bone its turn
+     put there. On `Combo_3.anim` the card's clavicle stood still over frames 9-16: Replace cut the
+     curve, the walk keyed 8, wrote nothing for 9-16 and keyed 17, and the clavicle followed the
+     spline between them, 3.1 cm off at 16. The paste's own measure read 0.002 cm, because it reads
+     inside the walk, where the solve's sets still stand; the verify sampled every sixth frame and
+     caught it only at 12 (0.56 cm). Found by recording what the walk set and reading every frame
+     fresh afterwards. In a walk every planned plug takes a key on every frame, and an animation's
+     gate samples every frame.
+
 ## The Pose Library: a pose lands on the same rig as it was made (2026-10-20)
 
 The animator, two scene tabs in a Maya on port 7003: «Я делаю позу через нашу библиотеку поз в первом

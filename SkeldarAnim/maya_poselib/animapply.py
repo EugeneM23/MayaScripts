@@ -611,6 +611,10 @@ class _Target(object):
         self.bones = scene.skeleton(ref, found)[0]
         self.pairs = pm.pairs(source, self.bones)
         scale = pm.scale_between(source, self.bones, self.pairs)
+        # the camera on the chest whenever the card's chest stands on the target's own spine (an
+        # upper-body card, 2026-10-21) - derived from the members as the press uses them
+        if anchors is None:
+            anchors = upper.anchors_for(first, members)
         # the camera and the weapon bones the card's parts bring (2026-10-20): keyed by a
         # `helpers.Writer` - on the bone, or on the weapon / camera driving it - never by the body
         members = helpers.members_with(members, source)
@@ -637,7 +641,9 @@ class _Target(object):
                                      source_root=first_root)
         self.placed = sorted(p for p in self.transfer.placed if not helpers.is_helper(p))
         placing = {"placed": self.placed} if self.placed else {}
-        self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry,
+        # `steady`: every frame of the walk writes each placed member's translate, on its place
+        # or not - a frame that wrote none took no key there (`EveryPlanned`, 2026-10-21)
+        self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry, steady=True,
                                       **placing) if self.rig else None
         self.writer = helpers.Writer(ref, self.bones, helper_t)
         solution = self._solve(self.bones, wanted, None)
@@ -684,7 +690,7 @@ class _Target(object):
             body = self.solver.solve(wanted, seed)
         else:
             body = skelsolve.solve(self.ref, bones, wanted, self.members, seed=seed,
-                                   root=self.carry,
+                                   root=self.carry, steady=True,
                                    **({"placed": self.placed} if self.placed else {}))
         return helpers.merged(body, self.writer.solve(wanted, seed))
 
@@ -734,6 +740,13 @@ class _Target(object):
         solution = self._solve(bones, wanted, self.seed)
         self._take(solution)
         values = OrderedDict(solution.values)
+        # every plug the dry solve planned is keyed on every frame: one this frame's solve left
+        # where it stands takes what it shows (the solve accepted it there) - unkeyed, the curve
+        # carried the keys either side across the frame (Combo_3.anim's clavicle 3 cm off
+        # between the keys at 8 and 17, 2026-10-21; the solves are `steady` for the same reason)
+        for plug in self.plugs:
+            if plug not in values:
+                values[plug] = float(cmds.getAttr(plug))
         self.seed = values                       # the next frame's eulers nearest these
         if self.only is not None:
             values = OrderedDict((plug, value) for plug, value in values.items()
@@ -825,7 +838,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only, header.get("anchors")) for ref in refs]
+                               first_root, only) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)

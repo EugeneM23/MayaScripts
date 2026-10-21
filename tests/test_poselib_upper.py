@@ -38,13 +38,15 @@ class Restrict(unittest.TestCase):
         card, _note = upper.restrict({"kind": "character", "bones": BONES, "members": MEMBERS})
         self.assertIn("camera_root", card["members"])
         self.assertIn("camera_bone", card["members"])
-        self.assertEqual(card["anchors"], {"camera_root": "spine_03"})
+        self.assertEqual(upper.anchors_for(card["bones"], card["members"]),
+                         {"camera_root": "spine_03"})
 
     def test_the_card_itself_is_not_changed(self):
         data = {"kind": "character", "bones": BONES, "members": list(MEMBERS)}
-        upper.restrict(data)
+        card, _note = upper.restrict(data)
         self.assertEqual(data["members"], MEMBERS)
         self.assertNotIn("anchors", data)
+        self.assertNotIn("anchors", card)       # derived at every press (`anchors_for`)
 
     def test_no_chest_and_nothing_above_it_are_refused(self):
         bones = dict(BONES)
@@ -63,6 +65,32 @@ class Restrict(unittest.TestCase):
         bones = {"Hips": _bone(None), "Chest": _bone("Hips", "spine_03"),
                  "spine_03": _bone("Hips")}
         self.assertEqual(upper.chest_of(bones), "Chest")
+
+
+FULL_TORSO = ["pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05", "head",
+              "camera_root", "camera_bone"]
+
+
+class AnchorsFor(unittest.TestCase):
+    """2026-10-21: the camera rides the chest whenever the chest stands on the target's own spine
+    - any card that poses its chest but not the whole torso under it, cut by 1P upper body or saved
+    so - not only a card the option cut."""
+
+    def test_an_upper_body_card_hangs_the_camera_on_its_chest(self):
+        self.assertEqual(upper.anchors_for(BONES, ["spine_03", "spine_04", "head", "camera_root"]),
+                         {"camera_root": "spine_03"})
+
+    def test_a_gap_in_the_torso_under_the_chest_hangs_it_there_too(self):
+        # the pelvis and the chest posed, spine_02 not (the animator's DG_Idle_1P)
+        self.assertEqual(upper.anchors_for(BONES, ["pelvis", "spine_01", "spine_03", "camera_root"]),
+                         {"camera_root": "spine_03"})
+
+    def test_a_whole_torso_keeps_the_camera_on_its_root(self):
+        self.assertEqual(upper.anchors_for(BONES, FULL_TORSO), {})
+
+    def test_no_chest_posed_anchors_nothing(self):
+        self.assertEqual(upper.anchors_for(BONES, ["head", "hand_r", "camera_root"]), {})
+        self.assertEqual(upper.anchors_for({"root": _bone(None)}, ["root"]), {})
 
 
 class TargetAnchors(unittest.TestCase):

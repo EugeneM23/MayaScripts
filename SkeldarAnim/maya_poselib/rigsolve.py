@@ -807,8 +807,11 @@ class Solver(object):
     travel asks for `main`: then a frame whose `wanted` holds the game root turns and moves Main
     onto it FIRST (`_Job._main`), and everything below solves against the moved Main."""
 
-    def __init__(self, rig, members, main=False, placed=()):
+    def __init__(self, rig, members, main=False, placed=(), steady=False):
         self.rig = rig
+        # an animation's walk (2026-10-21): every frame writes the translate of a placed member
+        # already on its place too (`_Job._place`), so the frame takes a key - a pose keys none
+        self.steady = bool(steady)
         self.game = game_bones(rig)
         self.bases = bases(rig)
         self.root = maya_rigs.leaf(rig.skeleton_root) if rig.skeleton_root else None
@@ -925,6 +928,7 @@ class _Job(object):
     spine_posed = False
     spine_seeded = False
     placed = frozenset()
+    steady = False
 
     def __init__(self, solver, wanted, seed=None):
         self.rig, self.game, self.bases, self.root = solver.rig, solver.game, solver.bases, \
@@ -938,6 +942,7 @@ class _Job(object):
         # the held bones with a target this frame solve with the members
         self.held = [leaf for leaf in self.held_all if leaf in self.wanted]
         self.placed = solver.placed
+        self.steady = getattr(solver, "steady", False)
         self.members = solver.members + self.held
         self.member_set = set(self.members)
         # Main carries the travel when asked and this frame says where the game root goes
@@ -1335,6 +1340,18 @@ class _Job(object):
         error = pm.position(self.wanted[leaf]) - pm.position(_world(self.game[leaf]))
         if error.length() > PLACE_TOL:
             self._move(control, pm.position(_world(control)) + error)
+        elif self.steady:
+            self._hold_translate(self.knots[control])
+
+    def _hold_translate(self, node):
+        """The node's translate written as it stands - an animation's walk (`steady`) keys every
+        planned plug on every frame, and a frame whose bone already stood on its place had taken
+        no translate key: the curve carried the keys either side across it (Combo_3.anim's
+        clavicle 3 cm off between the keys at 8 and 17, 2026-10-21)."""
+        plugs = [node + "." + ch for ch in TRANSLATE]
+        if self.session.allowed(plugs):
+            for plug in plugs:
+                self.session.set(plug, self.session.get(plug))
 
     def _shows_fk(self, leaf):
         """Does the member's game bone follow its FK half - its limb, or the spine for
@@ -1357,9 +1374,10 @@ class _Job(object):
         between follows by the bias's share, so a move is scaled by the response the step
         before measured (`PLACE_ROUNDS` at most); the members `after` (the head under the neck)
         re-solved after every move. Within `PLACE_TOL` nothing moves - no translate key for a
-        bone the turns already put there. A control whose translate cannot be written, or a
-        bone its move does not reach, keeps its place quietly: its turn is keyed, the measure
-        says where the bone stands."""
+        bone the turns already put there; an animation's walk (`steady`) writes the translate as
+        it stands instead, so the frame keys it (`_hold_translate`). A control whose translate
+        cannot be written, or a bone its move does not reach, keeps its place quietly: its turn
+        is keyed, the measure says where the bone stands."""
         if leaf not in self.placed or leaf not in self.wanted or leaf not in self.game or \
                 not self._shows_fk(leaf):
             return
@@ -1370,10 +1388,12 @@ class _Job(object):
         if not self.session.writable(plugs):
             return
         gain = 1.0
-        for _ in range(PLACE_ROUNDS):
+        for first in [True] + [False] * (PLACE_ROUNDS - 1):
             here = pm.position(_world(bone))
             error = om.MVector(point) - here
             if error.length() <= PLACE_TOL:
+                if first and self.steady:
+                    self._hold_translate(mover)
                 return
             step = error / gain
             self._move(control, pm.position(_world(control)) + step)

@@ -9,9 +9,15 @@ Tools > 1P Setup (the animator's tab). Each card is pasted (Replace all) twice:
   does (the chest included: 1P Setup's chest knot `Chest_1P_ctrl` is what the solve writes); the
   camera rides the chest as before; nothing "not posed";
 - **1P upper body on** - the root, the pelvis, spine_01/02 and the legs exactly where they stood,
-  both 1P layers' curves untouched; the chest and everything above it on its parent as the card's;
-  camera_root, camera_bone and weapon_r on the chest as the card's;
+  both 1P layers' curves untouched; the chest against the ROOT as the card's (2026-10-21, the
+  torso rule: stabilized whatever the target's lower spine does - it was gated on its parent
+  spine_02, the rule the animator found wrong) and everything above it on its parent as the
+  card's; camera_root, camera_bone and weapon_r on the chest as the card's;
 - one undo takes a press back.
+
+An animation card is gated on EVERY frame of the clip (2026-10-21): a paste that left a placed
+bone unkeyed on the frames it already stood right was off only between the every-sixth-frame
+samples (`animapply._Target.key` keys every planned plug on every frame since).
 """
 
 import math
@@ -142,10 +148,27 @@ def on_parent(bones, leaf, world_of):
     return world_of(leaf) * world_of(parent).inverse()
 
 
+def is_torso(leaf):
+    return leaf == "pelvis" or leaf.startswith("spine_")
+
+
+def torso_anchor(bones, leaf, members):
+    """The torso rule (2026-10-21, `posemath.Transfer._torso_anchor`): a posed torso bone turns
+    against the nearest torso bone below it the card poses, else against the root."""
+    node = bones[leaf].get("parent")
+    while node in bones:
+        if node == "root" or (is_torso(node) and node in members):
+            return node
+        node = bones[node].get("parent")
+    return "root"
+
+
 def check(path, on):
     name = os.path.basename(path) + (" ON" if on else " OFF")
     anim = store.is_anim(path)
-    frames = list(range(first, last + 1, 6)) if anim else [first + 10]
+    # EVERY frame of an animation: a frame the paste left unkeyed was off only between the
+    # samples - Combo_3.anim's clavicle 3.1 cm at frame 16, 0.56 at 12 (2026-10-21)
+    frames = list(range(first, last + 1)) if anim else [first + 10]
     reopen()
     stood = {}
     for f in frames:
@@ -170,10 +193,17 @@ def check(path, on):
         card = card_bones(path, data, f - first if anim else 0)
         cw = lambda leaf, c=card: om.MMatrix(c[leaf]["world"])  # noqa: E731
         tw = lambda leaf: wm(N(leaf))  # noqa: E731
+        posed = set(members)
         for leaf in members:
             if leaf in ("root",) or card[leaf].get("parent") not in card:
                 continue
-            d = apart(on_parent(card, leaf, tw), on_parent(card, leaf, cw))
+            if is_torso(leaf):
+                # a torso bone's TURN against its torso anchor, its place on its parent
+                anchor = torso_anchor(card, leaf, posed)
+                d = (apart(on_parent(card, leaf, tw), on_parent(card, leaf, cw))[0],
+                     apart(tw(leaf) * tw(anchor).inverse(), cw(leaf) * cw(anchor).inverse())[1])
+            else:
+                d = apart(on_parent(card, leaf, tw), on_parent(card, leaf, cw))
             if d[1] > worst_local[1] or d[0] > worst_local[0]:
                 worst_local = (max(d[0], worst_local[0]), max(d[1], worst_local[1]), leaf)
         if on:
@@ -193,11 +223,11 @@ def check(path, on):
                           stood[f][leaf] * stood[f]["spine_03"].inverse())
                 if d[0] > worst_chest[0] or d[1] > worst_chest[1]:
                     worst_chest = (max(d[0], worst_chest[0]), max(d[1], worst_chest[1]), leaf)
-    # an animation card carries no bone places but under 1P upper body (a pose card always does)
-    cm_tol = TOL_CM if (on or not anim) else float("inf")
-    gate(worst_local[0] < cm_tol and worst_local[1] < TOL_DEG,
-         "%s: every member (the chest too) on its parent as the card's: %.4f cm %.4f deg (%s)"
-         % ((name,) + worst_local))
+    # every card here is a twin of the target: its bone PLACES come too, a pose's and an
+    # animation's alike (152124b)
+    gate(worst_local[0] < TOL_CM and worst_local[1] < TOL_DEG,
+         "%s: every member on its parent as the card's (the torso against its torso anchor): "
+         "%.4f cm %.4f deg (%s)" % ((name,) + worst_local))
     if on:
         gate(worst_low[0] < 1e-3 and worst_low[1] < 1e-3,
              "%s: root, pelvis, spine_01/02 and legs kept: %.5f cm %.5f deg (%s)"

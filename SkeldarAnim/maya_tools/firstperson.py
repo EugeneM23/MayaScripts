@@ -56,6 +56,13 @@ CHEST_MARKER = "skeldar1PChest"          # the rig's namespace
 CHEST_GROW = 1.35                        # the square over FKSpine3_M's drawing
 CHEST_LEAST = 8.0                        # cm, half side when the control draws nothing
 LOWER_WORDS = ("Hip_", "Knee", "Ankle", "Toes", "Heel", "Leg", "Foot", "IKSpine")
+#  every spine IK control is the lower body's (2026-10-21): the hybrid and the curve controls read
+#  as upper, were drawn in the 1P upper display layer, and a marquee over the 1P body named the
+#  whole spine with them. An AdvancedSkeleton Extra group is what its control is (`FKExtraRoot_M`
+#  is FKRoot_M's) - the Pose Library's `scene._EXTRA` rule
+LOWER_PREFIXES = ("IKhybridSpine", "IKcvSpine")
+EXTRA = (("IKhybridExtra", "IKhybrid"), ("IKcvExtra", "IKcv"), ("RollExtra", "Roll"),
+         ("FKExtra", "FK"), ("IKExtra", "IK"), ("PoleExtra", "Pole"), ("RootExtraX", "RootX"))
 
 NO_RIG = "1P Setup: select any part of a rig"
 NO_KNOT_CONTROL = "1P Setup: %s has no %s - the setup needs AdvancedSkeleton's spine"
@@ -74,7 +81,12 @@ def leaf(path):
 
 def is_lower(name):
     name = leaf(name)
-    return name in LOWER_EXACT or any(word in name for word in LOWER_WORDS)
+    for extra, plain in EXTRA:
+        if name.startswith(extra):
+            name = plain + name[len(extra):]
+            break
+    return name in LOWER_EXACT or any(word in name for word in LOWER_WORDS) or \
+        name.startswith(LOWER_PREFIXES)
 
 
 def split(controls):

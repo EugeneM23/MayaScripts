@@ -154,7 +154,7 @@ def _seeded(plugs, seed):
     return [float(value) for value in found]
 
 
-def solve(ref, bones, wanted, members, seed=None, root=False, placed=()):
+def solve(ref, bones, wanted, members, seed=None, root=False, placed=(), steady=False):
     """Solution for a bare skeleton: the FINAL rotate channels of every member joint (and the
     pelvis's translate) that put it on `wanted`.
 
@@ -179,7 +179,9 @@ def solve(ref, bones, wanted, members, seed=None, root=False, placed=()):
 
     `placed` (`posemath.Transfer.placed`: a twin's card, 2026-10-20): those members' translate
     is written too - the card's place on the parent - when it differs from the joint's own by
-    more than `PLACE_TOL`; a translate that cannot be written keeps the joint's own quietly."""
+    more than `PLACE_TOL`; a translate that cannot be written keeps the joint's own quietly.
+    `steady` (an animation's walk, 2026-10-21): written whatever it differs by - every pasted
+    frame keys it, or the curve carried the keys either side across a frame it was left on."""
     placed = set(placed or ())
     wanted = dict((leaf, pm.matrix(m)) for leaf, m in (wanted or {}).items())
     # a root of its own is written only for the travel (`root`); a top joint that is no root
@@ -253,7 +255,7 @@ def solve(ref, bones, wanted, members, seed=None, root=False, placed=()):
             t_plugs, t_why = _blocked(path, TRANSLATE)
             t = pm.position(local)
             now = om.MVector(*[float(cmds.getAttr(p)) for p in t_plugs])
-            if not t_why and (t - now).length() > PLACE_TOL:
+            if not t_why and (steady or (t - now).length() > PLACE_TOL):
                 for channel, value in zip(TRANSLATE, (t.x, t.y, t.z)):
                     values["%s.%s" % (path, channel)] = value
     if missing:

@@ -44,6 +44,19 @@ class Split(unittest.TestCase):
         lower, upper = fp.split(["a:FKSpine3_M", "a:FKSpine4_M"])
         self.assertEqual((lower, upper), ([], ["a:FKSpine4_M"]))
 
+    def test_every_spine_ik_control_and_the_lower_controls_extra_groups_are_lower(self):
+        # 2026-10-21: IKhybridSpine / IKcvSpine / IKExtraSpine read as upper - drawn in the 1P
+        # upper display layer, a marquee over the 1P body took them, and a card saved so named
+        # the whole spine and the pelvis (FKExtraRoot_M, RootExtraX_M)
+        names = ["IKhybridSpine1_M", "IKhybridExtraSpine2_M", "IKcvSpine3_M", "IKcvExtraSpine1_M",
+                 "IKExtraSpine2_M", "IKSpine3_M", "FKExtraRoot_M", "FKExtraSpine1_M",
+                 "FKExtraSpine2_M", "RootExtraX_M", "IKExtraLeg_L", "PoleExtraLeg_R"]
+        for name in names:
+            self.assertTrue(fp.is_lower("Manny_Rig:" + name), name)
+        for name in ("FKExtraSpine4_M", "IKExtraArm_R", "PoleExtraArm_L", "FKExtraShoulder_R",
+                     "FKExtraNeck_M", "FKSpine5_M"):
+            self.assertFalse(fp.is_lower("Manny_Rig:" + name), name)
+
     def test_layer_names_do_not_start_with_a_digit(self):
         """Maya turns `3P_Lower_Body` into `P_Lower_Body`."""
         for name in (fp.LOWER, fp.UPPER):

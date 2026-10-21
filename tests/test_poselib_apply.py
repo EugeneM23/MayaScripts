@@ -1013,6 +1013,23 @@ class SelectedOnly(unittest.TestCase):
         finally:
             ap._long_node = saved
 
+    def test_a_knotted_control_brings_the_knot_that_is_written_in_its_place(self):
+        # 2026-10-21: in 1P the solve writes Chest_1P_ctrl for FKSpine3_M - FKSpine3_M selected
+        # kept none of the chest's plugs; a selected knot keeps the control it stands for too
+        control = "|g|Manny_Rig1:Group|Manny_Rig1:FKSpine3_M"
+        knot = "|g|Knots|Chest_1P_ctrl"
+        saved = (ap.scene.dag_object, ap.scene.stand_ins, ap.rigsolve.knot_driver)
+        ap.scene.dag_object = lambda item: item
+        ap.scene.stand_ins = lambda paths: dict((p, control if p == knot else p) for p in paths)
+        ap.rigsolve.knot_driver = lambda path: knot if path == control else None
+        try:
+            self.assertEqual(ap.selected_nodes([control]), frozenset([control, knot]))
+            self.assertEqual(ap.selected_nodes([knot]), frozenset([control, knot]))
+            self.assertEqual(ap.selected_nodes(["|g|Manny_Rig1:FKWrist_L"]),
+                             frozenset(["|g|Manny_Rig1:FKWrist_L"]))
+        finally:
+            ap.scene.dag_object, ap.scene.stand_ins, ap.rigsolve.knot_driver = saved
+
 
 class SelectedOnlyPress(Press):
     """The press under Selected only: `_plan` asked with the selection's nodes; nothing left to

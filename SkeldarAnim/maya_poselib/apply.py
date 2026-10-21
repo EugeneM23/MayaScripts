@@ -621,14 +621,24 @@ def _long_node(node):
 
 def selected_nodes(selection=None):
     """The long paths of the DAG transforms the selection names (a shape's transform, a
-    component's object) - what Selected only keys."""
+    component's object) - what Selected only keys - with, for a control a Tools knot drives, the
+    knot (the solve writes it in the control's place: 1P Setup's Chest_1P_ctrl for FKSpine3_M,
+    which selected kept none of the chest's plugs - 2026-10-21) and, for a selected knot, the
+    object it stands for (`scene.stand_ins`)."""
     if selection is None:
         selection = cmds.ls(selection=True, long=True) or []
-    out = set()
+    paths = []
     for item in selection:
         path = scene.dag_object(item)
-        if path is not None:
-            out.add(path)
+        if path is not None and path not in paths:
+            paths.append(path)
+    out = set(paths)
+    for path, stood in scene.stand_ins(paths).items():
+        out.add(stood or path)
+    for path in list(out):
+        knot = rigsolve.knot_driver(path)
+        if knot:
+            out.add(knot)
     return frozenset(out)
 
 
@@ -679,9 +689,12 @@ def _plan(data, ref, mirror=False, only=None):
     # clavicle - so a pose made on one Manny lands on another as it was (2026-10-20); a rig
     # whose game bones take orientation only (the Creep, the Orc D) cannot show them, and a
     # mirrored card's places are not mirrored (`posemath.mirror` reflects turns, the pelvis)
+    # the camera rides the chest whenever the card's chest stands on the target's spine (an upper
+    # body card, 2026-10-21 - `upper.anchors_for`, derived from the members, not stored)
     transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
                            scale=scale, places=_places(ref) and not mirror,
-                           anchors=upper.target_anchors(data.get("anchors"), pairs))
+                           anchors=upper.target_anchors(upper.anchors_for(source, members),
+                                                        pairs))
     wanted = transfer.frame()
     # the body solvers never see our helper bones: a `helpers.Writer` keys them, or what drives
     # them (a weapon in the hand, the Camera Setup camera)

@@ -753,12 +753,15 @@ class CameraIsBody(unittest.TestCase):
     """2026-10-20: the Camera Setup camera is part of its character (an accessory, as a weapon in
     a hand), never an object of a card - the card's camera_root is its motion."""
 
-    def test_the_camera_setup_camera_is_an_accessory(self):
+    def test_the_camera_setup_camera_is_the_body_s_camera(self):
+        # 2026-10-21: no longer an accessory naming nothing - it names the camera bones
         from maya_scenesetup import armor, camera, weaponspace
 
         class Cmds(object):
             def attributeQuery(self, attr, node=None, exists=False):
-                return attr == camera.MARKER and node == "|Manny_Rig_Character|SceneSetup_camera"
+                return (attr == camera.MARKER and
+                        node == "|Manny_Rig_Character|SceneSetup_camera") or \
+                    (attr == camera.CONTROL_MARKER and node == "|Manny_Rig:Camera_ctrl")
 
             def nodeType(self, path):
                 return "transform"
@@ -770,7 +773,139 @@ class CameraIsBody(unittest.TestCase):
         weaponspace.hand_for = armor.bone_for = lambda path: None
         try:
             self.assertEqual(scene._kind("|Manny_Rig_Character|SceneSetup_camera"),
-                             scene.ACCESSORY)
+                             scene.CAMERA)
+            self.assertEqual(scene._kind("|Manny_Rig:Camera_ctrl"), scene.CAMERA)
             self.assertEqual(scene._kind("|shotCam"), "transform")
         finally:
             scene.cmds, weaponspace.hand_for, armor.bone_for = saved
+
+    def test_the_camera_names_the_camera_bones(self):
+        members = scene.members_from_selection(RIG, [("Manny_Rig1:Camera_ctrl", scene.CAMERA)],
+                                               manny())
+        self.assertEqual(sorted(members), ["camera_bone", "camera_root"])
+        members = scene.members_from_selection(
+            RIG, [("Manny_Rig1:Camera_ctrl", scene.CAMERA), ("Manny_Rig1:FKWrist_L", "transform")],
+            manny())
+        self.assertEqual(sorted(members), ["camera_bone", "camera_root", "hand_l"])
+
+    def test_the_camera_bones_are_the_helpers_own(self):
+        from maya_poselib import helpers
+        self.assertEqual(scene.CAMERA_BONES, helpers.CAMERA)
+
+
+CHEST = "|Manny_Rig_Character|Knots|Chest_1P_ctrl"
+FK3 = "|Manny_Rig_Character|Manny_Rig:Group|Manny_Rig:FKSpine3_M"
+FKW = "|Manny_Rig_Character|Manny_Rig:Group|Manny_Rig:FKWrist_R"
+BASE = "|Manny_Rig_Character|Knots|FKWrist_R_dknotBase"
+INNER = BASE + "|FKWrist_R_dknot"
+ON_CHEST = "|Manny_Rig_Character|Knots|Chest_1P_ctrl_knot"
+SNAP = "|Manny_Rig_Character|Knots|FKSpine3_M_snapshot"
+PIVOT_SPACE = "|Manny_Rig_Character|Knots|FKWrist_R_pivotSpace"
+PIVOT = PIVOT_SPACE + "|FKWrist_R_pivot"
+
+
+class KnotCmds(object):
+    """Nodes with attributes, for `stand_in`: {path: {attr: value}}, {uuid: path}."""
+
+    def __init__(self):
+        self.nodes = {
+            CHEST: {"skeldarKnot": "knot", "skeldarKnotSource": "U-FK3",
+                    "skeldar1PChest": "Manny_Rig"},
+            FK3: {}, FKW: {},
+            BASE: {"skeldarKnot": "double_local", "skeldarKnotSource": "U-FKW"},
+            INNER: {"skeldarKnotInner": "U-BASE"},
+            ON_CHEST: {"skeldarKnot": "knot", "skeldarKnotSource": "U-CHEST"},
+            SNAP: {"skeldarKnot": "snapshot", "skeldarSnapshotOf": "U-FK3"},
+            PIVOT_SPACE: {"skeldarKnotPendingSpace": "U-FKW"},
+            PIVOT: {"skeldarKnotPending": "U-FKW"},
+        }
+        self.uuids = {"U-FK3": FK3, "U-FKW": FKW, "U-BASE": BASE, "U-CHEST": CHEST}
+        self.ls_calls = 0
+
+    def ls(self, items, objectsOnly=False, long=False, **kwargs):
+        self.ls_calls += 1
+        out = []
+        for item in [items] if isinstance(items, str) else list(items):
+            if item in self.uuids:
+                out.append(self.uuids[item])
+                continue
+            node, _dot, attr = item.rpartition(".") if "." in item else (item, "", "")
+            if attr and attr in self.nodes.get(node, {}):
+                out.append(node if objectsOnly else item)
+            elif not attr and item in self.nodes:
+                out.append(item)
+        return out
+
+    def attributeQuery(self, attr, node=None, exists=False):
+        return attr in self.nodes.get(node, {})
+
+    def getAttr(self, plug):
+        node, attr = plug.rsplit(".", 1)
+        return self.nodes[node][attr]
+
+
+class StandIn(unittest.TestCase):
+    """2026-10-21, the animator: «наша система не распознает контроллер chest (который создается
+    при переходе в режим 1p) как часть нашего рига». A Tools knot of ours stands for the OBJECT it
+    drives - 1P Setup's Chest_1P_ctrl for FKSpine3_M - so a selection of it names that object's
+    bones and is never saved as an object."""
+
+    def setUp(self):
+        self.saved = scene.cmds
+        self.fake = scene.cmds = KnotCmds()
+
+    def tearDown(self):
+        scene.cmds = self.saved
+
+    def test_the_1p_chest_stands_for_fkspine3(self):
+        self.assertEqual(scene.stand_in(CHEST), FK3)
+
+    def test_a_double_knot_s_inner_node_stands_for_its_object(self):
+        self.assertEqual(scene.stand_in(INNER), FKW)
+        self.assertEqual(scene.stand_in(BASE), FKW)
+
+    def test_a_knot_on_a_knot_is_followed_down(self):
+        self.assertEqual(scene.stand_in(ON_CHEST), FK3)
+
+    def test_a_snapshot_drives_nothing_and_stands_for_itself(self):
+        self.assertEqual(scene.stand_in(SNAP), SNAP)
+
+    def test_a_waiting_pivot_and_its_space_stand_for_their_object(self):
+        self.assertEqual(scene.stand_in(PIVOT), FKW)
+        self.assertEqual(scene.stand_in(PIVOT_SPACE), FKW)
+
+    def test_anything_else_stands_for_itself_in_one_ls(self):
+        plain = ["|Manny_Rig_Character|Manny_Rig:Group|Manny_Rig:FK%d" % i for i in range(30)]
+        self.fake.ls_calls = 0
+        self.assertEqual(scene.stand_ins(plain), dict((p, p) for p in plain))
+        self.assertEqual(self.fake.ls_calls, 1)
+
+    def test_the_markers_are_the_tools_own(self):
+        from maya_tools import knotplan
+        self.assertEqual(scene.KNOT_KIND, knotplan.KIND_MARKER)
+        self.assertEqual(scene.KNOT_SOURCE, knotplan.SOURCE_MARKER)
+        self.assertEqual(scene.KNOT_INNER, knotplan.INNER_MARKER)
+        self.assertEqual(scene.KNOT_PENDING, knotplan.PENDING_MARKER)
+        self.assertEqual(scene.KNOT_PENDING_SPACE, knotplan.PENDING_SPACE_MARKER)
+
+    def test_a_selected_knot_resolves_to_its_object_s_character(self):
+        ref = RIG
+        saved = (scene.dag_object, scene.character_of, scene._bare, scene.maya_rigs.rigs)
+        scene.dag_object = lambda item: item
+        scene.character_of = lambda path, rigs=None, bare=None, refs=None: \
+            ref if path == FK3 else None
+        scene._bare = lambda: []
+        scene.maya_rigs.rigs = lambda: []
+        try:
+            self.assertEqual(scene.resolve([CHEST, FK3]), [(FK3, ref)])
+        finally:
+            scene.dag_object, scene.character_of, scene._bare, scene.maya_rigs.rigs = saved
+
+    def test_a_knot_is_body_when_its_object_is(self):
+        saved = scene._is_body
+        scene._is_body = lambda path, ref: path == FK3
+        try:
+            self.assertTrue(scene.is_body(CHEST, RIG))
+            self.assertFalse(scene.is_body(SNAP, RIG))
+        finally:
+            scene._is_body = saved

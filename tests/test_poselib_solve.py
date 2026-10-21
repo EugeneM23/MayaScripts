@@ -19,6 +19,7 @@ Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Onto a skeleton
 
 import math
 import unittest
+from collections import OrderedDict
 
 import maya.api.OpenMaya as om
 
@@ -964,6 +965,121 @@ class RigSeed(unittest.TestCase):
         job._remember("|g|FKWrist_L")
         self.assertEqual(job.rest_rotate["|g|FKWrist_L"], (0.0, 0.0, 0.0))
         self.assertEqual(self.fake.rotate_reads, 1)
+
+
+class SteadySession(object):
+    """The writes a `_Job` makes, recorded: `get` answers what a plug holds (7 unless written)."""
+
+    def __init__(self):
+        self.last = OrderedDict()
+
+    def writable(self, plugs):
+        return True
+
+    def allowed(self, plugs):
+        return True
+
+    def set(self, plug, value):
+        self.last[plug] = float(value)
+
+    def get(self, plug):
+        return self.last.get(plug, 7.0)
+
+
+class SteadyPlace(unittest.TestCase):
+    """A placed member already on its place (2026-10-21): a POSE leaves its control's translate
+    alone - no key for a bone its turn put there - while an animation's walk (`steady`: every
+    pasted frame keyed) writes what the translate holds. Unwritten, that frame took no translate
+    key and the curve carried the keys either side across it: Combo_3.anim's clavicle stood its
+    card's place on frames 9-16, and between the keys at 8 and 17 it went 3 cm off."""
+
+    CONTROL, BONE, KNOT = "|g|FKScapula_R", "|g|clavicle_r", "|g|Chest_1P_ctrl"
+    HERE = (1.0, 2.0, 3.0)
+
+    def setUp(self):
+        self.saved = rigsolve._world
+        rigsolve._world = lambda node: placed(om.MMatrix(), self.HERE)
+
+    def tearDown(self):
+        rigsolve._world = self.saved
+
+    def job(self, steady, knotted=False):
+        job = object.__new__(rigsolve._Job)
+        leaf = "clavicle_r"
+        job.placed = set() if knotted else {leaf}
+        job.wanted = {leaf: placed(om.MMatrix(), self.HERE)}
+        job.game = {leaf: self.BONE}
+        job.bases = {leaf: rigsolve.Base(leaf, "Scapula", "_R", self.CONTROL, None, None,
+                                         "|g|Scapula_R", None)}
+        job.knots = {self.CONTROL: self.KNOT} if knotted else {}
+        job.knot_offset = {self.CONTROL: om.MMatrix()} if knotted else {}
+        job.session = SteadySession()
+        job.steady = steady
+        job._shows_fk = lambda leaf: True
+        return job
+
+    def translate(self, node):
+        return [node + "." + ch for ch in rigsolve.TRANSLATE]
+
+    def test_a_pose_keeps_the_translate_of_a_bone_on_its_place(self):
+        job = self.job(steady=False)
+        job._place("clavicle_r")
+        self.assertEqual(dict(job.session.last), {})
+
+    def test_a_walk_writes_what_the_translate_holds(self):
+        job = self.job(steady=True)
+        job._place("clavicle_r")
+        self.assertEqual(list(job.session.last), self.translate(self.CONTROL))
+        self.assertEqual(list(job.session.last.values()), [7.0, 7.0, 7.0])
+
+    def test_a_job_built_without_the_flag_is_a_pose(self):
+        self.assertFalse(rigsolve._Job.steady)
+
+    def test_a_walk_writes_what_a_knot_on_its_place_holds(self):
+        # 1P Setup's chest knot, its bone already where the frame wants it
+        job = self.job(steady=False, knotted=True)
+        job._knot_place("clavicle_r")
+        self.assertEqual(dict(job.session.last), {})
+        job = self.job(steady=True, knotted=True)
+        job._knot_place("clavicle_r")
+        self.assertEqual(list(job.session.last), self.translate(self.KNOT))
+
+    def test_the_solver_hands_the_flag_to_its_jobs(self):
+        import inspect
+        self.assertIn("steady", inspect.signature(rigsolve.Solver.__init__).parameters)
+
+
+class SkeletonSteadyPlace(SkeletonFake):
+    """The skeleton's half of `SteadyPlace`: a placed joint whose translate already holds its
+    card's place writes nothing in a pose, and its translate in an animation's walk (`steady`)."""
+
+    BONES = {"root": {"path": "|root", "parent": None, "canonical": "root",
+                      "world": list(om.MMatrix()), "rotateOrder": 0,
+                      "jointOrient": (0.0, 0.0, 0.0), "rotateAxis": (0.0, 0.0, 0.0)},
+             "clavicle_r": {"path": "|root|clavicle_r", "parent": "root",
+                            "canonical": "clavicle_r", "world": list(om.MMatrix()),
+                            "rotateOrder": 0, "jointOrient": (0.0, 0.0, 0.0),
+                            "rotateAxis": (0.0, 0.0, 0.0)}}
+    PATH = "|root|clavicle_r"
+
+    def solve(self, steady):
+        self.use(SkeletonCmds(values={self.PATH + ".translateX": 4.0,
+                                      self.PATH + ".translateY": 5.0,
+                                      self.PATH + ".translateZ": 6.0}))
+        wanted = {"root": om.MMatrix(), "clavicle_r": placed(om.MMatrix(), (4.0, 5.0, 6.0))}
+        ref = type("Ref", (), {"root": "|root"})()
+        return skelsolve.solve(ref, self.BONES, wanted, ["clavicle_r"], placed=["clavicle_r"],
+                               steady=steady)
+
+    def test_a_pose_writes_no_translate_already_there(self):
+        values = self.solve(steady=False).values
+        self.assertFalse([p for p in values if p.startswith(self.PATH + ".translate")])
+
+    def test_a_walk_writes_it(self):
+        values = self.solve(steady=True).values
+        got = [values[self.PATH + "." + ch] for ch in skelsolve.TRANSLATE]
+        for g, w in zip(got, (4.0, 5.0, 6.0)):
+            self.assertAlmostEqual(g, w, places=9)
 
 
 class Shared(unittest.TestCase):

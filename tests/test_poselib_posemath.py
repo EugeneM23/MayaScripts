@@ -1301,6 +1301,147 @@ class SteadyHeadingRootlessTarget(unittest.TestCase):
                     same(self, given[leaf], plain[leaf], 0.0, "frame %d %s" % (i, leaf))
 
 
+TORSO_CHAIN = [
+    ("root", None, (0, 0, 0)), ("pelvis", "root", (0, 95, 0)),
+    ("spine_01", "pelvis", (0, 10, 0)), ("spine_02", "spine_01", (0, 8, 0)),
+    ("spine_03", "spine_02", (0, 8, 0)), ("spine_04", "spine_03", (0, 8, 0)),
+    ("upperarm_l", "spine_04", (15, 6, 0)), ("lowerarm_l", "upperarm_l", (28, 0, 0)),
+    ("hand_l", "lowerarm_l", (26, 0, 0)), ("middle_01_l", "hand_l", (8, 0, 0)),
+    ("upperarm_r", "spine_04", (-15, 6, 0)), ("lowerarm_r", "upperarm_r", (-28, 0, 0)),
+    ("hand_r", "lowerarm_r", (-26, 0, 0)), ("middle_01_r", "hand_r", (-8, 0, 0)),
+    ("thigh_l", "pelvis", (10, -5, 0)), ("calf_l", "thigh_l", (0, -45, 0)),
+    ("foot_l", "calf_l", (0, -42, 0)), ("thigh_r", "pelvis", (-10, -5, 0)),
+    ("calf_r", "thigh_r", (0, -45, 0)), ("foot_r", "calf_r", (0, -42, 0)),
+    ("head", "spine_04", (0, 26, 0))]
+
+
+def torso(locals_=None, place=om.MMatrix()):
+    """`skeleton`'s shape over `TORSO_CHAIN` (a five-bone spine), rests at the chain's zero."""
+    locals_ = locals_ or {}
+    worlds, rests, out = {}, {}, {}
+    for name, parent, t in TORSO_CHAIN:
+        rests[name] = trs(t) * (rests[parent] if parent else om.MMatrix())
+        worlds[name] = trs(t, locals_.get(name, (0, 0, 0))) * \
+            (worlds[parent] if parent else place)
+        out[name] = {"parent": parent, "canonical": name, "rest": pm.flat(rests[name]),
+                     "world": pm.flat(worlds[name])}
+    return out
+
+
+# the card: a stabilized chest - the lower spine twisted under it, the chest turned back - and an
+# arm posed; the target: a lower spine twisting the other way (an attack combo's torso)
+CARD_POSE = {"pelvis": (0, 15, 0), "spine_01": (0, 20, 0), "spine_02": (5, 25, 0),
+             "spine_03": (-3, -55, 4), "spine_04": (2, 6, 0), "upperarm_l": (0, 30, 40),
+             "lowerarm_l": (0, 0, 50), "head": (0, 10, 5)}
+TWISTED = {"pelvis": (0, -10, 0), "spine_01": (0, -30, 0), "spine_02": (0, -25, 8),
+           "spine_03": (0, 12, 0)}
+UPPER_BODY = ["spine_03", "spine_04", "upperarm_l", "lowerarm_l", "hand_l", "middle_01_l",
+              "upperarm_r", "lowerarm_r", "hand_r", "middle_01_r", "head"]
+
+
+class Torso(unittest.TestCase):
+    """2026-10-21, the animator: «Если я сохранил анимацию верхней части тела которая
+    стабилизирована то даже на риге с анимацией в которой есть провороты она должна остаться
+    стабилизированой». A torso member (the pelvis, a spine bone) turns against the nearest torso
+    bone below it the card poses, else against the ROOT FRAME - never against the target's own
+    in-between spine; its place is still its own on its parent."""
+
+    PLACE = trs((200, 0, -40), (0, 60, 0))
+
+    def rel(self, out, leaf, anchor):
+        return pm.rotation(pm.matrix(out[leaf])) * pm.rotation(pm.matrix(out[anchor])).inverse()
+
+    def card_rel(self, card, leaf, anchor):
+        return pm.rotation(pm.matrix(card[leaf]["world"])) * \
+            pm.rotation(pm.matrix(card[anchor]["world"])).inverse()
+
+    def test_the_torso_is_the_pelvis_and_the_spine(self):
+        bones = {"pelvis": {"canonical": None}, "Spine1": {"canonical": "spine_03"},
+                 "ns:spine_02": {"canonical": None}, "neck_01": {"canonical": "neck_01"},
+                 "Spine2": {"canonical": None}, "head": {"canonical": None}}
+        self.assertEqual(sorted(leaf for leaf in bones if pm.is_torso(bones, leaf)),
+                         ["Spine1", "ns:spine_02", "pelvis"])
+
+    def test_an_upper_body_card_keeps_its_chest_against_the_root(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), UPPER_BODY)
+        self.assertLess(pm.angle(self.rel(out, "spine_03", "root"),
+                                 self.card_rel(card, "spine_03", "root")), 1e-6)
+        # the rule it replaces put the chest on the target's spine_02, its twist coming up
+        self.assertGreater(pm.angle(self.rel(out, "spine_03", "spine_02"),
+                                    self.card_rel(card, "spine_03", "spine_02")), 10.0)
+
+    def test_the_chest_stands_on_the_target_s_spine_and_the_lower_body_is_kept(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), UPPER_BODY)
+        for leaf in ("root", "pelvis", "spine_01", "spine_02", "thigh_l", "foot_r"):
+            self.assertLess(pm.angle(out[leaf], pm.matrix(target[leaf]["world"])), 1e-9, leaf)
+            self.assertLess((pm.position(out[leaf]) -
+                             pm.position(pm.matrix(target[leaf]["world"]))).length(), 1e-9, leaf)
+        place = om.MPoint(0, 8, 0) * pm.matrix(out["spine_02"])      # its own local on spine_02
+        self.assertLess((om.MVector(pm.position(out["spine_03"])) - om.MVector(place)).length(),
+                        1e-9)
+
+    def test_above_the_chest_rides_the_chest_as_the_card(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), UPPER_BODY)
+        for leaf in ("spine_04", "head", "upperarm_l", "lowerarm_l", "hand_l"):
+            self.assertLess(pm.angle(self.rel(out, leaf, "spine_03"),
+                                     self.card_rel(card, leaf, "spine_03")), 1e-6, leaf)
+
+    def test_a_full_card_is_unchanged(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), [b for b in card if b != "root"])
+        for leaf in card:
+            want = pm.matrix(card[leaf]["world"]) * self.PLACE
+            self.assertLess(pm.angle(out[leaf], want), 1e-6, leaf)
+            self.assertLess((pm.position(out[leaf]) - pm.position(want)).length(), 1e-6, leaf)
+
+    def test_the_chest_keeps_its_relation_to_the_card_s_pelvis(self):
+        # the animator's DG_Idle_1P: the pelvis and the chest posed, spine_01/02 not
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), ["pelvis"] + UPPER_BODY)
+        self.assertLess(pm.angle(self.rel(out, "spine_03", "pelvis"),
+                                 self.card_rel(card, "spine_03", "pelvis")), 1e-6)
+        self.assertLess(pm.angle(self.rel(out, "spine_03", "root"),
+                                 self.card_rel(card, "spine_03", "root")), 1e-6)
+
+    def test_a_member_between_keeps_its_relation_to_the_member_below_it(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), ["spine_02", "spine_04"])
+        self.assertLess(pm.angle(self.rel(out, "spine_04", "spine_02"),
+                                 self.card_rel(card, "spine_04", "spine_02")), 1e-6)
+        self.assertLess(pm.angle(self.rel(out, "spine_02", "root"),
+                                 self.card_rel(card, "spine_02", "root")), 1e-6)
+
+    def test_a_rootless_target_turns_the_chest_against_its_ground(self):
+        card = torso(CARD_POSE)
+        target = rootless(torso(TWISTED, place=self.PLACE))
+        out = pm.targets(card, target, pm.pairs(card, target), UPPER_BODY)
+        ground = ground_of(target, "mx_pelvis")
+        chest = pm.rotation(out["mx_spine_03"]) * pm.rotation(ground).inverse()
+        self.assertLess(pm.angle(chest, self.card_rel(card, "spine_03", "root")), 1e-6)
+
+    def test_a_hand_card_still_lands_on_the_arm_as_it_stands(self):
+        card, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        out = pm.targets(card, target, pm.pairs(card, target), ["hand_l"])
+        self.assertLess(pm.angle(out["lowerarm_l"], pm.matrix(target["lowerarm_l"]["world"])),
+                        1e-9)
+        self.assertLess(pm.angle(self.rel(out, "hand_l", "lowerarm_l"),
+                                 self.card_rel(card, "hand_l", "lowerarm_l")), 1e-6)
+
+    def test_a_clip_s_frames_keep_it_frame_by_frame(self):
+        # an animation: one Transfer, each frame's chest against the root as the card's frame
+        first, target = torso(CARD_POSE), torso(TWISTED, place=self.PLACE)
+        transfer = pm.Transfer(first, target, pm.pairs(first, target), UPPER_BODY)
+        for turn in (0, 20, -35):
+            frame = torso(dict(CARD_POSE, spine_01=(0, 20 + turn, 0)))
+            moved = torso(dict(TWISTED, spine_02=(0, -25 - turn, 8)), place=self.PLACE)
+            out = transfer.frame(frame, moved)
+            self.assertLess(pm.angle(self.rel(out, "spine_03", "root"),
+                                     self.card_rel(frame, "spine_03", "root")), 1e-6, turn)
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):
