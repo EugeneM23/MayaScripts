@@ -173,6 +173,43 @@ def padded_range():
                              minTime=saved[2], maxTime=saved[3])
 
 
+MAYA_SLIDERS = ("TimeSlider", "RangeSlider")
+
+
+def _slider_state():
+    """{control: visible} of Maya's Time Slider and Range Slider; {} in batch."""
+    if cmds.about(batch=True):
+        return {}
+    state = {}
+    for name in MAYA_SLIDERS:
+        try:
+            if cmds.workspaceControl(name, exists=True):
+                state[name] = bool(cmds.workspaceControl(name, query=True, visible=True))
+        except RuntimeError:
+            pass
+    return state
+
+
+@contextmanager
+def slider_kept():
+    """Maya's Time Slider and Range Slider left as they were around an OverRig proc.
+
+    OverRig's bake wrapper ends with `setTimeSliderVisible 1` (base_OverRig_scripts.mel), so
+    every Parent in / out, Fast Bake, IK rebake and chain capture brought Maya's slider back
+    over the Time Bar - found 2026-10-21 putting the dagger into Hand_R.
+    """
+    saved = _slider_state()
+    try:
+        yield
+    finally:
+        for name, visible in saved.items():
+            try:
+                if bool(cmds.workspaceControl(name, query=True, visible=True)) != visible:
+                    cmds.workspaceControl(name, edit=True, visible=visible)
+            except RuntimeError:
+                pass
+
+
 def half_frame_times(times):
     """The non-integer key times a doubled-time capture leaves behind.
 
@@ -339,20 +376,22 @@ def build_ik(joint_paths):
     selection decides the chain.
     """
     cmds.select(list(joint_paths), replace=True)
-    with padded_range():
+    with padded_range(), slider_kept():
         mel.eval(IK_PROC)
 
 
 def fast_bake(objects):
     """Bake the given objects using OverRig's own bake."""
     cmds.select(list(objects), replace=True)
-    mel.eval(BAKE_PROC)
+    with slider_kept():
+        mel.eval(BAKE_PROC)
 
 
 def parent_out(node):
     """Lift a node to world through OverRig, animation re-baked into it."""
     cmds.select(node, replace=True)
-    mel.eval("apply_Parent_out()")
+    with slider_kept():
+        mel.eval("apply_Parent_out()")
 
 
 def parent_in(child, parent):
@@ -361,7 +400,8 @@ def parent_in(child, parent):
     Selection is child first, parent last -- verified by experiment.
     """
     cmds.select([child, parent], replace=True)
-    mel.eval("apply_Parent_in()")
+    with slider_kept():
+        mel.eval("apply_Parent_in()")
 
 
 def add_to_set(objects, set_name):
