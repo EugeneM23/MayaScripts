@@ -160,5 +160,96 @@ class MelPathCandidates(unittest.TestCase):
             self.assertIn(candidate, overrig.NOT_LOADED_MESSAGE)
 
 
+class _Sliders(object):
+    """Maya's Time Slider and Range Slider workspace controls, by visibility."""
+
+    def __init__(self, visible, batch=False):
+        self.visible = dict(visible)
+        self.batch = batch
+        self.edits = []
+
+    def about(self, batch=False):
+        return self.batch
+
+    def workspaceControl(self, name, exists=False, query=False, edit=False, visible=None):
+        if exists:
+            return name in self.visible
+        if query:
+            return self.visible[name]
+        if edit:
+            self.edits.append((name, visible))
+            self.visible[name] = visible
+        return None
+
+    def select(self, *args, **kwargs):
+        pass
+
+    def playbackOptions(self, query=False, **kwargs):
+        return 0.0 if query else None
+
+
+def _shows_the_slider(sliders):
+    """What OverRig's bake wrapper ends with: `setTimeSliderVisible 1`."""
+    def answer(command):
+        sliders.visible["TimeSlider"] = True
+    return answer
+
+
+class SliderKept(unittest.TestCase):
+    """2026-10-21: putting the dagger into Hand_R brought Maya's Time Slider
+    back over the Time Bar - OverRig's wrapper ends every bake with
+    `setTimeSliderVisible 1`. Every OverRig bake leaves the sliders as they were."""
+
+    def setUp(self):
+        self.saved = overrig.cmds
+        self.sliders = _Sliders({"TimeSlider": False, "RangeSlider": False})
+        overrig.cmds = self.sliders
+
+    def tearDown(self):
+        overrig.cmds = self.saved
+
+    def test_a_slider_overrig_shows_is_hidden_again(self):
+        with overrig.slider_kept():
+            self.sliders.visible["TimeSlider"] = True
+        self.assertEqual(self.sliders.visible, {"TimeSlider": False, "RangeSlider": False})
+        self.assertEqual(self.sliders.edits, [("TimeSlider", False)])
+
+    def test_a_slider_that_was_shown_is_left_alone(self):
+        self.sliders.visible["TimeSlider"] = True
+        with overrig.slider_kept():
+            pass
+        self.assertEqual(self.sliders.edits, [])
+
+    def test_the_slider_is_put_back_when_the_proc_fails(self):
+        with self.assertRaises(RuntimeError):
+            with overrig.slider_kept():
+                self.sliders.visible["TimeSlider"] = True
+                raise RuntimeError("OverRig failed")
+        self.assertFalse(self.sliders.visible["TimeSlider"])
+
+    def test_batch_has_no_sliders(self):
+        self.sliders.batch = True
+        with overrig.slider_kept():
+            self.sliders.visible["TimeSlider"] = True
+        self.assertEqual(self.sliders.edits, [])
+
+    def test_every_overrig_bake_keeps_the_sliders(self):
+        for name, call in (("parent_in", lambda: overrig.parent_in("|dagger", "|space")),
+                           ("parent_out", lambda: overrig.parent_out("|dagger")),
+                           ("fast_bake", lambda: overrig.fast_bake(["|dagger"])),
+                           ("build_ik", lambda: overrig.build_ik(["|a", "|b", "|c"]))):
+            with _fake_mel(_shows_the_slider(self.sliders)):
+                call()
+            self.assertFalse(self.sliders.visible["TimeSlider"], name)
+
+    def test_fk_chain_capture_keeps_the_sliders(self):
+        """`fkcontrols` runs OverRig's chain capture procs itself."""
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "SkeldarAnim", "maya_overrig", "fkcontrols.py")
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("with overrig.padded_range(), overrig.slider_kept():", source)
+
+
 if __name__ == "__main__":
     unittest.main()

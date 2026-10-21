@@ -386,7 +386,7 @@ def build_fk(scene_map, only=None):
                 before_knots = set(overrig.set_members(overrig.KNOT_SET))
 
                 cmds.select(paths, replace=True)
-                with overrig.padded_range():
+                with overrig.padded_range(), overrig.slider_kept():
                     if len(paths) == 1:
                         mel.eval("apply_parentConstrAnim(1)")
                     else:
