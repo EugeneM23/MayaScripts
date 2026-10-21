@@ -400,22 +400,6 @@ class BlendSlider(QtWidgets.QWidget):
         self.update()
 
 
-class Hairline(QtWidgets.QWidget):
-    """The 1 px divider between two groups, level with their controls."""
-
-    def __init__(self, ui=1.0):
-        super(Hairline, self).__init__()
-        self._ui = ui
-        self.setFixedSize(int(round(9 * ui)), int(round((CAPTION_H + FACE + 2 * MARGIN) * ui)))
-
-    def paintEvent(self, _):
-        p = QtGui.QPainter(self)
-        ui = self._ui
-        cy = (CAPTION_H + MARGIN + FACE / 2.0) * ui
-        p.fillRect(QtCore.QRectF(self.width() / 2.0 - 0.5, cy - 9 * ui, 1, 18 * ui), QtGui.QColor(LINE))
-        p.end()
-
-
 class FlowLayout(QtWidgets.QLayout):
     def __init__(self, parent=None, spacing=6, margins=(4, 3, 4, 3)):
         super(FlowLayout, self).__init__(parent)
@@ -529,11 +513,11 @@ class ATBar(QtWidgets.QWidget):
         self._toggles = []
 
         ui = self.ui
-        lay = FlowLayout(self, spacing=int(round(4 * ui)),
+        #  the groups apart by space alone (2026-10-21, «прибери ще сірі роздєлітєльні лінії»)
+        lay = FlowLayout(self, spacing=int(round(16 * ui)),
                          margins=tuple(int(round(v * ui)) for v in (12, 6, 12, 7)))
         lay.addWidget(_group("", ACCENT_TEXT, [self._mark()], ui))
         for group in [self._keys_group(), self._blend_group()] + self._tool_groups():
-            lay.addWidget(Hairline(ui))
             lay.addWidget(group)
 
         self._sync_timer = QtCore.QTimer(self)
