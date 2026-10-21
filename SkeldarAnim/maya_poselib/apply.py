@@ -678,15 +678,17 @@ def _plan(data, ref, mirror=False, only=None):
     notes = []
     bones, _convention = scene.skeleton(ref, notes)
     source = data.get("bones") or {}
-    # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21); where the
-    # camera rides is read off the card's own members, gap and all (`upper.anchors_for`)
-    card_members = list(data.get("members") or ())
-    anchors = upper.anchors_for(source, card_members)
-    members = pm.with_torso(source, card_members)
+    members = list(data.get("members") or ())
+    # where the camera rides is read off the card's own members, gap and all (`upper.anchors_for`)
+    anchors = upper.anchors_for(source, members)
     if mirror:
         source, members = pm.mirror(source, members)
     # the camera and the weapon bones the card's parts bring (2026-10-20, `helpers`)
     members = helpers.members_with(members, source)
+    # then a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21) -
+    # after the camera: a card saved without the camera and with a gap is no whole body to bring
+    # the camera along
+    members = pm.with_torso(source, members)
     pairs = pm.pairs(source, bones)
     scale = pm.scale_between(source, bones, pairs)
     # onto the same body (a twin) the card's bone PLACES come too - a slid spine, a shrugged

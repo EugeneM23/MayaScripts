@@ -618,6 +618,10 @@ class _Target(object):
         # the camera and the weapon bones the card's parts bring (2026-10-20): keyed by a
         # `helpers.Writer` - on the bone, or on the weapon / camera driving it - never by the body
         members = helpers.members_with(members, source)
+        # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21): saved
+        # off a rig in 1P, spine_01/02/04/05 were left out and the head and arms rode the target's
+        # spine - filled AFTER the camera and the anchors were read off the card's own members
+        members = pm.with_torso(source, members)
         self.members, helper_t = helpers.split(
             ap.target_members(self.bones, self.pairs, members))
         missing = ap.unpaired_note(ap.unpaired(members, self.pairs, source),
@@ -824,10 +828,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         return False, ap.BLEND_ZERO
     # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21): saved off
     # a rig in 1P, spine_01/02/04/05 were left out and the head and arms rode the target's spine
-    # where the camera rides is read off the card's own members, gap and all (`upper.anchors_for`)
-    card_members = list(header.get("members") or ())
-    anchors = upper.anchors_for(header.get("bones") or {}, card_members)
-    members = pm.with_torso(header.get("bones") or {}, card_members)
+    members = list(header.get("members") or ())
     name = header.get("name") or "Animation"
     recording = bool(cmds.undoInfo(query=True, state=True))
     with timewalk.Walk(fresh=True) as walk:
@@ -843,7 +844,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only, anchors) for ref in refs]
+                               first_root, only) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)
