@@ -28,8 +28,9 @@ On the chosen weapon (Connections' «Acts on»):
   Mode, a rotate channel locked, or driven by anything but its own time curves (a constraint, a
   Tools knot, an animation layer - «bake its layers first»), a weapon with no geometry;
 - the two controllers placed from the model's own extents (`aim.placement`, the old Add Aim's
-  rule): the target past the tip along the blade, the up on the next longest axis at the same
-  distance. The aim and up vectors are those axes in the weapon's own frame;
+  rule): the target past the tip along the blade, the up on the OTHER side of the next longest
+  axis, a quarter of the target's distance out (changed after the first try), and a line from the
+  weapon to each controller. The aim and up vectors are those axes in the weapon's own frame;
 - **the frames are the weapon's own keys** (`fkik.own_keys` over its translate and rotate curves,
   FK/IK's rule since 2026-10-16); none: one plain value at the current frame, said. Tangents from
   the weapon's keys on each frame (`fkik.tangents_at`);

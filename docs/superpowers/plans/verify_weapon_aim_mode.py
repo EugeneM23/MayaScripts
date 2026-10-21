@@ -172,6 +172,26 @@ def main():
     gate("enter: the group in the character's group",
          "_Character|" in group or "Manny_Rig_Character" in group, group)
     gate("enter: the sword's frame said in the card", weaponaim.is_aimed(sword))
+    lines = [c for c in cmds.listRelatives(weaponaim.group_of(sword), children=True,
+                                           fullPath=True) or []
+             if cmds.attributeQuery(weaponaim.LINE_MARKER, node=c, exists=True)]
+    ctrls = weaponaim.controllers(weaponaim.group_of(sword))
+    evaluate(8)
+    worst = 0.0
+    for line in lines:
+        role = cmds.getAttr(line + "." + weaponaim.LINE_MARKER)
+        shape = cmds.listRelatives(line, shapes=True, fullPath=True)[0]
+        a = om.MVector(*cmds.pointPosition(shape + ".cv[0]", world=True))
+        b = om.MVector(*cmds.pointPosition(shape + ".cv[1]", world=True))
+        worst = max(worst, (a - om.MVector(pm.position(W(sword)))).length(),
+                    (b - om.MVector(pm.position(W(ctrls[role])))).length())
+    gate("enter: a line from the sword to each controller", len(lines) == 2 and worst < TOL,
+         "%d lines, %.2e" % (len(lines), worst))
+    up_local = om.MPoint(*cmds.xform(ctrls["up"], query=True, worldSpace=True,
+                                     translation=True)) * W(sword).inverse()
+    gate("enter: the up close beside the sword",
+         om.MVector(up_local).length() < 0.3 * weaponaim.stored_vectors(
+             weaponaim.group_of(sword))[2] + TOL, "%.1f cm" % om.MVector(up_local).length())
     gate("enter: a second press refused", "already" in connections.aim_mode(rig, sword, on=True))
     made = weaponaim.controllers(weaponaim.group_of(sword))
 
@@ -195,7 +215,8 @@ def main():
     text = connections.aim_mode(rig, sword, on=False)
     say("   leave:", text)
     gate("leave: nothing of the aim left", weaponaim.group_of(sword) is None and
-         not cmds.ls(type="aimConstraint"))
+         not cmds.ls(type="aimConstraint") and
+         not [n for n in cmds.ls(type="decomposeMatrix") if "_aimLine_" in n])
     gate("leave: the rotate keyed on the controllers' keys",
          key_times(sword, ("rotateX", "rotateY", "rotateZ")) == list(KEYS),
          key_times(sword, ("rotateX", "rotateY", "rotateZ")))

@@ -13287,8 +13287,11 @@ Aim); a parent change in Aim Mode automatic; `[Body | Weapon]`. Spec
   rows `connections.aim` / `connections.default`.
 - **`maya_scenesetup/weaponaim.py`**: `enter` - refused on a locked or driven rotate, a layered
   one («bake its layers first»), no geometry, already aimed; a target past the blade's tip and an
-  up on the next longest axis (`aim.placement`, `vectors`), curve controls `<w>_aimTarget`
-  (diamond) / `<w>_aimUp` (square), rotate and scale locked, in `<w>_aim` (marked
+  up on the OTHER side of the next longest axis, `UP_SHARE` (a quarter) of the target's distance
+  out (`aim.placement`, `vectors`; the animator, after using it: «с другой стороны оружия и не так
+  далеко»), curve controls `<w>_aimTarget` (diamond) / `<w>_aimUp` (square), rotate and scale
+  locked, a reference-display line from the weapon to each (`_line`: a two-point curve fed by
+  decomposeMatrix nodes, which `leave` deletes), in `<w>_aim` (marked
   `skeldarWeaponAim` = the weapon's UUID, `skeldarWeaponAimVectors`) parked in the character
   group; keyed in world on the weapon's OWN keys (`fkik.own_keys`, its tangents; none: placed at
   the current frame); the weapon's rotate keys cut and `aimConstraint` with NO offset (marked

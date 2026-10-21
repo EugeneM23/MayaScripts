@@ -38,6 +38,12 @@ UP_COLOUR = (0.25, 0.75, 1.0)
 ROTATE = fkik.ROTATE
 TRANSLATE = fkik.TRANSLATE
 LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
+# the up beside the weapon (2026-10-21, after using it: «AIm up должен быть с другой стороны
+# оружия и не так далеко от него»): on the other side of the next longest axis, a quarter of the
+# target's distance out
+UP_SHARE = 0.25
+LINE_MARKER = "skeldarWeaponAimLine"  # on a line from the weapon to a controller: its role
+LINE_NAME = "{0}_aimLine_{1}"
 
 NO_WEAPON = "no weapon in the scene - Inventory > Equip first"
 ALREADY = "%s is in Aim Mode already - Default first"
@@ -49,8 +55,8 @@ NO_GEOMETRY = "%s has no geometry to measure - cannot place the aim"
 
 def vectors(lo, hi):
     """(aim vector, up vector, aim distance, up distance) in the weapon's own frame from its
-    extents, or None (nothing to aim). The aim along the blade to past its tip, the up on the
-    next longest axis at the same distance (`aim.placement`)."""
+    extents, or None (nothing to aim). The aim along the blade to past its tip (`aim.placement`),
+    the up on the OTHER side of the next longest axis, `UP_SHARE` of that distance out."""
     placed = aimplace.placement(lo, hi)
     if placed is None:
         return None
@@ -59,7 +65,8 @@ def vectors(lo, hi):
     d_side = math.sqrt(sum(v * v for v in side))
     if d_top <= 0 or d_side <= 0:
         return None
-    return (tuple(v / d_top for v in top), tuple(v / d_side for v in side), d_top, d_side)
+    return (tuple(v / d_top for v in top), tuple(-v / d_side for v in side), d_top,
+            d_top * UP_SHARE)
 
 
 def point_of(matrix, direction, distance):
@@ -241,6 +248,37 @@ def _control(name, parent, points, colour):
     return node
 
 
+def _line(name, parent, start, end, colour):
+    """A line from `start`'s pivot to `end`'s in world (2026-10-21: «векторы от оружия к нашим
+    контролам эйма что бы мы не путались»): a two-point curve whose points read the two nodes'
+    world positions, under `parent` (an identity group), unselectable (reference display)."""
+    node = _control(name, parent, [(0, 0, 0), (0, 0, 1)], colour)
+    shape = cmds.listRelatives(node, shapes=True, fullPath=True)[0]
+    for index, source in enumerate((start, end)):
+        decompose = cmds.createNode("decomposeMatrix", name=_leaf(node) + "_p%d" % index,
+                                    skipSelect=True)
+        cmds.connectAttr(source + ".worldMatrix[0]", decompose + ".inputMatrix")
+        cmds.connectAttr(decompose + ".outputTranslate", "%s.controlPoints[%d]" % (shape, index))
+    cmds.setAttr(node + ".overrideEnabled", 1)
+    cmds.setAttr(node + ".overrideDisplayType", 2)
+    cmds.setAttr(shape + ".lineWidth", 1.0)
+    for attr in ("translate", "rotate", "scale"):
+        cmds.setAttr(node + "." + attr, lock=True)
+    return node
+
+
+def _drop_lines(group):
+    """The lines' decomposeMatrix nodes deleted (the group takes the lines themselves)."""
+    for child in cmds.listRelatives(group, children=True, fullPath=True, type="transform") or []:
+        if not cmds.attributeQuery(LINE_MARKER, node=child, exists=True):
+            continue
+        for shape in cmds.listRelatives(child, shapes=True, fullPath=True) or []:
+            for node in cmds.listConnections(shape, source=True, destination=False,
+                                             type="decomposeMatrix") or []:
+                if cmds.objExists(node):
+                    cmds.delete(node)
+
+
 def _make_controls(weapon, group_parent, size_target, size_up):
     """The aim group and its two controllers (world space) for `weapon`."""
     label = _leaf(weapon)
@@ -262,6 +300,10 @@ def _make_controls(weapon, group_parent, size_target, size_up):
         for attr in LOCKED:
             cmds.setAttr(ctrl + "." + attr, lock=True, keyable=False, channelBox=False)
         made[role] = _uuid(ctrl)
+    for role, colour in (("target", TARGET_COLOUR), ("up", UP_COLOUR)):
+        line = _line(LINE_NAME.format(label, role), _long(uuid), weapon, _long(made[role]), colour)
+        cmds.addAttr(line, longName=LINE_MARKER, dataType="string")
+        cmds.setAttr(line + "." + LINE_MARKER, role, type="string")
     return _long(uuid), dict((r, _long(u)) for r, u in made.items())
 
 
@@ -379,6 +421,7 @@ def leave(weapon):
             con = _constraint(weapon)
             if con:
                 cmds.delete(con)
+            _drop_lines(group)
             cmds.delete(group)
             weapon = _long(weapon_uuid)
             for axis, ch in enumerate(ROTATE):

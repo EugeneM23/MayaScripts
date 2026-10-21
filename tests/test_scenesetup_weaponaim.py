@@ -12,12 +12,13 @@ from tests.test_scenesetup_connections import FakeMenuCmds
 class Pure(unittest.TestCase):
 
     def test_vectors_aim_down_the_blade_and_up_across_it(self):
-        # a sword: the blade on +Y to 100, the guard on X +-15, thin on Z
+        # a sword: the blade on +Y to 100, the guard on X +-15, thin on Z; the up on the other
+        # side of the guard, a quarter of the target's distance out (2026-10-21)
         aim_v, up_v, d_aim, d_up = wa.vectors((-15, -20, -2), (15, 100, 2))
         self.assertEqual(aim_v, (0.0, 1.0, 0.0))
-        self.assertEqual(up_v, (1.0, 0.0, 0.0))
+        self.assertEqual(up_v, (-1.0, 0.0, 0.0))
         self.assertAlmostEqual(d_aim, 115.0)
-        self.assertAlmostEqual(d_up, 115.0)
+        self.assertAlmostEqual(d_up, 115.0 * wa.UP_SHARE)
 
     def test_a_blade_down_minus_y_aims_down(self):
         aim_v, _up, _d, _du = wa.vectors((-15, -100, -2), (15, 20, 2))
