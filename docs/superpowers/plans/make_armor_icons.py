@@ -9,6 +9,9 @@ on (the outside of the piece -- an armor model's points are in its bone's axes, 
 origin), the longer of the other two axes upright, flat shaded steel by the weapon icons' light
 from the upper left, painted back to front over a dark rim. Written to
 SkeldarAnim/assets/armor_icons/<key>.png, 256 px square with alpha (catalog.armor_icon_path).
+
+A textured row (2026-10-21, the Playerchar's clothing) is painted in its own colours: each triangle
+the texel at its uvs' centre (map1), lit the same way, so the icon reads as the piece it is.
 """
 import os
 import sys
@@ -50,23 +53,47 @@ def triangles(entry):
     for mesh in cmds.ls(type="mesh", noIntermediate=True, long=True) or []:
         fn = om.MFnMesh(om.MSelectionList().add(mesh).getDagPath(0))
         points = fn.getPoints(om.MSpace.kWorld)
+        uvs = bool(fn.numUVs())
         for poly in range(fn.numPolygons):
             verts = list(fn.getPolygonVertices(poly))
             for i in range(1, len(verts) - 1):
-                out.append([om.MVector(points[v]) for v in (verts[0], verts[i], verts[i + 1])])
+                corners = (0, i, i + 1)
+                tri = [om.MVector(points[verts[c]]) for c in corners]
+                uv = None
+                if uvs:
+                    try:
+                        got = [fn.getPolygonUV(poly, c) for c in corners]
+                        uv = (sum(u for u, _v in got) / 3.0, sum(v for _u, v in got) / 3.0)
+                    except RuntimeError:
+                        uv = None
+                out.append((tri, uv))
     return out
 
 
-def view_axes(tris):
+def texel(image, uv):
+    """The texture's colour (0..1 floats) at `uv`, rows from the top (v 0 is the bottom)."""
+    if image is None or uv is None:
+        return STEEL
+    x = min(image.width() - 1, max(0, int((uv[0] % 1.0) * image.width())))
+    y = min(image.height() - 1, max(0, int((1.0 - (uv[1] % 1.0)) * image.height())))
+    c = image.pixelColor(x, y)
+    return (c.redF(), c.greenF(), c.blueF())
+
+
+def view_axes(tris, clothing=False):
     """(right, up, toward the viewer) in model space: the viewer on the bulk's side of the
-    thinnest axis, the longer remaining axis upright."""
-    pts = [p for t in tris for p in t]
+    thinnest axis, the longer remaining axis upright. Clothing (a skinned row, standing where the
+    character wears it, facing +Z) is seen as the character is: up Y, from the front - or from
+    behind when its bulk is behind (a shield on the back)."""
+    pts = [p for t, _uv in tris for p in t]
     lo = [min(p[i] for p in pts) for i in range(3)]
     hi = [max(p[i] for p in pts) for i in range(3)]
     span = [hi[i] - lo[i] for i in range(3)]
     thin = span.index(min(span))
+    if clothing:
+        thin = 2
     rest = [i for i in range(3) if i != thin]
-    up_i = max(rest, key=lambda i: span[i])
+    up_i = 1 if clothing else max(rest, key=lambda i: span[i])
     right_i = [i for i in rest if i != up_i][0]
     toward = om.MVector(0, 0, 0)
     toward[thin] = 1.0 if sum(p[thin] for p in pts) / len(pts) > 0 else -1.0
@@ -78,10 +105,13 @@ def view_axes(tris):
 
 def render(entry):
     tris = triangles(entry)
-    right, up, toward = view_axes(tris)
-    flat = [[om.MVector(p * right, p * up, p * toward) for p in t] for t in tris]
-    xs = [p.x for t in flat for p in t]
-    ys = [p.y for t in flat for p in t]
+    image = QImage(entry.texture) if getattr(entry, "texture", "") else None
+    if image is not None and image.isNull():
+        raise RuntimeError("%s: cannot read %s" % (entry.key, entry.texture))
+    right, up, toward = view_axes(tris, getattr(entry, "kind", "") == catalog.SKINNED)
+    flat = [([om.MVector(p * right, p * up, p * toward) for p in t], texel(image, uv)) for t, uv in tris]
+    xs = [p.x for t, _c in flat for p in t]
+    ys = [p.y for t, _c in flat for p in t]
     cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
     k = SIZE * (1 - 2 * PAD) / max(max(xs) - min(xs), max(ys) - min(ys), 1e-6)
 
@@ -92,13 +122,13 @@ def render(entry):
     image.fill(Qt.transparent)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing)
-    order = sorted(flat, key=lambda t: t[0].z + t[1].z + t[2].z)
-    polys = [QPolygonF([to_px(p) for p in t]) for t in order]
+    order = sorted(flat, key=lambda tc: tc[0][0].z + tc[0][1].z + tc[0][2].z)
+    polys = [QPolygonF([to_px(p) for p in t]) for t, _c in order]
     painter.setPen(QPen(RIM, 3.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     painter.setBrush(QBrush(RIM))
     for poly in polys:
         painter.drawPolygon(poly)
-    for (a, b, c), poly in zip(order, polys):
+    for ((a, b, c), base), poly in zip(order, polys):
         n = (b - a) ^ (c - a)
         if n.length() < 1e-12:
             continue
@@ -106,8 +136,8 @@ def render(entry):
         if n.z < 0:
             n = -n
         shade = 0.22 + 0.85 * max(0.0, n * LIGHT)
-        spec = 0.5 * max(0.0, n * HALF) ** 16
-        colour = QColor.fromRgbF(*[min(1.0, STEEL[i] * shade + spec) for i in range(3)])
+        spec = (0.5 if image is None else 0.18) * max(0.0, n * HALF) ** 16
+        colour = QColor.fromRgbF(*[min(1.0, base[i] * shade + spec) for i in range(3)])
         painter.setPen(QPen(colour, 0.8))
         painter.setBrush(QBrush(colour))
         painter.drawPolygon(poly)

@@ -83,6 +83,16 @@ CHARACTERS = [
     # the plugin the same day («орка без текстур уберем из плагина он больше не нужен»).
     Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True,
               model="Orc_D"),
+    # The draft player character (2026-10-21, «риг драфтового персонажа его нужно встроить в наш
+    # пайплайн и добавить карточку в скелеты и в риг ... Сам персонаж по умолчанию пусть будет без
+    # одежды»): the animator's draft body, skinned on Manny's skeleton (its bind is the rig's build
+    # pose to 4e-14), in Manny_Rig's place of Manny's meshes -- the same rig, so a UE clip retargets
+    # exactly -- naked: its outfit is four clothing rows of ARMOR below. One atlas, the artist's own
+    # (assets/Playerchar/). Built by docs/superpowers/plans/make_playerchar_assets.py from
+    # sources/playerchar/. After Manny's rows: the Auto card ties to table order, and a Manny clip
+    # stays Manny's.
+    Character("Playerchar_Rig", "Playerchar [rig]", "Playerchar_Rig.ma", "rig",
+              textured=True, model="Playerchar"),
     # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton", textured=True, model="Manny"),
@@ -95,6 +105,10 @@ CHARACTERS = [
     # The same five meshes in the same maps as the rig (2026-09-30).
     Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton",
               textured=True, model="Creep"),
+    # The same body without its rig (2026-10-21), made from Playerchar_Rig.ma the Creep
+    # skeleton's way.
+    Character("Playerchar", "Playerchar [skeleton]", "Playerchar_Skeleton.ma", "skeleton",
+              textured=True, model="Playerchar"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -119,8 +133,8 @@ KINDS = ("rig", "skeleton")
 AUTO = "Auto"
 
 MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"),
-          Model("Orc_D", "Orc D"), Model("UE4_Mannequin", "UE4 Mannequin"),
-          Model(AUTO, "Auto")]
+          Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
+          Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
 
 
 def is_auto(model):
@@ -307,8 +321,14 @@ SOCKET_TURN = (90.0, 0.0, 0.0)
 # second plate for the same forearm is a row with the same slot. The model's
 # points are already in the bone's local axes at its place, so equipped it
 # stands at identity in its space (`armor.equip`) and its channels read 0.
-Armor = collections.namedtuple("Armor", "key label path bone slot texture",
-                               defaults=("",))
+# `kind` (2026-10-21, the Playerchar's clothes) is "rigid" -- such a piece --
+# or "skinned": clothing skinned to the game skeleton's bones by name, its file
+# a group of skinned meshes and the skeleton they were bound on; Equip rewires
+# the skins onto the wearer's bones (a skeleton of the same proportions only),
+# and `bone` is just the bone its armor space follows.
+RIGID, SKINNED = "rigid", "skinned"
+Armor = collections.namedtuple("Armor", "key label path bone slot texture kind",
+                               defaults=("", RIGID))
 
 ARMOR = [
     # Atone's Tech Limb (2026-10-01): the SKELETAL shield the game animates
@@ -323,6 +343,20 @@ ARMOR = [
     # retired.
     Armor("Tech_Limb", "Tech Limb", _asset_path("Armor/Tech_Limb_Shield.ma"),
           "lowerarm_l", "left_forearm"),
+    # The Playerchar's outfit as clothing (2026-10-21, «ему нужно сделать броню шлем щит штаны
+    # как одежду и поместить карточки в раздел армор»; asked: four cards, the body alone is the
+    # character, the same skeleton only): the animator's draft meshes skinned on Manny's bones,
+    # in the character's atlas. Built by docs/superpowers/plans/make_playerchar_assets.py --
+    # the helmet with its face guard and chain veil; the tunic, cloak, shoulder and belt chains,
+    # shoulder pads, belt, bracers and strap; the round shield on the back; the pants with boots.
+    Armor("Playerchar_Helmet", "Helmet", _asset_path("Armor/Playerchar_Helmet.ma"),
+          "head", "head", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
+    Armor("Playerchar_Armor", "Body Armor", _asset_path("Armor/Playerchar_Armor.ma"),
+          "spine_03", "torso", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
+    Armor("Playerchar_Shield", "Shield", _asset_path("Armor/Playerchar_Shield.ma"),
+          "spine_05", "back", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
+    Armor("Playerchar_Pants", "Pants", _asset_path("Armor/Playerchar_Pants.ma"),
+          "pelvis", "legs", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
 ]
 
 

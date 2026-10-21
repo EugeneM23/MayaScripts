@@ -13599,3 +13599,85 @@ offscreen skinned / given back / re-skinned by the watch), the menu tests; 8201 
 (the known `test_chat_deploy.Keys`). Seen live on port 7003: DWM took the caption, the bar dark (Maya's main
 window wraps as a QWidget - no `menuBar()`; the bar is its QMenuBar child, `workspaceSelectorLayout` is
 its right corner widget).
+
+## Playerchar: the draft character as a rig and a skeleton, its outfit as clothing (2026-10-21)
+
+The animator, with the draft character in a scene tab on port 7002: «риг драфтового персонажа его нужно
+встроить в наш пайплайн и добавить карточку в скелеты и в риг. Так же ему нужно сделать броню шлем щит
+штаны как одежду и поместить карточки в раздел армор. Сам персонаж по умолчанию пусть будет без одежды.»
+Asked, all three the recommendation: four cards, the name Playerchar, the clothes on the same skeleton
+only; the portrait rendered in a disposable GUI Maya. Spec
+`docs/superpowers/specs/2026-10-21-playerchar-and-clothing-design.md`.
+
+**Measured first** (the scene read only; the file on disk, `Downloads/T_Playerchar_proxy/Playerchar_Proxy.mb`,
+is what the tab holds, unmodified):
+- a `MESH` group (`Body` + `Outfit`) skinned onto a stock Manny_Rig added through Add Character; every
+  skin's bind is the rig's game skeleton at its build pose to 4e-14, so the skeleton IS Manny's (the artist's
+  `SKM_Playerchar_Proxy.fbx` beside it has its own 93 joints, Manny's to the millimetre);
+- one colour atlas, `T_Playerchar_proxy_bc.jpg` (2048), every mesh UV'd on it in `DiffuseUV`; the body's own
+  `.tga` is on an `E:` drive that is not here, its region is in the atlas;
+- two meshes HIDDEN in the scene, unskinned and not in the FBX - `chains_Beard` (a chain veil) and `Fabrics`
+  (a cloak): leftovers, left out (trap 288).
+
+**The pipeline** (all re-runnable, `docs/superpowers/plans/`):
+- `make_playerchar_source.py` → `sources/playerchar/Playerchar_Proxy.mb` (13.5 MB): the original copied to
+  temp and opened there (script nodes not run), the game skeleton taken off the rig and re-seated at the bind,
+  the rig, Manny's meshes and the materials (paths of Downloads and `E:`) deleted, plain names; and the atlas;
+- `make_playerchar_assets.py` (one mayapy per step, trap 122):
+  - `rig`: `assets/Manny_Rig.ma` with Manny's meshes, their lod group, `Main.view` and its conditions and
+    Manny's materials out, `SKM_Playerchar|Body` in, bound to the rig's game joints with the source's weights
+    vertex for vertex, the bind pose saved again whole (traps 79/91), one textured material naming
+    `Playerchar/Playerchar_Color.jpg` relatively → `assets/Playerchar_Rig.ma` (6.4 MB);
+  - `skeleton`: that rig without the rig, the Creep skeleton's way (images given their relative paths back
+    after the open, trap 284) → `assets/Playerchar_Skeleton.ma` (4.6 MB);
+  - `armor <key>`: a group `<key>` of skinned meshes at identity, `inheritsTransform` off, and the source's
+    skeleton at the bind; `accessoires` (one mesh, 19 shells) split by shell - the two weighted to `head` are
+    the helmet → `assets/Armor/Playerchar_{Helmet,Armor,Shield,Pants}.ma`;
+- the atlas copied as `assets/Playerchar/Playerchar_Color.jpg`; `make_character_skeletons.py` rerun (the
+  Auto card's templates); the portrait by `make_character_portraits.py` in a disposable GUI Maya (port 7051,
+  scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, killed after); the icons by `make_armor_icons.py`.
+
+**The catalog**: `Character("Playerchar_Rig", "Playerchar [rig]", ...)` after Orc D and
+`Character("Playerchar", "Playerchar [skeleton]", ...)` after the Creep's, model `Playerchar` (grid order
+Manny, Creep, Orc D, Playerchar, UE4 Mannequin, Auto - six cards, five a row at the dock's width, the sixth on
+a second row), both textured; `maya_charfire.FIRES["Playerchar"] = "gold"` (a new palette). After Manny's rows
+on purpose: the Auto card ties to table order, so a Manny clip stays Manny's (the twins' templates differ only
+by Manny's own 0.07 cm calf offset; `test_uebridge_skeletonmatch.own_match` knows twins).
+
+**Clothing - a skinned armor kind**: `catalog.Armor` gained `kind` (`catalog.RIGID`, the Tech Limb's, by
+default; `catalog.SKINNED`). Four rows: Helmet (`head`, slot head), Body Armor (`spine_03`, torso: tunic,
+shoulder and belt chains, shoulder pads, belt with pouches, a bracer, strap), Shield (`spine_05`, back - the
+round shield on the back), Pants (`pelvis`, legs: pants and boots), each `texture` = the atlas. A skinned row's
+`bone` is only what its armor space follows (selection names the character, Delete / Swap / `worn()` find it).
+`armor.equip` → `_equip_clothing`:
+- import into a namespace of its own; `clothing_refusal`: every bone the skins use must be in the wearer's
+  skeleton, and the median bone length at the bind (`maya_retargetmode.rest_world`) within 1 % of the piece's
+  (`fit_refusal`, `bone_lengths`, pure) - a refusal discards the import and changes nothing («Pants is made for
+  another body - Creep_Rig's bones differ from its skeleton by 24 % (median)»);
+- the slot emptied, then `_wear`: every skinCluster's `matrix[i]` reconnected to the wearer's joint of the same
+  leaf (`rewire_plan`, pure) - the bindPreMatrix stays the piece's, and a twin's joints at their bind stand
+  where the piece's did, wherever the character stands - the piece's skeleton and bind pose deleted, the group
+  hung in the bone's armor space and seated, its meshes not inheriting;
+- painted with the row's texture: `colour.textured_material` finds the character's own material (the same
+  image, relinked at Add), so body and clothes share one.
+Unequip, Delete character and Swap needed nothing new. `make_armor_icons.py` paints a textured row in its
+texture's colours and sees clothing as the character is seen (up Y, front - or back for the shield).
+
+Proof: `docs/superpowers/plans/verify_playerchar.py <UE clip> <scratch>` **16/16 mayapy standalone** (against
+the source imported as `chk`): both rows naked, on their bind (4.3e-14), textured with the shipped atlas, the
+body where the source's skin shows it (7.5e-9 cm); the four worn on the rig, each at identity in its bone's
+space, shown, not inheriting, no joint added, every vertex on a source vertex (7.5e-9 cm), one material with
+the body; `LongSword_Attack_Right_Heavy_3P` retargeted through the button (a twin, 0.0136 cm) and under the
+take every clothing vertex where the source's own skin puts it with the source's skeleton on the rig's bones
+(7.6e-6 cm, the hand travelling 229 cm); a clothing mesh names its character; the export 93 joints, 0 meshes;
+refused on the Creep with the scene untouched; worn on a Manny skeleton (0.000 cm off); a second Equip
+replaces; Unequip leaves nothing; Delete character through the pants takes the Manny and its pants. Unit
+tests `test_scenesetup_armor.Clothing` / `ClothingRows`, `test_scenesetup_catalog.Playerchar`; 8313 run, the
+known `test_chat_deploy.Keys` failing. Pictures in the disposable Maya: the rig naked and fully dressed, front
+and back. **Not seen in the animator's Maya** (the Armor tiles, a real Equip press): after Check update.
+
+288. **A mesh hidden in the source scene is not part of what the animator shows.** The parts picture drawn
+     from the file's triangles ignored visibility, so a chain veil over the face and a cloak were described
+     as pieces of the outfit and asked about; the dressed rig's playblast showed no veil - its transform was
+     hidden in the animator's scene (and in no FBX, and unskinned). Read `.visibility` up the hierarchy before
+     describing what a scene holds, and gate the shipped pieces as shown.

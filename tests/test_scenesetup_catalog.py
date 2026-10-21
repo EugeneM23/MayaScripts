@@ -660,6 +660,54 @@ class MannyTextured(unittest.TestCase):
 
 
 
+class Playerchar(unittest.TestCase):
+    """2026-10-21: the draft player character as a rig and a skeleton, naked -- its outfit is four
+    clothing rows of ARMOR (make_playerchar_assets.py). One atlas, the artist's own."""
+
+    def test_both_rows_are_textured_and_ship(self):
+        for key, kind, name in (("Playerchar_Rig", "rig", "Playerchar_Rig.ma"),
+                                ("Playerchar", "skeleton", "Playerchar_Skeleton.ma")):
+            entry = catalog.character_by_key(key)
+            self.assertEqual((entry.kind, entry.file, entry.model), (kind, name, "Playerchar"))
+            self.assertTrue(entry.textured, key)
+            self.assertTrue(os.path.isfile(catalog.character_file(entry)), key)
+
+    def test_after_manny_s_rows(self):
+        """The Auto card ties to table order: a Manny clip stays Manny's."""
+        keys = catalog.character_keys()
+        self.assertLess(keys.index("Manny_Rig"), keys.index("Playerchar_Rig"))
+        self.assertLess(keys.index("Manny"), keys.index("Playerchar"))
+
+    def test_the_atlas_ships(self):
+        self.assertTrue(os.path.isfile(catalog.asset_path("Playerchar/Playerchar_Color.jpg")))
+
+    def test_naked_with_one_relative_image(self):
+        banned = ("createNode script", "vaccine", "C:/", "c:/", "D:/", "E:/", "Downloads",
+                  "skeldarColour", "scratchpad", "Hands_1P", "Skin_1p", "Skin_3p", "Tunic", "Pants",
+                  "Helmet", "Shield")
+        for key in ("Playerchar_Rig", "Playerchar"):
+            path = catalog.character_file(catalog.character_by_key(key))
+            images, meshes = [], []
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    for word in banned:
+                        self.assertNotIn(word, line, key)
+                    if '".skeldarAssetImage"' in line:
+                        images.append(line.split('"')[-2])
+                    if line.startswith("createNode mesh "):
+                        meshes.append(line.split('"')[1])
+            self.assertEqual(images, ["Playerchar/Playerchar_Color.jpg"], key)
+            self.assertEqual(sorted(meshes), ["BodyShape", "BodyShapeOrig"], key)
+
+    def test_the_rig_has_no_view_switch(self):
+        """Manny's 1P/3P `Main.view` went with Manny's meshes: 1P Setup says there is no 1P mesh."""
+        with open(catalog.character_file(catalog.character_by_key("Playerchar_Rig")),
+                  encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+        self.assertNotIn('-ln "view"', text)
+        self.assertNotIn("viewCondition", text)
+
+
 class CreepTextured(unittest.TestCase):
     """2026-09-30: «Вот текстуры для крипа давай сделаем тоже самое что и для мени» -- and the whole
     Creep («Весь Крип»): the animator's body colour + normal and head colour, the head's normal and the
@@ -709,7 +757,7 @@ class Models(unittest.TestCase):
 
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
-                         ["Manny", "Creep", "Orc_D", "UE4_Mannequin", "Auto"])
+                         ["Manny", "Creep", "Orc_D", "Playerchar", "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -731,9 +779,9 @@ class Models(unittest.TestCase):
 
     def test_the_rows_of_a_kind(self):
         self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
-                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig"])
+                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig"])
         self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
-                         ["Manny", "Creep", "UE4_Mannequin"])
+                         ["Manny", "Creep", "Playerchar", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
@@ -743,6 +791,7 @@ class Models(unittest.TestCase):
         want = {("Manny", "rig"): "Manny_Rig", ("Manny", "skeleton"): "Manny",
                 ("Creep", "rig"): "Creep_Rig", ("Creep", "skeleton"): "Creep",
                 ("Orc_D", "rig"): "Orc_D_Rig",
+                ("Playerchar", "rig"): "Playerchar_Rig", ("Playerchar", "skeleton"): "Playerchar",
                 ("UE4_Mannequin", "skeleton"): "UE4_Mannequin"}
         for (model, kind), key in want.items():
             self.assertEqual(catalog.character_for(model, kind).key, key)

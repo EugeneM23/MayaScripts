@@ -89,14 +89,15 @@ class Grid(unittest.TestCase):
         self.assertEqual(len(self.grid.rects()), count)
         self.assertEqual(self.grid.height_for(330), look.grid(330, count)[3])
 
-    def test_the_card_holds_every_model_in_one_row_at_the_docks_width(self):
+    def test_the_card_holds_five_a_row_at_the_docks_width(self):
         """2026-10-08, the compact hub: five a row, and the grid is as tall as
-        its squares - the name lies over them."""
+        its squares - the name lies over them. Six cards since 2026-10-21 (the
+        Playerchar): the sixth on a second row."""
         count = len(catalog.MODELS)
         cols, cell, rects, height = look.grid(330, count)
-        self.assertEqual(cols, count)
-        self.assertEqual(self.grid.height_for(330), cell)
-        self.assertEqual(len({r[1] for r in self.grid.rects()}), 1)
+        self.assertEqual(cols, 5)
+        self.assertEqual(len({r[1] for r in rects}), -(-count // cols))
+        self.assertEqual(self.grid.height_for(330), height)
 
     def render(self):
         image = QT.QtGui.QImage(self.grid.size(), QT.QtGui.QImage.Format_ARGB32)
@@ -237,7 +238,7 @@ class Grid(unittest.TestCase):
 
     def test_a_press_on_a_dimmed_tile_starts_nothing(self):
         E, L, N = QT.QtCore.QEvent, QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
-        start = self.centre(3)
+        start = self.centre([m.key for m in catalog.MODELS].index("UE4_Mannequin"))
         self._mouse(E.MouseButtonPress, start, L, L)
         self._mouse(E.MouseMove, start + QT.QtCore.QPoint(40, 0), N, L)
         self.assertIsNone(self.grid._drag)

@@ -179,17 +179,36 @@ class ShippedTemplates(unittest.TestCase):
                 "%s changed since its bones were read - run "
                 "docs/superpowers/plans/make_character_skeletons.py in mayapy" % entry.file)
 
+    def own_match(self, key, keys):
+        """The row a clip of `key`'s skeleton should match among `keys`: its own, or the first row
+        before it whose skeleton is the same (a twin - the Playerchar stands on Manny's bones, and the
+        Auto card ties to table order, so a Manny clip stays Manny's)."""
+        mine = self.templates[key]
+        for other in keys:
+            theirs = self.templates[other]
+            if other == key or (sorted(theirs) == sorted(mine) and all(
+                    theirs[b][0] == mine[b][0] and max(abs(p - q) for p, q in zip(theirs[b][1], mine[b][1])) < 0.1
+                    for b in mine)):
+                return other
+        return key
+
     def test_each_rig_is_its_own_match_among_the_rigs(self):
         rigs = [e.key for e in self.catalog.CHARACTERS if e.kind == "rig"]
         for key in rigs:
             found = sm.match(clip_of(self.templates[key]), self.templates, rigs)
-            self.assertEqual(found.key, key)
+            self.assertEqual(found.key, self.own_match(key, rigs), key)
 
     def test_each_skeleton_is_its_own_match_among_the_skeletons(self):
         bare = [e.key for e in self.catalog.CHARACTERS if e.kind == "skeleton"]
         for key in bare:
             found = sm.match(clip_of(self.templates[key]), self.templates, bare)
-            self.assertEqual(found.key, key)
+            self.assertEqual(found.key, self.own_match(key, bare), key)
+
+    def test_the_playerchar_is_manny_s_twin_and_a_manny_clip_stays_manny_s(self):
+        rigs = [e.key for e in self.catalog.CHARACTERS if e.kind == "rig"]
+        self.assertEqual(self.own_match("Playerchar_Rig", rigs), "Manny_Rig")
+        found = sm.match(clip_of(self.templates["Manny_Rig"]), self.templates, rigs)
+        self.assertEqual(found.key, "Manny_Rig")
 
     def test_the_orc_is_no_skeleton_of_ours_among_the_skeletons(self):
         """Manny's names, its own proportions: the Skeleton kind has no Orc, so it is not Manny."""

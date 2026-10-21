@@ -120,7 +120,8 @@ class Grid(unittest.TestCase):
         self.assertIn(("select", "Tech_Limb"), self.scene.log)
 
     def test_a_click_off_every_tile_picks_nothing(self):
-        far = QT.QtCore.QPoint(self.grid.width() - 2, self.grid.height() - 2)
+        x, y, w, h = self.grid.rects()[0]                  # the gap after the first tile
+        far = QT.QtCore.QPoint(x + w + 1, y + h // 2)
         self.assertIsNone(self.grid.key_at(far.x(), far.y()))
         self.click(far)
         self.assertEqual(self.scene.log, [])
