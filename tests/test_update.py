@@ -151,6 +151,14 @@ class ConfirmText(unittest.TestCase):
         self.assertIn("C:/repo/SkeldarAnim", text)
         self.assertIn("replaces", text)
 
+    def test_a_source_flag_that_is_not_a_path_still_asks(self):
+        """A hand-written record carried "source": true (live, 2026-10-21)
+        and Check update died on str + bool before asking anything."""
+        text = up.confirm_text(record(A, source=True, dirty=True),
+                               record(D, log=(D,)), "C:/dest")
+        self.assertIn("source folder", text)
+        self.assertIn("replaces", text)
+
     def test_history_not_reaching_the_install_is_said(self):
         text = up.confirm_text(record(A), record(D, log=(D, C)), "C:/dest")
         self.assertIn("not in the published history", text)

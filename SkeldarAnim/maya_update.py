@@ -145,9 +145,10 @@ def confirm_text(installed, latest, dest):
                      "history - the newest changes are shown)")
     source = (installed or {}).get("source")
     if source:
-        lines += ["", "This copy was installed from the source folder",
-                  "  " + source,
-                  "and the update replaces it with the published build."]
+        lines += ["", "This copy was installed from the source folder"]
+        if isinstance(source, str):
+            lines.append("  " + source)
+        lines.append("and the update replaces it with the published build.")
     lines += ["", "The update replaces " + dest.replace("\\", "/"),
               "and rebuilds the SkeldarAnim shelf. Install it now?"]
     return "\n".join(lines)
