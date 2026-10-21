@@ -145,6 +145,7 @@ from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
 from maya_poselib import scene
 from maya_poselib import skelsolve
+from maya_poselib import upper
 
 __all__ = ["Plan", "Result", "plan_for", "apply", "apply_onto", "drop_floor", "apply_objects",
            "select_objects", "mix", "Blend", "summary"]
@@ -679,7 +680,8 @@ def _plan(data, ref, mirror=False, only=None):
     # whose game bones take orientation only (the Creep, the Orc D) cannot show them, and a
     # mirrored card's places are not mirrored (`posemath.mirror` reflects turns, the pelvis)
     transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
-                           scale=scale, places=_places(ref) and not mirror)
+                           scale=scale, places=_places(ref) and not mirror,
+                           anchors=upper.target_anchors(data.get("anchors"), pairs))
     wanted = transfer.frame()
     # the body solvers never see our helper bones: a `helpers.Writer` keys them, or what drives
     # them (a weapon in the hand, the Camera Setup camera)

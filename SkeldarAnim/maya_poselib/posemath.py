@@ -746,12 +746,16 @@ class Transfer(object):
     Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md"""
 
     def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
-                 pelvis="pelvis", places=False):
+                 pelvis="pelvis", places=False, anchors=None):
         """Everything `targets` computes before its loop, once: the alignment (read off `source`
         AS GIVEN - for an animation the FIRST pasted frame's bones), the target root, `rooted`,
         the target pelvis, `drive_bones`, the root offset, the order, each member's paired
         ancestor. `places` (2026-10-20): onto a `twin` - the same body - a member bone takes the
-        card's PLACE on its parent too (`frame`), not only its turn; `placed` names them."""
+        card's PLACE on its parent too (`frame`), not only its turn; `placed` names them.
+        `anchors` (2026-10-21, the Pose Library's 1P upper body): {target leaf: target anchor
+        leaf} - that member takes its turn AND its place relative to the anchor's, not to its
+        paired ancestor (the camera rides the chest in 1P: camera_root on spine_03); the
+        anchored bones and what hangs below them are worked out after the anchor."""
         self.source, self.target, self.pairs = source, target, pairs
         self.members = set(members or ())
         self.use_drive, self.scale = use_drive, scale
@@ -786,6 +790,21 @@ class Transfer(object):
         anchor = self.target_root if self.rooted else None
         self.above = dict((leaf, _paired_ancestor(target, leaf, pairs, source, anchor))
                           for leaf in self.order)
+        self.anchored = {}
+        for leaf, onto in (anchors or {}).items():
+            if leaf in target and onto in target and leaf != onto and pairs.get(onto) in source:
+                self.anchored[leaf] = onto
+                self.above[leaf] = onto
+        if self.anchored:
+            # an anchored bone, and everything below it, after the rest: its anchor's result
+            # must stand first (camera_root hangs off the root, its anchor spine_03 comes later)
+            moved = set()
+            for leaf in self.order:
+                parent = target[leaf].get("parent")
+                if leaf in self.anchored or parent in moved:
+                    moved.add(leaf)
+            self.order = [l for l in self.order if l not in moved] + \
+                [l for l in self.order if l in moved]
         self._offsets = {}
 
     # -------------------------------------------------------- reading the two skeletons
@@ -991,7 +1010,15 @@ class Transfer(object):
             turn = rotation(self._offset(leaf) * rotation(pose(s)) *
                             rotation(partner(above)).inverse() *
                             self._offset(above).inverse() * rotation(above_world))
-            if leaf == self.target_pelvis:
+            if leaf in self.anchored:
+                # its place on the anchor as the card has it on the anchor's partner, carried into
+                # the target anchor's axes (`O⁻¹`, the pelvis rule's factor) and scaled
+                p_above = partner(above)
+                d_local = (position(pose(s)) - position(p_above)) * \
+                    rotation(p_above).inverse()
+                d_t = d_local * rotation(self._offset(above)).inverse() * self.scale
+                point = position(above_world) + d_t * rotation(above_world)
+            elif leaf == self.target_pelvis:
                 d_local = (position(pose(s)) - position(source_pose)) * \
                     rotation(source_pose).inverse()
                 d_t = d_local * rotation(self.root_offset).inverse() * self.scale

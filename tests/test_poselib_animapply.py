@@ -350,7 +350,9 @@ class FakeTransfer(object):
 
     world = None
 
-    def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0):
+    def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
+                 places=False, anchors=None):
+        self.placed = set()
         self.world.log.append(("transfer", index(source), mirrored(source), sorted(members),
                                use_drive))
 

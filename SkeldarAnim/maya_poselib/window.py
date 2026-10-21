@@ -162,6 +162,11 @@ RESET_OPTION = "an option changed"
 RESET_HIDDEN = "the library was hidden"
 ONLY_TIP = ("Only the selected controls or joints take keys, each at its value in the whole "
             "card - the rest of the character stays as it is")
+UPPER_VAR = "skeldarPoseLibraryUpper1P"          # 1P upper body (2026-10-21, `upper`)
+UPPER_TIP = ("1P upper body: only the bones above the chest (spine_03) - the arms, hands, head, "
+             "the camera and the weapon - each placed on the target's chest as the card has it "
+             "on its own. The chest, the spine below it, the pelvis, the legs and Main stay as "
+             "they are: after Tools > 1P Setup the lower body and the stabilized chest are kept")
 OBJECTS_DRAG = "an objects card: select its objects and press Apply"
 OBJECTS_TARGET = "onto the selected objects, else the ones it was saved from"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
@@ -820,29 +825,67 @@ class Scene(object):
         with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
             return press(header, frames, progress)
 
+    def upper_on(self):
+        """Is 1P upper body on (`UPPER_VAR`)?"""
+        try:
+            return bool(int(self.option(UPPER_VAR, 0) or 0))
+        except Exception:                                    # noqa: BLE001 - no optionVar: off
+            return False
+
+    def _read(self, path):
+        """(card, refusal): the card at `path` as a press takes it - cut to its upper body while
+        1P upper body is on (`upper.restrict`; an objects card as it is)."""
+        data = store.read(path)
+        if not self.upper_on():
+            return data, ""
+        from maya_poselib import upper
+        cut, note = upper.restrict(data)
+        if cut is None:
+            return None, note
+        return cut, ""
+
+    def _paste_read(self, press, path, options):
+        """`_paste` of the card `_read` hands (a refusal said, nothing pressed)."""
+        from maya_poselib import timewalk
+        header, refusal = self._read(path)
+        if refusal:
+            return False, refusal
+        frames = self._frames(path, header)
+        steps = press_steps(header, options, _current_time())
+        with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
+            return press(header, frames, progress)
+
     def apply(self, path, mirror, options=None, only=False):
         """The card at `path` onto the selection: a pose (`apply.apply`), or an animation
-        pasted with `options` (`animapply.apply`); `only` - Selected only."""
+        pasted with `options` (`animapply.apply`); `only` - Selected only. 1P upper body cuts
+        the card first (`_read`)."""
         if store.is_anim(path):
             from maya_poselib import animapply
-            return self._paste(lambda header, frames, progress: animapply.apply(
+            return self._paste_read(lambda header, frames, progress: animapply.apply(
                 header, frames, mirror=mirror, options=options, progress=progress,
                 **_only(only)), path, options)
         from maya_poselib import apply
-        return apply.apply(store.read(path), mirror=mirror, **_only(only))
+        data, refusal = self._read(path)
+        if refusal:
+            return False, refusal
+        return apply.apply(data, mirror=mirror, **_only(only))
 
     def apply_onto(self, path, root, mirror, options=None):
         """The card at `path` onto the character of `root` (a drop on it in a viewport)."""
         if store.is_anim(path):
             from maya_poselib import animapply
-            return self._paste(lambda header, frames, progress: animapply.apply_onto(
+            return self._paste_read(lambda header, frames, progress: animapply.apply_onto(
                 header, frames, root, mirror=mirror, options=options, progress=progress),
                 path, options)
         from maya_poselib import apply
-        return apply.apply_onto(store.read(path), root, mirror=mirror)
+        data, refusal = self._read(path)
+        if refusal:
+            return False, refusal
+        return apply.apply_onto(data, root, mirror=mirror)
 
     def drop_floor(self, path, point, mirror, options=None):
-        """The card's source character added at the floor `point`, then the card onto it."""
+        """The card's source character added at the floor `point`, then the card onto it -
+        always the whole card (a character added for it has no other pose to keep)."""
         if store.is_anim(path):
             from maya_poselib import animapply
             return self._paste(lambda header, frames, progress: animapply.drop_floor(
@@ -854,20 +897,25 @@ class Scene(object):
     def select_objects(self, path, options=None):
         """What a press of the card at `path` would key, selected (an animation's: plus Main
         or the root when its travel would be carried - `options`' In place)."""
+        data, refusal = self._read(path)
+        if refusal:
+            return False, refusal
         if store.is_anim(path):
             from maya_poselib import animapply
-            return animapply.select_objects(store.read(path), options=options)
+            return animapply.select_objects(data, options=options)
         from maya_poselib import apply
-        return apply.select_objects(store.read(path))
+        return apply.select_objects(data)
 
     def blend_start(self, path, mirror, options=None, only=False):
         """'' when a blend session stands for the card at `path`, else why not. An animation
         card's session (`animapply.Blend`) previews one frame and pastes the whole range on
         release (`blend_finish`)."""
         self.blend_cancel()
+        header, refusal = self._read(path)
+        if refusal:
+            return refusal
         if store.is_anim(path):
             from maya_poselib import animapply
-            header = store.read(path)
             session = animapply.Blend()
             refusal = session.start(header, self._frames(path, header), mirror=mirror,
                                     options=options, **_only(only))
@@ -875,7 +923,7 @@ class Scene(object):
         else:
             from maya_poselib import apply
             session = apply.Blend()
-            refusal = session.start(store.read(path), mirror=mirror, **_only(only))
+            refusal = session.start(header, mirror=mirror, **_only(only))
             card = None
         if refusal:
             return refusal
@@ -1448,6 +1496,12 @@ def _classes():
             self.only.clicked.connect(
                 lambda checked=False: self._option_changed(ONLY_VAR, int(bool(checked))))
             row.addWidget(self.only)
+            self.upper = QtWidgets.QCheckBox("1P upper body")
+            self.upper.setObjectName("skeldarPoseUpper1P")
+            self.upper.setToolTip(UPPER_TIP)
+            self.upper.clicked.connect(
+                lambda checked=False: self._option_changed(UPPER_VAR, int(bool(checked))))
+            row.addWidget(self.upper)
             row.addStretch(1)
             column.addLayout(row)
 
@@ -1897,6 +1951,10 @@ def _classes():
                 self.only.setChecked(bool(int(self.scene.option(ONLY_VAR, 0) or 0)))
             except (TypeError, ValueError):
                 self.only.setChecked(False)
+            try:
+                self.upper.setChecked(bool(int(self.scene.option(UPPER_VAR, 0) or 0)))
+            except (TypeError, ValueError):
+                self.upper.setChecked(False)
 
         def _lit(self, buttons, default):
             return next((key for key, button in buttons.items() if button.isChecked()),

@@ -163,6 +163,7 @@ from maya_poselib import rigsolve
 from maya_poselib import scene
 from maya_poselib import skelsolve
 from maya_poselib import timewalk
+from maya_poselib import upper
 
 __all__ = ["apply", "apply_onto", "drop_floor", "select_objects", "Blend", "UNDO_CHUNK"]
 
@@ -587,7 +588,7 @@ class _Target(object):
     keyed frame by frame (`key`)."""
 
     def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None,
-                 only=None):
+                 only=None, anchors=None):
         """`first` is the clip's first pasted frame UNMIRRORED (the transfer's alignment),
         `source` the same frame as the press hands it over (mirrored when asked), `members` the
         card's members as the press uses them (mirrored when asked); `travel` - the card would
@@ -619,15 +620,22 @@ class _Target(object):
                                    ap.target_label(ref))
         self.carry, self.root_node, kept = _carry(ref, self.bones, travel)
         self._note(found + [missing, kept])
+        # 1P upper body (`upper`, 2026-10-21): onto a twin the card's bone PLACES come too - a
+        # twin retarget slides the clavicles 10-15 cm, and in front of the 1P camera that is the
+        # hands' place (the pose card's rule, `apply._places`); never mirrored
+        places = bool(anchors is not None and source is first and ap._places(ref))
         self.transfer = pm.Transfer(first, self.bones, self.pairs, members,
-                                    use_drive=self.rig, scale=scale)
+                                    use_drive=self.rig, scale=scale, places=places,
+                                    anchors=upper.target_anchors(anchors, self.pairs))
         self.place = self.transfer.place(self.bones)
-        self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry) \
-            if self.rig else None
-        self.writer = helpers.Writer(ref, self.bones, helper_t)
         # the DRY solve of the first frame, as it will be keyed: which plugs, and the seed
         wanted = self.transfer.frame(source, self.bones, self.place if self.carry else None,
                                      source_root=first_root)
+        self.placed = sorted(p for p in self.transfer.placed if not helpers.is_helper(p))
+        placing = {"placed": self.placed} if self.placed else {}
+        self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry,
+                                      **placing) if self.rig else None
+        self.writer = helpers.Writer(ref, self.bones, helper_t)
         solution = self._solve(self.bones, wanted, None)
         self._take(solution)
         self.dry = OrderedDict(solution.values)
@@ -672,7 +680,8 @@ class _Target(object):
             body = self.solver.solve(wanted, seed)
         else:
             body = skelsolve.solve(self.ref, bones, wanted, self.members, seed=seed,
-                                   root=self.carry)
+                                   root=self.carry,
+                                   **({"placed": self.placed} if self.placed else {}))
         return helpers.merged(body, self.writer.solve(wanted, seed))
 
     def camera(self):
@@ -812,7 +821,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only) for ref in refs]
+                               first_root, only, header.get("anchors")) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)

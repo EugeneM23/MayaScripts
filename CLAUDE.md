@@ -10946,6 +10946,39 @@ takes A's camera's values, `shot:shotCam` its values and focal length by name, t
 camera untouched, one undo each; B alone - the shot camera not searched for, said; the camera alone -
 B untouched; the animation's curves and focal length on all three, one undo); `tests/test_poselib_objects.py`.
 
+## The Pose Library: 1P upper body (2026-10-21)
+
+The animator, a Maya on 7003 with two tabs - an old take, and a new rig after Tools > 1P Setup:
+«перенести анимацию с первой сцены во вторую ... через нашу библиотеку поз ... анимация нижней части
+тела не должна пострадать ... настройку ... только для верхней части тела в режиме засетапленого
+1P», then «должно учитывать камеру и оружие».
+- **What broke** (their card `Dagger/Anim.anim` rebuilt headless onto a Manny_Rig + the same clip +
+  1P Setup): the card held the legs, so Replace all keyed the lower body over `_3P_Lower_Body` (the
+  feet 48 cm off), and it held `spine_03`, which the chest knot drives («1 not posed», 92 deg off).
+- **The option** «1P upper body» (window check box beside Selected only, `window.UPPER_VAR`
+  `skeldarPoseLibraryUpper1P`, off by default), read by `Scene._read` for every press of a
+  character card - Apply, Blend, a drop onto a character, Select objects, the skill bar (a floor
+  drop always takes the whole card). `maya_poselib/upper.py` (pure) `restrict(data)`: members =
+  the card's bones strictly below its chest (`spine_03` by canonical, else leaf): spine_04/05,
+  neck, head, clavicles, arms, fingers, arm twists; the chest, spine below, pelvis, legs, root not
+  members, so no travel and no Main; the weapon bones come with the hands (`members_with`); the
+  camera bones are members with `camera_root` ANCHORED on the chest.
+- **Chest-relative by construction**: a member turns against its nearest paired ancestor, and the
+  chest stays the target's (in 1P the stabilized `Chest_1P_ctrl`, which the camera control and the
+  IK arms follow) - hands, head, camera and weapon stand on the chest as the card's on its chest.
+  `posemath.Transfer(anchors={target leaf: anchor})`: the bone's turn and place on the anchor, its
+  subtree worked out after it. An animation card under the option also carries PLACES onto a twin
+  (`places`, `Solver(placed=)`, as a pose card always did): a twin retarget slides the clavicles
+  10-12 cm, which put the hands that far off in front of the camera.
+- Keys go to the active layer as ever - in 1P with Upper muted that is BaseAnimation, which shows.
+- Proof: `docs/superpowers/plans/verify_poselib_upper_1p.py <clip> <anim card> [pose card]`
+  **10/10 mayapy standalone** on HoleCombo + their `Anim` / `Pose 2`: off, the feet 48.45 cm (the
+  control); on, the pelvis, legs, root, spine_01..03 0.00000 cm / deg, both 1P layers' curves
+  untouched, every upper bone, camera_root / camera_bone and weapon_r (a Long Sword in the hand) on
+  spine_03 as the card's to 0.0001 cm / 0.0007 deg, one undo; the pose card the same.
+  `tests/test_poselib_upper.py`; 8165 unit tests (the known `test_chat_deploy.Keys` aside).
+  **Not seen in the animator's Maya** (it runs the installed build).
+
 ## The Pose Library: a pose lands on the same rig as it was made (2026-10-20)
 
 The animator, two scene tabs in a Maya on port 7003: «Я делаю позу через нашу библиотеку поз в первом
