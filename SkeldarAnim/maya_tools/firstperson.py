@@ -333,6 +333,37 @@ def _layered(controls, rigs):
     return out, ""
 
 
+def _bake_layer(name, moving):
+    """Layer `name`: Tools > Layer over `moving` (inside the press's chunk: Layer neither shows
+    its window nor undoes anything itself), else an empty additive layer of that name."""
+    if not moving:
+        return _empty_layer(name)
+    before = set(cmds.ls(type="animLayer") or [])
+    line = layerbake.bake(moving, highlight=None, name=name, cancellable=False)
+    layer = _new_layer(before)
+    if not layer:
+        raise RuntimeError("%s did not bake: %s" % (name, line))
+    return layer
+
+
+def _join_layer(layer, nodes, channels):
+    """`nodes`' free `channels` added to `layer` (no key written): what is keyed on them while the
+    layer is the active one lands in it."""
+    plugs = []
+    for node in nodes:
+        if not node or not cmds.objExists(node):
+            continue
+        for ch in _free(node, channels):
+            if cmds.getAttr(node + "." + ch, keyable=True):
+                plugs.append(node + "." + ch)
+    for plug in plugs:
+        try:
+            cmds.animLayer(layer, edit=True, attribute=plug)
+        except RuntimeError:
+            pass
+    return len(plugs)
+
+
 def _new_layer(before):
     made = [layer for layer in cmds.ls(type="animLayer") or [] if layer not in before]
     return made[-1] if made else None
@@ -406,29 +437,152 @@ def _camera(bone, chest):
 #  Across knot inside the chest (Tools > Across, its motion kept, Remove / Bake give it back);
 #  our weapon out of the hands and a weapon's Aim Mode controllers are moved under the chest.
 IK_ARMS = ("IKArm_R", "IKArm_L")
+#  their elbow poles too (the same day: «PoleArm контроллеры локтей тоже должны перемещатся в парент
+#  1P»): after the IK controls, so a pole following its arm (followArm) reads it settled
+POLES = ("PoleArm_R", "PoleArm_L")
+ARM_CONTROLS = IK_ARMS + POLES
 
 
-def _arms_into(rig, chest):
-    """The IK arm controls riding Across knots inside `chest`. (knots made, notes)."""
+ARM_MARKER = "skeldar1PArm"          # on the constraint: the chest's UUID
+ARM_REST = "skeldar1PArmRest"        # on the constraint: the Extra group's t / r before it
+
+
+def _unlocked(node):
+    """`node`'s translate / rotate that are not locked (a pole's rotate is)."""
+    return [ch for ch in knots.plan.CHANNELS if not cmds.getAttr(node + "." + ch, lock=True)]
+
+
+def _has_moves(node):
+    """Does a time curve feed any of `node`'s translate / rotate (through layers too)?"""
+    for ch in knots.plan.CHANNELS:
+        if cmds.keyframe(node + "." + ch, query=True, keyframeCount=True):
+            return True
+        for blend in cmds.listConnections(node + "." + ch, source=True, destination=False) or []:
+            if cmds.nodeType(blend).startswith("animBlendNode"):
+                return True
+    return False
+
+
+def arm_constraints(chest=None):
+    """Our 1P arm constraints (long paths) - all, or those on `chest`."""
+    out = []
+    uuid = knots._uuid(chest) if chest else None
+    for con in cmds.ls(type="parentConstraint", long=True) or []:
+        if knots._has(con, ARM_MARKER) and (uuid is None or knots._get(con, ARM_MARKER) == uuid):
+            out.append(con)
+    return out
+
+
+def _arm_parts(con):
+    """(the Extra group the constraint drives, the IK control under it)."""
+    extra = cmds.listRelatives(con, parent=True, fullPath=True)[0]
+    ik = [c for c in cmds.listRelatives(extra, children=True, type="transform", fullPath=True)
+          or [] if not cmds.objectType(c, isAType="constraint")][0]
+    return extra, ik
+
+
+def _arms_into(rig, chest, layer):
+    """The IK arms in the chest, the IK controls left FREE (2026-10-21, the animator: «руки не
+    переключаются в IK после перехода в режим 1P ... в сцене появились какие-то локаторы» - the
+    first build rode them on Across knots, which held their channels): each control's own Extra
+    group (`IKExtraArm_*`, `PoleExtraArm_*` for the poles - AdvancedSkeleton's free offset above it - `IKOffsetArm_*` above that is
+    AS's follow space and is left alone) parent-constrained to the chest, and the control's motion
+    baked back in that space on `layer` (a still control: nothing to bake). Connections' FK / IK
+    switch reads the control's parent on every frame and works as before. (controls, notes)."""
     import maya_rigs
-    pairs, notes = [], []
-    for leaf_name in IK_ARMS:
+    from maya_tools import reparent
+    made, notes = [], []
+    chest_uuid = knots._uuid(chest)
+    for leaf_name in ARM_CONTROLS:
         found = cmds.ls(maya_rigs.node(rig, leaf_name), long=True) or []
         if not found:
             continue
-        _info, refusal = knots._plan_object(found[0], "across")
-        if refusal:
-            notes.append("%s stays (%s)" % (leaf_name, refusal))
+        ik = found[0]
+        extra = cmds.listRelatives(ik, parent=True, fullPath=True)
+        if not extra:
             continue
-        pairs.append((found[0], chest))
-    if not pairs:
-        return [], notes
-    before = set(knots.knots())
-    line = knots.create_across(pairs, highlight=None)
-    made = [k for k in knots.knots() if k not in before]
-    if not made:
-        notes.append("IK arms not in the chest: %s" % line)
+        extra = extra[0]
+        if cmds.listRelatives(extra, children=True, type="constraint"):
+            notes.append("%s stays (its Extra group is constrained)" % leaf_name)
+            continue
+        rest = [cmds.getAttr(extra + "." + ch) for ch in knots.plan.CHANNELS]
+        extra_uuid = knots._uuid(extra)
+
+        def operate(uuids, extra_uuid=extra_uuid, rest=rest):
+            node = knots._by_uuid(extra_uuid)
+            con = knots._constrain(cmds.parentConstraint, knots._by_uuid(chest_uuid), node,
+                                   maintainOffset=True)
+            knots._set_string(con, ARM_MARKER, chest_uuid)
+            knots._set_string(con, ARM_REST, " ".join("%.12g" % v for v in rest))
+
+        if _has_moves(ik):
+            span = reparent._take([ik], [chest])
+            scales = {knots._uuid(ik): ("keep", 1.0, [], {})}
+            ik = reparent._rebake([ik], span, operate, scales, layer,
+                                   channels=_unlocked(ik))[0]
+            _settle_base(ik, layer, span[0])
+        else:
+            operate([])
+        made.append(ik)
     return made, notes
+
+
+_SHORT = {"translateX": "tx", "translateY": "ty", "translateZ": "tz",
+          "rotateX": "rx", "rotateY": "ry", "rotateZ": "rz"}
+
+
+def _settle_base(node, layer, frame):
+    """`node`'s base values set to what it shows at `frame` in its NEW space, `layer`'s curves
+    shifted by the difference (additive: the sum is unchanged) - so with `layer` muted (1P's
+    stabilized default) the control holds the take's first pose on the chest, as the FK arms
+    under it do."""
+    from maya_tools import layered
+    if not layer:
+        return
+    cmds.currentTime(frame)
+    for ch in knots.plan.CHANNELS:
+        plug = node + "." + ch
+        shown = cmds.getAttr(plug)
+        base_plug, base_curve, _w, _l = layered.walk(plug, _SHORT.get(ch, ch), None)
+        _up_plug, up_curve, _w, _l = layered.walk(plug, _SHORT.get(ch, ch), layer)
+        if not base_plug or base_curve or not up_curve or cmds.getAttr(base_plug, lock=True):
+            continue
+        delta = cmds.getAttr(base_plug) - shown
+        if abs(delta) < 1e-9:
+            continue
+        cmds.setAttr(base_plug, shown)
+        cmds.keyframe(up_curve, edit=True, relative=True, valueChange=delta)
+
+
+def release_arms(chest):
+    """The IK arms out of `chest` (its Bake / Remove): each control's motion baked back with its
+    Extra group free again at the values it had. The controls."""
+    from maya_tools import reparent
+    out = []
+    for con in arm_constraints(chest):
+        extra, ik = _arm_parts(con)
+        rest = [float(v) for v in (knots._get(con, ARM_REST) or "").split()]
+        con_uuid, extra_uuid = knots._uuid(con), knots._uuid(extra)
+
+        def operate(uuids, con_uuid=con_uuid, extra_uuid=extra_uuid, rest=rest):
+            cmds.delete(knots._by_uuid(con_uuid))
+            node = knots._by_uuid(extra_uuid)
+            for ch, value in zip(knots.plan.CHANNELS, rest):
+                try:
+                    cmds.setAttr(node + "." + ch, value)
+                except RuntimeError:
+                    pass
+
+        if _has_moves(ik):
+            span = reparent._take([ik], [chest])
+            scales = {knots._uuid(ik): ("keep", 1.0, [], {})}
+            layer, _refusal = reparent._layer_for([ik])
+            out.append(reparent._rebake([ik], span, operate, scales, layer,
+                                   channels=_unlocked(ik))[0])
+        else:
+            operate([])
+            out.append(ik)
+    return out
 
 
 def _rig_weapons(rig):
@@ -662,47 +816,53 @@ def setup(selection=None):
         return "1P Setup: " + refusal
     bone = _camera_bone(rig)
     notes = []
-    with knots._press("skeldar1PSetup"):
-        view = _view_on(rig)
-        from maya_scenesetup import rootcontrol
-        rootcontrol.ensure(rig)            # a rig added before 2026-10-21 has none
-        knots.create("knot", [control], highlight=None)
-        knot = _make_chest(knots._knots_driving(control)[0], control, rig.namespace)
-        before = set(cmds.ls(type="animLayer") or [])
-        #  inside this press's chunk: Layer neither shows its window nor undoes anything itself
-        line = layerbake.bake(lower + [knot], highlight=None, name=LOWER, cancellable=False)
-        lower_layer = _new_layer(before)
-        if not lower_layer:
-            raise RuntimeError("the lower body did not bake: %s" % line)
-        before = set(cmds.ls(type="animLayer") or [])
-        if upper:
-            line = layerbake.bake(upper, highlight=None, name=UPPER, cancellable=False)
-            upper_layer = _new_layer(before)
-            if not upper_layer:
-                raise RuntimeError("the upper body did not bake: %s" % line)
-        else:
-            upper_layer = _empty_layer(UPPER)
-            notes.append("nothing animates the upper body")
-        for ch in ("rotateX", "rotateY", "rotateZ"):
-            move_curve(knot + "." + ch, lower_layer, upper_layer)
-        for layer in (lower_layer, upper_layer):
-            knots._set_string(layer, MARKER, rig.namespace)
-        if bone:
-            words = _camera(bone, knot)
-        else:
-            words = "no %s on this rig - no camera" % CAMERA_BONE
-        arm_knots, arm_notes = _arms_into(rig, knot)
-        notes.extend(arm_notes)
-        if arm_knots:
-            notes.append("%s ride %s" % (" and ".join(leaf(k).replace("_across", "")
-                                                       for k in arm_knots), CHEST_NAME))
-        notes.extend(_weapons_into(rig, knot))
-        knot = knots._by_uuid(knots._uuid(knot)) or knot
-        layers = _display_layers(rig, all_lower, all_upper + [knot, control] + arm_knots
-                                 + ([camera_control(bone)] if bone else []))
-        #  stabilized by default (2026-10-21): the upper body's 3P motion muted, the lower
-        #  body's controls hidden - the animator works the chest and the arms
-        cmds.setAttr(upper_layer + ".mute", 1)
-        notes.append(DEFAULTS_WORDS % (UPPER, layers[0]))
-        cmds.select(knot, replace=True)
+    try:
+        with knots._press("skeldar1PSetup"):
+            view = _view_on(rig)
+            from maya_scenesetup import rootcontrol
+            rootcontrol.ensure(rig)            # a rig added before 2026-10-21 has none
+            knots.create("knot", [control], highlight=None)
+            knot = _make_chest(knots._knots_driving(control)[0], control, rig.namespace)
+            #  a still rig (2026-10-21, the animator: «на пустом риге без ключей много чего не
+            #  работает»): nothing to bake is no refusal - the layers are made all the same and the
+            #  still controls are put in them, so a key set later lands where it belongs
+            knot_moves = bool(_layered([knot], rigs)[0])
+            lower_layer = _bake_layer(LOWER, lower + ([knot] if knot_moves else []))
+            upper_layer = _bake_layer(UPPER, upper)
+            if not upper:
+                notes.append("nothing animates the upper body")
+            if not lower and not knot_moves:
+                notes.append("nothing animates the lower body")
+            for ch in ("rotateX", "rotateY", "rotateZ"):
+                move_curve(knot + "." + ch, lower_layer, upper_layer)
+            _join_layer(lower_layer, [c for c in all_lower if c not in lower], knots.plan.CHANNELS)
+            _join_layer(upper_layer, [c for c in all_upper if c not in upper], knots.plan.CHANNELS)
+            _join_layer(lower_layer, [knot], knots.plan.TRANSLATE)
+            _join_layer(upper_layer, [knot], knots.plan.ROTATE)
+            for layer in (lower_layer, upper_layer):
+                knots._set_string(layer, MARKER, rig.namespace)
+            if bone:
+                words = _camera(bone, knot)
+            else:
+                words = "no %s on this rig - no camera" % CAMERA_BONE
+            arms, arm_notes = _arms_into(rig, knot, upper_layer)
+            notes.extend(arm_notes)
+            if arms:
+                notes.append("%s follow %s" % (" and ".join(leaf(a) for a in arms), CHEST_NAME))
+            notes.extend(_weapons_into(rig, knot))
+            knot = knots._by_uuid(knots._uuid(knot)) or knot
+            layers = _display_layers(rig, all_lower, all_upper + [knot, control]
+                                     + ([camera_control(bone)] if bone else []))
+            #  stabilized by default (2026-10-21): the upper body's 3P motion muted, the lower
+            #  body's controls hidden - the animator works the chest and the arms
+            cmds.setAttr(upper_layer + ".mute", 1)
+            notes.append(DEFAULTS_WORDS % (UPPER, layers[0]))
+            cmds.select(knot, replace=True)
+    except Exception:
+        #  a press that failed half way leaves nothing behind (its one undo chunk)
+        try:
+            cmds.undo()
+        except RuntimeError:
+            pass
+        raise
     return message(name, view, len(lower), len(upper), words, notes)

@@ -1130,6 +1130,7 @@ def _carry_group_out(group, home):
     from maya_scenesetup import weaponaim
     from maya_tools import firstperson
     uuid = _uuid(group)
+    home = weaponaim.home_of(weaponaim.weapon_of_group(group)) or home   # Main, outside 1P
 
     def move():
         node = _by_uuid(uuid)
@@ -1178,8 +1179,22 @@ def _move_out(child, home):
 
 
 def _delete_knot(top):
+    _release_arms(top)
     _release_children(top)
     cmds.delete(top)
+
+
+def _release_arms(top):
+    """1P Setup's IK arms following this knot (the chest) let go with their motion kept - the
+    constraint would otherwise die with its target and leave the arms' keys in a space that no
+    longer moves (trap 157)."""
+    try:
+        from maya_tools import firstperson
+        if firstperson.arm_constraints(top):
+            firstperson.release_arms(top)
+    except Exception:                       # never stop a Bake / Remove over a passenger
+        import traceback
+        traceback.print_exc()
 
 
 def bake(selection=None):

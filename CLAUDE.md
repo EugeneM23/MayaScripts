@@ -13218,8 +13218,20 @@ character group" in the 1P Setup and Camera Setup sections above.**
   to its object colour first (`keep_colour`).
 - **The IK arms and the weapon in the chest** (the same day: «в режиме 1P IK руки и оружие
   находились в паренте нашего Chest контрола. Это правило работает и для aim системы оружия»):
-  `IKArm_R` / `IKArm_L` each ride a Tools > Across knot inside `Chest_1P_ctrl` (AS controls are
-  never re-parented); our weapon OUT of the hands (Connections' World: not in a weapon space, not
+  each IK control's own `IKExtraArm_*` group, and each elbow pole's `PoleExtraArm_*` (the same
+  day: «PoleArm контроллеры локтей тоже»; its rotate is locked, so `reparent._rebake` takes a
+  `channels` list now) (free; `IKOffsetArm_*` above it is AS's follow
+  space, driven) is parent-constrained to `Chest_1P_ctrl` (`ARM_MARKER`, its rest values on
+  `ARM_REST`), the control's motion re-baked in that space on `_3P_Upper_Body`
+  (`reparent._rebake`), and its base set to the take's first pose there (`_settle_base`) so Upper
+  muted holds it on the chest as the FK arms are. The IK controls stay FREE: Connections' FK / IK
+  switch works in 1P (it reads the control's parent each frame). The first build rode them on
+  Across knots - locators that held their channels and blocked the switch (the animator: «руки не
+  переключаются в IK после перехода в режим 1P ... появились какие-то локаторы»). Bake / Remove
+  of the chest lets them go first (`knots._release_arms` → `firstperson.release_arms`, motion
+  kept, the Extra group back at its values). A still rig (no keys) is set up too: nothing to bake
+  makes empty layers with the still controls added (`_bake_layer`, `_join_layer`), and a press
+  failing half way undoes itself (proof `verify_1p_empty.py [rig]` 28/28). Our weapon OUT of the hands (Connections' World: not in a weapon space, not
   parked on the floor) is moved under the chest, and every Aim Mode group of the rig's weapons
   too (`firstperson.carry_into`: a translate / rotate rebake on every frame of the take that skips
   locked or driven channels - the aim controllers' rotate is locked, an aimed weapon's driven). A
@@ -13228,7 +13240,7 @@ character group" in the 1P Setup and Camera Setup sections above.**
   aim groups are found from the group, its weapon or the hand holding it (`_rig_aims`). Default
   then reads the controllers' re-baked keys (every frame). Bake / Remove of the chest takes the Across knots
   standing inside it (`knots._with_riders`), and an aim group comes out with its controllers'
-  motion (`knots._carry_group_out`). Proof `verify_1p_hands_weapon.py <clip> [rig]` **20/20** on
+  motion (`knots._carry_group_out`). Proof `verify_1p_hands_weapon.py <clip> [rig]` **30/30** (FK and back to IK in 1P included) on
   Manny, Creep, Orc D (the take kept 0.0000 cm with both layers on; Upper muted, hand_r, a
   world dagger and the aim controllers keep their place on spine_03 to 0.0003; one undo; the
   chest baked off, everything where it was).

@@ -187,11 +187,14 @@ def _take(nodes, parents):
     return plan.span_for(take, keys, None)
 
 
-def _rebake(nodes, span, operate, scales, layer=None):
+def _rebake(nodes, span, operate, scales, layer=None, channels=None):
     """Keep `nodes`' world motion across `operate(uuids)` (the DAG move) - their world scale
     too (`scales`, `_scale_plans`); the nodes after. A node on animation layers (2026-10-15)
     is not baked (`bakeResults` would land in the layers' blend node): what it shows in its new
-    space is read on every frame and keyed on `layer` as final values, the other layers kept."""
+    space is read on every frame and keyed on `layer` as final values, the other layers kept.
+    `channels` (default all six) narrows what is written - a pole's rotate is locked (1P Setup);
+    the follow constraint then skips the rest."""
+    channels = list(channels or plan.CHANNELS)
     uuids = [knots._uuid(n) for n in nodes]
     locators, temps = [], []
     for node in nodes:
@@ -207,25 +210,28 @@ def _rebake(nodes, span, operate, scales, layer=None):
     nodes = [knots._by_uuid(u) for u in uuids]
     for uuid, node in zip(uuids, nodes):          # before the bake: a child's space reads it
         _carry_scale(node, scales[uuid], span)
-    cons = [knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False)
+    st = [c[-1] for c in plan.TRANSLATE if c not in channels] or "none"
+    sr = [c[-1] for c in plan.ROTATE if c not in channels] or "none"
+    cons = [knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False,
+                             skipTranslate=st, skipRotate=sr)
             for loc, node in zip(locators, nodes)]
     from maya_tools import layered
     stacked = [n for n in nodes if layered.is_layered(n)]
     plain = [n for n in nodes if n not in stacked]
     first, last = int(round(span[0])), int(round(span[1]))
-    shown = layered.read(stacked, plan.CHANNELS, range(first, last + 1)) if stacked else {}
+    shown = layered.read(stacked, channels, range(first, last + 1)) if stacked else {}
     if plain:
-        maya_timewarp.call(cmds.bakeResults, plain, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+        maya_timewarp.call(cmds.bakeResults, plain, attribute=list(channels), time=(span[0], span[1]),
                          simulation=True, sampleBy=1, preserveOutsideKeys=True,
                          disableImplicitControl=True)
     cmds.delete([c for c in cons if cmds.objExists(c)])
     for node in stacked:          # a layered node: its new local motion keyed on `layer`
-        layered.key_shown(node, plan.CHANNELS, first, last, shown[node], layer)
+        layered.key_shown(node, channels, first, last, shown[node], layer)
     plain_ids = set(knots._uuid(n) for n in plain)
     nodes = [knots._by_uuid(u) for u in uuids]
     for node in nodes:
         if knots._uuid(node) in plain_ids:
-            knots._continuous(node, plan.CHANNELS, span[0], span[1])
+            knots._continuous(node, channels, span[0], span[1])
     cmds.delete([loc for loc in locators if cmds.objExists(loc)])
     return nodes
 

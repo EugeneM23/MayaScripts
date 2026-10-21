@@ -83,7 +83,7 @@ def worst(a, b, keys=None):
     for f in a:
         for k in (keys or a[f]):
             d, g = apart(a[f][k], b[f][k])
-            if k in ("target", "up"):
+            if k in ("target", "up", "pole_r", "pole_l"):
                 g = 0.0
             by[k] = max(by.get(k, (0, 0))[0], d), max(by.get(k, (0, 0))[1], g)
             cm, deg = max(cm, d), max(deg, g)
@@ -151,7 +151,7 @@ for f in range(first, last + 1, 4):
 gate(not weaponspace.holding_hand(DAGGER), "the dagger out of the hand, its bone following it")
 
 aim = weaponaim.controllers(weaponaim.group_of(SWORD))
-G = {"hand_r": lambda: N("hand_r"), "hand_l": lambda: N("hand_l"),
+G = {"hand_r": lambda: N("hand_r"), "pole_r": lambda: N("PoleArm_R"), "pole_l": lambda: N("PoleArm_L"), "elbow_r": lambda: N("lowerarm_r"), "elbow_l": lambda: N("lowerarm_l"), "hand_l": lambda: N("hand_l"),
      "weapon_r": lambda: N("weapon_r"), "weapon_l": lambda: N("weapon_l"),
      "sword": lambda: bonedrive.driving_weapon(N("weapon_r")),
      "dagger": lambda: cmds.ls(dag_uuid, long=True)[0],
@@ -164,6 +164,7 @@ frames = list(range(first, last + 1, 3))
 raw = track(G, frames)
 
 cmds.currentTime(first + 4)
+LOCS = set(cmds.ls(type="locator", long=True))
 cmds.select(N("FKElbow_R"))
 line = fp.setup()
 print("   ", line)
@@ -179,11 +180,14 @@ chest = fp.chest_of(rig)
 gate(bool(chest) and parent_of(G["dagger"]()) == chest, "redo: back in the chest")
 chest = fp.chest_of(rig)
 gate(bool(chest), "1P Setup made the chest")
-riders = [k for k in knots.knots() if knots._has(k, knots.plan.SOURCE_MARKER)
-          and parent_of(k) == chest]
-sources = sorted(cmds.ls(knots._by_uuid(knots._get(k, knots.plan.SOURCE_MARKER)) or k)[0]
-                 .split(":")[-1] for k in riders)
-gate(sources == ["IKArm_L", "IKArm_R"], "the IK arms ride knots inside the chest: %s" % sources)
+cons = fp.arm_constraints(chest)
+held = sorted(fp._arm_parts(c)[1].split(":")[-1] for c in cons)
+gate(held == ["IKArm_L", "IKArm_R", "PoleArm_L", "PoleArm_R"],
+     "the IK arms' and the poles' Extra groups follow the chest: %s" % held)
+gate(not [c for c in cons if not fp._arm_parts(c)[0].split(":")[-1].startswith(("IKExtraArm", "PoleExtraArm"))],
+     "the constraints sit on the Extra groups, the controls themselves are free")
+gate(not (set(cmds.ls(type="locator", long=True)) - LOCS),
+     "no locator left in the scene: %s" % sorted(set(cmds.ls(type="locator", long=True)) - LOCS))
 gate(parent_of(G["dagger"]()) == chest, "the dagger is a child of the chest")
 gate(parent_of(weaponaim.group_of(G["sword"]())) == chest, "the sword's aim group in the chest")
 gate(weaponspace.holding_hand(G["sword"]()) is not None, "the sword still in its hand")
@@ -208,7 +212,15 @@ def rel(t, a):
 
 cmds.setAttr(upper + ".mute", 1)
 muted = track(G, frames)
-for name in ("hand_r", "dagger", "target", "up"):
+f0 = frames[0]
+first_rel = rel(dict((f, raw[f0]) for f in frames), "hand_r")
+cm, deg = worst(first_rel, rel(muted, "hand_r"))
+gate(cm < 0.6 and deg < 0.6, "Upper muted: hand_r holds the take's first pose on the chest "
+     "(%.4f cm, %.4f deg)" % (cm, deg))
+for name in ("pole_r", "pole_l"):
+    cm, deg = worst(rel(dict((f, raw[f0]) for f in frames), name), rel(muted, name))
+    gate(cm < 0.6, "Upper muted: %s holds the take's first place on the chest (%.4f cm)" % (name, cm))
+for name in ("dagger", "target", "up"):
     cm, deg = worst(rel(raw, name), rel(muted, name))
     gate(cm < 0.6 and deg < 0.6, "Upper muted: %s keeps its place on the chest (%.4f cm, %.4f deg)"
          % (name, cm, deg))
@@ -219,6 +231,21 @@ cmds.setAttr(upper + ".mute", 0)
 
 for l in fp.setup_layers(rig.namespace):
     cmds.setAttr(l + ".mute", 0)
+
+#  the bug (2026-10-21): «руки не переключаются в IK после перехода в режим 1P»
+before_sw = track(G, frames)
+t1 = cx.switch_arm("R", fkik.FK, rig=rig, highlight=False)
+print("   ", t1)
+t2 = cx.switch_arm("R", fkik.IK, rig=rig, highlight=False)
+print("   ", t2)
+gate(fkik.state(rig, "R") == fkik.IK and "to IK" in t2 and "to FK" in t1,
+     "in 1P the right arm switches to FK and back to IK")
+cm, deg = worst(before_sw, track(G, frames), ["hand_r", "weapon_r"])
+gate(cm < 0.1 and deg < 0.2, "the hand kept through FK and back (%.4f cm, %.4f deg)" % (cm, deg))
+t3 = cx.switch_arm("L", fkik.IK, rig=rig, highlight=False)
+print("   ", t3)
+gate(fkik.state(rig, "L") == fkik.IK, "the left arm switches to IK in 1P")
+raw = track(G, frames)
 
 #  the other order: Aim Mode entered on a rig already in 1P («мы можем сперва создать эйм а потом
 #  нажать на 1p setup» - and the other way round)
@@ -242,9 +269,11 @@ for name in ("target", "up"):
 cmds.setAttr(upper_l + ".mute", 0)
 raw = again
 print("   ", knots.bake([chest]))
-gate(not fp.chest_of(rig) and not knots.knots() and parent_of(G["dagger"]()) != chest
+gate(not fp.chest_of(rig) and not knots.knots() and not fp.arm_constraints() and parent_of(G["dagger"]()) != chest
      and cmds.objExists(weaponaim.group_of(G["sword"]())),
      "the chest baked off, the IK arms' knots in it with it")
+gate(parent_of(weaponaim.group_of(G["sword"]())) == weaponaim.home_of(G["sword"]())
+     == N("Main"), "the aim group back under Main")
 cm, deg = worst(raw, track(G, frames), ["dagger", "target", "up", "weapon_l", "hand_r"])
 gate(cm < 0.05 and deg < 0.1, "after the Bake: dagger, aim, hand_r as before (%.4f cm, %.4f deg)"
      % (cm, deg))
