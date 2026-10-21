@@ -373,10 +373,21 @@ def enter(weapon):
                                      worldUpObject=made["up"])[0]
             cmds.addAttr(con, longName=CON_MARKER, dataType="string")
             cmds.setAttr(con + "." + CON_MARKER, weapon_uuid, type="string")
+            #  a rig in 1P (Tools > 1P Setup, 2026-10-21): the controllers ride its chest
+            in_1p = _into_1p(_long(weapon_uuid))
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
-    return entered_message(label, keys)
+    line = entered_message(label, keys)
+    return line + (" | " + in_1p if in_1p else "")
+
+
+def _into_1p(weapon):
+    try:
+        from maya_tools import firstperson
+    except ImportError:
+        return ""
+    return firstperson.aim_into_chest(weapon)
 
 
 def leave(weapon):

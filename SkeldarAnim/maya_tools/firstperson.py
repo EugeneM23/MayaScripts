@@ -400,6 +400,200 @@ def _camera(bone, chest):
         leaf(control), CHEST_NAME, CAMERA_BONE)
 
 
+#  In 1P the hands and the weapon ride the chest (2026-10-21, the animator: «в режиме 1P IK руки
+#  и оружие находились в паренте нашего Chest контрола. Это правило работает и для aim системы
+#  оружия»). The IK arm controls are AdvancedSkeleton's and stay where they are: each rides an
+#  Across knot inside the chest (Tools > Across, its motion kept, Remove / Bake give it back);
+#  our weapon out of the hands and a weapon's Aim Mode controllers are moved under the chest.
+IK_ARMS = ("IKArm_R", "IKArm_L")
+
+
+def _arms_into(rig, chest):
+    """The IK arm controls riding Across knots inside `chest`. (knots made, notes)."""
+    import maya_rigs
+    pairs, notes = [], []
+    for leaf_name in IK_ARMS:
+        found = cmds.ls(maya_rigs.node(rig, leaf_name), long=True) or []
+        if not found:
+            continue
+        _info, refusal = knots._plan_object(found[0], "across")
+        if refusal:
+            notes.append("%s stays (%s)" % (leaf_name, refusal))
+            continue
+        pairs.append((found[0], chest))
+    if not pairs:
+        return [], notes
+    before = set(knots.knots())
+    line = knots.create_across(pairs, highlight=None)
+    made = [k for k in knots.knots() if k not in before]
+    if not made:
+        notes.append("IK arms not in the chest: %s" % line)
+    return made, notes
+
+
+def _rig_weapons(rig):
+    """Our weapons of this rig: marked nodes the rig answers for."""
+    import maya_rigs
+    from maya_scenesetup import bonedrive
+    try:
+        marked = cmds.ls("*." + bonedrive.MARKER, recursive=True, objectsOnly=True, long=True,
+                         type="transform") or []
+    except Exception:                                            # noqa: BLE001
+        return []
+    rigs = maya_rigs.rigs()
+    out = []
+    for weapon in dict.fromkeys(marked):
+        owner = maya_rigs.rig_of(weapon, rigs)
+        if owner is None:
+            from maya_scenesetup import weaponspace
+            hand = weaponspace.holding_hand(weapon)
+            owner = maya_rigs.rig_of(hand, rigs) if hand else None
+        if owner is not None and owner.namespace == rig.namespace:
+            out.append(weapon)
+    return out
+
+
+def _free(node, channels):
+    """The channels of `node` a bake may write: not locked, not driven but by curves."""
+    out = []
+    for ch in channels:
+        plug = node + "." + ch
+        if cmds.getAttr(plug, lock=True):
+            continue
+        src = cmds.listConnections(plug, source=True, destination=False, skipConversionNodes=True)
+        if src and not all(cmds.objectType(s, isAType="animCurve") or
+                           cmds.nodeType(s).startswith("animBlendNode") for s in src):
+            continue
+        out.append(ch)
+    return out
+
+
+def carry_into(nodes, parent, move):
+    """`nodes` keep their world motion across `move()` (a DAG move putting them, or their group,
+    under `parent`): each one's free translate / rotate baked back in its new space on every frame
+    of the take - Tools > Inside's road for a node whose rotate may be locked (an aim controller)
+    or driven (a weapon an aim turns). The nodes after (by UUID)."""
+    from maya_tools import reparent
+    span = reparent._take(nodes, [parent])
+    uuids = [knots._uuid(n) for n in nodes]
+    locs, temps = [], []
+    for node in nodes:
+        loc = cmds.spaceLocator(name="skeldar1PCarry_" + leaf(node))[0]
+        loc = knots._by_uuid(knots._uuid(loc))
+        cmds.setAttr(loc + ".rotateOrder", cmds.getAttr(node + ".rotateOrder"))
+        temps.append(knots._constrain(cmds.parentConstraint, node, loc, maintainOffset=False))
+        locs.append(loc)
+    maya_timewarp.call(cmds.bakeResults, locs, attribute=list(knots.plan.CHANNELS),
+                       time=(span[0], span[1]), simulation=True, sampleBy=1,
+                       disableImplicitControl=True)
+    cmds.delete([t for t in temps if cmds.objExists(t)])
+    move()
+    nodes = [knots._by_uuid(u) for u in uuids]
+    cons = []
+    for loc, node in zip(locs, nodes):
+        free = _free(node, knots.plan.CHANNELS)
+        st = [c[-1].lower() for c in knots.plan.TRANSLATE if c not in free] or "none"
+        sr = [c[-1].lower() for c in knots.plan.ROTATE if c not in free] or "none"
+        if len(st) == 3 and len(sr) == 3:
+            continue
+        cons.append(knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False,
+                                     skipTranslate=st, skipRotate=sr))
+        maya_timewarp.call(cmds.bakeResults, node, attribute=free, time=(span[0], span[1]),
+                           simulation=True, sampleBy=1, disableImplicitControl=True)
+    cmds.delete([c for c in cons if cmds.objExists(c)])
+    for node in nodes:
+        knots._filter_euler(node, _free(node, knots.plan.ROTATE))
+    cmds.delete([l for l in locs if cmds.objExists(l)])
+    return [knots._by_uuid(u) for u in uuids]
+
+
+def _weapons_into(rig, chest):
+    """Our weapons of the rig out of the hands, and every Aim Mode's controllers, moved under
+    `chest` with their motion kept. The words."""
+    from maya_scenesetup import bonedrive, weaponspace
+    words = []
+    chest_uuid = knots._uuid(chest)
+    for weapon in _rig_weapons(rig):
+        #  in a hand it rides the IK hand; on the floor it stays on the floor
+        if not weaponspace.holding_hand(weapon) and not bonedrive.is_parked(weapon):
+            uuid = knots._uuid(weapon)
+
+            def move(uuid=uuid):
+                cmds.parent(knots._by_uuid(uuid), knots._by_uuid(chest_uuid))
+            carry_into([weapon], chest, move)
+            words.append("%s in the chest" % leaf(weapon))
+    for group in _rig_aims(rig):
+        if aim_group_into(group, chest):
+            words.append("%s in the chest" % leaf(group))
+    return words
+
+
+def _aim_groups():
+    try:
+        from maya_scenesetup import weaponaim
+    except ImportError:
+        return []
+    return weaponaim.groups()
+
+
+def _rig_aims(rig):
+    """Every Aim Mode group of this rig's weapons: found from the group itself (its character
+    group), from its weapon, or from the hand holding the weapon."""
+    import maya_rigs
+    from maya_scenesetup import weaponaim, weaponspace
+    rigs = maya_rigs.rigs()
+    out = []
+    for group in _aim_groups():
+        weapon = weaponaim.weapon_of_group(group)
+        candidates = [group, weapon]
+        if weapon:
+            candidates.append(weaponspace.holding_hand(weapon))
+        for node in candidates:
+            owner = maya_rigs.rig_of(node, rigs) if node else None
+            if owner is not None:
+                if owner.namespace == rig.namespace:
+                    out.append(group)
+                break
+    return out
+
+
+def aim_group_into(group, chest):
+    """A weapon's Aim Mode group under `chest`, its controllers' world motion kept. False when it
+    stands there already."""
+    from maya_scenesetup import weaponaim
+    parents = cmds.listRelatives(group, parent=True, fullPath=True) or []
+    if parents and parents[0] == chest:
+        return False
+    ctrls = list(weaponaim.controllers(group).values())
+    group_uuid, chest_uuid = knots._uuid(group), knots._uuid(chest)
+
+    def move():
+        cmds.parent(knots._by_uuid(group_uuid), knots._by_uuid(chest_uuid))
+    carry_into(ctrls, chest, move)
+    return True
+
+
+def aim_into_chest(weapon):
+    """Aim Mode entered on a rig already in 1P (2026-10-21, the animator: «мы можем сперва
+    создать эйм а потом нажать на 1p setup» - and the other way round): its group into the rig's
+    chest. The words, "" when the rig is not in 1P."""
+    import maya_rigs
+    from maya_scenesetup import weaponaim, weaponspace
+    group = weaponaim.group_of(weapon)
+    if not group:
+        return ""
+    rigs = maya_rigs.rigs()
+    owner = None
+    for node in (group, weapon, weaponspace.holding_hand(weapon)):
+        owner = maya_rigs.rig_of(node, rigs) if node else None
+        if owner is not None:
+            break
+    chest = chest_of(owner) if owner is not None else None
+    if not chest or not aim_group_into(group, chest):
+        return ""
+    return "the aim in %s (1P)" % CHEST_NAME
+
+
 def _selected_bone(selection=None):
     """(camera_root of the character the selection names, refusal): a rig's, else a bare
     skeleton's."""
@@ -497,7 +691,14 @@ def setup(selection=None):
             words = _camera(bone, knot)
         else:
             words = "no %s on this rig - no camera" % CAMERA_BONE
-        layers = _display_layers(rig, all_lower, all_upper + [knot, control]
+        arm_knots, arm_notes = _arms_into(rig, knot)
+        notes.extend(arm_notes)
+        if arm_knots:
+            notes.append("%s ride %s" % (" and ".join(leaf(k).replace("_across", "")
+                                                       for k in arm_knots), CHEST_NAME))
+        notes.extend(_weapons_into(rig, knot))
+        knot = knots._by_uuid(knots._uuid(knot)) or knot
+        layers = _display_layers(rig, all_lower, all_upper + [knot, control] + arm_knots
                                  + ([camera_control(bone)] if bone else []))
         #  stabilized by default (2026-10-21): the upper body's 3P motion muted, the lower
         #  body's controls hidden - the animator works the chest and the arms

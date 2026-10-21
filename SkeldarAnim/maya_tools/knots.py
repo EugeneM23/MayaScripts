@@ -1079,7 +1079,10 @@ def _with_riders(tops):
         grown = False
         ids = set(_uuid(t) for t in out)
         for found in knots():
-            if found not in out and _get(found, plan.SOURCE_MARKER) in ids:
+            #  riding: on a knot, or an Across knot standing INSIDE one (1P Setup's IK arms in
+            #  its chest, 2026-10-21) - the chest gone, they would be left driving from nowhere
+            if found not in out and (_get(found, plan.SOURCE_MARKER) in ids
+                                     or any(found.startswith(t + "|") for t in out)):
                 out.append(found)
                 grown = True
     return out
@@ -1097,6 +1100,12 @@ def _release_children(top):
         for child in _children(node):
             if cmds.objectType(child, isAType="constraint") or _has(child, plan.INNER_MARKER):
                 continue
+            if _aim_group(child):           # a weapon's Aim Mode: its controllers keep moving
+                try:
+                    _carry_group_out(child, home)
+                    continue
+                except Exception:           # never stop a Bake / Remove over a passenger
+                    pass
             if _camera_control(child):      # the camera's control goes back under Main
                 try:
                     from maya_scenesetup import camera
@@ -1105,6 +1114,30 @@ def _release_children(top):
                 except Exception:           # never stop a Bake / Remove over a passenger
                     pass
             _move_out(child, home)
+
+
+def _aim_group(node):
+    try:
+        from maya_scenesetup import weaponaim
+    except ImportError:
+        return False
+    return _has(node, weaponaim.MARKER)
+
+
+def _carry_group_out(group, home):
+    """A weapon's aim group out of a knot (1P Setup's chest, 2026-10-21): the group under `home`
+    (None: world level), its controllers' world motion kept."""
+    from maya_scenesetup import weaponaim
+    from maya_tools import firstperson
+    uuid = _uuid(group)
+
+    def move():
+        node = _by_uuid(uuid)
+        if home:
+            cmds.parent(node, home)
+        else:
+            cmds.parent(node, world=True)
+    firstperson.carry_into(list(weaponaim.controllers(group).values()), home, move)
 
 
 def _camera_control(node):

@@ -170,6 +170,17 @@ class DisplayLayers(unittest.TestCase):
                          "stabilized: _3P_Upper_Body muted, M_1P_Lower_Controls hidden")
 
 
+class HandsInTheChest(unittest.TestCase):
+    """«в режиме 1P IK руки и оружие находились в паренте нашего Chest контрола» (2026-10-21)."""
+
+    def test_the_ik_arm_controls(self):
+        self.assertEqual(fp.IK_ARMS, ("IKArm_R", "IKArm_L"))
+
+    def test_the_ik_arms_are_upper_body(self):
+        lower, upper = fp.split(["a:" + n for n in fp.IK_ARMS])
+        self.assertEqual(lower, [])
+
+
 class RootControl(unittest.TestCase):
 
     def test_names(self):

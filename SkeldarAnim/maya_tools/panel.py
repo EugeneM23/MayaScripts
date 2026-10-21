@@ -194,8 +194,8 @@ TIPS = {
     "fp_setup": "1P Setup - select any part of a rig: its geometry to 1P, the chest control "
                 "Chest_1P_ctrl (a red square) on FKSpine3_M, the lower body and the chest's "
                 "travel onto layer _3P_Lower_Body, the upper body and the chest's turn onto "
-                "_3P_Upper_Body (the base keeps the first frame), and the camera's control "
-                "under the chest. Lower alone: the legs with a stable top; both: the 3P take as "
+                "_3P_Upper_Body (the base keeps the first frame); the camera's control, the IK "
+                "arms, a weapon out of the hands and Aim Mode's controllers ride the chest. Lower alone: the legs with a stable top; both: the 3P take as "
                 "it was",
     "camparent": "The selected character's camera control (Camera_ctrl) under %s - its "
                  "motion kept on every frame",

@@ -139,14 +139,14 @@ gate(not fp.setup_layers(rig.namespace) and not knots.knots()
      "one undo: no layer, no knot, Main.view 0")
 cmds.redo()
 lower, upper = lower[0], upper[0]
-gate(cmds.objExists(lower) and cmds.objExists(upper) and len(knots.knots()) == 1,
+gate(cmds.objExists(lower) and cmds.objExists(upper) and fp.chest_of(rig) is not None,
      "redo brings layers and knot back")
 if HAS_VIEW:
     gate(cmds.getAttr(N("Main") + ".view") == 1, "Main.view 1 (1P mesh)")
 else:
     gate("no 1P mesh" in line, "no Main.view: said on the line")
 
-knot = knots.knots()[0]
+knot = fp.chest_of(rig)
 shapes = cmds.listRelatives(knot, shapes=True, fullPath=True) or []
 gate(len(shapes) == 1 and cmds.nodeType(shapes[0]) == "nurbsCurve"
      and cmds.getAttr(shapes[0] + ".wireColorRGB")[0][0] > 0.8
@@ -276,9 +276,9 @@ if HAS_CAM:
     cm, deg = worst(before, track(bones + [bone], frames))
     gate(cm < 0.02 and deg < 0.05, "after the merge: body and camera_root as before (%.4f cm, "
          "%.4f deg)" % (cm, deg))
-    bline = knots.bake([knots.knots()[0]])
+    bline = knots.bake([fp.chest_of(rig)])
     cmds.undo()               # straight after the press (trap 222)
-    back = len(knots.knots()) == 1
+    back = fp.chest_of(rig) is not None
     cmds.redo()
     gate(back and not knots.knots(), "one undo brings the knot back, redo bakes it again")
     cam2 = camera.control_for(bone)

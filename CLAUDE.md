@@ -13194,6 +13194,22 @@ character group" in the 1P Setup and Camera Setup sections above.**
   controls' SHAPES: AS nests its FK spine (FKSpine3/4 under FKSpine1/2, all under FKRoot_M), so a
   hidden lower transform would hide upper controls. Trap 286 below: each shape's colour is moved
   to its object colour first (`keep_colour`).
+- **The IK arms and the weapon in the chest** (the same day: «в режиме 1P IK руки и оружие
+  находились в паренте нашего Chest контрола. Это правило работает и для aim системы оружия»):
+  `IKArm_R` / `IKArm_L` each ride a Tools > Across knot inside `Chest_1P_ctrl` (AS controls are
+  never re-parented); our weapon OUT of the hands (Connections' World: not in a weapon space, not
+  parked on the floor) is moved under the chest, and every Aim Mode group of the rig's weapons
+  too (`firstperson.carry_into`: a translate / rotate rebake on every frame of the take that skips
+  locked or driven channels - the aim controllers' rotate is locked, an aimed weapon's driven). A
+  weapon in a hand rides the IK hand already. Either order: Aim Mode entered on a rig already in
+  1P puts its group in the chest (`weaponaim.enter` → `firstperson.aim_into_chest`); the rig's
+  aim groups are found from the group, its weapon or the hand holding it (`_rig_aims`). Default
+  then reads the controllers' re-baked keys (every frame). Bake / Remove of the chest takes the Across knots
+  standing inside it (`knots._with_riders`), and an aim group comes out with its controllers'
+  motion (`knots._carry_group_out`). Proof `verify_1p_hands_weapon.py <clip> [rig]` **20/20** on
+  Manny, Creep, Orc D (the take kept 0.0000 cm with both layers on; Upper muted, hand_r, a
+  world dagger and the aim controllers keep their place on spine_03 to 0.0003; one undo; the
+  chest baked off, everything where it was).
 - **The Pose Library** keys the camera's control (`helpers._camera_of` → `keyed_node`), its
   parent carried by the `root` when it stands under Main or Root_ctrl (`_camera_carrier`), so an
   animation card's travel on Main still lands camera_root.
