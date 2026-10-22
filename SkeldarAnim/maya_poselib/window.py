@@ -3078,6 +3078,8 @@ def _classes():
                                 % (card.name, trash)):
                 return ""
             store.remove(path, trash)
+            import maya_hubsound
+            maya_hubsound.deleted()         # the fireball (2026-10-22)
             if self.picked == path:
                 self.unpick()
             self.refresh()
@@ -3140,6 +3142,8 @@ def _classes():
                                                  _counted(len(inside), "card"), trash)):
                 return ""
             store.remove(self._folder_path(rel), trash)
+            import maya_hubsound
+            maya_hubsound.deleted()
             if self._folder == rel or self._folder.startswith(rel + "/"):
                 self._folder = rel.rpartition("/")[0]
             self.refresh()

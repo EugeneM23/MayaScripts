@@ -7256,6 +7256,31 @@ that Maya** — trap 148. The disposable hub's floating window sat under the ani
 delivered genuine Enters to its card headers mid-run (the throttle ate one): the gates count only the plays
 made inside each synthetic send. Not built: a click sound, sounds on grid tiles / list rows, a volume.
 
+**…the hover tick replaced by the animator's own recordings** (2026-10-22: «уберем звуки интерфейса
+которы есть сейчас и вставим те которые я кину»). `hover.wav` and its Tone are gone and the hover callback
+is silent (`maya_hub._hover_sound` answers False). `maya_hubsound.RECORDED` = two mp3s the animator sent,
+kept in `sources/sounds/`:
+- `drag` (a grainy whoosh, 0.8 s): `dragged()`, played by the shared drag ghost
+  (`maya_hubqt.ghost_class`) on its first show - every drag that lifts it (portraits, inventory, armor,
+  pose cards, the UE list, Stash / Shared, skills, the rail, chat cards). The ghost is the one place
+  `maya_hubqt` reaches for audio (a test pins it);
+- `delete` (a fireball whoosh, 3.2 s): `deleted()` - Time Bar keys deleted (only with Interface
+  animations on: the read that finds them returns early otherwise), a layer in the layer panel, Delete
+  character, a Pose Library card or folder, Stash / Shared files, a chat message, and Maya's own Delete:
+  `bar._command` hears a bare `delete;` (measured: `doDelete` itself is not reported, the `delete;` it
+  runs is; a Python `cmds.delete` never is).
+- **Pitch variants, the same day** («настройку в диапазоне 25 % питча что бы они немного по разному
+  звучали каждый раз»): QSoundEffect has no pitch, so each recording ships as `VARIANTS` (7) files
+  `assets/sounds/<name>_<i>.wav`, played `pitch(i)` x0.875..x1.125 as fast (`PITCH_SPREAD` 0.25, a tape:
+  higher is shorter), written by `docs/superpowers/plans/make_ui_sound_variants.py <ffmpeg>` at
+  `GAIN_DB` (the whoosh -9.1 dB, «на 30% тише» than the first build's -6; the fireball -6). `play`
+  picks one at random, never the one played last (`pick`), one QSoundEffect a variant.
+- A window-open sound (a cardboard lid on `maya_hubwindow.Burster`) was added and removed the same day.
+- A key-set click (a sci-fi UI click on the Time Bar's key set) was added and removed the same day too.
+The switch (⋮ → Interface sounds) stays **OFF by default** («пусть звуки по умолчанию будут
+отключены»); a saved choice is kept. `message` (the chat chime) is still synthesised. Tests `test_hubsound`, `test_ui_sounds`. Not
+heard in a GUI Maya.
+
 148. **A verify that held widget wrappers across `processEvents()` killed the animator's Maya** (2026-10-01
      11:55:48, `MayaCrashLog261001.1155.dmp`): an access violation reading `0x8` in `Qt6Core` called straight
      from PySide's `QtCore.pyd` — a `QCoreApplication.sendEvent` to a deleted widget. Another session had

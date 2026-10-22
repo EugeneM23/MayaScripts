@@ -839,7 +839,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         played = []
 
         class Player(object):
-            def __init__(self, path):
+            def __init__(self, path, count=3):
                 self.path = path
 
             def play(self):
@@ -855,35 +855,38 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.addCleanup(restore)
         return hubsound, played
 
-    def test_the_callbacks_play_and_switch_the_sounds(self):
-        """2026-10-01: «приятный и простой звук наводки на кнопочку», and
-        the menu's Interface sounds."""
+    def test_the_hover_is_silent_and_the_menu_switches_the_sounds(self):
+        """2026-10-22: the hover tick is gone; the menu's Interface sounds
+        still switches the drag / delete / open sounds."""
         hubsound, played = self._fake_sound()
         self.fake.optionvars[hubsound.OPTIONVAR] = 1         # switched on
         hub.build()
         callbacks = hub._SKIN.callbacks
-        self.assertTrue(callbacks["hover"]())
-        self.assertEqual(played, [hubsound.sound_path("hover")])
+        self.assertFalse(callbacks["hover"]())
+        self.assertEqual(played, [])
         self.assertFalse(callbacks["sounds"](False))
         self.assertEqual(self.fake.optionvars[hubsound.OPTIONVAR], 0)
         self.assertIs(hub._SKIN.sounds, False)
-        self.assertFalse(callbacks["hover"]())
-        self.assertEqual(len(played), 1)
+        self.assertTrue(callbacks["sounds"](True))           # heard once
+        self.assertEqual(len(played), 1)                     # a whoosh variant
+        self.assertRegex(os.path.basename(played[0]), r"^drag_\d\.wav$")
 
     def test_the_skin_shows_the_switch_and_loads_the_sound(self):
-        """Off by default (2026-10-01: «Отключи воспроизведение звуков по
-        умолчанию»): the row unchecked and no audio opened; switched on, the
-        row checked and the sound loaded before the first hover."""
+        """Off by default (2026-10-22: «пусть звуки по умолчанию будут
+        отключены»): the row unchecked and no audio opened; switched on, the
+        row checked and every variant loaded before the first drag."""
         hubsound, played = self._fake_sound()
         skin = FakeSkin(None)
         hub._dress_sounds(skin)
         self.assertIs(skin.sounds, False)
-        self.assertNotIn("hover", hubsound._state()["players"])
+        self.assertEqual(hubsound._state()["players"], {})
         self.fake.optionvars[hubsound.OPTIONVAR] = 1
         hubsound.reset()
         hub._dress_sounds(skin)
         self.assertIs(skin.sounds, True)
-        self.assertIn("hover", hubsound._state()["players"])   # preloaded
+        for name in hubsound.RECORDED:                       # every variant preloaded
+            for i in range(hubsound.VARIANTS):
+                self.assertIn(hubsound.variant_name(name, i), hubsound._state()["players"])
         self.assertEqual(played, [])
 
     def test_a_jump_opens_that_card_only(self):

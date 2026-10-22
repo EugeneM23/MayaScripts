@@ -38,8 +38,8 @@ class FakePlayer(object):
 
     made = []
 
-    def __init__(self, path, fail=False):
-        self.path = path
+    def __init__(self, path, count=3, fail=False):
+        self.path, self.count = path, count
         self.fail = fail
         self.plays = 0
         FakePlayer.made.append(self)
@@ -77,55 +77,82 @@ def _decoded(data):
     return params, values
 
 
-class Synthesis(unittest.TestCase):
+class Recorded(unittest.TestCase):
+    """2026-10-22: the hover tick is gone, the animator's own recordings ship."""
+
+    def test_no_hover_sound_is_left(self):
+        self.assertNotIn("hover", sound.SOUNDS)
+        self.assertFalse(os.path.exists(os.path.join(_PLUGIN, "assets", "sounds",
+                                                     "hover.wav")))
+
+    def test_each_recording_ships_as_sixteen_bit_pitch_variants(self):
+        """The window-open lid went the same day; the whoosh and the fireball
+        ship as VARIANTS files each, a higher variant a shorter one."""
+        self.assertEqual(sound.RECORDED, ("drag", "delete"))
+        self.assertFalse(os.path.exists(os.path.join(_PLUGIN, "assets", "sounds",
+                                                     "open.wav")))
+        for name in sound.RECORDED:
+            lengths = []
+            for i in range(sound.VARIANTS):
+                with open(sound.sound_path(sound.variant_name(name, i)), "rb") as f:
+                    params, values = _decoded(f.read())
+                self.assertEqual(params[1:], (2, 44100), name)
+                lengths.append(len(values))
+            self.assertEqual(lengths, sorted(lengths, reverse=True), name)
+
+    def test_the_whoosh_is_thirty_percent_quieter_than_it_was(self):
+        """-6 dB was the first build's; x0.7 more is -3.1 dB."""
+        self.assertAlmostEqual(sound.GAIN_DB["drag"], -6.0 + 20 * __import__("math").log10(0.7),
+                               places=1)
+
+
+class Variants(SoundMixin, unittest.TestCase):
+    """2026-10-22: «настройку в диапазоне 25 % питча что бы они немного по
+    разному звучали каждый раз»."""
 
     def setUp(self):
-        self.tone = sound.SOUNDS["hover"]
-        self.samples = sound.synth(self.tone)
+        SoundMixin.setUp(self)
+        self.cmds.optionvars[sound.OPTIONVAR] = 1           # switched on
 
-    def test_eighty_milliseconds_at_the_rate(self):
-        self.assertEqual(len(self.samples), int(round(0.080 * sound.RATE)))
-        self.assertEqual(sound.RATE, 48000)
+    def test_the_variants_span_twenty_five_percent_about_the_recording(self):
+        rates = [sound.pitch(i) for i in range(sound.VARIANTS)]
+        self.assertAlmostEqual(rates[-1] - rates[0], 0.25)
+        self.assertAlmostEqual(rates[sound.VARIANTS // 2], 1.0)
+        self.assertEqual(sound.PITCH_SPREAD, 0.25)
 
-    def test_the_peak_is_minus_fifteen_dbfs(self):
-        self.assertAlmostEqual(max(abs(v) for v in self.samples), 0.178,
-                               places=9)
+    def test_a_pick_is_never_the_last_one_and_reaches_every_other(self):
+        for last in range(sound.VARIANTS):
+            seen = set()
+            for k in range(1000):
+                i = sound.pick(last, rand=lambda: k / 1000.0)
+                self.assertNotEqual(i, last)
+                seen.add(i)
+            self.assertEqual(seen, set(range(sound.VARIANTS)) - {last})
 
-    def test_it_starts_and_ends_on_zero(self):
-        """No click at either end: a raised-cosine attack and fade."""
-        self.assertEqual(self.samples[0], 0.0)
-        self.assertEqual(self.samples[-1], 0.0)
-        self.assertLess(abs(self.samples[1]), 0.01)
-        self.assertLess(abs(self.samples[-2]), 1e-4)
+    def test_each_play_plays_a_variant_file_one_effect_each(self):
+        heard = []
+        for k in range(12):
+            self.assertTrue(sound.play("delete", now=10.0 + k))
+            heard.append(sound._state()["variant"]["delete"])
+        self.assertTrue(all(a != b for a, b in zip(heard, heard[1:])))
+        for player in FakePlayer.made:
+            self.assertEqual(player.count, 1)
+            self.assertRegex(os.path.basename(player.path), r"^delete_[0-6]\.wav$")
 
-    def test_no_dc(self):
-        mean = sum(self.samples) / len(self.samples)
-        self.assertLess(abs(mean), 1e-3)
-
-    def test_it_rings_at_e6(self):
-        """Zero crossings over the first 20 ms, where the fundamental
-        dominates its octave: two a period."""
-        n = int(0.020 * sound.RATE)
-        part = self.samples[1:n]
-        crossings = sum(1 for a, b in zip(part, part[1:]) if a * b < 0)
-        freq = crossings / 2.0 / (len(part) / float(sound.RATE))
-        self.assertAlmostEqual(freq, 1318.5, delta=60)
-
-    def test_it_dies_away(self):
-        """The last 40 ms hold less than a tenth of the peak."""
-        tail = self.samples[int(0.040 * sound.RATE):]
-        self.assertLess(max(abs(v) for v in tail), 0.1 * 0.178)
+    def test_preload_makes_every_variant(self):
+        self.assertTrue(sound.preload("drag"))
+        self.assertEqual(len(FakePlayer.made), sound.VARIANTS)
 
 
 class WavFile(unittest.TestCase):
 
     def test_mono_sixteen_bit_at_the_rate(self):
-        data = sound.wav_bytes(sound.synth(sound.SOUNDS["hover"]))
+        data = sound.wav_bytes(sound.synth(sound.SOUNDS["message"]))
         params, values = _decoded(data)
         self.assertEqual(params, (1, 2, 48000))
-        self.assertEqual(len(values), 3840)
+        self.assertEqual(len(values), int(round(0.44 * 48000)))
         self.assertEqual(max(abs(v) for v in values),
-                         int(round(0.178 * 32767)))
+                         int(round(0.25 * 32767)))
 
     def test_a_sample_past_full_scale_is_clipped_not_wrapped(self):
         params, values = _decoded(sound.wav_bytes([1.5, -1.5, 0.5]))
@@ -133,20 +160,20 @@ class WavFile(unittest.TestCase):
 
     def test_write_puts_the_file_where_asked(self):
         folder = tempfile.mkdtemp()
-        path = sound.write("hover", os.path.join(folder, "x", "hover.wav"))
+        path = sound.write("message", os.path.join(folder, "x", "message.wav"))
         with open(path, "rb") as f:
             self.assertEqual(f.read(),
-                             sound.wav_bytes(sound.synth(sound.SOUNDS["hover"])))
+                             sound.wav_bytes(sound.synth(sound.SOUNDS["message"])))
 
     def test_the_shipped_file_is_the_synthesis(self):
         """make_hub_sounds.py wrote it; regenerate after changing a Tone. One
         LSB of slack for a libm that rounds a sine differently."""
-        path = sound.sound_path("hover")
+        path = sound.sound_path("message")
         self.assertEqual(path, os.path.join(_PLUGIN, "assets", "sounds",
-                                            "hover.wav"))
+                                            "message.wav"))
         with open(path, "rb") as f:
             shipped = _decoded(f.read())
-        made = _decoded(sound.wav_bytes(sound.synth(sound.SOUNDS["hover"])))
+        made = _decoded(sound.wav_bytes(sound.synth(sound.SOUNDS["message"])))
         self.assertEqual(shipped[0], made[0])
         self.assertEqual(len(shipped[1]), len(made[1]))
         self.assertLessEqual(max(abs(a - b) for a, b in
@@ -160,10 +187,10 @@ class WavFile(unittest.TestCase):
 class Switch(SoundMixin, unittest.TestCase):
 
     def test_off_by_default(self):
-        """2026-10-01, the animator: «Отключи воспроизведение звуков по
-        умолчанию» - ⋮ → Interface sounds turns them on."""
+        """2026-10-22: «пусть звуки по умолчанию будут отключены» - ⋮ →
+        Interface sounds turns them on."""
         self.assertFalse(sound.enabled())
-        self.assertFalse(sound.play("hover", now=1.0))
+        self.assertFalse(sound.play("drag", now=1.0))
         self.assertEqual(FakePlayer.made, [])
 
     def test_on_is_remembered(self):
@@ -205,26 +232,26 @@ class Play(SoundMixin, unittest.TestCase):
         self.cmds.optionvars[sound.OPTIONVAR] = 1
 
     def test_it_plays_the_shipped_file(self):
-        self.assertTrue(sound.play("hover", now=10.0))
+        self.assertTrue(sound.play("message", now=10.0))
         self.assertEqual(len(FakePlayer.made), 1)
-        self.assertEqual(FakePlayer.made[0].path, sound.sound_path("hover"))
+        self.assertEqual(FakePlayer.made[0].path, sound.sound_path("message"))
         self.assertEqual(FakePlayer.made[0].plays, 1)
 
     def test_disabled_is_silent(self):
         sound.set_enabled(False)
-        self.assertFalse(sound.play("hover", now=10.0))
+        self.assertFalse(sound.play("message", now=10.0))
         self.assertEqual(FakePlayer.made, [])
 
     def test_a_sweep_is_throttled(self):
-        self.assertTrue(sound.play("hover", now=10.000))
-        self.assertFalse(sound.play("hover", now=10.010))
-        self.assertTrue(sound.play("hover", now=10.010 + sound.MIN_GAP))
+        self.assertTrue(sound.play("message", now=10.000))
+        self.assertFalse(sound.play("message", now=10.010))
+        self.assertTrue(sound.play("message", now=10.010 + sound.MIN_GAP))
         self.assertEqual(sound.MIN_GAP, 0.035)
         self.assertEqual(FakePlayer.made[0].plays, 2)
 
     def test_one_player_per_sound(self):
-        sound.play("hover", now=1.0)
-        sound.play("hover", now=2.0)
+        sound.play("message", now=1.0)
+        sound.play("message", now=2.0)
         self.assertEqual(len(FakePlayer.made), 1)
 
     def test_a_missing_file_is_silent_and_makes_no_player(self):
@@ -232,33 +259,33 @@ class Play(SoundMixin, unittest.TestCase):
         self.assertEqual(FakePlayer.made, [])
 
     def test_a_player_that_raises_is_silent(self):
-        sound.make_player = lambda path: FakePlayer(path, fail=True)
-        self.assertFalse(sound.play("hover", now=1.0))
+        sound.make_player = lambda path, count=3: FakePlayer(path, fail=True)
+        self.assertFalse(sound.play("message", now=1.0))
 
     def test_a_player_that_cannot_be_made_is_silent(self):
-        def broken(path):
+        def broken(path, count=3):
             raise ImportError("no QtMultimedia")
         sound.make_player = broken
-        self.assertFalse(sound.play("hover", now=1.0))
-        self.assertFalse(sound.preload("hover"))
+        self.assertFalse(sound.play("message", now=1.0))
+        self.assertFalse(sound.preload("message"))
 
     def test_preload_makes_the_player_without_a_sound(self):
-        self.assertTrue(sound.preload("hover"))
+        self.assertTrue(sound.preload("message"))
         self.assertEqual(len(FakePlayer.made), 1)
         self.assertEqual(FakePlayer.made[0].plays, 0)
 
     def test_the_players_outlive_a_purge(self):
         """An install purges our modules (trap 111): a fresh module object
         finds the players already made, and the throttle with them."""
-        sound.play("hover", now=5.0)
+        sound.play("message", now=5.0)
         del sys.modules["maya_hubsound"]
         try:
             fresh = importlib.import_module("maya_hubsound")
             self.assertIsNot(fresh, sound)
             fresh.make_player = FakePlayer
             fresh._cmds = lambda: self.cmds
-            self.assertFalse(fresh.play("hover", now=5.01))     # throttled
-            self.assertTrue(fresh.play("hover", now=6.0))
+            self.assertFalse(fresh.play("message", now=5.01))     # throttled
+            self.assertTrue(fresh.play("message", now=6.0))
             self.assertEqual(len(FakePlayer.made), 1)
             self.assertEqual(FakePlayer.made[0].plays, 2)
         finally:

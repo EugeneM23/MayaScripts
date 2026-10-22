@@ -1084,6 +1084,9 @@ class Panel(object):
         rect = lay.row_at(index, self.scroll) if index is not None else None
         tab = self.tab
         self._write(call, name)
+        if name not in [r["name"] for r in self.rows[tab]]:
+            import maya_hubsound
+            maya_hubsound.deleted()         # a layer deleted: the fireball (2026-10-22)
         if row is not None and self.motion and name not in [r["name"] for r in self.rows[tab]]:
             self.ghosts.append({"t0": self.clock(), "row": row, "rect": rect, "tab": tab, "index": index})
             self.kick()

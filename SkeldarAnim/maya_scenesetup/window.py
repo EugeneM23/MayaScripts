@@ -699,6 +699,9 @@ def delete_characters(confirm=None):
     `confirm` stands in for the dialog (a verify run). Returns the line."""
     from maya_scenesetup import deletion
     message = deletion.delete_selected(confirm=confirm)
+    if message.startswith("Deleted"):
+        import maya_hubsound
+        maya_hubsound.deleted()             # the fireball (2026-10-22)
     try:
         refresh()
     except Exception:                                        # noqa: BLE001

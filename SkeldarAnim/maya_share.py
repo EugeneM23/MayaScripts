@@ -1026,6 +1026,9 @@ def _deleted(done, refused):
             kept.append(record["name"])
     save_history()
     refresh()
+    if done:
+        import maya_hubsound
+        maya_hubsound.deleted()             # the fireball (2026-10-22)
     parts = []
     if done:
         parts.append("Deleted {0} file{1} for everybody".format(

@@ -3,10 +3,15 @@
 2026-10-01, the animator: «давай для теста сделаем приятный звук когда
 срабатывает выделение какого-то элемента ... я вожу мышкой по кнопочкам
 нашего меню и вот тут давай сделаем приятный и простой звук наводки».
-One sound for now, `hover`: the mouse entering a button, a dropdown or a
-card header of the skinned hub (`maya_hubqt.sounding`), switched in the
-hub's menu (⋮ → Interface sounds), off by default («Отключи воспроизведение
-звуков по умолчанию», the same day).
+The hover tick went on 2026-10-22 («уберем звуки интерфейса которы есть
+сейчас и вставим те которые я кину»): the animator's own recordings now,
+`RECORDED` - `drag` (a whoosh) when any drag of ours lifts its ghost
+(`maya_hubqt.ghost_class`), `delete` (a fireball whoosh) on any deletion
+(keys, layers, characters, cards, Stash / Shared files, chat messages,
+Maya's Delete). Each recording ships as VARIANTS pitch variants spread over
+PITCH_SPREAD (25 %), one picked at random each play, so a repeated sound is
+never quite the same. Switched in the hub's menu (⋮ → Interface sounds), OFF
+by default («пусть звуки по умолчанию будут отключены», the same day). `message` (the chat) is still synthesised.
 
     synth / wav_bytes   the sound as numbers, then as a WAV (pure)
     write               the shipped file, assets/sounds/<name>.wav
@@ -42,10 +47,6 @@ RATE = 48000
 Tone = collections.namedtuple("Tone", "partials attack length fade peak")
 
 SOUNDS = {
-    #  A short soft "glass tick": E6 and its octave at a fifth of the level,
-    #  the octave dying first; −15 dBFS, heard rather than noticed.
-    "hover": Tone(partials=((1318.51, 1.0, 0.016), (2637.02, 0.2, 0.007)),
-                  attack=0.0015, length=0.080, fade=0.015, peak=0.178),
     #  A chat message (2026-10-20): «в духе ICQ» - its «о-оу», not its recording (that one is
     #  ICQ's, and this repository is public): two short sung syllables falling a fourth,
     #  G4 for 110 ms then D4 for 220 ms after a 40 ms breath, each a voice-like stack of
@@ -57,6 +58,18 @@ SOUNDS = {
         (880.99, 0.40, 0.25, 0.15, 0.22), (1174.7, 0.12, 0.18, 0.15, 0.22)),
         attack=0.012, length=0.44, fade=0.04, peak=0.25),
 }
+
+#  The animator's recordings (2026-10-22): their mp3s in sources/sounds/, shipped as
+#  assets/sounds/<name>_<i>.wav, written by docs/superpowers/plans/make_ui_sound_variants.py
+#  (ffmpeg, 44.1 kHz) at GAIN_DB - the whoosh 30 % quieter than the fireball's -6 dB
+#  («сделаем его на 30% тише»: x0.7 is -3.1 dB more).
+RECORDED = ("drag", "delete")
+GAIN_DB = {"drag": -9.1, "delete": -6.0}
+
+#  Each recording as VARIANTS files played PITCH_SPREAD apart from the lowest to the
+#  highest («в диапазоне 25 % питча»): x0.875 .. x1.125, evenly, the middle one x1.
+VARIANTS = 7
+PITCH_SPREAD = 0.25
 
 #  a partial with a length ends there over this release (s)
 RELEASE = 0.025
@@ -129,6 +142,29 @@ def wav_bytes(samples, rate=RATE):
     return buf.getvalue()
 
 
+def pitch(i):
+    """How fast variant `i` plays its recording (1.0 = as recorded)."""
+    if VARIANTS < 2:
+        return 1.0
+    return 1.0 - PITCH_SPREAD / 2.0 + PITCH_SPREAD * i / float(VARIANTS - 1)
+
+
+def variant_name(name, i):
+    """The file stem of variant `i` of recording `name`: drag_3."""
+    return "%s_%d" % (name, i)
+
+
+def pick(last, count=VARIANTS, rand=None):
+    """A variant at random, never the one played last (a replay of an effect still
+    playing restarts it, and the cut tail clicks)."""
+    import random
+    rand = rand or random.random
+    if count < 2:
+        return 0
+    i = int(rand() * (count - 1)) % (count - 1)
+    return i + 1 if last is not None and i >= last else i
+
+
 def plugin_root():
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -166,8 +202,8 @@ def _cmds():
 
 def enabled():
     """Whether the interface sounds are on (the menu row). OFF by default
-    (2026-10-01, the same day: «Отключи воспроизведение звуков по
-    умолчанию»)."""
+    (2026-10-01, and again 2026-10-22 with the animator's own drag and
+    delete sounds: «пусть звуки по умолчанию будут отключены»)."""
     global _ENABLED
     if _ENABLED is None:
         _ENABLED = False
@@ -192,7 +228,7 @@ def set_enabled(on):
     except Exception:                                        # noqa: BLE001
         pass
     if _ENABLED:
-        play("hover")
+        play("drag")
     return _ENABLED
 
 
@@ -225,14 +261,14 @@ class WinsoundPlayer(object):
         w.PlaySound(self.path, w.SND_FILENAME | w.SND_ASYNC | w.SND_NODEFAULT)
 
 
-def _qt_pool(path):
+def _qt_pool(path, count=POOL):
     try:
         from PySide6 import QtCore, QtMultimedia
     except ImportError:
         from PySide2 import QtCore, QtMultimedia
     url = QtCore.QUrl.fromLocalFile(path)
     effects = []
-    for _ in range(POOL):
+    for _ in range(count):
         effect = QtMultimedia.QSoundEffect()
         effect.setSource(url)
         effect.setVolume(1.0)
@@ -240,11 +276,11 @@ def _qt_pool(path):
     return EffectPool(effects)
 
 
-def make_player(path):
-    """A player of the WAV at `path`: a QSoundEffect pool, else winsound.
-    Raises when neither can be made (a seam for the tests)."""
+def make_player(path, count=POOL):
+    """A player of the WAV at `path`: a pool of `count` QSoundEffects, else
+    winsound. Raises when neither can be made (a seam for the tests)."""
     try:
-        return _qt_pool(path)
+        return _qt_pool(path, count)
     except Exception:                                        # noqa: BLE001
         return WinsoundPlayer(path)
 
@@ -259,6 +295,7 @@ def _state():
         setattr(sys, _STATE_ATTR, state)
     state.setdefault("players", {})
     state.setdefault("last", float("-inf"))
+    state.setdefault("variant", {})
     return state
 
 
@@ -270,8 +307,8 @@ def reset():
         delattr(sys, _STATE_ATTR)
 
 
-def _player(name):
-    """The player of sound `name`, made once per file (an update that
+def _player(name, count=POOL):
+    """The player of sound file `name`, made once per file (an update that
     replaces the file gets a new one), or None without the file or a
     backend."""
     path = sound_path(name)
@@ -285,17 +322,26 @@ def _player(name):
     if held is not None and held[0] == key:
         return held[1]
     try:
-        player = make_player(path)
+        player = make_player(path, count)
     except Exception:                                        # noqa: BLE001
         player = None
     players[name] = (key, player)
     return player
 
 
-def preload(name="hover"):
-    """Make the player now, so the first hover is not the one that waits
+def _files(name):
+    """The files sound `name` plays from: its variants, or its one file."""
+    if name in RECORDED:
+        return [variant_name(name, i) for i in range(VARIANTS)]
+    return [name]
+
+
+def preload(name="drag"):
+    """Make the players now, so the first drag is not the one that waits
     for the file to load. Answers whether there is one."""
     try:
+        if name in RECORDED:
+            return all(_player(f, 1) is not None for f in _files(name))
         return _player(name) is not None
     except Exception:                                        # noqa: BLE001
         return False
@@ -313,7 +359,13 @@ def play(name, now=None, force=False):
         now = time.monotonic() if now is None else now
         if now - state["last"] < MIN_GAP:
             return False
-        player = _player(name)
+        if name in RECORDED:
+            #  a variant at random, one effect each: no two in a row are the same
+            i = pick(state["variant"].get(name))
+            player = _player(variant_name(name, i), 1)
+            state["variant"][name] = i
+        else:
+            player = _player(name)
         if player is None:
             return False
         player.play()
@@ -321,3 +373,13 @@ def play(name, now=None, force=False):
         return True
     except Exception:                                        # noqa: BLE001
         return False
+
+
+def dragged():
+    """A drag of ours lifted its ghost: the whoosh."""
+    return play("drag")
+
+
+def deleted():
+    """Something was deleted: the fireball."""
+    return play("delete")

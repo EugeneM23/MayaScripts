@@ -2384,6 +2384,8 @@ def classes():
                     sets[k] = bd
                 gone.extend((k, bd) for k in removed)
             if gone:
+                import maya_hubsound
+                maya_hubsound.deleted()     # keys deleted: the fireball (2026-10-22)
                 self.timeline.delete_wave(gone)
             # a key set over one that stood: no key time changed, it flashes all the same;
             # a highlight keyed at once (`mark_set`): every key of it, however many
@@ -2942,7 +2944,15 @@ def _keys_edited(*_args):
 
 
 def _command(command, *_args):
-    """Every MEL command Maya runs passes here: only a setKeyframe is looked at."""
+    """Every MEL command Maya runs passes here: a setKeyframe, and Maya's own
+    Delete (Edit > Delete, the Delete key: a bare `delete;`), which plays the
+    delete sound (2026-10-22)."""
+    if command.strip().rstrip(";").strip() == "delete":
+        #  bare `delete;` on the selection is Maya's own Delete (doDelete runs it,
+        #  measured: doDelete itself is not reported); a Python cmds.delete never is
+        import maya_hubsound
+        maya_hubsound.deleted()
+        return
     if not command.startswith("setKeyframe"):
         return
     widget = current()

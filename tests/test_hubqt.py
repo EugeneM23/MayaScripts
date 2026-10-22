@@ -867,10 +867,12 @@ class HoverSound(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.skin.active, "colour")
 
     def test_the_layer_knows_no_audio(self):
-        """maya_hubqt calls back; maya_hub plays (maya_hubsound)."""
+        """maya_hubqt calls back; maya_hub plays (maya_hubsound). The one
+        exception (2026-10-22): the drag ghost's lift plays the whoosh."""
         with open(hubqt.__file__, encoding="utf-8") as f:
             source = f.read()
-        self.assertNotIn("hubsound", source)
+        self.assertEqual(source.count("maya_hubsound."), 1)
+        self.assertIn("maya_hubsound.dragged()", source)
         self.assertNotIn("QtMultimedia", source)
 
 

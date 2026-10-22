@@ -565,15 +565,16 @@ def _dress_edge(skin):
 
 def _dress_sounds(skin):
     """The menu's Interface sounds row = the switch (off by default); while
-    it is on, the hover sound loaded now, so the first hover is not the one
-    waiting for the file (0.44 s for the pool's three effects, measured
-    2026-10-01). Off, no audio is opened at all."""
+    it is on, the drag and delete sounds loaded now, so the first drag is
+    not the one waiting for the file (0.44 s for the pool's three effects,
+    measured 2026-10-01). Off, no audio is opened at all."""
     try:
         import maya_hubsound
         on = maya_hubsound.enabled()
         skin.paint_sounds(on)
         if on:
-            maya_hubsound.preload("hover")
+            for name in maya_hubsound.RECORDED:
+                maya_hubsound.preload(name)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -1774,9 +1775,10 @@ def chip_state(state):
 
 
 def _hover_sound():
-    """The mouse entered a button of the skin (maya_hubqt.sounding)."""
-    import maya_hubsound
-    return maya_hubsound.play("hover")
+    """The mouse entered a button of the skin (maya_hubqt.sounding). Silent
+    since 2026-10-22: the hover tick was taken out for the animator's own
+    drag and delete sounds."""
+    return False
 
 
 def set_sounds(on):

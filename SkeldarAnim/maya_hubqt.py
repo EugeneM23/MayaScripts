@@ -3085,7 +3085,19 @@ def ghost_class():
                 self.icon_w, self.icon_h = int(icon_w), int(icon_h)
                 self.anchor, self.backdrop = anchor, backdrop
                 self.text, self.good = "", True
+                self.sounded = False
                 self._resize()
+
+            def showEvent(self, event):                      # noqa: N802
+                #  a drag lifts its ghost: the whoosh (2026-10-22), once a ghost
+                if not self.sounded:
+                    self.sounded = True
+                    try:
+                        import maya_hubsound
+                        maya_hubsound.dragged()
+                    except Exception:                        # noqa: BLE001
+                        pass
+                QtWidgets.QWidget.showEvent(self, event)
 
             def _caption_width(self):
                 if not self.text:

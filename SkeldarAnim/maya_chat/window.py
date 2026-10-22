@@ -2695,6 +2695,9 @@ class ChatWindow(object):
             self.session.delete(self.chat, message["id"])
         except Exception as exc:                             # noqa: BLE001
             self.say(getattr(exc, "text", str(exc)))
+            return
+        import maya_hubsound
+        maya_hubsound.deleted()                 # the fireball (2026-10-22)
 
     def _typed(self):
         if self.chat is None or not self.composer.toPlainText() or self.editing:

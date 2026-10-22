@@ -463,6 +463,9 @@ def delete_names(names):
             gone.append(name)
         except OSError as exc:
             lines.append("{0} not deleted: {1}".format(name, exc.strerror))
+    if gone:
+        import maya_hubsound
+        maya_hubsound.deleted()             # the fireball (2026-10-22)
     refresh()
     head = "Deleted {0} file{1} from the stash".format(
         len(gone), "" if len(gone) == 1 else "s") if gone else ""
