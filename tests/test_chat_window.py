@@ -871,3 +871,67 @@ class EmojiPictures(Base):
         rect, e, n, mine = box.pills[0]
         self.assertEqual((e, n, mine), ("🔥", 1, False))
         self.assertLess(rect.width(), self.win.px(70))
+
+
+class Picker(Base):
+    def setUp(self):
+        Base.setUp(self)
+        W._VARS.pop("skeldarChatEmojiTone", None)
+        self.win.open_chat("dm")
+        self.picker = self.win.pick_emoji()
+
+    def tearDown(self):
+        self.picker.close()
+        Base.tearDown(self)
+
+    def test_recent_then_the_eight_groups(self):
+        keys = [k for k, _t, _items in self.picker.sections()]
+        self.assertEqual(keys, ["recent", "smileys", "people", "animals", "food", "travel",
+                                "activities", "objects", "symbols"])
+        self.assertGreater(len(self.picker.items()), 1300)
+
+    def test_search_in_russian(self):
+        self.picker.search.setText("кот")
+        self.assertEqual([k for k, _t, _i in self.picker.sections()], ["found"])
+        self.assertIn("\U0001F431", self.picker.items())
+
+    def test_nothing_found(self):
+        self.picker.set_query("zzzzqq")
+        self.assertEqual(self.picker.items(), [])
+
+    def test_enter_picks_the_first_result(self):
+        self.picker.set_query("огонь")
+        first = self.picker.items()[0]
+        enter = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return,
+                                QtCore.Qt.NoModifier)
+        self.picker.search.keyPressEvent(enter)
+        self.assertEqual(self.win.composer.toPlainText(), first)
+
+    def test_esc_clears_then_closes(self):
+        self.picker.set_query("кот")
+        esc = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Escape, QtCore.Qt.NoModifier)
+        self.picker.search.keyPressEvent(esc)
+        self.assertEqual(self.picker.search.text(), "")
+        self.assertTrue(self.picker.isVisible())
+        self.picker.search.keyPressEvent(esc)
+        self.assertFalse(self.picker.isVisible())
+
+    def test_a_tone_is_applied_and_remembered(self):
+        self.picker.set_tone(3)
+        self.assertIn("\U0001F44D\U0001F3FD", self.picker.items())
+        self.assertEqual(int(W.get_var("skeldarChatEmojiTone")), 3)
+        again = self.win.pick_emoji()
+        self.assertIn("\U0001F44D\U0001F3FD", again.items())
+        again.close()
+
+    def test_a_toned_pick_goes_into_the_composer_and_recent(self):
+        self.picker.set_tone(5)
+        self.picker.pick("\U0001F44D\U0001F3FF")
+        self.assertEqual(self.win.composer.toPlainText(), "\U0001F44D\U0001F3FF")
+        self.assertIn("\U0001F44D\U0001F3FF", W.get_var("skeldarChatEmojiRecent"))
+
+    def test_a_tab_scrolls_to_its_group(self):
+        self.picker.scroll_to("food")
+        self.assertGreater(self.picker.scroll, 0)
+        top = self.picker.section_top("food")
+        self.assertAlmostEqual(self.picker.scroll, min(top, self.picker.max_scroll()), delta=1)
