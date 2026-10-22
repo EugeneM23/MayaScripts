@@ -20,6 +20,9 @@ from . import store as _store
 
 TYPING_S = 3     # at most one typing frame a chat this often
 HISTORY = 50
+STUN = [{"urls": ["stun:stun.cloudflare.com:3478"]}]
+TURN_EARLY_S = 3600          # ask again an hour before the credentials expire
+TURN_RETRY_S = 300           # after a failure, STUN for five minutes
 
 
 class State(object):
@@ -35,6 +38,7 @@ class State(object):
         self.typing = {}                # chat id -> {user id: monotonic time}
         self.reads = {}                 # chat id -> {user id: upto}
         self.downloads = {}             # file id -> {state, progress, error, then} (files.py)
+        self.calls = {}                 # call id -> view (calls.py)
 
 
 def _now_ms():
@@ -116,7 +120,13 @@ class Session(object):
         """This account's sign-in code, to sign in on another machine."""
         return self.store.token()
 
+    def end_calls(self):
+        """The call window hangs up and the rings stop (signing out, the session closing):
+        told as "calls_end" while the link is still up, so the leave reaches the server."""
+        self.tell("calls_end")
+
     def sign_out(self):
+        self.end_calls()
         self.stop()
         self.store.forget()
         self.state = State()
@@ -206,6 +216,9 @@ class Session(object):
                 continue
             chats[c["id"]] = c
         st.chats = chats
+        # a call that has not ended is learnt again from its events; one held from before a
+        # resync may have ended unseen
+        st.calls = {k: v for k, v in (st.calls or {}).items() if v.get("state") == "ended"}
         for cid in list(st.messages):
             if cid not in chats:
                 st.messages.pop(cid, None)
@@ -496,6 +509,68 @@ class Session(object):
         if e.get("code") == "bad_token":
             self.sign_out()
 
+    # ---------------------------------------------------------------- calls (2026-10-22)
+    def _call_frame(self, frame, must=True):
+        self._need()
+        frame = dict(frame, cid="call-" + uuid.uuid4().hex[:16])
+        if not self.protocol.push(frame):
+            if must:
+                raise _api.ChatError("offline", "Нет связи с сервером")
+            return None
+        return frame["cid"]
+
+    def start_call(self, chat, kind):
+        return self._call_frame({"type": "call_start", "chat": chat, "kind": kind})
+
+    def join_call(self, call_id):
+        return self._call_frame({"type": "call_join", "call": call_id})
+
+    def decline_call(self, call_id):
+        return self._call_frame({"type": "call_decline", "call": call_id}, must=False)
+
+    def leave_call(self, call_id):
+        try:
+            return self._call_frame({"type": "call_leave", "call": call_id}, must=False) is not None
+        except _api.ChatError:
+            return False
+
+    def call_signal(self, call_id, to, data):
+        if self.protocol is None:
+            return False
+        return bool(self.protocol.push({"type": "call_signal", "call": call_id, "to": to, "data": data}))
+
+    def turn_servers(self, now=None):
+        now = time.time() if now is None else now
+        held = getattr(self, "_turn", None)
+        if held and now < held[0]:
+            return held[1], held[2]
+        try:
+            body = self.api.turn()
+            servers = list(body.get("ice_servers") or STUN)
+            ttl = int(body.get("ttl") or 3600)
+            self._turn = (now + max(60, ttl - TURN_EARLY_S), servers, bool(body.get("turn")))
+        except Exception:                                   # noqa: BLE001 - a call goes on without TURN
+            self._turn = (now + TURN_RETRY_S, list(STUN), False)
+        return self._turn[1], self._turn[2]
+
+    def calls_here(self):
+        """Ids of the calls this Maya has a window in (kept on disk: a crash leaves them)."""
+        try:
+            return list(self.store.calls_here())
+        except Exception:                                   # noqa: BLE001
+            return []
+
+    def call_here(self, call_id, on):
+        """Mark / unmark a call this Maya is in."""
+        try:
+            self.store.set_call_mark(call_id, on)
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def _on_call(self, e):
+        from . import calls as _calls
+        self.state.calls = _calls.merge(self.state.calls, e["call"])
+
     # ---------------------------------------------------------------- what the animator does
     def _need(self):
         if self.protocol is None or self.state.me is None:
@@ -677,5 +752,11 @@ def get():
 def close():
     held = getattr(sys, "_skeldar_chat", None)
     if held is not None:
+        held.end_calls()
         held.stop()
         del sys._skeldar_chat
+    try:
+        from . import notify
+        notify.uninstall()
+    except Exception:                                        # noqa: BLE001
+        pass

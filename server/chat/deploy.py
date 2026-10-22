@@ -3,6 +3,9 @@
     mayapy server/chat/deploy.py check        the token works; prints the workers.dev subdomain
     mayapy server/chat/deploy.py staging      uploads skeldar-chat-staging; prints "URL <url>"
     mayapy server/chat/deploy.py production   uploads skeldar-chat
+    mayapy server/chat/deploy.py turn         makes the Cloudflare TURN key calls use (the API token
+                                              needs the 'Calls Write' right) and keeps it; the next
+                                              staging / production deploy hands it to the Worker
     mayapy server/chat/deploy.py keys         asks for the API token (hidden), finds the account
                                               and keeps both as user environment variables
 
@@ -30,10 +33,15 @@ SOURCE = os.path.join(HERE, "worker.js")
 
 
 class DeployError(Exception):
-    pass
+    codes = ()
 
 
-def metadata(with_migration, bucket=None):
+# The TURN key lives in the keys file only (never the registry): its id and its secret.
+TURN_NAMES = ("turn_key_id", "turn_key_token")
+TURN_NAME = "skeldar-chat"
+
+
+def metadata(with_migration, bucket=None, secrets=None):
     meta = {
         "main_module": "worker.js",
         "compatibility_date": COMPAT,
@@ -41,6 +49,9 @@ def metadata(with_migration, bucket=None):
     }
     if bucket:
         meta["bindings"].append({"type": "r2_bucket", "name": "FILES", "bucket_name": bucket})
+    for name, text in sorted((secrets or {}).items()):
+        if text:
+            meta["bindings"].append({"type": "secret_text", "name": name, "text": text})
     if with_migration:
         meta["migrations"] = {"new_tag": MIGRATION, "new_sqlite_classes": ["Studio"]}
     return meta
@@ -113,10 +124,24 @@ def saved(names=NAMES_ENV):
     return found
 
 
-def save(values):
+def _write_keys_file(values):
+    """Add `values` to the keys file, keeping what else it holds."""
+    held = {}
+    try:
+        with open(KEYS_FILE, encoding="utf-8") as handle:
+            held = json.load(handle)
+        if not isinstance(held, dict):
+            held = {}
+    except (OSError, ValueError):
+        pass
+    held.update(values)
     os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
     with open(KEYS_FILE, "w", encoding="utf-8") as handle:
-        json.dump(values, handle)
+        json.dump(held, handle)
+
+
+def save(values):
+    _write_keys_file(values)
     import ctypes
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
@@ -179,6 +204,21 @@ def check(env=os.environ, opener=urllib.request.urlopen):
     return result["subdomain"]
 
 
+def turn(env=os.environ, opener=urllib.request.urlopen):
+    """Make a Cloudflare Realtime TURN key and keep it beside the account keys. Needs the API
+    token's Calls Write right. Returns the key's id (the secret is never printed)."""
+    token, account = _credentials(env)
+    try:
+        result = request("POST", "%s/accounts/%s/calls/turn_keys" % (API, account), token,
+                         json.dumps({"name": TURN_NAME}).encode(), "application/json", opener=opener)
+    except DeployError as exc:
+        raise DeployError("Could not make a TURN key (%s). Give the API token the "
+                          "'Calls Write' permission (dash.cloudflare.com -> My Profile -> API Tokens) "
+                          "and run `deploy.py turn` again." % exc)
+    _write_keys_file({"turn_key_id": result["uid"], "turn_key_token": result["key"]})
+    return result["uid"]
+
+
 def ensure_bucket(token, account, name, opener=urllib.request.urlopen):
     """The R2 bucket `name`, made when missing. Refuses plainly when R2 is off on the account."""
     base = "%s/accounts/%s/r2/buckets" % (API, account)
@@ -209,7 +249,9 @@ def deploy(target, env=os.environ, opener=urllib.request.urlopen):
 
     def upload(with_migration):
         boundary = "skeldar" + uuid.uuid4().hex
-        body = multipart(metadata(with_migration, bucket), source, boundary)
+        held = saved(TURN_NAMES)
+        secrets = {"TURN_KEY_ID": held.get("turn_key_id"), "TURN_KEY_TOKEN": held.get("turn_key_token")}
+        body = multipart(metadata(with_migration, bucket, secrets), source, boundary)
         return request("PUT", script, token, body, "multipart/form-data; boundary=" + boundary,
                        opener=opener)
 
@@ -225,12 +267,14 @@ def deploy(target, env=os.environ, opener=urllib.request.urlopen):
 
 
 def main(argv):
-    if len(argv) != 2 or argv[1] not in ("check", "staging", "production", "keys"):
+    if len(argv) != 2 or argv[1] not in ("check", "staging", "production", "keys", "turn"):
         print(__doc__)
         return 2
     try:
         if argv[1] == "keys":
             print("KEPT for %s - now run: deploy.py check" % keys())
+        elif argv[1] == "turn":
+            print("TURN KEY MADE " + turn())
         elif argv[1] == "check":
             print("SUBDOMAIN " + check())
         else:

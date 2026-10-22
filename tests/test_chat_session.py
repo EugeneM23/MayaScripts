@@ -1,5 +1,6 @@
 """maya_chat.session on a fake api and a fake link."""
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -62,6 +63,13 @@ class FakeApi(object):
 
     def dm(self, user_id):
         return chat("dm_new", members=(ME, BOB))
+
+    turn_calls = 0
+
+    def turn(self):
+        self.turn_calls += 1
+        return {"ice_servers": [{"urls": ["turn:x"], "username": "u", "credential": "p"}],
+                "ttl": 86400, "turn": True}
 
     def people(self):
         return [dict(BOB, online=True, last_seen=0, relation="friend"),
@@ -380,6 +388,118 @@ class OnePerMaya(unittest.TestCase):
         finally:
             s.Session = old_cls
             s.close()
+
+
+class Calls(Base):
+    def setUp(self):
+        Base.setUp(self)
+        self.ses = self.session()
+        self.ses.protocol.opened()
+        self.frame(self.ses, {"kind": "caught_up", "seq": 1})
+
+    def view(self, **kw):
+        v = {"id": "c1", "chat": "dm", "by": "me", "kind": "video", "cid": "x", "state": "ringing",
+             "members": ["me"], "declined": [], "started_at": 1, "answered_at": None, "ended_at": None}
+        v.update(kw)
+        return v
+
+    def test_start_sends_the_frame_with_a_cid(self):
+        cid = self.ses.start_call("dm", "video")
+        sent = [f for f in self.ses.link.frames() if f.get("type") == "call_start"]
+        self.assertEqual(sent, [{"type": "call_start", "chat": "dm", "kind": "video", "cid": cid}])
+
+    def test_join_decline_leave_signal(self):
+        self.ses.join_call("c1")
+        self.ses.decline_call("c2")
+        self.assertTrue(self.ses.leave_call("c1"))
+        self.assertTrue(self.ses.call_signal("c1", "bob", {"sdp": "o"}))
+        kinds = [(f["type"], f.get("call")) for f in self.ses.link.frames() if f["type"].startswith("call_")]
+        self.assertEqual(kinds, [("call_join", "c1"), ("call_decline", "c2"), ("call_leave", "c1"),
+                                 ("call_signal", "c1")])
+        sig = [f for f in self.ses.link.frames() if f["type"] == "call_signal"][0]
+        self.assertEqual((sig["to"], sig["data"]), ("bob", {"sdp": "o"}))
+
+    def test_offline_start_raises_and_leave_is_quiet(self):
+        self.ses.protocol.state = "closed"
+        with self.assertRaises(a.ChatError):
+            self.ses.start_call("dm", "audio")
+        self.assertFalse(self.ses.leave_call("c1"))
+        self.assertFalse(self.ses.call_signal("c1", "bob", {}))
+
+    def test_call_events_keep_the_state_and_are_told(self):
+        self.frame(self.ses, {"kind": "call", "seq": 2, "call": self.view()})
+        self.assertEqual(self.ses.state.calls["c1"]["state"], "ringing")
+        self.frame(self.ses, {"kind": "call", "seq": 3, "call": self.view(state="live", members=["me", "bob"])})
+        self.assertEqual(self.ses.state.calls["c1"]["members"], ["me", "bob"])
+        self.assertIn("call", self.told)
+
+    def test_signals_are_told_not_kept(self):
+        self.frame(self.ses, {"kind": "call_signal", "call": "c1", "from": "bob", "data": {"ice": {}}})
+        self.assertIn("call_signal", self.told)
+
+    def test_a_refused_call_frame_is_told_as_an_error(self):
+        cid = self.ses.start_call("dm", "video")
+        self.frame(self.ses, {"kind": "error", "cid": cid, "code": "call_exists", "text": "busy"})
+        self.assertIn("error", self.told)
+
+    def test_turn_servers_are_cached(self):
+        servers, turn = self.ses.turn_servers(now=1000.0)
+        servers2, _ = self.ses.turn_servers(now=2000.0)
+        self.assertTrue(turn)
+        self.assertEqual(servers, servers2)
+        self.assertEqual(self.ses.api.turn_calls, 1)
+        self.ses.turn_servers(now=1000.0 + 86400 - 3000)
+        self.assertEqual(self.ses.api.turn_calls, 2)
+
+    def test_a_resync_drops_calls_that_have_not_ended(self):
+        self.frame(self.ses, {"kind": "call", "seq": 2, "call": self.view()})
+        self.frame(self.ses, {"kind": "call", "seq": 3,
+                              "call": self.view(id="c2", state="ended", members=[], ended_at=5)})
+        self.frame(self.ses, {"kind": "resync"})
+        self.assertEqual(list(self.ses.state.calls), ["c2"])
+
+    def test_sign_out_ends_the_calls_while_the_link_is_up(self):
+        seen = []
+        self.ses.listen(lambda kind, data: seen.append((kind, self.ses.link is not None)))
+        self.ses.sign_out()
+        self.assertIn(("calls_end", True), seen)
+
+    def test_close_ends_the_calls(self):
+        seen = []
+        sys._skeldar_chat = self.ses
+        self.ses.listen(lambda kind, data: seen.append(kind))
+        s.close()
+        self.assertIn("calls_end", seen)
+
+    def test_the_calls_this_maya_is_in_are_kept_on_disk(self):
+        self.ses.call_here("c1", True)
+        self.ses.call_here("c2", True)
+        self.ses.call_here("c1", False)
+        self.assertEqual(st.Store(self.dir).calls_here(), ["c2"])
+        self.assertEqual(self.ses.calls_here(), ["c2"])
+
+    def test_a_call_another_running_maya_marked_is_not_ours(self):
+        import json as _json
+        store = st.Store(self.dir)
+        with open(store._path("calls.json"), "w") as f:
+            _json.dump({"mine": os.getpid(), "other": 4242, "crashed": 4343}, f)
+        alive = lambda pid: pid in (os.getpid(), 4242)
+        self.assertEqual(sorted(store.calls_here(alive=alive)), ["crashed", "mine"])
+
+    def test_an_older_list_of_marks_reads_as_a_maya_that_is_gone(self):
+        import json as _json
+        store = st.Store(self.dir)
+        with open(store._path("calls.json"), "w") as f:
+            _json.dump(["c9"], f)
+        self.assertEqual(store.calls_here(alive=lambda pid: True), ["c9"])
+
+    def test_turn_failure_falls_back_to_stun(self):
+        def boom():
+            raise a.ChatError("offline", "no")
+        self.ses.api.turn = boom
+        servers, turn = self.ses.turn_servers(now=5.0)
+        self.assertFalse(turn)
+        self.assertEqual(servers, [{"urls": ["stun:stun.cloudflare.com:3478"]}])
 
 
 if __name__ == "__main__":

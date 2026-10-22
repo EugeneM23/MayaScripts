@@ -31,6 +31,12 @@ const FILE_KINDS = new Set(["scene", "fbx", "pose", "anim", "image"]);
 // A file's preview (the card's still, a viewport snapshot, a picture shrunk): a JPEG/PNG in SQLite.
 const THUMB_STATES = new Set(["uploading", "ready"]);
 const FILES_LIST = 300;   // a person's files, a page
+// Calls (2026-10-22): voice/video/screen through WebRTC between the members; the server keeps the
+// call and relays the set-up messages. Spec: docs/superpowers/specs/2026-10-22-chat-calls-design.md
+const CALL_MAX = 4;
+const RING_MS = 45000;
+const GONE_MS = 30000;
+const SIGNAL_MAX = 64 * 1024;
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -45,6 +51,13 @@ function refuse(code, text, status = 400) { throw new Refusal(code, text, status
 
 function hex(bytes) { return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 function randomHex(n) { const b = new Uint8Array(n); crypto.getRandomValues(b); return hex(b); }
+// A call's line in words, as maya_chat.calls.note_text has it (with the phone in front).
+function callNoteText(note) {
+  // «Пропущенный звонок», «Звонок · N с», «Звонок · N мин» (escaped: the file stays ASCII-safe)
+  if (!note.answered) return "\u{1F4DE} Пропущенный звонок";
+  const s = Math.max(0, Math.floor(Number(note.seconds) || 0));
+  return "\u{1F4DE} Звонок · " + (s < 60 ? s + " с" : Math.floor(s / 60) + " мин");
+}
 function b64url(bytes) {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -81,6 +94,11 @@ const SCHEMA = [
      kind TEXT NOT NULL, bytes INTEGER NOT NULL, zip INTEGER NOT NULL, fps REAL, range TEXT, upload TEXT,
      parts TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL, msg TEXT, at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS files_chat ON files (chat)`,
+  `CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, chat TEXT NOT NULL, by TEXT NOT NULL, kind TEXT NOT NULL,
+     cid TEXT, state TEXT NOT NULL, started_at INTEGER NOT NULL, answered_at INTEGER, ended_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS calls_chat ON calls (chat, state)`,
+  `CREATE TABLE IF NOT EXISTS call_members (call TEXT NOT NULL, uid TEXT NOT NULL, joined_at INTEGER NOT NULL,
+     left_at INTEGER, gone_at INTEGER, declined INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (call, uid))`,
 ];
 const REACTIONS_EACH = 8;
 // An emoji: 1-16 UTF-16 units, no ASCII letter, digit or space.
@@ -92,6 +110,7 @@ export class Studio extends DurableObject {
     this.sql = ctx.storage.sql;
     for (const statement of SCHEMA) this.sql.exec(statement);
     try { this.sql.exec("ALTER TABLE messages ADD COLUMN file TEXT"); } catch { /* there already */ }
+    try { this.sql.exec("ALTER TABLE messages ADD COLUMN call TEXT"); } catch { /* there already */ }
     for (const column of ["thumb BLOB", "thumb_type TEXT", "thumb_v INTEGER NOT NULL DEFAULT 0", "sheet TEXT"]) {
       try { this.sql.exec("ALTER TABLE files ADD COLUMN " + column); } catch { /* there already */ }
     }
@@ -186,10 +205,19 @@ export class Studio extends DurableObject {
     return { online: this.ctx.getWebSockets(uid).length > 0, last_seen: row ? row.last_seen : 0 };
   }
 
+  // The one alarm serves two clocks: the daily sweep (daily_at) and the calls' deadlines.
   async alarm() {
-    this.sql.exec("DELETE FROM events WHERE at < ?", Date.now() - KEEP_EVENTS);
-    try { await this.sweepFiles(Date.now()); } catch { /* the next alarm tries again */ }
-    await this.ctx.storage.setAlarm(Date.now() + DAY);
+    const now = Date.now();
+    try { this.sweepCalls(now); } catch { /* the daily sweep still runs */ }
+    let daily = (await this.ctx.storage.get("daily_at")) ?? 0;
+    if (daily <= now) {
+      this.sql.exec("DELETE FROM events WHERE at < ?", now - KEEP_EVENTS);
+      try { await this.sweepFiles(now); } catch { /* the next alarm tries again */ }
+      daily = now + DAY;
+      await this.ctx.storage.put("daily_at", daily);
+    }
+    const next = this.nextCallDeadline(now);
+    await this.ctx.storage.setAlarm(next != null ? Math.min(daily, next) : daily);
   }
 
   // ---------------------------------------------------------------- files (R2)
@@ -467,6 +495,27 @@ export class Studio extends DurableObject {
     return json({ users: rows.map((r) => ({ ...this.user(r), relation: this.relation(me.id, r.id) })) });
   }
 
+  // Connection servers for a call: Cloudflare TURN credentials when the server holds a TURN key,
+  // else Cloudflare's STUN alone.
+  async turn({ me }) {
+    const stun = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
+    const id = this.env && this.env.TURN_KEY_ID;
+    const token = this.env && this.env.TURN_KEY_TOKEN;
+    if (!id || !token) return json({ ice_servers: stun, ttl: 86400, turn: false });
+    try {
+      const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+        method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+        body: JSON.stringify({ ttl: 86400 }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const body = await r.json();
+      const servers = [].concat(body.iceServers || []).map((s) => ({ ...s,
+        urls: [].concat(s.urls || []).filter((u) => !/:53(\?|$)/.test(u)) })).filter((s) => s.urls.length);
+      return json({ ice_servers: servers, ttl: 86400, turn: true });
+    } catch (e) {
+      return json({ ice_servers: stun, ttl: 3600, turn: false, text: "TURN unavailable: " + e.message });
+    }
+  }
+
   // Everybody in the studio but me: who they are, whether they are online, and how they stand to me.
   people({ me }) {
     const rows = this.sql.exec("SELECT * FROM users WHERE id != ? ORDER BY nick LIMIT 2000", me.id).toArray();
@@ -573,7 +622,8 @@ export class Studio extends DurableObject {
   messageView(r, reactions) {
     const out = { id: r.id, chat: r.chat, seq: r.seq, from_id: r.from_id, cid: r.cid,
                   text: r.deleted ? "" : r.text, reply_to: r.reply_to, at: r.at, edited_at: r.edited_at,
-                  deleted: !!r.deleted, file: r.file && !r.deleted ? this.fileView(r.file) : null };
+                  deleted: !!r.deleted, file: r.file && !r.deleted ? this.fileView(r.file) : null,
+                  call: r.call ? JSON.parse(r.call) : null };
     out.reactions = reactions ? (reactions.get(r.id) || {}) : this.reactionsOf([r.id]).get(r.id) || {};
     return out;
   }
@@ -701,6 +751,7 @@ export class Studio extends DurableObject {
       admin = next ? next.uid : null;
       this.sql.exec("UPDATE chats SET admin = ? WHERE id = ?", admin, chat);
     }
+    this.leaveChatCalls(chat, uid);
     this.emit({ chat, kind: "member_removed", payload: { chat_id: chat, user_id: uid, admin } });
     this.sql.exec("DELETE FROM members WHERE chat = ? AND uid = ?", chat, uid);
     if (!this.memberIds(chat).length) {
@@ -739,7 +790,13 @@ export class Studio extends DurableObject {
     const wasOnline = this.ctx.getWebSockets(me.id).length > 0;
     this.ctx.acceptWebSocket(server, [me.id]);
     server.serializeAttachment({ uid: me.id });
+    // Back within GONE_MS: still in those calls. Their views go out again, so a client that lost
+    // its call window (Maya restarted) learns it is still in one and can leave it.
+    const back = this.sql.exec(`SELECT call FROM call_members WHERE uid = ? AND left_at IS NULL AND gone_at IS NOT NULL
+       AND call IN (SELECT id FROM calls WHERE state != 'ended')`, me.id).toArray();
+    this.sql.exec("UPDATE call_members SET gone_at = NULL WHERE uid = ? AND left_at IS NULL", me.id);
     if (!wasOnline) this.announce(me.id, true);
+    for (const r of back) this.emitCall(r.call);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -756,7 +813,9 @@ export class Studio extends DurableObject {
       msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
       const me = this.userById(uid);
       const handler = { hello: this.onHello, send: this.onSend, edit: this.onEdit, delete: this.onDelete,
-                        read: this.onRead, typing: this.onTyping, react: this.onReact }[msg.type];
+                        read: this.onRead, typing: this.onTyping, react: this.onReact,
+                        call_start: this.onCallStart, call_join: this.onCallJoin, call_leave: this.onCallLeave,
+                        call_decline: this.onCallDecline, call_signal: this.onCallSignal }[msg.type];
       if (!handler) refuse("bad_request", "Unknown message " + msg.type);
       await handler.call(this, ws, me, msg);
     } catch (e) {
@@ -766,7 +825,7 @@ export class Studio extends DurableObject {
     }
   }
 
-  webSocketClose(ws) {
+  async webSocketClose(ws) {
     const { uid } = ws.deserializeAttachment() || {};
     try { ws.close(1000, "bye"); } catch { /* already closed */ }
     if (!uid) return;
@@ -774,10 +833,15 @@ export class Studio extends DurableObject {
     if (!others.length && this.sql.exec("SELECT 1 FROM users WHERE id = ?", uid).toArray().length) {
       this.sql.exec("UPDATE users SET last_seen = ? WHERE id = ?", Date.now(), uid);
       this.announce(uid, false);
+      // Gone from every socket: out of any call in GONE_MS unless they come back.
+      const now = Date.now();
+      const marked = this.sql.exec(`UPDATE call_members SET gone_at = ? WHERE uid = ? AND left_at IS NULL AND gone_at IS NULL
+         AND call IN (SELECT id FROM calls WHERE state != 'ended') RETURNING call`, now, uid).toArray();
+      if (marked.length) await this.wake(now + GONE_MS);
     }
   }
 
-  webSocketError(ws) { this.webSocketClose(ws); }
+  async webSocketError(ws) { await this.webSocketClose(ws); }
 
   onHello(ws, me, msg) {
     const since = Number(msg.since) || 0;
@@ -864,6 +928,7 @@ export class Studio extends DurableObject {
   onEdit(ws, me, msg) {
     const chat = String(msg.chat ?? "");
     const row = this.own(chat, msg.id, me);
+    if (row.call) refuse("bad_request", "A call's line cannot be edited");
     const text = row.file ? this.caption(msg.text) : this.text(msg.text);
     const at = Date.now();
     this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, row.id);
@@ -914,6 +979,169 @@ export class Studio extends DurableObject {
     this.emit({ chat, kind: "reaction", payload: { chat_id: chat, id, user_id: me.id, emoji, on } });
   }
 
+  // ---------------------------------------------------------------- calls
+  callView(id) {
+    const c = this.sql.exec("SELECT * FROM calls WHERE id = ?", id).toArray()[0];
+    if (!c) return null;
+    const rows = this.sql.exec("SELECT uid, left_at, declined FROM call_members WHERE call = ? ORDER BY joined_at", id).toArray();
+    return { id: c.id, chat: c.chat, by: c.by, kind: c.kind, cid: c.cid, state: c.state,
+             members: rows.filter((r) => r.left_at == null && !r.declined).map((r) => r.uid),
+             declined: rows.filter((r) => r.declined).map((r) => r.uid),
+             started_at: c.started_at, answered_at: c.answered_at ?? null, ended_at: c.ended_at ?? null };
+  }
+
+  emitCall(id) {
+    const view = this.callView(id);
+    if (view) this.emit({ chat: view.chat, kind: "call", payload: { call: view } });
+  }
+
+  liveCall(id) {
+    const c = this.sql.exec("SELECT * FROM calls WHERE id = ?", id).toArray()[0];
+    if (!c || c.state === "ended") refuse("no_call", "This call has ended", 404);
+    return c;
+  }
+
+  async onCallStart(ws, me, msg) {
+    this.limit(me.id + ":call", 10);
+    const chat = String(msg.chat ?? "");
+    const kind = msg.kind === "video" || msg.kind === "audio" ? msg.kind : refuse("bad_request", "A call is audio or video");
+    const cid = String(msg.cid ?? "").slice(0, 64);
+    this.writable(chat, me);
+    if (this.sql.exec("SELECT 1 FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray().length) {
+      refuse("call_exists", "This chat already has a call - join it");
+    }
+    // Arm the timer first: a call that rings with no alarm behind it would block the chat for good.
+    await this.wake(Date.now() + RING_MS);
+    if (this.sql.exec("SELECT 1 FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray().length) {
+      refuse("call_exists", "This chat already has a call - join it");
+    }
+    const id = randomHex(8);
+    const now = Date.now();
+    this.sql.exec("INSERT INTO calls (id, chat, by, kind, cid, state, started_at) VALUES (?, ?, ?, ?, ?, 'ringing', ?)",
+      id, chat, me.id, kind, cid, now);
+    this.sql.exec("INSERT INTO call_members (call, uid, joined_at) VALUES (?, ?, ?)", id, me.id, now);
+    this.emitCall(id);
+  }
+
+  // A person who is no longer in the chat (removed, or the account deleted) leaves its running calls.
+  leaveChatCalls(chat, uid) {
+    for (const c of this.sql.exec("SELECT id FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray()) {
+      if (this.callView(c.id).members.includes(uid)) this.leaveCall(c.id, uid);
+    }
+  }
+
+  inChat(chat, uid) {
+    return this.sql.exec("SELECT 1 FROM members WHERE chat = ? AND uid = ?", chat, uid).toArray().length > 0;
+  }
+
+  onCallJoin(ws, me, msg) {
+    this.limit(me.id + ":call", 10);
+    const c = this.liveCall(String(msg.call ?? ""));
+    this.member(c.chat, me.id);
+    const view = this.callView(c.id);
+    // Already in it (a second join, or a client that lost its window): the view again, so it knows.
+    if (view.members.includes(me.id)) { this.emitCall(c.id); return; }
+    if (view.members.length >= CALL_MAX) refuse("call_full", "A call holds at most " + CALL_MAX + " people");
+    const now = Date.now();
+    this.sql.exec(`INSERT INTO call_members (call, uid, joined_at) VALUES (?, ?, ?)
+       ON CONFLICT (call, uid) DO UPDATE SET joined_at = excluded.joined_at, left_at = NULL, gone_at = NULL, declined = 0`,
+      c.id, me.id, now);
+    if (c.state === "ringing") this.sql.exec("UPDATE calls SET state = 'live', answered_at = ? WHERE id = ?", now, c.id);
+    this.emitCall(c.id);
+  }
+
+  onCallDecline(ws, me, msg) {
+    const c = this.liveCall(String(msg.call ?? ""));
+    this.member(c.chat, me.id);
+    if (this.callView(c.id).members.includes(me.id)) return;       // in it: hang up instead
+    const now = Date.now();
+    this.sql.exec(`INSERT INTO call_members (call, uid, joined_at, left_at, declined) VALUES (?, ?, ?, ?, 1)
+       ON CONFLICT (call, uid) DO UPDATE SET declined = 1, left_at = excluded.left_at`, c.id, me.id, now, now);
+    const declined = new Set(this.callView(c.id).declined);
+    const others = this.memberIds(c.chat).filter((u) => u !== c.by);
+    if (c.state === "ringing" && others.every((u) => declined.has(u))) this.endCall(c.id);
+    else this.emitCall(c.id);
+  }
+
+  onCallLeave(ws, me, msg) {
+    const c = this.liveCall(String(msg.call ?? ""));
+    this.leaveCall(c.id, me.id);
+  }
+
+  // Someone leaves; a ringing call ends when its caller hangs up, a live one when one person is left in it.
+  leaveCall(id, uid) {
+    const c = this.sql.exec("SELECT * FROM calls WHERE id = ?", id).toArray()[0];
+    if (!c || c.state === "ended") return;
+    this.sql.exec("UPDATE call_members SET left_at = ? WHERE call = ? AND uid = ? AND left_at IS NULL", Date.now(), id, uid);
+    const view = this.callView(id);
+    if ((c.state === "ringing" && uid === c.by) || (c.state === "live" && view.members.length <= 1)
+        || !view.members.length) this.endCall(id);
+    else this.emitCall(id);
+  }
+
+  endCall(id) {
+    const c = this.sql.exec("SELECT * FROM calls WHERE id = ?", id).toArray()[0];
+    if (!c || c.state === "ended") return;
+    const now = Date.now();
+    this.sql.exec("UPDATE calls SET state = 'ended', ended_at = ? WHERE id = ?", now, id);
+    this.sql.exec("UPDATE call_members SET left_at = ? WHERE call = ? AND left_at IS NULL", now, id);
+    this.emitCall(id);
+    const answered = c.answered_at != null;
+    this.postCallLine(c.chat, c.by, { id, kind: c.kind, answered,
+                                       seconds: answered ? Math.round((now - c.answered_at) / 1000) : 0 });
+  }
+
+  // The call's line in the chat: a message from the caller carrying the call's note. Its text is the
+  // note in words, for clients that do not know calls; those that do draw the note and skip the text.
+  postCallLine(chat, by, note) {
+    if (!this.sql.exec("SELECT 1 FROM chats WHERE id = ?", chat).toArray().length) return;
+    const message = this.ctx.storage.transactionSync(() => {
+      const seq = this.sql.exec("UPDATE chats SET last_seq = last_seq + 1 WHERE id = ? RETURNING last_seq", chat).one().last_seq;
+      const id = randomHex(8);
+      this.sql.exec("INSERT INTO messages (chat, seq, id, from_id, cid, text, reply_to, at, call) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        chat, seq, id, by, "call:" + note.id, callNoteText(note), Date.now(), JSON.stringify(note));
+      return this.messageView(this.sql.exec("SELECT * FROM messages WHERE id = ?", id).one());
+    });
+    this.emit({ chat, kind: "message", payload: { message } });
+  }
+
+  onCallSignal(ws, me, msg) {
+    this.limit(me.id + ":signal", 200);
+    const c = this.liveCall(String(msg.call ?? ""));
+    const members = this.callView(c.id).members;
+    const to = String(msg.to ?? "");
+    if (to === me.id || !members.includes(me.id) || !members.includes(to)
+        || !this.inChat(c.chat, me.id) || !this.inChat(c.chat, to)) {
+      refuse("not_in_call", "Both people must be in the call");
+    }
+    if (!msg.data || typeof msg.data !== "object" || Array.isArray(msg.data)) refuse("bad_request", "A signal carries an object");
+    if (JSON.stringify(msg.data).length > SIGNAL_MAX) refuse("too_big", "A signal is at most 64 KB");
+    this.deliver({ kind: "call_signal", call: c.id, from: me.id, data: msg.data }, [to]);
+  }
+
+  // The timer: the earliest of the next daily sweep and the next call deadline.
+  async wake(at) {
+    const current = await this.ctx.storage.getAlarm();
+    if (current == null || at < current) await this.ctx.storage.setAlarm(at);
+  }
+
+  sweepCalls(now) {
+    for (const c of this.sql.exec("SELECT id FROM calls WHERE state = 'ringing' AND started_at <= ?", now - RING_MS).toArray()) {
+      this.endCall(c.id);
+    }
+    const gone = this.sql.exec(`SELECT call, uid FROM call_members WHERE left_at IS NULL AND gone_at IS NOT NULL AND gone_at <= ?
+       AND call IN (SELECT id FROM calls WHERE state != 'ended')`, now - GONE_MS).toArray();
+    for (const m of gone) this.leaveCall(m.call, m.uid);
+  }
+
+  nextCallDeadline(now) {
+    const ring = this.sql.exec("SELECT MIN(started_at) AS t FROM calls WHERE state = 'ringing'").one().t;
+    const gone = this.sql.exec(`SELECT MIN(gone_at) AS t FROM call_members WHERE left_at IS NULL AND gone_at IS NOT NULL
+       AND call IN (SELECT id FROM calls WHERE state != 'ended')`).one().t;
+    const times = [ring != null ? ring + RING_MS : null, gone != null ? gone + GONE_MS : null].filter((t) => t != null);
+    return times.length ? Math.max(now + 1000, Math.min(...times)) : null;
+  }
+
   onTyping(ws, me, msg) {
     const chat = String(msg.chat ?? "");
     this.member(chat, me.id);
@@ -925,6 +1153,7 @@ export class Studio extends DurableObject {
 const ROUTES = [
   ["GET", /^\/v1\/health$/, "health", true],
   ["POST", /^\/v1\/register$/, "register", true],
+  ["GET", /^\/v1\/turn$/, "turn"],
   ["GET", /^\/v1\/me$/, "getMe"],
   ["DELETE", /^\/v1\/me$/, "deleteMe"],
   ["PATCH", /^\/v1\/me$/, "patchMe"],

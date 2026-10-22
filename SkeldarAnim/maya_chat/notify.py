@@ -133,9 +133,207 @@ def ring(now=None):
     return played
 
 
+def _rings():
+    """{call id: ring handle (or None)} for the calls ringing here, kept on sys (trap 111)."""
+    held = getattr(sys, "_skeldar_chat_rings", None)
+    if not isinstance(held, dict):
+        held = {}
+        sys._skeldar_chat_rings = held
+    return held
+
+
+def _loop_ring():
+    """The looped ring, whatever the interface-sounds switch says; None when it cannot play."""
+    try:
+        import maya_hubsound
+        return maya_hubsound.loop("ring", force=True)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _now_ms():
+    import time
+    return int(time.time() * 1000)
+
+
+def _user(session, uid):
+    for c in session.state.chats.values():
+        for m in c.get("members", []):
+            if m.get("id") == uid:
+                return m
+    for m in session.state.people or []:
+        if m.get("id") == uid:
+            return m
+    return None
+
+
+def _gone(call_id):
+    """Stop the ring and take the card away."""
+    handle = _rings().pop(call_id, None)
+    if handle is not None:
+        try:
+            handle.stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        from . import toast
+        toast.dismiss_call(call_id)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def stop_all():
+    """Stop every ring and take every call card away (the session closed or went)."""
+    for cid in list(_rings()):
+        _gone(cid)
+    try:
+        from . import toast
+        for card in toast.call_cards():
+            toast.dismiss_call(card.call_id)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def uninstall():
+    """Take the listener off and stop the rings."""
+    old = getattr(sys, "_skeldar_chat_notify", None)
+    if old is not None:
+        try:
+            old[0].unlisten(old[1])
+        except Exception:                                    # noqa: BLE001
+            pass
+        sys._skeldar_chat_notify = None
+    stop_all()
+
+
+def _stop_after(call_id, seconds):
+    """The ring gives up after `seconds` (a single-shot timer, where Qt is)."""
+    try:
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(int(seconds * 1000), lambda: _gone(call_id))
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _heard_call(session, data, out):
+    from . import calls as _calls, toast
+    view = (data or {}).get("call") or {}
+    cid = view.get("id")
+    me = (session.state.me or {}).get("id")
+    ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms())}
+    held = _rings()
+    if cid in ringing and cid not in held:
+        caller = _user(session, view.get("by"))
+        head = look.display_name(caller) if caller else "Звонок"
+        held[cid] = None
+        try:
+            toast.show_call(view, caller or {"nick": "?"}, head)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+        held[cid] = _loop_ring()
+        _stop_after(cid, _calls.RING_S)
+        out.append(("call_card", cid))
+    elif cid in held and cid not in ringing:
+        _gone(cid)
+        out.append(("call_gone", cid))
+
+
+STRAY_MS = 3000     # a stray call is looked at again this much later (after the catch-up)
+
+
+def _later(ms, fn):
+    """fn() in `ms` (a single-shot timer where Qt runs; else now)."""
+    try:
+        from PySide6 import QtCore, QtWidgets
+        if QtWidgets.QApplication.instance() is not None:
+            QtCore.QTimer.singleShot(int(ms), fn)
+            return
+    except Exception:                                        # noqa: BLE001
+        pass
+    fn()
+
+
+def _left():
+    """Call ids this Maya has left as strays, kept on sys (once per call)."""
+    held = getattr(sys, "_skeldar_chat_strays", None)
+    if not isinstance(held, set):
+        held = set()
+        sys._skeldar_chat_strays = held
+    return held
+
+
+def _window_holds(view):
+    try:
+        from . import callview
+        win = callview.current()
+    except Exception:                                        # noqa: BLE001
+        return False
+    if win is None:
+        return False
+    holds = getattr(win, "holds", None)
+    if holds is not None:
+        return bool(holds(view))
+    return getattr(win, "call_id", None) == view.get("id")
+
+
+def stray(session, view):
+    """Whether `view` is a call this Maya was in (marked on disk) that no call window holds
+    any more: Maya restarted or crashed mid-call, and the server still has me in it."""
+    me = (session.state.me or {}).get("id")
+    cid = view.get("id")
+    if not cid or view.get("state") == "ended" or me not in (view.get("members") or []):
+        return False
+    here = getattr(session, "calls_here", None)
+    if here is None or cid not in here():
+        return False
+    return cid not in _left() and not _window_holds(view)
+
+
+def _check_stray(session, call_id, out):
+    view = (session.state.calls or {}).get(call_id)
+    if view is None or not stray(session, view):
+        return
+    _left().add(call_id)
+    session.leave_call(call_id)
+    mark = getattr(session, "call_here", None)
+    if mark is not None:
+        mark(call_id, False)
+    out.append(("stray_left", call_id))
+
+
+def _heard_stray(session, data, out):
+    view = (data or {}).get("call") or {}
+    cid = view.get("id")
+    if not cid:
+        return
+    if view.get("state") == "ended":
+        mark = getattr(session, "call_here", None)
+        here = getattr(session, "calls_here", None)
+        if mark is not None and here is not None and cid in here():
+            mark(cid, False)
+        return
+    if stray(session, view):
+        _later(STRAY_MS, lambda: _check_stray(session, cid, out))
+
+
 def heard(session, kind, data, out=None):
     """What a session event does: returns the list of things done (for the tests)."""
     done = [] if out is None else out
+    if kind == "call":
+        _heard_call(session, data, done)
+        _heard_stray(session, data, done)
+        return done
+    if kind == "calls_end":
+        stop_all()
+        done.append(("calls_end",))
+        return done
+    if kind == "resync":
+        from . import calls as _calls
+        me = (session.state.me or {}).get("id")
+        ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms())}
+        for cid in [c for c in _rings() if c not in ringing]:
+            _gone(cid)
+            done.append(("call_gone", cid))
     if kind in ("message", "read", "read_local", "resync", "chat", "member_removed", "status"):
         done.append(("badge", paint(session)))
     if kind != "message" or not data:

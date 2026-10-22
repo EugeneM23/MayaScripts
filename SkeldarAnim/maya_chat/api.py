@@ -108,6 +108,9 @@ class Api(object):
             path += "?before=%d" % int(before)
         return self.call("GET", path)
 
+    def turn(self):
+        return self.call("GET", "/v1/turn")
+
     def people(self):
         return self.call("GET", "/v1/people")["users"]
 

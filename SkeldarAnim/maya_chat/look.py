@@ -160,6 +160,10 @@ CLIP = u"\U0001F4CE"
 
 def message_text(message):
     """A message as one line of text: a file's message is «📎 name», its caption after a dash."""
+    note = (message or {}).get("call")
+    if note:
+        from . import calls
+        return calls.ICON + " " + calls.note_text(note)
     text = " ".join(str((message or {}).get("text") or "").split())
     f = (message or {}).get("file")
     if f and f.get("name"):
@@ -268,13 +272,13 @@ def one_column(width, scale=1.0):
 
 class Item(object):
     """A line of the feed: a day separator or a message."""
-    __slots__ = ("kind", "text", "message", "mine", "first", "last", "tick", "pending")
+    __slots__ = ("kind", "text", "message", "mine", "first", "last", "tick", "pending", "missed")
 
     def __init__(self, kind, text="", message=None, mine=False, first=True, last=True,
-                 tick="", pending=False):
+                 tick="", pending=False, missed=False):
         self.kind, self.text, self.message = kind, text, message
         self.mine, self.first, self.last = mine, first, last
-        self.tick, self.pending = tick, pending
+        self.tick, self.pending, self.missed = tick, pending, missed
 
     def key(self):
         if self.kind == "day":
@@ -317,6 +321,13 @@ def feed(messages, pending, me_id, chat, reads, now_ms):
             prev_msg_item = None
         else:
             prev_msg_item = out[-1] if out and out[-1].kind == "msg" else None
+        note = None if is_pending else records.call_note(msg.get("call"))
+        if note is not None:
+            from . import calls
+            out.append(Item("call", calls.note_text(note), msg, False, True, True, "", False,
+                            not note["answered"]))
+            prev = msg
+            continue
         sender = me_id if is_pending else msg.get("from_id")
         mine = sender == me_id
         first = True
@@ -334,7 +345,7 @@ def feed(messages, pending, me_id, chat, reads, now_ms):
 def last_mine(messages, me_id):
     """My newest message that is not deleted, for ↑ in an empty composer."""
     for m in reversed(messages or []):
-        if m.get("from_id") == me_id and not m.get("deleted"):
+        if m.get("from_id") == me_id and not m.get("deleted") and not m.get("call"):
             return m
     return None
 

@@ -1,6 +1,6 @@
 """The chat's cache on disk, one folder per server host. Stdlib only.
 
-    token  me.json  chats.json  messages/<chat>.jsonl  outbox.json  since
+    token  me.json  chats.json  messages/<chat>.jsonl  outbox.json  since  calls.json
 
 Every write goes to a temporary file and replaces the old one, so a crash never leaves half a file;
 a file that cannot be read reads as empty.
@@ -11,6 +11,41 @@ import re
 import urllib.parse
 
 KEEP = 500
+
+
+def _pid_alive(pid):
+    """Whether process `pid` is running (0, unknown: not). Windows asks the process itself;
+    elsewhere os.kill(pid, 0)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+            k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = k32.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return False
+            try:
+                code = wintypes.DWORD()
+                if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == 259                    # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(handle)
+        except Exception:                                    # noqa: BLE001
+            return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _safe(name):
@@ -105,6 +140,34 @@ class Store(object):
 
     def set_since(self, seq):
         self._write(self._path("since"), str(int(seq)))
+
+    def call_marks(self):
+        """{call id: the pid of the Maya that marked it} (an older list: pid 0)."""
+        try:
+            held = json.loads(self._read(self._path("calls.json")) or "{}")
+        except ValueError:
+            return {}
+        if isinstance(held, list):
+            return {c: 0 for c in held if isinstance(c, str)}
+        if not isinstance(held, dict):
+            return {}
+        return {c: p for c, p in held.items() if isinstance(c, str) and isinstance(p, int)}
+
+    def calls_here(self, alive=None):
+        """The ids of the calls this Maya is in, or a Maya that is gone was in (a crash leaves
+        them here). A call another running Maya on this machine marked is that Maya's: every
+        Maya sharing these prefs reads this file, and must not leave the other's call."""
+        alive = _pid_alive if alive is None else alive
+        me = os.getpid()
+        return [c for c, pid in self.call_marks().items() if pid == me or pid <= 0 or not alive(pid)]
+
+    def set_call_mark(self, call_id, on):
+        marks = self.call_marks()
+        if on:
+            marks[call_id] = os.getpid()
+        else:
+            marks.pop(call_id, None)
+        self._write(self._path("calls.json"), json.dumps(marks, sort_keys=True))
 
     def forget(self):
         """Sign out on this machine: the token and me go, the history stays."""

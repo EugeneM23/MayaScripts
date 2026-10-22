@@ -537,11 +537,208 @@ def phase_person():
     wa.close()
 
 
+def _hello(w, token):
+    """Say hello at the newest seq and wait for caught_up (as phase_react does)."""
+    w.send({"type": "hello", "since": jcall("GET", "/v1/chats", token)[1]["seq"]})
+    w.until(lambda e: e.get("kind") == "caught_up", 10)
+
+
+def _call_ev(w, call_id=None, state=None, seconds=8, members=None):
+    def test(e):
+        if e.get("kind") != "call":
+            return False
+        c = e["call"]
+        return ((call_id is None or c["id"] == call_id) and (state is None or c["state"] == state)
+                and (members is None or len(c["members"]) == members))
+    ev, _ = w.until(test, seconds)
+    return ev["call"] if ev else None
+
+
+def _error(w, seconds=5):
+    ev, _ = w.until(lambda e: e.get("kind") == "error", seconds)
+    return ev
+
+
+def _make_group(token, member_ids):
+    status, g = jcall("POST", "/v1/chats", token, {"kind": "group", "name": "zzt calls", "members": member_ids})
+    if status != 200:
+        raise RuntimeError("group answered %s %s" % (status, g))
+    return g
+
+
+def phase_turn():
+    T = Users.make("tu")
+    st, body = jcall("GET", "/v1/turn", T[0])
+    servers = body.get("ice_servers", []) if isinstance(body, dict) else []
+    urls = [u for s in servers for u in s.get("urls", [])]
+    gate("turn answers ICE servers", st == 200 and any(u.startswith("stun:") for u in urls), str(body)[:200])
+    if body.get("turn"):
+        turns = [s for s in servers if any(u.startswith("turn") for u in s["urls"])]
+        gate("a TURN server with credentials", bool(turns) and all(s.get("username") and s.get("credential") for s in turns))
+        gate("no port 53", not any(":53?" in u or u.endswith(":53") for u in urls))
+    else:
+        print("  (no TURN key on this server: STUN only)", body.get("text", ""))
+        gate("without a TURN key it says turn is false", body.get("turn") is False and not any(u.startswith("turn") for u in urls))
+    st, _ = jcall("GET", "/v1/turn", None)
+    gate("turn needs signing in", st == 401)
+
+
+def phase_calls():
+    A, B, C = Users.make("cla"), Users.make("clb"), Users.make("clc")
+    st, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
+    wa, wb, wc = ws(A[0]), ws(B[0]), ws(C[0])
+    for w, t in ((wa, A[0]), (wb, B[0]), (wc, C[0])):
+        _hello(w, t)
+
+    # ring, a second call refused, a stranger refused
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "video", "cid": "c1"})
+    c = _call_ev(wb, state="ringing")
+    gate("a call rings for the other person", c is not None and c["members"] == [A[1]["id"]]
+         and c["by"] == A[1]["id"] and c["kind"] == "video" and c["cid"] == "c1", c)
+    cid = c["id"] if c else ""
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c2"})
+    err = _error(wa)
+    gate("a second call in the chat is refused", bool(err) and err["code"] == "call_exists", err)
+    wc.send({"type": "call_join", "call": cid})
+    err = _error(wc)
+    gate("a stranger cannot join", bool(err) and err["code"] == "not_member", str(err))
+
+    # join -> live, signals between the two only
+    wb.send({"type": "call_join", "call": cid})
+    c = _call_ev(wa, cid, "live")
+    gate("the call goes live with both", c is not None and sorted(c["members"]) ==
+         sorted([A[1]["id"], B[1]["id"]]) and c["answered_at"], c)
+    wb.send({"type": "call_signal", "call": cid, "to": A[1]["id"], "data": {"sdp": "offer-x"}})
+    ev, _ = wa.until(lambda e: e.get("kind") == "call_signal", 5)
+    gate("a signal reaches the other member", bool(ev) and ev["from"] == B[1]["id"]
+         and ev["data"] == {"sdp": "offer-x"} and "seq" not in ev, ev)
+    wb.send({"type": "call_signal", "call": cid, "to": C[1]["id"], "data": {"x": 1}})
+    err = _error(wb)
+    gate("a signal to someone outside the call is refused", bool(err) and err["code"] == "not_in_call", err)
+    wb.send({"type": "call_signal", "call": cid, "to": A[1]["id"], "data": {"x": "y" * 70000}})
+    err = _error(wb)
+    gate("a signal over 64 KB is refused", bool(err) and err["code"] == "too_big", err)
+
+    # leave -> ended, the call line
+    wb.send({"type": "call_leave", "call": cid})
+    c = _call_ev(wa, cid, "ended")
+    gate("the last but one leaving ends the call", c is not None and c["ended_at"], c)
+    ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == cid, 5)
+    note = ev["message"]["call"] if ev else {}
+    gate("the call line lands in the chat", bool(ev) and note.get("answered") is True
+         and note.get("kind") == "video" and isinstance(note.get("seconds"), int) and note["seconds"] >= 0
+         and ev["message"]["from_id"] == A[1]["id"], ev)
+    secs = note.get("seconds", 0)
+    words = u"\U0001F4DE Звонок · " + (u"%d с" % secs if secs < 60 else u"%d мин" % (secs // 60))
+    gate("the call line's text is the note in words, for older clients",
+         bool(ev) and ev["message"]["text"] == words, ev and ev["message"]["text"])
+
+    # decline -> ended, not answered
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c3"})
+    c = _call_ev(wb, state="ringing")
+    wb.send({"type": "call_decline", "call": c["id"]})
+    c2 = _call_ev(wa, c["id"], "ended")
+    ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == c["id"], 5)
+    gate("a declined call ends, not answered", c2 is not None and bool(ev)
+         and ev["message"]["call"]["answered"] is False, ev)
+
+    # nobody answers -> ended after 45 s
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c4"})
+    c = _call_ev(wb, state="ringing")
+    c2 = _call_ev(wa, c["id"], "ended", seconds=70)
+    gate("a call nobody answers ends after 45 s", c2 is not None
+         and 44000 <= c2["ended_at"] - c2["started_at"] <= 70000,
+         str(c2 and c2["ended_at"] - c2["started_at"]))
+    ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == c["id"], 5)
+    gate("an unanswered call's line says not answered", bool(ev) and ev["message"]["call"]["answered"] is False, ev)
+
+    # Maya restarted mid-call: back within 30 s it hears the call it is still in; a second join
+    # answers the view again
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c5r"})
+    c = _call_ev(wb, state="ringing")
+    wb.send({"type": "call_join", "call": c["id"]})
+    _call_ev(wa, c["id"], "live")
+    _call_ev(wb, c["id"], "live")
+    wb.send({"type": "call_join", "call": c["id"]})
+    again = _call_ev(wb, c["id"], "live", seconds=5)
+    gate("joining a call one is in answers its view again", again is not None
+         and B[1]["id"] in again["members"], again)
+    seq = jcall("GET", "/v1/chats", B[0])[1]["seq"]
+    wb.close()
+    time.sleep(2)
+    wb = ws(B[0])
+    wb.send({"type": "hello", "since": seq})
+    back = _call_ev(wb, c["id"], "live", seconds=10)
+    gate("back within 30 s, the call one is still in is heard again", back is not None
+         and B[1]["id"] in back["members"], back)
+    wb.until(lambda e: e.get("kind") == "caught_up", 10)
+    wb.send({"type": "call_leave", "call": c["id"]})
+    gate("and it can be left", _call_ev(wa, c["id"], "ended") is not None)
+
+    # a member gone for 30 s leaves
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c5"})
+    c = _call_ev(wb, state="ringing")
+    wb.send({"type": "call_join", "call": c["id"]})
+    _call_ev(wa, c["id"], "live")
+    wb.close()
+    t0 = time.time()
+    c2 = _call_ev(wa, c["id"], "ended", seconds=70)
+    gate("a member gone for 30 s leaves, and alone the call ends", c2 is not None
+         and time.time() - t0 >= 25, "%.1f s" % (time.time() - t0))
+
+    # the 5th person is refused
+    more = [Users.make("cld"), Users.make("cle")]
+    group = _make_group(A[0], [B[1]["id"], C[1]["id"]] + [m[1]["id"] for m in more])
+    socks = [ws(t) for t, _u in [B, C] + more]
+    for w, (t, _u) in zip(socks, [B, C] + more):
+        _hello(w, t)
+    wa.send({"type": "call_start", "chat": group["id"], "kind": "audio", "cid": "c6"})
+    c = _call_ev(socks[0], state="ringing")
+    for w in socks[:3]:
+        w.send({"type": "call_join", "call": c["id"]})
+    full = _call_ev(wa, c["id"], "live", seconds=8, members=4)
+    gate("four people in a group call", full is not None, full)
+    socks[3].send({"type": "call_join", "call": c["id"]})
+    err = _error(socks[3])
+    gate("a 5th person is refused", bool(err) and err["code"] == "call_full", err)
+    # one at a time: leaves sent at once on four sockets may arrive in any order, and one that
+    # comes after the call ended leaves a stale no_call error on its socket
+    for w in socks[:3]:
+        w.send({"type": "call_leave", "call": c["id"]})
+        _call_ev(wa, c["id"], None, seconds=5)          # the last of them ends it
+
+    # a member removed from the group mid-call leaves the call
+    wa.send({"type": "call_start", "chat": group["id"], "kind": "audio", "cid": "c7"})
+    c = _call_ev(socks[0], state="ringing")
+    for w in socks[:3]:
+        w.send({"type": "call_join", "call": c["id"]})
+    _call_ev(wa, c["id"], "live", seconds=8, members=4)
+    status, _ = jcall("DELETE", "/v1/chats/%s/members/%s" % (group["id"], C[1]["id"]), A[0])
+    gate("the admin removes a member", status == 200, status)
+    after = _call_ev(wa, c["id"], None, seconds=8)
+    gate("a removed member leaves the running call", after is not None
+         and C[1]["id"] not in after["members"] and len(after["members"]) == 3, after)
+    socks[1].send({"type": "call_signal", "call": c["id"], "to": A[1]["id"], "data": {"x": 1}})
+    err = _error(socks[1])
+    gate("a removed member cannot signal", bool(err) and err["code"] == "not_in_call", err)
+
+    # an account deleted mid-call leaves the call
+    call("DELETE", "/v1/me", more[0][0])
+    after = _call_ev(wa, c["id"], None, seconds=8)
+    gate("a deleted account leaves the running call", after is not None
+         and more[0][1]["id"] not in after["members"], after)
+    for w in [wa, wc] + socks:
+        try:
+            w.close()
+        except OSError as exc:
+            print("  (close: %s)" % exc)
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
           "people": phase_people, "react": phase_react, "newcomer": phase_newcomer,
           "files": phase_files, "previews": phase_previews,
-          "person": phase_person}
+          "person": phase_person, "calls": phase_calls, "turn": phase_turn}
 
 
 def main(argv):

@@ -144,6 +144,73 @@ class Deploy(unittest.TestCase):
             deploy.deploy("live", env=ENV, opener=Opener({}))
 
 
+class Secrets(unittest.TestCase):
+    def test_no_secrets_keeps_the_bindings_as_they_were(self):
+        self.assertEqual(deploy.metadata(True)["bindings"],
+                         [{"type": "durable_object_namespace", "name": "STUDIO", "class_name": "Studio"}])
+
+    def test_secrets_are_secret_text_bindings(self):
+        meta = deploy.metadata(False, secrets={"TURN_KEY_ID": "k1", "TURN_KEY_TOKEN": "t1"})
+        self.assertIn({"type": "secret_text", "name": "TURN_KEY_ID", "text": "k1"}, meta["bindings"])
+        self.assertIn({"type": "secret_text", "name": "TURN_KEY_TOKEN", "text": "t1"}, meta["bindings"])
+
+    def test_an_empty_secret_is_left_out(self):
+        meta = deploy.metadata(False, secrets={"TURN_KEY_ID": None, "TURN_KEY_TOKEN": ""})
+        self.assertEqual(len(meta["bindings"]), 1)
+
+
+class TurnKey(unittest.TestCase):
+    URL = "/accounts/acc/calls/turn_keys"
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.old = deploy.KEYS_FILE
+        deploy.KEYS_FILE = os.path.join(self.dir, "cloudflare.json")
+
+    def tearDown(self):
+        import shutil
+        deploy.KEYS_FILE = self.old
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_creates_the_key_and_saves_it(self):
+        opener = Opener({("POST", self.URL): ok({"uid": "u" * 32, "key": "k" * 64, "name": "skeldar-chat"})})
+        self.assertEqual(deploy.turn(env=ENV, opener=opener), "u" * 32)
+        held = deploy.saved(deploy.TURN_NAMES)
+        self.assertEqual(held["turn_key_id"], "u" * 32)
+        self.assertEqual(held["turn_key_token"], "k" * 64)
+        self.assertEqual(json.loads(opener.calls[0][2]), {"name": "skeldar-chat"})
+
+    def test_it_keeps_what_the_file_already_held(self):
+        with open(deploy.KEYS_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"CLOUDFLARE_API_TOKEN": "old"}, handle)
+        deploy.turn(env=ENV, opener=Opener({("POST", self.URL): ok({"uid": "u", "key": "k"})}))
+        with open(deploy.KEYS_FILE, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["CLOUDFLARE_API_TOKEN"], "old")
+
+    def test_a_token_without_calls_rights_says_so(self):
+        opener = Opener({("POST", self.URL): bad("Authentication error")})
+        with self.assertRaises(deploy.DeployError) as cm:
+            deploy.turn(env=ENV, opener=opener)
+        self.assertIn("Calls Write", str(cm.exception))
+
+    def test_deploy_sends_saved_turn_secrets(self):
+        with open(deploy.KEYS_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"turn_key_id": "kid", "turn_key_token": "ktok"}, handle)
+        table = Deploy.table(None, ok({"id": "x"}))
+        opener = Opener(table)
+        deploy.deploy("staging", env=ENV, opener=opener)
+        put = [c for c in opener.calls if c[0] == "PUT"][0]
+        self.assertIn(b'{"type": "secret_text", "name": "TURN_KEY_ID", "text": "kid"}', put[2])
+        self.assertIn(b'{"type": "secret_text", "name": "TURN_KEY_TOKEN", "text": "ktok"}', put[2])
+
+    def test_deploy_without_a_turn_key_sends_no_secrets(self):
+        opener = Opener(Deploy.table(None, ok({"id": "x"})))
+        deploy.deploy("staging", env=ENV, opener=opener)
+        put = [c for c in opener.calls if c[0] == "PUT"][0]
+        self.assertNotIn(b"secret_text", put[2])
+
+
 class Check(unittest.TestCase):
     def test_answers_the_subdomain(self):
         opener = Opener({("GET", "/accounts/acc/workers/subdomain"): ok({"subdomain": "evgen"})})

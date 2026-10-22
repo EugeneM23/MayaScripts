@@ -1025,3 +1025,112 @@ class Picker(Base):
         with mock.patch("maya_chat.emoji.recent", return_value=[]):
             self.picker = self.win.pick_emoji()
             self.assertEqual(self.picker._active_tab(), "recent")
+
+
+class CallsInWindow(Base):
+
+    def setUp(self):
+        super(CallsInWindow, self).setUp()
+        self.win.open_chat("dm")
+
+    def button(self, name):
+        return self.win.root.findChild(QtWidgets.QAbstractButton, name)
+
+    def test_header_buttons_start_calls(self):
+        got = []
+        with mock.patch("maya_chat.callview.start", side_effect=lambda s, c, k: got.append((c, k))):
+            self.button("skeldarChatCallVoice").click()
+            self.button("skeldarChatCallVideo").click()
+        self.assertEqual(got, [("dm", "audio"), ("dm", "video")])
+
+    def test_a_running_call_turns_them_into_join(self):
+        now = int(time.time() * 1000)
+        view = {"id": "c1", "chat": "dm", "by": "bob", "kind": "video", "cid": "x",
+                "state": "live", "members": ["bob", "carl"], "declined": [],
+                "started_at": now, "answered_at": now, "ended_at": None}
+        self.ses.state.calls = {"c1": view}
+        self.ses.tell("call", {"kind": "call", "call": view})
+        join = self.button("skeldarChatCallJoin")
+        self.assertTrue(join.isVisibleTo(self.win.root))
+        self.assertFalse(self.button("skeldarChatCallVoice").isVisibleTo(self.win.root))
+        got = []
+        with mock.patch("maya_chat.callview.answer", side_effect=lambda s, c, k: got.append((c, k))):
+            join.click()
+        self.assertEqual(got, [("c1", "video")])
+
+    def test_the_call_line_paints_and_a_click_calls_back(self):
+        note = {"id": "c", "kind": "video", "answered": False, "seconds": 0}
+        call = dict(msg("m9", 9, text="", at=NOW - 500), call=note)
+        self.ses.state.messages["dm"].append(call)
+        self.win.refresh()
+        QtWidgets.QApplication.processEvents()
+        boxes = [b for b in self.win.feed.boxes if b.item.kind == "call"]
+        self.assertEqual(len(boxes), 1)
+        self.assertTrue(boxes[0].item.missed)
+        self.assertGreater(self.win.feed.grab().toImage().width(), 0)
+        got = []
+        centre = boxes[0].callpill.center()
+        box, where = self.win.feed.box_at(centre)
+        self.assertEqual(where, "call")
+        with mock.patch("maya_chat.callview.start", side_effect=lambda s, c, k: got.append((c, k))):
+            event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, centre,
+                                      self.win.feed.mapToGlobal(centre), QtCore.Qt.LeftButton,
+                                      QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+            self.win.feed.mousePressEvent(event)
+        self.assertEqual(got, [("dm", "video")])
+
+
+class CallsInWindowRound1(Base):
+
+    def setUp(self):
+        super(CallsInWindowRound1, self).setUp()
+        self.win.open_chat("dm")
+
+    def vis(self, name):
+        return self.win.root.findChild(QtWidgets.QAbstractButton, name).isVisibleTo(self.win.root)
+
+    def run_call(self, members, state="live"):
+        now = int(time.time() * 1000)
+        view = {"id": "c1", "chat": "dm", "by": "bob", "kind": "audio", "cid": "x",
+                "state": state, "members": members, "declined": [], "started_at": now,
+                "answered_at": now, "ended_at": None}
+        self.ses.state.calls = {"c1": view}
+        self.ses.tell("call", {"kind": "call", "call": view})
+        return view
+
+    def test_in_the_call_shows_neither(self):
+        self.run_call(["bob", "me"])
+        self.assertFalse(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        self.assertFalse(self.vis("skeldarChatCallVideo"))
+
+    def test_a_full_call_shows_neither_and_a_press_starts_nothing(self):
+        self.run_call(["bob", "a", "b", "c"])
+        self.assertFalse(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        with mock.patch("maya_chat.callview.start") as start, \
+                mock.patch("maya_chat.callview.answer") as answer:
+            self.win.start_call("audio")
+        start.assert_not_called()
+        answer.assert_not_called()
+
+    def test_an_old_call_line_joins_a_joinable_call_else_nothing(self):
+        self.run_call(["bob"])
+        with mock.patch("maya_chat.callview.start") as start, \
+                mock.patch("maya_chat.callview.answer") as answer:
+            self.win.start_call("video", "dm")
+        start.assert_not_called()
+        answer.assert_called_once()
+
+    def test_refresh_on_a_chat_switch_repaints_and_an_end_brings_voice_back(self):
+        self.run_call(["bob"])
+        self.win.open_chat("dm2")
+        self.assertTrue(self.vis("skeldarChatCallVoice"))
+        self.win.open_chat("dm")
+        self.assertTrue(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        view = dict(self.ses.state.calls["c1"], state="ended")
+        self.ses.state.calls = {"c1": view}
+        self.ses.tell("call", {"kind": "call", "call": view})
+        self.assertTrue(self.vis("skeldarChatCallVoice"))
+        self.assertFalse(self.vis("skeldarChatCallJoin"))

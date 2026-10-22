@@ -93,6 +93,20 @@ class Payload(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(
             os.path.dirname(PLUGIN), "voice_server")))
 
+    def test_the_call_page_ships(self):
+        """2026-10-22, chat calls: the call page lives in assets/call/; `assets` ships whole."""
+        shipped = set()
+        for name in install.payload():
+            path = os.path.join(REPO, name)
+            if os.path.isdir(path):
+                for folder, _dirs, files in os.walk(path):
+                    for leaf in files:
+                        shipped.add(os.path.relpath(os.path.join(folder, leaf), REPO).replace("\\", "/"))
+            else:
+                shipped.add(name.replace("\\", "/"))
+        for leaf in ("call.html", "call.css", "call.js"):
+            self.assertIn("assets/call/" + leaf, shipped, leaf)
+
     def test_the_installer_ships_itself(self):
         """A colleague repairs the shelf by re-dragging install.py from
         the installed folder -- so the installed folder must hold it."""

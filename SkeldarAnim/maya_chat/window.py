@@ -20,6 +20,8 @@ import maya_hubstyle as hubstyle
 import maya_hubwindow as hubwindow
 
 from . import look
+from . import records
+from . import calls as _calls
 
 POS_VAR = "skeldarChatWindowPos"
 SIZE_VAR = "skeldarChatWindowSize"
@@ -476,7 +478,7 @@ class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
                  "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
-                 "thumb", "avatar", "bigs")
+                 "thumb", "avatar", "bigs", "callpill")
 
     def __init__(self, item):
         self.item = item
@@ -497,6 +499,7 @@ class Box(object):
         self.thumb = None        # the file's preview over its card
         self.avatar = None       # the sender's avatar beside a group's message
         self.bigs = []           # [(rect, glyph)]: a message of 1-3 emoji alone, as pictures
+        self.callpill = None     # a call line's pill (2026-10-22)
 
 
 def feed_class():
@@ -645,6 +648,17 @@ def feed_class():
                         h = px(28)
                         box.rect = QtCore.QRectF(0, y, width, h)
                         box.height = h
+                        boxes.append(box)
+                        y += h
+                        continue
+                    if item.kind == "call":
+                        h = px(26)
+                        box.rect = QtCore.QRectF(0, y, width, h)
+                        box.height = h
+                        cfont = _font(self.font(), px(9.5), True)
+                        from . import emojiart
+                        w = emojiart.line_width(_calls.ICON + "  " + item.text, cfont) + px(20)
+                        box.callpill = QtCore.QRectF((width - w) / 2.0, y + px(3), w, px(20))
                         boxes.append(box)
                         y += h
                         continue
@@ -1024,6 +1038,20 @@ def feed_class():
                         p.setPen(_colour("muted"))
                         p.drawText(pill, QtCore.Qt.AlignCenter, item.text)
                         continue
+                    if item.kind == "call":
+                        pill = box.callpill
+                        p.setFont(_font(self.font(), px(9.5), True))
+                        p.setPen(_colour("line"))
+                        p.setBrush(_colour("card"))
+                        p.drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0)
+                        text = _calls.ICON + "  " + item.text
+                        from . import emojiart
+                        tw = emojiart.line_width(text, p.font())
+                        emojiart.draw_line(p, QtCore.QRectF(pill.left() + (pill.width() - tw) / 2.0,
+                                                            pill.top(), tw + 1, pill.height()),
+                                           text, p.font(),
+                                           _colour("danger" if item.missed else "muted"))
+                        continue
                     p.save()
                     key = item.key()
                     if key in self.entering:
@@ -1139,6 +1167,10 @@ def feed_class():
             # ---------------------------------------------------------- input
             def box_at(self, point):
                 for box in self.boxes:
+                    if box.callpill is not None:
+                        if box.callpill.contains(point):
+                            return box, "call"
+                        continue
                     if box.avatar is not None and box.avatar.contains(point):
                         return box, "avatar"
                     for rect, action, _label in box.fbuttons:
@@ -1169,6 +1201,12 @@ def feed_class():
                     return
                 box, where = self.box_at(pos)
                 if box is None:
+                    return
+                if where == "call":
+                    if event.button() == QtCore.Qt.LeftButton:
+                        note = records.call_note(box.item.message.get("call")) or {}
+                        self.win.start_call(note.get("kind") or "audio",
+                                            box.item.message.get("chat"))
                     return
                 if event.button() == QtCore.Qt.RightButton:
                     self.win.message_menu(box.item, gp)
@@ -2062,6 +2100,20 @@ class ChatWindow(object):
                                       "Участники")
         self.members_button.clicked.connect(lambda *_a: self.show_pane("members"))
         head.addWidget(self.members_button)
+        self.call_voice = _button("", "tool", "phone", "skeldarChatCallVoice", self.scale,
+                                  "Голосовой звонок")
+        self.call_voice.clicked.connect(lambda *_a: self.start_call("audio"))
+        self.call_video = _button("", "tool", "video", "skeldarChatCallVideo", self.scale,
+                                  "Видеозвонок")
+        self.call_video.clicked.connect(lambda *_a: self.start_call("video"))
+        self.call_join = _button("Присоединиться", "primary", None, "skeldarChatCallJoin",
+                                 self.scale)
+        self.call_join.clicked.connect(lambda *_a: self.join_call())
+        self.call_join.hide()
+        self._joinable = None
+        head.addWidget(self.call_voice)
+        head.addWidget(self.call_video)
+        head.addWidget(self.call_join)
         lay.addLayout(head)
 
         self.feed = feed_class()(self)
@@ -2224,9 +2276,43 @@ class ChatWindow(object):
         return page
 
     # ---------------------------------------------------------- session -> picture
+    def _paint_call_buttons(self):
+        """Voice and video, or «Присоединиться» while the chat has a call I may come into."""
+        chat = self.chat
+        me = self.me_id()
+        running = _calls.of_chat(getattr(self.session.state, "calls", {}), chat) if chat else None
+        joinable = running if running and _calls.can_join(running, me) else None
+        self.call_join.setVisible(bool(joinable))
+        free = chat is not None and running is None
+        self.call_voice.setVisible(free)
+        self.call_video.setVisible(free)
+        self._joinable = joinable
+
+    def start_call(self, kind, chat=None):
+        chat = chat or self.chat
+        if chat is None:
+            return None
+        running = _calls.of_chat(getattr(self.session.state, "calls", {}), chat)
+        if running is not None:
+            return self.join_call() if self._joinable and self._joinable["chat"] == chat else None
+        from . import callview
+        return callview.start(self.session, chat, kind)
+
+    def join_call(self):
+        view = self._joinable
+        if not view:
+            return None
+        from . import callview
+        return callview.answer(self.session, view["id"], view["kind"])
+
     def _heard(self, kind, data):
         if self.root is None or not hubqt._valid(self.root):
             return
+        if kind == "call":
+            try:
+                self._paint_call_buttons()
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
         if kind == "message" and data and self.chat == data["message"]["chat"] \
                 and not self.at_bottom() and data["message"]["from_id"] != self.me_id():
             self.unseen += 1
@@ -2319,6 +2405,7 @@ class ChatWindow(object):
         self.chat_sub.setText(look.presence(c, me_id, st.online, st.typing, time.monotonic(),
                                             _now_ms()))
         self.members_button.setVisible(c.get("kind") == "group")
+        self._paint_call_buttons()
         messages = st.messages.get(self.chat, [])
         users = dict((m["id"], m) for m in c.get("members", []))
 
@@ -2550,7 +2637,8 @@ class ChatWindow(object):
             who = next((u for u in c.get("members", []) if u.get("id") == m.get("from_id")),
                        {"nick": "?"})
             self.bar_text.setText("Ответ " + look.display_name(who) + ": "
-                                  + " ".join(str(m.get("text") or "").split())[:60])
+                                  + (look.message_text(m) if m.get("call") else
+                                     " ".join(str(m.get("text") or "").split()))[:60])
         self.bar.setVisible(bool(self.editing or self.reply_to))
 
     def retry(self, item):
@@ -2595,9 +2683,10 @@ class ChatWindow(object):
                 rows.append((label, lambda a=action: self.file_action(item, a)))
         rows.append(("Реакция…", lambda: self.pick_emoji(m)))
         rows.append(("Ответить", lambda: self.start_reply(m)))
-        if m.get("text"):
+        call = bool(m.get("call"))      # a call's line: its text is for older clients only
+        if m.get("text") and not call:
             rows.append(("Скопировать", lambda: self.copy_text(m.get("text") or "")))
-        if item.mine:
+        if item.mine and not call:
             rows.append(("Изменить", lambda: self.start_edit(m)))
             rows.append(("Удалить", lambda: self.delete_message(m)))
         return rows

@@ -52,6 +52,14 @@ class TheSet(unittest.TestCase):
         for name in ("pin", "pinned", "clock"):
             self.assertIn("<path", icons.svg(name))
 
+    def test_the_call_window_icons(self):
+        """2026-10-22: the call window's buttons."""
+        for name in ("phone", "phone-off", "video", "video-off", "microphone",
+                     "microphone-off", "screen-share", "screen-share-off", "minimize",
+                     "settings"):
+            root = ET.fromstring(icons.svg(name, "#ffffff"))
+            self.assertTrue([e for e in root if e.tag.endswith("path")], name)
+
     def test_the_licence_notice_rides_along(self):
         self.assertIn("MIT", icons.__doc__)
         self.assertIn("Tabler", icons.__doc__)
