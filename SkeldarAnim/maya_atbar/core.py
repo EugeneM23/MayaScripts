@@ -284,37 +284,36 @@ def nudge(frames):
 @undoable
 def inbetween(frames, scene=False):
     """Insert (frames > 0) or remove (frames < 0) that many frames after the current time, on the
-    selected controls or on every curve in the scene. Every curve moves by the same amount, so a removal
-    stops at the first key it would run into - the channels stay in sync."""
+    selected controls or on every curve in the scene. A removal deletes the keys on those frames, then
+    every curve moves by the same amount - the channels stay in sync."""
     if not frames:
         return
     ct = current_time()
     curves = scene_curves() if scene else selected_curves()
     if not curves:
         return warn("nothing animated in the scene" if scene else "select animated controls")
+    #  baked animation has a key on every frame: a removal that only closed empty gaps removed nothing
+    end = ct - frames if frames < 0 else ct
     spans = []
+    cut = False
     for c in curves:
-        after = [t for t in cmds.keyframe(c, q=True, tc=True) or [] if t > ct]
+        times = cmds.keyframe(c, q=True, tc=True) or []
+        doomed = [t for t in times if ct < t <= end]
+        if doomed:
+            cmds.cutKey(c, time=(min(doomed), max(doomed)), clear=True)
+            cut = True
+        after = [t for t in times if t > end]
         if after:
             spans.append((c, min(after), max(after)))
-    if not spans:
+    if not spans and not cut:
         return warn("no keys after frame %g" % ct)
-    shift = frames
-    if frames < 0:
-        room = int(math.floor(min(first for _c, first, _l in spans) - ct - 1))
-        if room <= 0:
-            return warn("no empty frames right after frame %g to remove" % ct)
-        shift = -min(-frames, room)
     for c, first, last in spans:
         try:
-            cmds.keyframe(c, e=True, t=(first, last), relative=True, timeChange=shift, option="over")
+            cmds.keyframe(c, e=True, t=(first, last), relative=True, timeChange=frames, option="over")
         except RuntimeError:
             pass
-    where = "the scene" if scene else "%d curves" % len(spans)
-    text = "%s %d frame(s) after frame %g in %s" % ("inserted" if shift > 0 else "removed", abs(shift), ct, where)
-    if shift != frames:
-        text += " (only %d empty)" % abs(shift)
-    message(text)
+    where = "the scene" if scene else "%d curves" % len(curves)
+    message("%s %d frame(s) after frame %g in %s" % ("inserted" if frames > 0 else "removed", abs(frames), ct, where))
 
 
 # ---------------------------------------------------------------- sliders
