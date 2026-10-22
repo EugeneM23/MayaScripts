@@ -67,6 +67,15 @@ def classes():
         p = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
         return p.x(), p.y()
 
+    def flame_of(model):
+        import maya_chargrid
+        import maya_charfire
+        return maya_chargrid._classes()["fire_look"](maya_charfire.fire_of(model) or "ember")
+
+    def burn(*args, **kwargs):
+        import maya_chargrid
+        return maya_chargrid._classes()["burn"](*args, **kwargs)
+
     def local_xy(event):
         p = event.position() if hasattr(event, "position") else event.pos()
         return p.x(), p.y()
@@ -524,6 +533,7 @@ def classes():
             self.drag = None            # {"from": (n, r, c), "aim": ..., "ghost": ...}
             self.drop_aim = None        # a drag from another panel, lit
             self._was_busy = False
+            self.fire = {}              # (r, c) -> [model, maya_charfire.CardFx]: a character cell burning
             self.index = strip.register(self)
 
         # geometry ---------------------------------------------------------------
@@ -600,6 +610,8 @@ def classes():
                     self.update()
                 else:
                     return True
+            if self.fire:
+                return True
             return (any(now - t < FLASH_MS for t in self.flash_at.values())
                     or any(now - t < RUN_MS for t in self.run_at.values()))
 
@@ -608,6 +620,52 @@ def classes():
                 goal = 1.0 if cell == self.under else 0.0
                 cur = self.hover.get(cell, 0.0)
                 self.hover[cell] = tlook.approach(cur, goal, dt, HOVER_MS) if self.strip.motion else goal
+            self._step_fire(dt)
+
+        # the character cells burn as Animation Setup's portraits do (2026-10-22) -------
+        def burning_model(self, cell):
+            """The model a cell's portrait burns for, or None (not a character, no fire, no motion)."""
+            if cell is None or not self.strip.motion or self.drag is not None:
+                return None
+            item = self.item(*cell)
+            if not item or item.get("kind") != "character":
+                return None
+            try:
+                import maya_charfire as charfire
+            except Exception:                                # noqa: BLE001
+                return None
+            model = item.get("model")
+            return model if charfire.fire_of(model) else None
+
+        def _light_fire(self):
+            """The fire on the cell under the mouse; the others go out."""
+            lit = self.burning_model(self.under)
+            for cell, (model, fx) in self.fire.items():
+                fx.set_hover(cell == self.under and model == lit)
+            if lit and (self.under not in self.fire or self.fire[self.under][0] != lit):
+                import maya_charfire as charfire
+                fx = charfire.CardFx(7 + 31 * (self.under[1] + 1))
+                fx.set_hover(True)
+                self.fire[self.under] = [lit, fx]
+            if self.fire:
+                self.strip.kick()
+
+        def _step_fire(self, dt):
+            """Every burning cell `dt` ms on; the burnt-out and the changed dropped."""
+            if not self.strip.motion:
+                self.fire.clear()
+                return
+            dt = min(0.05, max(0.0, dt / 1000.0))
+            for cell in list(self.fire):
+                model, fx = self.fire[cell]
+                item = self.item(*cell)
+                if not item or item.get("model") != model:
+                    del self.fire[cell]
+                    continue
+                if fx.active():
+                    fx.step(dt)
+                if not fx.active():
+                    del self.fire[cell]
 
         # the mouse --------------------------------------------------------------
         def mouseMoveEvent(self, event):
@@ -625,11 +683,13 @@ def classes():
                 self.under = under
                 item = self.item(*under) if under else None
                 self.setToolTip(self.strip.skills.tip(item) if under else "")
+                self._light_fire()
                 self.strip.kick()
 
         def leaveEvent(self, event):
             if self.drag is None:
                 self.under = None
+                self._light_fire()
                 self.strip.kick()
             super(SkillGrid, self).leaveEvent(event)
 
@@ -687,6 +747,9 @@ def classes():
             if not item:
                 return ""
             self.run_at[cell] = self.strip.clock()
+            burning = self.fire.get(cell)
+            if burning is not None:
+                burning[1].burst()
             self.strip.kick()
             point = self.cell_centre(*cell)
             try:
@@ -706,6 +769,8 @@ def classes():
                 self.drag["scene"] = self.strip.skills.scene_drag(self.item(r, c))
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
+            for _model, fx in self.fire.values():
+                fx.set_hover(False)
             self.grabMouse()
             self.setFocus()
             try:
@@ -850,8 +915,9 @@ def classes():
                         self.armed is not None and self.armed["cell"] == (r, c)
                         and now - self.armed["t0"] <= self.armed["ms"])
                     waiting = bool(item) and s.skills.waiting(item)
+                    burning = self.fire.get((r, c)) if item else None
                     self._paint_cell(p, self.cell_rect(r, c), item, lift, flash, scale - 1.0, opacity,
-                                     lit, waiting)
+                                     lit, waiting, burning[1] if burning else None)
                     if r == 0 and c < len(NUMBER_KEYS) and opacity > 0.01:
                         self._paint_number(p, self.cell_rect(r, c), NUMBER_KEYS[c], opacity * scale,
                                            bool(item), waiting)
@@ -869,7 +935,7 @@ def classes():
                 p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
             p.end()
 
-        def _paint_cell(self, p, rect, item, lift, flash, grow, opacity, lit, waiting):
+        def _paint_cell(self, p, rect, item, lift, flash, grow, opacity, lit, waiting, fx=None):
             s, tk, ui, k = self.strip, self.strip.tokens, self.strip.ui, kit()
             if opacity <= 0.01:
                 return
@@ -892,19 +958,23 @@ def classes():
             p.setPen(QtGui.QPen(k.colour(tk["accent"] if lit else tk["track_edge"]), (1.5 if lit else 1) * ui))
             p.setBrush(face)
             p.drawRoundedRect(rect, radius, radius)
+            hot = fx is not None and (fx.power > 0.002 or fx.warm > 0.002 or fx.flash > 0)
+            glow_hex = tk["accent"]
+            if hot:
+                glow_hex = flame_of(item.get("model")).glow.name()
             if lift > 0.01 and item:
-                k.glow(p, rect, radius, tk["accent"], lift, ui)
+                k.glow(p, rect, radius, glow_hex, lift, ui)
             if lit:
                 k.glow(p, rect, radius, tk["accent"], 1.0, ui)
             if item:
-                self._paint_item(p, rect, item, lift, waiting)
+                self._paint_item(p, rect, item, lift, waiting, fx if hot else None, face)
             elif lift > 0.01:
                 p.setFont(font(15 * ui))
                 p.setPen(k.colour(tk["faint"], 255 * lift))
                 p.drawText(rect, Qt.AlignCenter, "+")
             p.restore()
 
-    def _paint_item(self, p, rect, item, lift, waiting):
+    def _paint_item(self, p, rect, item, lift, waiting, fx=None, face=None):
         """A skill's face: an icon (or letters) over its short name; a picture filling the cell
         (a portrait, a card's still, a weapon), its name on a dark band - and its tag."""
         s, tk, ui, k = self.strip, self.strip.tokens, self.strip.ui, kit()
@@ -922,8 +992,18 @@ def classes():
             clip.addRoundedRect(inner, 4 * ui, 4 * ui)
             p.save()
             p.setClipPath(clip)
-            p.drawPixmap(QtCore.QPointF(inner.center().x() - pix.width() / 2.0,
-                                        inner.center().y() - pix.height() / 2.0), pix)
+            spot = QtCore.QRectF(inner.center().x() - pix.width() / 2.0,
+                                 inner.center().y() - pix.height() / 2.0, pix.width(), pix.height())
+            burned = False
+            if fx is not None:          # a character's portrait burning (Animation Setup's fire)
+                try:
+                    burn(p, spot, clip, fx, item.get("model"), pix,
+                         face if face is not None else k.colour(tk["card"]))
+                    burned = True
+                except Exception:                            # noqa: BLE001
+                    print(traceback.format_exc())
+            if not burned:
+                p.drawPixmap(spot.topLeft(), pix)
             if roomy:
                 strip_rect = QtCore.QRectF(inner.left(), inner.bottom() - band, inner.width(), band)
                 p.fillRect(strip_rect, k.colour("#000000", 150))

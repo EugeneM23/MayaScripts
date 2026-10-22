@@ -374,6 +374,129 @@ def _classes():
         return (mask_image(shade, QtGui.QColor(0, 0, 0)),
                 mask_image(rim, flame.rim), mask_image(light, flame.light))
 
+    LIT = {}            # the lit and body masks, per portrait, size, fire
+
+    def lit_for(key, pixmap, side, flame):
+        cache = ("lit", key, side, flame.name)
+        if cache not in LIT:
+            if pixmap is None or pixmap.isNull():
+                return None
+            LIT[cache] = lit_images(pixmap, side, flame)
+        return LIT[cache]
+
+    def body_for(key, pixmap, side, face):
+        """The portrait's silhouette, opaque, in the card's own face colour:
+        laid under the portrait it hides the fire behind the body, so a faint
+        silhouette (the «?» card's) looks as it does on a cold card and the
+        fire burns behind it, as on the others."""
+        cache = ("body", key, side, face.rgba())
+        if cache not in LIT:
+            if pixmap is None or pixmap.isNull():
+                return None
+            LIT[cache] = mask_image(
+                charfire.body_mask(portrait_alpha(pixmap, side)), face)
+        return LIT[cache]
+
+    def paint_sparks(p, box, fx, flame, front):
+        sparks = fx.sparks
+        if not len(sparks.age):
+            return
+        side = box.width()
+        p.setCompositionMode(Plus)
+        for i in range(len(sparks.age)):
+            if bool(sparks.front[i]) != front:
+                continue
+            left = 1.0 - float(sparks.age[i] / sparks.life[i])
+            twinkle = 0.72 + 0.28 * math.sin(sparks.t * 26.0
+                                             + float(sparks.phase[i]))
+            alpha = min(1.0, left * 2.6) * twinkle
+            x = box.left() + float(sparks.pos[i, 0]) * side
+            y = box.top() + float(sparks.pos[i, 1]) * side
+            d = side * float(sparks.size[i]) * (0.55 + 0.45 * left)
+            if front:
+                d *= 0.8
+            head = QtCore.QPointF(x, y)
+            tail = QtCore.QPointF(x - float(sparks.vel[i, 0]) * side * 0.05,
+                                  y - float(sparks.vel[i, 1]) * side * 0.05)
+            grad = QtGui.QLinearGradient(head, tail)
+            grad.setColorAt(0.0, fire_colour(flame.name, 0.5 + 0.4 * left,
+                                             0.65 * alpha))
+            grad.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
+            pen = QtGui.QPen(QtGui.QBrush(grad), max(1.0, d * 0.28))
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.drawLine(head, tail)
+            image = flame.sprites[2 if left > 0.66 else
+                                  (1 if left > 0.33 else 0)]
+            p.setOpacity(alpha)
+            p.drawImage(QtCore.QRectF(x - d, y - d, 2 * d, 2 * d), image)
+            p.setOpacity(1.0)
+        p.setCompositionMode(Over)
+
+    def burn(p, box, shape, fx, key, pixmap, face, opacity=1.0,
+             missing=None):
+        """A portrait burning inside `shape` (its rounded box): the fire
+        behind the character, the character lit by it, sparks in front.
+        Shared by the portrait grid and the skill bar's character cells
+        (2026-10-22). The face is the caller's; the ring and glow too."""
+        flame = fire_look(charfire.fire_of(key) or "ember")
+        hot, heat = fx.power, fx.warm
+        centre = box.center()
+        side = max(1, int(round(box.width())))
+        p.save()
+        p.setClipPath(shape, Qt.IntersectClip)
+        if hot > 0.002 or heat > 0.002:
+            dark = QtGui.QLinearGradient(box.topLeft(), box.bottomLeft())
+            dark.setColorAt(0.0, QtGui.QColor(0, 0, 0, int(150 * hot)))
+            dark.setColorAt(0.6, QtGui.QColor(0, 0, 0, 0))
+            p.fillRect(box, QtGui.QBrush(dark))
+            embers = QtGui.QRadialGradient(
+                QtCore.QPointF(centre.x(), box.bottom() + box.height() * 0.15),
+                box.width() * 0.95)
+            c = QtGui.QColor(flame.base)
+            c.setAlphaF(min(1.0, 0.30 * heat + 0.20 * fx.flash))
+            embers.setColorAt(0.0, c)
+            embers.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
+            p.setCompositionMode(Plus)
+            p.fillRect(box, QtGui.QBrush(embers))
+            target = box.adjusted(-box.width() * 0.03, 0,
+                                  box.width() * 0.03, box.height() * 0.02)
+            data = fx.fire.field(flame.lut, target.width(), target.height())
+            height, width = data.shape[0], data.shape[1]
+            image = QtGui.QImage(data.data, width, height, width * 4,
+                                 Premultiplied)
+            p.drawImage(target, image)
+            del image, data
+            p.setCompositionMode(Over)
+            paint_sparks(p, box, fx, flame, front=False)
+        body = body_for(key, pixmap, side, face)
+        if body is not None:                     # the fire behind the body
+            p.drawImage(box, body)
+        p.setOpacity(opacity)
+        if pixmap is not None and not pixmap.isNull():
+            p.drawPixmap(box, pixmap, QtCore.QRectF(pixmap.rect()))
+        elif missing is not None:
+            missing(p, box)
+        p.setOpacity(1.0)
+        if hot > 0.002 or heat > 0.002:
+            lit = lit_for(key, pixmap, side, flame)
+            if lit:
+                shade, rim, light = lit
+                flicker = (0.82 + 0.18 * math.sin(fx.fire.t * 17.0)
+                           * math.sin(fx.fire.t * 5.3))
+                p.setOpacity(0.30 * hot)                     # backlit
+                p.drawImage(box, shade)
+                p.setCompositionMode(Plus)
+                p.setOpacity(min(1.0, (0.20 + 0.60 * heat) * hot * flicker))
+                p.drawImage(box, rim)
+                p.setOpacity(min(1.0, 0.26 * heat * flicker
+                                 + 0.18 * fx.flash))
+                p.drawImage(box, light)
+                p.setOpacity(1.0)
+                p.setCompositionMode(Over)
+            paint_sparks(p, box, fx, flame, front=True)
+        p.restore()
+
     def same(a, b):
         if a is b:
             return True
@@ -996,64 +1119,8 @@ def _classes():
             p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
                        Qt.AlignHCenter | Qt.AlignVCenter, text)
 
-        def _lit_for(self, key, side, flame):
-            cache = (key, side, flame.name)
-            if cache not in self._lit:
-                pixmap = self.pixmaps.get(key)
-                if pixmap is None or pixmap.isNull():
-                    return None
-                self._lit[cache] = lit_images(pixmap, side, flame)
-            return self._lit[cache]
-
-        def _body_for(self, key, side, face):
-            """The portrait's silhouette, opaque, in the card's own face
-            colour: laid under the portrait it hides the fire behind the
-            body, so a faint silhouette (the «?» card's) looks as it does on
-            a cold card and the fire burns behind it, as on the others."""
-            cache = ("body", key, side, face.rgba())
-            if cache not in self._lit:
-                pixmap = self.pixmaps.get(key)
-                if pixmap is None or pixmap.isNull():
-                    return None
-                self._lit[cache] = mask_image(
-                    charfire.body_mask(portrait_alpha(pixmap, side)), face)
-            return self._lit[cache]
-
         def _paint_sparks(self, p, box, fx, flame, front):
-            sparks = fx.sparks
-            if not len(sparks.age):
-                return
-            side = box.width()
-            p.setCompositionMode(Plus)
-            for i in range(len(sparks.age)):
-                if bool(sparks.front[i]) != front:
-                    continue
-                left = 1.0 - float(sparks.age[i] / sparks.life[i])
-                twinkle = 0.72 + 0.28 * math.sin(sparks.t * 26.0
-                                                 + float(sparks.phase[i]))
-                alpha = min(1.0, left * 2.6) * twinkle
-                x = box.left() + float(sparks.pos[i, 0]) * side
-                y = box.top() + float(sparks.pos[i, 1]) * side
-                d = side * float(sparks.size[i]) * (0.55 + 0.45 * left)
-                if front:
-                    d *= 0.8
-                head = QtCore.QPointF(x, y)
-                tail = QtCore.QPointF(x - float(sparks.vel[i, 0]) * side * 0.05,
-                                      y - float(sparks.vel[i, 1]) * side * 0.05)
-                grad = QtGui.QLinearGradient(head, tail)
-                grad.setColorAt(0.0, fire_colour(flame.name, 0.5 + 0.4 * left,
-                                                 0.65 * alpha))
-                grad.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
-                pen = QtGui.QPen(QtGui.QBrush(grad), max(1.0, d * 0.28))
-                pen.setCapStyle(Qt.RoundCap)
-                p.setPen(pen)
-                p.drawLine(head, tail)
-                image = flame.sprites[2 if left > 0.66 else
-                                      (1 if left > 0.33 else 0)]
-                p.setOpacity(alpha)
-                p.drawImage(QtCore.QRectF(x - d, y - d, 2 * d, 2 * d), image)
-                p.setOpacity(1.0)
-            p.setCompositionMode(Over)
+            paint_sparks(p, box, fx, flame, front)
 
         def _paint_hot(self, p, index, rect, fx):
             """A burning portrait, in the coordinates of whoever paints it:
@@ -1103,64 +1170,9 @@ def _classes():
             p.fillPath(shape, mix(face, flame.bg_hot,
                                   min(1.0, 0.35 * hot + 0.75 * heat)))
 
-            pixmap = self.pixmaps.get(key)
-            side = int(round(box.width()))
-            p.save()
-            p.setClipPath(shape)
-            if hot > 0.002 or heat > 0.002:
-                dark = QtGui.QLinearGradient(box.topLeft(), box.bottomLeft())
-                dark.setColorAt(0.0, QtGui.QColor(0, 0, 0, int(150 * hot)))
-                dark.setColorAt(0.6, QtGui.QColor(0, 0, 0, 0))
-                p.fillRect(box, QtGui.QBrush(dark))
-                embers = QtGui.QRadialGradient(
-                    QtCore.QPointF(centre.x(),
-                                   box.bottom() + box.height() * 0.15),
-                    box.width() * 0.95)
-                c = QtGui.QColor(flame.base)
-                c.setAlphaF(min(1.0, 0.30 * heat + 0.20 * fx.flash))
-                embers.setColorAt(0.0, c)
-                embers.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
-                p.setCompositionMode(Plus)
-                p.fillRect(box, QtGui.QBrush(embers))
-                target = box.adjusted(-box.width() * 0.03, 0,
-                                      box.width() * 0.03, box.height() * 0.02)
-                data = fx.fire.field(flame.lut, target.width(),
-                                     target.height())
-                height, width = data.shape[0], data.shape[1]
-                image = QtGui.QImage(data.data, width, height, width * 4,
-                                     Premultiplied)
-                p.drawImage(target, image)
-                del image, data
-                p.setCompositionMode(Over)
-                self._paint_sparks(p, box, fx, flame, front=False)
-            body = self._body_for(key, side, face)
-            if body is not None:                 # the fire behind the body
-                p.drawImage(box, body)
-            p.setOpacity(0.45 if dragging == key else 1.0)
-            if pixmap is not None and not pixmap.isNull():
-                p.drawPixmap(box, pixmap, QtCore.QRectF(pixmap.rect()))
-            else:
-                self._missing(p, box)
-            p.setOpacity(1.0)
-            if hot > 0.002 or heat > 0.002:
-                lit = self._lit_for(key, side, flame)
-                if lit:
-                    shade, rim, light = lit
-                    flicker = (0.82 + 0.18 * math.sin(fx.fire.t * 17.0)
-                               * math.sin(fx.fire.t * 5.3))
-                    p.setOpacity(0.30 * hot)                 # backlit
-                    p.drawImage(box, shade)
-                    p.setCompositionMode(Plus)
-                    p.setOpacity(min(1.0, (0.20 + 0.60 * heat) * hot
-                                     * flicker))
-                    p.drawImage(box, rim)
-                    p.setOpacity(min(1.0, 0.26 * heat * flicker
-                                     + 0.18 * fx.flash))
-                    p.drawImage(box, light)
-                    p.setOpacity(1.0)
-                    p.setCompositionMode(Over)
-                self._paint_sparks(p, box, fx, flame, front=True)
-            p.restore()
+            burn(p, box, shape, fx, key, self.pixmaps.get(key), face,
+                 opacity=0.45 if dragging == key else 1.0,
+                 missing=self._missing)
 
             # the name over the bottom, under the ring (2026-10-08: it lies
             # inside the square, so it is part of the grown card)
@@ -1222,6 +1234,7 @@ def _classes():
 
     _CLASSES.update(Keeper=Keeper, PortraitGrid=PortraitGrid, Ghost=Ghost,
                     FireOverlay=FireOverlay, scrolled_content=scrolled_content,
+                    burn=burn, fire_look=fire_look,
                     qt=q)
     return _CLASSES
 

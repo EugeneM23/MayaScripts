@@ -406,5 +406,71 @@ class Motion(Base):
         self.assertTrue(st.skill_grid.busy(st.clock()))
 
 
+class CharacterFire(Base):
+    """A character cell burns under the mouse as Animation Setup's portrait does (2026-10-22)."""
+
+    motion = True
+
+    def cell_of(self, kind):
+        page = look.page_of(self.model.data(), 3)
+        for key, item in page["cells"].items():
+            if item.get("kind") == kind:
+                return tuple(look.parse_key(key))
+        self.fail("no %s cell on F3" % kind)
+
+    def hover(self, cell):
+        grid = self.strip.skill_grid
+        x, y = self.centre(*cell)
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.mouse(grid, E.MouseMove, x, y, Qt.NoButton, Qt.NoButton)
+
+    def run_for(self, seconds):
+        grid = self.strip.skill_grid
+        for _ in range(int(seconds / 0.016)):
+            grid.step(16.0)
+
+    def test_a_character_cell_catches_fire_and_burns_out(self):
+        from maya_skillbar import run as skillrun
+        self.model.picture = skillrun.picture            # the real portraits
+        self.show(3)
+        grid = self.strip.skill_grid
+        grid.pop, self.strip.entrance = None, None       # the page popped in: cells whole
+        cell = self.cell_of("character")
+        self.hover(cell)
+        self.assertIn(cell, grid.fire)
+        self.run_for(0.6)
+        self.assertGreater(grid.fire[cell][1].power, 0.5)
+        self.assertTrue(grid.busy(self.strip.clock()))
+        hot = self.image(grid)
+        fire, grid.fire = grid.fire, {}
+        cold = self.image(grid)                          # the same hover, no fire
+        grid.fire = fire
+        rect = grid.cell_rect(*cell).toRect()
+        changed = sum(1 for x in range(rect.left(), rect.right(), 2)
+                      for y in range(rect.top(), rect.bottom(), 2)
+                      if hot.pixel(x, y) != cold.pixel(x, y))
+        self.assertGreater(changed, 20)
+        grid.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.run_for(4.0)
+        self.assertEqual(grid.fire, {})
+
+    def test_a_tool_cell_does_not_burn(self):
+        self.show(3)
+        grid = self.strip.skill_grid
+        page = look.page_of(self.model.data(), 3)
+        for key, item in page["cells"].items():
+            if item.get("kind") != "character":
+                r, c = look.parse_key(key)
+                self.assertIsNone(grid.burning_model((r, c)))
+                return
+
+    def test_no_fire_without_motion(self):
+        self.show(3)
+        grid = self.strip.skill_grid
+        self.strip.motion = False
+        self.hover(self.cell_of("character"))
+        self.assertEqual(grid.fire, {})
+
+
 if __name__ == "__main__":
     unittest.main()
