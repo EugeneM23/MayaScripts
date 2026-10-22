@@ -6,12 +6,17 @@ See `maya_panezoom_rules` for the motion. How:
   (`PrintWindow`, PW_RENDERFULLCONTENT - our own top-level windows are not in it) cropped to the
   pane, each visible viewport put over it from its own colour buffer (`M3dView.readColorBuffer`)
   where DWM's copy of it is one flat colour;
-- an overlay (a frameless mouse-deaf Qt.Tool owned by Maya's window, over the pane) is shown with
-  that picture, so the switch underneath is never seen;
+- an overlay (a frameless mouse-deaf opaque Qt.Tool owned by Maya's window) is shown with that
+  picture over the single view's own 3D drawing area only - the panels' menu and icon bars stay
+  live around it - so the switch underneath is never seen;
 - Maya's own switch runs (`doSwitchPanes`, as Maya's hotbox), the pane is drawn and its picture
   taken again;
-- the overlay flies the panel from where it stood to where it stands now, then fades onto the
-  live view and goes. Nothing is recorded; the data (the layout) is switched at once.
+- the overlay flies the view from where it stood to where it stands now, turning from the old
+  picture into the new one, then fades (its window opacity) onto the live view and goes.
+  Nothing is recorded; the data (the layout) is switched at once.
+
+Every picture is a pixmap made once, the moving one halved down in mips (a smooth scale never
+shrinks a big picture much in a frame), drawn on a precise 16 ms timer.
 
 Instant (Maya's switch alone) with ⋮ -> Interface animations off, without Qt, or when anything
 of the above fails. State on `sys._skeldar_panezoom` (trap 111).
@@ -185,8 +190,18 @@ def _view_image(panel):
     return q.mirrored(False, True), widget       # MImage starts at the lower left
 
 
+def _view_widget(panel):
+    import maya.api.OpenMayaUI as omui
+    from PySide6 import QtWidgets
+    view = omui.M3dView.getM3dViewFromModelPanel(panel)
+    return _wrap(view.widget(), QtWidgets.QWidget)
+
+
 def capture(pane):
-    """(the pane's picture at physical size with its devicePixelRatio, {panel: rect}) or None."""
+    """(the pane's picture at physical size with its devicePixelRatio, {"views", "panels"}) or None.
+
+    "views" - each visible model panel's 3D drawing area, "panels" - the whole panel (with its
+    menu and icon bars), both {panel: rect} in the pane's logical px."""
     from PySide6 import QtCore, QtGui
     from maya_graphoverlay import winstyle
     main = pane.window()
@@ -204,29 +219,32 @@ def capture(pane):
     phys = QtCore.QRect(int(round(at.x() * dpr)), int(round(at.y() * dpr)),
                         int(round(pane.width() * dpr)), int(round(pane.height() * dpr)))
     image = whole.copy(phys)
-    rects = {}
+    views, panels = {}, {}
     painter = QtGui.QPainter(image)
     try:
         for panel in _panels():
-            rect = _rect_in(_panel_widget(panel), pane)
-            if not rules.usable(rect):
-                continue
-            rects[panel] = rect
+            prect = _rect_in(_panel_widget(panel), pane)
             try:
-                view, widget = _view_image(panel)
+                vrect = _rect_in(_view_widget(panel), pane)
             except Exception:                                # noqa: BLE001
-                view, widget = None, None
-            if view is None or widget is None:
+                vrect = None
+            if not rules.usable(vrect):
                 continue
-            vrect = _rect_in(widget, pane)
-            if not rules.usable(vrect) or not _flat(image, vrect, dpr):
+            views[panel] = vrect
+            if rules.usable(prect):
+                panels[panel] = prect
+            if not _flat(image, vrect, dpr):
                 continue
-            target = QtCore.QRectF(*[v * dpr for v in vrect])
-            painter.drawImage(target, view)
+            try:
+                view, _widget = _view_image(panel)
+            except Exception:                                # noqa: BLE001
+                view = None
+            if view is not None:
+                painter.drawImage(QtCore.QRectF(*[v * dpr for v in vrect]), view)
     finally:
         painter.end()
     image.setDevicePixelRatio(dpr)
-    return image, rects
+    return image, {"views": views, "panels": panels}
 
 
 def _raise_ours(overlay):
@@ -246,6 +264,9 @@ def overlay_class():
     from PySide6 import QtCore, QtGui, QtWidgets
 
     class Overlay(QtWidgets.QWidget):
+        """Opaque (a layered per-pixel window costs a whole-window upload a frame): the fade is
+        the window's own opacity."""
+
         def __init__(self, parent=None):
             super().__init__(parent, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint
                              | QtCore.Qt.WindowDoesNotAcceptFocus
@@ -253,7 +274,9 @@ def overlay_class():
             self.setObjectName(OVERLAY)
             self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
             self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating)
-            self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+            self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
+            self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
+            self.setWindowOpacity(0.999)        # layered from the start: no flash at the fade
             self.zoom = None
 
         def paintEvent(self, event):                         # noqa: N802
@@ -267,21 +290,55 @@ def overlay_class():
     return Overlay
 
 
-class Zoom:
-    """One flight. `paint` draws it at the age the clock says; `tick` moves it on."""
+def _pixmap(image):
+    from PySide6 import QtGui
+    pm = QtGui.QPixmap.fromImage(image)
+    pm.setDevicePixelRatio(float(image.devicePixelRatio() or 1.0))
+    return pm
 
-    def __init__(self, kind, before, after, src, dst, panel, piece=None, clock=time.time):
+
+def _mips(image):
+    """The picture at its own size and halved down to ~160 px wide, as pixmaps, largest first:
+    a smooth scale is then never asked to shrink a big picture much in one frame."""
+    from PySide6 import QtCore, QtGui
+    if image is None:
+        return []
+    out = []
+    img = image
+    while True:
+        pm = QtGui.QPixmap.fromImage(img)
+        pm.setDevicePixelRatio(1.0)
+        out.append(pm)
+        if img.width() <= 320 or img.height() <= 180:
+            break
+        img = img.scaled(max(1, img.width() // 2), max(1, img.height() // 2),
+                         QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+    return out
+
+
+class Zoom:
+    """One flight. `paint` draws it at the age the clock says; `tick` moves it on.
+
+    Everything is drawn inside `area` (the single view's 3D drawing area, pane logical px): the
+    overlay stands exactly there, so the panels' menu and icon bars around it stay live."""
+
+    def __init__(self, kind, before, after, src, dst, panel, piece=None, clock=time.perf_counter,
+                 area=None):
         self.kind = kind
-        self.before = before            # QImage, what was on screen
+        self.before = before            # QImage, what was on screen (the whole pane)
         self.after = after              # QImage, what is under the overlay now
-        self.src, self.dst = src, dst   # the moving panel's rects, pane logical px
+        self.src, self.dst = src, dst   # the moving view's rects, pane logical px
         self.panel = panel
-        self.piece = piece              # the moving picture (a crop of `before`)
         self.clock = clock
         self.started = None
         self.overlay = None
         self.timer = None
-        self.ui = 1.0
+        self.area = area
+        self.window_fade = False        # the real overlay fades by its window opacity
+        self._back = None
+        self._old = None
+        self._from = []                 # the old view (mips)
+        self._to = []                   # the new view (mips)
 
     # the Maya side -------------------------------------------------------
     @classmethod
@@ -296,15 +353,24 @@ class Zoom:
         got = capture(pane)
         if got is None:
             return None
-        before, before_rects = got
-        src = before_rects.get(panel)
-        if kind == rules.IN and not rules.usable(src):
+        before, seen = got
+        src = seen["views"].get(panel)
+        if not rules.usable(src):
+            return None
+        full = (0.0, 0.0, float(pane.width()), float(pane.height()))
+        if kind == rules.IN:          # where the single view will draw: the pane less its bars
+            outer = seen["panels"].get(panel)
+            area = rules.inset(full, rules.margins(outer, src)) if outer else src
+        else:
+            area = src
+        if not rules.usable(area):
             return None
         overlay = overlay_class()(pane.window())
-        top = pane.mapToGlobal(QtCore.QPoint(0, 0))
-        overlay.setGeometry(top.x(), top.y(), pane.width(), pane.height())
-        zoom = cls(kind, before, before, src, src, panel)
+        zoom = cls(kind, before, before, src, src, panel, area=area)
+        zoom.window_fade = True
         zoom.hold = True
+        zoom._old = zoom._back = _pixmap(before)
+        zoom._place(overlay, pane)
         overlay.zoom = zoom
         zoom.overlay = overlay
         overlay.show()
@@ -323,22 +389,34 @@ class Zoom:
         got = capture(pane)
         if got is None:
             return None
-        after, after_rects = got
-        dst = after_rects.get(panel)
-        if kind == rules.IN:
-            zoom.setup(after, src, dst or (0.0, 0.0, float(pane.width()), float(pane.height())))
-        else:
-            full = (0.0, 0.0, float(pane.width()), float(pane.height()))
-            zoom.setup(after, before_rects.get(panel) or full, dst)
-        zoom.ui = float(overlay.devicePixelRatioF() or 1.0)
+        after, now = got
+        dst = now["views"].get(panel)
+        if kind == rules.IN and rules.usable(dst):
+            zoom.area = dst                 # where it really draws, not where it was guessed
+            zoom._place(overlay, pane)
+        zoom.setup(after, src, dst)
         zoom.run()
         return zoom
+
+    def _place(self, overlay, pane):
+        from PySide6 import QtCore
+        x, y, w, h = self.area
+        top = pane.mapToGlobal(QtCore.QPoint(int(round(x)), int(round(y))))
+        overlay.setGeometry(top.x(), top.y(), int(round(w)), int(round(h)))
 
     def setup(self, after, src, dst):
         self.after = after
         self.src = src
         self.dst = dst if rules.usable(dst) else None
-        self.piece = self._crop(self.before, src)
+        if self.area is None:
+            image = self.before
+            dpr = float(image.devicePixelRatio() or 1.0)
+            self.area = (0.0, 0.0, image.width() / dpr, image.height() / dpr)
+        self._old = _pixmap(self.before) if self.before is not None else None
+        back = self.before if self.kind == rules.IN else after
+        self._back = _pixmap(back) if back is not None else None
+        self._from = _mips(self._crop(self.before, src))
+        self._to = _mips(self._crop(after, self.dst)) if self.dst else []
         self.hold = False
 
     def _crop(self, image, rect):
@@ -350,12 +428,13 @@ class Zoom:
 
     def run(self):
         from PySide6 import QtCore
-        self.started = self.clock()
         self.timer = QtCore.QTimer(self.overlay)
+        self.timer.setTimerType(QtCore.Qt.PreciseTimer)
         self.timer.setInterval(TICK_MS)
         self.timer.timeout.connect(self.tick)
+        self.started = self.clock()
         self.timer.start()
-        self.overlay.update()
+        self.overlay.repaint()
 
     def age_ms(self):
         return 0.0 if self.started is None else (self.clock() - self.started) * 1000.0
@@ -363,13 +442,17 @@ class Zoom:
     def tick(self):
         if self.overlay is None:
             return
-        if self.state()["done"]:
+        st = self.state()
+        if st["done"]:
             if _state().get("zoom") is self:
                 _state()["zoom"] = None
             self.stop()
             return
         try:
-            self.overlay.repaint()
+            if self.window_fade and st["alpha"] < 1.0:
+                self.overlay.setWindowOpacity(max(0.0, st["alpha"]))
+            if st["rect"] is not None or not self.window_fade:
+                self.overlay.repaint()
         except RuntimeError:
             self.stop()
 
@@ -391,7 +474,7 @@ class Zoom:
     def state(self):
         if self.hold:
             return {"rect": None, "dim": 0.0, "ring": 0.0, "alpha": 1.0, "done": False}
-        if self.dst is None or self.piece is None:     # nowhere to fly: the old picture fades
+        if self.dst is None or not self._from:     # nowhere to fly: the old picture fades
             age, whole = self.age_ms(), rules.total_ms(self.kind)
             return {"rect": None, "dim": 0.0, "ring": 0.0,
                     "alpha": 1.0 - min(1.0, age / whole), "done": age >= whole}
@@ -402,23 +485,45 @@ class Zoom:
         st = self.state()
         if st["alpha"] <= 0.0:
             return
-        p.setOpacity(st["alpha"])
-        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
-        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         if size is None:
             size = QtCore.QRectF(0, 0, self.overlay.width(), self.overlay.height())
-        if st["rect"] is None:
-            p.drawImage(size, self.before)
+        ax, ay, aw, ah = self.area
+        area = QtCore.QRectF(ax, ay, aw, ah)
+        p.save()
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        if not self.window_fade:
+            p.setOpacity(st["alpha"])
+        p.translate(size.x(), size.y())
+        p.scale(size.width() / aw, size.height() / ah)
+        p.translate(-ax, -ay)
+        p.setClipRect(area)
+        hold = st["rect"] is None          # held, or nowhere to fly: the old picture
+        back = self._back
+        if hold:
+            back = self._old or back
+        if back is not None:
+            dpr = back.devicePixelRatio()
+            p.drawPixmap(area, back, QtCore.QRectF(ax * dpr, ay * dpr, aw * dpr, ah * dpr))
+        if hold:
+            p.restore()
             return
-        back = self.before if self.kind == rules.IN else self.after
-        p.drawImage(size, back)
         if st["dim"] > 0.0:
-            p.fillRect(size, QtGui.QColor(10, 11, 13, int(255 * st["dim"])))
+            p.fillRect(area, QtGui.QColor(10, 11, 13, int(255 * st["dim"])))
         rect = QtCore.QRectF(*st["rect"])
-        if self.piece is not None:
-            p.drawImage(rect, self.piece)
+        device = p.transform().m11() * float(p.device().devicePixelRatioF() or 1.0)
+        want = rect.width() * device
+        turn = rules.mix(self.age_ms(), self.kind) if self._to else 0.0
+        for mips, opacity in ((self._from, 1.0), (self._to, turn)):
+            if not mips or opacity <= 0.0:
+                continue
+            pm = mips[rules.mip_for([m.width() for m in mips], want)]
+            p.setOpacity((1.0 if self.window_fade else st["alpha"]) * opacity)
+            p.drawPixmap(rect, pm, QtCore.QRectF(pm.rect()))
+        p.setOpacity(1.0 if self.window_fade else st["alpha"])
         if st["ring"] > 0.01:
             self._ring(p, rect, st["ring"])
+        p.restore()
 
     def _ring(self, p, rect, strength):
         from PySide6 import QtGui
@@ -427,16 +532,15 @@ class Zoom:
         p.save()
         p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
         p.setBrush(QtGui.QBrush())
-        steps = 5
+        steps = 4
         for i in range(steps):
             reach = rules.GLOW * (i + 1) / steps
             c = QtGui.QColor(accent)
             c.setAlphaF(max(0.0, min(1.0, strength * 0.22 * (steps - i) / steps)))
-            pen = QtGui.QPen(c, 1.6)
-            p.setPen(pen)
+            p.setPen(QtGui.QPen(c, 2.0))
             p.drawRoundedRect(rect.adjusted(-reach, -reach, reach, reach), 6 + reach, 6 + reach)
         c = QtGui.QColor(accent)
         c.setAlphaF(min(1.0, strength))
         p.setPen(QtGui.QPen(c, rules.RING))
-        p.drawRoundedRect(rect, 4, 4)
+        p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4)
         p.restore()

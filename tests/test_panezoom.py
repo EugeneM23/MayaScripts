@@ -56,6 +56,26 @@ class Rules(unittest.TestCase):
         self.assertEqual(rules.kind_of("single"), rules.OUT)
         self.assertEqual(rules.kind_of("quad"), rules.IN)
 
+    def test_the_view_inside_a_panel_spreads_with_its_bars(self):
+        panel = (0.0, 0.0, 200.0, 150.0)
+        view = (0.0, 40.0, 200.0, 110.0)          # a 40 px menu + icon bar on top
+        m = rules.margins(panel, view)
+        self.assertEqual(m, (0.0, 40.0, 0.0, 0.0))
+        self.assertEqual(rules.inset(FULL, m), (0.0, 40.0, 400.0, 260.0))
+
+    def test_the_old_view_turns_into_the_new_one_as_it_flies(self):
+        move = rules.MOVE_MS[rules.IN]
+        self.assertEqual(rules.mix(0, rules.IN), 0.0)
+        self.assertAlmostEqual(rules.mix(move / 2, rules.IN), 0.5)
+        self.assertEqual(rules.mix(move, rules.IN), 1.0)
+
+    def test_the_smallest_picture_still_big_enough(self):
+        widths = [1600, 800, 400, 200]
+        self.assertEqual(rules.mip_for(widths, 1700), 0)
+        self.assertEqual(rules.mip_for(widths, 790), 1)
+        self.assertEqual(rules.mip_for(widths, 401), 1)
+        self.assertEqual(rules.mip_for(widths, 50), 3)
+
     def test_the_rules_import_nothing_of_maya_or_qt(self):
         code = ("import sys, maya_panezoom_rules; "
                 "bad = [m for m in sys.modules if m.split('.')[0] in ('maya', 'PySide6')]; "
@@ -125,6 +145,34 @@ class Painted(unittest.TestCase):
         z = self.zoom(rules.IN, 0)
         z.hold = True
         self.assertEqual(self.render(z).pixelColor(300, 200).name(), "#2060c0")
+
+    def test_only_the_area_is_painted(self):
+        import maya_panezoom
+        clock = {"t": 0.12}
+        before = self.picture("#2060c0")
+        z = maya_panezoom.Zoom(rules.IN, before, before, None, None, "p",
+                               clock=lambda: clock["t"], area=(0.0, 40.0, 400.0, 260.0))
+        z.setup(self.picture("#30a040"), (0.0, 40.0, 200.0, 110.0), (0.0, 40.0, 400.0, 260.0))
+        z.started = 0.0
+        out = QtGui.QImage(400, 260, QtGui.QImage.Format_ARGB32)
+        out.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(out)
+        z.paint(p, QtCore.QRectF(0, 0, 400, 260))
+        p.end()
+        self.assertEqual(out.pixelColor(300, 200).alpha(), 255)  # the whole area is drawn
+        self.assertEqual(out.pixelColor(0, 0).alpha(), 255)
+
+    def test_a_big_picture_is_halved_into_mips(self):
+        import maya_panezoom
+        img = QtGui.QImage(1600, 900, QtGui.QImage.Format_RGB32)
+        img.fill(QtGui.QColor("#808080"))
+        widths = [m.width() for m in maya_panezoom._mips(img)]
+        self.assertEqual(widths, [1600, 800, 400, 200])
+
+    def test_the_real_overlay_fades_by_its_window_not_its_paint(self):
+        z = self.zoom(rules.IN, rules.MOVE_MS[rules.IN] + rules.FADE_MS / 2)
+        z.window_fade = True
+        self.assertEqual(self.render(z).pixelColor(200, 150).alpha(), 255)
 
     def test_nowhere_to_fly_fades_the_old_picture(self):
         import maya_panezoom
