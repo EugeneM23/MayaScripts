@@ -287,6 +287,183 @@ def card_class():
     return Toast
 
 
+CALL_NAME = "skeldarChatCallCard"
+CALL_H = look.TOAST_H + 34          # logical px: the card plus a row of buttons
+HOVER_MS = 110.0
+BUTTONS = (("voice", "Голос"), ("video", "Видео"), ("decline", "Отклонить"))
+
+
+def call_card_class():
+    if "call" in _CLASSES:
+        return _CLASSES["call"]
+    q = _q()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    Toast = card_class()
+
+    class CallCard(Toast):
+        """An incoming call: who, what kind, and Голос / Видео / Отклонить. It stays until the
+        call is answered, declined or gone (dismiss_call), never on its own timer."""
+
+        def __init__(self, call_view, user, head, parent=None):
+            super(CallCard, self).__init__(call_view.get("chat"), user, head, "", parent)
+            self.call_id = call_view["id"]
+            self.kind = call_view.get("kind")
+            self.level = {name: 0.0 for name, _t in BUTTONS}
+            self.over = None
+            self.setObjectName(CALL_NAME)
+            self.resize(int(look.TOAST_W * self.scale), int(CALL_H * self.scale))
+
+        def set_call(self, call_view, user, head):
+            self.kind = call_view.get("kind")
+            self.user, self.head = user, head
+            self.update()
+
+        # the card never leaves on its own
+        def tick(self, now):
+            self.stay_left = 1e12
+            for name, _t in BUTTONS:
+                goal = 1.0 if self.over == name else 0.0
+                if not _animations():
+                    self.level[name] = goal
+                else:
+                    step = (now - self.last) / HOVER_MS
+                    cur = self.level[name]
+                    self.level[name] = min(goal, cur + step) if goal > cur else max(goal, cur - step)
+            return super(CallCard, self).tick(now)
+
+        def moving(self, now):
+            if self.leaving is not None or self.place_to is not None:
+                return True
+            if now - self.born < look.TOAST_IN_MS or now - self.flash_at < look.TOAST_FLASH_MS:
+                return True
+            return any(0.0 < v < 1.0 or (v == 0.0 and n == self.over)
+                       for n, v in self.level.items())
+
+        def button_rects(self):
+            gap, pad = self.px(6), self.px(13)
+            top = self.height() - self.px(3) - self.px(34) + self.px(2)
+            h = self.px(26)
+            width = (self.width() - 2 * pad - 2 * gap) / 3.0
+            return {name: QtCore.QRectF(pad + i * (width + gap), top, width, h)
+                    for i, (name, _t) in enumerate(BUTTONS)}
+
+        def press(self, name):
+            self.leave()
+            if name == "decline":
+                decline_call(self.call_id)
+            else:
+                answer_call(self.call_id, "video" if name == "video" else "audio")
+
+        def _button_at(self, pos):
+            for name, rect in self.button_rects().items():
+                if rect.contains(pos):
+                    return name
+            return None
+
+        def mouseMoveEvent(self, event):                 # noqa: N802
+            name = self._button_at(event.position())
+            if name != self.over:
+                self.over = name
+                if not _animations():
+                    self.tick(_now())
+                _wake()
+                self.update()
+
+        def leaveEvent(self, event):                     # noqa: N802
+            self.over = None
+            super(CallCard, self).leaveEvent(event)
+
+        def mousePressEvent(self, event):                # noqa: N802
+            if event.button() == QtCore.Qt.LeftButton:
+                name = self._button_at(event.position())
+                if name is not None:
+                    self.press(name)
+
+        def _paint(self, p, reveal, opacity, flash, slide):
+            from . import window as W
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setOpacity(opacity)
+            pad = self.px(3)
+            full = QtCore.QRectF(pad - slide, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+            card = QtCore.QRectF(full.x(), full.y(), max(self.px(12), full.width() * reveal),
+                                 full.height())
+            radius = self.px(8)
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(card, radius, radius)
+            p.fillPath(path, W._blend("panel", "card_active", 0.6 if self.hover else 0.0))
+            p.save()
+            p.setClipPath(path)
+            ink = max(0.0, min(1.0, (reveal - 0.35) / 0.65))
+            p.setOpacity(opacity * ink)
+            size = self.px(32)
+            top = card.y() + self.px(8)
+            av = QtCore.QRectF(card.x() + self.px(10), top + self.px(3), size, size)
+            held = getattr(sys, "_skeldar_chat", None)
+            online = W.is_online(self.user, held.state.online if held is not None else {})
+            W.paint_avatar(p, av, self.user, self.scale, online)
+            tx = av.right() + self.px(10)
+            right = full.right() - self.px(10)
+            base = QtGui.QFont(self.font())
+            p.setFont(W._font(base, self.px(12), bold=True))
+            p.setPen(W._colour("text"))
+            fm = QtGui.QFontMetrics(p.font())
+            p.drawText(QtCore.QRectF(tx, top, right - tx, self.px(16)),
+                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+                       fm.elidedText("Входящий звонок · " + str(self.head), QtCore.Qt.ElideRight,
+                                     int(right - tx)))
+            p.setFont(W._font(base, self.px(11)))
+            p.setPen(W._colour("muted"))
+            p.drawText(QtCore.QRectF(tx, top + self.px(19), right - tx, self.px(16)),
+                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+                       "Видеозвонок" if self.kind == "video" else "Звонок")
+            p.setFont(W._font(base, self.px(11), bold=True))
+            for name, text in BUTTONS:
+                rect = self.button_rects()[name]
+                k = self.level[name]
+                accent, danger = W._colour("accent"), W._colour("danger")
+                if name == "video":
+                    fill = W._blend("accent", "accent_text", 0.25 * k)
+                    ink_c, edge = W._colour("panel"), fill
+                elif name == "voice":
+                    fill = W._blend("card", "accent", 0.18 + 0.2 * k)
+                    ink_c, edge = W._colour("text"), accent
+                else:
+                    fill = W._blend("card", "danger", 0.18 + 0.2 * k)
+                    ink_c, edge = W._colour("text"), danger
+                p.setBrush(fill)
+                p.setPen(QtGui.QPen(edge, self.px(1)))
+                p.drawRoundedRect(rect, self.px(6), self.px(6))
+                p.setPen(ink_c)
+                p.drawText(rect, QtCore.Qt.AlignCenter, text)
+            p.restore()
+            p.setOpacity(opacity)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.setPen(QtGui.QPen(W._colour("accent", 0.7), self.px(1)))
+            p.drawPath(path)
+            if flash > 0.0:
+                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                for i in range(4):
+                    k = flash * (1.0 - i / 4.0)
+                    p.setPen(QtGui.QPen(W._colour("accent", 0.55 * k), self.px(1.0 + i * 1.2)))
+                    p.drawRoundedRect(card, radius, radius)
+
+    _CLASSES["call"] = CallCard
+    return CallCard
+
+
+def answer_call(call_id, kind):
+    from . import callview, session as _session
+    callview.answer(_session.get(), call_id, kind)
+
+
+def decline_call(call_id):
+    from . import session as _session
+    try:
+        _session.get().decline_call(call_id)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 # ------------------------------------------------------------------ the stack
 def _alive(st):
     st["cards"] = [c for c in st["cards"] if hubqt._valid(c)]
@@ -298,14 +475,19 @@ def _layout(animate=True):
     cards = [c for c in _alive(st) if c.leaving is None]
     if not cards:
         return
+    #  the call cards stand nearest the Time Bar, the message cards above them
+    cards = [c for c in cards if not hasattr(c, "call_id")] + \
+            [c for c in cards if hasattr(c, "call_id")]
     rect, obstacles = area()
     scale = cards[0].scale
     margin = look.TOAST_MARGIN * scale
     left = look.toast_left(rect, obstacles, margin)
-    size = (cards[0].width(), cards[0].height())
-    for index, card in enumerate(reversed(cards)):           # the newest at the bottom
-        x, y, _w, _h = look.toast_rect(rect, left, size, index, margin, look.TOAST_GAP * scale)
-        card.go_to(x, y, animate and _animations())
+    x, y, w, h = rect
+    bottom = y + h - margin
+    for card in reversed(cards):                             # the newest at the bottom
+        bottom -= card.height()
+        card.go_to(int(left), int(bottom), animate and _animations())
+        bottom -= look.TOAST_GAP * scale
 
 
 def _wake():
@@ -339,7 +521,7 @@ def show(chat_id, user, head, text):
     """A card for a message; the card of the same chat is replaced. Returns the card."""
     st = _state()
     for card in _alive(st):
-        if card.chat_id == chat_id and card.leaving is None:
+        if card.chat_id == chat_id and card.leaving is None and not hasattr(card, "call_id"):
             card.set_text(user, head, text)
             st["cards"].remove(card)
             st["cards"].append(card)
@@ -349,7 +531,7 @@ def show(chat_id, user, head, text):
     from . import window
     card = card_class()(chat_id, user, head, text, window._main_window())
     st["cards"].append(card)
-    live = [c for c in st["cards"] if c.leaving is None]
+    live = [c for c in st["cards"] if c.leaving is None and not hasattr(c, "call_id")]
     for old in live[:-look.TOAST_MAX]:
         old.leave()
     _layout()
@@ -367,10 +549,43 @@ def cards():
     return [c for c in _alive(_state()) if c.leaving is None]
 
 
+def call_cards():
+    return [c for c in cards() if hasattr(c, "call_id")]
+
+
+def show_call(call_view, user, head):
+    """A card for an incoming call; a second show of the same call updates it."""
+    st = _state()
+    for card in call_cards():
+        if card.call_id == call_view["id"]:
+            card.set_call(call_view, user, head)
+            return card
+    from . import window
+    card = call_card_class()(call_view, user, head, window._main_window())
+    st["cards"].append(card)
+    _layout()
+    if not _animations():
+        card.born = _now() - 1e9
+        card.flash_at = card.born
+    card.show()
+    card.raise_()
+    _layout(animate=False)
+    _wake()
+    return card
+
+
+def dismiss_call(call_id):
+    for card in call_cards():
+        if card.call_id == call_id:
+            card.leave()
+            if not _animations():
+                _tick()
+
+
 def dismiss_chat(chat_id):
-    """The chat was opened: its card goes."""
+    """The chat was opened: its message card goes (a call card stays until answered)."""
     for card in cards():
-        if card.chat_id == chat_id:
+        if card.chat_id == chat_id and not hasattr(card, "call_id"):
             card.leave()
 
 

@@ -133,9 +133,93 @@ def ring(now=None):
     return played
 
 
+def _rings():
+    """{call id: ring handle (or None)} for the calls ringing here, kept on sys (trap 111)."""
+    held = getattr(sys, "_skeldar_chat_rings", None)
+    if not isinstance(held, dict):
+        held = {}
+        sys._skeldar_chat_rings = held
+    return held
+
+
+def _loop_ring():
+    """The looped ring, whatever the interface-sounds switch says; None when it cannot play."""
+    try:
+        import maya_hubsound
+        return maya_hubsound.loop("ring", force=True)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _now_ms():
+    import time
+    return int(time.time() * 1000)
+
+
+def _user(session, uid):
+    for c in session.state.chats.values():
+        for m in c.get("members", []):
+            if m.get("id") == uid:
+                return m
+    for m in session.state.people or []:
+        if m.get("id") == uid:
+            return m
+    return None
+
+
+def _gone(call_id):
+    """Stop the ring and take the card away."""
+    handle = _rings().pop(call_id, None)
+    if handle is not None:
+        try:
+            handle.stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        from . import toast
+        toast.dismiss_call(call_id)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def _stop_after(call_id, seconds):
+    """The ring gives up after `seconds` (a single-shot timer, where Qt is)."""
+    try:
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(int(seconds * 1000), lambda: _gone(call_id))
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _heard_call(session, data, out):
+    from . import calls as _calls, toast
+    view = (data or {}).get("call") or {}
+    cid = view.get("id")
+    me = (session.state.me or {}).get("id")
+    ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms())}
+    held = _rings()
+    if cid in ringing and cid not in held:
+        caller = _user(session, view.get("by"))
+        head = look.display_name(caller) if caller else "Звонок"
+        held[cid] = None
+        try:
+            toast.show_call(view, caller or {"nick": "?"}, head)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+        held[cid] = _loop_ring()
+        _stop_after(cid, _calls.RING_S)
+        out.append(("call_card", cid))
+    elif cid in held and cid not in ringing:
+        _gone(cid)
+        out.append(("call_gone", cid))
+
+
 def heard(session, kind, data, out=None):
     """What a session event does: returns the list of things done (for the tests)."""
     done = [] if out is None else out
+    if kind == "call":
+        _heard_call(session, data, done)
+        return done
     if kind in ("message", "read", "read_local", "resync", "chat", "member_removed", "status"):
         done.append(("badge", paint(session)))
     if kind != "message" or not data:

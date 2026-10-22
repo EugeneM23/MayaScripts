@@ -57,6 +57,12 @@ SOUNDS = {
         (293.66, 1.00, 0.45, 0.15, 0.22), (587.33, 0.75, 0.35, 0.15, 0.22),
         (880.99, 0.40, 0.25, 0.15, 0.22), (1174.7, 0.12, 0.18, 0.15, 0.22)),
         attack=0.012, length=0.44, fade=0.04, peak=0.25),
+    #  An incoming call (2026-10-22): a soft two-note phrase, E5 then G5, 1.6 s with a
+    #  silence after it, so the loop reads as a calm ring; the chime's loudness.
+    "ring": Tone(partials=(
+        (659.25, 1.00, 0.30, 0.00, 0.40), (1318.5, 0.25, 0.18, 0.00, 0.40),
+        (783.99, 0.90, 0.35, 0.24, 0.50), (1568.0, 0.20, 0.20, 0.24, 0.50)),
+        attack=0.006, length=1.6, fade=0.05, peak=0.25),
 }
 
 #  The animator's recordings (2026-10-22): their mp3s in sources/sounds/, shipped as
@@ -387,6 +393,66 @@ def play(name, now=None, force=False):
         return True
     except Exception:                                        # noqa: BLE001
         return False
+
+
+def make_loop_player(path):
+    """A player that loops until stopped: a QSoundEffect with an infinite loop count, else
+    winsound SND_LOOP | SND_ASYNC (stopped with PlaySound(None)). Silent when muted()."""
+    try:
+        try:
+            from PySide6 import QtCore, QtMultimedia
+        except ImportError:
+            from PySide2 import QtCore, QtMultimedia
+        effect = QtMultimedia.QSoundEffect()
+        effect.setSource(QtCore.QUrl.fromLocalFile(path))
+        try:
+            effect.setLoopCount(QtMultimedia.QSoundEffect.Loop.Infinite)
+        except AttributeError:
+            effect.setLoopCount(-2)
+        effect.setVolume(0.0 if muted() else 1.0)
+        return effect
+    except Exception:                                        # noqa: BLE001
+        import winsound
+
+        class _Win(object):
+            def play(self):
+                if muted():
+                    return
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                                   | winsound.SND_LOOP | winsound.SND_NODEFAULT)
+
+            def stop(self):
+                if muted():
+                    return
+                winsound.PlaySound(None, 0)
+        return _Win()
+
+
+class _Loop(object):
+    def __init__(self, player):
+        self.player = player
+
+    def stop(self):
+        try:
+            self.player.stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def loop(name, force=False):
+    """Play `name` over and over until the handle's stop(); None when the sounds are off
+    (unless `force`), the file is missing or nothing can play it."""
+    try:
+        if not (force or enabled()):
+            return None
+        path = sound_path(name)
+        if not os.path.isfile(path):
+            return None
+        player = make_loop_player(path)
+        player.play()
+        return _Loop(player)
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def dragged():
