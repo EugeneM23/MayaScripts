@@ -709,6 +709,11 @@ def _build_skin(host=None, kind=None, windowed=False):
         skin.paint_layout(kind)
         if rail:
             skin.show_card(current())
+            #  its remembered height too: a rebuilt rail showed the card whole
+            #  until its icon was clicked again (2026-10-22)
+            setter = getattr(qt, "set_card_height", None)
+            if setter is not None:
+                setter(skin, card_height(current()), scale)
         skin.finish(hubstyle.stylesheet(scale, arrow=_arrow(qt)))
     except Exception:
         hubstyle.take_marks()
