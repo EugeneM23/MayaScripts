@@ -566,6 +566,23 @@ def _make_group(token, member_ids):
     return g
 
 
+def phase_turn():
+    T = Users.make("tu")
+    st, body = jcall("GET", "/v1/turn", T[0])
+    servers = body.get("ice_servers", []) if isinstance(body, dict) else []
+    urls = [u for s in servers for u in s.get("urls", [])]
+    gate("turn answers ICE servers", st == 200 and any(u.startswith("stun:") for u in urls), str(body)[:200])
+    if body.get("turn"):
+        turns = [s for s in servers if any(u.startswith("turn") for u in s["urls"])]
+        gate("a TURN server with credentials", bool(turns) and all(s.get("username") and s.get("credential") for s in turns))
+        gate("no port 53", not any(":53?" in u or u.endswith(":53") for u in urls))
+    else:
+        print("  (no TURN key on this server: STUN only)", body.get("text", ""))
+        gate("without a TURN key it says turn is false", body.get("turn") is False and not any(u.startswith("turn") for u in urls))
+    st, _ = jcall("GET", "/v1/turn", None)
+    gate("turn needs signing in", st == 401)
+
+
 def phase_calls():
     A, B, C = Users.make("cla"), Users.make("clb"), Users.make("clc")
     st, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
@@ -693,7 +710,7 @@ PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_fri
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
           "people": phase_people, "react": phase_react, "newcomer": phase_newcomer,
           "files": phase_files, "previews": phase_previews,
-          "person": phase_person, "calls": phase_calls}
+          "person": phase_person, "calls": phase_calls, "turn": phase_turn}
 
 
 def main(argv):

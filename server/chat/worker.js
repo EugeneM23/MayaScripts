@@ -488,6 +488,27 @@ export class Studio extends DurableObject {
     return json({ users: rows.map((r) => ({ ...this.user(r), relation: this.relation(me.id, r.id) })) });
   }
 
+  // Connection servers for a call: Cloudflare TURN credentials when the server holds a TURN key,
+  // else Cloudflare's STUN alone.
+  async turn({ me }) {
+    const stun = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
+    const id = this.env && this.env.TURN_KEY_ID;
+    const token = this.env && this.env.TURN_KEY_TOKEN;
+    if (!id || !token) return json({ ice_servers: stun, ttl: 86400, turn: false });
+    try {
+      const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+        method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+        body: JSON.stringify({ ttl: 86400 }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const body = await r.json();
+      const servers = [].concat(body.iceServers || []).map((s) => ({ ...s,
+        urls: [].concat(s.urls || []).filter((u) => !/:53(\?|$)/.test(u)) })).filter((s) => s.urls.length);
+      return json({ ice_servers: servers, ttl: 86400, turn: true });
+    } catch (e) {
+      return json({ ice_servers: stun, ttl: 3600, turn: false, text: "TURN unavailable: " + e.message });
+    }
+  }
+
   // Everybody in the studio but me: who they are, whether they are online, and how they stand to me.
   people({ me }) {
     const rows = this.sql.exec("SELECT * FROM users WHERE id != ? ORDER BY nick LIMIT 2000", me.id).toArray();
@@ -1117,6 +1138,7 @@ export class Studio extends DurableObject {
 const ROUTES = [
   ["GET", /^\/v1\/health$/, "health", true],
   ["POST", /^\/v1\/register$/, "register", true],
+  ["GET", /^\/v1\/turn$/, "turn"],
   ["GET", /^\/v1\/me$/, "getMe"],
   ["DELETE", /^\/v1\/me$/, "deleteMe"],
   ["PATCH", /^\/v1\/me$/, "patchMe"],
