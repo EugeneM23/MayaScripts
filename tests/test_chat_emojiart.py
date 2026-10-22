@@ -93,3 +93,74 @@ class Line(unittest.TestCase):
     def test_elides_to_the_rect(self):
         used, _img = self._draw("long " * 40 + "\U0001F525", 80)
         self.assertLessEqual(used, 80)
+
+
+import shutil
+import tempfile
+
+
+def _webp_bytes():
+    """A one-frame WebP standing in for Noto's file."""
+    img = QtGui.QImage(8, 8, QtGui.QImage.Format_ARGB32)
+    img.fill(QtGui.QColor("red"))
+    buf = QtCore.QBuffer()
+    buf.open(QtCore.QIODevice.WriteOnly)
+    img.save(buf, "WEBP", 90)
+    return bytes(buf.data())
+
+
+class Animation(unittest.TestCase):
+    def setUp(self):
+        _app()
+        self.dir = tempfile.mkdtemp()
+        self.fetched = []
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _anim(self, fail=False):
+        def fetch(u):
+            self.fetched.append(u)
+            if fail:
+                raise IOError("no")
+            return _webp_bytes()
+        return A.Animated(self.dir, fetch=fetch, spawn=lambda fn: fn())
+
+    def test_downloads_once_then_has_frames(self):
+        a = self._anim()
+        frames = a.frames("1f525", 32)
+        if frames is None:                      # spawn ran inline: the second ask has them
+            frames = a.frames("1f525", 32)
+        self.assertTrue(frames)
+        self.assertEqual(self.fetched, [A.NOTO.format("1f525")])
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "1f525.webp")))
+        self.assertTrue(a.take_changed())
+        self.assertFalse(a.take_changed())
+        a.frames("1f525", 32)
+        self.assertEqual(len(self.fetched), 1)
+
+    def test_a_failure_is_not_asked_again(self):
+        a = self._anim(fail=True)
+        self.assertIsNone(a.frames("1f602", 32))
+        self.assertIsNone(a.frames("1f602", 32))
+        self.assertEqual(len(self.fetched), 1)
+        self.assertIn("1f602", a.failed)
+
+    def test_keeps_the_last_ones_only(self):
+        a = self._anim()
+        a.keep = 2
+        for cp in ("a1", "a2", "a3"):
+            a.frames(cp, 16)
+        self.assertEqual(len(a._frames), 2)
+
+    def test_frame_at_plays_once_and_rests_on_the_first(self):
+        f0, f1 = QtGui.QImage(1, 1, QtGui.QImage.Format_ARGB32), QtGui.QImage(2, 2, QtGui.QImage.Format_ARGB32)
+        frames = [(f0, 40), (f1, 80)]
+        self.assertEqual(A.frame_at(frames, 10), (f0, False))
+        self.assertEqual(A.frame_at(frames, 50), (f1, False))
+        self.assertEqual(A.frame_at(frames, 80), (f0, True))
+        self.assertEqual(A.frame_at([], 0), (None, True))
+
+    def test_anim_of(self):
+        self.assertEqual(A.anim_of("\U0001F602"), "1f602")
+        self.assertEqual(A.anim_of("x"), "")
