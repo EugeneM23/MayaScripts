@@ -1,7 +1,6 @@
 """The AT bar's tools (2026-10-21): animBot's keys, blend sliders, pose and animation clipboard, mirror,
 xform, space switch, temp controls and pivot, trails, bookmarks and anim recovery, native."""
 import datetime
-import glob
 import json
 import math
 import os
@@ -1240,6 +1239,29 @@ def recovery_dir():
 
 
 RECOVERY_KEEP = 20
+RECOVERY_STAMP = "%Y%m%d_%H%M%S"
+
+
+def backups_of(stem, names):
+    """[(time, name)] of the backups of the scene `stem` among the file names `names`, oldest first. Pure.
+    The stamp is matched exactly: the backups of `shot_1` are not those of `shot_1_2`."""
+    found = []
+    for name in names:
+        m = re.match(r"^(.*)_(\d{8}_\d{6})\.m[ab]$", name)
+        if m and m.group(1) == stem:
+            found.append((datetime.datetime.strptime(m.group(2), RECOVERY_STAMP), name))
+    return sorted(found)
+
+
+def newest_backup(stem, saved_at, names):
+    """The name of the newest backup of `stem` made after the file was saved (`saved_at`, a datetime),
+    else None. Pure."""
+    newer = [name for when, name in backups_of(stem, names) if when > saved_at]
+    return newer[-1] if newer else None
+
+
+def _stem(path):
+    return os.path.splitext(os.path.basename(path or "untitled"))[0] or "untitled"
 
 
 def save_recovery(force=False):
@@ -1248,16 +1270,73 @@ def save_recovery(force=False):
     folder = recovery_dir()
     if not os.path.isdir(folder):
         os.makedirs(folder)
-    scene = os.path.splitext(os.path.basename(cmds.file(q=True, sn=True) or "untitled"))[0] or "untitled"
-    path = os.path.join(folder, "%s_%s.ma" % (scene, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))
-    cmds.file(path, exportAll=True, type="mayaAscii", force=True, preserveReferences=True)
-    backups = sorted(glob.glob(os.path.join(folder, scene + "_*.ma")))
-    for old in backups[:-RECOVERY_KEEP]:
+    scene = _stem(cmds.file(q=True, sn=True))
+    path = os.path.join(folder, "%s_%s.mb" % (scene, datetime.datetime.now().strftime(RECOVERY_STAMP)))
+    #  a crash in the middle of the export leaves a .partial, never a broken newest backup; GUI Maya
+    #  appends .mb to an export path without it, so the extension stays last
+    tmp = path[:-3] + ".partial.mb"
+    cmds.file(tmp, exportAll=True, type="mayaBinary", force=True, preserveReferences=True)
+    os.replace(tmp, path)
+    for _when, old in backups_of(scene, os.listdir(folder))[:-RECOVERY_KEEP]:
         try:
-            os.remove(old)
+            os.remove(os.path.join(folder, old))
         except OSError:
             pass
     return path
+
+
+def restore_recovery(backup, scene):
+    """The backup opened in place of `scene`: named as the scene, so Save writes the scene's own file."""
+    cmds.file(backup, open=True, force=True)
+    cmds.file(rename=scene)
+    cmds.file(type="mayaAscii" if scene.lower().endswith(".ma") else "mayaBinary")
+    cmds.file(modified=True)
+    message("recovered changes from %s - save to keep them" % os.path.basename(backup))
+
+
+def check_recovery(*_args):
+    """After a scene opens: changes backed up later than its file was saved (a crash, a close without
+    saving) are offered in its place."""
+    scene = cmds.file(q=True, sn=True)
+    folder = recovery_dir()
+    if not scene or not os.path.isfile(scene) or not os.path.isdir(folder):
+        return
+    if os.path.normcase(os.path.dirname(os.path.abspath(scene))) == os.path.normcase(os.path.abspath(folder)):
+        return
+    key = (scene, os.path.getmtime(scene))
+    if _state.get("recovery_checked") == key:
+        return
+    _state["recovery_checked"] = key
+    saved_at = datetime.datetime.fromtimestamp(key[1])
+    name = newest_backup(_stem(scene), saved_at, os.listdir(folder))
+    if not name:
+        return
+    when = backups_of(_stem(scene), [name])[0][0]
+    answer = cmds.confirmDialog(
+        title="AT Anim Recovery",
+        message="%s was saved at %s.\nAnim Recovery has newer changes from %s.\n\nOpen the recovered changes?"
+                % (os.path.basename(scene), saved_at.strftime("%d.%m %H:%M:%S"), when.strftime("%d.%m %H:%M:%S")),
+        button=["Open recovered", "Keep saved file"], defaultButton="Open recovered",
+        cancelButton="Keep saved file", dismissString="Keep saved file")
+    if answer == "Open recovered":
+        restore_recovery(os.path.join(folder, name), scene)
+
+
+def _deferred_check(*_args):
+    import maya.utils
+    maya.utils.executeDeferred(check_recovery)
+
+
+def install_recovery_check():
+    """check_recovery after every scene open, and once now for the scene Maya started with. Idempotent."""
+    old = _state.pop("recovery_callback", None)
+    if old is not None:
+        try:
+            om.MMessage.removeCallback(old)
+        except RuntimeError:
+            pass
+    _state["recovery_callback"] = om.MSceneMessage.addCallback(om.MSceneMessage.kAfterOpen, _deferred_check)
+    _deferred_check()
 
 
 def open_recovery_folder():

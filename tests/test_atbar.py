@@ -3,6 +3,7 @@
 Its glyphs, where it docks, the ⋮ -> Time bar ▸ AT bar switch, and the smoothing its SM slider uses.
 """
 
+import datetime
 import os
 import re
 import sys
@@ -207,6 +208,31 @@ class Smoothing(unittest.TestCase):
         self.assertAlmostEqual(core.smooth_at(spike, -0.125), (spike[0] + spike[1]) / 2.0)
         self.assertAlmostEqual(core.smooth_at(spike, -1.0), spike[core.SM_PASSES_AT_100])
         self.assertAlmostEqual(core.smooth_at(spike, -9.0), spike[-1])
+
+
+class Recovery(unittest.TestCase):
+    """2026-10-22, «після відкриття останньої версії я маю побачити останні збережені зміни»: the backup
+    offered when a scene opens is its newest one made after the file was saved."""
+
+    STEM = "AS_Dagger_14"
+    SAVED = datetime.datetime(2026, 10, 22, 15, 47, 23)
+
+    def test_the_newest_backup_after_the_save_is_offered(self):
+        names = ["AS_Dagger_14_20261022_154000.mb", "AS_Dagger_14_20261022_163505.mb",
+                 "AS_Dagger_14_20261022_155005.ma", "AS_Dagger_14_20261022_170000.partial.mb"]
+        self.assertEqual(core.newest_backup(self.STEM, self.SAVED, names), "AS_Dagger_14_20261022_163505.mb")
+
+    def test_nothing_when_every_backup_is_older_than_the_save(self):
+        names = ["AS_Dagger_14_20261022_154000.mb", "AS_Dagger_14_20261022_154723.mb"]
+        self.assertIsNone(core.newest_backup(self.STEM, self.SAVED, names))
+
+    def test_another_scene_s_backups_are_not_its_own(self):
+        names = ["AS_Dagger_14_2_20261022_163505.mb", "AS_Dagger_1_20261022_163505.mb", "AS_Dagger_20261022_163505.mb"]
+        self.assertEqual(core.backups_of(self.STEM, names), [])
+        self.assertEqual(core.backups_of("AS_Dagger_14_2", names),
+                         [(datetime.datetime(2026, 10, 22, 16, 35, 5), "AS_Dagger_14_2_20261022_163505.mb")])
+        self.assertEqual(core.backups_of("AS_Dagger", names),
+                         [(datetime.datetime(2026, 10, 22, 16, 35, 5), "AS_Dagger_20261022_163505.mb")])
 
 
 if __name__ == "__main__":

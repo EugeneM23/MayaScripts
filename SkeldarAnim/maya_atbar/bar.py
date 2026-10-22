@@ -18,6 +18,7 @@ from . import CONTROL, TIMEBAR, core, glyphs
 BAR_NAME = "skeldarATBarRoot"
 NUDGE_OPT = "skeldarATBarFrames"
 RECOVERY_OPT = "skeldarATBarRecoveryMinutes"
+RECOVERY_ON_OPT = "skeldarATBarRecoveryOn"
 
 #  maya_hubstyle.TOKENS and the Time Bar's numbers (SkeldarAnim docs/interface-motion.md)
 PANEL, CARD, FIELD, LINE, HOVER = "#1f2023", "#2a2c30", "#1b1c1f", "#45474d", "#34363b"
@@ -849,6 +850,12 @@ class ATBar(QtWidgets.QWidget):
         self._sync_timer.timeout.connect(self._sync_toggles)
         self._sync_timer.start(1000)
 
+        #  on unless turned off: a crash is exactly the session nobody remembered to turn it on in
+        on = cmds.optionVar(q=RECOVERY_ON_OPT) if cmds.optionVar(exists=RECOVERY_ON_OPT) else 1
+        self.recovery_btn.setChecked(bool(on))
+        self._toggle_recovery(quiet=True)
+        _safe(core.install_recovery_check)()
+
     def needed_height(self, width=None):
         if not width:
             #  not laid out yet (1 px wide): its host's width, else a row as wide as Maya's window
@@ -977,7 +984,8 @@ class ATBar(QtWidgets.QWidget):
                                 self._toggle_temp_pivot, checkable=True)
         self.trail_btn = b("motion_trail", TIME, "Motion Trail (time slider range) - click again to remove",
                            self._toggle_trail, checkable=True)
-        self.recovery_btn = b("recovery", TOOLS, "Anim Recovery: auto-save a backup copy of the scene every few minutes",
+        self.recovery_btn = b("recovery", TOOLS, "Anim Recovery: a backup of unsaved changes every minute,\n"
+                              "offered when the scene is opened again after a crash",
                               self._toggle_recovery, menu=self._recovery_menu, checkable=True)
         self._toggles = [(self.temp_ctrl_btn, core.temp_controls_active),
                          (self.temp_pivot_btn, core.temp_pivot_active),
@@ -1056,14 +1064,16 @@ class ATBar(QtWidgets.QWidget):
     def _toggle_suspend(self):
         core.set_viewport_suspended(not core._state["suspended"])
 
-    def _toggle_recovery(self):
-        if self.recovery_btn.isChecked():
-            minutes = cmds.optionVar(q=RECOVERY_OPT) if cmds.optionVar(exists=RECOVERY_OPT) else 5
+    def _toggle_recovery(self, quiet=False):
+        on = self.recovery_btn.isChecked()
+        cmds.optionVar(iv=(RECOVERY_ON_OPT, int(on)))
+        minutes = cmds.optionVar(q=RECOVERY_OPT) if cmds.optionVar(exists=RECOVERY_OPT) else 1
+        if on:
             self._recovery_timer.start(int(minutes * 60 * 1000))
-            core.message("anim recovery on: every %d min" % minutes)
         else:
             self._recovery_timer.stop()
-            core.message("anim recovery off")
+        if not quiet:
+            core.message("anim recovery on: every %d min" % minutes if on else "anim recovery off")
 
     def _recovery_menu(self):
         def set_minutes(m):
@@ -1072,7 +1082,7 @@ class ATBar(QtWidgets.QWidget):
                 self._recovery_timer.start(m * 60 * 1000)
         return [("Save backup now", lambda: core.message("saved " + core.save_recovery(force=True))),
                 ("Open backups folder", core.open_recovery_folder),
-                ("Interval", [("%d min" % m, (lambda m=m: set_minutes(m))) for m in (2, 5, 10, 20)])]
+                ("Interval", [("%d min" % m, (lambda m=m: set_minutes(m))) for m in (1, 2, 5, 10)])]
 
     # ---- menus
 
