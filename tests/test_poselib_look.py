@@ -906,5 +906,59 @@ class Boundary(unittest.TestCase):
         self.assertEqual(re.findall(
             r"^\s*(?:import|from)\s+(?:maya_poselib|\.)", source, re.MULTILINE), [])
 
+class ListRows(unittest.TestCase):
+    """2026-10-22: at the card-size slider's low end the cards are rows."""
+
+    def test_the_smallest_size_is_the_list(self):
+        self.assertTrue(look.is_list(look.CELL_MIN))
+        self.assertFalse(look.is_list(look.CELL_MIN + 1))
+
+    def test_rows_fill_the_room_one_under_another(self):
+        cols, rects, height = look.rows(400, 3, 1.0)
+        self.assertEqual(cols, 1)
+        self.assertEqual(rects[0], (look.MARGIN, look.MARGIN, 400 - 2 * look.MARGIN,
+                                    look.ROW_H))
+        self.assertEqual(rects[1][1] - rects[0][1], look.ROW_H + look.ROW_GAP)
+        self.assertEqual(height, 2 * look.MARGIN + 3 * look.ROW_H + 2 * look.ROW_GAP)
+        self.assertEqual(look.rows(400, 0, 1.0), (1, [], 0))
+
+    def test_rows_scale(self):
+        _c, rects, _h = look.rows(600, 1, 1.5)
+        self.assertEqual(rects[0][3], int(round(look.ROW_H * 1.5)))
+
+    def test_a_row_is_hit_whole_and_its_gap_is_nothing(self):
+        _c, rects, _h = look.rows(400, 2, 1.0)
+        x, y, w, h = rects[0]
+        self.assertEqual(look.hit(rects, x + w - 2, y + h - 1, 1.0, True), 0)
+        self.assertIsNone(look.hit(rects, x + 5, y + h, 1.0, True))
+        self.assertEqual(look.visible(rects, y + h + 2, y + h + 3, 1.0, True), [1])
+
+    def test_the_picture_sits_left_and_the_columns_follow_it(self):
+        rect = (10, 20, 600, look.ROW_H)
+        tx, ty, tw, th = look.row_thumb(rect)
+        self.assertEqual((tw, th), (look.ROW_THUMB, look.ROW_THUMB))
+        self.assertEqual(ty, 20 + (look.ROW_H - look.ROW_THUMB) // 2)
+        columns = look.row_columns(rect)
+        self.assertGreater(columns["name"][0], tx + tw)
+        self.assertLess(columns["name"][0] + columns["name"][1], columns["who"][0])
+        self.assertLessEqual(columns["folder"][0] + columns["folder"][1], columns["tag"][0])
+
+    def test_a_narrow_row_drops_the_folder_first(self):
+        columns = look.row_columns((0, 0, 260, look.ROW_H))
+        self.assertEqual(columns["folder"][1], 0)
+        self.assertGreater(columns["name"][1], 0)
+
+    def test_the_tag_names_the_kind(self):
+        Card = namedtuple("Card", "kind type frames")
+        self.assertEqual(look.row_tag(Card("character", "pose", 0)), ("POSE", "accent_text"))
+        self.assertEqual(look.row_tag(Card("character", "anim", 48)),
+                         (look.BADGE + " 48", "highlight"))
+        self.assertEqual(look.row_tag(Card("objects", "pose", 0)), ("OBJ", "muted"))
+
+    def test_the_folder_button_reads_the_path(self):
+        self.assertEqual(look.crumbs(""), "Library")
+        self.assertEqual(look.crumbs("Hands/Left"), "Library › Hands › Left")
+
+
 if __name__ == "__main__":
     unittest.main()

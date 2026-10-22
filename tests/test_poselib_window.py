@@ -578,6 +578,9 @@ class WindowCase(unittest.TestCase):
                                                 QT.QtCore.Qt.NoModifier))
 
     def tree_point(self, rel):
+        """A folder's row in the folder popup (open: the tree lives in it since 2026-10-22)."""
+        self.win.open_folders()
+        self.pump()
         tree = self.win.tree
         item = self.win.folder_item(rel)
         rect = tree.visualItemRect(item)
@@ -646,7 +649,7 @@ class Listing(WindowCase):
         self.assertEqual(self.names(), ["Wave"])
 
     def test_the_card_size_slider_resizes_the_cards(self):
-        self.win.size.setValue(look.CELL_MIN)
+        self.win.size.setValue(look.CELL_MIN + 1)        # CELL_MIN itself is the list
         small = self.win.canvas.rects()[0][2]
         self.win.size.setValue(look.CELL_MAX)
         self.assertGreater(self.win.canvas.rects()[0][2], small)
@@ -1705,14 +1708,14 @@ class AnimOptions(AnimCase):
                          ("skeldarPoseAtCurrent", "skeldarPoseConnect", "skeldarPoseInPlace",
                           "skeldarPoseRangeStart", "skeldarPoseRangeEnd"))
 
-    def test_the_frame_fields_wear_the_hubs_field(self):
+    def test_the_frame_fields_wear_a_wells_field(self):
         self.win.pick(self.walk)
         box = self.win.range_start
         image = QT.QtGui.QImage(box.size(), QT.QtGui.QImage.Format_ARGB32)
         image.fill(0)
         box.render(image)
         self.assertEqual(image.pixelColor(box.width() // 4, box.height() // 2).name(),
-                         hubstyle.TOKENS["field"])                  # not Maya's own spin box
+                         hubstyle.TOKENS["panel"])     # a field in a well (2026-10-22), not Maya's own
 
     def test_the_options_start_at_their_defaults(self):
         self.win.pick(self.walk)
@@ -2712,6 +2715,128 @@ class Backdrop(WindowCase):
 
 
 
+
+
+class OurLook(WindowCase):
+    """2026-10-22 (variant B of four mockups): no tree column - the folder a button in the top
+    bar opening the tree in a popup; the type filter as segments; options as chips; a list
+    at the smallest card size."""
+
+    def test_no_tree_column_the_folder_is_a_button(self):
+        self.assertFalse(self.win.tree.isVisible())
+        self.assertEqual(self.win.splitter.count(), 2)
+        self.assertIn("Library", self.win.folder_button.text())
+        self.win.set_folder("Hands/Left")
+        self.assertIn("Left", self.win.folder_button.text())
+        self.assertEqual(self.win.folder_button.toolTip(), "Library › Hands › Left")
+
+    def test_the_button_opens_the_tree_and_a_pick_closes_it(self):
+        self.win.folder_button.click()
+        self.pump()
+        self.assertTrue(self.win.folders_open())
+        self.assertTrue(self.win.tree.isVisible())
+        self.win.tree.setCurrentItem(self.win.folder_item("Hands"))
+        self.assertFalse(self.win.folders_open())
+        self.assertEqual(self.names(), ["Fist", "Wave"])
+
+    def test_a_press_outside_closes_the_popup(self):
+        self.win.open_folders()
+        self.pump()
+        far = QT.QtCore.QPoint(600, 400)          # away from the popup under the button
+        event = QT.QtGui.QMouseEvent(QT.QtCore.QEvent.MouseButtonPress,
+                                     QT.QtCore.QPointF(far),
+                                     QT.QtCore.QPointF(self.win.canvas.mapToGlobal(far)),
+                                     QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.LeftButton,
+                                     QT.QtCore.Qt.NoModifier)
+        self.app.sendEvent(self.win.canvas, event)
+        self.assertFalse(self.win.folders_open())
+
+    def test_a_drag_over_the_button_opens_the_folders_and_drops_into_one(self):
+        button = self.win.folder_button
+        over = button.mapToGlobal(button.rect().center())
+        self.assertIsNone(self.win.folder_at(over.x(), over.y()))
+        self.pump()
+        self.assertTrue(self.win.folders_open())
+        tree = self.win.tree
+        point = tree.viewport().mapToGlobal(
+            tree.visualItemRect(self.win.folder_item("Hands/Left")).center())
+        self.assertEqual(self.win.folder_at(point.x(), point.y()), "Hands/Left")
+        self.win.drop_at(point.x(), point.y(), self.idle)
+        self.assertTrue(os.path.isdir(self.root + "/Hands/Left/Idle.pose"))
+        self.assertFalse(self.win.folders_open())
+
+    def test_a_drag_leaving_the_popup_closes_it(self):
+        button = self.win.folder_button
+        over = button.mapToGlobal(button.rect().center())
+        self.win.folder_at(over.x(), over.y())
+        self.pump()
+        self.assertTrue(self.win.folders_open())
+        far = self.win.canvas.mapToGlobal(QT.QtCore.QPoint(300, 300))
+        self.assertIsNone(self.win.folder_at(far.x(), far.y()))
+        self.assertFalse(self.win.folders_open())
+
+    def test_the_type_segments_drive_the_hidden_filter(self):
+        self.assertFalse(self.win.type_filter.isVisible())
+        self.assertTrue(self.win.type_buttons["all"].isChecked())
+        self.win.type_buttons["pose"].click()
+        self.assertEqual(self.win.type_filter.currentData(), "pose")
+        self.assertEqual(self.scene.options[pw.TYPE_VAR], "pose")
+        self.win.type_filter.setCurrentIndex(2)
+        self.assertTrue(self.win.type_buttons["anim"].isChecked())
+        self.assertFalse(self.win.type_buttons["pose"].isChecked())
+
+    def test_options_are_chips(self):
+        for chip in (self.win.mirror, self.win.only, self.win.upper, self.win.at_current,
+                     self.win.connect_box, self.win.in_place):
+            self.assertIsInstance(chip, QT.QtWidgets.QPushButton)
+            self.assertTrue(chip.isCheckable())
+            self.assertEqual(chip.property("skRole"), "chip")
+
+    def test_the_bar_and_the_cards_stand_in_wells(self):
+        sheet = self.win.styleSheet()
+        self.assertIn("QFrame#skeldarPoseBar { background: %s" % hubstyle.TOKENS["track"],
+                      sheet)
+        self.assertIn("QScrollArea#skeldarPoseScroll { background: %s"
+                      % hubstyle.TOKENS["track"], sheet)
+
+    def test_the_smallest_size_lists_the_cards(self):
+        self.win.size.setValue(look.CELL_MIN)
+        canvas = self.win.canvas
+        self.assertTrue(canvas.listing)
+        rects = canvas.rects()
+        self.assertEqual(len(rects), 3)
+        self.assertEqual(rects[0][3], int(round(look.ROW_H * canvas.k)))
+        self.assertEqual(len(set(r[0] for r in rects)), 1)       # one column
+        x, y, w, h = rects[1]
+        self.assertEqual(canvas.card_at(x + w - 3, y + h // 2).path,
+                         self.win.cards_shown()[1])
+        self.win.size.setValue(look.CELL_DEFAULT)
+        self.assertFalse(canvas.listing)
+
+    def test_a_row_is_hovered_not_grown_and_picked_by_a_click(self):
+        self.win.size.setValue(look.CELL_MIN)
+        canvas = self.win.canvas
+        point = self.card_point(self.fist, local=True)
+        self.mouse(canvas, "move", point, QT.QtCore.Qt.NoButton, QT.QtCore.Qt.NoButton)
+        self.assertEqual(canvas._zooms, {})
+        self.mouse(canvas, "press", point, QT.QtCore.Qt.LeftButton)
+        self.mouse(canvas, "release", point, QT.QtCore.Qt.LeftButton)
+        self.assertEqual(self.win.picked, self.fist)
+
+    def test_the_rows_paint(self):
+        self.win.size.setValue(look.CELL_MIN)
+        self.win.pick(self.fist)
+        canvas = self.win.canvas
+        image = QT.QtGui.QImage(canvas.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        canvas.render(image)
+        index = self.win.cards_shown().index(self.fist)
+        x, y, w, h = canvas.rects()[index]
+        edge = image.pixelColor(x + w // 2, y).name()
+        self.assertEqual(edge, hubstyle.TOKENS["accent"])        # the picked row's outline
+        tx, ty, tw, th = look.row_thumb(canvas.rects()[index], canvas.k)
+        self.assertNotEqual(image.pixelColor(tx + tw // 2, ty + th // 2).name(),
+                            hubstyle.TOKENS["track"])           # its picture
 
 
 if __name__ == "__main__":

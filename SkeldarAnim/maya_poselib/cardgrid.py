@@ -93,6 +93,9 @@ BADGE_FONT = 9.0
 BADGE_PAD = 4
 BADGE_ALPHA = 0.6
 _SHEET_KEYS = ("frames", "columns", "size", "step")
+#  colours a list row's tag wears beside the hub's tokens (docs/interface-motion.md: the
+#  highlight blue means something - here, an animation)
+EXTRA_TONES = {"highlight": "#7fa9e6"}
 
 
 def sheet_info(raw):
@@ -161,7 +164,7 @@ def _classes():
     Ghost = maya_hubqt.ghost_class()          # the hub's own, the inventory's and portraits' too
 
     def colour(name):
-        return QtGui.QColor(hubstyle.TOKENS[name])
+        return QtGui.QColor(EXTRA_TONES.get(name) or hubstyle.TOKENS[name])
 
     def font(px, bold=False):
         f = QtGui.QFont()
@@ -196,6 +199,7 @@ def _classes():
             self.k = panel.k
             self.cards = []
             self.cell = look.CELL_DEFAULT
+            self.listing = False            # the cards as rows (the slider at its low end)
             self.picked = None
             self.empty_text = ""
             self._rects = []
@@ -249,18 +253,34 @@ def _classes():
         def fit(self, width, least_height=0):
             """The grid laid out for `width` px, the canvas at least `least_height` tall (it
             paints the viewport's background below the last row)."""
-            _cols, self._rects, height = look.grid(width, len(self.cards), self.cell, self.k)
+            self.listing = look.is_list(self.cell)
+            if self.listing:
+                #  a row grows under nobody: the zooms go with the grid
+                for path in list(self._zooms):
+                    del self._zooms[path]
+                self.zoom_timer.stop()
+                _cols, self._rects, height = look.rows(width, len(self.cards), self.k)
+                grid = set()
+            else:
+                _cols, self._rects, height = look.grid(width, len(self.cards), self.cell,
+                                                       self.k)
+                grid = set(rect[2] for rect in self._rects)
             #  the cache holds the sizes in use: the cards' at their CACHE_STEP (the cards
             #  follow the pane's width, so a dragged splitter would otherwise leave a size per
-            #  pixel), twice those (the card under the mouse), the details' and the ghost's
-            grid = set(rect[2] for rect in self._rects)
+            #  pixel), twice those (the card under the mouse), the details', the ghost's and a
+            #  row's picture
             sides = set(cache_side(side) for side in grid)
             sides.update(cache_side(zoom_side(side)) for side in grid)
-            sides.update((self.panel.thumb_side(), int(look.GHOST * self.k)))
+            sides.update((self.panel.thumb_side(), int(look.GHOST * self.k),
+                          self.row_side()))
             for key in [key for key in self.pixmaps if key[1] not in sides]:
                 del self.pixmaps[key]
             self.resize(max(1, int(width)), max(1, height, int(least_height)))
             self.update()
+
+        def row_side(self):
+            """A list row's picture side, physical px."""
+            return int(round(look.ROW_THUMB * self.k))
 
         def _refit(self):
             scroll = self.panel.scroll
@@ -462,7 +482,7 @@ def _classes():
             grown card covering most of its neighbour kept the neighbour from growing). So the
             card under the mouse is the one that grows, drawn on top, and the one a press acts
             on; a gap between places is no card."""
-            return look.hit(self._rects, x, y, self.k)
+            return look.hit(self._rects, x, y, self.k, self.listing)
 
         def card_at(self, x, y):
             index = self.index_at(x, y)
@@ -532,7 +552,11 @@ def _classes():
         def _dirty(self, path):
             index = self._where.get(path)
             if index is not None and index < len(self._rects):
-                self.update(self._reach(index))
+                if self.listing:
+                    x, y, w, h = self._rects[index]
+                    self.update(QtCore.QRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4))
+                else:
+                    self.update(self._reach(index))
 
         def _set_hover(self, index):
             """The card under the mouse is `index` (None for none): the one before shrinks, this
@@ -546,6 +570,9 @@ def _classes():
                 if one is None or one >= len(self.cards):
                     continue
                 path = self.cards[one].path
+                if self.listing:                     # a row is lit, never grown
+                    self._dirty(path)
+                    continue
                 zoom = self._zooms.get(path)
                 if zoom is None and target > 0:
                     zoom = self._zooms[path] = look.Zoom()
@@ -845,7 +872,7 @@ def _classes():
                 self._shadow(p, whole, radius, z, lifted)
                 plate = QtGui.QPainterPath()
                 plate.addRoundedRect(whole, radius, radius)
-                p.fillPath(plate, colour("field"))
+                p.fillPath(plate, colour("track"))
             shape = QtGui.QPainterPath()
             shape.addRoundedRect(box, radius, radius)
             p.fillPath(shape, colour("card_active" if chosen else ("hover" if lit else "card")))
@@ -888,12 +915,93 @@ def _classes():
             p.setPen(colour("muted"))
             p.drawText(pill, Qt.AlignCenter, chip)
 
+        def _paint_row(self, p, index, card, rect, chosen, lit):
+            """A card as a list row (`look.rows`): a faint face on every other row, `hover`
+            under the mouse, `card_active` and the accent outline when picked; its picture (or
+            the preview playing) in a small rounded square, its name, character, folder and
+            tag (`look.row_tag`)."""
+            k = self.k
+            x, y, w, h = rect
+            whole = QtCore.QRectF(x, y, w, h)
+            radius = 5 * k
+            face = "card_active" if chosen else ("hover" if lit else
+                                                 ("field" if index % 2 else None))
+            if face:
+                path = QtGui.QPainterPath()
+                path.addRoundedRect(whole, radius, radius)
+                p.fillPath(path, colour(face))
+            if chosen:
+                self._stroke(p, whole, radius, "accent", max(1.5, 1.5 * k))
+            tx, ty, tw, th = look.row_thumb(rect, k)
+            box = QtCore.QRectF(tx, ty, tw, th)
+            shape = QtGui.QPainterPath()
+            shape.addRoundedRect(box, 4 * k, 4 * k)
+            p.fillPath(shape, colour("card"))
+            p.save()
+            p.setClipPath(shape)
+            if not self._draw_playing(p, card, box):
+                picture = self.thumb(card.thumbnail, self.row_side())
+                if picture is not None and not picture.isNull():
+                    p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
+                else:
+                    self._missing(p, box)
+            p.restore()
+            self._stroke(p, box, 4 * k, "accent" if chosen else "line", max(1.0, k))
+
+            columns = look.row_columns(rect, k)
+            middle = y + h / 2.0
+
+            def text(part, value, tone, size, bold=False, align=Qt.AlignLeft):
+                cx, cw = columns[part]
+                if cw <= 4 or not value:
+                    return
+                f = self._font(size * k, bold)
+                p.setFont(f)
+                p.setPen(colour(tone))
+                shown = QtGui.QFontMetrics(f).elidedText(value, Qt.ElideRight, int(cw))
+                p.drawText(QtCore.QRectF(cx, y, cw, h), align | Qt.AlignVCenter, shown)
+
+            text("name", card.name, "text" if chosen else "text2", 12, chosen)
+            text("who", card.label or card.kind, "faint", 10.5)
+            text("folder", "Library" + ("/" + card.folder if card.folder else ""),
+                 "faint", 10.5)
+            tag, tone = look.row_tag(card)
+            tx, tw = columns["tag"]
+            f = self._font(9.5 * k, True)
+            metrics = QtGui.QFontMetrics(f)
+            pill_w = min(float(tw), metrics.horizontalAdvance(tag) + 14 * k)
+            pill_h = 16 * k
+            pill = QtCore.QRectF(tx + tw - pill_w, middle - pill_h / 2.0, pill_w, pill_h)
+            pen = QtGui.QPen(colour(tone), max(1.0, k))
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), pill_h / 2.0, pill_h / 2.0)
+            p.setFont(f)
+            p.drawText(pill, Qt.AlignCenter, tag)
+
         def paintEvent(self, event):                         # noqa: N802
             k = self.k
             area = event.rect()
             now = self._now()
             p = QtGui.QPainter(self)
-            p.fillRect(area, colour("field"))
+            p.fillRect(area, colour("track"))
+            if self.listing:
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+                if not self.cards and self.empty_text:
+                    p.setFont(font(12 * k))
+                    p.setPen(colour("muted"))
+                    p.drawText(self.rect().adjusted(int(16 * k), int(16 * k), -int(16 * k), 0),
+                               Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                               self.empty_text)
+                for index in look.visible(self._rects, area.top(), area.bottom() + 1, k,
+                                          True):
+                    card = self.cards[index]
+                    chosen = card.path == self.picked
+                    self._paint_row(p, index, card, self._rects[index], chosen,
+                                    index == self._hover and not chosen)
+                p.end()
+                return
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
             if not self.cards and self.empty_text:

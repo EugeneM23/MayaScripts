@@ -110,6 +110,11 @@ GHOST_NAME = cardgrid.GHOST_NAME
 CANVAS_NAME = cardgrid.CANVAS_NAME
 SCROLL_NAME = cardgrid.SCROLL_NAME
 TREE_NAME = "skeldarPoseFolders"
+#  Our look (2026-10-22, variant B): the top bar's well, the folder button and its popup
+BAR_NAME = "skeldarPoseBar"
+FOLDER_BUTTON = "skeldarPoseFolderButton"
+FOLDER_POPUP = "skeldarPoseFolderPopup"
+TYPE_SHORT = {"anim": "Anims"}                   # the type segments' words (the combo's long)
 
 #  The hub card (build_panel).
 NOTE = "Poses and animations of bones - onto any rig or skeleton."
@@ -1161,6 +1166,33 @@ def _classes():
                 return
             QtWidgets.QSpinBox.wheelEvent(self, event)
 
+    # ---------------------------------------------------------- the folder popup's watch
+
+    class PopupWatch(QtCore.QObject):
+        """While the folder popup stands: a press outside it and its button, or Esc, closes
+        it (a tool window does not close itself the way a Qt.Popup does - and a Qt.Popup
+        would take the mouse grab a card's drag needs)."""
+
+        def __init__(self, window):
+            QtCore.QObject.__init__(self, window)
+            self.window = window
+
+        def eventFilter(self, watched, event):               # noqa: N802
+            kind = event.type()
+            win = self.window
+            try:
+                if kind == QtCore.QEvent.MouseButtonPress:
+                    point = event.globalPosition().toPoint() \
+                        if hasattr(event, "globalPosition") else event.globalPos()
+                    if not win._on_popup(point.x(), point.y()) and \
+                            not win._on_button(point.x(), point.y()):
+                        win.close_folders()
+                elif kind == QtCore.QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                    win.close_folders()
+            except RuntimeError:                     # the window is gone
+                pass
+            return False
+
     # ---------------------------------------------------------- the window
 
     class PoseWindow(QtWidgets.QWidget):
@@ -1275,9 +1307,18 @@ def _classes():
                 buttons[key] = button
             return track, buttons
 
+        def _chip(self, text):
+            """An on / off option as the hub's chip (2026-10-22, our look): a checkable button,
+            so `click()`, `isChecked()`, `setChecked()` and `clicked` are a check box's."""
+            chip = QtWidgets.QPushButton(text)
+            chip.setProperty("skRole", "chip")
+            chip.setCheckable(True)
+            chip.setFocusPolicy(Qt.NoFocus)
+            return chip
+
         def _check(self, text, name, tip, var):
             """A remembered option's checkbox: a click writes it to `var` (1 / 0)."""
-            box = QtWidgets.QCheckBox(text)
+            box = self._chip(text)
             box.setObjectName(name)
             box.setToolTip(tip)
             box.clicked.connect(
@@ -1289,25 +1330,33 @@ def _classes():
             #  compact (2026-10-15, «давай сделаем более компактный интерфейс»): one row on top
             #  (the title is the control's tab, the library's folder the ⋮ button's tooltip),
             #  thin margins, a narrower tree and side panel, a smaller details picture
+            #  our look, no tree column (2026-10-22, variant B of four mockups): the folder is
+            #  a button at the left of the top bar opening the tree in a popup; the bar, the
+            #  cards and the side panel each stand in a well
             top = QtWidgets.QVBoxLayout(self)
             top.setContentsMargins(s(4), s(4), s(4), s(4))
             top.setSpacing(s(4))
-            top.addLayout(self._build_toolbar())
+            bar = QtWidgets.QFrame()
+            bar.setObjectName(BAR_NAME)
+            bar.setAttribute(Qt.WA_StyledBackground, True)
+            bar.setLayout(self._build_toolbar())
+            bar.layout().setContentsMargins(s(4), s(4), s(4), s(4))
+            self.bar = bar
+            top.addWidget(bar)
+            self._build_folder_popup()
 
             self.splitter = QtWidgets.QSplitter(Qt.Horizontal)
             self.splitter.setObjectName("skeldarPoseSplitter")
             self.splitter.setChildrenCollapsible(False)
             self.splitter.setHandleWidth(s(4))
-            self.splitter.addWidget(self._build_tree())
             self.canvas = cardgrid.make_canvas(self)
             self.scroll = cardgrid.make_scroll(self.canvas)
             self.scroll.setMinimumWidth(s(160))
             self.splitter.addWidget(self.scroll)
             self.splitter.addWidget(self._build_side())
-            self.splitter.setStretchFactor(0, 0)
-            self.splitter.setStretchFactor(1, 1)
-            self.splitter.setStretchFactor(2, 0)
-            self.splitter.setSizes([s(140), s(580), s(260)])
+            self.splitter.setStretchFactor(0, 1)
+            self.splitter.setStretchFactor(1, 0)
+            self.splitter.setSizes([s(700), s(260)])
             top.addWidget(self.splitter, 1)
 
             self.status = self._label("", "status", "skeldarPoseStatus", wrap=True)
@@ -1349,10 +1398,144 @@ def _classes():
             self.menu_button.setMenu(menu)
             return self.menu_button
 
+        def _build_folder_button(self):
+            s = self.px
+            button = QtWidgets.QToolButton()
+            button.setObjectName(FOLDER_BUTTON)
+            button.setProperty("skRole", "crumb")
+            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            button.setLayoutDirection(Qt.RightToLeft)          # the chevron after the path
+            button.setToolTip("The folder the cards come from - click for the folders "
+                              "(drag a card onto it to move the card into one)")
+            try:
+                button.setIcon(maya_hubqt.icon("chevron-down", hubstyle.TOKENS["muted"], s(14)))
+                button.setIconSize(QtCore.QSize(s(14), s(14)))
+            except Exception:                                # noqa: BLE001
+                pass
+            button.setMaximumWidth(s(220))
+            button.clicked.connect(lambda _checked=False: self.toggle_folders())
+            self.folder_button = button
+            return button
+
+        def _build_folder_popup(self):
+            """The tree in a frameless tool window under the folder button. It never takes the
+            mouse grab, so a card dragged onto the button can open it and drop into a folder;
+            a press outside it or Esc closes it (`_popup_filter`)."""
+            s = self.px
+            popup = QtWidgets.QFrame(self, Qt.Tool | Qt.FramelessWindowHint)
+            popup.setObjectName(FOLDER_POPUP)
+            popup.setAttribute(Qt.WA_StyledBackground, True)
+            popup.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            popup.setStyleSheet(sheet(self.k))
+            column = QtWidgets.QVBoxLayout(popup)
+            column.setContentsMargins(s(4), s(4), s(4), s(4))
+            column.addWidget(self._build_tree())
+            self.folder_popup = popup
+            self._by_drag = False
+            self._popup_watch = None
+            popup.hide()
+
+        def folders_open(self):
+            return bool(self.folder_popup.isVisible())
+
+        def open_folders(self, by_drag=False):
+            """The folder popup under the folder button, as wide as the tree needs."""
+            s = self.px
+            popup, button = self.folder_popup, self.folder_button
+            self._by_drag = bool(by_drag)
+            at = button.mapToGlobal(QtCore.QPoint(0, button.height() + s(4)))
+            rows = max(1, self._tree_rows())
+            height = min(s(360), rows * s(24) + s(16))
+            width = max(button.width(), s(200))
+            popup.setGeometry(at.x(), at.y(), width, height)
+            popup.show()
+            popup.raise_()
+            if self._popup_watch is None:
+                self._popup_watch = PopupWatch(self)
+                QtWidgets.QApplication.instance().installEventFilter(self._popup_watch)
+            self.tree.scrollToItem(self.tree.currentItem() or self.folder_item(""))
+            return True
+
+        def close_folders(self):
+            self._by_drag = False
+            if self._popup_watch is not None:
+                QtWidgets.QApplication.instance().removeEventFilter(self._popup_watch)
+                self._popup_watch = None
+            self.folder_popup.hide()
+
+        def toggle_folders(self):
+            if self.folders_open():
+                self.close_folders()
+            else:
+                self.open_folders()
+
+        def _tree_rows(self):
+            count = [0]
+
+            def walk(item):
+                count[0] += 1
+                for index in range(item.childCount()):
+                    walk(item.child(index))
+
+            for index in range(self.tree.topLevelItemCount()):
+                walk(self.tree.topLevelItem(index))
+            return count[0]
+
+        def _paint_folder_button(self):
+            text = look.crumbs(self._folder)
+            metrics = QtGui.QFontMetrics(self.folder_button.font())
+            room = max(40, self.folder_button.maximumWidth() - self.px(40))
+            self.folder_button.setText(metrics.elidedText(text, Qt.ElideLeft, room))
+            self.folder_button.setToolTip(text)
+
+        def _on_button(self, gx, gy):
+            button = self.folder_button
+            if not button.isVisible():
+                return False
+            local = button.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
+            return button.rect().contains(local)
+
+        def _on_popup(self, gx, gy):
+            """Over the popup - with the gap down from the button, so a drag going from one
+            to the other keeps it open."""
+            popup = self.folder_popup
+            m = self.px(8)
+            return popup.isVisible() and popup.geometry().adjusted(-m, -m, m, m).contains(
+                int(gx), int(gy))
+
+        def _build_type_segments(self):
+            """[All | Poses | Anims]: the type filter shown as segments; the combo
+            `skeldarPoseType` stays the model (hidden), so the remembered value and every
+            reader of it keep working."""
+            track, self.type_buttons = self._segments(
+                "skeldarPoseType_", [(key, TYPE_SHORT.get(key, text))
+                                     for text, key in TYPE_LABELS],
+                lambda key: self.type_filter.setCurrentIndex(
+                    [k for _t, k in TYPE_LABELS].index(key)))
+            track.setObjectName("skeldarPoseTypeTrack")
+            self._light_type()
+            return track
+
+        def _light_type(self):
+            key = self.type_filter.currentData()
+            for name, button in getattr(self, "type_buttons", {}).items():
+                button.setChecked(name == key)
+
+        def _glyph(self, name, tip):
+            label = QtWidgets.QLabel()
+            label.setToolTip(tip)
+            side = self.px(13)
+            try:
+                label.setPixmap(maya_hubqt.pixmap(name, hubstyle.TOKENS["faint"], side))
+            except Exception:                                # noqa: BLE001
+                label.setText({"list": "≡", "grid": "▦"}.get(name, ""))
+            return label
+
         def _build_toolbar(self):
             s = self.px
             row = QtWidgets.QHBoxLayout()
             row.setSpacing(s(4))
+            row.addWidget(self._build_folder_button())
             self.search = QtWidgets.QLineEdit()
             self.search.setObjectName("skeldarPoseSearch")
             self.search.setPlaceholderText(SEARCH_HINT)
@@ -1370,7 +1553,9 @@ def _classes():
             self.type_filter.setCurrentIndex(types.index(remembered) if remembered in types
                                              else 0)
             self.type_filter.currentIndexChanged.connect(self._typed)
+            self.type_filter.setVisible(False)
             row.addWidget(self.type_filter)
+            row.addWidget(self._build_type_segments())
 
             self.sort = QtWidgets.QComboBox()
             self.sort.setObjectName("skeldarPoseSort")
@@ -1393,7 +1578,10 @@ def _classes():
                 cell = look.CELL_DEFAULT
             self.size.setValue(max(look.CELL_MIN, min(look.CELL_MAX, cell)))
             self.size.valueChanged.connect(self._sized)
+            self.size.setToolTip("Card size - at the smallest the cards are a list")
+            row.addWidget(self._glyph("list", "Smallest: a list"))
             row.addWidget(self.size)
+            row.addWidget(self._glyph("layout-grid", "Larger: a grid"))
 
             self.save_button = self._button("Save", "primary", "plus", "skeldarPoseSave")
             self.save_button.setToolTip("Save the selection's pose or animation as a card in "
@@ -1494,19 +1682,19 @@ def _classes():
             column.addLayout(row)
 
             row = QtWidgets.QHBoxLayout()
-            row.setSpacing(s(10))
-            self.mirror = QtWidgets.QCheckBox("Mirror")
+            row.setSpacing(s(4))
+            self.mirror = self._chip("Mirror")
             self.mirror.setObjectName("skeldarPoseMirror")
             self.mirror.setToolTip("Left and right swapped - Apply, the blend and the drags")
             self.mirror.clicked.connect(lambda _checked=False: self.blend_reset(RESET_OPTION))
             row.addWidget(self.mirror)
-            self.only = QtWidgets.QCheckBox("Selected only")
+            self.only = self._chip("Selected only")
             self.only.setObjectName("skeldarPoseOnly")
             self.only.setToolTip(ONLY_TIP)
             self.only.clicked.connect(
                 lambda checked=False: self._option_changed(ONLY_VAR, int(bool(checked))))
             row.addWidget(self.only)
-            self.upper = QtWidgets.QCheckBox("1P upper body")
+            self.upper = self._chip("1P upper")
             self.upper.setObjectName("skeldarPoseUpper1P")
             self.upper.setToolTip(UPPER_TIP)
             self.upper.clicked.connect(
@@ -1565,7 +1753,7 @@ def _classes():
                 self.paste_buttons[mode].setToolTip(tip)
             column.addWidget(track)
             self.at_current = self._check(
-                "At current time", "skeldarPoseAtCurrent",
+                "At current", "skeldarPoseAtCurrent",
                 "The clip starts at the current frame; off: at its own source frames",
                 AT_CURRENT_VAR)
             #  `connect_box`, never `connect`: PySide6 looks a signal's connect up on the
@@ -1841,6 +2029,8 @@ def _classes():
             if self._building_tree or current is None:
                 return
             self._folder = current.data(0, Qt.UserRole) or ""
+            if self.folders_open() and not self._by_drag:
+                self.close_folders()                 # a pick is the popup's answer
             if self._save is not None:
                 #  the save panel names the folder the card goes into: it follows the tree
                 #  (the final review, S7 - the line kept naming the folder it opened on) - and
@@ -1863,6 +2053,7 @@ def _classes():
 
         def _typed(self, _index):
             self.scene.set_option(TYPE_VAR, self.type_filter.currentData())
+            self._light_type()
             self._repopulate()
 
         def _sized(self, value):
@@ -1878,6 +2069,7 @@ def _classes():
             if self.canvas.cell != self.size.value():
                 self.canvas.set_cell(self.size.value())
             self.canvas.set_cards(shown, empty)
+            self._paint_folder_button()
 
         def cards_shown(self):
             """The paths of the cards the grid shows, in its order."""
@@ -2199,7 +2391,14 @@ def _classes():
 
         def folder_at(self, gx, gy):
             """The catalog of the tree item under the global point ("" the library), or None
-            off every item."""
+            off every item. A drag over the folder button opens the folder popup (the tree is
+            in it, 2026-10-22); a popup a drag opened closes once the drag leaves both."""
+            if self._on_button(gx, gy):
+                if not self.folders_open():
+                    self.open_folders(by_drag=True)
+                return None
+            if self._by_drag and self.folders_open() and not self._on_popup(gx, gy):
+                self.close_folders()
             viewport = self.tree.viewport()
             if not self.tree.isVisible():
                 return None
@@ -2255,6 +2454,8 @@ def _classes():
             aim = self.aim(gx, gy, path, snap)
             light_well(None)
             skill_light(None)
+            if self._by_drag:
+                self.close_folders()
             kind = aim.get("kind")
             if kind == "skill":
                 import maya_skillbar
@@ -2733,6 +2934,14 @@ def _classes():
             light_well(well)
             if well is None:
                 skill_light(None)
+                if self._by_drag:
+                    #  the drag ended: the popup it opened closes once its drop (which runs
+                    #  right after, and may land in a folder of it) is done
+                    QtCore.QTimer.singleShot(0, self._close_drag_folders)
+
+        def _close_drag_folders(self):
+            if self._by_drag:
+                self.close_folders()
 
         def rename_card(self, path):
             card = self._card(path)
@@ -2898,29 +3107,43 @@ def _classes():
 
 
 _SHEET = """
-#{ROOT} {{ background: {panel}; }}
-QScrollArea#skeldarPoseSideScroll, #skeldarPoseSideViewport {{ background: {card};
-    border: none; border-radius: {r8}px; }}
-QStackedWidget#skeldarPoseSide {{ background: {card}; border-radius: {r8}px; }}
-QFrame#skeldarPoseDetails, QFrame#skeldarPoseSavePanel {{ background: {card};
+#{ROOT} {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {bevel},
+    stop:0.09 {panel}, stop:1 {panel}); }}
+QFrame#{BAR} {{ background: {track}; border: {b1}px solid {track_edge};
+    border-radius: {r6}px; }}
+QFrame#{BAR} QLineEdit, QFrame#{BAR} QComboBox {{ background: {panel};
+    border: {b1}px solid {track_edge}; }}
+QToolButton[skRole="crumb"] {{ background: {panel}; border: {b1}px solid {track_edge};
+    border-radius: {r6}px; padding: {p2}px {p6}px; color: {text}; }}
+QToolButton[skRole="crumb"]:hover {{ background: {hover}; }}
+QFrame#{POPUP} {{ background: {panel}; border: {b1}px solid {edge};
     border-radius: {r8}px; }}
-QTreeWidget#{TREE} {{ background: {field}; border: none; border-radius: {r6}px;
-    color: {text2}; padding: {p4}px; outline: 0px; }}
+QScrollArea#skeldarPoseSideScroll {{ background: {track};
+    border: {b1}px solid {track_edge}; border-radius: {r6}px; }}
+#skeldarPoseSideViewport, QStackedWidget#skeldarPoseSide, QFrame#skeldarPoseDetails,
+    QFrame#skeldarPoseSavePanel {{ background: {track}; border: none; }}
+QTreeWidget#{TREE} {{ background: {track}; border: {b1}px solid {track_edge};
+    border-radius: {r6}px; color: {text2}; padding: {p4}px; outline: 0px; }}
 QTreeWidget#{TREE}::item {{ padding: {p2}px {p2}px; border-radius: {r4}px; }}
 QTreeWidget#{TREE}::item:hover {{ background: {field_hover}; }}
 QTreeWidget#{TREE}::item:selected {{ background: {accent_tint}; color: {accent_text}; }}
-QScrollArea#{SCROLL} {{ background: {field}; border: none; border-radius: {r6}px; }}
-QSplitter::handle {{ background: {panel}; }}
+QScrollArea#{SCROLL} {{ background: {track}; border: {b1}px solid {track_edge};
+    border-radius: {r6}px; }}
+QSplitter::handle {{ background: transparent; }}
 QPushButton[skRole="primary"]:disabled {{ background: {hover}; color: {faint}; }}
-QPushButton[skRole="chip"] {{ background: {field}; border: none; border-radius: {r10}px;
-    padding: {p3}px {p8}px; color: {muted}; }}
-QPushButton[skRole="chip"]:hover {{ color: {text}; }}
-QPushButton[skRole="chip"]:checked {{ background: {accent_tint}; color: {accent_text}; }}
-QPushButton[skRole="chip"]:disabled {{ color: {faint}; background: {field}; }}
-QLabel[skRole="thumb"] {{ background: {field}; border-radius: {r6}px; color: {faint}; }}
-QSpinBox {{ background: {field}; border: {b1}px solid {field}; border-radius: {r6}px;
+QPushButton[skRole="chip"] {{ background: {panel}; border: {b1}px solid {track_edge};
+    border-radius: {r10}px; padding: {p2}px {p8}px; color: {text2}; }}
+QPushButton[skRole="chip"]:hover {{ color: {text}; background: {hover}; }}
+QPushButton[skRole="chip"]:checked {{ background: {accent_tint}; color: {accent_text};
+    border: {b1}px solid {accent}; }}
+QPushButton[skRole="chip"]:disabled {{ color: {faint}; background: {panel}; }}
+QFrame#skeldarPoseAnimOptions {{ background: transparent; border: none;
+    border-top: {b1}px solid {track_edge}; border-radius: 0px; }}
+QLabel[skRole="thumb"] {{ background: {panel}; border-radius: {r6}px; color: {faint}; }}
+QSpinBox {{ background: {panel}; border: {b1}px solid {track_edge}; border-radius: {r6}px;
     padding: {p2}px {p6}px; color: {text}; selection-background-color: {accent_tint}; }}
 QSpinBox:focus {{ border: {b1}px solid {accent}; }}
+#skeldarPoseStatus {{ color: {status_text}; padding: {p2}px {p6}px; }}
 """
 
 
@@ -2935,7 +3158,8 @@ def sheet(scale=1.0):
     except Exception:                                        # noqa: BLE001
         arrow = None
     values = dict(hubstyle.TOKENS)
-    values.update(ROOT=ROOT, TREE=TREE_NAME, SCROLL=SCROLL_NAME)
+    values.update(ROOT=ROOT, TREE=TREE_NAME, SCROLL=SCROLL_NAME, BAR=BAR_NAME,
+                  POPUP=FOLDER_POPUP, bevel="#26282c", edge="#101113")
     values["b1"] = hubstyle.px(1, scale)
     for n in (2, 3, 4, 6, 8, 10):
         values["p%d" % n] = hubstyle.px(n, scale)

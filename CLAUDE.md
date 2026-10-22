@@ -10915,6 +10915,37 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.
 
+## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
+
+The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...
+при минимальном размере значков наши карточки начинали отображаться списком с маленькими привью».
+Four mockups (https://claude.ai/artifact/2M3xdDHPGJZusLsV8PcjrU); they chose **B, no tree column**.
+Spec `docs/superpowers/specs/2026-10-22-pose-library-restyle-list-design.md`. **This replaces the tree
+column and the check boxes of the sections above.**
+- **The folder is a button** (`skeldarPoseFolderButton`, «Library › Hands», a chevron after it) at the
+  left of the top bar. A click opens `skeldarPoseFolderPopup`: a frameless `Qt.Tool` window under it
+  holding the SAME tree (`skeldarPoseFolders`) - picks, its right-button rows and `folder_item` /
+  `set_folder` as before. A pick, a press outside (`PopupWatch`, an application filter while it stands)
+  or Esc closes it. It takes no mouse grab, so **a card dragged onto the button opens it** (`folder_at`,
+  which the chat's drag asks too) and a release on a folder moves the card; a popup a drag opened closes
+  when the drag leaves it and the button, and after the drop.
+- **The look**: the root a bevel (`#26282c` to `panel`); the top bar (`skeldarPoseBar`), the cards and
+  the side panel in wells (`track`, a `track_edge` hairline), fields in them on `panel`; the type filter
+  `[All | Poses | Anims]` segments (`skeldarPoseType_<key>`) over the hidden combo `skeldarPoseType`
+  (the model, still read and remembered); list / grid glyphs at the size slider's ends (new Tabler icons
+  `list`, `layout-grid`); Mirror, Selected only, 1P upper, At current, Connect, In place are checkable
+  `chip` buttons (`PoseWindow._chip`) with a check box's API.
+- **The list** (`look.LIST_AT` = `CELL_MIN`, `rows`, `row_thumb`, `row_columns`, `row_tag`; the
+  canvas's `listing`): a row `ROW_H` 40 logical px - the picture in a 32 px square (an animation plays
+  there under the mouse), name, character, folder (the first to go when narrow), a tag «POSE» /
+  «▶ 48» (`cardgrid.EXTRA_TONES` highlight blue) / «OBJ». Rows alternate a faint face; hover lights,
+  never grows; the picked row `card_active` with the accent outline. Clicks, drags, the right button
+  and the middle blend as on a card. `look.hit` / `visible` / `tile_rect` take `listing`.
+- Proof: `OurLook` (11) in `test_poselib_window.py`, `ListRows` (8) in `test_poselib_look.py`; 8488
+  unit tests, the known `test_chat_deploy.Keys` failing; `render_poselib_restyle.py` ->
+  `poselib_restyle.png` (offscreen, 150 %). `verify_poselib_gui.py`'s folder drop drives `window().tree`
+  without opening the popup: history. **Not seen in a GUI Maya.**
+
 ## The Pose Library: any object beside the character, found again on load (2026-10-15)
 
 The animator: «объекты которые не относятся к ригу мы не сохраняем ... мы сохранили наш риг и камеру ...

@@ -116,35 +116,108 @@ def grid(width, count, cell, scale=1.0):
     return cols, rects, 2 * pad + rows * (side + name) + (rows - 1) * gap
 
 
+#  The list (2026-10-22, the animator: «при минимальном размере значков наши карточки
+#  начинали отображаться списком с маленькими привью»): at the card-size slider's low end the
+#  cards are rows - ROW_H tall, ROW_GAP apart, the MARGIN round them - each with its picture
+#  in a ROW_THUMB square at its left
+LIST_AT = CELL_MIN
+ROW_H = 40
+ROW_GAP = 2
+ROW_THUMB = 32
+ROW_PAD = 4             # the picture's inset from the row's left and the text's from its right
+
+
+def is_list(cell):
+    """Whether the card-size slider's `cell` shows the cards as rows. Pure."""
+    return int(cell) <= LIST_AT
+
+
+def rows(width, count, scale=1.0):
+    """(1, rects, height): the list's rows for `count` cards in `width` physical px - grid's
+    shape, every rect a whole row (x, y, w, h) the room wide. Pure."""
+    k = float(scale or 1.0)
+    pad, row, gap = _px(MARGIN, k), _px(ROW_H, k), _px(ROW_GAP, k)
+    room = max(1, int(round(width or 0)) - 2 * pad) if width else max(1, _px(240, k))
+    if count <= 0:
+        return 1, [], 0
+    rects = [(pad, pad + index * (row + gap), room, row) for index in range(count)]
+    return 1, rects, 2 * pad + count * row + (count - 1) * gap
+
+
+def row_thumb(rect, scale=1.0):
+    """The picture's square (x, y, w, h) in the row `rect`. Pure."""
+    k = float(scale or 1.0)
+    x, y, _w, h = rect
+    side = _px(ROW_THUMB, k)
+    return (x + _px(ROW_PAD, k), y + (h - side) // 2, side, side)
+
+
+def row_columns(rect, scale=1.0):
+    """{part: (x, w)} of the row `rect`'s text after its picture: the name, the character,
+    the folder and the tag, the folder giving way first, then the character. Pure."""
+    k = float(scale or 1.0)
+    x, _y, w, _h = rect
+    gap = _px(8, k)
+    start = x + _px(ROW_PAD, k) + _px(ROW_THUMB, k) + gap
+    end = x + w - _px(ROW_PAD + 4, k)
+    tag = _px(54, k)
+    room = max(0, end - tag - gap - start)
+    name = min(_px(170, k), room)
+    rest = max(0, room - name - gap)
+    who = min(_px(120, k), rest)
+    folder = max(0, rest - who - gap)
+    columns = {"name": (start, name)}
+    columns["who"] = (start + name + gap, who)
+    columns["folder"] = (start + name + gap + who + gap, folder)
+    columns["tag"] = (end - tag, tag)
+    return columns
+
+
+def row_tag(card):
+    """(text, tone) of a row's tag: an animation card's play badge in the highlight blue, a
+    pose «POSE» in the accent, a card of objects «OBJ» muted. Pure."""
+    if getattr(card, "kind", "") == "objects":
+        return "OBJ", "muted"
+    if getattr(card, "type", "pose") == "anim":
+        return badge_text(getattr(card, "frames", 0)) or BADGE, "highlight"
+    return "POSE", "accent_text"
+
+
 def name_rect(rect, scale=1.0):
     """The name strip under a card's square."""
     x, y, w, h = rect
     return (x, y + h, w, _px(NAME_H, scale))
 
 
-def tile_rect(rect, scale=1.0):
-    """The square and its name strip: what a press on the card covers."""
+def tile_rect(rect, scale=1.0, listing=False):
+    """The square and its name strip: what a press on the card covers (a list's row whole)."""
     x, y, w, h = rect
-    return (x, y, w, h + _px(NAME_H, scale))
+    return (x, y, w, h + (0 if listing else _px(NAME_H, scale)))
 
 
-def visible(rects, top, bottom, scale=1.0):
+def visible(rects, top, bottom, scale=1.0, listing=False):
     """The indexes of the cards whose tile (square and name strip) intersects the vertical
     span [top, bottom] - what a scrolled viewport must paint, so hundreds of cards cost what
     the screen holds. A card touching the span only at an edge is not in it. Pure."""
-    strip = _px(NAME_H, scale)
+    strip = 0 if listing else _px(NAME_H, scale)
     return [index for index, (_x, y, _w, h) in enumerate(rects)
             if y < bottom and y + h + strip > top]
 
 
-def hit(rects, x, y, scale=1.0):
+def hit(rects, x, y, scale=1.0, listing=False):
     """The index of the card under (x, y), or None: the square and its name strip, the gaps
     between cards nothing. Pure."""
     for index, rect in enumerate(rects):
-        rx, ry, rw, rh = tile_rect(rect, scale)
+        rx, ry, rw, rh = tile_rect(rect, scale, listing)
         if rx <= x < rx + rw and ry <= y < ry + rh:
             return index
     return None
+
+
+def crumbs(folder):
+    """The folder button's text: «Library», «Library › Hands › Left». Pure."""
+    parts = ["Library"] + [part for part in (folder or "").split("/") if part]
+    return " › ".join(parts)
 
 
 def _inside(start, length, grown, view_start, view_length, margin):
