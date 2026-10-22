@@ -257,6 +257,8 @@ class WinsoundPlayer(object):
         self.path = path
 
     def play(self):
+        if muted():
+            return
         w = self._winsound
         w.PlaySound(self.path, w.SND_FILENAME | w.SND_ASYNC | w.SND_NODEFAULT)
 
@@ -271,9 +273,19 @@ def _qt_pool(path, count=POOL):
     for _ in range(count):
         effect = QtMultimedia.QSoundEffect()
         effect.setSource(url)
-        effect.setVolume(1.0)
+        effect.setVolume(0.0 if muted() else 1.0)
         effects.append(effect)
     return EffectPool(effects)
+
+
+#  set by the test run (tests/__init__.py): every sound is played as usual,
+#  at no volume - nothing a test exercises changes, and nobody hears it
+MUTE_ENV = "SKELDAR_MUTE_SOUNDS"
+
+
+def muted():
+    """Whether the sounds are made silent (the test run)."""
+    return bool(os.environ.get(MUTE_ENV))
 
 
 def make_player(path, count=POOL):
