@@ -405,6 +405,16 @@ def walk_well(gx, gy):
         return None
 
 
+def chat_aim(gx, gy):
+    """Is the chat window (or the rail's chat icon) under the global point? A card dropped there
+    goes into the open chat (2026-10-22)."""
+    try:
+        import maya_filedrag
+        return maya_filedrag.section_under(maya_filedrag._names_at(gx, gy)) == "chat"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def skill_aim(gx, gy):
     """The skill bar's cell or tab under the global point (maya_skillbar), or None - a card dropped
     there is a pose / animation skill (2026-10-19)."""
@@ -2218,6 +2228,8 @@ def _classes():
                 if card is not None and card.kind == "objects":
                     return {"kind": "none", "text": look.WALK_NOT_OBJECTS}
                 return {"kind": "walk", "well": well, "well_kind": well_kind}
+            if chat_aim(gx, gy):
+                return {"kind": "chat"}
             skill = skill_aim(gx, gy)
             skill_light(skill)
             if skill:
@@ -2252,6 +2264,9 @@ def _classes():
             if kind == "walk":
                 well = aim["well"]
                 return self._run(lambda: self.say(well.take(path)))
+            if kind == "chat":
+                import maya_chat.window as chat_window
+                return self._run(lambda: self.say(chat_window.send_card(path)))
             if kind in ("character", "floor"):
                 self._blend_drop()               # the whole card goes onto who it is dropped on
             mirror = self.mirror.isChecked()

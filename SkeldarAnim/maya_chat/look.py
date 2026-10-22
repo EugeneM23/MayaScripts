@@ -167,7 +167,8 @@ def message_text(message):
     return text
 
 
-FILE_TAGS = {".ma": "MA", ".mb": "MB", ".fbx": "FBX"}
+FILE_TAGS = {".ma": "MA", ".mb": "MB", ".fbx": "FBX", ".pose": "POSE", ".anim": "ANIM"}
+KIND_WORDS = {"scene": u"сцена", "fbx": "fbx", "pose": u"поза", "anim": u"анимация"}
 
 
 def file_tag(f):
@@ -180,7 +181,7 @@ def file_line(f):
     """The card's second line: «12.3 MB · scene · 30 fps · 0-48»."""
     from . import files
     f = f or {}
-    parts = [files.size_text(f.get("bytes") or 0), u"сцена" if f.get("kind") == "scene" else "fbx"]
+    parts = [files.size_text(f.get("bytes") or 0), KIND_WORDS.get(f.get("kind"), "")]
     if f.get("fps"):
         parts.append(u"%g fps" % f["fps"])
     rng = f.get("range")

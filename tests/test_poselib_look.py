@@ -362,6 +362,10 @@ class DropCaption(unittest.TestCase):
         aim = {"kind": "character", "label": "Manny_Rig1"}
         self.assertEqual(look.drop_caption("Fist", aim), ("Fist \u00b7 onto Manny_Rig1", True))
 
+    def test_over_the_chat_it_is_sent(self):
+        self.assertEqual(look.drop_caption("Fist", {"kind": "chat"}),
+                         ("Fist · send to the chat", True))
+
     def test_over_the_floor_names_the_character_it_would_bring(self):
         aim = {"kind": "floor", "label": "Manny [rig]", "point": (120.4, 0.0, -35.6)}
         self.assertEqual(look.drop_caption("Fist", aim),

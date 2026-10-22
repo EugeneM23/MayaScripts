@@ -13317,6 +13317,22 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
   selection put back, nothing selected refused. Proof `verify_chat_send_selection.py` **6/6 in mayapy
   standalone against staging** (an animated cube sent, a sphere beside it not; B imports the FBX: the
   cube with its keys, no sphere). mayapy dies on its way out after the summary (standalone + Qt).
+- **Pose Library cards too** (the same morning: «пересылки поз и анимаций из библиотеки ... драг энд
+  дропом в чат»; asked about rigs, skeletons and weapons: «то что есть в плагине не добавлять»; on the
+  receiver «драгом во вьюпорт или драгом в библиотеку, других опций не нужно ... во вьюпорт - просто
+  загружаем всю анимацию»). A card dragged out of the Pose Library onto the chat window or the rail's
+  chat icon (`poselib.window.chat_aim`, aim kind `chat`, «Fist · send to the chat») goes as its
+  `.pose` / `.anim` folder zipped (`files.send_card`; server kinds `pose` / `anim`, the name rule takes
+  the two extensions). In the feed it is a POSE / ANIM card with no buttons and the hint «перетащите во
+  вьюпорт или в библиотеку поз»; dragged (`ChatWindow.card_aim`): over the Pose Library's tree a folder,
+  over its window «From Chat» (`files.to_library`, a free name, the window refreshed); onto a character
+  in a viewport or the floor the WHOLE card (`files.apply_card`: never 1P-upper-cut or Selected only;
+  the floor adds the card's source character as the library's floor drop does). Downloaded on the
+  drop; the unzip takes only plain files under `<name>/` (`_unzip_card`). Proof
+  `verify_chat_send_card.py` **7/7 on staging and production** in mayapy standalone (a Manny UE5
+  skeleton, hand_r turned 40 deg, the card sent, B's copy file for file, into «From Chat» twice -
+  «Fist 2» -, applied back onto the skeleton at rest: hand_r 0.000006 off the card);
+  `verify_chat_server.py all` 0 of 90 on production. Not seen in a GUI Maya (the real drags).
 
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 

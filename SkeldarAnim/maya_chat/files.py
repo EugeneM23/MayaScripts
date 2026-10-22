@@ -25,6 +25,8 @@ import zipfile
 from . import api as _api
 
 KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx"}
+CARDS = {".pose": "pose", ".anim": "anim"}      # a Pose Library card: its folder, zipped
+LIBRARY_FOLDER = "From Chat"
 ZIP_LEVEL = 6
 TELL_EVERY = 0.2          # a transfer's progress is told at most this often
 DEFER = None              # tests: fn -> fn()
@@ -32,7 +34,24 @@ SPAWN = None              # tests: fn -> fn()
 
 
 def kind_of(name):
+    """scene / fbx for a file one can send by path."""
     return KINDS.get(os.path.splitext(name or "")[1].lower())
+
+
+def card_kind(name):
+    """pose / anim for a Pose Library card's folder name."""
+    return CARDS.get(os.path.splitext(os.path.basename((name or "").rstrip("/\\")))[1].lower())
+
+
+def is_card(f):
+    return (f or {}).get("kind") in ("pose", "anim")
+
+
+def _size(path):
+    if os.path.isdir(path):
+        return sum(os.path.getsize(os.path.join(top, n)) for top, _d, names in os.walk(path)
+                   for n in names)
+    return os.path.getsize(path)
 
 
 def size_text(size):
@@ -83,6 +102,9 @@ def local_path(session, f):
     if not f or not f.get("id") or not f.get("name"):
         return None
     path = _root(session, "files", f["id"], os.path.basename(f["name"]))
+    if is_card(f):
+        return path if os.path.isfile(os.path.join(path, "pose.json")) or \
+            os.path.isfile(os.path.join(path, "anim.json")) else None
     return path if os.path.isfile(path) else None
 
 
@@ -151,9 +173,23 @@ def send_selection(session, chat, caption=""):
     return _begin(session, chat, cid, local, caption, meta)
 
 
+def send_card(session, chat, card, caption=""):
+    """A Pose Library card (its .pose / .anim folder) into `chat`; the pending cid."""
+    card = (card or "").rstrip("/\\")
+    name = os.path.basename(card)
+    if card_kind(name) is None or not os.path.isdir(card):
+        raise _api.ChatError("bad_file", u"Это не карточка библиотеки поз: %s" % name)
+    cid = uuid.uuid4().hex
+    folder = _root(session, "uploads", cid)
+    os.makedirs(folder, exist_ok=True)
+    local = os.path.join(folder, name)
+    shutil.copytree(card, local)
+    return _begin(session, chat, cid, local, caption, {})
+
+
 def _begin(session, chat, cid, local, caption, meta):
     name = os.path.basename(local)
-    f = {"id": None, "name": name, "kind": kind_of(name), "bytes": os.path.getsize(local),
+    f = {"id": None, "name": name, "kind": kind_of(name) or card_kind(name), "bytes": _size(local),
          "zip": 0, "fps": meta.get("fps"), "range": meta.get("range"), "expired": False}
     session.add_upload(chat, cid, caption, f, local)
     start(session, cid)
@@ -185,7 +221,14 @@ def _upload_work(session, cid, p):
 
     try:
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_LEVEL) as out:
-            out.write(up["local"], f["name"])
+            if os.path.isdir(up["local"]):
+                for top, _dirs, names in os.walk(up["local"]):
+                    for n in sorted(names):
+                        full = os.path.join(top, n)
+                        rel = os.path.relpath(full, up["local"]).replace(os.sep, "/")
+                        out.write(full, f["name"] + "/" + rel)
+            else:
+                out.write(up["local"], f["name"])
         size = os.path.getsize(archive)
         f["zip"] = size
         if up.get("cancelled"):
@@ -306,13 +349,17 @@ def _download_work(session, f, entry):
         session.api.file_download(f["id"], archive, progress)
         name = os.path.basename(f["name"])
         with zipfile.ZipFile(archive) as zf:
-            members = [m for m in zf.namelist() if os.path.basename(m) == name] or zf.namelist()
-            if not members:
-                raise _api.ChatError("bad_file", "The zip holds nothing")
-            with zf.open(members[0]) as src, open(os.path.join(folder, name) + ".part", "wb") as out:
-                shutil.copyfileobj(src, out, 1024 * 1024)
-        os.replace(os.path.join(folder, name) + ".part", os.path.join(folder, name))
-        path = os.path.join(folder, name)
+            if is_card(f):
+                path = _unzip_card(zf, folder, name)
+            else:
+                members = [m for m in zf.namelist() if os.path.basename(m) == name] or zf.namelist()
+                if not members:
+                    raise _api.ChatError("bad_file", "The zip holds nothing")
+                with zf.open(members[0]) as src, \
+                        open(os.path.join(folder, name) + ".part", "wb") as out:
+                    shutil.copyfileobj(src, out, 1024 * 1024)
+                os.replace(os.path.join(folder, name) + ".part", os.path.join(folder, name))
+                path = os.path.join(folder, name)
         defer(lambda: _downloaded(session, f, entry, path, None))
     except Exception as exc:                                 # noqa: BLE001
         if not isinstance(exc, _api.ChatError):
@@ -321,6 +368,29 @@ def _download_work(session, f, entry):
         defer(lambda: _downloaded(session, f, entry, None, text))
     finally:
         _remove(archive)
+
+
+def _unzip_card(zf, folder, name):
+    """The card's folder out of the zip: only the plain files under `name/` (nothing climbs out)."""
+    part = os.path.join(folder, name + ".part")
+    _remove(part)
+    for member in zf.namelist():
+        parts = member.replace("\\", "/").split("/")
+        if len(parts) < 2 or parts[0] != name or not parts[-1] or \
+                any(p in ("", ".", "..") or ":" in p for p in parts[1:]):
+            continue
+        target = os.path.join(part, *parts[1:])
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with zf.open(member) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out, 1024 * 1024)
+    if not (os.path.isfile(os.path.join(part, "pose.json")) or
+            os.path.isfile(os.path.join(part, "anim.json"))):
+        _remove(part)
+        raise _api.ChatError("bad_file", u"В архиве нет карточки")
+    final = os.path.join(folder, name)
+    _remove(final)
+    os.replace(part, final)
+    return final
 
 
 def _downloaded(session, f, entry, path, error):
@@ -357,6 +427,46 @@ def to_stash(path, f):
 def to_share(path, f):
     import maya_share
     return maya_share.send_file(path, os.path.basename(f.get("name") or path))
+
+
+def to_library(path, folder=None):
+    """A received card copied into the Pose Library: into `folder` (a catalog, "" the library),
+    else «From Chat». The line."""
+    from maya_poselib import store, window as libwindow
+    root = libwindow.Scene().library()
+    folder = LIBRARY_FOLDER if folder is None else folder
+    ext = os.path.splitext(path.rstrip("/\\"))[1]
+    stem = os.path.splitext(os.path.basename(path.rstrip("/\\")))[0]
+    name = store.unique_name(root, folder, stem)
+    target = os.path.join(root, folder, name + ext) if folder else os.path.join(root, name + ext)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copytree(path, target)
+    try:
+        live = libwindow.live()
+        if live is not None:
+            live.refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    return u"%s - в библиотеке поз (%s)" % (name, folder or "Library")
+
+
+def apply_card(path, aim):
+    """The whole card onto who it was dropped on: a character (`aim` kind character with root),
+    or a new character on the floor (kind floor with point). Never cut to 1P upper body or the
+    selection: «просто загружаем всю анимацию». The line."""
+    from maya_poselib import store, window as libwindow
+    scene = libwindow.Scene()
+    if aim.get("kind") == "floor":
+        result = scene.drop_floor(path, aim.get("point"), False)
+    elif store.is_anim(path):
+        from maya_poselib import animapply
+        root = aim["root"]
+        result = scene._paste(lambda header, frames, progress: animapply.apply_onto(
+            header, frames, root, mirror=False, options=None, progress=progress), path, None)
+    else:
+        from maya_poselib import apply
+        result = apply.apply_onto(store.read(path), aim["root"], mirror=False)
+    return result[-1] if isinstance(result, tuple) and result else (result or "")
 
 
 def save_to(path, f, dest=None):

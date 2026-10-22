@@ -25,7 +25,9 @@ const PART = 16 * 1024 * 1024;
 const FILE_MAX = 1024 * 1024 * 1024;
 const FILE_KEEP = 30 * DAY;
 const UPLOADS_EACH = 4;
-const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb|fbx)$/i;
+// A scene, an fbx, or a Pose Library card (a .pose / .anim folder, zipped) - 2026-10-22.
+const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb|fbx|pose|anim)$/i;
+const FILE_KINDS = new Set(["scene", "fbx", "pose", "anim"]);
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -240,9 +242,9 @@ export class Studio extends DurableObject {
     const chat = String(b.chat ?? "");
     this.writable(chat, me);
     const name = String(b.name ?? "").trim();
-    if (!FILE_NAME.test(name)) refuse("bad_name", "A file is a .ma, .mb or .fbx with a plain name");
+    if (!FILE_NAME.test(name)) refuse("bad_name", "A file is a .ma, .mb, .fbx or a pose card with a plain name");
     const kind = String(b.kind ?? "");
-    if (kind !== "scene" && kind !== "fbx") refuse("bad_request", "A file is a scene or an fbx");
+    if (!FILE_KINDS.has(kind)) refuse("bad_request", "A file is a scene, an fbx or a pose card");
     const zip = Number(b.zip);
     const bytes = Number(b.bytes);
     if (!Number.isInteger(zip) || zip < 1) refuse("bad_request", "The zip's size is missing");

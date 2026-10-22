@@ -38,7 +38,8 @@ FILE_WIDTH = 250      # the least a file bubble takes
 FILE_ACTIONS = {"ready": (("open", "Open"), ("import", "Import"), ("more", u"\u22ef")),
                 "upload": (("cancel", u"Отмена"),),
                 "failed": (("cancel", u"Отмена"),),
-                "download": (), "expired": ()}
+                "download": (), "expired": (), "card": ()}
+CARD_HINT = u"перетащите во вьюпорт или в библиотеку поз"
 FILE_FILTER = "Maya scenes and FBX (*.ma *.mb *.fbx)"
 
 _CLASSES = {}
@@ -684,7 +685,7 @@ def feed_class():
                 mode, progress, text = state
                 box.fbuttons = []
                 actions = FILE_ACTIONS.get(mode, ())
-                if mode in ("upload", "download", "expired", "failed"):
+                if mode in ("upload", "download", "expired", "failed", "card"):
                     tail = px(74) if actions else 0
                     box.fbar = (QtCore.QRectF(row.left(), row.top(), row.width() - tail, row.height()),
                                 progress, text)
@@ -2086,7 +2087,8 @@ class ChatWindow(object):
             rows.append(("Повторить", lambda: self.retry(item)))
             rows.append(("Удалить", lambda: (self.session.discard(m.get("cid")), self.refresh())))
             return rows
-        if m.get("file") and not m["file"].get("expired"):
+        from . import files as _files
+        if m.get("file") and not m["file"].get("expired") and not _files.is_card(m["file"]):
             for action, label in FILE_MENU:
                 rows.append((label, lambda a=action: self.file_action(item, a)))
         rows.append(("Реакция…", lambda: self.pick_emoji(m)))
@@ -2148,6 +2150,12 @@ class ChatWindow(object):
         return self._sent_file(lambda: files.send_selection(self.session, self.chat,
                                                             self._caption()), "selection")
 
+    def send_card(self, card):
+        """A Pose Library card dropped on the window (2026-10-22)."""
+        from . import files
+        return self._sent_file(lambda: files.send_card(self.session, self.chat, card,
+                                                       self._caption()), "card")
+
     def send_file_dialog(self):
         q = _q()
         path, _filter = q.QtWidgets.QFileDialog.getOpenFileName(
@@ -2178,6 +2186,9 @@ class ChatWindow(object):
             progress = d.get("progress")
             return "download", progress, (u"скачиваю %d%%" % int(100 * progress)
                                           if progress is not None else u"скачиваю…")
+        from . import files
+        if files.is_card(f):
+            return "card", None, CARD_HINT
         return "ready", None, ""
 
     def _sender(self, m):
@@ -2188,8 +2199,9 @@ class ChatWindow(object):
                    {"id": m.get("from_id"), "nick": "?"})
         return look.display_name(who)
 
-    def file_action(self, item, action, at=None):
-        """A file card's button, or its menu row."""
+    def file_action(self, item, action, at=None, target=None):
+        """A file card's button, its menu row, or where it was dropped (`target`: a Pose Library
+        card's folder, or the character / floor it goes onto)."""
         from . import files
         m = item.message
         if action == "cancel":
@@ -2212,7 +2224,9 @@ class ChatWindow(object):
                 "import": lambda path: files.import_file(path, f, sender),
                 "save": lambda path: files.save_to(path, f),
                 "stash": lambda path: files.to_stash(path, f),
-                "share": lambda path: files.to_share(path, f)}.get(action)
+                "share": lambda path: files.to_share(path, f),
+                "library": lambda path: files.to_library(path, (target or {}).get("folder")),
+                "apply": lambda path: files.apply_card(path, target or {})}.get(action)
         if verb is None:
             return None
 
@@ -2254,6 +2268,10 @@ class ChatWindow(object):
         return True
 
     def drag_aim(self, gp):
+        drag = getattr(self, "_drag", None) or {}
+        from . import files
+        if files.is_card((drag.get("item") and drag["item"].message.get("file")) or {}):
+            return self.card_aim(gp, drag)
         import maya_filedrag
         under = maya_filedrag.section_under(maya_filedrag._names_at(gp.x(), gp.y()))
         viewport = False
@@ -2264,6 +2282,39 @@ class ChatWindow(object):
                 viewport = False
         return maya_filedrag.aim_for("chat", under, viewport)
 
+    def card_aim(self, gp, drag):
+        """A pose / animation card from the chat: into the Pose Library (a folder of its tree,
+        else «From Chat»), onto a character in a viewport, onto the floor - else nothing."""
+        x, y = gp.x(), gp.y()
+        try:
+            from maya_poselib import window as libwindow
+            import maya_hubqt
+            live = libwindow.live()
+            folder = live.folder_at(x, y) if live is not None else None
+            if folder is not None:
+                return {"kind": "library", "folder": folder,
+                        "text": u"в библиотеку · %s" % (folder or "Library")}
+            if maya_hubqt.on_hub(x, y, control=libwindow.CONTROL):
+                return {"kind": "library", "folder": None, "text": u"в библиотеку · From Chat"}
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+        try:
+            from maya_scenesetup import droptarget
+            if "snap" not in drag:
+                drag["snap"] = droptarget.snapshot()
+            aim = droptarget.character_target(x, y, drag["snap"], self.scale)
+            if aim.get("kind") == "character":
+                return {"kind": "apply", "root": aim.get("root"),
+                        "text": u"на %s" % (aim.get("label") or u"персонажа")}
+            if aim.get("text") != droptarget.NO_VIEWPORT:
+                floor = droptarget.floor_at(x, y)
+                if floor.get("kind") == "floor":
+                    return {"kind": "apply", "point": floor.get("point"), "floor": True,
+                            "text": u"новый персонаж на полу"}
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+        return {"kind": "none", "text": u"во вьюпорт или в библиотеку поз"}
+
     def drag_move(self, gp):
         drag = getattr(self, "_drag", None)
         if not drag:
@@ -2272,7 +2323,7 @@ class ChatWindow(object):
         drag["aim"] = aim
         drag["ghost"].follow(gp)
         f = drag["item"].message.get("file") or {}
-        if aim["kind"] in DRAG_VERBS:
+        if aim["kind"] in DRAG_VERBS or aim["kind"] in ("library", "apply"):
             drag["ghost"].set_caption(u"%s · %s" % (f.get("name") or "", aim["text"]), True)
         else:
             drag["ghost"].set_caption(aim["text"], False)
@@ -2285,11 +2336,21 @@ class ChatWindow(object):
         drag["ghost"].deleteLater()
         if cancel:
             return None
+        self._drag = drag
         aim = self.drag_aim(gp)
+        self._drag = None
+        item = drag["item"]
+        if aim["kind"] in ("library", "apply"):
+            target = dict(aim)
+            if target.get("floor"):
+                target["kind"] = "floor"
+            elif aim["kind"] == "apply":
+                target["kind"] = "character"
+            self._later(lambda: self.file_action(item, aim["kind"], target=target))
+            return aim["kind"]
         action = DRAG_VERBS.get(aim["kind"])
         if action is None:
             return None
-        item = drag["item"]
         self._later(lambda: self.file_action(item, action))
         return action
 
@@ -2894,6 +2955,15 @@ def _local_paths(mime):
     if mime is None or not mime.hasUrls():
         return []
     return [u.toLocalFile() for u in mime.urls() if u.isLocalFile() and u.toLocalFile()]
+
+
+def send_card(card):
+    """A Pose Library card sent into the chat that is open in the window (its drag, 2026-10-22)."""
+    win = window()
+    if win is None or win.chat is None:
+        return u"Откройте чат, чтобы отправить в него карточку."
+    cid = win.send_card(card)
+    return (u"%s - в чат" % os.path.basename(card.rstrip("/\\"))) if cid else (win.line.text() or "")
 
 
 def send_path(path):

@@ -84,7 +84,7 @@ def reactions(value):
     return out
 
 
-FILE_KINDS = ("scene", "fbx")
+FILE_KINDS = ("scene", "fbx", "pose", "anim")
 
 
 def file(value):

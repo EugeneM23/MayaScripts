@@ -260,3 +260,58 @@ class Download(Inline):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Cards(Inline):
+    """A Pose Library card (its folder) sent and received (2026-10-22)."""
+
+    def make_card(self):
+        card = os.path.join(self.src, "Fist.pose")
+        os.makedirs(card)
+        with open(os.path.join(card, "pose.json"), "w") as out:
+            out.write('{"format": "skeldar.pose"}')
+        with open(os.path.join(card, "thumbnail.jpg"), "wb") as out:
+            out.write(os.urandom(300))
+        return card
+
+    def test_the_kinds(self):
+        self.assertEqual(files.card_kind("C:/lib/Fist.pose/"), "pose")
+        self.assertEqual(files.card_kind("Walk.anim"), "anim")
+        self.assertIsNone(files.card_kind("Run.ma"))
+        self.assertTrue(files.is_card({"kind": "anim"}))
+        self.assertEqual(r.file(dict(FILE, kind="pose", name="Fist.pose"))["kind"], "pose")
+
+    def test_a_card_goes_as_its_folder_and_comes_back_whole(self):
+        ses = self.ready()
+        card = self.make_card()
+        files.send_card(ses, "dm", card)
+        fid = "%016x" % 1
+        api = ses.api
+        self.assertEqual(api.started[0][1:3], ("Fist.pose", "pose"))
+        with zipfile.ZipFile(io.BytesIO(api.objects[fid])) as zf:
+            self.assertEqual(sorted(zf.namelist()), ["Fist.pose/pose.json", "Fist.pose/thumbnail.jpg"])
+        shutil.rmtree(os.path.join(self.dir, "files"))
+        got = []
+        files.fetch(ses, {"id": fid, "name": "Fist.pose", "kind": "pose"}, got.append)
+        self.assertEqual(sorted(os.listdir(got[0])), ["pose.json", "thumbnail.jpg"])
+        with open(os.path.join(card, "thumbnail.jpg"), "rb") as a_, \
+                open(os.path.join(got[0], "thumbnail.jpg"), "rb") as b_:
+            self.assertEqual(a_.read(), b_.read())
+
+    def test_nothing_climbs_out_of_a_card_zip(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("Fist.pose/pose.json", "{}")
+            zf.writestr("Fist.pose/../../evil.txt", "x")
+            zf.writestr("other/evil.txt", "x")
+        folder = tempfile.mkdtemp(dir=self.src)
+        with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+            path = files._unzip_card(zf, folder, "Fist.pose")
+        self.assertEqual(os.listdir(path), ["pose.json"])
+        self.assertEqual(sorted(os.listdir(folder)), ["Fist.pose"])
+        self.assertFalse(os.path.exists(os.path.join(self.src, "evil.txt")))
+
+    def test_a_folder_that_is_no_card_is_refused(self):
+        ses = self.ready()
+        with self.assertRaises(a.ChatError):
+            files.send_card(ses, "dm", self.src)

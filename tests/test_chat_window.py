@@ -746,3 +746,27 @@ class Files(Base):
         self.win.chat = None
         self.assertIsNone(self.win.send_path("C:/x/Run.ma"))
         self.assertIn("Откройте чат", self.win.line.text())
+
+    def test_a_card_is_dragged_not_pressed(self):
+        self.ses.state.messages["dm"].append(dict(msg("mc", 4, text=""),
+                                                  file=dict(FILE, id="c" * 16, name="Fist.pose", kind="pose")))
+        self.win.refresh()
+        box = self.card("mc")
+        self.assertEqual(look.file_tag(box.item.message["file"]), "POSE")
+        self.assertEqual(box.fbuttons, [])
+        self.assertEqual(box.fbar[2], W.CARD_HINT)
+        self.assertNotIn("Open", dict(self.win.menu_rows(box.item)))
+        done = []
+        self.win._later = lambda fn: fn()
+        self.win.file_action = lambda item, action, at=None, target=None: done.append((action, target))
+        with mock.patch.object(self.win, "card_aim", lambda gp, drag: {"kind": "library", "folder": "Fights",
+                                                                      "text": "в библиотеку · Fights"}):
+            self.win.start_drag(box.item, QtCore.QPoint(5, 5))
+            self.assertEqual(self.win.drag_end(QtCore.QPoint(6, 6)), "library")
+        with mock.patch.object(self.win, "card_aim", lambda gp, drag: {"kind": "apply", "root": "|root",
+                                                                      "text": "на Manny"}):
+            self.win.start_drag(box.item, QtCore.QPoint(5, 5))
+            self.win.drag_end(QtCore.QPoint(6, 6))
+        self.assertEqual(done[0], ("library", {"kind": "library", "folder": "Fights", "text": "в библиотеку · Fights"}))
+        self.assertEqual(done[1][1]["kind"], "character")
+        self.assertEqual(done[1][1]["root"], "|root")
