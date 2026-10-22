@@ -132,8 +132,18 @@ def page_class():
 
             def __init__(self, profile, parent=None):
                 super(CallPage, self).__init__(profile, parent)
+                self.loaded = False
                 self.permissionRequested.connect(self._permission)
                 self.desktopMediaRequested.connect(self.screen_requested.emit)
+                self.loadFinished.connect(self._loaded)
+
+            def _loaded(self, *_args):
+                self.loaded = True
+
+            def acceptNavigationRequest(self, url, kind, main_frame):            # noqa: N802
+                # Our page is loaded once (setHtml); nothing may take the view anywhere after it,
+                # or a page elsewhere would sit where the camera and microphone are granted.
+                return not self.loaded
 
             def _permission(self, permission):
                 if allowed(permission.origin()):
@@ -160,6 +170,7 @@ def make_view(bridge, parent=None):
     q = _q()
     from PySide6 import QtWebChannel, QtWebEngineCore, QtWebEngineWidgets
     view = QtWebEngineWidgets.QWebEngineView(parent)
+    view.setAcceptDrops(False)                               # a dropped link would navigate
     profile = QtWebEngineCore.QWebEngineProfile()            # off the record, its own
     page = page_class()(profile, view)
     profile.setParent(page)                                  # deleted after the page, never before

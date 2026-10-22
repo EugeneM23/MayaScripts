@@ -1,6 +1,6 @@
 """The chat's cache on disk, one folder per server host. Stdlib only.
 
-    token  me.json  chats.json  messages/<chat>.jsonl  outbox.json  since
+    token  me.json  chats.json  messages/<chat>.jsonl  outbox.json  since  calls.json
 
 Every write goes to a temporary file and replaces the old one, so a crash never leaves half a file;
 a file that cannot be read reads as empty.
@@ -105,6 +105,13 @@ class Store(object):
 
     def set_since(self, seq):
         self._write(self._path("since"), str(int(seq)))
+
+    def calls_here(self):
+        """The ids of the calls this Maya is in (a crash leaves them here)."""
+        return [c for c in self._json("calls.json", []) if isinstance(c, str)]
+
+    def set_calls_here(self, ids):
+        self._write(self._path("calls.json"), json.dumps(sorted(set(ids))))
 
     def forget(self):
         """Sign out on this machine: the token and me go, the history stays."""

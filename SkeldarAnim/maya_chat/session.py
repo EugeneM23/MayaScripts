@@ -120,7 +120,13 @@ class Session(object):
         """This account's sign-in code, to sign in on another machine."""
         return self.store.token()
 
+    def end_calls(self):
+        """The call window hangs up and the rings stop (signing out, the session closing):
+        told as "calls_end" while the link is still up, so the leave reaches the server."""
+        self.tell("calls_end")
+
     def sign_out(self):
+        self.end_calls()
         self.stop()
         self.store.forget()
         self.state = State()
@@ -210,6 +216,9 @@ class Session(object):
                 continue
             chats[c["id"]] = c
         st.chats = chats
+        # a call that has not ended is learnt again from its events; one held from before a
+        # resync may have ended unseen
+        st.calls = {k: v for k, v in (st.calls or {}).items() if v.get("state") == "ended"}
         for cid in list(st.messages):
             if cid not in chats:
                 st.messages.pop(cid, None)
@@ -544,6 +553,24 @@ class Session(object):
             self._turn = (now + TURN_RETRY_S, list(STUN), False)
         return self._turn[1], self._turn[2]
 
+    def calls_here(self):
+        """Ids of the calls this Maya has a window in (kept on disk: a crash leaves them)."""
+        try:
+            return list(self.store.calls_here())
+        except Exception:                                   # noqa: BLE001
+            return []
+
+    def call_here(self, call_id, on):
+        """Mark / unmark a call this Maya is in."""
+        try:
+            ids = set(self.store.calls_here())
+            if (call_id in ids) == bool(on):
+                return
+            (ids.add if on else ids.discard)(call_id)
+            self.store.set_calls_here(ids)
+        except Exception:                                   # noqa: BLE001
+            pass
+
     def _on_call(self, e):
         from . import calls as _calls
         self.state.calls = _calls.merge(self.state.calls, e["call"])
@@ -729,6 +756,7 @@ def get():
 def close():
     held = getattr(sys, "_skeldar_chat", None)
     if held is not None:
+        held.end_calls()
         held.stop()
         del sys._skeldar_chat
     try:

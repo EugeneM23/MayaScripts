@@ -450,6 +450,33 @@ class Calls(Base):
         self.ses.turn_servers(now=1000.0 + 86400 - 3000)
         self.assertEqual(self.ses.api.turn_calls, 2)
 
+    def test_a_resync_drops_calls_that_have_not_ended(self):
+        self.frame(self.ses, {"kind": "call", "seq": 2, "call": self.view()})
+        self.frame(self.ses, {"kind": "call", "seq": 3,
+                              "call": self.view(id="c2", state="ended", members=[], ended_at=5)})
+        self.frame(self.ses, {"kind": "resync"})
+        self.assertEqual(list(self.ses.state.calls), ["c2"])
+
+    def test_sign_out_ends_the_calls_while_the_link_is_up(self):
+        seen = []
+        self.ses.listen(lambda kind, data: seen.append((kind, self.ses.link is not None)))
+        self.ses.sign_out()
+        self.assertIn(("calls_end", True), seen)
+
+    def test_close_ends_the_calls(self):
+        seen = []
+        sys._skeldar_chat = self.ses
+        self.ses.listen(lambda kind, data: seen.append(kind))
+        s.close()
+        self.assertIn("calls_end", seen)
+
+    def test_the_calls_this_maya_is_in_are_kept_on_disk(self):
+        self.ses.call_here("c1", True)
+        self.ses.call_here("c2", True)
+        self.ses.call_here("c1", False)
+        self.assertEqual(st.Store(self.dir).calls_here(), ["c2"])
+        self.assertEqual(self.ses.calls_here(), ["c2"])
+
     def test_turn_failure_falls_back_to_stun(self):
         def boom():
             raise a.ChatError("offline", "no")

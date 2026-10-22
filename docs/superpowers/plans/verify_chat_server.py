@@ -627,7 +627,11 @@ def phase_calls():
     note = ev["message"]["call"] if ev else {}
     gate("the call line lands in the chat", bool(ev) and note.get("answered") is True
          and note.get("kind") == "video" and isinstance(note.get("seconds"), int) and note["seconds"] >= 0
-         and ev["message"]["from_id"] == A[1]["id"] and ev["message"]["text"] == "", ev)
+         and ev["message"]["from_id"] == A[1]["id"], ev)
+    secs = note.get("seconds", 0)
+    words = u"\U0001F4DE Звонок · " + (u"%d с" % secs if secs < 60 else u"%d мин" % (secs // 60))
+    gate("the call line's text is the note in words, for older clients",
+         bool(ev) and ev["message"]["text"] == words, ev and ev["message"]["text"])
 
     # decline -> ended, not answered
     wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c3"})
@@ -647,6 +651,29 @@ def phase_calls():
          str(c2 and c2["ended_at"] - c2["started_at"]))
     ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == c["id"], 5)
     gate("an unanswered call's line says not answered", bool(ev) and ev["message"]["call"]["answered"] is False, ev)
+
+    # Maya restarted mid-call: back within 30 s it hears the call it is still in; a second join
+    # answers the view again
+    wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c5r"})
+    c = _call_ev(wb, state="ringing")
+    wb.send({"type": "call_join", "call": c["id"]})
+    _call_ev(wa, c["id"], "live")
+    _call_ev(wb, c["id"], "live")
+    wb.send({"type": "call_join", "call": c["id"]})
+    again = _call_ev(wb, c["id"], "live", seconds=5)
+    gate("joining a call one is in answers its view again", again is not None
+         and B[1]["id"] in again["members"], again)
+    seq = jcall("GET", "/v1/chats", B[0])[1]["seq"]
+    wb.close()
+    time.sleep(2)
+    wb = ws(B[0])
+    wb.send({"type": "hello", "since": seq})
+    back = _call_ev(wb, c["id"], "live", seconds=10)
+    gate("back within 30 s, the call one is still in is heard again", back is not None
+         and B[1]["id"] in back["members"], back)
+    wb.until(lambda e: e.get("kind") == "caught_up", 10)
+    wb.send({"type": "call_leave", "call": c["id"]})
+    gate("and it can be left", _call_ev(wa, c["id"], "ended") is not None)
 
     # a member gone for 30 s leaves
     wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c5"})
@@ -674,10 +701,11 @@ def phase_calls():
     socks[3].send({"type": "call_join", "call": c["id"]})
     err = _error(socks[3])
     gate("a 5th person is refused", bool(err) and err["code"] == "call_full", err)
-    for w in socks:
+    # one at a time: leaves sent at once on four sockets may arrive in any order, and one that
+    # comes after the call ended leaves a stale no_call error on its socket
+    for w in socks[:3]:
         w.send({"type": "call_leave", "call": c["id"]})
-    wa.send({"type": "call_leave", "call": c["id"]})
-    _call_ev(wa, c["id"], "ended")
+        _call_ev(wa, c["id"], None, seconds=5)          # the last of them ends it
 
     # a member removed from the group mid-call leaves the call
     wa.send({"type": "call_start", "chat": group["id"], "kind": "audio", "cid": "c7"})

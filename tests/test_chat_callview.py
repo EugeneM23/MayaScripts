@@ -67,6 +67,12 @@ class FakeSession(object):
     def turn_servers(self, now=None):
         return [{"urls": ["stun:x"]}], False
 
+    here = None
+
+    def call_here(self, call_id, on):
+        self.here = set() if self.here is None else self.here
+        (self.here.add if on else self.here.discard)(call_id)
+
 
 class FakePage(object):
     def __init__(self):
@@ -119,6 +125,16 @@ class Starting(Base):
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
         st = self.sent("start")[0]
         self.assertEqual((st["peers"], st["offer_to"], st["video"]), (["bob"], ["bob"], False))
+
+    def test_the_answerer_s_window_names_the_chat(self):
+        self.ses.state.calls = {"c1": view("ringing", ("bob",), by="bob")}
+        w = V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
+        self.assertEqual(w.name_label.text(), "Bob")
+
+    def test_the_answerer_s_window_names_the_chat_when_its_view_comes(self):
+        w = V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        self.assertEqual(w.name_label.text(), "Bob")
 
     def test_signals_go_both_ways_and_early_ones_wait_for_start(self):
         w = V.answer(self.ses, "c1", "video", view_factory=fake_factory(self.store))
@@ -207,13 +223,33 @@ class Starting(Base):
         self.assertEqual(w.call_id, "c1")
         self.assertEqual(self.sent("signal"), [{"from": "bob", "data": {"sdp": "o"}}])
 
-    def test_members_changing_before_start_fold_into_start(self):
+    def test_members_who_came_after_me_before_start_are_not_offered_to(self):
         V.answer(self.ses, "c1", "video", view_factory=fake_factory(self.store))
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me", "x", "y"), by="bob")})
         self.store["bridge"].ready()
-        self.assertEqual(self.sent("add_peer"), [])
-        self.assertEqual(self.sent("start")[0]["peers"], ["bob", "x", "y"])
+        st = self.sent("start")[0]
+        self.assertEqual((st["peers"], st["offer_to"]), (["bob"], ["bob"]))
+        self.assertEqual(self.sent("add_peer"), [{"uid": "x", "offer": False},
+                                                 {"uid": "y", "offer": False}])
+
+    def test_the_starter_waits_for_a_newcomer_s_offer_while_the_page_loads(self):
+        V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view()})
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("me", "bob"))})
+        self.store["bridge"].ready()
+        names = [n for n, _a in self.store["sent"]]
+        self.assertEqual(names[:2], ["start", "add_peer"])
+        self.assertEqual(self.sent("start")[0]["offer_to"], [])
+        self.assertEqual(self.sent("add_peer"), [{"uid": "bob", "offer": False}])
+
+    def test_one_who_left_before_start_is_not_offered_to(self):
+        V.answer(self.ses, "c1", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "x", "me"), by="bob")})
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        self.store["bridge"].ready()
+        self.assertEqual(self.sent("start")[0]["offer_to"], ["bob"])
+        self.assertEqual(self.sent("remove_peer"), [])
 
     def test_the_page_note_is_said(self):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
@@ -269,6 +305,33 @@ class Buttons(Base):
             w2 = V.start(self.ses, "dm", "audio", view_factory=fake_factory({}))
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertIs(V.current(), w2)
+
+
+class Here(Base):
+    def test_the_call_is_marked_while_the_window_is_in_it(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view()})
+        self.assertEqual(self.ses.here, {"c1"})
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            w.press("hang_up")
+        self.assertEqual(self.ses.here, set())
+
+    def test_signing_out_hangs_up(self):
+        V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
+        self.store["bridge"].ready()
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self.ses.tell("calls_end", None)
+        self.assertIn(("leave", "c1"), self.ses.calls)
+        self.assertIsNone(V.current())
+
+    def test_holds_its_call_and_the_starter_its_cid(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.assertTrue(w.holds(view()))
+        self.assertFalse(w.holds(view(cid="other")))
+        self.ses.tell("call", {"kind": "call", "call": view()})
+        self.assertTrue(w.holds(view(cid="zzz")))
+        self.assertFalse(w.holds(view(id="c9")))
 
 
 class FakeRequest(object):

@@ -93,6 +93,31 @@ class ConsoleMessages(unittest.TestCase):
         self.assertIn("[call page] boom (call.js:3)", text)
 
 
+class Navigation(unittest.TestCase):
+    def test_only_the_first_load_may_navigate(self):
+        _app()
+        accept = callpage.page_class().acceptNavigationRequest
+
+        class Fake(object):
+            loaded = False
+        page = Fake()
+        url = QtCore.QUrl("https://skeldar.call/")
+        self.assertTrue(accept(page, url, 0, True))
+        page.loaded = True
+        self.assertFalse(accept(page, QtCore.QUrl("https://evil.example/"), 0, True))
+        self.assertFalse(accept(page, url, 0, True))
+
+    def test_the_loaded_flag_follows_load_finished(self):
+        _app()
+        cls = callpage.page_class()
+
+        class Fake(object):
+            loaded = False
+        page = Fake()
+        cls._loaded(page, True)
+        self.assertTrue(page.loaded)
+
+
 class Page(unittest.TestCase):
     def test_a_late_signal_cannot_bring_back_one_who_left(self):
         js = open(os.path.join(callpage.folder(), "call.js"), encoding="utf-8").read()

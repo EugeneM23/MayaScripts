@@ -3,9 +3,10 @@ the call page in it, buttons for the microphone, the camera, the screen, the dev
 and hanging up. One call at a time; the window follows the session's call events.
 
 The page (callpage.py, call.js) drops a `signal` that comes before its `start`, so the window
-holds the call's set-up messages until it has sent `start`, then hands them on in order. The
-membership known when `start` goes is in `start`; later changes are `add_peer` / `remove_peer`
-(calls.peer_commands).
+holds the call's set-up messages until it has sent `start`, then hands them on in order. `start`
+carries the first view holding me (I offer to those already in it); anyone who came after it
+offers to me, so the membership since then follows as `add_peer` / `remove_peer`
+(calls.peer_commands), right after `start` and on every later view.
 """
 import sys
 import time
@@ -98,6 +99,8 @@ def answer(session, call_id, kind, view_factory=None):
     win = CallWindow(session, kind, call_id=call_id, view_factory=view_factory)
     view = (getattr(session.state, "calls", None) or {}).get(call_id)
     win.chat = view["chat"] if view else None
+    if win.chat:
+        win._paint_name()
     try:
         win.cid = session.join_call(call_id)
     except Exception as exc:                                  # noqa: BLE001
@@ -240,6 +243,7 @@ class CallWindow(object):
         self.closed = False
         self.last_message = ""
         self.answered_at = None
+        self._here = False
         self._unfolded = None
         self._last_note = ""
         self.scale = W._scale()
@@ -417,6 +421,8 @@ class CallWindow(object):
                 self._call(data["call"])
             elif kind == "call_signal":
                 self._signal_in(data)
+            elif kind == "calls_end":                   # signing out, the session closing
+                self.hang_up()
             elif kind == "error" and data.get("cid") and data.get("cid") == self.cid:
                 self.fail(refusal_text(data.get("code"), data.get("text")), leave=False)
         except Exception:                                     # noqa: BLE001
@@ -444,6 +450,9 @@ class CallWindow(object):
             self._paint_name()
         if view["id"] != self.call_id:
             return
+        if self.chat is None:
+            self.chat = view["chat"]
+            self._paint_name()
         if view["state"] == "ended":
             self.bridge.send("end", {})
             self.close_window()
@@ -455,31 +464,61 @@ class CallWindow(object):
                 self.bridge.send("end", {})
                 self.close_window()
             return
+        self._mark_here(True)
         if not self.started:
+            # The first view holding me is the one I came into: I offer to those already in
+            # it. Anyone who joins later offers to me, so later views are membership only.
+            if self._pending_view is None:
+                self._pending_view = view
             self.members = list(view["members"])
-            self._start_page(view)
+            self._start_page()
             return
         for name, args in _calls.peer_commands(self.members, view["members"], me):
             self.bridge.send(name, args)
         self.members = list(view["members"])
 
-    def _start_page(self, view):
-        if not self.page_ready:
-            self._pending_view = view
+    def _start_page(self):
+        view = self._pending_view
+        if not self.page_ready or view is None:
             return
         self._pending_view = None
         me = self._me()
+        # those of the first view who have left since are not offered to
+        view = dict(view, members=[u for u in view["members"] if u in self.members or u == me])
         servers, turn = self.session.turn_servers()
         args = _calls.start_args(view, me, self._names(), servers, self.kind == "video",
                                  get_var(MIC_VAR) or "", get_var(CAM_VAR) or "")
         self.bridge.send("start", args)
         self.started = True
+        for name, cargs in _calls.peer_commands(view["members"], self.members, me):
+            self.bridge.send(name, cargs)
         held, self.held = self.held, []
         for call, frm, data in held:
             if call == self.call_id:
                 self.bridge.send("signal", {"from": frm, "data": data})
         if not turn:
             self.say(u"прямое соединение - через строгую сеть может не пройти")
+
+    def _mark_here(self, on):
+        """This Maya is in the call (on disk, so after a crash it knows to leave it)."""
+        if not self.call_id or self._here == bool(on):
+            return
+        self._here = bool(on)
+        mark = getattr(self.session, "call_here", None)
+        if mark is not None:
+            try:
+                mark(self.call_id, on)
+            except Exception:                                 # noqa: BLE001
+                traceback.print_exc()
+
+    def holds(self, view):
+        """Whether this window is the one for `view` (a starter's waiting on its cid too)."""
+        if self.closed:
+            return False
+        if self.call_id is not None:
+            return view.get("id") == self.call_id
+        return bool(self.cid) and view.get("cid") == self.cid \
+            and view.get("by") == self._me()
 
     def _names(self):
         chat = self.session.state.chats.get(self.chat) or {}
@@ -509,8 +548,7 @@ class CallWindow(object):
         self.page_ready = True
         if self.started:              # a page that reloaded must not be started twice
             return
-        if self._pending_view is not None:
-            self._start_page(self._pending_view)
+        self._start_page()
 
     def _page_signal(self, to, data):
         if self.call_id:
@@ -702,6 +740,7 @@ class CallWindow(object):
             self.session.unlisten(self._heard)
         except Exception:                                     # noqa: BLE001
             pass
+        self._mark_here(False)
         self._remember_place()
         if getattr(sys, _ATTR, None) is self:
             delattr(sys, _ATTR)

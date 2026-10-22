@@ -165,7 +165,7 @@ def message_text(message):
         from . import calls
         return calls.ICON + " " + calls.note_text(note)
     text = " ".join(str((message or {}).get("text") or "").split())
-    f =(message or {}).get("file")
+    f = (message or {}).get("file")
     if f and f.get("name"):
         return CLIP + " " + f["name"] + ((" - " + text) if text else "")
     return text
@@ -345,7 +345,7 @@ def feed(messages, pending, me_id, chat, reads, now_ms):
 def last_mine(messages, me_id):
     """My newest message that is not deleted, for ↑ in an empty composer."""
     for m in reversed(messages or []):
-        if m.get("from_id") == me_id and not m.get("deleted"):
+        if m.get("from_id") == me_id and not m.get("deleted") and not m.get("call"):
             return m
     return None
 

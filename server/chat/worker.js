@@ -51,6 +51,13 @@ function refuse(code, text, status = 400) { throw new Refusal(code, text, status
 
 function hex(bytes) { return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 function randomHex(n) { const b = new Uint8Array(n); crypto.getRandomValues(b); return hex(b); }
+// A call's line in words, as maya_chat.calls.note_text has it (with the phone in front).
+function callNoteText(note) {
+  // «Пропущенный звонок», «Звонок · N с», «Звонок · N мин» (escaped: the file stays ASCII-safe)
+  if (!note.answered) return "\u{1F4DE} Пропущенный звонок";
+  const s = Math.max(0, Math.floor(Number(note.seconds) || 0));
+  return "\u{1F4DE} Звонок · " + (s < 60 ? s + " с" : Math.floor(s / 60) + " мин");
+}
 function b64url(bytes) {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -783,8 +790,13 @@ export class Studio extends DurableObject {
     const wasOnline = this.ctx.getWebSockets(me.id).length > 0;
     this.ctx.acceptWebSocket(server, [me.id]);
     server.serializeAttachment({ uid: me.id });
+    // Back within GONE_MS: still in those calls. Their views go out again, so a client that lost
+    // its call window (Maya restarted) learns it is still in one and can leave it.
+    const back = this.sql.exec(`SELECT call FROM call_members WHERE uid = ? AND left_at IS NULL AND gone_at IS NOT NULL
+       AND call IN (SELECT id FROM calls WHERE state != 'ended')`, me.id).toArray();
     this.sql.exec("UPDATE call_members SET gone_at = NULL WHERE uid = ? AND left_at IS NULL", me.id);
     if (!wasOnline) this.announce(me.id, true);
+    for (const r of back) this.emitCall(r.call);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -916,6 +928,7 @@ export class Studio extends DurableObject {
   onEdit(ws, me, msg) {
     const chat = String(msg.chat ?? "");
     const row = this.own(chat, msg.id, me);
+    if (row.call) refuse("bad_request", "A call's line cannot be edited");
     const text = row.file ? this.caption(msg.text) : this.text(msg.text);
     const at = Date.now();
     this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, row.id);
@@ -1026,7 +1039,8 @@ export class Studio extends DurableObject {
     const c = this.liveCall(String(msg.call ?? ""));
     this.member(c.chat, me.id);
     const view = this.callView(c.id);
-    if (view.members.includes(me.id)) return;
+    // Already in it (a second join, or a client that lost its window): the view again, so it knows.
+    if (view.members.includes(me.id)) { this.emitCall(c.id); return; }
     if (view.members.length >= CALL_MAX) refuse("call_full", "A call holds at most " + CALL_MAX + " people");
     const now = Date.now();
     this.sql.exec(`INSERT INTO call_members (call, uid, joined_at) VALUES (?, ?, ?)
@@ -1077,14 +1091,15 @@ export class Studio extends DurableObject {
                                        seconds: answered ? Math.round((now - c.answered_at) / 1000) : 0 });
   }
 
-  // The call's line in the chat: a message from the caller with no text and the call's note.
+  // The call's line in the chat: a message from the caller carrying the call's note. Its text is the
+  // note in words, for clients that do not know calls; those that do draw the note and skip the text.
   postCallLine(chat, by, note) {
     if (!this.sql.exec("SELECT 1 FROM chats WHERE id = ?", chat).toArray().length) return;
     const message = this.ctx.storage.transactionSync(() => {
       const seq = this.sql.exec("UPDATE chats SET last_seq = last_seq + 1 WHERE id = ? RETURNING last_seq", chat).one().last_seq;
       const id = randomHex(8);
-      this.sql.exec("INSERT INTO messages (chat, seq, id, from_id, cid, text, reply_to, at, call) VALUES (?, ?, ?, ?, ?, '', NULL, ?, ?)",
-        chat, seq, id, by, "call:" + note.id, Date.now(), JSON.stringify(note));
+      this.sql.exec("INSERT INTO messages (chat, seq, id, from_id, cid, text, reply_to, at, call) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        chat, seq, id, by, "call:" + note.id, callNoteText(note), Date.now(), JSON.stringify(note));
       return this.messageView(this.sql.exec("SELECT * FROM messages WHERE id = ?", id).one());
     });
     this.emit({ chat, kind: "message", payload: { message } });

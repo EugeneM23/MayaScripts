@@ -279,6 +279,19 @@ class CallLine(unittest.TestCase):
                                                         "answered": False, "seconds": 0})),
                          u"\U0001F4DE Пропущенный звонок")
 
+    def test_the_server_s_text_for_older_clients_is_not_shown(self):
+        d = self.msg(1, {"id": "c", "kind": "audio", "answered": True, "seconds": 42})
+        d["text"] = u"\U0001F4DE Звонок · 42 с"
+        items = look.feed([d], [], "me", dm(), {}, NOW)
+        self.assertEqual([i.kind for i in items if i.kind != "day"], ["call"])
+        self.assertEqual(items[-1].text, u"Звонок · 42 с")
+        self.assertEqual(look.message_text(d), u"\U0001F4DE Звонок · 42 с")
+
+    def test_up_does_not_edit_a_call_line(self):
+        line = self.msg(2, {"id": "c", "kind": "audio", "answered": False, "seconds": 0}, frm="me")
+        line["text"] = u"\U0001F4DE Пропущенный звонок"
+        self.assertEqual(look.last_mine([m("a", 1, frm="me"), line], "me")["id"], "a")
+
 
 if __name__ == "__main__":
     unittest.main()

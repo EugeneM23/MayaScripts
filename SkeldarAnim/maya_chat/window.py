@@ -656,8 +656,8 @@ def feed_class():
                         box.rect = QtCore.QRectF(0, y, width, h)
                         box.height = h
                         cfont = _font(self.font(), px(9.5), True)
-                        w = QtGui.QFontMetrics(cfont).horizontalAdvance(
-                            _calls.ICON + "  " + item.text) + px(20)
+                        from . import emojiart
+                        w = emojiart.line_width(_calls.ICON + "  " + item.text, cfont) + px(20)
                         box.callpill = QtCore.QRectF((width - w) / 2.0, y + px(3), w, px(20))
                         boxes.append(box)
                         y += h
@@ -1044,8 +1044,13 @@ def feed_class():
                         p.setPen(_colour("line"))
                         p.setBrush(_colour("card"))
                         p.drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0)
-                        p.setPen(_colour("danger" if item.missed else "muted"))
-                        p.drawText(pill, QtCore.Qt.AlignCenter, _calls.ICON + "  " + item.text)
+                        text = _calls.ICON + "  " + item.text
+                        from . import emojiart
+                        tw = emojiart.line_width(text, p.font())
+                        emojiart.draw_line(p, QtCore.QRectF(pill.left() + (pill.width() - tw) / 2.0,
+                                                            pill.top(), tw + 1, pill.height()),
+                                           text, p.font(),
+                                           _colour("danger" if item.missed else "muted"))
                         continue
                     p.save()
                     key = item.key()
@@ -2632,7 +2637,8 @@ class ChatWindow(object):
             who = next((u for u in c.get("members", []) if u.get("id") == m.get("from_id")),
                        {"nick": "?"})
             self.bar_text.setText("Ответ " + look.display_name(who) + ": "
-                                  + " ".join(str(m.get("text") or "").split())[:60])
+                                  + (look.message_text(m) if m.get("call") else
+                                     " ".join(str(m.get("text") or "").split()))[:60])
         self.bar.setVisible(bool(self.editing or self.reply_to))
 
     def retry(self, item):
@@ -2677,9 +2683,10 @@ class ChatWindow(object):
                 rows.append((label, lambda a=action: self.file_action(item, a)))
         rows.append(("Реакция…", lambda: self.pick_emoji(m)))
         rows.append(("Ответить", lambda: self.start_reply(m)))
-        if m.get("text"):
+        call = bool(m.get("call"))      # a call's line: its text is for older clients only
+        if m.get("text") and not call:
             rows.append(("Скопировать", lambda: self.copy_text(m.get("text") or "")))
-        if item.mine:
+        if item.mine and not call:
             rows.append(("Изменить", lambda: self.start_edit(m)))
             rows.append(("Удалить", lambda: self.delete_message(m)))
         return rows

@@ -204,5 +204,119 @@ class CallCards(unittest.TestCase):
         self.assertEqual(self.toast.call_cards(), [])
 
 
+class HereSession(FakeSession):
+    """A session whose disk remembers the calls this Maya was in."""
+
+    def __init__(self, here=()):
+        super(HereSession, self).__init__()
+        self.here, self.left = set(here), []
+
+    def calls_here(self):
+        return list(self.here)
+
+    def call_here(self, call_id, on):
+        (self.here.add if on else self.here.discard)(call_id)
+
+    def leave_call(self, call_id):
+        self.left.append(call_id)
+        return True
+
+
+class Strays(unittest.TestCase):
+    """Maya restarted mid-call: the server still has me in it, no window holds it."""
+
+    def setUp(self):
+        _app()
+        if hasattr(__import__("sys"), "_skeldar_chat_strays"):
+            del __import__("sys")._skeldar_chat_strays
+        self.later = mock.patch.object(notify, "_later", side_effect=lambda ms, fn: fn())
+        self.later.start()
+
+    def tearDown(self):
+        self.later.stop()
+        from maya_chat import callview
+        callview.destroy()
+
+    def tell(self, ses, view):
+        ses.state.calls = {view["id"]: view}
+        return notify.heard(ses, "call", {"kind": "call", "call": view}, out=[])
+
+    def test_a_call_I_was_in_here_with_no_window_is_left_once(self):
+        ses = HereSession(here=["c1"])
+        live = call(state="live", members=["bob", "me"])
+        out = self.tell(ses, live)
+        self.assertIn(("stray_left", "c1"), out)
+        self.assertEqual(ses.left, ["c1"])
+        self.assertNotIn("c1", ses.here)
+        ses.here.add("c1")                                        # even marked again: once
+        self.tell(ses, live)
+        self.assertEqual(ses.left, ["c1"])
+
+    def test_a_call_from_another_machine_is_not_left(self):
+        ses = HereSession(here=[])
+        self.tell(ses, call(state="live", members=["bob", "me"]))
+        self.assertEqual(ses.left, [])
+
+    def test_a_call_the_window_holds_is_not_left(self):
+        from maya_chat import callview
+        ses = HereSession(here=["c1"])
+
+        class Win(object):
+            closed = False
+            call_id = "c1"
+
+            def holds(self, view):
+                return view["id"] == "c1"
+        with mock.patch.object(callview, "current", return_value=Win()):
+            self.tell(ses, call(state="live", members=["bob", "me"]))
+        self.assertEqual(ses.left, [])
+
+    def test_the_starter_s_window_waiting_on_its_cid_holds_it(self):
+        from maya_chat import callview
+        ses = HereSession(here=["c1"])
+        win = callview.CallWindow.__new__(callview.CallWindow)
+        win.closed, win.call_id, win.cid, win.session = False, None, "x", ses
+        with mock.patch.object(callview, "current", return_value=win):
+            self.tell(ses, call(by="me", members=["me"], cid="x"))
+        self.assertEqual(ses.left, [])
+
+    def test_an_ended_call_is_forgotten_on_disk(self):
+        ses = HereSession(here=["c1"])
+        self.tell(ses, call(state="ended", members=[], ended_at=1))
+        self.assertNotIn("c1", ses.here)
+        self.assertEqual(ses.left, [])
+
+    def test_a_call_I_am_not_in_is_not_left(self):
+        ses = HereSession(here=["c1"])
+        self.tell(ses, call(state="live", members=["bob", "x"]))
+        self.assertEqual(ses.left, [])
+
+
+class Ending(unittest.TestCase):
+    def setUp(self):
+        _app()
+
+    def test_calls_end_stops_the_rings(self):
+        with mock.patch.object(notify, "stop_all") as stop:
+            out = notify.heard(FakeSession(), "calls_end", None, out=[])
+        stop.assert_called_once()
+        self.assertIn(("calls_end",), out)
+
+    def test_a_resync_stops_a_ring_for_a_call_no_longer_known(self):
+        rings = []
+
+        class H(object):
+            def stop(self):
+                rings.append("stop")
+        ses = FakeSession()
+        with mock.patch.object(notify, "_loop_ring", side_effect=lambda: H()):
+            ses.state.calls = {"c1": call()}
+            notify.heard(ses, "call", {"kind": "call", "call": call()}, out=[])
+            ses.state.calls = {}
+            out = notify.heard(ses, "resync", None, out=[])
+        self.assertIn(("call_gone", "c1"), out)
+        self.assertEqual(rings, ["stop"])
+
+
 if __name__ == "__main__":
     unittest.main()
