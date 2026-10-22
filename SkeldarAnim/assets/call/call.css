@@ -1,0 +1,28 @@
+html, body { margin: 0; height: 100%; background: var(--panel); color: var(--text);
+  font: 13px "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
+#grid { position: absolute; inset: 6px; display: grid; gap: 6px; grid-template-columns: 1fr; grid-auto-rows: 1fr; }
+#grid.n2 { grid-template-columns: 1fr 1fr; }
+#grid.n3, #grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+#grid.focus { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 96px; }
+#grid.focus .tile.screen { grid-column: 1 / -1; }
+.tile { position: relative; background: var(--card); border-radius: 8px; overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line) inset; transition: box-shadow 120ms; }
+.tile.speaking { box-shadow: 0 0 0 2px var(--accent) inset, 0 0 14px var(--accent); }
+.tile video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+.tile.screen video { object-fit: contain; }
+.tile.nocam video { display: none; }
+.tile .face { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }
+.tile.nocam .face { display: flex; }
+.tile .face span { width: 64px; height: 64px; border-radius: 50%; background: var(--accent);
+  color: var(--on_accent); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; }
+.tile .name { position: absolute; left: 8px; bottom: 6px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; }
+.tile .muted { display: none; margin-left: 6px; color: var(--danger); }
+.tile.micoff .muted { display: inline; }
+.tile .lost { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55); color: #fff; }
+.tile.lost .lost { display: flex; }
+#note { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 3px 10px;
+  border-radius: 10px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; display: none; }
+#note.on { display: block; }
+@media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
