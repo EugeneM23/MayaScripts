@@ -33,7 +33,9 @@ the Time Bar's numbers. Spec of the original:
   changed only when the animator asks:
   - the hub cards' slide and light (`maya_hubmotion`);
   - the controls' ink glow (`maya_hubglow`);
-  - the section windows' burst (2026-10-18: the Time Bar's numbers, `maya_hubburst`);
+  - the windows' spring (2026-10-22, the animator's pick of four mockups: the whole window
+    grows out of the point on a damped spring and fades in, one picture drawn scaled -
+    `maya_hubburst.MOTION`; the 2026-10-18 burst is kept as `"burst"`);
   - the radial menu (`maya_radial_rules`).
 
   All of them are already the same family: a back ease, nearest first, accent light.

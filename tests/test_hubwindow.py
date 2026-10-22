@@ -52,10 +52,32 @@ class Frame(unittest.TestCase):
         self.frame.render(image)
         return image
 
-    def test_the_frame_face_is_the_panel_and_the_content_the_card(self):
+    def test_the_content_stands_on_the_panel_under_a_hairline(self):
+        """Look B (2026-10-22): one dark surface, a track_edge hairline under the title."""
+        image = self.render()
+        self.assertEqual(_rgb(image, 120, 20), _hex("panel"))
+        self.assertEqual(_rgb(image, 120, 100), _hex("panel"))
+        self.assertEqual(_rgb(image, 120, 33), _hex("track_edge"))
+
+    def test_a_card_face_paints_the_content_card(self):
+        self.frame.content_face = "card"
         image = self.render()
         self.assertEqual(_rgb(image, 120, 20), _hex("panel"))
         self.assertEqual(_rgb(image, 120, 100), _hex("card"))
+
+    def test_the_fields_are_recessed_under_the_frame_only(self):
+        self.frame.setObjectName("testFrame")
+        field = QtWidgets.QLineEdit(self.frame.content)
+        outside = QtWidgets.QLineEdit()
+        hubwindow.recess(self.frame, 1.0)
+        sheet = self.frame.styleSheet()
+        self.assertIn("#testFrame QLineEdit", sheet)
+        self.assertIn(hubstyle.TOKENS["track"], sheet)
+        for line in sheet.splitlines():
+            if line.strip():
+                self.assertTrue(line.startswith("#testFrame "), line)
+        self.assertEqual(outside.styleSheet(), "")
+        field.deleteLater()
 
     def test_no_stripe_and_no_accent_along_the_edges(self):
         image = self.render()
@@ -118,8 +140,12 @@ class Pill(unittest.TestCase):
 
 
 class Burst(unittest.TestCase):
+    """The 2026-10-17 burst, kept as maya_hubburst.MOTION "burst"."""
 
     def setUp(self):
+        self._motion = hubburst.MOTION
+        hubburst.MOTION = "burst"
+        self.addCleanup(setattr, hubburst, "MOTION", self._motion)
         self.app = _app()
         self.frame = hubwindow.frame_class()(1.0)
         self.frame.resize(240, 160)
@@ -232,6 +258,87 @@ class Burst(unittest.TestCase):
         with mock.patch.object(hubmotion, "enabled", lambda: False):
             self.assertFalse(self.burster.run(True, (0, 0), lambda: None))
         self.assertFalse(self.burster.busy())
+
+
+class Spring(unittest.TestCase):
+    """The spring (2026-10-22): the one picture scaled about the point, its clock from the
+    picture, no rows walked."""
+
+    def setUp(self):
+        self.assertEqual(hubburst.MOTION, "spring")
+        self.app = _app()
+        self.frame = hubwindow.frame_class()(1.0)
+        self.frame.resize(240, 160)
+        self.frame.show()
+        self.app.processEvents()
+        self.walks = []
+        self.burster = hubwindow.Burster(
+            self.frame, lambda: self.walks.append(1) or [(5, 5, 230, 24)],
+            lambda: (42, 44, 48), 1.0)
+
+    def _run(self, opening, at=(120, 80)):
+        origin = self.frame.mapToGlobal(QtCore.QPoint(*at))
+        self.ended = []
+        self.assertTrue(self.burster.run(opening, (origin.x(), origin.y()),
+                                         lambda: self.ended.append(1)))
+
+    def test_no_rows_are_walked(self):
+        self._run(True)
+        self.frame.grab()
+        for ms in (20.0, 80.0, 200.0):
+            self.burster.effect.ms = ms
+            self.burster.tick_now()
+        self.assertEqual(self.walks, [])
+        self.assertEqual(self.burster.effect.plan.kind, "spring")
+
+    def test_the_clock_starts_at_the_picture(self):
+        self._run(True)
+        self.assertEqual(self.burster._clock(), 0.0)
+        self.frame.grab()
+        self.assertIsNotNone(self.burster.effect.started)
+        self.assertLess(self.burster._clock(), 100.0)
+
+    def test_an_unpainted_frame_runs_its_clock_from_the_press(self):
+        self._run(True)
+        self.burster._run_at -= hubwindow.PICTURE_WAIT_MS + 50
+        self.assertGreater(self.burster._clock(), 40.0)
+
+    def test_early_the_picture_is_small_about_the_point(self):
+        self._run(True, at=(120, 80))
+        self.frame.grab()
+        self.burster.effect.ms = 10.0
+        image = self.frame.grab().toImage()
+        # the frame's own corner lies outside a picture scaled about the middle
+        self.assertLess(image.pixelColor(2, 2).alpha(), 20)
+        self.assertGreater(image.pixelColor(120, 80).alpha(), 0)
+
+    def test_it_ends_plain(self):
+        self._run(True)
+        self.frame.grab()
+        self.burster.effect.ms = self.burster.effect.plan.total
+        self.burster.tick_now()
+        self.assertEqual(self.ended, [1])
+        self.assertFalse(self.burster.effect.isEnabled())
+
+    def test_a_close_ends_gone(self):
+        self._run(False)
+        self.frame.grab()
+        plan = self.burster.effect.plan
+        state = hubburst.at(plan, plan.total)
+        self.assertEqual(state.face, 0.0)
+        self.burster.effect.ms = plan.total
+        self.burster.tick_now()
+        self.assertEqual(self.ended, [1])
+
+    def test_the_shape_reported_is_the_scaled_window(self):
+        shapes = []
+        origin = self.frame.mapToGlobal(QtCore.QPoint(0, 0))
+        self.burster.run(True, (origin.x(), origin.y()), lambda: None, on_tick=shapes.append)
+        self.frame.grab()
+        self.burster.effect.ms = 0.0
+        self.burster.tick_now()
+        x0, y0, x1, y1 = shapes[-1]
+        self.assertAlmostEqual((x1 - x0) / 240.0, hubburst.SPRING_FROM, places=3)
 
 
 class BurstParts(unittest.TestCase):

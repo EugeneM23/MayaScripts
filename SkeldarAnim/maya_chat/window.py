@@ -1498,6 +1498,7 @@ class ChatWindow(object):
         card = w.QFrame()
         card.setObjectName("skeldarChatCard")
         frame.content = card
+        frame.content_face = "card"     # the chat paints its pages on the card
         column.addWidget(card, 1)
         self.card = card
         body = w.QVBoxLayout(card)

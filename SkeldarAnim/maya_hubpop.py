@@ -533,6 +533,7 @@ class Popup(object):
                   frame.objectName(), self.scroll.objectName(),
                   self.content.objectName()))
         hubwindow.dress(frame, s)
+        hubwindow.recess(frame, s)              # look B's fields (2026-10-22)
         self.root = root
         #  the light: the window's Enter and Leave (2026-10-09, as a card's)
         self._hover = _hover_class()(self._on_hover, root)

@@ -8,6 +8,10 @@ maya_hubqt.Skin card (look B, its close and float pills), bursting out of its ra
 folding into its close pill. Both are driven by the real maya_hubwindow.Burster and the plan it
 makes (maya_hubburst).
 
+2026-10-22 (spec 2026-10-22-window-look-b-spring-design.md): look B is the Time Bar's (one
+surface, a hairline, the fields recessed) and the motion the spring; the paint cost is timed for
+the spring and, as the control, for the 2026-10-17 burst (maya_hubburst.MOTION "burst").
+
     $env:QT_QPA_PLATFORM='offscreen'
     & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' docs/superpowers/plans/render_floating_window.py
 """
@@ -23,13 +27,14 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "SkeldarAnim"))
 
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
+import maya_hubburst as hubburst              # noqa: E402
 import maya_hubqt as hubqt                    # noqa: E402
 import maya_hubstyle as hubstyle              # noqa: E402
 import maya_hubwindow as hubwindow            # noqa: E402
 
 SCALE = 1.5
-OPEN_MS = (20, 40, 90, 150, 230, 320, 520, 900)
-FOLD_MS = (60, 160)
+OPEN_MS = (0, 20, 50, 90, 140, 240, 420)
+FOLD_MS = (40, 90, 130)
 LABELS = ("Knot", "Offset", "Orient", "Local x2", "World x2", "Aim", "Snapshot")
 COLUMNS = len(OPEN_MS) + len(FOLD_MS)
 
@@ -61,6 +66,9 @@ def buttons(parent_layout, parent):
         button.setProperty("skRole", "primary" if i == 0 else "tool")
         button.setFixedHeight(px(24))
         parent_layout.addWidget(button)
+    field = QtWidgets.QLineEdit("Knot_pCube1", parent)       # a recessed field (look B)
+    field.setFixedHeight(px(22))
+    parent_layout.addWidget(field)
 
 
 def window():
@@ -98,7 +106,8 @@ def window():
     root.setStyleSheet(hubstyle.stylesheet(SCALE)
                        + "\n#renderWindowFrame { border: none; background: transparent; }")
     hubwindow.dress(frame, SCALE)
-    root.resize(px(300), px(280))
+    hubwindow.recess(frame, SCALE)
+    root.resize(px(300), px(300))
     root.show()
     QtWidgets.QApplication.processEvents()
     return root, frame, title, card, close
@@ -153,7 +162,7 @@ def paint_cost(frame, burster, point):
     burster.effect.ms = 90.0
     frame.grab()
     times = []
-    for _ in range(30):
+    for _ in range(60):
         burster.effect.ms = 90.0
         t0 = time.perf_counter()
         frame.grab()
@@ -189,22 +198,25 @@ def main():
     painter = QtGui.QPainter(sheet)
     painter.setPen(QtGui.QColor("#e4e4e6"))
     total_w = film(painter, frame, window_burster, w_open, w_fold, 0, cell_w, cell_h,
-                   "floating window, look B: burst out of a point, fold into the close pill")
+                   "floating window, look B: spring out of a point, shrink into the close pill")
     total_r = film(painter, rail.frame, rail_burster, r_open, r_fold, cell_h, cell_w, cell_h,
-                   "edge rail card, look B: burst out of its rail icon, fold into its close pill")
+                   "edge rail card, look B: spring out of its rail icon, shrink into its close pill")
     painter.end()
     out = os.path.join(HERE, "floating_window.png")
     sheet.save(out)
-
-    mid_w, max_w, plan_w = paint_cost(frame, window_burster, w_open)
-    mid_r, max_r, plan_r = paint_cost(rail.frame, rail_burster, r_open)
     print("wrote", out)
     print("plan total (open, from the burster's plan): window %.0f ms, rail card %.0f ms"
           % (total_w, total_r))
-    print("burst paint at 90 ms, window %dx%d px: median %.2f ms, max %.2f ms (30 grabs)"
-          % (frame.width(), frame.height(), mid_w, max_w))
-    print("burst paint at 90 ms, rail card %dx%d px: median %.2f ms, max %.2f ms (30 grabs)"
-          % (rail.frame.width(), rail.frame.height(), mid_r, max_r))
+    motion = hubburst.MOTION
+    for kind in ("spring", "burst"):
+        hubburst.MOTION = kind
+        mid_w, max_w, _ = paint_cost(frame, window_burster, w_open)
+        mid_r, max_r, _ = paint_cost(rail.frame, rail_burster, r_open)
+        print("%s paint at 90 ms, window %dx%d px: median %.2f ms, max %.2f ms (60 grabs)"
+              % (kind, frame.width(), frame.height(), mid_w, max_w))
+        print("%s paint at 90 ms, rail card %dx%d px: median %.2f ms, max %.2f ms (60 grabs)"
+              % (kind, rail.frame.width(), rail.frame.height(), mid_r, max_r))
+    hubburst.MOTION = motion
     skin.destroy()
 
 

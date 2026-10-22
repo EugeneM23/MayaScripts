@@ -13819,3 +13819,31 @@ rerun (the assets' sha1); 8345 unit tests, the known `test_chat_deploy.Keys` fai
      as pieces of the outfit and asked about; the dressed rig's playblast showed no veil - its transform was
      hidden in the animator's scene (and in no FBX, and unskinned). Read `.visibility` up the hierarchy before
      describing what a scene holds, and gate the shipped pieces as shown.
+
+## Floating windows: look B and a spring (2026-10-22)
+
+The animator: «всплываюшие окна нашего плагина сейчас отрисованы не в нашем стиле и у них
+анимация не плавная». Live mockups (https://claude.ai/artifact/Q2HzadyrH8RGqJeiot2c9k,
+`docs/superpowers/plans/window_motion_mockups.html`): three looks, four motions; they chose
+**B (the Time Bar's)** and **4 (spring)**. Spec
+`docs/superpowers/specs/2026-10-22-window-look-b-spring-design.md`. **This replaces the burst of
+"Floating windows in place of the viewport popups" and the inner card of its look B.** Every
+`maya_hubwindow.Burster` user changed: the section windows, the edge rail's card, the chat window.
+- **The look**: `WindowFrame.content_face` "panel" - the content on the frame's own dark face, a
+  `track_edge` hairline under the title; the fields recessed (`hubwindow.recessed_sheet` /
+  `recess(frame, scale)`, set on the frame and scoped to it: line edits, drop-downs, lists, tool
+  buttons, chips, check boxes on `track` with a `track_edge` edge). The chat keeps its card
+  (`content_face = "card"`). No shadow (a margin would move place, size and grips).
+- **The spring** (`maya_hubburst.MOTION = "spring"`; `"burst"` is the old motion, kept):
+  `plan_spring` / `spring(ms)` (ζ 0.72, 3 Hz); opening scale 0.7 → 1 about the point, opacity in
+  over 120 ms, done at 420 ms; closing 140 ms to 0.85, ease-in cubic, opacity out. The drawn scale
+  is held at 1 - a window cannot paint past its edge, and the overshoot was cut there. The effect
+  draws the one picture scaled (`_draw_spring`): no row walk, no mask image, no light.
+- **The stutter's causes, fixed**: the clock now starts when the effect takes its picture
+  (`PopupBurst.started`, `Burster._clock`; an unpainted frame from the press + 150 ms), not at the
+  press - the first picture of a window of Maya controls takes tens of ms; a spring tick compares
+  the size only (`_moved` walked every row each tick).
+- Proof: `test_hubburst.Spring`, `test_hubwindow.Spring` / the look tests; the old burst's tests
+  pin `MOTION = "burst"`. `render_floating_window.py` -> `floating_window.png`; a frame's paint at
+  150 %: spring median 0.15 ms (window 450 x 450), the burst 0.58 ms. **Not seen in a GUI Maya.**
+

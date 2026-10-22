@@ -898,6 +898,12 @@ class Edge(object):
         cx, cy, cw, ch = max(rects, key=lambda r: r[2] * r[3])
         lx, ly = hubburst.clamp_origin((px - cx, py - cy), (cw, ch),
                                        hubburst.ORIGIN_PAD * self.scale)
+        if hubburst.MOTION == "spring":
+            #  the spring starts as the card scaled about the point (2026-10-22)
+            x0, y0, x1, y1 = hubburst.plan_spring(True, (lx, ly), (cw, ch),
+                                                  self.scale).start
+            return (int(round(cx + x0)), int(round(cy + y0)),
+                    int(round(x1 - x0)), int(round(y1 - y0)))
         #  and the box kept inside the card (maya_hubburst._box)
         x0, y0 = max(0.0, lx - hx), max(0.0, ly - hy)
         x1, y1 = min(float(cw), lx + hx), min(float(ch), ly + hy)

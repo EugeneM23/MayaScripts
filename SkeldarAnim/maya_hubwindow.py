@@ -14,6 +14,11 @@ It holds:
   plus `maya_hubburst.light` drawn as added light inside the shape;
 - `Burster`: drives that effect out of a global point or into one.
 
+2026-10-22 (spec: docs/superpowers/specs/2026-10-22-window-look-b-spring-design.md): look B
+is the Time Bar's now - one dark surface (`content_face` "panel"), a hairline under the title,
+the fields recessed (`recessed_sheet`) - and the motion is the spring out of the point
+(maya_hubburst.MOTION): the one picture drawn scaled, its clock starting at the picture.
+
 Qt is imported lazily through maya_hubqt; the classes are made on first use.
 """
 
@@ -66,6 +71,9 @@ def frame_class():
             def __init__(self, scale=1.0, parent=None):
                 super(WindowFrame, self).__init__(scale, parent)
                 self.content = None
+                #  "panel": the content stands on the frame's own face, a hairline under
+                #  the title (look B, 2026-10-22); "card": a lighter card (the chat window)
+                self.content_face = "panel"
                 self._failed = False
 
             def paintEvent(self, event):                   # noqa: N802
@@ -96,10 +104,17 @@ def frame_class():
                             top = content.mapTo(self, QtCore.QPoint(0, 0))
                             rect = QtCore.QRectF(top.x(), top.y(),
                                                  content.width(), content.height())
-                        rc = float(hubstyle.px(6, s))
-                        painter.setPen(QtCore.Qt.NoPen)
-                        painter.setBrush(QtGui.QColor(tokens["card"]))
-                        painter.drawRoundedRect(rect, rc, rc)
+                        if self.content_face == "card":
+                            rc = float(hubstyle.px(6, s))
+                            painter.setPen(QtCore.Qt.NoPen)
+                            painter.setBrush(QtGui.QColor(tokens["card"]))
+                            painter.drawRoundedRect(rect, rc, rc)
+                        elif rect.top() > 1.0:
+                            y = rect.top() - 0.5
+                            painter.setPen(QtGui.QPen(QtGui.QColor(tokens["track_edge"]),
+                                                      1.0))
+                            painter.drawLine(QtCore.QPointF(1.0, y),
+                                             QtCore.QPointF(self.width() - 1.0, y))
                 finally:
                     painter.end()
                 if self.level > 0.002 or self.flash > 0.002:
@@ -123,6 +138,38 @@ def dress(frame, scale):
             content.setStyleSheet("#{0} {{ background: transparent; }}".format(name))
         else:
             content.setAttribute(q.QtCore.Qt.WA_StyledBackground, False)
+
+
+def recessed_sheet(name, scale):
+    """Look B's fields (2026-10-22): line edits, drop-downs, lists, tool buttons, chips and
+    check boxes on `track` with a 1 px `track_edge` edge, as the Time Bar's are - every rule
+    under the widget `name` (set on the frame), so nothing outside the window changes. Pixels
+    are physical (trap 98)."""
+    t = hubstyle.TOKENS
+    b = max(1, hubstyle.px(1, scale))
+    f = "#" + name
+    return (
+        "{f} QLineEdit, {f} QComboBox, {f} QListWidget {{ background: {tr};"
+        " border: {b}px solid {te}; }}\n"
+        "{f} QLineEdit:focus {{ border: {b}px solid {ac}; }}\n"
+        "{f} QComboBox:hover {{ background: {fh}; }}\n"
+        "{f} QPushButton[skRole=\"tool\"] {{ background: {tr}; border: {b}px solid {te}; }}\n"
+        "{f} QPushButton[skRole=\"tool\"]:hover {{ background: {hv}; }}\n"
+        "{f} QCheckBox[skRole=\"chip\"] {{ background: {tr}; border: {b}px solid {te}; }}\n"
+        "{f} QCheckBox[skRole=\"chip\"]:checked {{ background: {at};"
+        " border: {b}px solid {at}; }}\n"
+        "{f} QCheckBox::indicator {{ background: {tr}; }}\n"
+        "{f} QCheckBox::indicator:checked {{ background: {ac}; }}\n"
+        "{f} QSlider::groove:horizontal {{ background: {tr}; }}\n").format(
+            f=f, b=b, tr=t["track"], te=t["track_edge"], ac=t["accent"],
+            fh=t["field_hover"], hv=t["hover"], at=t["accent_tint"])
+
+
+def recess(frame, scale):
+    """`recessed_sheet` set on `frame` (it needs a name); its face stays its own paint."""
+    name = frame.objectName()
+    if name:
+        frame.setStyleSheet(recessed_sheet(name, scale))
 
 
 TITLE_H = 34             # logical px: the title row, room for a 30-tall pill (2026-10-18)
@@ -389,6 +436,7 @@ def burst_class():
                 self.offset = QtCore.QPoint()
                 self.ratio = 1.0
                 self.draws = 0
+                self.started = None         # the clock's zero: when the picture was taken
                 self.broken = False
                 self.error = None
                 self._image = None
@@ -400,6 +448,7 @@ def burst_class():
                 self.ms = 0.0
                 self.plan = None
                 self.pix = None
+                self.started = None
                 self.setEnabled(True)
 
             def stop(self):
@@ -437,6 +486,12 @@ def burst_class():
                 self.offset = QtCore.QPoint(offset)
                 self.ratio = pix.width() / max(1.0, float(inner.width()))
                 self.plan, self.face = self.planner(self.opening)
+                if self.started is None:
+                    #  the clock starts now, not at the press: the picture of a window full
+                    #  of Maya's controls takes tens of ms (2026-10-22, the stutter)
+                    self.started = _now()
+                if self.plan.kind == "spring":
+                    return True
                 fmt = QtGui.QImage.Format_ARGB32_Premultiplied
                 self._image = QtGui.QImage(pix.width(), pix.height(), fmt)
                 self._mask = QtGui.QImage(pix.width(), pix.height(), fmt)
@@ -447,6 +502,8 @@ def burst_class():
                     return False
                 if self.plan is None:
                     return False
+                if self.plan.kind == "spring":
+                    return self._draw_spring(painter)
                 k = self.ratio
                 state = hubburst.at(self.plan, self.ms)
                 face = QtGui.QColor(*self.face)
@@ -517,8 +574,32 @@ def burst_class():
                 self.draws += 1
                 return True
 
+            def _draw_spring(self, painter):
+                """The picture scaled about the point, at its opacity: nothing else."""
+                state = hubburst.at(self.plan, self.ms)
+                k = hubburst.scale_of(self.plan, state)
+                r = self.ratio
+                ox = self.offset.x() + self.plan.origin[0] * r
+                oy = self.offset.y() + self.plan.origin[1] * r
+                painter.save()
+                try:
+                    painter.setWorldTransform(QtGui.QTransform())
+                    painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+                    painter.setOpacity(max(0.0, min(1.0, state.face)))
+                    painter.translate(ox, oy)
+                    painter.scale(k, k)
+                    painter.translate(-ox, -oy)
+                    painter.drawPixmap(self.offset, self.pix)
+                finally:
+                    painter.restore()
+                self.draws += 1
+                return True
+
         _CLASSES["burst"] = PopupBurst
     return _CLASSES["burst"]
+
+
+PICTURE_WAIT_MS = 150     # a burst whose frame has not painted runs its clock from the press
 
 
 class Burster(object):
@@ -544,9 +625,10 @@ class Burster(object):
         q = hubqt.qt()
         o = self.frame.mapFromGlobal(q.QtCore.QPoint(int(self._origin[0]),
                                                      int(self._origin[1])))
-        make = hubburst.plan_open if opening else hubburst.plan_close
-        return (make((o.x(), o.y()), (self.frame.width(), self.frame.height()),
-                     self.parts(), self.scale), self.face())
+        plan = hubburst.plan(opening, (o.x(), o.y()),
+                             (self.frame.width(), self.frame.height()),
+                             self.parts, self.scale)
+        return plan, (self.face() if plan.kind != "spring" else None)
 
     def run(self, opening, origin, done, on_tick=None):
         """Start a burst (`opening`) or a fold toward the global `origin`; `done` is called
@@ -559,6 +641,7 @@ class Burster(object):
                 self.frame.setGraphicsEffect(self.effect)    # held: trap 201
             self.stop()
             self._origin = origin
+            self._run_at = _now()
             self._done, self._on_tick = done, on_tick
             self.effect.begin(opening)
             self.frame.update()
@@ -570,12 +653,27 @@ class Burster(object):
         anim = q.QtCore.QVariantAnimation()
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
-        anim.setDuration(int(hubburst.MAX_MS))
-        anim.valueChanged.connect(lambda v: self._tick(v * hubburst.MAX_MS))
+        #  a heartbeat: the time is the effect's own clock (`_clock`), which starts at the
+        #  picture; the driver runs on until the motion is done, at most 3 x MAX_MS
+        anim.setDuration(int(hubburst.MAX_MS * 3))
+        anim.valueChanged.connect(lambda v: self._tick(self._clock()))
         anim.finished.connect(self._finish)
         self.anim = anim
         anim.start()
         return True
+
+    def _clock(self):
+        """ms since the effect took its picture; 0 until it has."""
+        effect = self.effect
+        started = getattr(effect, "started", None) if effect is not None else None
+        if started is None:
+            #  a frame that is not painted (masked down to nothing) never takes its picture:
+            #  its clock runs from the press, PICTURE_WAIT_MS late
+            run_at = getattr(self, "_run_at", None)
+            if run_at is None:
+                return 0.0
+            return max(0.0, _now() - run_at - PICTURE_WAIT_MS)
+        return max(0.0, _now() - started)
 
     def tick_now(self):
         """One tick at the effect's current ms (the tests hold the animation)."""
@@ -612,10 +710,12 @@ class Burster(object):
 
     def _moved(self, plan):
         """Whether the frame's rows or size are no longer the ones `plan` was made for
-        (0.2 ms on Animation Setup's window)."""
+        (0.2 ms on Animation Setup's window; a spring has no rows, its size alone)."""
         size = (float(self.frame.width()), float(self.frame.height()))
         if size != tuple(plan.size):
             return True
+        if plan.kind == "spring":
+            return False
         return [tuple(r) for r in self.parts()] != [tuple(r) for r in plan.parts]
 
     def _finish(self):

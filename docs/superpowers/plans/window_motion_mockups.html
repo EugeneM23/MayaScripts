@@ -1,0 +1,301 @@
+<title>Skeldar Window Motion</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a Maya-like viewport stage with the hub rail, the window under test, the switches below it. */
+:root{
+  --panel:#1f2023; --card:#2a2c30; --card-active:#383a41; --field:#1b1c1f; --track:#17181a;
+  --track-edge:#26282c; --line:#45474d; --hover:#34363b; --text:#e4e4e6; --text2:#c9cacf;
+  --muted:#9a9ca3; --faint:#6c6e75; --accent:#e07a36; --accent-text:#f0a26b; --rim:#fff1e2;
+  --page:#141518; --vp-top:#4a4f59; --vp-bot:#2a2d33;
+  --ui:"Segoe UI",system-ui,-apple-system,sans-serif; --mono:Consolas,"Cascadia Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--page);color:var(--text);font:13px/1.45 var(--ui)}
+body{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1100px;margin:0 auto;display:grid;gap:14px}
+h1{font-size:18px;margin:0;font-weight:600;text-wrap:balance}
+.lead{color:var(--muted);margin:0;max-width:72ch}
+.stage{position:relative;height:620px;border-radius:8px;overflow:hidden;
+  background:linear-gradient(180deg,var(--vp-top),var(--vp-bot));border:1px solid var(--track-edge)}
+.stage .hint{position:absolute;right:14px;bottom:10px;color:#c9cacf99;font-size:12px;pointer-events:none}
+.grid{position:absolute;inset:0;background-image:linear-gradient(#ffffff0a 1px,transparent 1px),linear-gradient(90deg,#ffffff0a 1px,transparent 1px);background-size:40px 40px;pointer-events:none}
+.rail{position:absolute;left:0;top:0;bottom:0;width:44px;background:var(--panel);border-right:1px solid var(--track-edge);
+  display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px;z-index:2}
+.rail .mark{font:700 11px var(--ui);color:var(--accent);margin-bottom:6px}
+.rail button{width:32px;height:32px;border-radius:6px;border:0;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center;position:relative}
+.rail button:hover{background:var(--hover);color:var(--text)}
+.rail button.on{background:var(--card-active);color:var(--accent-text)}
+.rail .gap{width:20px;height:1px;background:var(--line);margin:4px 0}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* the window */
+.win{position:absolute;z-index:3;width:300px;will-change:transform,opacity,clip-path;visibility:hidden}
+.win .glow{position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0}
+.head{display:flex;align-items:center;gap:8px;height:34px;padding:0 4px 0 10px;cursor:default}
+.head .t{flex:1;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);font-weight:600}
+.pill{width:28px;height:26px;border-radius:5px;border:0;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer}
+.pill:hover{background:var(--hover);color:var(--text);box-shadow:0 0 0 1px #e07a3655,0 0 10px #e07a3633}
+.sub{display:flex;align-items:center;gap:6px;padding:6px 10px 4px;font-size:12px;font-weight:600;color:var(--text)}
+.sub small{margin-left:auto;font-weight:400;color:var(--faint);font-size:11px}
+.row{display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border-radius:5px;cursor:pointer;transform-origin:0 50%}
+.row .n{width:74px;flex:none;color:var(--text)}
+.row .h{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row svg{color:#7fa9e6;flex:none}
+.row:hover{background:var(--hover)}
+.row.wait{background:var(--accent);color:#1b1c1f}
+.row.wait .n,.row.wait .h,.row.wait svg{color:#1b1c1f}
+.foot{display:flex;gap:4px;padding:8px}
+.foot button{flex:1;height:24px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--text2);font:12px var(--ui);cursor:pointer}
+.foot button:hover{background:var(--hover)}
+.foot button.del{flex:0 0 32px;color:#e0524a}
+.cap{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 10px 0}
+
+/* look A: what ships now - panel face, a lighter card inside, plain centred buttons */
+.lookA{background:var(--panel);border:1px solid var(--track-edge);border-radius:8px}
+.lookA .body{margin:0 6px 6px;background:var(--card);border-radius:6px;padding:4px}
+.lookA .row{justify-content:center;background:var(--panel);margin:3px 0;height:24px}
+.lookA .row .h,.lookA .row svg{display:none}.lookA .row .n{width:auto}
+.lookA .row.first{background:var(--accent)}.lookA .row.first .n{color:#1b1c1f}
+.lookA .sub small{display:none}
+/* look B: the Time Bar - one dark surface, controls in recessed wells, hints muted, hairlines */
+.lookB{background:var(--panel);border:1px solid var(--track-edge);border-radius:8px;box-shadow:0 10px 30px #0008}
+.lookB .head{border-bottom:1px solid var(--track-edge)}
+.lookB .well{margin:2px 8px 6px;background:var(--track);border:1px solid var(--track-edge);border-radius:6px;padding:3px}
+.lookB .body{padding-bottom:2px}
+/* look C: raised card - the window is the card itself, lighter, the header part of it */
+.lookC{background:var(--card);border:1px solid #3a3c42;border-radius:10px;box-shadow:0 1px 0 #ffffff0d inset,0 16px 40px #000a}
+.lookC .head{height:38px}
+.lookC .head .t{text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)}
+.lookC .well{margin:0 8px 6px;background:var(--field);border-radius:7px;padding:3px}
+.lookC .row:hover{background:var(--card-active)}
+
+/* switches */
+.panel{display:grid;gap:10px;background:var(--panel);border:1px solid var(--track-edge);border-radius:8px;padding:12px 14px}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.line .lab{width:64px;color:var(--muted);font-size:12px}
+.seg{display:inline-flex;background:var(--track);border:1px solid var(--track-edge);border-radius:6px;padding:2px;gap:2px;flex-wrap:wrap}
+.seg button{border:0;background:transparent;color:var(--muted);font:12px var(--ui);height:24px;padding:0 12px;border-radius:4px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:#44474e;color:var(--text);font-weight:600}
+.seg button:focus-visible,.go:focus-visible,.rail button:focus-visible{outline:2px solid var(--accent-text);outline-offset:1px}
+.go{height:26px;padding:0 14px;border-radius:5px;border:0;background:var(--accent);color:#1b1c1f;font:600 12px var(--ui);cursor:pointer}
+.go.plain{background:transparent;border:1px solid var(--line);color:var(--text2);font-weight:400}
+.note{color:var(--text2);font-size:12.5px;max-width:80ch;margin:0}
+.note b{color:var(--text)}
+.cost{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.cost div{background:var(--panel);border:1px solid var(--track-edge);border-radius:8px;padding:10px 12px;min-width:0}
+.cost h3{margin:0 0 4px;font-size:13px}
+.cost p{margin:0;color:var(--muted);font-size:12px}
+.meter{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+@media (max-width:520px){.stage{height:560px}.win{width:260px}}
+</style>
+
+<div class="wrap">
+  <h1>Floating windows: look and motion</h1>
+  <p class="lead">Click a rail icon to open its window out of the icon, click it again or ✕ to fold it back. A click on the empty viewport opens it at the cursor. Switch the look and the motion below; Slow ×4 shows each frame.</p>
+
+  <div class="stage" id="stage">
+    <div class="grid"></div>
+    <nav class="rail" id="rail" aria-label="Hub rail">
+      <div class="mark">SA</div>
+      <button data-k="tools" aria-label="Tools"><svg class="i" viewBox="0 0 24 24"><path d="M7 10h3V7L6.5 3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1-3 3l-6-6a6 6 0 0 1-8-8z"/></svg></button>
+      <button data-k="anim" aria-label="Animation Setup"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 7v6l-3 7M12 13l3 7M8 10h8"/></svg></button>
+      <button data-k="conn" aria-label="Connections"><svg class="i" viewBox="0 0 24 24"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1"/></svg></button>
+      <div class="gap"></div>
+      <button data-k="walk" aria-label="Walk Builder"><svg class="i" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M7 21l3-4M16 21l-2-4-3-3 1-6M6 12l2-3 4-1 3 3 3 1"/></svg></button>
+      <button data-k="pose" aria-label="Pose Library"><svg class="i" viewBox="0 0 24 24"><path d="M5 4h4v16H5zM9 4h4v16H9zM13 6l4-1 3 14-4 1z"/></svg></button>
+    </nav>
+
+    <section class="win lookB" id="win" aria-label="Tools window">
+      <div class="glow" id="glow"></div>
+      <div class="head part">
+        <svg class="i" viewBox="0 0 24 24" style="color:var(--accent-text)"><path d="M7 10h3V7L6.5 3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1-3 3l-6-6a6 6 0 0 1-8-8z"/></svg>
+        <span class="t">Tools</span>
+        <button class="pill" aria-label="Back to the rail"><svg class="i" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+        <button class="pill" id="x" aria-label="Close"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="body">
+        <div class="sub part">Knots <small>drive with a locator</small></div>
+        <div class="well">
+          <div class="row part first"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></svg><span class="n">Knot</span><span class="h">object follows a locator</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><path d="M11 11l8 8"/></svg><span class="n">Offset</span><span class="h">knot at your own pivot</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-3-6.3M20 4v4h-4"/></svg><span class="n">Orient</span><span class="h">carries rotation only</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="10" height="10" rx="2"/><rect x="10" y="4" width="10" height="10" rx="2"/></svg><span class="n">Local ×2</span><span class="h">double knot, own axes</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4a12 12 0 0 1 0 16M12 4a12 12 0 0 0 0 16"/></svg><span class="n">World ×2</span><span class="h">double knot, world axes</span></div>
+          <div class="row part wait"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/></svg><span class="n">Finish</span><span class="h">Aim is waiting</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3"/></svg><span class="n">Snapshot</span><span class="h">free copy of the motion</span></div>
+        </div>
+        <div class="sub part">Parent <small>motion kept</small></div>
+        <div class="well">
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><path d="M5 5v14h14M9 15l10-10"/></svg><span class="n">Inside</span><span class="h">under the last selected</span></div>
+          <div class="row part"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/></svg><span class="n">To world</span><span class="h">out to world level</span></div>
+        </div>
+        <div class="cap part">Selected knots</div>
+        <div class="foot part"><button>0</button><button>1</button><button>Bake</button><button>Layer</button><button class="del" aria-label="Remove">✕</button></div>
+      </div>
+    </section>
+    <div class="hint">click the viewport to open at the cursor</div>
+  </div>
+
+  <div class="panel">
+    <div class="line"><span class="lab">Look</span>
+      <div class="seg" id="look" role="group" aria-label="Look">
+        <button data-v="A">A · now</button><button data-v="B" aria-pressed="true">B · Time Bar</button><button data-v="C">C · raised card</button>
+      </div></div>
+    <div class="line"><span class="lab">Motion</span>
+      <div class="seg" id="motion" role="group" aria-label="Motion">
+        <button data-v="1">1 · now (burst)</button><button data-v="2" aria-pressed="true">2 · zoom from point</button><button data-v="3">3 · soft unroll</button><button data-v="4">4 · spring</button>
+      </div></div>
+    <div class="line"><span class="lab">Speed</span>
+      <div class="seg" id="speed" role="group" aria-label="Speed">
+        <button data-v="1" aria-pressed="true">Real</button><button data-v="4">Slow ×4</button>
+      </div>
+      <button class="go" id="replay">Open from Tools</button><button class="go plain" id="close">Fold back</button>
+      <span class="meter" id="meter"></span>
+    </div>
+    <p class="note" id="desc"></p>
+  </div>
+
+  <div class="cost">
+    <div><h3>1 · now (burst)</h3><p>Shape unrolls out of the point, rows pop from 30 % with a bounce, the edges race outward lit. In Maya every frame rebuilds a full-window picture: all rows composited, a mask image, the glow, then the translucent window is sent whole to Windows.</p></div>
+    <div><h3>2 · zoom from point</h3><p>The whole window grows from 92 % at the point and fades in, 200 ms; folds to 95 % in 130 ms. One cached picture drawn scaled each frame: the cheapest, nothing to stutter.</p></div>
+    <div><h3>3 · soft unroll</h3><p>The shape unrolls without a bounce, rows fade in and slide 6 px into place nearest first, a thin lit rim fades at the end. One picture plus row offsets, no mask image.</p></div>
+    <div><h3>4 · spring</h3><p>Grows from 70 % at the point with a light spring (one small overshoot, settles by 320 ms). Same cost as 2, with more character.</p></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage'), win = document.getElementById('win'), glow = document.getElementById('glow');
+  const rail = document.getElementById('rail'), meter = document.getElementById('meter'), desc = document.getElementById('desc');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const S = {look:'B', motion:'2', slow:1, open:false, origin:[22,60], anim:null, key:'tools'};
+  const DESC = {
+    '1':'<b>Now.</b> Shape 144 ms ease-out-quint, rows pop 120 ms back-out from 0.3, nearest first 24 ms + 11 ms per 60 px, racing edge light 390 ms. Folds farthest first, then the shape closes.',
+    '2':'<b>Zoom from point.</b> Scale 0.92 → 1 about the point, opacity 0 → 1, 200 ms ease-out-expo. Fold: scale → 0.95, opacity → 0, 130 ms ease-in-cubic.',
+    '3':'<b>Soft unroll.</b> Shape 220 ms ease-out-cubic, rows opacity 0 → 1 and 6 px → 0 over 160 ms, 10 ms apart nearest first, rim light fades 300 ms after the shape lands.',
+    '4':'<b>Spring.</b> Scale 0.7 → 1 about the point on a spring (ζ 0.72, 3 Hz), opacity in 120 ms. Fold: 140 ms back to 0.85 and gone.'
+  };
+  const clamp=(t)=>t<0?0:t>1?1:t, within=(v,a,b)=>Math.max(a,Math.min(b,v)), lerp=(a,b,k)=>a+(b-a)*k;
+  const quint=(t)=>1-Math.pow(1-t,5), quintIn=(t)=>t*t*t*t*t, cubic=(t)=>1-Math.pow(1-t,3), cubicIn=(t)=>t*t*t;
+  const expo=(t)=>t>=1?1:1-Math.pow(2,-10*t);
+  const backOut=(t)=>{const c=1.70158,c3=c+1;return 1+c3*Math.pow(t-1,3)+c*Math.pow(t-1,2)};
+  const backIn=(t)=>{const c=1.70158;return (c+1)*t*t*t-c*t*t};
+  const spring=(t)=>{const z=0.72; const w0=2*Math.PI*3.0, wd=w0*Math.sqrt(1-z*z); return 1-Math.exp(-z*w0*t)*(Math.cos(wd*t)+z*w0/wd*Math.sin(wd*t));};
+
+  function place(origin){
+    const sw=stage.clientWidth, sh=stage.clientHeight, ww=win.offsetWidth, wh=win.offsetHeight;
+    let x=origin[0]+14, y=origin[1]-18;
+    if(origin[0]<50){x=52;y=origin[1]-17;}
+    x=Math.max(52,Math.min(x,sw-ww-8)); y=Math.max(8,Math.min(y,sh-wh-8));
+    win.style.left=x+'px'; win.style.top=y+'px';
+    return [origin[0]-x, origin[1]-y];
+  }
+  function parts(){return [...win.querySelectorAll('.part')].map(el=>({el,y:el.offsetTop+el.offsetHeight/2,x:el.offsetLeft+16}));}
+  function reset(){
+    win.style.transform='';win.style.opacity='';win.style.clipPath='';glow.style.opacity=0;glow.style.boxShadow='';
+    win.querySelectorAll('.part').forEach(p=>{p.style.transform='';p.style.opacity='';});
+  }
+  function radius(){return S.look==='C'?10:8}
+
+  function frame(o, ms, opening){
+    const W=win.offsetWidth,H=win.offsetHeight, ps=S.parts, r=radius();
+    let done=false;
+    if(S.motion==='1'){
+      if(opening){
+        const f=quint(clamp(ms/144));
+        const x0=lerp(within(o[0],0,W)-14,0,f), x1=lerp(within(o[0],0,W)+14,W,f), y0=lerp(within(o[1],0,H)-10,0,f), y1=lerp(within(o[1],0,H)+10,H,f);
+        win.style.clipPath=`inset(${y0}px ${W-x1}px ${H-y1}px ${x0}px round ${lerp(10,r,f)}px)`;
+        let last=0;
+        ps.forEach(p=>{const d=(40+(Math.abs(p.x-o[0])+Math.abs(p.y-o[1])*1.5)/60*18)*1.2/2; last=Math.max(last,d+120);
+          const u=clamp((ms-d)/120); p.el.style.opacity=u<=0?0:Math.min(1,u*2.5); p.el.style.transform=`scale(${lerp(0.3,1,backOut(u))})`;});
+        const L=clamp(ms/390), edge=Math.pow(1-L,0.55);
+        glow.style.opacity=edge; glow.style.boxShadow=`inset 0 0 0 1.5px rgba(255,241,226,${0.9*edge}), inset 0 0 22px rgba(224,122,54,${0.55*edge})`;
+        done=ms>=Math.max(390,last);
+      } else {
+        let m0=0; ps.forEach(p=>{const d=Math.max(0,180-Math.abs(p.y-o[1])/60*12)*1.2/2; m0=Math.max(m0,d+70+36);
+          const u=clamp((ms-d)/70); p.el.style.opacity=1-u; p.el.style.transform=`scale(${lerp(1,0.3,backIn(u))})`;});
+        const k=quintIn(clamp((ms-m0)/108));
+        const cx=within(o[0],0,W), cy=within(o[1],0,H);
+        win.style.clipPath=`inset(${lerp(0,cy-10,k)}px ${lerp(0,W-cx-14,k)}px ${lerp(0,H-cy-10,k)}px ${lerp(0,cx-14,k)}px round ${lerp(r,10,k)}px)`;
+        win.style.opacity= ms>m0+68 ? 1-clamp((ms-m0-68)/40) : 1;
+        done=ms>=m0+108;
+      }
+    } else if(S.motion==='2'){
+      win.style.transformOrigin=`${o[0]}px ${o[1]}px`;
+      if(opening){const k=expo(clamp(ms/200)); win.style.transform=`scale(${lerp(0.92,1,k)})`; win.style.opacity=clamp(ms/120); done=ms>=200;}
+      else {const k=cubicIn(clamp(ms/130)); win.style.transform=`scale(${lerp(1,0.95,k)})`; win.style.opacity=1-k; done=ms>=130;}
+    } else if(S.motion==='3'){
+      const cx=within(o[0],0,W), cy=within(o[1],0,H);
+      if(opening){
+        const f=cubic(clamp(ms/220));
+        win.style.clipPath=`inset(${lerp(cy,0,f)}px ${lerp(W-cx,0,f)}px ${lerp(H-cy,0,f)}px ${lerp(cx,0,f)}px round ${r}px)`;
+        const order=ps.map(p=>Math.hypot(p.x-o[0],p.y-o[1])).map((d,i)=>[d,i]).sort((a,b)=>a[0]-b[0]);
+        let last=0; order.forEach(([d,i],n)=>{const p=ps[i]; const del=30+n*10; last=Math.max(last,del+160);
+          const u=cubic(clamp((ms-del)/160)); p.el.style.opacity=u; p.el.style.transform=`translateY(${(1-u)*6*Math.sign(p.y-o[1]||1)}px)`;});
+        const g=clamp((ms-180)/300); const a=g<=0?0:Math.sin(Math.PI*Math.min(1,g*1.0))*(1-g*0.3);
+        glow.style.opacity=a; glow.style.boxShadow=`inset 0 0 0 1px rgba(224,122,54,${0.8*a}), 0 0 14px rgba(224,122,54,${0.35*a})`;
+        done=ms>=Math.max(480,last);
+      } else {
+        const f=cubicIn(clamp(ms/150));
+        win.style.clipPath=`inset(${lerp(0,cy,f)}px ${lerp(0,W-cx,f)}px ${lerp(0,H-cy,f)}px ${lerp(0,cx,f)}px round ${r}px)`;
+        win.style.opacity=1-clamp((ms-60)/90); done=ms>=150;
+      }
+    } else {
+      win.style.transformOrigin=`${o[0]}px ${o[1]}px`;
+      if(opening){const k=spring(ms/1000); win.style.transform=`scale(${lerp(0.7,1,k)})`; win.style.opacity=clamp(ms/120); done=ms>=420;}
+      else {const k=cubicIn(clamp(ms/140)); win.style.transform=`scale(${lerp(1,0.85,k)})`; win.style.opacity=1-k; done=ms>=140;}
+    }
+    return done;
+  }
+
+  function run(opening, originStage){
+    if(S.anim) cancelAnimationFrame(S.anim.id);
+    reset(); win.style.visibility='visible';
+    const o = opening ? place(originStage) : [originStage[0]-win.offsetLeft, originStage[1]-win.offsetTop];
+    S.parts=parts();
+    if(reduce){ if(!opening) win.style.visibility='hidden'; S.open=opening; return; }
+    const t0=performance.now(); let frames=0, worst=0, prev=t0;
+    const tick=(now)=>{
+      frames++; worst=Math.max(worst,now-prev); prev=now;
+      const ms=(now-t0)/S.slow;
+      const done=frame(o,ms,opening);
+      if(done){
+        reset(); if(!opening) win.style.visibility='hidden';
+        meter.textContent=`${frames} frames, ${Math.round((now-t0)/S.slow)} ms, worst gap ${worst.toFixed(1)} ms`;
+        S.anim=null; return;
+      }
+      S.anim={id:requestAnimationFrame(tick)};
+    };
+    S.anim={id:requestAnimationFrame(tick)};
+    S.open=opening;
+  }
+
+  function iconOrigin(btn){const a=btn.getBoundingClientRect(), b=stage.getBoundingClientRect(); return [a.left-b.left+a.width/2, a.top-b.top+a.height/2];}
+  function lightRail(k){rail.querySelectorAll('button').forEach(b=>b.classList.toggle('on',S.open&&b.dataset.k===k));}
+
+  rail.addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b) return; e.stopPropagation();
+    const o=iconOrigin(b);
+    if(S.open && S.key===b.dataset.k){run(false,o);} else {S.key=b.dataset.k;S.origin=o;run(true,o);}
+    lightRail(S.key);
+  });
+  stage.addEventListener('click',e=>{
+    if(e.target.closest('.win')||e.target.closest('.rail')) return;
+    const b=stage.getBoundingClientRect(); const o=[e.clientX-b.left,e.clientY-b.top];
+    if(S.open){run(false,S.origin);lightRail(null);return;}
+    S.origin=o; S.key='free'; run(true,o); lightRail(null);
+  });
+  document.getElementById('x').addEventListener('click',e=>{e.stopPropagation();const b=e.currentTarget.getBoundingClientRect(),s=stage.getBoundingClientRect();run(false,[b.left-s.left+b.width/2,b.top-s.top+b.height/2]);S.open=false;lightRail(null);});
+
+  function seg(id,fn){const g=document.getElementById(id);g.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;g.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));fn(b.dataset.v);});}
+  seg('look',v=>{S.look=v;win.className='win look'+v;});
+  seg('motion',v=>{S.motion=v;desc.innerHTML=DESC[v];});
+  seg('speed',v=>{S.slow=+v;});
+  document.getElementById('replay').addEventListener('click',()=>{const b=rail.querySelector('[data-k="tools"]');S.key='tools';S.origin=iconOrigin(b);run(true,S.origin);lightRail('tools');});
+  document.getElementById('close').addEventListener('click',()=>{if(S.open){run(false,S.origin);lightRail(null);}});
+  desc.innerHTML=DESC[S.motion];
+
+  // open at rest so the first frame shows the window
+  const first=rail.querySelector('[data-k="tools"]'); S.origin=iconOrigin(first); place(S.origin); win.style.visibility='visible'; S.open=true; lightRail('tools');
+})();
+</script>

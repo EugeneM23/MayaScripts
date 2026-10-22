@@ -939,15 +939,16 @@ class RailBurst(unittest.TestCase):
         self.shapes = []
         edge = self.build()
         edge.reveal(origin=(140, 270))              # host-local (40, 120): the rail
-        #  pulled ORIGIN_PAD inside the card (60, 10, 280, 200), as the plan pulls it
-        #  and the box kept inside the card (maya_hubburst._box)
-        hx, hy = hubedge.hubburst.START_HALF
-        x = 60 + hubedge.hubburst.ORIGIN_PAD
-        left = max(60, x - hx)
-        self.assertEqual(edge.burst_shape, (left, 120 - hy, x + hx - left, 2 * hy))
+        #  pulled ORIGIN_PAD inside the card (60, 10, 280, 200), as the plan pulls it;
+        #  the spring (2026-10-22) starts as the card scaled about that point
+        burst = hubedge.hubburst
+        x = 60 + burst.ORIGIN_PAD
+        x0, y0, x1, y1 = burst.plan_spring(True, (x - 60, 110), (280, 200), 1.0).start
+        self.assertEqual(edge.burst_shape, (int(round(60 + x0)), int(round(10 + y0)),
+                                            int(round(x1 - x0)), int(round(y1 - y0))))
         mask = edge.host.mask()
         self.assertTrue(mask.contains(QtCore.QPoint(x, 120)))       # the box shows
-        self.assertFalse(mask.contains(QtCore.QPoint(200, 150)))
+        self.assertFalse(mask.contains(QtCore.QPoint(330, 15)))
 
     def test_a_refused_burst_is_asked_before_the_frame_opens(self):
         frames = []

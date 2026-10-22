@@ -546,11 +546,11 @@ class Burst(Seams):
         effect = popup.burst
         w, h = popup.root.width(), popup.root.height()
         far = (w - 10, h - 6)
-        effect.ms = 60.0                        # the Time Bar's unroll is quick: 0.7 of the way
+        effect.ms = 20.0                        # the spring (2026-10-22): still small
         self.assertEqual(self.alpha_at(popup, *far), 0)
         self.assertGreater(self.alpha_at(popup, 14, 12), 0)
         self.assertTrue(effect.plan.opening)
-        self.assertGreater(len(effect.plan.parts), 1)
+        self.assertEqual(effect.plan.kind, "spring")
         effect.ms = effect.plan.total
         self.assertGreater(self.alpha_at(popup, *far), 0)
 

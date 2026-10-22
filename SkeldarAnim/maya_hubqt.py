@@ -1354,6 +1354,7 @@ class Card(object):
             self.frame.content = content
             column.addWidget(content)
             hubwindow.dress(self.frame, scale)
+            hubwindow.recess(self.frame, scale)     # look B's fields (2026-10-22)
         else:
             self.body_layout.setContentsMargins(0, s(4), 0, 0)
             #  the head ruled off (2026-10-16, the card rules): a hairline at

@@ -261,6 +261,62 @@ class Light(unittest.TestCase):
                          (tlook.EDGE_GLOW, tlook.EDGE_CORE, tlook.TOP_GLOW))
 
 
+class Spring(unittest.TestCase):
+    """The spring (2026-10-22, spec 2026-10-22-window-look-b-spring-design.md)."""
+
+    def test_it_is_the_motion_in_use(self):
+        self.assertEqual(burst.MOTION, "spring")
+        plan = burst.plan(True, (20, 10), SIZE, lambda: self.fail("rows walked"))
+        self.assertEqual(plan.kind, "spring")
+
+    def test_the_burst_still_walks_its_rows(self):
+        walked = []
+        plan = burst.plan(True, (20, 10), SIZE, lambda: walked.append(1) or PARTS,
+                          motion="burst")
+        self.assertEqual(plan.kind, "burst")
+        self.assertEqual(walked, [1])
+
+    def test_the_spring_overshoots_once_a_little_and_settles(self):
+        values = [burst.spring(ms) for ms in range(0, 1000, 2)]
+        self.assertEqual(values[0], 0.0)
+        peak = max(values)
+        self.assertGreater(peak, 1.0)
+        self.assertLess(peak, 1.05)          # 3.8 % of the way: the scale 1.2 % over
+        self.assertLess(abs(burst.spring(burst.SPRING_MS) - 1.0), 0.004)
+
+    def test_opening_grows_from_spring_from_about_the_point_and_fades_in(self):
+        plan = burst.plan_spring(True, (20, 10), SIZE)
+        o = burst.clamp_origin((20, 10), SIZE, burst.ORIGIN_PAD)
+        start = burst.at(plan, 0.0)
+        self.assertAlmostEqual(burst.scale_of(plan, start), burst.SPRING_FROM)
+        self.assertEqual(start.face, 0.0)
+        # the point stays where it is
+        x0, y0, x1, y1 = start.shape
+        self.assertAlmostEqual(o[0] - x0, (o[0]) * burst.SPRING_FROM)
+        self.assertAlmostEqual(y1 - o[1], (SIZE[1] - o[1]) * burst.SPRING_FROM)
+        mid = burst.at(plan, burst.SPRING_FADE_MS)
+        self.assertEqual(mid.face, 1.0)
+        end = burst.at(plan, plan.total)
+        self.assertEqual(end.shape, (0.0, 0.0, SIZE[0], SIZE[1]))
+        self.assertEqual(plan.total, burst.SPRING_MS)
+        self.assertEqual(end.parts, [])
+
+    def test_closing_shrinks_toward_the_point_and_fades_out(self):
+        plan = burst.plan_spring(False, (280, 12), SIZE)
+        self.assertEqual(burst.at(plan, 0.0).face, 1.0)
+        self.assertAlmostEqual(burst.scale_of(plan, burst.at(plan, 0.0)), 1.0)
+        end = burst.at(plan, plan.total)
+        self.assertEqual(end.face, 0.0)
+        self.assertAlmostEqual(burst.scale_of(plan, end), burst.SHUT_TO)
+        self.assertEqual(plan.total, burst.SHUT_MS)
+        scales = [burst.scale_of(plan, burst.at(plan, ms)) for ms in range(0, 141, 10)]
+        self.assertEqual(scales, sorted(scales, reverse=True))
+
+    def test_a_spring_carries_no_light(self):
+        plan = burst.plan_spring(True, (150, 200), SIZE)
+        self.assertEqual(burst.light(plan, 20.0), burst.Light([], 0.0))
+
+
 class Pure(unittest.TestCase):
 
     def test_it_imports_no_maya_and_no_qt(self):

@@ -51,8 +51,23 @@ MAX_PARTS = 48
 MAX_DEPTH = 8
 MAX_MS = 1200             # the driver's length; the plan's total ends it sooner
 
+#  the spring (2026-10-22, spec 2026-10-22-window-look-b-spring-design.md). The animator,
+#  of the mockups https://claude.ai/artifact/Q2HzadyrH8RGqJeiot2c9k: «вид B (Time Bar) и
+#  анимацию 4 (spring)». The whole window grows out of the point on a damped spring and fades
+#  in; it shrinks a little toward the point and fades out. One picture drawn scaled: no rows,
+#  no mask, no light - the burst's per-frame cost was what made it stutter.
+MOTION = "spring"         # "spring" or "burst" (the 2026-10-17 motion, kept)
+SPRING_FROM = 0.7         # the scale it grows from
+SPRING_ZETA = 0.72        # damping: one small overshoot (the scale about 1.2 % over)
+SPRING_HZ = 3.0           # the spring's own frequency
+SPRING_MS = 420           # settled: the scale within 0.1 % of 1
+SPRING_FADE_MS = 120      # the opacity comes up
+SHUT_TO = 0.85            # the scale it shrinks to when closing
+SHUT_MS = 140             # the close, ease-in cubic
+
 Plan = collections.namedtuple(
-    "Plan", "opening size origin parts pivots delays start end m0 total scale")
+    "Plan", "opening size origin parts pivots delays start end m0 total scale kind",
+    defaults=("burst",))
 State = collections.namedtuple("State", "shape radius face parts")
 Light = collections.namedtuple("Light", "edges top")
 
@@ -138,9 +153,76 @@ def plan_close(origin, size, parts, scale=1.0):
                 float(m0 + CLOSE_SHAPE_MS), float(scale))
 
 
+def spring(ms):
+    """The damped spring's progress `ms` in: 0 at 0, past 1 once by about 1.5 %, settling on 1
+    (a mass let go from 0 toward 1, damping SPRING_ZETA, frequency SPRING_HZ)."""
+    t = max(0.0, float(ms)) / 1000.0
+    w0 = 2.0 * math.pi * SPRING_HZ
+    z = SPRING_ZETA
+    wd = w0 * math.sqrt(1.0 - z * z)
+    return 1.0 - math.exp(-z * w0 * t) * (math.cos(wd * t) + z * w0 / wd * math.sin(wd * t))
+
+
+def _scaled(origin, size, k):
+    """The window's rect (x0, y0, x1, y1) scaled by `k` about `origin`."""
+    w, h = size
+    ox, oy = origin
+    return (ox - ox * k, oy - oy * k, ox + (w - ox) * k, oy + (h - oy) * k)
+
+
+def plan_spring(opening, origin, size, scale=1.0):
+    """The spring's plan: out of `origin` (`opening`) or into it, for a window of `size`."""
+    size = (float(size[0]), float(size[1]))
+    o = clamp_origin(origin, size, ORIGIN_PAD * scale)
+    whole = (0.0, 0.0, size[0], size[1])
+    if opening:
+        return Plan(True, size, o, [], [], [], _scaled(o, size, SPRING_FROM), whole, 0.0,
+                    float(SPRING_MS), float(scale), "spring")
+    return Plan(False, size, o, [], [], [], whole, _scaled(o, size, SHUT_TO), 0.0,
+                float(SHUT_MS), float(scale), "spring")
+
+
+def plan(opening, origin, size, parts, scale=1.0, motion=None):
+    """The plan of the motion in use (MOTION, or `motion`): `parts` is called only for the
+    burst, which needs the rows - the spring never walks them."""
+    if (motion or MOTION) == "spring":
+        return plan_spring(opening, origin, size, scale)
+    rows_now = parts() if callable(parts) else parts
+    return (plan_open if opening else plan_close)(origin, size, rows_now, scale)
+
+
+def scale_of(plan, state):
+    """The scale a spring state stands at, from its shape (1 for the burst)."""
+    if plan.kind != "spring":
+        return 1.0
+    w = plan.size[0]
+    return (state.shape[2] - state.shape[0]) / w if w > 0 else 1.0
+
+
+def _spring_at(plan, ms):
+    s = plan.scale
+    if plan.opening:
+        if ms >= plan.total:
+            return State(plan.end, CARD_RADIUS * s, 1.0, [])
+        #  held at 1: a window cannot paint past its own edge, and the spring's overshoot
+        #  was cut there (the filmstrip, 2026-10-22) - it lands softly instead
+        k = min(1.0, lerp(SPRING_FROM, 1.0, spring(ms)))
+        return State(_scaled(plan.origin, plan.size, k), CARD_RADIUS * s * k,
+                     _clamp(ms / float(SPRING_FADE_MS)), [])
+    if ms >= plan.total:
+        return State(plan.end, CARD_RADIUS * s * SHUT_TO, 0.0, [])
+    u = _clamp(ms / float(SHUT_MS))
+    e = u * u * u
+    k = lerp(1.0, SHUT_TO, e)
+    return State(_scaled(plan.origin, plan.size, k), CARD_RADIUS * s * k, 1.0 - e, [])
+
+
 def at(plan, ms):
     """The burst's state `ms` after its start: the shape, its corner radius (physical px), the
-    face's opacity, and per row (opacity, scale). At or past the total, exactly the end."""
+    face's opacity, and per row (opacity, scale). At or past the total, exactly the end.
+    A spring's state has no rows: its shape is the window scaled about the point."""
+    if plan.kind == "spring":
+        return _spring_at(plan, ms)
     s = plan.scale
     if plan.opening:
         if ms >= plan.total:
@@ -179,7 +261,7 @@ def light(plan, ms):
     standing inside the card, each (axis, pos, intensity) - 1 at the start, fading as
     (1 - ease_out_quint)^0.55 - and the card's top edge, once the shape reaches it, fading as
     (1 - ms / REVEAL_MS)^1.6. A close carries none."""
-    if not plan.opening or ms >= plan.total:
+    if not plan.opening or ms >= plan.total or plan.kind == "spring":
         return Light([], 0.0)
     w, h = plan.size
     u = ms / float(SHAPE_MS)
