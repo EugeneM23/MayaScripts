@@ -246,3 +246,39 @@ class Toast(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CallLine(unittest.TestCase):
+
+    def msg(self, seq, call, frm="bob"):
+        d = m("m%d" % seq, seq, frm=frm, t=NOW + seq, text="")
+        d["call"] = call
+        return d
+
+    def test_a_call_note_is_its_own_item(self):
+        items = look.feed([self.msg(1, {"id": "c", "kind": "audio", "answered": True, "seconds": 300})],
+                          [], "me", dm(), {}, NOW)
+        calls = [i for i in items if i.kind == "call"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].text, "Звонок · 5 мин")
+        self.assertFalse(calls[0].missed)
+
+    def test_a_missed_call(self):
+        items = look.feed([self.msg(1, {"id": "c", "kind": "video", "answered": False, "seconds": 0})],
+                          [], "me", dm(), {}, NOW)
+        call = [i for i in items if i.kind == "call"][0]
+        self.assertEqual(call.text, "Пропущенный звонок")
+        self.assertTrue(call.missed)
+
+    def test_a_call_breaks_a_run_of_one_sender(self):
+        items = look.feed([m("a", 1, t=NOW), self.msg(2, {"id": "c", "kind": "audio",
+                                                          "answered": False, "seconds": 0}),
+                           m("b", 3, t=NOW + 2)], [], "me", dm(), {}, NOW)
+        kinds = [i.kind for i in items]
+        self.assertEqual(kinds, ["day", "msg", "call", "msg"])
+        self.assertTrue(items[1].last and items[3].first)
+
+    def test_the_preview_reads_the_call(self):
+        self.assertEqual(look.message_text(self.msg(1, {"id": "c", "kind": "audio",
+                                                        "answered": False, "seconds": 0})),
+                         u"\U0001F4DE Пропущенный звонок")

@@ -272,13 +272,13 @@ def one_column(width, scale=1.0):
 
 class Item(object):
     """A line of the feed: a day separator or a message."""
-    __slots__ = ("kind", "text", "message", "mine", "first", "last", "tick", "pending")
+    __slots__ = ("kind", "text", "message", "mine", "first", "last", "tick", "pending", "missed")
 
     def __init__(self, kind, text="", message=None, mine=False, first=True, last=True,
-                 tick="", pending=False):
+                 tick="", pending=False, missed=False):
         self.kind, self.text, self.message = kind, text, message
         self.mine, self.first, self.last = mine, first, last
-        self.tick, self.pending = tick, pending
+        self.tick, self.pending, self.missed = tick, pending, missed
 
     def key(self):
         if self.kind == "day":
@@ -321,6 +321,13 @@ def feed(messages, pending, me_id, chat, reads, now_ms):
             prev_msg_item = None
         else:
             prev_msg_item = out[-1] if out and out[-1].kind == "msg" else None
+        note = None if is_pending else records.call_note(msg.get("call"))
+        if note is not None:
+            from . import calls
+            out.append(Item("call", calls.note_text(note), msg, False, True, True, "", False,
+                            not note["answered"]))
+            prev = msg
+            continue
         sender = me_id if is_pending else msg.get("from_id")
         mine = sender == me_id
         first = True
