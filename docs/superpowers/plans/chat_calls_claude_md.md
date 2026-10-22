@@ -64,7 +64,7 @@ The animator: calls in the messenger - voice, video and screen sharing, up to 4 
   **0.65 s**. `verify_chat_server.py all` **0 of 135 on staging** (new gates: the call line's text, a
   second join answers the view, back within 30 s the call is heard again and can be left; the four-way
   leave now one at a time - sent at once they raced, and a late leave left a stale `no_call` on its
-  socket). production: (filled at merge). `verify_call_page.py` 0 of 17 (the page alone,
+  socket). **Production** (deployed at the merge, 2026-10-22): `verify_chat_server.py all` **0 of 135**, `verify_chat_calls.py` **0 of 20** - ring 0.35 s, connected 0.97 s, a third joining 0.83 s, two answering together 0.63 s. A call marked in `calls.json` carries the pid of the Maya that marked it, so a second Maya sharing these prefs never leaves the first one's call as a stray (the final re-review). `verify_call_page.py` 0 of 17 (the page alone,
   three people). Picture `docs/superpowers/plans/chat_calls.png` (`render_chat_calls.py`).
 - **Not seen in a GUI Maya**: real devices, the real screen picker, remote audio's autoplay in Maya's
   QtWebEngine, the burst over a QWebEngineView, the ring, two machines on different networks.
