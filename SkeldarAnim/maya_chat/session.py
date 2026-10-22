@@ -177,6 +177,12 @@ class Session(object):
 
     def _caught_up(self, seq):
         self.store.set_since(self.protocol.since)
+        # the catch-up replays every newcomer of the last 30 days, accounts deleted since among
+        # them (the test runs' - 170 of them once): the server's own list is the one to show
+        try:
+            self.read_people(tell=False)
+        except _api.ChatError:
+            pass
         self.tell("caught_up", seq)
 
     def _resync_frame(self):
@@ -376,6 +382,15 @@ class Session(object):
                 if x["id"] == u["id"]:
                     c["members"][i] = dict(x, **u)
         self._save_chats()
+
+    def _on_user_gone(self, e):
+        """An account was deleted: it leaves every list."""
+        gone = e["user_id"]
+        st = self.state
+        st.people = [u for u in st.people if u["id"] != gone]
+        for k in list(st.friends):
+            st.friends[k] = [u for u in st.friends[k] if u["id"] != gone]
+        st.online.pop(gone, None)
 
     def _on_presence(self, e):
         st = self.state

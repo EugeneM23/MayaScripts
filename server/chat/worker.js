@@ -404,6 +404,7 @@ export class Studio extends DurableObject {
     this.sql.exec("DELETE FROM reactions WHERE uid = ?", uid);
     this.sql.exec("DELETE FROM requests WHERE from_id = ? OR to_id = ?", uid, uid);
     this.sql.exec("DELETE FROM users WHERE id = ?", uid);
+    this.emit({ kind: "user_gone", payload: { user_id: uid } });
   }
 
   // ---------------------------------------------------------------- routes: profile

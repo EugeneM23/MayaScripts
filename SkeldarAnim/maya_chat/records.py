@@ -12,7 +12,7 @@ TRAILING = ".,;:!?)]}'\""
 # Events that carry a global seq, and the ones that never do.
 SEQ_KINDS = ("message", "edited", "deleted", "read", "chat", "member_added", "member_removed",
              "friend_request", "request_sent", "friend_added", "friend_removed",
-             "request_cancelled", "user", "reaction")
+             "request_cancelled", "user", "user_gone", "reaction")
 LIVE_KINDS = ("typing", "presence", "ack", "error", "resync", "caught_up")
 
 
@@ -183,7 +183,7 @@ def event(d):
                        admin=_opt_str(d, "admin"))
         elif kind in ("friend_request", "request_sent", "friend_added", "user"):
             out["user"] = user(d.get("user"))
-        elif kind == "friend_removed":
+        elif kind in ("friend_removed", "user_gone"):
             out["user_id"] = _str(d, "user_id", False)
         elif kind == "request_cancelled":
             out.update(from_id=_str(d, "from_id", False), to_id=_str(d, "to_id", False))

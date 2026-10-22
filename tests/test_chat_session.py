@@ -281,6 +281,22 @@ class Events(Base):
         self.frame(ses, {"seq": 26, "kind": "user", "user": dict(ME, name="Me again")})
         self.assertNotIn("me", [u["id"] for u in ses.state.people])
 
+    def test_a_deleted_account_leaves_the_lists(self):
+        ses = self.session()
+        self.frame(ses, {"seq": 24, "kind": "user_gone", "user_id": "carl"})
+        self.assertEqual([u["id"] for u in ses.state.people], ["bob"])
+        self.assertNotIn("carl", ses.state.online)
+        self.assertIn("user_gone", self.told)
+
+    def test_the_catch_up_reads_everybody_again(self):
+        # a replayed newcomer whose account is gone since must not stay in the list
+        ses = self.session()
+        ghost = {"id": "zzt", "nick": "zzt_x", "name": "Zzt", "avatar_v": 0}
+        self.frame(ses, {"seq": 21, "kind": "user", "user": ghost})
+        self.assertIn("zzt", [u["id"] for u in ses.state.people])
+        self.frame(ses, {"kind": "caught_up", "seq": 21})
+        self.assertEqual([u["id"] for u in ses.state.people], ["bob", "carl"])
+
     def test_a_reaction_is_toggled_locally_and_by_the_server(self):
         ses = self.session()
         ses.protocol.opened()
