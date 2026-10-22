@@ -153,7 +153,72 @@ class Starting(Base):
         with mock.patch.object(hubmotion, "enabled", return_value=False):
             self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "call_exists", "text": "join it"})
         self.assertIsNone(V.current())
-        self.assertIn("join it", w.last_message)
+        self.assertEqual(w.last_message, u"В этом чате уже идёт звонок — присоединитесь к нему")
+        self.assertNotIn(("leave", "c1"), self.ses.calls)
+
+    def test_an_unknown_refusal_keeps_the_server_s_text(self):
+        w = V.start(self.ses, "dm", "audio", view_factory=fake_factory(self.store))
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "odd", "text": "why"})
+        self.assertEqual(w.last_message, "why")
+
+    def test_a_mic_error_in_a_call_leaves_it(self):
+        V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
+        self.store["bridge"].ready()
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self.store["bridge"].state(u'{"error": "Микрофон недоступен", "peers": {}}')
+        self.assertIn(("leave", "c1"), self.ses.calls)
+        self.assertIsNone(V.current())
+
+    def test_hanging_up_before_the_ack_leaves_when_the_view_comes(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            w.press("hang_up")
+        self.assertIsNone(V.current())
+        self.assertNotIn(("leave", "c1"), self.ses.calls)
+        self.ses.tell("call", {"kind": "call", "call": view()})
+        self.assertIn(("leave", "c1"), self.ses.calls)
+        n = len(self.ses.listeners)
+        self.ses.tell("call", {"kind": "call", "call": view()})
+        self.assertEqual(self.ses.calls.count(("leave", "c1")), 1)
+        self.assertEqual(len(self.ses.listeners), n)
+
+    def test_a_view_before_ready_then_ready_starts_and_replays_in_order(self):
+        V.answer(self.ses, "c1", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        for n in ("1", "2"):
+            self.ses.tell("call_signal", {"kind": "call_signal", "call": "c1", "from": "bob",
+                                          "data": {"n": n}})
+        self.assertEqual(self.sent("start"), [])
+        self.store["bridge"].ready()
+        names = [n for n, _a in self.store["sent"]]
+        self.assertEqual(names, ["start", "signal", "signal"])
+        self.assertEqual([a["data"]["n"] for a in self.sent("signal")], ["1", "2"])
+        self.store["bridge"].ready()                                  # a second ready: no new start
+        self.assertEqual(len(self.sent("start")), 1)
+
+    def test_the_starter_holds_a_signal_before_its_call_id(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.store["bridge"].ready()
+        self.ses.tell("call_signal", {"kind": "call_signal", "call": "c1", "from": "bob",
+                                      "data": {"sdp": "o"}})
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("me", "bob"))})
+        self.assertEqual(w.call_id, "c1")
+        self.assertEqual(self.sent("signal"), [{"from": "bob", "data": {"sdp": "o"}}])
+
+    def test_members_changing_before_start_fold_into_start(self):
+        V.answer(self.ses, "c1", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me", "x", "y"), by="bob")})
+        self.store["bridge"].ready()
+        self.assertEqual(self.sent("add_peer"), [])
+        self.assertEqual(self.sent("start")[0]["peers"], ["bob", "x", "y"])
+
+    def test_the_page_note_is_said(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.store["bridge"].state(u'{"note": "камера занята"}')
+        self.assertEqual(w.last_message, u"камера занята")
 
 
 class Buttons(Base):

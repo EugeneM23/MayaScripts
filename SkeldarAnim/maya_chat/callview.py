@@ -84,7 +84,8 @@ def start(session, chat, kind, view_factory=None):
     try:
         win.cid = session.start_call(chat, kind)
     except Exception as exc:                                  # noqa: BLE001
-        win.fail(getattr(exc, "text", None) or str(exc))
+        win.fail(refusal_text(getattr(exc, "code", None), getattr(exc, "text", None) or str(exc)),
+                 leave=False)
         return None
     win.show()
     return win
@@ -100,7 +101,8 @@ def answer(session, call_id, kind, view_factory=None):
     try:
         win.cid = session.join_call(call_id)
     except Exception as exc:                                  # noqa: BLE001
-        win.fail(getattr(exc, "text", None) or str(exc))
+        win.fail(refusal_text(getattr(exc, "code", None), getattr(exc, "text", None) or str(exc)),
+                 leave=False)
         return None
     win.show()
     return win
@@ -158,6 +160,63 @@ def _pick_screen(win, choices):
     return chosen.get(action)
 
 
+REFUSALS = {
+    "call_full": u"В звонке уже 4 человека",
+    "call_exists": u"В этом чате уже идёт звонок — присоединитесь к нему",
+    "no_call": u"Звонок уже закончился",
+    "not_in_call": u"Вы не в этом звонке",
+    "too_many": u"Слишком часто — попробуйте через минуту",
+    "bad_request": u"Звонок не начался",
+}
+
+
+def refusal_text(code, text=None):
+    """A refusal's line in Russian by its code; else the server's own text."""
+    return REFUSALS.get(code) or text or code or u"Звонок не удался"
+
+
+def _leave_when_known(session, cid, me):
+    """A one-shot listener: leave the call `cid` started once its view arrives; gone on an
+    error for that cid too."""
+    def heard(kind, data):
+        try:
+            if kind == "error" and data.get("cid") == cid:
+                session.unlisten(heard)
+            elif kind == "call":
+                view = data["call"]
+                if view.get("cid") != cid or view.get("by") != me:
+                    return
+                session.unlisten(heard)
+                if view["state"] != "ended" and me in view["members"]:
+                    session.leave_call(view["id"])
+        except Exception:                                     # noqa: BLE001
+            traceback.print_exc()
+    session.listen(heard)
+    return heard
+
+
+_CLASSES = {}
+
+
+def _resize_watch(fn, parent):
+    """An event filter calling fn() on its watched widget's resize."""
+    if "resize" not in _CLASSES:
+        q = W._q()
+
+        class ResizeWatch(q.QtCore.QObject):
+            def __init__(self, fn, parent=None):
+                super(ResizeWatch, self).__init__(parent)
+                self.fn = fn
+
+            def eventFilter(self, obj, event):                # noqa: N802
+                if event.type() == q.QtCore.QEvent.Resize:
+                    self.fn()
+                return False
+
+        _CLASSES["resize"] = ResizeWatch
+    return _CLASSES["resize"](fn, parent)
+
+
 def _set_icon(button, name, scale, colour=None):
     colour = colour or hubstyle.TOKENS["text2"]
     button.setIcon(hubqt.icon(name, colour, hubstyle.px(14, scale)))
@@ -182,6 +241,7 @@ class CallWindow(object):
         self.last_message = ""
         self.answered_at = None
         self._unfolded = None
+        self._last_note = ""
         self.scale = W._scale()
         self._build()
         session.listen(self._heard)
@@ -266,6 +326,8 @@ class CallWindow(object):
         grip.setObjectName("skeldarChatCallGrip")
         grip.setFixedSize(px(14), px(14))
         self.grip = grip
+        self._grip_watch = _resize_watch(self._place_grip, body)
+        body.installEventFilter(self._grip_watch)
 
         root.setStyleSheet(hubstyle.stylesheet(s)
                            + "\n#skeldarChatCallFrame {{ border: none; background: transparent; }}")
@@ -356,7 +418,7 @@ class CallWindow(object):
             elif kind == "call_signal":
                 self._signal_in(data)
             elif kind == "error" and data.get("cid") and data.get("cid") == self.cid:
-                self.fail(data.get("text") or data.get("code") or u"Звонок не удался")
+                self.fail(refusal_text(data.get("code"), data.get("text")), leave=False)
         except Exception:                                     # noqa: BLE001
             traceback.print_exc()
 
@@ -445,6 +507,8 @@ class CallWindow(object):
     # -------------------------------------------------- the page
     def _page_ready(self):
         self.page_ready = True
+        if self.started:              # a page that reloaded must not be started twice
+            return
         if self._pending_view is not None:
             self._start_page(self._pending_view)
 
@@ -454,6 +518,10 @@ class CallWindow(object):
 
     def _page_state(self, state):
         self.state = state
+        note = state.get("note") or ""
+        if note and note != self._last_note:
+            self._last_note = note
+            self.say(note)
         error = state.get("error")
         if error and not state.get("peers") and u"Микрофон" in error:
             self.fail(error)
@@ -491,13 +559,20 @@ class CallWindow(object):
     def hang_up(self):
         if self.closed:
             return
+        self._leave()
+        self.bridge.send("end", {})
+        self.close_window()
+
+    def _leave(self):
+        """Leave the call on the server; before its id is known (the starter, the ack not
+        back) leave it when its view arrives, so it does not ring on."""
         if self.call_id:
             try:
                 self.session.leave_call(self.call_id)
             except Exception:                                 # noqa: BLE001
                 traceback.print_exc()
-        self.bridge.send("end", {})
-        self.close_window()
+        elif self.cid:
+            _leave_when_known(self.session, self.cid, self._me())
 
     def choose_device(self, kind, device_id):
         set_var(MIC_VAR if kind == "mic" else CAM_VAR, device_id or "")
@@ -581,13 +656,20 @@ class CallWindow(object):
         if self.closed:
             return
         try:
-            self.grip.move(self.body.width() - self.grip.width(),
-                           self.body.height() - self.grip.height())
+            self._place_grip()
             if self.answered_at:
                 seconds = max(0, int(time.time() - self.answered_at / 1000.0))
                 self.timer_label.setText("%d:%02d" % (seconds // 60, seconds % 60))
             else:
                 self.timer_label.setText(u"вызов…")
+        except RuntimeError:
+            pass
+
+    def _place_grip(self):
+        try:
+            self.grip.move(self.body.width() - self.grip.width(),
+                           self.body.height() - self.grip.height())
+            self.grip.raise_()
         except RuntimeError:
             pass
 
@@ -599,7 +681,11 @@ class CallWindow(object):
         except RuntimeError:
             pass
 
-    def fail(self, text):
+    def fail(self, text, leave=True):
+        """Say why and close; `leave`: leave the call on the server too (a failure while in it)."""
+        if leave and not self.closed:
+            self._leave()
+            self.bridge.send("end", {})
         self.say(text)
         try:
             from . import notify
