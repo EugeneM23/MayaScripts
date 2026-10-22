@@ -222,8 +222,8 @@ class Shows(Strip):
         self.assertTrue(near(image.pixelColor(int(mid), bar.KEY_Y)), "a key")
         self.assertFalse(near(image.pixelColor(int(self.tl.track().x(30.0)), bar.KEY_Y)), "the gap beside it")
         #  the playhead's cell: its accent edge at the bottom (its number rides the caret line)
-        edge = image.pixelColor(int(self.x(12)), self.tl.height() - 2)
-        bare = image.pixelColor(int(self.x(50)), self.tl.height() - 2)
+        edge = image.pixelColor(int(sum(self.tl.track().cell(12)) / 2.0) + 1, self.tl.height() - 2)
+        bare = image.pixelColor(int(sum(self.tl.track().cell(50)) / 2.0) + 1, self.tl.height() - 2)
         self.assertGreater(edge.red() - edge.blue(), (bare.red() - bare.blue()) + 60, "the playhead")
         self.assertFalse(near(image.pixelColor(int(self.x(50)), bar.KEY_Y)))
 

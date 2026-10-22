@@ -36,7 +36,8 @@ LIFT = 0.10             # +10 % under the mouse
 KEY_LIFT = 0.6          # a key grows 60 % (under the mouse or reached)
 KEY_PULSE = 1.3         # ... and a key reached or just set swells and shrinks back 30 % more
                         # (2026-10-18: «анимация сжатия должна быть на 30 % сильнее»)
-PAD = 10                # logical px either side of the timeline's frames
+PAD = 1                 # logical px either side of the timeline's frames: inside its border only
+#  (was 10, 2026-10-22: the pads read as black gaps at both ends, dimmed as outside the range)
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
 LABEL_H = 11            # the frame numbers' row at the very top, the band under it (2026-10-17)
@@ -1141,17 +1142,22 @@ def classes():
             label_pen = colour(tk["faint"])
             tall_of = {"label": 10.4 * ui, "mid": 6.5 * ui, "tick": 3.9 * ui}      # 30 % taller (2026-10-17)
             tick_w = max(1.0, ui * 0.75)
+            #  each tick in its frame's cell middle, the number centred over it - as the
+            #  caret line above (2026-10-22: on the cell's left edge the last frame's
+            #  cell read as one frame past the timeline's end)
             for frame, kind in look.ticks(t, ui):
-                x = round(t.x(frame))
+                c0, c1 = t.cell(frame)
+                x = round((c0 + c1) / 2.0)
                 tall = tall_of[kind]
                 p.setPen(Qt.NoPen)
                 p.setBrush(major if kind == "label" else minor)
                 p.drawRect(QtCore.QRectF(x, tick_y - tall, tick_w, tall))
                 if kind == "label":
                     text = look.frame_text(frame)
-                    if x + 3 * ui + metrics.horizontalAdvance(text) <= w - 2 * ui:
-                        p.setPen(label_pen)
-                        p.drawText(QtCore.QPointF(x + 3 * ui, ry + metrics.ascent()), text)
+                    tw = metrics.horizontalAdvance(text)
+                    tx = min(max(x - tw / 2.0, 2 * ui), w - 2 * ui - tw)
+                    p.setPen(label_pen)
+                    p.drawText(QtCore.QPointF(tx, ry + metrics.ascent()), text)
             # the keys at rest
             if with_keys:
                 p.setPen(Qt.NoPen)
