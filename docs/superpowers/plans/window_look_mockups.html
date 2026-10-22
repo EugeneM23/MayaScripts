@@ -1,0 +1,140 @@
+<title>Skeldar Window Looks</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: four windows side by side, each the same Connections card in another frame. One dark look (Maya). */
+:root{
+  --ground:#3d4148; --panel:#1f2023; --card:#2a2c30; --active:#383a41; --track:#17181a; --edge:#26282c;
+  --thumb:#44474e; --line:#45474d; --hover:#34363b; --text:#e4e4e6; --text2:#c9cacf; --muted:#9a9ca3;
+  --faint:#77797f; --accent:#e07a36; --accent-hover:#ea8a48; --on-accent:#2a1405; --accent-text:#f0a26b;
+  --tint:#3a2a1f; --ok:#8fd19a; --blue:#7fa9e6;
+  --ui:"Segoe UI",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{background:var(--ground);color:var(--text);font:12px/1.35 var(--ui)}
+body{padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:15px;font-weight:600;margin:0 0 4px;text-wrap:balance}
+.lead{color:var(--text2);max-width:72ch;margin:0 0 18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:26px 22px;align-items:start}
+.cell{min-width:0}
+.cell>.name{font-weight:600;font-size:13px;margin-bottom:3px}
+.cell>.note{color:var(--muted);margin-bottom:10px;min-height:32px}
+
+/* ---- shared content (the card's body) ---- */
+.cap{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:8px 0 4px;border-bottom:1px solid var(--hover);margin-bottom:6px}
+.row{display:grid;grid-template-columns:62px 1fr 54px;gap:6px;align-items:center;margin:5px 0}
+.lbl{color:var(--text2)}
+.seg{display:flex;background:var(--track);border:1px solid var(--edge);border-radius:6px;padding:2px;gap:2px;height:22px}
+.seg span{flex:1;display:grid;place-items:center;border-radius:4px;color:var(--muted);cursor:pointer;transition:background .11s,color .11s}
+.seg span:hover{background:var(--hover);color:var(--text)}
+.seg span.on{background:var(--thumb);color:var(--text);font-weight:600}
+.btn{height:24px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--text2);font:inherit;cursor:pointer;transition:transform .11s,box-shadow .11s,background .11s}
+.btn:hover{transform:scale(1.04);background:var(--hover);box-shadow:0 0 10px rgba(224,122,54,.18)}
+.btn:active{background:var(--active)}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}
+.btn.primary:hover{background:var(--accent-hover);box-shadow:0 0 14px rgba(224,122,54,.45)}
+.wide{width:100%;margin-top:6px}
+.status{margin-top:10px;padding:6px 8px;border-radius:6px;background:#24262a;color:#a9abb1;border-left:2px solid var(--ok);font-size:11px}
+.sub{color:var(--muted);font-size:11px}
+
+/* ---- window chrome, shared ---- */
+.win{position:relative;width:100%;max-width:330px;cursor:default;transition:box-shadow .14s}
+.pill{width:26px;height:24px;display:grid;place-items:center;border-radius:6px;color:var(--muted);cursor:pointer;transition:transform .11s,background .11s,color .11s,box-shadow .11s}
+.pill:hover{background:var(--hover);color:var(--text);transform:scale(1.1);box-shadow:0 0 10px rgba(255,255,255,.08)}
+.pill.x:hover{background:#3a2626;color:#e39a93}
+.pill svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ico{width:16px;height:16px;fill:none;stroke:var(--blue);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.pills{display:flex;gap:2px;margin-left:auto}
+
+/* A — now (look B as built) */
+.a{background:var(--panel);border:1px solid var(--edge);border-radius:8px}
+.a .head{display:flex;align-items:center;gap:7px;height:32px;padding:0 4px 0 10px;border-bottom:1px solid var(--edge)}
+.a .title{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text2);font-weight:600}
+.a .body{padding:4px 10px 10px}
+.a.lit{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+
+/* B — a header band */
+.b{background:var(--card);border:1px solid #121315;border-radius:10px;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+.b .head{display:flex;align-items:center;gap:9px;padding:9px 6px 9px 10px;background:var(--panel);border-bottom:1px solid #121315}
+.b .badge{width:26px;height:26px;border-radius:7px;background:#22303f;display:grid;place-items:center;flex:none}
+.b .t{display:flex;flex-direction:column;min-width:0}
+.b .title{font-size:13px;font-weight:600;color:var(--text)}
+.b .body{padding:6px 12px 12px}
+.b .body .seg,.b .body .status{background:var(--panel)}
+.b.lit{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 18px rgba(224,122,54,.25),0 8px 22px rgba(0,0,0,.35)}
+
+/* C — a tab on the edge (the Time Bar's page tabs) */
+.c{margin-top:14px;background:var(--panel);border:1px solid var(--edge);border-radius:10px}
+.c .tab{position:absolute;top:-14px;left:12px;height:26px;display:flex;align-items:center;gap:7px;padding:0 12px 0 9px;background:var(--active);border:1px solid var(--line);border-radius:7px;font-weight:600;font-size:12px}
+.c .pills{position:absolute;top:-14px;right:10px;background:var(--active);border:1px solid var(--line);border-radius:7px;padding:0 1px}
+.c .body{padding:18px 12px 12px}
+.c .well{background:var(--track);border:1px solid var(--edge);border-radius:8px;padding:2px 8px 8px;margin-top:8px}
+.c .well .seg{background:#111214}
+.c.lit .tab,.c.lit{border-color:var(--accent)}
+.c.lit{box-shadow:0 0 16px rgba(224,122,54,.22)}
+.c.lit .tab{background:var(--tint);color:var(--accent-text)}
+
+/* D — an instrument (the Time Bar's strip: bevel, light on the edge) */
+.d{background:linear-gradient(#26282c, var(--panel) 46px);border:1px solid #101113;border-radius:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 6px 18px rgba(0,0,0,.35)}
+.d .head{display:flex;align-items:center;gap:8px;height:36px;padding:0 6px 0 11px}
+.d .dot{width:8px;height:8px;border-radius:50%;background:var(--blue);box-shadow:0 0 8px var(--blue)}
+.d .title{font-weight:600;font-size:12.5px}
+.d .title b{color:var(--muted);font-weight:400;margin-left:6px;font-size:11px}
+.d .body{padding:2px 11px 11px}
+.d .grip{position:absolute;left:50%;top:5px;width:34px;height:3px;margin-left:-17px;border-radius:2px;background:var(--line);opacity:.6}
+.d.lit{border-color:#000;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 0 0 1px var(--accent),0 0 22px rgba(224,122,54,.35),0 6px 18px rgba(0,0,0,.35)}
+.d.lit .dot{background:var(--accent);box-shadow:0 0 9px var(--accent)}
+
+.hint{margin-top:22px;color:var(--muted);max-width:72ch}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<h1>Окна плагина — четыре рамки</h1>
+<p class="lead">Одно и то же окно Connections в четырёх рамках. Наведите на кнопки и сегменты; клик по окну делает его активным (так оно светится, когда вы в нём работаете). Анимация открытия во всех одна — spring.</p>
+
+<div class="grid" id="grid"></div>
+<p class="hint">Содержимое — настоящие контролы карточки (их рисует Maya через наш скин), меняется только рамка вокруг: заголовок, кнопки ⧉ ✕, фон, край и подсветка активного окна. Плюс то, как карточка внутри разложена (подложки, отступы, статус).</p>
+
+<template id="content">
+  <div class="cap">Weapon in hands</div>
+  <div class="row"><span class="lbl">Hand R</span><div class="seg"><span>Free</span><span class="on">Weapon</span></div><button class="btn">Apply</button></div>
+  <div class="row"><span class="lbl">Hand L</span><div class="seg"><span class="on">Free</span><span>Weapon</span></div><button class="btn">Apply</button></div>
+  <div class="row"><span class="lbl">Weapon</span><div class="seg"><span>World</span><span class="on">Hand R</span><span>Hand L</span></div><button class="btn">Apply</button></div>
+  <button class="btn primary wide">Apply all</button>
+  <div class="cap" style="margin-top:8px">Aim</div>
+  <div class="row" style="grid-template-columns:1fr 1fr"><button class="btn primary">Aim Mode</button><button class="btn">Default</button></div>
+  <div class="status">Manny_Rig: LongSwordMesh in the right hand, left hand free</div>
+</template>
+
+<script>
+const I={
+  link:'<path d="M9 15l6-6"/><path d="M11 6l.5-.5a4 4 0 0 1 5.7 5.7L16.6 12"/><path d="M13 18l-.5.5a4 4 0 0 1-5.7-5.7L7.4 12"/>',
+  pop:'<path d="M14 4h6v6"/><path d="M20 4l-8 8"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  x:'<path d="M6 6l12 12M18 6L6 18"/>'
+};
+const svg=(p,c='')=>`<svg viewBox="0 0 24 24" class="${c}">${p}</svg>`;
+const pills=`<div class="pills"><div class="pill" title="Open in a floating window">${svg(I.pop)}</div><div class="pill x" title="Close">${svg(I.x)}</div></div>`;
+const body=()=>document.getElementById('content').innerHTML;
+const looks=[
+ {k:'a',name:'A · Сейчас',note:'Как собрано: одна тёмная поверхность, мелкий заголовок капсом, волосок под ним.',
+  html:()=>`<div class="win a"><div class="head">${svg(I.link,'ico')}<span class="title">Connections</span>${pills}</div><div class="body">${body()}</div></div>`},
+ {k:'b',name:'B · Шапка',note:'Тёмная полоса заголовка с иконкой в плашке и подзаголовком (персонаж), тело — светлее, тень под окном.',
+  html:()=>`<div class="win b"><div class="head"><div class="badge">${svg(I.link,'ico')}</div><div class="t"><span class="title">Connections</span><span class="sub">Manny_Rig · Weapon</span></div>${pills}</div><div class="body">${body()}</div></div>`},
+ {k:'c',name:'C · Вкладка на краю',note:'Заголовок — вкладка, как F-вкладки таймбара, сидит на верхнем крае; группы — в утопленных колодцах.',
+  html:()=>`<div class="win c"><div class="tab">${svg(I.link,'ico')}Connections</div>${pills}<div class="body"><div class="well">${body().replace('<div class="cap" style="margin-top:8px">Aim</div>','</div><div class="well"><div class="cap">Aim</div>').replace('<div class="status">','</div><div class="status">')}</div></div>`},
+ {k:'d',name:'D · Инструмент',note:'Как полоса таймбара: фаска сверху, точка группы, заголовок с подписью, ручка для перетаскивания, активное — оранжевый свет по краю.',
+  html:()=>`<div class="win d"><div class="grip"></div><div class="head"><span class="dot"></span><span class="title">Connections<b>Manny_Rig</b></span>${pills}</div><div class="body">${body()}</div></div>`},
+];
+const grid=document.getElementById('grid');
+for(const l of looks){
+  const cell=document.createElement('div');cell.className='cell';
+  cell.innerHTML=`<div class="name">${l.name}</div><div class="note">${l.note}</div>${l.html()}`;
+  grid.appendChild(cell);
+}
+grid.addEventListener('click',e=>{
+  const s=e.target.closest('.seg span');
+  if(s){[...s.parentNode.children].forEach(x=>x.classList.toggle('on',x===s));}
+  const w=e.target.closest('.win'); if(!w) return;
+  document.querySelectorAll('.win').forEach(x=>x.classList.toggle('lit',x===w));
+});
+document.querySelector('.win').classList.add('lit');
+</script>

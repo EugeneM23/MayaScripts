@@ -13849,3 +13849,19 @@ The animator: «всплываюшие окна нашего плагина се
   pin `MOTION = "burst"`. `render_floating_window.py` -> `floating_window.png`; a frame's paint at
   150 %: spring median 0.15 ms (window 450 x 450), the burst 0.58 ms. **Not seen in a GUI Maya.**
 
+
+**…the frame redrawn: look D with look B's wells** (the same day: «перерисуем что бы было как
+вариант B в предыдущих макетах», then on four new frames, https://claude.ai/artifact/TEXoEcRVjj2ap5XJP1BVJf:
+«Мне нравится как ты сделал D с объемом»). Spec
+`docs/superpowers/specs/2026-10-22-window-look-d-wells-design.md`. **This replaces the look above
+(one flat surface, the hairline, the caps title).**
+- **The frame** (`maya_hubwindow.WindowFrame`, every window, the rail card and the chat): the
+  face fades from `BEVEL_TOP` #26282c to `panel` by 46 px, a 7 % white line inside the top edge,
+  a #101113 outline, radius 10, a grip bar at the top's middle; the title is the group's glowing
+  dot (`dot_pixmap`) and the name as written, bold; the window worked in gets the accent ring and
+  glow on its edge with no face change (`hubqt.paint_light(..., radius=, face=False)`).
+- **The wells** (`wells`, pure; `_groups` reads the shown controls each paint, ~1.5 ms on a
+  300-control card): every group of controls between two headings (`heading` / `subhead`), or
+  all of them, on a recessed `track` plate, the fields on `panel` inside it (`recessed_sheet`).
+- Proof: `test_hubwindow` (Frame, Wells, WellSides, Title), the title tests in `test_hubpop` /
+  `test_hubqt`; `floating_window.png`. **Not seen in a GUI Maya.**

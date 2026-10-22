@@ -2543,11 +2543,11 @@ class Windowed(unittest.TestCase):
         self.assertEqual(frame.content.objectName(), "skeldarHubCardContent_alpha")
         self.assertIs(self.card.body.parent(), frame.content)
 
-    def test_the_title_is_spaced_capitals_and_no_chevron_no_rule(self):
+    def test_the_title_is_bold_text_and_no_chevron_no_rule(self):
         title = self.card.frame.findChild(QtWidgets.QLabel, "skeldarHubCardTitle_alpha")
-        self.assertEqual(title.text(), "ALPHA")
-        self.assertIn("letter-spacing", title.styleSheet())
-        self.assertIn(style.TOKENS["muted"], title.styleSheet())
+        self.assertEqual(title.text(), "Alpha")
+        self.assertIn("bold", title.styleSheet())
+        self.assertIn(style.TOKENS["text"], title.styleSheet())
         self.assertIsNone(self.card.frame.findChild(QtWidgets.QWidget,
                                                     "skeldarHubCardRule_alpha"))
         self.assertIsNone(self.card.chevron)

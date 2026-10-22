@@ -183,7 +183,7 @@ class Window(Seams):
         popup = hubpop.open_popup("alpha")
         name = popup.root.findChild(QtWidgets.QLabel,
                                     "skeldarAnimPopupName_" + popup.scope.tag)
-        self.assertEqual(name.text(), "ALPHA")
+        self.assertEqual(name.text(), "Alpha")   # look D (2026-10-22): as written
         pills = popup.root.findChildren(hubwindow.pill_class())
         close = [b for b in pills
                  if b.objectName() == "skeldarAnimPopupClose_" + popup.scope.tag]

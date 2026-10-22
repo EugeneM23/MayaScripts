@@ -19,6 +19,13 @@ is the Time Bar's now - one dark surface (`content_face` "panel"), a hairline un
 the fields recessed (`recessed_sheet`) - and the motion is the spring out of the point
 (maya_hubburst.MOTION): the one picture drawn scaled, its clock starting at the picture.
 
+2026-10-22, later (spec: docs/superpowers/specs/2026-10-22-window-look-d-wells-design.md): the
+frame is look D, an instrument like the Time Bar's strip - lighter at the top with a light line
+inside the top edge, a dark outline, a grip, the group's glowing dot and the name in the title,
+the light (accent ring and glow) on the edge with no face change - and inside it look B's
+wells: each group of controls (those between two headings) on a recessed `track` plate, the
+fields standing on `panel` in them.
+
 Qt is imported lazily through maya_hubqt; the classes are made on first use.
 """
 
@@ -55,11 +62,105 @@ def _approach(value, goal, dt, ms):
 
 # ------------------------------------------------------------------ the frame
 
+#  Look D's frame (2026-10-22, the animator's pick of four: «как вариант B ... мне нравится
+#  как ты сделал D с объемом»): an instrument like the Time Bar's strip. Logical px.
+RADIUS = 10
+EDGE = "#101113"          # the frame's outline, darker than the panel
+BEVEL_TOP = "#26282c"     # the face at the top, fading to `panel` by BEVEL_FADE
+BEVEL_FADE = 46
+BEVEL_ALPHA = 0.07        # the light line inside the top edge
+GRIP_W, GRIP_H, GRIP_Y, GRIP_ALPHA = 34, 3, 5, 0.6
+#  Look B's wells (the 2026-10-22 mockup): each group of controls on a recessed plate
+WELL_RADIUS = 6
+WELL_PAD = 4              # above the first and below the last control of a group
+WELL_GAP = 5              # kept clear above the next heading
+WELL_MARGIN = 5           # the wells' sides kept this far in from the frame's
+HEAD_ROLES = ("heading", "subhead")
+
+
+def wells(heads, items, left, right, pad, gap):
+    """The wells of a column of controls, pure. `heads`: (top, bottom) of each heading;
+    `items`: (top, bottom) or (top, bottom, left, right) of each control; all in one space.
+    A group is the controls whose middle falls between two headings (before the first, after
+    the last); its well is the group's own height plus `pad`, never over its headings (it ends
+    `gap` above the next one). Every well is as wide as all the controls together plus `pad`
+    each side, kept within `left`..`right` (so they line up). Groups with no control get no
+    well. Returns (x0, y0, x1, y1)."""
+    heads = sorted(heads)
+    sides = [it for it in items if len(it) == 4]
+    if sides:
+        left = max(left, min(it[2] for it in sides) - pad)
+        right = min(right, max(it[3] for it in sides) + pad)
+    bounds = [float("-inf")] + [h[0] for h in heads] + [float("inf")]
+    floors = [float("-inf")] + [h[1] for h in heads]
+    out = []
+    for i in range(len(heads) + 1):
+        lo, hi = bounds[i], bounds[i + 1]
+        tops, bottoms = [], []
+        for item in items:
+            top, bottom = item[0], item[1]
+            mid = (top + bottom) / 2.0
+            if lo <= mid < hi and bottom > top:
+                tops.append(top)
+                bottoms.append(bottom)
+        if not tops:
+            continue
+        y0 = max(min(tops) - pad, floors[i] + 1)
+        y1 = min(max(bottoms) + pad, hi - gap)
+        if y1 > y0:
+            out.append((left, y0, right, y1))
+    return out
+
+
+def _mapped(widget, frame):
+    """`widget`'s rect in `frame`'s coordinates (a QRectF)."""
+    q = hubqt.qt()
+    top = widget.mapTo(frame, q.QtCore.QPoint(0, 0))
+    return q.QtCore.QRectF(top.x(), top.y(), widget.width(), widget.height())
+
+
+def _groups(content, frame):
+    """The headings and the controls shown under `content`, as (top, bottom) in `frame`'s
+    coordinates: a control is a visible widget holding no visible widget of its own (scroll
+    bars and the scroll area's viewport left out); a heading is a widget marked
+    `heading` / `subhead`, and what is inside it does not count."""
+    q = hubqt.qt()
+    QtWidgets = q.QtWidgets
+    heads, items = [], []
+    skip = (QtWidgets.QScrollBar,)
+    for widget in content.findChildren(QtWidgets.QWidget):
+        if not widget.isVisibleTo(content) or widget.width() <= 0 or widget.height() <= 0:
+            continue
+        if isinstance(widget, skip):
+            continue
+        role = widget.property("skRole")
+        if role in HEAD_ROLES:
+            r = _mapped(widget, frame)
+            heads.append((r.top(), r.bottom()))
+            continue
+        if any(isinstance(c, QtWidgets.QWidget) and not isinstance(c, skip)
+               and c.isVisibleTo(content) for c in widget.children()):
+            continue
+        parent = widget.parentWidget()
+        inside = False
+        while parent is not None and parent is not content:
+            if parent.property("skRole") in HEAD_ROLES:
+                inside = True
+                break
+            parent = parent.parentWidget()
+        if inside:
+            continue
+        r = _mapped(widget, frame)
+        items.append((r.top(), r.bottom(), r.left(), r.right()))
+    return heads, items
+
+
 def frame_class():
-    """WindowFrame(scale, parent=None): the look-B frame. Its face is `panel` with a 1 px
-    `track_edge` outline (radius 8); its `content` (a child the caller makes and names) is
-    filled `card` (radius 6). No stripe, no accent, no title hairline. The card's light
-    (`level`, `flash`: maya_hubqt.paint_light) is drawn over it all."""
+    """WindowFrame(scale, parent=None): the look-D frame (2026-10-22). Its face fades from
+    BEVEL_TOP to `panel`, a light line inside the top edge, an EDGE outline (radius RADIUS),
+    a grip at the top's middle; the light (`level`, `flash`: maya_hubqt.paint_light, no face
+    change) on its edge. Its `content` (a child the caller makes and names) stands on the
+    face in wells (`content_face` "panel") or on a `card` (the chat window)."""
     if "frame" not in _CLASSES:
         q = hubqt.qt()
         QtCore, QtGui = q.QtCore, q.QtGui
@@ -88,37 +189,85 @@ def frame_class():
 
             def _paint(self):
                 s = self.scale
+                lit = self.level > 0.002 or self.flash > 0.002
                 painter = QtGui.QPainter(self)
                 try:
                     painter.setRenderHint(QtGui.QPainter.Antialiasing)
-                    r = float(hubstyle.px(8, s))
+                    r = float(hubstyle.px(RADIUS, s))
                     outer = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-                    painter.setPen(QtGui.QPen(QtGui.QColor(tokens["track_edge"]), 1.0))
-                    painter.setBrush(QtGui.QColor(tokens["panel"]))
+                    #  the body: lighter at the top, `panel` from BEVEL_FADE down
+                    face = QtGui.QLinearGradient(0.0, 0.0, 0.0,
+                                                 float(hubstyle.px(BEVEL_FADE, s)))
+                    face.setColorAt(0.0, QtGui.QColor(BEVEL_TOP))
+                    face.setColorAt(1.0, QtGui.QColor(tokens["panel"]))
+                    painter.setPen(QtGui.QPen(QtGui.QColor(EDGE), 1.0))
+                    painter.setBrush(QtGui.QBrush(face))
                     painter.drawRoundedRect(outer, r, r)
+                    #  the bevel: a light line just inside the top edge
+                    painter.save()
+                    painter.setClipRect(QtCore.QRectF(0.0, 0.0, self.width(), r + 1.0))
+                    shine = QtGui.QColor(255, 255, 255)
+                    shine.setAlphaF(BEVEL_ALPHA)
+                    painter.setPen(QtGui.QPen(shine, 1.0))
+                    painter.setBrush(QtCore.Qt.NoBrush)
+                    painter.drawRoundedRect(outer.adjusted(1.0, 1.0, -1.0, -1.0),
+                                            r - 1.0, r - 1.0)
+                    painter.restore()
+                    #  the grip: a short bar in the middle of the top edge
+                    gw, gh = float(hubstyle.px(GRIP_W, s)), float(hubstyle.px(GRIP_H, s))
+                    grip = QtGui.QColor(tokens["line"])
+                    grip.setAlphaF(GRIP_ALPHA)
+                    painter.setPen(QtCore.Qt.NoPen)
+                    painter.setBrush(grip)
+                    painter.drawRoundedRect(
+                        QtCore.QRectF((self.width() - gw) / 2.0,
+                                      float(hubstyle.px(GRIP_Y, s)), gw, gh),
+                        gh / 2.0, gh / 2.0)
+                finally:
+                    painter.end()
+                if lit:
+                    hubqt.paint_light(self, self.level, self.flash, s,
+                                      radius=RADIUS, face=False)
+                painter = QtGui.QPainter(self)
+                try:
+                    painter.setRenderHint(QtGui.QPainter.Antialiasing)
                     content = self.content
                     if content is not None and hubqt._valid(content) \
                             and content.isVisible():
-                        rect = QtCore.QRectF(content.geometry())
-                        if content.parentWidget() is not self:
-                            top = content.mapTo(self, QtCore.QPoint(0, 0))
-                            rect = QtCore.QRectF(top.x(), top.y(),
-                                                 content.width(), content.height())
+                        rect = _mapped(content, self)
                         if self.content_face == "card":
                             rc = float(hubstyle.px(6, s))
                             painter.setPen(QtCore.Qt.NoPen)
                             painter.setBrush(QtGui.QColor(tokens["card"]))
                             painter.drawRoundedRect(rect, rc, rc)
-                        elif rect.top() > 1.0:
-                            y = rect.top() - 0.5
-                            painter.setPen(QtGui.QPen(QtGui.QColor(tokens["track_edge"]),
-                                                      1.0))
-                            painter.drawLine(QtCore.QPointF(1.0, y),
-                                             QtCore.QPointF(self.width() - 1.0, y))
+                        else:
+                            self._paint_wells(painter, content, rect)
                 finally:
                     painter.end()
-                if self.level > 0.002 or self.flash > 0.002:
-                    hubqt.paint_light(self, self.level, self.flash, self.scale)
+
+            def _paint_wells(self, painter, content, rect):
+                """Look B's wells: each group of the section's controls - those between
+                two headings - on a recessed `track` plate."""
+                s = self.scale
+                heads, items = _groups(content, self)
+                left = float(hubstyle.px(WELL_MARGIN, s))
+                right = self.width() - left
+                rw = float(hubstyle.px(WELL_RADIUS, s))
+                painter.save()
+                #  the content's own height and a pad round it (the rail card's content has
+                #  no margin of its own: the pad stands outside it)
+                pad = float(hubstyle.px(WELL_PAD, s))
+                painter.setClipRect(QtCore.QRectF(left, rect.top() - pad, right - left,
+                                                  rect.height() + 2.0 * pad))
+                painter.setPen(QtGui.QPen(QtGui.QColor(tokens["track_edge"]), 1.0))
+                painter.setBrush(QtGui.QColor(tokens["track"]))
+                for x0, y0, x1, y1 in wells(heads, items, left, right,
+                                            hubstyle.px(WELL_PAD, s),
+                                            hubstyle.px(WELL_GAP, s)):
+                    painter.drawRoundedRect(
+                        QtCore.QRectF(x0 + 0.5, y0 + 0.5, x1 - x0 - 1.0, y1 - y0 - 1.0),
+                        rw, rw)
+                painter.restore()
 
         _CLASSES["frame"] = WindowFrame
     return _CLASSES["frame"]
@@ -141,10 +290,10 @@ def dress(frame, scale):
 
 
 def recessed_sheet(name, scale):
-    """Look B's fields (2026-10-22): line edits, drop-downs, lists, tool buttons, chips and
-    check boxes on `track` with a 1 px `track_edge` edge, as the Time Bar's are - every rule
-    under the widget `name` (set on the frame), so nothing outside the window changes. Pixels
-    are physical (trap 98)."""
+    """Look B's fields (2026-10-22): line edits, drop-downs, lists, tool buttons, chips,
+    check boxes and segment tracks with a 1 px `track_edge` edge, on `panel` inside the
+    `track` wells (so they stand up from the well) - every rule under the widget `name` (set
+    on the frame), so nothing outside the window changes. Pixels are physical (trap 98)."""
     t = hubstyle.TOKENS
     b = max(1, hubstyle.px(1, scale))
     f = "#" + name
@@ -160,8 +309,9 @@ def recessed_sheet(name, scale):
         " border: {b}px solid {at}; }}\n"
         "{f} QCheckBox::indicator {{ background: {tr}; }}\n"
         "{f} QCheckBox::indicator:checked {{ background: {ac}; }}\n"
+        "{f} QWidget[skRole=\"segments\"] {{ background: {tr}; border: {b}px solid {te}; }}\n"
         "{f} QSlider::groove:horizontal {{ background: {tr}; }}\n").format(
-            f=f, b=b, tr=t["track"], te=t["track_edge"], ac=t["accent"],
+            f=f, b=b, tr=t["panel"], te=t["track_edge"], ac=t["accent"],
             fh=t["field_hover"], hv=t["hover"], at=t["accent_tint"])
 
 
@@ -175,25 +325,58 @@ def recess(frame, scale):
 TITLE_H = 34             # logical px: the title row, room for a 30-tall pill (2026-10-18)
 
 
+TITLE_SIZE = 10.5        # logical px: the title's name, a step over the body text
+DOT = 8                  # logical px: the group's dot in the title
+DOT_BOX = 15             # logical px: the dot's widget, with room for its glow
+
+
 def title_label(text, scale, name):
-    """The look-B title's name (a section window's and the edge rail card's,
-    2026-10-18): `text` in capitals, the heading role's look - spaced, bold,
-    `muted`, at the caption size - on no background, named `name`."""
+    """The window title's name (look D, 2026-10-22): `text` as written, bold, `text`, a
+    step over the body size, on no background, named `name`."""
     q = hubqt.qt()
-    label = hubqt._named(q.QtWidgets.QLabel((text or "").upper()), name)
+    label = hubqt._named(q.QtWidgets.QLabel(text or ""), name)
     label.setStyleSheet(
-        "color: {0}; font-weight: bold; letter-spacing: {2}px; font-size: {1}px; "
-        "background: transparent;".format(hubstyle.TOKENS["muted"],
-                                          hubstyle.px(8.5, scale),
-                                          hubstyle.px(1, scale)))
+        "color: {0}; font-weight: bold; font-size: {1}px; "
+        "background: transparent;".format(hubstyle.TOKENS["text"],
+                                          hubstyle.px(TITLE_SIZE, scale)))
     return label
 
 
+def dot_pixmap(colour, scale):
+    """The group's dot: a DOT disc in `colour` with a soft glow of it round it."""
+    q = hubqt.qt()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    box = hubstyle.px(DOT_BOX, scale)
+    image = QtGui.QPixmap(box, box)
+    image.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(image)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        c = box / 2.0
+        glow = QtGui.QRadialGradient(c, c, c)
+        tint = QtGui.QColor(colour)
+        tint.setAlphaF(0.55)
+        glow.setColorAt(0.0, tint)
+        tint.setAlphaF(0.0)
+        glow.setColorAt(1.0, tint)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(glow))
+        painter.drawEllipse(QtCore.QRectF(0, 0, box, box))
+        d = float(hubstyle.px(DOT, scale))
+        painter.setBrush(QtGui.QColor(colour))
+        painter.drawEllipse(QtCore.QRectF(c - d / 2.0, c - d / 2.0, d, d))
+    finally:
+        painter.end()
+    return image
+
+
 def title_icon(icon_name, colour, scale, name):
-    """The look-B title's icon: in its group colour, with no chip (15 px)."""
+    """The window title's mark (look D, 2026-10-22): the group's dot in its colour, glowing.
+    `icon_name` is kept on the widget (`skIconName`) for what reads it."""
     q = hubqt.qt()
     icon = hubqt._named(q.QtWidgets.QLabel(), name)
-    icon.setPixmap(hubqt.pixmap(icon_name, colour, hubstyle.px(15, scale)))
+    icon.setProperty("skIconName", icon_name or "")
+    icon.setPixmap(dot_pixmap(colour, scale))
     icon.setStyleSheet("background: transparent;")
     return icon
 

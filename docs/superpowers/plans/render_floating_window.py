@@ -60,10 +60,24 @@ def use_font(app):
             app.setFont(QtGui.QFont(families[0]))
 
 
+def heading(parent_layout, parent, text):
+    """A section's caption (the hub's heading role): look B gives each group a well."""
+    label = QtWidgets.QLabel(text.upper(), parent)
+    label.setProperty("skRole", "heading")
+    parent_layout.addWidget(label)
+
+
 def buttons(parent_layout, parent):
-    for i, text in enumerate(LABELS):
+    heading(parent_layout, parent, "Knots")
+    for i, text in enumerate(LABELS[:5]):
         button = QtWidgets.QPushButton(text, parent)
         button.setProperty("skRole", "primary" if i == 0 else "tool")
+        button.setFixedHeight(px(24))
+        parent_layout.addWidget(button)
+    heading(parent_layout, parent, "Selected")
+    for text in LABELS[5:]:
+        button = QtWidgets.QPushButton(text, parent)
+        button.setProperty("skRole", "tool")
         button.setFixedHeight(px(24))
         parent_layout.addWidget(button)
     field = QtWidgets.QLineEdit("Knot_pCube1", parent)       # a recessed field (look B)

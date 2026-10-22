@@ -52,17 +52,43 @@ class Frame(unittest.TestCase):
         self.frame.render(image)
         return image
 
-    def test_the_content_stands_on_the_panel_under_a_hairline(self):
-        """Look B (2026-10-22): one dark surface, a track_edge hairline under the title."""
+    def test_the_face_is_lighter_at_the_top_and_panel_below(self):
+        """Look D (2026-10-22): the bevel fades from BEVEL_TOP to `panel`."""
         image = self.render()
-        self.assertEqual(_rgb(image, 120, 20), _hex("panel"))
+        top = _rgb(image, 120, 4)
+        low = _rgb(image, 120, 60)
+        self.assertGreater(sum(top), sum(low))
+        self.assertEqual(low, _hex("panel"))
+
+    def test_the_outline_is_the_dark_edge_and_the_grip_stands_on_top(self):
+        image = self.render()
+        edge = QtGui.QColor(hubwindow.EDGE)
+        self.assertEqual(_rgb(image, 0, 80), (edge.red(), edge.green(), edge.blue()))
+        grip = _rgb(image, 120, hubwindow.GRIP_Y + 1)
+        self.assertGreater(sum(grip), sum(_rgb(image, 120 + 30, hubwindow.GRIP_Y + 1)))
+
+    def test_an_empty_content_has_no_well(self):
+        image = self.render()
         self.assertEqual(_rgb(image, 120, 100), _hex("panel"))
-        self.assertEqual(_rgb(image, 120, 33), _hex("track_edge"))
+
+    def test_a_control_stands_on_a_well(self):
+        layout = QtWidgets.QVBoxLayout(self.frame.content)
+        layout.setContentsMargins(4, 4, 4, 4)
+        button = QtWidgets.QPushButton("Apply", self.frame.content)
+        button.setFixedHeight(20)
+        layout.addWidget(button)
+        layout.addStretch(1)
+        self.app.processEvents()
+        image = self.render()
+        top = button.mapTo(self.frame, QtCore.QPoint(0, 0))
+        # beside the button, inside the content's side margin: the well
+        self.assertEqual(_rgb(image, 7, top.y() + 10), _hex("track"))
+        # well below the last control: the panel again
+        self.assertEqual(_rgb(image, 120, 150), _hex("panel"))
 
     def test_a_card_face_paints_the_content_card(self):
         self.frame.content_face = "card"
         image = self.render()
-        self.assertEqual(_rgb(image, 120, 20), _hex("panel"))
         self.assertEqual(_rgb(image, 120, 100), _hex("card"))
 
     def test_the_fields_are_recessed_under_the_frame_only(self):
@@ -72,7 +98,7 @@ class Frame(unittest.TestCase):
         hubwindow.recess(self.frame, 1.0)
         sheet = self.frame.styleSheet()
         self.assertIn("#testFrame QLineEdit", sheet)
-        self.assertIn(hubstyle.TOKENS["track"], sheet)
+        self.assertIn(hubstyle.TOKENS["panel"], sheet)
         for line in sheet.splitlines():
             if line.strip():
                 self.assertTrue(line.startswith("#testFrame "), line)
@@ -388,3 +414,56 @@ class BurstParts(unittest.TestCase):
         parts = hubqt.burst_parts(frame, head, body, clip, 1.0)
         self.assertIn((14, 40, 270, 40), parts)
         clip.close()
+
+
+class Wells(unittest.TestCase):
+    """maya_hubwindow.wells: look B's recessed plates under the headings, pure."""
+
+    def test_no_heading_one_well_round_every_control(self):
+        out = hubwindow.wells([], [(10, 30), (40, 60)], 5, 95, 4, 5)
+        self.assertEqual(out, [(5, 6, 95, 64)])
+
+    def test_each_heading_starts_a_well_and_the_one_above_ends_short_of_it(self):
+        heads = [(0, 14), (60, 74)]
+        items = [(20, 40), (44, 52), (80, 100)]
+        out = hubwindow.wells(heads, items, 0, 100, 4, 5)
+        self.assertEqual(out, [(0, 16, 100, 55), (0, 76, 100, 104)])
+
+    def test_a_heading_with_nothing_under_it_has_no_well(self):
+        out = hubwindow.wells([(0, 14), (20, 34)], [(40, 60)], 0, 100, 4, 5)
+        self.assertEqual(out, [(0, 36, 100, 64)])
+
+    def test_a_flat_control_counts_for_nothing(self):
+        self.assertEqual(hubwindow.wells([], [(10, 10)], 0, 100, 4, 5), [])
+
+
+class Title(unittest.TestCase):
+
+    def setUp(self):
+        self.app = _app()
+
+    def test_the_title_is_the_name_as_written_bold(self):
+        label = hubwindow.title_label("Connections", 1.0, "t")
+        self.assertEqual(label.text(), "Connections")
+        self.assertIn("bold", label.styleSheet())
+
+    def test_the_mark_is_a_dot_in_the_group_colour(self):
+        icon = hubwindow.title_icon("link", "#7fa9e6", 1.0, "i")
+        image = icon.pixmap().toImage()
+        c = image.width() // 2
+        self.assertEqual(_rgb(image, c, c), (0x7f, 0xa9, 0xe6))
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+        self.assertEqual(icon.property("skIconName"), "link")
+
+
+class WellSides(unittest.TestCase):
+
+    def test_every_well_is_as_wide_as_all_the_controls_plus_the_pad(self):
+        heads = [(0, 14), (60, 74)]
+        items = [(20, 40, 30, 70), (80, 100, 20, 50)]
+        out = hubwindow.wells(heads, items, 5, 95, 4, 5)
+        self.assertEqual([(x0, x1) for x0, _y, x1, _z in out], [(16, 74), (16, 74)])
+
+    def test_the_sides_stay_within_the_bounds(self):
+        out = hubwindow.wells([], [(10, 20, 2, 99)], 5, 95, 4, 5)
+        self.assertEqual((out[0][0], out[0][2]), (5, 95))

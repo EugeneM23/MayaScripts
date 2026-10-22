@@ -782,26 +782,29 @@ def _frame_class():
     return _CLASSES["frame"]
 
 
-def paint_light(widget, level, flash, scale):
-    """The card light on `widget`: the face card_active at `level`, the inner
-    glow (`maya_hubstyle.glow_rings`), the 2 px ring card_edge at `level` -
-    brighter toward accent_text, and fully drawn, while it `flash`es."""
+def paint_light(widget, level, flash, scale, radius=8, face=True):
+    """The card light on `widget`: the face card_active at `level` (unless
+    `face` is False: a floating window keeps its own face, 2026-10-22), the
+    inner glow (`maya_hubstyle.glow_rings`), the 2 px ring card_edge at
+    `level` - brighter toward accent_text, and fully drawn, while it
+    `flash`es. `radius` is the widget's corner, logical px."""
     q = qt()
     QtCore, QtGui = q.QtCore, q.QtGui
     tokens = hubstyle.TOKENS
     edge = float(hubstyle.px(2, scale))
-    radius = float(hubstyle.px(8, scale))
+    radius = float(hubstyle.px(radius, scale))
     outer = QtCore.QRectF(widget.rect())
     painter = QtGui.QPainter(widget)
     try:
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setPen(QtCore.Qt.NoPen)
-        face = QtGui.QColor(tokens["card_active"])
-        face.setAlphaF(min(1.0, level))
-        painter.setBrush(face)
-        inner = outer.adjusted(edge, edge, -edge, -edge)
-        painter.drawRoundedRect(inner, max(0.0, radius - edge),
-                                max(0.0, radius - edge))
+        if face:
+            fill = QtGui.QColor(tokens["card_active"])
+            fill.setAlphaF(min(1.0, level))
+            painter.setBrush(fill)
+            inner = outer.adjusted(edge, edge, -edge, -edge)
+            painter.drawRoundedRect(inner, max(0.0, radius - edge),
+                                    max(0.0, radius - edge))
         painter.setBrush(QtCore.Qt.NoBrush)
         glow = QtGui.QColor(tokens["accent"])
         for inset, width, alpha in hubstyle.glow_rings(level, flash, scale):
