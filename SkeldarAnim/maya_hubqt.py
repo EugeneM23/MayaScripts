@@ -1909,6 +1909,7 @@ class Skin(object):
                           ("Maya icons", "mayaicons"),
                           ("Viewport bar", "viewportbar"),
                           ("Main bar", "mainbar"),
+                          ("1P in its camera", "camview"),
                           ("Time bar", "timebar"),
                           ("Side panel", "sidepanel"),
                           ("Layout", "layout"),
@@ -1934,7 +1935,7 @@ class Skin(object):
                 continue
             action = self.menu.addAction(text)
             if key in ("sounds", "animations", "mayatheme", "mayaicons",
-                       "viewportbar", "mainbar"):
+                       "viewportbar", "mainbar", "camview"):
                 #  a switch (2026-10-01, the hover sound, the card motion):
                 #  `triggered` carries the new state and is not emitted by
                 #  paint_sounds / paint_animations
@@ -2430,6 +2431,14 @@ class Skin(object):
     def paint_mainbar(self, on):
         """The menu's Main bar row shows `on` (no callback; 2026-10-21)."""
         action = getattr(self, "mainbar_action", None)
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(bool(on))
+            action.blockSignals(False)
+
+    def paint_camview(self, on):
+        """The menu's 1P in its camera row shows `on` (no callback; 2026-10-22)."""
+        action = getattr(self, "camview_action", None)
         if action is not None:
             action.blockSignals(True)
             action.setChecked(bool(on))

@@ -463,6 +463,8 @@ def _callbacks():
         "viewportbar": set_viewportbar,
         #  Maya's title and menu bar in our colours (2026-10-21, maya_mainbar)
         "mainbar": set_mainbar,
+        #  a character's own camera puts it in 1P (2026-10-22, maya_camview)
+        "camview": set_camview,
         #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
@@ -529,6 +531,7 @@ def _dress_header(skin):
     _dress_mayaicons(skin)
     _dress_viewportbar(skin)
     _dress_mainbar(skin)
+    _dress_camview(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
     _dress_interface(skin)
@@ -609,6 +612,15 @@ def _dress_mainbar(skin):
     try:
         import maya_mainbar
         skin.paint_mainbar(maya_mainbar.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_camview(skin):
+    """The menu's 1P in its camera row = the switch (off by default)."""
+    try:
+        import maya_camview
+        skin.paint_camview(maya_camview.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -724,6 +736,7 @@ def build():
     _side_panel_soon()
     _viewport_bar_soon()
     _main_bar_soon()
+    _camview_soon()
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
@@ -892,6 +905,22 @@ def _main_bar_soon():
             print("SkeldarAnim: the main bar could not be painted")
             print(traceback.format_exc())
     cmds.evalDeferred(paint, lowestPriority=True)
+
+
+def _camview_soon():
+    """A character's own camera puts it in 1P (2026-10-22) while the switch is
+    on. Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def start():
+        try:
+            import maya_camview
+            maya_camview.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the camera 1P watch could not start")
+            print(traceback.format_exc())
+    cmds.evalDeferred(start, lowestPriority=True)
 
 
 def _viewport_bar_soon():
@@ -1087,6 +1116,7 @@ def _ensure_edge():
         _side_panel_soon()
         _viewport_bar_soon()
         _main_bar_soon()
+        _camview_soon()
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
@@ -1743,6 +1773,17 @@ def set_mainbar(on):
     message = maya_mainbar.set_enabled(on)
     if is_skinned():
         _SKIN.paint_mainbar(maya_mainbar.enabled())
+    say(message)
+    return message
+
+
+def set_camview(on):
+    """⋮ -> 1P in its camera (2026-10-22): a viewport on a character's Camera
+    Setup camera puts that rig in 1P, leaving it puts it back in 3P."""
+    import maya_camview
+    message = maya_camview.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_camview(maya_camview.enabled())
     say(message)
     return message
 

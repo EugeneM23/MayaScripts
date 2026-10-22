@@ -103,6 +103,7 @@ _PAYLOAD = (
     "maya_viewportbar.py",      # the viewport's menu and icon bar in our look (2026-10-20)
     "maya_viewportbar_art.py",  # its icons redrawn as vectors, Maya's shapes in our colours
     "maya_mainbar.py",          # Maya's title and menu bar in our colours (2026-10-21)
+    "maya_camview.py",          # a character's own camera puts it in 1P (2026-10-22)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)

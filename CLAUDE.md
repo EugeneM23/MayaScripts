@@ -11290,6 +11290,24 @@ recommendation: ortho views flattened into smoothly, the flight orbits what is l
 - **Not seen in a GUI Maya**: the flight on screen, its frame rate on a heavy scene, during
   playback.
 
+**…and a character's own camera puts it in 1P** (2026-10-22, «настройку ... не активна по
+умолчанию ... переключаюсь на камеру нашего персонажа то он автоматически переключает свой режим в
+1p когда я выхожу ... включает 3P (если конечно эта опция доступна)»). ⋮ -> **1P in its camera**
+(optionVar `skeldarCamView1P`, OFF by default), `SkeldarAnim/maya_camview.py` (a payload row):
+- while on, a 250 ms Qt timer reads the camera every visible model panel shows (a flight's TARGET in
+  place of its substitute, `maya_camflight.target_of`, so the switch comes as the flight starts) -
+  any road: the Space menu, Maya's lookThru, the panel menus;
+- a Camera Setup camera (`camera.MARKER`) of a rig whose Main carries `view` (Manny, Orc D,
+  Playerchar - not the Creep) standing in 3P goes to 1P and is remembered (`ours`, on
+  `sys._skeldar_camview`); once no panel shows it, back to 3P - only a rig the watch switched: one put
+  in 1P by hand stays, a view put back to 3P by hand while shown is not fought (`plan`, pure);
+- `Main.view` written with the undo queue off, a clean scene left clean; a locked or driven view left
+  alone; switching the option off puts its rigs back in 3P. The hub's build starts it
+  (`_camview_soon`).
+- Proof: `tests/test_camview.py`; `docs/superpowers/plans/verify_camview.py` **14/14 mayapy
+  standalone** (Manny_Rig and Creep_Rig with Camera Setup, the panels stood in for). Not seen in a GUI
+  Maya.
+
 ## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
 
 The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать
