@@ -196,8 +196,12 @@ def tap():
     if not panel:
         return ""
     try:
-        import maya_panezoom              # flown in and out since 2026-10-22
-        maya_panezoom.tap(panel)
+        import maya.mel as mel
+        mel.eval('global string $gMainPane;'
+                 'if (`paneLayout -q -configuration $gMainPane` == "single")'
+                 ' doSwitchPanes(1, { "@goBack", "" });'
+                 ' else doSwitchPanes(1, { "single", "%s" });'
+                 ' updateToolbox();' % panel)
     except Exception:                                        # noqa: BLE001
         traceback.print_exc()
     return ""
