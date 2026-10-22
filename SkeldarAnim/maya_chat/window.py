@@ -1300,6 +1300,7 @@ PICK_ROWS = 8
 PICK_CELL = 32
 PICK_HEAD = 18        # a section's title row
 PICK_LIFT = 1.10      # a cell under the mouse grows 10 % (the Time Bar's hover)
+PICK_GLOW = 0.35      # the accent glow's alpha at a lit cell's centre
 PICK_TONES = ("#ffc93a", "#f7d7c4", "#e0b291", "#bf8f68", "#9b643d", "#594539")
 
 
@@ -1544,12 +1545,28 @@ def picker_class():
                 finally:
                     p.end()
 
+            def _glow(self, p, rect, lift):
+                """The Time Bar's hover glow: added accent light, brightest at the cell's
+                centre, never past the cell."""
+                p.save()
+                try:
+                    p.setClipRect(rect, QtCore.Qt.IntersectClip)
+                    grad = QtGui.QRadialGradient(rect.center(), rect.width() / 2.0)
+                    grad.setColorAt(0.0, _colour("accent", PICK_GLOW * lift))
+                    grad.setColorAt(1.0, _colour("accent", 0.0))
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(QtGui.QBrush(grad))
+                    p.drawRect(rect)
+                finally:
+                    p.restore()
+
             def _active_tab(self):
                 if self.query:
                     return None
                 active = "recent"
                 for key, top in sorted(self.tops.items(), key=lambda kv: kv[1]):
-                    if top <= self.scroll + self.head:
+                    if top <= self.scroll + 1:
                         active = key
                 return active
 
@@ -1611,6 +1628,7 @@ def picker_class():
                         p.setPen(QtCore.Qt.NoPen)
                         p.setBrush(_colour("hover", lift))
                         p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), px(6), px(6))
+                        self._glow(p, rect, lift)
                     k = 1.0 + (PICK_LIFT - 1.0) * lift
                     s = side * k
                     target = QtCore.QRectF(rect.center().x() - s / 2.0, rect.center().y() - s / 2.0, s, s)
@@ -2973,12 +2991,19 @@ class ChatWindow(object):
             " color: {3}; padding: 0 {4}px; }}".format(
                 hubstyle.TOKENS["track"], hubstyle.TOKENS["track_edge"], self.px(5),
                 hubstyle.TOKENS["text"], self.px(6)))
+        w, h = picker.width(), picker.height()
         if at is None:
             if message is None:
                 corner = self.emoji_button.mapToGlobal(self.emoji_button.rect().topLeft())
-                at = (corner.x(), corner.y() - picker.height() - self.px(4))
+                area = _screen_area((corner.x(), corner.y()))
+                at = (corner.x(), corner.y() - h - self.px(4))
+                if area is not None and at[1] < area[1]:
+                    # no room above the button: below it
+                    at = (corner.x(), corner.y() + self.emoji_button.height() + self.px(4))
             else:
-                at = _cursor()
+                at = _cursor() or (0, 0)
+        area = _screen_area((int(at[0]), int(at[1])))
+        at = clamp_into(int(at[0]), int(at[1]), w, h, area)
         picker.move(int(at[0]), int(at[1]))
         picker.search.setFocus()
         picker.show()
@@ -3532,6 +3557,33 @@ def _screens():
 def _on(screen, point):
     return screen[0] <= point[0] < screen[0] + screen[2] and \
         screen[1] <= point[1] < screen[1] + screen[3]
+
+
+def clamp_into(x, y, w, h, area):
+    """(x, y) moved so a w x h box lies inside area (x, y, w, h); a box larger than the
+    area keeps its top-left on the area's. None: unchanged."""
+    if area is None:
+        return (x, y)
+    ax, ay, aw, ah = area
+    x = max(ax, min(x, ax + aw - w))
+    y = max(ay, min(y, ay + ah - h))
+    return (x, y)
+
+
+def _screen_area(point):
+    """(x, y, w, h) of the available geometry of the screen holding `point`, else the
+    primary screen's; None without a screen."""
+    try:
+        q = _q()
+        app = q.QtGui.QGuiApplication
+        screen = app.screenAt(q.QtCore.QPoint(int(point[0]), int(point[1]))) \
+            or app.primaryScreen()
+        if screen is None:
+            return None
+        g = screen.availableGeometry()
+        return (g.x(), g.y(), g.width(), g.height())
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def _cursor():

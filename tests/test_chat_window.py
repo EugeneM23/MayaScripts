@@ -935,3 +935,93 @@ class Picker(Base):
         self.assertGreater(self.picker.scroll, 0)
         top = self.picker.section_top("food")
         self.assertAlmostEqual(self.picker.scroll, min(top, self.picker.max_scroll()), delta=1)
+
+    # ---- fix round 1: the glow, the screen, the lit tab
+    def _cell_in_widget(self, i=0):
+        rect, g = self.picker.cells[i]
+        return QtCore.QRectF(rect.x(), rect.y() + self.picker.top_grid - self.picker.scroll,
+                             rect.width(), rect.height()), g
+
+    def _render(self):
+        img = QtGui.QImage(self.picker.size(), QtGui.QImage.Format_ARGB32)
+        img.fill(QtGui.QColor(0, 0, 0))
+        self.picker.render(img)
+        return img
+
+    @staticmethod
+    def _mean(img, rect):
+        r = g = b = n = 0
+        for x in range(int(rect.left()) + 1, int(rect.right()) - 1):
+            for y in range(int(rect.top()) + 1, int(rect.bottom()) - 1):
+                c = img.pixelColor(x, y)
+                r, g, b, n = r + c.red(), g + c.green(), b + c.blue(), n + 1
+        return r / float(n), g / float(n), b / float(n)
+
+    def _hover(self, rect):
+        pos = QtCore.QPointF(rect.center())
+        move = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, pos, pos, QtCore.Qt.NoButton,
+                                 QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
+        self.picker.mouseMoveEvent(move)
+
+    def test_the_hovered_cell_glows(self):
+        rect, g = self._cell_in_widget(0)
+        cold = self._mean(self._render(), rect)
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._hover(rect)
+        self.assertEqual(self.picker.levels.get(("emoji", g)), 1.0)
+        lit = self._mean(self._render(), rect)
+        with mock.patch.object(self.picker, "_glow"):
+            plain = self._mean(self._render(), rect)
+        self.assertGreater(sum(lit), sum(cold) + 10)
+        self.assertGreater(lit[0], plain[0] + 3)          # the accent's warm light
+        self.assertGreater(lit[0] - lit[2], plain[0] - plain[2])
+
+    def test_the_glow_stays_inside_its_cell(self):
+        rect, g = self._cell_in_widget(0)
+        right, _g = self._cell_in_widget(1)
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._hover(rect)
+        lit = self._mean(self._render(), right)
+        with mock.patch.object(self.picker, "_glow"):
+            plain = self._mean(self._render(), right)
+        self.assertAlmostEqual(sum(lit), sum(plain), delta=0.5)
+
+    def test_the_picker_stays_inside_a_small_screen(self):
+        self.picker.close()
+        area = (100, 100, 500, 420)
+        with mock.patch.object(W, "_screen_area", return_value=area):
+            for at in ((560, 480), (90, 90), (0, 5000)):
+                p = self.win.pick_emoji(at=at)
+                g = p.geometry()
+                self.assertGreaterEqual(g.left(), 100)
+                self.assertGreaterEqual(g.top(), 100)
+                self.assertLessEqual(g.left() + g.width(), 600)
+                self.assertLessEqual(g.top() + g.height(), 520)
+                p.close()
+            with mock.patch.object(W, "_cursor", return_value=(590, 510)):
+                p = self.win.pick_emoji(message={"id": "m"})
+                g = p.geometry()
+                self.assertLessEqual(g.left() + g.width(), 600)
+                self.assertLessEqual(g.top() + g.height(), 520)
+                p.close()
+        self.picker = self.win.pick_emoji()
+
+    def test_below_the_button_when_there_is_no_room_above(self):
+        self.picker.close()
+        btn = self.win.emoji_button
+        corner = btn.mapToGlobal(btn.rect().topLeft())
+        area = (corner.x() - 500, corner.y() - 50, 3000, 3000)
+        with mock.patch.object(W, "_screen_area", return_value=area):
+            self.picker = self.win.pick_emoji()
+        self.assertGreaterEqual(self.picker.y(), corner.y() + btn.height())
+
+    def test_recent_is_lit_at_the_top_and_food_after_its_tab(self):
+        self.assertEqual(self.picker._active_tab(), "recent")
+        self.picker.scroll_to("food")
+        self.assertEqual(self.picker._active_tab(), "food")
+
+    def test_recent_is_lit_at_the_top_even_when_empty(self):
+        self.picker.close()
+        with mock.patch("maya_chat.emoji.recent", return_value=[]):
+            self.picker = self.win.pick_emoji()
+            self.assertEqual(self.picker._active_tab(), "recent")
