@@ -846,6 +846,24 @@ class EmojiPictures(Base):
             self._paint(feed)
         self.assertFalse(feed.plays)
 
+    def test_a_play_never_painted_again_is_dropped_past_the_cap(self):
+        feed = self.win.feed
+        for store in (feed.entering, feed.flashing, feed.pill_pops):
+            store.clear()
+        feed.folding = []
+        feed.playing = None
+        key = (("gone", "x"), "😂", "big")                 # its box is never painted again
+        feed.plays[key] = W._now_ms() - W.PLAY_CAP_MS - 1
+        busy = feed.tick(16)
+        self.assertNotIn(key, feed.plays)
+        self.assertFalse(busy)
+
+    def test_another_chat_drops_the_plays(self):
+        feed = self.win.feed
+        feed.plays[(("dm", "m1"), "😂", "big")] = W._now_ms()
+        self.win.open_chat("dm2")
+        self.assertFalse(feed.plays)
+
     def test_a_pill_is_a_picture_and_a_count(self):
         self.ses.state.messages["dm"][0]["reactions"] = {"🔥": ["bob"]}
         self.win.refresh()

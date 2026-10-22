@@ -44,6 +44,7 @@ FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg
 PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
 BIG_EMOJI = 64        # an emoji sent alone (1-3 of them), logical px (2026-10-22)
 PILL_EMOJI = 16       # a reaction's picture in its pill
+PLAY_CAP_MS = 5000    # an emoji's play is dropped past this, painted or not (Noto's ~2.2 s)
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -563,6 +564,11 @@ def feed_class():
                         if n > self._counts.get(k, 0):
                             self.pill_pops[k] = now
                 self._counts = counts
+                chat_id = (ctx.get("chat") or {}).get("id")
+                if chat_id != getattr(self, "_chat_id", None):
+                    self.plays.clear()            # another chat: nothing of the last one plays
+                    self._emoji_hover = None
+                self._chat_id = chat_id
                 self._known = {"keys": set(keys),
                                "pending": set(i.key() for i in items if i.pending)}
                 self.items = items
@@ -923,6 +929,9 @@ def feed_class():
                 for k, start in list(self.pill_pops.items()):
                     if now - start >= POP_MS:
                         del self.pill_pops[k]
+                for k, start in list(self.plays.items()):
+                    if now - start >= PLAY_CAP_MS:     # its box may never be painted again
+                        del self.plays[k]
                 busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
                             or self.playing or self.plays)
                 self.update()
@@ -945,9 +954,21 @@ def feed_class():
                 self.win.animate()
                 return True
 
+            def _draw_emoji(self, p, rect, key, glyph, now):
+                """Draw an emoji picture into `rect`; False when it has none."""
+                pic = self._emoji_frame(key, glyph, rect.width(), now)
+                if pic is None:
+                    return False
+                if isinstance(pic, QtGui.QPixmap):
+                    p.drawPixmap(rect, pic, QtCore.QRectF(pic.rect()))
+                else:
+                    p.drawImage(rect, pic, QtCore.QRectF(pic.rect()))
+                return True
+
             def _emoji_frame(self, key, glyph, side, now):
-                """The image to draw for an emoji picture at `side`: its animation's frame while
-                it plays (starting it the first time it is painted), else its still picture."""
+                """What to draw for an emoji picture at `side`: its animation's frame (a QImage)
+                while it plays (starting it the first time it is painted), else its still
+                picture (a QPixmap)."""
                 from . import emojiart
                 if key not in self.played:
                     self._start(key, glyph)
@@ -959,8 +980,7 @@ def feed_class():
                         self.plays.pop(key, None)
                     if img is not None:
                         return img
-                pm = emojiart.pixmap(glyph, int(side))
-                return pm.toImage() if pm is not None else None
+                return emojiart.pixmap(glyph, int(side))
 
             # ---------------------------------------------------------- paint
             def paintEvent(self, event):                   # noqa: N802
@@ -1069,9 +1089,7 @@ def feed_class():
                         box.doc.drawContents(p)
                         p.restore()
                     for rect, glyph in box.bigs:
-                        img = self._emoji_frame((key, glyph, "big"), glyph, rect.width(), now)
-                        if img is not None:
-                            p.drawImage(rect, img, QtCore.QRectF(img.rect()))
+                        self._draw_emoji(p, rect, (key, glyph, "big"), glyph, now)
                     p.setFont(small)
                     if item.tick == "read":
                         p.setPen(_colour("accent_text"))
@@ -1098,11 +1116,14 @@ def feed_class():
                             side = px(PILL_EMOJI)
                             pic = QtCore.QRectF(r.left() + px(7), r.center().y() - side / 2.0,
                                                 side, side)
-                            img = self._emoji_frame((key, e, "pill"), e, side, now)
-                            if img is not None:
-                                p.drawImage(pic, img, QtCore.QRectF(img.rect()))
-                            else:
+                            if not self._draw_emoji(p, pic, (key, e, "pill"), e, now):
+                                from . import emoji as _emoji
+                                fallback = QtGui.QFont(p.font())
+                                fallback.setFamilies([fallback.family(), _emoji.FONT])
+                                p.save()
+                                p.setFont(fallback)
                                 p.drawText(pic, QtCore.Qt.AlignCenter, e)
+                                p.restore()
                             p.drawText(QtCore.QRectF(pic.right() + px(4), r.top(),
                                                      r.right() - pic.right() - px(4), r.height()),
                                        QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, str(n))
