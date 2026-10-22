@@ -128,6 +128,29 @@ def send_scene(session, chat, caption=""):
     return _begin(session, chat, cid, local, caption, meta)
 
 
+def send_selection(session, chat, caption=""):
+    """The objects selected in the scene as one FBX into `chat`, exactly as Stash's «stash the
+    selection» writes it (2026-10-22: «отправлять то что в выделении»); the pending cid."""
+    import maya.cmds as cmds
+    import maya_stash
+    import maya_stashstore
+    picked = cmds.ls(selection=True, long=True) or []
+    if not picked:
+        raise _api.ChatError("nothing_selected", u"Сначала выделите объекты, которые отправить.")
+    cid = uuid.uuid4().hex
+    folder = _root(session, "uploads", cid)
+    os.makedirs(folder, exist_ok=True)
+    local = os.path.join(folder, maya_stashstore.selection_name(picked, time.time()))
+    try:
+        maya_stash._export_fbx(picked, local)
+    except maya_stash.ExportFailed as exc:
+        _remove(folder)
+        raise _api.ChatError("export_failed", u"Не удалось выгрузить выделенное в FBX: %s" % exc)
+    meta = {"range": [cmds.playbackOptions(query=True, minTime=True),
+                      cmds.playbackOptions(query=True, maxTime=True)]}
+    return _begin(session, chat, cid, local, caption, meta)
+
+
 def _begin(session, chat, cid, local, caption, meta):
     name = os.path.basename(local)
     f = {"id": None, "name": name, "kind": kind_of(name), "bytes": os.path.getsize(local),

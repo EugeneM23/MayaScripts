@@ -13311,6 +13311,12 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
   **0 of 90 on production**; `verify_chat_client.py` **28/28 on staging and on production** (a 20 MB
   scene: B gets the message in 6.7-9.1 s, downloads it byte for byte in 1.5 s). Not seen in a GUI Maya
   (the paperclip, a real drop from Explorer, a card dragged onto a viewport).
+- **The selection too** (the same morning: «отправлять то что в выделении»): the paperclip's «Отправить
+  выделенное (FBX)» - `files.send_selection`, Stash's own `maya_stash._export_fbx` and
+  `maya_stashstore.selection_name` (`hero_box_0555.fbx`, `selection_<HHMM>.fbx` for several), the
+  selection put back, nothing selected refused. Proof `verify_chat_send_selection.py` **6/6 in mayapy
+  standalone against staging** (an animated cube sent, a sphere beside it not; B imports the FBX: the
+  cube with its keys, no sphere). mayapy dies on its way out after the summary (standalone + Qt).
 
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 

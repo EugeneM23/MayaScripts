@@ -707,7 +707,7 @@ class Files(Base):
 
     def test_the_paperclip_sends_a_scene_or_a_file(self):
         self.assertEqual([label for label, _f in self.win.clip_rows()],
-                         ["Отправить сцену", "Отправить файл…"])
+                         ["Отправить сцену", "Отправить выделенное (FBX)", "Отправить файл…"])
 
     def test_a_dropped_scene_goes_with_the_composer_s_text(self):
         from maya_chat import files

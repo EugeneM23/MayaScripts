@@ -1595,8 +1595,8 @@ class ChatWindow(object):
 
         row = w.QHBoxLayout()
         self.clip_button = _button("", "tool", "paperclip", "skeldarChatClip", self.scale,
-                                   "Отправить сцену или файл (.ma .mb .fbx) - или перетащите "
-                                   "его в окно")
+                                   "Отправить сцену, выделенное или файл (.ma .mb .fbx) - "
+                                   "или перетащите файл в окно")
         self.clip_button.clicked.connect(lambda *_a: self.clip_menu())
         row.addWidget(self.clip_button, 0, Qt.AlignBottom)
         self.emoji_button = _button("", "tool", "mood-smile", "skeldarChatEmoji", self.scale,
@@ -2110,7 +2110,9 @@ class ChatWindow(object):
         self._menu = menu
 
     def clip_rows(self):
-        return [(u"Отправить сцену", self.send_scene), (u"Отправить файл…", self.send_file_dialog)]
+        return [(u"Отправить сцену", self.send_scene),
+                (u"Отправить выделенное (FBX)", self.send_selection),
+                (u"Отправить файл…", self.send_file_dialog)]
 
     def _caption(self):
         """The composer's text goes with a file as its caption."""
@@ -2140,6 +2142,11 @@ class ChatWindow(object):
         from . import files
         return self._sent_file(lambda: files.send_scene(self.session, self.chat, self._caption()),
                                "scene")
+
+    def send_selection(self):
+        from . import files
+        return self._sent_file(lambda: files.send_selection(self.session, self.chat,
+                                                            self._caption()), "selection")
 
     def send_file_dialog(self):
         q = _q()
