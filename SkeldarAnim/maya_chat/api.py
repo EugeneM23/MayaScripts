@@ -100,6 +100,14 @@ class Api(object):
     def users(self, q):
         return self.call("GET", "/v1/users?q=" + urllib.parse.quote(q))["users"]
 
+    def person_files(self, user_id, before=None):
+        """{user, files: [{msg, chat, seq, at, text, file, chat_kind, chat_name}], more}: what
+        `user_id` sent in the chats I am in, newest first."""
+        path = "/v1/users/%s/files" % user_id
+        if before:
+            path += "?before=%d" % int(before)
+        return self.call("GET", path)
+
     def people(self):
         return self.call("GET", "/v1/people")["users"]
 

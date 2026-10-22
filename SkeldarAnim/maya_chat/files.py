@@ -553,13 +553,17 @@ def apply_card(path, aim):
     return result[-1] if isinstance(result, tuple) and result else (result or "")
 
 
-def show_picture(path, f=None):
-    """A picture from the chat opened in the system's viewer."""
-    try:
-        os.startfile(path)                                    # noqa: S606 - the animator's own file
-    except (AttributeError, OSError):
-        import subprocess
-        subprocess.Popen(["xdg-open", path])
+VIEWER = None             # tests: path -> None
+
+
+def show_picture(path, f=None, scale=1.0):
+    """A picture from the chat opened in our own viewer (2026-10-22: «картинки по умолчанию
+    открываются в пейнте ... в каком-то просмотрщике»)."""
+    if VIEWER is not None:
+        VIEWER(path)
+    else:
+        from . import profile
+        profile.view_picture(path, scale)
     return u"%s открыта" % os.path.basename(path)
 
 

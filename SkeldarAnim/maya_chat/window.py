@@ -206,7 +206,15 @@ def avatar_widget_class():
             def __init__(self, win, user, side, dot=True, parent=None):
                 super(AvatarDot, self).__init__(parent)
                 self.win, self.user, self.dot = win, user, dot
+                self.clickable = True       # a person's avatar opens their card (2026-10-22)
                 self.setFixedSize(int(side), int(side))
+                self.setCursor(QtCore.Qt.PointingHandCursor)
+
+            def mousePressEvent(self, event):              # noqa: N802
+                if self.clickable and event.button() == QtCore.Qt.LeftButton \
+                        and self.win.show_profile(self.user):
+                    return
+                super(AvatarDot, self).mousePressEvent(event)
 
             def set_user(self, user, dot=True):
                 self.user, self.dot = user, dot
@@ -225,6 +233,10 @@ def avatar_widget_class():
 
         _CLASSES["avatar"] = AvatarDot
     return _CLASSES["avatar"]
+
+
+def px_of(widget, n):
+    return hubstyle.px(n, widget.win.scale)
 
 
 def _font(base, px_size, bold=False):
@@ -302,6 +314,13 @@ def list_class():
                         return -1 if self.rows[i].get("kind") == "head" else i
                 return -1
 
+            def avatar_rect(self, i):
+                """Row `i`'s avatar (a click there opens the person's card)."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                top = self.tops()[0][i]
+                h = self.row_h(self.rows[i])
+                return QtCore.QRectF(px(10), top + (h - px(38)) / 2.0, px(38), px(38))
+
             def mouseMoveEvent(self, event):              # noqa: N802
                 i = self.index_at(event.position().y() if hasattr(event, "position")
                                   else event.pos().y())
@@ -319,6 +338,10 @@ def list_class():
                 i = self.index_at(pos.y())
                 if i >= 0 and event.button() == QtCore.Qt.LeftButton:
                     row = self.rows[i]
+                    person = row.get("kind") == "person" or (row.get("chat") or {}).get("kind") == "dm"
+                    if person and self.avatar_rect(i).contains(pos) \
+                            and self.win.show_profile(row.get("user")):
+                        return
                     if row.get("kind") == "person":
                         self.win.write_to(row["user"]["id"])
                     else:
@@ -455,7 +478,7 @@ class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
                  "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
-                 "thumb")
+                 "thumb", "avatar")
 
     def __init__(self, item):
         self.item = item
@@ -474,6 +497,7 @@ class Box(object):
         self.fbuttons = []       # [(rect, action, label)] under the card
         self.fbar = None         # (rect, progress or None, text): an upload or download
         self.thumb = None        # the file's preview over its card
+        self.avatar = None       # the sender's avatar beside a group's message
 
 
 def feed_class():
@@ -649,6 +673,8 @@ def feed_class():
                     else:
                         x = side + avatar
                     box.bubble = QtCore.QRectF(x, y, bw, bh)
+                    if group and not item.mine and item.last:
+                        box.avatar = QtCore.QRectF(px(12), y + bh - px(24), px(24), px(24))
                     cx = x + pad_x
                     cy = y + pad_y
                     if name_h:
@@ -945,8 +971,8 @@ def feed_class():
                                                else bubble.left(), bubble.bottom() - px(10),
                                                px(10), px(10))
                         p.drawRect(corner)
-                    if group and not item.mine and item.last:
-                        av = QtCore.QRectF(px(12), bubble.bottom() - px(24), px(24), px(24))
+                    if box.avatar is not None:
+                        av = box.avatar
                         paint_avatar(p, av, self.ctx.get("user_of", lambda uid: {"id": uid})(
                             item.message.get("from_id")), s)
                     if box.name_at is not None:
@@ -1021,6 +1047,8 @@ def feed_class():
             # ---------------------------------------------------------- input
             def box_at(self, point):
                 for box in self.boxes:
+                    if box.avatar is not None and box.avatar.contains(point):
+                        return box, "avatar"
                     for rect, action, _label in box.fbuttons:
                         if rect.contains(point):
                             return box, "file:" + action
@@ -1052,6 +1080,12 @@ def feed_class():
                     return
                 if event.button() != QtCore.Qt.LeftButton:
                     return
+                if where == "avatar" or (box.name_at is not None and where == "bubble"
+                                         and pos.y() < box.name_at.y() + px_of(self, 2)
+                                         and pos.y() > box.name_at.y() - px_of(self, 14)):
+                    uid = box.item.message.get("from_id")
+                    if self.win.show_profile(self.ctx.get("user_of", lambda u: {"id": u})(uid)):
+                        return
                 if where.startswith("file:"):
                     self.win.file_action(box.item, where[5:], gp)
                     return
@@ -1410,6 +1444,7 @@ class ChatWindow(object):
         self.root = None
         self.burster = None
         self.avatars = None
+        self.profile = None          # a person's card standing over the window
         try:
             from . import avatars
             self.avatars = avatars.cache(session)
@@ -1775,6 +1810,7 @@ class ChatWindow(object):
         page, lay = self._pane_box("Настройки", "skeldarChatSettings")
         pic = w.QHBoxLayout()
         self.settings_avatar = avatar_widget_class()(self, {}, self.px(56), False)
+        self.settings_avatar.clickable = False
         self.settings_avatar.setObjectName("skeldarChatSettingsAvatar")
         pic.addWidget(self.settings_avatar)
         choose = _button("Выбрать картинку…", None, "photo", "skeldarChatAvatarChoose", self.scale,
@@ -2280,6 +2316,32 @@ class ChatWindow(object):
         return self._sent_file(lambda: files.send_card(self.session, self.chat, card,
                                                        self._caption()), "card")
 
+    def show_profile(self, user):
+        """A person's card over the window (their avatar large, their files); False when `user`
+        is no person (a group's picture)."""
+        user = user or {}
+        uid = user.get("id")
+        if not uid or uid in self.session.state.chats:
+            return False
+        known = dict(user)
+        for chat in self.session.state.chats.values():
+            for u in chat.get("members") or ():
+                if u.get("id") == uid:
+                    known.update(u)
+        for u in getattr(self.session.state, "people", None) or ():
+            if u.get("id") == uid:
+                known.update(u)
+        if uid == self.me_id():
+            known.update(self.session.state.me or {})
+        if not known.get("nick"):
+            return False
+        old = getattr(self, "profile", None)
+        if old is not None and old.is_open():
+            old.close()
+        from . import profile
+        self.profile = profile.Profile(self, known)
+        return True
+
     def send_image(self, image):
         """A picture (the clipboard's QImage) into the open chat."""
         from . import files
@@ -2365,7 +2427,7 @@ class ChatWindow(object):
                 "save": lambda path: files.save_to(path, f),
                 "stash": lambda path: files.to_stash(path, f),
                 "share": lambda path: files.to_share(path, f),
-                "view": lambda path: files.show_picture(path, f),
+                "view": lambda path: files.show_picture(path, f, self.scale),
                 "library": lambda path: files.to_library(path, (target or {}).get("folder")),
                 "apply": lambda path: files.apply_card(path, target or {})}.get(action)
         if verb is None:
@@ -3030,6 +3092,11 @@ class ChatWindow(object):
 
     def destroy(self):
         self.session.unlisten(self._heard)
+        if getattr(self, "profile", None) is not None:
+            try:
+                self.profile.close()
+            except Exception:                                # noqa: BLE001
+                pass
         root, self.root = self.root, None
         if root is not None and hubqt._valid(root):
             root.hide()

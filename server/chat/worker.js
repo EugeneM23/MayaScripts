@@ -30,6 +30,7 @@ const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb
 const FILE_KINDS = new Set(["scene", "fbx", "pose", "anim", "image"]);
 // A file's preview (the card's still, a viewport snapshot, a picture shrunk): a JPEG/PNG in SQLite.
 const THUMB_STATES = new Set(["uploading", "ready"]);
+const FILES_LIST = 300;   // a person's files, a page
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -469,6 +470,28 @@ export class Studio extends DurableObject {
   people({ me }) {
     const rows = this.sql.exec("SELECT * FROM users WHERE id != ? ORDER BY nick LIMIT 2000", me.id).toArray();
     return json({ users: rows.map((r) => ({ ...this.withPresence(r), relation: this.relation(me.id, r.id) })) });
+  }
+
+  // A person's files (2026-10-22: «нажать на аватар пользователя ... список всех файлов»): what
+  // they sent in the chats I am in, newest first, at most FILES_LIST; `before` (ms) pages back.
+  personFiles({ url, me, params }) {
+    const who = this.userById(params[0]);
+    const before = Number(url.searchParams.get("before"));
+    const until = Number.isFinite(before) && before > 0 ? before : 8.64e15;
+    const rows = this.sql.exec(
+      `SELECT m.id AS msg, m.chat AS chat, m.seq AS seq, m.at AS at, m.text AS text, m.file AS file,
+              c.kind AS chat_kind, c.name AS chat_name
+         FROM messages m JOIN members me ON me.chat = m.chat AND me.uid = ? JOIN chats c ON c.id = m.chat
+        WHERE m.from_id = ? AND m.deleted = 0 AND m.file IS NOT NULL AND m.at < ?
+        ORDER BY m.at DESC LIMIT ?`, me.id, who.id, until, FILES_LIST).toArray();
+    const files = [];
+    for (const r of rows) {
+      const file = this.fileView(r.file);
+      if (!file) continue;
+      files.push({ msg: r.msg, chat: r.chat, seq: r.seq, at: r.at, text: r.text, file,
+                   chat_kind: r.chat_kind, chat_name: r.chat_name });
+    }
+    return json({ user: this.withPresence(this.userById(who.id)), files, more: rows.length === FILES_LIST });
   }
 
   friends({ me }) {
@@ -922,5 +945,6 @@ const ROUTES = [
   ["DELETE", /^\/v1\/files\/([0-9a-f]{16})$/, "fileCancel"],
   ["GET", /^\/v1\/files\/([0-9a-f]{16})$/, "fileGet"],
   ["PUT", /^\/v1\/files\/([0-9a-f]{16})\/thumb$/, "fileThumbPut"],
+  ["GET", /^\/v1\/users\/([0-9a-f]{16})\/files$/, "personFiles"],
   ["GET", /^\/v1\/files\/([0-9a-f]{16})\/thumb$/, "fileThumbGet"],
 ];

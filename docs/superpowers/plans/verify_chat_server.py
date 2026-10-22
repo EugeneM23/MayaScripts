@@ -488,10 +488,56 @@ def phase_previews():
     wa.close()
 
 
+def phase_person():
+    """A person's files (2026-10-22): what they sent in the chats I am in, newest first."""
+    A, B, C = Users.make("xa"), Users.make("xb"), Users.make("xc")
+    status, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
+    status, other = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": C[1]["id"]})
+    wa = ws(A[0])
+    wa.send({"type": "hello", "since": jcall("GET", "/v1/chats", A[0])[1]["seq"]})
+    wa.until(lambda e: e["kind"] == "caught_up")
+    sent = []
+    for chat, name, kind in ((dm["id"], "Walk.anim", "anim"), (dm["id"], "Shot.ma", "scene"),
+                             (other["id"], "Secret.ma", "scene")):
+        data = os.urandom(50)
+        status, start = jcall("POST", "/v1/files", A[0], {"chat": chat, "name": name, "kind": kind,
+                                                          "bytes": 50, "zip": len(data)})
+        call("PUT", "/v1/files/%s/parts/1" % start["id"], A[0], raw=data, ctype="application/octet-stream")
+        jcall("POST", "/v1/files/%s/complete" % start["id"], A[0])
+        wa.send({"type": "send", "chat": chat, "cid": "x" + name, "text": "t " + name, "file": start["id"]})
+        ack, _ = wa.until(lambda e: e["kind"] in ("ack", "error"))
+        sent.append((name, ack))
+        time.sleep(0.05)
+    wa.send({"type": "send", "chat": dm["id"], "cid": "plain", "text": "no file"})
+    wa.until(lambda e: e["kind"] in ("ack", "error"))
+    status, doc = jcall("GET", "/v1/users/%s/files" % A[1]["id"], B[0])
+    names = [f["file"]["name"] for f in doc.get("files", [])]
+    gate("B sees what A sent in their chat, newest first, and no more", status == 200
+         and names == ["Shot.ma", "Walk.anim"], names)
+    first = (doc.get("files") or [{}])[0]
+    gate("each with its chat and message", first.get("chat") == dm["id"] and first.get("msg") == sent[1][1]["id"]
+         and first.get("chat_kind") == "dm" and first.get("text") == "t Shot.ma", first)
+    gate("and the person", doc.get("user", {}).get("id") == A[1]["id"], doc.get("user"))
+    status, doc = jcall("GET", "/v1/users/%s/files" % A[1]["id"], A[0])
+    gate("A sees all its own", [f["file"]["name"] for f in doc["files"]] == ["Secret.ma", "Shot.ma", "Walk.anim"],
+         [f["file"]["name"] for f in doc["files"]])
+    status, doc = jcall("GET", "/v1/users/%s/files?before=%d" % (A[1]["id"], doc["files"][1]["at"]), A[0])
+    gate("before pages back", [f["file"]["name"] for f in doc["files"]] == ["Walk.anim"], doc)
+    wa.send({"type": "delete", "chat": dm["id"], "id": sent[1][1]["id"]})
+    wa.until(lambda e: e["kind"] == "deleted")
+    status, doc = jcall("GET", "/v1/users/%s/files" % A[1]["id"], B[0])
+    gate("a deleted message's file is gone from the list", [f["file"]["name"] for f in doc["files"]] == ["Walk.anim"],
+         [f["file"]["name"] for f in doc["files"]])
+    status, doc = jcall("GET", "/v1/users/%s/files" % ("0" * 16), B[0])
+    gate("no such person", status == 404, doc)
+    wa.close()
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
           "people": phase_people, "react": phase_react, "newcomer": phase_newcomer,
-          "files": phase_files, "previews": phase_previews}
+          "files": phase_files, "previews": phase_previews,
+          "person": phase_person}
 
 
 def main(argv):

@@ -13358,6 +13358,21 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
     for byte, a pose's still, a pasted picture downloaded whole); `verify_chat_send_card.py` 7/7;
     the viewport preview in the disposable Maya (360 x 226, 0.04 s, selection kept); 19 unit tests
     `tests/test_chat_previews.py`; 8374 run, the known `test_chat_deploy.Keys` failing.
+- **A person's card, and our picture viewer** (the same morning: «нажать на аватар пользователя ...
+  окошко с увеличенной аватаркой и списком всех файлов ... сортировать по типам», and «картинки по
+  умолчанию открываются в пейнте»). Spec `docs/superpowers/specs/2026-10-22-chat-profile-design.md`.
+  - Server `GET /v1/users/<id>/files[?before]`: what that person sent in the chats I am in, newest
+    first, 300 a page, each with its chat and message.
+  - `maya_chat/profile.py`: `Profile` over the chat window (92 px avatar, name, @nick, presence,
+    Написать; [Все | Позы | Анимации | Сцены | FBX | Картинки] with counts, a search, the painted
+    `FileList`: double click to the message, right button its verbs, a drag is the feed's drag).
+    Opened by `AvatarDot` (`clickable`; the header, Members, New chat, mine), a list row's avatar
+    (`ChatList.avatar_rect`), a group message's avatar or sender name (`Box.avatar`); a group's
+    picture is no person (`ChatWindow.show_profile`).
+  - `profile.Viewer`, opened by `files.show_picture` in place of the system's program: fitted, wheel
+    zoom about the mouse, drag pans, double click fits, Esc closes.
+  - Proof: `verify_chat_server.py all` **0 of 108 on production** (phase `person`); 16 unit tests
+    `tests/test_chat_profile.py`, 227 chat tests (the known `Keys` failing). Not seen in a GUI Maya.
 
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 

@@ -486,3 +486,53 @@ def everybody(people, me_id, query=""):
     rows = [u for u in people or [] if u.get("id") != me_id and person_matches(u, query)]
     rows.sort(key=lambda r: (display_name(r).lower(), r.get("nick") or ""))
     return rows
+
+
+# ---------------------------------------------------------------------- a person's files (2026-10-22)
+
+PROFILE_KINDS = (("all", u"Все"), ("pose", u"Позы"), ("anim", u"Анимации"), ("scene", u"Сцены"),
+                 ("fbx", "FBX"), ("image", u"Картинки"))
+
+
+def profile_counts(entries):
+    """{kind: how many} of a person's files, "all" included. Pure."""
+    out = dict((k, 0) for k, _label in PROFILE_KINDS)
+    for e in entries or ():
+        kind = ((e or {}).get("file") or {}).get("kind")
+        out["all"] += 1
+        if kind in out:
+            out[kind] += 1
+    return out
+
+
+def profile_rows(entries, kind="all", query=""):
+    """A person's files of `kind` ("all": every one) whose name, caption or chat holds `query`,
+    newest first. Pure."""
+    q = (query or "").strip().lower()
+    out = []
+    for e in entries or ():
+        f = (e or {}).get("file") or {}
+        if kind != "all" and f.get("kind") != kind:
+            continue
+        if q and q not in u" ".join([f.get("name") or "", e.get("text") or "",
+                                     e.get("chat_name") or ""]).lower():
+            continue
+        out.append(e)
+    out.sort(key=lambda e: -int(e.get("at") or 0))
+    return out
+
+
+def profile_line(e, chats=None, now_ms=None):
+    """A file row's second line: «анимация · 12.3 MB · 14 окт · в «Fights»». Pure."""
+    from . import files
+    f = (e or {}).get("file") or {}
+    parts = [KIND_WORDS.get(f.get("kind"), ""), files.size_text(f.get("bytes") or 0)]
+    at = e.get("at")
+    if at:
+        import time as _time
+        parts.append(clock(int(at), now_ms if now_ms is not None else int(_time.time() * 1000)))
+    if e.get("chat_kind") == "group" and e.get("chat_name"):
+        parts.append(u"в «%s»" % e["chat_name"])
+    if f.get("expired"):
+        parts.append(u"истёк")
+    return u" · ".join(p for p in parts if p)
