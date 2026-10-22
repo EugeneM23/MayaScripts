@@ -8,7 +8,6 @@ to send). A message may carry a file (2026-10-22, spec 2026-10-22-chat-files-des
 opens, imports, saves or stashes it, a paperclip sends a scene or a file, and files from Explorer,
 Stash or Shared dropped on the window go into the open chat.
 """
-import html
 import math
 import sys
 import os
@@ -43,6 +42,9 @@ FILE_ACTIONS = {"ready": (("open", "Open"), ("import", "Import"), ("more", u"\u2
 CARD_HINT = u"перетащите во вьюпорт или в библиотеку поз"
 FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg)"
 PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
+BIG_EMOJI = 64        # an emoji sent alone (1-3 of them), logical px (2026-10-22)
+PILL_EMOJI = 18       # a reaction's picture in its pill
+PLAY_CAP_MS = 5000    # an emoji's play is dropped past this, painted or not (Noto's ~2.2 s)
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -247,17 +249,11 @@ def _font(base, px_size, bold=False):
     return f
 
 
-def rich(text):
-    """A message's text as HTML: escaped, links as anchors, new lines kept."""
-    from . import records
-    out = []
-    for kind, piece in records.runs(text or ""):
-        if kind == "link":
-            out.append('<a href="{0}">{1}</a>'.format(html.escape(piece, quote=True),
-                                                      html.escape(piece)))
-        else:
-            out.append(html.escape(piece))
-    return "".join(out).replace("\n", "<br>")
+def rich(text, px=None):
+    """A message's text as HTML: escaped, links as anchors, emoji as pictures `px` square
+    (the line's height when None), new lines kept."""
+    from . import emojiart
+    return emojiart.rich(text, px or 16)
 
 
 # ------------------------------------------------------------------ the list
@@ -450,9 +446,11 @@ def list_class():
                     p.setPen(_colour("accent_text" if r.get("typing")
                                      else ("ok" if r.get("kind") == "person" and r.get("online")
                                            else "muted")))
-                    sub = pfm.elidedText(r["preview"], QtCore.Qt.ElideRight,
-                                         int(right - x0 - badge_w - px(6)))
-                    p.drawText(QtCore.QPointF(x0, top + px(41) + lift), sub)
+                    from . import emojiart
+                    width_left = right - x0 - badge_w - px(6)
+                    emojiart.draw_line(p, QtCore.QRectF(x0, top + px(41) + lift - pfm.ascent(),
+                                                        width_left, pfm.height()),
+                                       r["preview"], p.font(), p.pen().color())
                 if not self.rows:
                     p.setPen(_colour("faint"))
                     p.setFont(_font(self.font(), px(10)))
@@ -478,7 +476,7 @@ class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
                  "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
-                 "thumb", "avatar")
+                 "thumb", "avatar", "bigs")
 
     def __init__(self, item):
         self.item = item
@@ -498,6 +496,7 @@ class Box(object):
         self.fbar = None         # (rect, progress or None, text): an upload or download
         self.thumb = None        # the file's preview over its card
         self.avatar = None       # the sender's avatar beside a group's message
+        self.bigs = []           # [(rect, glyph)]: a message of 1-3 emoji alone, as pictures
 
 
 def feed_class():
@@ -526,6 +525,10 @@ def feed_class():
                 self._dragging = False
                 self._hover_button = None
                 self.playing = None       # (message key, started ms): an animation preview playing
+                self.plays = {}           # (message key, glyph, "big"|"pill") -> started ms
+                self.played = set()       # the same keys, played once since the window opened
+                self.anim = None          # emojiart.Animated (the window sets it)
+                self._emoji_hover = None  # (message key, glyph, kind) under the mouse
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
@@ -561,6 +564,11 @@ def feed_class():
                         if n > self._counts.get(k, 0):
                             self.pill_pops[k] = now
                 self._counts = counts
+                chat_id = (ctx.get("chat") or {}).get("id")
+                if chat_id != getattr(self, "_chat_id", None):
+                    self.plays.clear()            # another chat: nothing of the last one plays
+                    self._emoji_hover = None
+                self._chat_id = chat_id
                 self._known = {"keys": set(keys),
                                "pending": set(i.key() for i in items if i.pending)}
                 self.items = items
@@ -581,21 +589,33 @@ def feed_class():
                     self.relayout()
                 super(Feed, self).resizeEvent(event)
 
+            def _big(self, item):
+                """The glyphs of a message of 1-3 emoji alone, each with a picture; else []."""
+                from . import emoji as _emoji
+                from . import emojiart
+                if not _emoji.only_emoji(item.text):
+                    return []
+                parts = [p for _k, p in _emoji.tokens("".join(item.text.split()))]
+                return parts if all(emojiart._known(p) for p in parts) else []
+
             def _doc(self, item, width):
                 key = (item.key(), item.text, int(width))
                 doc = self.docs.get(key)
                 if doc is None:
                     from . import emoji as _emoji
+                    from . import emojiart
                     doc = QtGui.QTextDocument()
                     doc.setDocumentMargin(0)
                     big = _emoji.only_emoji(item.text)
                     font = _font(self.font(), hubstyle.px(30 if big else 11, self.win.scale))
                     font.setFamilies([font.family(), _emoji.FONT])
                     doc.setDefaultFont(font)
+                    side = int(QtGui.QFontMetrics(font).height() * 1.2)
+                    emojiart.register(doc, item.text, side)
                     doc.setDefaultStyleSheet("a {{ color: {0}; }}".format(
                         hubstyle.TOKENS["accent_text"]))
                     doc.setHtml('<span style="color:{0}">{1}</span>'.format(
-                        hubstyle.TOKENS["text"], rich(item.text)))
+                        hubstyle.TOKENS["text"], rich(item.text, side)))
                     doc.setTextWidth(width)
                     ideal = doc.idealWidth()
                     if ideal + 1 < width:
@@ -631,8 +651,14 @@ def feed_class():
                     msg = item.message
                     inner = max(px(40), max_w - 2 * pad_x)
                     f = msg.get("file")
+                    bigs = [] if f else self._big(item)
                     if f and not item.text:
                         doc, doc_w, doc_h = None, 0, -px(2)
+                    elif bigs:
+                        side_b, gap_b = px(BIG_EMOJI), px(4)
+                        doc = None
+                        doc_w = len(bigs) * side_b + (len(bigs) - 1) * gap_b
+                        doc_h = side_b
                     else:
                         doc = self._doc(item, inner)
                         doc_w, doc_h = doc.size().width(), doc.size().height()
@@ -695,6 +721,10 @@ def feed_class():
                         self._lay_file(box, cx, cy, bw - 2 * pad_x)
                         cy += file_h
                     box.doc_at = QtCore.QPointF(cx, cy)
+                    if bigs:
+                        side_b, gap_b = px(BIG_EMOJI), px(4)
+                        box.bigs = [(QtCore.QRectF(cx + i * (side_b + gap_b), cy, side_b, side_b), g)
+                                    for i, g in enumerate(bigs)]
                     cy += doc_h + px(2)
                     box.meta_at = QtCore.QPointF(x + bw - pad_x - meta_w, cy + sfm.ascent())
                     h = bh
@@ -856,10 +886,7 @@ def feed_class():
                     p.drawText(rect, QtCore.Qt.AlignCenter, label)
 
             def _pill_font(self):
-                from . import emoji as _emoji
-                f = _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
-                f.setFamilies([f.family(), _emoji.FONT])
-                return f
+                return _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
 
             def _lay_pills(self, box, x, top, bw, max_w, mine):
                 """The reactions' pills under a bubble, wrapped to the bubble's side; the height
@@ -874,7 +901,7 @@ def feed_class():
                 width = max(bw, min(max_w, px(260)))
                 rows, row, used = [], [], 0
                 for e, n, me in pills:
-                    w = fm.horizontalAdvance("%s %d" % (e, n)) + px(14)
+                    w = px(PILL_EMOJI) + px(4) + fm.horizontalAdvance(str(n)) + px(14)
                     if row and used + gap + w > width:
                         rows.append(row)
                         row, used = [], 0
@@ -902,10 +929,58 @@ def feed_class():
                 for k, start in list(self.pill_pops.items()):
                     if now - start >= POP_MS:
                         del self.pill_pops[k]
+                for k, start in list(self.plays.items()):
+                    if now - start >= PLAY_CAP_MS:     # its box may never be painted again
+                        del self.plays[k]
                 busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
-                            or self.playing)
+                            or self.playing or self.plays)
                 self.update()
                 return busy
+
+            def _start(self, key, glyph):
+                """Play `glyph`'s animation now when it has one and its frames are ready."""
+                from . import emojiart
+                if self.anim is None or not hubmotion.enabled():
+                    return False
+                cp = emojiart.anim_of(glyph)
+                if not cp:
+                    return False
+                side = int(hubstyle.px(BIG_EMOJI if key[2] == "big" else PILL_EMOJI,
+                                       self.win.scale))
+                if not self.anim.frames(cp, side):
+                    return False
+                self.plays[key] = _now_ms()
+                self.played.add(key)
+                self.win.animate()
+                return True
+
+            def _draw_emoji(self, p, rect, key, glyph, now):
+                """Draw an emoji picture into `rect`; False when it has none."""
+                pic = self._emoji_frame(key, glyph, rect.width(), now)
+                if pic is None:
+                    return False
+                if isinstance(pic, QtGui.QPixmap):
+                    p.drawPixmap(rect, pic, QtCore.QRectF(pic.rect()))
+                else:
+                    p.drawImage(rect, pic, QtCore.QRectF(pic.rect()))
+                return True
+
+            def _emoji_frame(self, key, glyph, side, now):
+                """What to draw for an emoji picture at `side`: its animation's frame (a QImage)
+                while it plays (starting it the first time it is painted), else its still
+                picture (a QPixmap)."""
+                from . import emojiart
+                if key not in self.played:
+                    self._start(key, glyph)
+                start = self.plays.get(key)
+                if start is not None and self.anim is not None:
+                    frames = self.anim.frames(emojiart.anim_of(glyph), int(side))
+                    img, done = emojiart.frame_at(frames, now - start)
+                    if done:
+                        self.plays.pop(key, None)
+                    if img is not None:
+                        return img
+                return emojiart.pixmap(glyph, int(side))
 
             # ---------------------------------------------------------- paint
             def paintEvent(self, event):                   # noqa: N802
@@ -921,6 +996,7 @@ def feed_class():
                 s = self.win.scale
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
                 now = _now_ms()
                 small = _font(self.font(), px(9))
                 group = (self.ctx.get("chat") or {}).get("kind") == "group"
@@ -997,10 +1073,11 @@ def feed_class():
                         p.setFont(_font(self.font(), px(9.5)))
                         p.setPen(_colour("text2"))
                         fm2 = QtGui.QFontMetrics(p.font())
-                        p.drawText(QtCore.QPointF(qrect.left() + px(7),
-                                                  qrect.bottom() - fm2.descent() - px(2)),
-                                   fm2.elidedText(qtext, QtCore.Qt.ElideRight,
-                                                  int(qrect.width() - px(10))))
+                        from . import emojiart
+                        emojiart.draw_line(p, QtCore.QRectF(qrect.left() + px(7),
+                                                            qrect.bottom() - fm2.height() - px(2),
+                                                            qrect.width() - px(10), fm2.height()),
+                                           qtext, p.font(), p.pen().color())
                     if box.card is not None:
                         p.save()
                         self._paint_file(p, box)
@@ -1011,6 +1088,8 @@ def feed_class():
                         p.translate(box.doc_at)
                         box.doc.drawContents(p)
                         p.restore()
+                    for rect, glyph in box.bigs:
+                        self._draw_emoji(p, rect, (key, glyph, "big"), glyph, now)
                     p.setFont(small)
                     if item.tick == "read":
                         p.setPen(_colour("accent_text"))
@@ -1034,7 +1113,20 @@ def feed_class():
                             p.setBrush(_colour("accent_tint" if me else "field"))
                             p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
                             p.setPen(_colour("accent_text" if me else "text2"))
-                            p.drawText(r, QtCore.Qt.AlignCenter, "%s %d" % (e, n))
+                            side = px(PILL_EMOJI)
+                            pic = QtCore.QRectF(r.left() + px(7), r.center().y() - side / 2.0,
+                                                side, side)
+                            if not self._draw_emoji(p, pic, (key, e, "pill"), e, now):
+                                from . import emoji as _emoji
+                                fallback = QtGui.QFont(p.font())
+                                fallback.setFamilies([fallback.family(), _emoji.FONT])
+                                p.save()
+                                p.setFont(fallback)
+                                p.drawText(pic, QtCore.Qt.AlignCenter, e)
+                                p.restore()
+                            p.drawText(QtCore.QRectF(pic.right() + px(4), r.top(),
+                                                     r.right() - pic.right() - px(4), r.height()),
+                                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, str(n))
                         p.setFont(small)
                     if box.failed_rect is not None:
                         p.setPen(_colour("danger"))
@@ -1059,6 +1151,9 @@ def feed_class():
                     for rect, e, _n, _me in box.pills:
                         if rect.contains(point):
                             return box, "pill:" + e
+                    for rect, glyph in box.bigs:
+                        if rect.contains(point):
+                            return box, "big:" + glyph
                     if box.bubble is not None and box.bubble.contains(point):
                         return box, "bubble"
                     if box.failed_rect is not None and box.failed_rect.contains(point):
@@ -1130,6 +1225,7 @@ def feed_class():
                             self.grabMouse()
                         return
                 box, _where = self.box_at(pos)
+                self._hover_emoji(box, _where)
                 self._hover_preview(box if _where == "thumb" else None)
                 hover = None
                 if _where.startswith("file:"):
@@ -1171,7 +1267,19 @@ def feed_class():
                     self.win.animate()
                 self.update()
 
+            def _hover_emoji(self, box, where):
+                """The mouse entering an animated emoji (a big one, a pill) plays it again."""
+                hit = None
+                if box is not None and (where.startswith("big:") or where.startswith("pill:")):
+                    kind, glyph = where.split(":", 1)
+                    hit = (box.item.key(), glyph, kind)
+                if hit != self._emoji_hover:
+                    self._emoji_hover = hit
+                    if hit is not None and hit not in self.plays:
+                        self._start(hit, hit[1])
+
             def leaveEvent(self, event):                   # noqa: N802
+                self._emoji_hover = None
                 self._hover_preview(None)
                 super(Feed, self).leaveEvent(event)
 
@@ -1187,18 +1295,42 @@ def feed_class():
 
 # ------------------------------------------------------------------ the emoji picker
 
-PICK_COLS = 10
-PICK_ROWS = 9
-PICK_CELL = 30
+PICK_COLS = 9
+PICK_ROWS = 8
+PICK_CELL = 32
+PICK_HEAD = 18        # a section's title row
+PICK_LIFT = 1.10      # a cell under the mouse grows 10 % (the Time Bar's hover)
+PICK_GLOW = 0.35      # the accent glow's alpha at a lit cell's centre
+PICK_TONES = ("#ffc93a", "#f7d7c4", "#e0b291", "#bf8f68", "#9b643d", "#594539")
 
 
 def picker_class():
-    """EmojiPicker(window, picked): a popup of tabs over a painted grid; a click calls
-    picked(emoji) and closes it."""
+    """EmojiPicker(window, picked): a search field over tone swatches, group tabs and a
+    scrolling painted grid; a click (or Enter on the search) calls picked(emoji) and closes it."""
     if "picker" not in _CLASSES:
         q = _q()
         QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
         from . import emoji as _emoji
+        from . import emojiart
+
+        class Search(QtWidgets.QLineEdit):
+            def __init__(self, picker):
+                super(Search, self).__init__(picker)
+                self.picker = picker
+
+            def keyPressEvent(self, event):                # noqa: N802
+                if event.key() == QtCore.Qt.Key_Escape:
+                    if self.text():
+                        self.clear()
+                    else:
+                        self.picker.close()
+                    return
+                if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                    items = self.picker.items()
+                    if items:
+                        self.picker.pick(items[0])
+                    return
+                super(Search, self).keyPressEvent(event)
 
         class EmojiPicker(QtWidgets.QWidget):
 
@@ -1210,43 +1342,157 @@ def picker_class():
                 self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
                 self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
                 self.setMouseTracking(True)
-                recent = _emoji.recent(get_var(_emoji.RECENT_VAR))
-                self.tabs = [("recent", "🕘", "Недавние", tuple(recent))] + list(_emoji.CATEGORIES)
-                self.tab = 0 if get_var(_emoji.RECENT_VAR) else 1
-                self.hover = None
                 px = win.px
                 self.pad = px(8)
                 self.cell = px(PICK_CELL)
-                self.setFixedSize(2 * self.pad + PICK_COLS * self.cell,
-                                  2 * self.pad + self.cell + px(6) + PICK_ROWS * self.cell)
+                self.head = px(PICK_HEAD)
+                self.idx = _emoji.index()
+                try:
+                    self.tone = int(get_var(_emoji.TONE_VAR) or 0)
+                except (TypeError, ValueError):
+                    self.tone = 0
+                self.query = ""
+                self.scroll = 0.0
+                self.hover = None
+                self.levels = {}          # hovered cell -> its lift, 0..1
+                self._last = time.monotonic()
+                self.timer = QtCore.QTimer(self)
+                self.timer.setInterval(TICK_MS)
+                self.timer.timeout.connect(self._tick)
+                width = 2 * self.pad + PICK_COLS * self.cell
+                self.search = Search(self)
+                self.search.setObjectName("skeldarChatEmojiSearch")
+                self.search.setPlaceholderText(u"Поиск: кот, огонь, fire…")
+                self.search.setGeometry(self.pad, self.pad, width - 2 * self.pad, px(26))
+                self.search.textChanged.connect(self.set_query)
+                self.top_tones = self.pad + px(26) + px(6)
+                self.top_tabs = self.top_tones + px(20)
+                self.top_grid = self.top_tabs + self.cell + px(4)
+                self.setFixedSize(width, self.top_grid + PICK_ROWS * self.cell + self.pad)
                 self.font_ = QtGui.QFont(self.font())
                 self.font_.setFamilies([self.font_.family(), _emoji.FONT])
                 self.font_.setPixelSize(px(19))
+                self._layout()
+                self.search.setFocus()
+
+            # ------------------------------------------------------ what is listed
+            def _glyph(self, rec):
+                return _emoji.toned(rec, self.tone)[0]
+
+            def sections(self):
+                """[(key, title, [glyph])] as last laid out."""
+                return self._sections
+
+            def _fresh_sections(self):
+                """The results of a search, else Recent and the groups."""
+                if self.query.strip():
+                    return [("found", u"Найдено",
+                             [self._glyph(r) for r in _emoji.search(self.query, idx=self.idx)])]
+                out = [("recent", u"Недавние", _emoji.recent(get_var(_emoji.RECENT_VAR)))]
+                for key, _tab, title in self.idx.groups:
+                    out.append((key, title, [self._glyph(r) for r in self.idx.of_group(key)]))
+                return out
 
             def items(self):
-                return self.tabs[self.tab][3][:PICK_COLS * PICK_ROWS]
+                return [g for _k, _t, glyphs in self.sections() for g in glyphs]
+
+            def _layout(self):
+                """Each section's top and each cell's rect, in grid coordinates (scroll 0)."""
+                self._sections = self._fresh_sections()
+                self.tops, self.cells, y = {}, [], 0
+                for key, title, glyphs in self._sections:
+                    self.tops[key] = y
+                    y += self.head
+                    for i, g in enumerate(glyphs):
+                        self.cells.append((QtCore.QRectF(self.pad + (i % PICK_COLS) * self.cell,
+                                                         y + (i // PICK_COLS) * self.cell,
+                                                         self.cell, self.cell), g))
+                    y += ((len(glyphs) + PICK_COLS - 1) // PICK_COLS) * self.cell
+                self.height_ = y
+                self.scroll = max(0.0, min(self.scroll, self.max_scroll()))
+                self.update()
+
+            def max_scroll(self):
+                return max(0.0, self.height_ - PICK_ROWS * self.cell)
+
+            def section_top(self, key):
+                return self.tops.get(key, 0)
+
+            def scroll_to(self, key):
+                self.scroll = max(0.0, min(float(self.section_top(key)), self.max_scroll()))
+                self.update()
+
+            def set_query(self, text):
+                self.query = text or ""
+                if self.search.text() != self.query:
+                    self.search.setText(self.query)
+                self.scroll = 0.0
+                self._layout()
+
+            def set_tone(self, tone):
+                self.tone = max(0, min(5, int(tone)))
+                set_var(_emoji.TONE_VAR, str(self.tone))
+                self._layout()
+
+            # ------------------------------------------------------ hits
+            def _tabs(self):
+                keys = ["recent"] + [g[0] for g in self.idx.groups]
+                glyphs = [u"\U0001F558"] + [g[1] for g in self.idx.groups]
+                return [(QtCore.QRectF(self.pad + i * self.cell, self.top_tabs, self.cell,
+                                       self.cell), k, g)
+                        for i, (k, g) in enumerate(zip(keys, glyphs))]
+
+            def _tone_rects(self):
+                s = self.win.px(14)
+                return [(QtCore.QRectF(self.pad + i * (s + self.win.px(6)),
+                                       self.top_tones + self.win.px(3), s, s), i)
+                        for i in range(6)]
 
             def hit(self, pos):
-                """("tab", i) | ("emoji", e) | None at a point."""
-                x, y = pos.x() - self.pad, pos.y() - self.pad
-                if x < 0 or y < 0:
+                for rect, t in self._tone_rects():
+                    if rect.contains(pos):
+                        return ("tone", t)
+                for rect, key, _g in self._tabs():
+                    if rect.contains(pos):
+                        return ("tab", key)
+                if pos.y() < self.top_grid or pos.y() > self.top_grid + PICK_ROWS * self.cell:
                     return None
-                col = int(x // self.cell)
-                if y < self.cell:
-                    return ("tab", col) if col < len(self.tabs) else None
-                y -= self.cell + self.win.px(6)
-                if y < 0 or col >= PICK_COLS:
-                    return None
-                i = int(y // self.cell) * PICK_COLS + col
-                items = self.items()
-                return ("emoji", items[i]) if 0 <= i < len(items) else None
+                gp = QtCore.QPointF(pos.x(), pos.y() - self.top_grid + self.scroll)
+                for rect, g in self.cells:
+                    if rect.contains(gp):
+                        return ("emoji", g)
+                return None
 
-            def mouseMoveEvent(self, event):              # noqa: N802
-                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+            # ------------------------------------------------------ input
+            def wheelEvent(self, event):                   # noqa: N802
+                dy = event.angleDelta().y()
+                self.scroll = max(0.0, min(self.scroll - dy / 120.0 * self.cell * 1.5,
+                                           self.max_scroll()))
+                where = (event.position() if hasattr(event, "position")
+                         else QtCore.QPointF(event.pos()))
+                self._rehover(where)
+                self.update()
+
+            def _rehover(self, pos):
                 h = self.hit(pos)
                 if h != self.hover:
                     self.hover = h
-                    self.update()
+                    if h is not None and h[0] == "emoji" and not hubmotion.enabled():
+                        self.levels = {h: 1.0}
+                    self._wake()
+
+            def mouseMoveEvent(self, event):              # noqa: N802
+                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                self._rehover(pos)
+                self.update()
+
+            def leaveEvent(self, event):                   # noqa: N802
+                self.hover = None
+                self._wake()
+
+            def hideEvent(self, event):                    # noqa: N802
+                emojiart.release()
+                super(EmojiPicker, self).hideEvent(event)
 
             def mousePressEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
@@ -1256,21 +1502,50 @@ def picker_class():
                 h = self.hit(pos)
                 if h is None:
                     return
-                if h[0] == "tab":
-                    self.tab = h[1]
-                    self.update()
-                    return
+                if h[0] == "tone":
+                    self.set_tone(h[1])
+                elif h[0] == "tab":
+                    if self.query:
+                        self.set_query("")
+                    self.scroll_to(h[1])
+                else:
+                    self.pick(h[1])
+
+            def pick(self, e):
                 self.close()
                 try:
-                    self.picked(h[1])
+                    self.picked(e)
                 except Exception:                            # noqa: BLE001
                     traceback.print_exc()
 
-            def pick(self, e):
-                """A test's click."""
-                self.close()
-                self.picked(e)
+            # ------------------------------------------------------ motion
+            def _wake(self):
+                if hubmotion.enabled() and not self.timer.isActive():
+                    self._last = time.monotonic()
+                    self.timer.start()
+                elif not hubmotion.enabled():
+                    self.levels = {self.hover: 1.0} if self.hover else {}
+                    self.update()
 
+            def _tick(self):
+                now = time.monotonic()
+                dt = (now - self._last) * 1000.0
+                self._last = now
+                keys = set(self.levels) | ({self.hover} if self.hover else set())
+                busy = False
+                for k in keys:
+                    goal = 1.0 if k == self.hover else 0.0
+                    v = look_approach(self.levels.get(k, 0.0), goal, dt, HOVER_MS)
+                    if v <= 0.0:
+                        self.levels.pop(k, None)
+                    else:
+                        self.levels[k] = v
+                    busy = busy or v != goal
+                self.update()
+                if not busy:
+                    self.timer.stop()
+
+            # ------------------------------------------------------ paint
             def paintEvent(self, event):                   # noqa: N802
                 p = QtGui.QPainter(self)
                 try:
@@ -1280,40 +1555,101 @@ def picker_class():
                 finally:
                     p.end()
 
+            def _glow(self, p, rect, lift):
+                """The Time Bar's hover glow: added accent light, brightest at the cell's
+                centre, never past the cell."""
+                p.save()
+                try:
+                    p.setClipRect(rect, QtCore.Qt.IntersectClip)
+                    grad = QtGui.QRadialGradient(rect.center(), rect.width() / 2.0)
+                    grad.setColorAt(0.0, _colour("accent", PICK_GLOW * lift))
+                    grad.setColorAt(1.0, _colour("accent", 0.0))
+                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(QtGui.QBrush(grad))
+                    p.drawRect(rect)
+                finally:
+                    p.restore()
+
+            def _active_tab(self):
+                if self.query:
+                    return None
+                active = "recent"
+                for key, top in sorted(self.tops.items(), key=lambda kv: kv[1]):
+                    if top <= self.scroll + 1:
+                        active = key
+                return active
+
             def _paint(self, p):
                 px = self.win.px
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
                 p.setPen(QtGui.QPen(_colour("line"), 1))
                 p.setBrush(_colour("panel"))
                 p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
                                   px(8), px(8))
-                p.setFont(self.font_)
-                c = self.cell
-                for i, tab in enumerate(self.tabs):
-                    r = QtCore.QRectF(self.pad + i * c, self.pad, c, c)
-                    if i == self.tab:
+                for rect, t in self._tone_rects():
+                    p.setPen(QtGui.QPen(_colour("accent") if t == self.tone else _colour("line"),
+                                        px(1.5) if t == self.tone else 1))
+                    p.setBrush(QtGui.QColor(PICK_TONES[t]))
+                    p.drawEllipse(rect)
+                active = self._active_tab()
+                for rect, key, glyph in self._tabs():
+                    if key == active:
                         p.setPen(QtCore.Qt.NoPen)
                         p.setBrush(_colour("card_active"))
-                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
+                        p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), px(6), px(6))
                         p.setPen(QtGui.QPen(_colour("accent"), 1.5))
-                        p.drawLine(QtCore.QPointF(r.left() + px(6), r.bottom() - 1),
-                                   QtCore.QPointF(r.right() - px(6), r.bottom() - 1))
-                    elif self.hover == ("tab", i):
+                        p.drawLine(QtCore.QPointF(rect.left() + px(6), rect.bottom() - 1),
+                                   QtCore.QPointF(rect.right() - px(6), rect.bottom() - 1))
+                    elif self.hover == ("tab", key):
                         p.setPen(QtCore.Qt.NoPen)
                         p.setBrush(_colour("hover"))
-                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
-                    p.setPen(_colour("text"))
-                    p.drawText(r, QtCore.Qt.AlignCenter, tab[1])
-                top = self.pad + c + px(6)
-                for i, e in enumerate(self.items()):
-                    r = QtCore.QRectF(self.pad + (i % PICK_COLS) * c,
-                                      top + (i // PICK_COLS) * c, c, c)
-                    if self.hover == ("emoji", e):
+                        p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), px(6), px(6))
+                    pm = emojiart.pixmap(glyph, px(20))
+                    if pm is not None:
+                        p.drawPixmap(rect.center() - QtCore.QPointF(px(10), px(10)), pm)
+                    else:
+                        p.setFont(self.font_)
+                        p.setPen(_colour("text"))
+                        p.drawText(rect, QtCore.Qt.AlignCenter, glyph)
+                grid = QtCore.QRectF(0, self.top_grid, self.width(), PICK_ROWS * self.cell)
+                p.save()
+                p.setClipRect(grid)
+                p.translate(0, self.top_grid - self.scroll)
+                title_font = _font(self.font(), px(9), True)
+                for key, title, glyphs in self.sections():
+                    top = self.tops[key]
+                    p.setFont(title_font)
+                    p.setPen(_colour("muted"))
+                    p.drawText(QtCore.QRectF(self.pad, top, self.width() - 2 * self.pad, self.head),
+                               QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, title.upper())
+                    if not glyphs and key == "found":
+                        p.drawText(QtCore.QRectF(self.pad, top + self.head,
+                                                 self.width() - 2 * self.pad, self.cell),
+                                   QtCore.Qt.AlignCenter, u"Ничего не нашлось")
+                lo, hi = self.scroll - self.cell, self.scroll + grid.height() + self.cell
+                side = px(24)
+                for rect, g in self.cells:
+                    if rect.bottom() < lo or rect.top() > hi:
+                        continue
+                    lift = self.levels.get(("emoji", g), 0.0)
+                    if lift > 0.0:
                         p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("hover"))
-                        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), px(6), px(6))
-                    p.setPen(_colour("text"))
-                    p.drawText(r, QtCore.Qt.AlignCenter, e)
+                        p.setBrush(_colour("hover", lift))
+                        p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), px(6), px(6))
+                        self._glow(p, rect, lift)
+                    k = 1.0 + (PICK_LIFT - 1.0) * lift
+                    s = side * k
+                    target = QtCore.QRectF(rect.center().x() - s / 2.0, rect.center().y() - s / 2.0, s, s)
+                    pm = emojiart.pixmap(g, int(round(side * PICK_LIFT)))
+                    if pm is not None:
+                        p.drawPixmap(target, pm, QtCore.QRectF(pm.rect()))
+                    else:
+                        p.setFont(self.font_)
+                        p.setPen(_colour("text"))
+                        p.drawText(rect, QtCore.Qt.AlignCenter, g)
+                p.restore()
 
         _CLASSES["picker"] = EmojiPicker
     return _CLASSES["picker"]
@@ -1729,6 +2065,11 @@ class ChatWindow(object):
         lay.addLayout(head)
 
         self.feed = feed_class()(self)
+        from . import emojiart
+        try:
+            self.feed.anim = emojiart.animated(self.session)
+        except Exception:                                    # noqa: BLE001
+            self.feed.anim = None
         self.feed_area = self._scroll(self.feed, "skeldarChatFeedArea")
         self.feed_area.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.feed_area.verticalScrollBar().rangeChanged.connect(self._range_changed)
@@ -2599,8 +2940,15 @@ class ChatWindow(object):
         font.setPixelSize(self.px(17))
         for e in _emoji.QUICK:
             b = q.QtWidgets.QToolButton(holder)
-            b.setText(e)
-            b.setFont(font)
+            from . import emojiart
+            pm = emojiart.pixmap(e, self.px(22))
+            if pm is not None:
+                b.setIcon(q.QtGui.QIcon(pm))
+                b.setIconSize(q.QtCore.QSize(self.px(22), self.px(22)))
+            else:
+                b.setText(e)
+                b.setFont(font)
+            b.setToolTip(e)
             b.setAutoRaise(True)
             b.setCursor(q.QtCore.Qt.PointingHandCursor)
             b.setFixedSize(self.px(30), self.px(30))
@@ -2648,13 +2996,26 @@ class ChatWindow(object):
             self.composer.setFocus()
 
         picker = picker_class()(self, picked)
+        picker.search.setStyleSheet(
+            "QLineEdit {{ background: {0}; border: 1px solid {1}; border-radius: {2}px;"
+            " color: {3}; padding: 0 {4}px; }}".format(
+                hubstyle.TOKENS["track"], hubstyle.TOKENS["track_edge"], self.px(5),
+                hubstyle.TOKENS["text"], self.px(6)))
+        w, h = picker.width(), picker.height()
         if at is None:
             if message is None:
                 corner = self.emoji_button.mapToGlobal(self.emoji_button.rect().topLeft())
-                at = (corner.x(), corner.y() - picker.height() - self.px(4))
+                area = _screen_area((corner.x(), corner.y()))
+                at = (corner.x(), corner.y() - h - self.px(4))
+                if area is not None and at[1] < area[1]:
+                    # no room above the button: below it
+                    at = (corner.x(), corner.y() + self.emoji_button.height() + self.px(4))
             else:
-                at = _cursor()
+                at = _cursor() or (0, 0)
+        area = _screen_area((int(at[0]), int(at[1])))
+        at = clamp_into(int(at[0]), int(at[1]), w, h, area)
         picker.move(int(at[0]), int(at[1]))
+        picker.search.setFocus()
         picker.show()
         self._picker = picker
         return picker
@@ -2980,6 +3341,9 @@ class ChatWindow(object):
                 widget.update()
             self.list.update()
             self.feed.update()
+        anim = self.feed.anim
+        if anim is not None and anim.take_changed():
+            self.feed.update()
         try:
             from . import thumbs
             held = thumbs.cache(self.session)
@@ -3206,6 +3570,33 @@ def _screens():
 def _on(screen, point):
     return screen[0] <= point[0] < screen[0] + screen[2] and \
         screen[1] <= point[1] < screen[1] + screen[3]
+
+
+def clamp_into(x, y, w, h, area):
+    """(x, y) moved so a w x h box lies inside area (x, y, w, h); a box larger than the
+    area keeps its top-left on the area's. None: unchanged."""
+    if area is None:
+        return (x, y)
+    ax, ay, aw, ah = area
+    x = max(ax, min(x, ax + aw - w))
+    y = max(ay, min(y, ay + ah - h))
+    return (x, y)
+
+
+def _screen_area(point):
+    """(x, y, w, h) of the available geometry of the screen holding `point`, else the
+    primary screen's; None without a screen."""
+    try:
+        q = _q()
+        app = q.QtGui.QGuiApplication
+        screen = app.screenAt(q.QtCore.QPoint(int(point[0]), int(point[1]))) \
+            or app.primaryScreen()
+        if screen is None:
+            return None
+        g = screen.availableGeometry()
+        return (g.x(), g.y(), g.width(), g.height())
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def _cursor():

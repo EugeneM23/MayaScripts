@@ -13502,6 +13502,34 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
   - Proof: `verify_chat_server.py all` **0 of 108 on production** (phase `person`); 16 unit tests
     `tests/test_chat_profile.py`, 227 chat tests (the known `Keys` failing). Not seen in a GUI Maya.
 
+## Chat: the whole emoji set in Fluent 3D, animated when sent alone (2026-10-22)
+
+The animator: «добавить больше разных смайликов и эмодзи (найди где-то библеотеки)» (calls next,
+in a spec of their own). Mockup https://claude.ai/artifact/BTa4Lm5xuZvu1QBQri1zyh, chosen D. Spec
+`docs/superpowers/specs/2026-10-22-chat-emoji-fluent-design.md`, plan beside it.
+- **Shipped** `SkeldarAnim/assets/emoji/` (~6 MB): 8 sheets (96 px WebP, 64 columns) of Microsoft's
+  Fluent Emoji 3D (MIT, commit 1ffb34c) - 1,587 base and 1,550 toned pictures - `emoji.json`
+  (emojibase 18.0.0's names, keywords ru + en, groups, skin tones; `anim` is Noto's codepoint string,
+  591 records have one), `LICENSE.txt` (Fluent and emojibase MIT, Noto CC BY 4.0). Built by
+  `docs/superpowers/plans/make_emoji_sheets.py`; `--check` compares with a fresh build. Flags and the
+  component group are left out.
+- `maya_chat/emoji.py` (stdlib): `index()`, `tokens(text)` (longest known emoji, sequences whole,
+  a lone symbol without VS16 stays text), `search` (every query word starts a name or keyword
+  word, ru or en), `toned`, `count`/`only_emoji`/`is_emoji` on tokens.
+- `maya_chat/emojiart.py` (Qt): pictures cut from the sheets, `rich`/`register` for the bubbles'
+  QTextDocuments, `draw_line` for list previews, quotes and toasts, `Animated` - Noto's 512 px webp
+  fetched once into `<store>/emoji_anim/` (a corrupt cached one is deleted and fetched once more),
+  frames decoded at the drawn size on a thread, the last 24 kept.
+- **The feed**: emoji in text are pictures (`W.PILL_EMOJI` 16 in pills); 1-3 alone are 64 px
+  pictures (`Box.bigs`, `W.BIG_EMOJI`). An animated one plays once the first time it is painted and
+  again under the mouse, each play capped at `PLAY_CAP_MS` 5000 and the plays cleared on a chat
+  change; Interface animations off - none.
+- **The picker**: a search field (Esc clears then closes, Enter picks the first), six skin tones
+  (`skeldarChatEmojiTone`), tabs Recent + 8 groups over one scrolling painted grid, the hovered
+  cell lifts 10 % with an accent glow, kept on screen.
+- Proof: `docs/superpowers/plans/render_chat_emoji.py` -> `chat_emoji.png` (offscreen, 150 %).
+- Not built: flags, pictures in the composer, `:name` autocomplete, stickers.
+
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 
 The animator: «Сейчас наши анимационные слои некорректно работают с scene time warp давай

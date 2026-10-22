@@ -770,3 +770,258 @@ class Files(Base):
         self.assertEqual(done[0], ("library", {"kind": "library", "folder": "Fights", "text": "в библиотеку · Fights"}))
         self.assertEqual(done[1][1]["kind"], "character")
         self.assertEqual(done[1][1]["root"], "|root")
+
+
+class EmojiPictures(Base):
+    @staticmethod
+    def _paint(widget):
+        """Run paintEvent even when the window is not exposed offscreen."""
+        img = QtGui.QImage(max(1, widget.width()), max(1, widget.height()),
+                           QtGui.QImage.Format_ARGB32)
+        widget.render(img)
+
+    def setUp(self):
+        Base.setUp(self)
+        self.win.open_chat("dm")
+
+    def _send_in(self, text, mid="e1", seq=50):
+        self.ses.state.messages["dm"].append(msg(mid, seq, text=text))
+        self.win.refresh()
+        return next(b for b in self.win.feed.boxes
+                    if b.item.kind == "msg" and b.item.message.get("id") == mid)
+
+    def test_text_with_emoji_has_its_picture_in_the_document(self):
+        box = self._send_in("огонь 🔥")
+        self.assertIsNotNone(box.doc)
+        res = box.doc.resource(QtGui.QTextDocument.ImageResource, QtCore.QUrl("emoji:1f525"))
+        self.assertIsNotNone(res)
+
+    def test_emoji_alone_are_big_pictures(self):
+        box = self._send_in("🔥😂")
+        self.assertIsNone(box.doc)
+        self.assertEqual([g for _r, g in box.bigs], ["🔥", "😂"])
+        side = box.bigs[0][0].width()
+        self.assertAlmostEqual(side, self.win.px(W.BIG_EMOJI), delta=1)
+        found, where = self.win.feed.box_at(box.bigs[1][0].center())
+        self.assertEqual(where, "big:😂")
+
+    def test_an_animated_big_emoji_plays_once_then_on_hover(self):
+        box = self._send_in("😂")
+        feed = self.win.feed
+        frames = [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
+
+        class FakeAnim(object):
+            def frames(self, cp, px):
+                return frames
+
+            def take_changed(self):
+                return False
+        feed.anim = FakeAnim()
+        with mock.patch.object(hubmotion, "enabled", return_value=True):
+            self._paint(feed)
+            key = (box.item.key(), "😂", "big")
+            self.assertIn(key, feed.plays)
+            self.assertIn(key, feed.played)
+            feed.plays.clear()
+            self._paint(feed)
+            self.assertNotIn(key, feed.plays)            # once only
+            ev = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, box.bigs[0][0].center(),
+                                   box.bigs[0][0].center(), QtCore.Qt.NoButton,
+                                   QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
+            feed.mouseMoveEvent(ev)
+            self.assertIn(key, feed.plays)               # the mouse plays it again
+
+    def test_no_animation_when_animations_are_off(self):
+        box = self._send_in("😂")
+        feed = self.win.feed
+
+        class FakeAnim(object):
+            def frames(self, cp, px):
+                return [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
+
+            def take_changed(self):
+                return False
+        feed.anim = FakeAnim()
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._paint(feed)
+        self.assertFalse(feed.plays)
+
+    def test_a_play_never_painted_again_is_dropped_past_the_cap(self):
+        feed = self.win.feed
+        for store in (feed.entering, feed.flashing, feed.pill_pops):
+            store.clear()
+        feed.folding = []
+        feed.playing = None
+        key = (("gone", "x"), "😂", "big")                 # its box is never painted again
+        feed.plays[key] = W._now_ms() - W.PLAY_CAP_MS - 1
+        busy = feed.tick(16)
+        self.assertNotIn(key, feed.plays)
+        self.assertFalse(busy)
+
+    def test_another_chat_drops_the_plays(self):
+        feed = self.win.feed
+        feed.plays[(("dm", "m1"), "😂", "big")] = W._now_ms()
+        self.win.open_chat("dm2")
+        self.assertFalse(feed.plays)
+
+    def test_a_pill_is_a_picture_and_a_count(self):
+        self.ses.state.messages["dm"][0]["reactions"] = {"🔥": ["bob"]}
+        self.win.refresh()
+        box = next(b for b in self.win.feed.boxes if b.pills)
+        rect, e, n, mine = box.pills[0]
+        self.assertEqual((e, n, mine), ("🔥", 1, False))
+        self.assertLess(rect.width(), self.win.px(70))
+
+
+class Picker(Base):
+    def setUp(self):
+        Base.setUp(self)
+        W._VARS.pop("skeldarChatEmojiTone", None)
+        self.win.open_chat("dm")
+        self.picker = self.win.pick_emoji()
+
+    def tearDown(self):
+        self.picker.close()
+        Base.tearDown(self)
+
+    def test_recent_then_the_eight_groups(self):
+        keys = [k for k, _t, _items in self.picker.sections()]
+        self.assertEqual(keys, ["recent", "smileys", "people", "animals", "food", "travel",
+                                "activities", "objects", "symbols"])
+        self.assertGreater(len(self.picker.items()), 1300)
+
+    def test_search_in_russian(self):
+        self.picker.search.setText("кот")
+        self.assertEqual([k for k, _t, _i in self.picker.sections()], ["found"])
+        self.assertIn("\U0001F431", self.picker.items())
+
+    def test_nothing_found(self):
+        self.picker.set_query("zzzzqq")
+        self.assertEqual(self.picker.items(), [])
+
+    def test_enter_picks_the_first_result(self):
+        self.picker.set_query("огонь")
+        first = self.picker.items()[0]
+        enter = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return,
+                                QtCore.Qt.NoModifier)
+        self.picker.search.keyPressEvent(enter)
+        self.assertEqual(self.win.composer.toPlainText(), first)
+
+    def test_esc_clears_then_closes(self):
+        self.picker.set_query("кот")
+        esc = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Escape, QtCore.Qt.NoModifier)
+        self.picker.search.keyPressEvent(esc)
+        self.assertEqual(self.picker.search.text(), "")
+        self.assertTrue(self.picker.isVisible())
+        self.picker.search.keyPressEvent(esc)
+        self.assertFalse(self.picker.isVisible())
+
+    def test_a_tone_is_applied_and_remembered(self):
+        self.picker.set_tone(3)
+        self.assertIn("\U0001F44D\U0001F3FD", self.picker.items())
+        self.assertEqual(int(W.get_var("skeldarChatEmojiTone")), 3)
+        again = self.win.pick_emoji()
+        self.assertIn("\U0001F44D\U0001F3FD", again.items())
+        again.close()
+
+    def test_a_toned_pick_goes_into_the_composer_and_recent(self):
+        self.picker.set_tone(5)
+        self.picker.pick("\U0001F44D\U0001F3FF")
+        self.assertEqual(self.win.composer.toPlainText(), "\U0001F44D\U0001F3FF")
+        self.assertIn("\U0001F44D\U0001F3FF", W.get_var("skeldarChatEmojiRecent"))
+
+    def test_a_tab_scrolls_to_its_group(self):
+        self.picker.scroll_to("food")
+        self.assertGreater(self.picker.scroll, 0)
+        top = self.picker.section_top("food")
+        self.assertAlmostEqual(self.picker.scroll, min(top, self.picker.max_scroll()), delta=1)
+
+    # ---- fix round 1: the glow, the screen, the lit tab
+    def _cell_in_widget(self, i=0):
+        rect, g = self.picker.cells[i]
+        return QtCore.QRectF(rect.x(), rect.y() + self.picker.top_grid - self.picker.scroll,
+                             rect.width(), rect.height()), g
+
+    def _render(self):
+        img = QtGui.QImage(self.picker.size(), QtGui.QImage.Format_ARGB32)
+        img.fill(QtGui.QColor(0, 0, 0))
+        self.picker.render(img)
+        return img
+
+    @staticmethod
+    def _mean(img, rect):
+        r = g = b = n = 0
+        for x in range(int(rect.left()) + 1, int(rect.right()) - 1):
+            for y in range(int(rect.top()) + 1, int(rect.bottom()) - 1):
+                c = img.pixelColor(x, y)
+                r, g, b, n = r + c.red(), g + c.green(), b + c.blue(), n + 1
+        return r / float(n), g / float(n), b / float(n)
+
+    def _hover(self, rect):
+        pos = QtCore.QPointF(rect.center())
+        move = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, pos, pos, QtCore.Qt.NoButton,
+                                 QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
+        self.picker.mouseMoveEvent(move)
+
+    def test_the_hovered_cell_glows(self):
+        rect, g = self._cell_in_widget(0)
+        cold = self._mean(self._render(), rect)
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._hover(rect)
+        self.assertEqual(self.picker.levels.get(("emoji", g)), 1.0)
+        lit = self._mean(self._render(), rect)
+        with mock.patch.object(self.picker, "_glow"):
+            plain = self._mean(self._render(), rect)
+        self.assertGreater(sum(lit), sum(cold) + 10)
+        self.assertGreater(lit[0], plain[0] + 3)          # the accent's warm light
+        self.assertGreater(lit[0] - lit[2], plain[0] - plain[2])
+
+    def test_the_glow_stays_inside_its_cell(self):
+        rect, g = self._cell_in_widget(0)
+        right, _g = self._cell_in_widget(1)
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._hover(rect)
+        lit = self._mean(self._render(), right)
+        with mock.patch.object(self.picker, "_glow"):
+            plain = self._mean(self._render(), right)
+        self.assertAlmostEqual(sum(lit), sum(plain), delta=0.5)
+
+    def test_the_picker_stays_inside_a_small_screen(self):
+        self.picker.close()
+        area = (100, 100, 500, 420)
+        with mock.patch.object(W, "_screen_area", return_value=area):
+            for at in ((560, 480), (90, 90), (0, 5000)):
+                p = self.win.pick_emoji(at=at)
+                g = p.geometry()
+                self.assertGreaterEqual(g.left(), 100)
+                self.assertGreaterEqual(g.top(), 100)
+                self.assertLessEqual(g.left() + g.width(), 600)
+                self.assertLessEqual(g.top() + g.height(), 520)
+                p.close()
+            with mock.patch.object(W, "_cursor", return_value=(590, 510)):
+                p = self.win.pick_emoji(message={"id": "m"})
+                g = p.geometry()
+                self.assertLessEqual(g.left() + g.width(), 600)
+                self.assertLessEqual(g.top() + g.height(), 520)
+                p.close()
+        self.picker = self.win.pick_emoji()
+
+    def test_below_the_button_when_there_is_no_room_above(self):
+        self.picker.close()
+        btn = self.win.emoji_button
+        corner = btn.mapToGlobal(btn.rect().topLeft())
+        area = (corner.x() - 500, corner.y() - 50, 3000, 3000)
+        with mock.patch.object(W, "_screen_area", return_value=area):
+            self.picker = self.win.pick_emoji()
+        self.assertGreaterEqual(self.picker.y(), corner.y() + btn.height())
+
+    def test_recent_is_lit_at_the_top_and_food_after_its_tab(self):
+        self.assertEqual(self.picker._active_tab(), "recent")
+        self.picker.scroll_to("food")
+        self.assertEqual(self.picker._active_tab(), "food")
+
+    def test_recent_is_lit_at_the_top_even_when_empty(self):
+        self.picker.close()
+        with mock.patch("maya_chat.emoji.recent", return_value=[]):
+            self.picker = self.win.pick_emoji()
+            self.assertEqual(self.picker._active_tab(), "recent")
