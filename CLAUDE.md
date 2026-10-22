@@ -13353,6 +13353,15 @@ The animator: «Давай сделем так что бы у нас было в
   the relation, presence, a stranger's presence heard), `verify_chat_client.py` **19/19**; 129
   chat unit tests (People, Toasts: placement, stacking, replace, stay, click, ink). **Not seen in a
   GUI Maya.**
+- **The card flies in** (2026-10-22, «красиво прилетало в левый угол через весь экран с правой
+  стороны»): a new card starts at the area's right edge and flies to its place (`look.toast_fly`:
+  ease-out quint along, a sine swoop up `TOAST_FLY_LIFT` 46 and down, `TOAST_FLY_MS` 760, faded in over
+  its first 12 %); the window is `TOAST_TRAIL_MAX` wider while it flies and paints an added-light
+  accent streak behind the card (`toast_trail`: the way covered in the last 34 ms); mouse-deaf in
+  flight, the stay starts on landing, the ring flashes at `TOAST_LAND` 0.82. The card's own width is
+  `cw` (paint, cross, buttons); `base` is its place, the flight an offset over it. A replaced card,
+  animations off: no flight. Tests `Toasts` (flight, streak), `test_the_flight_comes_from_the_right...`;
+  filmstrip `docs/superpowers/plans/chat_toast_flight.png`. Not seen in a GUI Maya.
 
 ## Chat: everybody without friends, emoji and reactions, avatars, a message chime (2026-10-20)
 

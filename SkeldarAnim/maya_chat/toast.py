@@ -3,7 +3,8 @@ just above the Time Bar (2026-10-20, «При свернутом окне чат
 активном окне маи с левой части экрана над таймслайдером»).
 
 Each card is a frameless Qt.Tool window owned by Maya's main window that never takes the focus.
-It unrolls out of its left edge with the accent ring flashing, stays TOAST_STAY_MS (held while the
+It flies in from the area's right edge across the viewport on a low swoop, an accent streak
+trailing it while it is fast (2026-10-22), lands with the accent ring flashing, stays TOAST_STAY_MS (held while the
 mouse is over it), and fades to the left. A click opens the chat on that conversation; the cross
 dismisses. A newer card comes in at the bottom and the older ones move up; a second message of
 the same chat replaces its card. One 16 ms timer for every card, stopped at rest. With ⋮ ->
@@ -118,8 +119,14 @@ def card_class():
             self.place_from = None
             self.place_at = None
             self.place_to = None
+            self.base = None                     # where the card stands, the flight aside
+            self.fly_at = None
+            self.fly_distance = 0.0
+            self.fly_alpha = 1.0
+            self.trail = 0.0
             self.set_text(user, head, text, fresh=False)
-            self.resize(int(look.TOAST_W * self.scale), int(look.TOAST_H * self.scale))
+            self.cw = int(look.TOAST_W * self.scale)
+            self.resize(self.cw, int(look.TOAST_H * self.scale))
 
         def px(self, n):
             return n * self.scale
@@ -136,13 +143,13 @@ def card_class():
 
         def cross_rect(self):
             s = self.px(14)
-            return QtCore.QRectF(self.width() - self.px(8) - s, self.px(7), s, s)
+            return QtCore.QRectF(self.cw - self.px(8) - s, self.px(7), s, s)
 
         # ------------------------------------------------------------ time
         def tick(self, now):
             dt = now - self.last
             self.last = now
-            if self.leaving is None and not self.hover:
+            if self.leaving is None and not self.hover and self.fly_at is None:
                 self.stay_left -= dt
                 if self.stay_left <= 0:
                     self.leave()
@@ -150,14 +157,52 @@ def card_class():
                 u = min(1.0, (now - self.place_at) / float(look.TOAST_MOVE_MS))
                 k = look.ease_out(u, 3)
                 (x0, y0), (x1, y1) = self.place_from, self.place_to
-                self.move(int(x0 + (x1 - x0) * k), int(y0 + (y1 - y0) * k))
+                self.base = (int(x0 + (x1 - x0) * k), int(y0 + (y1 - y0) * k))
                 if u >= 1.0:
                     self.place_to = None
+            self._stand(now)
             self.update()
             return self.moving(now)
 
+        # ------------------------------------------------------------ the flight in
+        def fly_from(self, start_x):
+            """Fly in from a global x on the right to where the card stands."""
+            if self.base is None:
+                self.base = (self.x(), self.y())
+            self.fly_distance = max(0.0, float(start_x - self.base[0]))
+            if self.fly_distance <= 0.0:
+                return
+            self.fly_at = _now()
+            self.born = self.fly_at - look.TOAST_IN_MS        # whole from the start: no unroll
+            self.flash_at = self.fly_at + look.TOAST_FLY_MS * look.TOAST_LAND
+            self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+            self.resize(self.cw + int(look.TOAST_TRAIL_MAX * self.scale), self.height())
+            self._stand(self.fly_at)
+
+        def flying(self):
+            return self.fly_at is not None
+
+        def _stand(self, now):
+            if self.base is None:
+                return
+            x, y = self.base
+            if self.fly_at is not None:
+                dx, dy, self.fly_alpha, speed = look.toast_fly(
+                    now - self.fly_at, self.fly_distance, look.TOAST_FLY_LIFT * self.scale)
+                self.trail = look.toast_trail(speed, self.scale)
+                if now - self.fly_at >= look.TOAST_FLY_MS:
+                    self.fly_at = None
+                    self.fly_alpha, self.trail = 1.0, 0.0
+                    self.resize(self.cw, self.height())
+                    if self.leaving is None:
+                        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
+                else:
+                    x, y = int(x + dx), int(y + dy)
+            if (x, y) != (self.x(), self.y()):
+                self.move(x, y)
+
         def moving(self, now):
-            if self.leaving is not None or self.place_to is not None:
+            if self.leaving is not None or self.place_to is not None or self.fly_at is not None:
                 return True
             if now - self.born < look.TOAST_IN_MS or now - self.flash_at < look.TOAST_FLASH_MS:
                 return True
@@ -175,11 +220,14 @@ def card_class():
         def go_to(self, x, y, animate=True):
             if not animate or not self.isVisible():
                 self.place_to = None
-                self.move(x, y)
+                self.base = (x, y)
+                self._stand(_now())
                 return
-            if (x, y) == (self.x(), self.y()):
+            if self.base is None:
+                self.base = (self.x(), self.y())
+            if (x, y) == self.base:
                 return
-            self.place_from = (self.x(), self.y())
+            self.place_from = self.base
             self.place_to = (x, y)
             self.place_at = _now()
 
@@ -217,22 +265,47 @@ def card_class():
             leaving = None if self.leaving is None else now - self.leaving
             reveal, opacity, _flash, slide = look.toast_look(age, leaving)
             flash = 0.0
-            if _animations():
+            if _animations() and now >= self.flash_at:
                 flash = max(0.0, 1.0 - (now - self.flash_at) / float(look.TOAST_FLASH_MS)) ** 1.5
+            opacity *= self.fly_alpha
             if opacity <= 0.0:
                 return
             p = QtGui.QPainter(self)
             try:
+                if self.trail > 0.5:
+                    self._paint_trail(p, opacity)
                 self._paint(p, reveal, opacity, flash, slide)
             finally:
                 p.end()
+
+        def _paint_trail(self, p, opacity):
+            """The streak behind a flying card: added accent light from its right edge out."""
+            from . import window as W
+            pad = self.px(3)
+            x0 = self.cw - pad - self.px(10)
+            h = self.height() - 2 * pad
+            mid = pad + h / 2.0
+            p.save()
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+            p.setPen(QtCore.Qt.NoPen)
+            for share, alpha, length in ((0.78, 0.22, 1.0), (0.34, 0.38, 0.8), (0.08, 0.75, 0.62)):
+                band = h * share
+                end = x0 + self.trail * length
+                grad = QtGui.QLinearGradient(x0, 0, end, 0)
+                grad.setColorAt(0.0, W._colour("accent", alpha * opacity))
+                grad.setColorAt(1.0, W._colour("accent", 0.0))
+                p.setBrush(QtGui.QBrush(grad))
+                p.drawRoundedRect(QtCore.QRectF(x0, mid - band / 2.0, end - x0, band),
+                                  band / 2.0, band / 2.0)
+            p.restore()
 
         def _paint(self, p, reveal, opacity, flash, slide):
             from . import window as W
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setOpacity(opacity)
             pad = self.px(3)
-            full = QtCore.QRectF(pad - slide, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+            full = QtCore.QRectF(pad - slide, pad, self.cw - 2 * pad, self.height() - 2 * pad)
             card = QtCore.QRectF(full.x(), full.y(), max(self.px(12), full.width() * reveal),
                                  full.height())
             radius = self.px(8)
@@ -311,7 +384,8 @@ def call_card_class():
             self.level = {name: 0.0 for name, _t in BUTTONS}
             self.over = None
             self.setObjectName(CALL_NAME)
-            self.resize(int(look.TOAST_W * self.scale), int(CALL_H * self.scale))
+            self.cw = int(look.TOAST_W * self.scale)
+            self.resize(self.cw, int(CALL_H * self.scale))
 
         def set_call(self, call_view, user, head):
             self.kind = call_view.get("kind")
@@ -332,7 +406,7 @@ def call_card_class():
             return super(CallCard, self).tick(now)
 
         def moving(self, now):
-            if self.leaving is not None or self.place_to is not None:
+            if self.leaving is not None or self.place_to is not None or self.fly_at is not None:
                 return True
             if now - self.born < look.TOAST_IN_MS or now - self.flash_at < look.TOAST_FLASH_MS:
                 return True
@@ -343,7 +417,7 @@ def call_card_class():
             gap, pad = self.px(6), self.px(13)
             top = self.height() - self.px(3) - self.px(34) + self.px(2)
             h = self.px(26)
-            width = (self.width() - 2 * pad - 2 * gap) / 3.0
+            width = (self.cw - 2 * pad - 2 * gap) / 3.0
             return {name: QtCore.QRectF(pad + i * (width + gap), top, width, h)
                     for i, (name, _t) in enumerate(BUTTONS)}
 
@@ -389,7 +463,7 @@ def call_card_class():
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setOpacity(opacity)
             pad = self.px(3)
-            full = QtCore.QRectF(pad - slide, pad, self.width() - 2 * pad, self.height() - 2 * pad)
+            full = QtCore.QRectF(pad - slide, pad, self.cw - 2 * pad, self.height() - 2 * pad)
             card = QtCore.QRectF(full.x(), full.y(), max(self.px(12), full.width() * reveal),
                                  full.height())
             radius = self.px(8)
@@ -495,6 +569,12 @@ def _layout(animate=True):
         bottom -= look.TOAST_GAP * scale
 
 
+def _fly_in(card):
+    """A new card starts at the area's right edge and flies across to its place."""
+    (x, _y, w, _h), _o = area()
+    card.fly_from(x + w)
+
+
 def _wake():
     st = _state()
     q = _q()
@@ -543,6 +623,8 @@ def show(chat_id, user, head, text):
     if not _animations():
         card.born = _now() - 1e9
         card.flash_at = card.born
+    else:
+        _fly_in(card)
     card.show()
     card.raise_()
     _layout(animate=False)
@@ -572,6 +654,8 @@ def show_call(call_view, user, head):
     if not _animations():
         card.born = _now() - 1e9
         card.flash_at = card.born
+    else:
+        _fly_in(card)
     card.show()
     card.raise_()
     _layout(animate=False)

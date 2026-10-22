@@ -239,6 +239,19 @@ class Toast(unittest.TestCase):
         self.assertEqual(opacity, 0.0)
         self.assertGreater(slide, 0)
 
+    def test_the_flight_comes_from_the_right_and_slows_into_place(self):
+        dx0, dy0, a0, v0 = look.toast_fly(0, 2000, 46)
+        self.assertEqual((dx0, dy0, a0), (2000.0, 0.0, 0.0))
+        dx1, dy1, a1, v1 = look.toast_fly(look.TOAST_FLY_MS / 2.0, 2000, 46)
+        self.assertLess(dx1, 200)
+        self.assertLess(dy1, 0)
+        self.assertLess(v1, v0)
+        dx2, dy2, a2, v2 = look.toast_fly(look.TOAST_FLY_MS, 2000, 46)
+        self.assertAlmostEqual(dx2, 0.0)
+        self.assertAlmostEqual(dy2, 0.0, places=6)
+        self.assertEqual((a2, v2), (1.0, 0.0))
+        self.assertEqual(look.toast_trail(v0, 1.0), look.TOAST_TRAIL_MAX)
+
     def test_long_text_is_cut(self):
         self.assertTrue(look.toast_text("a " * 200).endswith("…"))
         self.assertEqual(look.toast_text("a\n b"), "a b")

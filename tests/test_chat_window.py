@@ -456,12 +456,19 @@ class Toasts(unittest.TestCase):
         cards = [self.toast.show("c%d" % i, BOB, "Bob", "m") for i in range(4)]
         live = self.toast.cards()
         self.assertEqual(live, cards[1:])
+        for card in live:
+            self._land(card)
         self.toast._layout(animate=False)
         self.assertLess(cards[2].y(), cards[3].y())
         self.assertEqual(cards[2].x(), cards[3].x())
 
+    def _land(self, card):
+        card.fly_at -= look.TOAST_FLY_MS + 1
+        self.toast._tick()
+
     def test_it_stands_at_the_bottom_left_of_its_area(self):
         card = self.toast.show("dm", BOB, "Bob", "hi")
+        self._land(card)
         self.toast._layout(animate=False)
         (x, y, w, h), _o = self.toast.area()
         margin = look.TOAST_MARGIN * card.scale
@@ -480,6 +487,7 @@ class Toasts(unittest.TestCase):
 
     def test_it_goes_by_itself_after_its_stay(self):
         card = self.toast.show("dm", BOB, "Bob", "hi")
+        self._land(card)
         card.stay_left = 0
         card.last -= 20
         self.toast._tick()
@@ -490,6 +498,7 @@ class Toasts(unittest.TestCase):
 
     def test_the_card_paints_ink(self):
         card = self.toast.show("dm", BOB, "Bob", "hi there")
+        self._land(card)
         card.born -= 10000
         card.flash_at -= 10000
         image = QtGui.QImage(card.size(), QtGui.QImage.Format_ARGB32)
@@ -498,6 +507,38 @@ class Toasts(unittest.TestCase):
         inked = sum(1 for x in range(0, image.width(), 3) for y in range(0, image.height(), 3)
                     if image.pixelColor(x, y).alpha() > 0)
         self.assertGreater(inked, 100)
+
+    def test_a_new_card_flies_in_from_the_right_and_lands_whole(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi")
+        self.assertTrue(card.flying())
+        (x, y, w, h), _o = self.toast.area()
+        target = card.base
+        self.assertGreater(card.x(), target[0] + w * 0.5)       # far to the right at first
+        self.assertGreater(card.width(), card.cw)               # room for the streak
+        self.assertTrue(card.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+        card.fly_at -= look.TOAST_FLY_MS * 0.5
+        self.toast._tick()
+        self.assertGreater(card.x(), target[0])
+        self.assertLess(card.y(), target[1])                    # the swoop rises
+        self.assertGreater(card.trail, 0)
+        before = card.stay_left
+        self._land(card)
+        self.assertFalse(card.flying())
+        self.assertEqual((card.x(), card.y()), tuple(target))
+        self.assertEqual(card.width(), card.cw)
+        self.assertFalse(card.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+        self.assertGreaterEqual(before, look.TOAST_STAY_MS)      # the stay starts on landing
+
+    def test_a_flying_card_paints_its_streak(self):
+        card = self.toast.show("dm", BOB, "Bob", "hi")
+        card.fly_at -= look.TOAST_FLY_MS * 0.15
+        self.toast._tick()
+        image = QtGui.QImage(card.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        card.render(image)
+        y = card.height() // 2
+        behind = [image.pixelColor(x, y).alpha() for x in range(card.cw + 4, card.width(), 4)]
+        self.assertGreater(max(behind), 0)
 
     def test_opening_its_chat_takes_its_card_away(self):
         self.toast.show("dm", BOB, "Bob", "hi")
