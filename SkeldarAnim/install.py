@@ -143,6 +143,8 @@ _PAYLOAD = (
     "maya_camradial.py",        # Space: the camera menu in place of the hotbox (2026-10-20)
     "maya_camflight.py",        # Space's switch flies between cameras (2026-10-21)
     "maya_camflight_rules.py",
+    "maya_panezoom.py",         # Space's tap flies a view in and out of the four (2026-10-22)
+    "maya_panezoom_rules.py",
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)

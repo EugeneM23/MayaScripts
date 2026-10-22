@@ -11308,6 +11308,29 @@ recommendation: ortho views flattened into smoothly, the flight orbits what is l
   standalone** (Manny_Rig and Creep_Rig with Camera Setup, the panels stood in for). Not seen in a GUI
   Maya.
 
+**…and the tap flies the view in and out** (2026-10-22, «переход резкий ... эффект влета в окно и
+вылета из него»; of a picture over the viewport (A) and live panes resized frame by frame (B) they
+chose A). `SkeldarAnim/maya_panezoom.py` + `maya_panezoom_rules.py` (stdlib, pinned), payload rows;
+`maya_camradial.tap` calls `maya_panezoom.tap(panel)`.
+- **The pictures**: the main pane from DWM's copy of Maya's main window (`winstyle.capture`,
+  PrintWindow - our own top-level windows are not in it) cropped to `$gMainPane`; a viewport whose
+  part of it is one flat colour (DWM gave no 3D there) gets its own `M3dView.readColorBuffer`
+  (API 2, flipped: MImage starts at the lower left), painted into its widget's rect.
+- **The press**: the before picture taken; a frameless mouse-deaf `Qt.Tool` overlay
+  (`skeldarPaneZoom`, owned by Maya's window, over the pane) shows it still; our other `skeldar*`
+  top-levels raised above it; Maya's own `doSwitchPanes` (the old MEL) runs under it; `refresh -f`;
+  the after picture taken.
+- **IN** (four -> one, `MOVE_MS` 340): the panel under the cursor flies from its quarter to its new
+  rect while the other three darken (`DIM` 0.62). **OUT** (one -> four, 300): the whole view shrinks
+  into its quarter while the new layout brightens in. Ease-out quint; an accent ring and glow ride the
+  moving panel, added light, fading as it lands; then the overlay fades onto the live view over
+  `FADE_MS` 90. A panel not found after the switch: the old picture fades.
+- Instant (the plain switch) with Interface animations off, without Qt, or on any failure, and never
+  a second switch after one ran (`_state()["switched"]`). A second tap ends a standing flight first.
+- Proof: `tests/test_panezoom.py` (rules, the overlay painted offscreen, the fallbacks);
+  `render_pane_zoom.py` -> `pane_zoom.png`. **Not seen in a GUI Maya**: whether DWM's copy holds the
+  VP2 viewports, the colour buffer's orientation, the overlay's place across monitors.
+
 ## Scene tabs: several scenes in one Maya, switched like browser tabs (2026-10-15)
 
 The animator: «Возможно ли в maya сделать вкладки как в браузере что бы открывать разные сцены а не запускать
