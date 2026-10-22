@@ -12,8 +12,10 @@ TRAILING = ".,;:!?)]}'\""
 # Events that carry a global seq, and the ones that never do.
 SEQ_KINDS = ("message", "edited", "deleted", "read", "chat", "member_added", "member_removed",
              "friend_request", "request_sent", "friend_added", "friend_removed",
-             "request_cancelled", "user", "user_gone", "reaction")
-LIVE_KINDS = ("typing", "presence", "ack", "error", "resync", "caught_up")
+             "request_cancelled", "user", "user_gone", "reaction", "call")
+LIVE_KINDS = ("typing", "presence", "ack", "error", "resync", "caught_up", "call_signal")
+CALL_STATES = ("ringing", "live", "ended")
+CALL_KINDS = ("audio", "video")
 
 
 class Bad(ValueError):
@@ -121,6 +123,40 @@ def file(value):
     return out
 
 
+def _uids(value):
+    if not isinstance(value, list) or not all(isinstance(u, str) and u for u in value):
+        raise Bad("a list of user ids")
+    return list(value)
+
+
+def call(d):
+    """A call's view: {id, chat, by, kind, cid, state, members, declined, started_at, answered_at,
+    ended_at}. Raises Bad."""
+    d = _dict(d)
+    state, kind = d.get("state"), d.get("kind")
+    if state not in CALL_STATES or kind not in CALL_KINDS:
+        raise Bad("call state or kind")
+    return {"id": _str(d, "id", False), "chat": _str(d, "chat", False), "by": _str(d, "by", False),
+            "kind": kind, "cid": d.get("cid") if isinstance(d.get("cid"), str) else "",
+            "state": state, "members": _uids(d.get("members")),
+            "declined": _uids(d.get("declined") or []), "started_at": _int(d, "started_at"),
+            "answered_at": d["answered_at"] if isinstance(d.get("answered_at"), int)
+            and not isinstance(d.get("answered_at"), bool) else None,
+            "ended_at": d["ended_at"] if isinstance(d.get("ended_at"), int)
+            and not isinstance(d.get("ended_at"), bool) else None}
+
+
+def call_note(value):
+    """A message's call line {id, kind, answered, seconds}, or None (a bad one too)."""
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str) \
+            or value.get("kind") not in CALL_KINDS or not isinstance(value.get("answered"), bool) \
+            or isinstance(value.get("seconds"), bool) or not isinstance(value.get("seconds"), int) \
+            or value["seconds"] < 0:
+        return None
+    return {"id": value["id"], "kind": value["kind"], "answered": value["answered"],
+            "seconds": value["seconds"]}
+
+
 def message(d):
     d = _dict(d)
     edited = d.get("edited_at")
@@ -131,7 +167,8 @@ def message(d):
             "cid": _opt_str(d, "cid"), "text": _str(d, "text"),
             "reply_to": _opt_str(d, "reply_to"), "at": _int(d, "at"),
             "edited_at": edited, "deleted": bool(d.get("deleted")),
-            "reactions": reactions(d.get("reactions")), "file": file(d.get("file"))}
+            "reactions": reactions(d.get("reactions")), "file": file(d.get("file")),
+            "call": call_note(d.get("call"))}
 
 
 def chat(d):
@@ -191,6 +228,13 @@ def event(d):
             out.update(chat_id=_str(d, "chat_id", False), id=_str(d, "id", False),
                        user_id=_str(d, "user_id", False), emoji=_str(d, "emoji", False),
                        on=bool(d.get("on", True)))
+        elif kind == "call":
+            out["call"] = call(d.get("call"))
+        elif kind == "call_signal":
+            if not isinstance(d.get("data"), dict):
+                raise Bad("signal data")
+            out.update({"call": _str(d, "call", False), "from": _str(d, "from", False),
+                        "data": d["data"]})
         elif kind == "typing":
             out.update(chat_id=_str(d, "chat_id", False), user_id=_str(d, "user_id", False))
         elif kind == "presence":

@@ -160,8 +160,12 @@ CLIP = u"\U0001F4CE"
 
 def message_text(message):
     """A message as one line of text: a file's message is «📎 name», its caption after a dash."""
+    note = (message or {}).get("call")
+    if note:
+        from . import calls
+        return calls.ICON + " " + calls.note_text(note)
     text = " ".join(str((message or {}).get("text") or "").split())
-    f = (message or {}).get("file")
+    f =(message or {}).get("file")
     if f and f.get("name"):
         return CLIP + " " + f["name"] + ((" - " + text) if text else "")
     return text
