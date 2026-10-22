@@ -140,7 +140,7 @@ function tickLevels() {
 // ------------------------------------------------------------------ peers
 function addPeer(uid, offer) {
   if (S.ended || !S.local || S.peers.has(uid) || uid === S.me) return;
-  const pc = new RTCPeerConnection({ iceServers: S.ice });
+  const pc = new RTCPeerConnection({ iceServers: S.ice, iceTransportPolicy: S.relay ? "relay" : "all" });
   const p = { uid, pc, offer, stream: new MediaStream(), pending: [], failedAt: 0, mic: true, cam: false,
               screen: false, speaking: false, bytes: { audio_in: 0, video_in: 0, audio_out: 0, video_out: 0 } };
   S.peers.set(uid, p);
@@ -250,7 +250,7 @@ async function stats() {
 // ------------------------------------------------------------------ commands
 const COMMANDS = {
   async start(a) {
-    S.me = a.me; S.names = a.names || {}; S.ice = a.ice_servers || []; S.devices = { mic: a.mic || "", cam: a.cam || "" };
+    S.me = a.me; S.names = a.names || {}; S.ice = a.ice_servers || []; S.relay = !!a.relay_only; S.devices = { mic: a.mic || "", cam: a.cam || "" };
     try { S.local = await userMedia(!!a.video); }
     catch (e) { S.error = "Микрофон недоступен: " + e.name; report(); return; }
     S.camTrack = S.local.getVideoTracks()[0] || null;

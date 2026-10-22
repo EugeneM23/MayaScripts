@@ -13588,11 +13588,14 @@ The animator: calls in the messenger - voice, video and screen sharing, up to 4 
 - **The chat window**: voice and video buttons in a chat's header (hidden while the chat has an unended
   call; «Присоединиться» when one can join); the call line in the feed a centred pill «Звонок · 7 мин» /
   «Пропущенный звонок» (danger), a click calls back.
-- **TURN: off.** `deploy.py turn` answered «10000: Authentication error» - the Cloudflare API token lacks
-  the **Calls Write** right. Calls go over STUN only (the window says «прямое соединение - через строгую
-  сеть может не пройти»): two people behind strict NATs may not connect. To turn it on: give the token
-  Calls Write (dash.cloudflare.com -> My Profile -> API Tokens), `deploy.py turn`, then deploy staging and
-  production again.
+- **TURN: on since 2026-10-22** (two colleagues on different networks saw only themselves). The token
+  got Calls Write (in the dashboard: Account -> Realtime / Calls -> Edit); `deploy.py turn` made the key
+  (Cloudflare answers its secret as `secret`, not `key`), kept in `~/.skeldar/cloudflare.json`, and both
+  Workers carry it. Proof: `callview.RELAY_ONLY = True` (a test seam, `iceTransportPolicy` "relay") +
+  `verify_chat_calls.py` **0 of 20 on staging and production, relay/relay**. A verify right after a deploy
+  can still meet the old Durable Object (it answered STUN only once): run it again. And an incoming call's
+  45 s ring age is measured by the server's clock (`api.skew_ms` from the Date header): a callee whose
+  clock ran ahead never saw the card.
 - Proof: `docs/superpowers/plans/verify_chat_calls.py` **0 of 13 gates on staging** (twice in a row;
   headless mayapy, two real accounts made and deleted, two callview windows with real pages, Chromium's
   fake devices, `--mute-audio --disable-gpu`): it rang for B **0.11-0.34 s** after A pressed; B's answer

@@ -174,7 +174,7 @@ class TurnKey(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_creates_the_key_and_saves_it(self):
-        opener = Opener({("POST", self.URL): ok({"uid": "u" * 32, "key": "k" * 64, "name": "skeldar-chat"})})
+        opener = Opener({("POST", self.URL): ok({"uid": "u" * 32, "secret": "k" * 64, "name": "skeldar-chat"})})
         self.assertEqual(deploy.turn(env=ENV, opener=opener), "u" * 32)
         held = deploy.saved(deploy.TURN_NAMES)
         self.assertEqual(held["turn_key_id"], "u" * 32)
@@ -184,7 +184,7 @@ class TurnKey(unittest.TestCase):
     def test_it_keeps_what_the_file_already_held(self):
         with open(deploy.KEYS_FILE, "w", encoding="utf-8") as handle:
             json.dump({"CLOUDFLARE_API_TOKEN": "old"}, handle)
-        deploy.turn(env=ENV, opener=Opener({("POST", self.URL): ok({"uid": "u", "key": "k"})}))
+        deploy.turn(env=ENV, opener=Opener({("POST", self.URL): ok({"uid": "u", "secret": "k"})}))
         with open(deploy.KEYS_FILE, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["CLOUDFLARE_API_TOKEN"], "old")
 

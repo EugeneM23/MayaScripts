@@ -215,7 +215,7 @@ def turn(env=os.environ, opener=urllib.request.urlopen):
         raise DeployError("Could not make a TURN key (%s). Give the API token the "
                           "'Calls Write' permission (dash.cloudflare.com -> My Profile -> API Tokens) "
                           "and run `deploy.py turn` again." % exc)
-    _write_keys_file({"turn_key_id": result["uid"], "turn_key_token": result["key"]})
+    _write_keys_file({"turn_key_id": result["uid"], "turn_key_token": result.get("secret") or result["key"]})
     return result["uid"]
 
 

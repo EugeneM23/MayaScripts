@@ -39,6 +39,9 @@ BUTTONS = (("mic", "microphone", u"Микрофон"),
            ("hang_up", "phone-off", u"Завершить"))
 
 
+# a test seam: every connection through the TURN relay (proves the relay carries a call)
+RELAY_ONLY = False
+
 def get_var(name):
     return W.get_var(name)
 
@@ -488,6 +491,7 @@ class CallWindow(object):
         servers, turn = self.session.turn_servers()
         args = _calls.start_args(view, me, self._names(), servers, self.kind == "video",
                                  get_var(MIC_VAR) or "", get_var(CAM_VAR) or "")
+        args["relay_only"] = RELAY_ONLY
         self.bridge.send("start", args)
         self.started = True
         for name, cargs in _calls.peer_commands(view["members"], self.members, me):
