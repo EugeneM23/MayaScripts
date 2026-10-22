@@ -167,9 +167,9 @@ def is_online(user, online):
     return bool(seen.get("online", user.get("online")))
 
 
-def paint_avatar(p, rect, user, scale, online=None):
+def paint_avatar(p, rect, user, scale, online=None, ring="panel"):
     """A user's circle: their picture, else their colour and initials. `online` True draws the
-    green dot at the bottom-right (ringed in the panel colour)."""
+    green dot at the bottom-right (ringed in `ring`: what the circle stands on)."""
     q = _q()
     p.save()
     p.setRenderHint(q.QtGui.QPainter.Antialiasing)
@@ -189,13 +189,13 @@ def paint_avatar(p, rect, user, scale, online=None):
         p.drawText(rect, q.QtCore.Qt.AlignCenter, look.initials(user))
     if online:
         d = max(5.0, rect.width() * 0.3)
-        ring = max(1.0, scale * 1.5)
-        dot = q.QtCore.QRectF(rect.right() - d + ring * 0.3, rect.bottom() - d + ring * 0.3, d, d)
+        width = max(1.0, scale * 2.0)
+        dot = q.QtCore.QRectF(rect.right() - d + width * 0.3, rect.bottom() - d + width * 0.3, d, d)
         p.setPen(q.QtCore.Qt.NoPen)
-        p.setBrush(q.QtGui.QColor(hubstyle.TOKENS["panel"]))
+        p.setBrush(q.QtGui.QColor(hubstyle.TOKENS.get(ring, ring)))
         p.drawEllipse(dot)
         p.setBrush(q.QtGui.QColor(hubstyle.TOKENS["ok"]))
-        p.drawEllipse(dot.adjusted(ring, ring, -ring, -ring))
+        p.drawEllipse(dot.adjusted(width, width, -width, -width))
     p.restore()
 
 
@@ -243,6 +243,61 @@ def px_of(widget, n):
     return hubstyle.px(n, widget.win.scale)
 
 
+def paint_ticks(p, right, mid_y, tick, colour, scale):
+    """A message's tick drawn ending at `right`, centred on `mid_y` (look A, 2026-10-22):
+    ✓ sent, ✓✓ read, a clock while it goes, ! failed. Returns the width it took."""
+    q = _q()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    width = tick_width(tick, scale)
+    if not width:
+        return 0
+    left = right - width
+    p.save()
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    pen = QtGui.QPen(QtGui.QColor(colour), max(1.1, 1.45 * scale))
+    pen.setCapStyle(QtCore.Qt.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(QtCore.Qt.NoBrush)
+    path = QtGui.QPainterPath()
+    if tick == "failed":
+        f = QtGui.QFont(p.font())
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QtCore.QRectF(left, mid_y - width, width, 2 * width), QtCore.Qt.AlignCenter, "!")
+        p.restore()
+        return width
+    if tick == "clock":
+        k = width / 16.0
+        p.drawEllipse(QtCore.QPointF(left + 8 * k, mid_y), 6.5 * k, 6.5 * k)
+        path.moveTo(left + 8 * k, mid_y - 3.5 * k)
+        path.lineTo(left + 8 * k, mid_y)
+        path.lineTo(left + 10.5 * k, mid_y + 2 * k)
+    elif tick == "sent":            # Tabler's check: M5 12 l5 5 L20 7
+        k = width / 15.0
+        path.moveTo(left, mid_y)
+        path.lineTo(left + 5 * k, mid_y + 5 * k)
+        path.lineTo(left + 15 * k, mid_y - 5 * k)
+    else:                           # read: M7 12l5 5L22 7 M2 12l5 5 m5-5l5-5
+        k = width / 20.0
+        x = lambda u: left + (u - 2) * k                    # noqa: E731
+        y = lambda v: mid_y + (v - 12) * k                  # noqa: E731
+        path.moveTo(x(7), y(12))
+        path.lineTo(x(12), y(17))
+        path.lineTo(x(22), y(7))
+        path.moveTo(x(2), y(12))
+        path.lineTo(x(7), y(17))
+        path.moveTo(x(12), y(12))
+        path.lineTo(x(17), y(7))
+    p.drawPath(path)
+    p.restore()
+    return width
+
+
+def tick_width(tick, scale):
+    return hubstyle.px({"sent": 11, "read": 15, "clock": 11, "failed": 6}.get(tick, 0), scale)
+
+
 def _font(base, px_size, bold=False):
     q = _q()
     f = q.QtGui.QFont(base)
@@ -282,8 +337,8 @@ def list_class():
 
             def row_h(self, row=None):
                 if row is not None and row.get("kind") == "head":
-                    return hubstyle.px(24, self.win.scale)
-                return hubstyle.px(54, self.win.scale)
+                    return hubstyle.px(26, self.win.scale)
+                return hubstyle.px(58, self.win.scale)
 
             def tops(self):
                 out, y = [], 0
@@ -317,7 +372,7 @@ def list_class():
                 px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
                 top = self.tops()[0][i]
                 h = self.row_h(self.rows[i])
-                return QtCore.QRectF(px(10), top + (h - px(38)) / 2.0, px(38), px(38))
+                return QtCore.QRectF(px(14), top + (h - px(42)) / 2.0, px(42), px(42))
 
             def mouseMoveEvent(self, event):              # noqa: N802
                 i = self.index_at(event.position().y() if hasattr(event, "position")
@@ -382,77 +437,109 @@ def list_class():
                 now = _now_ms()
                 tops, _total = self.tops()
                 online = self.win.session.state.online
+                from . import emojiart
                 for i, r in enumerate(self.rows):
                     top = tops[i]
                     h = self.row_h(r)
                     if r.get("kind") == "head":
                         p.setFont(_font(self.font(), px(9), True))
-                        p.setPen(_colour("faint"))
-                        p.drawText(QtCore.QRectF(px(12), top, w - px(24), h),
+                        p.setPen(_colour("muted"))
+                        p.drawText(QtCore.QRectF(px(14), top + px(4), w - px(28), h - px(4)),
                                    QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, r["title"])
-                        p.setPen(QtGui.QPen(_colour("line"), 1))
-                        p.drawLine(QtCore.QPointF(px(12), top + px(2)),
-                                   QtCore.QPointF(w - px(12), top + px(2)))
+                        p.setPen(QtGui.QPen(_colour("track_edge"), 1))
+                        p.drawLine(QtCore.QPointF(px(14), top + px(4)),
+                                   QtCore.QPointF(w - px(14), top + px(4)))
                         continue
-                    rect = QtCore.QRectF(px(4), top + px(2), w - px(8), h - px(4))
+                    #  look A (2026-10-22): rows inset in the column, the open chat
+                    #  `card_active` in a 1.5 px accent outline with an inner glow
+                    rect = QtCore.QRectF(px(6), top + px(1), w - px(12), h - px(2))
                     glow = self.glow.get(r["id"], 0.0)
+                    ring = "panel"
                     if r["id"] == self.selected:
+                        ring = "card_active"
                         p.setPen(QtCore.Qt.NoPen)
                         p.setBrush(_colour("card_active"))
-                        p.drawRoundedRect(rect, px(6), px(6))
-                        p.setPen(QtGui.QPen(_colour("accent", 0.9), max(1.0, s)))
+                        p.drawRoundedRect(rect, px(8), px(8))
                         p.setBrush(QtCore.Qt.NoBrush)
-                        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), px(6), px(6))
+                        for k, alpha in ((3.0, 0.05), (2.0, 0.08), (1.0, 0.12)):
+                            p.setPen(QtGui.QPen(_colour("accent", alpha), px(2)))
+                            inset = (1.0 + k) * s
+                            p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset),
+                                              px(8) - inset, px(8) - inset)
+                        p.setPen(QtGui.QPen(_colour("accent"), max(1.0, 1.5 * s)))
+                        p.drawRoundedRect(rect.adjusted(0.75 * s, 0.75 * s, -0.75 * s, -0.75 * s),
+                                          px(8), px(8))
                     elif glow > 0.002:
+                        ring = "card" if glow > 0.5 else "panel"
                         p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("hover", glow))
-                        p.drawRoundedRect(rect.translated(0, -glow * s), px(6), px(6))
-                    lift = -glow * s
-                    av = QtCore.QRectF(px(10), top + (h - px(38)) / 2.0 + lift, px(38), px(38))
+                        p.setBrush(_colour("card", glow))
+                        p.drawRoundedRect(rect, px(8), px(8))
+                    av = QtCore.QRectF(px(14), top + (h - px(42)) / 2.0, px(42), px(42))
                     dot = r.get("kind") == "person" or (r.get("chat") or {}).get("kind") == "dm"
-                    paint_avatar(p, av, r["user"], s, dot and is_online(r["user"], online))
+                    paint_avatar(p, av, r["user"], s, dot and is_online(r["user"], online),
+                                 ring=ring)
                     x0 = av.right() + px(10)
-                    right = w - px(12)
-                    p.setFont(_font(self.font(), px(11.5), True))
-                    p.setPen(_colour("text"))
-                    fm = QtGui.QFontMetrics(p.font())
-                    t_font = _font(self.font(), px(9.5))
+                    right = w - px(16)
+                    t_font = _font(self.font(), px(10))
                     tfm = QtGui.QFontMetrics(t_font)
                     tw = tfm.horizontalAdvance(r["time"]) if r["time"] else 0
-                    title = fm.elidedText(r["title"], QtCore.Qt.ElideRight,
-                                          int(right - x0 - tw - px(6)))
-                    p.drawText(QtCore.QPointF(x0, top + px(22) + lift), title)
+                    tick = r.get("tick") or ""
+                    kw = tick_width(tick, s)
                     if r["time"]:
                         p.setFont(t_font)
-                        p.setPen(_colour("faint"))
-                        p.drawText(QtCore.QPointF(right - tw, top + px(21) + lift), r["time"])
-                    p.setFont(_font(self.font(), px(10)))
-                    pfm = QtGui.QFontMetrics(p.font())
+                        p.setPen(_colour("muted"))
+                        p.drawText(QtCore.QPointF(right - tw, top + px(23)), r["time"])
+                    if kw:
+                        colour = hubstyle.TOKENS["muted" if tick == "clock" else
+                                                 ("danger" if tick == "failed" else "accent_text")]
+                        p.setFont(t_font)
+                        paint_ticks(p, right - tw - px(4), top + px(19), tick, colour, s)
+                    p.setFont(_font(self.font(), px(12), True))
+                    p.setPen(_colour("text"))
+                    fm = QtGui.QFontMetrics(p.font())
+                    title = fm.elidedText(r["title"], QtCore.Qt.ElideRight,
+                                          int(right - x0 - tw - kw - px(10)))
+                    p.drawText(QtCore.QPointF(x0, top + px(24)), title)
+                    body = _font(self.font(), px(11))
+                    p.setFont(body)
+                    pfm = QtGui.QFontMetrics(body)
                     badge_w = 0
+                    line_y = top + px(42)
                     if r.get("unread"):
                         text = look.count_text(r["unread"])
-                        bf = _font(self.font(), px(9), True)
+                        bf = _font(self.font(), px(10), True)
                         bfm = QtGui.QFontMetrics(bf)
-                        badge_w = max(px(18), bfm.horizontalAdvance(text) + px(10))
+                        badge_w = max(px(20), bfm.horizontalAdvance(text) + px(12))
                         k = pop_scale(now - self.pops.get(r["id"], -10 ** 9))
-                        badge = QtCore.QRectF(0, 0, badge_w * k, px(18) * k)
+                        badge = QtCore.QRectF(0, 0, badge_w * k, px(20) * k)
                         badge.moveCenter(QtCore.QPointF(right - badge_w / 2.0,
-                                                        top + px(37) + lift))
+                                                        line_y - pfm.ascent() / 2.0 + px(1)))
                         p.setPen(QtCore.Qt.NoPen)
                         p.setBrush(_colour("accent"))
                         p.drawRoundedRect(badge, badge.height() / 2, badge.height() / 2)
                         p.setFont(bf)
                         p.setPen(QtGui.QColor(hubstyle.TOKENS.get("on_accent", "#1b1c1f")))
                         p.drawText(badge, QtCore.Qt.AlignCenter, text)
-                        p.setFont(_font(self.font(), px(10)))
-                    p.setPen(_colour("accent_text" if r.get("typing")
-                                     else ("ok" if r.get("kind") == "person" and r.get("online")
-                                           else "muted")))
-                    from . import emojiart
-                    width_left = right - x0 - badge_w - px(6)
-                    emojiart.draw_line(p, QtCore.QRectF(x0, top + px(41) + lift - pfm.ascent(),
-                                                        width_left, pfm.height()),
-                                       r["preview"], p.font(), p.pen().color())
+                        p.setFont(body)
+                    width_left = right - x0 - badge_w - (px(8) if badge_w else 0)
+                    x = x0
+                    prefix = r.get("prefix") or ""
+                    if prefix and not r.get("typing"):
+                        lead = pfm.elidedText(prefix + ": ", QtCore.Qt.ElideRight,
+                                              int(width_left))
+                        p.setPen(_colour("#d2d3d7"))
+                        p.drawText(QtCore.QPointF(x, line_y), lead)
+                        used = pfm.horizontalAdvance(lead)
+                        x += used
+                        width_left -= used
+                    if width_left > px(4):
+                        ink = _colour("accent_text" if r.get("typing")
+                                      else ("ok" if r.get("kind") == "person" and r.get("online")
+                                            else "muted"))
+                        text = r.get("text", r["preview"]) if prefix else r["preview"]
+                        emojiart.draw_line(p, QtCore.QRectF(x, line_y - pfm.ascent(),
+                                                            width_left, pfm.height()),
+                                           text, body, ink)
                 if not self.rows:
                     p.setPen(_colour("faint"))
                     p.setFont(_font(self.font(), px(10)))
@@ -461,6 +548,130 @@ def list_class():
 
         _CLASSES["list"] = ChatList
     return _CLASSES["list"]
+
+
+TAB_VAR = "skeldarChatTab"
+
+
+def tabs_class():
+    """Tabs(window): «Все / Личные / Группы» over the list (look A, 2026-10-22), painted: the
+    current one in `text` underlined in the accent with its glow, a grey count of the tab's
+    chats with unread; a click shows that tab (`window.set_tab`)."""
+    if "tabs" not in _CLASSES:
+        q = _q()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+
+        class Tabs(QtWidgets.QWidget):
+
+            def __init__(self, win, parent=None):
+                super(Tabs, self).__init__(parent)
+                self.win = win
+                self.counts = {}
+                self.hovered = None
+                self.setObjectName("skeldarChatTabs")
+                self.setMouseTracking(True)
+                self.setFixedHeight(hubstyle.px(30, win.scale))
+                self.setCursor(QtCore.Qt.PointingHandCursor)
+
+            def set_counts(self, counts):
+                if counts != self.counts:
+                    self.counts = dict(counts)
+                    self.update()
+
+            def _font(self):
+                return _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
+
+            def rects(self):
+                """[(key, label, tab rect, count rect or None)] left to right."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                fm = QtGui.QFontMetrics(self._font())
+                cfm = QtGui.QFontMetrics(_font(self.font(), px(9), True))
+                out, x = [], px(6)
+                for key, label in look.TABS:
+                    n = int(self.counts.get(key) or 0)
+                    w = fm.horizontalAdvance(label) + px(18)
+                    count = None
+                    if n:
+                        cw = max(px(16), cfm.horizontalAdvance(look.count_text(n)) + px(8))
+                        count = QtCore.QRectF(x + w - px(4), (self.height() - px(16)) / 2.0,
+                                              cw, px(16))
+                        w += cw + px(1)
+                    out.append((key, label, QtCore.QRectF(x, 0, w, self.height()), count))
+                    x += w + px(2)
+                return out
+
+            def key_at(self, x):
+                for key, _label, rect, _count in self.rects():
+                    if rect.left() <= x < rect.right():
+                        return key
+                return None
+
+            def mouseMoveEvent(self, event):               # noqa: N802
+                pos = event.position() if hasattr(event, "position") else event.pos()
+                key = self.key_at(pos.x())
+                if key != self.hovered:
+                    self.hovered = key
+                    self.update()
+
+            def leaveEvent(self, event):                   # noqa: N802
+                self.hovered = None
+                self.update()
+
+            def mousePressEvent(self, event):              # noqa: N802
+                if event.button() != QtCore.Qt.LeftButton:
+                    return
+                pos = event.position() if hasattr(event, "position") else event.pos()
+                key = self.key_at(pos.x())
+                if key:
+                    self.win.set_tab(key)
+
+            def paintEvent(self, event):                   # noqa: N802
+                p = QtGui.QPainter(self)
+                try:
+                    self._paint(p)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                finally:
+                    p.end()
+
+            def _paint(self, p):
+                s = self.win.scale
+                px = lambda n: hubstyle.px(n, s)              # noqa: E731
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                h = self.height()
+                p.setPen(QtGui.QPen(_colour("track_edge"), 1))
+                p.drawLine(QtCore.QPointF(0, h - 0.5), QtCore.QPointF(self.width(), h - 0.5))
+                current = self.win.tab
+                for key, label, rect, count in self.rects():
+                    on = key == current
+                    if key == self.hovered and not on:
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("track_edge"))
+                        p.drawRoundedRect(rect.adjusted(0, px(3), 0, px(4)), px(5), px(5))
+                    p.setFont(self._font())
+                    p.setPen(_colour("text" if on or key == self.hovered else "muted"))
+                    text_rect = QtCore.QRectF(rect.left() + px(9), 0, rect.width(), h)
+                    p.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, label)
+                    if count is not None:
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("line"))
+                        p.drawRoundedRect(count, count.height() / 2.0, count.height() / 2.0)
+                        p.setFont(_font(self.font(), px(9), True))
+                        p.setPen(_colour("text"))
+                        p.drawText(count, QtCore.Qt.AlignCenter,
+                                   look.count_text(self.counts.get(key)))
+                    if on:
+                        bar = QtCore.QRectF(rect.left() + px(6), h - px(2),
+                                            rect.width() - px(12), px(2))
+                        p.setPen(QtCore.Qt.NoPen)
+                        for grow, alpha in ((px(4), 0.08), (px(2.5), 0.14), (px(1.2), 0.24)):
+                            p.setBrush(_colour("accent", alpha))
+                            p.drawRoundedRect(bar.adjusted(-grow, -grow, grow, 0), grow, grow)
+                        p.setBrush(_colour("accent"))
+                        p.drawRoundedRect(bar, px(1), px(1))
+
+        _CLASSES["tabs"] = Tabs
+    return _CLASSES["tabs"]
 
 
 def look_approach(value, goal, dt_ms, ms):
@@ -478,7 +689,7 @@ class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
                  "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
-                 "thumb", "avatar", "bigs", "callpill")
+                 "thumb", "avatar", "bigs", "callpill", "bare", "tail", "meta_pill", "band")
 
     def __init__(self, item):
         self.item = item
@@ -500,6 +711,10 @@ class Box(object):
         self.avatar = None       # the sender's avatar beside a group's message
         self.bigs = []           # [(rect, glyph)]: a message of 1-3 emoji alone, as pictures
         self.callpill = None     # a call line's pill (2026-10-22)
+        self.bare = False        # emoji alone: no bubble face (look A)
+        self.tail = False        # the last of a run: Telegram's tail on the sender's side
+        self.meta_pill = None    # emoji alone: the time in a dark pill under them
+        self.band = None         # «Непрочитанные сообщения»
 
 
 def feed_class():
@@ -532,6 +747,10 @@ def feed_class():
                 self.played = set()       # the same keys, played once since the window opened
                 self.anim = None          # emojiart.Animated (the window sets it)
                 self._emoji_hover = None  # (message key, glyph, kind) under the mouse
+                self.hover_key = None     # the message whose row the mouse is on (look A)
+                self.reply_level = 0.0    # its reply button fading in, 0..1
+                self.reply_hot = False    # the mouse on that button
+                self._tile = None         # the backdrop's dots
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
@@ -610,7 +829,7 @@ def feed_class():
                     doc = QtGui.QTextDocument()
                     doc.setDocumentMargin(0)
                     big = _emoji.only_emoji(item.text)
-                    font = _font(self.font(), hubstyle.px(30 if big else 11, self.win.scale))
+                    font = _font(self.font(), hubstyle.px(30 if big else 11.5, self.win.scale))
                     font.setFamilies([font.family(), _emoji.FONT])
                     doc.setDefaultFont(font)
                     side = int(QtGui.QFontMetrics(font).height() * 1.2)
@@ -632,126 +851,198 @@ def feed_class():
                 s = self.win.scale
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 group = (self.ctx.get("chat") or {}).get("kind") == "group"
-                side = px(12)
-                avatar = px(28) if group else 0
-                max_w = min(0.74 * (width - 2 * side - avatar), px(520))
+                side = px(14)
+                avatar = px(36) if group else 0
+                max_w = min(0.72 * (width - 2 * side - avatar), px(520))
                 pad_x, pad_y = px(10), px(6)
-                small = _font(self.font(), px(9))
-                sfm = QtGui.QFontMetrics(small)
-                name_font = _font(self.font(), px(10), True)
-                nfm = QtGui.QFontMetrics(name_font)
-                y = px(8)
+                sfm = QtGui.QFontMetrics(self._meta_font())
+                nfm = QtGui.QFontMetrics(_font(self.font(), px(10.5), True))
+                y = px(6)
                 boxes = []
                 for item in self.items:
                     box = Box(item)
                     if item.kind == "day":
-                        h = px(28)
+                        h = px(32)
                         box.rect = QtCore.QRectF(0, y, width, h)
                         box.height = h
                         boxes.append(box)
                         y += h
                         continue
                     if item.kind == "call":
-                        h = px(26)
+                        h = px(32)
                         box.rect = QtCore.QRectF(0, y, width, h)
                         box.height = h
-                        cfont = _font(self.font(), px(9.5), True)
-                        from . import emojiart
-                        w = emojiart.line_width(_calls.ICON + "  " + item.text, cfont) + px(20)
-                        box.callpill = QtCore.QRectF((width - w) / 2.0, y + px(3), w, px(20))
+                        w = self._call_width(item)
+                        box.callpill = QtCore.QRectF((width - w) / 2.0, y + px(6), w, px(22))
                         boxes.append(box)
                         y += h
                         continue
-                    msg = item.message
-                    inner = max(px(40), max_w - 2 * pad_x)
-                    f = msg.get("file")
-                    bigs = [] if f else self._big(item)
-                    if f and not item.text:
-                        doc, doc_w, doc_h = None, 0, -px(2)
-                    elif bigs:
-                        side_b, gap_b = px(BIG_EMOJI), px(4)
-                        doc = None
-                        doc_w = len(bigs) * side_b + (len(bigs) - 1) * gap_b
-                        doc_h = side_b
-                    else:
-                        doc = self._doc(item, inner)
-                        doc_w, doc_h = doc.size().width(), doc.size().height()
-                    box.doc = doc
-                    ph = look.preview_height(f, self._pending_thumb(item)) if f else 0
-                    file_h = (px(FILE_CARD) + px(4) + px(FILE_ROW) + px(6)
-                              + (px(ph) + px(4) if ph else 0)) if f else 0
-                    meta = []
-                    if msg.get("edited_at"):
-                        meta.append("изм.")
-                    meta.append(look.hm(msg.get("at") or _now_ms()))
-                    tick = {"clock": "◷", "sent": "✓", "read": "✓✓", "failed": "!"}.get(item.tick, "")
-                    if tick:
-                        meta.append(tick)
-                    box.meta = " ".join(meta)
-                    meta_w = sfm.horizontalAdvance(box.meta)
-                    content_w = max(doc_w, meta_w)
-                    if f:
-                        content_w = max(content_w, min(inner, px(FILE_WIDTH)))
-                    name_h = 0
-                    if group and not item.mine and item.first:
-                        name = self.ctx.get("name_of", lambda uid: uid)(msg.get("from_id"))
-                        name_h = nfm.height() + px(2)
-                        content_w = max(content_w, nfm.horizontalAdvance(name))
-                    quote_h = 0
-                    reply = msg.get("reply_to")
-                    original = None
-                    if reply:
-                        original = look.find(self.ctx.get("messages"), reply)
-                        quote_h = px(34)
-                        content_w = max(content_w, min(inner, px(160)))
-                    bw = content_w + 2 * pad_x
-                    bh = pad_y + name_h + quote_h + file_h + doc_h + px(2) + sfm.height() + pad_y
-                    gap = px(8) if item.first else px(2)
-                    y += gap
-                    if item.mine:
-                        x = width - side - bw
-                    else:
-                        x = side + avatar
-                    box.bubble = QtCore.QRectF(x, y, bw, bh)
-                    if group and not item.mine and item.last:
-                        box.avatar = QtCore.QRectF(px(12), y + bh - px(24), px(24), px(24))
-                    cx = x + pad_x
-                    cy = y + pad_y
-                    if name_h:
-                        box.name_at = QtCore.QPointF(cx, cy + nfm.ascent())
-                        cy += name_h
-                    if quote_h:
-                        qrect = QtCore.QRectF(cx, cy, bw - 2 * pad_x, quote_h - px(4))
-                        if original is not None:
-                            qname = self.ctx.get("name_of", lambda uid: uid)(
-                                original.get("from_id"))
-                            qtext = "сообщение удалено" if original.get("deleted") \
-                                else look.message_text(original)
-                        else:
-                            qname, qtext = "", "сообщение"
-                        box.quote = (qrect, reply, qname, qtext)
-                        cy += quote_h
-                    if f:
-                        self._lay_file(box, cx, cy, bw - 2 * pad_x)
-                        cy += file_h
-                    box.doc_at = QtCore.QPointF(cx, cy)
-                    if bigs:
-                        side_b, gap_b = px(BIG_EMOJI), px(4)
-                        box.bigs = [(QtCore.QRectF(cx + i * (side_b + gap_b), cy, side_b, side_b), g)
-                                    for i, g in enumerate(bigs)]
-                    cy += doc_h + px(2)
-                    box.meta_at = QtCore.QPointF(x + bw - pad_x - meta_w, cy + sfm.ascent())
-                    h = bh
-                    if item.tick == "failed":
-                        box.failed_rect = QtCore.QRectF(x, y + bh + px(2), bw, sfm.height() + px(2))
-                        h += sfm.height() + px(4)
-                    if not item.pending:
-                        h += self._lay_pills(box, x, y + h, bw, max_w, item.mine)
-                    box.rect = QtCore.QRectF(0, y, width, h)
-                    box.height = h
-                    boxes.append(box)
-                    y += h
+                    if item.kind == "unread":
+                        h = px(32)
+                        box.rect = QtCore.QRectF(0, y, width, h)
+                        box.band = QtCore.QRectF(0, y + px(6), width, px(22))
+                        box.height = h
+                        boxes.append(box)
+                        y += h
+                        continue
+                    boxes.append(self._lay_message(box, y, width, max_w, side, avatar, group,
+                                                   pad_x, pad_y, sfm, nfm))
+                    y = box.rect.bottom()
                 return boxes
+
+            def _meta_width(self, box, sfm):
+                tick = box.item.tick
+                return sfm.horizontalAdvance(box.meta) + (
+                    hubstyle.px(3, self.win.scale) + tick_width(tick, self.win.scale)
+                    if tick else 0)
+
+            def _last_line(self, doc):
+                """(width, baseline y) of a document's last line."""
+                block = doc.lastBlock()
+                lay = block.layout()
+                if lay is None or lay.lineCount() == 0:
+                    return 0.0, doc.size().height()
+                line = lay.lineAt(lay.lineCount() - 1)
+                top = lay.position().y()
+                return line.x() + line.naturalTextWidth(), top + line.y() + line.ascent()
+
+            def _lay_message(self, box, y, width, max_w, side, avatar, group, pad_x, pad_y,
+                             sfm, nfm):
+                """One message (look A, 2026-10-22): a bubble with its time and ticks inside -
+                on the text's last line when they fit, else under it or at the right of the
+                last row of reactions - its reactions inside too; emoji alone bare, their time
+                in a dark pill."""
+                s = self.win.scale
+                px = lambda n: hubstyle.px(n, s)              # noqa: E731
+                item = box.item
+                msg = item.message
+                inner = max(px(40), max_w - 2 * pad_x)
+                f = msg.get("file")
+                bigs = [] if f else self._big(item)
+                box.meta = ("изм. " if msg.get("edited_at") else "") + \
+                    look.hm(msg.get("at") or _now_ms())
+                meta_w = self._meta_width(box, sfm)
+                meta_gap = px(8)
+                rows = [] if item.pending else self._pill_rows(msg, inner)
+                pills_w = max([w for w, _r in rows] or [0])
+                ph, pgap = px(22), px(4)
+                pills_h = (len(rows) * (ph + pgap) + px(2)) if rows else 0
+                y += px(8) if item.first else px(2)
+                box.tail = item.last and not bigs
+                if bigs:
+                    side_b, gap_b = px(BIG_EMOJI), px(4)
+                    bw = len(bigs) * side_b + (len(bigs) - 1) * gap_b
+                    x = width - side - bw if item.mine else side + avatar
+                    box.bare = True
+                    box.bubble = QtCore.QRectF(x, y, bw, side_b)
+                    box.bigs = [(QtCore.QRectF(x + i * (side_b + gap_b), y, side_b, side_b), g)
+                                for i, g in enumerate(bigs)]
+                    mw = meta_w + px(14)
+                    box.meta_pill = QtCore.QRectF(x + bw - mw, y + side_b + px(2), mw, px(18))
+                    box.meta_at = QtCore.QPointF(
+                        box.meta_pill.left() + px(7),
+                        box.meta_pill.center().y() + (sfm.ascent() - sfm.descent()) / 2.0)
+                    h = side_b + px(2) + px(18)
+                    if rows:
+                        self._place_pills(box, rows, x, y + h + px(2), bw, item.mine, ph, pgap)
+                        h += px(2) + len(rows) * (ph + pgap)
+                    if group and not item.mine and item.last:
+                        box.avatar = QtCore.QRectF(side, y + side_b - px(30), px(30), px(30))
+                    return self._close_box(box, y, h, width, sfm)
+                if f and not item.text:
+                    doc, doc_w, doc_h = None, 0, 0
+                else:
+                    doc = self._doc(item, inner)
+                    doc_w, doc_h = doc.size().width(), doc.size().height()
+                box.doc = doc
+                ph_file = look.preview_height(f, self._pending_thumb(item)) if f else 0
+                file_h = (px(FILE_CARD) + px(4) + px(FILE_ROW) + px(4)
+                          + (px(ph_file) + px(4) if ph_file else 0)) if f else 0
+                content_w = doc_w
+                if f:
+                    content_w = max(content_w, min(inner, px(FILE_WIDTH)))
+                name_h = 0
+                if group and not item.mine and item.first:
+                    name = self.ctx.get("name_of", lambda uid: uid)(msg.get("from_id"))
+                    name_h = nfm.height() + px(1)
+                    content_w = max(content_w, nfm.horizontalAdvance(name))
+                quote_h = 0
+                reply = msg.get("reply_to")
+                original = None
+                if reply:
+                    original = look.find(self.ctx.get("messages"), reply)
+                    quote_h = px(38)
+                    content_w = max(content_w, min(inner, px(160)))
+                last_w, last_base = self._last_line(doc) if doc is not None else (0.0, 0.0)
+                inline = doc is not None and not rows and look.meta_fits(
+                    last_w, meta_w, inner, meta_gap)
+                on_pills = False
+                meta_h = 0
+                if inline:
+                    content_w = max(content_w, last_w + meta_gap + meta_w)
+                elif rows and rows[-1][0] + meta_gap + meta_w <= inner:
+                    on_pills = True
+                    content_w = max(content_w, pills_w, rows[-1][0] + meta_gap + meta_w)
+                else:
+                    content_w = max(content_w, pills_w, meta_w)
+                    meta_h = sfm.height() + px(1)
+                content_w = min(max(content_w, px(24)), inner)
+                bw = content_w + 2 * pad_x
+                body = name_h + quote_h + file_h + doc_h
+                bh = pad_y + body + pills_h + meta_h + pad_y
+                if item.mine:
+                    x = width - side - bw
+                else:
+                    x = side + avatar
+                box.bubble = QtCore.QRectF(x, y, bw, bh)
+                if group and not item.mine and item.last:
+                    box.avatar = QtCore.QRectF(side, y + bh - px(30), px(30), px(30))
+                cx = x + pad_x
+                cy = y + pad_y
+                if name_h:
+                    box.name_at = QtCore.QPointF(cx, cy + nfm.ascent())
+                    cy += name_h
+                if quote_h:
+                    qrect = QtCore.QRectF(cx, cy + px(1), bw - 2 * pad_x, quote_h - px(5))
+                    if original is not None:
+                        quid = original.get("from_id")
+                        qname = self.ctx.get("name_of", lambda uid: uid)(quid)
+                        qtext = "сообщение удалено" if original.get("deleted") \
+                            else look.message_text(original)
+                    else:
+                        quid, qname, qtext = None, "", "сообщение"
+                    box.quote = (qrect, reply, qname, qtext,
+                                 look.user_colour(quid) if quid else hubstyle.TOKENS["accent"])
+                    cy += quote_h
+                if f:
+                    self._lay_file(box, cx, cy, bw - 2 * pad_x)
+                    cy += file_h
+                box.doc_at = QtCore.QPointF(cx, cy)
+                cy += doc_h
+                right = x + bw - pad_x
+                if inline:
+                    box.meta_at = QtCore.QPointF(right - meta_w, box.doc_at.y() + last_base)
+                if rows:
+                    self._place_pills(box, rows, cx, cy + px(2), content_w, False, ph, pgap)
+                    if on_pills:
+                        r = box.pills[-1][0]
+                        box.meta_at = QtCore.QPointF(
+                            right - meta_w, r.center().y() + (sfm.ascent() - sfm.descent()) / 2.0)
+                    cy += pills_h
+                if meta_h:
+                    box.meta_at = QtCore.QPointF(right - meta_w, cy + sfm.ascent())
+                return self._close_box(box, y, bh, width, sfm)
+
+            def _close_box(self, box, y, h, width, sfm):
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                if box.item.tick == "failed":
+                    b = box.bubble
+                    box.failed_rect = QtCore.QRectF(b.left() - px(40), y + h + px(2),
+                                                    b.width() + px(40), sfm.height() + px(2))
+                    h += sfm.height() + px(4)
+                box.rect = QtCore.QRectF(0, y, width, h)
+                box.height = h
+                return box
 
             def _lay_file(self, box, x, y, w):
                 """A file message's card, and under it its buttons or its progress bar."""
@@ -857,14 +1148,14 @@ def feed_class():
                 if box.thumb is not None:
                     self._paint_preview(p, box)
                 card = box.card
-                p.setPen(QtCore.Qt.NoPen)
-                p.setBrush(_colour("panel", 0.45))
-                p.drawRoundedRect(card, px(6), px(6))
-                tile = QtCore.QRectF(card.left() + px(5), card.top() + px(5),
-                                     card.height() - px(10), card.height() - px(10))
-                p.setBrush(_colour("accent_tint"))
-                p.drawRoundedRect(tile, px(5), px(5))
-                p.setFont(_font(self.font(), px(9), True))
+                mine = box.item.mine
+                #  look A (2026-10-22): no plate, the tile ringed in the accent
+                tile = QtCore.QRectF(card.left(), card.top() + px(2),
+                                     card.height() - px(4), card.height() - px(4))
+                p.setPen(QtGui.QPen(_colour("accent", 0.45), max(1.0, s)))
+                p.setBrush(_colour("#2b1b10" if mine else "accent_tint"))
+                p.drawRoundedRect(tile.adjusted(0.5, 0.5, -0.5, -0.5), px(8), px(8))
+                p.setFont(_font(self.font(), px(9.5), True))
                 p.setPen(_colour("accent_text"))
                 p.drawText(tile, QtCore.Qt.AlignCenter, look.file_tag(f))
                 left = tile.right() + px(8)
@@ -874,15 +1165,15 @@ def feed_class():
                 p.setPen(_colour("text"))
                 p.drawText(QtCore.QPointF(left, card.top() + px(6) + fm.ascent()),
                            fm.elidedText(f.get("name") or "", QtCore.Qt.ElideMiddle, int(width)))
-                p.setFont(_font(self.font(), px(9)))
+                p.setFont(_font(self.font(), px(9.5)))
                 fm2 = QtGui.QFontMetrics(p.font())
-                p.setPen(_colour("muted"))
+                p.setPen(_colour(look.MINE_META if mine else "muted"))
                 p.drawText(QtCore.QPointF(left, card.bottom() - px(6) - fm2.descent()),
                            fm2.elidedText(look.file_line(f), QtCore.Qt.ElideRight, int(width)))
                 if box.fbar is not None:
                     rect, progress, text = box.fbar
                     p.setPen(QtCore.Qt.NoPen)
-                    p.setBrush(_colour("field"))
+                    p.setBrush(QtGui.QColor(0, 0, 0, 77))
                     p.drawRoundedRect(rect, px(5), px(5))
                     if progress is not None:
                         done = QtCore.QRectF(rect)
@@ -893,44 +1184,58 @@ def feed_class():
                     p.drawText(rect, QtCore.Qt.AlignCenter, text)
                 for rect, action, label in box.fbuttons:
                     hover = self._hover_button == (id(box.item.message), action)
-                    p.setPen(QtCore.Qt.NoPen)
-                    p.setBrush(_colour("hover" if hover else "field"))
-                    p.drawRoundedRect(rect, px(5), px(5))
+                    lead = action == "open"
+                    edge = _colour("accent", 0.55) if lead or hover else (
+                        QtGui.QColor(255, 255, 255, 46) if mine else _colour("line"))
+                    p.setPen(QtGui.QPen(edge, max(1.0, s)))
+                    p.setBrush(_colour("hover") if hover else QtGui.QColor(0, 0, 0, 36))
+                    p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), px(5), px(5))
                     p.setPen(_colour("accent_text" if action == "open" else "text"))
                     p.drawText(rect, QtCore.Qt.AlignCenter, label)
 
             def _pill_font(self):
                 return _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
 
-            def _lay_pills(self, box, x, top, bw, max_w, mine):
-                """The reactions' pills under a bubble, wrapped to the bubble's side; the height
-                they take."""
+            def _meta_font(self):
+                return _font(self.font(), hubstyle.px(9.5, self.win.scale))
+
+            def _call_width(self, item):
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                from . import emojiart
+                text_w = emojiart.line_width(item.text, _font(self.font(), px(9.5), True))
+                tfm = QtGui.QFontMetrics(_font(self.font(), px(9.5)))
+                time_w = tfm.horizontalAdvance(look.hm(item.message.get("at") or _now_ms()))
+                return px(12) + px(14) + px(6) + text_w + px(8) + time_w + px(12)
+
+            def _pill_rows(self, message, width):
+                """The reactions' pills wrapped into rows `width` wide: [(row width, [(w, e, n,
+                me)])] (look A: they stand inside the bubble)."""
                 from . import emoji as _emoji
                 px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
-                pills = _emoji.pills(box.item.message.get("reactions"), self.win.me_id())
+                pills = _emoji.pills(message.get("reactions"), self.win.me_id())
                 if not pills:
-                    return 0
+                    return []
                 fm = QtGui.QFontMetrics(self._pill_font())
-                ph, gap = px(22), px(4)
-                width = max(bw, min(max_w, px(260)))
+                gap = px(4)
                 rows, row, used = [], [], 0
                 for e, n, me in pills:
                     w = px(PILL_EMOJI) + px(4) + fm.horizontalAdvance(str(n)) + px(14)
                     if row and used + gap + w > width:
-                        rows.append(row)
+                        rows.append((used, row))
                         row, used = [], 0
                     row.append((w, e, n, me))
                     used += (gap if used else 0) + w
-                rows.append(row)
-                y = top + px(3)
-                for row in rows:
-                    total = sum(w for w, _e, _n, _m in row) + gap * (len(row) - 1)
-                    cx = (x + bw - total) if mine else x
+                rows.append((used, row))
+                return rows
+
+            def _place_pills(self, box, rows, x, top, width, right_aligned, ph, gap):
+                y = top
+                for total, row in rows:
+                    cx = (x + width - total) if right_aligned else x
                     for w, e, n, me in row:
                         box.pills.append((QtCore.QRectF(cx, y, w, ph), e, n, me))
                         cx += w + gap
                     y += ph + gap
-                return y - top
 
             # ---------------------------------------------------------- motion
             def tick(self, dt):
@@ -946,8 +1251,10 @@ def feed_class():
                 for k, start in list(self.plays.items()):
                     if now - start >= PLAY_CAP_MS:     # its box may never be painted again
                         del self.plays[k]
+                goal = 1.0 if self.hover_key is not None else 0.0
+                self.reply_level = look_approach(self.reply_level, goal, dt, HOVER_MS)
                 busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
-                            or self.playing or self.plays)
+                            or self.playing or self.plays or self.reply_level != goal)
                 self.update()
                 return busy
 
@@ -1012,8 +1319,9 @@ def feed_class():
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
                 p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
                 now = _now_ms()
-                small = _font(self.font(), px(9))
+                small = self._meta_font()
                 group = (self.ctx.get("chat") or {}).get("kind") == "group"
+                self._paint_backdrop(p, clip)
                 for top, height, start in self.folding:
                     k = 1.0 - (now - start) / float(FOLD_MS)
                     p.setPen(QtCore.Qt.NoPen)
@@ -1021,6 +1329,7 @@ def feed_class():
                     r = QtCore.QRectF(self.width() * 0.25, top + height * (1 - k) / 2,
                                       self.width() * 0.5, height * k)
                     p.drawRoundedRect(r, px(8), px(8))
+                from . import emojiart
                 for box in self.boxes:
                     if box.rect.bottom() < clip.top() - px(40) or \
                             box.rect.top() > clip.bottom() + px(40):
@@ -1029,28 +1338,27 @@ def feed_class():
                     if item.kind == "day":
                         p.setFont(_font(self.font(), px(9.5), True))
                         fm = QtGui.QFontMetrics(p.font())
-                        w = fm.horizontalAdvance(item.text) + px(16)
+                        w = fm.horizontalAdvance(item.text) + px(20)
                         pill = QtCore.QRectF((self.width() - w) / 2.0,
-                                             box.rect.top() + px(5), w, px(18))
-                        p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("field"))
-                        p.drawRoundedRect(pill, px(9), px(9))
-                        p.setPen(_colour("muted"))
+                                             box.rect.top() + px(7), w, px(20))
+                        self._dark_pill(p, pill)
+                        p.setPen(_colour("#c9cacf"))
                         p.drawText(pill, QtCore.Qt.AlignCenter, item.text)
                         continue
-                    if item.kind == "call":
-                        pill = box.callpill
+                    if item.kind == "unread":
+                        band = box.band
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("accent", 0.08))
+                        p.drawRect(band)
+                        p.setPen(QtGui.QPen(_colour("accent", 0.2), 1))
+                        p.drawLine(band.topLeft(), band.topRight())
+                        p.drawLine(band.bottomLeft(), band.bottomRight())
                         p.setFont(_font(self.font(), px(9.5), True))
-                        p.setPen(_colour("line"))
-                        p.setBrush(_colour("card"))
-                        p.drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0)
-                        text = _calls.ICON + "  " + item.text
-                        from . import emojiart
-                        tw = emojiart.line_width(text, p.font())
-                        emojiart.draw_line(p, QtCore.QRectF(pill.left() + (pill.width() - tw) / 2.0,
-                                                            pill.top(), tw + 1, pill.height()),
-                                           text, p.font(),
-                                           _colour("danger" if item.missed else "muted"))
+                        p.setPen(_colour("accent_text"))
+                        p.drawText(band, QtCore.Qt.AlignCenter, item.text)
+                        continue
+                    if item.kind == "call":
+                        self._paint_call(p, box, item)
                         continue
                     p.save()
                     key = item.key()
@@ -1059,7 +1367,8 @@ def feed_class():
                         p.translate(0, (1.0 - back_out(u)) * px(14))
                         p.setOpacity(max(0.0, min(1.0, u * 2.0)))
                     bubble = box.bubble
-                    face = look.MINE if item.mine else hubstyle.TOKENS["card_active"]
+                    mine = item.mine
+                    face = look.MINE if mine else look.THEIRS
                     if key in self.flashing:
                         k = 1.0 - (now - self.flashing[key]) / float(SENT_FLASH_MS)
                         colour = _blend(face, "accent", 0.45 * k)
@@ -1067,44 +1376,45 @@ def feed_class():
                         colour = _q().QtGui.QColor(face)
                     if item.pending and item.tick == "clock":
                         colour.setAlphaF(0.75)
-                    p.setPen(QtCore.Qt.NoPen)
-                    p.setBrush(colour)
-                    p.drawRoundedRect(bubble, px(10), px(10))
-                    if item.last:          # the tail corner, square on the sender's side
-                        corner = QtCore.QRectF(bubble.right() - px(10) if item.mine
-                                               else bubble.left(), bubble.bottom() - px(10),
-                                               px(10), px(10))
-                        p.drawRect(corner)
+                    if not box.bare:
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(colour)
+                        p.drawPath(self._bubble_path(bubble, mine, box.tail))
                     if box.avatar is not None:
                         av = box.avatar
                         paint_avatar(p, av, self.ctx.get("user_of", lambda uid: {"id": uid})(
                             item.message.get("from_id")), s)
                     if box.name_at is not None:
                         uid = item.message.get("from_id")
-                        p.setFont(_font(self.font(), px(10), True))
+                        p.setFont(_font(self.font(), px(10.5), True))
                         p.setPen(_q().QtGui.QColor(look.user_colour(uid)))
                         p.drawText(box.name_at, self.ctx.get("name_of", lambda u: u)(uid))
                     if box.quote is not None:
-                        qrect, _rid, qname, qtext = box.quote
+                        qrect, _rid, qname, qtext, qcolour = box.quote
+                        clip_q = QtGui.QPainterPath()
+                        clip_q.addRoundedRect(qrect, px(6), px(6))
+                        p.save()
+                        p.setClipPath(clip_q, QtCore.Qt.IntersectClip)
                         p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("panel", 0.35))
-                        p.drawRoundedRect(qrect, px(4), px(4))
-                        p.setBrush(_colour("accent"))
-                        p.drawRect(QtCore.QRectF(qrect.left(), qrect.top(), px(2), qrect.height()))
-                        p.setFont(_font(self.font(), px(9.5), True))
-                        p.setPen(_colour("accent_text"))
+                        p.setBrush(QtGui.QColor(0, 0, 0, 46) if mine
+                                   else QtGui.QColor(255, 255, 255, 15))
+                        p.drawRect(qrect)
+                        p.setBrush(QtGui.QColor(qcolour))
+                        p.drawRect(QtCore.QRectF(qrect.left(), qrect.top(), px(3), qrect.height()))
+                        p.restore()
+                        p.setFont(_font(self.font(), px(10), True))
+                        p.setPen(QtGui.QColor(qcolour).lighter(135))
                         fm = QtGui.QFontMetrics(p.font())
-                        p.drawText(QtCore.QPointF(qrect.left() + px(7), qrect.top() + fm.ascent()
-                                                  + px(2)),
+                        p.drawText(QtCore.QPointF(qrect.left() + px(10), qrect.top() + fm.ascent()
+                                                  + px(3)),
                                    fm.elidedText(qname, QtCore.Qt.ElideRight,
-                                                 int(qrect.width() - px(10))))
-                        p.setFont(_font(self.font(), px(9.5)))
-                        p.setPen(_colour("text2"))
+                                                 int(qrect.width() - px(14))))
+                        p.setFont(_font(self.font(), px(10)))
+                        p.setPen(_colour("#ead6c6" if mine else "#c9cacf"))
                         fm2 = QtGui.QFontMetrics(p.font())
-                        from . import emojiart
-                        emojiart.draw_line(p, QtCore.QRectF(qrect.left() + px(7),
-                                                            qrect.bottom() - fm2.height() - px(2),
-                                                            qrect.width() - px(10), fm2.height()),
+                        emojiart.draw_line(p, QtCore.QRectF(qrect.left() + px(10),
+                                                            qrect.bottom() - fm2.height() - px(3),
+                                                            qrect.width() - px(14), fm2.height()),
                                            qtext, p.font(), p.pen().color())
                     if box.card is not None:
                         p.save()
@@ -1118,14 +1428,7 @@ def feed_class():
                         p.restore()
                     for rect, glyph in box.bigs:
                         self._draw_emoji(p, rect, (key, glyph, "big"), glyph, now)
-                    p.setFont(small)
-                    if item.tick == "read":
-                        p.setPen(_colour("accent_text"))
-                    elif item.tick == "failed":
-                        p.setPen(_colour("danger"))
-                    else:
-                        p.setPen(_colour("muted"))
-                    p.drawText(box.meta_at, box.meta)
+                    self._paint_meta(p, box, small)
                     if box.pills:
                         p.setFont(self._pill_font())
                         for rect, e, n, me in box.pills:
@@ -1136,11 +1439,15 @@ def feed_class():
                                 c = r.center()
                                 r.setSize(r.size() * k)
                                 r.moveCenter(c)
-                            p.setPen(QtGui.QPen(_colour("accent"), max(1.0, s)) if me
-                                     else QtCore.Qt.NoPen)
-                            p.setBrush(_colour("accent_tint" if me else "field"))
+                            if me:
+                                p.setPen(QtGui.QPen(_colour("accent"), max(1.0, s)))
+                                p.setBrush(_colour("accent", 0.3 if mine else 0.2))
+                            else:
+                                p.setPen(QtCore.Qt.NoPen)
+                                p.setBrush(QtGui.QColor(0, 0, 0, 56) if mine and not box.bare
+                                           else QtGui.QColor(255, 255, 255, 20))
                             p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-                            p.setPen(_colour("accent_text" if me else "text2"))
+                            p.setPen(_colour("accent_text" if me else "text"))
                             side = px(PILL_EMOJI)
                             pic = QtCore.QRectF(r.left() + px(7), r.center().y() - side / 2.0,
                                                 side, side)
@@ -1162,10 +1469,165 @@ def feed_class():
                                    QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
                                    if item.mine else QtCore.Qt.AlignLeft,
                                    "не отправлено — повторить")
+                    if key == self.hover_key and self.reply_level > 0.01:
+                        self._paint_reply_button(p, box)
                     p.restore()
 
+            # ---------------------------------------------------------- look A's parts
+            def _paint_backdrop(self, p, clip):
+                """`look.FEED_BG` under a pattern of white and accent dots (2026-10-22)."""
+                p.fillRect(clip, QtGui.QColor(look.FEED_BG))
+                side = max(4, int(hubstyle.px(look.PATTERN, self.win.scale)))
+                if self._tile is None or self._tile.width() != side:
+                    tile = QtGui.QPixmap(side, side)
+                    tile.fill(QtCore.Qt.transparent)
+                    tp = QtGui.QPainter(tile)
+                    try:
+                        tp.setRenderHint(QtGui.QPainter.Antialiasing)
+                        tp.setPen(QtCore.Qt.NoPen)
+                        r = max(0.8, self.win.scale)
+                        tp.setBrush(QtGui.QColor(255, 255, 255, 13))
+                        tp.drawEllipse(QtCore.QPointF(r + 0.5, r + 0.5), r, r)
+                        tp.setBrush(_colour("accent", 0.06))
+                        tp.drawEllipse(QtCore.QPointF(side / 2.0 + r, side / 2.0 + r), r, r)
+                    finally:
+                        tp.end()
+                    self._tile = tile
+                p.fillRect(clip, QtGui.QBrush(self._tile))
+
+            def _dark_pill(self, p, rect):
+                p.setPen(QtGui.QPen(QtGui.QColor("#2c2e33"), 1))
+                p.setBrush(QtGui.QColor(16, 17, 19, 204))
+                p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5),
+                                  rect.height() / 2.0, rect.height() / 2.0)
+
+            def _paint_call(self, p, box, item):
+                """A call's line: a dark pill, the phone drawn (green, missed red), its text and
+                time."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                from . import emojiart
+                pill = box.callpill
+                self._dark_pill(p, pill)
+                ink = "danger" if item.missed else "ok"
+                side = px(14)
+                pic = hubqt.pixmap("phone", hubstyle.TOKENS[ink], side)
+                x = pill.left() + px(12)
+                p.drawPixmap(QtCore.QRectF(x, pill.center().y() - side / 2.0, side, side), pic,
+                             QtCore.QRectF(pic.rect()))
+                x += side + px(6)
+                font = _font(self.font(), px(9.5), True)
+                tw = emojiart.line_width(item.text, font)
+                emojiart.draw_line(p, QtCore.QRectF(x, pill.top(), tw + 1, pill.height()),
+                                   item.text, font, _colour("danger" if item.missed else "text"))
+                p.setFont(_font(self.font(), px(9.5)))
+                p.setPen(_colour("muted"))
+                p.drawText(QtCore.QRectF(x + tw + px(8), pill.top(), pill.right() - x - tw,
+                                         pill.height()),
+                           QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+                           look.hm(item.message.get("at") or _now_ms()))
+
+            def _bubble_path(self, bubble, mine, tail):
+                """A bubble: radius 12; the last of a run square at the sender's bottom corner
+                with Telegram's curl (the mockup's 9 x 14 tail, 2026-10-22)."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                r = px(12)
+                path = QtGui.QPainterPath()
+                path.addRoundedRect(bubble, r, r)
+                if not tail:
+                    return path
+                k = self.win.scale
+                corner = QtGui.QPainterPath()
+                corner.addRect(QtCore.QRectF(bubble.right() - r if mine else bubble.left(),
+                                             bubble.bottom() - r, r, r))
+                curl = QtGui.QPainterPath()
+                bottom, top = bubble.bottom(), bubble.bottom() - 14 * k
+                if mine:
+                    x0 = bubble.right()
+                    curl.moveTo(x0 - 0.4 * k, top + 0.5 * k)
+                    curl.cubicTo(x0 + 0.4 * k - 0.4 * k, top + 7.5 * k,
+                                 x0 + 4.0 * k, top + 12.0 * k, x0 + 8.6 * k, bottom)
+                    curl.lineTo(x0 - 0.4 * k, bottom)
+                else:
+                    x0 = bubble.left()
+                    curl.moveTo(x0 + 0.4 * k, top + 0.5 * k)
+                    curl.cubicTo(x0, top + 7.5 * k, x0 - 4.0 * k, top + 12.0 * k,
+                                 x0 - 8.6 * k, bottom)
+                    curl.lineTo(x0 + 0.4 * k, bottom)
+                curl.closeSubpath()
+                return path.united(corner).united(curl)
+
+            def _paint_meta(self, p, box, font):
+                """The time and the drawn ticks: inside the bubble (mine in `MINE_META`, read
+                in `accent_text`), or in a dark pill under emoji alone."""
+                if box.meta_at is None:
+                    return
+                s = self.win.scale
+                item = box.item
+                fm = QtGui.QFontMetrics(font)
+                if box.meta_pill is not None:
+                    self._dark_pill(p, box.meta_pill)
+                    ink = "#c9cacf"
+                else:
+                    ink = look.MINE_META if item.mine else hubstyle.TOKENS["muted"]
+                p.setFont(font)
+                p.setPen(QtGui.QColor(ink))
+                p.drawText(box.meta_at, box.meta)
+                tick = item.tick
+                if tick:
+                    colour = {"read": hubstyle.TOKENS["accent_text"],
+                              "failed": hubstyle.TOKENS["danger"]}.get(tick, ink)
+                    right = box.meta_at.x() + fm.horizontalAdvance(box.meta) + \
+                        hubstyle.px(3, s) + tick_width(tick, s)
+                    paint_ticks(p, right, box.meta_at.y() - fm.ascent() * 0.36, tick, colour, s)
+
+            def _reply_rect(self, box):
+                """The reply button beside a bubble (look A): a 26 px circle 8 px out."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                b = box.bubble
+                side = px(26)
+                x = b.left() - px(8) - side if box.item.mine else b.right() + px(8)
+                return QtCore.QRectF(x, b.center().y() - side / 2.0, side, side)
+
+            def _paint_reply_button(self, p, box):
+                s = self.win.scale
+                rect = self._reply_rect(box)
+                level = self.reply_level
+                p.save()
+                p.setOpacity(p.opacity() * level)
+                hot = self.reply_hot
+                if hot:
+                    for grow, alpha in ((3.0, 0.08), (1.6, 0.16)):
+                        p.setPen(QtCore.Qt.NoPen)
+                        p.setBrush(_colour("accent", alpha))
+                        g = grow * s
+                        p.drawEllipse(rect.adjusted(-g, -g, g, g))
+                p.setPen(QtGui.QPen(_colour("accent", 0.6) if hot else QtGui.QColor("#3a3c42"),
+                                    max(1.0, s)))
+                p.setBrush(_colour("card"))
+                c = rect.center()
+                lift = 1.1 if hot else 1.0
+                r = QtCore.QRectF(0, 0, rect.width() * lift, rect.height() * lift)
+                r.moveCenter(c)
+                p.drawEllipse(r)
+                side = hubstyle.px(15, s)
+                pic = hubqt.pixmap("corner-up-left",
+                                   hubstyle.TOKENS["text" if hot else "muted"], side)
+                p.drawPixmap(QtCore.QRectF(c.x() - side / 2.0, c.y() - side / 2.0, side, side),
+                             pic, QtCore.QRectF(pic.rect()))
+                p.restore()
+
             # ---------------------------------------------------------- input
+            def hover_box(self):
+                if self.hover_key is None:
+                    return None
+                return next((b for b in self.boxes if b.item.kind == "msg"
+                             and b.item.key() == self.hover_key), None)
+
             def box_at(self, point):
+                hovered = self.hover_box()
+                if hovered is not None and self.reply_level > 0.01 \
+                        and self._reply_rect(hovered).contains(point):
+                    return hovered, "reply"
                 for box in self.boxes:
                     if box.callpill is not None:
                         if box.callpill.contains(point):
@@ -1201,6 +1663,10 @@ def feed_class():
                     return
                 box, where = self.box_at(pos)
                 if box is None:
+                    return
+                if where == "reply":
+                    if event.button() == QtCore.Qt.LeftButton:
+                        self.win.start_reply(box.item.message)
                     return
                 if where == "call":
                     if event.button() == QtCore.Qt.LeftButton:
@@ -1262,9 +1728,13 @@ def feed_class():
                             self._dragging = True
                             self.grabMouse()
                         return
+                self._hover_row(pos)
                 box, _where = self.box_at(pos)
                 self._hover_emoji(box, _where)
                 self._hover_preview(box if _where == "thumb" else None)
+                if _where == "reply":
+                    self.setCursor(QtCore.Qt.PointingHandCursor)
+                    return
                 hover = None
                 if _where.startswith("file:"):
                     hover = (id(box.item.message), _where[5:])
@@ -1316,9 +1786,26 @@ def feed_class():
                     if hit is not None and hit not in self.plays:
                         self._start(hit, hit[1])
 
+            def _hover_row(self, pos):
+                """The message whose row the mouse is on shows its reply button (look A)."""
+                key, hot = None, False
+                for box in self.boxes:
+                    if box.item.kind == "msg" and box.rect.top() <= pos.y() < box.rect.bottom():
+                        if not box.item.pending:
+                            key = box.item.key()
+                            hot = self._reply_rect(box).contains(pos)
+                        break
+                if key != self.hover_key or hot != self.reply_hot:
+                    self.hover_key, self.reply_hot = key, hot
+                    self.win.animate()
+                    self.update()
+
             def leaveEvent(self, event):                   # noqa: N802
                 self._emoji_hover = None
                 self._hover_preview(None)
+                if self.hover_key is not None:
+                    self.hover_key, self.reply_hot = None, False
+                    self.win.animate()
                 super(Feed, self).leaveEvent(event)
 
             def top_of(self, message_id):
@@ -1706,7 +2193,8 @@ def composer_class():
                 super(Composer, self).__init__(parent)
                 self.win = win
                 self.setObjectName("skeldarChatComposer")
-                self.setPlaceholderText("Сообщение…")
+                self.setPlaceholderText("Сообщение")
+                self.setFont(_font(self.font(), hubstyle.px(11.5, win.scale)))
                 self.setTabChangesFocus(True)
                 self.document().contentsChanged.connect(self._grow)
                 self._grow()
@@ -1717,6 +2205,12 @@ def composer_class():
                 # stylesheet gives (contentsMargins). Leaving the document margin
                 # out clipped the one line by 8 px at the bottom.
                 lines = max(1, min(look.MAX_LINES, int(self.document().size().height())))
+                #  a scroll bar only once the text is past what the field grows to (look A:
+                #  its handle stood in the round field on one line)
+                self.setVerticalScrollBarPolicy(
+                    QtCore.Qt.ScrollBarAsNeeded
+                    if self.document().size().height() > look.MAX_LINES
+                    else QtCore.Qt.ScrollBarAlwaysOff)
                 fm = self.fontMetrics()
                 m = self.contentsMargins()
                 v = self.viewportMargins()
@@ -1732,6 +2226,14 @@ def composer_class():
             def showEvent(self, event):                    # noqa: N802
                 super(Composer, self).showEvent(event)
                 self._grow()
+
+            def focusInEvent(self, event):                 # noqa: N802
+                super(Composer, self).focusInEvent(event)
+                self.win._field_lit(True)
+
+            def focusOutEvent(self, event):                # noqa: N802
+                super(Composer, self).focusOutEvent(event)
+                self.win._field_lit(False)
 
             def keyPressEvent(self, event):                # noqa: N802
                 key = event.key()
@@ -1788,6 +2290,72 @@ def _button(text, role=None, icon_name=None, name=None, scale=1.0, tip=None):
     return b
 
 
+MENU_ICONS = {u"Ответить": "corner-up-left", u"Скопировать": "copy", u"Изменить": "pencil",
+              u"Удалить": "trash", u"Реакция…": "mood-smile", u"Повторить": "refresh",
+              "Open": "folder", "Import": "download", u"Открыть": "folder",
+              u"Сохранить как…": "device-floppy", u"В Stash": "archive",
+              u"Отправить сцену": "upload", u"Отправить выделенное (FBX)": "focus-2",
+              u"Отправить файл…": "paperclip"}
+
+
+def _menu_icon(action, label, scale):
+    """A menu row's Tabler icon (look A, 2026-10-22); Удалить's in `danger`."""
+    name = MENU_ICONS.get(label)
+    if name:
+        colour = hubstyle.TOKENS["danger" if label == u"Удалить" else "text2"]
+        action.setIcon(hubqt.icon(name, colour, hubstyle.px(14, scale)))
+
+
+def look_a_sheet(scale):
+    """The window's own rules over the hub's stylesheet (look A, 2026-10-22, spec
+    2026-10-22-chat-look-telegram-design.md): the two columns on `panel`, a round search
+    field, the header and the composer on `panel` with a hairline, a round field holding the
+    text, a round send button that turns orange with text. Lengths are physical (trap 98)."""
+    t = hubstyle.TOKENS
+    px = lambda n: hubstyle.px(n, scale)                    # noqa: E731
+    lit = "rgba(224,122,54,180)"
+    return "\n".join([
+        "#skeldarChatFrame { border: none; background: transparent; }",
+        "QScrollArea { background: transparent; border: none; }",
+        "#skeldarChatList, #skeldarChatFeed, #skeldarChatNewBody, #skeldarChatMembersBody,"
+        " #skeldarChatViewport { background: transparent; }",
+        "#skeldarChatLeft, #skeldarChatRight { background: %s; }" % t["panel"],
+        "#skeldarChatSplit { background: %s; }" % hubwindow.EDGE,
+        "QLineEdit#skeldarChatSearch { background: %s; color: %s; border: 1px solid %s;"
+        " border-radius: %dpx; padding: 0 %dpx 0 %dpx; min-height: %dpx; }"
+        % (t["field"], t["text"], t["track_edge"], px(15), px(10), px(2), px(28)),
+        "QLineEdit#skeldarChatSearch:focus { border: 1px solid %s; }" % lit,
+        "#skeldarChatHead { background: %s; border: none; border-bottom: 1px solid %s; }"
+        % (t["panel"], t["track_edge"]),
+        "#skeldarChatCompose { background: %s; border: none; border-top: 1px solid %s; }"
+        % (t["panel"], t["track_edge"]),
+        "#skeldarChatField { background: %s; border: 1px solid %s; border-radius: %dpx; }"
+        % (t["field"], t["track_edge"], px(17)),
+        "#skeldarChatField[skFocus=\"true\"] { border: 1px solid %s; }" % lit,
+        "QPlainTextEdit#skeldarChatComposer { background: transparent; color: %s;"
+        " border: none; padding: %dpx 0 %dpx 0; }" % (t["text"], px(3), px(3)),
+        "QPushButton#skeldarChatEmoji { background: transparent; border: none;"
+        " border-radius: %dpx; min-width: %dpx; max-width: %dpx; min-height: %dpx;"
+        " max-height: %dpx; padding: 0; }" % (px(14), px(28), px(28), px(28), px(28)),
+        "QPushButton#skeldarChatEmoji:hover { background: %s; }" % t["hover"],
+        "QPushButton#skeldarChatSend { background: #2c2e33; border: none; border-radius: %dpx;"
+        " min-width: %dpx; max-width: %dpx; min-height: %dpx; max-height: %dpx; padding: 0; }"
+        % (px(17), px(34), px(34), px(34), px(34)),
+        "QPushButton#skeldarChatSend[skState=\"ready\"] { background: %s; }" % t["accent"],
+        "QPushButton#skeldarChatSend[skState=\"ready\"]:hover { background: %s;"
+        " border: 1px solid %s; }" % (t["accent_hover"], hubstyle.TOKENS.get("rim", "#fff1e2")),
+        "QPushButton#skeldarChatDown { background: %s; color: %s; border: 1px solid %s;"
+        " border-radius: %dpx; min-width: %dpx; min-height: %dpx; max-height: %dpx;"
+        " padding: 0 %dpx; font-weight: bold; }"
+        % (t["card"], t["text"], t["line"], px(18), px(36), px(36), px(36), px(8)),
+        "QPushButton#skeldarChatDown:hover { border: 1px solid %s; }" % t["accent"],
+        "#skeldarChatBar { background: transparent; }",
+        "#skeldarChatBarQuote { background: rgba(255,255,255,13); border-radius: %dpx; }"
+        % px(6),
+        "#skeldarChatBarText { color: #c9cacf; }",
+    ])
+
+
 def _label(text="", role=None, name=None, wrap=False):
     q = _q()
     lab = q.QtWidgets.QLabel(text)
@@ -1813,6 +2381,7 @@ class ChatWindow(object):
         self.query = ""
         self.history_done = set()
         self.unseen = 0              # messages that came while scrolled up
+        self.unread_from = None      # (chat, message id): where the unread band stands
         self._dirty = False
         self._last_tick = None
         self.root = None
@@ -1872,11 +2441,12 @@ class ChatWindow(object):
         card = w.QFrame()
         card.setObjectName("skeldarChatCard")
         frame.content = card
-        frame.content_face = "card"     # the chat paints its pages on the card
+        #  look A (2026-10-22): the columns paint their own faces, no card behind them
+        frame.content_face = "none"
         column.addWidget(card, 1)
         self.card = card
         body = w.QVBoxLayout(card)
-        body.setContentsMargins(px(6), px(6), px(6), px(6))
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         self.pages = w.QStackedWidget()
         self.pages.setObjectName("skeldarChatPages")
@@ -1888,19 +2458,10 @@ class ChatWindow(object):
         grip.setFixedSize(px(14), px(14))
         self.grip = grip
 
-        sheet = hubstyle.stylesheet(s)
-        root.setStyleSheet(
-            sheet + "\n#skeldarChatFrame {{ border: none; background: transparent; }}"
-            "\nQScrollArea {{ background: transparent; border: none; }}"
-            "\n#skeldarChatList, #skeldarChatFeed, #skeldarChatFriendsBody, #skeldarChatNewBody,"
-            " #skeldarChatMembersBody, #skeldarChatViewport {{ background: transparent; }}"
-            "\nQPlainTextEdit#skeldarChatComposer {{ background: {0}; color: {1};"
-            " border: 1px solid {2}; border-radius: {3}px; padding: {4}px; }}"
-            "\n#skeldarChatLeft {{ background: transparent; }}"
-            "\n#skeldarChatSplit {{ background: {2}; }}".format(
-                hubstyle.TOKENS["field"], hubstyle.TOKENS["text"],
-                hubstyle.TOKENS["track_edge"], px(6), px(4)))
+        root.setStyleSheet(hubstyle.stylesheet(s) + "\n" + look_a_sheet(s))
         hubwindow.dress(frame, s)
+        card.setStyleSheet("#skeldarChatCard {{ background: transparent;"
+                           " border-top: 1px solid {0}; }}".format(hubstyle.TOKENS["track_edge"]))
         self.root = root
         self.burster = hubwindow.Burster(frame, self._burst_parts, self._burst_face, s)
         self.timer = q.QtCore.QTimer(root)
@@ -1992,36 +2553,45 @@ class ChatWindow(object):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
+        #  look A (2026-10-22): ≡ (my card, New chat, Settings), the round search, ✎; the
+        #  tabs; the rows. My name and Settings moved from a foot into ≡, as in Telegram.
         left = w.QWidget()
         left.setObjectName("skeldarChatLeft")
+        left.setAttribute(q.QtCore.Qt.WA_StyledBackground, True)
         left.setFixedWidth(px(look.LIST_W))
         lv = w.QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, px(4), 0)
-        lv.setSpacing(px(4))
-        top = w.QHBoxLayout()
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(0)
+        head = w.QWidget()
+        head.setObjectName("skeldarChatListTop")
+        head.setFixedHeight(px(44))
+        top = w.QHBoxLayout(head)
+        top.setContentsMargins(px(6), 0, px(6), 0)
+        top.setSpacing(px(4))
+        self.menu_button = _button("", "tool", "menu-2", "skeldarChatMenuButton", self.scale,
+                                   "Мой профиль, новый чат, настройки")
+        self.menu_button.clicked.connect(lambda *_a: self.me_menu())
+        top.addWidget(self.menu_button)
         self.search = w.QLineEdit()
         self.search.setObjectName("skeldarChatSearch")
         self.search.setPlaceholderText("Поиск")
+        self.search.setFont(_font(self.search.font(), px(11)))
+        self.search.addAction(hubqt.icon("search", hubstyle.TOKENS["muted"], px(14)),
+                              w.QLineEdit.LeadingPosition)
         self.search.textChanged.connect(self._searched)
         top.addWidget(self.search, 1)
         new = _button("", "tool", "pencil", "skeldarChatNew", self.scale, "Новый чат или группа")
         new.clicked.connect(lambda *_a: self.show_pane("new"))
         top.addWidget(new)
-        lv.addLayout(top)
+        lv.addWidget(head)
+        self.tab = get_var(TAB_VAR) or "all"
+        if self.tab not in dict(look.TABS):
+            self.tab = "all"
+        self.tabs = tabs_class()(self)
+        lv.addWidget(self.tabs)
         self.list = list_class()(self)
         self.list_area = self._scroll(self.list, "skeldarChatListArea")
         lv.addWidget(self.list_area, 1)
-        foot = w.QHBoxLayout()
-        self.me_avatar = avatar_widget_class()(self, {}, px(22), False)
-        self.me_avatar.setObjectName("skeldarChatMeAvatar")
-        foot.addWidget(self.me_avatar)
-        self.me_label = _label("", "label", "skeldarChatMe")
-        foot.addWidget(self.me_label, 1)
-        settings = _button("", "tool", "settings", "skeldarChatSettingsButton", self.scale,
-                           "Настройки")
-        settings.clicked.connect(lambda *_a: self.show_pane("settings"))
-        foot.addWidget(settings)
-        lv.addLayout(foot)
         lay.addWidget(left)
         self.left = left
 
@@ -2078,21 +2648,29 @@ class ChatWindow(object):
         page = w.QWidget()
         page.setObjectName("skeldarChatPage")
         lay = w.QVBoxLayout(page)
-        lay.setContentsMargins(px(6), 0, 0, 0)
-        lay.setSpacing(px(4))
-        head = w.QHBoxLayout()
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        #  look A (2026-10-22): the header on `panel` with a hairline under it
+        head_w = w.QFrame()
+        head_w.setObjectName("skeldarChatHead")
+        head_w.setFixedHeight(px(50))
+        head = w.QHBoxLayout(head_w)
+        head.setContentsMargins(px(10), 0, px(8), 0)
+        head.setSpacing(px(8))
         self.chat_back = _button("", "tool", "arrow-left", "skeldarChatBack", self.scale, "К списку")
         self.chat_back.clicked.connect(lambda *_a: self.back())
         head.addWidget(self.chat_back)
-        self.chat_avatar = avatar_widget_class()(self, {}, px(30))
+        self.chat_avatar = avatar_widget_class()(self, {}, px(34))
         self.chat_avatar.setObjectName("skeldarChatHeadAvatar")
         head.addWidget(self.chat_avatar)
         texts = w.QVBoxLayout()
-        texts.setSpacing(0)
+        texts.setSpacing(px(1))
+        texts.setContentsMargins(px(2), 0, 0, 0)
         self.chat_title = _label("", None, "skeldarChatTitleText")
-        self.chat_title.setStyleSheet("font-weight: bold; color: {0};".format(
-            hubstyle.TOKENS["text"]))
-        self.chat_sub = _label("", "subtitle", "skeldarChatSub")
+        self.chat_title.setFont(_font(self.chat_title.font(), px(12.5), True))
+        self.chat_title.setStyleSheet("color: {0};".format(hubstyle.TOKENS["text"]))
+        self.chat_sub = _label("", None, "skeldarChatSub")
+        self.chat_sub.setFont(_font(self.chat_sub.font(), px(10.5)))
         texts.addWidget(self.chat_title)
         texts.addWidget(self.chat_sub)
         head.addLayout(texts, 1)
@@ -2114,7 +2692,7 @@ class ChatWindow(object):
         head.addWidget(self.call_voice)
         head.addWidget(self.call_video)
         head.addWidget(self.call_join)
-        lay.addLayout(head)
+        lay.addWidget(head_w)
 
         self.feed = feed_class()(self)
         from . import emojiart
@@ -2126,46 +2704,101 @@ class ChatWindow(object):
         self.feed_area.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.feed_area.verticalScrollBar().rangeChanged.connect(self._range_changed)
         lay.addWidget(self.feed_area, 1)
-        self.down = _button("", "primary", "arrow-down", "skeldarChatDown", self.scale,
-                            "К новым сообщениям")
+        self.down = _button("", None, None, "skeldarChatDown", self.scale, "К новым сообщениям")
+        self.down.setIcon(hubqt.icon("arrow-down", hubstyle.TOKENS["text2"], px(16)))
         self.down.setParent(self.feed_area)
         self.down.clicked.connect(lambda *_a: self.to_bottom())
         self.down.hide()
 
+        #  the composer (look A): on `panel` with a hairline over it; the reply / edit bar
+        #  is an icon, a quote in the sender's colour and ✕
+        compose = w.QFrame()
+        compose.setObjectName("skeldarChatCompose")
+        cv = w.QVBoxLayout(compose)
+        cv.setContentsMargins(px(8), px(6), px(8), px(8))
+        cv.setSpacing(px(6))
         self.bar = w.QWidget()
         self.bar.setObjectName("skeldarChatBar")
         bar = w.QHBoxLayout(self.bar)
-        bar.setContentsMargins(px(6), 0, 0, 0)
-        self.bar_text = _label("", "note", "skeldarChatBarText")
-        bar.addWidget(self.bar_text, 1)
+        bar.setContentsMargins(px(4), 0, 0, 0)
+        bar.setSpacing(px(8))
+        self.bar_icon = w.QLabel()
+        self.bar_icon.setObjectName("skeldarChatBarIcon")
+        bar.addWidget(self.bar_icon)
+        self.bar_quote = w.QFrame()
+        self.bar_quote.setObjectName("skeldarChatBarQuote")
+        qv = w.QVBoxLayout(self.bar_quote)
+        qv.setContentsMargins(px(10), px(2), px(8), px(2))
+        qv.setSpacing(0)
+        self.bar_text = _label("", None, "skeldarChatBarTitle")
+        self.bar_text.setFont(_font(self.bar_text.font(), px(10), True))
+        qv.addWidget(self.bar_text)
+        self.bar_sub = _label("", None, "skeldarChatBarText")
+        self.bar_sub.setFont(_font(self.bar_sub.font(), px(10.5)))
+        qv.addWidget(self.bar_sub)
+        bar.addWidget(self.bar_quote, 1)
         cancel = _button("", "tool", "x", "skeldarChatBarCancel", self.scale, "Отменить (Esc)")
         cancel.clicked.connect(lambda *_a: self.cancel_bar())
         bar.addWidget(cancel)
         self.bar.hide()
-        lay.addWidget(self.bar)
+        cv.addWidget(self.bar)
 
         row = w.QHBoxLayout()
+        row.setSpacing(px(6))
         self.clip_button = _button("", "tool", "paperclip", "skeldarChatClip", self.scale,
                                    "Отправить сцену, выделенное или файл (.ma .mb .fbx) - "
                                    "или перетащите файл в окно")
         self.clip_button.clicked.connect(lambda *_a: self.clip_menu())
         row.addWidget(self.clip_button, 0, Qt.AlignBottom)
-        self.emoji_button = _button("", "tool", "mood-smile", "skeldarChatEmoji", self.scale,
-                                    "Эмоджи")
-        self.emoji_button.clicked.connect(lambda *_a: self.pick_emoji())
-        row.addWidget(self.emoji_button, 0, Qt.AlignBottom)
+        self.field = w.QFrame()
+        self.field.setObjectName("skeldarChatField")
+        fl = w.QHBoxLayout(self.field)
+        fl.setContentsMargins(px(14), px(2), px(3), px(2))
+        fl.setSpacing(px(2))
         self.composer = composer_class()(self)
         self.composer.textChanged.connect(self._typed)
-        row.addWidget(self.composer, 1)
-        self.send_button = _button("", "primary", "send", "skeldarChatSend", self.scale,
+        fl.addWidget(self.composer, 1)
+        self.emoji_button = _button("", None, None, "skeldarChatEmoji", self.scale, "Эмоджи")
+        self.emoji_button.setIcon(hubqt.icon("mood-smile", hubstyle.TOKENS["muted"], px(18)))
+        self.emoji_button.setIconSize(q.QtCore.QSize(px(18), px(18)))
+        self.emoji_button.clicked.connect(lambda *_a: self.pick_emoji())
+        fl.addWidget(self.emoji_button, 0, Qt.AlignBottom)
+        row.addWidget(self.field, 1)
+        self.send_button = _button("", None, None, "skeldarChatSend", self.scale,
                                    "Отправить (Enter)")
+        self.send_button.setIconSize(q.QtCore.QSize(px(17), px(17)))
         self.send_button.clicked.connect(lambda *_a: self.send_now())
         row.addWidget(self.send_button, 0, Qt.AlignBottom)
-        lay.addLayout(row)
+        cv.addLayout(row)
         self.line = _label("", "status", "skeldarChatLine", wrap=True)
         self.line.hide()
-        lay.addWidget(self.line)
+        cv.addWidget(self.line)
+        lay.addWidget(compose)
+        self._paint_send()
         return page
+
+    def _paint_send(self):
+        """The round send button (look A): grey while there is nothing to send, the accent
+        with the arrow in `on_accent` once there is."""
+        ready = bool(self.composer.toPlainText().strip())
+        button = self.send_button
+        if button.property("skState") == ("ready" if ready else "") and button.icon().cacheKey():
+            return
+        button.setProperty("skState", "ready" if ready else "")
+        colour = hubstyle.TOKENS["on_accent"] if ready else hubstyle.TOKENS["faint"]
+        button.setIcon(hubqt.icon("send", colour, self.px(17)))
+        style = button.style()
+        style.unpolish(button)
+        style.polish(button)
+        button.update()
+
+    def _field_lit(self, on):
+        """The composer's round field lights while the text has the focus."""
+        self.field.setProperty("skFocus", "true" if on else "")
+        style = self.field.style()
+        style.unpolish(self.field)
+        style.polish(self.field)
+        self.field.update()
 
     def _build_new(self):
         q = _q()
@@ -2341,21 +2974,29 @@ class ChatWindow(object):
         if not signed:
             return
         me = st.me
-        self.me_label.setText(look.display_name(me))
-        self.me_avatar.set_user(me, dot=False)
         now = time.monotonic()
         rows = []
         chats, persons = look.directory(self.chats(), getattr(st, "people", []), me["id"],
                                         st.online, self.query, _now_ms())
         for c in chats:
+            if not look.in_tab("group" if c.get("kind") == "group" else "dm", self.tab):
+                continue
             last = c.get("last") or {}
+            prefix, text = look.preview_parts(c, me["id"], st.typing, now)
+            tick = ""
+            if last and last.get("from_id") == me["id"] and not last.get("deleted"):
+                upto = look.read_by_others(c, st.reads, me["id"])
+                tick = "read" if (last.get("seq") or 0) <= upto else "sent"
             rows.append({"id": c["id"], "kind": "chat", "chat": c,
                          "title": look.chat_title(c, me["id"]),
                          "preview": look.preview(c, me["id"], st.typing, now),
+                         "prefix": prefix, "text": text, "tick": tick,
                          "time": look.clock(last.get("at"), _now_ms()) if last else "",
                          "unread": int(c.get("unread") or 0),
                          "user": look.other(c, me["id"]) or {"id": c["id"], "name": c.get("name")},
                          "typing": bool(look.typers(st.typing, c["id"], me["id"], now))})
+        if not look.in_tab("person", self.tab):
+            persons = []
         if persons:
             rows.append({"id": "head:people", "kind": "head",
                          "title": "ВСЕ ПОЛЬЗОВАТЕЛИ · " + look.people_count(persons)})
@@ -2363,6 +3004,8 @@ class ChatWindow(object):
             rows.append({"id": "person:" + u["id"], "kind": "person", "user": u,
                          "title": look.display_name(u), "preview": u["line"], "time": "",
                          "unread": 0, "typing": False, "online": u["online"]})
+        self.tabs.set_counts(dict((key, look.tab_count(self.chats(), key))
+                                  for key, _label in look.TABS))
         self.list.selected = self.chat
         self.list.set_rows(rows)
         if self.chat is not None and self.chat not in st.chats:
@@ -2386,10 +3029,15 @@ class ChatWindow(object):
             self.left.setVisible(not show_right)
             self.right.setVisible(show_right)
             self.split.setVisible(False)
+            #  one column: the list takes the window's width (it stood at its fixed width
+            #  with a gap beside it)
+            self.left.setMinimumWidth(0)
+            self.left.setMaximumWidth(16777215)
         else:
             self.left.setVisible(True)
             self.right.setVisible(True)
             self.split.setVisible(True)
+            self.left.setFixedWidth(self.px(look.LIST_W))
         self.chat_back.setVisible(narrow)
 
     def _refresh_chat(self):
@@ -2404,6 +3052,9 @@ class ChatWindow(object):
                                   dot=partner is not None)
         self.chat_sub.setText(look.presence(c, me_id, st.online, st.typing, time.monotonic(),
                                             _now_ms()))
+        typing = bool(look.typers(st.typing, c["id"], me_id, time.monotonic()))
+        self.chat_sub.setStyleSheet("color: {0};".format(
+            hubstyle.TOKENS["accent_text" if typing else "muted"]))
         self.members_button.setVisible(c.get("kind") == "group")
         self._paint_call_buttons()
         messages = st.messages.get(self.chat, [])
@@ -2413,6 +3064,9 @@ class ChatWindow(object):
             return users.get(uid, {"id": uid, "nick": uid})
 
         items = look.feed(messages, st.pending.get(self.chat, []), me_id, c, st.reads, _now_ms())
+        mark = self.unread_from
+        if mark and mark[0] == self.chat and mark[1]:
+            items = look.mark_unread(items, mark[1])
         ctx = {"chat": c, "messages": messages, "user_of": user_of,
                "file_state": self.file_state,
                "name_of": lambda uid: look.display_name(user_of(uid)),
@@ -2530,6 +3184,12 @@ class ChatWindow(object):
             self.reply_to = self.editing = None
             self.composer.clear()
             self.unseen = 0
+            #  «Непрочитанные сообщения» stands before what was unread as the chat opened,
+            #  until another chat is opened (look A, 2026-10-22)
+            c = self.session.state.chats.get(chat_id) or {}
+            self.unread_from = (chat_id, look.first_unread(
+                self.session.state.messages.get(chat_id, []), int(c.get("unread") or 0),
+                self.me_id()))
         self.chat = chat_id
         self.pane = "chat"
         self.single = "right"
@@ -2629,17 +3289,38 @@ class ChatWindow(object):
         return True
 
     def _paint_bar(self):
+        """The reply / edit bar (look A): its icon, a quote whose bar and title take the
+        replied sender's colour, the text under."""
+        messages = self.session.state.messages.get(self.chat, [])
+        colour = hubstyle.TOKENS["accent_text"]
         if self.editing:
-            self.bar_text.setText("Изменение сообщения")
+            m = look.find(messages, self.editing) or {}
+            icon_name, title = "pencil", "Изменение сообщения"
+            text = " ".join(str(m.get("text") or "").split())
         elif self.reply_to:
-            m = look.find(self.session.state.messages.get(self.chat, []), self.reply_to) or {}
+            m = look.find(messages, self.reply_to) or {}
             c = self.session.state.chats.get(self.chat) or {}
             who = next((u for u in c.get("members", []) if u.get("id") == m.get("from_id")),
                        {"nick": "?"})
-            self.bar_text.setText("Ответ " + look.display_name(who) + ": "
-                                  + (look.message_text(m) if m.get("call") else
-                                     " ".join(str(m.get("text") or "").split()))[:60])
-        self.bar.setVisible(bool(self.editing or self.reply_to))
+            icon_name, title = "corner-up-left", "Ответ " + look.display_name(who)
+            text = look.message_text(m) if (m.get("call") or m.get("file")) else \
+                " ".join(str(m.get("text") or "").split())
+            if m.get("from_id"):
+                colour = _q().QtGui.QColor(look.user_colour(m.get("from_id"))).lighter(135).name()
+        else:
+            self.bar.setVisible(False)
+            return
+        self.bar_icon.setPixmap(hubqt.pixmap(icon_name, hubstyle.TOKENS["accent_text"],
+                                             self.px(17)))
+        self.bar_text.setText(title)
+        self.bar_text.setStyleSheet("color: {0};".format(colour))
+        fm = self.bar_sub.fontMetrics()
+        self.bar_sub.setText(fm.elidedText(text, _q().QtCore.Qt.ElideRight,
+                                           max(self.px(60), self.bar_quote.width() - self.px(24))))
+        self.bar_quote.setStyleSheet(
+            "#skeldarChatBarQuote {{ background: rgba(255,255,255,13); border-radius: {0}px;"
+            " border-left: {1}px solid {2}; }}".format(self.px(6), self.px(3), colour))
+        self.bar.setVisible(True)
 
     def retry(self, item):
         if item.pending:
@@ -2663,6 +3344,7 @@ class ChatWindow(object):
             menu.addSeparator()
         for label, fn in rows:
             act = menu.addAction(label)
+            _menu_icon(act, label, self.scale)
             act.triggered.connect(lambda *_a, f=fn: f())
         menu.popup(global_point)
         self._menu = menu
@@ -2698,6 +3380,7 @@ class ChatWindow(object):
         menu.setObjectName("skeldarChatClipMenu")
         for label, fn in self.clip_rows():
             act = menu.addAction(label)
+            _menu_icon(act, label, self.scale)
             act.triggered.connect(lambda *_a, f=fn: f())
         menu.popup(self.clip_button.mapToGlobal(q.QtCore.QPoint(0, 0)))
         self._menu = menu
@@ -3150,6 +3833,7 @@ class ChatWindow(object):
         maya_hubsound.deleted()                 # the fireball (2026-10-22)
 
     def _typed(self):
+        self._paint_send()
         if self.chat is None or not self.composer.toPlainText() or self.editing:
             return
         try:
@@ -3164,7 +3848,59 @@ class ChatWindow(object):
     def empty_list_text(self):
         if self.query:
             return "Ничего не найдено"
+        if self.tab == "groups":
+            return "Групп пока нет - ✎ создаст"
         return "Пока здесь никого, кроме вас"
+
+    def set_tab(self, key):
+        """A tab over the list: «Все», «Личные» (dm chats and everybody), «Группы»."""
+        if key not in dict(look.TABS):
+            return
+        self.tab = key
+        set_var(TAB_VAR, key)
+        self.list_area.verticalScrollBar().setValue(0)
+        self.refresh()
+
+    def me_rows(self):
+        """≡'s rows (look A, 2026-10-22): what the list's foot held."""
+        return [(u"Мой профиль", "user", lambda: self.show_profile(self.session.state.me)),
+                (u"Новый чат или группа", "pencil", lambda: self.show_pane("new")),
+                (u"Настройки", "settings", lambda: self.show_pane("settings"))]
+
+    def me_menu(self):
+        """≡: my avatar, name and @nick over my card, New chat and Settings."""
+        q = _q()
+        w = q.QtWidgets
+        menu = w.QMenu(self.root)
+        menu.setObjectName("skeldarChatMeMenu")
+        me = self.session.state.me or {}
+        holder = w.QWidget(menu)
+        holder.setObjectName("skeldarChatMeHead")
+        row = w.QHBoxLayout(holder)
+        row.setContentsMargins(self.px(10), self.px(8), self.px(16), self.px(8))
+        row.setSpacing(self.px(10))
+        face = avatar_widget_class()(self, me, self.px(36), False)
+        face.clickable = False
+        row.addWidget(face)
+        texts = w.QVBoxLayout()
+        texts.setSpacing(0)
+        name = _label(look.display_name(me), None, "skeldarChatMeName")
+        name.setFont(_font(name.font(), self.px(12), True))
+        texts.addWidget(name)
+        texts.addWidget(_label("@" + (me.get("nick") or "?"), "subtitle", "skeldarChatMeNick"))
+        row.addLayout(texts, 1)
+        head = w.QWidgetAction(menu)
+        head.setDefaultWidget(holder)
+        menu.addAction(head)
+        menu.addSeparator()
+        for label, icon_name, fn in self.me_rows():
+            act = menu.addAction(hubqt.icon(icon_name, hubstyle.TOKENS["text2"], self.px(14)),
+                                 label)
+            act.triggered.connect(lambda *_a, f=fn: f())
+        menu.popup(self.menu_button.mapToGlobal(
+            q.QtCore.QPoint(0, self.menu_button.height())))
+        self._menu = menu
+        return menu
 
     # ---------------------------------------------------------- sign-in
     def _nick_typed(self, text):

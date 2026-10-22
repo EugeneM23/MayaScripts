@@ -13607,6 +13607,55 @@ The animator: calls in the messenger - voice, video and screen sharing, up to 4 
      grant the media itself, so the page's own permission handler is never asked: a proof of the grant
      leaves it out.
 
+## Chat: Telegram's layout in our colours, look A (2026-10-22)
+
+The animator: «Давай мессенджеру нарисуем дизайн в нашем стиле за референс возьмем телеграмм сделай
+тестовый макет». Three live mockups on a Design canvas (https://claude.ai/artifact/VyPc4uDZjzFB9kwC9Ag4kX:
+A Telegram in our tokens, B wells as look D, C one column); chosen **A** («Берём A (Telegram в наших
+цветах) за основу»). Spec `docs/superpowers/specs/2026-10-22-chat-look-telegram-design.md`. **This
+replaces the chat window's look in the sections above** (the card behind both columns, the list's
+foot, bubbles on `card_active`, the time on its own line, reactions under the bubble); every behaviour
+and every control name the tests and the other modules use is kept.
+- **The frame**: `maya_hubwindow` gained `content_face` `"none"` (the content paints its own faces:
+  no card, no wells); the chat's card is transparent with a `track_edge` hairline under the title,
+  the columns on `panel`, a 1 px `EDGE` divider. `look_a_sheet(scale)` holds the window's rules over
+  the hub's stylesheet (physical px).
+- **The list** (`look.LIST_W` 264): a top row ≡ (`me_menu`: my avatar, name, @nick, then `me_rows`
+  Мой профиль / Новый чат или группа / Настройки; the old foot is gone), a round search with its
+  icon, ✎; **tabs** «Все / Личные / Группы» (`tabs_class`, `look.TABS`, `look.in_tab`: Личные = dm
+  chats and everybody, Группы = group chats; a grey count `look.tab_count`; remembered in
+  `skeldarChatTab`, `set_tab`); rows 58 px, avatar 42 (`paint_avatar(..., ring=)` rings the online
+  dot in what it stands on), my last message's drawn ticks, the sender apart in a lighter ink
+  (`look.preview_parts`; `preview` is unchanged), the open chat `card_active` with a 1.5 px accent
+  outline and an inner glow. In one column the list now takes the window's width (it stood at its
+  fixed width with a gap beside it, since the first build).
+- **The feed**: `look.FEED_BG` under white and accent dots (`look.PATTERN`); bubbles radius 12, theirs
+  `look.THEIRS`, mine `look.MINE`, the last of a run with Telegram's tail (`_bubble_path`: one path);
+  the time and **drawn** ticks (`paint_ticks`, `tick_width`) inside the bubble - on the text's last
+  line when `look.meta_fits`, else under it or at the right of the last row of reactions, which stand
+  inside the bubble now (`_pill_rows`, `_place_pills`); a quote's bar and name in the replied
+  sender's colour (`box.quote` gained its colour); emoji alone bare with the time in a dark pill
+  (`box.bare`, `box.meta_pill`); day separators and call lines dark pills, the call's phone drawn
+  green / red; the file card without its plate, the tile ringed, outlined buttons;
+  **«Непрочитанные сообщения»** before what was unread when the chat opened (`look.first_unread`,
+  `look.mark_unread`, `ChatWindow.unread_from`, Item kind `"unread"`); a **reply button** beside the
+  bubble under the mouse (`_hover_row`, `_reply_rect`, `box_at` → `"reply"`, fading in by
+  `HOVER_MS`).
+- **Header and composer**: the header a 50 px `panel` strip (avatar 34, the status `accent_text`
+  while typing); the composer on `panel` with a hairline, 📎, a round field holding the text and the
+  emoji button (`skFocus` lit while the text has the focus, `_field_lit`), a round send button grey
+  while empty and orange with text (`_paint_send`, `skState`); the composer's scroll bar only past
+  `look.MAX_LINES`; the reply / edit bar an icon, a quote in the sender's colour (`bar_text` its
+  title, `bar_sub` its text) and ✕; to the newest a round button. Menu rows carry Tabler icons
+  (`MENU_ICONS`, `_menu_icon`; new icons `menu-2`, `search`, `corner-up-left`, `copy`).
+- **Proof**: `tests/test_chat_look.LookA` (tabs, counts, preview parts, the first unread, the band,
+  meta fits) and `tests/test_chat_window.LookA` (tabs filter and are remembered, a tab click, rows'
+  sender and tick, ≡'s rows, the band, the time on its line or under it, pills inside, the reply
+  button, emoji alone, the send button, the window's own faces); 8704 unit tests, the known
+  `test_chat_deploy.Keys` failing. Picture `docs/superpowers/plans/chat_look_a.png`
+  (`render_chat_look_a.py`, offscreen at 150 %). **Not seen in a GUI Maya.** Not built: pinned and
+  muted chats, search inside a chat, a ⋮ in the header.
+
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 
 The animator: «Сейчас наши анимационные слои некорректно работают с scene time warp давай

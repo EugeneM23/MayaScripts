@@ -293,5 +293,57 @@ class CallLine(unittest.TestCase):
         self.assertEqual(look.last_mine([m("a", 1, frm="me"), line], "me")["id"], "a")
 
 
+class LookA(unittest.TestCase):
+    """Telegram's layout in our colours (2026-10-22)."""
+
+    def test_tabs_hold_their_kinds(self):
+        self.assertEqual([k for k, _l in look.TABS], ["all", "dm", "groups"])
+        self.assertTrue(all(look.in_tab(k, "all") for k in ("dm", "group", "person")))
+        self.assertTrue(look.in_tab("dm", "dm") and look.in_tab("person", "dm"))
+        self.assertFalse(look.in_tab("group", "dm"))
+        self.assertTrue(look.in_tab("group", "groups"))
+        self.assertFalse(look.in_tab("person", "groups") or look.in_tab("dm", "groups"))
+
+    def test_a_tab_counts_its_chats_with_unread(self):
+        chats = [dm(unread=2), dict(dm(unread=1), id="dm2"), dict(group(), unread=5), dm()]
+        self.assertEqual(look.tab_count(chats, "all"), 3)
+        self.assertEqual(look.tab_count(chats, "dm"), 2)
+        self.assertEqual(look.tab_count(chats, "groups"), 1)
+
+    def test_the_preview_s_sender_comes_apart(self):
+        self.assertEqual(look.preview_parts(dm(m("a", 1, frm="me")), "me", {}, 0), ("Вы", "hi"))
+        self.assertEqual(look.preview_parts(group(m("a", 1, frm="ann")), "me", {}, 0),
+                         ("Ann", "hi"))
+        self.assertEqual(look.preview_parts(dm(m("a", 1)), "me", {}, 0), ("", "hi"))
+        self.assertEqual(look.preview_parts(dm(m("a", 1)), "me", {"dm": {"bob": 4.0}}, 5.0),
+                         ("", "печатает…"))
+        for chat in (dm(m("a", 1, frm="me")), group(m("a", 1, frm="ann")), dm()):
+            prefix, text = look.preview_parts(chat, "me", {}, 0)
+            self.assertEqual(look.preview(chat, "me", {}, 0),
+                             prefix + ": " + text if prefix else text)
+
+    def test_the_first_unread_is_the_oldest_of_the_last_n_from_others(self):
+        msgs = [m("a", 1), m("b", 2, frm="me"), m("c", 3), m("d", 4, deleted=True), m("e", 5)]
+        self.assertEqual(look.first_unread(msgs, 2, "me"), "c")
+        self.assertEqual(look.first_unread(msgs, 1, "me"), "e")
+        self.assertEqual(look.first_unread(msgs, 9, "me"), "a")
+        self.assertIsNone(look.first_unread(msgs, 0, "me"))
+
+    def test_the_band_stands_before_that_message(self):
+        items = look.feed([m("a", 1), m("b", 2)], [], "me", dm(), {}, NOW)
+        marked = look.mark_unread(items, "b")
+        self.assertEqual([i.kind for i in marked], ["day", "msg", "unread", "msg"])
+        self.assertEqual(marked[2].text, look.UNREAD_BAND)
+        self.assertEqual(marked[2].key(), "unread:" + look.UNREAD_BAND)
+        self.assertTrue(marked[3].first, "after the band a run starts again")
+        self.assertEqual([i.kind for i in look.mark_unread(items, "zz")], ["day", "msg", "msg"])
+        self.assertEqual([i.kind for i in look.mark_unread(items, None)], ["day", "msg", "msg"])
+
+    def test_the_time_stands_on_the_last_line_when_it_fits(self):
+        self.assertTrue(look.meta_fits(100, 40, 160, 10))
+        self.assertTrue(look.meta_fits(110, 40, 160, 10))
+        self.assertFalse(look.meta_fits(111, 40, 160, 10))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -217,8 +217,9 @@ class ListAndChat(Base):
     def test_a_click_opens_the_chat_and_reads_it(self):
         self.win.list.resize(250, 200)
         y = self.win.list.row_h() * 1.5
-        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(50, y),
-                                  QtCore.QPointF(50, y), QtCore.Qt.LeftButton,
+        # on the row's text: its avatar (14..56) opens the person's card
+        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(120, y),
+                                  QtCore.QPointF(120, y), QtCore.Qt.LeftButton,
                                   QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
         self.win.list.mousePressEvent(event)
         self.assertEqual(self.win.chat, "dm2")
@@ -1134,3 +1135,151 @@ class CallsInWindowRound1(Base):
         self.ses.tell("call", {"kind": "call", "call": view})
         self.assertTrue(self.vis("skeldarChatCallVoice"))
         self.assertFalse(self.vis("skeldarChatCallJoin"))
+
+
+class LookA(Base):
+    """Telegram's layout in our colours (2026-10-22, spec 2026-10-22-chat-look-telegram-design.md)."""
+
+    def msgs(self):
+        return [b for b in self.win.feed.boxes if b.item.kind == "msg"]
+
+    def test_the_tabs_filter_the_list_and_are_remembered(self):
+        self.assertEqual(self.win.tab, "all")
+        self.assertEqual(self.win.tabs.counts, {"all": 1, "dm": 1, "groups": 0})
+        self.win.set_tab("groups")
+        self.assertEqual(self.win.list.rows, [])
+        self.assertIn("Групп", self.win.empty_list_text())
+        self.assertEqual(W.get_var(W.TAB_VAR), "groups")
+        self.win.set_tab("dm")
+        self.assertEqual([r["id"] for r in self.win.list.rows], ["dm", "dm2"])
+        other = W.ChatWindow(self.ses, scale=1.0)
+        try:
+            self.assertEqual(other.tab, "dm")
+        finally:
+            other.destroy()
+
+    def test_a_click_on_a_tab_shows_it(self):
+        tabs = self.win.tabs
+        tabs.resize(260, tabs.height())
+        rect = [r for key, _l, r, _c in tabs.rects() if key == "groups"][0]
+        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, rect.center(), rect.center(),
+                                  QtCore.Qt.LeftButton, QtCore.Qt.LeftButton,
+                                  QtCore.Qt.NoModifier)
+        tabs.mousePressEvent(event)
+        self.assertEqual(self.win.tab, "groups")
+
+    def test_the_rows_carry_the_sender_apart_and_my_tick(self):
+        row = self.win.list.rows[0]
+        self.assertEqual((row["prefix"], row["text"], row["tick"]), ("Вы", "mine", "sent"))
+        self.ses.state.reads["dm"] = {"bob": 2}
+        self.win.refresh()
+        self.assertEqual(self.win.list.rows[0]["tick"], "read")
+
+    def test_my_menu_holds_my_card_new_chat_and_settings(self):
+        self.assertEqual([label for label, _i, _f in self.win.me_rows()],
+                         ["Мой профиль", "Новый чат или группа", "Настройки"])
+        menu = self.win.me_menu()
+        self.assertEqual(len(menu.actions()), 5)          # me, a line, three rows
+        dict((label, fn) for label, _i, fn in self.win.me_rows())["Настройки"]()
+        self.assertEqual(self.win.pane, "settings")
+        menu.close()
+
+    def test_the_unread_band_stands_before_what_was_unread(self):
+        self.ses.state.messages["dm2"] = [msg("a1", 1, frm="ann", chat="dm2"),
+                                          msg("a2", 2, frm="me", chat="dm2"),
+                                          msg("a3", 3, frm="ann", chat="dm2"),
+                                          msg("a4", 4, frm="ann", chat="dm2")]
+        self.ses.state.chats["dm2"]["unread"] = 2
+        self.win.open_chat("dm2")
+        kinds = [(b.item.kind, b.item.message.get("id") if b.item.message else None)
+                 for b in self.win.feed.boxes]
+        i = kinds.index(("unread", None))
+        self.assertEqual(kinds[i + 1], ("msg", "a3"))
+        self.assertIsNotNone(self.win.feed.boxes[i].band)
+        self.win.refresh()
+        self.assertIn("unread", [b.item.kind for b in self.win.feed.boxes], "it stays")
+        self.win.open_chat("dm")
+        self.win.open_chat("dm2")
+        self.assertNotIn("unread", [b.item.kind for b in self.win.feed.boxes],
+                         "read since: gone when the chat opens again")
+
+    def test_a_short_message_s_time_stands_on_its_line(self):
+        self.win.open_chat("dm")
+        short = self.msgs()[0]
+        self.assertTrue(short.tail, "alone in its run: the tail")
+        self.assertLessEqual(short.bubble.height(),
+                             short.doc.size().height() + 2 * hubstyle_px(6) + 0.5,
+                             "one line: the time inside it, no line of its own")
+        self.assertGreater(short.meta_at.x(), short.doc_at.x())
+        self.assertTrue(short.bubble.contains(short.meta_at))
+
+    def test_a_long_message_s_time_takes_a_line_when_the_last_is_full(self):
+        self.ses.state.messages["dm"].append(msg("m5", 5, text="word " * 60))
+        self.win.open_chat("dm")
+        box = self.msgs()[-1]
+        last_w, _base = self.win.feed._last_line(box.doc)
+        inner = box.bubble.width() - 2 * hubstyle_px(10)
+        fits = look.meta_fits(last_w, self.win.feed._meta_width(
+            box, QtGui.QFontMetrics(self.win.feed._meta_font())), inner, hubstyle_px(8))
+        under = box.meta_at.y() > box.doc_at.y() + box.doc.size().height()
+        self.assertEqual(under, not fits)
+        self.assertTrue(box.bubble.contains(box.meta_at))
+
+    def test_reactions_stand_inside_the_bubble(self):
+        self.ses.state.messages["dm"][0]["reactions"] = {"👍": ["me", "bob"]}
+        self.win.open_chat("dm")
+        box = self.msgs()[0]
+        rect = box.pills[0][0]
+        self.assertTrue(box.bubble.contains(rect))
+        self.assertTrue(box.bubble.contains(box.meta_at))
+
+    def test_the_reply_button_shows_on_hover_and_replies(self):
+        self.win.open_chat("dm")
+        box = self.msgs()[0]
+        self.win.feed._hover_row(box.bubble.center())
+        self.assertEqual(self.win.feed.hover_key, box.item.key())
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self.win.feed.tick(16)
+        rect = self.win.feed._reply_rect(box)
+        self.assertGreater(rect.left(), box.bubble.right(), "theirs: on the right")
+        found, where = self.win.feed.box_at(rect.center())
+        self.assertEqual(where, "reply")
+        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, rect.center(),
+                                  self.win.feed.mapToGlobal(rect.center()), QtCore.Qt.LeftButton,
+                                  QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        self.win.feed.mousePressEvent(event)
+        self.assertEqual(self.win.reply_to, "m1")
+        self.assertIn("Ответ Bob", self.win.bar_text.text())
+        self.assertEqual(self.win.bar_sub.text(), "first")
+
+    def test_emoji_alone_have_no_bubble_and_a_time_pill(self):
+        self.ses.state.messages["dm"].append(msg("m6", 6, text="🔥"))
+        self.win.open_chat("dm")
+        box = self.msgs()[-1]
+        if box.bigs:            # the Fluent picture is shipped: emoji alone are bare
+            self.assertTrue(box.bare)
+            self.assertIsNotNone(box.meta_pill)
+            self.assertFalse(box.tail)
+
+    def test_the_send_button_turns_orange_with_text(self):
+        self.win.open_chat("dm")
+        self.assertEqual(self.win.send_button.property("skState"), "")
+        self.win.composer.setPlainText("hey")
+        self.assertEqual(self.win.send_button.property("skState"), "ready")
+        self.win.composer.clear()
+        self.assertEqual(self.win.send_button.property("skState"), "")
+
+    def test_the_window_paints_its_own_faces(self):
+        self.assertEqual(self.win.frame.content_face, "none")
+        self.win.open_chat("dm")
+        image = QtGui.QImage(self.win.feed.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        self.win.feed.render(image)
+        corner = image.pixelColor(6, 6)        # between the pattern's dots
+        self.assertEqual((corner.red(), corner.green(), corner.blue()), (0x18, 0x19, 0x1b),
+                         "the feed's backdrop")
+
+
+def hubstyle_px(n):
+    import maya_hubstyle
+    return maya_hubstyle.px(n, 1.0)

@@ -246,8 +246,10 @@ def frame_class():
                             painter.setPen(QtCore.Qt.NoPen)
                             painter.setBrush(QtGui.QColor(tokens["card"]))
                             painter.drawRoundedRect(rect, rc, rc)
-                        else:
+                        elif self.content_face == "panel":
                             self._paint_wells(painter, content, rect)
+                        #  "none": the content paints its own faces (the chat's look A,
+                        #  2026-10-22)
                 finally:
                     painter.end()
 

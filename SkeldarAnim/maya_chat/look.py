@@ -10,12 +10,21 @@ from . import records
 DEFAULT_SIZE = (760, 520)
 LEAST_SIZE = (520, 360)
 ONE_COLUMN = 600          # logical px: narrower than this shows one column
-LIST_W = 250              # the left column
+LIST_W = 264              # the left column (look A, 2026-10-22)
 UNSENT_MS = 10 * 60 * 1000
 JOIN_MS = 5 * 60 * 1000   # one sender's messages this close are one run
 TYPING_S = 5.0            # a typing mark lives this long
 MAX_LINES = 6             # the composer grows to this many lines
 MINE = "#5a3922"
+
+#  Look A (2026-10-22, spec 2026-10-22-chat-look-telegram-design.md): Telegram's layout in
+#  our tokens - «Берём A (Telegram в наших цветах) за основу».
+THEIRS = "#2a2c30"        # another's bubble (the hub's `card`)
+MINE_META = "#e7b48f"     # the time and ticks inside my bubble
+FEED_BG = "#18191b"       # under the bubbles
+PATTERN = 22              # logical px between the feed's dots
+TABS = (("all", u"Все"), ("dm", u"Личные"), ("groups", u"Группы"))
+UNREAD_BAND = u"Непрочитанные сообщения"
 
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
           "сентября", "октября", "ноября", "декабря")
@@ -216,22 +225,79 @@ def file_line(f):
     return u" · ".join(parts)
 
 
-def preview(chat, me_id, typing, now):
-    """A list row's second line."""
+def preview_parts(chat, me_id, typing, now):
+    """A list row's second line as (sender, text): the sender «Вы» for mine, the member's name
+    in a group, "" otherwise (look A draws it in a lighter ink)."""
     if typers(typing, chat["id"], me_id, now):
-        return "печатает…"
+        return "", "печатает…"
     last = chat.get("last")
     if not last:
-        return "нет сообщений"
+        return "", "нет сообщений"
     if last.get("deleted"):
         text = "сообщение удалено"
     else:
         text = message_text(last)
     if last.get("from_id") == me_id:
-        return "Вы: " + text
+        return "Вы", text
     if chat.get("kind") == "group":
-        return display_name(_member(chat, last.get("from_id"))) + ": " + text
-    return text
+        return display_name(_member(chat, last.get("from_id"))), text
+    return "", text
+
+
+def preview(chat, me_id, typing, now):
+    """A list row's second line."""
+    prefix, text = preview_parts(chat, me_id, typing, now)
+    return prefix + ": " + text if prefix else text
+
+
+def in_tab(kind, tab):
+    """Does a list row of `kind` ("dm", "group", "person") show under `tab`."""
+    if tab == "dm":
+        return kind in ("dm", "person")
+    if tab == "groups":
+        return kind == "group"
+    return True
+
+
+def tab_count(chats, tab):
+    """How many of the tab's chats have unread messages."""
+    return sum(1 for c in chats or [] if int(c.get("unread") or 0) > 0
+               and in_tab("group" if c.get("kind") == "group" else "dm", tab))
+
+
+def first_unread(messages, unread, me_id):
+    """The id of the oldest of the last `unread` messages from others (deleted ones left out):
+    where «Непрочитанные сообщения» stands. None when nothing was unread."""
+    if not unread or unread <= 0:
+        return None
+    theirs = [m for m in messages or [] if not m.get("deleted") and m.get("from_id") != me_id
+              and m.get("id")]
+    if not theirs:
+        return None
+    return theirs[max(0, len(theirs) - int(unread))]["id"]
+
+
+def mark_unread(items, message_id):
+    """The feed's items with the unread band before the message `message_id` (a copy; the
+    items round it start and end their runs there)."""
+    if not message_id:
+        return list(items)
+    out = []
+    for i, item in enumerate(items):
+        if item.kind == "msg" and not item.pending and item.message.get("id") == message_id:
+            if out and out[-1].kind == "msg":
+                out[-1] = _copy(out[-1], last=True)
+            out.append(Item("unread", UNREAD_BAND))
+            out.append(_copy(item, first=True))
+            out.extend(items[i + 1:])
+            return out
+        out.append(item)
+    return out
+
+
+def meta_fits(last_line_w, meta_w, inner_w, gap):
+    """Does a bubble's time (and ticks) fit on its text's last line."""
+    return last_line_w + gap + meta_w <= inner_w
 
 
 def last_at(chat):
@@ -281,10 +347,18 @@ class Item(object):
         self.tick, self.pending, self.missed = tick, pending, missed
 
     def key(self):
-        if self.kind == "day":
-            return "day:" + self.text
+        if self.kind in ("day", "unread"):
+            return self.kind + ":" + self.text
         m = self.message
         return m.get("cid") or m.get("id") if self.pending else m.get("id")
+
+
+def _copy(item, **changes):
+    out = Item(item.kind, item.text, item.message, item.mine, item.first, item.last,
+               item.tick, item.pending, item.missed)
+    for name, value in changes.items():
+        setattr(out, name, value)
+    return out
 
 
 def read_by_others(chat, reads, me_id):
