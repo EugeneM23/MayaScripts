@@ -352,6 +352,62 @@ def card_shape(skin, host):
     return out
 
 
+def card_rect(skin, host):
+    """The rail card's host-local rect (x, y, w, h) as it shows - cut to the
+    scroll area, its scroll bar beside it included - or None (2026-10-22: the
+    edge panel's grips stand on it)."""
+    if skin is None or not _valid(host):
+        return None
+    q = qt()
+    QtCore = q.QtCore
+    try:
+        card = skin.cards.get(getattr(skin, "shown", None))
+        scroll = getattr(skin, "scroll", None)
+        if card is None or scroll is None or not _valid(card.frame) \
+                or not card.frame.isVisible():
+            return None
+
+        def rect_of(widget):
+            p = widget.mapTo(host, QtCore.QPoint(0, 0))
+            return QtCore.QRect(p.x(), p.y(), widget.width(), widget.height())
+
+        view = rect_of(scroll.viewport())
+        r = rect_of(card.frame).intersected(view)
+        bar = scroll.verticalScrollBar()
+        if bar is not None and _valid(bar) and bar.isVisible() and bar.maximum() > 0:
+            r = r.united(rect_of(bar))
+        return None if r.isEmpty() else r.getRect()
+    except RuntimeError:
+        return None
+
+
+def set_card_height(skin, logical, scale):
+    """The rail card's height (2026-10-22): its scroll area held so the shown
+    card is `logical` px tall - a taller card scrolls inside - or, None, as
+    tall as the panel allows again. Answers whether it was set."""
+    if skin is None:
+        return False
+    scroll = getattr(skin, "scroll", None)
+    card = skin.cards.get(getattr(skin, "shown", None))
+    if scroll is None or not _valid(scroll):
+        return False
+    q = qt()
+    parent = scroll.parentWidget()
+    layout = parent.layout() if parent is not None else None
+    if logical is None or card is None or not _valid(card.frame):
+        #  the layout's alignment too: aligned, it would keep the scroll at its
+        #  size hint instead of the panel's height
+        scroll.setMaximumHeight(16777215)
+        if layout is not None:
+            layout.setAlignment(scroll, q.QtCore.Qt.Alignment())
+        return True
+    top = card.frame.y()                      # the card's place in the column
+    scroll.setMaximumHeight(max(1, top + hubstyle.px(logical, scale)))
+    if layout is not None:
+        layout.setAlignment(scroll, q.QtCore.Qt.AlignTop)
+    return True
+
+
 def burst_parts(frame, head, root, clip, scale):
     """The parts a burst pops in and folds out (maya_hubburst), in `frame`'s
     coordinates (2026-10-18; shared by a section's window and the edge rail's

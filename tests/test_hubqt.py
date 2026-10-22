@@ -2905,3 +2905,44 @@ class WhenSeen(unittest.TestCase):
         self._flush()
         self.assertEqual(self.runs, ["job"])
         self.assertEqual(job._skeldar_seen[0], "subtitle")
+
+
+class RailCardHeight(unittest.TestCase):
+    """2026-10-22: the edge rail card's bottom grip - set_card_height / card_rect."""
+
+    def setUp(self):
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.host = QtWidgets.QWidget()
+        self.host.resize(400, 800)
+        layout = QtWidgets.QVBoxLayout(self.host)
+        self.skin = hubqt.Skin(layout, scale=1.0, layout="rail", windowed=True)
+        self.skin.add_jump("tools", "Tools", "tool", "#7fa9e6", group="animation")
+        card = self.skin.add_card("tools", "Tools", "tool", "#7fa9e6", "#4a3322",
+                                  collapsible=False)
+        for i in range(12):
+            b = QtWidgets.QPushButton("b%d" % i)
+            b.setFixedHeight(24)
+            card.body_layout.addWidget(b)
+        self.skin.finish(style.stylesheet(1.0))
+        self.skin.show_card("tools")
+        self.host.show()
+        self.settle()
+
+    def tearDown(self):
+        self.skin.destroy()
+        self.host.deleteLater()
+
+    def settle(self):
+        for _ in range(5):
+            self.app.processEvents()
+
+    def test_a_height_shortens_the_card_and_it_scrolls(self):
+        natural = hubqt.card_rect(self.skin, self.host)[3]
+        self.assertTrue(hubqt.set_card_height(self.skin, 200, 1.0))
+        self.settle()
+        self.assertEqual(hubqt.card_rect(self.skin, self.host)[3], 200)
+        self.assertGreater(self.skin.scroll.verticalScrollBar().maximum(), 0)
+        hubqt.set_card_height(self.skin, None, 1.0)
+        self.settle()
+        self.assertEqual(hubqt.card_rect(self.skin, self.host)[3], natural)
+        self.assertGreater(self.skin.scroll.height(), natural)

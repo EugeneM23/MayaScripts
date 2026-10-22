@@ -114,6 +114,31 @@ def dragged_width(width0, dx, scale, side="left"):
     return width0 + step
 
 
+#  2026-10-22 («окна который открываются на рейле можно было изменять размер
+#  перетаскивая за противоположный край и за низ»): the rail card's height,
+#  remembered per section (`HEIGHT_VAR + key`, logical px; unset or 0 = as tall
+#  as its content), never under MIN_HEIGHT.
+HEIGHT_VAR = "skeldarAnimHub_edgeHeight_"
+MIN_HEIGHT = 120
+
+
+def card_grips(card, grip, side="left"):
+    """The rail card's two grips, host-local (x, y, w, h), from the card's own
+    rect `card` (x, y, w, h) and the grip's thickness: the width grip down the
+    card's inner side (its right on the left edge, its left on the right edge),
+    the height grip along its bottom - both inside the card, over its margin."""
+    x, y, w, h = [int(v) for v in card]
+    g = int(grip)
+    side_x = x if side_of(side) == "right" else x + w - g
+    return (side_x, y, g, max(1, h - g)), (x, y + h - g, w, g)
+
+
+def dragged_height(height0, dy, scale):
+    """The card's logical height after the bottom grip moved `dy` physical px
+    down from `height0` logical px, never under MIN_HEIGHT."""
+    return max(MIN_HEIGHT, int(round(height0 + float(dy) / float(scale or 1.0))))
+
+
 def may_reveal(edge_on, shown, buttons, app_active):
     """The cursor at the edge may bring the panel out: edge mode on, the
     panel hidden, no mouse button held (a window or marquee dragged to the

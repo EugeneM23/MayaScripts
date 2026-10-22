@@ -18,6 +18,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import maya_edgerules as rules
 import maya_hubedge as hubedge
+import maya_hubstyle as hubstyle
+edgerules = rules
 
 
 def _app():
@@ -1212,3 +1214,91 @@ class RailBurstThroughTheHub(unittest.TestCase):
         beta.tick_now()
         self.assertTrue(self.edge.shown)
         self.assertEqual(self.edge.frame, self.edge.host.width())
+
+
+class CardGrips(unittest.TestCase):
+    """2026-10-22: «окна который открываются на рейле можно было изменять размер
+    перетаскивая за противоположный край и за низ» - the rail card's width grip
+    down its inner side, its height grip along its bottom."""
+
+    VIEWPORT = (100, 150, 1500, 700)
+
+    def setUp(self):
+        self.app = _app()
+        self.card = [60, 10, 280, 200]
+        self.heights = []
+        self.edge = hubedge.Edge(
+            scale=1.0, width=360, motion=lambda: False, rail=True,
+            rest=lambda: 40, work_area=lambda: self.VIEWPORT,
+            cursor=lambda: (800, 400), buttons=lambda: False,
+            app_active=lambda: True, card=lambda: tuple(self.card),
+            on_height=self.set_height)
+
+    def set_height(self, logical, save):
+        self.heights.append((logical, save))
+        if logical is not None:
+            self.card[3] = logical
+
+    def tearDown(self):
+        self.edge.destroy()
+
+    def test_hidden_at_rest(self):
+        self.assertFalse(self.edge.grip.isVisible())
+        self.assertFalse(self.edge.hgrip.isVisible())
+
+    def test_out_they_stand_on_the_card(self):
+        self.edge.reveal()
+        self.edge._place_grips()
+        g = hubstyle.px(edgerules.GRIP_PX, 1.0)
+        self.assertTrue(self.edge.grip.isVisible())
+        self.assertTrue(self.edge.hgrip.isVisible())
+        self.assertEqual(self.edge.grip.geometry().getRect(), (340 - g, 10, g, 200 - g))
+        self.assertEqual(self.edge.hgrip.geometry().getRect(), (60, 210 - g, 280, g))
+
+    def test_dragging_the_bottom_sets_the_height_and_the_release_keeps_it(self):
+        self.edge.reveal()
+        self.edge._place_grips()
+        hgrip = self.edge.hgrip
+        hgrip.press(500)
+        hgrip.drag(560)
+        self.assertEqual(self.heights[-1], (260, False))
+        hgrip.drag(100)
+        self.assertEqual(self.heights[-1], (edgerules.MIN_HEIGHT, False))
+        hgrip.drag(540)
+        hgrip.release()
+        self.assertEqual(self.heights[-1], (240, True))
+        g = hubstyle.px(edgerules.GRIP_PX, 1.0)
+        self.assertEqual(hgrip.geometry().getRect(), (60, 250 - g, 280, g))
+
+    def test_a_double_click_gives_the_content_s_height_back(self):
+        self.edge.reveal()
+        self.edge.hgrip.mouseDoubleClickEvent(None)
+        self.assertEqual(self.heights[-1], (None, True))
+
+    def test_the_width_grip_still_widens(self):
+        self.edge.reveal()
+        grip = self.edge.grip
+        grip.press(400)
+        grip.drag(440)
+        grip.release()
+        self.assertEqual(self.edge.width, 400)
+
+    def test_on_the_right_side_the_width_grip_is_the_card_s_left(self):
+        self.edge.set_side("right")
+        self.edge.reveal()
+        self.edge._place_grips()
+        self.assertEqual(self.edge.grip.geometry().x(), 60)
+
+
+class CardGripRules(unittest.TestCase):
+
+    def test_card_grips(self):
+        side, bottom = edgerules.card_grips((60, 10, 280, 200), 5, "left")
+        self.assertEqual(side, (335, 10, 5, 195))
+        self.assertEqual(bottom, (60, 205, 280, 5))
+        side, _ = edgerules.card_grips((60, 10, 280, 200), 5, "right")
+        self.assertEqual(side[0], 60)
+
+    def test_dragged_height(self):
+        self.assertEqual(edgerules.dragged_height(200, 30, 1.5), 220)
+        self.assertEqual(edgerules.dragged_height(200, -500, 1.0), edgerules.MIN_HEIGHT)

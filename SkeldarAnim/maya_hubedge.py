@@ -75,6 +75,7 @@ HOST = "skeldarAnimHubEdge"
 SENSOR = "skeldarAnimHubEdgeSensor"
 SLOT = "skeldarAnimHubEdgeSlot"
 GRIP = "skeldarAnimHubEdgeGrip"
+HGRIP = "skeldarAnimHubEdgeHeightGrip"
 
 #  the sensor's window opacity: invisible, and still hit-testable (alpha 0
 #  would let the mouse through - a layered window is transparent to the
@@ -361,6 +362,52 @@ def _classes():
             def mouseReleaseEvent(self, event):            # noqa: N802
                 self.release()
 
+        class HeightGrip(QtWidgets.QWidget):
+            """The rail card's bottom (2026-10-22): a drag sets the card's height,
+            the release remembers it, a double click gives the card its content's
+            height back. `press/drag/release` take GLOBAL y (physical px)."""
+
+            def __init__(self, edge, parent=None):
+                super(HeightGrip, self).__init__(parent)
+                self.edge = edge
+                self._start = None
+                self.setCursor(QtCore.Qt.SizeVerCursor)
+                self.setToolTip("Drag to make the card taller or shorter - "
+                                "double click: as tall as its content")
+
+            def press(self, gy):
+                self._start = (gy, self.edge.card_height())
+
+            def drag(self, gy):
+                if self._start is None:
+                    return
+                y0, height0 = self._start
+                self.edge.set_height(
+                    rules.dragged_height(height0, gy - y0, self.edge.scale),
+                    save=False)
+
+            def release(self):
+                if self._start is not None:
+                    self.edge.set_height(self.edge.card_height(), save=True)
+                self._start = None
+
+            def mousePressEvent(self, event):              # noqa: N802
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.press(_global_point(event)[1])
+                    event.accept()
+                else:
+                    event.ignore()
+
+            def mouseMoveEvent(self, event):               # noqa: N802
+                self.drag(_global_point(event)[1])
+
+            def mouseReleaseEvent(self, event):            # noqa: N802
+                self.release()
+
+            def mouseDoubleClickEvent(self, event):        # noqa: N802
+                self._start = None
+                self.edge.set_height(None, save=True)
+
         class PressWatch(QtCore.QObject):
             """An application event filter: a press anywhere is handed to
             `edge.press_at` (which asks whether it lies outside the panel).
@@ -380,7 +427,7 @@ def _classes():
                 return False
 
         _CLASSES.update(sensor=Sensor, host=Host, grip=WidthGrip,
-                        watch=PressWatch)
+                        hgrip=HeightGrip, watch=PressWatch)
     return _CLASSES
 
 
@@ -401,7 +448,8 @@ class Edge(object):
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
-                 rest=None, shape=None, burst=None, burst_stop=None):
+                 rest=None, shape=None, burst=None, burst_stop=None,
+                 card=None, on_height=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -422,6 +470,12 @@ class Edge(object):
         #  runs. None, or a burst that cannot start: the frame's old slide.
         self.burst = burst
         self.burst_stop = burst_stop   # () stops every card's burst still drawing (2026-10-19)
+        #  2026-10-22: `card()` -> the rail card's host-local rect (x, y, w, h) or None:
+        #  the width grip stands down its inner side and the height grip along its
+        #  bottom; `on_height(logical or None, save)` sets the card's height (None:
+        #  its content's) - None: no height grip
+        self.card = card
+        self.on_height = on_height
         self.burst_shape = None
         self._burst_gen = 0         # each rail move's number: stale bursts are deaf
         self.scale = float(scale or 1.0)
@@ -446,7 +500,7 @@ class Edge(object):
         #  frame slides out before the hub and leaves with it (2026-10-09)
         self._frame = 0
         self._watching = False
-        self.slot = self.grip = None
+        self.slot = self.grip = self.hgrip = None
         if parent is None:
             parent = main_window()
         flags = QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint
@@ -469,6 +523,11 @@ class Edge(object):
         grip = classes["grip"](self, host)
         grip.setObjectName(GRIP)
         self.grip = grip
+        if self.rail and self.on_height is not None:
+            hgrip = classes["hgrip"](self, host)
+            hgrip.setObjectName(HGRIP)
+            hgrip.hide()
+            self.hgrip = hgrip
 
         sensor = classes["sensor"](
             self, parent, flags | QtCore.Qt.WindowDoesNotAcceptFocus)
@@ -512,6 +571,7 @@ class Edge(object):
             self._area = area
             self.place()
             return
+        self._place_grips()
         if self.shape is not None and self._rest_out:
             #  the card grows and shrinks (a section opened, a list filled)
             try:
@@ -654,6 +714,10 @@ class Edge(object):
                 self._set_frame(w if self._rest_out else self.rest_px())
             if grip is not None and hubqt._valid(grip):
                 grip.setVisible(bool(self._rest_out))
+            slot.setGeometry(rules.slot_x(offset, line, self.side), 0,
+                             max(1, w - line), h)
+            self._place_grips()
+            return
         elif self._anim is not None:
             offset = self.offset
         else:
@@ -1149,6 +1213,65 @@ class Edge(object):
         self.sensor.show()
         self.sensor.raise_()
         return True
+
+    def card_rect(self):
+        """The rail card's host-local rect (x, y, w, h), or None."""
+        if self.card is None:
+            return None
+        try:
+            rect = self.card()
+        except Exception:                                    # noqa: BLE001
+            return None
+        if not rect or rect[2] <= 0 or rect[3] <= 0:
+            return None
+        return tuple(int(v) for v in rect)
+
+    def card_height(self):
+        """The rail card's shown height, logical px (0 with no card)."""
+        rect = self.card_rect()
+        return int(round(rect[3] / self.scale)) if rect else 0
+
+    def _place_grips(self):
+        """The rail card's grips on the card while it is out and still (2026-10-22):
+        the width grip down its inner side, the height grip along its bottom; in
+        the old place (the host's whole inner side) with no card to follow."""
+        if not self.rail or not self.alive():
+            return
+        if self.card is None:
+            grip = self.grip
+            if grip is not None and hubqt._valid(grip):
+                g = hubstyle.px(rules.GRIP_PX, self.scale)
+                w, h = self.host.width(), self.host.height()
+                grip.setGeometry(rules.grip_x(w, g, self.side), 0, g, h)
+            return
+        rect = self.card_rect()
+        out = bool(self._rest_out) and self._anim is None and rect is not None
+        g = hubstyle.px(rules.GRIP_PX, self.scale)
+        grips = rules.card_grips(rect, g, self.side) if rect else None
+        for widget, at in ((self.grip, grips[0] if grips else None),
+                           (self.hgrip, grips[1] if grips else None)):
+            if widget is None or not hubqt._valid(widget):
+                continue
+            if out and at is not None:
+                widget.setGeometry(*at)
+                widget.show()
+                widget.raise_()
+            elif widget is self.hgrip or self.card is not None:
+                widget.hide()
+
+    def set_height(self, logical, save=True):
+        """The rail card's height, logical px (None: as tall as its content), handed
+        to `on_height`; the grips follow."""
+        if self.on_height is None:
+            return
+        if logical is not None:
+            logical = max(rules.MIN_HEIGHT, int(round(logical)))
+        try:
+            self.on_height(logical, save)
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
+        self._place_grips()
+        self._set_frame(self._frame)
 
     def set_width(self, logical, save=True):
         """The panel's logical width, clamped and laid out; `save` (the end

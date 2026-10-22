@@ -1066,6 +1066,53 @@ def _save_edge_width(width):
     cmds.optionVar(intValue=(edgerules.WIDTH_VAR, int(width)))
 
 
+def card_height(key):
+    """The rail card `key`'s height, logical px, as the animator's grip left it
+    (2026-10-22); None: as tall as its content."""
+    var = edgerules.HEIGHT_VAR + str(key)
+    if cmds.optionVar(exists=var):
+        value = cmds.optionVar(query=var)
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+    return None
+
+
+def _set_card_height(logical):
+    """The shown rail card's height (None: its content's); nothing where the skin
+    module has no such call (an older one mid-install, a test's stand-in)."""
+    setter = getattr(_hubqt(), "set_card_height", None)
+    if setter is not None:
+        setter(_SKIN, logical, _scale())
+
+
+def _rail_card():
+    """The edge panel's card rect for its grips (2026-10-22)."""
+    current = edge()
+    if current is None or not is_skinned():
+        return None
+    rect = getattr(_hubqt(), "card_rect", None)
+    return rect(_SKIN, current.host) if rect is not None else None
+
+
+def _rail_height(logical, save=True):
+    """The bottom grip moved or released (Edge.on_height): the shown card that tall
+    (None: its content's height), remembered for that card on the release."""
+    if not is_skinned():
+        return
+    key = getattr(_SKIN, "shown", None)
+    _set_card_height(logical)
+    if save and key:
+        var = edgerules.HEIGHT_VAR + str(key)
+        if logical is None:
+            if cmds.optionVar(exists=var):
+                cmds.optionVar(remove=var)
+        else:
+            cmds.optionVar(intValue=(var, int(logical)))
+
+
 def _ensure_edge():
     """The edge panel built (hidden) with the skin in it; the Edge. One
     standing with this module object's skin in it is the answer as it is.
@@ -1099,7 +1146,8 @@ def _ensure_edge():
         current = he.Edge(scale=_scale(), width=_edge_width(),
                           on_width=_save_edge_width, side=edge_side(),
                           rail=True, rest=_rail_rest, shape=_rail_shape,
-                          burst=_rail_burst, burst_stop=_rail_burst_stop)
+                          burst=_rail_burst, burst_stop=_rail_burst_stop,
+                          card=_rail_card, on_height=_rail_height)
         he.state()["edge"] = current
         #  its cards in look B with ✕ (2026-10-18); the dock keeps ⧉ alone
         _SKIN = _build_skin(host=current.slot, kind="rail", windowed=True)
@@ -2086,6 +2134,9 @@ def _show_on_rail(key, animate=True):
     card = _SKIN.show_card(key, animate=animate)
     if card is None:
         return None
+    if edge() is not None and getattr(_SKIN, "windowed", False):
+        #  the edge rail's card takes the height its grip left (2026-10-22)
+        _set_card_height(card_height(key))
     _SKIN.set_active(key)
     remember_current(key)
     return card

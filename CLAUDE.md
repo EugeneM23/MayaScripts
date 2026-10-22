@@ -13865,3 +13865,17 @@ The animator: «всплываюшие окна нашего плагина се
   all of them, on a recessed `track` plate, the fields on `panel` inside it (`recessed_sheet`).
 - Proof: `test_hubwindow` (Frame, Wells, WellSides, Title), the title tests in `test_hubpop` /
   `test_hubqt`; `floating_window.png`. **Not seen in a GUI Maya.**
+
+**…and the rail card is resized by its own edges** (the same day: «окна который открываются на
+рейле можно было изменять размер перетаскивая за противоположный край и за низ»). The width grip
+(`maya_hubedge.WidthGrip`) stood down the whole host's inner side, mostly outside the card's mask,
+so it could not be caught. Now `Edge(card=, on_height=)` puts both grips ON the card while it is out
+(`rules.card_grips`: the width grip down its inner side, `HeightGrip` along its bottom, GRIP_PX
+thick, over the card's margin), placed again by the 150 ms follow. The width is as before (one
+for the panel, `skeldarAnimHub_edgeWidth`); the height is per card
+(`skeldarAnimHub_edgeHeight_<key>`, logical px, at least `MIN_HEIGHT` 120): `hubqt.set_card_height`
+holds the skin's scroll area (aligned top) so the card is that tall and scrolls inside; a double
+click on the bottom gives it its content's height back; `_show_on_rail` applies the card's own.
+`hubqt.card_rect` is the card as it shows, its scroll bar included. Tests
+`test_hubedge.CardGrips` / `CardGripRules`, `test_hubqt.RailCardHeight`. **Not seen in a GUI
+Maya.**
