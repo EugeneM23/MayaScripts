@@ -723,6 +723,7 @@ export class Studio extends DurableObject {
       admin = next ? next.uid : null;
       this.sql.exec("UPDATE chats SET admin = ? WHERE id = ?", admin, chat);
     }
+    this.leaveChatCalls(chat, uid);
     this.emit({ chat, kind: "member_removed", payload: { chat_id: chat, user_id: uid, admin } });
     this.sql.exec("DELETE FROM members WHERE chat = ? AND uid = ?", chat, uid);
     if (!this.memberIds(chat).length) {
@@ -975,13 +976,28 @@ export class Studio extends DurableObject {
     if (this.sql.exec("SELECT 1 FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray().length) {
       refuse("call_exists", "This chat already has a call - join it");
     }
+    // Arm the timer first: a call that rings with no alarm behind it would block the chat for good.
+    await this.wake(Date.now() + RING_MS);
+    if (this.sql.exec("SELECT 1 FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray().length) {
+      refuse("call_exists", "This chat already has a call - join it");
+    }
     const id = randomHex(8);
     const now = Date.now();
     this.sql.exec("INSERT INTO calls (id, chat, by, kind, cid, state, started_at) VALUES (?, ?, ?, ?, ?, 'ringing', ?)",
       id, chat, me.id, kind, cid, now);
     this.sql.exec("INSERT INTO call_members (call, uid, joined_at) VALUES (?, ?, ?)", id, me.id, now);
     this.emitCall(id);
-    await this.wake(now + RING_MS);
+  }
+
+  // A person who is no longer in the chat (removed, or the account deleted) leaves its running calls.
+  leaveChatCalls(chat, uid) {
+    for (const c of this.sql.exec("SELECT id FROM calls WHERE chat = ? AND state != 'ended'", chat).toArray()) {
+      if (this.callView(c.id).members.includes(uid)) this.leaveCall(c.id, uid);
+    }
+  }
+
+  inChat(chat, uid) {
+    return this.sql.exec("SELECT 1 FROM members WHERE chat = ? AND uid = ?", chat, uid).toArray().length > 0;
   }
 
   onCallJoin(ws, me, msg) {
@@ -1058,7 +1074,8 @@ export class Studio extends DurableObject {
     const c = this.liveCall(String(msg.call ?? ""));
     const members = this.callView(c.id).members;
     const to = String(msg.to ?? "");
-    if (to === me.id || !members.includes(me.id) || !members.includes(to)) {
+    if (to === me.id || !members.includes(me.id) || !members.includes(to)
+        || !this.inChat(c.chat, me.id) || !this.inChat(c.chat, to)) {
       refuse("not_in_call", "Both people must be in the call");
     }
     if (!msg.data || typeof msg.data !== "object" || Array.isArray(msg.data)) refuse("bad_request", "A signal carries an object");

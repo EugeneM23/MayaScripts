@@ -609,7 +609,7 @@ def phase_calls():
     ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == cid, 5)
     note = ev["message"]["call"] if ev else {}
     gate("the call line lands in the chat", bool(ev) and note.get("answered") is True
-         and note.get("kind") == "video" and isinstance(note.get("seconds"), int)
+         and note.get("kind") == "video" and isinstance(note.get("seconds"), int) and note["seconds"] >= 0
          and ev["message"]["from_id"] == A[1]["id"] and ev["message"]["text"] == "", ev)
 
     # decline -> ended, not answered
@@ -628,6 +628,8 @@ def phase_calls():
     gate("a call nobody answers ends after 45 s", c2 is not None
          and 44000 <= c2["ended_at"] - c2["started_at"] <= 70000,
          str(c2 and c2["ended_at"] - c2["started_at"]))
+    ev, _ = wa.until(lambda e: e.get("kind") == "message" and (e["message"].get("call") or {}).get("id") == c["id"], 5)
+    gate("an unanswered call's line says not answered", bool(ev) and ev["message"]["call"]["answered"] is False, ev)
 
     # a member gone for 30 s leaves
     wa.send({"type": "call_start", "chat": dm["id"], "kind": "audio", "cid": "c5"})
@@ -658,11 +660,33 @@ def phase_calls():
     for w in socks:
         w.send({"type": "call_leave", "call": c["id"]})
     wa.send({"type": "call_leave", "call": c["id"]})
+    _call_ev(wa, c["id"], "ended")
+
+    # a member removed from the group mid-call leaves the call
+    wa.send({"type": "call_start", "chat": group["id"], "kind": "audio", "cid": "c7"})
+    c = _call_ev(socks[0], state="ringing")
+    for w in socks[:3]:
+        w.send({"type": "call_join", "call": c["id"]})
+    _call_ev(wa, c["id"], "live", seconds=8, members=4)
+    status, _ = jcall("DELETE", "/v1/chats/%s/members/%s" % (group["id"], C[1]["id"]), A[0])
+    gate("the admin removes a member", status == 200, status)
+    after = _call_ev(wa, c["id"], None, seconds=8)
+    gate("a removed member leaves the running call", after is not None
+         and C[1]["id"] not in after["members"] and len(after["members"]) == 3, after)
+    socks[1].send({"type": "call_signal", "call": c["id"], "to": A[1]["id"], "data": {"x": 1}})
+    err = _error(socks[1])
+    gate("a removed member cannot signal", bool(err) and err["code"] == "not_in_call", err)
+
+    # an account deleted mid-call leaves the call
+    call("DELETE", "/v1/me", more[0][0])
+    after = _call_ev(wa, c["id"], None, seconds=8)
+    gate("a deleted account leaves the running call", after is not None
+         and more[0][1]["id"] not in after["members"], after)
     for w in [wa, wc] + socks:
         try:
             w.close()
-        except Exception:
-            pass
+        except OSError as exc:
+            print("  (close: %s)" % exc)
 
 
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
