@@ -1302,3 +1302,44 @@ class CardGripRules(unittest.TestCase):
     def test_dragged_height(self):
         self.assertEqual(edgerules.dragged_height(200, 30, 1.5), 220)
         self.assertEqual(edgerules.dragged_height(200, -500, 1.0), edgerules.MIN_HEIGHT)
+
+
+class RailWidthFloor(unittest.TestCase):
+    """2026-10-22, «баг с обрезанием окна»: a card needing more than the grip's width
+    was cut at its inner side; the panel stands at least as wide as `least()` asks,
+    and the rail's window is see-through round the card's rounded corners."""
+
+    VIEWPORT = (100, 150, 1500, 700)
+
+    def setUp(self):
+        self.app = _app()
+        self.need = 0
+        self.edge = hubedge.Edge(
+            scale=1.5, width=280, motion=lambda: False, rail=True,
+            rest=lambda: 40, work_area=lambda: self.VIEWPORT,
+            cursor=lambda: (800, 400), buttons=lambda: False,
+            app_active=lambda: True, least=lambda: self.need)
+
+    def tearDown(self):
+        self.edge.destroy()
+
+    def test_the_grip_s_width_with_no_card_asking_more(self):
+        self.edge.place()
+        self.assertEqual(self.edge.host.width(), int(round(280 * 1.5)))
+
+    def test_a_wider_card_widens_the_panel_without_saving_it(self):
+        self.need = 390
+        self.edge._follow()
+        self.assertEqual(self.edge.host.width(), int(round(390 * 1.5)))
+        self.assertEqual(self.edge.width, 280)
+        self.need = 0
+        self.edge._follow()
+        self.assertEqual(self.edge.host.width(), int(round(280 * 1.5)))
+
+    def test_the_grip_cannot_go_under_what_the_card_needs(self):
+        self.need = 390
+        self.edge.set_width(300, save=False)
+        self.assertEqual(self.edge.width, 390)
+
+    def test_the_rail_window_is_see_through(self):
+        self.assertTrue(self.edge.host.testAttribute(QtCore.Qt.WA_TranslucentBackground))

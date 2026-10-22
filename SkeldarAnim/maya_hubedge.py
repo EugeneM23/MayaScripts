@@ -305,6 +305,9 @@ def _classes():
             def paintEvent(self, event):                   # noqa: N802
                 #  only the frame shows (the window's mask); its line on
                 #  the frame's inner edge, so it slides out with it
+                if self.edge.rail:
+                    #  see-through: the rail and the card paint themselves
+                    return
                 side = self.edge.side
                 frame = max(1, min(self.width(), self.edge.frame))
                 fx, fw = rules.frame_span(frame, self.width(), side)
@@ -449,7 +452,7 @@ class Edge(object):
                  motion=None, on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
                  rest=None, shape=None, burst=None, burst_stop=None,
-                 card=None, on_height=None):
+                 card=None, on_height=None, least=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -476,6 +479,11 @@ class Edge(object):
         #  its content's) - None: no height grip
         self.card = card
         self.on_height = on_height
+        #  `least()` -> the logical width the shown card needs (2026-10-22: a card
+        #  held narrower than its content was cut at its inner side); the panel is
+        #  never narrower, whatever width the grip left
+        self.least = least
+        self._least_seen = None
         self.burst_shape = None
         self._burst_gen = 0         # each rail move's number: stale bursts are deaf
         self.scale = float(scale or 1.0)
@@ -510,6 +518,11 @@ class Edge(object):
         #  the panel coming out under the cursor must not take the keyboard
         #  from the viewport; a click inside still activates it
         host.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        if self.rail:
+            #  see-through (2026-10-22, «видно артефакт острого края»): the window's
+            #  mask is square, so its corners showed the host's fill round the
+            #  card's rounded frame; translucent, they show what is behind it
+            host.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.host = host
 
         slot = QtWidgets.QWidget(host)
@@ -567,8 +580,10 @@ class Edge(object):
             return
         if self._anim is not None:
             return
-        if area != self._area:
+        least = self.least_width()
+        if area != self._area or least != self._least_seen:
             self._area = area
+            self._least_seen = least
             self.place()
             return
         self._place_grips()
@@ -689,7 +704,7 @@ class Edge(object):
         if not self.alive():
             return
         area = self.work_area()
-        x, y, w, h = rules.panel_rect(area, self.width, self.scale,
+        x, y, w, h = rules.panel_rect(area, self.shown_width(), self.scale,
                                       self.side)
         self.host.setGeometry(x, y, w, h)
         sx, sy, sw, sh = rules.sensor_rect(area, self.side)
@@ -1273,10 +1288,23 @@ class Edge(object):
         self._place_grips()
         self._set_frame(self._frame)
 
+    def least_width(self):
+        """The logical width the shown card needs (`least()`), 0 without one."""
+        if self.least is None:
+            return 0
+        try:
+            return int(max(0, self.least() or 0))
+        except Exception:                                    # noqa: BLE001
+            return 0
+
+    def shown_width(self):
+        """The width the panel stands at: the grip's, or what the card needs."""
+        return max(self.width, self.least_width())
+
     def set_width(self, logical, save=True):
-        """The panel's logical width, clamped and laid out; `save` (the end
-        of a grip drag) reports it to `on_width`."""
-        self.width = rules.clamp_width(logical)
+        """The panel's logical width, clamped and laid out - never under what the
+        shown card needs; `save` (the end of a grip drag) reports it to `on_width`."""
+        self.width = rules.clamp_width(max(logical, self.least_width()))
         self.place()
         if save and self.on_width:
             self.on_width(self.width)

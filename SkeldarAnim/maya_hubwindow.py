@@ -172,6 +172,7 @@ def frame_class():
             def __init__(self, scale=1.0, parent=None):
                 super(WindowFrame, self).__init__(scale, parent)
                 self.content = None
+                self.content_view = None      # the rail card's scroll viewport (2026-10-22)
                 #  "panel": the content stands on the frame's own face, a hairline under
                 #  the title (look B, 2026-10-22); "card": a lighter card (the chat window)
                 self.content_face = "panel"
@@ -235,6 +236,11 @@ def frame_class():
                     if content is not None and hubqt._valid(content) \
                             and content.isVisible():
                         rect = _mapped(content, self)
+                        view = getattr(self, "content_view", None)
+                        if view is not None and hubqt._valid(view):
+                            #  the rail card's own scroll (2026-10-22): wells only
+                            #  where its content shows
+                            rect = rect.intersected(_mapped(view, self))
                         if self.content_face == "card":
                             rc = float(hubstyle.px(6, s))
                             painter.setPen(QtCore.Qt.NoPen)

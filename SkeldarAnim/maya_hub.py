@@ -1097,6 +1097,16 @@ def _rail_card():
     return rect(_SKIN, current.host) if rect is not None else None
 
 
+def _rail_least():
+    """The logical width the edge panel needs for its shown card (2026-10-22: held
+    narrower, the card was cut at its inner side); 0 with none."""
+    current = edge()
+    if current is None or not is_skinned():
+        return 0
+    least = getattr(_hubqt(), "rail_least", None)
+    return least(_SKIN, current.host, current.scale) if least is not None else 0
+
+
 def _rail_height(logical, save=True):
     """The bottom grip moved or released (Edge.on_height): the shown card that tall
     (None: its content's height), remembered for that card on the release."""
@@ -1147,7 +1157,8 @@ def _ensure_edge():
                           on_width=_save_edge_width, side=edge_side(),
                           rail=True, rest=_rail_rest, shape=_rail_shape,
                           burst=_rail_burst, burst_stop=_rail_burst_stop,
-                          card=_rail_card, on_height=_rail_height)
+                          card=_rail_card, on_height=_rail_height,
+                          least=_rail_least)
         he.state()["edge"] = current
         #  its cards in look B with ✕ (2026-10-18); the dock keeps ⧉ alone
         _SKIN = _build_skin(host=current.slot, kind="rail", windowed=True)

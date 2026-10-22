@@ -13902,3 +13902,15 @@ click on the bottom gives it its content's height back; `_show_on_rail` applies 
 `hubqt.card_rect` is the card as it shows, its scroll bar included. Tests
 `test_hubedge.CardGrips` / `CardGripRules`, `test_hubqt.RailCardHeight`. **Not seen in a GUI
 Maya.**
+
+**…three fixes after using it** (the same day, a screenshot: the card cut at its right, square
+corners round the rounded frame, the window "breaking" when its bottom was dragged). Measured on
+7002: the grip had left the panel at 280 logical, the Shared card's content needs 505 px in a
+343 px viewport; the outer scroll was capped and cut the card's frame off below. Now:
+`Edge(least=)` - the panel stands at least `hubqt.rail_least` wide (the shown content's least
+width plus what stands beside the viewport), never saved, and the grip cannot go under it; a
+windowed card's content sits in its own `InnerScroll` (`card.inner`, sizeHint = the content's
+whole hint) and `set_card_height` holds the FRAME, its content scrolling inside (wells clipped to
+`frame.content_view`); the rail host is `WA_TranslucentBackground`, paints nothing, and the rail
+skin's root / content / viewport / scroll are transparent - the mask stays square, the corners
+show what is behind. Tests `test_hubedge.RailWidthFloor`, `test_hubqt.RailCardHeight`.

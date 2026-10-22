@@ -381,6 +381,26 @@ def card_rect(skin, host):
         return None
 
 
+def rail_least(skin, host, scale):
+    """The logical width `host` (the edge panel) must have for the skin's shown card
+    to fit its scroll's viewport: the content's least width and what stands beside
+    the viewport (the rail, the margins, a scroll bar), rounded up (2026-10-22). 0
+    without a shown card."""
+    import math
+    if skin is None or not _valid(host):
+        return 0
+    try:
+        card = skin.cards.get(getattr(skin, "shown", None))
+        scroll = getattr(skin, "scroll", None)
+        if card is None or scroll is None or not _valid(card.frame)                 or not card.frame.isVisible():
+            return 0
+        aside = max(0, host.width() - scroll.viewport().width())
+        need = skin.content.minimumSizeHint().width() + aside
+    except RuntimeError:
+        return 0
+    return int(math.ceil(need / float(scale or 1.0)))
+
+
 def set_card_height(skin, logical, scale):
     """The rail card's height (2026-10-22): its scroll area held so the shown
     card is `logical` px tall - a taller card scrolls inside - or, None, as
@@ -394,17 +414,20 @@ def set_card_height(skin, logical, scale):
     q = qt()
     parent = scroll.parentWidget()
     layout = parent.layout() if parent is not None else None
-    if logical is None or card is None or not _valid(card.frame):
-        #  the layout's alignment too: aligned, it would keep the scroll at its
-        #  size hint instead of the panel's height
-        scroll.setMaximumHeight(16777215)
-        if layout is not None:
-            layout.setAlignment(scroll, q.QtCore.Qt.Alignment())
-        return True
-    top = card.frame.y()                      # the card's place in the column
-    scroll.setMaximumHeight(max(1, top + hubstyle.px(logical, scale)))
+    #  The card itself is held (2026-10-22): its content scrolls inside it
+    #  (_inner_scroll_class). Capping the panel's scroll, as first built, cut the
+    #  card's frame off at the bottom - «если тянуть за нижний край то окно
+    #  ломается». The scroll's cap and alignment are cleared for a hub that had them.
+    scroll.setMaximumHeight(16777215)
     if layout is not None:
-        layout.setAlignment(scroll, q.QtCore.Qt.AlignTop)
+        layout.setAlignment(scroll, q.QtCore.Qt.Alignment())
+    inner = getattr(card, "inner", None) if card is not None else None
+    if card is None or not _valid(card.frame):
+        return True
+    if logical is None or inner is None:
+        card.frame.setMaximumHeight(16777215)
+        return True
+    card.frame.setMaximumHeight(max(1, hubstyle.px(logical, scale)))
     return True
 
 
@@ -791,6 +814,54 @@ def _head_class():
 
         _CLASSES["head"] = CardHead
     return _CLASSES["head"]
+
+
+def _inner_scroll_class():
+    """The edge rail card's own scroll (2026-10-22, «если тянуть за нижний край то окно
+    ломается»): the card's content scrolls INSIDE its frame when the card is held shorter
+    than its content, so the frame keeps its title, its bottom and its rounded corners
+    (the panel's scroll had cut the frame itself off). Unheld, it asks for its content's
+    whole size - QScrollArea's own hint stops at 24 lines - and a content that grows (a
+    list filled, a section shown) asks again."""
+    if "inner" not in _CLASSES:
+        q = qt()
+        QtCore, QtWidgets = q.QtCore, q.QtWidgets
+
+        class InnerScroll(QtWidgets.QScrollArea):
+
+            def __init__(self, scale=1.0, parent=None):
+                super(InnerScroll, self).__init__(parent)
+                self.scale = scale
+                self.setWidgetResizable(True)
+                self.setFrameShape(QtWidgets.QFrame.NoFrame)
+                self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+            def _bar(self):
+                bar = self.verticalScrollBar()
+                return bar.sizeHint().width() if bar.isVisible() else 0
+
+            def sizeHint(self):                            # noqa: N802
+                widget = self.widget()
+                if widget is None:
+                    return super(InnerScroll, self).sizeHint()
+                hint = widget.sizeHint()
+                return QtCore.QSize(hint.width() + self._bar(), hint.height())
+
+            def minimumSizeHint(self):                     # noqa: N802
+                widget = self.widget()
+                if widget is None:
+                    return super(InnerScroll, self).minimumSizeHint()
+                least = widget.minimumSizeHint()
+                return QtCore.QSize(least.width() + self._bar(),
+                                    min(least.height(), hubstyle.px(40, self.scale)))
+
+            def viewportEvent(self, event):                # noqa: N802
+                if event.type() == QtCore.QEvent.LayoutRequest:
+                    self.updateGeometry()
+                return super(InnerScroll, self).viewportEvent(event)
+
+        _CLASSES["inner"] = InnerScroll
+    return _CLASSES["inner"]
 
 
 def sounding(widget, root):
@@ -1269,6 +1340,7 @@ class Card(object):
             collapsible = False
             import maya_hubwindow as hubwindow     # lazy: it imports this module
         self.close = None
+        self.inner = None           # a windowed card's own scroll (2026-10-22)
         #  the rail layout (2026-10-16): one card shown, never collapsed - no
         #  chevron, the header's click does nothing
         self.collapsible = bool(collapsible)
@@ -1411,7 +1483,22 @@ class Card(object):
             inner.setSpacing(0)
             inner.addWidget(self.body)
             self.frame.content = content
-            column.addWidget(content)
+            #  inside a scroll of its own (2026-10-22): a card held shorter than its
+            #  content scrolls inside its frame (set_card_height)
+            view = _named(_inner_scroll_class()(scale), "skeldarHubCardScroll_" + key)
+            view.setWidget(content)
+            port = view.viewport()
+            port.setObjectName("skeldarHubCardView_" + key)
+            port.setAutoFillBackground(False)
+            content.setAutoFillBackground(False)     # setWidget turned it on
+            view.setStyleSheet(
+                "#skeldarHubCardScroll_{0}, #skeldarHubCardView_{0} "
+                "{{ background: transparent; border: none; }}".format(key))
+            self.frame.content_view = port
+            self.inner = view
+            view.verticalScrollBar().valueChanged.connect(
+                lambda *_a: self.frame.update())
+            column.addWidget(view)
             hubwindow.dress(self.frame, scale)
             hubwindow.recess(self.frame, scale)     # look B's fields (2026-10-22)
         else:
@@ -2340,6 +2427,14 @@ class Skin(object):
             self.column.setContentsMargins(0, 0, self.px(2), 0)
 
     def finish(self, sheet):
+        if self.windowed and self.layout == "rail":
+            #  the edge rail's skin stands in a see-through window (2026-10-22): no
+            #  face behind the card's rounded corners, the rail and the card paint
+            #  their own
+            sheet = sheet + (
+                "\n#{0}, #{1}, #{2}, QScrollArea#{3} {{ background: transparent; "
+                "border: none; }}\n").format(hubstyle.ROOT, hubstyle.CONTENT,
+                                           hubstyle.VIEWPORT, hubstyle.SCROLL)
         self.root.setStyleSheet(sheet)
 
     def say(self, text, state=None, source=None):

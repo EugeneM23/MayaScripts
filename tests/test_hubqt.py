@@ -2941,8 +2941,32 @@ class RailCardHeight(unittest.TestCase):
         self.assertTrue(hubqt.set_card_height(self.skin, 200, 1.0))
         self.settle()
         self.assertEqual(hubqt.card_rect(self.skin, self.host)[3], 200)
-        self.assertGreater(self.skin.scroll.verticalScrollBar().maximum(), 0)
+        card = self.skin.cards["tools"]
+        #  the card's OWN content scrolls (2026-10-22): the frame stays whole, its
+        #  bottom inside the panel's scroll - the panel's scroll had cut it off
+        self.assertGreater(card.inner.verticalScrollBar().maximum(), 0)
+        self.assertEqual(card.frame.height(), 200)
+        self.assertLessEqual(card.frame.geometry().bottom(),
+                             self.skin.scroll.viewport().height())
         hubqt.set_card_height(self.skin, None, 1.0)
         self.settle()
         self.assertEqual(hubqt.card_rect(self.skin, self.host)[3], natural)
-        self.assertGreater(self.skin.scroll.height(), natural)
+        self.assertEqual(card.inner.verticalScrollBar().maximum(), 0)
+
+    def test_the_rail_skin_is_see_through_round_its_card(self):
+        sheet = self.skin.root.styleSheet()
+        self.assertIn("background: transparent", sheet)
+        self.assertIn("#%s, #%s" % (style.ROOT, style.CONTENT), sheet)
+
+    def test_rail_least_is_what_the_content_needs_beside_the_rail(self):
+        card = self.skin.cards["tools"]
+        wide = QtWidgets.QPushButton("wide")
+        wide.setMinimumWidth(600)
+        card.body_layout.addWidget(wide)
+        self.settle()
+        need = hubqt.rail_least(self.skin, self.host, 1.0)
+        aside = self.host.width() - self.skin.scroll.viewport().width()
+        self.assertEqual(need, self.skin.content.minimumSizeHint().width() + aside)
+        self.assertGreater(need, 600)
+        self.assertEqual(hubqt.rail_least(self.skin, self.host, 2.0),
+                         -(-need // 2))
