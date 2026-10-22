@@ -563,11 +563,7 @@ class Session(object):
     def call_here(self, call_id, on):
         """Mark / unmark a call this Maya is in."""
         try:
-            ids = set(self.store.calls_here())
-            if (call_id in ids) == bool(on):
-                return
-            (ids.add if on else ids.discard)(call_id)
-            self.store.set_calls_here(ids)
+            self.store.set_call_mark(call_id, on)
         except Exception:                                   # noqa: BLE001
             pass
 

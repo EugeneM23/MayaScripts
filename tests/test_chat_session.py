@@ -1,5 +1,6 @@
 """maya_chat.session on a fake api and a fake link."""
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -476,6 +477,21 @@ class Calls(Base):
         self.ses.call_here("c1", False)
         self.assertEqual(st.Store(self.dir).calls_here(), ["c2"])
         self.assertEqual(self.ses.calls_here(), ["c2"])
+
+    def test_a_call_another_running_maya_marked_is_not_ours(self):
+        import json as _json
+        store = st.Store(self.dir)
+        with open(store._path("calls.json"), "w") as f:
+            _json.dump({"mine": os.getpid(), "other": 4242, "crashed": 4343}, f)
+        alive = lambda pid: pid in (os.getpid(), 4242)
+        self.assertEqual(sorted(store.calls_here(alive=alive)), ["crashed", "mine"])
+
+    def test_an_older_list_of_marks_reads_as_a_maya_that_is_gone(self):
+        import json as _json
+        store = st.Store(self.dir)
+        with open(store._path("calls.json"), "w") as f:
+            _json.dump(["c9"], f)
+        self.assertEqual(store.calls_here(alive=lambda pid: True), ["c9"])
 
     def test_turn_failure_falls_back_to_stun(self):
         def boom():
