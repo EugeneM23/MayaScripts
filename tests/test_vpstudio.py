@@ -1234,6 +1234,25 @@ class TestViewPresets(FakeSceneTest):
                 self.assertIs(flags[flag], True, flag)
         self.assertIn("2 panels", line)
 
+    def test_anim_turns_on_the_scene_grid_and_highlight_selection(self):
+        calls = []
+        self.fake.grid = lambda **kw: calls.append(("grid", kw))
+        self.fake.selectPref = lambda **kw: calls.append(("selectPref", kw))
+        vp.anim_view()
+        self.assertIn(("grid", {"toggle": True}), calls)
+        self.assertIn(("selectPref", {"allowHiliteSelection": True}), calls)
+
+    def test_a_refused_scene_switch_does_not_stop_the_other(self):
+        calls = []
+
+        def refuse(**kw):
+            raise RuntimeError("no UI")
+
+        self.fake.grid = refuse
+        self.fake.selectPref = lambda **kw: calls.append(kw)
+        vp.anim_view()
+        self.assertEqual(calls, [{"allowHiliteSelection": True}])
+
     def test_anim_touches_nothing_else(self):
         vp.anim_view()
         flags = self.fake.panels["modelPanel1"]

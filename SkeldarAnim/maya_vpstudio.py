@@ -769,13 +769,30 @@ def _edit_panels(plan, panels=None):
     return touched
 
 
+def _anim_switches():
+    """The two scene-wide switches a panel flag cannot override: Maya's own
+    grid display (Display > Grid; off, no panel draws one) and Highlight
+    Selection (the status line's toggle; off, a selected object is not drawn
+    highlighted). Each on its own - one this Maya refuses is skipped."""
+    for command, flags in ((getattr(cmds, "grid", None), {"toggle": True}),
+                           (getattr(cmds, "selectPref", None),
+                            {"allowHiliteSelection": True})):
+        if command is None:
+            continue
+        try:
+            command(**flags)
+        except Exception:                                     # noqa: BLE001
+            continue
+
+
 def anim_view():
-    """Controls, cameras, locators, geometry and the selection drawn; bones
-    hidden; nothing else touched."""
+    """Controls, cameras, locators, geometry, the grid and the selection
+    highlight drawn; bones hidden; nothing else touched."""
     count = _edit_panels(ANIM_VIEW)
+    _anim_switches()
     cmds.refresh()
-    return ("Anim view - controls, cameras, locators, geometry, grid shown, "
-            "joints hidden (%d panels)" % count)
+    return ("Anim view - controls, cameras, locators, geometry, grid and "
+            "selection highlight shown, joints hidden (%d panels)" % count)
 
 
 def default_view():
