@@ -28,7 +28,7 @@ class Api(object):
         self.token = token
         self.opener = opener
 
-    def raw(self, method, path, data=None, content_type="application/octet-stream"):
+    def raw(self, method, path, data=None, content_type="application/octet-stream", timeout=TIMEOUT):
         """Bytes out and bytes back (avatars). A refusal is a ChatError as for call()."""
         headers = {"User-Agent": AGENT}
         if data is not None:
@@ -37,7 +37,7 @@ class Api(object):
             headers["Authorization"] = "Bearer " + self.token
         req = urllib.request.Request(self.server + path, data=data, method=method, headers=headers)
         try:
-            with self.opener(req, timeout=TIMEOUT) as answer:
+            with self.opener(req, timeout=timeout) as answer:
                 return answer.read()
         except urllib.error.HTTPError as exc:
             raw, status = exc.read(), exc.code
@@ -141,3 +141,76 @@ class Api(object):
         if before is not None:
             query["before"] = before
         return self.call("GET", "/v1/chats/%s/messages?%s" % (chat_id, urllib.parse.urlencode(query)))["messages"]
+
+    # ---------------------------------------------------------------- files (2026-10-22)
+    def file_start(self, chat_id, name, kind, size, zip_size, fps=None, frame_range=None):
+        """An upload begun: {id, part_size, parts}."""
+        return self.call("POST", "/v1/files", {"chat": chat_id, "name": name, "kind": kind,
+                                               "bytes": int(size), "zip": int(zip_size),
+                                               "fps": fps, "range": frame_range})
+
+    def file_part(self, file_id, n, data):
+        raw = self.raw("PUT", "/v1/files/%s/parts/%d" % (file_id, n), bytes(data), timeout=PART_TIMEOUT)
+        return json.loads(raw.decode("utf-8") or "{}")
+
+    def file_complete(self, file_id):
+        return self.call("POST", "/v1/files/%s/complete" % file_id)
+
+    def file_cancel(self, file_id):
+        return self.call("DELETE", "/v1/files/" + file_id)
+
+    def file_download(self, file_id, path, progress=None):
+        """The file's zip streamed to `path` (via path + ".part"); its size. `progress(done, total)`
+        answering False stops it (ChatError "cancelled")."""
+        headers = {"User-Agent": AGENT}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        req = urllib.request.Request(self.server + "/v1/files/" + file_id, method="GET",
+                                     headers=headers)
+        part = path + ".part"
+        try:
+            with self.opener(req, timeout=PART_TIMEOUT) as answer:
+                headers = getattr(answer, "headers", None) or {}
+                total = int(headers.get("content-length") or 0)
+                done = 0
+                with open(part, "wb") as out:
+                    while True:
+                        piece = answer.read(PIECE)
+                        if not piece:
+                            break
+                        out.write(piece)
+                        done += len(piece)
+                        if progress is not None and progress(done, total) is False:
+                            raise ChatError("cancelled", "Stopped")
+        except urllib.error.HTTPError as exc:
+            raw, status = exc.read(), exc.code
+            try:
+                doc = json.loads(raw.decode("utf-8") or "{}")
+            except ValueError:
+                doc = {}
+            _remove(part)
+            raise ChatError(doc.get("error") or "server", doc.get("text") or "Refused", status)
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            _remove(part)
+            raise ChatError("offline", "The chat server did not answer (%s)" % getattr(exc, "reason", exc))
+        except ChatError:
+            _remove(part)
+            raise
+        if total and done != total:
+            _remove(part)
+            raise ChatError("offline", "The download stopped half way")
+        import os
+        os.replace(part, path)
+        return done
+
+
+PART_TIMEOUT = 120
+PIECE = 1024 * 1024
+
+
+def _remove(path):
+    import os
+    try:
+        os.remove(path)
+    except OSError:
+        pass

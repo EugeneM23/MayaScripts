@@ -13275,6 +13275,39 @@ Friends and «Все пользователи» panes of the sections above.**
   `docs/superpowers/plans/chat_extras.png` (`render_chat_extras.py`). Note the verifies print emoji:
   run them with `PYTHONIOENCODING=utf-8` (cp1252 raises). **Not seen in a GUI Maya.**
 
+## Chat: scenes and files in a chat (2026-10-22)
+
+The animator: «Давай добавим в наш мессенджер возможность пересылки сцен и файлов как в стеше и
+шаре». Asked: the file in **our own Cloudflare R2** (not Shared's anonymous hosts), downloaded **on a
+click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer**, and a card dragged
+**back into Stash / Shared / a viewport**. Spec `docs/superpowers/specs/2026-10-22-chat-files-design.md`.
+- **Server** (`worker.js`): R2 binding `FILES` (bucket `skeldar-chat-files` / `-staging`, made by
+  `deploy.py`, which says plainly when R2 is off - Cloudflare's 10042); one zip a file at `f/<id>`, R2
+  multipart in `PART` 16 MB equal parts, at most 1 GB, 4 unfinished a person; table `files`, column
+  `messages.file`. `POST /v1/files` (a member of a writable chat, a plain .ma/.mb/.fbx name), `PUT
+  .../parts/<n>` (exact size), `POST .../complete`, `DELETE` (cancel, not attached), `GET` (a member;
+  410 `expired`). `send` may carry `file: <id>` (mine, ready, same chat; the text then a caption, may be
+  empty). Deleting the message deletes the object; the daily alarm expires files after 30 days and
+  sweeps unfinished uploads and orphans. Without the binding every file route answers `no_files` 503.
+- **Client**: `records.file`; `api.file_start/part/complete/cancel/download` (streamed, `.part` then
+  replace); `maya_chat/files.py` - `send_path`, `send_scene` (Shared's copy of the active tab), an
+  upload is a pending message with `file` + `upload` driven by a thread (zip, parts, complete), then
+  `session.upload_done` puts the send frame (with `file` and `file_meta`, so a restart still draws the
+  card) into the outbox; a failure is "failed", retry uploads again, discard cancels on the server.
+  `fetch` downloads into `<store>/files/<id>/<name>` once, then runs `then(path)` on Maya's main thread
+  (`files.DEFER`/`SPAWN` for tests). Open / Import are Shared's `maya_share.open_file` / `import_file`
+  (split out of `open_entry` / `import_entry`); Save as, To Stash, To Shared.
+- **Window**: a paperclip (Send scene / Send file...), the composer's text as the caption; Explorer
+  files dropped anywhere on the window (the composer too); Stash and Shared rows dropped on the window
+  or the rail's chat icon (`maya_filedrag` section `chat`, `maya_stash.drop_to_chat`,
+  `maya_share.drop_to_chat`). A file message is a card (MA/MB/FBX tile, name, «12.3 MB · сцена · 30 fps ·
+  0-48») with Open / Import / ⋯, a progress bar while uploading (Отмена) or downloading, «файл истёк»;
+  the right-button menu has the same rows. A card pressed and dragged: the hub's ghost; onto a viewport
+  Import, onto Stash / Shared a copy. The list's preview and toasts read «📎 name - caption».
+- Proof: `tests/test_chat_files.py`, the window's `Files` tests, `test_filedrag`, `test_chat_deploy`;
+  `verify_chat_server.py files` and `verify_chat_client.py` (a 20 MB scene both ways) written - **not run:
+  R2 is not enabled on the account** (the staging deploy stopped at the bucket, nothing uploaded).
+
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 
 The animator: «Сейчас наши анимационные слои некорректно работают с scene time warp давай

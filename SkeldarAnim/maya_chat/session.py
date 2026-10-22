@@ -34,6 +34,7 @@ class State(object):
         self.online = {}                # user id -> {"online", "last_seen"}
         self.typing = {}                # chat id -> {user id: monotonic time}
         self.reads = {}                 # chat id -> {user id: upto}
+        self.downloads = {}             # file id -> {state, progress, error, then} (files.py)
 
 
 def _now_ms():
@@ -145,7 +146,9 @@ class Session(object):
     def _pending_of(self, msg):
         return {"cid": msg["cid"], "chat": msg["chat"], "text": msg["text"],
                 "reply_to": msg.get("reply_to"), "at": msg.get("at") or _now_ms(),
-                "from_id": (self.state.me or {}).get("id"), "state": "sending", "error": None}
+                "from_id": (self.state.me or {}).get("id"), "state": "sending", "error": None,
+                "file": records.file(msg.get("file_meta")) if msg.get("file") else None,
+                "upload": None}
 
     def _save_chats(self):
         self.store.set_chats(self.state.chats.values())
@@ -498,13 +501,64 @@ class Session(object):
         self.tell("pending", {"chat": chat, "cid": cid})
         return cid
 
+    # ---------------------------------------------------------------- files (2026-10-22)
+    def add_upload(self, chat, cid, text, f, local):
+        """A file message pending while its file uploads (files.py drives it)."""
+        self._need()
+        p = {"cid": cid, "chat": chat, "text": str(text or "").strip(), "reply_to": None,
+             "at": _now_ms(), "from_id": (self.state.me or {}).get("id"), "state": "sending",
+             "error": None, "file": f,
+             "upload": {"local": local, "id": None, "phase": "zip", "progress": 0.0,
+                        "cancelled": False}}
+        self.state.pending.setdefault(chat, []).append(p)
+        self.tell("pending", {"chat": chat, "cid": cid})
+        return p
+
+    def upload_done(self, cid, f):
+        """The file is on the server: the message goes out like any other (and into the outbox)."""
+        p = self._find_pending(cid)
+        if p is None:
+            return False
+        p["upload"] = None
+        p["file"] = f
+        self.protocol.queue(self._frame(p))
+        self._save_outbox()
+        self.tell("pending", {"chat": p["chat"], "cid": cid})
+        return True
+
+    def upload_failed(self, cid, text):
+        p = self._find_pending(cid)
+        if p is None:
+            return False
+        p["state"], p["error"] = "failed", text
+        self.tell("failed", {"chat": p["chat"], "cid": cid, "text": text})
+        return True
+
+    def drop_upload(self, cid):
+        p = self._find_pending(cid)
+        if p is None:
+            return False
+        self._drop_pending(p["chat"], cid)
+        self.tell("pending", {"chat": p["chat"], "cid": cid})
+        return True
+
+    def _frame(self, p):
+        msg = {"type": "send", "chat": p["chat"], "cid": p["cid"], "text": p["text"],
+               "reply_to": p["reply_to"], "at": p["at"]}
+        if p.get("file") and p["file"].get("id"):
+            msg["file"] = p["file"]["id"]
+            msg["file_meta"] = dict(p["file"])
+        return msg
+
     def retry(self, cid):
         p = self._find_pending(cid)
         if p is None or p["state"] != "failed":
             return False
+        if p.get("upload"):
+            from . import files
+            return files.start(self, cid)
         p["state"], p["error"] = "sending", None
-        self.protocol.queue({"type": "send", "chat": p["chat"], "cid": cid, "text": p["text"],
-                             "reply_to": p["reply_to"], "at": p["at"]})
+        self.protocol.queue(self._frame(p))
         self._save_outbox()
         self.tell("pending", {"chat": p["chat"], "cid": cid})
         return True
@@ -514,6 +568,11 @@ class Session(object):
         p = self._find_pending(cid)
         if p is None:
             return False
+        if p.get("upload"):
+            from . import files
+            files.cancel(self, cid)
+            if p.get("state") != "failed":
+                return True       # the thread stops at its next part, then the pending goes
         self._drop_pending(p["chat"], cid)
         if self.protocol is not None:
             self.protocol.outbox = [m for m in self.protocol.outbox if m.get("cid") != cid]

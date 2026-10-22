@@ -41,6 +41,16 @@ class AimFor(unittest.TestCase):
         self.assertEqual(fd.aim_for("shared", "stash", False)["kind"], "stash")
         self.assertEqual(fd.aim_for("shared", "stash", False)["text"], "copy into Stash")
 
+    def test_the_chat_is_a_section_both_ways(self):
+        self.assertEqual(fd.section_under(["skeldarChatFeed", "skeldarChatWindow"]), "chat")
+        self.assertEqual(fd.section_under(["skeldarHubJump_chat"]), "chat")
+        for source in ("stash", "shared"):
+            aim = fd.aim_for(source, "chat", True)
+            self.assertEqual((aim["kind"], aim["text"]), ("chat", "send to the chat"))
+        self.assertEqual(fd.aim_for("chat", "stash", False)["kind"], "stash")
+        self.assertEqual(fd.aim_for("chat", None, True)["kind"], "import")
+        self.assertEqual(fd.aim_for("chat", "chat", True)["kind"], "none")
+
     def test_a_section_wins_over_a_viewport_behind_it(self):
         self.assertEqual(fd.aim_for("stash", "shared", True)["kind"], "send")
 

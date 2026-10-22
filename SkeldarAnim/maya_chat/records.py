@@ -84,6 +84,31 @@ def reactions(value):
     return out
 
 
+FILE_KINDS = ("scene", "fbx")
+
+
+def file(value):
+    """A message's file {id, name, kind, bytes, zip, fps, range, expired}, or None for anything
+    that is not one (the message keeps its text)."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        out = {"id": _str(value, "id", empty=False), "name": _str(value, "name", empty=False),
+               "kind": _str(value, "kind", empty=False), "bytes": _int(value, "bytes", 0),
+               "zip": _int(value, "zip", 0), "expired": bool(value.get("expired"))}
+    except Bad:
+        return None
+    if out["kind"] not in FILE_KINDS:
+        return None
+    fps = value.get("fps")
+    out["fps"] = float(fps) if isinstance(fps, (int, float)) and not isinstance(fps, bool) else None
+    rng = value.get("range")
+    out["range"] = ([float(rng[0]), float(rng[1])] if isinstance(rng, list) and len(rng) == 2
+                    and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in rng)
+                    else None)
+    return out
+
+
 def message(d):
     d = _dict(d)
     edited = d.get("edited_at")
@@ -94,7 +119,7 @@ def message(d):
             "cid": _opt_str(d, "cid"), "text": _str(d, "text"),
             "reply_to": _opt_str(d, "reply_to"), "at": _int(d, "at"),
             "edited_at": edited, "deleted": bool(d.get("deleted")),
-            "reactions": reactions(d.get("reactions"))}
+            "reactions": reactions(d.get("reactions")), "file": file(d.get("file"))}
 
 
 def chat(d):

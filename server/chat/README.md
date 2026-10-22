@@ -10,6 +10,9 @@ It never ships with the plugin.
    the user variables CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID; deploy.py reads them from there
    too, so no restart is needed.
 
+4. Chat files (2026-10-22) need R2: dashboard -> R2 Object Storage -> enable (free to 10 GB), and the
+   token needs Account · Workers R2 Storage · Edit. `deploy.py` makes the bucket on its first run.
+
 ## Deploy
     & 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' server/chat/deploy.py check
     & 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' server/chat/deploy.py staging

@@ -19,6 +19,10 @@ import uuid
 
 API = "https://api.cloudflare.com/client/v4"
 NAMES = {"staging": "skeldar-chat-staging", "production": "skeldar-chat"}
+# The R2 bucket a target keeps its chat files in (2026-10-22); made on the first deploy.
+BUCKETS = {"staging": "skeldar-chat-files-staging", "production": "skeldar-chat-files"}
+R2_OFF = 10042            # "Please enable R2 through the Cloudflare Dashboard."
+NO_BUCKET = 10006
 COMPAT = "2025-06-01"
 MIGRATION = "v1"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,12 +33,14 @@ class DeployError(Exception):
     pass
 
 
-def metadata(with_migration):
+def metadata(with_migration, bucket=None):
     meta = {
         "main_module": "worker.js",
         "compatibility_date": COMPAT,
         "bindings": [{"type": "durable_object_namespace", "name": "STUDIO", "class_name": "Studio"}],
     }
+    if bucket:
+        meta["bindings"].append({"type": "r2_bucket", "name": "FILES", "bucket_name": bucket})
     if with_migration:
         meta["migrations"] = {"new_tag": MIGRATION, "new_sqlite_classes": ["Studio"]}
     return meta
@@ -67,8 +73,11 @@ def request(method, url, token, body=None, ctype=None, opener=urllib.request.url
     except ValueError:
         raise DeployError("Cloudflare answered something that is not JSON: %r" % data[:200])
     if not doc.get("success"):
-        words = "; ".join("%s: %s" % (e.get("code"), e.get("message")) for e in doc.get("errors") or [])
-        raise DeployError(words or "Cloudflare refused the request")
+        errors = doc.get("errors") or []
+        words = "; ".join("%s: %s" % (e.get("code"), e.get("message")) for e in errors)
+        error = DeployError(words or "Cloudflare refused the request")
+        error.codes = [e.get("code") for e in errors]
+        raise error
     return doc.get("result")
 
 
@@ -170,6 +179,23 @@ def check(env=os.environ, opener=urllib.request.urlopen):
     return result["subdomain"]
 
 
+def ensure_bucket(token, account, name, opener=urllib.request.urlopen):
+    """The R2 bucket `name`, made when missing. Refuses plainly when R2 is off on the account."""
+    base = "%s/accounts/%s/r2/buckets" % (API, account)
+    try:
+        request("GET", base + "/" + name, token, opener=opener)
+        return False
+    except DeployError as exc:
+        codes = getattr(exc, "codes", [])
+        if R2_OFF in codes:
+            raise DeployError("R2 is not enabled on this Cloudflare account - open the dashboard, "
+                              "R2 Object Storage, and enable it (free up to 10 GB); then deploy again")
+        if NO_BUCKET not in codes:
+            raise
+    request("POST", base, token, json.dumps({"name": name}).encode(), "application/json", opener=opener)
+    return True
+
+
 def deploy(target, env=os.environ, opener=urllib.request.urlopen):
     if target not in NAMES:
         raise DeployError("Target is staging or production, not %r" % target)
@@ -178,10 +204,12 @@ def deploy(target, env=os.environ, opener=urllib.request.urlopen):
     with open(SOURCE, "rb") as handle:
         source = handle.read()
     script = "%s/accounts/%s/workers/scripts/%s" % (API, account, name)
+    bucket = BUCKETS[target]
+    ensure_bucket(token, account, bucket, opener)
 
     def upload(with_migration):
         boundary = "skeldar" + uuid.uuid4().hex
-        body = multipart(metadata(with_migration), source, boundary)
+        body = multipart(metadata(with_migration, bucket), source, boundary)
         return request("PUT", script, token, body, "multipart/form-data; boundary=" + boundary,
                        opener=opener)
 

@@ -85,7 +85,7 @@ def message_text(session, message):
     c = session.state.chats.get(message["chat"]) or {}
     who = next((m for m in c.get("members", []) if m.get("id") == message.get("from_id")),
                {"nick": "?"})
-    text = " ".join(str(message.get("text") or "").split())
+    text = look.message_text(message)
     if len(text) > PREVIEW:
         text = text[:PREVIEW - 1] + "…"
     head = look.display_name(who)

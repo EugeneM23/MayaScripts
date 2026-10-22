@@ -777,6 +777,16 @@ def drop_to_stash(rids):
     return _status(" | ".join(line for line in lines if line))
 
 
+def drop_to_chat(rids):
+    """Rows dropped on the chat (2026-10-22): each file sent into the open chat, a file not
+    downloaded yet fetched first."""
+    import maya_chat.window as chat_window
+    lines = [when_local(rid, lambda path: chat_window.send_path(path), "chat")
+             if rid in state()["entries"] else "That file is no longer in the list."
+             for rid in rids]
+    return _status(" | ".join(line for line in lines if line))
+
+
 def _save_changes():
     """Maya's own «save changes?» for a modified scene; True to go on."""
     if cmds.about(batch=True):
@@ -864,26 +874,31 @@ def open_entry(rid):
     path, why = _local_or_fetch(rid)
     if not path:
         return _status(why)
-    record = state()["entries"][rid]["record"]
+    return _status(open_file(path, state()["entries"][rid]["record"]))
+
+
+def open_file(path, record):
+    """Open a received file at `path` (record: name, kind, from) and say what happened. The
+    chat opens its files through this too (2026-10-22)."""
     in_tab = tabscope.opens_in_tab(path, cmds)
     if not in_tab and not _save_changes():
-        return _status("Open cancelled - nothing changed.")
+        return "Open cancelled - nothing changed."
     if record["kind"] == "scene" and in_tab:
         #  a scene open (2026-10-16; tabs on, 2026-10-15): a tab of its own beside it, with its
         #  ranges, its vaccine swept - only an empty scene is replaced
         tabscope.open_scene(path, cmds)
-        return _status("Opened {0} from {1} in a tab".format(
-            record["name"], record.get("from") or "someone"))
+        return "Opened {0} from {1} in a tab".format(
+            record["name"], record.get("from") or "someone")
     if record["kind"] == "scene":
         with tabscope.decided():
             cmds.file(path, open=True, force=True, executeScriptNodes=False,
                       ignoreVersion=True, prompt=False)
         _restore_playback()
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
-        return _status("Opened {0} from {1}{2}".format(
-            record["name"], record.get("from") or "someone", note))
+        return "Opened {0} from {1}{2}".format(
+            record["name"], record.get("from") or "someone", note)
     tabscope.new_scene(cmds)        # an empty tab beside a scene that is open
-    return _status(_import_fbx(path, record, "Opened"))
+    return _import_fbx(path, record, "Opened")
 
 
 def import_entry(rid):
@@ -891,15 +906,19 @@ def import_entry(rid):
     path, why = _local_or_fetch(rid)
     if not path:
         return _status(why)
-    record = state()["entries"][rid]["record"]
+    return _status(import_file(path, state()["entries"][rid]["record"]))
+
+
+def import_file(path, record):
+    """Import a received file at `path` (record: name, kind, from) into the open scene; the line."""
     if record["kind"] == "scene":
         nodes = cmds.file(path, i=True, executeScriptNodes=False,
                           ignoreVersion=True, returnNewNodes=True,
                           mergeNamespacesOnClash=False, prompt=False) or []
         note = _clean(nodes, True)
-        return _status("Imported {0} from {1} - {2} nodes{3}".format(
-            record["name"], record.get("from") or "someone", len(nodes), note))
-    return _status(_import_fbx(path, record, "Imported"))
+        return "Imported {0} from {1} - {2} nodes{3}".format(
+            record["name"], record.get("from") or "someone", len(nodes), note)
+    return _import_fbx(path, record, "Imported")
 
 
 def save_entry(rid, dest=None):

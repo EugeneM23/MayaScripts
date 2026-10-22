@@ -613,3 +613,136 @@ class Notify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FILE = {"id": "f" * 16, "name": "Run_Cycle.ma", "kind": "scene", "bytes": 12900000, "zip": 4000000,
+        "fps": 30.0, "range": [0.0, 48.0], "expired": False}
+
+
+class Files(Base):
+    """A file message's card, the paperclip, drops and the card dragged out (2026-10-22)."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self.ses.state.messages["dm"].append(dict(msg("mf", 3, text=""), file=dict(FILE)))
+        self.win.open_chat("dm")
+        self.win.refresh()
+
+    def card(self, mid="mf"):
+        return [b for b in self.win.feed.boxes if b.item.kind == "msg"
+                and (b.item.message.get("id") == mid or b.item.message.get("cid") == mid)][-1]
+
+    def press(self, rect, button=QtCore.Qt.LeftButton):
+        local = rect.center()
+        gp = self.win.feed.mapToGlobal(local.toPoint())
+        event = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, local, QtCore.QPointF(gp),
+                                  button, button, QtCore.Qt.NoModifier)
+        self.win.feed.mousePressEvent(event)
+
+    def test_a_file_message_is_a_card_with_its_buttons(self):
+        box = self.card()
+        self.assertIsNotNone(box.card)
+        self.assertIsNone(box.doc)               # no caption: no text line
+        self.assertEqual([a for _r, a, _l in box.fbuttons], ["open", "import", "more"])
+        self.assertIn("12.3 MB", look.file_line(FILE))
+        self.assertEqual(look.file_tag(FILE), "MA")
+        plain = [b for b in self.win.feed.boxes if b.item.kind == "msg"][0]
+        self.assertIsNone(plain.card)
+
+    def test_open_downloads_then_opens_it(self):
+        from maya_chat import files
+        got = []
+        with mock.patch.object(files, "fetch", lambda ses, f, then: (got.append(f["id"]), then("C:/x/Run_Cycle.ma"), True)[2]), \
+                mock.patch.object(files, "open_file", lambda path, f, sender: "Opened %s from %s" % (f["name"], sender)):
+            rect = [r for r, a, _l in self.card().fbuttons if a == "open"][0]
+            self.press(rect)
+        self.assertEqual(got, ["f" * 16])
+        self.assertEqual(self.win.line.text(), "Opened Run_Cycle.ma from Bob")
+
+    def test_a_download_in_flight_is_a_bar_and_said(self):
+        from maya_chat import files
+        with mock.patch.object(files, "fetch", lambda ses, f, then: False):
+            self.win.file_action(self.card().item, "import")
+        self.assertIn("Скачиваю Run_Cycle.ma", self.win.line.text())
+        self.ses.state.downloads["f" * 16] = {"state": "loading", "progress": 0.4, "then": []}
+        self.win.refresh()
+        box = self.card()
+        self.assertEqual(box.fbuttons, [])
+        self.assertEqual(box.fbar[2], "скачиваю 40%")
+
+    def test_an_upload_shows_its_progress_and_cancels(self):
+        self.ses.state.pending["dm"] = [{
+            "cid": "up", "chat": "dm", "text": "", "at": NOW, "from_id": "me", "state": "sending",
+            "error": None, "file": dict(FILE, id=None),
+            "upload": {"phase": "upload", "progress": 0.5, "local": "x", "id": "a"}}]
+        self.win.refresh()
+        box = self.card("up")
+        self.assertEqual(box.fbar[2], "отправляю 50%")
+        rect = [r for r, a, _l in box.fbuttons if a == "cancel"][0]
+        self.press(rect)
+        self.assertIn(("discard", "up"), self.ses.calls)
+
+    def test_an_expired_file_has_no_buttons(self):
+        self.ses.state.messages["dm"][-1]["file"]["expired"] = True
+        self.win.refresh()
+        box = self.card()
+        self.assertEqual(box.fbuttons, [])
+        self.assertEqual(box.fbar[2], "файл истёк")
+        self.assertNotIn("Open", dict(self.win.menu_rows(box.item)))
+
+    def test_the_menu_offers_the_file_and_no_copy_of_an_empty_text(self):
+        rows = dict(self.win.menu_rows(self.card().item))
+        for label in ("Open", "Import", "Сохранить как…", "В Stash"):
+            self.assertIn(label, rows)
+        self.assertNotIn("Скопировать", rows)
+
+    def test_the_card_paints(self):
+        image = QtGui.QImage(self.win.feed.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        self.win.feed.render(image)
+        rect = self.card().card.toRect()
+        inked = sum(1 for x in range(rect.left(), rect.right(), 3)
+                    for y in range(rect.top(), rect.bottom(), 3) if image.pixelColor(x, y).alpha())
+        self.assertGreater(inked, 50)
+
+    def test_the_paperclip_sends_a_scene_or_a_file(self):
+        self.assertEqual([label for label, _f in self.win.clip_rows()],
+                         ["Отправить сцену", "Отправить файл…"])
+
+    def test_a_dropped_scene_goes_with_the_composer_s_text(self):
+        from maya_chat import files
+        sent = []
+        self.win.composer.setPlainText("the run")
+        with mock.patch.object(files, "send_path", lambda ses, chat, path, caption="": (sent.append((chat, path, caption)), "cid")[1]):
+            self.assertEqual(self.win.dropped(["C:/x/Run.ma", "C:/x/notes.txt"]), 1)
+        self.assertEqual(sent, [("dm", "C:/x/Run.ma", "the run")])
+        self.assertEqual(self.win.composer.toPlainText(), "")
+        self.assertIn("notes.txt", self.win.line.text())
+        self.assertEqual(self.win.dropped(["C:/x/notes.txt"]), 0)
+
+    def test_the_window_takes_file_drops(self):
+        mime = QtCore.QMimeData()
+        mime.setUrls([QtCore.QUrl.fromLocalFile("C:/x/Run.ma")])
+        self.assertEqual(W._local_paths(mime), ["C:/x/Run.ma"])
+        self.assertTrue(self.win.root.acceptDrops())
+
+    def test_a_card_dragged_onto_a_viewport_imports_it(self):
+        done = []
+        self.win._later = lambda fn: fn()
+        self.win.file_action = lambda item, action, at=None: done.append(action)
+        with mock.patch.object(self.win, "drag_aim", lambda gp: {"kind": "import", "text": "import into the scene"}):
+            self.assertTrue(self.win.start_drag(self.card().item, QtCore.QPoint(5, 5)))
+            self.assertIn("import into the scene", self.win._drag["ghost"].caption_text())
+            self.assertEqual(self.win.drag_end(QtCore.QPoint(6, 6)), "import")
+        self.assertEqual(done, ["import"])
+
+    def test_a_drag_let_go_nowhere_does_nothing(self):
+        self.win._later = lambda fn: fn()
+        with mock.patch.object(self.win, "drag_aim", lambda gp: {"kind": "none", "text": "nowhere"}):
+            self.win.start_drag(self.card().item, QtCore.QPoint(5, 5))
+            self.assertIsNone(self.win.drag_end(QtCore.QPoint(6, 6)))
+
+    def test_with_no_chat_open_a_file_is_refused(self):
+        self.win.chat = None
+        self.assertIsNone(self.win.send_path("C:/x/Run.ma"))
+        self.assertIn("Откройте чат", self.win.line.text())

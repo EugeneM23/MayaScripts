@@ -20,6 +20,12 @@ const NAME_MAX = 40;
 const GROUP_NAME_MAX = 60;
 const GROUP_MAX = 50;
 const AVATAR_MAX = 256 * 1024;
+// Files (2026-10-22): one zip a file in R2, uploaded in equal parts, kept 30 days.
+const PART = 16 * 1024 * 1024;
+const FILE_MAX = 1024 * 1024 * 1024;
+const FILE_KEEP = 30 * DAY;
+const UPLOADS_EACH = 4;
+const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb|fbx)$/i;
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -66,6 +72,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS reactions (chat TEXT NOT NULL, msg TEXT NOT NULL, uid TEXT NOT NULL,
      emoji TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (msg, uid, emoji))`,
   `CREATE INDEX IF NOT EXISTS reactions_chat ON reactions (chat)`,
+  `CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, chat TEXT NOT NULL, uid TEXT NOT NULL, name TEXT NOT NULL,
+     kind TEXT NOT NULL, bytes INTEGER NOT NULL, zip INTEGER NOT NULL, fps REAL, range TEXT, upload TEXT,
+     parts TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL, msg TEXT, at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS files_chat ON files (chat)`,
 ];
 const REACTIONS_EACH = 8;
 // An emoji: 1-16 UTF-16 units, no ASCII letter, digit or space.
@@ -76,6 +86,7 @@ export class Studio extends DurableObject {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     for (const statement of SCHEMA) this.sql.exec(statement);
+    try { this.sql.exec("ALTER TABLE messages ADD COLUMN file TEXT"); } catch { /* there already */ }
     this.hits = new Map();
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
@@ -169,7 +180,150 @@ export class Studio extends DurableObject {
 
   async alarm() {
     this.sql.exec("DELETE FROM events WHERE at < ?", Date.now() - KEEP_EVENTS);
+    try { await this.sweepFiles(Date.now()); } catch { /* the next alarm tries again */ }
     await this.ctx.storage.setAlarm(Date.now() + DAY);
+  }
+
+  // ---------------------------------------------------------------- files (R2)
+  bucket() {
+    if (!this.env || !this.env.FILES) refuse("no_files", "Files are not set up on this server", 503);
+    return this.env.FILES;
+  }
+
+  fileRow(id) {
+    const row = this.sql.exec("SELECT * FROM files WHERE id = ?", String(id ?? "")).toArray()[0];
+    if (!row) refuse("no_file", "No such file", 404);
+    return row;
+  }
+
+  fileView(id) {
+    const row = this.sql.exec("SELECT * FROM files WHERE id = ?", id).toArray()[0];
+    if (!row) return null;
+    let range = null;
+    try { range = row.range ? JSON.parse(row.range) : null; } catch { range = null; }
+    return { id: row.id, name: row.name, kind: row.kind, bytes: row.bytes, zip: row.zip,
+             fps: row.fps, range, expired: row.state === "expired" };
+  }
+
+  partsOf(row) { return Math.max(1, Math.ceil(row.zip / PART)); }
+
+  // The object (or the unfinished upload) and the row gone; never fails.
+  async dropFile(row) {
+    try {
+      const bucket = this.bucket();
+      if (row.upload && row.state === "uploading") {
+        await bucket.resumeMultipartUpload("f/" + row.id, row.upload).abort();
+      } else {
+        await bucket.delete("f/" + row.id);
+      }
+    } catch { /* already gone */ }
+    this.sql.exec("DELETE FROM files WHERE id = ?", row.id);
+  }
+
+  async sweepFiles(now) {
+    if (!this.env || !this.env.FILES) return;
+    for (const row of this.sql.exec("SELECT * FROM files WHERE state = 'attached' AND at < ?", now - FILE_KEEP).toArray()) {
+      try { await this.env.FILES.delete("f/" + row.id); } catch { /* gone */ }
+      this.sql.exec("UPDATE files SET state = 'expired' WHERE id = ?", row.id);
+    }
+    const doomed = this.sql.exec(
+      `SELECT * FROM files WHERE (state IN ('uploading', 'ready') AND at < ?)
+         OR chat NOT IN (SELECT id FROM chats)
+         OR (state IN ('attached', 'expired') AND (msg IS NULL OR msg NOT IN (SELECT id FROM messages WHERE deleted = 0)))`,
+      now - DAY).toArray();
+    for (const row of doomed) await this.dropFile(row);
+  }
+
+  async fileStart({ request, me }) {
+    const bucket = this.bucket();
+    const b = await this.body(request);
+    const chat = String(b.chat ?? "");
+    this.writable(chat, me);
+    const name = String(b.name ?? "").trim();
+    if (!FILE_NAME.test(name)) refuse("bad_name", "A file is a .ma, .mb or .fbx with a plain name");
+    const kind = String(b.kind ?? "");
+    if (kind !== "scene" && kind !== "fbx") refuse("bad_request", "A file is a scene or an fbx");
+    const zip = Number(b.zip);
+    const bytes = Number(b.bytes);
+    if (!Number.isInteger(zip) || zip < 1) refuse("bad_request", "The zip's size is missing");
+    if (zip > FILE_MAX) refuse("too_big", "A file is at most 1 GB zipped", 413);
+    if (!Number.isInteger(bytes) || bytes < 0) refuse("bad_request", "The file's size is missing");
+    const open = this.sql.exec("SELECT COUNT(*) AS n FROM files WHERE uid = ? AND state IN ('uploading', 'ready')", me.id).one().n;
+    if (open >= UPLOADS_EACH) refuse("too_many", "At most " + UPLOADS_EACH + " files on the way at once", 429);
+    const fps = b.fps !== null && b.fps !== undefined && Number.isFinite(Number(b.fps)) ? Number(b.fps) : null;
+    const range = Array.isArray(b.range) && b.range.length === 2 && b.range.every((v) => Number.isFinite(Number(v)))
+      ? JSON.stringify(b.range.map(Number)) : null;
+    const id = randomHex(8);
+    const upload = await bucket.createMultipartUpload("f/" + id, { httpMetadata: { contentType: "application/zip" } });
+    this.sql.exec(`INSERT INTO files (id, chat, uid, name, kind, bytes, zip, fps, range, upload, state, at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploading', ?)`,
+      id, chat, me.id, name, kind, bytes, zip, fps, range, upload.uploadId, Date.now());
+    return json({ id, part_size: PART, parts: Math.max(1, Math.ceil(zip / PART)) });
+  }
+
+  mineUploading(id, me) {
+    const row = this.fileRow(id);
+    if (row.uid !== me.id) refuse("not_yours", "Only your own upload", 403);
+    if (row.state !== "uploading") refuse("not_uploading", "That file is not being uploaded", 409);
+    return row;
+  }
+
+  async filePart({ request, me, params }) {
+    const bucket = this.bucket();
+    const row = this.mineUploading(params[0], me);
+    const n = Number(params[1]);
+    const count = this.partsOf(row);
+    if (!(n >= 1 && n <= count)) refuse("bad_part", "No such part");
+    const want = n < count ? PART : row.zip - PART * (count - 1);
+    const body = await request.arrayBuffer();
+    if (body.byteLength !== want) refuse("bad_part", "Part " + n + " is " + want + " bytes, not " + body.byteLength);
+    const part = await bucket.resumeMultipartUpload("f/" + row.id, row.upload).uploadPart(n, body);
+    const fresh = this.fileRow(row.id);
+    const parts = JSON.parse(fresh.parts || "{}");
+    parts[n] = part.etag;
+    this.sql.exec("UPDATE files SET parts = ? WHERE id = ?", JSON.stringify(parts), row.id);
+    return json({ ok: true, part: n });
+  }
+
+  async fileComplete({ me, params }) {
+    const bucket = this.bucket();
+    const row = this.mineUploading(params[0], me);
+    const parts = JSON.parse(row.parts || "{}");
+    const count = this.partsOf(row);
+    const list = [];
+    for (let n = 1; n <= count; n++) {
+      if (!parts[n]) refuse("missing_part", "Part " + n + " has not arrived", 409);
+      list.push({ partNumber: n, etag: parts[n] });
+    }
+    const object = await bucket.resumeMultipartUpload("f/" + row.id, row.upload).complete(list);
+    if (object && object.size !== row.zip) {
+      await this.dropFile({ ...row, state: "ready" });
+      refuse("bad_size", "The file arrived the wrong size", 409);
+    }
+    this.sql.exec("UPDATE files SET state = 'ready', upload = NULL WHERE id = ?", row.id);
+    return json({ id: row.id, state: "ready" });
+  }
+
+  async fileCancel({ me, params }) {
+    const row = this.fileRow(params[0]);
+    if (row.uid !== me.id) refuse("not_yours", "Only your own upload", 403);
+    if (row.state === "attached" || row.state === "expired") refuse("attached", "Delete its message instead", 409);
+    await this.dropFile(row);
+    return json({ ok: true });
+  }
+
+  async fileGet({ me, params }) {
+    const bucket = this.bucket();
+    const row = this.fileRow(params[0]);
+    this.member(row.chat, me.id);
+    if (row.state === "expired") refuse("expired", "This file has expired", 410);
+    if (row.state !== "attached" && row.uid !== me.id) refuse("no_file", "No such file", 404);
+    if (row.state === "uploading") refuse("not_ready", "The file is still uploading", 409);
+    const object = await bucket.get("f/" + row.id);
+    if (!object) refuse("expired", "This file has expired", 410);
+    return new Response(object.body, { headers: {
+      "content-type": "application/zip", "content-length": String(object.size),
+      "cache-control": "private, no-store" } });
   }
 
   // ---------------------------------------------------------------- routes: sign-in
@@ -351,7 +505,7 @@ export class Studio extends DurableObject {
   messageView(r, reactions) {
     const out = { id: r.id, chat: r.chat, seq: r.seq, from_id: r.from_id, cid: r.cid,
                   text: r.deleted ? "" : r.text, reply_to: r.reply_to, at: r.at, edited_at: r.edited_at,
-                  deleted: !!r.deleted };
+                  deleted: !!r.deleted, file: r.file && !r.deleted ? this.fileView(r.file) : null };
     out.reactions = reactions ? (reactions.get(r.id) || {}) : this.reactionsOf([r.id]).get(r.id) || {};
     return out;
   }
@@ -536,7 +690,7 @@ export class Studio extends DurableObject {
       const handler = { hello: this.onHello, send: this.onSend, edit: this.onEdit, delete: this.onDelete,
                         read: this.onRead, typing: this.onTyping, react: this.onReact }[msg.type];
       if (!handler) refuse("bad_request", "Unknown message " + msg.type);
-      handler.call(this, ws, me, msg);
+      await handler.call(this, ws, me, msg);
     } catch (e) {
       const code = e instanceof Refusal ? e.code : "server";
       const text = e instanceof Refusal ? e.message : "The server failed: " + e.message;
@@ -586,6 +740,13 @@ export class Studio extends DurableObject {
     return row;
   }
 
+  // A file's caption: may be empty.
+  caption(raw) {
+    const text = String(raw ?? "").replace(/^\s+|\s+$/gu, "");
+    if (text.length > TEXT_MAX) refuse("too_long", "A message is at most " + TEXT_MAX + " characters");
+    return text;
+  }
+
   text(raw) {
     const text = String(raw ?? "").replace(/^\s+|\s+$/gu, "");
     if (!text) refuse("empty", "An empty message");
@@ -601,15 +762,22 @@ export class Studio extends DurableObject {
     if (known) { ws.send(JSON.stringify({ kind: "ack", cid, id: known.id, seq: known.seq })); return; }
     this.limit(me.id + ":msg", 20);
     this.writable(chat, me);
-    const text = this.text(msg.text);
+    const fileId = msg.file ? String(msg.file) : null;
+    if (fileId) {
+      const f = this.sql.exec("SELECT * FROM files WHERE id = ?", fileId).toArray()[0];
+      if (!f || f.uid !== me.id || f.chat !== chat) refuse("no_file", "No such file", 404);
+      if (f.state !== "ready") refuse("not_ready", "The file has not finished uploading", 409);
+    }
+    const text = fileId ? this.caption(msg.text) : this.text(msg.text);
     let reply = msg.reply_to ? String(msg.reply_to) : null;
     if (reply && !this.sql.exec("SELECT 1 FROM messages WHERE chat = ? AND id = ?", chat, reply).toArray().length) reply = null;
     const message = this.ctx.storage.transactionSync(() => {
       const seq = this.sql.exec("UPDATE chats SET last_seq = last_seq + 1 WHERE id = ? RETURNING last_seq", chat).one().last_seq;
       const id = randomHex(8);
       const at = Date.now();
-      this.sql.exec("INSERT INTO messages (chat, seq, id, from_id, cid, text, reply_to, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        chat, seq, id, me.id, cid, text, reply, at);
+      this.sql.exec("INSERT INTO messages (chat, seq, id, from_id, cid, text, reply_to, at, file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        chat, seq, id, me.id, cid, text, reply, at, fileId);
+      if (fileId) this.sql.exec("UPDATE files SET state = 'attached', msg = ?, at = ? WHERE id = ?", id, at, fileId);
       this.sql.exec("UPDATE members SET read_upto = ? WHERE chat = ? AND uid = ?", seq, chat, me.id);
       return this.messageView(this.sql.exec("SELECT * FROM messages WHERE id = ?", id).one());
     });
@@ -628,18 +796,20 @@ export class Studio extends DurableObject {
   onEdit(ws, me, msg) {
     const chat = String(msg.chat ?? "");
     const row = this.own(chat, msg.id, me);
-    const text = this.text(msg.text);
+    const text = row.file ? this.caption(msg.text) : this.text(msg.text);
     const at = Date.now();
     this.sql.exec("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", text, at, row.id);
     this.emit({ chat, kind: "edited", payload: { chat_id: chat, id: row.id, text, edited_at: at } });
   }
 
-  onDelete(ws, me, msg) {
+  async onDelete(ws, me, msg) {
     const chat = String(msg.chat ?? "");
     const row = this.own(chat, msg.id, me);
     this.sql.exec("UPDATE messages SET deleted = 1, text = '' WHERE id = ?", row.id);
     this.sql.exec("DELETE FROM reactions WHERE msg = ?", row.id);
     this.emit({ chat, kind: "deleted", payload: { chat_id: chat, id: row.id } });
+    const file = row.file ? this.sql.exec("SELECT * FROM files WHERE id = ?", row.file).toArray()[0] : null;
+    if (file) await this.dropFile(file);
   }
 
   onRead(ws, me, msg) {
@@ -707,4 +877,9 @@ const ROUTES = [
   ["DELETE", /^\/v1\/chats\/([\w]+)\/members\/([0-9a-f]{16})$/, "deleteMember"],
   ["GET", /^\/v1\/chats\/([\w]+)\/messages$/, "history"],
   ["GET", /^\/v1\/ws$/, "connect"],
+  ["POST", /^\/v1\/files$/, "fileStart"],
+  ["PUT", /^\/v1\/files\/([0-9a-f]{16})\/parts\/(\d{1,5})$/, "filePart"],
+  ["POST", /^\/v1\/files\/([0-9a-f]{16})\/complete$/, "fileComplete"],
+  ["DELETE", /^\/v1\/files\/([0-9a-f]{16})$/, "fileCancel"],
+  ["GET", /^\/v1\/files\/([0-9a-f]{16})$/, "fileGet"],
 ];

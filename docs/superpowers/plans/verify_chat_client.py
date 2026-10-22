@@ -19,12 +19,15 @@ from PySide6 import QtCore  # noqa: E402
 
 import maya_chat  # noqa: E402
 from maya_chat import api as A  # noqa: E402
+from maya_chat import files as F  # noqa: E402
 from maya_chat import session as S  # noqa: E402
 from maya_chat import store as ST  # noqa: E402
 
 SERVER = sys.argv[1] if len(sys.argv) > 1 else maya_chat.SERVER
 APP = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
 RESULTS = []
+DEFERRED = []          # what the file threads hand back to "the main thread"
+F.DEFER = DEFERRED.append
 
 
 def gate(name, ok, detail=""):
@@ -36,6 +39,8 @@ def wait(cond, timeout=8.0):
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         APP.processEvents(QtCore.QEventLoop.AllEvents, 50)
+        while DEFERRED:
+            DEFERRED.pop(0)()
         if cond():
             return time.monotonic() - start
     return None
@@ -135,6 +140,28 @@ def main():
                                                          for m in b.state.chats[dm]["members"]
                                                          if m["id"] == ma["id"])) is not None)
         gate("B reads it", b.api.avatar(ma["id"]) == png)
+
+        # 5c. a scene sent as a file (2026-10-22): up in parts, down byte for byte
+        if os.environ.get("CHAT_FILES", "1") != "0":
+            scene = os.path.join(root, "Run_Cycle.ma")
+            with open(scene, "wb") as out:
+                out.write(b"//Maya ASCII 2027 scene\n" + os.urandom(20 * 1024 * 1024))
+            fcid = F.send_path(a, dm, scene, "the run")
+            got = wait(lambda: has(b, dm, lambda m: m["cid"] == fcid), 180)
+            gate("B gets the file message", got is not None, "%.1f s" % (got or -1))
+            msg = [m for m in b.state.messages.get(dm, []) if m["cid"] == fcid]
+            f = (msg[0] if msg else {}).get("file") or {}
+            gate("its card: name, caption, size", f.get("name") == "Run_Cycle.ma" and msg[0]["text"] == "the run"
+                 and f.get("bytes") == os.path.getsize(scene), f)
+            gate("A's own copy is kept as the sent file", bool(F.local_path(a, f)))
+            landed = []
+            F.fetch(b, f, landed.append) if f else None
+            took = wait(lambda: bool(landed), 180)
+            with open(scene, "rb") as one:
+                same = bool(landed) and open(landed[0], "rb").read() == one.read()
+            gate("B downloads it byte for byte", same, "%.1f s" % (took or -1))
+            again_path = []
+            gate("a second press uses the copy on disk", F.fetch(b, f, again_path.append) and again_path == landed)
 
         # 6. a refusal: too long
         cid4 = a.send(dm, "x" * 5000)

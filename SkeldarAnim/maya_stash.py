@@ -407,6 +407,13 @@ def drop_to_share(names):
     return _status(" | ".join(line for line in lines if line))
 
 
+def drop_to_chat(names):
+    """Files dropped on the chat (2026-10-22): each sent into the open chat."""
+    import maya_chat.window as chat_window
+    lines = [_drop_one(name, lambda path, n: chat_window.send_path(path)) for name in names]
+    return _status(" | ".join(line for line in lines if line))
+
+
 def save_selected(*_args):
     """A copy of the picked stash file where the animator picks."""
     name, why = _one_picked("save")

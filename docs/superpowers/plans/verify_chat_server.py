@@ -26,7 +26,7 @@ def gate(name, ok, detail=""):
     print("%s %s%s" % ("PASS" if ok else "FAIL", name, (" - %s" % (detail,)) if detail != "" else ""))
 
 
-def call(method, path, token=None, body=None, raw=None, ctype=None):
+def call(method, path, token=None, body=None, raw=None, ctype=None, timeout=20):
     headers = {"user-agent": "skeldar-chat-verify/1"}
     data = None
     if body is not None:
@@ -39,7 +39,7 @@ def call(method, path, token=None, body=None, raw=None, ctype=None):
         headers["authorization"] = "Bearer " + token
     req = urllib.request.Request(SERVER + path, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as answer:
+        with urllib.request.urlopen(req, timeout=timeout) as answer:
             return answer.status, answer.read(), answer.headers.get("content-type", "")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(), exc.headers.get("content-type", "")
@@ -363,9 +363,84 @@ def phase_newcomer():
     gate("anybody reads my picture", status == 200 and a["avatar_v"] == 1 and data == PNG, (status, status2))
 
 
+def phase_files():
+    """Files (2026-10-22): a 40 MB zip in three parts, only for the chat's members."""
+    A, B, C = Users.make("ia"), Users.make("ib"), Users.make("ic")
+    status, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
+    data = os.urandom(40 * 1024 * 1024)
+    meta = {"chat": dm["id"], "name": "Run_Cycle.ma", "kind": "scene", "bytes": 90000000,
+            "zip": len(data), "fps": 30, "range": [0, 48]}
+    status, doc = jcall("POST", "/v1/files", C[0], dict(meta))
+    gate("a stranger cannot start a file in the chat", status == 403 and doc.get("error") == "not_member", doc)
+    status, doc = jcall("POST", "/v1/files", A[0], dict(meta, name="virus.exe"))
+    gate("only .ma .mb .fbx", status == 400 and doc.get("error") == "bad_name", doc)
+    status, doc = jcall("POST", "/v1/files", A[0], dict(meta, zip=2 * 1024 ** 3))
+    gate("over 1 GB is refused", status == 413 and doc.get("error") == "too_big", doc)
+    status, start = jcall("POST", "/v1/files", A[0], dict(meta))
+    gate("an upload begins in 16 MB parts", status == 200 and start.get("parts") == 3
+         and start.get("part_size") == 16 * 1024 * 1024, start)
+    if status != 200:
+        return
+    fid, size = start["id"], start["part_size"]
+    status, doc = jcall("PUT", "/v1/files/%s/parts/1" % fid, C[0], raw=data[:size], ctype="application/octet-stream")
+    gate("a stranger cannot send a part", status == 403, doc)
+    status, doc = jcall("PUT", "/v1/files/%s/parts/1" % fid, A[0], raw=data[:100], ctype="application/octet-stream")
+    gate("a part of the wrong size is refused", status == 400 and doc.get("error") == "bad_part", doc)
+    status, doc = jcall("POST", "/v1/files/%s/complete" % fid, A[0])
+    gate("complete before the parts is refused", status == 409 and doc.get("error") == "missing_part", doc)
+    t0 = time.time()
+    ok = True
+    for n in range(1, 4):
+        status, doc = call("PUT", "/v1/files/%s/parts/%d" % (fid, n), A[0], raw=data[(n - 1) * size:n * size],
+                           ctype="application/octet-stream", timeout=120)
+        ok = ok and status == 200
+    status, doc = jcall("POST", "/v1/files/%s/complete" % fid, A[0])
+    gate("three parts and complete", ok and status == 200 and doc.get("state") == "ready",
+         "%s in %.1f s" % (doc, time.time() - t0))
+    status, data_b, _ct = call("GET", "/v1/files/" + fid, B[0])
+    gate("not readable until it is in a message", status == 404, status)
+    wa, wb = ws(A[0]), ws(B[0])
+    for w, t in ((wa, A[0]), (wb, B[0])):
+        w.send({"type": "hello", "since": jcall("GET", "/v1/chats", t)[1]["seq"]})
+        w.until(lambda e: e["kind"] == "caught_up")
+    wa.send({"type": "send", "chat": dm["id"], "cid": "f1", "text": "", "file": fid})
+    ack, _ = wa.until(lambda e: e["kind"] in ("ack", "error"))
+    got, _ = wb.until(lambda e: e["kind"] == "message")
+    f = (got or {}).get("message", {}).get("file") or {}
+    gate("a message with the file and no text", ack and ack["kind"] == "ack" and f.get("id") == fid
+         and f.get("name") == "Run_Cycle.ma" and f.get("zip") == len(data) and f.get("range") == [0, 48]
+         and got["message"]["text"] == "", (ack, f))
+    wa.send({"type": "send", "chat": dm["id"], "cid": "f2", "text": "again", "file": fid})
+    err, _ = wa.until(lambda e: e["kind"] == "error")
+    gate("one file goes in one message", err and err["code"] == "not_ready", err)
+    t0 = time.time()
+    status, data_b, ctype = call("GET", "/v1/files/" + fid, B[0], timeout=120)
+    gate("the other downloads it byte for byte", status == 200 and data_b == data and ctype == "application/zip",
+         "%.1f s" % (time.time() - t0))
+    status, _d, _c = call("GET", "/v1/files/" + fid, C[0])
+    gate("a stranger cannot download it", status == 403, status)
+    msgs = jcall("GET", "/v1/chats/%s/messages" % dm["id"], B[0])[1]["messages"]
+    gate("history carries the file", (msgs[-1].get("file") or {}).get("id") == fid, msgs[-1].get("file"))
+    wa.send({"type": "edit", "chat": dm["id"], "id": ack["id"], "text": "a caption later"})
+    ed, _ = wb.until(lambda e: e["kind"] == "edited")
+    gate("a file's caption can be edited", ed and ed["text"] == "a caption later", ed)
+    wa.send({"type": "delete", "chat": dm["id"], "id": ack["id"]})
+    wb.until(lambda e: e["kind"] == "deleted")
+    time.sleep(1)
+    status, _d, _c = call("GET", "/v1/files/" + fid, B[0])
+    gate("deleting the message deletes the file", status == 404, status)
+    status, start = jcall("POST", "/v1/files", A[0], dict(meta, zip=10))
+    status, doc = jcall("DELETE", "/v1/files/" + start["id"], A[0])
+    status2, doc2 = jcall("POST", "/v1/files/%s/complete" % start["id"], A[0])
+    gate("a cancelled upload is gone", status == 200 and status2 == 404, (doc, doc2))
+    for w in (wa, wb):
+        w.close()
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
-          "people": phase_people, "react": phase_react, "newcomer": phase_newcomer}
+          "people": phase_people, "react": phase_react, "newcomer": phase_newcomer,
+          "files": phase_files}
 
 
 def main(argv):

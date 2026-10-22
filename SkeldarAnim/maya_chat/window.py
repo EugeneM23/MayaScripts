@@ -3,11 +3,15 @@ docs/superpowers/specs/2026-10-19-chat-messenger-design.md "The window").
 
 A floating hub window in look B: drawn by our own widgets and QPainter from the session's
 state, listening to it. The window never talks to the server but through the session
-(and its `api` for the group presses). No modal dialog but the picture file picker.
+(and its `api` for the group presses). No modal dialog but the file pickers (a picture, a file
+to send). A message may carry a file (2026-10-22, spec 2026-10-22-chat-files-design.md): its card
+opens, imports, saves or stashes it, a paperclip sends a scene or a file, and files from Explorer,
+Stash or Shared dropped on the window go into the open chat.
 """
 import html
 import math
 import sys
+import os
 import time
 import traceback
 
@@ -28,6 +32,14 @@ SENT_FLASH_MS = 120   # a message sent (its ack) flashes
 POP_MS = 200          # a count pops when it changes
 HOVER_MS = 110
 TYPING_FRAME_S = 3.0
+FILE_CARD = 46        # a file message's card (2026-10-22)
+FILE_ROW = 24         # its buttons / its progress bar
+FILE_WIDTH = 250      # the least a file bubble takes
+FILE_ACTIONS = {"ready": (("open", "Open"), ("import", "Import"), ("more", u"\u22ef")),
+                "upload": (("cancel", u"Отмена"),),
+                "failed": (("cancel", u"Отмена"),),
+                "download": (), "expired": ()}
+FILE_FILTER = "Maya scenes and FBX (*.ma *.mb *.fbx)"
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -439,7 +451,7 @@ def look_approach(value, goal, dt_ms, ms):
 class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
-                 "meta_at", "failed_rect", "height", "pills")
+                 "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar")
 
     def __init__(self, item):
         self.item = item
@@ -454,6 +466,9 @@ class Box(object):
         self.failed_rect = None
         self.height = 0.0
         self.pills = []          # [(rect, emoji, count, mine)] under the bubble
+        self.card = None         # a file message's card (2026-10-22)
+        self.fbuttons = []       # [(rect, action, label)] under the card
+        self.fbar = None         # (rect, progress or None, text): an upload or download
 
 
 def feed_class():
@@ -478,6 +493,9 @@ def feed_class():
                 self._counts = {}         # (message id, emoji) -> count last seen
                 self._known = None
                 self._laid_w = -1
+                self._press = None        # (point, item) on a file card, before a drag starts
+                self._dragging = False
+                self._hover_button = None
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
@@ -582,9 +600,14 @@ def feed_class():
                         continue
                     msg = item.message
                     inner = max(px(40), max_w - 2 * pad_x)
-                    doc = self._doc(item, inner)
+                    f = msg.get("file")
+                    if f and not item.text:
+                        doc, doc_w, doc_h = None, 0, -px(2)
+                    else:
+                        doc = self._doc(item, inner)
+                        doc_w, doc_h = doc.size().width(), doc.size().height()
                     box.doc = doc
-                    doc_w, doc_h = doc.size().width(), doc.size().height()
+                    file_h = (px(FILE_CARD) + px(4) + px(FILE_ROW) + px(6)) if f else 0
                     meta = []
                     if msg.get("edited_at"):
                         meta.append("изм.")
@@ -595,6 +618,8 @@ def feed_class():
                     box.meta = " ".join(meta)
                     meta_w = sfm.horizontalAdvance(box.meta)
                     content_w = max(doc_w, meta_w)
+                    if f:
+                        content_w = max(content_w, min(inner, px(FILE_WIDTH)))
                     name_h = 0
                     if group and not item.mine and item.first:
                         name = self.ctx.get("name_of", lambda uid: uid)(msg.get("from_id"))
@@ -608,7 +633,7 @@ def feed_class():
                         quote_h = px(34)
                         content_w = max(content_w, min(inner, px(160)))
                     bw = content_w + 2 * pad_x
-                    bh = pad_y + name_h + quote_h + doc_h + px(2) + sfm.height() + pad_y
+                    bh = pad_y + name_h + quote_h + file_h + doc_h + px(2) + sfm.height() + pad_y
                     gap = px(8) if item.first else px(2)
                     y += gap
                     if item.mine:
@@ -627,11 +652,14 @@ def feed_class():
                             qname = self.ctx.get("name_of", lambda uid: uid)(
                                 original.get("from_id"))
                             qtext = "сообщение удалено" if original.get("deleted") \
-                                else " ".join(str(original.get("text") or "").split())
+                                else look.message_text(original)
                         else:
                             qname, qtext = "", "сообщение"
                         box.quote = (qrect, reply, qname, qtext)
                         cy += quote_h
+                    if f:
+                        self._lay_file(box, cx, cy, bw - 2 * pad_x)
+                        cy += file_h
                     box.doc_at = QtCore.QPointF(cx, cy)
                     cy += doc_h + px(2)
                     box.meta_at = QtCore.QPointF(x + bw - pad_x - meta_w, cy + sfm.ascent())
@@ -646,6 +674,82 @@ def feed_class():
                     boxes.append(box)
                     y += h
                 return boxes
+
+            def _lay_file(self, box, x, y, w):
+                """A file message's card, and under it its buttons or its progress bar."""
+                px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                box.card = QtCore.QRectF(x, y, w, px(FILE_CARD))
+                row = QtCore.QRectF(x, y + px(FILE_CARD) + px(4), w, px(FILE_ROW))
+                state = (self.ctx.get("file_state") or (lambda item: ("ready", None, "")))(box.item)
+                mode, progress, text = state
+                box.fbuttons = []
+                actions = FILE_ACTIONS.get(mode, ())
+                if mode in ("upload", "download", "expired", "failed"):
+                    tail = px(74) if actions else 0
+                    box.fbar = (QtCore.QRectF(row.left(), row.top(), row.width() - tail, row.height()),
+                                progress, text)
+                    if actions:
+                        action, label = actions[0]
+                        box.fbuttons.append((QtCore.QRectF(row.right() - tail + px(4), row.top(),
+                                                           tail - px(4), row.height()), action, label))
+                    return
+                box.fbar = None
+                gap = px(4)
+                more = px(32)
+                main = [a for a in actions if a[0] != "more"]
+                each = (row.width() - more - gap * len(main)) / max(1, len(main))
+                cx = row.left()
+                for action, label in actions:
+                    width = more if action == "more" else each
+                    box.fbuttons.append((QtCore.QRectF(cx, row.top(), width, row.height()), action, label))
+                    cx += width + gap
+
+            def _paint_file(self, p, box):
+                s = self.win.scale
+                px = lambda n: hubstyle.px(n, s)              # noqa: E731
+                f = box.item.message.get("file") or {}
+                card = box.card
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(_colour("panel", 0.45))
+                p.drawRoundedRect(card, px(6), px(6))
+                tile = QtCore.QRectF(card.left() + px(5), card.top() + px(5),
+                                     card.height() - px(10), card.height() - px(10))
+                p.setBrush(_colour("accent_tint"))
+                p.drawRoundedRect(tile, px(5), px(5))
+                p.setFont(_font(self.font(), px(9), True))
+                p.setPen(_colour("accent_text"))
+                p.drawText(tile, QtCore.Qt.AlignCenter, look.file_tag(f))
+                left = tile.right() + px(8)
+                width = card.right() - px(6) - left
+                p.setFont(_font(self.font(), px(10.5), True))
+                fm = QtGui.QFontMetrics(p.font())
+                p.setPen(_colour("text"))
+                p.drawText(QtCore.QPointF(left, card.top() + px(6) + fm.ascent()),
+                           fm.elidedText(f.get("name") or "", QtCore.Qt.ElideMiddle, int(width)))
+                p.setFont(_font(self.font(), px(9)))
+                fm2 = QtGui.QFontMetrics(p.font())
+                p.setPen(_colour("muted"))
+                p.drawText(QtCore.QPointF(left, card.bottom() - px(6) - fm2.descent()),
+                           fm2.elidedText(look.file_line(f), QtCore.Qt.ElideRight, int(width)))
+                if box.fbar is not None:
+                    rect, progress, text = box.fbar
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(_colour("field"))
+                    p.drawRoundedRect(rect, px(5), px(5))
+                    if progress is not None:
+                        done = QtCore.QRectF(rect)
+                        done.setWidth(max(0.0, min(1.0, progress)) * rect.width())
+                        p.setBrush(_colour("accent", 0.55))
+                        p.drawRoundedRect(done, px(5), px(5))
+                    p.setPen(_colour("text2"))
+                    p.drawText(rect, QtCore.Qt.AlignCenter, text)
+                for rect, action, label in box.fbuttons:
+                    hover = self._hover_button == (id(box.item.message), action)
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(_colour("hover" if hover else "field"))
+                    p.drawRoundedRect(rect, px(5), px(5))
+                    p.setPen(_colour("accent_text" if action == "open" else "text"))
+                    p.drawText(rect, QtCore.Qt.AlignCenter, label)
 
             def _pill_font(self):
                 from . import emoji as _emoji
@@ -792,10 +896,16 @@ def feed_class():
                                                   qrect.bottom() - fm2.descent() - px(2)),
                                    fm2.elidedText(qtext, QtCore.Qt.ElideRight,
                                                   int(qrect.width() - px(10))))
-                    p.save()
-                    p.translate(box.doc_at)
-                    box.doc.drawContents(p)
-                    p.restore()
+                    if box.card is not None:
+                        p.save()
+                        self._paint_file(p, box)
+                        p.restore()
+                        p.setFont(small)
+                    if box.doc is not None:
+                        p.save()
+                        p.translate(box.doc_at)
+                        box.doc.drawContents(p)
+                        p.restore()
                     p.setFont(small)
                     if item.tick == "read":
                         p.setPen(_colour("accent_text"))
@@ -832,6 +942,11 @@ def feed_class():
             # ---------------------------------------------------------- input
             def box_at(self, point):
                 for box in self.boxes:
+                    for rect, action, _label in box.fbuttons:
+                        if rect.contains(point):
+                            return box, "file:" + action
+                    if box.card is not None and box.card.contains(point):
+                        return box, "card"
                     for rect, e, _n, _me in box.pills:
                         if rect.contains(point):
                             return box, "pill:" + e
@@ -843,15 +958,24 @@ def feed_class():
 
             def mousePressEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") \
+                    else event.globalPos()
+                if self._dragging:
+                    self._end_drag(gp, cancel=event.button() != QtCore.Qt.LeftButton)
+                    return
                 box, where = self.box_at(pos)
                 if box is None:
                     return
                 if event.button() == QtCore.Qt.RightButton:
-                    gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") \
-                        else event.globalPos()
                     self.win.message_menu(box.item, gp)
                     return
                 if event.button() != QtCore.Qt.LeftButton:
+                    return
+                if where.startswith("file:"):
+                    self.win.file_action(box.item, where[5:], gp)
+                    return
+                if where == "card" and not box.item.pending:
+                    self._press = (QtCore.QPointF(pos), box.item)
                     return
                 if where == "failed":
                     self.win.retry(box.item)
@@ -870,12 +994,47 @@ def feed_class():
 
             def mouseMoveEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") \
+                    else event.globalPos()
+                if self._dragging:
+                    self.win.drag_move(gp)
+                    return
+                if self._press is not None and event.buttons() & QtCore.Qt.LeftButton:
+                    start, item = self._press
+                    moved = (pos - start).manhattanLength()
+                    if moved >= QtWidgets.QApplication.startDragDistance():
+                        self._press = None
+                        if self.win.start_drag(item, gp):
+                            self._dragging = True
+                            self.grabMouse()
+                        return
                 box, _where = self.box_at(pos)
-                link = _where.startswith("pill:")
+                hover = None
+                if _where.startswith("file:"):
+                    hover = (id(box.item.message), _where[5:])
+                if hover != self._hover_button:
+                    self._hover_button = hover
+                    self.update()
+                link = _where.startswith("pill:") or _where.startswith("file:")
                 if box is not None and box.doc is not None and not link:
                     link = bool(box.doc.documentLayout().anchorAt(pos - box.doc_at))
                     link = link or (box.quote is not None and box.quote[0].contains(pos))
                 self.setCursor(QtCore.Qt.PointingHandCursor if link else QtCore.Qt.ArrowCursor)
+
+            def mouseReleaseEvent(self, event):            # noqa: N802
+                gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") \
+                    else event.globalPos()
+                self._press = None
+                if self._dragging:
+                    self._end_drag(gp, cancel=event.button() != QtCore.Qt.LeftButton)
+
+            def _end_drag(self, gp, cancel):
+                self._dragging = False
+                try:
+                    self.releaseMouse()
+                except Exception:                            # noqa: BLE001
+                    pass
+                self.win.drag_end(gp, cancel)
 
             def top_of(self, message_id):
                 for box in self.boxes:
@@ -1224,6 +1383,10 @@ class ChatWindow(object):
         self.later.setInterval(0)
         self.later.timeout.connect(self.refresh)
         root.installEventFilter(_resize_filter(self))
+        self._drops = _drop_filter(self)
+        root.setAcceptDrops(True)
+        root.installEventFilter(self._drops)
+        self.composer.viewport().installEventFilter(self._drops)
         self.root.destroyed.connect(lambda *_a: self._gone())
 
     def _build_signin(self):
@@ -1431,6 +1594,11 @@ class ChatWindow(object):
         lay.addWidget(self.bar)
 
         row = w.QHBoxLayout()
+        self.clip_button = _button("", "tool", "paperclip", "skeldarChatClip", self.scale,
+                                   "Отправить сцену или файл (.ma .mb .fbx) - или перетащите "
+                                   "его в окно")
+        self.clip_button.clicked.connect(lambda *_a: self.clip_menu())
+        row.addWidget(self.clip_button, 0, Qt.AlignBottom)
         self.emoji_button = _button("", "tool", "mood-smile", "skeldarChatEmoji", self.scale,
                                     "Эмоджи")
         self.emoji_button.clicked.connect(lambda *_a: self.pick_emoji())
@@ -1659,6 +1827,7 @@ class ChatWindow(object):
 
         items = look.feed(messages, st.pending.get(self.chat, []), me_id, c, st.reads, _now_ms())
         ctx = {"chat": c, "messages": messages, "user_of": user_of,
+               "file_state": self.file_state,
                "name_of": lambda uid: look.display_name(user_of(uid)),
                "deleted": set(m["id"] for m in messages if m.get("deleted"))}
         was_bottom = self.at_bottom()
@@ -1917,13 +2086,230 @@ class ChatWindow(object):
             rows.append(("Повторить", lambda: self.retry(item)))
             rows.append(("Удалить", lambda: (self.session.discard(m.get("cid")), self.refresh())))
             return rows
+        if m.get("file") and not m["file"].get("expired"):
+            for action, label in FILE_MENU:
+                rows.append((label, lambda a=action: self.file_action(item, a)))
         rows.append(("Реакция…", lambda: self.pick_emoji(m)))
         rows.append(("Ответить", lambda: self.start_reply(m)))
-        rows.append(("Скопировать", lambda: self.copy_text(m.get("text") or "")))
+        if m.get("text"):
+            rows.append(("Скопировать", lambda: self.copy_text(m.get("text") or "")))
         if item.mine:
             rows.append(("Изменить", lambda: self.start_edit(m)))
             rows.append(("Удалить", lambda: self.delete_message(m)))
         return rows
+
+    # ---------------------------------------------------------- files (2026-10-22)
+    def clip_menu(self):
+        q = _q()
+        menu = q.QtWidgets.QMenu(self.root)
+        menu.setObjectName("skeldarChatClipMenu")
+        for label, fn in self.clip_rows():
+            act = menu.addAction(label)
+            act.triggered.connect(lambda *_a, f=fn: f())
+        menu.popup(self.clip_button.mapToGlobal(q.QtCore.QPoint(0, 0)))
+        self._menu = menu
+
+    def clip_rows(self):
+        return [(u"Отправить сцену", self.send_scene), (u"Отправить файл…", self.send_file_dialog)]
+
+    def _caption(self):
+        """The composer's text goes with a file as its caption."""
+        if self.editing:
+            return ""
+        text = self.composer.toPlainText().strip()
+        self.composer.clear()
+        return text
+
+    def _sent_file(self, fn, what):
+        if self.chat is None:
+            self.say(u"Откройте чат, чтобы отправить в него файл.")
+            return None
+        try:
+            cid = fn()
+        except Exception as exc:                             # noqa: BLE001
+            if not getattr(exc, "text", None):
+                traceback.print_exc()
+            self.say(getattr(exc, "text", None) or str(exc))
+            return None
+        self.say("")
+        self.refresh()
+        self.to_bottom()
+        return cid
+
+    def send_scene(self):
+        from . import files
+        return self._sent_file(lambda: files.send_scene(self.session, self.chat, self._caption()),
+                               "scene")
+
+    def send_file_dialog(self):
+        q = _q()
+        path, _filter = q.QtWidgets.QFileDialog.getOpenFileName(
+            self.root, u"Отправить файл в чат", "", FILE_FILTER)
+        return self.send_path(path) if path else None
+
+    def send_path(self, path):
+        from . import files
+        return self._sent_file(lambda: files.send_path(self.session, self.chat, path,
+                                                       self._caption()), "file")
+
+    def file_state(self, item):
+        """(mode, progress, text) of a file message: ready, upload, failed, download, expired."""
+        m = item.message
+        f = m.get("file") or {}
+        up = m.get("upload") if item.pending else None
+        if up:
+            if m.get("state") == "failed":
+                return "failed", None, u"не отправлено"
+            if up.get("phase") == "zip":
+                return "upload", None, u"сжимаю…"
+            return "upload", up.get("progress") or 0.0, u"отправляю %d%%" % int(
+                100 * (up.get("progress") or 0.0))
+        if f.get("expired"):
+            return "expired", None, u"файл истёк"
+        d = self.session.state.downloads.get(f.get("id")) if f.get("id") else None
+        if d and d.get("state") == "loading":
+            progress = d.get("progress")
+            return "download", progress, (u"скачиваю %d%%" % int(100 * progress)
+                                          if progress is not None else u"скачиваю…")
+        return "ready", None, ""
+
+    def _sender(self, m):
+        if m.get("from_id") == self.me_id():
+            return u"вас"
+        c = self.session.state.chats.get(self.chat) or {}
+        who = next((u for u in c.get("members", []) if u.get("id") == m.get("from_id")),
+                   {"id": m.get("from_id"), "nick": "?"})
+        return look.display_name(who)
+
+    def file_action(self, item, action, at=None):
+        """A file card's button, or its menu row."""
+        from . import files
+        m = item.message
+        if action == "cancel":
+            self.session.discard(m.get("cid"))
+            self.refresh()
+            return None
+        if action == "more":
+            q = _q()
+            menu = q.QtWidgets.QMenu(self.root)
+            menu.setObjectName("skeldarChatFileMenu")
+            for a, label in FILE_MORE:
+                act = menu.addAction(label)
+                act.triggered.connect(lambda *_a, a=a: self.file_action(item, a))
+            menu.popup(at or q.QtGui.QCursor.pos())
+            self._menu = menu
+            return None
+        f = m.get("file") or {}
+        sender = self._sender(m)
+        verb = {"open": lambda path: files.open_file(path, f, sender),
+                "import": lambda path: files.import_file(path, f, sender),
+                "save": lambda path: files.save_to(path, f),
+                "stash": lambda path: files.to_stash(path, f),
+                "share": lambda path: files.to_share(path, f)}.get(action)
+        if verb is None:
+            return None
+
+        def then(path):
+            try:
+                self.say(verb(path) or "")
+            except Exception as exc:                         # noqa: BLE001
+                traceback.print_exc()
+                self.say(u"Не вышло: %s" % exc)
+
+        try:
+            there = files.fetch(self.session, f, then)
+        except Exception as exc:                             # noqa: BLE001
+            self.say(getattr(exc, "text", None) or str(exc))
+            return None
+        if not there:
+            self.say(u"Скачиваю %s…" % (f.get("name") or u"файл"))
+            self.refresh()
+        return there
+
+    # ---------------------------------------------------------- a card dragged out
+    def start_drag(self, item, gp):
+        import maya_hubqt
+        f = item.message.get("file") or {}
+        if not f.get("id") or f.get("expired"):
+            return False
+        q = _q()
+        size = int(self.px(40))
+        try:
+            pixmap = maya_hubqt.pixmap("message-circle", hubstyle.TOKENS["accent"], size)
+        except Exception:                                    # noqa: BLE001
+            pixmap = q.QtGui.QPixmap()
+        ghost = maya_hubqt.ghost_class()(pixmap, size, size, self.scale, anchor=(0.5, 0.5),
+                                         name="skeldarChatGhost", backdrop="field")
+        self._drag = {"item": item, "ghost": ghost, "aim": None}
+        ghost.follow(gp)
+        ghost.show()
+        self.drag_move(gp)
+        return True
+
+    def drag_aim(self, gp):
+        import maya_filedrag
+        under = maya_filedrag.section_under(maya_filedrag._names_at(gp.x(), gp.y()))
+        viewport = False
+        if under is None:
+            try:
+                viewport = maya_filedrag._viewport_at(gp.x(), gp.y())
+            except Exception:                                # noqa: BLE001
+                viewport = False
+        return maya_filedrag.aim_for("chat", under, viewport)
+
+    def drag_move(self, gp):
+        drag = getattr(self, "_drag", None)
+        if not drag:
+            return
+        aim = self.drag_aim(gp)
+        drag["aim"] = aim
+        drag["ghost"].follow(gp)
+        f = drag["item"].message.get("file") or {}
+        if aim["kind"] in DRAG_VERBS:
+            drag["ghost"].set_caption(u"%s · %s" % (f.get("name") or "", aim["text"]), True)
+        else:
+            drag["ghost"].set_caption(aim["text"], False)
+
+    def drag_end(self, gp, cancel=False):
+        drag, self._drag = getattr(self, "_drag", None), None
+        if not drag:
+            return None
+        drag["ghost"].hide()
+        drag["ghost"].deleteLater()
+        if cancel:
+            return None
+        aim = self.drag_aim(gp)
+        action = DRAG_VERBS.get(aim["kind"])
+        if action is None:
+            return None
+        item = drag["item"]
+        self._later(lambda: self.file_action(item, action))
+        return action
+
+    def _later(self, fn):
+        """One idle later (the ghost gone first, a Maya import outside the mouse grab)."""
+        try:
+            import maya.utils
+            maya.utils.executeDeferred(fn)
+        except ImportError:
+            fn()
+
+    def dropped(self, paths):
+        """Files from Explorer let go on the window: each sent into the open chat."""
+        from . import files
+        good = [path for path in paths if files.kind_of(path)]
+        bad = [path for path in paths if not files.kind_of(path)]
+        if not good:
+            self.say(u"В чат можно отправить только .ma, .mb и .fbx.")
+            return 0
+        sent = 0
+        for path in good:
+            if self.send_path(path):
+                sent += 1
+        if bad and sent:
+            self.say(u"Не отправлено (не сцена и не fbx): %s" % ", ".join(
+                os.path.basename(b) for b in bad[:3]))
+        return sent
 
     def _quick_reactions(self, menu, message):
         """The menu's first row: the six quick reactions, mine lit."""
@@ -2460,6 +2846,56 @@ def _resize_filter(win):
     watch = _CLASSES["resize"](win, win.root if win.root is not None else None)
     win._watch = watch                                      # held
     return watch
+
+
+FILE_MENU = (("open", "Open"), ("import", "Import"), ("save", u"Сохранить как…"),
+             ("stash", u"В Stash"))
+FILE_MORE = (("save", u"Сохранить как…"), ("stash", u"В Stash"))
+DRAG_VERBS = {"import": "import", "stash": "stash", "send": "share"}
+
+
+def _drop_filter(win):
+    """Files from Explorer dropped anywhere on the window, the composer included."""
+    if "drop_filter" not in _CLASSES:
+        q = _q()
+        QtCore = q.QtCore
+
+        class DropFilter(QtCore.QObject):
+            def __init__(self, win, parent=None):
+                super(DropFilter, self).__init__(parent)
+                self.win = win
+
+            def eventFilter(self, obj, event):               # noqa: N802
+                kind = event.type()
+                if kind in (QtCore.QEvent.DragEnter, QtCore.QEvent.DragMove):
+                    if _local_paths(event.mimeData()):
+                        event.acceptProposedAction()
+                        return True
+                elif kind == QtCore.QEvent.Drop:
+                    paths = _local_paths(event.mimeData())
+                    if paths:
+                        event.acceptProposedAction()
+                        self.win.dropped(paths)
+                        return True
+                return False
+
+        _CLASSES["drop_filter"] = DropFilter
+    return _CLASSES["drop_filter"](win, win.root)
+
+
+def _local_paths(mime):
+    if mime is None or not mime.hasUrls():
+        return []
+    return [u.toLocalFile() for u in mime.urls() if u.isLocalFile() and u.toLocalFile()]
+
+
+def send_path(path):
+    """A file sent into the chat that is open in the window (a Stash / Shared drop)."""
+    win = window()
+    if win is None or win.chat is None:
+        return u"Откройте чат, чтобы отправить в него файл."
+    cid = win.send_path(path)
+    return (u"%s - в чат" % os.path.basename(path)) if cid else (win.line.text() or "")
 
 
 def _screens():

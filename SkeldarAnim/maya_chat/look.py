@@ -155,6 +155,40 @@ def presence(chat, me_id, online, typing, now, now_ms):
     return "%d участников, %d в сети" % (len(members), count)
 
 
+CLIP = u"\U0001F4CE"
+
+
+def message_text(message):
+    """A message as one line of text: a file's message is «📎 name», its caption after a dash."""
+    text = " ".join(str((message or {}).get("text") or "").split())
+    f = (message or {}).get("file")
+    if f and f.get("name"):
+        return CLIP + " " + f["name"] + ((" - " + text) if text else "")
+    return text
+
+
+FILE_TAGS = {".ma": "MA", ".mb": "MB", ".fbx": "FBX"}
+
+
+def file_tag(f):
+    """The card's tile: MA, MB or FBX."""
+    import os
+    return FILE_TAGS.get(os.path.splitext((f or {}).get("name") or "")[1].lower(), "FILE")
+
+
+def file_line(f):
+    """The card's second line: «12.3 MB · scene · 30 fps · 0-48»."""
+    from . import files
+    f = f or {}
+    parts = [files.size_text(f.get("bytes") or 0), u"сцена" if f.get("kind") == "scene" else "fbx"]
+    if f.get("fps"):
+        parts.append(u"%g fps" % f["fps"])
+    rng = f.get("range")
+    if rng:
+        parts.append(u"%g-%g" % (rng[0], rng[1]))
+    return u" · ".join(parts)
+
+
 def preview(chat, me_id, typing, now):
     """A list row's second line."""
     if typers(typing, chat["id"], me_id, now):
@@ -165,7 +199,7 @@ def preview(chat, me_id, typing, now):
     if last.get("deleted"):
         text = "сообщение удалено"
     else:
-        text = " ".join(str(last.get("text") or "").split())
+        text = message_text(last)
     if last.get("from_id") == me_id:
         return "Вы: " + text
     if chat.get("kind") == "group":

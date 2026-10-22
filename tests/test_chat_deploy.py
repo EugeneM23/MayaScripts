@@ -63,6 +63,11 @@ class Metadata(unittest.TestCase):
     def test_a_later_deploy_sends_no_migration(self):
         self.assertNotIn("migrations", deploy.metadata(False))
 
+    def test_binds_the_files_bucket(self):
+        meta = deploy.metadata(False, "skeldar-chat-files")
+        self.assertIn({"type": "r2_bucket", "name": "FILES", "bucket_name": "skeldar-chat-files"},
+                      meta["bindings"])
+
 
 class Multipart(unittest.TestCase):
     def test_holds_the_metadata_and_the_module(self):
@@ -80,13 +85,14 @@ class Deploy(unittest.TestCase):
             ("PUT", "/accounts/acc/workers/scripts/skeldar-chat-staging"): upload,
             ("POST", "/accounts/acc/workers/scripts/skeldar-chat-staging/subdomain"): ok({}),
             ("GET", "/accounts/acc/workers/subdomain"): ok({"subdomain": "evgen"}),
+            ("GET", "/accounts/acc/r2/buckets/skeldar-chat-files-staging"): ok({"name": "b"}),
         }
 
     def test_uploads_enables_and_names_the_url(self):
         opener = Opener(self.table(ok({"id": "x"})))
         url = deploy.deploy("staging", env=ENV, opener=opener)
         self.assertEqual(url, "https://skeldar-chat-staging.evgen.workers.dev")
-        method, _url, data, headers = opener.calls[0]
+        method, _url, data, headers = [c for c in opener.calls if c[0] == "PUT"][0]
         self.assertEqual(method, "PUT")
         self.assertIn(b'"new_sqlite_classes": ["Studio"]', data)
         self.assertEqual(headers.get("Authorization"), "Bearer tok")
@@ -100,6 +106,27 @@ class Deploy(unittest.TestCase):
         puts = [c for c in opener.calls if c[0] == "PUT"]
         self.assertEqual(len(puts), 2)
         self.assertNotIn(b"new_sqlite_classes", puts[1][2])
+
+    def test_a_missing_bucket_is_made_and_bound(self):
+        table = self.table(ok({"id": "x"}))
+        table[("GET", "/accounts/acc/r2/buckets/skeldar-chat-files-staging")] = bad("not found", 10006)
+        table[("POST", "/accounts/acc/r2/buckets")] = ok({"name": "skeldar-chat-files-staging"})
+        opener = Opener(table)
+        deploy.deploy("staging", env=ENV, opener=opener)
+        made = [c for c in opener.calls if c[0] == "POST" and c[1].endswith("/r2/buckets")]
+        self.assertEqual(json.loads(made[0][2]), {"name": "skeldar-chat-files-staging"})
+        put = [c for c in opener.calls if c[0] == "PUT"][0]
+        self.assertIn(b'"bucket_name": "skeldar-chat-files-staging"', put[2])
+
+    def test_r2_off_says_so_before_any_upload(self):
+        table = self.table(ok({"id": "x"}))
+        table[("GET", "/accounts/acc/r2/buckets/skeldar-chat-files-staging")] = bad(
+            "Please enable R2 through the Cloudflare Dashboard.", 10042)
+        opener = Opener(table)
+        with self.assertRaises(deploy.DeployError) as cm:
+            deploy.deploy("staging", env=ENV, opener=opener)
+        self.assertIn("R2 is not enabled", str(cm.exception))
+        self.assertFalse([c for c in opener.calls if c[0] == "PUT"])
 
     def test_another_refusal_is_raised_with_cloudflare_s_words(self):
         opener = Opener(self.table(bad("Script too large", 10027)))

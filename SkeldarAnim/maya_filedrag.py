@@ -21,13 +21,16 @@ import collections
 
 Item = collections.namedtuple("Item", "name section key")
 
-LISTS = {"stash": "skeldarStashList", "shared": "skeldarShareList"}
+LISTS = {"stash": "skeldarStashList", "shared": "skeldarShareList",
+         "chat": "skeldarChatWindow"}
 JUMP = "skeldarHubJump_"
-TITLES = {"stash": "Stash", "shared": "Shared"}
-ICONS = {"stash": "archive", "shared": "send"}
+TITLES = {"stash": "Stash", "shared": "Shared", "chat": "Chat"}
+ICONS = {"stash": "archive", "shared": "send", "chat": "message-circle"}
 DOT = u"·"
-DROPS = ("import", "send", "stash")
-NOWHERE = "drop onto Shared, Stash or a viewport"
+DROPS = ("import", "send", "stash", "chat")
+NOWHERE = "drop onto Shared, Stash, the chat or a viewport"
+TEXTS = {"shared": ("send", "send to Shared"), "stash": ("stash", "copy into Stash"),
+         "chat": ("chat", "send to the chat")}
 
 
 def section_under(names):
@@ -48,9 +51,8 @@ def aim_for(source, under, over_viewport):
     """What a release does: dict(kind, text, section). The other section
     under the cursor wins over a viewport behind it. Pure."""
     if under and under != source:
-        if under == "shared":
-            return dict(kind="send", text="send to Shared", section=under)
-        return dict(kind="stash", text="copy into Stash", section=under)
+        kind, text = TEXTS[under]
+        return dict(kind=kind, text=text, section=under)
     if under is None and over_viewport:
         return dict(kind="import", text="import into the scene", section=None)
     return dict(kind="none", text=NOWHERE, section=None)
@@ -92,10 +94,12 @@ def _act(kind, items):
     source = items[0].section
     if source == "stash":
         import maya_stash as module
-        verb = {"import": module.drop_import, "send": module.drop_to_share}[kind]
+        verb = {"import": module.drop_import, "send": module.drop_to_share,
+                "chat": module.drop_to_chat}[kind]
     else:
         import maya_share as module
-        verb = {"import": module.drop_import, "stash": module.drop_to_stash}[kind]
+        verb = {"import": module.drop_import, "stash": module.drop_to_stash,
+                "chat": module.drop_to_chat}[kind]
     import maya.utils
     import maya_hubcopy as hubcopy
     maya.utils.executeDeferred(hubcopy.wrap(lambda: module._run(lambda: verb(keys))))
