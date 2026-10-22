@@ -220,6 +220,24 @@ def _unrecorded():
             cmds.undoInfo(stateWithoutFlush=True)
 
 
+@contextlib.contextmanager
+def _kept_selection():
+    """The animator's selection as it stood, put back after (cmds.camera selects what it makes)."""
+    try:
+        import maya.api.OpenMaya as om
+        kept = om.MGlobal.getActiveSelectionList()
+    except Exception:                                        # noqa: BLE001
+        kept = None
+    try:
+        yield
+    finally:
+        if kept is not None:
+            try:
+                om.MGlobal.setActiveSelectionList(kept, om.MGlobal.kReplaceList)
+            except Exception:                                # noqa: BLE001
+                pass
+
+
 def _dag(node):
     import maya.api.OpenMaya as om
     sel = om.MSelectionList()
@@ -286,7 +304,7 @@ class MayaScene(object):
 
     def make_sub(self):
         cmds = _cmds()
-        with _unrecorded():
+        with _unrecorded(), _kept_selection():
             made = cmds.camera()
             top, shape = made[0], made[1]
             try:

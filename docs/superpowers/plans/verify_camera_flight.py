@@ -138,6 +138,7 @@ def scene_setup():
 
 def main():
     persp, top, char = scene_setup()
+    keep = cmds.polyCube(name="keptSel")[0]
     path = os.path.join(tempfile.mkdtemp(), "flight.ma")
     cmds.file(rename=path)
     cmds.file(save=True, type="mayaAscii")
@@ -151,12 +152,18 @@ def main():
     undo_name = cmds.undoInfo(query=True, undoName=True)
     gate("the undo queue holds a step of ours to watch", undo_name == "skeldarUndoMarker",
          repr(undo_name))
+    cmds.undoInfo(stateWithoutFlush=False)    # the animator's pick, not a step to watch
+    cmds.select(keep, keep + ".vtx[2]")
+    cmds.undoInfo(stateWithoutFlush=True)
+    picked = cmds.ls(selection=True)
     cmds.file(modified=False)
 
     # 1. persp -> the character's camera
     flights, clock, panel = flights_from(persp)
     took = flights.fly("modelPanel4", char)
     sub = panel.shows
+    gate("the animator's selection is kept when the substitute is made",
+         cmds.ls(selection=True) == picked, str(cmds.ls(selection=True)))
     gate("the flight takes the switch over", took and sub != persp, sub)
     gate("one substitute, in the root namespace, marked and hidden",
          subs() == ["skeldarCameraFlight"] and cmds.getAttr(sub + ".hiddenInOutliner"),
@@ -186,6 +193,8 @@ def main():
     gate("then the panel looks through the character's camera", not alive and panel.shows == char,
          panel.shows)
     gate("and the substitute is gone", subs() == [] and not cmds.objExists(sub))
+    gate("the selection is still the animator's after the flight",
+         cmds.ls(selection=True) == picked, str(cmds.ls(selection=True)))
     gate("no undo step was made", cmds.undoInfo(query=True, undoName=True) == undo_name,
          repr(cmds.undoInfo(query=True, undoName=True)))
     gate("the clean scene is clean again", not cmds.file(query=True, modified=True))

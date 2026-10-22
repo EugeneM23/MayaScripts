@@ -11271,6 +11271,11 @@ recommendation: ortho views flattened into smoothly, the flight orbits what is l
 - **Nothing recorded**: the substitute is made and deleted with the undo queue off and moved
   through the API (no undo step, no autoKey). A clean scene is set clean again. The first flight
   sweeps away a substitute a crash or a mid-flight save left behind.
+- **The selection is kept** (2026-10-22, «при переходе между камерами мы не должны терять наше
+  выделение»): `cmds.camera()` selects the camera it makes, so the substitute took the animator's
+  selection. `make_sub` puts it back (`_kept_selection`: `MGlobal` get / set, components and order
+  kept). `verify_camera_flight.py` **30/30**, a cube and a vertex selected through the whole
+  flight; with `_kept_selection` switched off the two gates fail.
 - The Space menu leaves the substitute out and marks the flight's target as the camera shown.
 - Proof:
   - `tests/test_camflight_rules.py`, `tests/test_camflight.py` (`Flights` on a fake scene and
