@@ -15,6 +15,9 @@ CELL = 96
 COLS = 64
 ELLIPSIS = u"…"
 
+_SHEETS = collections.OrderedDict()   # decoded sheets, at most SHEETS_KEPT
+SHEETS_KEPT = 2
+RELEASE_MS = 3000
 _BAD = set()          # sheets that could not be read
 _OK = {}              # glyph -> whether it has a picture
 _PIX = {}
@@ -31,22 +34,42 @@ def folder():
     return os.path.join(os.path.dirname(here), "assets", "emoji")
 
 
+def release():
+    """Drop every decoded sheet (a sheet is tens of MB)."""
+    _SHEETS.clear()
+
+
+def _sheet(name):
+    """The decoded sheet `name` (a small LRU); None when it cannot be read."""
+    img = _SHEETS.get(name)
+    if img is not None:
+        _SHEETS.move_to_end(name)
+        return img
+    q = _qt()
+    img = q.QtGui.QImage(os.path.join(folder(), name))
+    if img.isNull():
+        _BAD.add(name)
+        return None
+    _SHEETS[name] = img
+    while len(_SHEETS) > SHEETS_KEPT:
+        _SHEETS.popitem(last=False)
+    if q.QtCore.QCoreApplication.instance() is not None:
+        q.QtCore.QTimer.singleShot(RELEASE_MS, release)
+    return img
+
+
 def image(glyph):
     """The glyph's 96 px picture, or None when it is not a known emoji or its sheet cannot
-    be read. One cell is cut straight from the file: no whole sheet is held."""
+    be read. The sheet is held briefly (see `release`)."""
     found = emoji.index().cell(glyph) if glyph else None
     if not found or found[0] in _BAD:
         return None
-    q = _qt()
-    cell = found[1]
-    reader = q.QtGui.QImageReader(os.path.join(folder(), found[0]))
-    reader.setClipRect(q.QtCore.QRect((cell % COLS) * CELL, (cell // COLS) * CELL, CELL, CELL))
-    img = reader.read()
-    if img.isNull() or img.width() != CELL or img.height() != CELL:
-        if not q.QtGui.QImageReader(os.path.join(folder(), found[0])).canRead():
-            _BAD.add(found[0])
+    sheet = _sheet(found[0])
+    if sheet is None:
         return None
-    return img
+    cell = found[1]
+    img = sheet.copy((cell % COLS) * CELL, (cell // COLS) * CELL, CELL, CELL)
+    return img if not img.isNull() else None
 
 
 def pixmap(glyph, px):

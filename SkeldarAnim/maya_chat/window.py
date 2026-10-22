@@ -1490,6 +1490,10 @@ def picker_class():
                 self.hover = None
                 self._wake()
 
+            def hideEvent(self, event):                    # noqa: N802
+                emojiart.release()
+                super(EmojiPicker, self).hideEvent(event)
+
             def mousePressEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
                 if not self.rect().contains(pos.toPoint()):

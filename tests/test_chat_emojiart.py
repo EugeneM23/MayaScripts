@@ -192,11 +192,25 @@ class NoSheetHeld(unittest.TestCase):
     def setUp(self):
         _app()
 
-    def test_cutting_cells_keeps_no_whole_sheet(self):
+    def test_release_drops_every_sheet_and_the_cells_keep_their_ink(self):
+        import time
+        A.release()
         A._OK.clear()
-        for g in ("\U0001F525", "\U0001F602", "\U0001F44D"):
-            self.assertGreater(_ink(A.image(g)), 30)
-        self.assertFalse(hasattr(A, "_SHEETS") and A._SHEETS)
+        glyphs = [r["g"] for r in emoji.index().records if r["sheet"] == emoji.index().records[0]["sheet"]][:50]
+        t = time.time()
+        cells = [A.image(g) for g in glyphs]
+        self.assertLess(time.time() - t, 2.0)
+        self.assertLessEqual(len(A._SHEETS), A.SHEETS_KEPT)
+        A.release()
+        self.assertEqual(len(A._SHEETS), 0)
+        self.assertGreater(sum(1 for c in cells if _ink(c) > 30), len(cells) // 2)
+
+    def test_at_most_two_sheets_are_held(self):
+        A.release()
+        for sheet in {r["sheet"] for r in emoji.index().records}:
+            A._sheet(sheet)
+        self.assertLessEqual(len(A._SHEETS), 2)
+        A.release()
 
 
 class BrokenSheet(unittest.TestCase):
@@ -220,6 +234,7 @@ class BrokenSheet(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _clear(self):
+        A.release()
         A._OK.clear()
         A._BAD.clear()
         A._PIX.clear()
