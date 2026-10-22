@@ -17,5 +17,8 @@ import sys
 _PLUGIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
     __file__))), "SkeldarAnim")
 
+#  the hub's sounds play at no volume for the whole run (maya_hubsound.muted)
+os.environ.setdefault("SKELDAR_MUTE_SOUNDS", "1")
+
 if _PLUGIN not in sys.path:
     sys.path.insert(0, _PLUGIN)
