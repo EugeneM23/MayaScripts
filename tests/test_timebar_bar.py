@@ -1060,11 +1060,25 @@ class PlayAndTrail(Strip):
         self.strip.on_time()
         self.assertEqual(self.tl.trail, {})
 
-    def test_play_closes_a_frame_round_the_bar(self):
+    def test_play_glows_in_from_the_timeline_s_edge(self):
         self.strip.play.click()
         self.assertIsNotNone(self.tl.play_at)
         self.assertTrue(self.tl.busy(self.strip.clock()))
-        self.tl.grab()
+        start = self.tl.play_at
+        w, h = self.tl.width(), self.tl.height()
+
+        def light(ms, x, y):
+            self.strip.clock = (lambda: start + ms)
+            c = self.tl.grab().toImage().pixelColor(x, y)
+            return c.red() + c.green() + c.blue()
+
+        x = w // 2
+        edge_peak, edge_after = light(100, x, 3), light(look.EFFECT_MS["play"] + 1, x, 3)
+        self.assertGreater(edge_peak, edge_after + 20)
+        # the middle of the bar, past the glow's depth, is left alone
+        mid = h // 2
+        if mid > look.PLAY_GLOW_DEPTH * self.strip.ui + 3:
+            self.assertEqual(light(100, x, mid), light(look.EFFECT_MS["play"] + 1, x, mid))
         self.assertFalse(getattr(self.tl, "_failed", False))
 
     def test_stopping_closes_no_frame(self):

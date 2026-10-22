@@ -607,12 +607,30 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
 #    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
 #    удаления ключа ... одни частицы») -----------------------------------------
 
-EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 420, "reveal": REVEAL_MS}
+EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 700, "reveal": REVEAL_MS}
 # a deleted key breaking into shards: switched off for now (2026-10-20, «пока выключим
 # эффект разлета частиц при удалении ключа ... пусть он останется в проекте»); True brings
 # it back as it was
 DELETE_SHARDS = False
 TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
+# Play pressed: a soft glow fills the timeline in from its edge and fades (2026-10-22,
+# the animator chose mockup B, «вариант B только внутри таймслайдер как сейчас»)
+PLAY_GLOW_PEAK = 0.55   # the glow's strength at its height
+PLAY_GLOW_RISE = 0.12   # the share of the effect it takes to come up
+PLAY_GLOW_DEPTH = 18    # logical px in from the edge the glow reaches
+PLAY_GLOW_RING = 0.30   # a ring's alpha at the edge, x the strength, falling as (1 - depth)^2
+PLAY_GLOW_RIM = 0.4     # the hot rim's alpha, x the strength
+
+
+def play_glow(u):
+    """The Play glow's strength at `u` (0..1 through it): up over the first
+    PLAY_GLOW_RISE, then falling as (1 - v)^1.6; 0 outside."""
+    if u is None or u < 0 or u >= 1:
+        return 0.0
+    if u < PLAY_GLOW_RISE:
+        return PLAY_GLOW_PEAK * u / PLAY_GLOW_RISE
+    v = (u - PLAY_GLOW_RISE) / (1.0 - PLAY_GLOW_RISE)
+    return PLAY_GLOW_PEAK * (1.0 - v) ** 1.6
 SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
 
 

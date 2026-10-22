@@ -384,6 +384,14 @@ class KeyEffectTests(unittest.TestCase):
         self.assertAlmostEqual(look.progress(260, "set"), 0.5)
         self.assertIsNone(look.progress(look.EFFECT_MS["delete"], "delete"))
 
+    def test_the_play_glow_comes_up_then_fades(self):
+        self.assertEqual(look.play_glow(None), 0.0)
+        self.assertEqual(look.play_glow(1.0), 0.0)
+        self.assertAlmostEqual(look.play_glow(look.PLAY_GLOW_RISE), look.PLAY_GLOW_PEAK)
+        self.assertLess(look.play_glow(0.05), look.play_glow(look.PLAY_GLOW_RISE))
+        self.assertGreater(look.play_glow(0.3), look.play_glow(0.7))
+        self.assertLess(look.play_glow(0.99), 0.01)
+
 
 class DeleteWaveTests(unittest.TestCase):
     """Keys deleted together break one after another left to right, the wave within

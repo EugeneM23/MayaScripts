@@ -810,7 +810,7 @@ def classes():
             self.cooling = {}           # key -> clock() when it was set hot (Steel keys)
             self.plates = []            # [(a, b, clock())]: a highlight keyed at once, one hot plate
             self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
-            self.play_at = None         # Play pressed: a frame closes in round the bar
+            self.play_at = None         # Play pressed: a glow fills in from the edge
             self.right_at = None        # ms of a right press whose key menu waits for a second one
             self.menu_wait = QtCore.QTimer(self)    # the key menu, opened once no second press came
             self.menu_wait.setSingleShot(True)
@@ -879,7 +879,7 @@ def classes():
             self.strip.kick()
 
         def played(self):
-            """Play pressed: an accent frame closes in round the bar."""
+            """Play pressed: a soft accent glow fills the timeline in from its edge."""
             if self.strip.motion:
                 self.play_at = self.strip.clock()
                 self.strip.kick()
@@ -898,13 +898,31 @@ def classes():
         def _draw_play_frame(self, p, w, h):
             st = self.strip
             u = look.progress(st.clock() - self.play_at, "play") if self.play_at is not None else None
-            if u is None:
+            level = look.play_glow(u)
+            if level <= 0:
                 return
             ui = st.ui
-            inset = 1 + 7 * ui * look.ease_out_quint(u)
+            p.save()
+            p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
             p.setBrush(Qt.NoBrush)
-            p.setPen(QtGui.QPen(colour(st.tokens["accent"], 255 * (1.0 - u)), 1 + 2.5 * ui * (1.0 - u)))
-            p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), 6 * ui, 6 * ui)
+            # rings one physical px wide from the edge in, the accent fading as (1 - d)^2
+            rings = max(1, int(round(look.PLAY_GLOW_DEPTH * ui)))
+            radius = 6 * ui
+            accent = st.tokens["accent"]
+            for i in range(rings):
+                k = 1.0 - i / float(rings)
+                a = level * k * k * look.PLAY_GLOW_RING
+                if a * 255 < 1:
+                    continue
+                inset = 1.5 + i
+                if 2 * inset >= min(w, h):
+                    break
+                p.setPen(QtGui.QPen(colour(accent, 255 * a), 1.0))
+                r = max(1.0, radius - i * 0.3)
+                p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), r, r)
+            p.setPen(QtGui.QPen(colour(RIM, 255 * level * look.PLAY_GLOW_RIM), 1.0 * ui))
+            p.drawRoundedRect(QtCore.QRectF(1.75, 1.75, w - 3.5, h - 3.5), radius, radius)
+            p.restore()
 
         def key_effect(self, kind, frame, breakdown=False, glow=True, **timing):
             """A key set ("set": a round glow) or deleted ("delete": sparks) at `frame`;

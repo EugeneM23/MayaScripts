@@ -1,0 +1,156 @@
+<title>Play Effect Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one column of variants, each a live Time Bar strip that presses Play on a loop. Dark only: the hub's own colours. */
+:root{
+  --panel:#1f2023; --card:#2a2c30; --field:#1b1c1f; --track:#17181a; --line:#45474d;
+  --text:#e4e4e6; --muted:#9a9ca3; --accent:#e07a36; --accent-text:#f0a26b;
+  --sans:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; --mono:"IBM Plex Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+body{background:var(--panel);color:var(--text);font-family:var(--sans);}
+.wrap{max-width:980px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:18px}
+h1{font-size:20px;margin:0;text-wrap:balance}
+.lead{color:var(--muted);margin:0;max-width:65ch;line-height:1.5}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;color:var(--muted);font-size:13px}
+.bar label{display:flex;gap:6px;align-items:center}
+.bar button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font:inherit;cursor:pointer}
+.bar button:hover{border-color:var(--accent)}
+.bar button:focus-visible,.v:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.v{background:var(--card);border:1px solid #33353a;border-radius:8px;padding:12px 14px 14px;display:grid;gap:8px;cursor:pointer}
+.v.now{border-color:#6b4a33}
+.head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.tag{font:600 12px var(--mono);color:var(--accent-text);letter-spacing:.06em}
+.name{font-weight:600}
+.what{color:var(--muted);font-size:13px;line-height:1.45;max-width:80ch}
+canvas{width:100%;height:84px;display:block;border-radius:6px}
+.note{font:12px var(--mono);color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.v{transition:none}}
+</style>
+
+<div class="wrap">
+  <h1>Play: варианты эффекта на таймлайне</h1>
+  <p class="lead">Каждая полоска сама нажимает Play раз в несколько секунд. Клик по карточке проигрывает её ещё раз. A - то, что стоит сейчас, для сравнения. Свет везде добавочный, цвет - акцент хаба.</p>
+  <div class="bar">
+    <label for="speed">Скорость</label>
+    <select id="speed"><option value="1">1x</option><option value="0.5">0.5x</option><option value="0.25">0.25x</option></select>
+    <label><input type="checkbox" id="trail" checked> след от каретки при проигрывании</label>
+    <button id="all" type="button">Play во всех</button>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+const T={panel:"#1f2023",field:"#1b1c1f",track:"#17181a",line:"#45474d",text:"#e4e4e6",muted:"#9a9ca3",accent:[224,122,54],hot:[255,214,170]};
+const F0=0,F1=48,KEYS=[0,4,9,14,20,26,31,37,42,48];
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${Math.max(0,Math.min(1,a))})`;
+const clamp=x=>Math.max(0,Math.min(1,x));
+const outQuint=u=>1-Math.pow(1-u,5), outCubic=u=>1-Math.pow(1-u,3), smooth=u=>u*u*(3-2*u);
+
+const VARIANTS=[
+ {tag:"A",name:"Сейчас: рамка сжимается",what:"Оранжевая рамка по краю бара сходится внутрь и гаснет за 420 мс.",ms:420,draw:frameNow},
+ {tag:"B",name:"Мягкое внутреннее свечение",what:"Весь бар вспыхивает изнутри, как подсвеченная карточка хаба: мягкий глоу по краю, глубиной 18 px, плавно гаснет. Без линий и движения - только свет.",ms:700,draw:innerGlow},
+ {tag:"C",name:"Бегущие края от кнопки",what:"Свет вылетает из кнопки Play и бежит по верхнему и нижнему краю влево, ярче у головы, тает за ней. Как разворот бара снизу.",ms:760,draw:racing},
+ {tag:"D",name:"Волна по диапазону",what:"Мягкая световая волна проходит по таймлайну от каретки до конца диапазона; ключи, которых она касается, загораются и остывают.",ms:900,draw:wave},
+ {tag:"E",name:"Зажигание каретки",what:"Каретка вспыхивает круглым ореолом, ячейка раскаляется добела и остывает в акцент. Одна точка света там, где начинается проигрывание.",ms:650,draw:ignite},
+ {tag:"F",name:"Кольца от Play",what:"От кнопки Play расходятся два мягких кольца света по бару, второе слабее, со сдвигом 120 мс.",ms:800,draw:rings},
+ {tag:"G",name:"Дыхание (пока играет)",what:"Не вспышка, а состояние: пока идёт проигрывание, нижний край бара тихо дышит акцентным светом (период 1.6 с); на Play - короткий подъём.",ms:0,draw:breathe,always:true},
+];
+
+const list=document.getElementById("list");
+const items=VARIANTS.map((v,i)=>{
+  const el=document.createElement("section");el.className="v";el.tabIndex=0;
+  el.innerHTML=`<div class="head"><span class="tag">${v.tag}</span><span class="name">${v.name}</span><span class="note">${v.ms?v.ms+" мс":"пока играет"}</span></div><canvas id="c${i}"></canvas><div class="what">${v.what}</div>`;
+  list.appendChild(el);list.style.display="grid";list.style.gap="14px";
+  const it={v,el,cv:el.querySelector("canvas"),t0:-1e9-i*700,phase:i*700};
+  const go=()=>{it.t0=clock;};
+  el.addEventListener("click",go);el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go();}});
+  return it;
+});
+document.getElementById("all").onclick=()=>items.forEach(it=>it.t0=clock);
+
+let clock=0,last=performance.now();
+const CYCLE=3600,PLAY=2400;
+function geo(w,h){
+  const x0=10,x1=w-150,top=26,bot=h-10;
+  const cw=(x1-x0)/(F1-F0+1);
+  return {w,h,x0,x1,top,bot,cw,cell:f=>x0+(f-F0)*cw,btn:{x:w-80,y:(top+bot)/2,r:13}};
+}
+function base(c,g,frame,it,age){
+  c.fillStyle=T.panel;c.fillRect(0,0,g.w,g.h);
+  // range row hint
+  c.fillStyle=T.field;roundRect(c,g.x0,6,g.x1-g.x0,14,4);c.fill();
+  c.fillStyle=T.line;roundRect(c,g.cell(0),8,g.cell(F1+1)-g.cell(0),10,3);c.fill();
+  // track
+  c.fillStyle=T.track;roundRect(c,g.x0,g.top,g.x1-g.x0,g.bot-g.top,5);c.fill();
+  c.strokeStyle="#2c2e33";c.lineWidth=1;
+  for(let f=F0;f<=F1;f++){const x=Math.round(g.cell(f)+g.cw/2)+.5;const t=f%5===0?7:3;c.beginPath();c.moveTo(x,g.bot-t);c.lineTo(x,g.bot);c.stroke();}
+  // trail
+  if(document.getElementById("trail").checked&&it.trail){for(const [f,t0] of it.trail){const u=(clock-t0)/380;if(u>=1)continue;c.fillStyle=rgba(T.accent,.28*(1-u));c.fillRect(g.cell(f),g.top,g.cw,g.bot-g.top);}}
+  // keys
+  for(const k of KEYS){const kx=g.cell(k)+g.cw*0.18,kw=g.cw*0.64;const lit=it.lit&&it.lit.get(k);
+    c.fillStyle=lit?mix(lit):"rgb(224,122,54)";roundRect(c,kx,g.top+3,kw,g.bot-g.top-6,1.5);c.fill();}
+  // playhead
+  const px=g.cell(frame);c.fillStyle="rgba(240,162,107,.22)";c.fillRect(px,g.top,g.cw,g.bot-g.top);
+  c.fillStyle=rgba(T.accent,1);c.fillRect(px,g.top,g.cw,2);c.fillRect(px,g.bot-2,g.cw,2);
+  // transport
+  c.fillStyle="#26282c";for(let i=-2;i<=2;i++){if(i===0)continue;c.beginPath();c.arc(g.btn.x+i*27,g.btn.y,10,0,7);c.fill();}
+  c.fillStyle="#3a2a1f";c.beginPath();c.arc(g.btn.x,g.btn.y,g.btn.r,0,7);c.fill();
+  c.strokeStyle=rgba(T.accent,1);c.lineWidth=1.5;c.stroke();
+  c.fillStyle=it.playing?"#f0a26b":"#f0a26b";
+  if(it.playing){c.fillRect(g.btn.x-4,g.btn.y-5,3,10);c.fillRect(g.btn.x+1,g.btn.y-5,3,10);}
+  else{c.beginPath();c.moveTo(g.btn.x-3,g.btn.y-6);c.lineTo(g.btn.x+6,g.btn.y);c.lineTo(g.btn.x-3,g.btn.y+6);c.fill();}
+  c.fillStyle=T.muted;c.font="11px Consolas,monospace";c.fillText(String(Math.floor(frame)).padStart(2,"0"),g.w-30,g.btn.y+4);
+}
+function mix(u){const a=T.hot,b=T.accent;const k=clamp(u);return `rgb(${Math.round(b[0]+(a[0]-b[0])*k)},${Math.round(b[1]+(a[1]-b[1])*k)},${Math.round(b[2]+(a[2]-b[2])*k)})`;}
+function roundRect(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+function blob(c,x,y,r,a,col=T.accent,core=0){const gr=c.createRadialGradient(x,y,0,x,y,r);gr.addColorStop(0,rgba(core?T.hot:col,a));gr.addColorStop(.35,rgba(col,a*.55));gr.addColorStop(1,rgba(col,0));c.fillStyle=gr;c.fillRect(x-r,y-r,2*r,2*r);}
+
+// --- effects (age ms since Play, g geometry) ---
+function frameNow(c,g,age){const u=age/420;if(u<0||u>=1)return;c.globalCompositeOperation="source-over";const inset=1+7*outQuint(u);
+  c.strokeStyle=rgba(T.accent,1-u);c.lineWidth=1+2.5*(1-u);roundRect(c,inset,inset,g.w-2*inset,g.h-2*inset,6);c.stroke();}
+function innerGlow(c,g,age){const u=age/700;if(u<0||u>=1)return;const a=(u<.12?u/.12:Math.pow(1-(u-.12)/.88,1.6))*.55;const d=18;
+  for(let i=0;i<d;i++){const k=1-i/d;c.strokeStyle=rgba(T.accent,a*k*k*.22);c.lineWidth=1;roundRect(c,i+.5,i+.5,g.w-2*i-1,g.h-2*i-1,Math.max(1,6-i*.3));c.stroke();}
+  c.strokeStyle=rgba(T.hot,a*.7);c.lineWidth=1.5;roundRect(c,.75,.75,g.w-1.5,g.h-1.5,6);c.stroke();}
+function racing(c,g,age){const u=age/760;if(u<0||u>=1)return;const e=outCubic(Math.min(1,u/.7));const sx=g.btn.x,head=sx-(sx-4)*e;const fade=Math.pow(1-u,.55);
+  for(const y of [1.5,g.h-1.5]){const gr=c.createLinearGradient(head,0,sx,0);gr.addColorStop(0,rgba(T.hot,.95*fade));gr.addColorStop(.08,rgba(T.accent,.8*fade));gr.addColorStop(1,rgba(T.accent,.08*fade));
+    c.fillStyle=gr;c.fillRect(head,y-1,sx-head,2);blob(c,head,y,22,.55*fade,T.accent,1);}
+  blob(c,sx,g.btn.y,40,.45*Math.pow(1-u,2));}
+function wave(c,g,age,frame,it){const u=age/900;if(u<0||u>=1)return;const fx=g.cell(it.startFrame)+g.cw/2,tx=g.cell(F1+1);const x=fx+(tx-fx)*outCubic(u);const a=Math.sin(Math.PI*Math.min(1,u*1.05))*.7;
+  const gr=c.createLinearGradient(x-110,0,x+30,0);gr.addColorStop(0,rgba(T.accent,0));gr.addColorStop(.75,rgba(T.accent,.32*a));gr.addColorStop(.92,rgba(T.hot,.55*a));gr.addColorStop(1,rgba(T.accent,0));
+  c.fillStyle=gr;c.fillRect(g.x0,g.top,g.x1-g.x0,g.bot-g.top);blob(c,x,(g.top+g.bot)/2,34,.5*a,T.accent,1);
+  for(const k of KEYS){const kx=g.cell(k)+g.cw/2;if(kx<=x&&kx>=fx&&!it.waved.has(k)){it.waved.add(k);it.litAt.set(k,clock);}}}
+function ignite(c,g,age,frame,it){const u=age/650;if(u<0||u>=1)return;const px=g.cell(it.startFrame)+g.cw/2,py=(g.top+g.bot)/2;
+  const s=u<.15?u/.15:1;const a=(1-u)**1.5;blob(c,px,py,46*s,.75*a,T.accent,1);blob(c,px,py,14,.9*a,T.hot,1);
+  c.fillStyle=rgba(T.hot,.85*a);c.fillRect(g.cell(it.startFrame),g.top,g.cw,g.bot-g.top);}
+function rings(c,g,age){for(const [d,str] of [[0,1],[120,.55]]){const u=(age-d)/680;if(u<0||u>=1)continue;const r=8+outQuint(u)*260;const a=(1-u)**1.4*str;
+  const gr=c.createRadialGradient(g.btn.x,g.btn.y,Math.max(0,r-18),g.btn.x,g.btn.y,r+6);gr.addColorStop(0,rgba(T.accent,0));gr.addColorStop(.7,rgba(T.accent,.5*a));gr.addColorStop(.85,rgba(T.hot,.6*a));gr.addColorStop(1,rgba(T.accent,0));
+  c.fillStyle=gr;c.fillRect(g.btn.x-r-8,0,2*r+16,g.h);}}
+function breathe(c,g,age,frame,it){if(!it.playing&&age>300)return;const rise=age<300?Math.sin(Math.PI*age/300)*.5:0;const b=it.playing?(.5+.5*Math.sin(clock/1600*Math.PI*2))*.32:0;const a=b+rise;
+  const gr=c.createLinearGradient(0,g.h,0,g.h-26);gr.addColorStop(0,rgba(T.accent,.6*a));gr.addColorStop(1,rgba(T.accent,0));c.fillStyle=gr;c.fillRect(g.x0,g.h-26,g.w-g.x0-10,26);
+  c.fillStyle=rgba(T.hot,.8*a);c.fillRect(g.x0+6,g.h-1.5,g.w-g.x0-22,1.5);}
+
+function tick(now){
+  const sp=+document.getElementById("speed").value;const dt=Math.min(50,now-last);last=now;clock+=dt*sp;
+  for(const it of items){
+    const n=Math.floor((clock-it.phase)/CYCLE);
+    if(n!==it.n){it.n=n;if(n>=0)it.t0=it.phase+n*CYCLE;}
+    if(it.t0!==it.seen){it.seen=it.t0;it.startFrame=6;it.trail=new Map();it.waved=new Set();it.litAt=new Map();it.prevF=undefined;}
+    const age=clock-it.t0;
+    it.playing=age>=0&&age<PLAY;
+    const frame=it.playing?it.startFrame+(age/1000)*12:it.startFrame;
+    const f=Math.floor(Math.min(F1,frame));
+    if(it.playing&&it.prevF!==f){if(it.prevF!==undefined)it.trail.set(it.prevF,clock);it.prevF=f;}
+    it.lit=new Map();for(const [k,t0] of it.litAt){const u=(clock-t0)/600;if(u<1)it.lit.set(k,1-u);}
+    const cv=it.cv,dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+    if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+    const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
+    const g=geo(w,h);base(c,g,Math.min(F1,frame),it,age);
+    c.save();roundRect(c,0,0,w,h,6);c.clip();c.globalCompositeOperation="lighter";
+    it.v.draw(c,g,age,frame,it);c.restore();
+    it.el.classList.toggle("now",age>=0&&age<900);
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
