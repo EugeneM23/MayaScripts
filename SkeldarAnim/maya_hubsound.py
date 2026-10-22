@@ -11,7 +11,8 @@ The hover tick went on 2026-10-22 («уберем звуки интерфейс�
 Maya's Delete). Each recording ships as VARIANTS pitch variants spread over
 PITCH_SPREAD (25 %), one picked at random each play, so a repeated sound is
 never quite the same. Switched in the hub's menu (⋮ → Interface sounds), OFF
-by default («пусть звуки по умолчанию будут отключены», the same day). `message` (the chat) is still synthesised.
+by default («пусть звуки по умолчанию будут отключены», the same day). `message` (the chat)
+is the animator's recording too, one file (`CLIPS`); `ring` (a call) is synthesised.
 
     synth / wav_bytes   the sound as numbers, then as a WAV (pure)
     write               the shipped file, assets/sounds/<name>.wav
@@ -47,16 +48,6 @@ RATE = 48000
 Tone = collections.namedtuple("Tone", "partials attack length fade peak")
 
 SOUNDS = {
-    #  A chat message (2026-10-20): «в духе ICQ» - its «о-оу», not its recording (that one is
-    #  ICQ's, and this repository is public): two short sung syllables falling a fourth,
-    #  G4 for 110 ms then D4 for 220 ms after a 40 ms breath, each a voice-like stack of
-    #  harmonics weighted toward an «у» and then an «о»; −12 dBFS.
-    "message": Tone(partials=(
-        (392.00, 1.00, 0.40, 0.00, 0.11), (784.00, 0.55, 0.30, 0.00, 0.11),
-        (1176.0, 0.22, 0.20, 0.00, 0.11), (1568.0, 0.08, 0.15, 0.00, 0.11),
-        (293.66, 1.00, 0.45, 0.15, 0.22), (587.33, 0.75, 0.35, 0.15, 0.22),
-        (880.99, 0.40, 0.25, 0.15, 0.22), (1174.7, 0.12, 0.18, 0.15, 0.22)),
-        attack=0.012, length=0.44, fade=0.04, peak=0.25),
     #  An incoming call (2026-10-22): a soft two-note phrase, E5 then G5, 1.6 s with a
     #  silence after it, so the loop reads as a calm ring; the chime's loudness.
     "ring": Tone(partials=(
@@ -71,6 +62,11 @@ SOUNDS = {
 #  («сделаем его на 30% тише»: x0.7 is -3.1 dB more).
 RECORDED = ("drag", "delete")
 GAIN_DB = {"drag": -9.1, "delete": -6.0}
+
+#  The animator's recordings that ship as ONE file, assets/sounds/<name>.wav, at this
+#  gain (dB), by the same script: the chat message (2026-10-22, «поставь вот этот звук на
+#  звук сообщения в месенджере» - sources/sounds/message_uvedomlenie.mp3).
+CLIPS = {"message": -6.0}
 
 #  Each recording as VARIANTS files played PITCH_SPREAD apart from the lowest to the
 #  highest («в диапазоне 25 % питча»): x0.875 .. x1.125, evenly, the middle one x1.

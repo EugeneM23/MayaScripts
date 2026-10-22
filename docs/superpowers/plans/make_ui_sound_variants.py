@@ -46,6 +46,17 @@ def render(ffmpeg):
                 % (sound.GAIN_DB[name], int(round(RATE * rate)), RATE),
                 "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", path])
             print("%s x%.4f" % (path, rate))
+    for name, gain in sorted(sound.CLIPS.items()):
+        found = [p for p in glob.glob(os.path.join(REPO, "sources", "sounds", name + "_*"))
+                 if p.lower().endswith((".mp3", ".wav"))]
+        if len(found) != 1:
+            raise SystemExit("one source for %s, found %r" % (name, found))
+        path = os.path.join(out, name + ".wav")
+        subprocess.check_call([
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", found[0],
+            "-af", "volume=%.2fdB" % gain,
+            "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s16le", path])
+        print(path)
 
 
 if __name__ == "__main__":

@@ -138,17 +138,6 @@ class Cache(unittest.TestCase):
 
 
 class Chime(unittest.TestCase):
-    def test_the_shipped_chime_is_the_synthesis(self):
-        with open(sound.sound_path("message"), "rb") as f:
-            shipped = f.read()
-        self.assertEqual(shipped, sound.wav_bytes(sound.synth(sound.SOUNDS["message"])))
-
-    def test_its_second_note_starts_late_and_it_ends_on_zero(self):
-        samples = sound.synth(sound.SOUNDS["message"])
-        self.assertEqual(samples[0], 0.0)
-        self.assertAlmostEqual(samples[-1], 0.0, places=6)
-        self.assertAlmostEqual(max(abs(v) for v in samples), 0.25, places=6)
-
     def test_force_plays_with_the_interface_sounds_off(self):
         sound.reset()
         made = []

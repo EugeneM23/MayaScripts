@@ -147,10 +147,10 @@ class Variants(SoundMixin, unittest.TestCase):
 class WavFile(unittest.TestCase):
 
     def test_mono_sixteen_bit_at_the_rate(self):
-        data = sound.wav_bytes(sound.synth(sound.SOUNDS["message"]))
+        data = sound.wav_bytes(sound.synth(sound.SOUNDS["ring"]))
         params, values = _decoded(data)
         self.assertEqual(params, (1, 2, 48000))
-        self.assertEqual(len(values), int(round(0.44 * 48000)))
+        self.assertEqual(len(values), int(round(1.6 * 48000)))
         self.assertEqual(max(abs(v) for v in values),
                          int(round(0.25 * 32767)))
 
@@ -160,24 +160,32 @@ class WavFile(unittest.TestCase):
 
     def test_write_puts_the_file_where_asked(self):
         folder = tempfile.mkdtemp()
-        path = sound.write("message", os.path.join(folder, "x", "message.wav"))
+        path = sound.write("ring", os.path.join(folder, "x", "ring.wav"))
         with open(path, "rb") as f:
             self.assertEqual(f.read(),
-                             sound.wav_bytes(sound.synth(sound.SOUNDS["message"])))
+                             sound.wav_bytes(sound.synth(sound.SOUNDS["ring"])))
 
     def test_the_shipped_file_is_the_synthesis(self):
         """make_hub_sounds.py wrote it; regenerate after changing a Tone. One
         LSB of slack for a libm that rounds a sine differently."""
-        path = sound.sound_path("message")
-        self.assertEqual(path, os.path.join(_PLUGIN, "assets", "sounds",
-                                            "message.wav"))
+        path = sound.sound_path("ring")
+        self.assertEqual(path, os.path.join(_PLUGIN, "assets", "sounds", "ring.wav"))
         with open(path, "rb") as f:
             shipped = _decoded(f.read())
-        made = _decoded(sound.wav_bytes(sound.synth(sound.SOUNDS["message"])))
+        made = _decoded(sound.wav_bytes(sound.synth(sound.SOUNDS["ring"])))
         self.assertEqual(shipped[0], made[0])
         self.assertEqual(len(shipped[1]), len(made[1]))
         self.assertLessEqual(max(abs(a - b) for a, b in
                                  zip(shipped[1], made[1])), 1)
+
+    def test_the_message_is_the_animator_s_recording(self):
+        """make_ui_sound_variants.py wrote it from sources/sounds/message_*.mp3."""
+        self.assertNotIn("message", sound.SOUNDS)
+        self.assertIn("message", sound.CLIPS)
+        with wave.open(sound.sound_path("message"), "rb") as w:
+            self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()),
+                             (2, 2, 44100))
+            self.assertGreater(w.getnframes() / 44100.0, 3.0)
 
     def test_every_sound_ships(self):
         for name in sound.SOUNDS:
