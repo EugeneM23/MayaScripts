@@ -4,7 +4,8 @@ replaces the video, a third person joins the mesh, end stops everything.
 
 Chromium's fake UI is NOT used: the camera and microphone are granted by CallPage itself (only to
 https://skeldar.call), and the screen through its screen_requested signal. The GPU is off: with it,
-offscreen Qt lost its GL context and mayapy segfaulted mid-run (2 runs of 3).
+offscreen Qt lost its GL context and mayapy segfaulted mid-run (2 runs of 3). --mute-audio keeps
+the fake devices' beeps off the speakers: a run must be silent.
 
     $env:QT_QPA_PLATFORM='offscreen'; mayapy docs/superpowers/plans/verify_call_page.py
 """
@@ -13,7 +14,7 @@ import sys
 import time
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = ("--use-fake-device-for-media-stream "
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = ("--mute-audio --use-fake-device-for-media-stream "
                                             "--autoplay-policy=no-user-gesture-required --disable-gpu --disable-gpu-compositing")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
