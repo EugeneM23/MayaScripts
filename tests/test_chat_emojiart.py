@@ -164,3 +164,25 @@ class Animation(unittest.TestCase):
     def test_anim_of(self):
         self.assertEqual(A.anim_of("\U0001F602"), "1f602")
         self.assertEqual(A.anim_of("x"), "")
+
+
+class BadFiles(Animation):
+    def test_a_corrupt_cached_file_is_fetched_again(self):
+        bad = os.path.join(self.dir, "1f525.webp")
+        with open(bad, "wb") as f:
+            f.write(b"<html>not a picture</html>")
+        a = self._anim()
+        frames = a.frames("1f525", 32)
+        self.assertTrue(frames)
+        self.assertEqual(self.fetched, [A.NOTO.format("1f525")])
+        self.assertNotIn("1f525", a.failed)
+        with open(bad, "rb") as f:
+            self.assertEqual(f.read(), _webp_bytes())
+
+    def test_garbage_from_the_fetch_fails_and_leaves_no_file(self):
+        a = A.Animated(self.dir, fetch=lambda u: self.fetched.append(u) or b"garbage",
+                       spawn=lambda fn: fn())
+        self.assertIsNone(a.frames("1f602", 32))
+        self.assertIn("1f602", a.failed)
+        self.assertEqual(len(self.fetched), 1)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "1f602.webp")))

@@ -248,15 +248,27 @@ class Animated(object):
     def _load(self, cp, key):
         try:
             path = self.path(cp)
-            if not os.path.isfile(path):
-                data = self.fetch(NOTO.format(cp))
-                os.makedirs(self.folder, exist_ok=True)
-                with open(path + ".part", "wb") as f:
-                    f.write(data)
-                os.replace(path + ".part", path)
-            frames = decode(path, key[1])
+            frames = None
+            fetched = False
+            for _attempt in (0, 1):
+                if not os.path.isfile(path):
+                    data = self.fetch(NOTO.format(cp))
+                    fetched = True
+                    os.makedirs(self.folder, exist_ok=True)
+                    with open(path + ".part", "wb") as f:
+                        f.write(data)
+                    os.replace(path + ".part", path)
+                frames = decode(path, key[1])
+                if frames:
+                    break
+                try:
+                    os.remove(path)          # a bad file must not fail again next launch
+                except OSError:
+                    pass
+                if fetched:
+                    break
             if not frames:
-                raise ValueError("no frames in " + path)
+                raise ValueError("no frames for " + cp)
             with self.lock:
                 self._frames[key] = frames
                 while len(self._frames) > self.keep:
