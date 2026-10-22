@@ -62,9 +62,17 @@ of this software and associated documentation files (the "Software"), to deal in
 Software without restriction, including without limitation the rights to use, copy,
 modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
 permit persons to whom the Software is furnished to do so, subject to the following
-conditions: The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
-WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 """
 
 
@@ -209,6 +217,23 @@ def build(folder):
     return data
 
 
+def build_into(out):
+    """Build in a temp folder; only when everything succeeded replace the contents of `out`."""
+    tmp = tempfile.mkdtemp(prefix="skeldar_emoji_new_")
+    try:
+        data = build(tmp)
+        os.makedirs(out, exist_ok=True)
+        for name in os.listdir(out):
+            path = os.path.join(out, name)
+            if os.path.isfile(path):
+                os.remove(path)
+        for name in os.listdir(tmp):
+            shutil.move(os.path.join(tmp, name), os.path.join(out, name))
+        return data
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def check():
     """A fresh build equals the shipped one: the same index, sheets of the same size whose
     pixels differ by less than 1 on average."""
@@ -243,6 +268,6 @@ def check():
 if __name__ == "__main__":
     if "--check" in sys.argv:
         sys.exit(0 if check() else 1)
-    data = build(OUT)
+    data = build_into(OUT)
     print("%d emoji, %d with tones" % (len(data["emoji"]),
                                        sum(len(r["tones"]) for r in data["emoji"])))
