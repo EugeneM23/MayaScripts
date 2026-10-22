@@ -13305,8 +13305,12 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
   the right-button menu has the same rows. A card pressed and dragged: the hub's ghost; onto a viewport
   Import, onto Stash / Shared a copy. The list's preview and toasts read «📎 name - caption».
 - Proof: `tests/test_chat_files.py`, the window's `Files` tests, `test_filedrag`, `test_chat_deploy`;
-  `verify_chat_server.py files` and `verify_chat_client.py` (a 20 MB scene both ways) written - **not run:
-  R2 is not enabled on the account** (the staging deploy stopped at the bucket, nothing uploaded).
+  R2 enabled by the animator the same day; staging and production deployed (buckets made by
+  `deploy.py`). `verify_chat_server.py files` **17/17 on staging** (40 MB in three parts in 16.6 s, the
+  other's download byte for byte in 3.7 s, a stranger refused, the file gone with its message), `all`
+  **0 of 90 on production**; `verify_chat_client.py` **28/28 on staging and on production** (a 20 MB
+  scene: B gets the message in 6.7-9.1 s, downloads it byte for byte in 1.5 s). Not seen in a GUI Maya
+  (the paperclip, a real drop from Explorer, a card dragged onto a viewport).
 
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 

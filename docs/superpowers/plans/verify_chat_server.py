@@ -391,7 +391,7 @@ def phase_files():
     t0 = time.time()
     ok = True
     for n in range(1, 4):
-        status, doc = call("PUT", "/v1/files/%s/parts/%d" % (fid, n), A[0], raw=data[(n - 1) * size:n * size],
+        status, doc, _ct = call("PUT", "/v1/files/%s/parts/%d" % (fid, n), A[0], raw=data[(n - 1) * size:n * size],
                            ctype="application/octet-stream", timeout=120)
         ok = ok and status == 200
     status, doc = jcall("POST", "/v1/files/%s/complete" % fid, A[0])
