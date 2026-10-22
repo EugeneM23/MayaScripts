@@ -244,10 +244,6 @@ class Toast(unittest.TestCase):
         self.assertEqual(look.toast_text("a\n b"), "a b")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CallLine(unittest.TestCase):
 
     def msg(self, seq, call, frm="bob"):
@@ -282,3 +278,7 @@ class CallLine(unittest.TestCase):
         self.assertEqual(look.message_text(self.msg(1, {"id": "c", "kind": "audio",
                                                         "answered": False, "seconds": 0})),
                          u"\U0001F4DE Пропущенный звонок")
+
+
+if __name__ == "__main__":
+    unittest.main()

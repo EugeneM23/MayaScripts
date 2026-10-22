@@ -1078,3 +1078,59 @@ class CallsInWindow(Base):
                                       QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
             self.win.feed.mousePressEvent(event)
         self.assertEqual(got, [("dm", "video")])
+
+
+class CallsInWindowRound1(Base):
+
+    def setUp(self):
+        super(CallsInWindowRound1, self).setUp()
+        self.win.open_chat("dm")
+
+    def vis(self, name):
+        return self.win.root.findChild(QtWidgets.QAbstractButton, name).isVisibleTo(self.win.root)
+
+    def run_call(self, members, state="live"):
+        now = int(time.time() * 1000)
+        view = {"id": "c1", "chat": "dm", "by": "bob", "kind": "audio", "cid": "x",
+                "state": state, "members": members, "declined": [], "started_at": now,
+                "answered_at": now, "ended_at": None}
+        self.ses.state.calls = {"c1": view}
+        self.ses.tell("call", {"kind": "call", "call": view})
+        return view
+
+    def test_in_the_call_shows_neither(self):
+        self.run_call(["bob", "me"])
+        self.assertFalse(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        self.assertFalse(self.vis("skeldarChatCallVideo"))
+
+    def test_a_full_call_shows_neither_and_a_press_starts_nothing(self):
+        self.run_call(["bob", "a", "b", "c"])
+        self.assertFalse(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        with mock.patch("maya_chat.callview.start") as start, \
+                mock.patch("maya_chat.callview.answer") as answer:
+            self.win.start_call("audio")
+        start.assert_not_called()
+        answer.assert_not_called()
+
+    def test_an_old_call_line_joins_a_joinable_call_else_nothing(self):
+        self.run_call(["bob"])
+        with mock.patch("maya_chat.callview.start") as start, \
+                mock.patch("maya_chat.callview.answer") as answer:
+            self.win.start_call("video", "dm")
+        start.assert_not_called()
+        answer.assert_called_once()
+
+    def test_refresh_on_a_chat_switch_repaints_and_an_end_brings_voice_back(self):
+        self.run_call(["bob"])
+        self.win.open_chat("dm2")
+        self.assertTrue(self.vis("skeldarChatCallVoice"))
+        self.win.open_chat("dm")
+        self.assertTrue(self.vis("skeldarChatCallJoin"))
+        self.assertFalse(self.vis("skeldarChatCallVoice"))
+        view = dict(self.ses.state.calls["c1"], state="ended")
+        self.ses.state.calls = {"c1": view}
+        self.ses.tell("call", {"kind": "call", "call": view})
+        self.assertTrue(self.vis("skeldarChatCallVoice"))
+        self.assertFalse(self.vis("skeldarChatCallJoin"))

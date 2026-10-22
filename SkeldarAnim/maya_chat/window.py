@@ -2278,14 +2278,18 @@ class ChatWindow(object):
         running = _calls.of_chat(getattr(self.session.state, "calls", {}), chat) if chat else None
         joinable = running if running and _calls.can_join(running, me) else None
         self.call_join.setVisible(bool(joinable))
-        self.call_voice.setVisible(chat is not None and not joinable)
-        self.call_video.setVisible(chat is not None and not joinable)
+        free = chat is not None and running is None
+        self.call_voice.setVisible(free)
+        self.call_video.setVisible(free)
         self._joinable = joinable
 
     def start_call(self, kind, chat=None):
         chat = chat or self.chat
         if chat is None:
             return None
+        running = _calls.of_chat(getattr(self.session.state, "calls", {}), chat)
+        if running is not None:
+            return self.join_call() if self._joinable and self._joinable["chat"] == chat else None
         from . import callview
         return callview.start(self.session, chat, kind)
 
