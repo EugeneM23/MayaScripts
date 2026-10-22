@@ -322,7 +322,9 @@ def _player(name, count=POOL):
     if held is not None and held[0] == key:
         return held[1]
     try:
-        player = make_player(path, count)
+        #  the pool size only when it is not the default: a player seam that takes
+        #  just the path (an older test's, a caller's) still makes the one-file sounds
+        player = make_player(path) if count == POOL else make_player(path, count)
     except Exception:                                        # noqa: BLE001
         player = None
     players[name] = (key, player)
