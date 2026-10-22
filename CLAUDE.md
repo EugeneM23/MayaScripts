@@ -11140,6 +11140,53 @@ beside it. **This replaces «the chest stays the target's» and «a Tools knot i
      fresh afterwards. In a walk every planned plug takes a key on every frame, and an animation's
      gate samples every frame.
 
+## The Pose Library: 1P lower body (2026-10-22)
+
+The animator: «Так как мы обрабатываем анимацию upper body в нашей библеотеке поз давай точно так
+же сделаем обработку и lower body и галочку для загрузки анимации только на нижнюю часть». Asked
+what the target's upper body does meanwhile: **kept stable** (over riding the new hips). Spec
+`docs/superpowers/specs/2026-10-22-pose-library-lower-body-design.md`.
+- **The cut** (`maya_poselib/lower.py`, pure, beside `upper.py`): `restrict(data)` - members are
+  every card bone NOT the chest (`upper.chest_of`, canonical `spine_03`) or below it, selected at
+  its save or not: root, pelvis, spine_01/02, legs and their twists; never a helper or a camera
+  bone (no weapon, no camera). `keep` = [the chest], `lower_1p` True. Refused: no chest, nothing
+  under it (a hand card). The pelvis is a member, so an animation carries its travel onto Main
+  (In place keeps the character where it stands).
+- **The kept chest** (`posemath.Transfer(kept=)`, target leaves the card does not pose): turn =
+  its turn against the target's root frame as it stood × where this frame puts the root frame
+  (a pose: its world turn; an animation's travel turns it with Main), place = its local on its
+  parent as it stood, on the parent's RESULT - the chest sits on the end of the new spine_02 and
+  everything above it rides it. `kept_now(target)` reads it; `frame(..., kept=)` takes it read
+  earlier. `lower.target_keep` maps the card's `keep` onto the target (else the target's own
+  chest); `apply.with_kept` adds it to the solver's members, so it is written and measured: in 3P
+  `FKSpine3_M`, in 1P `Chest_1P_ctrl` (rigsolve's knot redirect: its place follows the spine, its
+  turn stays what it shows, turning only with Main), on a skeleton spine_03's rotate. Select
+  objects names it too.
+- **An animation reads the kept chest at every pasted frame BEFORE its ops** (`_Target.read_kept`,
+  the pass `read_ground` uses): the chest is a planned plug and Replace cuts its curve. Under
+  Insert too, at each frame (`_ground_time` is the ground's rule): the controls above the chest
+  are not planned, so Insert shifts none of them.
+- **The window**: a chip **1P lower** (`skeldarPoseLower1P`, `window.LOWER_VAR`
+  `skeldarPoseLibraryLower1P`) after «1P upper»; the two exclude each other
+  (`PoseWindow._half_changed`; both remembered on reads as upper, `Scene.lower_on`).
+  `Scene._read` cuts with `upper` or `lower` - Apply, Blend, a drop onto a character, Select
+  objects, the skill bar; a floor drop takes the whole card.
+- **The camera**: in 3P its control hangs under Main, so it stays with the root; in 1P it rides
+  `Chest_1P_ctrl` with the rest of the upper body.
+- Proof: `tests/test_poselib_lower.py` (the cut, `target_keep`, the kept rule in `Transfer`: the
+  world turn under a turned spine, the place on the new spine's end, the head riding it, a moved
+  root frame, `kept=` over `T_now`, a kept bone the card poses), `test_poselib_window.BodyHalves` /
+  `SceneCut`, `test_poselib_animapply.LowerKept`; 8495 unit tests, the known
+  `test_chat_deploy.Keys` failing. `docs/superpowers/plans/verify_poselib_lower.py <walk> <other>`
+  (mayapy standalone; `AS_am_LongS_OxGuardL_Walk_Fwd` as the card's source on one Manny_Rig,
+  `AS_Longsword_Attack_Heavy_Backward_3P` on a second) **42/42** - a pose and an animation (Replace,
+  every frame) in 3P and after 1P Setup, and a pose onto a bare Manny UE5 skeleton: the pelvis,
+  spine_01/02 and legs on the card's to 0.005 cm, the root on the card's travel 0.0000, the chest's
+  turn against the root as before and its place on the new spine_02 0.0000 cm / deg, the spine
+  above, the neck, the arms and the head on the chest as before (0.0004 deg), the camera on the root
+  in 3P and on the chest in 1P, `_3P_Upper_Body`'s curves untouched, one undo. Not seen in a GUI
+  Maya.
+
 ## The Pose Library: a pose lands on the same rig as it was made (2026-10-20)
 
 The animator, two scene tabs in a Maya on port 7003: «Я делаю позу через нашу библиотеку поз в первом

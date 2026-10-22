@@ -795,7 +795,7 @@ class Transfer(object):
     Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md"""
 
     def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
-                 pelvis="pelvis", places=False, anchors=None):
+                 pelvis="pelvis", places=False, anchors=None, kept=()):
         """Everything `targets` computes before its loop, once: the alignment (read off `source`
         AS GIVEN - for an animation the FIRST pasted frame's bones), the target root, `rooted`,
         the target pelvis, `drive_bones`, the root offset, the order, each member's paired
@@ -804,7 +804,10 @@ class Transfer(object):
         `anchors` (2026-10-21, the Pose Library's 1P upper body): {target leaf: target anchor
         leaf} - that member takes its turn AND its place relative to the anchor's, not to its
         paired ancestor (the camera rides the chest in 1P: camera_root on spine_03); the
-        anchored bones and what hangs below them are worked out after the anchor."""
+        anchored bones and what hangs below them are worked out after the anchor. `kept`
+        (2026-10-22, the Pose Library's 1P lower body): target leaves the card does not pose that
+        stay STABLE - their turn against the target's root frame as it stood, their place on
+        their parent's result (`frame`): the chest under a lower-body card."""
         self.source, self.target, self.pairs = source, target, pairs
         self.members = set(members or ())
         self.use_drive, self.scale = use_drive, scale
@@ -862,6 +865,8 @@ class Transfer(object):
                     moved.add(leaf)
             self.order = [l for l in self.order if l not in moved] + \
                 [l for l in self.order if l in moved]
+        self.kept = [leaf for leaf in (kept or ()) if leaf in target and
+                     target[leaf].get("parent") in target]
         self._offsets = {}
 
     def _posed(self, leaf):
@@ -961,6 +966,25 @@ class Transfer(object):
                           rigid(matrix(source[s_parent]["rest"])).inverse())
         return rest_t + (now_s - rest_s) * rotation(self._offset(parent)).inverse() * self.scale
 
+    def kept_now(self, target=None):
+        """{kept leaf: (its turn against the target's root frame, its local translation on its
+        parent)} as `target` (default the one given) stands - what `frame` keeps of each `kept`
+        bone. An animation reads it at every pasted frame BEFORE its ops (the chest is a planned
+        plug: Replace cuts its curve) and hands it to `frame`."""
+        target = self.target if target is None else target
+        if not self.kept or self.target_root is None or self.target_root not in target:
+            return {}
+        place = self._root_place(target, self._stands(target[self.target_root]))
+        out = {}
+        for leaf in self.kept:
+            if leaf not in target or target[leaf].get("parent") not in target:
+                continue
+            now = self._stands(target[leaf])
+            parent = self._stands(target[target[leaf]["parent"]])
+            out[leaf] = (rotation(now) * rotation(place).inverse(),
+                         position(now * parent.inverse()))
+        return out
+
     def place(self, target=None):
         """The target's root frame as it stands (`target`'s world, default the one given to
         `__init__`): its root bone's world, or - rootless - its ground frame (`_ground`).
@@ -970,7 +994,7 @@ class Transfer(object):
             return om.MMatrix()
         return self._root_place(target, self._stands(target[self.target_root]))
 
-    def frame(self, source=None, target=None, root_world=None, source_root=None):
+    def frame(self, source=None, target=None, root_world=None, source_root=None, kept=None):
         """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
         (unchanged bones at their current world).
 
@@ -1032,9 +1056,21 @@ class Transfer(object):
         same the travel was read from, so the pelvis relative to it and the root world it rides
         turn together (the final review, M3) - and a ROOTLESS target's top joint takes off the
         heading that steadied frame implies, not its own (`_steadied`, `_on_ground`): near
-        upside down its own heading is noise, and the body stood turned by the difference."""
+        upside down its own heading is noise, and the body stood turned by the difference.
+
+        A `kept` bone the card does not pose (2026-10-22, 1P lower body) stays stable:
+
+            turn  = keep_turn · rotation(root_world)
+            point = keep_local · W[parent]
+
+        `keep_turn` its turn against the target's root frame and `keep_local` its translation on
+        its parent, both as the target stands (`kept_now`) - or as `kept` hands them, read before
+        an animation's ops. So under a lower-body card the chest keeps its turn against the
+        character - a pose's root never moves, so its world turn; an animation's travel turns it
+        with Main - and sits on the end of the new spine, and everything above it rides it."""
         source = self.source if source is None else source
         target = self.target if target is None else target
+        keeping = self.kept_now(target) if kept is None else dict(kept)
         if self.target_root is None:
             return {}
         now = dict((leaf, self._stands(bone)) for leaf, bone in target.items())
@@ -1079,6 +1115,11 @@ class Transfer(object):
                 continue
             parent_now = place if top else now[parent]
             parent_world = root_world if top else out[parent]
+            if leaf in keeping and not top and not self._posed(leaf):
+                keep_turn, keep_local = keeping[leaf]
+                point = om.MPoint(keep_local.x, keep_local.y, keep_local.z) * parent_world
+                out[leaf] = _placed(rotation(keep_turn * rotation(root_world)), point)
+                continue
             local = now[leaf] * parent_now.inverse()
             s = self.pairs.get(leaf)
             if s not in self.members or s not in source:

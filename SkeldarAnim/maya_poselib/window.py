@@ -171,7 +171,14 @@ UPPER_VAR = "skeldarPoseLibraryUpper1P"          # 1P upper body (2026-10-21, `u
 UPPER_TIP = ("1P upper body: only the bones above the chest (spine_03) - the arms, hands, head, "
              "the camera and the weapon - each placed on the target's chest as the card has it "
              "on its own. The chest, the spine below it, the pelvis, the legs and Main stay as "
-             "they are: after Tools > 1P Setup the lower body and the stabilized chest are kept")
+             "they are: after Tools > 1P Setup the lower body and the stabilized chest are kept. "
+             "Turns 1P lower off")
+LOWER_VAR = "skeldarPoseLibraryLower1P"          # 1P lower body (2026-10-22, `lower`)
+LOWER_TIP = ("1P lower body: only the bones under the chest (spine_03) - the pelvis, the spine "
+             "under it, the legs, and an animation's travel onto Main. The character's chest keeps "
+             "its turn against the root and sits on the new spine: the arms, the head, the camera "
+             "and the weapon ride it as they did - in 1P Chest_1P_ctrl takes the keys. "
+             "Turns 1P upper off")
 OBJECTS_DRAG = "an objects card: select its objects and press Apply"
 OBJECTS_TARGET = "onto the selected objects, else the ones it was saved from"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
@@ -840,21 +847,33 @@ class Scene(object):
         with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
             return press(header, frames, progress)
 
-    def upper_on(self):
-        """Is 1P upper body on (`UPPER_VAR`)?"""
+    def _on(self, var):
         try:
-            return bool(int(self.option(UPPER_VAR, 0) or 0))
+            return bool(int(self.option(var, 0) or 0))
         except Exception:                                    # noqa: BLE001 - no optionVar: off
             return False
 
+    def upper_on(self):
+        """Is 1P upper body on (`UPPER_VAR`)?"""
+        return self._on(UPPER_VAR)
+
+    def lower_on(self):
+        """Is 1P lower body on (`LOWER_VAR`) - and 1P upper off (the two exclude each other; a
+        pair remembered both on reads as upper)?"""
+        return self._on(LOWER_VAR) and not self.upper_on()
+
     def _read(self, path):
         """(card, refusal): the card at `path` as a press takes it - cut to its upper body while
-        1P upper body is on (`upper.restrict`; an objects card as it is)."""
+        1P upper body is on (`upper.restrict`), to its lower body while 1P lower body is
+        (`lower.restrict`, 2026-10-22); an objects card as it is."""
         data = store.read(path)
-        if not self.upper_on():
+        if self.upper_on():
+            from maya_poselib import upper as half
+        elif self.lower_on():
+            from maya_poselib import lower as half
+        else:
             return data, ""
-        from maya_poselib import upper
-        cut, note = upper.restrict(data)
+        cut, note = half.restrict(data)
         if cut is None:
             return None, note
         return cut, ""
@@ -1698,8 +1717,14 @@ def _classes():
             self.upper.setObjectName("skeldarPoseUpper1P")
             self.upper.setToolTip(UPPER_TIP)
             self.upper.clicked.connect(
-                lambda checked=False: self._option_changed(UPPER_VAR, int(bool(checked))))
+                lambda checked=False: self._half_changed("upper", checked))
             row.addWidget(self.upper)
+            self.lower = self._chip("1P lower")
+            self.lower.setObjectName("skeldarPoseLower1P")
+            self.lower.setToolTip(LOWER_TIP)
+            self.lower.clicked.connect(
+                lambda checked=False: self._half_changed("lower", checked))
+            row.addWidget(self.lower)
             row.addStretch(1)
             column.addLayout(row)
 
@@ -2157,6 +2182,11 @@ def _classes():
                 self.upper.setChecked(bool(int(self.scene.option(UPPER_VAR, 0) or 0)))
             except (TypeError, ValueError):
                 self.upper.setChecked(False)
+            try:
+                self.lower.setChecked(bool(int(self.scene.option(LOWER_VAR, 0) or 0)) and
+                                      not self.upper.isChecked())
+            except (TypeError, ValueError):
+                self.lower.setChecked(False)
 
         def _lit(self, buttons, default):
             return next((key for key, button in buttons.items() if button.isChecked()),
@@ -2190,6 +2220,19 @@ def _classes():
             if self.only.isChecked() and (card is None or card.kind != "objects"):
                 extra["only"] = True
             return extra
+
+        def _half_changed(self, half, on):
+            """«1P upper» or «1P lower» clicked: remembered - and turning one on turns the other
+            off (a card is cut to one half), then the standing blend is put back."""
+            var = UPPER_VAR if half == "upper" else LOWER_VAR
+            if half == "upper":
+                other, other_var = self.lower, LOWER_VAR
+            else:
+                other, other_var = self.upper, UPPER_VAR
+            if on and other.isChecked():
+                other.setChecked(False)
+                self._remember(other_var, 0)
+            self._option_changed(var, int(bool(on)))
 
         def _option_changed(self, var, value):
             """An option the animator changed: remembered, and a standing blend - previewed

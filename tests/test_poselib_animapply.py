@@ -353,18 +353,28 @@ class FakeTransfer(object):
     world = None
 
     def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
-                 places=False, anchors=None):
+                 places=False, anchors=None, kept=()):
         self.placed = set()
+        self.kept = list(kept or ())
         self.world.log.append(("transfer", index(source), mirrored(source), sorted(members),
                                use_drive))
+        if self.kept:
+            self.world.log.append(("kept", list(self.kept)))
+
+    def kept_now(self, target=None):
+        """The kept bones as the target stands: the frame the walk stands on, read."""
+        self.world.log.append(("kept_now", self.world.frame))
+        return {"read_at": self.world.frame} if self.kept else {}
 
     def place(self, target=None):
         if target is not None and "ground" in target.get("root", {}):
             return om.MMatrix(target["root"]["ground"])
         return om.MMatrix(self.world.place)
 
-    def frame(self, source=None, target=None, root_world=None, source_root=None):
+    def frame(self, source=None, target=None, root_world=None, source_root=None, kept=None):
         self.world.log.append(("frame", index(source), mirrored(source), flat(root_world)))
+        if kept is not None:
+            self.world.log.append(("frame_kept", index(source), kept.get("read_at")))
         if source_root is not None:
             self.world.log.append(("source_root", index(source), flat(source_root)))
         return {"index": index(source), "mirrored": mirrored(source)}
@@ -877,6 +887,46 @@ class Rootless(Base):
         self.assertEqual(self.world.entries("source_root"), [])
         self.assertEqual(self.world.entries("travel_roots"), [])
         self.assertTrue(all(e[2] is None for e in self.world.entries("mirror")))
+
+
+class LowerKept(Base):
+    """2026-10-22, 1P lower body: a card's `keep` names the target bones kept stable - members
+    the solver writes, read at every pasted frame BEFORE the ops (Replace cuts their curves) and
+    handed to the transfer frame by frame, whatever the mode."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self.header["members"] = ["pelvis"]
+        self.header["keep"] = ["hand_r"]
+
+    def test_the_kept_bone_is_a_member_of_the_solve(self):
+        ok, text = self.press()
+        self.assertTrue(ok, text)
+        self.assertIn(["hand_r"], [e[1] for e in self.world.entries("kept")])
+        solver = self.world.entries("solver")[0]
+        self.assertIn("hand_r", solver[1])
+
+    def test_read_at_every_pasted_frame_before_the_cut(self):
+        ok, text = self.press()
+        self.assertTrue(ok, text)
+        cut = self.world.names().index("cut")
+        before = [e[1] for e in self.world.log[:cut] if e[0] == "kept_now"]
+        self.assertEqual(before, [12, 13, 14, 15, 16, 17])
+        self.assertEqual([e[2] for e in self.world.entries("frame_kept")],
+                         [12, 13, 14, 15, 16, 17])
+
+    def test_under_insert_too_every_pasted_frame_is_read(self):
+        ok, text = self.press(options={"mode": "insert"})
+        self.assertTrue(ok, text)
+        shift = self.world.names().index("shift")
+        before = [e[1] for e in self.world.log[:shift] if e[0] == "kept_now"]
+        self.assertEqual(before, [12, 13, 14, 15, 16, 17])
+
+    def test_a_card_without_keep_reads_nothing(self):
+        self.header.pop("keep")
+        self.press()
+        self.assertEqual(self.world.entries("kept_now"), [])
+        self.assertEqual(self.world.entries("frame_kept"), [])
 
 
 class InPlaceGround(Base):

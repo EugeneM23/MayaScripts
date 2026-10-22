@@ -157,6 +157,7 @@ from maya_poselib import apply as ap
 from maya_poselib import helpers
 from maya_poselib import keys
 from maya_poselib import look
+from maya_poselib import lower
 from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
@@ -588,13 +589,14 @@ class _Target(object):
     keyed frame by frame (`key`)."""
 
     def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None,
-                 only=None, anchors=None):
+                 only=None, anchors=None, keep=None):
         """`first` is the clip's first pasted frame UNMIRRORED (the transfer's alignment),
         `source` the same frame as the press hands it over (mirrored when asked), `members` the
         card's members as the press uses them (mirrored when asked); `travel` - the card would
         carry the travel (`_travels`); `first_root` the source's root frame at that frame when
         the press steadied it (`_clip_roots`), else None; `only` the long paths Selected only
-        keeps (`apply.only_selected`), else None."""
+        keeps (`apply.only_selected`), else None; `keep` the card's bones a lower-body card keeps
+        stable on the target (`lower`, 2026-10-22: its chest), else None."""
         self.ref = ref
         self.only = only
         self.partial = False                   # Selected only cut some plugs: nothing measured
@@ -607,10 +609,15 @@ class _Target(object):
         self.score = 0.0
         self.partner = {}                      # target time -> {plug: the take there}
         self.grounds = {}                      # target time -> its root frame, read before
+        self.kept_reads = {}                   # target time -> `Transfer.kept_now`, read before
         found = []
         self.bones = scene.skeleton(ref, found)[0]
         self.pairs = pm.pairs(source, self.bones)
         scale = pm.scale_between(source, self.bones, self.pairs)
+        # a lower-body card keeps the target's chest stable (2026-10-22, `lower`): a member the
+        # solver writes, its turn against the root and its place on the spine read BEFORE the ops
+        # at every pasted frame (`read_kept`) - Replace cuts the chest's own curve
+        self.kept = lower.target_keep(keep, self.pairs, self.bones)
         # the camera on the chest whenever the card's chest stands on the target's own spine (an
         # upper-body card, 2026-10-21) - derived from the members as the press uses them
         if anchors is None:
@@ -624,6 +631,7 @@ class _Target(object):
         members = pm.with_torso(source, members)
         self.members, helper_t = helpers.split(
             ap.target_members(self.bones, self.pairs, members))
+        self.members = ap.with_kept(self.members, self.kept, self.bones)
         missing = ap.unpaired_note(ap.unpaired(members, self.pairs, source),
                                    ap.target_label(ref))
         self.carry, self.root_node, kept = _carry(ref, self.bones, travel)
@@ -638,7 +646,8 @@ class _Target(object):
             places = False
         self.transfer = pm.Transfer(first, self.bones, self.pairs, members,
                                     use_drive=self.rig, scale=scale, places=places,
-                                    anchors=upper.target_anchors(anchors, self.pairs))
+                                    anchors=upper.target_anchors(anchors, self.pairs),
+                                    kept=self.kept)
         self.place = self.transfer.place(self.bones)
         # the DRY solve of the first frame, as it will be keyed: which plugs, and the seed
         wanted = self.transfer.frame(source, self.bones, self.place if self.carry else None,
@@ -725,6 +734,11 @@ class _Target(object):
         there) - read by the press's pass BEFORE its ops (M4)."""
         self.grounds[time] = self.transfer.place(scene.refresh_world(self.ref, self.bones))
 
+    def read_kept(self, time):
+        """The kept bones as the target stands at `time` (`Transfer.kept_now`) - read by the
+        press's pass BEFORE its ops, as `read_ground`."""
+        self.kept_reads[time] = self.transfer.kept_now(scene.refresh_world(self.ref, self.bones))
+
     def key(self, time, source, shown, first, mirror, layer, alpha, keyed, roots=None):
         """One pasted frame (the module's step 5), the walk standing on `time`: `source` is the
         frame's bones unmirrored (the travel reads them), `shown` as the press hands them over
@@ -740,7 +754,8 @@ class _Target(object):
         elif self.reads_ground:
             root_world = self.grounds.get(time)
         wanted = self.transfer.frame(shown, bones, root_world,
-                                     source_root=roots[0] if roots else None)
+                                     source_root=roots[0] if roots else None,
+                                     kept=self.kept_reads.get(time))
         solution = self._solve(bones, wanted, self.seed)
         self._take(solution)
         values = OrderedDict(solution.values)
@@ -844,7 +859,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only) for ref in refs]
+                               first_root, only, keep=header.get("keep")) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)
@@ -863,11 +878,14 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
             return _result(targets, header, plan, options, layer, alpha, mirror)
         # BEFORE anything is cut or keyed: the take each frame mixes with (Blend), the ground a
         # rootless target stands on (M4) - read at every pasted frame, the ground under Insert
-        # at `a` alone (`_ground_time`: the take resumes there after the clip)
-        if alpha < 1.0 or any(target.reads_ground for target in targets):
+        # at `a` alone (`_ground_time`: the take resumes there after the clip) - and the bones a
+        # lower-body card keeps stable (2026-10-22), at every pasted frame whatever the mode: the
+        # controls above the chest are no planned plugs, Insert shifts none of them
+        keeps = any(target.kept and target.plugs for target in targets)
+        if alpha < 1.0 or keeps or any(target.reads_ground for target in targets):
             for _source, _index, time in plan.frames:
                 at = _ground_time(plan, time)
-                if alpha >= 1.0 and at != time:
+                if alpha >= 1.0 and not keeps and at != time:
                     for target in targets:
                         if target.reads_ground:
                             target.grounds[time] = target.grounds.get(at)
@@ -876,6 +894,8 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 for target in targets:
                     if target.plugs and alpha < 1.0:
                         target.partner[time] = keys.current(target.plugs)
+                    if target.kept and target.plugs:
+                        target.read_kept(time)
                     if target.reads_ground:
                         if at == time:
                             target.read_ground(time)

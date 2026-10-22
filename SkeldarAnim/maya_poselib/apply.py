@@ -140,6 +140,7 @@ import maya.cmds as cmds
 import maya_rigs
 from maya_poselib import helpers
 from maya_poselib import keys
+from maya_poselib import lower
 from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
@@ -361,6 +362,16 @@ def target_members(bones, pairs, members):
     """The target leaves (in the target skeleton's order) whose partner is a source member."""
     wanted = set(members or ())
     return [leaf for leaf in bones if pairs.get(leaf) in wanted]
+
+
+def with_kept(members_t, kept, bones):
+    """`members_t` (target leaves) with the `kept` ones (`lower.target_keep`) the solver writes
+    too, in the target skeleton's order. Pure."""
+    extra = set(kept or ()) - set(members_t)
+    if not extra:
+        return list(members_t)
+    wanted = set(members_t) | extra
+    return [leaf for leaf in bones if leaf in wanted]
 
 
 def unpaired(members, pairs, source=None):
@@ -691,6 +702,9 @@ def _plan(data, ref, mirror=False, only=None):
     members = pm.with_torso(source, members)
     pairs = pm.pairs(source, bones)
     scale = pm.scale_between(source, bones, pairs)
+    # a lower-body card keeps the TARGET's chest stable (2026-10-22, `lower`): its turn against
+    # the root as it stands, its place on the end of the new spine - a member the solver writes
+    kept = lower.target_keep(data.get("keep"), pairs, bones)
     # onto the same body (a twin) the card's bone PLACES come too - a slid spine, a shrugged
     # clavicle - so a pose made on one Manny lands on another as it was (2026-10-20); a rig
     # whose game bones take orientation only (the Creep, the Orc D) cannot show them, and a
@@ -699,11 +713,12 @@ def _plan(data, ref, mirror=False, only=None):
     # body card, 2026-10-21 - `upper.anchors_for`, derived from the members, not stored)
     transfer = pm.Transfer(source, bones, pairs, members, use_drive=(ref.kind == "rig"),
                            scale=scale, places=_places(ref) and not mirror,
-                           anchors=upper.target_anchors(anchors, pairs))
+                           anchors=upper.target_anchors(anchors, pairs), kept=kept)
     wanted = transfer.frame()
     # the body solvers never see our helper bones: a `helpers.Writer` keys them, or what drives
     # them (a weapon in the hand, the Camera Setup camera)
     members_t, helper_t = helpers.split(target_members(bones, pairs, members))
+    members_t = with_kept(members_t, kept, bones)
     placed = sorted(p for p in transfer.placed if not helpers.is_helper(p))
     missing = unpaired_note(unpaired(members, pairs, source), target_label(ref))
     if missing:
@@ -1300,6 +1315,8 @@ def select_objects(data, selection=None):
         pairs = pm.pairs(data["bones"], bones)
         members_t = target_members(bones, pairs, pm.with_torso(data["bones"],
                                                                list(data.get("members") or ())))
+        members_t = with_kept(members_t, lower.target_keep(data.get("keep"), pairs, bones),
+                              bones)
         if ref.kind == "rig":
             found = rigsolve.controls_for(ref.rig, members_t)
         else:

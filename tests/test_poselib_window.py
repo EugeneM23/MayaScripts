@@ -2839,5 +2839,87 @@ class OurLook(WindowCase):
                             hubstyle.TOKENS["track"])           # its picture
 
 
+class BodyHalves(WindowCase):
+    """2026-10-22: «1P lower» beside «1P upper» - each cuts every press of a character card to
+    its half, and the two exclude each other."""
+
+    def test_lower_is_a_chip_beside_upper(self):
+        self.assertIsInstance(self.win.lower, QT.QtWidgets.QPushButton)
+        self.assertEqual(self.win.lower.objectName(), "skeldarPoseLower1P")
+        self.assertEqual(self.win.lower.property("skRole"), "chip")
+        self.assertIn("chest", self.win.lower.toolTip())
+
+    def test_turning_one_on_turns_the_other_off(self):
+        self.win.upper.click()
+        self.assertTrue(self.win.upper.isChecked())
+        self.win.lower.click()
+        self.assertTrue(self.win.lower.isChecked())
+        self.assertFalse(self.win.upper.isChecked())
+        self.assertEqual(self.scene.options[pw.LOWER_VAR], 1)
+        self.assertEqual(self.scene.options[pw.UPPER_VAR], 0)
+        self.win.upper.click()
+        self.assertFalse(self.win.lower.isChecked())
+        self.assertEqual(self.scene.options[pw.LOWER_VAR], 0)
+        self.assertEqual(self.scene.options[pw.UPPER_VAR], 1)
+        self.win.upper.click()
+        self.assertFalse(self.win.upper.isChecked())
+        self.assertEqual(self.scene.options[pw.UPPER_VAR], 0)
+
+    def test_both_remembered_on_reads_as_upper(self):
+        self.scene.options.update({pw.UPPER_VAR: 1, pw.LOWER_VAR: 1})
+        self.win._load_options()
+        self.assertTrue(self.win.upper.isChecked())
+        self.assertFalse(self.win.lower.isChecked())
+
+
+class SceneCut(unittest.TestCase):
+    """`Scene._read` cuts a character card to the half its option names."""
+
+    BONES = {"root": {"parent": None}, "pelvis": {"parent": "root"},
+             "spine_02": {"parent": "pelvis"}, "spine_03": {"parent": "spine_02"},
+             "head": {"parent": "spine_03"}, "thigh_l": {"parent": "pelvis"}}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_poselib_cut_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        data = card_data("Walk", members=("pelvis", "spine_03", "head", "thigh_l"))
+        data["bones"] = self.BONES
+        self.path = store.write(self.tmp, "", "Walk", data,
+                                write_jpg(os.path.join(self.tmp, "t.jpg")))
+        options = self.options = {}
+
+        class Scene(pw.Scene):
+            def option(self, name, default=None):
+                return options.get(name, default)
+
+        self.scene = Scene()
+
+    def test_off_the_card_is_whole(self):
+        card, refusal = self.scene._read(self.path)
+        self.assertEqual(refusal, "")
+        self.assertEqual(card["members"], ["pelvis", "spine_03", "head", "thigh_l"])
+
+    def test_lower_cuts_it_to_the_lower_body_and_keeps_the_chest(self):
+        self.options[pw.LOWER_VAR] = 1
+        card, refusal = self.scene._read(self.path)
+        self.assertEqual(refusal, "")
+        self.assertEqual(card["members"], ["pelvis", "thigh_l", "root", "spine_02"])
+        self.assertEqual(card["keep"], ["spine_03"])
+
+    def test_upper_wins_when_both_are_on(self):
+        self.options.update({pw.UPPER_VAR: 1, pw.LOWER_VAR: 1})
+        card, _refusal = self.scene._read(self.path)
+        self.assertNotIn("keep", card)
+        self.assertEqual(card["members"][:2], ["spine_03", "head"])
+
+    def test_a_card_with_nothing_below_is_refused(self):
+        self.options[pw.LOWER_VAR] = 1
+        data = card_data("Hand", members=("head",))
+        data["bones"] = self.BONES
+        path = store.write(self.tmp, "", "Hand", data,
+                           write_jpg(os.path.join(self.tmp, "t2.jpg")))
+        self.assertEqual(self.scene._read(path)[0], None)
+
+
 if __name__ == "__main__":
     unittest.main()
