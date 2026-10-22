@@ -43,7 +43,7 @@ CARD_HINT = u"перетащите во вьюпорт или в библиот�
 FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg)"
 PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
 BIG_EMOJI = 64        # an emoji sent alone (1-3 of them), logical px (2026-10-22)
-PILL_EMOJI = 16       # a reaction's picture in its pill
+PILL_EMOJI = 18       # a reaction's picture in its pill
 PLAY_CAP_MS = 5000    # an emoji's play is dropped past this, painted or not (Noto's ~2.2 s)
 
 _CLASSES = {}
@@ -596,7 +596,7 @@ def feed_class():
                 if not _emoji.only_emoji(item.text):
                     return []
                 parts = [p for _k, p in _emoji.tokens("".join(item.text.split()))]
-                return parts if all(emojiart.image(p) is not None for p in parts) else []
+                return parts if all(emojiart._known(p) for p in parts) else []
 
             def _doc(self, item, width):
                 key = (item.key(), item.text, int(width))
@@ -1468,17 +1468,23 @@ def picker_class():
                 dy = event.angleDelta().y()
                 self.scroll = max(0.0, min(self.scroll - dy / 120.0 * self.cell * 1.5,
                                            self.max_scroll()))
+                where = (event.position() if hasattr(event, "position")
+                         else QtCore.QPointF(event.pos()))
+                self._rehover(where)
                 self.update()
 
-            def mouseMoveEvent(self, event):              # noqa: N802
-                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+            def _rehover(self, pos):
                 h = self.hit(pos)
                 if h != self.hover:
                     self.hover = h
                     if h is not None and h[0] == "emoji" and not hubmotion.enabled():
                         self.levels = {h: 1.0}
                     self._wake()
-                    self.update()
+
+            def mouseMoveEvent(self, event):              # noqa: N802
+                pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
+                self._rehover(pos)
+                self.update()
 
             def leaveEvent(self, event):                   # noqa: N802
                 self.hover = None
@@ -2060,7 +2066,7 @@ class ChatWindow(object):
             self.feed.anim = emojiart.animated(self.session)
         except Exception:                                    # noqa: BLE001
             self.feed.anim = None
-        self.feed_area =self._scroll(self.feed, "skeldarChatFeedArea")
+        self.feed_area = self._scroll(self.feed, "skeldarChatFeedArea")
         self.feed_area.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.feed_area.verticalScrollBar().rangeChanged.connect(self._range_changed)
         lay.addWidget(self.feed_area, 1)

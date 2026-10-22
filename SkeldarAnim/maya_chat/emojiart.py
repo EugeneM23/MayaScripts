@@ -15,7 +15,8 @@ CELL = 96
 COLS = 64
 ELLIPSIS = u"…"
 
-_SHEETS = {}
+_BAD = set()          # sheets that could not be read
+_OK = {}              # glyph -> whether it has a picture
 _PIX = {}
 _PIX_MAX = 3000
 
@@ -30,23 +31,22 @@ def folder():
     return os.path.join(os.path.dirname(here), "assets", "emoji")
 
 
-def _sheet(name):
-    img = _SHEETS.get(name)
-    if img is None:
-        img = _SHEETS[name] = _qt().QtGui.QImage(os.path.join(folder(), name))
-    return img
-
-
 def image(glyph):
-    """The glyph's 96 px picture, or None when it is not a known emoji."""
+    """The glyph's 96 px picture, or None when it is not a known emoji or its sheet cannot
+    be read. One cell is cut straight from the file: no whole sheet is held."""
     found = emoji.index().cell(glyph) if glyph else None
-    if not found:
+    if not found or found[0] in _BAD:
         return None
-    sheet = _sheet(found[0])
-    if sheet.isNull():
-        return None
+    q = _qt()
     cell = found[1]
-    return sheet.copy((cell % COLS) * CELL, (cell // COLS) * CELL, CELL, CELL)
+    reader = q.QtGui.QImageReader(os.path.join(folder(), found[0]))
+    reader.setClipRect(q.QtCore.QRect((cell % COLS) * CELL, (cell // COLS) * CELL, CELL, CELL))
+    img = reader.read()
+    if img.isNull() or img.width() != CELL or img.height() != CELL:
+        if not q.QtGui.QImageReader(os.path.join(folder(), found[0])).canRead():
+            _BAD.add(found[0])
+        return None
+    return img
 
 
 def pixmap(glyph, px):
@@ -70,7 +70,11 @@ def url(glyph):
 
 
 def _known(part):
-    return emoji.index().cell(part) is not None
+    """Whether the glyph has a picture (answered once a glyph)."""
+    held = _OK.get(part)
+    if held is None:
+        held = _OK[part] = image(part) is not None
+    return held
 
 
 def rich(text, px):
@@ -258,7 +262,10 @@ class Animated(object):
                     with open(path + ".part", "wb") as f:
                         f.write(data)
                     os.replace(path + ".part", path)
-                frames = decode(path, key[1])
+                try:
+                    frames = decode(path, key[1])
+                except Exception:                            # noqa: BLE001
+                    frames = None
                 if frames:
                     break
                 try:

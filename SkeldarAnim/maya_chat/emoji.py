@@ -51,6 +51,7 @@ class Index(object):
             for tone, (_sheet, _cell, glyph) in (rec.get("tones") or {}).items():
                 self._add(glyph, rec, int(tone))
         self.longest = max([len(k) for k in self.by_glyph] or [1])
+        self.starts = frozenset(k[0] for k in self.by_glyph)
 
     def _add(self, glyph, rec, tone):
         if glyph and glyph not in self.by_glyph:
@@ -104,8 +105,13 @@ def tokens(text, idx=None):
     idx = idx or index()
     text = str(text or "")
     out, run, i, n = [], [], 0, len(text)
+    starts = idx.starts
     while i < n:
         size = 0
+        if text[i] not in starts:
+            run.append(text[i])
+            i += 1
+            continue
         for k in range(min(idx.longest, n - i), 0, -1):
             if text[i:i + k] in idx.by_glyph:
                 size = k

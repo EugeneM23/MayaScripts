@@ -186,3 +186,101 @@ class BadFiles(Animation):
         self.assertIn("1f602", a.failed)
         self.assertEqual(len(self.fetched), 1)
         self.assertFalse(os.path.exists(os.path.join(self.dir, "1f602.webp")))
+
+
+class NoSheetHeld(unittest.TestCase):
+    def setUp(self):
+        _app()
+
+    def test_cutting_cells_keeps_no_whole_sheet(self):
+        A._OK.clear()
+        for g in ("\U0001F525", "\U0001F602", "\U0001F44D"):
+            self.assertGreater(_ink(A.image(g)), 30)
+        self.assertFalse(hasattr(A, "_SHEETS") and A._SHEETS)
+
+
+class BrokenSheet(unittest.TestCase):
+    """emoji.json is fine but one sheet is corrupt (or gone): its emoji stay text."""
+
+    def setUp(self):
+        _app()
+        self.dir = tempfile.mkdtemp()
+        real = A.folder()
+        self.fire = "\U0001F525"
+        self.sheet = emoji.index().cell(self.fire)[0]
+        for name in os.listdir(real):
+            shutil.copy(os.path.join(real, name), self.dir)
+        self.old_folder = A.folder
+        A.folder = lambda: self.dir
+        self._clear()
+
+    def tearDown(self):
+        A.folder = self.old_folder
+        self._clear()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _clear(self):
+        A._OK.clear()
+        A._BAD.clear()
+        A._PIX.clear()
+
+    def _break(self, remove):
+        path = os.path.join(self.dir, self.sheet)
+        if remove:
+            os.remove(path)
+        else:
+            with open(path, "wb") as f:
+                f.write(b"not a webp")
+        self._clear()
+
+    def _check(self):
+        self.assertIsNone(A.image(self.fire))
+        self.assertFalse(A._known(self.fire))
+        out = A.rich("a " + self.fire, 20)
+        self.assertNotIn("<img", out)
+        self.assertIn(self.fire, out)
+        font = QtGui.QFont()
+        font.setPixelSize(14)
+        # offscreen Qt has no font to draw text with: the line is judged by its parts
+        parts, _fm, _side = A._parts(self.fire, font)
+        self.assertEqual([k for k, _p, _w in parts], ["text"])
+        img = QtGui.QImage(120, 24, QtGui.QImage.Format_ARGB32)
+        img.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(img)
+        used = A.draw_line(p, QtCore.QRectF(0, 0, 120, 24), self.fire, font,
+                           QtGui.QColor("white"))
+        p.end()
+        self.assertGreater(used, 0)
+
+    def test_a_corrupt_sheet_falls_back_to_text(self):
+        self._break(remove=False)
+        self._check()
+
+    def test_a_missing_sheet_falls_back_to_text(self):
+        self._break(remove=True)
+        self._check()
+        self.assertIn(self.sheet, A._BAD)
+
+    def test_a_good_sheet_still_makes_pictures(self):
+        self.assertTrue(A._known(self.fire))
+        self.assertIn("<img", A.rich(self.fire, 20))
+
+
+class DecodeRaises(unittest.TestCase):
+    def test_a_decode_that_raises_removes_the_cached_file(self):
+        d = tempfile.mkdtemp()
+        try:
+            a = A.Animated(d, fetch=lambda u: _webp_bytes(), spawn=lambda fn: fn())
+            real = A.decode
+
+            def boom(path, px):
+                raise RuntimeError("bad")
+            A.decode = boom
+            try:
+                self.assertIsNone(a.frames("1f525", 32))
+            finally:
+                A.decode = real
+            self.assertIn("1f525", a.failed)
+            self.assertFalse(os.path.exists(os.path.join(d, "1f525.webp")))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
