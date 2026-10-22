@@ -731,3 +731,8 @@ def close():
     if held is not None:
         held.stop()
         del sys._skeldar_chat
+    try:
+        from . import notify
+        notify.uninstall()
+    except Exception:                                        # noqa: BLE001
+        pass

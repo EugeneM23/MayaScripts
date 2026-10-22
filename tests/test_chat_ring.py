@@ -152,6 +152,41 @@ class CallCards(unittest.TestCase):
         ring.assert_not_called()
         self.assertEqual(self.toast.call_cards(), [])
 
+    def test_pressing_a_button_stops_the_ring_at_once(self):
+        rings = []
+
+        class H(object):
+            def stop(self):
+                rings.append("stop")
+        with mock.patch.object(notify, "_loop_ring", side_effect=lambda: H()), \
+                mock.patch.object(self.toast, "answer_call"):
+            self.ses.state.calls = {"c1": call()}
+            notify.heard(self.ses, "call", {"kind": "call", "call": call()}, out=[])
+            self.toast.call_cards()[0].press("voice")
+        self.assertEqual(rings, ["stop"])
+        self.assertEqual(notify._rings(), {})
+        self.assertEqual(self.toast.call_cards(), [])
+
+    def test_uninstall_stops_every_ring_and_removes_the_cards(self):
+        rings = []
+
+        class H(object):
+            def stop(self):
+                rings.append("stop")
+        with mock.patch.object(notify, "_loop_ring", side_effect=lambda: H()):
+            self.ses.state.calls = {"c1": call(), "c2": call(id="c2")}
+            for c in self.ses.state.calls.values():
+                notify.heard(self.ses, "call", {"kind": "call", "call": c}, out=[])
+            self.assertEqual(len(self.toast.call_cards()), 2)
+            notify.uninstall()
+        self.assertEqual(rings, ["stop", "stop"])
+        self.assertEqual(self.toast.call_cards(), [])
+
+    def test_closing_the_session_calls_uninstall(self):
+        with mock.patch.object(notify, "uninstall") as un:
+            S.close()
+        un.assert_called_once()
+
     def test_answered_elsewhere_stops_the_ring(self):
         rings = []
 

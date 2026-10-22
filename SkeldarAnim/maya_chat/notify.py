@@ -182,6 +182,30 @@ def _gone(call_id):
         traceback.print_exc()
 
 
+def stop_all():
+    """Stop every ring and take every call card away (the session closed or went)."""
+    for cid in list(_rings()):
+        _gone(cid)
+    try:
+        from . import toast
+        for card in toast.call_cards():
+            toast.dismiss_call(card.call_id)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
+def uninstall():
+    """Take the listener off and stop the rings."""
+    old = getattr(sys, "_skeldar_chat_notify", None)
+    if old is not None:
+        try:
+            old[0].unlisten(old[1])
+        except Exception:                                    # noqa: BLE001
+            pass
+        sys._skeldar_chat_notify = None
+    stop_all()
+
+
 def _stop_after(call_id, seconds):
     """The ring gives up after `seconds` (a single-shot timer, where Qt is)."""
     try:

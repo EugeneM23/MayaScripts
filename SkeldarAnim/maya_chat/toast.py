@@ -349,6 +349,11 @@ def call_card_class():
 
         def press(self, name):
             self.leave()
+            try:
+                from . import notify
+                notify._gone(self.call_id)         # the ring stops now, not on the server's word
+            except Exception:                                # noqa: BLE001
+                pass
             if name == "decline":
                 decline_call(self.call_id)
             else:
