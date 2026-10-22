@@ -136,8 +136,21 @@ def main():
     gate("a and b still talk", (a.peer().get("state"), b.peer().get("state")) == ("connected", "connected"))
     c.bridge.send("end", {})
     gate("the third leaves", pump(10, lambda: not (c.state.get("peers") or {})))
+    for side in (a, b):
+        side.bridge.send("remove_peer", {"uid": "c"})
+    pump(1)
+    # A message from c relayed late, after the others let it go: it must not bring c back.
+    a.bridge.send("signal", {"from": "c", "data": {"mic": True}})
+    a.bridge.send("signal", {"from": "c", "data": {"ice": {"candidate": "", "sdpMid": "0"}}})
+    pump(2)
+    gate("a late signal from one who left creates no peer", "c" not in (a.state.get("peers") or {}),
+         sorted(a.state.get("peers") or {}))
     a.bridge.send("end", {})
     gate("end closes the call", pump(10, lambda: not (a.state.get("peers") or {})))
+    b.bridge.send("remove_peer", {"uid": "a"})
+    a.bridge.send("signal", {"from": "b", "data": {"mic": True}})
+    pump(2)
+    gate("a signal after end creates no peer", not (a.state.get("peers") or {}), sorted(a.state.get("peers") or {}))
     failed = GATES.count(False)
     print("%d of %d gates failed" % (failed, len(GATES)))
     sys.stdout.flush()

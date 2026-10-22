@@ -74,5 +74,33 @@ class Permissions(unittest.TestCase):
         self.assertFalse(callpage.allowed("https://evil.example/"))
 
 
+class ConsoleMessages(unittest.TestCase):
+    def test_warnings_and_errors_are_printed_info_is_not(self):
+        import contextlib
+        import io
+        _app()
+        from PySide6 import QtWebEngineCore
+        levels = QtWebEngineCore.QWebEnginePage.JavaScriptConsoleMessageLevel
+        override = callpage.page_class().javaScriptConsoleMessage     # its self is not used
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            override(None, levels.InfoMessageLevel, "info", 1, "call.js")
+            override(None, levels.WarningMessageLevel, "warn", 2, "call.js")
+            override(None, levels.ErrorMessageLevel, "boom", 3, "call.js")
+        text = out.getvalue()
+        self.assertNotIn("info", text)
+        self.assertIn("[call page] warn (call.js:2)", text)
+        self.assertIn("[call page] boom (call.js:3)", text)
+
+
+class Page(unittest.TestCase):
+    def test_a_late_signal_cannot_bring_back_one_who_left(self):
+        js = open(os.path.join(callpage.folder(), "call.js"), encoding="utf-8").read()
+        self.assertIn("S.left.has(from)", js)
+        self.assertIn("S.left.add(uid)", js)
+        self.assertIn("S.left.delete(a.uid)", js)
+        self.assertIn("S.ended = true", js)
+
+
 if __name__ == "__main__":
     unittest.main()

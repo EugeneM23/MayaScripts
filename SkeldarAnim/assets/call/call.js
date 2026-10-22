@@ -3,7 +3,8 @@
 "use strict";
 const S = { me: null, names: {}, ice: [], peers: new Map(), local: null, camTrack: null, screenTrack: null,
             mic: true, cam: false, screen: false, devices: { mic: "", cam: "" }, list: { mics: [], cams: [] },
-            error: "", note: "", bridge: null, audio: null, levels: new Map(), timer: null, statsTimer: null };
+            error: "", note: "", bridge: null, audio: null, levels: new Map(), timer: null, statsTimer: null,
+            left: new Set(), ended: false };
 const LOST_MS = 20000;
 const SPEAK = 0.035;
 
@@ -35,7 +36,7 @@ function note(text) {
 // ------------------------------------------------------------------ tiles
 function initials(uid) {
   const name = S.names[uid] || uid || "?";
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => [...w][0].toUpperCase()).join("");
 }
 function tile(uid) {
   let t = document.getElementById("t-" + uid);
@@ -105,13 +106,20 @@ async function pushVideo() {
 }
 
 // ------------------------------------------------------------------ speaking light
+function unwatchLevel(uid) {
+  const l = S.levels.get(uid);
+  if (!l) return;
+  try { l.src.disconnect(); l.an.disconnect(); } catch (e) { /* gone */ }
+  S.levels.delete(uid);
+}
 function watchLevel(uid, stream) {
   if (!stream.getAudioTracks().length) return;
+  unwatchLevel(uid);
   if (!S.audio) S.audio = new AudioContext();
   if (S.audio.state === "suspended") S.audio.resume().catch(() => {});
   const src = S.audio.createMediaStreamSource(stream);
   const an = S.audio.createAnalyser(); an.fftSize = 512; src.connect(an);
-  S.levels.set(uid, { an, buf: new Float32Array(an.fftSize), since: 0, on: false });
+  S.levels.set(uid, { src, an, buf: new Float32Array(an.fftSize), since: 0, on: false });
 }
 function tickLevels() {
   const now = Date.now();
@@ -131,7 +139,7 @@ function tickLevels() {
 
 // ------------------------------------------------------------------ peers
 function addPeer(uid, offer) {
-  if (S.peers.has(uid) || uid === S.me || !S.local) return;
+  if (S.ended || !S.local || S.peers.has(uid) || uid === S.me) return;
   const pc = new RTCPeerConnection({ iceServers: S.ice });
   const p = { uid, pc, offer, stream: new MediaStream(), pending: [], failedAt: 0, mic: true, cam: false,
               screen: false, speaking: false, bytes: { audio_in: 0, video_in: 0, audio_out: 0, video_out: 0 } };
@@ -152,20 +160,28 @@ function addPeer(uid, offer) {
   };
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
-    if (st === "failed" || st === "disconnected") { p.failedAt = p.failedAt || Date.now(); if (st === "failed" && p.offer) makeOffer(p, true); }
+    if (st === "failed" || st === "disconnected") { p.failedAt = p.failedAt || Date.now(); if (st === "failed" && p.offer) sendOffer(p, true); }
     else if (st === "connected") { p.failedAt = 0; send(uid, { mic: S.mic, cam: !!outgoingVideo(), screen: S.screen }); }
     setTile(uid, { lost: false });
     report();
   };
   tile(uid);
   setTile(uid, { nocam: true });
-  if (offer) makeOffer(p, false);
+  if (offer) sendOffer(p, false);
   report();
 }
 async function makeOffer(p, restart) {
   const o = await p.pc.createOffer(restart ? { iceRestart: true } : undefined);
+  if (S.peers.get(p.uid) !== p) return;              // left while the offer was made
   await p.pc.setLocalDescription(o);
+  if (S.peers.get(p.uid) !== p) return;
   send(p.uid, { sdp: p.pc.localDescription.toJSON() });
+}
+function sendOffer(p, restart) {
+  makeOffer(p, restart).catch((e) => {
+    if (S.peers.get(p.uid) !== p) return;
+    S.error = "offer: " + (e && e.message ? e.message : e); report();
+  });
 }
 async function attachLocal(p) {
   // The answer sends on the offer's lines: my microphone on the audio one, my camera or screen on the video one.
@@ -179,16 +195,21 @@ async function attachLocal(p) {
   }
 }
 async function onSignal(from, data) {
-  if (!S.local) return;
+  // A late message from somebody who left (or after `end`) must not bring them back as a peer.
+  if (S.ended || !S.local || S.left.has(from)) return;
   let p = S.peers.get(from);
   if (!p) { addPeer(from, false); p = S.peers.get(from); if (!p) return; }
+  const gone = () => S.peers.get(from) !== p;
   try {
     if (data.sdp) {
       await p.pc.setRemoteDescription(data.sdp);
+      if (gone()) return;
       if (data.sdp.type === "offer") {
         await attachLocal(p);
         const a = await p.pc.createAnswer();
+        if (gone()) return;
         await p.pc.setLocalDescription(a);
+        if (gone()) return;
         send(from, { sdp: p.pc.localDescription.toJSON() });
       }
       for (const c of p.pending.splice(0)) await p.pc.addIceCandidate(c).catch(() => {});
@@ -199,14 +220,15 @@ async function onSignal(from, data) {
     if ("mic" in data) { p.mic = !!data.mic; setTile(from, { micoff: !p.mic }); }
     if ("cam" in data) { p.cam = !!data.cam; setTile(from, { nocam: !p.cam }); }
     if ("screen" in data) { p.screen = !!data.screen; setTile(from, { screen: p.screen }); }
-  } catch (e) { S.error = "signal: " + e.message; }
+  } catch (e) { if (!gone()) S.error = "signal: " + e.message; }
   report();
 }
 function removePeer(uid) {
+  S.left.add(uid);
   const p = S.peers.get(uid);
   if (!p) return;
   try { p.pc.close(); } catch (e) { /* closed */ }
-  S.peers.delete(uid); S.levels.delete(uid); dropTile(uid); report();
+  S.peers.delete(uid); unwatchLevel(uid); dropTile(uid); report();
 }
 async function stats() {
   for (const p of S.peers.values()) {
@@ -241,7 +263,7 @@ const COMMANDS = {
     S.statsTimer = setInterval(stats, 2000);
     await listDevices();
   },
-  add_peer(a) { addPeer(a.uid, !!a.offer); },
+  add_peer(a) { S.left.delete(a.uid); addPeer(a.uid, !!a.offer); },
   remove_peer(a) { removePeer(a.uid); },
   signal(a) { return onSignal(a.from, a.data || {}); },
   mute(a) {
@@ -250,32 +272,39 @@ const COMMANDS = {
     setTile(S.me, { micoff: !S.mic }); others({ mic: S.mic }); report();
   },
   async camera(a) {
+    if (S.ended) return;
     if (a.on && !S.camTrack) {
       try {
         const s = await navigator.mediaDevices.getUserMedia({ video: S.devices.cam ? { deviceId: { exact: S.devices.cam } } : true });
         S.camTrack = s.getVideoTracks()[0];
       } catch (e) { note("Камера недоступна: " + e.name); return; }
+    } else if (!a.on) {
+      stopCamera();                                   // the camera's light goes off; a camera-on takes it again
     }
     S.cam = !!a.on && !!S.camTrack;
-    if (S.camTrack) S.camTrack.enabled = S.cam;
     await pushVideo(); report();
   },
   async screen(a) {
+    if (S.ended) return;
+    stopScreen();                                     // a new share replaces the old capture
     if (a.on) {
       try {
         const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-        S.screenTrack = s.getVideoTracks()[0];
-        S.screenTrack.onended = () => COMMANDS.screen({ on: false });
+        const t = s.getVideoTracks()[0];
+        if (S.ended) { t.stop(); return; }
+        S.screenTrack = t;
+        t.onended = () => { if (S.screenTrack === t) COMMANDS.screen({ on: false }); };
         S.screen = true;
-      } catch (e) { note(""); S.screen = false; report(); return; }
-    } else {
-      if (S.screenTrack) { S.screenTrack.onended = null; S.screenTrack.stop(); }
-      S.screenTrack = null; S.screen = false;
+      } catch (e) { note(""); report(); }
     }
     await pushVideo(); report();
   },
   async devices(a) {
-    S.devices = { mic: a.mic || "", cam: a.cam || "" };
+    if (S.ended) return;
+    // Merge: a change of one device keeps the other. The camera is taken anew only while it is on;
+    // otherwise the next camera-on takes the chosen one.
+    if (a.mic !== undefined) S.devices.mic = a.mic || "";
+    if (a.cam !== undefined) S.devices.cam = a.cam || "";
     if (a.mic !== undefined && S.local) {
       try {
         const s = await navigator.mediaDevices.getUserMedia({ audio: S.devices.mic ? { deviceId: { exact: S.devices.mic } } : true });
@@ -287,23 +316,35 @@ const COMMANDS = {
       } catch (e) { note("Микрофон не переключился: " + e.name); }
     }
     if (a.cam !== undefined && S.cam) {
-      if (S.camTrack) S.camTrack.stop();
-      S.camTrack = null;
+      stopCamera();
       await COMMANDS.camera({ on: true });
     }
     report();
   },
   names(a) { S.names = a || {}; for (const t of document.querySelectorAll(".tile")) tile(t.id.slice(2)); },
   end() {
+    S.ended = true;
     for (const uid of [...S.peers.keys()]) removePeer(uid);
     for (const t of (S.local ? S.local.getTracks() : [])) t.stop();
-    if (S.screenTrack) S.screenTrack.stop();
+    stopCamera(); stopScreen(); S.cam = false;
+    S.local = null;
+    for (const uid of [...S.levels.keys()]) unwatchLevel(uid);
+    if (S.audio) { S.audio.close().catch(() => {}); S.audio = null; }
     if (S.timer) clearInterval(S.timer);
     if (S.statsTimer) clearInterval(S.statsTimer);
     S.timer = S.statsTimer = null;
     report();
   },
 };
+function stopCamera() {
+  if (!S.camTrack) return;
+  if (S.local && S.local.getVideoTracks().includes(S.camTrack)) S.local.removeTrack(S.camTrack);
+  S.camTrack.stop(); S.camTrack = null;
+}
+function stopScreen() {
+  if (S.screenTrack) { S.screenTrack.onended = null; S.screenTrack.stop(); }
+  S.screenTrack = null; S.screen = false;
+}
 
 // Every command waits for `start` (it awaits the devices: an `add_peer` or `signal` sent right after
 // it must find the local media there); set-up messages run one after another in the order they came.

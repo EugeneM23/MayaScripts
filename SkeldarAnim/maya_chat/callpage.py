@@ -115,6 +115,11 @@ def _object(text):
     return value if isinstance(value, dict) else None
 
 
+def _level(level):
+    """A console level as a number, whether Qt hands an enum member or an int."""
+    return int(getattr(level, "value", level))
+
+
 def page_class():
     """`CallPage(profile, parent=None)`: grants media only to ORIGIN, hands a screen request on."""
     if "page" not in _CLASSES:
@@ -137,8 +142,12 @@ def page_class():
                     permission.deny()
 
             def javaScriptConsoleMessage(self, level, message, line, source):   # noqa: N802
-                if level >= QtWebEngineCore.QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel:
+                # The level is a plain enum.Enum in Maya 2027's PySide6: no ordering, compare values.
+                if _level(level) >= _level(_LEVELS().WarningMessageLevel):
                     print("[call page] %s (%s:%s)" % (message, source, line))
+
+        def _LEVELS():                                  # noqa: N802
+            return QtWebEngineCore.QWebEnginePage.JavaScriptConsoleMessageLevel
 
         _CLASSES["page"] = CallPage
     return _CLASSES["page"]
