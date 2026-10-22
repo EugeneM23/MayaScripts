@@ -697,15 +697,19 @@ class Playerchar(unittest.TestCase):
                     if line.startswith("createNode mesh "):
                         meshes.append(line.split('"')[1])
             self.assertEqual(images, ["Playerchar/Playerchar_Color.jpg"], key)
-            self.assertEqual(sorted(meshes), ["BodyShape", "BodyShapeOrig"], key)
+            self.assertEqual(sorted(meshes), ["BodyShape", "BodyShapeOrig", "Body_1PShape", "Body_1PShapeOrig"], key)
 
-    def test_the_rig_has_no_view_switch(self):
-        """Manny's 1P/3P `Main.view` went with Manny's meshes: 1P Setup says there is no 1P mesh."""
+    def test_the_rig_has_manny_s_view_switch(self):
+        """2026-10-22, «1P версию точно так же как и для менни»: `Body_1P` (the body's arms and legs) and
+        Main's `view` (3P:1P, not keyable) switching it with the body through two conditions."""
         with open(catalog.character_file(catalog.character_by_key("Playerchar_Rig")),
                   encoding="utf-8", errors="replace") as handle:
             text = handle.read()
-        self.assertNotIn('-ln "view"', text)
-        self.assertNotIn("viewCondition", text)
+        self.assertIn('-ln "view"', text)
+        self.assertIn('-en "3P:1P"', text)
+        self.assertIn('createNode condition -n "Body_viewCondition"', text)
+        self.assertIn('createNode condition -n "Body_1P_viewCondition"', text)
+        self.assertIn('createNode transform -n "Body_1P" -p "SKM_Playerchar"', text)
 
 
 class CreepTextured(unittest.TestCase):

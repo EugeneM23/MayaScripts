@@ -74,3 +74,21 @@
 a UE clip retargeted onto the rig exact (a twin); all four pieces equipped on the rig - every vertex
 where the source scene's skin puts it at the bind and under the take; Unequip; equipped on a Manny
 skeleton; refused on the Creep; Delete character takes the clothes; the export bones only.
+
+## Addendum 2026-10-22: the 1P version, as Manny's
+
+The animator: «Для этого персонажа нужно сделать 1P версию точно так же как и для менни».
+
+- Manny's 1P (`Skin_1p`, 2026-10-09) is the cut of his body keeping the arms from the shoulder and the
+  legs from the hip: no head, no torso. `Main.view` (3P:1P, not keyable, 3P by default) switches it with
+  `Skin_3p` through two conditions; the skeleton asset keeps `Skin_1p` hidden.
+- Playerchar's body is not Manny's mesh, so the cut is a rule fitted on Manny's: a face is the 1P's when
+  any of its vertices weighs at least 0.35 on the arm and leg bones (upperarm, lowerarm, hand, the
+  fingers, thigh, calf, foot, ball). On Manny's `Skin_3p` it gives his own cut back to 1726 of 92178
+  faces (1.9 %).
+- `Body_1P` (7682 of 18710 vertices) beside `Body` in `SKM_Playerchar`, skinned with the body's weights
+  vertex for vertex on the same bind pose, the same material; `Main.view` as Manny's; hidden in the
+  skeleton asset. Tools > 1P Setup then sets the rig to 1P.
+- Not done: the clothing has no 1P cut (a worn helmet stays on in 1P).
+- Proof: `verify_playerchar.py` 18/18 (the 1P on the body under a take, the switch), `verify_1p_setup.py`
+  30/30 on Playerchar_Rig.

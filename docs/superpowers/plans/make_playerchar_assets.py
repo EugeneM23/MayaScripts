@@ -14,6 +14,12 @@ outfit skinned onto a bare copy of Manny's game skeleton at the rig's build pose
   the source's Body copied at its bind, bound to the rig's game joints with the source's weights vertex
   for vertex, the bind pose saved again whole (traps 79/91), one textured material naming the atlas
   relatively ("Playerchar/Playerchar_Color.jpg", colour.ASSET_IMAGE).
+- **1P** (2026-10-22, «1P версию точно так же как и для менни»): `Body_1P`, the body's arms and legs -
+  the cut Manny's `Skin_1p` is (the torso and head out): a face kept when any of its vertices weighs at
+  least ONE_P_SHARE on the arm and leg bones (fitted on Manny: that rule gives his own cut back to 1.9 %
+  of its faces). Skinned with the body's weights vertex for vertex, the same material; `Main.view`
+  (enum 3P:1P, not keyable, 3P by default) switches the two as on Manny's and the Orc D's rig. In the
+  skeleton asset `Body_1P` stays, hidden, as Manny's skeleton keeps `Skin_1p`.
 - **skeleton**: the rig asset without its rig, the Creep skeleton's way: the bones re-seated from their
   world matrices, `|Group` and everything nothing kept depends on deleted.
 - **armor**: one clothing piece - a group `<key>` of skinned meshes at identity (`inheritsTransform`
@@ -43,6 +49,13 @@ MAPS = "Playerchar/"
 ATLAS = "Playerchar_Color.jpg"
 GROUP = "SKM_Playerchar"
 BODY = "Body"
+BODY_1P = "Body_1P"
+VIEW = "view"
+# Manny's 1P (`Skin_1p`) is his body's limbs: a face of the body is the 1P's when any of its vertices
+# weighs at least this on these bones (fitted on Manny's Skin_3p against his own cut: 1726 of 92178 off)
+LIMB_BONES = ("upperarm", "lowerarm", "hand", "thumb", "index", "middle", "ring", "pinky",
+              "thigh", "calf", "foot", "ball")
+ONE_P_SHARE = 0.35
 BANNED = ("createNode script", "vaccine", "breed_gene", "C:/", "c:/", "D:/", "E:/", "e:/", "Downloads",
           "scratchpad", "Basechar_proxy_mat", "Merged_bodyLow", "skeldarColour", "srcP:")
 
@@ -173,6 +186,17 @@ def head_shells(transform):
         on_head = sum(flat[v * n + head] for v in verts) / float(len(verts))
         out.append((on_head > 0.5, verts, faces))
     return out
+
+
+def first_person_faces(transform):
+    """The faces of `transform` its first-person cut keeps: a face with a vertex weighing ONE_P_SHARE
+    or more on the arm and leg bones (Manny's Skin_1p rule)."""
+    names, flat, n = weights_of(transform)
+    limb = [i for i, x in enumerate(names) if x.startswith(LIMB_BONES)]
+    share = [sum(flat[v * n + i] for i in limb) for v in range(len(flat) // n)]
+    fn = mfn(transform)
+    return [f for f in range(fn.numPolygons)
+            if max(share[v] for v in fn.getPolygonVertices(f)) >= ONE_P_SHARE]
 
 
 def one_uv_set(shape):
@@ -409,28 +433,47 @@ def build_rig():
     group = cmds.createNode("transform", name=GROUP, skipSelect=True)
     body = cmds.ls(cmds.parent(body, "|" + GROUP)[0], long=True)[0]
     skin = bind_like(body, kept, src_body, game, BODY)
-    pose = whole_bind_pose(root, [skin])
-    cmds.dgdirty(body)
-    now = mfn(body).getPoints(om.MSpace.kWorld)
-    still = max(now[k].distanceTo(src_points[v]) for k, v in enumerate(kept))
-    print("%s: %d vertices, skin off its bind %.2e, every vertex where the source's skin has it to %.2e cm, %s"
-          % (BODY, len(kept), bind_error(skin), still, pose))
-    assert still < 1e-3 and bind_error(skin) < 1e-4
+    faces_1p = first_person_faces(src_body)
+    body1, kept1 = copy_mesh(src_body, BODY_1P, faces_1p)
+    body1 = cmds.ls(cmds.parent(body1, "|" + GROUP)[0], long=True)[0]
+    skin1 = bind_like(body1, kept1, src_body, game, BODY_1P)
+    pose = whole_bind_pose(root, [skin, skin1])
+    for mesh, keep, sc in ((body, kept, skin), (body1, kept1, skin1)):
+        cmds.dgdirty(mesh)
+        now = mfn(mesh).getPoints(om.MSpace.kWorld)
+        still = max(now[k].distanceTo(src_points[v]) for k, v in enumerate(keep))
+        print("%s: %d vertices, %d faces, skin off its bind %.2e, every vertex where the source's skin has "
+              "it to %.2e cm, %s" % (leaf(mesh), len(keep), mfn(mesh).numPolygons, bind_error(sc), still, pose))
+        assert still < 1e-3 and bind_error(sc) < 1e-4
     cmds.namespace(removeNamespace="srcP", deleteNamespaceContent=True)
 
     for shape in cmds.ls(cmds.ls(materials=True), long=True):
         pass
     mat, engine = atlas_material("Playerchar_Body")
-    cmds.sets(body, edit=True, forceElement=engine)
-    for a in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
-        cmds.setAttr(body + "." + a, lock=True)
+    cmds.sets([body, body1], edit=True, forceElement=engine)
+    for mesh in (body, body1):
+        for a in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
+            cmds.setAttr(mesh + "." + a, lock=True)
+    # Main's switch between the two, as Manny's and the Orc D's: 3P by default, not keyable
+    cmds.addAttr(main, longName=VIEW, attributeType="enum", enumName="3P:1P", defaultValue=0, keyable=False)
+    cmds.setAttr(main + "." + VIEW, channelBox=True)
+    for mesh, value in ((body, 0), (body1, 1)):
+        cond = cmds.createNode("condition", name=leaf(mesh) + "_viewCondition", skipSelect=True)
+        cmds.connectAttr(main + "." + VIEW, cond + ".firstTerm")
+        cmds.setAttr(cond + ".secondTerm", value)
+        cmds.setAttr(cond + ".colorIfTrueR", 1.0)
+        cmds.setAttr(cond + ".colorIfFalseR", 0.0)
+        cmds.connectAttr(cond + ".outColorR", mesh + ".visibility", force=True)
+    for value, shown, hidden in ((1, body1, body), (0, body, body1)):
+        cmds.setAttr(main + "." + VIEW, value)
+        assert cmds.getAttr(shown + ".visibility") and not cmds.getAttr(hidden + ".visibility"), value
     gone = asset_dress.unused_shading()
     print("shading taken out:", sorted(set(t for _n, t in gone)))
     print("left of Manny:", cmds.ls("*Manny*"))
-    assert cmds.ls(type="skinCluster") == [skin], cmds.ls(type="skinCluster")
+    assert sorted(cmds.ls(type="skinCluster")) == sorted([skin, skin1]), cmds.ls(type="skinCluster")
     assert cmds.ls(type="dagPose") == ["bindPose1"], cmds.ls(type="dagPose")
     assert len(cmds.dagPose("bindPose1", q=True, members=True)) == 93
-    assert not cmds.attributeQuery("view", node=main, exists=True)
+    assert cmds.attributeQuery(VIEW, node=main, exists=True) and not cmds.getAttr(main + "." + VIEW)
     print("images:", asset_dress.check_images(MAPS, [ATLAS]))
     print("assemblies:", cmds.ls(assemblies=True))
     save_ascii(RIG)
@@ -463,6 +506,12 @@ def build_skeleton():
     drift = max(max(abs(a - b) for a, b in zip(list(m), list(wm(path(u))))) for u, m in world)
     cmds.delete("|Group")
     kinds = drop_unused(["|root", "|" + GROUP])
+    # the 1P stays in the file hidden, as Manny's skeleton keeps Skin_1p (its switch went with Main)
+    for mesh, shown in ((BODY, True), (BODY_1P, False)):
+        node = "|%s|%s" % (GROUP, mesh)
+        for plug in cmds.listConnections(node + ".visibility", s=True, d=False, plugs=True) or []:
+            cmds.disconnectAttr(plug, node + ".visibility")
+        cmds.setAttr(node + ".visibility", shown)
     print("deleted by type:", sorted(kinds.items(), key=lambda kv: -kv[1])[:20])
     root = cmds.ls("|root", type="joint", long=True)[0]
     assert len(cmds.listRelatives(root, allDescendents=True, type="joint")) == 92
@@ -470,7 +519,7 @@ def build_skeleton():
     skins = cmds.ls(type="skinCluster")
     worst = max(bind_error(sc) for sc in skins)
     print("bones re-seated, drift %.2e; skins %s off their bind %.2e" % (drift, skins, worst))
-    assert worst < 1e-4 and len(skins) == 1
+    assert worst < 1e-4 and len(skins) == 2
     print("images:", asset_dress.check_images(MAPS, [ATLAS]))
     print("assemblies:", cmds.ls(assemblies=True))
     save_ascii(SKELETON, BANNED + ('createNode transform -n "Group"', "ControlSet", "FitSkeleton", "MoCapConstraints"))

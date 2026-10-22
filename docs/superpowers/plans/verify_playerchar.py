@@ -6,13 +6,16 @@ Spec: docs/superpowers/specs/2026-10-21-playerchar-and-clothing-design.md. Again
 were built from (sources/playerchar/Playerchar_Proxy.mb, imported into `chk`):
 
 - «Playerchar [rig]» and «Playerchar [skeleton]» added: one mesh each, naked, on its bind, textured with
-  the shipped atlas, the body where the source's skin shows it; the rig without Manny's 1P switch;
+  the shipped atlas, the body where the source's skin shows it; each with the first-person `Body_1P`
+  (the body's arms and legs, Manny's cut), hidden, the rig's `Main.view` (3P:1P) switching the two;
 - the four clothing rows equipped on the rig: each in its bone's armor space, its meshes not
   inheriting, no joint of the piece's left, every vertex on a vertex of the source's own mesh, the body's
   material shared;
 - a UE clip retargeted onto the rig through the button (Manny's skeleton: exact), and under the take
   every clothing vertex where the source's own skin puts it with the source's skeleton on the rig's
-  game bones; a clothing mesh selected names its character; the export bones only;
+  game bones; every `Body_1P` vertex on its body vertex under the take; the switch untouched by the
+  retarget and showing each mesh in turn; a clothing mesh selected names its character; the export
+  bones only;
 - refused on the Creep (another body) with the scene untouched; worn on a Manny skeleton (a twin);
   a second Equip replaces; Unequip leaves nothing; Delete character takes the clothes.
 """
@@ -48,7 +51,7 @@ FROM = {"Playerchar_Helmet": ["polySurface9"],
         "Playerchar_Armor": ["TorsoCloth_", "chains_Shoulders", "chains_Legs", "polySurface9"],
         "Playerchar_Shield": ["Shield"], "Playerchar_Pants": ["Pants"]}
 FAILS = []
-TOTAL = 16
+TOTAL = 18
 
 
 def gate(n, ok, msg):
@@ -125,14 +128,22 @@ rig = [r for r in maya_rigs.rigs() if r.namespace.endswith("Playerchar_Rig")][0]
 RIG = rig.skeleton_root
 group = character.character_group(RIG) or ""
 body = [m for m in live_meshes(group) if leaf(m) == "Body"] if group else []
+body1 = [m for m in live_meshes(group) if leaf(m) == "Body_1P"] if group else []
 main = maya_rigs.node(rig, "Main")
 files = [f for f in cmds.ls(type="file") if cmds.attributeQuery(colour.ASSET_IMAGE, node=f, exists=True)]
-gate(1, len(body) == 1 and len(live_meshes(group)) == 1 and skin_error(skins(body[0])[0]) < 1e-4
-     and not cmds.attributeQuery("view", node=main, exists=True)
+view_ok = (cmds.attributeQuery("view", node=main, exists=True)
+           and cmds.attributeQuery("view", node=main, listEnum=True) == ["3P:1P"]
+           and cmds.getAttr(main + ".view") == 0 and not cmds.getAttr(main + ".view", keyable=True))
+gate(1, len(body) == 1 and len(body1) == 1 and len(live_meshes(group)) == 2
+     and skin_error(skins(body[0])[0]) < 1e-4 and skin_error(skins(body1[0])[0]) < 1e-4 and view_ok
+     and cmds.getAttr(body[0] + ".visibility") and not cmds.getAttr(body1[0] + ".visibility")
      and [os.path.normcase(cmds.getAttr(f + ".fileTextureName")) for f in files] == [os.path.normcase(ATLAS)],
-     "Playerchar [rig]: one mesh (naked), on its bind %.1e, no 1P switch, its image the shipped atlas %s"
+     "Playerchar [rig]: the body (naked) and Body_1P, on their bind %.1e, Main.view 3P (not keyable) showing "
+     "the body, its image the shipped atlas %s"
      % (skin_error(skins(body[0])[0]) if body else -1, [cmds.getAttr(f + ".fileTextureName") for f in files]))
-BODY = body[0]
+BODY, BODY_1P = body[0], body1[0]
+ONE_P, one_p_off = match(points(BODY_1P), [points(BODY)])
+print("    Body_1P: %d of the body's vertices, each on one to %.1e cm" % (len(ONE_P), one_p_off))
 drift = float(np.abs(points(BODY) - SRC_AT_BIND["Body"]).max())
 gate(2, drift < 1e-3, "the rig's body where the source's skin shows it at the bind to %.1e cm" % drift)
 
@@ -140,10 +151,14 @@ print("   ", character.add_character(catalog.character_by_key("Playerchar")))
 cmds.select(clear=True)
 bare_group = [g for g in cmds.ls(assemblies=True, long=True) if g.endswith("Playerchar_Skeleton_Character")]
 BARE = cmds.ls(bare_group[0] + "|root", long=True)[0] if bare_group else ""
-bare_body = live_meshes(bare_group[0]) if bare_group else []
-gate(3, len(bare_body) == 1 and skin_error(skins(bare_body[0])[0]) < 1e-4
+bare_body = [m for m in live_meshes(bare_group[0]) if leaf(m) == "Body"] if bare_group else []
+bare_1p = [m for m in live_meshes(bare_group[0]) if leaf(m) == "Body_1P"] if bare_group else []
+gate(3, len(bare_body) == 1 and len(bare_1p) == 1 and skin_error(skins(bare_body[0])[0]) < 1e-4
+     and skin_error(skins(bare_1p[0])[0]) < 1e-4
+     and cmds.getAttr(bare_body[0] + ".visibility") and not cmds.getAttr(bare_1p[0] + ".visibility")
      and float(np.abs(points(bare_body[0]) - SRC_AT_BIND["Body"]).max()) < 1e-3,
-     "Playerchar [skeleton]: one mesh on its bind, where the source's skin shows it (%s)" % BARE)
+     "Playerchar [skeleton]: the body on its bind, where the source's skin shows it, Body_1P beside it "
+     "hidden (%s)" % BARE)
 
 # ------------------------------------------------------------------ the clothing on the rig
 joints_before = len(cmds.ls(type="joint"))
@@ -208,7 +223,7 @@ print("   ", text_rt.splitlines()[0][:180])
 CLIPJ, RIGJ = joints_of(src), joints_of(RIG)
 print("    the clip: %d joints, not in it: %s" % (len(CLIPJ), [n for n in ("head", "neck_01", "hand_r") if n not in CLIPJ]))
 frames = list(range(int(first), int(last) + 1, max(1, int((last - first) / 6))))
-worst_bone, worst_skin, travel, start = 0.0, 0.0, 0.0, None
+worst_bone, worst_skin, travel, start, worst_1p = 0.0, 0.0, 0.0, None, 0.0
 for t in frames:
     cmds.currentTime(t)
     for name in [n for n in ("hand_r", "hand_l", "head", "neck_01", "foot_l", "foot_r", "pelvis") if n in CLIPJ]:
@@ -222,6 +237,7 @@ for t in frames:
     for mesh, (key, idx) in MAPS.items():
         want = np.vstack([points(SRC_MESH[n]) for n in FROM[key]])[idx]
         worst_skin = max(worst_skin, float(np.abs(points(mesh) - want).max()))
+    worst_1p = max(worst_1p, float(np.abs(points(BODY_1P) - points(BODY)[ONE_P]).max()))
     head = np.array(cmds.xform(RIGJ["hand_r"], q=True, ws=True, t=True))
     start = head if start is None else start
     travel = max(travel, float(np.linalg.norm(head - start)))
@@ -230,6 +246,13 @@ gate(7, ok_rt and worst_bone < 0.1, "the clip retargeted onto the rig through th
 gate(8, worst_skin < 1e-3 and travel > 10.0,
      "under the take every clothing vertex where the source's own skin puts it to %.1e cm (hand_r travels %.0f cm)"
      % (worst_skin, travel))
+gate(17, worst_1p < 1e-3, "under the take every Body_1P vertex on its body vertex to %.1e cm" % worst_1p)
+seen = []
+for value in (1, 0):
+    cmds.setAttr(main + ".view", value)
+    seen.append((bool(cmds.getAttr(BODY + ".visibility")), bool(cmds.getAttr(BODY_1P + ".visibility"))))
+gate(18, seen == [(False, True), (True, False)] and not cmds.listConnections(main + ".view", type="animCurve"),
+     "Main.view untouched by the retarget (no key), 1P shows Body_1P alone, 3P the body: %s" % seen)
 cmds.select(list(MAPS)[0])
 named = skeleton.current_root()
 cmds.select(clear=True)

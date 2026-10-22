@@ -3406,7 +3406,7 @@ null,
 "file": "Playerchar_Skeleton.ma",
 "kind": "skeleton",
 "model": "Playerchar",
-"sha1": "1e2a55b35b9fead1ee0ba974467bd4904b590b57"
+"sha1": "81ebb71fefad7bb7126ea28c19b3662a61a5ea9f"
 },
 "Playerchar_Rig": {
 "bones": {
@@ -3972,7 +3972,7 @@ null,
 "file": "Playerchar_Rig.ma",
 "kind": "rig",
 "model": "Playerchar",
-"sha1": "fa0abdf4d1de9e9f82cece48c69ff496e96f4378"
+"sha1": "c45ab1a8960255f25fe5e18fcfef7c55826656d0"
 },
 "UE4_Mannequin": {
 "bones": {

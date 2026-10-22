@@ -13625,7 +13625,7 @@ is what the tab holds, unmodified):
   the rig, Manny's meshes and the materials (paths of Downloads and `E:`) deleted, plain names; and the atlas;
 - `make_playerchar_assets.py` (one mayapy per step, trap 122):
   - `rig`: `assets/Manny_Rig.ma` with Manny's meshes, their lod group, `Main.view` and its conditions and
-    Manny's materials out, `SKM_Playerchar|Body` in, bound to the rig's game joints with the source's weights
+    Manny's materials out (the switch made again for `Body_1P` since 2026-10-22, below), `SKM_Playerchar|Body` in, bound to the rig's game joints with the source's weights
     vertex for vertex, the bind pose saved again whole (traps 79/91), one textured material naming
     `Playerchar/Playerchar_Color.jpg` relatively → `assets/Playerchar_Rig.ma` (6.4 MB);
   - `skeleton`: that rig without the rig, the Creep skeleton's way (images given their relative paths back
@@ -13675,6 +13675,22 @@ replaces; Unequip leaves nothing; Delete character through the pants takes the M
 tests `test_scenesetup_armor.Clothing` / `ClothingRows`, `test_scenesetup_catalog.Playerchar`; 8313 run, the
 known `test_chat_deploy.Keys` failing. Pictures in the disposable Maya: the rig naked and fully dressed, front
 and back. **Not seen in the animator's Maya** (the Armor tiles, a real Equip press): after Check update.
+
+**…and a 1P version, as Manny's** (2026-10-22, «Для этого персонажа нужно сделать 1P версию точно так же
+как и для менни»). Measured first: Manny's 1P is `Skin_1p` (2026-10-09, `make_manny_1p_assets.py`), the
+cut of `Skin_3p` that keeps the arms from the shoulder and the legs from the hip - no head, no torso;
+`Hands_1P` hidden. Playerchar's body is another mesh, so the cut is a RULE fitted on Manny's: a face is
+the 1P's when any of its vertices weighs at least `ONE_P_SHARE` (0.35) on the arm and leg bones
+(`LIMB_BONES`); on Manny's `Skin_3p` that gives his own cut back to 1726 of 92178 faces.
+`make_playerchar_assets.py rig` adds `SKM_Playerchar|Body_1P` (7682 of the body's 18710 vertices; the
+shoulder seam is stepped where Manny's is a clean ring) skinned with the body's weights vertex for
+vertex on the same bindPose1, the same material, and `Main.view` (enum 3P:1P, channel box, not keyable,
+3P by default) with `Body_viewCondition` / `Body_1P_viewCondition`; `skeleton` keeps `Body_1P` hidden, as
+Manny's skeleton keeps `Skin_1p`. So Tools > 1P Setup puts Playerchar in 1P. The clothing has no 1P of
+its own: a worn helmet stays on in 1P. Proof: `verify_playerchar.py` **18/18** (gates 17: every
+`Body_1P` vertex on its body vertex under the take, 0.0 cm; 18: the switch untouched by the retarget,
+each mesh in turn), `verify_1p_setup.py <clip> Playerchar_Rig` **30/30**; `make_character_skeletons.py`
+rerun (the assets' sha1); 8345 unit tests, the known `test_chat_deploy.Keys` failing.
 
 288. **A mesh hidden in the source scene is not part of what the animator shows.** The parts picture drawn
      from the file's triangles ignored visibility, so a chain veil over the face and a cloak were described
