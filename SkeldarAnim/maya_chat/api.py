@@ -6,6 +6,8 @@ default with 403 "error code: 1010" (measured 2026-10-20).
 """
 import json
 import socket
+import time
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +29,9 @@ class Api(object):
         self.server = server.rstrip("/")
         self.token = token
         self.opener = opener
+        # this machine's clock minus the server's, in ms, read off every answer's Date header: a
+        # call rings by the server's time (a callee whose clock ran 2 min ahead never saw the card)
+        self.skew_ms = 0
 
     def raw(self, method, path, data=None, content_type="application/octet-stream", timeout=TIMEOUT):
         """Bytes out and bytes back (avatars). A refusal is a ChatError as for call()."""
@@ -49,6 +54,14 @@ class Api(object):
             doc = {}
         raise ChatError(doc.get("error") or "server", doc.get("text") or "Refused", status)
 
+    def _clock(self, answer):
+        try:
+            date = (getattr(answer, "headers", None) or {}).get("Date")
+            if date:
+                self.skew_ms = int(time.time() * 1000 - parsedate_to_datetime(date).timestamp() * 1000)
+        except Exception:                                    # noqa: BLE001
+            pass
+
     def call(self, method, path, body=None):
         headers = {"User-Agent": AGENT}
         data = None
@@ -61,6 +74,7 @@ class Api(object):
         try:
             with self.opener(req, timeout=TIMEOUT) as answer:
                 raw, status = answer.read(), getattr(answer, "status", 200)
+                self._clock(answer)
         except urllib.error.HTTPError as exc:
             raw, status = exc.read(), exc.code
         except (urllib.error.URLError, socket.timeout, OSError) as exc:

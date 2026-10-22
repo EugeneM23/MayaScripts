@@ -104,3 +104,22 @@ class Failures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerClock(unittest.TestCase):
+    """The server's Date header gives this machine's clock skew (a call rings by the server's time)."""
+
+    def test_the_skew_is_read_off_the_date_header(self):
+        import time
+        from email.utils import formatdate
+        ans = Answer({})
+        ans.headers = {"Date": formatdate(time.time() - 120, usegmt=True)}   # the server 2 min behind
+        api = a.Api("https://x.dev", opener=Opener(ans))
+        self.assertEqual(api.skew_ms, 0)
+        api.me()
+        self.assertAlmostEqual(api.skew_ms, 120000, delta=2000)
+
+    def test_no_date_keeps_the_skew(self):
+        api = a.Api("https://x.dev", opener=Opener(Answer({})))
+        api.me()
+        self.assertEqual(api.skew_ms, 0)

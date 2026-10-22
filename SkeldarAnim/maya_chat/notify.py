@@ -151,9 +151,12 @@ def _loop_ring():
         return None
 
 
-def _now_ms():
+def _now_ms(session=None):
+    """Now by the SERVER's clock (a call's started_at is the server's): this machine's less the
+    skew the api read off the server's Date header."""
     import time
-    return int(time.time() * 1000)
+    skew = getattr(getattr(session, "api", None), "skew_ms", 0) or 0
+    return int(time.time() * 1000) - int(skew)
 
 
 def _user(session, uid):
@@ -220,7 +223,7 @@ def _heard_call(session, data, out):
     view = (data or {}).get("call") or {}
     cid = view.get("id")
     me = (session.state.me or {}).get("id")
-    ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms())}
+    ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms(session))}
     held = _rings()
     if cid in ringing and cid not in held:
         caller = _user(session, view.get("by"))
@@ -330,7 +333,7 @@ def heard(session, kind, data, out=None):
     if kind == "resync":
         from . import calls as _calls
         me = (session.state.me or {}).get("id")
-        ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms())}
+        ringing = {c["id"] for c in _calls.ringing_for(session.state.calls, me, _now_ms(session))}
         for cid in [c for c in _rings() if c not in ringing]:
             _gone(cid)
             done.append(("call_gone", cid))

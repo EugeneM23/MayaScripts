@@ -320,3 +320,34 @@ class Ending(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClockSkew(unittest.TestCase):
+    """A call rings by the SERVER's clock: a callee whose clock runs ahead still gets the card."""
+
+    def setUp(self):
+        _app()
+        from maya_chat import toast
+        self.toast = toast
+        toast.clear()
+
+    def tearDown(self):
+        self.toast.clear()
+        QtWidgets.QApplication.processEvents()
+
+    def test_a_clock_two_minutes_ahead_still_rings(self):
+        class Api(object):
+            skew_ms = 120000                       # this machine's clock is 2 min ahead
+        ses = FakeSession()
+        ses.api = Api()
+        started = int(time.time() * 1000) - 120000      # the server's "now"
+        c = call(started_at=started)
+        ses.state.calls = {"c1": c}
+
+        class H(object):
+            def stop(self):
+                pass
+        with mock.patch.object(notify, "_loop_ring", side_effect=lambda: H()):
+            out = notify.heard(ses, "call", {"kind": "call", "call": c}, out=[])
+        self.assertIn(("call_card", "c1"), out)
+        notify.stop_all()
