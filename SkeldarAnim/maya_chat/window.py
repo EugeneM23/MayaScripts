@@ -38,9 +38,11 @@ FILE_WIDTH = 250      # the least a file bubble takes
 FILE_ACTIONS = {"ready": (("open", "Open"), ("import", "Import"), ("more", u"\u22ef")),
                 "upload": (("cancel", u"Отмена"),),
                 "failed": (("cancel", u"Отмена"),),
-                "download": (), "expired": (), "card": ()}
+                "download": (), "expired": (), "card": (),
+                "image": (("view", u"Открыть"), ("save", u"Сохранить как…"))}
 CARD_HINT = u"перетащите во вьюпорт или в библиотеку поз"
-FILE_FILTER = "Maya scenes and FBX (*.ma *.mb *.fbx)"
+FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg)"
+PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -452,7 +454,8 @@ def look_approach(value, goal, dt_ms, ms):
 class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
-                 "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar")
+                 "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
+                 "thumb")
 
     def __init__(self, item):
         self.item = item
@@ -470,6 +473,7 @@ class Box(object):
         self.card = None         # a file message's card (2026-10-22)
         self.fbuttons = []       # [(rect, action, label)] under the card
         self.fbar = None         # (rect, progress or None, text): an upload or download
+        self.thumb = None        # the file's preview over its card
 
 
 def feed_class():
@@ -497,6 +501,7 @@ def feed_class():
                 self._press = None        # (point, item) on a file card, before a drag starts
                 self._dragging = False
                 self._hover_button = None
+                self.playing = None       # (message key, started ms): an animation preview playing
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
@@ -608,7 +613,9 @@ def feed_class():
                         doc = self._doc(item, inner)
                         doc_w, doc_h = doc.size().width(), doc.size().height()
                     box.doc = doc
-                    file_h = (px(FILE_CARD) + px(4) + px(FILE_ROW) + px(6)) if f else 0
+                    ph = look.preview_height(f, self._pending_thumb(item)) if f else 0
+                    file_h = (px(FILE_CARD) + px(4) + px(FILE_ROW) + px(6)
+                              + (px(ph) + px(4) if ph else 0)) if f else 0
                     meta = []
                     if msg.get("edited_at"):
                         meta.append("изм.")
@@ -679,6 +686,10 @@ def feed_class():
             def _lay_file(self, box, x, y, w):
                 """A file message's card, and under it its buttons or its progress bar."""
                 px = lambda n: hubstyle.px(n, self.win.scale)      # noqa: E731
+                ph = look.preview_height(box.item.message.get("file"), self._pending_thumb(box.item))
+                if ph:
+                    box.thumb = QtCore.QRectF(x, y, w, px(ph))
+                    y += px(ph) + px(4)
                 box.card = QtCore.QRectF(x, y, w, px(FILE_CARD))
                 row = QtCore.QRectF(x, y + px(FILE_CARD) + px(4), w, px(FILE_ROW))
                 state = (self.ctx.get("file_state") or (lambda item: ("ready", None, "")))(box.item)
@@ -696,7 +707,7 @@ def feed_class():
                     return
                 box.fbar = None
                 gap = px(4)
-                more = px(32)
+                more = px(32) if any(a[0] == "more" for a in actions) else -gap
                 main = [a for a in actions if a[0] != "more"]
                 each = (row.width() - more - gap * len(main)) / max(1, len(main))
                 cx = row.left()
@@ -705,10 +716,76 @@ def feed_class():
                     box.fbuttons.append((QtCore.QRectF(cx, row.top(), width, row.height()), action, label))
                     cx += width + gap
 
+            def _pending_thumb(self, item):
+                up = item.message.get("upload") if item.pending else None
+                return bool(up and up.get("thumb"))
+
+            def _preview_image(self, box):
+                f = box.item.message.get("file") or {}
+                up = box.item.message.get("upload") if box.item.pending else None
+                try:
+                    from . import thumbs
+                    held = thumbs.cache(self.win.session)
+                    return held.image(f, (up or {}).get("thumb")) if held is not None else None
+                except Exception:                            # noqa: BLE001
+                    return None
+
+            def _paint_preview(self, p, box):
+                s = self.win.scale
+                px = lambda n: hubstyle.px(n, s)              # noqa: E731
+                from . import thumbs
+                f = box.item.message.get("file") or {}
+                rect = box.thumb
+                clip = QtGui.QPainterPath()
+                clip.addRoundedRect(rect, px(6), px(6))
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(_colour("panel", 0.6))
+                p.drawPath(clip)
+                image = self._preview_image(box)
+                if image is None:
+                    p.setPen(_colour("muted"))
+                    p.setFont(_font(self.font(), px(9)))
+                    p.drawText(rect, QtCore.Qt.AlignCenter, u"превью…")
+                    return
+                sheet = thumbs.sheet_of(f)
+                source = QtCore.QRectF(0, 0, image.width(), image.height())
+                if sheet is None and f.get("kind") != "image":
+                    # a still's own backdrop fills the frame round it (a viewport, a card's)
+                    p.setBrush(image.pixelColor(1, 1))
+                    p.drawPath(clip)
+                if sheet is not None:
+                    side = image.width() / float(sheet["columns"])
+                    playing = self.playing if self.playing and self.playing[0] == box.item.key() \
+                        else None
+                    cell = thumbs.play_cell(_now_ms() - playing[1] if playing else None, sheet)
+                    cx, cy, cw, ch = thumbs.cell_rect(cell, sheet["columns"], side)
+                    source = QtCore.QRectF(cx, cy, cw, ch)
+                fx, fy, fw, fh = look.fitted(source.width(), source.height(), rect.width(), rect.height())
+                target = QtCore.QRectF(rect.left() + fx, rect.top() + fy, fw, fh)
+                p.save()
+                p.setClipPath(clip)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+                p.drawImage(target, image, source)
+                p.restore()
+                if sheet is not None:
+                    badge = u"\u25b6" if not (self.playing and self.playing[0] == box.item.key()) \
+                        else u"\u25b6 %d" % (sheet["cells"])
+                    p.setFont(_font(self.font(), px(9), True))
+                    fm = QtGui.QFontMetrics(p.font())
+                    bw = fm.horizontalAdvance(badge) + px(10)
+                    br = QtCore.QRectF(rect.right() - bw - px(6), rect.bottom() - px(20), bw, px(16))
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(QtGui.QColor(0, 0, 0, 150))
+                    p.drawRoundedRect(br, px(8), px(8))
+                    p.setPen(_colour("text"))
+                    p.drawText(br, QtCore.Qt.AlignCenter, badge)
+
             def _paint_file(self, p, box):
                 s = self.win.scale
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 f = box.item.message.get("file") or {}
+                if box.thumb is not None:
+                    self._paint_preview(p, box)
                 card = box.card
                 p.setPen(QtCore.Qt.NoPen)
                 p.setBrush(_colour("panel", 0.45))
@@ -799,7 +876,8 @@ def feed_class():
                 for k, start in list(self.pill_pops.items()):
                     if now - start >= POP_MS:
                         del self.pill_pops[k]
-                busy = bool(self.entering or self.flashing or self.folding or self.pill_pops)
+                busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
+                            or self.playing)
                 self.update()
                 return busy
 
@@ -946,6 +1024,8 @@ def feed_class():
                     for rect, action, _label in box.fbuttons:
                         if rect.contains(point):
                             return box, "file:" + action
+                    if box.thumb is not None and box.thumb.contains(point):
+                        return box, "thumb"
                     if box.card is not None and box.card.contains(point):
                         return box, "card"
                     for rect, e, _n, _me in box.pills:
@@ -975,7 +1055,13 @@ def feed_class():
                 if where.startswith("file:"):
                     self.win.file_action(box.item, where[5:], gp)
                     return
-                if where == "card" and not box.item.pending:
+                if where in ("card", "thumb") and not box.item.pending:
+                    from . import files as _files
+                    f = box.item.message.get("file") or {}
+                    if _files.is_image(f):
+                        if where == "thumb":
+                            self.win.file_action(box.item, "view", gp)
+                        return
                     self._press = (QtCore.QPointF(pos), box.item)
                     return
                 if where == "failed":
@@ -1010,6 +1096,7 @@ def feed_class():
                             self.grabMouse()
                         return
                 box, _where = self.box_at(pos)
+                self._hover_preview(box if _where == "thumb" else None)
                 hover = None
                 if _where.startswith("file:"):
                     hover = (id(box.item.message), _where[5:])
@@ -1036,6 +1123,23 @@ def feed_class():
                 except Exception:                            # noqa: BLE001
                     pass
                 self.win.drag_end(gp, cancel)
+
+            def _hover_preview(self, box):
+                """An animation's preview plays while the mouse is on it."""
+                from . import thumbs
+                key = None
+                if box is not None and thumbs.sheet_of(box.item.message.get("file")) is not None:
+                    key = box.item.key()
+                if key == (self.playing[0] if self.playing else None):
+                    return
+                self.playing = (key, _now_ms()) if key else None
+                if self.playing:
+                    self.win.animate()
+                self.update()
+
+            def leaveEvent(self, event):                   # noqa: N802
+                self._hover_preview(None)
+                super(Feed, self).leaveEvent(event)
 
             def top_of(self, message_id):
                 for box in self.boxes:
@@ -1235,6 +1339,23 @@ def composer_class():
                     if self.win.cancel_bar():
                         return
                 super(Composer, self).keyPressEvent(event)
+
+            def canInsertFromMimeData(self, source):       # noqa: N802
+                if source is not None and (source.hasImage() or self.win.sendable(source)):
+                    return True
+                return super(Composer, self).canInsertFromMimeData(source)
+
+            def insertFromMimeData(self, source):          # noqa: N802
+                """Ctrl+V (or a drop) of a picture or of files: they go into the chat; text is
+                text (2026-10-22: «кидать в чат картинки просто через ctrl + v»)."""
+                paths = self.win.sendable(source)
+                if paths:
+                    self.win.dropped(paths)
+                    return
+                if source is not None and source.hasImage():
+                    self.win.send_image(source.imageData())
+                    return
+                super(Composer, self).insertFromMimeData(source)
 
         _CLASSES["composer"] = Composer
     return _CLASSES["composer"]
@@ -2088,7 +2209,10 @@ class ChatWindow(object):
             rows.append(("Удалить", lambda: (self.session.discard(m.get("cid")), self.refresh())))
             return rows
         from . import files as _files
-        if m.get("file") and not m["file"].get("expired") and not _files.is_card(m["file"]):
+        if m.get("file") and not m["file"].get("expired") and _files.is_image(m["file"]):
+            for action, label in FILE_ACTIONS["image"]:
+                rows.append((label, lambda a=action: self.file_action(item, a)))
+        elif m.get("file") and not m["file"].get("expired") and not _files.is_card(m["file"]):
             for action, label in FILE_MENU:
                 rows.append((label, lambda a=action: self.file_action(item, a)))
         rows.append(("Реакция…", lambda: self.pick_emoji(m)))
@@ -2156,6 +2280,20 @@ class ChatWindow(object):
         return self._sent_file(lambda: files.send_card(self.session, self.chat, card,
                                                        self._caption()), "card")
 
+    def send_image(self, image):
+        """A picture (the clipboard's QImage) into the open chat."""
+        from . import files
+        q = _q()
+        if image is not None and not isinstance(image, q.QtGui.QImage):
+            image = q.QtGui.QImage(image)
+        return self._sent_file(lambda: files.send_image(self.session, self.chat, image,
+                                                        self._caption()), "image")
+
+    def sendable(self, mime):
+        """The local files of `mime` the chat can send (scenes, FBX, pictures)."""
+        from . import files
+        return [path for path in _local_paths(mime) if files.kind_of(path)]
+
     def send_file_dialog(self):
         q = _q()
         path, _filter = q.QtWidgets.QFileDialog.getOpenFileName(
@@ -2189,6 +2327,8 @@ class ChatWindow(object):
         from . import files
         if files.is_card(f):
             return "card", None, CARD_HINT
+        if files.is_image(f):
+            return "image", None, ""
         return "ready", None, ""
 
     def _sender(self, m):
@@ -2225,6 +2365,7 @@ class ChatWindow(object):
                 "save": lambda path: files.save_to(path, f),
                 "stash": lambda path: files.to_stash(path, f),
                 "share": lambda path: files.to_share(path, f),
+                "view": lambda path: files.show_picture(path, f),
                 "library": lambda path: files.to_library(path, (target or {}).get("folder")),
                 "apply": lambda path: files.apply_card(path, target or {})}.get(action)
         if verb is None:
@@ -2250,8 +2391,9 @@ class ChatWindow(object):
     # ---------------------------------------------------------- a card dragged out
     def start_drag(self, item, gp):
         import maya_hubqt
+        from . import files as _files
         f = item.message.get("file") or {}
-        if not f.get("id") or f.get("expired"):
+        if not f.get("id") or f.get("expired") or _files.is_image(f):
             return False
         q = _q()
         size = int(self.px(40))
@@ -2368,14 +2510,14 @@ class ChatWindow(object):
         good = [path for path in paths if files.kind_of(path)]
         bad = [path for path in paths if not files.kind_of(path)]
         if not good:
-            self.say(u"В чат можно отправить только .ma, .mb и .fbx.")
+            self.say(u"В чат можно отправить только .ma, .mb, .fbx и картинки (.png, .jpg).")
             return 0
         sent = 0
         for path in good:
             if self.send_path(path):
                 sent += 1
         if bad and sent:
-            self.say(u"Не отправлено (не сцена и не fbx): %s" % ", ".join(
+            self.say(u"Не отправлено (не сцена, не fbx и не картинка): %s" % ", ".join(
                 os.path.basename(b) for b in bad[:3]))
         return sent
 
@@ -2772,6 +2914,13 @@ class ChatWindow(object):
                 widget.update()
             self.list.update()
             self.feed.update()
+        try:
+            from . import thumbs
+            held = thumbs.cache(self.session)
+            if held is not None and held.take_changed():
+                self.feed.update()
+        except Exception:                                    # noqa: BLE001
+            pass
 
     # ---------------------------------------------------------- place, size, show
     def _grab(self, point):

@@ -167,8 +167,30 @@ def message_text(message):
     return text
 
 
-FILE_TAGS = {".ma": "MA", ".mb": "MB", ".fbx": "FBX", ".pose": "POSE", ".anim": "ANIM"}
-KIND_WORDS = {"scene": u"сцена", "fbx": "fbx", "pose": u"поза", "anim": u"анимация"}
+FILE_TAGS = {".ma": "MA", ".mb": "MB", ".fbx": "FBX", ".pose": "POSE", ".anim": "ANIM",
+             ".png": "PNG", ".jpg": "JPG", ".jpeg": "JPG"}
+KIND_WORDS = {"scene": u"сцена", "fbx": "fbx", "pose": u"поза", "anim": u"анимация",
+              "image": u"картинка"}
+PREVIEW_H = 132       # logical px: a file's preview over its card (2026-10-22)
+PICTURE_H = 220       # ... a picture's
+
+
+def preview_height(f, pending_thumb=False):
+    """How tall the preview over a file's card stands (logical px): 0 with none. Pure."""
+    f = f or {}
+    if not (int(f.get("thumb_v") or 0) > 0 or pending_thumb):
+        return 0
+    return PICTURE_H if f.get("kind") == "image" else PREVIEW_H
+
+
+def fitted(width, height, box_w, box_h):
+    """(x, y, w, h): a `width` x `height` picture fitted inside a `box_w` x `box_h` box, centred,
+    its aspect kept. Pure."""
+    if width <= 0 or height <= 0 or box_w <= 0 or box_h <= 0:
+        return (0.0, 0.0, 0.0, 0.0)
+    k = min(float(box_w) / width, float(box_h) / height)
+    w, h = width * k, height * k
+    return ((box_w - w) / 2.0, (box_h - h) / 2.0, w, h)
 
 
 def file_tag(f):

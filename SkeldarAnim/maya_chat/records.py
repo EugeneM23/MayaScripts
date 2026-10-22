@@ -84,7 +84,7 @@ def reactions(value):
     return out
 
 
-FILE_KINDS = ("scene", "fbx", "pose", "anim")
+FILE_KINDS = ("scene", "fbx", "pose", "anim", "image")
 
 
 def file(value):
@@ -106,6 +106,18 @@ def file(value):
     out["range"] = ([float(rng[0]), float(rng[1])] if isinstance(rng, list) and len(rng) == 2
                     and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in rng)
                     else None)
+    v = value.get("thumb_v")
+    out["thumb_v"] = v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+    sheet = value.get("sheet")
+    out["sheet"] = None
+    if isinstance(sheet, dict):
+        try:
+            grid = {"cells": int(sheet["cells"]), "columns": int(sheet["columns"]),
+                    "step": int(sheet.get("step") or 1), "fps": float(sheet.get("fps") or 30.0)}
+            if grid["cells"] >= 2 and grid["columns"] >= 1 and grid["step"] >= 1:
+                out["sheet"] = grid
+        except (KeyError, TypeError, ValueError):
+            pass
     return out
 
 

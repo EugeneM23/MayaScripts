@@ -24,7 +24,10 @@ import zipfile
 
 from . import api as _api
 
-KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx"}
+KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx",
+         ".png": "image", ".jpg": "image", ".jpeg": "image"}
+IMAGES = (".png", ".jpg", ".jpeg")
+IMAGE_MOST = 50 * 1024 * 1024    # a picture sent into a chat
 CARDS = {".pose": "pose", ".anim": "anim"}      # a Pose Library card: its folder, zipped
 LIBRARY_FOLDER = "From Chat"
 ZIP_LEVEL = 6
@@ -45,6 +48,20 @@ def card_kind(name):
 
 def is_card(f):
     return (f or {}).get("kind") in ("pose", "anim")
+
+
+def is_image(f):
+    return (f or {}).get("kind") == "image"
+
+
+def _preview(make):
+    """A preview's (bytes, sheet), or None when it cannot be made - never raises: a file goes
+    without one rather than not at all."""
+    try:
+        return make()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        return None
 
 
 def _size(path):
@@ -116,18 +133,52 @@ def record_of(f, sender=""):
 # -------------------------------------------------------------------- sending
 
 def send_path(session, chat, path, caption="", name=None):
-    """A .ma/.mb/.fbx from disk into `chat`; the pending cid, or raises ChatError."""
+    """A .ma/.mb/.fbx or a picture from disk into `chat`; the pending cid, or raises ChatError."""
     own = os.path.basename(path or "")
     if kind_of(own) is None:
-        raise _api.ChatError("bad_file", "Only .ma, .mb and .fbx files can be sent")
+        raise _api.ChatError("bad_file", "Only .ma, .mb, .fbx and pictures (.png, .jpg) can be sent")
     if not os.path.isfile(path):
         raise _api.ChatError("bad_file", "No file at %s" % path)
+    if kind_of(own) == "image" and os.path.getsize(path) > IMAGE_MOST:
+        raise _api.ChatError("too_big", u"Картинка больше 50 MB")
     cid = uuid.uuid4().hex
     folder = _root(session, "uploads", cid)
     os.makedirs(folder, exist_ok=True)
     local = os.path.join(folder, name or own)
     shutil.copy2(path, local)
-    return _begin(session, chat, cid, local, caption, {})
+    thumb = None
+    if kind_of(own) == "image":
+        from . import thumbs
+        thumb = _preview(lambda: thumbs.from_picture(local, thumbs.IMAGE))
+    return _begin(session, chat, cid, local, caption, {}, thumb)
+
+
+def send_image(session, chat, image, caption=""):
+    """A picture (a QImage - the clipboard's) into `chat` as a PNG, a JPEG when that is much
+    smaller (a photo); the pending cid. 2026-10-22: «кидать в чат картинки просто через ctrl + v»."""
+    if image is None or image.isNull():
+        raise _api.ChatError("bad_file", u"В буфере обмена нет картинки")
+    cid = uuid.uuid4().hex
+    folder = _root(session, "uploads", cid)
+    os.makedirs(folder, exist_ok=True)
+    stem = time.strftime("picture_%Y%m%d_%H%M%S")
+    png = os.path.join(folder, stem + ".png")
+    if not image.save(png, "PNG"):
+        _remove(folder)
+        raise _api.ChatError("bad_file", u"Не удалось сохранить картинку")
+    jpg = os.path.join(folder, stem + ".jpg")
+    local = png
+    if image.save(jpg, "JPG", 92) and os.path.getsize(jpg) * 3 < os.path.getsize(png):
+        os.remove(png)
+        local = jpg
+    else:
+        _remove(jpg)
+    if os.path.getsize(local) > IMAGE_MOST:
+        _remove(folder)
+        raise _api.ChatError("too_big", u"Картинка больше 50 MB")
+    from . import thumbs
+    thumb = _preview(lambda: thumbs.from_picture(local, thumbs.IMAGE))
+    return _begin(session, chat, cid, local, caption, {}, thumb)
 
 
 def send_scene(session, chat, caption=""):
@@ -141,13 +192,15 @@ def send_scene(session, chat, caption=""):
     folder = _root(session, "uploads", cid)
     os.makedirs(folder, exist_ok=True)
     local = os.path.join(folder, name)
+    from . import thumbs
+    thumb = _preview(thumbs.from_viewport)
     tabscope.export_scene(local, file_type, cmds)
     meta = {"range": [cmds.playbackOptions(query=True, minTime=True),
                       cmds.playbackOptions(query=True, maxTime=True)]}
     fps = animimport.fps_from_unit(cmds.currentUnit(query=True, time=True))
     if fps:
         meta["fps"] = fps
-    return _begin(session, chat, cid, local, caption, meta)
+    return _begin(session, chat, cid, local, caption, meta, thumb)
 
 
 def send_selection(session, chat, caption=""):
@@ -159,6 +212,8 @@ def send_selection(session, chat, caption=""):
     picked = cmds.ls(selection=True, long=True) or []
     if not picked:
         raise _api.ChatError("nothing_selected", u"Сначала выделите объекты, которые отправить.")
+    from . import thumbs
+    thumb = _preview(thumbs.from_viewport)
     cid = uuid.uuid4().hex
     folder = _root(session, "uploads", cid)
     os.makedirs(folder, exist_ok=True)
@@ -170,7 +225,7 @@ def send_selection(session, chat, caption=""):
         raise _api.ChatError("export_failed", u"Не удалось выгрузить выделенное в FBX: %s" % exc)
     meta = {"range": [cmds.playbackOptions(query=True, minTime=True),
                       cmds.playbackOptions(query=True, maxTime=True)]}
-    return _begin(session, chat, cid, local, caption, meta)
+    return _begin(session, chat, cid, local, caption, meta, thumb)
 
 
 def send_card(session, chat, card, caption=""):
@@ -184,14 +239,25 @@ def send_card(session, chat, card, caption=""):
     os.makedirs(folder, exist_ok=True)
     local = os.path.join(folder, name)
     shutil.copytree(card, local)
-    return _begin(session, chat, cid, local, caption, {})
+    from . import thumbs
+    thumb = _preview(lambda: thumbs.from_card(local))
+    return _begin(session, chat, cid, local, caption, {}, thumb)
 
 
-def _begin(session, chat, cid, local, caption, meta):
+def _begin(session, chat, cid, local, caption, meta, thumb=None):
+    """The pending upload. `thumb` = (jpeg bytes, sheet or None): kept beside the upload so my
+    card shows it at once, and sent once the server knows the file."""
     name = os.path.basename(local)
     f = {"id": None, "name": name, "kind": kind_of(name) or card_kind(name), "bytes": _size(local),
-         "zip": 0, "fps": meta.get("fps"), "range": meta.get("range"), "expired": False}
-    session.add_upload(chat, cid, caption, f, local)
+         "zip": 0, "fps": meta.get("fps"), "range": meta.get("range"), "expired": False,
+         "thumb_v": 0, "sheet": None}
+    p = session.add_upload(chat, cid, caption, f, local)
+    if thumb and thumb[0]:
+        still = os.path.join(os.path.dirname(local), "preview.thumb.jpg")
+        with open(still, "wb") as out:
+            out.write(thumb[0])
+        p["upload"]["thumb"] = still
+        f["sheet"] = thumb[1]
     start(session, cid)
     return cid
 
@@ -239,6 +305,15 @@ def _upload_work(session, cid, p):
         begun = api.file_start(p["chat"], f["name"], f["kind"], f["bytes"], size,
                                f.get("fps"), f.get("range"))
         up["id"] = begun["id"]
+        if up.get("thumb") and os.path.isfile(up["thumb"]):
+            try:
+                with open(up["thumb"], "rb") as handle:
+                    put = api.file_thumb_put(up["id"], handle.read(), f.get("sheet"))
+                f["thumb_v"] = int(put.get("thumb_v") or 1)
+            except Exception as exc:                         # noqa: BLE001 - the file goes without it
+                if not isinstance(exc, _api.ChatError):
+                    traceback.print_exc()
+                f["thumb_v"], f["sheet"] = 0, None
         part_size = int(begun["part_size"])
         count = int(begun["parts"])
         with open(archive, "rb") as handle:
@@ -270,6 +345,15 @@ def _uploaded(session, cid, p):
     """Main thread: the file is on the server; the copy kept as the sent file, the frame out."""
     up, f = p["upload"], p["file"]
     f["id"] = up["id"]
+    if f.get("thumb_v") and up.get("thumb") and os.path.isfile(up["thumb"]):
+        try:
+            from . import thumbs
+            held = thumbs.cache(session)
+            if held is not None:
+                with open(up["thumb"], "rb") as handle:
+                    held.put(f["id"], f["thumb_v"], handle.read())
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
     target = _root(session, "files", f["id"])
     os.makedirs(target, exist_ok=True)
     try:
@@ -467,6 +551,16 @@ def apply_card(path, aim):
         from maya_poselib import apply
         result = apply.apply_onto(store.read(path), aim["root"], mirror=False)
     return result[-1] if isinstance(result, tuple) and result else (result or "")
+
+
+def show_picture(path, f=None):
+    """A picture from the chat opened in the system's viewer."""
+    try:
+        os.startfile(path)                                    # noqa: S606 - the animator's own file
+    except (AttributeError, OSError):
+        import subprocess
+        subprocess.Popen(["xdg-open", path])
+    return u"%s открыта" % os.path.basename(path)
 
 
 def save_to(path, f, dest=None):

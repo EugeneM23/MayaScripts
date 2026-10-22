@@ -156,6 +156,20 @@ class Api(object):
     def file_complete(self, file_id):
         return self.call("POST", "/v1/files/%s/complete" % file_id)
 
+    def file_thumb_put(self, file_id, data, sheet=None):
+        """The preview of my file on its way (a JPEG); `sheet` - an animation's grid."""
+        path = "/v1/files/%s/thumb" % file_id
+        if sheet:
+            path += "?" + urllib.parse.urlencode({"cells": int(sheet["cells"]),
+                                                  "columns": int(sheet["columns"]),
+                                                  "step": int(sheet.get("step") or 1),
+                                                  "fps": float(sheet.get("fps") or 30.0)})
+        raw = self.raw("PUT", path, bytes(data), "image/jpeg")
+        return json.loads(raw.decode("utf-8") or "{}")
+
+    def file_thumb(self, file_id):
+        return self.raw("GET", "/v1/files/%s/thumb" % file_id)
+
     def file_cancel(self, file_id):
         return self.call("DELETE", "/v1/files/" + file_id)
 

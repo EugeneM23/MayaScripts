@@ -13333,6 +13333,31 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
   skeleton, hand_r turned 40 deg, the card sent, B's copy file for file, into «From Chat» twice -
   «Fist 2» -, applied back onto the skeleton at rest: hand_r 0.000006 off the card);
   `verify_chat_server.py all` 0 of 90 on production. Not seen in a GUI Maya (the real drags).
+- **Previews, and pictures by Ctrl+V** (the same morning: «превью позы или анимации ... маленькое
+  превью картинку когда мы экспортируем что-то из сцены в чат или пересылаем сцену ... кидать в чат
+  картинки просто через ctrl + v»). Spec `docs/superpowers/specs/2026-10-22-chat-previews-design.md`.
+  - A file carries a preview made by its sender (`maya_chat/thumbs.py`, a JPEG under 256 KB): a pose
+    card its still; an animation card its preview sheet again at 128 px cells with its grid
+    (`sheet`: cells, columns, step, fps) - the chat plays it under the mouse at the clip's rate;
+    Send scene / Send selection one playblast of the panel looked at (the library's HIDDEN flags off
+    for it); a picture itself. One that cannot be made leaves the file going without it.
+  - Server: `files.thumb/thumb_type/thumb_v/sheet`, `PUT /v1/files/<id>/thumb[?cells&columns&step&fps]`
+    (the sender, before the message; 409 after), `GET .../thumb` (a member once sent); the view
+    carries `thumb_v` and `sheet`. Pictures are files: `.png`/`.jpg`/`.jpeg`, kind `image`.
+  - Client: `files._begin(..., thumb)` keeps it beside the upload (my pending card shows it) and puts
+    it after `file_start`; `thumbs.Cache` (`<store>/thumbs/<id>_<v>.jpg`, avatars' way; my own put
+    there when the upload ends). The window draws it over the card (132 px, a picture 220), a
+    picture's card has Открыть / Сохранить как… and is not dragged; `files.send_image` (PNG, or JPEG
+    under a third of it, at most 50 MB); `Composer.insertFromMimeData`: Ctrl+V of a picture sends
+    it, of Explorer files the sendable ones, text stays text.
+  - The drop of a card onto a rig, driven in a disposable GUI Maya (port 7061): `card_aim` over the
+    projected pelvis names the rig, ghost under the cursor or not, and a real press-move-release
+    through the feed applied it (hand_r 1e-6). Nothing found wrong: to be retried on this build.
+  - Proof: `verify_chat_server.py all` **0 of 101 on production** (phase `previews`);
+    `verify_chat_previews.py` **7/7 on staging and production** (Qt offscreen, no Maya: the sheet byte
+    for byte, a pose's still, a pasted picture downloaded whole); `verify_chat_send_card.py` 7/7;
+    the viewport preview in the disposable Maya (360 x 226, 0.04 s, selection kept); 19 unit tests
+    `tests/test_chat_previews.py`; 8374 run, the known `test_chat_deploy.Keys` failing.
 
 ## Scene Time Warp: every bake and layer write in curve time (2026-10-20)
 

@@ -25,9 +25,11 @@ const PART = 16 * 1024 * 1024;
 const FILE_MAX = 1024 * 1024 * 1024;
 const FILE_KEEP = 30 * DAY;
 const UPLOADS_EACH = 4;
-// A scene, an fbx, or a Pose Library card (a .pose / .anim folder, zipped) - 2026-10-22.
-const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb|fbx|pose|anim)$/i;
-const FILE_KINDS = new Set(["scene", "fbx", "pose", "anim"]);
+// A scene, an fbx, a Pose Library card (a .pose / .anim folder, zipped), or a picture - 2026-10-22.
+const FILE_NAME = /^[^\\/:*?"<>|\x00-\x1f.][^\\/:*?"<>|\x00-\x1f]{0,115}\.(ma|mb|fbx|pose|anim|png|jpe?g)$/i;
+const FILE_KINDS = new Set(["scene", "fbx", "pose", "anim", "image"]);
+// A file's preview (the card's still, a viewport snapshot, a picture shrunk): a JPEG/PNG in SQLite.
+const THUMB_STATES = new Set(["uploading", "ready"]);
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -89,6 +91,9 @@ export class Studio extends DurableObject {
     this.sql = ctx.storage.sql;
     for (const statement of SCHEMA) this.sql.exec(statement);
     try { this.sql.exec("ALTER TABLE messages ADD COLUMN file TEXT"); } catch { /* there already */ }
+    for (const column of ["thumb BLOB", "thumb_type TEXT", "thumb_v INTEGER NOT NULL DEFAULT 0", "sheet TEXT"]) {
+      try { this.sql.exec("ALTER TABLE files ADD COLUMN " + column); } catch { /* there already */ }
+    }
     this.hits = new Map();
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
@@ -199,12 +204,15 @@ export class Studio extends DurableObject {
   }
 
   fileView(id) {
-    const row = this.sql.exec("SELECT * FROM files WHERE id = ?", id).toArray()[0];
+    const row = this.sql.exec(
+      "SELECT id, name, kind, bytes, zip, fps, range, state, thumb_v, sheet FROM files WHERE id = ?", id).toArray()[0];
     if (!row) return null;
     let range = null;
     try { range = row.range ? JSON.parse(row.range) : null; } catch { range = null; }
+    let sheet = null;
+    try { sheet = row.sheet ? JSON.parse(row.sheet) : null; } catch { sheet = null; }
     return { id: row.id, name: row.name, kind: row.kind, bytes: row.bytes, zip: row.zip,
-             fps: row.fps, range, expired: row.state === "expired" };
+             fps: row.fps, range, expired: row.state === "expired", thumb_v: row.thumb_v || 0, sheet };
   }
 
   partsOf(row) { return Math.max(1, Math.ceil(row.zip / PART)); }
@@ -242,9 +250,9 @@ export class Studio extends DurableObject {
     const chat = String(b.chat ?? "");
     this.writable(chat, me);
     const name = String(b.name ?? "").trim();
-    if (!FILE_NAME.test(name)) refuse("bad_name", "A file is a .ma, .mb, .fbx or a pose card with a plain name");
+    if (!FILE_NAME.test(name)) refuse("bad_name", "A file is a .ma, .mb, .fbx, a pose card or a picture with a plain name");
     const kind = String(b.kind ?? "");
-    if (!FILE_KINDS.has(kind)) refuse("bad_request", "A file is a scene, an fbx or a pose card");
+    if (!FILE_KINDS.has(kind)) refuse("bad_request", "A file is a scene, an fbx, a pose card or a picture");
     const zip = Number(b.zip);
     const bytes = Number(b.bytes);
     if (!Number.isInteger(zip) || zip < 1) refuse("bad_request", "The zip's size is missing");
@@ -312,6 +320,35 @@ export class Studio extends DurableObject {
     if (row.state === "attached" || row.state === "expired") refuse("attached", "Delete its message instead", 409);
     await this.dropFile(row);
     return json({ ok: true });
+  }
+
+  // The sender's preview, while the file is on its way (before its message is sent).
+  async fileThumbPut({ request, me, params }) {
+    const row = this.fileRow(params[0]);
+    if (row.uid !== me.id) refuse("not_yours", "Only your own file", 403);
+    if (!THUMB_STATES.has(row.state)) refuse("attached", "The preview goes with the upload", 409);
+    const { bytes, type } = await this.picture(request);
+    // An animation's preview is a sheet of square cells: its grid rides the query.
+    const q = new URL(request.url).searchParams;
+    let sheet = null;
+    const cells = Number(q.get("cells")), columns = Number(q.get("columns"));
+    if (Number.isInteger(cells) && cells >= 2 && cells <= 400 && Number.isInteger(columns) && columns >= 1 && columns <= cells) {
+      const step = Number(q.get("step")), fps = Number(q.get("fps"));
+      sheet = JSON.stringify({ cells, columns, step: Number.isInteger(step) && step >= 1 ? step : 1,
+                               fps: Number.isFinite(fps) && fps > 0 && fps <= 240 ? fps : 30 });
+    }
+    this.sql.exec("UPDATE files SET thumb = ?, thumb_type = ?, thumb_v = thumb_v + 1, sheet = ? WHERE id = ?",
+      bytes, type, sheet, row.id);
+    return json({ id: row.id, thumb_v: (row.thumb_v || 0) + 1 });
+  }
+
+  fileThumbGet({ me, params }) {
+    const row = this.sql.exec("SELECT chat, uid, state, thumb, thumb_type FROM files WHERE id = ?",
+      String(params[0] ?? "")).toArray()[0];
+    if (!row) refuse("no_file", "No such file", 404);
+    this.member(row.chat, me.id);
+    if (row.state !== "attached" && row.state !== "expired" && row.uid !== me.id) refuse("no_file", "No such file", 404);
+    return this.servePicture(row.thumb, row.thumb_type);
   }
 
   async fileGet({ me, params }) {
@@ -884,4 +921,6 @@ const ROUTES = [
   ["POST", /^\/v1\/files\/([0-9a-f]{16})\/complete$/, "fileComplete"],
   ["DELETE", /^\/v1\/files\/([0-9a-f]{16})$/, "fileCancel"],
   ["GET", /^\/v1\/files\/([0-9a-f]{16})$/, "fileGet"],
+  ["PUT", /^\/v1\/files\/([0-9a-f]{16})\/thumb$/, "fileThumbPut"],
+  ["GET", /^\/v1\/files\/([0-9a-f]{16})\/thumb$/, "fileThumbGet"],
 ];

@@ -437,10 +437,61 @@ def phase_files():
         w.close()
 
 
+def phase_previews():
+    """Previews and pictures (2026-10-22): a file's thumb with an animation's grid, only its
+    sender puts it, only the chat's members read it; a picture is a file."""
+    A, B, C = Users.make("wa"), Users.make("wb"), Users.make("wc")
+    status, dm = jcall("POST", "/v1/chats", A[0], {"kind": "dm", "with": B[1]["id"]})
+    data = os.urandom(2000)
+    meta = {"chat": dm["id"], "name": "Walk.anim", "kind": "anim", "bytes": 5000, "zip": len(data)}
+    status, start = jcall("POST", "/v1/files", A[0], dict(meta))
+    fid = start["id"]
+    jpeg = bytes([0xff, 0xd8, 0xff, 0xe0]) + os.urandom(3000)
+    status, doc = jcall("PUT", "/v1/files/%s/thumb" % fid, B[0], raw=jpeg, ctype="image/jpeg")
+    gate("only the sender puts a preview", status == 403, doc)
+    status, doc = jcall("PUT", "/v1/files/%s/thumb" % fid, A[0], raw=b"not a picture", ctype="image/jpeg")
+    gate("a preview is a JPEG or a PNG", status == 400 and doc.get("error") == "bad_picture", doc)
+    status, doc = jcall("PUT", "/v1/files/%s/thumb" % fid, A[0], raw=bytes([0xff, 0xd8, 0xff]) + b"x" * (300 * 1024),
+                        ctype="image/jpeg")
+    gate("a preview is at most 256 KB", status == 413, doc)
+    status, doc = jcall("PUT", "/v1/files/%s/thumb?cells=24&columns=5&step=2&fps=30" % fid, A[0],
+                        raw=jpeg, ctype="image/jpeg")
+    gate("the sender's preview with its grid", status == 200 and doc.get("thumb_v") == 1, doc)
+    call("PUT", "/v1/files/%s/parts/1" % fid, A[0], raw=data, ctype="application/octet-stream")
+    jcall("POST", "/v1/files/%s/complete" % fid, A[0])
+    status, got, _ct = call("GET", "/v1/files/%s/thumb" % fid, B[0])
+    gate("not readable before its message", status == 404, status)
+    wa = ws(A[0])
+    wa.send({"type": "hello", "since": jcall("GET", "/v1/chats", A[0])[1]["seq"]})
+    wa.until(lambda e: e["kind"] == "caught_up")
+    wa.send({"type": "send", "chat": dm["id"], "cid": "p1", "text": "", "file": fid})
+    ack, _ = wa.until(lambda e: e["kind"] in ("ack", "error"))
+    msgs = jcall("GET", "/v1/chats/%s/messages" % dm["id"], B[0])[1]["messages"]
+    f = msgs[-1].get("file") or {}
+    gate("the file says it has a preview and its grid", f.get("thumb_v") == 1 and f.get("sheet") ==
+         {"cells": 24, "columns": 5, "step": 2, "fps": 30}, f)
+    status, got, ctype = call("GET", "/v1/files/%s/thumb" % fid, B[0])
+    gate("the other reads the preview byte for byte", status == 200 and got == jpeg and ctype == "image/jpeg",
+         (status, ctype))
+    status, _g, _c = call("GET", "/v1/files/%s/thumb" % fid, C[0])
+    gate("a stranger cannot", status == 403, status)
+    status, doc = jcall("PUT", "/v1/files/%s/thumb" % fid, A[0], raw=jpeg, ctype="image/jpeg")
+    gate("no new preview once it is sent", status == 409, doc)
+    status, start = jcall("POST", "/v1/files", A[0], {"chat": dm["id"], "name": "ref shot.jpeg", "kind": "image",
+                                                      "bytes": 10, "zip": 10})
+    gate("a picture is a file", status == 200 and start.get("id"), start)
+    if status == 200:
+        jcall("DELETE", "/v1/files/" + start["id"], A[0])
+    status, doc = jcall("POST", "/v1/files", A[0], {"chat": dm["id"], "name": "a.gif", "kind": "image",
+                                                    "bytes": 10, "zip": 10})
+    gate("but only a .png or a .jpg", status == 400, doc)
+    wa.close()
+
+
 PHASES = {"signin": phase_signin, "profile": phase_profile, "friends": phase_friends,
           "chats": phase_chats, "live": phase_live, "presence": phase_presence,
           "people": phase_people, "react": phase_react, "newcomer": phase_newcomer,
-          "files": phase_files}
+          "files": phase_files, "previews": phase_previews}
 
 
 def main(argv):
