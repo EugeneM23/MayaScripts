@@ -770,3 +770,86 @@ class Files(Base):
         self.assertEqual(done[0], ("library", {"kind": "library", "folder": "Fights", "text": "в библиотеку · Fights"}))
         self.assertEqual(done[1][1]["kind"], "character")
         self.assertEqual(done[1][1]["root"], "|root")
+
+
+class EmojiPictures(Base):
+    @staticmethod
+    def _paint(widget):
+        """Run paintEvent even when the window is not exposed offscreen."""
+        img = QtGui.QImage(max(1, widget.width()), max(1, widget.height()),
+                           QtGui.QImage.Format_ARGB32)
+        widget.render(img)
+
+    def setUp(self):
+        Base.setUp(self)
+        self.win.open_chat("dm")
+
+    def _send_in(self, text, mid="e1", seq=50):
+        self.ses.state.messages["dm"].append(msg(mid, seq, text=text))
+        self.win.refresh()
+        return next(b for b in self.win.feed.boxes
+                    if b.item.kind == "msg" and b.item.message.get("id") == mid)
+
+    def test_text_with_emoji_has_its_picture_in_the_document(self):
+        box = self._send_in("огонь 🔥")
+        self.assertIsNotNone(box.doc)
+        res = box.doc.resource(QtGui.QTextDocument.ImageResource, QtCore.QUrl("emoji:1f525"))
+        self.assertIsNotNone(res)
+
+    def test_emoji_alone_are_big_pictures(self):
+        box = self._send_in("🔥😂")
+        self.assertIsNone(box.doc)
+        self.assertEqual([g for _r, g in box.bigs], ["🔥", "😂"])
+        side = box.bigs[0][0].width()
+        self.assertAlmostEqual(side, self.win.px(W.BIG_EMOJI), delta=1)
+        found, where = self.win.feed.box_at(box.bigs[1][0].center())
+        self.assertEqual(where, "big:😂")
+
+    def test_an_animated_big_emoji_plays_once_then_on_hover(self):
+        box = self._send_in("😂")
+        feed = self.win.feed
+        frames = [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
+
+        class FakeAnim(object):
+            def frames(self, cp, px):
+                return frames
+
+            def take_changed(self):
+                return False
+        feed.anim = FakeAnim()
+        with mock.patch.object(hubmotion, "enabled", return_value=True):
+            self._paint(feed)
+            key = (box.item.key(), "😂", "big")
+            self.assertIn(key, feed.plays)
+            self.assertIn(key, feed.played)
+            feed.plays.clear()
+            self._paint(feed)
+            self.assertNotIn(key, feed.plays)            # once only
+            ev = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, box.bigs[0][0].center(),
+                                   box.bigs[0][0].center(), QtCore.Qt.NoButton,
+                                   QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
+            feed.mouseMoveEvent(ev)
+            self.assertIn(key, feed.plays)               # the mouse plays it again
+
+    def test_no_animation_when_animations_are_off(self):
+        box = self._send_in("😂")
+        feed = self.win.feed
+
+        class FakeAnim(object):
+            def frames(self, cp, px):
+                return [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
+
+            def take_changed(self):
+                return False
+        feed.anim = FakeAnim()
+        with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self._paint(feed)
+        self.assertFalse(feed.plays)
+
+    def test_a_pill_is_a_picture_and_a_count(self):
+        self.ses.state.messages["dm"][0]["reactions"] = {"🔥": ["bob"]}
+        self.win.refresh()
+        box = next(b for b in self.win.feed.boxes if b.pills)
+        rect, e, n, mine = box.pills[0]
+        self.assertEqual((e, n, mine), ("🔥", 1, False))
+        self.assertLess(rect.width(), self.win.px(70))

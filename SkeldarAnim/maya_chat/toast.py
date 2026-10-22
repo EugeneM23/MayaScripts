@@ -260,10 +260,9 @@ def card_class():
                        fm.elidedText(self.head, QtCore.Qt.ElideRight, int(right - tx)))
             p.setFont(W._font(base, self.px(11)))
             p.setPen(W._colour("muted"))
-            fm = QtGui.QFontMetrics(p.font())
-            p.drawText(QtCore.QRectF(tx, card.y() + self.px(27), right - tx, self.px(16)),
-                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
-                       fm.elidedText(self.text, QtCore.Qt.ElideRight, int(right - tx)))
+            from . import emojiart
+            emojiart.draw_line(p, QtCore.QRectF(tx, card.y() + self.px(27), right - tx, self.px(16)),
+                               self.text, p.font(), p.pen().color())
             cross = self.cross_rect().translated(-slide, 0)
             p.setPen(QtGui.QPen(W._colour("text" if self.cross_hover else "faint"), self.px(1.4)))
             m = self.px(3.5)

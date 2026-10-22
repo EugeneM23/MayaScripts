@@ -8,7 +8,6 @@ to send). A message may carry a file (2026-10-22, spec 2026-10-22-chat-files-des
 opens, imports, saves or stashes it, a paperclip sends a scene or a file, and files from Explorer,
 Stash or Shared dropped on the window go into the open chat.
 """
-import html
 import math
 import sys
 import os
@@ -43,6 +42,8 @@ FILE_ACTIONS = {"ready": (("open", "Open"), ("import", "Import"), ("more", u"\u2
 CARD_HINT = u"перетащите во вьюпорт или в библиотеку поз"
 FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg)"
 PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
+BIG_EMOJI = 64        # an emoji sent alone (1-3 of them), logical px (2026-10-22)
+PILL_EMOJI = 16       # a reaction's picture in its pill
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -247,17 +248,11 @@ def _font(base, px_size, bold=False):
     return f
 
 
-def rich(text):
-    """A message's text as HTML: escaped, links as anchors, new lines kept."""
-    from . import records
-    out = []
-    for kind, piece in records.runs(text or ""):
-        if kind == "link":
-            out.append('<a href="{0}">{1}</a>'.format(html.escape(piece, quote=True),
-                                                      html.escape(piece)))
-        else:
-            out.append(html.escape(piece))
-    return "".join(out).replace("\n", "<br>")
+def rich(text, px=None):
+    """A message's text as HTML: escaped, links as anchors, emoji as pictures `px` square
+    (the line's height when None), new lines kept."""
+    from . import emojiart
+    return emojiart.rich(text, px or 16)
 
 
 # ------------------------------------------------------------------ the list
@@ -450,9 +445,11 @@ def list_class():
                     p.setPen(_colour("accent_text" if r.get("typing")
                                      else ("ok" if r.get("kind") == "person" and r.get("online")
                                            else "muted")))
-                    sub = pfm.elidedText(r["preview"], QtCore.Qt.ElideRight,
-                                         int(right - x0 - badge_w - px(6)))
-                    p.drawText(QtCore.QPointF(x0, top + px(41) + lift), sub)
+                    from . import emojiart
+                    width_left = right - x0 - badge_w - px(6)
+                    emojiart.draw_line(p, QtCore.QRectF(x0, top + px(41) + lift - pfm.ascent(),
+                                                        width_left, pfm.height()),
+                                       r["preview"], p.font(), p.pen().color())
                 if not self.rows:
                     p.setPen(_colour("faint"))
                     p.setFont(_font(self.font(), px(10)))
@@ -478,7 +475,7 @@ class Box(object):
     """A laid-out line of the feed."""
     __slots__ = ("item", "rect", "bubble", "doc", "doc_at", "name_at", "quote", "meta",
                  "meta_at", "failed_rect", "height", "pills", "card", "fbuttons", "fbar",
-                 "thumb", "avatar")
+                 "thumb", "avatar", "bigs")
 
     def __init__(self, item):
         self.item = item
@@ -498,6 +495,7 @@ class Box(object):
         self.fbar = None         # (rect, progress or None, text): an upload or download
         self.thumb = None        # the file's preview over its card
         self.avatar = None       # the sender's avatar beside a group's message
+        self.bigs = []           # [(rect, glyph)]: a message of 1-3 emoji alone, as pictures
 
 
 def feed_class():
@@ -526,6 +524,10 @@ def feed_class():
                 self._dragging = False
                 self._hover_button = None
                 self.playing = None       # (message key, started ms): an animation preview playing
+                self.plays = {}           # (message key, glyph, "big"|"pill") -> started ms
+                self.played = set()       # the same keys, played once since the window opened
+                self.anim = None          # emojiart.Animated (the window sets it)
+                self._emoji_hover = None  # (message key, glyph, kind) under the mouse
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
@@ -581,21 +583,33 @@ def feed_class():
                     self.relayout()
                 super(Feed, self).resizeEvent(event)
 
+            def _big(self, item):
+                """The glyphs of a message of 1-3 emoji alone, each with a picture; else []."""
+                from . import emoji as _emoji
+                from . import emojiart
+                if not _emoji.only_emoji(item.text):
+                    return []
+                parts = [p for _k, p in _emoji.tokens("".join(item.text.split()))]
+                return parts if all(emojiart.image(p) is not None for p in parts) else []
+
             def _doc(self, item, width):
                 key = (item.key(), item.text, int(width))
                 doc = self.docs.get(key)
                 if doc is None:
                     from . import emoji as _emoji
+                    from . import emojiart
                     doc = QtGui.QTextDocument()
                     doc.setDocumentMargin(0)
                     big = _emoji.only_emoji(item.text)
                     font = _font(self.font(), hubstyle.px(30 if big else 11, self.win.scale))
                     font.setFamilies([font.family(), _emoji.FONT])
                     doc.setDefaultFont(font)
+                    side = int(QtGui.QFontMetrics(font).height() * 1.2)
+                    emojiart.register(doc, item.text, side)
                     doc.setDefaultStyleSheet("a {{ color: {0}; }}".format(
                         hubstyle.TOKENS["accent_text"]))
                     doc.setHtml('<span style="color:{0}">{1}</span>'.format(
-                        hubstyle.TOKENS["text"], rich(item.text)))
+                        hubstyle.TOKENS["text"], rich(item.text, side)))
                     doc.setTextWidth(width)
                     ideal = doc.idealWidth()
                     if ideal + 1 < width:
@@ -631,8 +645,14 @@ def feed_class():
                     msg = item.message
                     inner = max(px(40), max_w - 2 * pad_x)
                     f = msg.get("file")
+                    bigs = [] if f else self._big(item)
                     if f and not item.text:
                         doc, doc_w, doc_h = None, 0, -px(2)
+                    elif bigs:
+                        side_b, gap_b = px(BIG_EMOJI), px(4)
+                        doc = None
+                        doc_w = len(bigs) * side_b + (len(bigs) - 1) * gap_b
+                        doc_h = side_b
                     else:
                         doc = self._doc(item, inner)
                         doc_w, doc_h = doc.size().width(), doc.size().height()
@@ -695,6 +715,10 @@ def feed_class():
                         self._lay_file(box, cx, cy, bw - 2 * pad_x)
                         cy += file_h
                     box.doc_at = QtCore.QPointF(cx, cy)
+                    if bigs:
+                        side_b, gap_b = px(BIG_EMOJI), px(4)
+                        box.bigs = [(QtCore.QRectF(cx + i * (side_b + gap_b), cy, side_b, side_b), g)
+                                    for i, g in enumerate(bigs)]
                     cy += doc_h + px(2)
                     box.meta_at = QtCore.QPointF(x + bw - pad_x - meta_w, cy + sfm.ascent())
                     h = bh
@@ -856,10 +880,7 @@ def feed_class():
                     p.drawText(rect, QtCore.Qt.AlignCenter, label)
 
             def _pill_font(self):
-                from . import emoji as _emoji
-                f = _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
-                f.setFamilies([f.family(), _emoji.FONT])
-                return f
+                return _font(self.font(), hubstyle.px(10.5, self.win.scale), True)
 
             def _lay_pills(self, box, x, top, bw, max_w, mine):
                 """The reactions' pills under a bubble, wrapped to the bubble's side; the height
@@ -874,7 +895,7 @@ def feed_class():
                 width = max(bw, min(max_w, px(260)))
                 rows, row, used = [], [], 0
                 for e, n, me in pills:
-                    w = fm.horizontalAdvance("%s %d" % (e, n)) + px(14)
+                    w = px(PILL_EMOJI) + px(4) + fm.horizontalAdvance(str(n)) + px(14)
                     if row and used + gap + w > width:
                         rows.append(row)
                         row, used = [], 0
@@ -903,9 +924,43 @@ def feed_class():
                     if now - start >= POP_MS:
                         del self.pill_pops[k]
                 busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
-                            or self.playing)
+                            or self.playing or self.plays)
                 self.update()
                 return busy
+
+            def _start(self, key, glyph):
+                """Play `glyph`'s animation now when it has one and its frames are ready."""
+                from . import emojiart
+                if self.anim is None or not hubmotion.enabled():
+                    return False
+                cp = emojiart.anim_of(glyph)
+                if not cp:
+                    return False
+                side = int(hubstyle.px(BIG_EMOJI if key[2] == "big" else PILL_EMOJI,
+                                       self.win.scale))
+                if not self.anim.frames(cp, side):
+                    return False
+                self.plays[key] = _now_ms()
+                self.played.add(key)
+                self.win.animate()
+                return True
+
+            def _emoji_frame(self, key, glyph, side, now):
+                """The image to draw for an emoji picture at `side`: its animation's frame while
+                it plays (starting it the first time it is painted), else its still picture."""
+                from . import emojiart
+                if key not in self.played:
+                    self._start(key, glyph)
+                start = self.plays.get(key)
+                if start is not None and self.anim is not None:
+                    frames = self.anim.frames(emojiart.anim_of(glyph), int(side))
+                    img, done = emojiart.frame_at(frames, now - start)
+                    if done:
+                        self.plays.pop(key, None)
+                    if img is not None:
+                        return img
+                pm = emojiart.pixmap(glyph, int(side))
+                return pm.toImage() if pm is not None else None
 
             # ---------------------------------------------------------- paint
             def paintEvent(self, event):                   # noqa: N802
@@ -921,6 +976,7 @@ def feed_class():
                 s = self.win.scale
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
                 now = _now_ms()
                 small = _font(self.font(), px(9))
                 group = (self.ctx.get("chat") or {}).get("kind") == "group"
@@ -997,10 +1053,11 @@ def feed_class():
                         p.setFont(_font(self.font(), px(9.5)))
                         p.setPen(_colour("text2"))
                         fm2 = QtGui.QFontMetrics(p.font())
-                        p.drawText(QtCore.QPointF(qrect.left() + px(7),
-                                                  qrect.bottom() - fm2.descent() - px(2)),
-                                   fm2.elidedText(qtext, QtCore.Qt.ElideRight,
-                                                  int(qrect.width() - px(10))))
+                        from . import emojiart
+                        emojiart.draw_line(p, QtCore.QRectF(qrect.left() + px(7),
+                                                            qrect.bottom() - fm2.height() - px(2),
+                                                            qrect.width() - px(10), fm2.height()),
+                                           qtext, p.font(), p.pen().color())
                     if box.card is not None:
                         p.save()
                         self._paint_file(p, box)
@@ -1011,6 +1068,10 @@ def feed_class():
                         p.translate(box.doc_at)
                         box.doc.drawContents(p)
                         p.restore()
+                    for rect, glyph in box.bigs:
+                        img = self._emoji_frame((key, glyph, "big"), glyph, rect.width(), now)
+                        if img is not None:
+                            p.drawImage(rect, img, QtCore.QRectF(img.rect()))
                     p.setFont(small)
                     if item.tick == "read":
                         p.setPen(_colour("accent_text"))
@@ -1034,7 +1095,17 @@ def feed_class():
                             p.setBrush(_colour("accent_tint" if me else "field"))
                             p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
                             p.setPen(_colour("accent_text" if me else "text2"))
-                            p.drawText(r, QtCore.Qt.AlignCenter, "%s %d" % (e, n))
+                            side = px(PILL_EMOJI)
+                            pic = QtCore.QRectF(r.left() + px(7), r.center().y() - side / 2.0,
+                                                side, side)
+                            img = self._emoji_frame((key, e, "pill"), e, side, now)
+                            if img is not None:
+                                p.drawImage(pic, img, QtCore.QRectF(img.rect()))
+                            else:
+                                p.drawText(pic, QtCore.Qt.AlignCenter, e)
+                            p.drawText(QtCore.QRectF(pic.right() + px(4), r.top(),
+                                                     r.right() - pic.right() - px(4), r.height()),
+                                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, str(n))
                         p.setFont(small)
                     if box.failed_rect is not None:
                         p.setPen(_colour("danger"))
@@ -1059,6 +1130,9 @@ def feed_class():
                     for rect, e, _n, _me in box.pills:
                         if rect.contains(point):
                             return box, "pill:" + e
+                    for rect, glyph in box.bigs:
+                        if rect.contains(point):
+                            return box, "big:" + glyph
                     if box.bubble is not None and box.bubble.contains(point):
                         return box, "bubble"
                     if box.failed_rect is not None and box.failed_rect.contains(point):
@@ -1130,6 +1204,7 @@ def feed_class():
                             self.grabMouse()
                         return
                 box, _where = self.box_at(pos)
+                self._hover_emoji(box, _where)
                 self._hover_preview(box if _where == "thumb" else None)
                 hover = None
                 if _where.startswith("file:"):
@@ -1171,7 +1246,19 @@ def feed_class():
                     self.win.animate()
                 self.update()
 
+            def _hover_emoji(self, box, where):
+                """The mouse entering an animated emoji (a big one, a pill) plays it again."""
+                hit = None
+                if box is not None and (where.startswith("big:") or where.startswith("pill:")):
+                    kind, glyph = where.split(":", 1)
+                    hit = (box.item.key(), glyph, kind)
+                if hit != self._emoji_hover:
+                    self._emoji_hover = hit
+                    if hit is not None and hit not in self.plays:
+                        self._start(hit, hit[1])
+
             def leaveEvent(self, event):                   # noqa: N802
+                self._emoji_hover = None
                 self._hover_preview(None)
                 super(Feed, self).leaveEvent(event)
 
@@ -1729,7 +1816,12 @@ class ChatWindow(object):
         lay.addLayout(head)
 
         self.feed = feed_class()(self)
-        self.feed_area = self._scroll(self.feed, "skeldarChatFeedArea")
+        from . import emojiart
+        try:
+            self.feed.anim = emojiart.animated(self.session)
+        except Exception:                                    # noqa: BLE001
+            self.feed.anim = None
+        self.feed_area =self._scroll(self.feed, "skeldarChatFeedArea")
         self.feed_area.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.feed_area.verticalScrollBar().rangeChanged.connect(self._range_changed)
         lay.addWidget(self.feed_area, 1)
@@ -2599,8 +2691,15 @@ class ChatWindow(object):
         font.setPixelSize(self.px(17))
         for e in _emoji.QUICK:
             b = q.QtWidgets.QToolButton(holder)
-            b.setText(e)
-            b.setFont(font)
+            from . import emojiart
+            pm = emojiart.pixmap(e, self.px(22))
+            if pm is not None:
+                b.setIcon(q.QtGui.QIcon(pm))
+                b.setIconSize(q.QtCore.QSize(self.px(22), self.px(22)))
+            else:
+                b.setText(e)
+                b.setFont(font)
+            b.setToolTip(e)
             b.setAutoRaise(True)
             b.setCursor(q.QtCore.Qt.PointingHandCursor)
             b.setFixedSize(self.px(30), self.px(30))
@@ -2976,6 +3075,9 @@ class ChatWindow(object):
             for widget in self.root.findChildren(avatar_widget_class()):
                 widget.update()
             self.list.update()
+            self.feed.update()
+        anim = self.feed.anim
+        if anim is not None and anim.take_changed():
             self.feed.update()
         try:
             from . import thumbs
