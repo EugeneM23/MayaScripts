@@ -190,6 +190,13 @@ def slot_text(item):
 _SKIP_VK = set([0x01, 0x02, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2,
                 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14, 0x90, 0x91, 0x15, 0x19])
 VK_ESCAPE = 0x1B
+VK_SPACE = 0x20
+VK_Q = 0x51
+MEDIA_VK = range(0xA6, 0xB8)    # browser and media keys: Windows can report one held for ever
+# The key each menu is pressed with (2026-10-22): its release is the one listened for. Every key
+# held at the press was listened for, and Windows reported a stuck "A" and Play/Pause as held in
+# the animator's Maya, so the camera menu never saw Space go up and stood as a click menu.
+MENU_KEYS = {"cameras": VK_SPACE, "slots": VK_Q}
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
 
@@ -215,6 +222,18 @@ def keys_down():
         return []
     return [vk for vk in range(0x08, 0xFF)
             if vk not in _SKIP_VK and vk != VK_ESCAPE and key_down(vk)]
+
+
+def held_keys(kind):
+    """The keys whose release lets the menu go. Space for the camera menu, whether or not it is
+    still down (a quick tap may be up already: the next tick then reads it as a tap); the slots
+    menu's Q when it is down, else the keys held now less the media keys (bound to another key)."""
+    if kind == "cameras":
+        return [VK_SPACE]
+    own = MENU_KEYS.get(kind)
+    if own is not None and key_down(own):
+        return [own]
+    return [vk for vk in keys_down() if vk not in MEDIA_VK]
 
 
 # --------------------------------------------------------------- the presses
@@ -252,7 +271,7 @@ def press(kind="slots"):
         spec = maya_camradial.spec()
     menu = Menu(q, spec)
     _state()["menu"] = menu
-    menu.show(keys_down())
+    menu.show(held_keys(kind))
     return ""
 
 

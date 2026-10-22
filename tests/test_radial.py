@@ -292,3 +292,30 @@ class MotionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeldKeys(unittest.TestCase):
+    """2026-10-22: Windows reported a stuck "A" and Play/Pause as held, and the camera menu,
+    listening to every key held at the press, never saw Space go up."""
+
+    def held(self, kind, down):
+        import maya_radial
+        old = (maya_radial.key_down, maya_radial.keys_down)
+        maya_radial.key_down = lambda vk: vk in down
+        maya_radial.keys_down = lambda: sorted(down)
+        try:
+            return maya_radial.held_keys(kind)
+        finally:
+            maya_radial.key_down, maya_radial.keys_down = old
+
+    def test_the_camera_menu_listens_to_space_alone(self):
+        self.assertEqual(self.held("cameras", {0x20, 0x41, 0xB3}), [0x20])
+
+    def test_a_quick_tap_already_up_is_still_space(self):
+        self.assertEqual(self.held("cameras", {0x41}), [0x20])
+
+    def test_the_slots_menu_listens_to_its_q(self):
+        self.assertEqual(self.held("slots", {0x51, 0x41, 0xB3}), [0x51])
+
+    def test_another_key_without_the_media_keys(self):
+        self.assertEqual(self.held("slots", {0x46, 0xB3}), [0x46])
