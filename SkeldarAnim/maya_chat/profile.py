@@ -209,7 +209,8 @@ def list_class():
                     fm2 = QtGui.QFontMetrics(p.font())
                     p.setPen(W._colour("muted"))
                     p.drawText(QtCore.QPointF(left, rect.bottom() - px(8) - fm2.descent()),
-                               fm2.elidedText(look.profile_line(e, now_ms=now), QtCore.Qt.ElideRight,
+                               fm2.elidedText(look.profile_line(e, now_ms=now, me=self.card.win.me_id(),
+                                                                 owner=self.card.user.get("id")), QtCore.Qt.ElideRight,
                                               int(width)))
 
         _CLASSES["list"] = FileList
@@ -411,7 +412,8 @@ class Profile(object):
         elif self.state == "failed":
             text = u"Не удалось загрузить файлы: %s" % self.error
         elif not self.entries:
-            text = u"%s пока ничего не присылал(а)" % look.display_name(self.user)
+            text = (u"Вы пока ничего не отправляли" if self.user.get("id") == self.win.me_id()
+                    else u"Вы с %s пока не обменивались файлами" % look.display_name(self.user))
         elif not rows:
             text = u"Ничего не нашли"
         else:
@@ -426,10 +428,10 @@ class Profile(object):
     # ------------------------------------------------------------------ presses
     def item_of(self, e):
         """The feed's Item of a file row: what the window's file verbs and its drag take."""
-        m = {"id": e.get("msg"), "chat": e.get("chat"), "from_id": self.user.get("id"),
+        m = {"id": e.get("msg"), "chat": e.get("chat"), "from_id": e.get("from_id") or self.user.get("id"),
              "cid": e.get("msg"), "text": e.get("text") or "", "file": e.get("file"),
              "at": e.get("at"), "seq": e.get("seq")}
-        return look.Item("msg", e.get("text") or "", m, mine=self.user.get("id") == self.win.me_id())
+        return look.Item("msg", e.get("text") or "", m, mine=(e.get("from_id") or self.user.get("id")) == self.win.me_id())
 
     def verbs(self, e):
         from . import files

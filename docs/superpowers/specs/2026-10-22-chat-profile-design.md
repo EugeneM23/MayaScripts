@@ -5,8 +5,10 @@ The animator: «давай добавим возможность нажать н
 файлов, позы анимации сцены». Mid-way: «У меня картинки по умолчанию открываются в пейнте. А можно
 что бы в каком-то просмотрщике?». Done alone; the choices:
 
-- **Which files**: what that person sent, in the chats I am in (a dm, a group) - not what others
-  sent them. My own card lists everything I sent.
+- **Which files**: every file the two of us passed each other - sent by either of us in a chat we
+  are both in (a dm, a group); a file I sent reads «от вас». My own card lists everything I sent.
+  (The first build listed only what THEY sent; the animator sent a scene, opened the partner's card
+  and read 0: «Отправил в чат сцену нажимаю на аватарку ... 0 сцен».)
 - **Where**: a card over the chat window (a dimmed backdrop), not a pane of its own.
 - **Kinds**: Все / Позы / Анимации / Сцены / FBX / Картинки, each with its count, and a search over
   the name, the caption and the group's name.

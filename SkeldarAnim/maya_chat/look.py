@@ -522,11 +522,14 @@ def profile_rows(entries, kind="all", query=""):
     return out
 
 
-def profile_line(e, chats=None, now_ms=None):
-    """A file row's second line: «анимация · 12.3 MB · 14 окт · в «Fights»». Pure."""
+def profile_line(e, chats=None, now_ms=None, me=None, owner=None):
+    """A file row's second line: «анимация · 12.3 MB · 14 окт · в «Fights»»; on another's card
+    (`owner` not `me`) a file I sent starts «от вас». Pure."""
     from . import files
     f = (e or {}).get("file") or {}
     parts = [KIND_WORDS.get(f.get("kind"), ""), files.size_text(f.get("bytes") or 0)]
+    if me and owner != me and (e or {}).get("from_id") == me:
+        parts.insert(0, u"от вас")
     at = e.get("at")
     if at:
         import time as _time

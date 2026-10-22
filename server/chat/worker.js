@@ -472,23 +472,28 @@ export class Studio extends DurableObject {
     return json({ users: rows.map((r) => ({ ...this.withPresence(r), relation: this.relation(me.id, r.id) })) });
   }
 
-  // A person's files (2026-10-22: «нажать на аватар пользователя ... список всех файлов»): what
-  // they sent in the chats I am in, newest first, at most FILES_LIST; `before` (ms) pages back.
+  // A person's files (2026-10-22: «нажать на аватар пользователя ... список всех файлов»): every
+  // file the two of us passed each other - sent by either of us in a chat we are both in (on my own
+  // card: everything I sent) - newest first, at most FILES_LIST; `before` (ms) pages back. The first
+  // build listed only what THEY sent, so the card of the person I had just sent a scene to read 0
+  // («Отправил в чат сцену нажимаю на аватарку ... 0 сцен»).
   personFiles({ url, me, params }) {
     const who = this.userById(params[0]);
     const before = Number(url.searchParams.get("before"));
     const until = Number.isFinite(before) && before > 0 ? before : 8.64e15;
     const rows = this.sql.exec(
       `SELECT m.id AS msg, m.chat AS chat, m.seq AS seq, m.at AS at, m.text AS text, m.file AS file,
-              c.kind AS chat_kind, c.name AS chat_name
-         FROM messages m JOIN members me ON me.chat = m.chat AND me.uid = ? JOIN chats c ON c.id = m.chat
-        WHERE m.from_id = ? AND m.deleted = 0 AND m.file IS NOT NULL AND m.at < ?
-        ORDER BY m.at DESC LIMIT ?`, me.id, who.id, until, FILES_LIST).toArray();
+              m.from_id AS from_id, c.kind AS chat_kind, c.name AS chat_name
+         FROM messages m JOIN members me ON me.chat = m.chat AND me.uid = ?
+                         JOIN members it ON it.chat = m.chat AND it.uid = ?
+                         JOIN chats c ON c.id = m.chat
+        WHERE m.from_id IN (?, ?) AND m.deleted = 0 AND m.file IS NOT NULL AND m.at < ?
+        ORDER BY m.at DESC LIMIT ?`, me.id, who.id, me.id, who.id, until, FILES_LIST).toArray();
     const files = [];
     for (const r of rows) {
       const file = this.fileView(r.file);
       if (!file) continue;
-      files.push({ msg: r.msg, chat: r.chat, seq: r.seq, at: r.at, text: r.text, file,
+      files.push({ msg: r.msg, chat: r.chat, seq: r.seq, at: r.at, text: r.text, file, from_id: r.from_id,
                    chat_kind: r.chat_kind, chat_name: r.chat_name });
     }
     return json({ user: this.withPresence(this.userById(who.id)), files, more: rows.length === FILES_LIST });

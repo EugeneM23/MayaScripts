@@ -518,6 +518,10 @@ def phase_person():
     gate("each with its chat and message", first.get("chat") == dm["id"] and first.get("msg") == sent[1][1]["id"]
          and first.get("chat_kind") == "dm" and first.get("text") == "t Shot.ma", first)
     gate("and the person", doc.get("user", {}).get("id") == A[1]["id"], doc.get("user"))
+    status, doc = jcall("GET", "/v1/users/%s/files" % B[1]["id"], A[0])
+    names = [(f["file"]["name"], f.get("from_id")) for f in doc.get("files", [])]
+    gate("B's card, read by A, holds what A sent B (not what A sent C)", status == 200
+         and names == [("Shot.ma", A[1]["id"]), ("Walk.anim", A[1]["id"])], names)
     status, doc = jcall("GET", "/v1/users/%s/files" % A[1]["id"], A[0])
     gate("A sees all its own", [f["file"]["name"] for f in doc["files"]] == ["Secret.ma", "Shot.ma", "Walk.anim"],
          [f["file"]["name"] for f in doc["files"]])

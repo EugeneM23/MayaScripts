@@ -51,6 +51,12 @@ class Pure(unittest.TestCase):
         self.assertIn(u"в «Fights»", line)
         self.assertIn(u"истёк", look.profile_line(entry("mx", "a.ma", "scene", NOW, expired=True), now_ms=NOW))
 
+    def test_a_file_i_sent_says_so_on_another_s_card(self):
+        e = dict(FILES[2], from_id="me")
+        self.assertTrue(look.profile_line(e, now_ms=NOW, me="me", owner="bob").startswith(u"от вас"))
+        self.assertNotIn(u"от вас", look.profile_line(e, now_ms=NOW, me="me", owner="me"))
+        self.assertNotIn(u"от вас", look.profile_line(dict(e, from_id="bob"), now_ms=NOW, me="me", owner="bob"))
+
 
 class Card(unittest.TestCase):
     def setUp(self):

@@ -13384,8 +13384,10 @@ click**, sent by **a paperclip, a drag from Stash / Shared, a drag from Explorer
 - **A person's card, and our picture viewer** (the same morning: «нажать на аватар пользователя ...
   окошко с увеличенной аватаркой и списком всех файлов ... сортировать по типам», and «картинки по
   умолчанию открываются в пейнте»). Spec `docs/superpowers/specs/2026-10-22-chat-profile-design.md`.
-  - Server `GET /v1/users/<id>/files[?before]`: what that person sent in the chats I am in, newest
-    first, 300 a page, each with its chat and message.
+  - Server `GET /v1/users/<id>/files[?before]`: every file the two of us passed each other (sent by
+    either in a chat we are both in; my own card: all I sent), newest first, 300 a page, each with
+    its chat, message and `from_id`; a file I sent reads «от вас». The first build listed only what
+    THEY sent, so the card of the person just sent a scene read 0.
   - `maya_chat/profile.py`: `Profile` over the chat window (92 px avatar, name, @nick, presence,
     Написать; [Все | Позы | Анимации | Сцены | FBX | Картинки] with counts, a search, the painted
     `FileList`: double click to the message, right button its verbs, a drag is the feed's drag).
