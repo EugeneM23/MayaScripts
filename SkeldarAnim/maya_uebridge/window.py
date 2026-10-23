@@ -119,7 +119,8 @@ CACHE_NAME = "maya_uebridge_cache.json"
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
           "content_dir": "", "source": None, "menu": [], "location": "",
           "unreal_labels": [], "list_mode": None, "tree_rows": [],
-          "last_toggle": (None, 0.0)}
+          "last_toggle": (None, 0.0), "last_click": (None, 0.0),
+          "picked": set(), "prev_sel": []}
 
 
 # ---------------------------------------------------------------- cache
@@ -310,10 +311,30 @@ def _repopulate(quiet=False):
     for index, record in enumerate(entries, 1):
         if record is not None and record.package in keep:
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
+    _remember_selection()
     paint_import()
     if not quiet:
         _status(count_line(len(_STATE["records"]), len(shown), query))
     return shown
+
+
+def _remember_selection():
+    """What the list holds picked now: its rows (to tell a folder that joins
+    the selection with this click from one that stood picked) and the
+    packages of its animations (to pick them again after a folder click,
+    which in Maya replaces the whole selection)."""
+    rows = cmds.textScrollList(_LIST, query=True, selectIndexedItem=True) or []
+    shown = _STATE.get("filtered") or []
+    _STATE["prev_sel"] = list(rows)
+    _STATE["picked"] = set(shown[i - 1].package for i in rows
+                           if 0 < i <= len(shown) and shown[i - 1] is not None)
+
+
+def _pick_packages(packages):
+    """Pick every shown animation row whose package is in `packages`."""
+    for index, record in enumerate(_STATE.get("filtered") or [], 1):
+        if record is not None and record.package in packages:
+            cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
 
 
 def _selected_records():
@@ -328,42 +349,63 @@ def _selected_records():
 def _on_select():
     """A row click. A folder row in Folders mode opens or closes (not during a
     search, which shows every match open) and leaves the selection at once;
-    the animations picked stay picked."""
+    the animations picked before stay picked, a plain click on the folder
+    included. A Shift range that takes in several folders toggles none."""
     rows = _STATE.get("tree_rows") or []
-    if list_mode() == "folders" and rows:
-        picked = cmds.textScrollList(_LIST, query=True,
-                                     selectIndexedItem=True) or []
-        folders = [i for i in picked
-                   if 0 < i <= len(rows) and rows[i - 1].kind == "folder"]
-        if folders:
-            for index in folders:
-                cmds.textScrollList(_LIST, edit=True, deselectIndexedItem=index)
-            searching = bool((cmds.textField(_SEARCH, query=True, text=True)
-                              if cmds.textField(_SEARCH, exists=True) else "")
-                             .strip())
-            if not searching:
-                paths = _open_folders()
-                last_path, last_at = _STATE.get("last_toggle") or (None, 0.0)
-                for index in folders:
-                    path = rows[index - 1].path
-                    if path == last_path and _now() - last_at < DOUBLE_S:
-                        continue        # the double click's second click
-                    paths = foldertree.toggled(paths, path)
-                    _STATE["last_toggle"] = (path, _now())
-                _save_open(paths)
-                _repopulate(quiet=True)
+    if list_mode() != "folders" or not rows:
+        paint_import()
+        return
+    picked = cmds.textScrollList(_LIST, query=True,
+                                 selectIndexedItem=True) or []
+    shown = _STATE.get("filtered") or []
+    folders = [i for i in picked
+               if 0 < i <= len(rows) and rows[i - 1].kind == "folder"]
+    if not folders:
+        _STATE["last_click"] = ("anim", _now())
+        _remember_selection()
+        paint_import()
+        return
+    _STATE["last_click"] = ("folder", _now())
+    before = set(_STATE.get("prev_sel") or [])
+    joined = [i for i in folders if i not in before]
+    #  what stays picked: the animations remembered, and any this same select
+    #  holds (a Ctrl-click, a Shift range over animations)
+    keep = set(_STATE.get("picked") or set())
+    keep |= set(shown[i - 1].package for i in picked
+                if 0 < i <= len(shown) and shown[i - 1] is not None)
+    for index in folders:
+        cmds.textScrollList(_LIST, edit=True, deselectIndexedItem=index)
+    searching = bool((cmds.textField(_SEARCH, query=True, text=True)
+                      if cmds.textField(_SEARCH, exists=True) else "").strip())
+    toggles = [] if searching or len(joined) != 1 else joined
+    paths = _open_folders()
+    changed = False
+    last_path, last_at = _STATE.get("last_toggle") or (None, 0.0)
+    for index in toggles:
+        path = rows[index - 1].path
+        if path == last_path and _now() - last_at < DOUBLE_S:
+            continue                # the double click's second click
+        paths = foldertree.toggled(paths, path)
+        _STATE["last_toggle"] = (path, _now())
+        changed = True
+    if changed:
+        _save_open(paths)
+        _repopulate(quiet=True)
+    _pick_packages(keep)
+    _remember_selection()
     paint_import()
 
 
 def _on_double():
-    """A double click imports the picked animations - never on a folder:
-    its clicks opened it, and a folder clicked a moment ago means this double
-    click was the folder's."""
-    _path, last_at = _STATE.get("last_toggle") or (None, 0.0)
-    if list_mode() == "folders" and _now() - last_at < DOUBLE_S:
-        return
-    if not _selected_records():
-        return
+    """A double click imports the picked animations. In Folders mode never on
+    a folder: a folder clicked a moment ago means this double click was the
+    folder's, and with nothing picked there is nothing to say."""
+    if list_mode() == "folders":
+        kind, at = _STATE.get("last_click") or (None, 0.0)
+        if kind == "folder" and _now() - at < DOUBLE_S:
+            return
+        if not _selected_records():
+            return
     _run(import_selected, busy=_import_busy())
 
 

@@ -1091,6 +1091,71 @@ class FolderTree(unittest.TestCase):
         self.assertNotIn(self.foldertree.OPEN_VAR, self.fake.vars)
         self.assertEqual(self.fake.lines[0], "\u25be Game/Props  (1)")
 
+    def _open_chars(self):
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()                       # Game open: Chars, Props
+        self.clock[0] += 5
+        self.fake.picked = [2]
+        window._on_select()                       # Game, Chars, Run, Walk, Props
+        self.clock[0] += 5
+
+    def _imports(self):
+        imported = []
+        saved = window.import_selected
+        window.import_selected = lambda: imported.append(True)
+        self.addCleanup(setattr, window, "import_selected", saved)
+        return imported
+
+    def test_a_plain_folder_click_keeps_the_animations_picked_before(self):
+        self._open_chars()
+        self.fake.picked = [3]                    # Run
+        window._on_select()
+        self.clock[0] += 5
+        self.fake.picked = [5]                    # Maya: only Props now
+        window._on_select()
+        self.assertEqual([r.name for r in window._selected_records()], ["Run"])
+        self.assertIn("    Spin", "\n".join(self.fake.lines))
+
+    def test_a_shift_range_over_several_folders_toggles_none(self):
+        self._open_chars()
+        before = list(self.fake.lines)
+        self.fake.picked = [1, 2, 3, 4, 5]        # Game .. Props
+        window._on_select()
+        self.assertEqual(self.fake.lines, before)
+        self.assertEqual([r.name for r in window._selected_records()],
+                         ["Run", "Walk"])
+
+    def test_a_folder_already_picked_is_not_toggled_again(self):
+        self._open_chars()
+        self.fake.picked = [3]                    # Run
+        window._on_select()
+        self.clock[0] += 5
+        self.fake.picked = [3, 5]                 # Props joins
+        window._on_select()                       # Props opens
+        self.assertIn("    Spin", "\n".join(self.fake.lines))
+
+    def test_list_mode_double_click_with_nothing_picked_still_imports(self):
+        imported = self._imports()
+        window._repopulate(quiet=True)
+        self.fake.picked = []
+        window._on_double()
+        self.assertEqual(imported, [True])
+
+    def test_a_double_click_on_an_animation_soon_after_a_folder_imports(self):
+        imported = self._imports()
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()
+        self.clock[0] += 5
+        self.fake.picked = [2]
+        window._on_select()                       # Chars open
+        self.clock[0] += 0.2
+        self.fake.picked = [3]                    # Run
+        window._on_select()
+        window._on_double()
+        self.assertEqual(imported, [True])
+
     def test_a_file_source_is_a_tree_under_its_folder(self):
         window._STATE.update(source="folder", location="C:/clips", records=[
             records.AnimRecord("W", "C:/clips/walks/W.fbx", "", 24, 1.0, 30.0,
