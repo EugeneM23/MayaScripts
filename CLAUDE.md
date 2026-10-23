@@ -14209,3 +14209,8 @@ The animator: «любое открытое окно подсвечено ора
   its frame); an offscreen render of the overlay (ring (224, 122, 54), glow, a clear middle). **Not seen
   in a GUI Maya**: the real `WindowFromPoint` walk, Maya's workspaceControl widgets' names, the overlay
   over floating Maya windows.
+- **The ring follows a dragged window at once** (the same day: «рамка отстает и доганяет окно»): it
+  was placed again only by the 50 ms poll. Now an event filter (`_follower_class`) on the ringed widget
+  and every widget up to its window re-places the overlay on each Move / Resize / Show / Hide
+  (`Light._watch`, taken off when the target changes or the watch stops). Tests
+  `test_the_ring_follows_a_dragged_window_with_no_poll`, `test_the_old_window_is_no_longer_followed`.

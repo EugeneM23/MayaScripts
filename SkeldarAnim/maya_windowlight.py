@@ -237,6 +237,35 @@ def _overlay_class():
     return _CLASSES["overlay"]
 
 
+def _follower_class():
+    """An event filter that keeps a ring on its window AS it moves: a dragged Maya
+    window sends Move on every step, the 50 ms poll trailed behind it (2026-10-23,
+    «рамка отстает и доганяет окно»)."""
+    if "follower" not in _CLASSES:
+        import maya_hubqt as hubqt
+        q = hubqt.qt()
+        QtCore = q.QtCore
+        kinds = (QtCore.QEvent.Move, QtCore.QEvent.Resize, QtCore.QEvent.Show,
+                 QtCore.QEvent.Hide)
+
+        class Follower(QtCore.QObject):
+
+            def __init__(self, light):
+                super(Follower, self).__init__()
+                self.light = light
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                try:
+                    if event.type() in kinds:
+                        self.light._follow()
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                return False
+
+        _CLASSES["follower"] = Follower
+    return _CLASSES["follower"]
+
+
 def _ptr(q, widget):
     try:
         return int(q.shiboken.getCppPointer(widget)[0])
@@ -337,6 +366,8 @@ class Light(object):
         self.tick_at = None
         self.poll_timer = None
         self.tick_timer = None
+        self.follower = None
+        self.watched = []           # widgets the follower listens to
         try:
             import maya_hub
             self.scale = maya_hub._scale()
@@ -368,6 +399,7 @@ class Light(object):
                 pass
         self.poll_timer = self.tick_timer = None
         self._set_target(None, animate=False)
+        self._unwatch()
         for overlay in list(self.overlays.values()):
             self._drop(overlay)
         self.overlays = {}
@@ -500,8 +532,37 @@ class Light(object):
         if old is not None:
             self._light(old, False, animate)
         self.target = chosen
+        self._unwatch()
         if chosen is not None:
             self._light(chosen, True, animate)
+            if chosen[1] == "ring":
+                self._watch(chosen[2])
+
+    def _watch(self, widget):
+        """Listen to the ringed widget and every widget above it to its window, so
+        a move or a resize re-places the ring at once."""
+        if self.follower is None:
+            self.follower = _follower_class()(self)
+        watched = []
+        try:
+            while widget is not None:
+                widget.installEventFilter(self.follower)
+                watched.append(widget)
+                if widget.isWindow():
+                    break
+                widget = widget.parentWidget()
+        except RuntimeError:
+            pass
+        self.watched = watched
+
+    def _unwatch(self):
+        for widget in self.watched:
+            try:
+                if self.hubqt._valid(widget):
+                    widget.removeEventFilter(self.follower)
+            except RuntimeError:
+                pass
+        self.watched = []
 
     def _popup_of(self, frame):
         hubpop = sys.modules.get("maya_hubpop")

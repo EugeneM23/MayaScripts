@@ -142,6 +142,34 @@ class Watch(unittest.TestCase):
         self.assertEqual(overlay.geometry(), rect)
         self.assertEqual(overlay.objectName(), wl.OVERLAY)
 
+    def test_the_ring_follows_a_dragged_window_with_no_poll(self):
+        outliner, leaf = self.window("Outliner")
+        self.under = leaf
+        self.light.poll(force=True)
+        overlay = self.light.overlays[wl._ptr(self.light.q, outliner)]
+        top = outliner.window()
+        for step in range(1, 4):
+            top.move(top.x() + 37, top.y() + 11)
+            self.app.processEvents()
+            rect = QtCore.QRect(outliner.mapToGlobal(QtCore.QPoint(0, 0)),
+                                outliner.size())
+            self.assertEqual(overlay.geometry(), rect, step)
+        outliner.resize(150, 120)
+        self.app.processEvents()
+        self.assertEqual(overlay.size(), QtCore.QSize(150, 120))
+
+    def test_the_old_window_is_no_longer_followed(self):
+        outliner, leaf_a = self.window("Outliner")
+        graph, leaf_b = self.window("Graph")
+        self.under = leaf_a
+        self.light.poll(force=True)
+        self.under = leaf_b
+        self.light.poll(force=True)
+        self.assertNotIn(outliner, self.light.watched)
+        self.assertIn(graph, self.light.watched)
+        self.light.stop()
+        self.assertEqual(self.light.watched, [])
+
     def test_a_framed_window_of_ours_lights_its_own_frame(self):
         root = QtWidgets.QWidget(None, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
         root.setObjectName("skeldarChatWindow")
