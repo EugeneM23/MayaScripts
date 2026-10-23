@@ -222,6 +222,41 @@ class SelectSets(unittest.TestCase):
         self.assertEqual(core.sets_grid(0), [])
 
 
+class RelationshipInRange(unittest.TestCase):
+    """2026-10-23, «прив'язку на всі ключі заміни на прив'язку тільки виділеної кількості ключів,
+    умовно з 10 по 20»: the paste on the keys inside the Time Bar's highlight, none on all keys."""
+
+    def test_keys_in_range_count_both_ends(self):
+        self.assertEqual(core.keys_in_range([0, 5, 10, 14, 20, 21, 10], 10, 20), [10, 14, 20])
+        self.assertEqual(core.keys_in_range([0, 30], 10, 20), [])
+
+    def _paste(self, span, keys):
+        ran = []
+        fake = mock.MagicMock()
+        fake.objExists.return_value = True
+        with mock.patch.object(core, "cmds", fake), \
+                mock.patch.object(core, "_clip", {"rel": ("anchor", [("follower", [1.0] * 16, [0, 0, 0])])}), \
+                mock.patch.object(core, "highlighted_range", return_value=span), \
+                mock.patch.object(core, "key_times", return_value=keys), \
+                mock.patch.object(core, "run_at_times", side_effect=lambda times, fn: ran.extend(times)), \
+                mock.patch.object(core, "warn", side_effect=lambda text: ran.append(text)), \
+                mock.patch.object(core, "message"):
+            core.paste_relationship(in_range=True)
+        return ran
+
+    def test_the_paste_walks_only_the_highlighted_keys(self):
+        self.assertEqual(self._paste((10, 20), [0, 4, 10, 12, 18, 20, 26]), [10, 12, 18, 20])
+
+    def test_without_a_highlight_it_asks_for_one(self):
+        ran = self._paste(None, [0, 10, 20])
+        self.assertEqual(len(ran), 1)
+        self.assertIn("highlight", ran[0])
+
+    def test_the_all_keys_paste_is_gone(self):
+        import inspect
+        self.assertNotIn("all_keys", inspect.signature(core.paste_relationship).parameters)
+
+
 class SetLibrary(unittest.TestCase):
     """2026-10-23, «щоб селекшн сет зберігався в ядрі АТ ... в будь-якій сцені»: the sets in a library
     of the animator's own, members found again by name in whatever scene is open."""

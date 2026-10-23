@@ -63,6 +63,28 @@ def time_range():
     return cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True)
 
 
+def highlighted_range():
+    """(first, last) of the frames highlighted on the Time Bar (or Maya's time slider), else None."""
+    try:
+        import maya_timebar
+        span = maya_timebar.highlight()
+    except Exception:                                        # noqa: BLE001 - no Time Bar
+        span = None
+    if span is None:
+        try:
+            slider = mel.eval("$t=$gPlayBackSlider")
+            if cmds.timeControl(slider, q=True, rangeVisible=True):
+                span = cmds.timeControl(slider, q=True, rangeArray=True)
+        except RuntimeError:
+            span = None
+    return (span[0], span[1] - 1) if span else None
+
+
+def keys_in_range(times, first, last):
+    """The key times from `first` to `last`, both ends counted. Pure."""
+    return sorted(t for t in set(times) if first - 1e-6 <= t <= last + 1e-6)
+
+
 def channelbox_attrs():
     cb = mel.eval("$t=$gChannelBoxName")
     attrs = []
@@ -798,21 +820,33 @@ def _relationship_target(n, rel, offset, a, channels):
 
 
 @undoable
-def paste_relationship(all_keys=False, channels="tr"):
+def paste_relationship(in_range=False, channels="tr"):
+    """On the current frame, or (`in_range`, 2026-10-23 «тільки виділеної кількості ключів, умовно з 10
+    по 20»; it replaced "on all keys") on the keys of the anchor and the followers inside the frames
+    highlighted on the Time Bar."""
     if not _clip["rel"]:
         return warn("copy a relationship first")
     anchor, items = _clip["rel"]
     if not cmds.objExists(anchor):
         return warn("anchor no longer exists")
     items = [item for item in items if cmds.objExists(item[0])]
+    times = None
+    if in_range:
+        span = highlighted_range()
+        if span is None:
+            return warn("highlight the frames on the Time Bar first (e.g. 10-20)")
+        times = keys_in_range(key_times([anchor] + [item[0] for item in items]), *span)
+        if not times:
+            return warn("no keys from %g to %g" % span)
 
     def apply(t=None):
         a = world_matrix(anchor)
         for n, rel, offset in items:
             set_world_matrix(n, _relationship_target(n, rel, offset, a, channels), channels)
             key_transform(n, t, force=t is not None, channels=channels)
-    if all_keys:
-        run_at_times(key_times([anchor] + [item[0] for item in items]) or [current_time()], apply)
+    if times:
+        run_at_times(times, apply)
+        message("relationship pasted on %d keys (%g-%g)" % (len(times), times[0], times[-1]))
     else:
         apply()
 

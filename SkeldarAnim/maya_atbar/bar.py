@@ -1020,7 +1020,8 @@ class ATBar(QtWidgets.QWidget):
                 b("relationship", SPACE, "Xform Relationship: click = copy (followers, anchor last)\n"
                                          "Shift+click = paste T+R, Ctrl+Shift+click = translate only, "
                                          "Alt+Shift+click = rotate only\n"
-                                         "Right click: paste translate / rotate separately, current frame or all keys",
+                                         "Right click: paste translate / rotate separately, current frame or the keys "
+                                         "in the frames highlighted on the Time Bar",
                   self._relationship_click, menu=self._relationship_menu),
                 b("world", SPACE, "World Space: click = copy, Shift+click = paste\nRight click for paste on all keys",
                   self._world_click, menu=self._world_menu),
@@ -1130,8 +1131,8 @@ class ATBar(QtWidgets.QWidget):
         entries = [("Copy relationship", core.copy_relationship), None]
         entries += [("Paste %s" % label, (lambda ch=ch: core.paste_relationship(channels=ch))) for label, ch in modes]
         entries.append(None)
-        entries += [("Paste %s on all keys" % label, (lambda ch=ch: core.paste_relationship(all_keys=True, channels=ch)))
-                    for label, ch in modes]
+        entries += [("Paste %s on the highlighted keys" % label,
+                     (lambda ch=ch: core.paste_relationship(in_range=True, channels=ch))) for label, ch in modes]
         return entries
 
     def _world_click(self):
