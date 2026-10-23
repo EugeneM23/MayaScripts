@@ -781,6 +781,11 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
         self.skin._fallback.timeout.emit()
         self.assertEqual(self.skin.active, "characters")
 
+    def test_a_windowed_skin_rests_with_nothing_lit(self):
+        self.skin.set_active("characters")
+        self.skin.windowed = True
+        self.assertIsNone(self.skin.resting())
+
     def test_a_hover_pins_nothing(self):
         self._enter(self.field)
         self.assertIsNone(self.skin.pinned)

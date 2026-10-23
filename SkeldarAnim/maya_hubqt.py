@@ -2735,7 +2735,11 @@ class Skin(object):
 
     def resting(self):
         """What is lit with the mouse off every card: the pinned card if it
-        is open, else none."""
+        is open, else none. A windowed skin's card is a window (the edge rail): it is
+        lit only while the mouse is on it (2026-10-23, «только то на котором указатель
+        мыши»)."""
+        if self.windowed:
+            return None
         card = self.cards.get(self.pinned) if self.pinned else None
         if card is not None and not card.collapsed():
             return self.pinned

@@ -488,6 +488,16 @@ class Motion(Seams):
         settle(self, lambda: popup.frame.level <= 0.0)
         self.assertEqual(popup.frame.level, 0.0)
 
+    def test_entering_one_window_puts_the_other_out(self):
+        first = hubpop.open_popup("alpha")
+        second = hubpop.open_popup("beta")
+        first.set_light(True)
+        QtWidgets.QApplication.sendEvent(
+            second.root, QtCore.QEvent(QtCore.QEvent.Enter))
+        settle(self, lambda: first.frame.level <= 0.0 and second.frame.level >= 1.0)
+        self.assertEqual(first.frame.level, 0.0)
+        self.assertEqual(second.frame.level, 1.0)
+
     def test_a_lit_popup_paints_its_ring_and_a_plain_one_its_outline(self):
         popup = hubpop.open_popup("alpha")
         popup.set_light(True)

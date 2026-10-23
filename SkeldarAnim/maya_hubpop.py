@@ -1001,7 +1001,14 @@ class Popup(object):
     def _on_hover(self, entered):
         if self.bursting():
             return              # the light waits for the burst (2026-10-17)
-        self.set_light(entered, animate=hubmotion.enabled())
+        animate = hubmotion.enabled()
+        if entered:
+            #  one window lit, the one under the mouse (2026-10-23): a Leave a drag or a
+            #  native child swallowed must not leave another lit
+            for other in list(_state()["popups"].values()):
+                if other is not self and other.alive():
+                    other.set_light(False, animate=animate)
+        self.set_light(entered, animate=animate)
 
     # ------------------------------------------------------------- burst
 
