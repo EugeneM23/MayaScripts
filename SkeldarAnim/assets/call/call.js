@@ -64,19 +64,58 @@ function setTile(uid, flags) {
   layout();
 }
 function layout() {
+  // A shared screen takes the whole top row, everybody else a strip under it. The tiles are placed
+  // by hand: left to the grid's auto-placement, a screen tile that came after a camera tile could
+  // not fit beside it and was pushed into the 96 px strip - a sliver.
   const g = document.getElementById("grid");
-  const n = g.children.length;
-  const focus = !!g.querySelector(".tile.screen");
-  g.className = focus ? "focus" : "n" + Math.min(4, Math.max(1, n));
+  const tiles = [...g.children];
+  const screens = tiles.filter((t) => t.classList.contains("screen"));
+  const rest = tiles.filter((t) => !t.classList.contains("screen"));
+  for (const t of tiles) { t.style.gridColumn = ""; t.style.gridRow = ""; }
+  if (!screens.length) {
+    g.style.gridTemplateColumns = ""; g.style.gridTemplateRows = "";
+    g.className = "n" + Math.min(4, Math.max(1, tiles.length));
+    return;
+  }
+  g.className = "focus";
+  const cols = screens.length * Math.max(1, rest.length);
+  g.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
+  g.style.gridTemplateRows = rest.length ? "1fr 96px" : "1fr";
+  screens.forEach((t, i) => {
+    const w = cols / screens.length;
+    t.style.gridRow = "1"; t.style.gridColumn = (1 + i * w) + " / span " + w;
+  });
+  rest.forEach((t, i) => {
+    const w = cols / rest.length;
+    t.style.gridRow = "2"; t.style.gridColumn = (1 + i * w) + " / span " + w;
+  });
 }
 function dropTile(uid) { const t = document.getElementById("t-" + uid); if (t) t.remove(); layout(); }
 
 // ------------------------------------------------------------------ media
+// The quality asked of a capture, and what a sender may spend on it. A screen keeps its resolution
+// (text must stay readable) and drops frames instead; a camera keeps its motion.
+const CAM = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+const SCREEN = { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 30 } };
+const BITRATE = { cam: 2500000, screen: 6000000 };
+function camConstraints() {
+  return S.devices.cam ? Object.assign({ deviceId: { exact: S.devices.cam } }, CAM) : CAM;
+}
+async function tune(sender) {
+  if (!sender || !sender.track || !sender.getParameters) return;
+  const screen = sender.track === S.screenTrack;
+  try {
+    const prm = sender.getParameters();
+    if (!prm.encodings || !prm.encodings.length) return;   // before negotiation: tuned when connected
+    for (const e of prm.encodings) { e.maxBitrate = screen ? BITRATE.screen : BITRATE.cam; e.scaleResolutionDownBy = 1; }
+    prm.degradationPreference = screen ? "maintain-resolution" : "balanced";
+    await sender.setParameters(prm);
+  } catch (e) { /* a browser that will not take it sends as it would */ }
+}
 async function userMedia(video) {
   const audio = S.devices.mic ? { deviceId: { exact: S.devices.mic } } : true;
-  const cam = S.devices.cam ? { deviceId: { exact: S.devices.cam } } : { width: { ideal: 1280 }, height: { ideal: 720 } };
   if (!video) return navigator.mediaDevices.getUserMedia({ audio });
-  try { return await navigator.mediaDevices.getUserMedia({ audio, video: cam }); }
+  try { return await navigator.mediaDevices.getUserMedia({ audio, video: camConstraints() }); }
   catch (e) { note("Камера недоступна: " + e.name); return navigator.mediaDevices.getUserMedia({ audio }); }
 }
 async function listDevices() {
@@ -98,7 +137,7 @@ function audioSender(p) {
 function outgoingVideo() { return S.screen && S.screenTrack ? S.screenTrack : (S.cam ? S.camTrack : null); }
 async function pushVideo() {
   const track = outgoingVideo();
-  for (const p of S.peers.values()) { const s = videoSender(p); if (s) await s.replaceTrack(track); }
+  for (const p of S.peers.values()) { const s = videoSender(p); if (s) { await s.replaceTrack(track); await tune(s); } }
   const local = new MediaStream([track].filter(Boolean));
   showStream(S.me, local, true);
   setTile(S.me, { nocam: !track, screen: S.screen });
@@ -161,7 +200,7 @@ function addPeer(uid, offer) {
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
     if (st === "failed" || st === "disconnected") { p.failedAt = p.failedAt || Date.now(); if (st === "failed" && p.offer) sendOffer(p, true); }
-    else if (st === "connected") { p.failedAt = 0; send(uid, { mic: S.mic, cam: !!outgoingVideo(), screen: S.screen }); }
+    else if (st === "connected") { p.failedAt = 0; tune(videoSender(p)); send(uid, { mic: S.mic, cam: !!outgoingVideo(), screen: S.screen }); }
     setTile(uid, { lost: false });
     report();
   };
@@ -275,7 +314,7 @@ const COMMANDS = {
     if (S.ended) return;
     if (a.on && !S.camTrack) {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: S.devices.cam ? { deviceId: { exact: S.devices.cam } } : true });
+        const s = await navigator.mediaDevices.getUserMedia({ video: camConstraints() });
         S.camTrack = s.getVideoTracks()[0];
       } catch (e) { note("Камера недоступна: " + e.name); return; }
     } else if (!a.on) {
@@ -289,8 +328,9 @@ const COMMANDS = {
     stopScreen();                                     // a new share replaces the old capture
     if (a.on) {
       try {
-        const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        const s = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN, audio: false });
         const t = s.getVideoTracks()[0];
+        if ("contentHint" in t) t.contentHint = "detail";    // the encoder keeps edges sharp
         if (S.ended) { t.stop(); return; }
         S.screenTrack = t;
         t.onended = () => { if (S.screenTrack === t) COMMANDS.screen({ on: false }); };

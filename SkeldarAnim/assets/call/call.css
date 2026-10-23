@@ -3,8 +3,7 @@ html, body { margin: 0; height: 100%; background: var(--panel); color: var(--tex
 #grid { position: absolute; inset: 6px; display: grid; gap: 6px; grid-template-columns: 1fr; grid-auto-rows: 1fr; }
 #grid.n2 { grid-template-columns: 1fr 1fr; }
 #grid.n3, #grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-#grid.focus { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 96px; }
-#grid.focus .tile.screen { grid-column: 1 / -1; }
+#grid.focus { grid-auto-rows: auto; }   /* columns, rows and places set by layout() */
 .tile { position: relative; background: var(--card); border-radius: 8px; overflow: hidden;
   box-shadow: 0 0 0 1px var(--line) inset; transition: box-shadow 120ms; }
 .tile.speaking { box-shadow: 0 0 0 2px var(--accent) inset, 0 0 14px var(--accent); }

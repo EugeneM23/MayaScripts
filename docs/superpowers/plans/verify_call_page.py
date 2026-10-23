@@ -115,6 +115,16 @@ def main():
     shared = pump(15, lambda: b.peer().get("screen") is True)
     if a.state.get("screen") or shared:
         gate("a screen share reaches the other side", shared)
+        box = {}
+        b.page.runJavaScript(
+            "(function(){var g=document.getElementById('grid').getBoundingClientRect();"
+            "var t=document.querySelector('#t-a').getBoundingClientRect();"
+            "return [g.width,g.height,t.width,t.height];})()", 0, lambda r: box.setdefault("r", r))
+        pump(5, lambda: "r" in box)
+        gw, gh, tw, th = box.get("r") or (0, 0, 0, 0)
+        # The screen takes the whole width and the top row; it came out a 96 px sliver before.
+        gate("the shared screen fills the top of the other's window",
+             tw >= gw - 1 and th >= gh - 96 - 6 - 1, box.get("r"))
     else:
         print("SKIP the screen share: this headless Qt offers no screen (%s)" % a.state.get("note"))
     a.bridge.send("screen", {"on": False})
