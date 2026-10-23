@@ -926,5 +926,178 @@ class FileSources(unittest.TestCase):
         self.assertEqual(records.parse_payload(payload), [self.file])
 
 
+
+class FakeTreeCmds(object):
+    """Just what `_repopulate`, `_on_select` and the mode switch ask: a list
+    of lines with a 1-based selection, a search text, optionVars."""
+
+    def __init__(self):
+        self.lines, self.picked, self.vars, self.text = [], [], {}, ""
+
+    def textScrollList(self, name, edit=False, query=False, exists=False,
+                       removeAll=False, append=None, selectIndexedItem=None,
+                       deselectIndexedItem=None, **kwargs):
+        if exists:
+            return True
+        if query:
+            return list(self.picked)
+        if removeAll:
+            self.lines, self.picked = [], []
+        if append is not None:
+            self.lines.append(append)
+        if selectIndexedItem is not None and not isinstance(selectIndexedItem, bool):
+            self.picked = sorted(set(self.picked) | {selectIndexedItem})
+        if deselectIndexedItem is not None:
+            self.picked = [i for i in self.picked if i != deselectIndexedItem]
+
+    def textField(self, name, query=False, exists=False, **kwargs):
+        if exists:
+            return True
+        return self.text if query else None
+
+    def optionVar(self, exists=None, query=None, stringValue=None, **kwargs):
+        if exists is not None:
+            return exists in self.vars
+        if query is not None:
+            return self.vars[query]
+        if stringValue is not None:
+            self.vars[stringValue[0]] = stringValue[1]
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None
+
+
+class FolderTree(unittest.TestCase):
+    """2026-10-23: the list in Folders mode is a tree; a folder only opens."""
+
+    def setUp(self):
+        from maya_uebridge import foldertree
+        self.foldertree = foldertree
+        self.fake = FakeTreeCmds()
+        saved = (window.cmds, dict(window._STATE), window._status, window._now,
+                 window.paint_import)
+        window.cmds = self.fake
+        window._status = lambda *a, **k: None
+        window.paint_import = lambda: None
+        self.clock = [100.0]
+        window._now = lambda: self.clock[0]
+
+        def put_back():
+            window.cmds, state, window._status, window._now, window.paint_import = saved
+            window._STATE.clear()
+            window._STATE.update(state)
+        self.addCleanup(put_back)
+        recs = [records.AnimRecord(p.rsplit("/", 1)[-1], p, "", 30, 1.0, 30.0)
+                for p in ("/Game/Chars/Walk", "/Game/Chars/Run", "/Game/Props/Spin")]
+        window._STATE.update(records=recs, filtered=[], source="unreal",
+                             project="Atone", location="", list_mode=None)
+
+    def test_list_is_the_default_and_unchanged(self):
+        self.assertEqual(window.list_mode(), "list")
+        window._repopulate(quiet=True)
+        self.assertEqual(len(self.fake.lines), 3)
+        self.assertNotIn(None, window._STATE["filtered"])
+
+    def test_the_mode_is_remembered(self):
+        window.set_list_mode("folders")
+        self.assertEqual(self.fake.vars[self.foldertree.MODE_VAR], "folders")
+        window._STATE["list_mode"] = None
+        self.assertEqual(window.list_mode(), "folders")
+
+    def test_folders_mode_fills_folder_rows_closed_at_first(self):
+        window.set_list_mode("folders")
+        self.assertEqual(self.fake.lines, ["\u25b8 Game  (3)"])
+        self.assertEqual(window._STATE["filtered"], [None])
+
+    def test_a_folder_click_opens_it_remembers_it_and_leaves_it_unpicked(self):
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()
+        self.assertEqual(self.fake.lines[0], "\u25be Game  (3)")
+        self.assertEqual(self.fake.picked, [])
+        key = self.foldertree.place_key("unreal", "Atone")
+        self.assertEqual(self.foldertree.read_open(
+            self.fake.vars[self.foldertree.OPEN_VAR], key), {"Game"})
+
+    def test_picked_animations_stay_picked_across_a_folder_click(self):
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()                       # Game open: Chars, Props
+        self.clock[0] += 5
+        self.fake.picked = [2]                    # Chars
+        window._on_select()                       # Game, Chars, Run, Walk, Props
+        self.clock[0] += 5
+        self.fake.picked = [3]                    # Run
+        window._on_select()
+        self.assertEqual([r.name for r in window._selected_records()], ["Run"])
+        self.fake.picked = [3, 5]                 # Run and Props (a folder)
+        self.clock[0] += 5
+        window._on_select()                       # Props opens: Spin under it
+        self.assertEqual([r.name for r in window._selected_records()], ["Run"])
+        self.assertIn("    Spin", "\n".join(self.fake.lines))
+
+    def test_the_second_click_of_a_double_click_does_not_close_it_again(self):
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()
+        self.clock[0] += 0.2
+        self.fake.picked = [1]
+        window._on_select()
+        self.assertEqual(self.fake.lines[0], "\u25be Game  (3)")
+
+    def test_a_double_click_on_a_folder_imports_nothing(self):
+        imported = []
+        saved = window.import_selected
+        window.import_selected = lambda: imported.append(True)
+        self.addCleanup(setattr, window, "import_selected", saved)
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()
+        window._on_double()
+        self.assertEqual(imported, [])
+
+    def test_a_double_click_on_an_animation_still_imports(self):
+        imported = []
+        saved = window.import_selected
+        window.import_selected = lambda: imported.append(True)
+        self.addCleanup(setattr, window, "import_selected", saved)
+        window.set_list_mode("folders")
+        self.fake.picked = [1]
+        window._on_select()
+        self.clock[0] += 5
+        self.fake.picked = [2]
+        window._on_select()                       # Chars open
+        self.clock[0] += 5
+        self.fake.picked = [3]                    # Run
+        window._on_select()
+        window._on_double()
+        self.assertEqual(imported, [True])
+
+    def test_a_search_opens_every_matching_branch_and_keeps_the_memory(self):
+        window.set_list_mode("folders")
+        self.fake.text = "spin"
+        window._repopulate(quiet=True)
+        self.assertEqual(self.fake.lines[0], "\u25be Game/Props  (1)")
+        self.assertTrue(self.fake.lines[1].strip().startswith("Spin"))
+        self.assertNotIn(self.foldertree.OPEN_VAR, self.fake.vars)
+
+    def test_a_folder_click_during_a_search_changes_nothing(self):
+        window.set_list_mode("folders")
+        self.fake.text = "spin"
+        window._repopulate(quiet=True)
+        self.fake.picked = [1]
+        window._on_select()
+        self.assertEqual(self.fake.picked, [])
+        self.assertNotIn(self.foldertree.OPEN_VAR, self.fake.vars)
+        self.assertEqual(self.fake.lines[0], "\u25be Game/Props  (1)")
+
+    def test_a_file_source_is_a_tree_under_its_folder(self):
+        window._STATE.update(source="folder", location="C:/clips", records=[
+            records.AnimRecord("W", "C:/clips/walks/W.fbx", "", 24, 1.0, 30.0,
+                               "folder", "C:/clips/walks/W.fbx", "", "fbx")])
+        window.set_list_mode("folders")
+        self.assertEqual(self.fake.lines, ["\u25b8 walks  (1)"])
+
+
 if __name__ == "__main__":
     unittest.main()

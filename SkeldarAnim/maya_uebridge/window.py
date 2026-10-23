@@ -42,6 +42,7 @@ never waits on a round trip.
 import json
 import os
 import tempfile
+import time
 import traceback
 
 import maya.cmds as cmds
@@ -49,6 +50,7 @@ import maya.cmds as cmds
 import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_uebridge import animimport
+from maya_uebridge import foldertree
 from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
@@ -92,6 +94,17 @@ SOURCE_VAR = "ueAnimBridgeSourceKind"          # the switch's memory
 LOCATION_VAR = "ueAnimBridgeLocation_{0}"       # the folder / project picked
 RECENT_VAR = "ueAnimBridgeRecent_{0}"           # JSON list: folders / projects
 BROWSE = "Browse..."
+#  2026-10-23 («режим в котором я буду видеть структуру папок»): the list as
+#  a folder tree in the same Maya list (`foldertree`); a folder row only opens
+#  and closes, it is never picked, imported or dragged.
+_LIST_MODE = "ueAnimBridgeListMode"
+LIST_MODES = (("list", "List", "Every animation in one list"),
+              ("folders", "Folders",
+               "The animations in their folders: a click on a folder opens or "
+               "closes it"))
+DOUBLE_S = 0.5            # a second click on the same folder this soon is the
+                          # double click's, not a new toggle
+_now = time.monotonic
 #  The block's look in the classic hub (the skin styles it by its role).
 INSET_CLASSIC_BG = (0.215, 0.22, 0.235)
 
@@ -105,7 +118,8 @@ CACHE_NAME = "maya_uebridge_cache.json"
 
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
           "content_dir": "", "source": None, "menu": [], "location": "",
-          "unreal_labels": []}
+          "unreal_labels": [], "list_mode": None, "tree_rows": [],
+          "last_toggle": (None, 0.0)}
 
 
 # ---------------------------------------------------------------- cache
@@ -264,13 +278,25 @@ def _repopulate(quiet=False):
 
     # The selection survives the rebuild by identity, not by position - a
     # narrowed filter must not silently select a different animation.
+    #  A folder row (None) is never kept.
     previous = _STATE.get("filtered") or []
     picked = cmds.textScrollList(_LIST, query=True,
                                  selectIndexedItem=True) or []
     keep = set(previous[i - 1].package for i in picked
-               if 0 < i <= len(previous))
+               if 0 < i <= len(previous) and previous[i - 1] is not None)
 
-    _STATE["filtered"] = shown
+    if list_mode() == "folders":
+        tree = foldertree.build(shown, _tree_root())
+        tree_rows = foldertree.rows(
+            tree, None if query.strip() else _open_folders())
+        entries = [row.record for row in tree_rows]
+        lines = [foldertree.row_text(row) for row in tree_rows]
+    else:
+        tree_rows = []
+        entries = list(shown)
+        lines = [records.format_row(record) for record in shown]
+    _STATE["filtered"] = entries
+    _STATE["tree_rows"] = tree_rows
     #  the placeholder says how many animations the source holds (the skin
     #  has no editor line to carry the count)
     try:
@@ -279,10 +305,10 @@ def _repopulate(quiet=False):
     except (RuntimeError, TypeError, ValueError):
         pass
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
-    for record in shown:
-        cmds.textScrollList(_LIST, edit=True, append=records.format_row(record))
-    for index, record in enumerate(shown, 1):
-        if record.package in keep:
+    for line in lines:
+        cmds.textScrollList(_LIST, edit=True, append=line)
+    for index, record in enumerate(entries, 1):
+        if record is not None and record.package in keep:
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
     paint_import()
     if not quiet:
@@ -295,7 +321,50 @@ def _selected_records():
     multiple selection)."""
     indices = cmds.textScrollList(_LIST, query=True, selectIndexedItem=True) or []
     shown = _STATE["filtered"]
-    return [shown[i - 1] for i in sorted(indices) if 0 < i <= len(shown)]
+    return [shown[i - 1] for i in sorted(indices)
+            if 0 < i <= len(shown) and shown[i - 1] is not None]
+
+
+def _on_select():
+    """A row click. A folder row in Folders mode opens or closes (not during a
+    search, which shows every match open) and leaves the selection at once;
+    the animations picked stay picked."""
+    rows = _STATE.get("tree_rows") or []
+    if list_mode() == "folders" and rows:
+        picked = cmds.textScrollList(_LIST, query=True,
+                                     selectIndexedItem=True) or []
+        folders = [i for i in picked
+                   if 0 < i <= len(rows) and rows[i - 1].kind == "folder"]
+        if folders:
+            for index in folders:
+                cmds.textScrollList(_LIST, edit=True, deselectIndexedItem=index)
+            searching = bool((cmds.textField(_SEARCH, query=True, text=True)
+                              if cmds.textField(_SEARCH, exists=True) else "")
+                             .strip())
+            if not searching:
+                paths = _open_folders()
+                last_path, last_at = _STATE.get("last_toggle") or (None, 0.0)
+                for index in folders:
+                    path = rows[index - 1].path
+                    if path == last_path and _now() - last_at < DOUBLE_S:
+                        continue        # the double click's second click
+                    paths = foldertree.toggled(paths, path)
+                    _STATE["last_toggle"] = (path, _now())
+                _save_open(paths)
+                _repopulate(quiet=True)
+    paint_import()
+
+
+def _on_double():
+    """A double click imports the picked animations - never on a folder:
+    its clicks opened it, and a folder clicked a moment ago means this double
+    click was the folder's."""
+    _path, last_at = _STATE.get("last_toggle") or (None, 0.0)
+    if list_mode() == "folders" and _now() - last_at < DOUBLE_S:
+        return
+    if not _selected_records():
+        return
+    _run(import_selected, busy=_import_busy())
 
 
 def _selected_record():
@@ -396,6 +465,48 @@ def _recent(source):
                 if isinstance(p, str)]
     except ValueError:
         return []
+
+
+def list_mode():
+    """"list" or "folders": the switch in the search row."""
+    mode = _STATE.get("list_mode")
+    if mode is None:
+        try:
+            mode = _var(foldertree.MODE_VAR, "list")
+        except Exception:                                    # noqa: BLE001
+            mode = "list"
+    return mode if mode in foldertree.MODES else "list"
+
+
+def set_list_mode(mode):
+    mode = mode if mode in foldertree.MODES else "list"
+    _STATE["list_mode"] = mode
+    cmds.optionVar(stringValue=(foldertree.MODE_VAR, mode))
+    _repopulate()
+
+
+def list_mode_button(mode):
+    return "{0}_{1}".format(_LIST_MODE, mode)
+
+
+def _tree_root():
+    """What a file's folder is relative to: the project / the folder."""
+    return "" if current_source() == "unreal" else _STATE.get("location") or ""
+
+
+def _place():
+    place = (_STATE.get("project") if current_source() == "unreal"
+             else _STATE.get("location"))
+    return foldertree.place_key(current_source(), place or "")
+
+
+def _open_folders():
+    return foldertree.read_open(_var(foldertree.OPEN_VAR, ""), _place())
+
+
+def _save_open(paths):
+    cmds.optionVar(stringValue=(foldertree.OPEN_VAR, foldertree.write_open(
+        _var(foldertree.OPEN_VAR, ""), _place(), paths)))
 
 
 def _remember(source, location):
@@ -1238,9 +1349,25 @@ def build_rows():
         "tool", "refresh")
     cmds.setParent("..")
 
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 3)])
     cmds.textField(_SEARCH, placeholderText=search_hint(0),
                    height=hubstyle.height("field", 24),
                    textChangedCommand=lambda *_: _run(_repopulate))
+    switch = cmds.rowLayout(numberOfColumns=len(LIST_MODES),
+                            columnAttach=[(i + 1, "both", 1)
+                                          for i in range(len(LIST_MODES))])
+    hubstyle.mark(switch, "segments", layout=True)
+    cmds.iconTextRadioCollection(_LIST_MODE)
+    for mode, words, note in LIST_MODES:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            list_mode_button(mode), style="textOnly", label=words,
+            height=hubstyle.height("segment", 22),
+            select=mode == list_mode(), annotation=note,
+            onCommand=lambda *_a, m=mode: _run(lambda: set_list_mode(m))),
+            "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
 
     cmds.textScrollList(
         _LIST, allowMultiSelection=True, font="fixedWidthFont",
@@ -1255,9 +1382,9 @@ def build_rows():
                    "pick several: onto a character the first goes; New and a "
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
-                   "drop.",
-        selectCommand=lambda *_: paint_import(),
-        doubleClickCommand=lambda *_: _run(import_selected, busy=_import_busy()))
+                   "drop. In Folders, a click on a folder opens or closes it.",
+        selectCommand=lambda *_: _run(_on_select),
+        doubleClickCommand=lambda *_: _on_double())
     #  under the list its height grip (2026-10-08): the skin turns this 8 px
     #  placeholder into a grip and shows the list's remembered rows (ten by
     #  default); the classic hub keeps the list's pixel height and the
