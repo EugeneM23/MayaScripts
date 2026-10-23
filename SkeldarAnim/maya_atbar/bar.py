@@ -615,7 +615,7 @@ class SetsPopup(QtWidgets.QWidget):
         """The set deleted from its cell's ×: the cell goes, the others close up, the panel stays open and
         keeps its edge on the button."""
         _safe(core.delete_selection_set, cell.node)()
-        if cmds.objExists(cell.node):
+        if core.has_set(cell.node):
             return
         self.cells.remove(cell)
         cell.setParent(None)

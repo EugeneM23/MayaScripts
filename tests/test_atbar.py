@@ -222,6 +222,62 @@ class SelectSets(unittest.TestCase):
         self.assertEqual(core.sets_grid(0), [])
 
 
+class SetLibrary(unittest.TestCase):
+    """2026-10-23, «щоб селекшн сет зберігався в ядрі АТ ... в будь-якій сцені»: the sets in a library
+    of the animator's own, members found again by name in whatever scene is open."""
+
+    def test_a_member_is_kept_without_its_namespaces(self):
+        self.assertEqual(core.member_keys(["tab_x:Manny_Rig1:FKWrist_L", "|grp|Manny_Rig1:FKElbow_L",
+                                           "Manny_Rig1:FKWrist_L", "DaggerMesh"]),
+                         ["FKWrist_L", "FKElbow_L", "DaggerMesh"])
+
+    def test_a_set_made_on_one_rig_finds_the_rig_of_another_scene(self):
+        self.assertEqual(core.resolve(["FKWrist_L", "FKElbow_L"], ["Manny_Rig:FKWrist_L", "Manny_Rig:FKElbow_L"]),
+                         ["Manny_Rig:FKWrist_L", "Manny_Rig:FKElbow_L"])
+
+    def test_two_rigs_one_character_the_selected_one(self):
+        found = ["Manny_Rig:FKWrist_L", "Manny_Rig1:FKWrist_L", "Manny_Rig:FKElbow_L", "Manny_Rig1:FKElbow_L"]
+        self.assertEqual(core.resolve(["FKWrist_L", "FKElbow_L"], found, prefer=["Manny_Rig1"]),
+                         ["Manny_Rig1:FKWrist_L", "Manny_Rig1:FKElbow_L"])
+        self.assertEqual(core.resolve(["FKWrist_L", "FKElbow_L"], found),
+                         ["Manny_Rig:FKWrist_L", "Manny_Rig:FKElbow_L"])
+
+    def test_the_rig_holding_most_of_the_set_wins_and_a_prop_at_the_root_comes_along(self):
+        found = ["Other:FKWrist_L", "Manny_Rig1:FKWrist_L", "Manny_Rig1:FKElbow_L", "DaggerMesh"]
+        self.assertEqual(core.resolve(["FKWrist_L", "FKElbow_L", "DaggerMesh"], found),
+                         ["Manny_Rig1:FKWrist_L", "Manny_Rig1:FKElbow_L", "DaggerMesh"])
+
+    def test_a_scene_tab_keeps_to_its_own_namespace(self):
+        found = ["Manny_Rig:FKWrist_L", "tab_b:Manny_Rig:FKWrist_L"]
+        self.assertEqual(core.resolve(["FKWrist_L"], found, within="tab_b"), ["tab_b:Manny_Rig:FKWrist_L"])
+
+    def test_a_missing_member_is_skipped(self):
+        self.assertEqual(core.resolve(["FKWrist_L", "Gone"], ["R:FKWrist_L"]), ["R:FKWrist_L"])
+
+    def test_the_scene_s_old_sets_are_taken_once(self):
+        lib = {"sets": {"hands": {"members": ["A"], "colour": "#fff"}}, "seen": []}
+        scene = [("hands", ["R:B"]), ("L_fingers", ["Manny_Rig1:FKThumbFinger1_L"])]
+        self.assertTrue(core.take_scene_sets(lib, scene))
+        self.assertEqual(lib["sets"]["hands"]["members"], ["A"])
+        self.assertEqual(lib["sets"]["L_fingers"]["members"], ["FKThumbFinger1_L"])
+        del lib["sets"]["L_fingers"]
+        self.assertFalse(core.take_scene_sets(lib, scene))
+        self.assertNotIn("L_fingers", lib["sets"])
+
+    def test_the_library_round_trips_and_a_broken_file_reads_empty(self):
+        import tempfile
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "sets.json")
+        self.assertEqual(core.load_library(path), {"sets": {}, "seen": []})
+        lib = {"sets": {"hands": {"members": ["FKWrist_L"], "colour": None}}, "seen": ["hands"]}
+        core.save_library(lib, path)
+        self.assertEqual(core.load_library(path), lib)
+        self.assertFalse(os.path.exists(path + ".partial"))
+        with open(path, "w") as f:
+            f.write("{broken")
+        self.assertEqual(core.load_library(path), {"sets": {}, "seen": []})
+
+
 class Smoothing(unittest.TestCase):
     """The SM slider (2026-10-21): left smooths - gradually, pass by pass - right roughens."""
 

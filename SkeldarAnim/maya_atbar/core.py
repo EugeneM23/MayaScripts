@@ -1134,96 +1134,223 @@ def sets_in(nodes, namespace):
     return sorted(found)
 
 
+# 2026-10-23 «щоб селекшн сет зберігався в ядрі АТ ... в будь-якій сцені»: the sets live in a library of
+# the animator's own (LIBRARY_NAME in Maya's user folder), not in the scene. A member is kept as its name
+# without namespaces and found again in whatever scene is open: Manny_Rig1:FKWrist_L there is
+# FKWrist_L, which is Manny_Rig:FKWrist_L here.
+LIBRARY_NAME = "AT_selection_sets.json"
+
+
+def library_path():
+    return os.path.join(cmds.internalVar(userAppDir=True), LIBRARY_NAME)
+
+
+def load_library(path=None):
+    """{"sets": {label: {"members": [...], "colour": str|None}}, "seen": [labels taken from scenes]}."""
+    path = path or library_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    sets = data.get("sets") if isinstance(data.get("sets"), dict) else {}
+    seen = data.get("seen") if isinstance(data.get("seen"), list) else []
+    return {"sets": sets, "seen": seen}
+
+
+def save_library(lib, path=None):
+    """Written to a .partial first: a crash mid-write never loses the sets already there."""
+    path = path or library_path()
+    tmp = path + ".partial"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(lib, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def member_key(node):
+    """`FKWrist_L` for `tab_x:Manny_Rig1:FKWrist_L` or `|grp|ns:FKWrist_L`. Pure."""
+    return node.split("|")[-1].split(":")[-1]
+
+
+def member_keys(nodes):
+    """The members' keys, each once, in the order picked. Pure."""
+    out = []
+    for node in nodes:
+        key = member_key(node)
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def _namespace(node):
+    return node.split("|")[-1].rpartition(":")[0]
+
+
+def resolve(keys, found, prefer=(), within=""):
+    """The scene's nodes for the set's `keys`. `found` holds every node named like a key in any namespace;
+    one per key, from the first namespace of `prefer` (the selection's) that has it, else from the
+    namespace most of the set lives in - a set made on Manny_Rig1 selects one character, not every rig's
+    hands. `within` (the scene tab's namespace) keeps the search inside the tab. Pure."""
+    within = (within or "").strip(":")
+    by_key = {}
+    for node in found:
+        ns = _namespace(node)
+        if within and ns != within and not ns.startswith(within + ":"):
+            continue
+        by_key.setdefault(member_key(node), []).append(node)
+    count = {}
+    for key in keys:
+        for ns in set(_namespace(n) for n in by_key.get(key, [])):
+            count[ns] = count.get(ns, 0) + 1
+    order = [ns for ns in prefer if ns in count] + sorted(count, key=lambda ns: (-count[ns], ns))
+    rank = {}
+    for i, ns in enumerate(order):
+        rank.setdefault(ns, i)
+    out = []
+    for key in keys:
+        nodes = by_key.get(key, [])
+        if nodes:
+            out.append(min(nodes, key=lambda n: (rank.get(_namespace(n), len(order)), n)))
+    return out
+
+
+def take_scene_sets(lib, scene_sets):
+    """The sets the scene still holds as objectSets (made before the library) added to `lib` once each:
+    `scene_sets` is [(label, member nodes)]. A label already in the library, or taken once and deleted
+    since, is left alone. True when `lib` changed. Pure."""
+    changed = False
+    for label, members in scene_sets:
+        if label in lib["sets"] or label in lib["seen"]:
+            continue
+        lib["sets"][label] = {"members": member_keys(members), "colour": None}
+        lib["seen"].append(label)
+        changed = True
+    return changed
+
+
+def _library():
+    """The library, with the open scene's old objectSets taken into it."""
+    lib = load_library()
+    scene = [(label, cmds.sets(node, q=True) or [])
+             for label, node in sets_in(cmds.ls(type="objectSet") or [], cmds.namespaceInfo(currentNamespace=True))]
+    if take_scene_sets(lib, scene):
+        save_library(lib)
+    return lib
+
+
 def selection_sets():
-    """Our select sets in the current namespace - the active scene tab's. 2026-10-21: a set made in a tab
-    went into the tab's namespace, and listing `AT_sel_*` at the root showed none of them."""
-    return sets_in(cmds.ls(type="objectSet") or [], cmds.namespaceInfo(currentNamespace=True))
+    """[(label, label)] of the library's sets, by label - every scene shows the same ones. The second is
+    what the cells and menus hand back to the functions below."""
+    return [(label, label) for label in sorted(_library()["sets"])]
 
 
-@undoable
+def has_set(name):
+    return name in load_library()["sets"]
+
+
+def set_members(name):
+    """The set's members in the open scene."""
+    entry = load_library()["sets"].get(name)
+    keys = (entry or {}).get("members") or []
+    if not keys:
+        return []
+    found = cmds.ls(keys, recursive=True) or []
+    prefer = []
+    for node in cmds.ls(sl=True) or []:
+        ns = _namespace(node)
+        if ns not in prefer:
+            prefer.append(ns)
+    current = cmds.namespaceInfo(currentNamespace=True)
+    return resolve(keys, found, prefer, "" if current in (":", "") else current)
+
+
+def _ask_label(text=""):
+    res = cmds.promptDialog(title="AT Select Set", message="Name:", text=text, button=["OK", "Cancel"],
+                            defaultButton="OK", cancelButton="Cancel", dismissString="Cancel")
+    if res != "OK":
+        return None
+    return re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip())
+
+
 def create_selection_set():
     """A set of the selection under a name asked for; a name already used updates that set."""
     sel = cmds.ls(sl=True) or []
     if not sel:
         return warn("select objects for the set")
-    res = cmds.promptDialog(title="AT Select Set", message="Name:", button=["OK", "Cancel"],
-                            defaultButton="OK", cancelButton="Cancel", dismissString="Cancel")
-    if res != "OK":
+    label = _ask_label()
+    if label is None:
         return
-    label = re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip()) or "set"
-    same = [node for name, node in selection_sets() if name == label]
-    if same:
-        cmds.sets(clear=same[0])
-        cmds.sets(sel, add=same[0])
-        message("select set %s updated: %d objects" % (label, len(sel)))
-    else:
-        cmds.sets(sel, name=SELSET_PREFIX + label)
-        message("select set %s saved: %d objects" % (label, len(sel)))
+    label = label or "set"
+    lib = load_library()
+    old = lib["sets"].get(label)
+    lib["sets"][label] = {"members": member_keys(sel), "colour": old.get("colour") if old else None}
+    save_library(lib)
+    message("select set %s %s: %d objects" % (label, "updated" if old else "saved", len(sel)))
 
 
 def select_set(name, add=False):
-    members = cmds.sets(name, q=True) or []
+    members = set_members(name)
+    if not members:
+        return warn("select set %s: none of its objects are in this scene" % name)
     cmds.select(members, add=add)
 
 
 def deselect_set(name):
-    members = cmds.sets(name, q=True) or []
+    members = set_members(name)
     if members:
         cmds.select(members, deselect=True)
 
 
 def set_size(name):
-    return len(cmds.sets(name, q=True) or [])
+    return len(set_members(name))
 
 
-@undoable
 def delete_selection_set(name):
-    if cmds.objExists(name):
-        cmds.delete(name)
-        message("select set %s deleted - Ctrl+Z brings it back" % set_label(name))
+    lib = load_library()
+    if lib["sets"].pop(name, None) is not None:
+        save_library(lib)
+        message("select set %s deleted" % name)
 
 
-@undoable
 def update_selection_set(name):
     """The set holds the selection now."""
     sel = cmds.ls(sl=True) or []
     if not sel:
         return warn("select the objects the set should hold")
-    cmds.sets(clear=name)
-    cmds.sets(sel, add=name)
-    message("select set %s updated: %d objects" % (set_label(name), len(sel)))
+    lib = load_library()
+    entry = lib["sets"].setdefault(name, {"colour": None})
+    entry["members"] = member_keys(sel)
+    save_library(lib)
+    message("select set %s updated: %d objects" % (name, len(sel)))
 
 
-@undoable
 def rename_selection_set(name):
-    """A new name asked for; the set stays in its namespace. The set's new name, or None."""
-    res = cmds.promptDialog(title="AT Select Set", message="Name:", text=set_label(name),
-                            button=["OK", "Cancel"], defaultButton="OK", cancelButton="Cancel",
-                            dismissString="Cancel")
-    if res != "OK":
+    """A new name asked for. The set's new name, or None."""
+    label = _ask_label(name)
+    if not label or label == name:
         return None
-    label = re.sub(r"\W", "_", cmds.promptDialog(q=True, text=True).strip())
-    if not label or label == set_label(name):
+    lib = load_library()
+    if label in lib["sets"]:
+        return warn("select set %s already exists" % label)
+    if name not in lib["sets"]:
         return None
-    namespace = name.rpartition(":")[0]
-    return cmds.rename(name, (namespace + ":" if namespace else "") + SELSET_PREFIX + label)
-
-
-SET_COLOUR_ATTR = "skeldarATColour"
+    lib["sets"][label] = lib["sets"].pop(name)
+    save_library(lib)
+    return label
 
 
 def set_colour(name):
     """The colour the animator gave the set's cell, or None."""
-    if cmds.attributeQuery(SET_COLOUR_ATTR, node=name, exists=True):
-        return cmds.getAttr(name + "." + SET_COLOUR_ATTR) or None
-    return None
+    return (load_library()["sets"].get(name) or {}).get("colour") or None
 
 
-@undoable
 def paint_set(name, colour):
-    if not cmds.attributeQuery(SET_COLOUR_ATTR, node=name, exists=True):
-        cmds.addAttr(name, longName=SET_COLOUR_ATTR, dataType="string")
-    cmds.setAttr(name + "." + SET_COLOUR_ATTR, colour, type="string")
+    lib = load_library()
+    if name in lib["sets"]:
+        lib["sets"][name]["colour"] = colour
+        save_library(lib)
 
 
 def sets_grid(count, columns=4):
