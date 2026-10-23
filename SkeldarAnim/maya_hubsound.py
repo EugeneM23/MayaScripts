@@ -10,8 +10,8 @@ The hover tick went on 2026-10-22 («уберем звуки интерфейс�
 (keys, layers, characters, cards, Stash / Shared files, chat messages,
 Maya's Delete). Each recording ships as VARIANTS pitch variants spread over
 PITCH_SPREAD (25 %), one picked at random each play, so a repeated sound is
-never quite the same. Switched in the hub's menu (⋮ → Interface sounds), OFF
-by default («пусть звуки по умолчанию будут отключены», the same day). `message` (the chat)
+never quite the same. Switched in the hub's menu (⋮ → Interface sounds), ON
+by default since 2026-10-23 (off before). `message` (the chat)
 is the animator's recording too, one file (`CLIPS`); `ring` (a call) is synthesised.
 
     synth / wav_bytes   the sound as numbers, then as a WAV (pure)
@@ -53,20 +53,22 @@ SOUNDS = {
     "ring": Tone(partials=(
         (659.25, 1.00, 0.30, 0.00, 0.40), (1318.5, 0.25, 0.18, 0.00, 0.40),
         (783.99, 0.90, 0.35, 0.24, 0.50), (1568.0, 0.20, 0.20, 0.24, 0.50)),
-        attack=0.006, length=1.6, fade=0.05, peak=0.25),
+        attack=0.006, length=1.6, fade=0.05, peak=0.2125),     # 0.25 x 0.85 (2026-10-23)
 }
 
 #  The animator's recordings (2026-10-22): their mp3s in sources/sounds/, shipped as
 #  assets/sounds/<name>_<i>.wav, written by docs/superpowers/plans/make_ui_sound_variants.py
 #  (ffmpeg, 44.1 kHz) at GAIN_DB - the whoosh 30 % quieter than the fireball's -6 dB
-#  («сделаем его на 30% тише»: x0.7 is -3.1 dB more).
+#  («сделаем его на 30% тише»: x0.7 is -3.1 dB more). 2026-10-23, every sound 15 %
+#  quieter («те звуки что есть сейчас на 15% тише»): x0.85 is -1.4 dB more.
 RECORDED = ("drag", "delete")
-GAIN_DB = {"drag": -9.1, "delete": -6.0}
+GAIN_DB = {"drag": -10.5, "delete": -7.4}
 
 #  The animator's recordings that ship as ONE file, assets/sounds/<name>.wav, at this
 #  gain (dB), by the same script: the chat message (2026-10-22, «поставь вот этот звук на
-#  звук сообщения в месенджере» - sources/sounds/message_uvedomlenie.mp3).
-CLIPS = {"message": -6.0}
+#  звук сообщения в месенджере» - sources/sounds/message_uvedomlenie.mp3); 2026-10-23
+#  three times quieter («звук сообщения сделаем в 3 раза тише»): x1/3 is -9.5 dB more.
+CLIPS = {"message": -16.95}
 
 #  Each recording as VARIANTS files played PITCH_SPREAD apart from the lowest to the
 #  highest («в диапазоне 25 % питча»): x0.875 .. x1.125, evenly, the middle one x1.
@@ -202,17 +204,22 @@ def _cmds():
         return None
 
 
+#  ON in Maya until the animator switches them off (2026-10-23: «звуки интерфейса были по
+#  умолчанию включены»; off 2026-10-01 .. 2026-10-22). A choice saved in the menu stands.
+DEFAULT_ON = True
+
+
 def enabled():
-    """Whether the interface sounds are on (the menu row). OFF by default
-    (2026-10-01, and again 2026-10-22 with the animator's own drag and
-    delete sounds: «пусть звуки по умолчанию будут отключены»)."""
+    """Whether the interface sounds are on (the menu row): the saved choice,
+    else DEFAULT_ON; outside Maya off (nobody to hear them)."""
     global _ENABLED
     if _ENABLED is None:
         _ENABLED = False
         cmds = _cmds()
         try:
-            if cmds is not None and cmds.optionVar(exists=OPTIONVAR):
-                _ENABLED = bool(cmds.optionVar(query=OPTIONVAR))
+            if cmds is not None:
+                _ENABLED = (bool(cmds.optionVar(query=OPTIONVAR))
+                            if cmds.optionVar(exists=OPTIONVAR) else DEFAULT_ON)
         except Exception:                                    # noqa: BLE001
             pass
     return _ENABLED

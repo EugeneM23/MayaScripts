@@ -872,10 +872,11 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertRegex(os.path.basename(played[0]), r"^drag_\d\.wav$")
 
     def test_the_skin_shows_the_switch_and_loads_the_sound(self):
-        """Off by default (2026-10-22: «пусть звуки по умолчанию будут
-        отключены»): the row unchecked and no audio opened; switched on, the
-        row checked and every variant loaded before the first drag."""
+        """Switched off (a saved choice; on by default since 2026-10-23): the
+        row unchecked and no audio opened; switched on, the row checked and
+        every variant loaded before the first drag."""
         hubsound, played = self._fake_sound()
+        self.fake.optionvars[hubsound.OPTIONVAR] = 0
         skin = FakeSkin(None)
         hub._dress_sounds(skin)
         self.assertIs(skin.sounds, False)

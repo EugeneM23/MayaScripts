@@ -7277,8 +7277,11 @@ kept in `sources/sounds/`:
   picks one at random, never the one played last (`pick`), one QSoundEffect a variant.
 - A window-open sound (a cardboard lid on `maya_hubwindow.Burster`) was added and removed the same day.
 - A key-set click (a sci-fi UI click on the Time Bar's key set) was added and removed the same day too.
-The switch (⋮ → Interface sounds) stays **OFF by default** («пусть звуки по умолчанию будут
-отключены»); a saved choice is kept. `message` (the chat chime) is still synthesised. Tests `test_hubsound`, `test_ui_sounds`. Not
+The switch (⋮ → Interface sounds) was OFF by default until 2026-10-23, **ON by default since**
+(«звуки интерфейса были по умолчанию включены», `maya_hubsound.DEFAULT_ON`; outside Maya off); a
+saved choice is kept. The same day every sound 15 % quieter: `GAIN_DB` drag -10.5 / delete -7.4,
+`CLIPS` message -7.4 (then three times quieter, -16.95: «звук сообщения сделаем в 3 раза тише»), ring's peak 0.2125 - the files written again by
+`make_ui_sound_variants.py` (peaks x0.851 of the old ones). `message` (the chat chime) is still synthesised. Tests `test_hubsound`, `test_ui_sounds`. Not
 heard in a GUI Maya.
 
 148. **A verify that held widget wrappers across `processEvents()` killed the animator's Maya** (2026-10-01

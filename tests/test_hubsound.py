@@ -101,8 +101,22 @@ class Recorded(unittest.TestCase):
             self.assertEqual(lengths, sorted(lengths, reverse=True), name)
 
     def test_the_whoosh_is_thirty_percent_quieter_than_it_was(self):
-        """-6 dB was the first build's; x0.7 more is -3.1 dB."""
-        self.assertAlmostEqual(sound.GAIN_DB["drag"], -6.0 + 20 * __import__("math").log10(0.7),
+        """-6 dB was the first build's; x0.7 more is -3.1 dB, then every sound
+        x0.85 (2026-10-23)."""
+        log = __import__("math").log10
+        self.assertAlmostEqual(sound.GAIN_DB["drag"], -6.0 + 20 * log(0.7) + 20 * log(0.85),
+                               places=1)
+
+    def test_every_sound_is_fifteen_percent_quieter(self):
+        """2026-10-23: «те звуки что есть сейчас на 15% тише»."""
+        cut = 20 * __import__("math").log10(0.85)
+        self.assertAlmostEqual(sound.GAIN_DB["delete"], -6.0 + cut, places=1)
+        self.assertAlmostEqual(sound.SOUNDS["ring"].peak, 0.25 * 0.85)
+
+    def test_the_message_is_three_times_quieter(self):
+        """2026-10-23: x0.85 with the rest, then «в 3 раза тише»."""
+        log = __import__("math").log10
+        self.assertAlmostEqual(sound.CLIPS["message"], -6.0 + 20 * log(0.85) + 20 * log(1 / 3.0),
                                places=1)
 
 
@@ -152,7 +166,7 @@ class WavFile(unittest.TestCase):
         self.assertEqual(params, (1, 2, 48000))
         self.assertEqual(len(values), int(round(1.6 * 48000)))
         self.assertEqual(max(abs(v) for v in values),
-                         int(round(0.25 * 32767)))
+                         int(round(0.2125 * 32767)))
 
     def test_a_sample_past_full_scale_is_clipped_not_wrapped(self):
         params, values = _decoded(sound.wav_bytes([1.5, -1.5, 0.5]))
@@ -194,9 +208,13 @@ class WavFile(unittest.TestCase):
 
 class Switch(SoundMixin, unittest.TestCase):
 
-    def test_off_by_default(self):
-        """2026-10-22: «пусть звуки по умолчанию будут отключены» - ⋮ →
-        Interface sounds turns them on."""
+    def test_on_by_default(self):
+        """2026-10-23: «звуки интерфейса были по умолчанию включены»."""
+        self.assertTrue(sound.enabled())
+        self.assertTrue(sound.play("drag", now=1.0))
+
+    def test_a_saved_off_stands(self):
+        self.cmds.optionvars[sound.OPTIONVAR] = 0
         self.assertFalse(sound.enabled())
         self.assertFalse(sound.play("drag", now=1.0))
         self.assertEqual(FakePlayer.made, [])
