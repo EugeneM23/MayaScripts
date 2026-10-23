@@ -145,6 +145,84 @@ class Memory(unittest.TestCase):
             self.assertEqual(foldertree.read_open(text, "k"), set())
 
 
+class DiskPath(unittest.TestCase):
+
+    def folder(self, path):
+        return foldertree.Row("folder", 0, path, path.rsplit("/", 1)[-1],
+                              None, 1, False)
+
+    def anim(self, record):
+        return foldertree.Row("anim", 0, "", record.name, record, 1, False)
+
+    def test_an_unreal_folder_is_under_the_content_dir(self):
+        self.assertEqual(foldertree.disk_path(
+            self.folder("Game/Chars/Hero"), "unreal", "", "C:/P/Content"),
+            "C:/P/Content/Chars/Hero")
+
+    def test_the_game_folder_is_the_content_dir_itself(self):
+        self.assertEqual(foldertree.disk_path(
+            self.folder("Game"), "unreal", "", "C:\\P\\Content\\"),
+            "C:/P/Content")
+
+    def test_another_mount_or_no_content_dir_has_no_place(self):
+        self.assertEqual(foldertree.disk_path(
+            self.folder("Engine/Anims"), "unreal", "", "C:/P/Content"), "")
+        self.assertEqual(foldertree.disk_path(
+            self.folder("Game/Chars"), "unreal", "", ""), "")
+
+    def test_an_unreal_animation_is_its_uasset(self):
+        record = records.AnimRecord("Walk", "/Game/Chars/Walk", "", 30, 1.0, 30.0)
+        self.assertEqual(foldertree.disk_path(
+            self.anim(record), "unreal", "", "C:/P/Content"),
+            "C:/P/Content/Chars/Walk.uasset")
+
+    def test_a_file_source_folder_is_under_its_root(self):
+        for source in ("folder", "unity"):
+            self.assertEqual(foldertree.disk_path(
+                self.folder("walks/fast"), source, "C:\\clips\\", ""),
+                "C:/clips/walks/fast")
+
+    def test_a_file_animation_is_its_file(self):
+        record = records.AnimRecord("W", "C:/clips/walks/W.fbx", "", 24, 1.0,
+                                    30.0, "folder", "C:\\clips\\walks\\W.fbx",
+                                    "", "fbx")
+        self.assertEqual(foldertree.disk_path(self.anim(record), "folder",
+                                              "C:/clips", ""),
+                         "C:/clips/walks/W.fbx")
+
+    def test_no_row_and_no_root_have_no_place(self):
+        self.assertEqual(foldertree.disk_path(None, "folder", "C:/c", ""), "")
+        self.assertEqual(foldertree.disk_path(
+            self.folder("walks"), "folder", "", ""), "")
+
+
+class SafeFileName(unittest.TestCase):
+
+    def test_the_extension_is_added(self):
+        self.assertEqual(foldertree.safe_file_name("Hero walk", ".fbx"),
+                         "Hero walk.fbx")
+
+    def test_a_typed_extension_is_not_doubled(self):
+        self.assertEqual(foldertree.safe_file_name("hero.FBX", ".fbx"),
+                         "hero.fbx")
+
+    def test_an_allowed_typed_extension_wins(self):
+        self.assertEqual(foldertree.safe_file_name(
+            "hero.mb", ".ma", (".ma", ".mb")), "hero.mb")
+        self.assertEqual(foldertree.safe_file_name(
+            "hero", ".ma", (".ma", ".mb")), "hero.ma")
+
+    def test_forbidden_characters_become_underscores(self):
+        self.assertEqual(foldertree.safe_file_name('a<b>c:d"e/f\\g|h?i*', ".fbx"),
+                         "a_b_c_d_e_f_g_h_i_.fbx")
+
+    def test_dots_spaces_and_devices(self):
+        self.assertEqual(foldertree.safe_file_name("  ..walk.  ", ".fbx"),
+                         "walk.fbx")
+        self.assertEqual(foldertree.safe_file_name("", ".fbx"), "animation.fbx")
+        self.assertEqual(foldertree.safe_file_name("con", ".fbx"), "_con.fbx")
+
+
 class Pure(unittest.TestCase):
 
     def test_it_imports_nothing_of_maya(self):

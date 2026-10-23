@@ -9,6 +9,7 @@ Pure: stdlib and `records` only, so it is testable with no Maya at all.
 
 import collections
 import json
+import re
 
 from maya_uebridge import records
 
@@ -57,6 +58,69 @@ def folder_of(record, root=""):
         if folder.lower().startswith(base.lower() + "/"):
             return folder[len(base) + 1:]
     return folder
+
+
+def _clean(path):
+    """`path` with forward slashes and no trailing slash ("" stays "")."""
+    text = _slashed(path)
+    return text.rstrip("/") if text.strip("/") else text
+
+
+def disk_path(row, source, root, content_dir):
+    """Where the list row `row` lives on disk, "" when it has no place.
+
+    A folder: Unreal's `Game/<rest>` under `content_dir` (another mount, or no
+    `content_dir` from an old cache, has none); a file source's under `root`
+    (the chosen folder, the Unity project). An animation: its uasset, or its
+    file. Slashes forward, no trailing slash."""
+    if row is None:
+        return ""
+    if row.kind != "folder":
+        record = row.record
+        if record is None:
+            return ""
+        if source == "unreal" or not record.path:
+            if not content_dir:
+                return ""
+            return _clean(records.uasset_path_of(record.package, content_dir))
+        return _clean(record.path)
+    if source == "unreal":
+        parts = [p for p in _slashed(row.path).split("/") if p]
+        if not content_dir or not parts or parts[0].lower() != "game":
+            return ""
+        base = _clean(content_dir)
+        return "/".join([base] + parts[1:])
+    if not root:
+        return ""
+    base = _clean(root)
+    rest = _slashed(row.path).strip("/")
+    return base + "/" + rest if rest else base
+
+
+_BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_DEVICES = set(["CON", "PRN", "AUX", "NUL"]
+               + ["COM%d" % n for n in range(1, 10)]
+               + ["LPT%d" % n for n in range(1, 10)])
+
+
+def safe_file_name(text, ext, allowed=()):
+    """A file name from what the animator typed: whitespace collapsed, a typed
+    `ext` (or one of `allowed`, which then wins) not doubled, Windows'
+    forbidden characters as "_", leading and trailing dots and spaces gone, a
+    device name prefixed with "_", nothing at all named "animation"."""
+    name = " ".join((text or "").split())
+    chosen = ext
+    for known in tuple(allowed) + (ext,):
+        if name.lower().endswith(known.lower()):
+            name = name[:-len(known)]
+            chosen = known.lower()
+            break
+    name = _BAD_NAME.sub("_", name).strip(". ")
+    if not name:
+        name = "animation"
+    if name.split(".")[0].strip().upper() in _DEVICES:
+        name = "_" + name
+    return name + chosen
 
 
 def build(record_list, root=""):
