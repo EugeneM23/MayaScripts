@@ -7695,9 +7695,25 @@ two panes, not one folder at a time); a folder only opens and closes. Spec
   place in `ueAnimBridgeOpenFolders` (JSON, the last 20 places).
 - `window._repopulate` fills the same `textScrollList`; `_STATE["filtered"]` holds one entry a ROW, `None` for a
   folder - `_selected_records`, the Import button's words and `listdrag.carried_records` skip it.
-  `_on_select` toggles a picked folder and deselects it (the picked animations stay); a second click on the
-  same folder within `DOUBLE_S` 0.5 s is the double click's and toggles nothing; `_on_double` imports nothing
-  then. A search shows only the matching branches, all open, and leaves the memory alone.
+  A search shows only the matching branches, all open, and leaves the memory alone.
+- **Folders you pick, export and save into** (the same day: «выделять папки ... экспортировать или
+  сохранять фаил в выделенной папке ... show in explorer»; spec
+  `docs/superpowers/specs/2026-10-23-animation-setup-folder-actions-design.md`, which replaces the click
+  rules above): a click picks a folder like a row (Ctrl / Shift as Maya's), a double click on a lone
+  picked folder opens / closes it, any other double click imports the picked animations; a picked folder
+  never imports and a rebuild keeps it by path (`picked_folders`). **Export FBX...** and a new **Save
+  scene...** (the Export ▸ row: FBX + Save in one row, Export to uasset under them) write straight into
+  the one picked folder, its name asked (`_ask_name`, `foldertree.safe_file_name`: `.fbx` / `.ma`, a typed
+  `.mb` kept), an existing file confirmed, a folder gone from disk refused; none picked: the save dialog;
+  several: refused; the buttons read «Export FBX to Chars...» (`folder_label`, repainted by
+  `paint_import`). Save scene with Scene Tabs on saves the active tab there (`saving.save_tab(path=)`).
+  An Unreal folder is its folder under the project's Content (`foldertree.disk_path`; another mount has
+  none). **The right button on a row** (a `popupMenu` on the list, made right after its grip separator;
+  `listdrag`'s filter tells the row under the mouse, `_right_pressed` / `_menu_row`): Show in Explorer (a
+  file selected, a folder opened), on a folder also Export FBX here... / Save scene here...; a missing
+  path disabled and said (`menu_rows`). Proof: unit tests only (`DiskPath`, `SafeFileName`, `FolderTree`,
+  `FolderSave`, `ListMenu`, the listdrag right press). Not seen in a GUI Maya: the popup, Explorer, the
+  prompt.
 - Proof: `tests/test_uebridge_foldertree.py`, `test_uebridge_window.FolderTree`,
   `test_uebridge_listdrag.FolderRows`. Not seen in a GUI Maya (the arrows in Maya's list font, a real double
   click's order of select / double-click commands).
