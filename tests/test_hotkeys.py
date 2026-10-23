@@ -1186,6 +1186,35 @@ class FrameCommands(unittest.TestCase):
         maya_hotkeys.run("time.prev")
         self.assertEqual(self.fake.time, 0.0)
 
+    def test_step_jumps_over_the_frames_without_a_key(self):
+        maya_hotkeys.run("time.next")
+        maya_hotkeys.run("time.next")
+        self.assertEqual(self.fake.time, 10.0)
+        maya_hotkeys.run("time.prev")
+        self.assertEqual(self.fake.time, 2.0)
+
+    def test_step_walks_the_selections_keys(self):
+        self.fake.curves["ctrl_rotateZ"] = [18.0, 22.0, 26.0]
+        self.fake.curve_types["ctrl_rotateZ"] = "animCurveTA"
+        self.fake.driving["|ctrl"] = ["ctrl_rotateZ"]
+        self.fake.selected = ["|ctrl"]
+        self.fake.time = 18.0
+        maya_hotkeys.run("time.next")
+        self.assertEqual(self.fake.time, 22.0)
+        self.fake.time = 25.0
+        maya_hotkeys.run("time.prev")
+        self.assertEqual(self.fake.time, 22.0)
+
+    def test_step_stays_at_the_last_key(self):
+        self.fake.time = 10.0
+        maya_hotkeys.run("time.next")
+        self.assertEqual(self.fake.time, 10.0)
+
+    def test_step_without_animation_is_one_frame(self):
+        self.fake.curves, self.fake.curve_types, self.fake.driving = {}, {}, {}
+        maya_hotkeys.run("time.next")
+        self.assertEqual(self.fake.time, 2.0)
+
     def test_insert_makes_room_after_the_current_frame(self):
         maya_hotkeys.run("time.insert")
         self.assertEqual(self.fake.curves["loc_translateX"],

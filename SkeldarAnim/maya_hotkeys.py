@@ -330,6 +330,31 @@ def step_frame(delta):
     cmds.currentTime(cmds.currentTime(query=True) + delta, edit=True)
 
 
+def neighbour_key(times, now, forward):
+    """The key time after (or before) `now`, or None. Pure."""
+    eps = 1e-6
+    if forward:
+        later = [t for t in times if t > now + eps]
+        return min(later) if later else None
+    earlier = [t for t in times if t < now - eps]
+    return max(earlier) if earlier else None
+
+
+def step_key(forward):
+    """To the next (or previous) key of the selection, else of the scene (2026-10-23, alt+a / alt+s:
+    «хочу щоб перемикалося до прикладу 18-22-26», not frame by frame through the empty ones). With no
+    animation at all, one frame; at the last key, it stays."""
+    curves = time_curves()
+    times = (cmds.keyframe(curves, query=True) or []) if curves else []
+    if not times:
+        return step_frame(1.0 if forward else -1.0)
+    now = cmds.currentTime(query=True)
+    frame = neighbour_key(times, now, forward)
+    if frame is None:
+        return _report("No key {0} {1:g}".format("after" if forward else "before", now))
+    cmds.currentTime(frame, edit=True)
+
+
 def insert_plan(now, last):
     """(start, end, +1) for the keys that make room after `now`.
 
@@ -940,10 +965,12 @@ _OURS = (
      "Open the SkeldarAnim panel: every tool a section, dock it anywhere",
      partial(_show, "maya_hub", "show")),
 
-    ("time.prev", "Timeline", "Frame back", "One frame back",
-     partial(step_frame, -1.0)),
-    ("time.next", "Timeline", "Frame forward", "One frame forward",
-     partial(step_frame, 1.0)),
+    ("time.prev", "Timeline", "Key back",
+     "To the previous key - the selection's, or the scene's when nothing is selected",
+     partial(step_key, False)),
+    ("time.next", "Timeline", "Key forward",
+     "To the next key - the selection's, or the scene's when nothing is selected",
+     partial(step_key, True)),
     ("time.insert", "Timeline", "Insert frame",
      "Make room for an inbetween after the current frame - the selection's "
      "curves, or the whole scene when nothing is selected",
