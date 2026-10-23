@@ -267,6 +267,87 @@ Proof:
   honest knobs (1.51% under the knee-mode fit).
 - `verify_cat.py` 55/55.
 
+## Addendum: the chest's own knobs, and a sprint matched beside the walk (the same day)
+
+The animator: «Некоторые ручки влияют на нашу анимацию почти незаметно, особенно это видно на груди» and
+«я добавил в сцену скелет со спринтом ... добиться такой анимации нашими настройками ... при этом походка
+тоже должна остаться».
+
+**The chest.** A scan from the Walk preset swept each knob over its range and recorded how far the chest
+(spine_05) moved against the travel line. The chest's knobs were shares of the pelvis's motion, and the
+spine took the pelvis's motion back:
+- Pitch ±10° moved the chest 0.4°.
+- Roll ±20° moved it 1.3°.
+- Shoulders level (`roll_cancel`), over its whole range, moved it 1.1°.
+- Chest counter-twist (`counter`) moved it 8°.
+
+On the sprint, the measurement came out as counter −2.96 and roll_cancel 2.56, both outside their ranges.
+
+The chest now has its own motion in degrees, in the world, on the pelvis's timing: **Chest twist**,
+**Chest roll** and **Chest bounce** (`chest_twist`, `chest_roll`, `chest_pitch`). The spine carries the
+chest from the pelvis to that motion, so the pelvis's twist and roll no longer move the chest. Over their
+ranges the three move the chest 42°, 24.5° and 20°. `catmodel.knobs` turns old saved `counter` /
+`roll_cancel` into the same motion (`_legacy`), and every preset moves as before, to 1.4e-5. The matcher
+reads the three straight off the chest.
+
+**A take of several cycles.** The sprint (`|Sprint|root`, keys 12–73) holds four cycles over 61 frames.
+Each cycle differs (mocap) and only the whole take closes, so cutting one cycle out fails; read as one
+cycle, it measured a ground time of 0.07 and a stride of 8 legs. `catmatch.mean_cycle` averages the take
+into one cycle:
+- `cycles_in` counts the cycles from the strongest harmonic of the left ankle's height.
+- Each phase is sampled in every cycle, places less the take's straight travel, rotations averaged and
+  projected back onto a rotation, on round(period) frames.
+
+A one-cycle take comes back as it is. Match fits the mean cycle, and Apply keys our cycle as many times as
+the take holds (`apply(cycles=)`, kept in the marker).
+
+**Fixed and added on the sprint's evidence:**
+- **The shin flipped 180° about its own bone** whenever the knee folded past ~70°. Each leg bone took its
+  roll from its own direction crossed with the knee hint, and as the heel kicks up behind, the shin points
+  along the hint's opposite, so the cross product changed sign. Now one bend plane serves the whole leg:
+  the hip-to-ankle line's normal toward the hint.
+- **The swinging foot.** **Foot hangs off the shin** (`foot_follow`, 0..1): mid-swing the foot blends from
+  its level platform to the rest foot carried by the shin (`follow_shape`). **Toes pointed off the shin**
+  (`swing_point`, degrees) points it from there. The fit holds `foot_follow` at 0, ½ and 1 in turn (fed
+  back together, the two run away) and keeps the best: 1 for the sprint.
+- **The clavicle.** The reference holds its shoulders forward (−13/+15°) and rolls them 17° once a cycle;
+  ours stood still. New knobs: **Shoulders forward** (`clavicle_forward`), **Shoulders roll**
+  (`clavicle_roll`) and **Shoulders pump** (`clavicle_pump`, rolling with the arm swing). The existing
+  `clavicle` swing is fitted too. The walk's clavicle error was the same: 16° on every frame.
+- **The wrist** twists about the forearm: **Wrist twist** (`hand_twist`) and **Wrist twist swing**
+  (`hand_twist_swing`).
+- `lift` reaches 1.0 of the leg (the sprint's 0.68 was past the old 0.6).
+
+**The Run preset is the fit on the mean cycle** (the animator: «Сделай только бег референсным пресетом»; the
+hand-made Run and a separate Sprint row are gone): 15 frames at 30 fps, 6.9 m/s,
+2.05 legs a step, ground time 0.23, foot lift 0.66 leg, lean 21°, flight 7 frames a cycle. The pose is off
+the reference by 154 summed group degrees: pelvis 7, spine 6, head 11, legs 18, feet 21, arms 19, hands 34,
+fingers 38. Before the fixes it was 217: legs 43, feet 53, arms 23, hands 36. What is left:
+- the elbow opens about 2 frames later than the reference's, which no cosine can shape;
+- the hand's flexion about its own Z;
+- the thumb's turn about its own X.
+
+**The walk stays.** The Walk preset, its knobs, and the walk keyed on `Manny_Skeleton1` beside the
+reference are unchanged.
+
+**Maya on port 7001**: a new Manny UE5 skeleton (`Manny_Skeleton3`, at (−150, −111)) was matched to the
+sprint. It runs it four times (12–72) at the sprint's speed and stride; the averaged reference measures
+duty 0.233 against our 0.267, and stride 2.045, lift 0.676/0.669, lean 21.5/21.5 and swing 47.1/46.8 on
+both. The window was rebuilt with the new knobs.
+
+Proof:
+- 30 unit tests. Six are new:
+  - each chest knob turns the chest by its degrees;
+  - the pelvis no longer takes the chest with it;
+  - old saved knobs give the same chest;
+  - the Run flies, and its shins never turn more than 30° a frame about their bone (this one fails
+    with the old roll rule);
+  - a swinging foot hangs off its shin pointed as set;
+  - a three-cycle take is averaged back to its cycle to 1e-6.
+- `verify_cat.py` 55/55, the Run on Manny and on the Creep.
+- The chest knobs are read back on the upright Jog to 2.5° of 15° (under the Run's 21° lean the read-back is
+  an euler of a tilted chest: 13.7°).
+
 ## Not built
 
 - Path Node;

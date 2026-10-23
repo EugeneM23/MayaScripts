@@ -2,6 +2,7 @@
 synthesises keeps the skeleton whole, closes, plants its feet and moves the way CATMotion says."""
 import importlib.util
 import json
+import math
 import os
 import subprocess
 import sys
@@ -192,6 +193,98 @@ class Signs(unittest.TestCase):
         plain, k = gen()
         moved = cm.generate(SKEL, k, 30, place=place)
         np.testing.assert_allclose(moved.frames[5]["pelvis"], plain.frames[5]["pelvis"] @ place, atol=1e-9)
+
+
+def turn_about(a, b, axis):
+    """Degrees two 4x4 worlds' rotations differ about `axis` (the rotation vector's part along it)."""
+    q = b[:3, :3].T @ a[:3, :3]
+    angle = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(q) - 1.0) / 2.0))))
+    v = np.array([q[2, 1] - q[1, 2], q[0, 2] - q[2, 0], q[1, 0] - q[0, 1]])
+    if np.linalg.norm(v) < 1e-9:
+        return 0.0 if angle < 1.0 else angle
+    return abs(float(np.dot(v / np.linalg.norm(v), cm.unit(axis)))) * angle
+
+
+class Chest(unittest.TestCase):
+    """The chest has its own motion in degrees (2026-10-23): the old knobs were shares of the pelvis's motion
+    and moved it by a degree or less over their whole range."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.dirname(MODEL))
+        import catmatch
+        cls.mt = catmatch
+
+    def test_each_chest_knob_turns_the_chest_by_its_degrees(self):
+        base = cm.preset("Jog", 30)          # upright: under a lean the read-back is an euler of a tilted chest
+        m0 = self.mt.measure(SKEL, cm.generate(SKEL, base, 30).frames)
+        for knob in ("chest_twist", "chest_roll", "chest_pitch"):
+            m = self.mt.measure(SKEL, cm.generate(SKEL, dict(base, **{knob: base[knob] + 15.0}), 30).frames)
+            self.assertAlmostEqual(m[knob] - m0[knob], 15.0, delta=2.5, msg=knob)       # was <= 1.3 over a whole range
+
+    def test_the_pelvis_no_longer_takes_the_chest_with_it(self):
+        base = cm.preset("Walk", 30)
+        m0 = self.mt.measure(SKEL, cm.generate(SKEL, base, 30).frames)
+        m = self.mt.measure(SKEL, cm.generate(SKEL, dict(base, twist=20.0, roll=10.0), 30).frames)
+        self.assertAlmostEqual(m["chest_twist"], m0["chest_twist"], delta=0.3)
+        self.assertAlmostEqual(m["chest_roll"], m0["chest_roll"], delta=0.3)
+
+    def test_knobs_saved_before_play_the_same_chest(self):
+        k = cm.knobs({"counter": 1.3, "roll_cancel": 0.4, "twist": 9.0, "roll": 6.0})
+        self.assertAlmostEqual(k["chest_twist"], 11.7)
+        self.assertAlmostEqual(k["chest_roll"], 3.6)
+        self.assertNotIn("counter", k)
+
+
+class Sprint(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.dirname(MODEL))
+        import catmatch
+        cls.mt = catmatch
+
+    def test_the_run_flies_and_its_shins_never_flip(self):
+        c, k = gen(preset="Run")
+        self.assertGreater(c.info["flight"], 0)
+        self.assertEqual(c.info["double"], 0)
+        T = c.info["frames"]
+        for side in "lr":
+            calf, foot = "calf_" + side, "foot_" + side
+            for f in range(T):
+                a, b = c.frames[f], c.frames[f + 1]
+                axis = b[foot][3, :3] - b[calf][3, :3]
+                self.assertLess(turn_about(a[calf], b[calf], axis), 30.0, (side, f))
+
+    def test_a_swinging_foot_hangs_off_its_shin_pointed(self):
+        for point in (0.0, 20.0, -15.0):
+            c, k = gen(preset="Run", foot_follow=1.0, swing_point=point)
+            m = self.mt.measure(SKEL, c.frames)
+            self.assertAlmostEqual(m["swing_point"], point, delta=1.0)
+            self.assertLess(m["swing_foot"], 4.0)
+        c, k = gen(preset="Run", foot_follow=0.0)
+        self.assertLess(self.mt.measure(SKEL, c.frames)["swing_point"], -30.0)    # level: far from the shin
+
+    def test_a_take_of_several_cycles_is_averaged_into_one(self):
+        c, k = gen(preset="Run")
+        T = c.info["frames"]
+        travel = c.frames[T]["root"][3, :3] - c.frames[0]["root"][3, :3]
+        take = []
+        for r in range(3):
+            for f in range(T + (1 if r == 2 else 0)):
+                world = {}
+                for leaf, m in c.frames[f].items():
+                    m = m.copy()
+                    m[3, :3] += travel * r
+                    world[leaf] = m
+                take.append(world)
+        self.assertEqual(self.mt.cycles_in(SKEL, take), 3)
+        one, cycles = self.mt.mean_cycle(SKEL, take)
+        self.assertEqual((cycles, len(one)), (3, T + 1))
+        worst = max(float(np.abs(one[f][leaf] - c.frames[f][leaf]).max()) for f in range(T + 1) for leaf in one[f])
+        self.assertLess(worst, 1e-6)
+        same, cycles = self.mt.mean_cycle(SKEL, c.frames)
+        self.assertEqual(cycles, 1)
+        self.assertIs(same, c.frames)
 
 
 class Match(unittest.TestCase):

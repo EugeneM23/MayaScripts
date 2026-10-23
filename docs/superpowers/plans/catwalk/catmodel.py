@@ -26,7 +26,7 @@ KNOBS = (
     ("on_spot", 0.0, 0.0, 1.0, "Timing", "On spot"),
     ("cycle_offset", 0.0, -60.0, 60.0, "Timing", "Cycle offset, fr"),
     ("duty", 0.62, 0.2, 0.85, "Feet", "Ground time"),
-    ("lift", 0.13, 0.0, 0.6, "Feet", "Foot lift, x leg"),
+    ("lift", 0.13, 0.0, 1.0, "Feet", "Foot lift, x leg"),
     ("lift_peak", 0.35, 0.1, 0.9, "Feet", "Lift peak"),
     ("lift_late", 0.0, -0.1, 0.4, "Feet", "Late lift, x leg"),
     ("step_shape", 0.5, -1.0, 1.0, "Feet", "Step shape (- fast start, + ease)"),
@@ -38,6 +38,8 @@ KNOBS = (
     ("toe_off", 30.0, 0.0, 70.0, "Feet", "Toe off, deg"),
     ("toe_hold", 0.6, 0.2, 0.95, "Feet", "Heel-up hold, swing"),
     ("swing_toes", 0.0, -20.0, 50.0, "Feet", "Toes up late swing, deg"),
+    ("foot_follow", 0.0, 0.0, 1.0, "Feet", "Foot hangs off the shin, swing"),
+    ("swing_point", 0.0, -40.0, 60.0, "Feet", "Toes pointed off the shin, deg"),
     ("swing_reach", 0.0, -0.1, 0.4, "Feet", "Reach past the print, x leg"),
     ("stance_center", 0.5, 0.15, 0.85, "Feet", "Under the hip at, stance"),
     ("foot_height", 0.0, -0.08, 0.08, "Feet", "Foot height, x leg"),
@@ -56,8 +58,9 @@ KNOBS = (
     ("knee_mid", 15.0, 0.0, 90.0, "Knees", "Knee mid-stance, deg"),
     ("knee_lift", 40.0, 0.0, 120.0, "Knees", "Knee at lift, deg"),
     ("swing_knee", 0.0, 0.0, 60.0, "Knees", "Knee before the strike, deg"),
-    ("counter", 0.8, 0.0, 2.0, "Spine & Head", "Chest counter-twist"),
-    ("roll_cancel", 1.0, 0.0, 1.5, "Spine & Head", "Shoulders level"),
+    ("chest_twist", 4.8, -40.0, 40.0, "Spine & Head", "Chest twist, deg"),
+    ("chest_roll", 0.0, -25.0, 25.0, "Spine & Head", "Chest roll, deg"),
+    ("chest_pitch", 0.0, -20.0, 20.0, "Spine & Head", "Chest bounce, deg"),
     ("spine_lean", 2.0, -30.0, 45.0, "Spine & Head", "Spine lean, deg"),
     ("head_stabilize", 0.8, 0.0, 1.0, "Spine & Head", "Head stabilize"),
     ("nod", 0.0, -30.0, 30.0, "Spine & Head", "Head nod, deg"),
@@ -69,9 +72,14 @@ KNOBS = (
     ("elbow", 15.0, 0.0, 140.0, "Arms", "Elbow, deg"),
     ("elbow_swing", 15.0, 0.0, 60.0, "Arms", "Elbow swing, deg"),
     ("clavicle", 3.0, 0.0, 20.0, "Arms", "Clavicle, deg"),
+    ("clavicle_forward", 0.0, -30.0, 40.0, "Arms", "Shoulders forward, deg"),
+    ("clavicle_roll", 0.0, -40.0, 40.0, "Arms", "Shoulders roll, deg"),
+    ("clavicle_pump", 0.0, -40.0, 40.0, "Arms", "Shoulders pump, deg"),
     ("hand_flop", 8.0, 0.0, 40.0, "Arms", "Hand flop, deg"),
     ("forearm_in", 0.0, -40.0, 60.0, "Arms", "Forearms in, deg"),
     ("hand_bend", 0.0, -60.0, 60.0, "Arms", "Wrist bend, deg"),
+    ("hand_twist", 0.0, -60.0, 60.0, "Arms", "Wrist twist, deg"),
+    ("hand_twist_swing", 0.0, -45.0, 45.0, "Arms", "Wrist twist swing, deg"),
     ("knuckle_curl", 0.0, -30.0, 90.0, "Fingers", "Knuckles curl, deg"),
     ("finger_curl", 0.0, -30.0, 110.0, "Fingers", "Fingers curl, deg"),
     ("tip_curl", 0.0, -30.0, 90.0, "Fingers", "Tips curl, deg"),
@@ -108,8 +116,8 @@ PRESETS = {
              "swing_reach": 0.3934, "stance_center": 0.3915, "foot_height": 0.0209, "crouch": 0.0407, "bob": 0.0415,
              "bob_phase": 0.9514, "push": 0.0123, "weight_shift": 0.0246, "twist": 5.8784, "roll": 1.2013,
              "lean": -1.9094, "pitch": 0.4878, "knee_drive": 0.0, "knee_plant": 32.5394, "knee_load": 34.6189,
-             "knee_mid": 16.952, "knee_lift": 39.9946, "swing_knee": 12.2372, "counter": 0.5464,
-             "roll_cancel": 0.9618, "spine_lean": 0.0, "head_stabilize": 0.8, "nod": 5.9234, "arm_out": 15.6903,
+             "knee_mid": 16.952, "knee_lift": 39.9946, "swing_knee": 12.2372, "chest_twist": 3.212,
+             "chest_roll": 0.0459, "spine_lean": 0.0, "head_stabilize": 0.8, "nod": 5.9234, "arm_out": 15.6903,
              "swing": 21.9548, "arm_forward": -7.644, "cross_swing": 8.0, "arm_lag": -0.0388, "elbow": 21.5249,
              "elbow_swing": 28.3598, "clavicle": 3.0, "hand_flop": 8.0, "forearm_in": 11.0282, "hand_bend": 6.5959,
              "knuckle_curl": 21.8283, "finger_curl": 55.7345, "tip_curl": 0.0, "curl_fan": 0.1588,
@@ -118,20 +126,34 @@ PRESETS = {
              "bend_spine_05": 12.8231, "bend_neck": -7.8304, "phase_l": 0.0, "phase_r": 0.0},
     "Jog": {"step_s": 0.38, "stride": 1.0, "duty": 0.42, "lift": 0.22, "lift_peak": 0.4, "step_shape": 0.3,
             "crouch": 0.06, "bob": 0.03, "bob_phase": 0.42, "weight_shift": 0.012, "twist": 8.0, "roll": 3.0,
-            "lean": 7.0, "pitch": 1.5, "counter": 1.0, "spine_lean": 4.0, "heel_strike": 10.0, "toe_off": 38.0,
+            "lean": 7.0, "pitch": 1.5, "chest_twist": 8.0, "chest_roll": 0.0, "spine_lean": 4.0, "heel_strike": 10.0, "toe_off": 38.0,
             "arm_out": 12.0, "swing": 32.0, "cross_swing": 12.0, "elbow": 70.0, "clavicle": 4.0},
-    "Run": {"step_s": 0.32, "stride": 1.4, "duty": 0.34, "lift": 0.32, "lift_peak": 0.45, "step_shape": 0.15,
-            "crouch": 0.08, "bob": 0.035, "bob_phase": 0.34, "push": 0.015, "weight_shift": 0.008, "twist": 10.0,
-            "roll": 2.0, "lean": 12.0, "pitch": 2.0, "counter": 1.1, "spine_lean": 6.0, "heel_strike": 6.0,
-            "toe_off": 45.0, "arm_out": 14.0, "swing": 45.0, "cross_swing": 15.0, "elbow": 85.0, "clavicle": 6.0,
-            "hand_flop": 6.0},
+    # the run: catmatch.fit on the animator's sprint reference (2026-10-23; four cycles over 61 frames at 30 fps,
+    # averaged into one of 15 frames - 6.9 m/s, 175 cm a step, both feet off the ground 7 frames a cycle)
+    "Run": {"step_s": 0.25, "stride": 2.0453, "duty": 0.2283, "lift": 0.6567, "lift_peak": 0.3979, "lift_late": -0.1,
+               "step_shape": 0.6609, "foot_push": 0.0, "swerve": 0.0, "stance": 0.3938, "toe_out": 6.624,
+               "heel_strike": 2.0831, "toe_off": 49.6276, "toe_hold": 0.4711, "swing_toes": 4.6763, "foot_follow": 1.0,
+               "swing_point": 14.0051, "swing_reach": 0.1237, "stance_center": 0.2914, "foot_height": -0.0072,
+               "crouch": 0.1281, "bob": 0.0175, "bob_phase": 0.3108, "push": 0.0146, "weight_shift": -0.0133,
+               "twist": -5.1944, "roll": 5.132, "lean": 21.4721, "pitch": -0.4235, "knee_drive": 0.0,
+               "knee_plant": 40.7083, "knee_load": 46.7154, "knee_mid": 47.5647, "knee_lift": 29.7016,
+               "swing_knee": 7.9106, "chest_twist": 14.8856, "chest_roll": -12.7044, "chest_pitch": -0.8147,
+               "spine_lean": 0.0, "head_stabilize": 0.8, "nod": 15.9321, "arm_out": 24.7407, "swing": 45.3683,
+               "arm_forward": -33.5776, "cross_swing": 8.0, "arm_lag": -0.2216, "elbow": 60.5132,
+               "elbow_swing": 54.7229, "clavicle": 0.0, "clavicle_forward": 14.0662, "clavicle_roll": -11.2156,
+               "clavicle_pump": -14.6244, "hand_flop": 8.0, "forearm_in": 9.402, "hand_bend": 9.3116,
+               "hand_twist": -16.1294, "hand_twist_swing": -1.0442, "knuckle_curl": 10.2898, "finger_curl": 24.8601,
+               "tip_curl": 34.617, "curl_fan": 0.4162, "finger_flop": 9.9292, "thumb_01": 9.5546, "thumb_02": 1.8424,
+               "shoulders": 4.6744, "bend_spine_01": -6.6013, "bend_spine_02": 4.9161, "bend_spine_03": 12.2767,
+               "bend_spine_04": 10.8883, "bend_spine_05": 6.5634, "bend_neck": -4.4322, "phase_l": 0.0,
+               "phase_r": -0.0333},
     "Sneak": {"step_s": 0.75, "stride": 0.55, "duty": 0.72, "lift": 0.10, "lift_peak": 0.3, "step_shape": 0.8,
               "crouch": 0.18, "bob": 0.012, "bob_phase": 0.2, "twist": 4.0, "roll": 2.0, "lean": 14.0,
-              "counter": 0.5, "spine_lean": 12.0, "head_stabilize": 1.0, "nod": -10.0, "heel_strike": 8.0,
+              "chest_twist": 2.0, "chest_roll": 0.0, "spine_lean": 12.0, "head_stabilize": 1.0, "nod": -10.0, "heel_strike": 8.0,
               "toe_off": 20.0, "arm_out": 22.0, "swing": 8.0, "elbow": 50.0, "elbow_swing": 8.0},
-    "Strafe L": {"step_s": 0.5, "direction": 90.0, "stride": 0.5, "stance": 1.3, "twist": 2.0, "swing": 8.0,
+    "Strafe L": {"step_s": 0.5, "direction": 90.0, "stride": 0.5, "stance": 1.3, "twist": 2.0, "chest_twist": 1.6, "swing": 8.0,
                  "heel_strike": 6.0, "toe_off": 18.0},
-    "Strafe R": {"step_s": 0.5, "direction": -90.0, "stride": 0.5, "stance": 1.3, "twist": 2.0, "swing": 8.0,
+    "Strafe R": {"step_s": 0.5, "direction": -90.0, "stride": 0.5, "stance": 1.3, "twist": 2.0, "chest_twist": 1.6, "swing": 8.0,
                  "heel_strike": 6.0, "toe_off": 18.0},
     "Backward": {"step_s": 0.6, "direction": 180.0, "stride": 0.55, "lean": -1.0, "heel_strike": 2.0,
                  "toe_off": 12.0, "swing": 14.0},
@@ -149,12 +171,26 @@ SIDES = (("l", 1.0), ("r", -1.0))
 def knobs(given=None):
     """The defaults with `given` over them, each held inside its range; an unknown name raises."""
     out = dict(DEFAULTS)
-    for name, value in (given or {}).items():
+    given = _legacy(dict(given or {}))
+    for name, value in given.items():
         if name not in DEFAULTS:
             raise KeyError("unknown knob %r" % name)
         lo, hi = RANGES[name]
         out[name] = min(hi, max(lo, float(value)))
     return out
+
+
+def _legacy(given):
+    """Knobs saved before the chest had its own (2026-10-23): `counter` (the chest's twist as a share of the
+    pelvis's, turned back) and `roll_cancel` (the share of the pelvis's roll the shoulders take back) as the
+    chest's own twist and roll in degrees - the same motion."""
+    counter = given.pop("counter", None)
+    cancel = given.pop("roll_cancel", None)
+    if counter is not None and "chest_twist" not in given:
+        given["chest_twist"] = float(counter) * float(given.get("twist", DEFAULTS["twist"]))
+    if cancel is not None and "chest_roll" not in given:
+        given["chest_roll"] = (1.0 - float(cancel)) * float(given.get("roll", DEFAULTS["roll"]))
+    return given
 
 
 def preset(name, fps):
@@ -556,15 +592,19 @@ def generate(skel, given=None, fps=30.0, place=None):
         osc = k["pitch"] * math.cos(2 * math.pi * (q - k["bob_phase"]))
         place_ = (pelvis0[3, :3] + travel(f) + UP * (bob - k["crouch"] * L) + direction * push + left * shift)
         q_rot = rot(UP, twist) @ rot(fwd, roll) @ rot(left, k["lean"] + osc)
-        return place_, q_rot, dict(twist=twist, roll=roll, osc=osc)
+        # the chest's own motion in the world, on the pelvis's timing: the spine carries it from the pelvis
+        chest = dict(twist=k["chest_twist"] * math.cos(2 * math.pi * (u - pl)),
+                     roll=k["chest_roll"] * math.cos(2 * math.pi * (u - pl - duty / 2.0)),
+                     pitch=k["chest_pitch"] * math.cos(2 * math.pi * (q - k["bob_phase"])))
+        return place_, q_rot, dict(twist=twist, roll=roll, osc=osc, chest=chest)
 
     # pass 1: where the hips are with no drop
-    plans, stance_share = [], []
+    plans, stance_share, swing_share = [], [], []
     for f in range(T):
         place_, q_rot, motion = pelvis_motion(f)
         pw = turned(pelvis0, q_rot)
         pw[3, :3] = place_
-        legs, shares = {}, {}
+        legs, shares, swings = {}, {}, {}
         for side, _ in SIDES:
             leg = skel.legs[side]
             hip = (skel.rest[leg["thigh"]] @ np.linalg.inv(pelvis0) @ pw)[3, :3]
@@ -572,8 +612,10 @@ def generate(skel, given=None, fps=30.0, place=None):
             ankle, qf, qb = foot_pose(side, b, a, w)
             legs[side] = (hip, ankle, qf, qb, stance)
             shares[side] = wrap(f / float(T) - phases[side]) / duty if stance else None
+            swings[side] = w
         plans.append((place_, q_rot, motion, legs))
         stance_share.append(shares)
+        swing_share.append(swings)
     # the pelvis set by the planted legs' knee angles (CAT's retargeting), then lowered where a planted
     # leg still falls short
     lift = _knee_lift(skel, k, plans, stance_share, T)
@@ -638,9 +680,10 @@ def generate(skel, given=None, fps=30.0, place=None):
             elif leaf in skel.spine:
                 n = float(len(skel.spine))
                 bend = k.get("bend_" + skel.canonical.get(leaf, ""), 0.0)
-                m = turned(m, rot(UP, -(1.0 + k["counter"]) * motion["twist"] / n)
-                           @ rot(fwd, -k["roll_cancel"] * motion["roll"] / n)
-                           @ rot(left, (k["spine_lean"] - motion["osc"]) / n + bend))
+                chest = motion["chest"]
+                m = turned(m, rot(UP, (chest["twist"] - motion["twist"]) / n)
+                           @ rot(fwd, (chest["roll"] - motion["roll"]) / n)
+                           @ rot(left, (k["spine_lean"] + chest["pitch"] - motion["osc"]) / n + bend))
             elif leaf == skel.neck and k["bend_neck"]:
                 m = turned(m, rot(left, k["bend_neck"]))
             elif leaf == skel.head and k["head_stabilize"] > 0:
@@ -648,7 +691,9 @@ def generate(skel, given=None, fps=30.0, place=None):
                 q = target[:3, :3].T @ m[:3, :3]
                 m = turned(m, scaled(q, k["head_stabilize"]))
             m = _leg_override(skel, leaf, m, scratch, legs, shift,
-                              dict((side, reel[side][f % T]) for side, _ in SIDES))
+                              dict((side, reel[side][f % T]) for side, _ in SIDES),
+                              dict((side, (k["foot_follow"] * follow_shape(swing_share[f % T][side]),
+                                           k["swing_point"])) for side, _ in SIDES))
             m = _arm_override(skel, k, leaf, m, world, scratch, u, phases)
             if leaf in skel.fingers:
                 m = curled(m, finger_curl(k, skel.fingers[leaf], u, phases))
@@ -692,7 +737,15 @@ def generate(skel, given=None, fps=30.0, place=None):
     return Cycle(frames, cycle_travel, info)
 
 
-def _leg_override(skel, leaf, m, world, legs, shift, reel=None):
+def follow_shape(w):
+    """How much a swinging foot hangs off its shin at swing share `w` (None: planted): in after the
+    push-off, out again in time to land on its plant."""
+    if w is None:
+        return 0.0
+    return smoothstep(w / 0.3) * (1.0 - smoothstep((w - 0.55) / 0.35))
+
+
+def _leg_override(skel, leaf, m, world, legs, shift, reel=None, follow=None):
     for side, sign in SIDES:
         leg = skel.legs[side]
         if leaf not in (leg["thigh"], leg["calf"], leg["foot"], leg["ball"]):
@@ -705,20 +758,36 @@ def _leg_override(skel, leaf, m, world, legs, shift, reel=None):
             pull = (reel or {}).get(side, 0.0)
             if pull > 0:
                 ankle = ankle + unit(hip - ankle) * pull
-            knee, ankle_ = _two_bone(hip, ankle, l1, l2, _hint(skel, sign, qf))
+            hint = _hint(skel, sign, qf)
+            knee, ankle_ = _two_bone(hip, ankle, l1, l2, hint)
+            # one bend plane for the thigh and the shin: the hip-ankle line's normal toward the hint (the
+            # shin's own cross with the hint flips as a sprint's heel kicks up behind)
+            line = unit(ankle_ - hip)
+            normal = unit(np.cross(line, hint - line * float(np.dot(hint, line))))
             world["_knee_" + side] = knee
             world["_ankle_" + side] = ankle_
-            return _aimed(skel, leaf, leg["calf"], m, knee - hip, _hint(skel, sign, qf))
+            world["_normal_" + side] = normal
+            return _aimed(skel, leaf, leg["calf"], m, knee - hip, hint, normal)
         if leaf == leg["calf"]:
             knee = world["_knee_" + side]
-            return _aimed(skel, leaf, leg["foot"], m, world["_ankle_" + side] - knee, _hint(skel, sign, qf))
+            return _aimed(skel, leaf, leg["foot"], m, world["_ankle_" + side] - knee, None,
+                          world["_normal_" + side])
         if leaf == leg["foot"]:
             out = m.copy()
-            out[:3, :3] = skel.rest[leaf][:3, :3] @ qf.T
+            platform = skel.rest[leaf][:3, :3] @ qf.T
+            share, point = (follow or {}).get(side, (0.0, 0.0))
+            if share > 0:                         # m: the foot as it hangs off the shin at rest, toes pointed
+                hung = m[:3, :3] @ rot(-world["_normal_" + side], point).T
+                platform = platform @ scaled(platform.T @ hung, share)
+            out[:3, :3] = platform
+            world["_foot_" + side] = (skel.rest[leaf][:3, :3] @ qf.T, platform)
             return out
         if leaf == leg["ball"]:
             out = m.copy()
             out[:3, :3] = skel.rest[leaf][:3, :3] @ qb.T
+            flat_foot, foot = world.get("_foot_" + side, (None, None))
+            if foot is not None:                  # the toes keep their bend in the foot hanging off the shin
+                out[:3, :3] = out[:3, :3] @ flat_foot.T @ foot
             return out
     return m
 
@@ -729,15 +798,19 @@ def _hint(skel, sign, qf):
     return unit(h) if np.linalg.norm(h) > 1e-6 else skel.fwd
 
 
-def _aimed(skel, leaf, child, m, direction, hint):
+def _aimed(skel, leaf, child, m, direction, hint, normal=None):
     """The bone `leaf` (its FK world `m`) turned so its child lies along `direction`, its bend plane
-    turned with the hint: the rest's (bone, hint) frame carried onto the new one."""
+    turned with the hint: the rest's (bone, hint) frame carried onto the new one. `normal`: the bend plane's
+    normal given (it then stands for cross(direction, hint))."""
     a0 = unit(skel.pos[child] - skel.pos[leaf])
     n0 = unit(np.cross(a0, skel.fwd))
     if np.linalg.norm(n0) < 1e-6:
         n0 = unit(np.cross(a0, skel.left))
     a = unit(direction)
-    n = unit(np.cross(a, hint))
+    if normal is not None:
+        n = unit(normal - a * float(np.dot(normal, a)))
+    else:
+        n = unit(np.cross(a, hint))
     if np.linalg.norm(n) < 1e-6:
         n = n0
     f0 = np.column_stack([a0, n0, np.cross(a0, n0)])
@@ -797,7 +870,9 @@ def _arm_override(skel, k, leaf, m, world, scratch, u, phases):
         forward = math.cos(2 * math.pi * (u - ph))
         cross_axis = rot(UP, -sign * k["cross_swing"]) @ skel.left
         if leaf == arm["clavicle"]:
-            return turned(m, rot(UP, -sign * k["clavicle"] * forward) @ rot(skel.fwd, sign * k["shoulders"]))
+            return turned(m, rot(UP, -sign * (k["clavicle"] * forward + k["clavicle_forward"]))
+                          @ rot(skel.fwd, sign * k["shoulders"])
+                          @ rot(skel.left, k["clavicle_roll"] + k["clavicle_pump"] * forward))
         if leaf == arm["upperarm"]:
             low = (skel.local[arm["lowerarm"]] @ m)[3, :3]
             down = rot(skel.fwd, sign * k["arm_out"]) @ (-UP)
@@ -817,5 +892,7 @@ def _arm_override(skel, k, leaf, m, world, scratch, u, phases):
         if leaf == arm["hand"]:
             hinge = scratch.get("hinge_" + side, skel.left)
             flop = k["hand_flop"] * math.cos(2 * math.pi * (u - ph - 0.15))
-            return turned(m, rot(hinge, -(flop + k["hand_bend"])))
+            along = m[3, :3] - world[arm["lowerarm"]][3, :3]          # the forearm: the wrist twists about it
+            twist = sign * (k["hand_twist"] + k["hand_twist_swing"] * forward)
+            return turned(m, rot(along, twist) @ rot(hinge, -(flop + k["hand_bend"])))
     return m

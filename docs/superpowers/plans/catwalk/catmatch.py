@@ -21,6 +21,70 @@ def _track(frames, leaf):
     return np.array([f[leaf] for f in frames])
 
 
+def cycles_in(skel, frames):
+    """How many cycles a closed take holds: the strongest harmonic of the left ankle's height (a walk cycle
+    lifts each foot once; a sprint keyed over four cycles lifts it four times)."""
+    n = len(frames) - 1
+    y = np.array([frames[i][skel.legs["l"]["foot"]][3, 1] for i in range(n)])
+    if n < 16:
+        return 1
+    amp = np.abs(np.fft.rfft(y - y.mean()))
+    return max(1, int(np.argmax(amp[1:n // 8 + 1])) + 1)
+
+
+def _sample(frames, t, travel, n):
+    """Every bone's world at the take's time `t` (frames), linearly between frames, its place less the
+    straight travel (`travel` over the `n` frames of the take)."""
+    i = min(int(math.floor(t)), n - 1)
+    w = t - i
+    out = {}
+    for leaf, m in frames[i].items():
+        b = frames[i + 1][leaf]
+        out[leaf] = (1.0 - w) * m + w * b
+        out[leaf][3, :3] -= travel * (t / float(n))
+    return out
+
+
+def _orthonormal(r):
+    u, _, vt = np.linalg.svd(r)
+    q = u @ vt
+    if np.linalg.det(q) < 0:
+        u[:, -1] *= -1
+        q = u @ vt
+    return q
+
+
+def mean_cycle(skel, frames):
+    """(frames of one closed cycle, cycles averaged) - a closed take holding several cycles (`cycles_in`)
+    made one: each phase of the cycle sampled in every cycle of the take and averaged (places less the
+    take's straight travel, rotations by their mean projected back onto a rotation), on round(period)
+    frames. A take of one cycle, or one that does not close, comes back as it is."""
+    n = len(frames) - 1
+    whole = max(float(np.abs(frames[-1][leaf][:3, :3] - frames[0][leaf][:3, :3]).max())
+                for leaf in skel.order if leaf in frames[0])
+    c = cycles_in(skel, frames)
+    if c < 2 or whole > 0.05:
+        return frames, 1
+    period = n / float(c)
+    T = max(8, int(round(period)))
+    pel = _track(frames, skel.pelvis)[:, 3, :3]
+    travel = pel[n] - pel[0]
+    out = []
+    for f in range(T + 1):
+        phase = f / float(T)
+        samples = [_sample(frames, min(n, (phase + i) * period), travel, n) for i in range(c)]
+        world = {}
+        for leaf in samples[0]:
+            m = np.mean([s[leaf] for s in samples], axis=0)
+            m[:3, :3] = _orthonormal(m[:3, :3])
+            m[3, :3] += travel * phase / c
+            m[:3, 3] = 0.0
+            m[3, 3] = 1.0
+            world[leaf] = m
+        out.append(world)
+    return out, c
+
+
 def _harmonic(values, k):
     """(cos part, sin part) of the k-th harmonic of a periodic series sampled at u = i/n."""
     n = len(values)
@@ -262,7 +326,24 @@ def measure(skel, frames):
                 if pitch[swing[j]] > half:
                     hold = (j + 0.5) / float(len(swing))
                     break
+        # how far the foot hangs off its shin mid-swing: the angle between it and the rest foot carried by
+        # the shin, over the swing's middle (where catmodel's foot_follow holds)
+        calf = _track(frames, leg["calf"])
+        hang = skel.rest[leg["foot"]][:3, :3] @ np.linalg.inv(skel.rest[leg["calf"]][:3, :3])
+        off, pointed = [], []
+        for j, i in enumerate(swing):
+            w = (j + 0.5) / float(len(swing))
+            if 0.3 <= w <= 0.55:
+                g = hang @ calf[i, :3, :3]
+                r = foot[i, :3, :3].T @ g                 # the column-form turn from the hung foot to the foot
+                v = _rotvec(r)
+                p_ = float(np.dot(v, left))               # about the side: the toes pointed (+) or up
+                pointed.append(p_)
+                off.append(float(np.linalg.norm(v - left * p_)))      # the rest of the turn
+        swing_foot = float(np.mean(off)) if off else 0.0
+        swing_point = float(np.mean(pointed)) if pointed else 0.0
         feet[side] = dict(start=start, length=length, duty=length / float(n), lift=lift / L, lift_peak=peak_at,
+                          swing_foot=swing_foot, swing_point=swing_point,
                           stance_center=centre, swing_reach=reach, foot_height=height, swing_toes=toes, toe_hold=hold,
                           lift_late=lift_late,
                           ball_lift=ball_lift / L, heel_strike=max(pitch[start], pitch[(start + 1) % n], 0.0),
@@ -311,7 +392,7 @@ def measure(skel, frames):
     out["left_contact"] = lc
     out["phase_r"] = ((feet["r"]["start"] - lc) / float(n)) % 1.0 - 0.5
     for key in ("lift", "lift_peak", "heel_strike", "toe_off", "toe_out", "progress", "stance_center",
-                "swing_reach", "foot_height", "swing_toes", "toe_hold", "lift_late"):
+                "swing_reach", "foot_height", "swing_toes", "toe_hold", "lift_late", "swing_foot", "swing_point"):
         out[key] = (feet["l"][key] + feet["r"][key]) / 2.0
     out["step_shape"] = _shape_of(out["progress"])
     rest_wide = abs(float(np.dot(skel.pos[skel.legs["l"]["foot"]] - skel.pos[skel.legs["r"]["foot"]], skel.left)))
@@ -346,7 +427,7 @@ def measure(skel, frames):
     out["roll"] = _project(roll, 1, d / 2.0)
     out["lean"] = float(np.mean(pitch))
     out["pitch"] = _project(pitch, 2, out["bob_phase"])
-    # the chest against the pelvis
+    # the chest in the world, on the pelvis's timing
     if skel.spine:
         top = skel.spine[-1]
         chest = [_angles(_delta(skel, top, frames[i][top]), fwd, left) for i in range(n)]
@@ -354,8 +435,9 @@ def measure(skel, frames):
         croll = from_contact([a[1] for a in chest])
         cpitch = from_contact([a[2] for a in chest])
         chest_yaw = _project(cyaw, 1, 0.0, -1.0)
-        out["counter"] = -chest_yaw / out["twist"] if abs(out["twist"]) > 0.5 else 0.8
-        out["roll_cancel"] = 1.0 - (_project(croll, 1, d / 2.0) / out["roll"]) if abs(out["roll"]) > 0.5 else 1.0
+        out["chest_twist"] = -chest_yaw
+        out["chest_roll"] = _project(croll, 1, d / 2.0)
+        out["chest_pitch"] = _project(cpitch, 2, out["bob_phase"])
         out["spine_lean"] = float(np.mean(cpitch)) - out["lean"]
         out["chest_yaw"] = chest_yaw
     # the fingers: each phalanx's curl about its own Z (the rotation vector's z of its turn from rest, in its
@@ -419,10 +501,15 @@ def measure(skel, frames):
             elbow.append(math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(a, b)))))))
         clav = arm["clavicle"]
         shoulder = 0.0
+        cyaw, cpitch = [0.0] * n, [0.0] * n
         if clav:
             p = skel.parent[clav]
-            shoulder = float(np.mean([_angles(_delta(skel, clav, frames[i][clav]) @ _delta(skel, p, frames[i][p]).T,
-                                              fwd, left)[1] for i in range(n)])) * sign
+            turns = [_angles(_delta(skel, clav, frames[i][clav]) @ _delta(skel, p, frames[i][p]).T, fwd, left)
+                     for i in range(n)]
+            shoulder = float(np.mean([a[1] for a in turns])) * sign
+            cyaw = from_contact([a[0] for a in turns])
+            cpitch = from_contact([a[2] for a in turns])
+        twists = []
         inward, wrist = [], []
         for i in range(n):
             a = cm.unit(low[i, 3, :3] - up_[i, 3, :3])
@@ -435,18 +522,25 @@ def measure(skel, frames):
                 inward.append(math.degrees(math.atan2(float(np.dot(perp, inside)), float(np.dot(perp, ahead)))))
             wrist.append(_angles(_delta(skel, arm["hand"], hand[i]) @ _delta(skel, arm["lowerarm"], low[i]).T,
                                  fwd, left)[2])
+            turn = _rotvec(_delta(skel, arm["hand"], hand[i]) @ _delta(skel, arm["lowerarm"], low[i]).T)
+            twists.append(float(np.dot(turn, b)) * sign)                 # about the forearm
         fwd_ang = from_contact(fwd_ang)
         elbow = from_contact(elbow)
         c1, s1 = _harmonic(fwd_ang, 1)
         amp1 = math.hypot(c1, s1)
         peak = (math.atan2(s1, c1) / (2 * math.pi)) % 1.0          # when the arm is furthest forward
         other_contact = 0.5 + out["phase_r"] if side == "l" else 0.0
-        arms[side] = dict(swing=amp1, forward_at=peak, lag=((peak - other_contact + 0.5) % 1.0) - 0.5,
+        twists = from_contact(twists)
+        arms[side] = dict(clavicle=_project(cyaw, 1, peak, -sign), clavicle_forward=-sign * float(np.mean(cyaw)),
+                          clavicle_roll=float(np.mean(cpitch)), clavicle_pump=_project(cpitch, 1, peak),
+                          hand_twist=float(np.mean(twists)), hand_twist_swing=_project(twists, 1, peak),
+                          swing=amp1, forward_at=peak, lag=((peak - other_contact + 0.5) % 1.0) - 0.5,
                           arm_out=float(np.mean(from_contact(out_ang))), elbow_mean=float(np.mean(elbow)),
                           elbow_swing=2 * math.hypot(*_harmonic(elbow, 1)), arm_fwd=float(np.mean(fwd_ang)),
                           shoulders=shoulder, forearm_in=float(np.mean(inward)) if inward else 0.0,
                           wrist=float(np.mean(wrist)))
-    for key in ("swing", "lag", "arm_out", "elbow_mean", "elbow_swing", "arm_fwd", "shoulders", "forearm_in", "wrist"):
+    for key in ("swing", "lag", "arm_out", "elbow_mean", "elbow_swing", "arm_fwd", "shoulders", "forearm_in", "wrist",
+                "clavicle", "clavicle_forward", "clavicle_roll", "clavicle_pump", "hand_twist", "hand_twist_swing"):
         vals = [arms[s][key] for s in arms]
         if vals:
             out[key if key.startswith("arm_") else "arm_" + key] = sum(vals) / len(vals)
@@ -514,6 +608,7 @@ LOOPS = (
     ("toe_off", "toe_off", 1.0),
     ("toe_hold", "toe_hold", 0.6),
     ("swing_toes", "swing_toes", 1.0),
+    ("swing_point", "swing_point", 1.0),
     ("swing_reach", "swing_reach", 1.0),
     ("stance_center", "stance_center", 1.0),
     ("foot_height", "foot_height", 1.0),
@@ -526,8 +621,9 @@ LOOPS = (
     ("roll", "roll", 1.0),
     ("lean", "lean", 1.0),
     ("pitch", "pitch", 1.0),
-    ("counter", "counter", 1.0),
-    ("roll_cancel", "roll_cancel", 1.0),
+    ("chest_twist", "chest_twist", 1.0),
+    ("chest_roll", "chest_roll", 1.0),
+    ("chest_pitch", "chest_pitch", 1.0),
     ("spine_lean", "spine_lean", 1.0),
     ("nod", "nod", 1.0),
     ("swing", "arm_swing", 1.0),
@@ -537,6 +633,12 @@ LOOPS = (
     ("elbow_swing", "arm_elbow_swing", 1.0),
     ("arm_forward", "arm_fwd", 1.0),
     ("shoulders", "arm_shoulders", 1.0),
+    ("clavicle", "arm_clavicle", 1.0),
+    ("clavicle_forward", "arm_clavicle_forward", 1.0),
+    ("clavicle_roll", "arm_clavicle_roll", 1.0),
+    ("clavicle_pump", "arm_clavicle_pump", 1.0),
+    ("hand_twist", "arm_hand_twist", 1.0),
+    ("hand_twist_swing", "arm_hand_twist_swing", 1.0),
     ("forearm_in", "arm_forearm_in", 1.0),
     ("hand_bend", "arm_wrist", -1.0),
     ("knee_plant", "knee_plant", 1.0),
@@ -585,7 +687,7 @@ def _wrap_error(err):
 def _scale(key):
     """How big an error of this measurement is worth one unit of cost."""
     if key in ("duty", "lift_peak", "stance_center", "toe_hold", "phase_r", "bob_phase", "arm_lag", "stance",
-               "step_shape", "counter", "roll_cancel", "curl_fan"):
+               "step_shape", "curl_fan"):
         return 0.05
     if key in ("stride", "lift", "lift_late", "swing_reach", "foot_height", "height", "bob", "push", "weight_shift"):
         return 0.01
@@ -625,51 +727,63 @@ def pelvis_track(ref, ours):
     return 100.0 * (float(np.sqrt(np.mean((a - b) ** 2))) + abs(ref["height"] - ours["height"]))
 
 
+FOLLOWS = (0.0, 0.5, 1.0)          # foot_follow tried in turn: how far a swinging foot hangs off its shin
+
+
 def fit(skel_ref, ref_frames, fps, rounds=14):
     """(knobs, ref numbers, ours numbers, rows) - knobs that make catmodel walk like the reference: the pelvis
-    by crouch, bob and bob_phase, its height judged frame by frame (`pelvis_track`), the knees by IK."""
+    by crouch, bob and bob_phase, its height judged frame by frame (`pelvis_track`), the knees by IK. The
+    swinging foot is fitted with foot_follow held at each of FOLLOWS (its pointing by swing_point), the best
+    kept: the two pull one measurement, and fed back together they run away."""
     ref = measure(skel_ref, ref_frames)
-    k = start_knobs(ref, fps)
-    k.update(FIT_FIXED)
-    skip = FIT_SKIP
-    k = cm.knobs(k)
-    best, best_cost = dict(k), None
-    gain = 0.8
 
-    def judged(knobs_):
+    def judged(knobs_, skip):
         frames_ = cm.generate(skel_ref, knobs_, fps).frames
         ours_ = measure(skel_ref, frames_)
         pose = compare(skel_ref, ref_frames, frames_, ref, ours_)
         return ours_, (sum(pose.values()) + 0.05 * cost(ref, ours_, skip)
                        + TRACK_WEIGHT * pelvis_track(ref, ours_))
 
-    for _ in range(rounds):
-        ours, c = judged(k)
-        if best_cost is None or c < best_cost:
-            best, best_cost = dict(k), c
-        else:
-            gain = max(0.15, gain * 0.7)          # it got worse: smaller steps from the best so far
-            k = dict(best)
-            ours, _ = judged(k)
-        moved = dict(k)
-        for knob, key, sign in LOOPS:
-            if knob not in k or key not in ref or key not in ours or knob in skip:
-                continue
-            err = ref[key] - ours[key]
-            if key in PHASES or key == "phase_r":
-                err = _wrap_error(err)
-            moved[knob] = k[knob] + sign * err * (gain if key != "stride" else 1.0)
-            if knob in PHASES:
-                moved[knob] = moved[knob] % 1.0
-        k = cm.knobs(moved)
-    ours, c = judged(k)
-    if best_cost is not None and c > best_cost:
-        k = best
-        ours, _ = judged(k)
-    # the knobs say what the pelvis does: where a planted leg cannot reach, the cover cuts the top of the bob,
-    # and the loops push the knobs on into the cut; the bob the cycle shows is the bob
-    k = cm.knobs(dict(k, crouch=-ours["height"], bob=ours["bob"], bob_phase=ours["bob_phase"]))
-    ours, _ = judged(k)
+    def fitted(follow):
+        k = start_knobs(ref, fps)
+        k.update(FIT_FIXED)
+        k["foot_follow"] = follow
+        if follow <= 0:
+            k["swing_point"] = 0.0
+        skip = FIT_SKIP + (("foot_follow", "swing_point") if follow <= 0 else ("foot_follow",))
+        k = cm.knobs(k)
+        best, best_cost = dict(k), None
+        gain = 0.8
+        for _ in range(rounds):
+            ours, c = judged(k, skip)
+            if best_cost is None or c < best_cost:
+                best, best_cost = dict(k), c
+            else:
+                gain = max(0.15, gain * 0.7)          # it got worse: smaller steps from the best so far
+                k = dict(best)
+                ours, _ = judged(k, skip)
+            moved = dict(k)
+            for knob, key, sign in LOOPS:
+                if knob not in k or key not in ref or key not in ours or knob in skip:
+                    continue
+                err = ref[key] - ours[key]
+                if key in PHASES or key == "phase_r":
+                    err = _wrap_error(err)
+                moved[knob] = k[knob] + sign * err * (gain if key != "stride" else 1.0)
+                if knob in PHASES:
+                    moved[knob] = moved[knob] % 1.0
+            k = cm.knobs(moved)
+        ours, c = judged(k, skip)
+        if best_cost is not None and c > best_cost:
+            k = best
+            ours, _ = judged(k, skip)
+        # the knobs say what the pelvis does: where a planted leg cannot reach, the cover cuts the top of the
+        # bob, and the loops push the knobs on into the cut; the bob the cycle shows is the bob
+        k = cm.knobs(dict(k, crouch=-ours["height"], bob=ours["bob"], bob_phase=ours["bob_phase"]))
+        ours, c = judged(k, skip)
+        return c, k, ours, skip
+
+    c, k, ours, skip = min((fitted(follow) for follow in FOLLOWS), key=lambda r: r[0])
     rows = []
     for knob, key, sign in LOOPS:
         if key in ref and key in ours and knob in k and knob not in skip:

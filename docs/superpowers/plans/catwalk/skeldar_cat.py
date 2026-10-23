@@ -145,9 +145,10 @@ def place_of(skel, bones):
 
 # ---- the press ----
 
-def apply(root=None, given=None, new_place=False, start=None):
+def apply(root=None, given=None, new_place=False, start=None, cycles=None):
     """Key the cycle on the skeleton of `root` (else the selection, else the last target), from frame
-    `start` when given (else where it was keyed before, else the playback start). Answers the status line."""
+    `start` when given (else where it was keyed before, else the playback start), `cycles` times over (else as
+    many as it was keyed before, else one). Answers the status line."""
     import numpy as np
     import maya.api.OpenMaya as om
     cm, scene = _modules()
@@ -168,18 +169,33 @@ def apply(root=None, given=None, new_place=False, start=None):
         start = int(cmds.playbackOptions(query=True, minTime=True)) if start is None else start
     if start is None:
         start = int(memo.get("start", 0))
+    cycles = max(1, int(cycles if cycles is not None else memo.get("cycles", 1)))
     fps = _fps()
     cycle = cm.generate(skel, knobs, fps, place=place)
+    T = cycle.info["frames"]
+    worlds = list(cycle.frames)
+    if cycles > 1:                                    # the cycle again, each time on from where the last ended
+        travel = cycle.frames[T][skel.root][3, :3] - cycle.frames[0][skel.root][3, :3]
+        worlds = []
+        for r in range(cycles):
+            for f in range(T + (1 if r == cycles - 1 else 0)):
+                world = {}
+                for leaf, m in cycle.frames[f].items():
+                    m = m.copy()
+                    m[3, :3] += travel * r
+                    world[leaf] = m
+                worlds.append(world)
     frames = [dict((leaf, om.MMatrix([float(x) for x in m.flatten()])) for leaf, m in world.items())
-              for world in cycle.frames]
+              for world in worlds]
     written = [leaf for leaf in skel.order if leaf in bones]
     translated = set(x for x in (skel.root, skel.pelvis) if x) | set(skel.helpers)
     values, static = scene.channel_values(bones, frames, written, translated)
     cmds.undoInfo(openChunk=True, chunkName="skeldarCat")
     try:
         count, held = scene.write_curves(values, static, start)
-        _set_memo(root, {"place": [float(x) for x in place.flatten()], "start": start, "knobs": knobs})
-        end = start + cycle.info["frames"]
+        _set_memo(root, {"place": [float(x) for x in place.flatten()], "start": start, "knobs": knobs,
+                         "cycles": cycles})
+        end = start + T * cycles
         cmds.playbackOptions(minTime=start, maxTime=end - 1, animationStartTime=min(start, cmds.playbackOptions(
             query=True, animationStartTime=True)), animationEndTime=max(end, cmds.playbackOptions(
                 query=True, animationEndTime=True)))
@@ -187,9 +203,9 @@ def apply(root=None, given=None, new_place=False, start=None):
         cmds.undoInfo(closeChunk=True)
     state["target"] = root
     info = cycle.info
-    line = ("%s: %s cycle %d fr (%d-%d), %.0f cm/s, step %.0f cm | %s | drop up to %.1f cm%s%s" % (
-        root.split("|")[-1].split(":")[-1], "spot" if knobs["on_spot"] >= 0.5 else "line", info["frames"], start,
-        end, info["speed"], info["stride"],
+    line = ("%s: %s cycle %d fr%s (%d-%d), %.0f cm/s, step %.0f cm | %s | drop up to %.1f cm%s%s" % (
+        root.split("|")[-1].split(":")[-1], "spot" if knobs["on_spot"] >= 0.5 else "line", info["frames"],
+        " x%d" % cycles if cycles > 1 else "", start, end, info["speed"], info["stride"],
         "flight %d fr" % info["flight"] if info["flight"] else "both feet down %d fr" % info["double"],
         info["drop"], " | " + note if note else "",
         " | left to their drivers: " + ", ".join(sorted(held)) if held else ""))
@@ -233,8 +249,9 @@ def match(reference=None, target=None):
     if target and target == reference:
         raise Refusal("%s is the skeleton our CAT keys - select the reference walk (the other skeleton) "
                       "and press Match again" % reference.split("|")[-1].split(":")[-1])
-    skel, frames, (a, b) = read_cycle(reference)
-    seam = max(float(np.abs(frames[-1][l][:3, :3] - frames[0][l][:3, :3]).max()) for l in skel.order)
+    skel, take, (a, b) = read_cycle(reference)
+    seam = max(float(np.abs(take[-1][l][:3, :3] - take[0][l][:3, :3]).max()) for l in skel.order)
+    frames, cycles = catmatch.mean_cycle(skel, take)          # a take of several cycles averaged into one
     knobs, ref, ours, rows = catmatch.fit(skel, frames, _fps(), rounds=30)
     pose = catmatch.compare(skel, frames, cm.generate(skel, knobs, _fps()).frames, ref,
                             catmatch.measure(skel, cm.generate(skel, knobs, _fps()).frames))
@@ -244,13 +261,14 @@ def match(reference=None, target=None):
     remember(knobs)
     _show_preset(CUSTOM)
     _fill(knobs)
-    line = ("matched %s (%d-%d, %d fr, %.0f cm a step): pose off by %s" % (
-        reference.split("|")[-1].split(":")[-1], a, b, ref["frames"], ref["stride"] * skel.leg,
+    line = ("matched %s (%d-%d, %s%d fr, %.0f cm a step): pose off by %s" % (
+        reference.split("|")[-1].split(":")[-1], a, b,
+        "%d cycles averaged into one of " % cycles if cycles > 1 else "", ref["frames"], ref["stride"] * skel.leg,
         ", ".join("%s %.0f" % (g, v) for g, v in pose.items())))
     if seam > 0.02:
         line += " | its last frame is not its first turned on: matched as if it were a cycle"
     if target and cmds.objExists(target):
-        line += " | " + apply(target, knobs, start=a)
+        line += " | " + apply(target, knobs, start=a, cycles=cycles)
     else:
         line += " | select your skeleton and press Apply"
     return line
