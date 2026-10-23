@@ -995,8 +995,41 @@ def page_height(strip):
         return
     ui = getattr(strip, "ui", 1.0) or 1.0
     height = int(round(strip.sizeHint().height() / float(ui)))
+    want = max(maya_timebar.HEIGHT, height) + maya_timebar.extra_height()
     try:
-        cmds.workspaceControl(maya_timebar.CONTROL, edit=True,
-                              resizeHeight=max(maya_timebar.HEIGHT, height) + maya_timebar.extra_height())
+        cmds.workspaceControl(maya_timebar.CONTROL, edit=True, resizeHeight=want)
     except Exception:                                        # noqa: BLE001
         pass
+    _fit_splitter(strip.parentWidget(), int(round(want * ui)))
+
+
+def _fit_splitter(host, want):
+    """`resizeHeight` grows a docked control but never shrinks it (2026-10-23, «після переносу на інший
+    екран вона розширилася»: 232 px asked down to 115 stayed 232): its splitter row set to `want` physical
+    px, the difference given to or taken from the tallest neighbour (the viewport)."""
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except ImportError:
+        from PySide2 import QtCore, QtWidgets
+    if host is None:
+        return
+    delta = want - host.height()
+    if abs(delta) < 2:
+        return
+    child = host
+    while child is not None and not isinstance(child.parentWidget(), QtWidgets.QSplitter):
+        child = child.parentWidget()
+    if child is None or child.parentWidget().orientation() != QtCore.Qt.Vertical:
+        return
+    splitter = child.parentWidget()
+    sizes = splitter.sizes()
+    i = splitter.indexOf(child)
+    others = [j for j in range(len(sizes)) if j != i and sizes[j] > 0]
+    if i < 0 or not others:
+        return
+    j = max(others, key=lambda k: sizes[k])
+    if sizes[j] - delta < 100:
+        return
+    sizes[i] += delta
+    sizes[j] -= delta
+    splitter.setSizes(sizes)

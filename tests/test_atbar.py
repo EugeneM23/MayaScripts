@@ -155,12 +155,44 @@ class InsideTheTimeBar(unittest.TestCase):
             def sizeHint(self):
                 return types.SimpleNamespace(height=lambda: 130)
 
+            def parentWidget(self):
+                return None
+
         fake = Cmds()
         state = {"bar": None, "jobs": [], "callbacks": [], "host": "docked"}
         with mock.patch.object(scene, "cmds", fake), mock.patch.object(sys, "_skeldar_timebar", state, create=True), \
                 mock.patch.object(maya_timebar, "extra_height", return_value=57):
             scene.page_height(Strip())
         self.assertEqual(fake.edits, [(maya_timebar.CONTROL, {"resizeHeight": 130 + 57})])
+
+    def _splitter(self, dock):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6 import QtCore, QtWidgets
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        splitter.resize(400, 900)
+        view, host = QtWidgets.QWidget(), QtWidgets.QWidget()
+        splitter.addWidget(view)
+        splitter.addWidget(host)
+        splitter.show()
+        splitter.setSizes([900 - dock, dock])
+        self.app.processEvents()
+        return splitter, host
+
+    def test_the_dock_shrinks_back_when_maya_left_it_taller(self):
+        # 2026-10-23: moved to another screen and back, resizeHeight never gave the 232 px back
+        from maya_timebar import scene
+        splitter, host = self._splitter(232)
+        scene._fit_splitter(host, 172)
+        self.app.processEvents()
+        self.assertEqual(host.height(), 172)
+
+    def test_the_dock_grows_taking_the_room_from_the_viewport(self):
+        from maya_timebar import scene
+        splitter, host = self._splitter(115)
+        scene._fit_splitter(host, 172)
+        self.app.processEvents()
+        self.assertEqual(host.height(), 172)
 
 
 class SelectSets(unittest.TestCase):

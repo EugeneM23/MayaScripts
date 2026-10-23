@@ -871,6 +871,13 @@ class ATBar(QtWidgets.QWidget):
         super(ATBar, self).resizeEvent(e)
         QtCore.QTimer.singleShot(0, self.fit_dock)
 
+    def eventFilter(self, obj, e):
+        #  the Time Bar's control resized by Maya (the window moved to a screen of another size): the dock
+        #  fitted to the rows again, every time
+        if self.embedded and e.type() == QtCore.QEvent.Resize and obj is self.parentWidget():
+            QtCore.QTimer.singleShot(0, self.fit_dock)
+        return False
+
     def fit_dock(self):
         """The dock as tall as the bar's rows at its current width (it wraps when narrow): the Time Bar's
         control when we are its top row, else our own."""
@@ -878,6 +885,9 @@ class ATBar(QtWidgets.QWidget):
         if self.minimumHeight() != want:
             self.setMinimumHeight(want)
         if self.embedded:
+            #  never taller than its rows: the room Maya's splitter hands the dock went to us (116 px for 57)
+            if self.maximumHeight() != want:
+                self.setMaximumHeight(want)
             _fit_timebar()
             return
         host = self.parentWidget()
@@ -1210,6 +1220,7 @@ def attach(host):
     if strip is None:
         strip = ATBar(embedded=True)
         host.layout().insertWidget(0, strip)
+        host.installEventFilter(strip)
     #  the host's own spacing (Maya's style default, 6 px) showed its grey between the two rows
     host.layout().setSpacing(0)
     strip.show()
