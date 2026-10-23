@@ -349,8 +349,9 @@ class SceneSetup(unittest.TestCase):
         index = self._created_index()
         lists = [i for i, c in enumerate(self.fake.calls)
                  if c[0] == "textScrollList" and c[1] == (uebridge._LIST,)
-                 and not c[2].get("edit") and not c[2].get("query")]
-        line = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
+                 and not c[2].get("edit") and not c[2].get("query")
+                 and not c[2].get("exists")]
+        line =[i for i, c in enumerate(self.fake.calls) if c[0] == "text"
                 and c[1] == (scenesetup._CHARACTER_STATUS,) and not c[2].get("edit")]
         portraits = [i for i, c in enumerate(self.fake.calls)
                      if c[0] == "columnLayout" and c[1] == (scenesetup._PORTRAITS,)]
@@ -945,7 +946,8 @@ class UeBridge(unittest.TestCase):
         self.assertEqual(self.fake.windows, {})
         columns = [c for c in self.fake.calls if c[0] == "columnLayout"
                    and not c[2].get("edit") and not c[2].get("query")]
-        self.assertEqual([c[1][0] for c in columns], [uebridge._INSET])
+        self.assertEqual([c[1][0] for c in columns],
+                         [uebridge._INSET, uebridge._EXPORT_ROW])
         self.assertEqual(columns[0][2]["backgroundColor"], uebridge.INSET_CLASSIC_BG)
         insets = [m for m in self.marks if m.role == "inset"]
         self.assertEqual(len(insets), 1)
@@ -1056,9 +1058,9 @@ class UeBridge(unittest.TestCase):
                          [uebridge.target_button("onto"),
                           uebridge.target_button("new"),
                           uebridge._TIMELINE, uebridge._IMPORT,
-                          uebridge._EXPORT_TOGGLE, "Export FBX...",
-                          uebridge._UASSET])
-        row = [c for c in fake.calls if c[0] == "rowLayout"
+                          uebridge._EXPORT_TOGGLE, uebridge._EXPORT_FBX,
+                          uebridge._SAVE_SCENE, uebridge._UASSET])
+        row = [c for c in fake.calls if c[0] == "columnLayout"
                and c[1] == (uebridge._EXPORT_ROW,)][0]
         self.assertFalse(row[2]["manage"])
 
@@ -1068,9 +1070,10 @@ class UeBridge(unittest.TestCase):
         self.assertFalse([c for c in self.fake.calls if c[0] == "rowLayout"
                           and c[2].get("numberOfColumns") == 5])
         export = [i for i, c in enumerate(self.fake.calls)
-                  if c[0] == "rowLayout" and c[1] == (uebridge._EXPORT_ROW,)]
+                  if c[0] == "columnLayout" and c[1] == (uebridge._EXPORT_ROW,)]
         self.assertEqual(self._order(self.fake.calls[export[0]:]),
-                         ["Export FBX...", uebridge._UASSET])
+                         [uebridge._EXPORT_FBX, uebridge._SAVE_SCENE,
+                          uebridge._UASSET])
 
     def test_the_timeline_box_is_a_clock_chip(self):
         """2026-10-19, variant A: the timeline box says what it does in words,

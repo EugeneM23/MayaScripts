@@ -1118,5 +1118,122 @@ class FolderTree(unittest.TestCase):
         self.assertEqual(self.fake.lines, ["\u25b8 walks  (1)"])
 
 
+class FolderSave(unittest.TestCase):
+    """2026-10-23: Export FBX... and Save scene... write into the picked
+    folder, asking only for the name."""
+
+    def setUp(self):
+        self.fake = FakeTreeCmds()
+        self.said = []
+        saved = (window.cmds, dict(window._STATE), window._status,
+                 window.paint_import, window._ask_name, window._ask_overwrite,
+                 window._isdir, window._exists, window._save_scene)
+        window.cmds = self.fake
+        window._status = self.said.append
+        window.paint_import = lambda: None
+        self.asked = []
+        self.answer = "Hero walk"
+        window._ask_name = lambda title, default, folder: (
+            self.asked.append((title, default, folder)) or self.answer)
+        self.overwrite = []
+        window._ask_overwrite = lambda path: self.overwrite.append(path) or False
+        self.dirs = {"C:/clips/walks", "C:/clips/runs"}
+        self.files = set()
+        window._isdir = lambda path: path in self.dirs
+        window._exists = lambda path: path in self.files or path in self.dirs
+        self.saved_scenes = []
+        window._save_scene = lambda path: self.saved_scenes.append(path) or "saved"
+
+        def put_back():
+            (window.cmds, state, window._status, window.paint_import,
+             window._ask_name, window._ask_overwrite, window._isdir,
+             window._exists, window._save_scene) = saved
+            window._STATE.clear()
+            window._STATE.update(state)
+        self.addCleanup(put_back)
+        recs = [records.AnimRecord(n, "C:/clips/{0}/{1}.fbx".format(f, n), "",
+                                   24, 1.0, 30.0, "folder",
+                                   "C:/clips/{0}/{1}.fbx".format(f, n), "", "fbx")
+                for f, n in (("walks", "W"), ("runs", "R"))]
+        window._STATE.update(records=recs, filtered=[], source="folder",
+                             location="C:/clips", list_mode=None)
+        window.set_list_mode("folders")           # rows: runs, walks
+
+        import maya_uebridge.animexport as animexport
+        self.exported = []
+        saved_export = (animexport.export_hierarchy, animexport.export_line)
+        animexport.export_hierarchy = lambda path: self.exported.append(path) or {}
+        animexport.export_line = lambda name, info: "exported " + name
+        self.addCleanup(lambda: (setattr(animexport, "export_hierarchy", saved_export[0]),
+                                 setattr(animexport, "export_line", saved_export[1])))
+
+    def test_one_folder_writes_the_fbx_straight_into_it(self):
+        self.fake.picked = [2]                    # walks
+        window.export_fbx_selected()
+        self.assertEqual(self.exported, ["C:/clips/walks/Hero walk.fbx"])
+        self.assertEqual(self.asked[0][2], "C:/clips/walks")
+        self.assertIn("C:/clips/walks", self.said[-1])
+
+    def test_the_name_defaults_to_animation_with_no_scene_or_pick(self):
+        self.fake.picked = [2]
+        window.export_fbx_selected()
+        self.assertEqual(self.asked[0][1], "animation")   # no scene, no animation picked
+
+    def test_a_cancelled_name_writes_nothing(self):
+        self.answer = None
+        self.fake.picked = [2]
+        window.export_fbx_selected()
+        self.assertEqual(self.exported, [])
+        self.assertEqual(self.said[-1], "export cancelled")
+
+    def test_an_existing_file_is_asked_and_kept_on_cancel(self):
+        self.files.add("C:/clips/walks/Hero walk.fbx")
+        self.fake.picked = [2]
+        window.export_fbx_selected()
+        self.assertEqual(self.overwrite, ["C:/clips/walks/Hero walk.fbx"])
+        self.assertEqual(self.exported, [])
+        self.assertIn("kept", self.said[-1])
+
+    def test_a_folder_gone_from_disk_is_refused_by_name(self):
+        self.dirs.discard("C:/clips/walks")
+        self.fake.picked = [2]
+        window.export_fbx_selected()
+        self.assertEqual(self.exported, [])
+        self.assertEqual(self.said[-1], "not on disk: C:/clips/walks")
+
+    def test_two_folders_refuse(self):
+        self.fake.picked = [1, 2]
+        window.export_fbx_selected()
+        self.assertEqual(self.exported, [])
+        self.assertEqual(self.said[-1], "pick one folder - 2 are picked")
+
+    def test_no_folder_opens_the_dialog(self):
+        dialogs = []
+        self.fake.fileDialog2 = lambda **kw: dialogs.append(kw) or ["C:/x/y.fbx"]
+        window.export_fbx_selected()
+        self.assertEqual(len(dialogs), 1)
+        self.assertEqual(self.exported, ["C:/x/y.fbx"])
+
+    def test_a_given_folder_row_wins_over_the_pick(self):
+        self.fake.picked = [1, 2]
+        window.export_fbx_selected(folder=window._STATE["tree_rows"][1])
+        self.assertEqual(self.exported, ["C:/clips/walks/Hero walk.fbx"])
+
+    def test_save_scene_writes_a_ma_or_the_typed_mb(self):
+        self.fake.picked = [2]
+        window.save_scene_selected()
+        self.answer = "take.mb"
+        window.save_scene_selected()
+        self.assertEqual(self.saved_scenes, ["C:/clips/walks/Hero walk.ma",
+                                             "C:/clips/walks/take.mb"])
+
+    def test_the_labels(self):
+        self.assertEqual(window.folder_label("Export FBX", ""), "Export FBX...")
+        self.assertEqual(window.folder_label("Save scene", "Chars"),
+                         "Save scene to Chars...")
+        self.assertEqual(window.folder_label("Export FBX", "A" * 30),
+                         "Export FBX to " + "A" * 23 + "\u2026...")
+
+
 if __name__ == "__main__":
     unittest.main()

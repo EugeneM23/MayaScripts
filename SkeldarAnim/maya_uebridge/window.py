@@ -89,6 +89,9 @@ _EXPORT_ROW = "ueAnimBridgeExportRow"
 _INSET = "ueAnimBridgeInset"
 _SOURCE = "ueAnimBridgeSource"
 _UASSET = "ueAnimBridgeExportUasset"
+_EXPORT_FBX = "ueAnimBridgeExportFbx"
+_SAVE_SCENE = "ueAnimBridgeSaveScene"
+LABEL_NAME_MAX = 24        # a folder's name in a button, elided past this
 SOURCE_VAR = "ueAnimBridgeSourceKind"          # the switch's memory
 LOCATION_VAR = "ueAnimBridgeLocation_{0}"       # the folder / project picked
 RECENT_VAR = "ueAnimBridgeRecent_{0}"           # JSON list: folders / projects
@@ -1199,21 +1202,147 @@ def export_uasset_selected():
         project_choice(), temp_folder()))
 
 
-def export_fbx_selected():
-    """A plain FBX of the resolved skeleton, where the dialog says.
+def folder_label(words, name):
+    """«Export FBX to Chars...» for a picked folder `name`, «Export FBX...»
+    for none; a name past LABEL_NAME_MAX elided. Pure."""
+    if not name:
+        return words + "..."
+    if len(name) > LABEL_NAME_MAX:
+        name = name[:LABEL_NAME_MAX - 1] + "…"
+    return "{0} to {1}...".format(words, name)
 
-    The p4-less half of what the Export tab used to do: the skeleton is the
-    same one an import would target (selection, the rig, the sole
-    skeleton), baked on export so no rig is ever touched.
-    """
-    from maya_uebridge import animexport   # lazy: keeps the import graph flat
-    paths = cmds.fileDialog2(fileFilter="FBX (*.fbx)", dialogStyle=2,
-                             fileMode=0, caption="Export skeleton animation")
-    if not paths:
-        _status("export cancelled")
+
+def folder_disk(row):
+    """`row`'s folder on disk for this list's source and place."""
+    return foldertree.disk_path(row, current_source(),
+                                _STATE.get("location") or "",
+                                _STATE.get("content_dir") or "")
+
+
+def _isdir(path):
+    return os.path.isdir(path)
+
+
+def _exists(path):
+    return os.path.exists(path)
+
+
+def _ask_name(title, default, folder):
+    """The file's name, asked; None when cancelled."""
+    answer = cmds.promptDialog(
+        title=title, message="Name in {0}:".format(folder), text=default,
+        button=["OK", "Cancel"], defaultButton="OK", cancelButton="Cancel",
+        dismissString="Cancel")
+    if answer != "OK":
+        return None
+    return cmds.promptDialog(query=True, text=True)
+
+
+def _ask_overwrite(path):
+    return cmds.confirmDialog(
+        title="File exists", message="{0} is already there. Overwrite it?"
+        .format(path), button=["Overwrite", "Cancel"], defaultButton="Cancel",
+        cancelButton="Cancel", dismissString="Cancel") == "Overwrite"
+
+
+def _default_name():
+    """The scene's name, else the first picked animation's, else
+    «animation»."""
+    try:
+        scene = cmds.file(query=True, sceneName=True, shortName=True) or ""
+    except (RuntimeError, TypeError, ValueError):
+        scene = ""
+    stem = os.path.splitext(scene)[0] if isinstance(scene, str) else ""
+    if stem:
+        return stem
+    chosen = _selected_records()
+    return chosen[0].name if chosen else "animation"
+
+
+def _path_in(row, ext, allowed, title, word):
+    """(path, None) where a file goes in the folder `row` - its name asked,
+    the folder checked on disk, an existing file confirmed - or (None, why)."""
+    folder = folder_disk(row)
+    if not folder:
+        return None, "{0} is not a folder on disk".format(row.label)
+    if not _isdir(folder):
+        return None, "not on disk: {0}".format(folder)
+    typed = _ask_name(title, _default_name(), folder)
+    if typed is None:
+        return None, "{0} cancelled".format(word)
+    path = folder + "/" + foldertree.safe_file_name(typed, ext, allowed)
+    if _exists(path) and not _ask_overwrite(path):
+        return None, "{0} cancelled - {1} kept".format(
+            word, os.path.basename(path))
+    return path, None
+
+
+def _destination(folder, ext, allowed, title, word, dialog):
+    """(path, None) or (None, why). `folder` a folder row; None means the
+    picked folder: one writes into it, none opens `dialog()`, several refuse."""
+    if folder is None:
+        folders = picked_folders()
+        if len(folders) > 1:
+            return None, "pick one folder - {0} are picked".format(len(folders))
+        folder = folders[0] if folders else None
+    if folder is None:
+        paths = dialog()
+        if not paths:
+            return None, "{0} cancelled".format(word)
+        return paths[0].replace("\\", "/"), None
+    return _path_in(folder, ext, allowed, title, word)
+
+
+def export_fbx_selected(folder=None):
+    """A plain FBX of the resolved skeleton (selection, the rig, the sole
+    skeleton), baked on export so no rig is ever touched - into the picked
+    folder (2026-10-23, «FBX сразу в папку»), else where the dialog says."""
+    path, refusal = _destination(
+        folder, ".fbx", (".fbx",), "Export FBX", "export",
+        lambda: cmds.fileDialog2(fileFilter="FBX (*.fbx)", dialogStyle=2,
+                                 fileMode=0, caption="Export skeleton animation"))
+    if refusal:
+        _status(refusal)
         return
-    info = animexport.export_hierarchy(paths[0])
-    _status(animexport.export_line(os.path.basename(paths[0]), info))
+    from maya_uebridge import animexport   # lazy: keeps the import graph flat
+    info = animexport.export_hierarchy(path)
+    _status("{0} - in {1}".format(
+        animexport.export_line(os.path.basename(path), info),
+        os.path.dirname(path)))
+
+
+def _save_scene(path):
+    """The scene (the active tab with Scene Tabs on) saved as `path`."""
+    try:
+        from maya_scenetabs import scope
+        tabs = scope.tabs_on()
+    except Exception:                                        # noqa: BLE001
+        tabs = False
+    if tabs:
+        from maya_scenetabs import saving, session
+        result = saving.save_tab(path=path)
+        if isinstance(result, session.Cancelled):
+            return str(result)
+    else:
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaBinary"
+                  if path.lower().endswith(".mb") else "mayaAscii")
+    return "saved the scene as {0} - in {1}".format(
+        os.path.basename(path), os.path.dirname(path))
+
+
+def save_scene_selected(folder=None):
+    """The scene saved into the picked folder (2026-10-23, «FBX и сцену
+    Maya»), else where the dialog says."""
+    path, refusal = _destination(
+        folder, ".ma", (".ma", ".mb"), "Save scene", "save",
+        lambda: cmds.fileDialog2(
+            fileFilter="Maya ASCII (*.ma);;Maya Binary (*.mb)", dialogStyle=2,
+            fileMode=0, caption="Save scene"))
+    if refusal:
+        _status(refusal)
+        return
+    _status(_save_scene(path))
 
 
 # ---------------------------------------------------------------- window
@@ -1434,21 +1563,31 @@ def build_rows():
         annotation="Show or hide the two exports: an FBX of your choosing, "
                    "or the selected Unreal AnimSequence written over",
         command=lambda *_: _run(toggle_export)), "secondary")
-    cmds.rowLayout(_EXPORT_ROW, numberOfColumns=2, adjustableColumn=1,
-                   manage=opened,
+    cmds.columnLayout(_EXPORT_ROW, adjustableColumn=True, manage=opened,
+                      rowSpacing=3)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 3)])
     hubstyle.mark(cmds.button(
-        label="Export FBX...",
+        _EXPORT_FBX, label="Export FBX...",
         height=hubstyle.height("button", 28),
         annotation="Export FBX... - Write the scene skeleton's animation to "
-                   "an FBX of your choosing (selection, else the rig, else "
-                   "the only skeleton), baked on export.",
+                   "an FBX (selection, else the rig, else the only "
+                   "skeleton), baked on export. A folder picked in Folders: "
+                   "straight into it, only the name asked.",
         command=lambda *_: _run(export_fbx_selected,
                                 busy="writing the fbx...")),
         "secondary", "upload")
     hubstyle.mark(cmds.button(
+        _SAVE_SCENE, label="Save scene...",
+        height=hubstyle.height("button", 28),
+        annotation="Save the scene (the active tab) as a Maya file. A folder "
+                   "picked in Folders: straight into it, only the name asked.",
+        command=lambda *_: _run(save_scene_selected,
+                                busy="saving the scene...")),
+        "secondary", "device-floppy")
+    cmds.setParent("..")
+    hubstyle.mark(cmds.button(
         _UASSET, label="Export to uasset", height=hubstyle.height("button", 28),
-        width=hubstyle.pick(130, 120),
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
                    "uasset is written on disk with no changelist behind it, "
@@ -1479,8 +1618,8 @@ def toggle_export():
     """Fold or unfold the two exports, remembered (2026-10-19, variant A)."""
     opened = not bool(_var(EXPORT_OPEN_VAR, 0))
     cmds.optionVar(intValue=(EXPORT_OPEN_VAR, int(opened)))
-    if cmds.rowLayout(_EXPORT_ROW, exists=True):
-        cmds.rowLayout(_EXPORT_ROW, edit=True, manage=opened)
+    if cmds.layout(_EXPORT_ROW, exists=True):
+        cmds.layout(_EXPORT_ROW, edit=True, manage=opened)
     if cmds.button(_EXPORT_TOGGLE, exists=True):
         cmds.button(_EXPORT_TOGGLE, edit=True,
                     label=export_toggle_label(opened))
@@ -1508,9 +1647,18 @@ def paint_import():
             name = target_button(target)
             if cmds.iconTextRadioButton(name, exists=True):
                 cmds.iconTextRadioButton(name, edit=True, label=words)
+        folders = (picked_folders()
+                   if cmds.textScrollList(_LIST, exists=True) else [])
+        name = (folders[0].label.rsplit("/", 1)[-1]
+                if len(folders) == 1 else "")
+        for button, words in ((_EXPORT_FBX, "Export FBX"),
+                              (_SAVE_SCENE, "Save scene")):
+            if cmds.button(button, exists=True):
+                cmds.button(button, edit=True,
+                            label=folder_label(words, name))
         if not cmds.button(_IMPORT, exists=True):
             return
-        names = ([record.name for record in _selected_records()]
+        names =([record.name for record in _selected_records()]
                  if cmds.textScrollList(_LIST, exists=True) else [])
         cmds.button(_IMPORT, edit=True, label=records.import_label(
             names, kind, import_target(), _model_label(),
