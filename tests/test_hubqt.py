@@ -54,6 +54,8 @@ class SeamsMixin(object):
             "viewportbar": lambda on: self.calls.append(("viewportbar", on)),
             "mainbar": lambda on: self.calls.append(("mainbar", on)),
             "camview": lambda on: self.calls.append(("camview", on)),
+            "windowlight": lambda on: self.calls.append(("windowlight", on)),
+            "windowlight_maya": lambda on: self.calls.append(("windowlight_maya", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "timebar_steel": lambda on: self.calls.append(("timebar_steel", on)),
             "timebar_at": lambda on: self.calls.append(("timebar_at", on)),
@@ -235,21 +237,23 @@ class TheShell(SeamsMixin, unittest.TestCase):
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",
                           "Viewport bar", "Main bar", "1P in its camera",
+                          "Window light", "Light Maya's windows",
                           "Time bar", "Side panel", "Layout", "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
         #  "Layout" (2026-10-16) and "Edge panel" (2026-10-09) are submenus:
         #  their own rows call nothing
-        self.assertEqual(actions[9].menu().objectName(),
+        self.assertEqual(actions[11].menu().objectName(),
                          "skeldarHubLayoutMenu")
-        self.assertIs(actions[10].menu(), self.skin.edge_menu)
+        self.assertIs(actions[12].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
-        self.assertEqual(actions[7].menu().objectName(), "skeldarHubTimeBarMenu")
+        self.assertEqual(actions[9].menu().objectName(), "skeldarHubTimeBarMenu")
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), ("viewportbar", True), ("mainbar", True), ("camview", True), "classic"])
-        rows = actions[7].menu().actions()
+                          ("animations", False), ("viewportbar", True), ("mainbar", True), ("camview", True),
+                          ("windowlight", True), ("windowlight_maya", True), "classic"])
+        rows = actions[9].menu().actions()
         self.assertEqual([a.text() for a in rows if not a.isSeparator()],
                          ["Maya's", "Docked", "Bottom edge", "Steel keys", "AT bar"])
         rows[2].trigger()
@@ -276,8 +280,8 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertTrue(steel.isChecked())
         self.assertEqual(self.calls[-1], ("timebar_at", True))
         #  the side panel (2026-10-17): Maya's / Right edge
-        self.assertEqual(actions[8].menu().objectName(), "skeldarHubSidePanelMenu")
-        side = actions[8].menu().actions()
+        self.assertEqual(actions[10].menu().objectName(), "skeldarHubSidePanelMenu")
+        side = actions[10].menu().actions()
         self.assertEqual([a.text() for a in side if not a.isSeparator()],
                          ["Maya's", "Right edge", "Out on selection", "Our Channel Box"])
         side[1].trigger()

@@ -14182,3 +14182,30 @@ whole hint) and `set_card_height` holds the FRAME, its content scrolling inside 
 `frame.content_view`); the rail host is `WA_TranslucentBackground`, paints nothing, and the rail
 skin's root / content / viewport / scroll are transparent - the mask stays square, the corners
 show what is behind. Tests `test_hubedge.RailWidthFloor`, `test_hubqt.RailCardHeight`.
+
+## Window light: only the window under the mouse is lit (2026-10-23)
+
+The animator: «любое открытое окно подсвечено оранжевым ... только то на котором указатель мыши», then
+«Это касается всех окон нашего плагина. Ченел бокс, тайм слайдер, библеотека поз, мессенджер ... и
+стандартные окна маи такие как аутлайнер или граф эдитор».
+- First fix (0d45080): the edge rail's windowed card no longer rests lit (`Skin.resting` None when
+  `windowed`), and a section window entered puts every other section window out (`maya_hubpop._on_hover`).
+- **`SkeldarAnim/maya_windowlight.py`** (a payload row): one cursor poll (50 ms) finds the window under the
+  mouse - Windows' own `WindowFromPoint` (another program in front lights nothing; our overlay is
+  input-transparent so it is skipped), `QWidget.find` + `childAt`, then walked up (`pick`, pure):
+  a top-level of ours holding a `maya_hubwindow.WindowFrame` (a section window, the chat, a call) lights
+  its own frame (a section window through its `set_light`); a workspaceControl (ours: Pose Library,
+  docked Time Bar; Maya's: Outliner, Graph Editor, Channel Box, Attribute Editor...) or a floating
+  window gets a ring from an input-transparent `Qt.Tool` overlay (`paint_light`, no face; a masked edge
+  host - Time Bar, side panel - ringed by its mask). Never: the viewport (`MainPane`), Maya's bars
+  (Shelf, StatusLine, TimeSlider, ...), the hub and its edge rail (their cards light themselves), menus,
+  toasts, ghosts, overlays, anything under 40 logical px. A drag keeps its window lit. Fades with the
+  card light's rhythm (`LIGHT_IN_MS` / `LIGHT_OUT_MS`), instant with animations off.
+- ⋮ -> **Window light** (`skeldarWindowLight`, on) and **Light Maya's windows**
+  (`skeldarWindowLightMaya`, on); started by the hub's build (`_windowlight_soon`); state on
+  `sys._skeldar_windowlight`, a watch from an older module object replaced by `ensure()`.
+- Proof: `tests/test_windowlight.py` (the rule, the fade, the watch over offscreen widgets: the window
+  under the mouse lit, the other faded out and dropped, the ring on its window, a framed window lighting
+  its frame); an offscreen render of the overlay (ring (224, 122, 54), glow, a clear middle). **Not seen
+  in a GUI Maya**: the real `WindowFromPoint` walk, Maya's workspaceControl widgets' names, the overlay
+  over floating Maya windows.

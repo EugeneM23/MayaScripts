@@ -465,6 +465,9 @@ def _callbacks():
         "mainbar": set_mainbar,
         #  a character's own camera puts it in 1P (2026-10-22, maya_camview)
         "camview": set_camview,
+        #  only the window under the mouse lit (2026-10-23, maya_windowlight)
+        "windowlight": set_windowlight,
+        "windowlight_maya": set_windowlight_maya,
         #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
@@ -532,6 +535,7 @@ def _dress_header(skin):
     _dress_viewportbar(skin)
     _dress_mainbar(skin)
     _dress_camview(skin)
+    _dress_windowlight(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
     _dress_interface(skin)
@@ -613,6 +617,16 @@ def _dress_mainbar(skin):
     try:
         import maya_mainbar
         skin.paint_mainbar(maya_mainbar.enabled())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_windowlight(skin):
+    """The menu's Window light rows = the two switches (both on by default)."""
+    try:
+        import maya_windowlight
+        skin.paint_windowlight(maya_windowlight.enabled(),
+                               maya_windowlight.maya_enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -743,6 +757,7 @@ def build():
     _viewport_bar_soon()
     _main_bar_soon()
     _camview_soon()
+    _windowlight_soon()
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
@@ -911,6 +926,22 @@ def _main_bar_soon():
             print("SkeldarAnim: the main bar could not be painted")
             print(traceback.format_exc())
     cmds.evalDeferred(paint, lowestPriority=True)
+
+
+def _windowlight_soon():
+    """The window under the mouse lit (2026-10-23) while the switch is on.
+    Deferred and guarded."""
+    if cmds.about(batch=True):
+        return
+
+    def start():
+        try:
+            import maya_windowlight
+            maya_windowlight.ensure()
+        except Exception:                                    # noqa: BLE001
+            print("SkeldarAnim: the window light could not start")
+            print(traceback.format_exc())
+    cmds.evalDeferred(start, lowestPriority=True)
 
 
 def _camview_soon():
@@ -1182,6 +1213,7 @@ def _ensure_edge():
         _viewport_bar_soon()
         _main_bar_soon()
         _camview_soon()
+        _windowlight_soon()
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
@@ -1839,6 +1871,29 @@ def set_mainbar(on):
     message = maya_mainbar.set_enabled(on)
     if is_skinned():
         _SKIN.paint_mainbar(maya_mainbar.enabled())
+    say(message)
+    return message
+
+
+def set_windowlight(on):
+    """⋮ -> Window light (2026-10-23): only the window under the mouse is lit."""
+    import maya_windowlight
+    message = maya_windowlight.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_windowlight(maya_windowlight.enabled(),
+                                maya_windowlight.maya_enabled())
+    say(message)
+    return message
+
+
+def set_windowlight_maya(on):
+    """⋮ -> Light Maya's windows (2026-10-23): Outliner, Graph Editor and the
+    rest light under the mouse too."""
+    import maya_windowlight
+    message = maya_windowlight.set_maya_enabled(on)
+    if is_skinned():
+        _SKIN.paint_windowlight(maya_windowlight.enabled(),
+                                maya_windowlight.maya_enabled())
     say(message)
     return message
 
