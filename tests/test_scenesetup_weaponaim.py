@@ -13,12 +13,24 @@ class Pure(unittest.TestCase):
 
     def test_vectors_aim_down_the_blade_and_up_across_it(self):
         # a sword: the blade on +Y to 100, the guard on X +-15, thin on Z; the up on the other
-        # side of the guard, a quarter of the target's distance out (2026-10-21)
+        # side of the guard (2026-10-21), opposite the blade's middle, half the target's distance
+        # out (2026-10-23: beside the grip it crashed Maya)
         aim_v, up_v, d_aim, d_up = wa.vectors((-15, -20, -2), (15, 100, 2))
         self.assertEqual(aim_v, (0.0, 1.0, 0.0))
-        self.assertEqual(up_v, (-1.0, 0.0, 0.0))
         self.assertAlmostEqual(d_aim, 115.0)
-        self.assertAlmostEqual(d_up, 115.0 * wa.UP_SHARE)
+        point = [v * d_up for v in up_v]
+        self.assertAlmostEqual(point[0], -115.0 * wa.UP_SHARE)
+        self.assertAlmostEqual(point[1], 100.0 * wa.UP_ALONG)
+        self.assertAlmostEqual(point[2], 0.0)
+
+    def test_the_constraint_s_up_axis_is_across_the_blade(self):
+        aim_v, up_v, _d, _du = wa.vectors((-15, -20, -2), (15, 100, 2))
+        for got, want in zip(wa.up_axis(aim_v, up_v), (-1.0, 0.0, 0.0)):
+            self.assertAlmostEqual(got, want)
+
+    def test_the_up_stands_well_off_the_blade_s_line(self):
+        aim_v, up_v, _d, _du = wa.vectors((-15, -20, -2), (15, 100, 2))
+        self.assertLess(sum(a * u for a, u in zip(aim_v, up_v)), 0.75)
 
     def test_a_blade_down_minus_y_aims_down(self):
         aim_v, _up, _d, _du = wa.vectors((-15, -100, -2), (15, 20, 2))

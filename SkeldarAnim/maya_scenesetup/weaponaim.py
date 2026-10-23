@@ -39,9 +39,13 @@ ROTATE = fkik.ROTATE
 TRANSLATE = fkik.TRANSLATE
 LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
 # the up beside the weapon (2026-10-21, after using it: «AIm up должен быть с другой стороны
-# оружия и не так далеко от него»): on the other side of the next longest axis, a quarter of the
-# target's distance out
-UP_SHARE = 0.25
+# оружия и не так далеко от него»): on the other side of the next longest axis. 2026-10-23 «другий
+# контрол який ближче до рукоятки дуже часто приводить до крашу ... давай його розмістимо далі від
+# предмету і по центру леза»: beside the grip, a quarter out, a small drag put it on the blade's line
+# and the aimConstraint's up degenerate; now opposite the blade's middle (UP_ALONG of the tip's
+# distance), half the target's distance out
+UP_SHARE = 0.5
+UP_ALONG = 0.5
 LINE_MARKER = "skeldarWeaponAimLine"  # on a line from the weapon to a controller: its role
 
 NO_WEAPON = "no weapon in the scene - Inventory > Equip first"
@@ -54,8 +58,10 @@ NO_GEOMETRY = "%s has no geometry to measure - cannot place the aim"
 
 def vectors(lo, hi):
     """(aim vector, up vector, aim distance, up distance) in the weapon's own frame from its
-    extents, or None (nothing to aim). The aim along the blade to past its tip (`aim.placement`),
-    the up on the OTHER side of the next longest axis, `UP_SHARE` of that distance out."""
+    extents, or None (nothing to aim): the directions and distances of the two controllers from
+    the weapon's pivot. The aim along the blade to past its tip (`aim.placement`); the up opposite
+    the blade's middle, on the OTHER side of the next longest axis, `UP_SHARE` of that distance
+    out. The constraint's up axis is `up_axis` of the two."""
     placed = aimplace.placement(lo, hi)
     if placed is None:
         return None
@@ -64,8 +70,21 @@ def vectors(lo, hi):
     d_side = math.sqrt(sum(v * v for v in side))
     if d_top <= 0 or d_side <= 0:
         return None
-    return (tuple(v / d_top for v in top), tuple(-v / d_side for v in side), d_top,
-            d_top * UP_SHARE)
+    aim_v = tuple(v / d_top for v in top)
+    along = d_top / (1.0 + aimplace.MARGIN) * UP_ALONG
+    point = [a * along - s / d_side * d_top * UP_SHARE for a, s in zip(aim_v, side)]
+    d_up = math.sqrt(sum(v * v for v in point))
+    return aim_v, tuple(v / d_up for v in point), d_top, d_up
+
+
+def up_axis(aim_v, up_v):
+    """The weapon's own axis the aimConstraint turns toward the up controller: `up_v` without its
+    part along the blade (the controller stands opposite the blade's middle, not beside the grip),
+    so the weapon stands as it stood. Pure."""
+    dot = sum(a * u for a, u in zip(aim_v, up_v))
+    perp = [u - dot * a for a, u in zip(aim_v, up_v)]
+    n = math.sqrt(sum(v * v for v in perp))
+    return tuple(v / n for v in perp) if n > 1e-9 else tuple(up_v)
 
 
 def point_of(matrix, direction, distance):
@@ -424,7 +443,7 @@ def enter(weapon):
             for ch in ROTATE:
                 cmds.cutKey(weapon + "." + ch, clear=True)
             con = cmds.aimConstraint(made["target"], weapon, maintainOffset=False,
-                                     aimVector=aim_v, upVector=up_v, worldUpType="object",
+                                     aimVector=aim_v, upVector=up_axis(aim_v, up_v), worldUpType="object",
                                      worldUpObject=made["up"])[0]
             cmds.addAttr(con, longName=CON_MARKER, dataType="string")
             cmds.setAttr(con + "." + CON_MARKER, weapon_uuid, type="string")

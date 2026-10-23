@@ -41,7 +41,7 @@ cmds.autoKeyframe(state=False)
 
 import maya_rigs  # noqa: E402
 from maya_scenesetup import bonedrive, catalog, character, connections, equip  # noqa: E402
-from maya_scenesetup import weaponaim  # noqa: E402
+from maya_scenesetup import aim as aimplace, weaponaim  # noqa: E402
 from maya_poselib import animapply, animcapture, apply, capture  # noqa: E402
 from maya_poselib import posemath as pm  # noqa: E402
 
@@ -195,9 +195,14 @@ def main():
          "%.4f" % (t1[0] - t0[0]))
     up_local = om.MPoint(*cmds.xform(ctrls["up"], query=True, worldSpace=True,
                                      translation=True)) * W(sword).inverse()
-    gate("enter: the up close beside the sword",
-         om.MVector(up_local).length() < 0.3 * weaponaim.stored_vectors(
-             weaponaim.group_of(sword))[2] + TOL, "%.1f cm" % om.MVector(up_local).length())
+    #  2026-10-23: beside the grip a drag put the up on the blade's line and crashed Maya - now
+    #  opposite the blade's middle, well off its line
+    aim_v, up_v, d_aim, d_up = weaponaim.stored_vectors(weaponaim.group_of(sword))
+    along = sum(a * b for a, b in zip(aim_v, up_local))
+    across = (om.MVector(up_local) - om.MVector(*aim_v) * along).length()
+    gate("enter: the up opposite the blade's middle, off its line",
+         abs(along - d_aim / (1.0 + aimplace.MARGIN) * weaponaim.UP_ALONG) < 1e-3
+         and abs(across - d_aim * weaponaim.UP_SHARE) < 1e-3, "along %.1f cm, across %.1f cm" % (along, across))
     gate("enter: a second press refused", "already" in connections.aim_mode(rig, sword, on=True))
     made = weaponaim.controllers(weaponaim.group_of(sword))
 
