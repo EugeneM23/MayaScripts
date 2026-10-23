@@ -7683,6 +7683,25 @@ The animator: «Давай переделаем меню animation setup и сд
   `ueAnimBridgeOntoLabel`, `ueAnimBridgeImport`, `ueAnimBridgeExportToggle`, `ueAnimBridgeExportRow`.
   `SHORT_TARGET` is gone. Unit tests only; 7596 OK. Not seen in a GUI Maya.
 
+## Animation Setup: the list as a folder tree (2026-10-23)
+
+The animator: «сделать режим в котором я буду видеть структуру папок». Asked: the tree INSIDE the list (not
+two panes, not one folder at a time); a folder only opens and closes. Spec
+`docs/superpowers/specs/2026-10-23-animation-setup-folder-tree-design.md`, plan beside it.
+- `[List | Folders]` segments beside the search field (`ueAnimBridgeListMode`, List by default), every source.
+- `maya_uebridge/foldertree.py` (stdlib, pinned): `folder_of` (Unreal's package folder, a file's folder under
+  the project / chosen folder), `build`, `rows` (folders first, then animations, by name; a chain of lone
+  folders one row; `None` opens all), `row_text` (`▸`/`▾`, two spaces a level, the count), the open folders per
+  place in `ueAnimBridgeOpenFolders` (JSON, the last 20 places).
+- `window._repopulate` fills the same `textScrollList`; `_STATE["filtered"]` holds one entry a ROW, `None` for a
+  folder - `_selected_records`, the Import button's words and `listdrag.carried_records` skip it.
+  `_on_select` toggles a picked folder and deselects it (the picked animations stay); a second click on the
+  same folder within `DOUBLE_S` 0.5 s is the double click's and toggles nothing; `_on_double` imports nothing
+  then. A search shows only the matching branches, all open, and leaves the memory alone.
+- Proof: `tests/test_uebridge_foldertree.py`, `test_uebridge_window.FolderTree`,
+  `test_uebridge_listdrag.FolderRows`. Not seen in a GUI Maya (the arrows in Maya's list font, a real double
+  click's order of select / double-click commands).
+
 ## A section popup bursts out of a point and folds back into one (2026-10-17)
 
 The animator: «Давай сделаем так что бы наши поапы появлялись с приятной анимацией сделай мекеты». Five
