@@ -296,6 +296,7 @@ def _classes():
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.status_text = ""
+            self.on_right = None
             self._press = None
             self._drag = None
             self._synthetic = False
@@ -532,6 +533,14 @@ def _classes():
                         self._cancel()
                     return True
                 self._press = None
+                if (event.button() == Qt.RightButton
+                        and self.on_right is not None):
+                    index = self.list.indexAt(local_of(event))
+                    try:
+                        self.on_right(index.row() if index.isValid() else None)
+                    except Exception:                        # noqa: BLE001
+                        traceback.print_exc()
+                    return False             # Maya's popup menu still opens
                 if event.button() == Qt.LeftButton:
                     local = local_of(event)
                     row, record = self._row_at(local)
@@ -580,7 +589,7 @@ def _classes():
 
 # ----------------------------------------------------------------- attach
 
-def attach_widget(widget, records_of, scene=None, key=None):
+def attach_widget(widget, records_of, scene=None, key=None, on_right=None):
     """The drag on a QListWidget `widget`: `records_of()` answers the record
     of every row, in row order. Replaces a drag attached under the same `key`
     (the list's name; the widget's address when none)."""
@@ -601,13 +610,14 @@ def attach_widget(widget, records_of, scene=None, key=None):
     #  the scene is called from Qt events (a drag): its calls run in the scope
     #  the drag was attached in (H3)
     drag = classes["Drag"](widget, records_of, hubcopy.bind(scene or Scene()))
+    drag.on_right = on_right
     widget.viewport().installEventFilter(drag)
     widget.installEventFilter(drag)
     _DRAGS[key] = drag
     return drag
 
 
-def attach(list_name, records_of, scene=None):
+def attach(list_name, records_of, scene=None, on_right=None):
     """The drag on the `cmds` textScrollList `list_name`, or None where it
     cannot stand (no Qt, no such control, not a list underneath)."""
     import maya_hubqt
@@ -626,4 +636,5 @@ def attach(list_name, records_of, scene=None):
     if not (q.shiboken.isValid(widget)
             and widget.inherits("QAbstractItemView")):
         return None
-    return attach_widget(widget, records_of, scene, key=list_name)
+    return attach_widget(widget, records_of, scene, key=list_name,
+                         on_right=on_right)

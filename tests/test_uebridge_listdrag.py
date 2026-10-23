@@ -117,6 +117,26 @@ class Drag(unittest.TestCase):
     def row(self, index):
         return self.list.visualItemRect(self.list.item(index)).center()
 
+    def test_a_right_press_tells_the_row_under_the_mouse(self):
+        told = []
+        self.drag.on_right = told.append
+        last = self.list.visualItemRect(self.list.item(2))
+        below = QT.QtCore.QPoint(last.center().x(),
+                                 (last.bottom() + self.list.viewport().height()) // 2)
+        self.assertGreater(below.y(), last.bottom())
+        self.assertLess(below.y(), self.list.viewport().height())
+        self.mouse(self.E.MouseButtonPress, self.row(2), self.R, self.R)
+        self.mouse(self.E.MouseButtonPress, below, self.R, self.R)
+        self.assertEqual(told, [2, None])
+        self.assertIsNone(self.drag.dragging())
+
+    def test_attach_takes_the_right_press_callback(self):
+        told = []
+        listdrag.attach_widget(self.list, lambda: list(self.records),
+                               self.scene, on_right=told.append)
+        self.mouse(self.E.MouseButtonPress, self.row(0), self.R, self.R)
+        self.assertEqual(told, [0])
+
     def mouse(self, kind, local, button, buttons):
         port = self.list.viewport()
         g = port.mapToGlobal(local)

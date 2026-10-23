@@ -1235,5 +1235,95 @@ class FolderSave(unittest.TestCase):
                          "Export FBX to " + "A" * 23 + "\u2026...")
 
 
+class ListMenu(unittest.TestCase):
+    """2026-10-23: the right button on a row - Show in Explorer, and on a
+    folder Export / Save here."""
+
+    def folder(self, path):
+        from maya_uebridge import foldertree
+        return foldertree.Row("folder", 0, path, path, None, 1, False)
+
+    def anim(self):
+        from maya_uebridge import foldertree
+        record = records.AnimRecord("W", "C:/c/w/W.fbx", "", 24, 1.0, 30.0,
+                                    "folder", "C:/c/w/W.fbx", "", "fbx")
+        return foldertree.Row("anim", 0, "", "W", record, 1, False)
+
+    def test_a_file_shows_in_explorer(self):
+        self.assertEqual(window.menu_rows(self.anim(), "folder", "C:/c", "",
+                                          exists=lambda p: True),
+                         [("Show in Explorer", window.MENU_EXPLORER, True)])
+
+    def test_a_folder_also_exports_and_saves_here(self):
+        rows = window.menu_rows(self.folder("w"), "folder", "C:/c", "",
+                                exists=lambda p: True)
+        self.assertEqual([key for _l, key, _e in rows],
+                         [window.MENU_EXPLORER, window.MENU_EXPORT,
+                          window.MENU_SAVE])
+        self.assertTrue(all(enabled for _l, _k, enabled in rows))
+
+    def test_a_missing_path_is_said_and_disabled(self):
+        rows = window.menu_rows(self.folder("w"), "folder", "C:/c", "",
+                                exists=lambda p: False)
+        self.assertEqual(rows[0], ("not on disk: C:/c/w", None, False))
+        self.assertFalse(any(enabled for _l, _k, enabled in rows))
+
+    def test_no_row_and_no_place(self):
+        self.assertEqual(window.menu_rows(None, "folder", "C:/c", ""),
+                         [("no file here", None, False)])
+        self.assertEqual(window.menu_rows(self.folder("Engine"), "unreal", "",
+                                          "C:/P/Content"),
+                         [("not a folder on disk", None, False)])
+
+    def test_show_in_explorer_selects_a_file_and_opens_a_folder(self):
+        ran = []
+        saved = window._popen
+        window._popen = ran.append
+        self.addCleanup(setattr, window, "_popen", saved)
+        saved_status = window._status
+        window._status = lambda *a, **k: None     # no real control headless
+        self.addCleanup(setattr, window, "_status", saved_status)
+        window.show_in_explorer("C:/c/w/W.fbx", True)
+        window.show_in_explorer("C:/c/w", False)
+        self.assertEqual(ran[0][:2], ["explorer", "/select,"])
+        self.assertEqual(ran[1][0], "explorer")
+        self.assertEqual(len(ran[1]), 2)
+        self.assertNotIn("/", ran[0][2])          # a native path
+
+    def test_run_menu_presses_with_that_folder(self):
+        pressed = []
+        saved = (window.export_fbx_selected, window.save_scene_selected)
+        window.export_fbx_selected = lambda folder=None: pressed.append(("x", folder))
+        window.save_scene_selected = lambda folder=None: pressed.append(("s", folder))
+        self.addCleanup(lambda: (setattr(window, "export_fbx_selected", saved[0]),
+                                 setattr(window, "save_scene_selected", saved[1])))
+        row = self.folder("w")
+        window.run_menu(window.MENU_EXPORT, row)
+        window.run_menu(window.MENU_SAVE, row)
+        self.assertEqual(pressed, [("x", row), ("s", row)])
+
+    def test_the_menu_row_is_the_right_pressed_one_else_the_first_picked(self):
+        fake = FakeTreeCmds()
+        saved = (window.cmds, dict(window._STATE))
+        window.cmds = fake
+
+        def put_back():
+            window.cmds = saved[0]
+            window._STATE.clear()
+            window._STATE.update(saved[1])
+        self.addCleanup(put_back)
+        rec = self.anim().record
+        window._STATE.update(filtered=[rec, rec], tree_rows=[], list_mode="list")
+        window._right_pressed(1)
+        self.assertEqual(window._menu_row().record, rec)
+        self.assertNotIn("menu_row", window._STATE)     # used once
+        fake.picked = [2]
+        self.assertEqual(window._menu_row().record, rec)
+        fake.picked = []
+        self.assertIsNone(window._menu_row())
+        window._right_pressed(None)
+        self.assertIsNone(window._menu_row())
+
+
 if __name__ == "__main__":
     unittest.main()

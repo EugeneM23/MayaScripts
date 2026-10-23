@@ -41,6 +41,7 @@ never waits on a round trip.
 
 import json
 import os
+import subprocess
 import tempfile
 import traceback
 
@@ -1345,6 +1346,91 @@ def save_scene_selected(folder=None):
     _status(_save_scene(path))
 
 
+MENU_EXPLORER = "explorer"
+MENU_EXPORT = "export"
+MENU_SAVE = "save"
+_popen = subprocess.Popen
+
+
+def menu_rows(row, source, root, content_dir, exists=os.path.exists):
+    """The right-click rows for the list row `row`: (label, key, enabled).
+    Pure but for `exists`."""
+    if row is None:
+        return [("no file here", None, False)]
+    path = foldertree.disk_path(row, source, root, content_dir)
+    if not path:
+        return [("not a folder on disk", None, False)]
+    there = bool(exists(path))
+    out = [] if there else [("not on disk: {0}".format(path), None, False)]
+    out.append(("Show in Explorer", MENU_EXPLORER, there))
+    if row.kind == "folder":
+        out.append(("Export FBX here...", MENU_EXPORT, there))
+        out.append(("Save scene here...", MENU_SAVE, there))
+    return out
+
+
+def show_in_explorer(path, is_file):
+    """Explorer on `path`: a file selected in its folder, a folder opened."""
+    native = os.path.normpath(path)
+    _popen(["explorer", "/select,", native] if is_file
+           else ["explorer", native])
+    _status("Explorer: {0}".format(path))
+
+
+def run_menu(key, row):
+    if key == MENU_EXPLORER:
+        show_in_explorer(folder_disk(row), row.kind != "folder")
+    elif key == MENU_EXPORT:
+        export_fbx_selected(folder=row)
+    elif key == MENU_SAVE:
+        save_scene_selected(folder=row)
+
+
+def _right_pressed(index):
+    """listdrag: the right button went down on row `index` (0-based) or on
+    no row (None)."""
+    _STATE["menu_row"] = index
+
+
+def _row_at(index):
+    """The list row at 0-based `index`: a tree row in Folders, an animation
+    row made from the record in List."""
+    if index is None:
+        return None
+    rows = _STATE.get("tree_rows") or []
+    if list_mode() == "folders" and 0 <= index < len(rows):
+        return rows[index]
+    shown = _STATE.get("filtered") or []
+    if 0 <= index < len(shown) and shown[index] is not None:
+        record = shown[index]
+        return foldertree.Row("anim", 0, "", record.name, record, 1, False)
+    return None
+
+
+def _menu_row():
+    """The row a menu opening is for: the right-pressed one (told by
+    listdrag, used once), else - no Qt - the first picked row."""
+    if "menu_row" in _STATE:
+        return _row_at(_STATE.pop("menu_row"))
+    picked = cmds.textScrollList(_LIST, query=True,
+                                 selectIndexedItem=True) or []
+    return _row_at(min(picked) - 1) if picked else None
+
+
+def _fill_list_menu(menu):
+    cmds.popupMenu(menu, edit=True, deleteAllItems=True)
+    row = _menu_row()
+    for label, key, enabled in menu_rows(
+            row, current_source(), _STATE.get("location") or "",
+            _STATE.get("content_dir") or ""):
+        if key is None:
+            cmds.menuItem(parent=menu, label=label, enable=False)
+            continue
+        cmds.menuItem(parent=menu, label=label, enable=enabled,
+                      command=(lambda k, r: lambda *_: _run(
+                          lambda: run_menu(k, r)))(key, row))
+
+
 # ---------------------------------------------------------------- window
 
 def is_open():
@@ -1516,6 +1602,10 @@ def build_rows():
     #  default); the classic hub keeps the list's pixel height and the
     #  placeholder is a quiet gap
     hubstyle.grip(cmds.separator(_LIST_GRIP, height=8, style="none"), _LIST)
+    #  2026-10-23: the right button on a row (listdrag tells which row)
+    menu = cmds.popupMenu(parent=_LIST, button=3)
+    cmds.popupMenu(menu, edit=True,
+                   postMenuCommand=lambda *_a, m=menu: _fill_list_menu(m))
 
     #  2026-10-19 (variant A, «сделаем его более понятным»): «Put it on
     #  [Selected rig | A new rig]», the timeline box in words, ONE Import
@@ -1687,6 +1777,7 @@ def _attach_drag():
     stands; without it the list is the list it always was."""
     try:
         from maya_uebridge import listdrag   # lazy: Qt stays out of cmds
-        listdrag.attach(_LIST, lambda: list(_STATE["filtered"]))
+        listdrag.attach(_LIST, lambda: list(_STATE["filtered"]),
+                        on_right=_right_pressed)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
