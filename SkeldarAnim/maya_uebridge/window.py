@@ -42,7 +42,6 @@ never waits on a round trip.
 import json
 import os
 import tempfile
-import time
 import traceback
 
 import maya.cmds as cmds
@@ -95,16 +94,14 @@ LOCATION_VAR = "ueAnimBridgeLocation_{0}"       # the folder / project picked
 RECENT_VAR = "ueAnimBridgeRecent_{0}"           # JSON list: folders / projects
 BROWSE = "Browse..."
 #  2026-10-23 («режим в котором я буду видеть структуру папок»): the list as
-#  a folder tree in the same Maya list (`foldertree`); a folder row only opens
-#  and closes, it is never picked, imported or dragged.
+#  a folder tree in the same Maya list (`foldertree`). A click picks a folder
+#  like any row, a double click on a lone picked folder opens or closes it
+#  («Клик выделяет, двойной раскрывает»); a picked folder never imports.
 _LIST_MODE = "ueAnimBridgeListMode"
 LIST_MODES = (("list", "List", "Every animation in one list"),
               ("folders", "Folders",
-               "The animations in their folders: a click on a folder opens or "
-               "closes it"))
-DOUBLE_S = 0.5            # a second click on the same folder this soon is the
-                          # double click's, not a new toggle
-_now = time.monotonic
+               "The animations in their folders: a double click opens or "
+               "closes a folder"))
 #  The block's look in the classic hub (the skin styles it by its role).
 INSET_CLASSIC_BG = (0.215, 0.22, 0.235)
 
@@ -118,9 +115,7 @@ CACHE_NAME = "maya_uebridge_cache.json"
 
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
           "content_dir": "", "source": None, "menu": [], "location": "",
-          "unreal_labels": [], "list_mode": None, "tree_rows": [],
-          "last_toggle": (None, 0.0), "last_click": (None, 0.0),
-          "picked": set(), "prev_sel": []}
+          "unreal_labels": [], "list_mode": None, "tree_rows": []}
 
 
 # ---------------------------------------------------------------- cache
@@ -279,12 +274,16 @@ def _repopulate(quiet=False):
 
     # The selection survives the rebuild by identity, not by position - a
     # narrowed filter must not silently select a different animation.
-    #  A folder row (None) is never kept.
+    #  A folder row is kept by its path.
     previous = _STATE.get("filtered") or []
+    previous_rows = _STATE.get("tree_rows") or []
     picked = cmds.textScrollList(_LIST, query=True,
                                  selectIndexedItem=True) or []
     keep = set(previous[i - 1].package for i in picked
                if 0 < i <= len(previous) and previous[i - 1] is not None)
+    keep_folders = set(previous_rows[i - 1].path for i in picked
+                       if 0 < i <= len(previous_rows)
+                       and previous_rows[i - 1].kind == "folder")
 
     if list_mode() == "folders":
         tree = foldertree.build(shown, _tree_root())
@@ -311,30 +310,13 @@ def _repopulate(quiet=False):
     for index, record in enumerate(entries, 1):
         if record is not None and record.package in keep:
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
-    _remember_selection()
+        elif (record is None and index <= len(tree_rows)
+              and tree_rows[index - 1].path in keep_folders):
+            cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
     paint_import()
     if not quiet:
         _status(count_line(len(_STATE["records"]), len(shown), query))
     return shown
-
-
-def _remember_selection():
-    """What the list holds picked now: its rows (to tell a folder that joins
-    the selection with this click from one that stood picked) and the
-    packages of its animations (to pick them again after a folder click,
-    which in Maya replaces the whole selection)."""
-    rows = cmds.textScrollList(_LIST, query=True, selectIndexedItem=True) or []
-    shown = _STATE.get("filtered") or []
-    _STATE["prev_sel"] = list(rows)
-    _STATE["picked"] = set(shown[i - 1].package for i in rows
-                           if 0 < i <= len(shown) and shown[i - 1] is not None)
-
-
-def _pick_packages(packages):
-    """Pick every shown animation row whose package is in `packages`."""
-    for index, record in enumerate(_STATE.get("filtered") or [], 1):
-        if record is not None and record.package in packages:
-            cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
 
 
 def _selected_records():
@@ -346,65 +328,38 @@ def _selected_records():
             if 0 < i <= len(shown) and shown[i - 1] is not None]
 
 
-def _on_select():
-    """A row click. A folder row in Folders mode opens or closes (not during a
-    search, which shows every match open) and leaves the selection at once;
-    the animations picked before stay picked, a plain click on the folder
-    included. A Shift range that takes in several folders toggles none."""
+def picked_folders():
+    """The picked folder rows, in list order (Folders mode; none in List)."""
+    if list_mode() != "folders":
+        return []
     rows = _STATE.get("tree_rows") or []
-    if list_mode() != "folders" or not rows:
-        paint_import()
-        return
-    picked = cmds.textScrollList(_LIST, query=True,
-                                 selectIndexedItem=True) or []
-    shown = _STATE.get("filtered") or []
-    folders = [i for i in picked
-               if 0 < i <= len(rows) and rows[i - 1].kind == "folder"]
-    if not folders:
-        _STATE["last_click"] = ("anim", _now())
-        _remember_selection()
-        paint_import()
-        return
-    _STATE["last_click"] = ("folder", _now())
-    before = set(_STATE.get("prev_sel") or [])
-    joined = [i for i in folders if i not in before]
-    #  what stays picked: the animations remembered, and any this same select
-    #  holds (a Ctrl-click, a Shift range over animations)
-    keep = set(_STATE.get("picked") or set())
-    keep |= set(shown[i - 1].package for i in picked
-                if 0 < i <= len(shown) and shown[i - 1] is not None)
-    for index in folders:
-        cmds.textScrollList(_LIST, edit=True, deselectIndexedItem=index)
-    searching = bool((cmds.textField(_SEARCH, query=True, text=True)
-                      if cmds.textField(_SEARCH, exists=True) else "").strip())
-    toggles = [] if searching or len(joined) != 1 else joined
-    paths = _open_folders()
-    changed = False
-    last_path, last_at = _STATE.get("last_toggle") or (None, 0.0)
-    for index in toggles:
-        path = rows[index - 1].path
-        if path == last_path and _now() - last_at < DOUBLE_S:
-            continue                # the double click's second click
-        paths = foldertree.toggled(paths, path)
-        _STATE["last_toggle"] = (path, _now())
-        changed = True
-    if changed:
-        _save_open(paths)
-        _repopulate(quiet=True)
-    _pick_packages(keep)
-    _remember_selection()
+    indices = cmds.textScrollList(_LIST, query=True,
+                                  selectIndexedItem=True) or []
+    return [rows[i - 1] for i in sorted(indices)
+            if 0 < i <= len(rows) and rows[i - 1].kind == "folder"]
+
+
+def _searching():
+    return bool((cmds.textField(_SEARCH, query=True, text=True)
+                 if cmds.textField(_SEARCH, exists=True) else "").strip())
+
+
+def _on_select():
+    """A row click picks it - a folder too, nothing opens; the words that
+    follow the pick are repainted."""
     paint_import()
 
 
 def _on_double():
-    """A double click imports the picked animations. In Folders mode never on
-    a folder: a folder clicked a moment ago means this double click was the
-    folder's, and with nothing picked there is nothing to say."""
+    """A double click on exactly one picked folder with no animation picked
+    opens or closes it (not during a search, which shows every match open);
+    any other double click imports the picked animations."""
     if list_mode() == "folders":
-        kind, at = _STATE.get("last_click") or (None, 0.0)
-        if kind == "folder" and _now() - at < DOUBLE_S:
-            return
-        if not _selected_records():
+        folders = picked_folders()
+        if len(folders) == 1 and not _selected_records():
+            if not _searching():
+                _save_open(foldertree.toggled(_open_folders(), folders[0].path))
+                _repopulate(quiet=True)
             return
     _run(import_selected, busy=_import_busy())
 
@@ -1424,7 +1379,7 @@ def build_rows():
                    "pick several: onto a character the first goes; New and a "
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
-                   "drop. In Folders, a click on a folder opens or closes it.",
+                   "drop. In Folders, a click picks a folder (Export and Save write into it), a double click opens or closes it; the right button shows a row in Explorer.",
         selectCommand=lambda *_: _run(_on_select),
         doubleClickCommand=lambda *_: _on_double())
     #  under the list its height grip (2026-10-08): the skin turns this 8 px
