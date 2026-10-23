@@ -222,6 +222,48 @@ class SelectSets(unittest.TestCase):
         self.assertEqual(core.sets_grid(0), [])
 
 
+class MotionTrails(unittest.TestCase):
+    """2026-10-23, «моушн тейл перестав справно працювати»: Maya named the groups AT_MOTION_TRAILS3..12,
+    the toggle looked for AT_MOTION_TRAILS alone and added a trail on every click."""
+
+    def test_a_numbered_group_is_ours(self):
+        self.assertTrue(core.is_trail_group_name("|AT_MOTION_TRAILS12"))
+        self.assertTrue(core.is_trail_group_name("AT_MOTION_TRAILS"))
+        self.assertTrue(core.is_trail_group_name("tab_x:AT_MOTION_TRAILS3"))
+        self.assertFalse(core.is_trail_group_name("AT_MOTION_TRAILS_old"))
+        self.assertFalse(core.is_trail_group_name("AT_trail_DaggerMesh1Handle"))
+
+    def test_the_numbered_groups_are_found_and_the_toggle_takes_them_away(self):
+        fake = mock.MagicMock()
+
+        def ls(*args, **kwargs):
+            if args and args[0].startswith("*."):
+                return ["|AT_MOTION_TRAILS13"]
+            return ["|AT_MOTION_TRAILS3", "|AT_MOTION_TRAILS12", "|grp|AT_MOTION_TRAILS4"]
+        fake.ls.side_effect = ls
+        fake.listRelatives.side_effect = lambda n, **k: ["|grp"] if n == "|grp|AT_MOTION_TRAILS4" else None
+        fake.objExists.return_value = True
+        with mock.patch.object(core, "cmds", fake), mock.patch.object(core, "selection", return_value=[]):
+            self.assertEqual(core.trail_groups(), ["|AT_MOTION_TRAILS12", "|AT_MOTION_TRAILS13", "|AT_MOTION_TRAILS3"])
+            self.assertTrue(core.motion_trails_exist())
+            core.motion_trail_click()
+        deleted = set(c.args[0] for c in fake.delete.call_args_list)
+        self.assertEqual(deleted, {"|AT_MOTION_TRAILS12", "|AT_MOTION_TRAILS13", "|AT_MOTION_TRAILS3"})
+        fake.createNode.assert_not_called()
+
+    def test_a_handle_from_before_the_tag_is_known_by_its_name(self):
+        self.assertTrue(core.legacy_trail_of("|AT_MOTION_TRAILS3|AT_trail_DaggerMesh3Handle", "DaggerMesh"))
+        self.assertTrue(core.legacy_trail_of("|g|AT_trail_DaggerMesh_aimUpHandle", "DaggerMesh_aimUp"))
+        self.assertFalse(core.legacy_trail_of("|g|AT_trail_DaggerMesh_aimUpHandle", "DaggerMesh"))
+
+    def test_clear_takes_only_the_selection_s_trails(self):
+        handles = [("|g|AT_trail_HandLHandle", "uuid-hand"), ("|g|AT_trail_HeadHandle", "uuid-head"),
+                   ("|g|AT_trail_DaggerMesh3Handle", None), ("|g|AT_trail_Foot2Handle", None)]
+        self.assertEqual(core.handles_of(handles, [("uuid-hand", "HandL"), ("uuid-dagger", "DaggerMesh")]),
+                         ["|g|AT_trail_HandLHandle", "|g|AT_trail_DaggerMesh3Handle"])
+        self.assertEqual(core.handles_of(handles, [("uuid-none", "Pelvis")]), [])
+
+
 class RelationshipInRange(unittest.TestCase):
     """2026-10-23, «прив'язку на всі ключі заміни на прив'язку тільки виділеної кількості ключів,
     умовно з 10 по 20»: the paste on the keys inside the Time Bar's highlight, none on all keys."""

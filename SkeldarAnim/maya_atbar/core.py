@@ -1015,29 +1015,158 @@ def toggle_temp_pivot():
 
 # ---------------------------------------------------------------- motion trail / bookmarks / viewport
 
+TRAIL_MARKER = "skeldarATTrails"
+
+
+def is_trail_group_name(node):
+    """`AT_MOTION_TRAILS`, or Maya's numbered `AT_MOTION_TRAILS12`, in any namespace. Pure."""
+    return re.match(r"^%s\d*$" % TRAIL_GRP, node.split("|")[-1].split(":")[-1]) is not None
+
+
+def trail_groups():
+    """Our trails' groups, found by their marker and by name: 2026-10-23 «моушн тейл перестав справно
+    працювати» - Maya had named the groups AT_MOTION_TRAILS3..12, `objExists("AT_MOTION_TRAILS")` saw
+    none of them, and every click added a trail instead of taking it away."""
+    found = cmds.ls("*." + TRAIL_MARKER, recursive=True, objectsOnly=True, long=True) or []
+    found += [n for n in cmds.ls(TRAIL_GRP + "*", recursive=True, type="transform", long=True) or []
+              if is_trail_group_name(n) and not cmds.listRelatives(n, parent=True)]
+    return sorted(set(found))
+
+
 def motion_trails_exist():
-    return cmds.objExists(TRAIL_GRP)
+    return bool(trail_groups())
+
+
+#  2026-10-23 «щоб можна було окремі трейли видаляти ... кнопка едд, і кнопки клір (для одного, і клар
+#  ол для всіх)»: each trail's handle says whose trail it is
+TRAIL_OF = "skeldarATTrailOf"
+TRAIL_PREFIX = "AT_trail_"
+
+
+def legacy_trail_of(handle, leaf):
+    """A handle made before TRAIL_OF (`AT_trail_DaggerMesh3Handle`) is the trail of `leaf`
+    (`DaggerMesh`): our prefix, the leaf, Maya's number, `Handle`. Pure."""
+    name = handle.split("|")[-1].split(":")[-1]
+    return re.match(r"^%s%s\d*Handle$" % (TRAIL_PREFIX, re.escape(leaf)), name) is not None
+
+
+def trail_handles():
+    """[(handle, the UUID of its object or None)] of every trail in our groups."""
+    out = []
+    for grp in trail_groups():
+        for handle in cmds.listRelatives(grp, children=True, type="transform", fullPath=True) or []:
+            of = None
+            if cmds.attributeQuery(TRAIL_OF, node=handle, exists=True):
+                of = cmds.getAttr(handle + "." + TRAIL_OF) or None
+            out.append((handle, of))
+    return out
+
+
+def handles_of(handles, nodes):
+    """The handles among `handles` ([(handle, uuid)]) that trail `nodes` ([(uuid, leaf)]). Pure."""
+    uuids = set(u for u, _ in nodes)
+
+    def ours(handle, of):
+        return of in uuids if of else any(legacy_trail_of(handle, leaf) for _, leaf in nodes)
+    return [h for h, of in handles if ours(h, of)]
+
+
+def _uuid(node):
+    return (cmds.ls(node, uuid=True) or [None])[0]
+
+
+def _drop_handles(handles):
+    trails = []
+    for handle in handles:
+        for shape in cmds.listRelatives(handle, shapes=True, fullPath=True) or []:
+            trails += cmds.listConnections(shape, type="motionTrail") or []
+    for node in sorted(set(trails)) + list(handles):
+        if cmds.objExists(node):                             # a trail's handle may go with it
+            cmds.delete(node)
+    for grp in trail_groups():
+        if not cmds.listRelatives(grp, children=True):
+            cmds.delete(grp)
+
+
+def _drop_trails(groups):
+    handles = []
+    for grp in groups:
+        handles += cmds.listRelatives(grp, children=True, type="transform", fullPath=True) or []
+    _drop_handles(handles)
+    for grp in groups:
+        if cmds.objExists(grp):
+            cmds.delete(grp)
+
+
+def _trail_group():
+    marked = cmds.ls("*." + TRAIL_MARKER, recursive=True, objectsOnly=True, long=True) or []
+    if marked:
+        return marked[0]
+    grp = cmds.createNode("transform", name=TRAIL_GRP, skipSelect=True)
+    cmds.addAttr(grp, longName=TRAIL_MARKER, attributeType="bool")
+    return cmds.ls(grp, long=True)[0]
+
+
+def _build_trails(nodes):
+    """A trail on each of `nodes` that has none yet. How many were made."""
+    have = set(of for _, of in trail_handles() if of)
+    nodes = [n for n in nodes if _uuid(n) not in have]
+    if not nodes:
+        return 0
+    st, et = time_range()
+    grp = _trail_group()
+    for n in nodes:
+        res = cmds.snapshot(n, motionTrail=True, increment=1, startTime=st, endTime=et, name=TRAIL_PREFIX + strip_ns(n))
+        handle = res[0] if cmds.nodeType(res[0]) == "transform" else (cmds.listRelatives(res[0], parent=True) or [None])[0]
+        if not handle:
+            continue
+        cmds.addAttr(handle, longName=TRAIL_OF, dataType="string")
+        cmds.setAttr(handle + "." + TRAIL_OF, _uuid(n), type="string")
+        try:
+            cmds.parent(handle, grp)
+        except RuntimeError:
+            pass
+    return len(nodes)
 
 
 @undoable
-def toggle_motion_trail():
-    if cmds.objExists(TRAIL_GRP):
-        cmds.delete(TRAIL_GRP)
-        return
+def motion_trail_click():
+    """The button: a trail on the selection in place of the ones standing; nothing selected, every
+    trail away."""
+    sel = selection()
+    _drop_trails(trail_groups())
+    if sel:
+        _build_trails(sel)
+        cmds.select(sel)
+
+
+@undoable
+def add_motion_trail():
+    """A trail on each selected control, the others kept."""
     sel = selection()
     if not sel:
-        return warn("select objects to trail")
-    st, et = time_range()
-    grp = cmds.createNode("transform", name=TRAIL_GRP, skipSelect=True)
-    for n in sel:
-        res = cmds.snapshot(n, motionTrail=True, increment=1, startTime=st, endTime=et, name="AT_trail_" + strip_ns(n))
-        handle = cmds.listRelatives(res[0], parent=True) if cmds.nodeType(res[0]) != "transform" else [res[0]]
-        if handle:
-            try:
-                cmds.parent(handle[0], grp)
-            except RuntimeError:
-                pass
+        return warn("select the controls to add a trail to")
+    made = _build_trails(sel)
     cmds.select(sel)
+    if not made:
+        message("the selection has its trails already")
+
+
+@undoable
+def clear_motion_trail():
+    """The trails of the selected controls away, the others kept."""
+    sel = selection()
+    if not sel:
+        return warn("select the controls whose trails to clear")
+    doomed = handles_of(trail_handles(), [(_uuid(n), strip_ns(n)) for n in sel])
+    if not doomed:
+        return warn("the selection has no trails")
+    _drop_handles(doomed)
+
+
+@undoable
+def clear_all_motion_trails():
+    _drop_trails(trail_groups())
 
 
 def _bookmarks():

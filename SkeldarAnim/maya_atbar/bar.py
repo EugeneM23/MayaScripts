@@ -992,8 +992,10 @@ class ATBar(QtWidgets.QWidget):
         self.temp_pivot_btn = b("temp_pivot", SPACE,
                                 "Temp Pivot: rotate the selection around the last selected; click again to key",
                                 self._toggle_temp_pivot, checkable=True)
-        self.trail_btn = b("motion_trail", TIME, "Motion Trail (time slider range) - click again to remove",
-                           self._toggle_trail, checkable=True)
+        self.trail_btn = b("motion_trail", TIME, "Motion Trail (time slider range): click = a trail on the selection "
+                                                 "in place of the others, nothing selected = all away\n"
+                                                 "Right click: Add to the selection, Clear the selection's, Clear all",
+                           self._toggle_trail, menu=self._trail_menu, checkable=True)
         self.recovery_btn = b("recovery", TOOLS, "Anim Recovery: a backup of unsaved changes every minute,\n"
                               "offered when the scene is opened again after a crash",
                               self._toggle_recovery, menu=self._recovery_menu, checkable=True)
@@ -1069,8 +1071,19 @@ class ATBar(QtWidgets.QWidget):
         self._sync_toggles()
 
     def _toggle_trail(self):
-        core.toggle_motion_trail()
+        core.motion_trail_click()
         self._sync_toggles()
+
+    def _trail_menu(self):
+        def run(fn):
+            def go():
+                fn()
+                self._sync_toggles()
+            return go
+        return [("Add trail to the selection", run(core.add_motion_trail)),
+                ("Clear the selection's trails", run(core.clear_motion_trail)),
+                None,
+                ("Clear all trails", run(core.clear_all_motion_trails))]
 
     def _toggle_suspend(self):
         core.set_viewport_suspended(not core._state["suspended"])
