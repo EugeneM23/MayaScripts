@@ -7705,7 +7705,7 @@ two panes, not one folder at a time); a folder only opens and closes. Spec
   scene...** (the Export ▸ row: FBX + Save in one row, Export to uasset under them) write straight into
   the one picked folder, its name asked (`_ask_name`, `foldertree.safe_file_name`: `.fbx` / `.ma`, a typed
   `.mb` kept), an existing file confirmed, a folder gone from disk refused; none picked: the save dialog;
-  several: refused; the buttons read «Export FBX to Chars...» (`folder_label`, repainted by
+  several: refused; the buttons stand in a `fill` row (they share the width) and read «Export FBX to Chars...» (`folder_label`, the name elided past 12 characters, repainted by
   `paint_import`). Save scene with Scene Tabs on saves the active tab there (`saving.save_tab(path=)`).
   An Unreal folder is its folder under the project's Content (`foldertree.disk_path`; another mount has
   none). **The right button on a row** (a `popupMenu` on the list, made right after its grip separator;

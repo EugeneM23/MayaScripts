@@ -92,7 +92,7 @@ _SOURCE = "ueAnimBridgeSource"
 _UASSET = "ueAnimBridgeExportUasset"
 _EXPORT_FBX = "ueAnimBridgeExportFbx"
 _SAVE_SCENE = "ueAnimBridgeSaveScene"
-LABEL_NAME_MAX = 24        # a folder's name in a button, elided past this
+LABEL_NAME_MAX = 12       # a folder's name in a button, elided past this
 SOURCE_VAR = "ueAnimBridgeSourceKind"          # the switch's memory
 LOCATION_VAR = "ueAnimBridgeLocation_{0}"       # the folder / project picked
 RECENT_VAR = "ueAnimBridgeRecent_{0}"           # JSON list: folders / projects
@@ -1250,9 +1250,14 @@ def _default_name():
     """The scene's name, else the first picked animation's, else
     «animation»."""
     try:
-        scene = cmds.file(query=True, sceneName=True, shortName=True) or ""
-    except (RuntimeError, TypeError, ValueError):
-        scene = ""
+        from maya_scenetabs import scope        # the active tab's file, not the session's
+        scene = scope.scene_name() or ""
+        scene = os.path.basename(scene) if isinstance(scene, str) else ""
+    except Exception:                                        # noqa: BLE001
+        try:
+            scene = cmds.file(query=True, sceneName=True, shortName=True) or ""
+        except (RuntimeError, TypeError, ValueError):
+            scene = ""
     stem = os.path.splitext(scene)[0] if isinstance(scene, str) else ""
     if stem:
         return stem
@@ -1655,15 +1660,17 @@ def build_rows():
         command=lambda *_: _run(toggle_export)), "secondary")
     cmds.columnLayout(_EXPORT_ROW, adjustableColumn=True, manage=opened,
                       rowSpacing=3)
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.rowLayout(
+        numberOfColumns=2,
+        columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
     hubstyle.mark(cmds.button(
         _EXPORT_FBX, label="Export FBX...",
         height=hubstyle.height("button", 28),
         annotation="Export FBX... - Write the scene skeleton's animation to "
                    "an FBX (selection, else the rig, else the only "
                    "skeleton), baked on export. A folder picked in Folders: "
-                   "straight into it, only the name asked.",
+                   "straight into it, only the name asked. Into an Unreal "
+                   "Content folder the editor may auto-import it.",
         command=lambda *_: _run(export_fbx_selected,
                                 busy="writing the fbx...")),
         "secondary", "upload")
@@ -1671,7 +1678,9 @@ def build_rows():
         _SAVE_SCENE, label="Save scene...",
         height=hubstyle.height("button", 28),
         annotation="Save the scene (the active tab) as a Maya file. A folder "
-                   "picked in Folders: straight into it, only the name asked.",
+                   "picked in Folders: straight into it, only the name asked. "
+                   "The open scene (the active tab) then points at the new "
+                   "file, as Save As does.",
         command=lambda *_: _run(save_scene_selected,
                                 busy="saving the scene...")),
         "secondary", "device-floppy")
@@ -1748,7 +1757,7 @@ def paint_import():
                             label=folder_label(words, name))
         if not cmds.button(_IMPORT, exists=True):
             return
-        names =([record.name for record in _selected_records()]
+        names = ([record.name for record in _selected_records()]
                  if cmds.textScrollList(_LIST, exists=True) else [])
         cmds.button(_IMPORT, edit=True, label=records.import_label(
             names, kind, import_target(), _model_label(),

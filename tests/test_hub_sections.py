@@ -351,7 +351,7 @@ class SceneSetup(unittest.TestCase):
                  if c[0] == "textScrollList" and c[1] == (uebridge._LIST,)
                  and not c[2].get("edit") and not c[2].get("query")
                  and not c[2].get("exists")]
-        line =[i for i, c in enumerate(self.fake.calls) if c[0] == "text"
+        line = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
                 and c[1] == (scenesetup._CHARACTER_STATUS,) and not c[2].get("edit")]
         portraits = [i for i, c in enumerate(self.fake.calls)
                      if c[0] == "columnLayout" and c[1] == (scenesetup._PORTRAITS,)]

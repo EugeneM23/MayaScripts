@@ -1179,6 +1179,15 @@ class FolderSave(unittest.TestCase):
         window.export_fbx_selected()
         self.assertEqual(self.asked[0][1], "animation")   # no scene, no animation picked
 
+    def test_the_name_defaults_to_the_active_tab_s_file_not_the_session(self):
+        import maya_scenetabs.scope as scope
+        saved = scope.scene_name
+        scope.scene_name = lambda *a, **k: "C:/work/Hero_Idle.ma"
+        self.addCleanup(lambda: setattr(scope, "scene_name", saved))
+        self.fake.picked = [2]
+        window.export_fbx_selected()
+        self.assertEqual(self.asked[0][1], "Hero_Idle")
+
     def test_a_cancelled_name_writes_nothing(self):
         self.answer = None
         self.fake.picked = [2]
@@ -1232,7 +1241,7 @@ class FolderSave(unittest.TestCase):
         self.assertEqual(window.folder_label("Save scene", "Chars"),
                          "Save scene to Chars...")
         self.assertEqual(window.folder_label("Export FBX", "A" * 30),
-                         "Export FBX to " + "A" * 23 + "\u2026...")
+                         "Export FBX to " + "A" * 11 +"\u2026...")
 
 
 class ListMenu(unittest.TestCase):
