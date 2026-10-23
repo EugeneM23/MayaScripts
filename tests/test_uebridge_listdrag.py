@@ -17,7 +17,7 @@ try:
 except Exception:                                            # noqa: BLE001
     QT = None
 
-from maya_uebridge import listdrag
+from maya_uebridge import listdrag, records
 
 Rec = collections.namedtuple("Rec", "name package")
 
@@ -269,6 +269,15 @@ class CarriedRows(unittest.TestCase):
 
     def test_a_ctrl_press_that_unpicked_the_row_carries_the_row(self):
         self.assertEqual(listdrag.carried_rows(2, [0, 2], [0], False), [2])
+
+
+class FolderRows(unittest.TestCase):
+    """2026-10-23: in Folders mode a list row may be a folder (None)."""
+
+    def test_a_folder_row_is_never_carried(self):
+        a = records.AnimRecord("A", "/Game/A", "", 1, 1.0, 30.0)
+        b = records.AnimRecord("B", "/Game/B", "", 1, 1.0, 30.0)
+        self.assertEqual(listdrag.carried_records([0, 1, 2, 7], [a, None, b]), [a, b])
 
 
 @unittest.skipIf(QT is None, "no Qt")

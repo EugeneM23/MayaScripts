@@ -133,6 +133,13 @@ def carried_rows(pressed, before, after, plain):
     return [pressed]
 
 
+def carried_records(rows, records):
+    """The records of `rows` - a folder row (None, Folders mode) and a row
+    past the list's end are left out. Pure."""
+    return [records[r] for r in rows
+            if 0 <= r < len(records) and records[r] is not None]
+
+
 def _as_list(records):
     if records is None:
         return []
@@ -407,7 +414,7 @@ def _classes():
             rows = carried_rows(press["row"], press["before"],
                                 self._picked_rows(), press["plain"])
             records = self._records()
-            carried = [records[r] for r in rows if 0 <= r < len(records)]
+            carried = carried_records(rows, records)
             if press["record"] not in carried:
                 rows, carried = [press["row"]], [press["record"]]
             # The click ends for the list where it began: its state returns
