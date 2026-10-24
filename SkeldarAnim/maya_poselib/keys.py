@@ -206,6 +206,8 @@ def active_layer():
         return None, ""
     records, muted = [], {}
     for order, name in enumerate(_walk(root)):
+        if _tab_root(name, root):
+            continue
         base = name == root
         records.append({
             "name": name,
@@ -219,6 +221,21 @@ def active_layer():
             "order": order,
         })
     return pick_layer(records)
+
+
+def _tab_root(name, root):
+    """Is `name` a scene tab's base (`<tab>:AnimLayerRoot` right under the session root)? It holds
+    no curves of its own - the base curves are the root's (trap 279) - so it is never keyed into."""
+    try:
+        from maya_scenetabs import layers
+        if not layers.is_tab_root_name(name):
+            return False
+        parent = cmds.animLayer(name, query=True, parent=True)
+    except Exception:                                        # noqa: BLE001
+        return False
+    if isinstance(parent, (list, tuple)):
+        parent = parent[0] if parent else None
+    return parent == root
 
 
 def _muted(name, root, known):

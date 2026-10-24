@@ -815,6 +815,39 @@ class ActiveLayer(Restoring):
         self.assertEqual(keys.layer_note(keys.active_layer()[0]), "")
         self.assertEqual(keys.layer_note(None), "")
 
+    # 2026-10-24, live in scene tabs («з'являються 2 слої і рука ламається при перепіканні на
+    # ІК»): a tab's base is `<tab>:AnimLayerRoot` under the session root, holding no curves of its
+    # own (trap 279). The Layer Editor reads it BaseAnimation and selects it; taken for an
+    # additive layer, the IK keys went onto it ON TOP of the base curves.
+
+    TABS = {"skeldarTabsLayerRoot": ["tab_x:AnimLayerRoot"],
+            "tab_x:AnimLayerRoot": ["tab_x:_3P_Lower_Body", "tab_x:Poses"]}
+
+    def tabs(self, **kw):
+        return LayerSceneCmds(self.TABS, root="skeldarTabsLayerRoot", **kw)
+
+    def test_a_selected_tab_root_is_the_base_and_keys_go_onto_the_session_root(self):
+        keys.cmds = self.tabs(selected=["skeldarTabsLayerRoot", "tab_x:AnimLayerRoot"])
+        layer, refusal = keys.active_layer()
+        self.assertEqual(refusal, "")
+        self.assertEqual(layer, keys.Layer("skeldarTabsLayerRoot", True, False, False, False))
+
+    def test_nothing_selected_in_a_tab_is_the_session_root(self):
+        keys.cmds = self.tabs()
+        layer, _ = keys.active_layer()
+        self.assertEqual((layer.name, layer.base), ("skeldarTabsLayerRoot", True))
+
+    def test_a_tab_s_own_layer_is_still_the_active_one(self):
+        keys.cmds = self.tabs(selected=["tab_x:AnimLayerRoot", "tab_x:Poses"])
+        layer, _ = keys.active_layer()
+        self.assertEqual((layer.name, layer.base, layer.additive), ("tab_x:Poses", False, True))
+
+    def test_a_layer_named_like_a_tab_root_below_another_layer_is_a_layer(self):
+        keys.cmds = LayerSceneCmds({"BaseAnimation": ["A"], "A": ["tab_y:AnimLayerRoot"]},
+                                   selected=["tab_y:AnimLayerRoot"])
+        layer, _ = keys.active_layer()
+        self.assertEqual((layer.name, layer.base), ("tab_y:AnimLayerRoot", False))
+
 
 class TweakCmds(object):
     """A scene of time curves for `time_fed` / `Tweaks`: `links` {node: [destination plugs]} (a

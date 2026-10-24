@@ -6400,6 +6400,18 @@ Leg_L to IK and back with nothing selected: the limb's places to 0.008 cm, the r
 the base untouched; one undo; a locked layer refused; Spine to IK; the knot named). Checked
 read-only in the animator's scene: all eight limbs of their two rigs pass `refusal`.
 
+**…and in a scene tab** (2026-10-24, the animator: «з'являються 2 слої і рука ламається при
+перепіканні на ІК»). In tabs the base is `<tab>:AnimLayerRoot` under `skeldarTabsLayerRoot`; the
+Layer Editor reads it BaseAnimation and the animator had it selected, so `keys.active_layer` took it
+for an ADDITIVE layer: `IKArm_L` / `PoleArm_L` were added to it (the second «layer» in the editor)
+and keyed with what they must SHOW on top of the base curves - the arm 72.6 cm off. A tab root right
+under the session root is never a candidate now (`keys._tab_root`, trap 279: it holds no curves);
+the session root takes the keys. Proof: `verify_fkik_tab_layers.py` on the animator's
+`AS_Dagger_Attack_Cbm_L_R_1p_Full_with3p_25.mb` - before: 9 channels on the tab root, 72.6 cm;
+after: none, the layers unchanged, on the keys the arm within 0.1-2.3 cm. Between the arm's keys
+the drift is the keys-only rule's (that take's 1P chest is keyed on 12-28 where the arm is not:
+up to 30 cm, and 62 cm on 57-58 past the arm's last key).
+
 **The card follows the selection, and works in its popup copy** (2026-10-13, the animator: «у окошка
 conection в режиме виджета не работает переключение рук на оружие и обратно ... статусы не обновляются
 при выделении персонажа а только после применения скрипта»). Two causes:
