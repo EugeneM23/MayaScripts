@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+from contextlib import contextmanager
 from functools import wraps
 
 import maya.api.OpenMaya as om
@@ -127,6 +128,25 @@ def scene_curves():
 def driven_plug(curve):
     cons = cmds.listConnections(curve + ".output", s=False, d=True, plugs=True, skipConversionNodes=True) or []
     return cons[0] if cons else None
+
+
+@contextmanager
+def detached(curves):
+    """Curve outputs disconnected while their keys move: on a connected curve every moved key re-dirties
+    the rig downstream (~20 ms a key on a spine IK control, 30+ s for a scene-wide insert), detached ~0.1 ms."""
+    links = []
+    for c in curves:
+        for dst in cmds.listConnections(c + ".output", s=False, d=True, plugs=True) or []:
+            try:
+                cmds.disconnectAttr(c + ".output", dst)
+                links.append((c + ".output", dst))
+            except RuntimeError:
+                pass
+    try:
+        yield
+    finally:
+        for src, dst in links:
+            cmds.connectAttr(src, dst, force=True)
 
 
 def is_animated(node):
@@ -293,12 +313,13 @@ def nudge(frames):
     if not curves:
         return warn("select animated controls")
     moved = 0
-    for c in curves:
-        try:
-            cmds.keyframe(c, e=True, relative=True, timeChange=frames, option="over")
-            moved += 1
-        except RuntimeError:
-            pass
+    with detached(curves):
+        for c in curves:
+            try:
+                cmds.keyframe(c, e=True, relative=True, timeChange=frames, option="over")
+                moved += 1
+            except RuntimeError:
+                pass
     message("%d curves moved %+d frames" % (moved, frames))
 
 
@@ -316,23 +337,25 @@ def inbetween(frames, scene=False):
     #  baked animation has a key on every frame: a removal that only closed empty gaps removed nothing
     end = ct - frames if frames < 0 else ct
     spans = []
-    cut = False
+    doomed = []
     for c in curves:
         times = cmds.keyframe(c, q=True, tc=True) or []
-        doomed = [t for t in times if ct < t <= end]
-        if doomed:
-            cmds.cutKey(c, time=(min(doomed), max(doomed)), clear=True)
-            cut = True
+        cut = [t for t in times if ct < t <= end]
+        if cut:
+            doomed.append((c, min(cut), max(cut)))
         after = [t for t in times if t > end]
         if after:
             spans.append((c, min(after), max(after)))
-    if not spans and not cut:
+    if not spans and not doomed:
         return warn("no keys after frame %g" % ct)
-    for c, first, last in spans:
-        try:
-            cmds.keyframe(c, e=True, t=(first, last), relative=True, timeChange=frames, option="over")
-        except RuntimeError:
-            pass
+    with detached(list(dict.fromkeys(c for c, _first, _last in doomed + spans))):
+        for c, first, last in doomed:
+            cmds.cutKey(c, time=(first, last), clear=True)
+        for c, first, last in spans:
+            try:
+                cmds.keyframe(c, e=True, t=(first, last), relative=True, timeChange=frames, option="over")
+            except RuntimeError:
+                pass
     where = "the scene" if scene else "%d curves" % len(curves)
     message("%s %d frame(s) after frame %g in %s" % ("inserted" if frames > 0 else "removed", abs(frames), ct, where))
 
