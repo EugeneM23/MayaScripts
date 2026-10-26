@@ -1,0 +1,14 @@
+gate  1 FAIL  clicks cat:Walk defaults: 34.0 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 12.3
+gate  2 ok    clicks cat:Walk step low: 4.2 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 18.2
+gate  3 FAIL  clicks cat:Walk step high: 47.4 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 12.2
+gate  4 ok    clicks cat:Walk duty low: 8.3 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 17.9
+gate  5 ok    clicks cat:Walk duty high: 0.0 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 32.5
+gate  6 FAIL  clicks cat:Walk bob low: 25.4 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 12.2
+gate  7 ok    clicks cat:Walk bob high: 8.9 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 19.0
+gate  8 FAIL  clicks cat:Walk lift low: 20.4 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 12.2
+gate  9 FAIL  clicks cat:Walk lift high: 48.5 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 15.3
+gate 10 ok    clicks cat:Walk height +10: 6.2 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 19.0
+gate 11 ok    clicks cat:Walk height -15: 0.0 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 65.2
+gate 12 ok    clicks cat:Walk weight +1: 0.0 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 26.2
+gate 13 FAIL  clicks cat:Walk speed high: 49.7 deg/fr^2 (the clip's own 9.1, limit 13.7), straightest 12.2
+13 gates, 6 failed

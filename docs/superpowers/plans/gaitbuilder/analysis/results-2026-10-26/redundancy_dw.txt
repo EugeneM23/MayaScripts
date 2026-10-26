@@ -1,0 +1,2 @@
+gate  1 ok    redundancy dw: 35 knobs, no pair past 0.85; 90 % of the change in 25 directions, 99 % in 32
+1 gates, 0 failed

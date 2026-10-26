@@ -294,6 +294,8 @@ KNOBS = (
          tip="The standing leg's hip up and the swinging leg's down, each way"),
     Knob("root_line", "Pelvis", "Root on line", "", "toggle", 1.0,
          tip="On: the root runs straight down the walk's line (a game's capsule); off: it weaves with the hips"),
+    Knob("in_place", "Pelvis", "In place", "", "toggle", 0.0,
+         tip="On: the walk on the spot - the root stays where the first frame has it, the planted feet slide back"),
     # the legs and feet
     Knob("toe_out", "Legs", "Toe out", "deg", "measured", sided=True, rule=_offset(30.0, 40.0),
          tip="The planted foot turned out (+) or in (-)"),
@@ -462,6 +464,7 @@ def engine_knobs(walk, base, gait):
     e["sway_add"] = value(gait, base, "sway") - base["sway"]
     e["surge_add"] = value(gait, base, "surge") - base["surge"]
     e["root_sway"] = 0.0 if value(gait, base, "root_line") >= 0.5 else 1.0
+    e["in_place"] = 1.0 if value(gait, base, "in_place") >= 0.5 else 0.0
     if getattr(walk, "chest_shape", None) is not None:
         e["chest_twist"] = walk.own_chest_twist + (value(gait, base, "chest_twist") - base["chest_twist"]) / gain
         e["chest_sway"] = walk.own_chest_sway + (value(gait, base, "chest_sway") - base["chest_sway"])

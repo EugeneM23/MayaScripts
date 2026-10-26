@@ -234,3 +234,255 @@ plugin (later, asked), `gaitmodel` replaces `maya_walk/model.py` and the card's 
 - several walkers at once;
 - the mean pose rig;
 - Fix posture (the clip's own Clean knobs still work).
+
+## Status at the pause: handed over to another agent (2026-10-26)
+
+The animator, mid-build: «Сохрани весь прогресс в документацию и поставь на паузу. Передам другому агенту на
+доработку ... запиши все пояснения и ход работы и план что бы другой агент продолжил с места остановки».
+
+Everything below is committed on `main`; nothing is pushed. Nothing in `SkeldarAnim/` changed, so no build or
+release is involved. The plan file `docs/superpowers/plans/2026-10-26-gait-builder.md` holds the task list; its
+checkboxes are marked as below.
+
+### How the work went
+
+1. **The analysis** (the top of this spec):
+   - every knob of both tools swept headless over its range: `analysis/scan.py`, summarised by
+     `analysis/report.py`;
+   - the helpers stressed: `analysis/quality.py`, `analysis/clicks.py`;
+   - one evaluation timed: `analysis/timing.py`, profiled: `analysis/profile.py`.
+
+   These scripts write their JSON beside themselves. Run them with mayapy from the `analysis` folder; they read
+   the animator's walks from `<Documents>/maya/SkeldarWalks` (asd, dw, HavyRun...), which are not in git.
+2. **The brainstorm**: the four answers at the top of this spec, then approach A (aspects over a clip) and the
+   knob list in "The knobs".
+3. **The build**, task by task in the plan (Tasks 1-5 done, 7-8 written, 6 and 9 open). Each task was committed
+   with its tests.
+
+### What exists (`docs/superpowers/plans/gaitbuilder/`)
+
+| file | state |
+|---|---|
+| `gaitmodel.py` | DONE. A fork of `maya_walk/model.py`: the speed-ups and the aspects' operators |
+| `aspects.py` | DONE. `measure`, the knob table `KNOBS` (12 main + details), `base_engine`, `defaults`, `ranges`, `value`, `timing`, `speed_law`, `engine_knobs` |
+| `gaitgen.py` | DONE. The CAT presets Walk / Jog / Run / Sneak made clips on Manny's template; all four analyse |
+| `gaitload.py` | WRITTEN, run only through `gates.py`-like use. Sources (saved walk, card, preset), the clean, the baseline cache, `evaluate` |
+| `skeldar_gait.py` | WRITTEN, compiles, NEVER RUN (not in a GUI Maya, not in mayapy) |
+| `gates.py` | DONE. Headless gates on real walks: parity, speed, identity, readback, effect, redundancy, clicks |
+| `analysis/` | the analysis scripts and the gate results of 2026-10-26 (`analysis/results-2026-10-26/`) |
+
+`skeldar_gait.py` holds the window and Apply onto a selected skeleton: `maya_walk.target.Retarget`, the memo
+`skeldarGait` on the top joint, a re-key on a slider's release, the source / pose / parts / Both-Left-Right
+controls.
+
+Tests: `tests/test_gait_model.py`, `tests/test_gait_aspects.py`, `tests/test_gait_operators.py`, 28 tests, all
+green. Run them with:
+
+```
+& 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' -m unittest tests.test_gait_model tests.test_gait_aspects tests.test_gait_operators
+```
+
+Gates:
+
+```
+& 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' docs/superpowers/plans/gaitbuilder/gates.py <parity|speed|identity|readback|effect|redundancy|clicks|all> [asd dw HavyRun cat:Walk]
+```
+
+Each gate on one walk runs 1-5 minutes; run them in parallel, one process per gate and walk.
+
+### Decisions taken in the build (keep them)
+
+- **A fork, not a subclass**, of Walk Builder's model, so its internals can be optimised and extended freely.
+  When the tool moves into the plugin (asked later), `gaitmodel` replaces `maya_walk/model.py` and the card's
+  knobs are migrated. The other `maya_walk` modules (files, clean, meanpose, pose, target, scene, cards) are used
+  as they are. `pose.prepare(walk, statics, bones, model, target)` takes the model module, so it is given
+  `gaitmodel`.
+- **The knobs are relative to the walk** (`engine_knobs`):
+  - every engine value is the walk's own plus a difference;
+  - an untouched knob changes nothing exactly (`MappingTests.test_own_values_are_the_walk`);
+  - a knob's default is what `measure` reads off the walk evaluated at `base_engine(walk)`: Walk Builder's
+    defaults, but with the walk's own twist, hip drop and chest twist / sway.
+
+  Walk Builder's own defaults set those to people's norms (5, 4, 7, 5); Gait Builder starts at the clip. The
+  helpers stay on at their defaults: Foot placement, Balance, the springs.
+- **A swing is added in phase with the walk's own** (`aspect_phase`, its gait harmonic's phase): "+2 cm bob"
+  grows the walk's bob by 2 cm and keeps the rest of its shape.
+- **Ranges come from the walk** (`Knob.rule(base, leg)`).
+- **Speed** keeps the walk ratio: step and cadence both grow as √speed, and past the step's range the cadence
+  takes the rest. The window stores `speed` and `step`: a Speed press drops `step`; a Step press stores both,
+  keeping the cadence (`skeldar_gait._knob_changed`).
+- **Hips**: when it is moved and Hip drop is not, the drop follows in the walk's ratio.
+- **CPU time, not the wall clock**, for speed: this machine runs Unity beside Maya and the wall clock swung
+  ±40 %. Speed is gated as a share of Walk Builder's time in the same run (`SPEED_SHARE` 0.45) or ≤ 0.35 s.
+
+### What the fork changed against Walk Builder
+
+**Speed** (asd 0.98 s → 0.38-0.56 s CPU; 43-45 % of Walk Builder's on asd, dw, HavyRun):
+- `exp_rot` of one vector in plain floats (it was a quarter of the time);
+- `_frame` of `align` and `_unit` in floats; `np.cross` in the legs replaced by `_cross3`;
+- a bone whose place in its parent never moves (`LT_STILL` 1e-5 cm) answers its place without the spline;
+- `_foot_free` kept per evaluation (`ctx["_feet"]`): a third of the foot targets were repeats;
+- the roll's golden-section search in floats;
+- **the one approximation**: in a balance round the arms swing again only when the carry moved more than
+  `ARM_RECARRY` (0.1 cm). Against Walk Builder that is ≤ 0.06 cm and ≤ 0.15° on asd, dw and HavyRun; exact with
+  `ARM_RECARRY` 0 (`ParityTests`).
+- Tried and dropped: a `periodic_cr` cache keyed by `id(table)`. Each `self.pdev[j]` is a new view object, so
+  the cache missed every call and was slower.
+
+**The aspects' operators** (new engine knobs, all defaulting to no change; `ASPECT_KNOBS`, sided ones in
+`SIDED`):
+- the pelvis: `bob_add`, `sway_add`, `surge_add` cm, in `_body`;
+- the trunk and head: `lean_add` (spread over the spine joints, divided by the measured `lean_gain`),
+  `chest_bounce_add` (the chest-share joints), `nod_add`;
+- the arms:
+  - `arm_swing_add` and `arm_fwd_add` (a world turn of the upper arm about -lside);
+  - `arm_out_add` (about ±ahead);
+  - `elbow_add` and `elbow_swing_add` (about the elbow's hinge, measured in the upper arm's frame);
+  - `shoulder_add` (the clavicle);
+  - `arm_lag_add` frames;
+- the legs: `toe_add` deg (into the feet's toe turn) and `knee_bend` deg (it caps the planted leg's reach;
+  the lowering sinks the pelvis).
+
+The turns are added in `_frame` by `aspect_turns`; `aspects_on(k)` switches the work off when all are 0.
+
+### Gate results at the pause (`analysis/results-2026-10-26/`)
+
+**Identity**: the physics off gives the clip to 0.0002 cm / 0.05°, exactly as Walk Builder's own knobs (asd,
+CAT Walk).
+
+**Speed**: 43-45 % of Walk Builder's CPU time.
+
+**Readback** (asked change against measured change, 43 a walk). It passes 35-39 a walk; the failures:
+
+| knob | the walks | asked → got |
+|---|---|---|
+| `duty` | all four | +6.35 → +4.84 % on asd: Walk Builder's ground time multiplies the contact, not the duty |
+| `lift` | asd, CAT Walk | +6.24 → +4.37 cm |
+| `chest_bounce` | all | +2.4 → +0.07: broken under the trunk spring, see "Next" 1 |
+| `elbow_swing` | HavyRun, dw | +5 → +2.3: the arms' springs filter it |
+| `arm_out` | HavyRun | +10 → +4.2 |
+| `knee_bend` | HavyRun, dw | overshoots: +9 → +19.6 |
+| `elbow` | dw | −4.4 → −3.0 |
+
+**Effect** (each knob over its range): the failures:
+- `root_line` 0-2.3 cm (a switch);
+- `chest_sway` 4.0-4.3° on asd and HavyRun (a spine-group rms dilutes it);
+- `chest_bounce` 2.9-3.7° (the bug);
+- `head_steady` 0.4-1.7° where the walk's head is already steady;
+- `balance` 0.4-2° without a pose.
+
+**Redundancy**:
+- `weight` ~ `follow` 0.93, `weight` ~ `arm_timing` 0.90, `arm_timing` ~ `follow` 0.88;
+- `speed` ~ `step` 0.85;
+- `forward` ~ `balance` 0.90 (HavyRun).
+
+The real dimensions are now 22-24 for 90 % and 30-33 for 99 % (were 5-9 and 14-29).
+
+**Clicks** (limit max(12, 1.5 × the clip's own)), in deg/frame²:
+
+| walk | over the limit |
+|---|---|
+| asd | step high 27.8, duty low 20.8, lift high 20.2, speed high 26.9 |
+| CAT Walk | defaults 34.0, step high 47.4, bob low 25.4, lift low 20.4, lift high 48.5, speed high 49.7 |
+| dw | step high 31.4, lift high 25.4, speed high 44.2 |
+| HavyRun | none |
+
+### Next, in this order
+
+1. **Chest bounce under the trunk spring.** It reads back with the springs off (`tests/test_gait_operators`,
+   QUIET) and gives ~0 with Torso drag 1.5.
+   - `_body_dynamics` takes the chest as `kin[spine[-1]]` from the frames (bounce included), springs it and
+     spreads the difference over the spine (`_spread_turn`). Find where the oscillation is lost.
+   - Suspects: `_spread_turn` / `_reattach` writing the frames' own turn back; or the spring's lag putting
+     the 2×/stride bounce out of phase. A 1.5-frame lag on a 15-frame period should not.
+   - Print the top spine joint's pitch series before and after `_body_dynamics` on asd with
+     `chest_bounce_add` 5.
+2. **Readback gains.**
+   - **lift**: map through the height above the take-off / landing line. `foot_target` scales `lift_up`, the
+     height over the straight line between the foot's off and on places. Add `lift_line` per side to `measure`
+     (the swing's max over that line) and set `lift = 1 + (asked - base) / lift_line`.
+   - **duty**: Walk Builder's `ground_time` lengthens each contact past its step and is capped by the swing's
+     room, so it is not linear in duty. Calibrate once a walk: evaluate at ground time 1.15 and 0.85 at load
+     (cache with the baseline) and interpolate duty → ground time.
+   - **elbow swing** under the springs: the same probe-calibration, or scale by the springs' measured gain at
+     the stride frequency.
+   - **arm out**: turn about `unit(arm_dir × (sign · lside))`, where `arm_dir` = the lowerarm's mean local
+     translation through `rots[upper]`. About `ahead`, an arm pointing forward cannot go out (a run). Keep
+     Arms forward about −lside: it reads back exactly.
+   - **knee bend**: `smooth_cover` in `_lowering` drops the pelvis more than the cap needs, so the knee ends
+     bent more than asked. Either gate it as a lower bound (the knob says "at least") with a stated slack, or
+     cover the need more tightly where `knee_bend` drives it.
+3. **The knob set** (redundancy and effect):
+   - Remove the arm lag that Walk Builder's `weight` carries:
+     - `ctx["lag"] = overlap + WEIGHT_LAG · weight` in `evaluate`;
+     - add a fork knob `weight_lag` (default 1, Walk Builder's) and set it to 0 from `engine_knobs`;
+     - drop `WEIGHT_FOLLOW`;
+     - Weight is then the bob shape, the clock warp and the knee bend.
+   - Remove the `arm_timing` knob: Follow-through covers it, at 0.88.
+   - In `gate_redundancy`, exempt the declared macro pair (speed, step) and the helpers (placement, balance).
+   - In `gate_effect`:
+     - measure the max over the group's joints of each joint's rms, not the group rms (a chest knob moves
+       the top joint far and the lumbar little);
+     - exempt the switches (`root_line`, `in_place`, `placement`);
+     - report `head_steady` and `balance` as "acts only where the walk / pose has it" rather than fail.
+     - Or hide such knobs when they cannot act: hide Balance without a pose; hide Head steady when the walk's
+       head moves under 3°.
+4. **Knee clicks** (plan Task 6).
+   - The failures are long steps, fast speeds, a high or low lift and a short duty, plus the CAT Walk at its
+     defaults (34). The straightest knee sits at the reach limit (12.2-13.9°) in every failure. So the knee
+     dwells at the cap and enters and leaves it sharply: trap 266, a knee near straight is the square root of
+     its reach.
+   - Look by frame where the second difference peaks (bend series, `drop` from `info["drop"]`, the roll).
+   - Candidates:
+     - an extra margin that grows with the asked step beyond the clip's (the knee kept ≥ the clip's own
+       straightest + a few degrees when Step / Speed / Lift go past the walk's);
+     - a smoother cover in `_lowering` (wider sigma when the cap is hit on many frames);
+     - the `rate_limited` roll applied to the reach as well.
+   - Acceptance as in the spec; re-run `gates.py clicks` for all four walks.
+5. **The Maya window** (plan Task 8):
+   - Run `skeldar_gait.py` in a GUI Maya.
+   - The animator opened port 7001 for this session. Their scene then was untitled and modified: a
+     `Manny_Skeleton_Character` walked with the asd card at Walk Builder's defaults. It was only read.
+   - Ask before writing into their scene; prefer a disposable Maya or mayapy.
+   - Write `verify_gait.py` (mayapy standalone, `verify_cat.py`'s shape: `ma_import` of
+     `SkeldarAnim/assets/Manny_Skeleton.ma`):
+     - Apply a saved walk and a CAT preset;
+     - the keys reproduce `gaitload.evaluate`'s worlds through the retarget;
+     - bone lengths kept;
+     - the loop closes;
+     - one Ctrl+Z;
+     - a re-key from the stored place does not drift;
+     - a knob changed re-keys;
+     - a pose card at a share.
+   - Known risks in the window code:
+     - `_source_chosen` keeps only the non-measured knobs (intended);
+     - `sources()` / `pose_cards()` read `maya_poselib.store.cards(...)[0]` (`Card.path`);
+     - `apply` reuses a memo's place across sources (check that a new source on a walked skeleton keeps its
+       place);
+     - `_build` reads `wc.knobs(state["clean"])` for Seam / Smooth.
+6. **Gates again**: all seven on asd, dw, HavyRun, cat:Walk. Then add `goblin` / `two_handed_sword` pose runs
+   (they need the pose path in `gates.Bench`: `pose.prepare` with the fork, as `analysis/scan.py`'s `run_wb`
+   does).
+7. **Write-up**:
+   - an addendum here with the final numbers;
+   - a "Gait Builder (standalone, 2026-10-26)" section in CLAUDE.md (where it lives, the decisions above, the
+     traps below);
+   - the plan's checkboxes.
+
+### Traps met in this build
+
+- **`a` is the pose's share inside `Walk._frame`'s joint loop** (`pose, a = ctx["pose"], ctx["alpha"]`). A
+  stride phase kept in a variable called `a` was overwritten to 0, and every swing operator added a constant.
+  The fork calls it `stride_a`.
+- **An elbow's bend read as an angle is unsigned**: a swing through straight folds back, and the read-back
+  halves. Test elbow swings about a bent elbow.
+- **A bob added upward is cut by the legs' reach** where the legs are near straight at mid-stance. That is
+  the pelvis's drop, by design. Test bob increases with the pelvis lowered.
+- **`periodic_cr` tables are numpy views**: `self.pdev[j]` is a new object each call, so a cache keyed by
+  `id()` never hits.
+- **Bash heredocs of long Python with backslashes break** (trap 198). Write patch scripts with the Write tool
+  and run them.
+- **The wall clock on this machine swings ±40 %** (Unity running): time with `time.process_time`, against Walk
+  Builder in the same run.
+- **The synthetic walker's hip twist reads negative**: its twist is out of phase with its feet's split. Ranges
+  must allow negative Hips (the `hips` rule does).

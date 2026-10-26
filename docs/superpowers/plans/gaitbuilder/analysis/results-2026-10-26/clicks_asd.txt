@@ -1,0 +1,14 @@
+gate  1 ok    clicks asd defaults: 9.9 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 12.4
+gate  2 ok    clicks asd step low: 6.9 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 14.9
+gate  3 FAIL  clicks asd step high: 27.8 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 12.4
+gate  4 FAIL  clicks asd duty low: 20.8 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 13.7
+gate  5 ok    clicks asd duty high: 0.0 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 32.5
+gate  6 ok    clicks asd bob low: 10.6 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 17.6
+gate  7 ok    clicks asd bob high: 9.6 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 19.0
+gate  8 ok    clicks asd lift low: 11.7 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 12.4
+gate  9 FAIL  clicks asd lift high: 20.2 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 19.6
+gate 10 ok    clicks asd height +10: 11.6 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 14.1
+gate 11 ok    clicks asd height -15: 0.0 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 43.5
+gate 12 ok    clicks asd weight +1: 0.0 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 25.4
+gate 13 FAIL  clicks asd speed high: 26.9 deg/fr^2 (the clip's own 7.4, limit 12.0), straightest 12.4
+13 gates, 4 failed

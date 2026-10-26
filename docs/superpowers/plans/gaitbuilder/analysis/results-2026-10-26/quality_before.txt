@@ -1,0 +1,68 @@
+WB asd            defaults       knee min  13.7/ 12.4  knee acc   8.8/ 10.5  reach 0.993/0.994  slide 0.46/173.24 (travel 5.6)  pelvis jerk 0.71
+WB asd            own            knee min  13.7/ 12.4  knee acc  15.4/  7.4  reach 0.993/0.994  slide 2.06/173.65 (travel 5.6)  pelvis jerk 0.70
+WB asd            stride 1.4     knee min  13.7/ 12.4  knee acc  21.5/ 20.2  reach 0.993/0.994  slide 1.37/242.53 (travel 7.8)  pelvis jerk 0.98
+WB asd            stride 0.6     knee min  13.8/ 12.4  knee acc   7.1/  7.2  reach 0.993/0.994  slide 0.46/103.95 (travel 3.4)  pelvis jerk 0.71
+WB asd            pelvis +10     knee min  20.4/ 15.1  knee acc  11.1/  8.4  reach 0.984/0.991  slide 1.37/173.24 (travel 5.6)  pelvis jerk 0.73
+WB asd            pelvis -15     knee min  44.5/ 60.6  knee acc   9.7/  6.3  reach 0.925/0.863  slide 23.85/173.24 (travel 5.6)  pelvis jerk 0.70
+WB asd            ground 1.3     knee min  35.5/ 36.7  knee acc  28.2/ 20.8  reach 0.952/0.949  slide 34.62/0.00 (travel 5.6)  pelvis jerk 2.35
+WB asd            lift 2         knee min  19.9/ 19.9  knee acc  22.1/  7.7  reach 0.985/0.985  slide 0.47/173.24 (travel 5.6)  pelvis jerk 0.73
+WB asd            no placement   knee min  13.7/ 16.7  knee acc  15.0/  5.5  reach 0.993/0.989  slide 2.06/173.65 (travel 5.6)  pelvis jerk 0.70
+WB asd            balance on/off: sway=2.5 moves the pelvis 2.27 / 2.26 cm rms
+WB asd            balance on/off: surge=2.5 moves the pelvis 1.18 / 1.21 cm rms
+WB asd            balance on/off: pelvis_forward=10.0 moves the pelvis 8.49 / 10.22 cm rms
+WB asd            balance on/off: bob=2.5 moves the pelvis 3.37 / 3.33 cm rms
+WB asd+goblin     defaults       knee min  65.7/ 33.8  knee acc   5.6/ 10.3  reach 0.840/0.957  slide 0.46/173.24 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     own            knee min  50.7/ 12.4  knee acc   6.0/ 13.9  reach 0.904/0.994  slide 2.30/173.65 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     stride 1.4     knee min  13.7/ 12.4  knee acc  16.2/ 33.7  reach 0.993/0.994  slide 1.37/242.53 (travel 7.8)  pelvis jerk 0.70
+WB asd+goblin     stride 0.6     knee min  80.3/ 48.6  knee acc   3.6/  4.9  reach 0.765/0.911  slide 0.46/103.94 (travel 3.4)  pelvis jerk 0.70
+WB asd+goblin     pelvis +10     knee min  48.1/ 12.4  knee acc   6.4/ 13.3  reach 0.913/0.994  slide 0.46/173.24 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     pelvis -15     knee min  83.6/ 57.6  knee acc   6.2/  8.5  reach 0.746/0.876  slide 0.46/173.24 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     ground 1.3     knee min  35.5/ 32.5  knee acc  34.2/ 28.6  reach 0.952/0.960  slide 173.24/173.24 (travel 5.6)  pelvis jerk 2.22
+WB asd+goblin     lift 2         knee min  72.6/ 41.8  knee acc   8.8/  6.4  reach 0.806/0.934  slide 1.35/173.24 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     no placement   knee min  51.1/ 12.4  knee acc   6.0/ 14.2  reach 0.902/0.994  slide 2.30/173.65 (travel 5.6)  pelvis jerk 0.70
+WB asd+goblin     balance on/off: sway=2.5 moves the pelvis 10.72 / 2.26 cm rms
+WB asd+goblin     balance on/off: surge=2.5 moves the pelvis 1.32 / 1.21 cm rms
+WB asd+goblin     balance on/off: pelvis_forward=10.0 moves the pelvis 9.60 / 10.00 cm rms
+WB asd+goblin     balance on/off: bob=2.5 moves the pelvis 3.85 / 3.85 cm rms
+WB HavyRun        defaults       knee min  10.8/  8.5  knee acc  37.0/ 31.4  reach 0.996/0.997  slide 1.22/235.84 (travel 9.1)  pelvis jerk 4.66
+WB HavyRun        own            knee min  10.8/  8.5  knee acc  22.6/ 36.5  reach 0.996/0.997  slide 2.01/235.08 (travel 9.1)  pelvis jerk 4.66
+WB HavyRun        stride 1.4     knee min  10.8/  8.5  knee acc  29.4/ 36.0  reach 0.996/0.997  slide 1.22/330.17 (travel 12.7)  pelvis jerk 3.96
+WB HavyRun        stride 0.6     knee min  32.6/ 37.9  knee acc  16.3/ 13.8  reach 0.960/0.946  slide 1.22/141.50 (travel 5.4)  pelvis jerk 4.66
+WB HavyRun        pelvis +10     knee min  10.8/  8.5  knee acc  27.7/ 26.7  reach 0.996/0.997  slide 1.22/235.84 (travel 9.1)  pelvis jerk 4.13
+WB HavyRun        pelvis -15     knee min  59.2/ 59.3  knee acc  14.8/ 12.3  reach 0.870/0.869  slide 15.10/235.84 (travel 9.1)  pelvis jerk 4.66
+WB HavyRun        ground 1.3     knee min  35.5/ 36.4  knee acc  18.0/ 13.1  reach 0.952/0.950  slide 0.97/235.84 (travel 9.1)  pelvis jerk 3.93
+WB HavyRun        lift 2         knee min  30.4/ 12.5  knee acc  22.2/ 35.9  reach 0.965/0.994  slide 1.22/235.84 (travel 9.1)  pelvis jerk 4.66
+WB HavyRun        no placement   knee min  11.5/  8.5  knee acc  23.4/ 32.0  reach 0.995/0.997  slide 2.01/235.08 (travel 9.1)  pelvis jerk 4.66
+WB HavyRun        balance on/off: sway=2.5 moves the pelvis 3.68 / 3.76 cm rms
+WB HavyRun        balance on/off: surge=2.5 moves the pelvis 0.88 / 0.90 cm rms
+WB HavyRun        balance on/off: pelvis_forward=10.0 moves the pelvis 9.92 / 10.28 cm rms
+WB HavyRun        balance on/off: bob=2.5 moves the pelvis 10.24 / 10.20 cm rms
+WB dw             defaults       knee min  18.7/ 21.6  knee acc  10.9/  8.5  reach 0.987/0.982  slide 0.81/1.96 (travel 3.3)  pelvis jerk 1.96
+WB dw             own            knee min  13.9/ 16.1  knee acc  12.9/  6.8  reach 0.993/0.990  slide 2.41/2.81 (travel 3.3)  pelvis jerk 1.95
+WB dw             stride 1.4     knee min  17.1/ 16.1  knee acc  21.3/ 22.4  reach 0.989/0.990  slide 0.81/4.15 (travel 4.6)  pelvis jerk 2.01
+WB dw             stride 0.6     knee min  14.0/ 16.1  knee acc   9.3/ 16.8  reach 0.992/0.990  slide 0.64/12.75 (travel 2.0)  pelvis jerk 1.95
+WB dw             pelvis +10     knee min  18.7/ 21.6  knee acc  11.3/  9.0  reach 0.987/0.982  slide 0.81/1.96 (travel 3.3)  pelvis jerk 1.96
+WB dw             pelvis -15     knee min  42.1/ 35.9  knee acc  12.0/ 13.5  reach 0.933/0.951  slide 12.66/24.22 (travel 3.3)  pelvis jerk 1.95
+WB dw             ground 1.3     knee min  35.5/ 35.6  knee acc  46.2/ 11.6  reach 0.952/0.952  slide 0.61/3.80 (travel 3.3)  pelvis jerk 1.88
+WB dw             lift 2         knee min  20.3/ 21.6  knee acc  12.7/ 21.0  reach 0.984/0.982  slide 1.34/0.40 (travel 3.3)  pelvis jerk 2.01
+WB dw             no placement   knee min  13.9/ 16.1  knee acc  10.9/  7.4  reach 0.993/0.990  slide 2.41/2.81 (travel 3.3)  pelvis jerk 1.95
+WB dw             balance on/off: sway=2.5 moves the pelvis 6.01 / 5.97 cm rms
+WB dw             balance on/off: surge=2.5 moves the pelvis 33.26 / 29.07 cm rms
+WB dw             balance on/off: pelvis_forward=10.0 moves the pelvis 9.56 / 10.15 cm rms
+WB dw             balance on/off: bob=2.5 moves the pelvis 2.83 / 2.71 cm rms
+CAT Walk         defaults       knee min  12.2/ 12.2  knee acc  22.0/  9.1  reach 0.994/0.994  slide 0.13/173.23 (travel 5.6)  pelvis jerk 0.28
+CAT Walk         stride 1.4     knee min  12.2/ 12.2  knee acc  49.8/ 27.6  reach 0.994/0.994  slide 0.13/242.52 (travel 7.8)  pelvis jerk 1.19
+CAT Walk         stride 0.6     knee min  20.3/ 20.8  knee acc   9.6/  7.4  reach 0.984/0.984  slide 0.13/103.94 (travel 3.4)  pelvis jerk 0.23
+CAT Walk         crouch -0.06   knee min   7.0/  4.8  knee acc  25.8/ 15.2  reach 0.998/0.999  slide 0.13/173.23 (travel 5.6)  pelvis jerk 0.20
+CAT Walk         crouch 0.2     knee min  55.7/ 56.2  knee acc  15.3/  6.3  reach 0.884/0.882  slide 0.13/173.23 (travel 5.6)  pelvis jerk 0.23
+CAT Walk         duty +0.15     knee min  11.0/  8.0  knee acc  37.4/ 48.2  reach 0.995/0.998  slide 0.10/173.23 (travel 5.6)  pelvis jerk 0.85
+CAT Walk         lift x2        knee min  12.2/ 12.0  knee acc  30.9/ 14.5  reach 0.994/0.995  slide 0.13/173.23 (travel 5.6)  pelvis jerk 0.25
+CAT Walk         knee drive     knee min  10.5/ 10.9  knee acc  22.0/  9.7  reach 0.996/0.995  slide 0.13/173.23 (travel 5.6)  pelvis jerk 0.35
+CAT Run          defaults       knee min  39.6/ 40.9  knee acc  29.0/ 27.3  reach 0.941/0.937  slide 0.54/0.54 (travel 23.3)  pelvis jerk 0.81
+CAT Run          stride 1.4     knee min  12.4/ 18.0  knee acc  44.8/ 41.3  reach 0.994/0.988  slide 0.54/0.54 (travel 28.5)  pelvis jerk 0.81
+CAT Run          stride 0.6     knee min  50.2/ 49.2  knee acc  18.1/ 17.1  reach 0.905/0.909  slide 0.54/0.54 (travel 14.0)  pelvis jerk 0.81
+CAT Run          crouch -0.06   knee min   0.5/  7.9  knee acc  59.3/ 51.2  reach 1.000/0.998  slide 0.54/0.54 (travel 23.3)  pelvis jerk 4.01
+CAT Run          crouch 0.2     knee min  57.5/ 58.5  knee acc  23.2/ 22.3  reach 0.877/0.873  slide 0.54/0.54 (travel 23.3)  pelvis jerk 0.81
+CAT Run          duty +0.15     knee min   7.9/  7.9  knee acc  57.6/ 44.1  reach 0.998/0.998  slide 0.54/0.54 (travel 23.3)  pelvis jerk 11.42
+CAT Run          lift x2        knee min  43.1/ 42.1  knee acc  41.3/ 40.0  reach 0.930/0.933  slide 0.54/0.55 (travel 23.3)  pelvis jerk 0.81
+CAT Run          knee drive     knee min  35.2/ 26.5  knee acc  29.1/ 36.9  reach 0.953/0.973  slide 0.54/0.54 (travel 23.3)  pelvis jerk 1.71

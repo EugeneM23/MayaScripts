@@ -1,0 +1,2 @@
+gate  1 FAIL  redundancy cat:Walk: 35 knobs, weight~follow 0.93; weight~arm_timing 0.91; arm_timing~follow 0.88; 90 % of the change in 22 directions, 99 % in 30
+1 gates, 1 failed

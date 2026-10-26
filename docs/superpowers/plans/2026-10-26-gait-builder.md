@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status (2026-10-26, paused and handed over):** Tasks 1-5 done; 7 implemented without its unit test; 8 written but never run; 6 and 9 open. Read the spec's "Status at the pause" (docs/superpowers/specs/2026-10-26-gait-builder-design.md) first: what exists, the gate results, the diagnoses and the ordered next steps. Task 2's 0.35 s became "<= 0.35 s or <= 45 % of Walk Builder's CPU time in the same run" (reached: 43-45 %).
+
 **Goal:** One standalone walk tool whose knobs are measured aspects of the clip in physical units (CAT's
 language) over Walk Builder's engine (clip, planted feet, balance, inertia, poses), faster and without knee
 clicks.
@@ -56,24 +58,24 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
 - Produces: `gaitmodel.analyse(clip) -> Walk`, `Walk.evaluate(given, pose) -> Result`, `gaitmodel.KNOBS`,
   `knobs()`, `Clip`. Identical API to `maya_walk.model`.
 
-- [ ] Step 1: Copy the module.
-- [ ] Step 2: Test: the synthetic walker of `tests/test_walkmodel.py` evaluated by both modules at the defaults,
+- [x] Step 1: Copy the module.
+- [x] Step 2: Test: the synthetic walker of `tests/test_walkmodel.py` evaluated by both modules at the defaults,
   at `own_knobs()`, at stride 1.3 and at ground time 1.2 is the same to 1e-9.
-- [ ] Step 3: Run, pass, commit.
+- [x] Step 3: Run, pass, commit.
 
 ### Task 2: Speed
 
 **Files:** Modify `gaitmodel.py`. Test `tests/test_gait_model.py`.
 
-- [ ] Step 1: `exp_rot` takes `_exp3` for a single vector.
-- [ ] Step 2: Profile asd with `prof.py` against the fork.
-- [ ] Step 3: Optimise the top entries, keeping the parity test at 1e-9:
+- [x] Step 1: `exp_rot` takes `_exp3` for a single vector.
+- [x] Step 2: Profile asd with `prof.py` against the fork.
+- [x] Step 3: Optimise the top entries, keeping the parity test at 1e-9:
   - `_skew` / `align` / `_frame` in plain floats;
   - `periodic_cr` on precomputed coefficient tables;
   - the balance rounds running the arms' springs again only when the carry moved by more than `CARRY_TOL`.
-- [ ] Step 4: Gate: ≤ 0.35 s on asd at the defaults. Where an approximation is needed (the arms between
+- [x] Step 4: Gate: ≤ 0.35 s on asd at the defaults. Where an approximation is needed (the arms between
   rounds), name it and measure it on asd, dw, HavyRun against the exact fork (≤ 0.05 cm, ≤ 0.1°).
-- [ ] Step 5: Commit.
+- [x] Step 5: Commit.
 
 ### Task 3: Aspect measurement
 
@@ -91,12 +93,12 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
 - A swing amplitude is its gait harmonic's (order `strides` for once-a-stride, `2 * strides` for twice)
   amplitude over the cycle; phases kept as `_phase` keys for the operators.
 
-- [ ] Step 1: Tests on the synthetic walker. Each quantity is built into the synthetic cycle at a known value
+- [x] Step 1: Tests on the synthetic walker. Each quantity is built into the synthetic cycle at a known value
   and read back within 2 %: a pelvis bob of 3 cm at twice a stride, sway 2 cm, the arm swing, the elbow, the
   width, the lift, the stance duty. Also a two-stride cycle reads the same.
-- [ ] Step 2: Implement with the definitions above (the hips and chest through the fork's `pelvis_fit` and
+- [x] Step 2: Implement with the definitions above (the hips and chest through the fork's `pelvis_fit` and
   `chest_fit`, so they agree with the engine).
-- [ ] Step 3: Pass, commit.
+- [x] Step 3: Pass, commit.
 
 ### Task 4: Operators in the fork
 
@@ -112,16 +114,16 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
   - `toe_add` deg and `knee_bend` deg (sided; 0 = off);
   - `arm_lag_add` frames.
 
-- [ ] Step 1: Tests, one per operator, on the synthetic walker: the change it makes reads back through
+- [x] Step 1: Tests, one per operator, on the synthetic walker: the change it makes reads back through
   `aspects.measure`, and at its default the result equals the parity result to 1e-9.
-- [ ] Step 2: Implement:
+- [x] Step 2: Implement:
   - precomputed harmonic tables (the pelvis's along / aside / height, each arm joint's log) at the clip's
     samples;
   - the turns at their joints in `_frame`: lean shared over the spine joints, the head's nod, the forearm's
     hinge, the upper arm's world turns, the clavicle's;
   - `knee_bend` as the planted leg's reach;
   - the arm chain's lag.
-- [ ] Step 3: Pass, commit.
+- [x] Step 3: Pass, commit.
 
 ### Task 5: The knob table and the mapping
 
@@ -134,13 +136,13 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
   - `engine_knobs(base, gait, P)` → the fork's knob dict;
   - `speed_law(base, speed)` → (step, cadence).
 
-- [ ] Step 1: Tests:
+- [x] Step 1: Tests:
   - `engine_knobs(base, defaults(base))` is the fork's defaults with gains 1 and adds 0;
   - Speed ×2 at the walk ratio gives step and cadence × √2;
   - past the longest step the cadence takes the rest;
   - Weight, Follow-through and Whip spread as the spec says;
   - side knobs give `_l` / `_r` engine knobs.
-- [ ] Step 2: Implement, pass, commit.
+- [x] Step 2: Implement, pass, commit.
 
 ### Task 6: Knee clicks and the knee bend
 
@@ -164,13 +166,13 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
 - `gaitload.evaluate(source, gait, pose)` → Result.
 
 - [ ] Step 1: Test: a preset clip analyses, closes, and its measure's stride and duty are the preset's.
-- [ ] Step 2: Implement, commit.
+- [x] Step 2: Implement, commit. (gaitgen.py and gaitload.py; checked by hand: the four presets analyse; the unit test of Step 1 is not written)
 
 ### Task 8: The Maya window
 
 **Files:** Create `skeldar_gait.py`.
 
-- [ ] Step 1:
+- [x] Step 1: WRITTEN, compiles, never run
   - the window: source menu, pose menu + share + parts, main knobs, details in collapsed frames, Both / Left /
     Right, Apply / Reset, the status;
   - `skeldarGait` memo on the top joint;

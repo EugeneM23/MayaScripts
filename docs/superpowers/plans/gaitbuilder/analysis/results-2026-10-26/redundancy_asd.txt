@@ -1,0 +1,2 @@
+gate  1 FAIL  redundancy asd: 35 knobs, weight~follow 0.93; weight~arm_timing 0.90; speed~step 0.85; 90 % of the change in 22 directions, 99 % in 31
+1 gates, 1 failed

@@ -1,0 +1,2 @@
+gate  1 FAIL  redundancy HavyRun: 35 knobs, forward~balance 0.90; 90 % of the change in 24 directions, 99 % in 33
+1 gates, 1 failed

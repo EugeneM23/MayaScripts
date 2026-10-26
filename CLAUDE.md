@@ -14242,3 +14242,23 @@ The animator: «любое открытое окно подсвечено ора
   and every widget up to its window re-places the overlay on each Move / Resize / Show / Hide
   (`Light._watch`, taken off when the target changes or the watch stops). Tests
   `test_the_ring_follows_a_dragged_window_with_no_poll`, `test_the_old_window_is_no_longer_followed`.
+
+## Gait Builder: Walk Builder and our CAT as one tool (IN PROGRESS, paused 2026-10-26)
+
+The animator: «Я бы хотел проанализировать работу этих двух инструментов и объеденить их ... сильно много
+ручек контроля ... эти ручки часто не сильно влияют на финальный результат». Standalone first, in
+`docs/superpowers/plans/gaitbuilder/`; nothing in `SkeldarAnim/` changed.
+
+- **The design**: aspects over a clip. Every knob is a measured feature of the walk in its unit (m/s, cm, deg,
+  % of a cycle). It starts at the clip's own value and drives a fork of Walk Builder's model (`gaitmodel.py`);
+  12 main knobs and ~30 details replace 38 + 77. Spec: `docs/superpowers/specs/2026-10-26-gait-builder-design.md`.
+- **Handed over to another agent**. READ ITS LAST SECTION, "Status at the pause", FIRST: what exists and what
+  is verified, the gate results, the diagnoses, the ordered next steps, the traps.
+- **The plan**: `docs/superpowers/plans/2026-10-26-gait-builder.md`, its checkboxes current.
+- **The state**:
+  - the fork is at parity with Walk Builder and 2.2× faster;
+  - `aspects.measure`, the operators and the knob mapping are unit-tested (28 tests);
+  - `gates.py` measures them on the animator's walks;
+  - the Maya window `skeldar_gait.py` is written and NEVER run;
+  - open: the chest-bounce bug, the read-back gains (duty, lift, elbow swing, arm out), the knob-set
+    redundancies (Weight / Follow-through / Arm timing), the knee clicks at long steps, `verify_gait.py`.

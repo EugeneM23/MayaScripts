@@ -1,0 +1,14 @@
+gate  1 ok    clicks dw defaults: 12.4 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 19.6
+gate  2 ok    clicks dw step low: 15.1 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 16.2
+gate  3 FAIL  clicks dw step high: 31.4 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 13.9
+gate  4 ok    clicks dw duty low: 11.1 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 17.0
+gate  5 ok    clicks dw duty high: 0.0 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 35.5
+gate  6 ok    clicks dw bob low: 12.2 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 17.7
+gate  7 ok    clicks dw bob high: 12.4 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 19.1
+gate  8 ok    clicks dw lift low: 14.8 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 13.9
+gate  9 FAIL  clicks dw lift high: 25.4 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 20.5
+gate 10 ok    clicks dw height +10: 12.1 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 19.4
+gate 11 ok    clicks dw height -15: 0.0 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 36.8
+gate 12 ok    clicks dw weight +1: 0.0 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 35.2
+gate 13 FAIL  clicks dw speed high: 44.2 deg/fr^2 (the clip's own 12.9, limit 19.3), straightest 13.9
+13 gates, 3 failed

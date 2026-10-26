@@ -1,0 +1,14 @@
+gate  1 ok    clicks HavyRun defaults: 33.5 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate  2 ok    clicks HavyRun step low: 0.0 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 35.1
+gate  3 ok    clicks HavyRun step high: 37.2 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate  4 ok    clicks HavyRun duty low: 28.1 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate  5 ok    clicks HavyRun duty high: 0.0 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 35.5
+gate  6 ok    clicks HavyRun bob low: 33.0 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 15.8
+gate  7 ok    clicks HavyRun bob high: 46.1 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate  8 ok    clicks HavyRun lift low: 37.5 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate  9 ok    clicks HavyRun lift high: 35.7 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 16.6
+gate 10 ok    clicks HavyRun height +10: 26.9 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+gate 11 ok    clicks HavyRun height -15: 0.0 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 59.2
+gate 12 ok    clicks HavyRun weight +1: 0.0 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 31.3
+gate 13 ok    clicks HavyRun speed high: 47.4 deg/fr^2 (the clip's own 36.5, limit 54.8), straightest 8.5
+13 gates, 0 failed
