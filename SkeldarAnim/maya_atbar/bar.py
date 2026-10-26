@@ -31,6 +31,9 @@ HOVER_MS, FLASH_MS, POP_MS, LIFT, FRAME_MS = 110.0, 120.0, 200.0, 0.10, 16
 
 FACE, MARGIN, CAPTION_H = 24, 3, 14
 SLIDER_PRESETS = (5, 15, 50, 100, 105, 120, 150)
+#  the compact bar (2026-10-26): its controls fit the F row's 22 px; apart from the status tools by GAP
+COMPACT_NAME = "skeldarATBarCompact"
+COMPACT_FACE, COMPACT_PAD, COMPACT_GAP, COMPACT_GROUP_GAP = 18, 2, 12, 9
 
 
 def _ui():
@@ -84,6 +87,14 @@ def _glyph(name, colour, px, dpr):
     return pm
 
 
+def _chip_font(ui):
+    f = QtGui.QFont()
+    f.setPixelSize(int(round(10 * ui)))
+    f.setBold(True)
+    f.setLetterSpacing(QtGui.QFont.PercentageSpacing, 108)
+    return f
+
+
 def _safe(fn, *args, **kwargs):
     def run(*_):
         try:
@@ -133,13 +144,19 @@ class Driver(QtCore.QObject):
 
 class ATButton(QtWidgets.QAbstractButton):
     """A painted 24 px control: the glyph in its group colour; hover lifts and lights it, a press flashes
-    the accent, a toggle pops. Left click runs `click` ("menu": opens the menu), right click shows `menu()`."""
+    the accent, a toggle pops. Left click runs `click` ("menu": opens the menu), right click shows `menu()`.
+    `face` / `pad`: the compact bar's smaller face; `text` in place of the glyph makes a chip as wide as it."""
 
-    def __init__(self, glyph, colour, tip, click=None, menu=None, checkable=False, driver=None, ui=1.0):
+    def __init__(self, glyph, colour, tip, click=None, menu=None, checkable=False, driver=None, ui=1.0,
+                 face=FACE, pad=MARGIN, text=None):
         super(ATButton, self).__init__()
         self.glyph, self.colour, self._ui, self.driver = glyph, colour, ui, driver
-        side = int(round((FACE + 2 * MARGIN) * ui))
-        self.setFixedSize(side, side)
+        self.face, self.pad, self.text = face, pad, text
+        side = int(round((face + 2 * pad) * ui))
+        width = side
+        if text:
+            width = int(round(QtGui.QFontMetrics(_chip_font(ui)).horizontalAdvance(text) + (14 + 2 * pad) * ui))
+        self.setFixedSize(width, side)
         self.setToolTip(tip)
         self.setCheckable(checkable)
         self.setCursor(QtCore.Qt.PointingHandCursor)
@@ -210,8 +227,9 @@ class ATButton(QtWidgets.QAbstractButton):
         c = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
         p.translate(c)
         p.scale(scale, scale)
-        half = FACE * ui / 2.0
-        face = QtCore.QRectF(-half, -half, 2 * half, 2 * half)
+        half = self.face * ui / 2.0
+        half_w = self.width() / 2.0 - self.pad * ui if self.text else half
+        face = QtCore.QRectF(-half_w, -half, 2 * half_w, 2 * half)
         radius = 5 * ui
         checked = self.isChecked()
         if self._hover > 0.01:                               # the glow: rings of added accent light
@@ -234,7 +252,13 @@ class ATButton(QtWidgets.QAbstractButton):
             ink = QtGui.QColor(ON_ACCENT)
         else:
             ink = _mix(self.colour, TEXT, round(self._hover * 10) / 10.0) if not checked else QtGui.QColor(self.colour)
-        px = 16 * ui
+        if self.text:
+            p.setFont(_chip_font(ui))
+            p.setPen(ink)
+            p.drawText(face, QtCore.Qt.AlignCenter, self.text)
+            p.end()
+            return
+        px = round(self.face * 2.0 / 3.0) * ui
         pm = _glyph(self.glyph, ink, px, self.devicePixelRatioF())
         p.drawPixmap(QtCore.QRectF(-px / 2.0, -px / 2.0, px, px), pm, QtCore.QRectF(pm.rect()))
         p.end()
@@ -723,6 +747,68 @@ def open_sets(anchor, ui):
     return SetsPopup(anchor, ui).open_at()
 
 
+class BlendPopup(QtWidgets.QWidget):
+    """The compact bar's four blend tracks (2026-10-26, «викатуватися з 1 загальної кнопки Blend»): a card
+    above the Blend chip, fading in from a little lower; a click outside or Esc closes it."""
+
+    def __init__(self, anchor, ui, tracks):
+        super(BlendPopup, self).__init__(anchor, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint
+                                         | QtCore.Qt.NoDropShadowWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.anchor, self.ui = anchor, ui
+        self.setStyleSheet(_style(ui))
+        pad = int(round(8 * ui))
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(pad, int(round(4 * ui)), pad, pad)
+        lay.setSpacing(0)
+        lay.addWidget(_group("BLEND", BLEND, tracks, ui, spacing=10))
+        self._fade = None
+
+    def paintEvent(self, _):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtGui.QPen(QtGui.QColor(LINE), 1))
+        p.setBrush(QtGui.QColor(CARD))
+        r = 8 * self.ui
+        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), r, r)
+        p.end()
+
+    def open_at(self):
+        """Above the chip, its left edge on the chip's (kept on screen); below when there is no room."""
+        self.adjustSize()
+        a, ui = self.anchor, self.ui
+        corner = a.mapToGlobal(QtCore.QPoint(0, 0))
+        screen = (a.screen() or QtWidgets.QApplication.primaryScreen()).availableGeometry()
+        x = max(screen.left(), min(corner.x(), screen.right() - self.width()))
+        y = corner.y() - self.height() - int(round(4 * ui))
+        if y < screen.top():
+            y = corner.y() + a.height() + int(round(4 * ui))
+        rise = int(round(4 * ui))
+        self.move(x, y + rise)
+        self.setWindowOpacity(0.0)
+        self.show()
+        fade = QtCore.QVariantAnimation(self)
+        fade.setDuration(int(POP_MS))
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+
+        def step(u):
+            self.setWindowOpacity(u)
+            self.move(x, y + int(round(rise * (1.0 - u))))
+        fade.valueChanged.connect(step)
+        fade.start()
+        self._fade = fade
+        return self
+
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.close()
+            return
+        super(BlendPopup, self).keyPressEvent(e)
+
+
 class FlowLayout(QtWidgets.QLayout):
     def __init__(self, parent=None, spacing=6, margins=(4, 3, 4, 3)):
         super(FlowLayout, self).__init__(parent)
@@ -782,9 +868,16 @@ class FlowLayout(QtWidgets.QLayout):
         return y + line_h - rect.y() + m.bottom()
 
 
-def _group(title, colour, widgets, ui=1.0, spacing=0):
-    """A caption in the group's colour over a row of its controls."""
+def _group(title, colour, widgets, ui=1.0, spacing=0, caption=True):
+    """A caption in the group's colour over a row of its controls (the compact bar: the row alone)."""
     box = QtWidgets.QWidget()
+    if not caption:
+        row = QtWidgets.QHBoxLayout(box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(int(round(spacing * ui)))
+        for w in widgets:
+            row.addWidget(w, 0, QtCore.Qt.AlignVCenter)
+        return box
     col = QtWidgets.QVBoxLayout(box)
     col.setContentsMargins(0, 0, 0, 0)
     col.setSpacing(0)
@@ -807,8 +900,10 @@ def _group(title, colour, widgets, ui=1.0, spacing=0):
     return box
 
 
-def _style(ui, embedded=False):
+def _style(ui, embedded=False, root=BAR_NAME):
     px = lambda v: int(round(v * ui))                         # noqa: E731 - Qt stylesheet pixels are physical
+    #  the compact bar stands on the F row, which paints its own surface
+    panel = "transparent" if root == COMPACT_NAME else PANEL
     return """
 QWidget#{root} {{ background: {panel}; border: none; {edge} }}
 QSpinBox {{ background: {field}; color: {text}; border: 1px solid {line}; border-radius: {r}px;
@@ -819,32 +914,45 @@ QMenu::item {{ padding: {ipy}px {ipx}px; border-radius: {r}px; }}
 QMenu::item:selected {{ background: {hover}; color: {accent_text}; }}
 QMenu::separator {{ height: 1px; background: {line}; margin: {pad}px {ipx}px; }}
 QToolTip {{ background: {card}; color: {text2}; border: 1px solid {line}; padding: {pad}px {ipy}px; }}
-""".format(root=BAR_NAME, edge="" if embedded else "border-bottom: 1px solid %s;" % TRACK, panel=PANEL, track=TRACK, field=FIELD, text=TEXT, text2=TEXT2, line=LINE, card=CARD, hover=HOVER,
+""".format(root=root, edge="" if embedded else "border-bottom: 1px solid %s;" % TRACK, panel=panel, track=TRACK, field=FIELD, text=TEXT, text2=TEXT2, line=LINE, card=CARD, hover=HOVER,
            accent=ACCENT, accent_text=ACCENT_TEXT, r=px(5), f=px(12), pad=px(4), ipy=px(5), ipx=px(12))
 
 
 class ATBar(QtWidgets.QWidget):
-    """`embedded`: the Time Bar's top row, inside its control - one surface with it, no edge of our own."""
+    """`embedded`: the Time Bar's top row, inside its control - one surface with it, no edge of our own.
+    `compact` (2026-10-26): one line in the Time Bar's F row - the same tools, smaller, no captions, the
+    blend tracks behind a Blend chip."""
 
-    def __init__(self, parent=None, embedded=False):
+    def __init__(self, parent=None, embedded=False, compact=False):
         super(ATBar, self).__init__(parent)
-        self.setObjectName(BAR_NAME)
+        self.compact = compact
+        self.setObjectName(COMPACT_NAME if compact else BAR_NAME)
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.embedded = embedded
         self.ui = _ui()
-        self.setStyleSheet(_style(self.ui, embedded))
+        self.face, self.pad = (COMPACT_FACE, COMPACT_PAD) if compact else (FACE, MARGIN)
+        self.setStyleSheet(_style(self.ui, embedded, self.objectName()))
         self.driver = Driver(self)
         self._recovery_timer = QtCore.QTimer(self)
         self._recovery_timer.timeout.connect(_safe(core.save_recovery))
         self._toggles = []
 
         ui = self.ui
-        #  the groups apart by space alone (2026-10-21, «прибери ще сірі роздєлітєльні лінії»)
-        lay = FlowLayout(self, spacing=int(round(16 * ui)),
-                         margins=tuple(int(round(v * ui)) for v in (12, 6, 12, 7)))
-        lay.addWidget(_group("", ACCENT_TEXT, [self._mark()], ui))
-        for group in [self._keys_group(), self._blend_group()] + self._tool_groups():
-            lay.addWidget(group)
+        groups = [self._keys_group(), self._blend_group()] + self._tool_groups()
+        if compact:
+            lay = QtWidgets.QHBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(int(round(COMPACT_GROUP_GAP * ui)))
+            groups.insert(0, groups.pop(1))                  # Blend first
+            for group in groups:
+                lay.addWidget(group, 0, QtCore.Qt.AlignVCenter)
+        else:
+            #  the groups apart by space alone (2026-10-21, «прибери ще сірі роздєлітєльні лінії»)
+            lay = FlowLayout(self, spacing=int(round(16 * ui)),
+                             margins=tuple(int(round(v * ui)) for v in (12, 6, 12, 7)))
+            lay.addWidget(_group("", ACCENT_TEXT, [self._mark()], ui))
+            for group in groups:
+                lay.addWidget(group)
 
         self._sync_timer = QtCore.QTimer(self)
         self._sync_timer.timeout.connect(self._sync_toggles)
@@ -869,18 +977,42 @@ class ATBar(QtWidgets.QWidget):
 
     def resizeEvent(self, e):
         super(ATBar, self).resizeEvent(e)
-        QtCore.QTimer.singleShot(0, self.fit_dock)
+        if not self.compact:
+            QtCore.QTimer.singleShot(0, self.fit_dock)
 
     def eventFilter(self, obj, e):
         #  the Time Bar's control resized by Maya (the window moved to a screen of another size): the dock
         #  fitted to the rows again, every time
         if self.embedded and e.type() == QtCore.QEvent.Resize and obj is self.parentWidget():
             QtCore.QTimer.singleShot(0, self.fit_dock)
+        #  compact: the F row resized, or its status tools moved (another selection mode, a renamed page)
+        if self.compact and e.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Move):
+            QtCore.QTimer.singleShot(0, self.place_in_row)
         return False
+
+    def place_in_row(self):
+        """Compact: right after the F row's status tools, centred on the row; the tabs leave our room."""
+        tabs = self.parentWidget()
+        tools = getattr(tabs, "tools", None)
+        if tools is None:
+            return
+        ui = self.ui
+        size = self.sizeHint()
+        room = size.width() + int(round(COMPACT_GAP * ui))
+        if tabs.extra_room != room:
+            tabs.extra_room = room
+            tools.place()
+            tabs.update()
+        x = tools.geometry().right() + 1 + int(round(COMPACT_GAP * ui))
+        geo = QtCore.QRect(x, (tabs.height() - size.height()) // 2, size.width(), size.height())
+        if self.geometry() != geo:
+            self.setGeometry(geo)
 
     def fit_dock(self):
         """The dock as tall as the bar's rows at its current width (it wraps when narrow): the Time Bar's
         control when we are its top row, else our own."""
+        if self.compact:
+            return
         want = self.needed_height()
         if self.minimumHeight() != want:
             self.setMinimumHeight(want)
@@ -921,8 +1053,12 @@ class ATBar(QtWidgets.QWidget):
             sizes[j] -= delta
             splitter.setSizes(sizes)
 
-    def _button(self, glyph, colour, tip, click=None, menu=None, checkable=False):
-        return ATButton(glyph, colour, tip, click, menu=menu, checkable=checkable, driver=self.driver, ui=self.ui)
+    def _button(self, glyph, colour, tip, click=None, menu=None, checkable=False, text=None):
+        return ATButton(glyph, colour, tip, click, menu=menu, checkable=checkable, driver=self.driver, ui=self.ui,
+                        face=self.face, pad=self.pad, text=text)
+
+    def _row(self, title, colour, widgets, _ui=None, spacing=0):
+        return _group(title, colour, widgets, self.ui, spacing, caption=not self.compact)
 
     def _mark(self):
         ui = self.ui
@@ -947,7 +1083,7 @@ class ATBar(QtWidgets.QWidget):
         ui = self.ui
         self.nudge_spin = QtWidgets.QSpinBox()
         self.nudge_spin.setRange(1, 999)
-        self.nudge_spin.setFixedSize(int(round(34 * ui)), int(round(FACE * ui)))
+        self.nudge_spin.setFixedSize(int(round((28 if self.compact else 34) * ui)), int(round(self.face * ui)))
         self.nudge_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
         self.nudge_spin.setAlignment(QtCore.Qt.AlignCenter)
         self.nudge_spin.setToolTip("Frames for the nudge and inbetween buttons")
@@ -956,9 +1092,9 @@ class ATBar(QtWidgets.QWidget):
         n = self.nudge_spin.value
         field = QtWidgets.QWidget()
         fl = QtWidgets.QHBoxLayout(field)
-        fl.setContentsMargins(int(round(MARGIN * ui)), 0, int(round(MARGIN * ui)), 0)
+        fl.setContentsMargins(int(round(self.pad * ui)), 0, int(round(self.pad * ui)), 0)
         fl.addWidget(self.nudge_spin)
-        return _group("KEYS", KEYS, [
+        return self._row("KEYS", KEYS, [
             self._button("nudge_left", KEYS, "Nudge Left: all keys of the selected controls back by the field's frames",
                          lambda: core.nudge(-n())),
             self._button("nudge_right", KEYS, "Nudge Right: all keys of the selected controls forward by the field's "
@@ -975,14 +1111,24 @@ class ATBar(QtWidgets.QWidget):
         ], self.ui)
 
     def _blend_group(self):
+        if self.compact:
+            self.blend_btn = self._button("", BLEND, "Blend: Smooth / Tweener / Blend to Default / Blend to "
+                                                     "Neighbors - click for the tracks", self._open_blend, text="BLEND")
+            return self._row("BLEND", BLEND, [self.blend_btn])
+        return _group("BLEND", BLEND, self._blend_tracks(), self.ui, spacing=10)
+
+    def _blend_tracks(self):
         ui = self.ui
-        return _group("BLEND", BLEND, [
+        return [
             BlendSlider("SM", "SM", KEYS, "Smooth / Rough: left smooths the curve, right roughens it\n"
                                           "Selected keys in the Graph Editor, else the key on the current frame", ui),
             BlendSlider("TW", "TW", BLEND, "Tweener: -100 = previous key, 0 = halfway, 100 = next key", ui),
             BlendSlider("BD", "BD", BLEND, "Blend to Default: 100 = default pose (snapshot or attribute default)", ui),
             BlendSlider("BN", "BN", BLEND, "Blend to Neighbors: left toward the previous key, right toward the next", ui),
-        ], ui, spacing=10)
+        ]
+
+    def _open_blend(self):
+        return BlendPopup(self.blend_btn, self.ui, self._blend_tracks()).open_at()
 
     def _tool_groups(self):
         b = self._button
@@ -1006,7 +1152,7 @@ class ATBar(QtWidgets.QWidget):
         self.sets_btn = b("select_sets", POSE, "Select Sets: click for the sets' cells\nRight click: the sets as a menu",
                           lambda: open_sets(self.sets_btn, self.ui), menu=self._sets_menu)
         return [
-            _group("POSE", POSE, [
+            self._row("POSE", POSE, [
                 self.sets_btn,
                 b("copy_anim", POSE, "Copy Animation of the selected controls", core.copy_animation),
                 b("paste_anim", POSE, "Paste Animation at the current frame (matched by name, else by selection order)\n"
@@ -1015,7 +1161,7 @@ class ATBar(QtWidgets.QWidget):
                 b("copy_pose", POSE, "Copy Pose", core.copy_pose),
                 b("paste_pose", POSE, "Paste Pose (matched by name, else by selection order)", core.paste_pose),
             ], ui),
-            _group("SPACE", SPACE, [
+            self._row("SPACE", SPACE, [
                 b("mirror", SPACE, "Mirror Pose: flip L/R pairs, mirror center controls\nRight click: select opposite",
                   core.mirror_pose, menu=self._mirror_menu),
                 b("align", SPACE, "Align Objects: snap the selection to the last selected", core.align_objects),
@@ -1034,14 +1180,14 @@ class ATBar(QtWidgets.QWidget):
                 self.temp_ctrl_btn,
                 self.temp_pivot_btn,
             ], ui),
-            _group("TIME", TIME, [
+            self._row("TIME", TIME, [
                 self.trail_btn,
                 b("bookmark", TIME, "Time Bookmark: add at the current frame / highlighted range\n"
                                     "Right click: next, previous, delete", core.add_bookmark, menu=self._bookmark_menu),
                 b("bookmark_panel", TIME, "Time Bookmarks Panel: jump to any bookmark", "menu",
                   menu=self._bookmarks_panel),
             ], ui),
-            _group("TOOLS", TOOLS, [
+            self._row("TOOLS", TOOLS, [
                 b("more", TOOLS, "Extra tools", "menu", menu=self._extra_menu),
                 b("euler", TOOLS, "Euler Filter rotation curves (selection, or whole scene)", core.euler_filter),
                 b("snapshot", TOOLS, "Snapshot Default Pose of the selected controls (used by BD)\n"
@@ -1250,6 +1396,56 @@ def detach():
     strip.setParent(None)
     strip.deleteLater()
     _fit_timebar()
+    return True
+
+
+def compact_host():
+    """The Time Bar's F row (`maya_skillbar.grid.PageTabs`) while our Time Bar stands, else None."""
+    try:
+        from maya_timebar import bar as timebar
+        strip = timebar.current()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        return None
+    return getattr(strip, "tabs", None) if strip is not None else None
+
+
+def compact():
+    """The compact bar standing in an F row, or None."""
+    for w in QtWidgets.QApplication.allWidgets():
+        if w.objectName() == COMPACT_NAME:
+            return w
+    return None
+
+
+def attach_compact(tabs):
+    """The compact bar in the F row `tabs`, after its status tools (an older one elsewhere goes). It."""
+    old = compact()
+    if old is not None and old.parentWidget() is tabs:
+        bar = old
+    else:
+        detach_compact()
+        bar = ATBar(tabs, compact=True)
+        tabs.installEventFilter(bar)
+        tabs.tools.installEventFilter(bar)
+    bar.show()
+    bar.place_in_row()
+    QtCore.QTimer.singleShot(0, bar.place_in_row)
+    return bar
+
+
+def detach_compact():
+    """The compact bar out of its F row, the row's room given back to the tabs. True when one was there."""
+    bar = compact()
+    if bar is None:
+        return False
+    tabs = bar.parentWidget()
+    bar.setParent(None)
+    bar.deleteLater()
+    if tabs is not None and hasattr(tabs, "extra_room"):
+        tabs.extra_room = 0
+        tabs.tools.place()
+        tabs.update()
     return True
 
 

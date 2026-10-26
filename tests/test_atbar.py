@@ -67,13 +67,14 @@ class _Cmds(object):
     def __init__(self):
         self.optionvars = {}
 
-    def optionVar(self, q=None, exists=None, intValue=None):
+    def optionVar(self, q=None, exists=None, intValue=None, stringValue=None):
         if exists is not None:
             return exists in self.optionvars
         if q is not None:
             return self.optionvars[q]
-        if intValue is not None:
-            self.optionvars[intValue[0]] = intValue[1]
+        for pair in (intValue, stringValue):
+            if pair is not None:
+                self.optionvars[pair[0]] = pair[1]
         return None
 
     def about(self, batch=False):
@@ -81,7 +82,8 @@ class _Cmds(object):
 
 
 class Switch(unittest.TestCase):
-    """⋮ -> Time bar ▸ AT bar: off by default, remembered."""
+    """⋮ -> Time bar ▸ AT bar ▸ Full / Compact / Off (2026-10-26, «2 варіанта розкладки»): off by default,
+    the layout remembered apart from on / off."""
 
     def setUp(self):
         self.cmds = _Cmds()
@@ -90,25 +92,53 @@ class Switch(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
+    def choose(self, choice):
+        with mock.patch.object(maya_atbar, "ensure") as ensure, mock.patch.object(maya_atbar, "hide") as hide:
+            text = maya_atbar.set_layout(choice)
+        return text, ensure, hide
+
     def test_off_until_the_animator_turns_it_on(self):
         self.assertFalse(maya_atbar.wanted())
+        self.assertEqual(maya_atbar.layout(), "off")
 
-    def test_on_is_remembered_and_shows_the_bar(self):
-        with mock.patch.object(maya_atbar, "ensure") as ensure, mock.patch.object(maya_atbar, "hide") as hide:
-            text = maya_atbar.set_on(True)
+    def test_full_is_remembered_and_shows_the_bar(self):
+        text, ensure, hide = self.choose("full")
         self.assertEqual(self.cmds.optionvars[maya_atbar.OPTIONVAR], 1)
+        self.assertEqual(self.cmds.optionvars[maya_atbar.LAYOUT_OPT], "full")
         ensure.assert_called_once_with()
         hide.assert_not_called()
         self.assertTrue(maya_atbar.wanted())
-        self.assertEqual(text, maya_atbar.MESSAGES[True])
+        self.assertEqual(maya_atbar.layout(), "full")
+        self.assertEqual(text, maya_atbar.MESSAGES["full"])
 
-    def test_off_is_remembered_and_hides_the_bar(self):
-        with mock.patch.object(maya_atbar, "ensure") as ensure, mock.patch.object(maya_atbar, "hide") as hide:
-            text = maya_atbar.set_on(False)
+    def test_compact_is_remembered_and_shows_the_bar(self):
+        text, ensure, hide = self.choose("compact")
+        self.assertEqual(self.cmds.optionvars[maya_atbar.OPTIONVAR], 1)
+        self.assertEqual(self.cmds.optionvars[maya_atbar.LAYOUT_OPT], "compact")
+        ensure.assert_called_once_with()
+        hide.assert_not_called()
+        self.assertEqual(maya_atbar.layout(), "compact")
+        self.assertEqual(text, maya_atbar.MESSAGES["compact"])
+
+    def test_off_hides_the_bar_and_keeps_the_layout_for_the_next_on(self):
+        self.choose("compact")
+        text, ensure, hide = self.choose("off")
         self.assertEqual(self.cmds.optionvars[maya_atbar.OPTIONVAR], 0)
         hide.assert_called_once_with()
         ensure.assert_not_called()
-        self.assertEqual(text, maya_atbar.MESSAGES[False])
+        self.assertEqual(maya_atbar.layout(), "off")
+        self.assertEqual(text, maya_atbar.MESSAGES["off"])
+        with mock.patch.object(maya_atbar, "ensure"):
+            maya_atbar.set_on(True)
+        self.assertEqual(maya_atbar.layout(), "compact")
+
+    def test_an_older_true_or_false_reads_as_full_or_off(self):
+        self.assertEqual(maya_atbar.choice_of(True), "full")
+        self.assertEqual(maya_atbar.choice_of(False), "off")
+        self.assertEqual(maya_atbar.choice_of("compact"), "compact")
+        self.assertEqual(maya_atbar.choice_of("nonsense"), "full")
+        self.cmds.optionvars[maya_atbar.OPTIONVAR] = 1           # on before the layouts existed
+        self.assertEqual(maya_atbar.layout(), "full")
 
     def test_the_hub_brings_it_back_only_when_it_was_left_on(self):
         with mock.patch.object(maya_atbar, "ensure", return_value="skeldarATBar") as ensure:
@@ -164,6 +194,36 @@ class InsideTheTimeBar(unittest.TestCase):
                 mock.patch.object(maya_timebar, "extra_height", return_value=57):
             scene.page_height(Strip())
         self.assertEqual(fake.edits, [(maya_timebar.CONTROL, {"resizeHeight": 130 + 57})])
+
+    def test_a_row_gone_frees_the_fixed_height_so_the_dock_can_shrink(self):
+        # 2026-10-26, Full -> Compact: a fixed workspaceControl keeps its height as its minimum (172 for 115),
+        # so the splitter could not take the AT row's 57 px back until the height was free
+        import maya_timebar
+        from maya_timebar import scene
+
+        class Cmds(object):
+            def __init__(self):
+                self.edits = []
+
+            def workspaceControl(self, name, exists=False, edit=False, **kwargs):
+                if exists:
+                    return True
+                self.edits.append(kwargs)
+
+        host = types.SimpleNamespace(height=lambda: 172)
+        strip = types.SimpleNamespace(ui=1.0, sizeHint=lambda: types.SimpleNamespace(height=lambda: 115),
+                                      parentWidget=lambda: host)
+        fake = Cmds()
+        fitted = []
+        state = {"bar": None, "jobs": [], "callbacks": [], "host": "docked"}
+        with mock.patch.object(scene, "cmds", fake), mock.patch.object(sys, "_skeldar_timebar", state, create=True), \
+                mock.patch.object(maya_timebar, "extra_height", return_value=0), \
+                mock.patch.object(scene, "_later", lambda fn: fn()), \
+                mock.patch.object(scene, "_fit_splitter",
+                                  lambda h, want: fitted.append((h, want, fake.edits[-1]))):
+            scene.page_height(strip)
+        self.assertEqual(fitted, [(host, 115, {"heightProperty": "free"})])
+        self.assertEqual(fake.edits[-1], {"heightProperty": "fixed"})
 
     def _splitter(self, dock):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

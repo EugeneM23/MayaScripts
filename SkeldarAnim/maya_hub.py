@@ -1963,22 +1963,23 @@ def set_timebar_steel(on):
 
 
 def _at_on():
-    """⋮ -> Time bar ▸ AT bar as the animator left it, or None (the module cannot be read)."""
+    """⋮ -> Time bar ▸ AT bar's layout as the animator left it (full / compact / off), or None (the
+    module cannot be read)."""
     try:
         import maya_atbar
-        return maya_atbar.wanted()
+        return maya_atbar.layout()
     except Exception:                                        # noqa: BLE001
         return None
 
 
-def set_timebar_at(on):
-    """⋮ -> Time bar ▸ AT bar (2026-10-21): animBot's tools as a bar of their own on top of the
-    Time Bar (maya_atbar)."""
+def set_timebar_at(choice):
+    """⋮ -> Time bar ▸ AT bar ▸ Full / Compact / Off (2026-10-21, the layouts 2026-10-26): animBot's
+    tools on top of the Time Bar or in its F row (maya_atbar). True / False: Full / Off."""
     import maya_atbar
     import maya_timebar
-    message = maya_atbar.set_on(on)
+    message = maya_atbar.set_layout(choice)
     if is_skinned():
-        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel(), maya_atbar.wanted())
+        _SKIN.paint_timebar(maya_timebar.mode(), maya_timebar.steel(), maya_atbar.layout())
     say(message)
     return message
 

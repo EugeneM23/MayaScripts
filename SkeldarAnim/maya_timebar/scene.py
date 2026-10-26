@@ -1000,7 +1000,45 @@ def page_height(strip):
         cmds.workspaceControl(maya_timebar.CONTROL, edit=True, resizeHeight=want)
     except Exception:                                        # noqa: BLE001
         pass
-    _fit_splitter(strip.parentWidget(), int(round(want * ui)))
+    host, px = strip.parentWidget(), int(round(want * ui))
+    if host is None or host.height() <= px + 1:
+        _fit_splitter(host, px)
+        return
+    #  shrinking (2026-10-26, the AT row gone): a fixed control keeps its height as its minimum, so the
+    #  splitter is fitted while the height is free - one idle later, once Qt's size hints followed - and
+    #  the height fixed again one more idle later, once the splitter gave the rows their sizes (measured:
+    #  fixed at once took the old height back)
+    cmds.workspaceControl(maya_timebar.CONTROL, edit=True, heightProperty="free")
+
+    def fixed():
+        cmds.workspaceControl(maya_timebar.CONTROL, edit=True, heightProperty="fixed")
+
+    def fit():
+        try:
+            _settle_layouts()
+            _fit_splitter(host, px)
+        finally:
+            _later(fixed)
+    _later(fit)
+
+
+def _qtcore():
+    try:
+        from PySide6 import QtCore
+    except ImportError:
+        from PySide2 import QtCore
+    return QtCore
+
+
+def _later(fn):
+    _qtcore().QTimer.singleShot(0, fn)
+
+
+def _settle_layouts():
+    """The layout requests a row taken away left pending, handled now: until then the dock's size hints
+    still counted the row and the splitter kept the old height."""
+    QtCore = _qtcore()
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.LayoutRequest)
 
 
 def _fit_splitter(host, want):
