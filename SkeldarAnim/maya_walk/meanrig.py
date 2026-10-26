@@ -292,7 +292,8 @@ def rekey_target(name):
         memo = scene.memo_of(root)
         scene.apply(root, name, memo.get("knobs"), memo.get("pose") or None,
                     tuple(memo.get("parts", scene.ALL_PARTS)), record=False,
-                    pose_card=memo.get("pose_card") or None)
+                    pose_card=memo.get("pose_card") or None,
+                    params=scene.memo_params(root, memo, translate=False))
     return " -> %s keyed again" % ", ".join(scene.walker_label(r) for r in roots)
 
 

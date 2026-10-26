@@ -26,6 +26,7 @@ from . import pose as wp
 from . import clean as wc
 from . import meanpose as mp
 from . import cards as wcards
+from . import gait
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
@@ -67,7 +68,15 @@ POSE_COPY = "skeldarWalkPose"
 NO_POSE = "(none)"
 ALL_PARTS = tuple(part for part, keys in wp.PARTS)
 MARKER = "skeldarWalk"
-VERSION = 2
+#  The memo: 3 (2026-10-26) holds the parameters the card set (maya_walk.gait, `params`) beside the model's knobs
+#  they gave; 2 holds the model's knobs alone - still read, and translated into parameters (memo_params)
+VERSION = 3
+READ_VERSIONS = (2, 3)
+#  The parameters as a memo and the card hold them: the hand's changes {key: [kind, x]} (gait.stored_change), the
+#  keys set by hand (pinned), the macros, the character and its strength, the physics, the pose's share, In place
+#  and the clean's knobs (Seam, Smooth)
+DEFAULT_PARAMS = {"changes": {}, "pins": [], "macros": {}, "character": "", "strength": 1.0, "physics": True,
+                  "pose": 0.0, "in_place": 0.0, "clean": {}}
 CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ")
 TRANSLATE = CHANNELS[:3]
 ROTATE = CHANNELS[3:]
@@ -787,7 +796,7 @@ def memo_of(root):
         memo = json.loads(cmds.getAttr(root + "." + MARKER) or "{}")
     except ValueError:
         return {}
-    return memo if memo.get("version") == VERSION else {}
+    return memo if memo.get("version") in READ_VERSIONS else {}
 
 
 def _set_memo(root, memo):
@@ -975,6 +984,93 @@ class Unrecorded(object):
 
 # ---- apply, pick ----
 
+def normal_params(params):
+    """`params` (a memo's, the card's) with every field in its kind: changes {key: (kind, x)} of known keys only,
+    pins a sorted list, the rest filled from DEFAULT_PARAMS."""
+    out = dict(DEFAULT_PARAMS)
+    out.update(params or {})
+    keys = set(gait.keys())
+    changes = {}
+    for key, change in (out.get("changes") or {}).items():
+        try:
+            kind, x = change
+            if key in keys and kind in ("ratio", "offset"):
+                changes[key] = (str(kind), float(x))
+        except (TypeError, ValueError):
+            continue
+    out["changes"] = changes
+    out["pins"] = sorted(k for k in (out.get("pins") or ()) if k in keys)
+    out["macros"] = dict((k, float(v)) for k, v in (out.get("macros") or {}).items()
+                         if k in ("weight", "speed") and v not in (None, ""))
+    out["character"] = out.get("character") if out.get("character") in gait.CHARACTER else ""
+    out["strength"] = float(out.get("strength", 1.0) or 0.0)
+    out["physics"] = bool(out.get("physics", True))
+    out["pose"] = float(out.get("pose", 0.0) or 0.0)
+    out["in_place"] = 1.0 if float(out.get("in_place", 0.0) or 0.0) >= 0.5 else 0.0
+    out["clean"] = wc.knobs(out.get("clean") or {})
+    return out
+
+
+def plain_params(params):
+    """The parameters as JSON holds them (a change a list)."""
+    out = normal_params(params)
+    out["changes"] = dict((k, [kind, x]) for k, (kind, x) in out["changes"].items())
+    return out
+
+
+def param_values(walk, params):
+    """(the walk's own parameters, the parameters' values {key: value}) of `params` on `walk`."""
+    params = normal_params(params)
+    own = gait.own(walk)
+    return own, gait.values(own, params["changes"], params["pins"], params["macros"], params["character"] or None,
+                            params["strength"])
+
+
+def params_knobs(walk, params):
+    """(maya_walk.model's knobs, the parameters' values) for the parameters `params` on `walk`: gait.engine_knobs,
+    the pose's share and In place beside them."""
+    params = normal_params(params)
+    own, vals = param_values(walk, params)
+    knobs = gait.engine_knobs(walk, own, vals, pins=params["pins"], physics=params["physics"])
+    knobs["pose"] = params["pose"]
+    if params["in_place"]:
+        knobs["in_place"] = 1.0
+    return knobs, vals
+
+
+def memo_params(root=None, memo=None, translate=True):
+    """The parameters a walked skeleton carries: a version 3 memo's own; a version 2's (the model's knobs) read as
+    parameters through gait.from_legacy - `translate` False: None for those. None for a skeleton walked by none."""
+    memo = memo_of(root) if memo is None else memo
+    if not memo.get("walk"):
+        return None
+    if isinstance(memo.get("params"), dict):
+        return normal_params(memo["params"])
+    if not translate:
+        return None
+    knobs = memo.get("knobs") or {}
+    params = normal_params({"pose": knobs.get("pose", 0.0), "in_place": knobs.get("in_place", 0.0),
+                            "clean": wc.knobs(knobs)})
+    try:
+        walk = load_walk(memo["walk"], knobs)[0]
+        changes, pins, macros = gait.from_legacy(walk, model_knobs(knobs))
+    except REFUSALS + (IOError, OSError, ValueError, KeyError):
+        return params
+    params.update(normal_params({"changes": changes, "pins": sorted(pins), "macros": macros}))
+    params["pose"] = float(knobs.get("pose", 0.0) or 0.0)
+    params["in_place"] = 1.0 if float(knobs.get("in_place", 0.0) or 0.0) >= 0.5 else 0.0
+    params["clean"] = wc.knobs(knobs)
+    return params
+
+
+def diagnosis(walk, result, own=None):
+    """(the result's measured parameters, gait.diagnose's findings)."""
+    measured = gait.of_result(walk, result)
+    findings = gait.diagnose(measured, own if own is not None else gait.own(walk), result.info,
+                             leg=getattr(walk, "leg_length", 0.0), fps=getattr(walk, "fps", 30.0))
+    return measured, findings
+
+
 def model_knobs(given):
     """The model's share of the card's knobs (a side's own values included): what evaluate() takes."""
     return dict((k, v) for k, v in (given or {}).items() if k in wm.DEFAULTS or k in wm.SIDE_KNOBS)
@@ -1003,22 +1099,31 @@ def evaluated(walk, knobs, pose, prepared=None, parts=()):
     return result
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None):
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None, params=None):
     """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
     skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
     - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
-    stands). One undo step; `record` False (the Mean pose rig's live update): no undo step at all, the curves
-    re-keyed in place - Ctrl+Z belongs to the rig. The pose: the Pose Library card `pose_card` (relative to the
-    library; the copy kept on the skeleton when the card is gone), else an old saved pose `pose_name`. Returns
-    (Result, info, the status line)."""
+    stands). `params` (2026-10-26, the card's parameters - normal_params): the model's knobs are the parameters'
+    (params_knobs) and `given` gives only the clean's knobs where `params` has none. One undo step; `record` False
+    (the Mean pose rig's live update): no undo step at all, the curves re-keyed in place - Ctrl+Z belongs to the
+    rig. The pose: the Pose Library card `pose_card` (relative to the library; the copy kept on the skeleton when
+    the card is gone), else an old saved pose `pose_name`. Returns (Result, info, the status line); with `params`
+    info carries "values" (the parameters asked), "measured" (the result's, gait.measure) and "diagnosis"."""
     started = time.time()
     root = _long(root)
+    if params is not None:              # the clean's knobs: the parameters' own, else `given`'s - kept on them
+        raw = dict((params or {}).get("clean") or {})
+        params = normal_params(dict(params, clean=dict(wc.knobs(given), **raw)))
+        given = dict(given or {}, **params["clean"])
     walk, statics, start, report = load_walk(walk_name, given)
     bones, note = read_bones(root)
     memo = memo_of(root)
     retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
     pose = prepared = None
-    knobs = model_knobs(given)
+    if params is not None:
+        knobs, values_asked = params_knobs(walk, params)
+    else:
+        knobs, values_asked = model_knobs(given), None
     pose_label, pose_note, packed = pose_name or "", "", None
     if not pose_card and pose_name:         # an old pose name: its card when it was moved into the library
         migrated = wcards.legacy_card(pose_name)
@@ -1030,7 +1135,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         pose_label, pose_bones, pose_note, ident = card_pose(pose_card, pose_name, root)
         if pose_bones is None:
             raise Refusal(pose_note or "no pose to walk in")
-        prepared = prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident)
+        prepared = prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident)  # clean: given
         pose = wp.filtered(prepared, parts)
         packed = wcards.pack(pose_bones)
     result = evaluated(walk, knobs, pose, prepared, parts)
@@ -1043,11 +1148,14 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
             if not _cmds().attributeQuery(POSE_COPY, node=root, exists=True):
                 _cmds().addAttr(root, longName=POSE_COPY, dataType="string")
             _cmds().setAttr(root + "." + POSE_COPY, packed, type="string")
-        _set_memo(root, {"walk": walk_name, "pose": pose_label or "", "pose_card": pose_card or "",
-                         "parts": list(parts),
-                         "knobs": dict(result.info["knobs"], **wc.knobs(given)),
-                         "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
-                         "listed": True, "keys": keys_print(root)})
+        stored = {"walk": walk_name, "pose": pose_label or "", "pose_card": pose_card or "",
+                  "parts": list(parts),
+                  "knobs": dict(result.info["knobs"], **wc.knobs(given)),
+                  "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
+                  "listed": True, "keys": keys_print(root)}
+        if params is not None:
+            stored["params"] = plain_params(params)
+        _set_memo(root, stored)
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
     #  short: the card's status line holds three lines (2026-10-13, «интерфейс рисуй компактным»)
@@ -1068,10 +1176,15 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         text += " | the walk sinks %.1f cm at the contacts" % result.info["lowered"]
     if info["short"] > 0.05:
         text += " | a foot falls %.1f cm short" % info["short"]
-    held = [got for steps in (result.info.get("ground") or {}).values() for asked, got in steps]
-    asked = result.info["knobs"]["ground_time"]
-    if held and max(abs(g - asked) for g in held) > 0.02:       # the swing's room or both feet up stopped it
-        text += " | feet down x%.2f-%.2f of x%.2f asked" % (min(held), max(held), asked)
+    held = [step for steps in (result.info.get("ground") or {}).values() for step in steps]
+    if held and max(abs(g - a) for a, g in held) > 0.02:        # the swing's room or both feet up stopped it
+        if params is not None:                                # Ground time: shares of a stride
+            text += " | feet down %.0f-%.0f %% of %.0f %% asked" % (100.0 * min(g for a, g in held),
+                                                                  100.0 * max(g for a, g in held),
+                                                                  100.0 * held[0][0])
+        else:
+            text += " | feet down x%.2f-%.2f of x%.2f asked" % (min(g for a, g in held), max(g for a, g in held),
+                                                                held[0][0])
     balance = result.info.get("balance") or {}
     if balance.get("note"):
         text += " | no balance: " + balance["note"]
@@ -1092,6 +1205,12 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     if note:
         text += " | " + note
     info["clean"] = report
+    if params is not None:
+        info["values"] = values_asked
+        try:
+            info["measured"], info["diagnosis"] = diagnosis(walk, result)
+        except Exception:                                    # noqa: BLE001 - a measure never fails the keys
+            info["measured"], info["diagnosis"] = {}, []
     return result, info, text + " | %.1f s" % (time.time() - started)
 
 
