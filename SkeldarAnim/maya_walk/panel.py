@@ -65,6 +65,8 @@ SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
 SIDE_MARK = {"l": " L", "r": " R"}
 OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
+#  The card's two-sided knobs (the engine's own sided knobs past wm.LEGACY are gait's)
+CARD_SIDED = tuple(n for n in scene.wm.SIDED if n in scene.wm.LEGACY)
 NOTHING = "Select skeletons - Pick puts the walk on them and lists them"
 
 #  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
@@ -300,12 +302,12 @@ def values():
     out = {}
     for name, default in scene.ALL_DEFAULTS.items():
         shown = _shown(name)
-        if shown is not None and not (name in scene.wm.SIDED and mode != "both"):
+        if shown is not None and not (name in CARD_SIDED and mode != "both"):
             out[name] = shown
             _remember("knob_" + name, shown)
         else:
             out[name] = float(_stored("knob_" + name, default))
-    for name in scene.wm.SIDED:
+    for name in CARD_SIDED:
         if mode != "both":                 # the slider shows this side: its value is this side's own
             shown = _shown(name)
             if shown is not None and (abs(shown - out[name]) > 1e-9 or _stored(_override(name, mode)) is not None):
@@ -320,7 +322,7 @@ def values():
 def _forget_sides(name=None):
     """A knob's sides linked again (every SIDED knob without `name`)."""
     cmds = _cmds()
-    for each in ([name] if name else scene.wm.SIDED):
+    for each in ([name] if name else CARD_SIDED):
         for side in ("l", "r"):
             key = OPTION + _override(each, side)
             if cmds.optionVar(exists=key):
@@ -946,7 +948,7 @@ def _set_knobs(knobs, frames):
     own value ("lift_l") is remembered; given every knob (a walked skeleton read back), a side without one is
     linked again."""
     cmds = _cmds()
-    if all(name in knobs for name in scene.wm.DEFAULTS):
+    if all(name in knobs for name in scene.wm.LEGACY):
         _forget_sides()
     for key, value in knobs.items():
         if key in scene.wm.SIDE_KNOBS:
@@ -990,7 +992,7 @@ def show_side(mode):
         cmds.iconTextRadioButton(_side_tab(mode), edit=True, select=True)
     quiet, _QUIET[0] = _QUIET[0], True
     try:
-        for name in scene.wm.SIDED:
+        for name in CARD_SIDED:
             control = _control(name)
             if not cmds.floatSliderGrp(control, exists=True):
                 continue
@@ -1022,11 +1024,11 @@ def knob_changed(name):
         mode = side_mode()
         shown = _shown(name)
         if shown is not None:
-            if name in scene.wm.SIDED and mode != "both":
+            if name in CARD_SIDED and mode != "both":
                 _remember(_override(name, mode), shown)
             else:
                 _remember("knob_" + name, shown)
-                if name in scene.wm.SIDED:
+                if name in CARD_SIDED:
                     _forget_sides(name)
                     show_side(mode)
             if name == "tempo":                  # the frames shown are the active cycle's
