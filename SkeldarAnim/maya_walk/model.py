@@ -101,6 +101,20 @@ KNOBS = (
     ("push", 0.0, 0.0, 60.0),         # deg
     ("heel_strike", 0.0, 0.0, 40.0),  # deg
     ("slap", 0.0, -10.0, 20.0),       # source frames
+    # Overlap as a time shift (frames of the new cycle): a joint's whole series later, its amplitude kept. The arm
+    # (per side) from the clavicle (0.6 of it) down, the forearm and the hand later again; the spine bottom up (0
+    # at spine_01, all of it at the top and the neck), the head later than the chest by head_lag; joints under
+    # them as their parent
+    ("arm_lag", 0.0, -10.0, 15.0),
+    ("elbow_lag", 0.0, -10.0, 15.0),
+    ("hand_lag", 0.0, -10.0, 15.0),
+    ("torso_lag", 0.0, -10.0, 15.0),
+    ("head_lag", 0.0, -10.0, 15.0),
+    # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
+    # with it), and a second bob twice a step, peak to peak, its lows at each strike and each passing
+    ("bob_shift", 0.0, -30.0, 30.0),
+    ("double_bounce", 0.0, 0.0, 20.0),     # cm
+    ("chest_phase", 0.0, -180.0, 180.0),   # deg: the chest's twist later than its own against the hips'
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
@@ -120,7 +134,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
-         "arm_swing_add", "duty", "push", "heel_strike", "slap")
+         "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -870,7 +884,7 @@ class Walk(object):
         d = ctx["k"].get("detail", 1.0) if ctx is not None else 1.0
         plain = d == 1.0 and shift == 0.0 and (np.all(np.asarray(gain) == 1.0))
         if got is None or plain:
-            return periodic_cr(getattr(self, series)[j], tau)
+            return periodic_cr(getattr(self, series)[j], tau - shift)
         reg, res, mean = got
         r = periodic_cr(reg, tau - shift) - mean
         if axes is not None:
@@ -1111,6 +1125,46 @@ class Walk(object):
             queue.extend(kids[j])
         self.order = [j for j in bfs if self.kind[j] != "helper"] + [j for j in bfs if self.kind[j] == "helper"]
         self.forearms = set(j for j, n in enumerate(self.names) if _stem(n) == "lowerarm")
+        self._lag_levels()
+
+    def _lag_levels(self):
+        """Which lag knobs shift each joint's series and by what share: {j: ((knob, share, side or None), ...)}
+        - the arm chain by its level (clavicle 0.6 x arm_lag, upper arm arm_lag, forearm + elbow_lag, hand and
+        below + hand_lag; per side), spine_NN bottom up (torso_lag x i / (N - 1)), the necks torso_lag, the head
+        torso_lag + head_lag; a joint under one of them (the jaw, the eyes) as its parent."""
+        idx, levels = self.index, {}
+        for side in SIDES:
+            arm = ("arm_lag", 1.0, side)
+            for name, level in (("clavicle", (("arm_lag", 0.6, side),)), ("upperarm", (arm,)),
+                                ("lowerarm", (arm, ("elbow_lag", 1.0, side))),
+                                ("hand", (arm, ("elbow_lag", 1.0, side), ("hand_lag", 1.0, side)))):
+                if "%s_%s" % (name, side) in idx:
+                    levels[idx["%s_%s" % (name, side)]] = level
+        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
+                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
+        for i, (_, j) in enumerate(spine):
+            levels[j] = (("torso_lag", i / float(len(spine) - 1) if len(spine) > 1 else 1.0, None),)
+        for j, n in enumerate(self.names):
+            if re.match(r"neck_\d+$", n):
+                levels[j] = (("torso_lag", 1.0, None),)
+            elif n == "head":
+                levels[j] = (("torso_lag", 1.0, None), ("head_lag", 1.0, None))
+        self.lag_levels = {}
+        for j in self.order:
+            if j in levels:
+                self.lag_levels[j] = levels[j]
+            elif self.kind[j] in ("arm", "finger", "local") and self.parents[j] in self.lag_levels:
+                self.lag_levels[j] = self.lag_levels[self.parents[j]]
+
+    def lags(self, k, ks, frame):
+        """Each joint's time shift under knobs k / per side ks, source frames ({j: frames}, only those moved):
+        the lag knobs' frames of the new cycle x `frame` (source frames a new frame)."""
+        out = {}
+        for j, level in self.lag_levels.items():
+            d = sum((ks[side] if side else k)[knob] * share for knob, share, side in level)
+            if d:
+                out[j] = d * frame
+        return out
 
     def _steps(self, side):
         """Every stance of the foot in the cycle, sorted by its start (a cycle may hold several steps of each
@@ -1335,10 +1389,16 @@ class Walk(object):
             gain = k["spine"] * ex
             own = (gain * self.twist_gain * self.own_chest_twist, gain * self.own_chest_sway)
         twist, sway = target[0] - own[0], target[1] - own[1]
-        if abs(twist) < 1e-9 and abs(sway) < 1e-9:
+        late = math.radians(k.get("chest_phase", 0.0))
+        if abs(twist) < 1e-9 and abs(sway) < 1e-9 and not late:
             return None
         a, b = self.chest_shapes(tau)
-        return self.left * (math.radians(twist) * a * -self.up + math.radians(sway) * b * self.fwd)
+        if late:         # Chest timing: the target's twist later on its shape, the walk's own taken away where it was
+            turned = math.cos(self.stride_phase(tau) - self.chest_shape[0] - late)
+            tw = math.radians(target[0]) * turned - math.radians(own[0]) * a
+        else:
+            tw = math.radians(twist) * a
+        return self.left * (tw * -self.up + math.radians(sway) * b * self.fwd)
 
     def _chest_own(self, times, ctx):
         """(twist, sway): how far the shoulders turn each way under these knobs and pose with nothing added
@@ -2445,6 +2505,7 @@ class Walk(object):
                 ctx["stance_reach"][s] = min(ctx["reach"][s], limit)
         ctx["aspects"] = self.aspects_on(k)
         ctx["frame"], ctx["grown"] = P / float(n), None
+        ctx["lags"] = self.lags(k, ks, ctx["frame"])
         ctx["locks"], held = self._locks(ctx) if ctx["placement"] > 0.0 else ({}, 0.0)
         ctx["ground"] = {}
         timed = any(ks[s]["ground_time"] != 1.0 or ks[s]["duty"] > 0.0 for s in SIDES)
@@ -2640,9 +2701,12 @@ class Walk(object):
             if name == "pelvis":
                 pose, a = ctx["pose"], ctx["alpha"]
                 clock = warp(phi, ctx["beta"], ctx["phi0"], self.strides) * self.P
-                v = float(self._sample("pdev", j, clock, ctx, gains, self.basis) @ self.up) - mean[2]
+                late = k["bob_shift"] * ctx.get("frame", 1.0)       # Low point: the bob's regular part later
+                v = float(self._sample("pdev", j, clock, ctx, gains, self.basis, late) @ self.up) - mean[2]
                 if k["bob_add"]:       # a bob where the walk has (next to) none: at its own phase, else the guide's
-                    v += 0.5 * k["bob_add"] * math.cos(2.0 * self.stride_phase(clock) - self.aspect_phase["bob"])
+                    v += 0.5 * k["bob_add"] * math.cos(2.0 * self.stride_phase(clock - late) - self.aspect_phase["bob"])
+                if k["double_bounce"]:  # two lows a step: at each strike and each passing
+                    v -= 0.5 * k["double_bounce"] * math.cos(4.0 * self.stride_phase(clock - late))
                 own = mean[2] + self.fix["height"]          # the corrected walk's mean height
                 base = own if pose is None or "height" not in pose else (1.0 - a) * own + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
@@ -2869,7 +2933,7 @@ class Walk(object):
                 rots[j], poss[j] = m[:3, :3], m[3, :3]
             else:
                 clock = feet[self.leg_side[j]] if j in self.leg_side else tau     # below a thigh: its foot's
-                t = clock - self.lag[j] * ctx["lag"]
+                t = clock - self.lag[j] * ctx["lag"] - ctx.get("lags", {}).get(j, 0.0)
                 pose, a = ctx["pose"], ctx["alpha"]
                 if kind == "head":
                     centre = self.wmean[j] if pose is None or "head" not in pose else toward(self.wmean[j], pose["head"], a)

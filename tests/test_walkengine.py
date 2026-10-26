@@ -262,5 +262,112 @@ class TimingTests(unittest.TestCase):
         self.assertAlmostEqual(added_near(w, a, b, "l", "to", 2, 1), 15.0, delta=0.5)
 
 
+def world_rots(r, j):
+    return [r.worlds[j, f, :3, :3] for f in range(r.frames)]
+
+
+def local_rots(w, r, name):
+    j = w.index[name]
+    p = w.parents[j]
+    return [r.worlds[j, f, :3, :3] @ r.worlds[p, f, :3, :3].T for f in range(r.frames)]
+
+
+def shifted_by(a, b, frames):
+    """The most rotation b[f] differs from a[f - frames], degrees."""
+    n = len(a)
+    return max(tw.angle(a[(f - frames) % n].T @ b[f]) for f in range(n))
+
+
+def low_time(w, r):
+    """When the pelvis height's regular part is lowest, frames of the result (on a fine grid)."""
+    y = pelvis_height(w, r)
+    n = len(y)
+    _, coef = w.regular_fit(y, np.arange(n) * w.P / float(n))
+    fine = np.arange(n * 64) * w.P / float(n * 64)
+    return float(np.argmin(w.harmonic_basis(fine) @ coef)) / 64.0
+
+
+class LagTests(unittest.TestCase):
+
+    def test_lag_knobs_default_to_none(self):
+        w = tw.walk()
+        self.assertEqual(w.lags(wm.DEFAULTS, {"l": wm.DEFAULTS, "r": wm.DEFAULTS}, 1.0), {})
+
+    def test_arm_lag_shifts_the_arm_exactly(self):
+        w = tw.walk()
+        own = still(w)
+        a, b = w.evaluate(own), w.evaluate(dict(own, arm_lag=2.0))
+        self.assertLess(shifted_by(world_rots(a, w.index["upperarm_l"]), world_rots(b, w.index["upperarm_l"]), 2), 0.05)
+        self.assertLess(shifted_by(world_rots(a, w.index["lowerarm_r"]), world_rots(b, w.index["lowerarm_r"]), 2), 0.05)
+
+    def test_arm_lag_per_side(self):
+        w = tw.walk()
+        own = still(w)
+        a, b = w.evaluate(own), w.evaluate(dict(own, arm_lag_l=3.0))
+        self.assertLess(shifted_by(world_rots(a, w.index["upperarm_l"]), world_rots(b, w.index["upperarm_l"]), 3), 0.05)
+        right = w.index["upperarm_r"]
+        self.assertLess(float(np.abs(a.worlds[right, :, :3, :3] - b.worlds[right, :, :3, :3]).max()), 1e-9)
+
+    def test_elbow_lag_shifts_the_forearm_in_the_upper_arm(self):
+        w = tw.walk()
+        own = still(w)
+        a, b = w.evaluate(own), w.evaluate(dict(own, elbow_lag=2.0))
+        self.assertLess(shifted_by(local_rots(w, a, "lowerarm_l"), local_rots(w, b, "lowerarm_l"), 2), 0.05)
+        up = w.index["upperarm_l"]
+        self.assertLess(float(np.abs(a.worlds[up, :, :3, :3] - b.worlds[up, :, :3, :3]).max()), 1e-9)
+
+    def test_torso_lag_shifts_the_neck_and_not_spine_01(self):
+        w = tw.walk()
+        own = still(w)
+        a, b = w.evaluate(own), w.evaluate(dict(own, torso_lag=2.0))
+        self.assertLess(shifted_by(local_rots(w, a, "neck_01"), local_rots(w, b, "neck_01"), 2), 0.05)
+        levels = w.lags(dict(wm.DEFAULTS, torso_lag=1.0), {"l": wm.DEFAULTS, "r": wm.DEFAULTS}, 1.0)
+        self.assertNotIn(w.index["spine_01"], levels)
+        self.assertAlmostEqual(levels[w.index["neck_01"]], 1.0)
+
+    def test_head_lag_shifts_the_head_s_world_turn(self):
+        w = tw.walk()
+        own = still(w)
+        a, b = w.evaluate(own), w.evaluate(dict(own, head_lag=2.0))
+        self.assertLess(shifted_by(world_rots(a, w.index["head"]), world_rots(b, w.index["head"]), 2), 0.05)
+
+    def test_bob_shift_moves_the_low_point(self):
+        w = tw.walk()
+        own = still(w)
+        step = w.P / (2.0 * w.strides)           # the bob is lowest once a step
+        moved = (low_time(w, w.evaluate(dict(own, bob_shift=2.0))) - low_time(w, w.evaluate(own))) % step
+        self.assertAlmostEqual(moved, 2.0, delta=0.05)
+
+    def test_double_bounce_adds_two_lows_a_step(self):
+        w = tw.walk()
+        flat = dict(still(w), g_bob=0.0)
+        y = pelvis_height(w, w.evaluate(dict(flat, double_bounce=3.0)))
+        self.assertAlmostEqual(regular_p2p(w, y), 3.0, delta=0.05)
+        n = len(y)
+        _, coef = w.regular_fit(y, np.arange(n) * w.P / float(n))
+        fine = w.harmonic_basis(np.arange(n * 16) * w.P / float(n * 16)) @ coef
+        lows = sum(1 for i in range(len(fine)) if fine[i] < fine[i - 1] and fine[i] < fine[(i + 1) % len(fine)])
+        self.assertEqual(lows, 4 * w.strides)
+
+    def test_chest_phase_turns_the_chest_s_twist_later(self):
+        w = tw.walk()
+        own = still(w)
+
+        def phase(r):
+            ul, ur = w.index["upperarm_l"], w.index["upperarm_r"]
+            d = r.worlds[ul, :-1, 3, :3] - r.worlds[ur, :-1, 3, :3]
+            yaw = np.degrees(np.arctan2(d @ w.fwd, d @ w.lside))
+            a = np.array([w.stride_phase(f * w.P / float(len(yaw))) for f in range(len(yaw))])
+            yaw = yaw - yaw.mean()
+            return math.degrees(math.atan2(float(np.dot(yaw, np.sin(a))), float(np.dot(yaw, np.cos(a)))))
+        # later by about the asked phase: the spine takes a share of a world turn (maya_walk.gait reads it back)
+        base = phase(w.evaluate(own))
+        later = (phase(w.evaluate(dict(own, chest_phase=60.0))) - base + 180.0) % 360.0 - 180.0
+        sooner = (phase(w.evaluate(dict(own, chest_phase=-60.0))) - base + 180.0) % 360.0 - 180.0
+        self.assertGreater(later, 30.0)
+        self.assertLess(later, 70.0)
+        self.assertLess(sooner, -30.0)
+
+
 if __name__ == "__main__":
     unittest.main()
