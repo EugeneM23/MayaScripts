@@ -34,8 +34,9 @@ TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
 REFERENCE_FILE = os.path.join(PLUGIN, "assets", "walk_reference_ue5.wpose.gz")
 #  Every knob the card holds and a walked skeleton remembers: the model's and the clean's (Seam, Smooth - the model
 #  never sees them: apply hands each its own)
-ALL_DEFAULTS = dict(wm.DEFAULTS, **wc.DEFAULTS)
-ALL_RANGES = dict(wm.RANGES, **wc.RANGES)
+#  The card's knobs (the engine's own knobs past wm.LEGACY are set by maya_walk.gait, never shown)
+ALL_DEFAULTS = dict(dict((k, wm.DEFAULTS[k]) for k in wm.LEGACY), **wc.DEFAULTS)
+ALL_RANGES = dict(dict((k, wm.RANGES[k]) for k in wm.LEGACY), **wc.RANGES)
 #  Where the walks and the poses live: this override (a verify's temporary folder), else the optionVar, else
 #  <userAppDir>/SkeldarWalks - outside the plugin folder, which an install replaces.
 WALKS = None
