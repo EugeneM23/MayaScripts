@@ -324,6 +324,48 @@ class MotionTrails(unittest.TestCase):
         self.assertEqual(core.handles_of(handles, [("uuid-none", "Pelvis")]), [])
 
 
+class TempControlsInATab(unittest.TestCase):
+    """2026-10-26, «чому не працює Temp Control?»: in a scene tab the current namespace is the tab's, so
+    the group Maya made was `tab_x:AT_TEMP` while the code parented to `AT_TEMP` (No object matches
+    name), and `ls("AT_tempCtrl_*")` never saw the tab's locators - every click made one more."""
+
+    def test_a_name_in_the_current_namespace(self):
+        self.assertEqual(core.here("AT_TEMP", ":tab_x"), ":tab_x:AT_TEMP")
+        self.assertEqual(core.here("AT_tempCtrl_*", ":tab_x"), ":tab_x:AT_tempCtrl_*")
+        self.assertEqual(core.here("AT_TEMP", ":"), ":AT_TEMP")
+        self.assertEqual(core.here("AT_TEMP", ""), ":AT_TEMP")
+
+    def _fake(self, existing):
+        fake = mock.MagicMock()
+        fake.namespaceInfo.return_value = ":tab_x"
+        fake.ls.side_effect = lambda pattern, **k: list(existing.get(pattern, []))
+        fake.objExists.side_effect = lambda name: name in existing
+        return fake
+
+    def test_the_tab_s_temp_controls_are_found_and_baked_back(self):
+        fake = self._fake({":tab_x:AT_tempCtrl_*": ["|tab_x:AT_tempCtrl_IKArm_L"]})
+        with mock.patch.object(core, "cmds", fake), \
+                mock.patch.object(core, "_release_temp_controls") as release:
+            self.assertTrue(core.temp_controls_active())
+            core.toggle_temp_controls()
+        release.assert_called_once_with(["|tab_x:AT_tempCtrl_IKArm_L"])
+
+    def test_the_group_is_the_node_maya_made(self):
+        fake = self._fake({})
+        fake.createNode.return_value = "tab_x:AT_TEMP"
+        with mock.patch.object(core, "cmds", fake):
+            self.assertEqual(core._temp_group(), "tab_x:AT_TEMP")
+        fake = self._fake({":tab_x:AT_TEMP": []})
+        with mock.patch.object(core, "cmds", fake):
+            self.assertEqual(core._temp_group(), ":tab_x:AT_TEMP")
+        fake.createNode.assert_not_called()
+
+    def test_the_tab_s_temp_pivot_is_found(self):
+        fake = self._fake({":tab_x:AT_tempPivot": []})
+        with mock.patch.object(core, "cmds", fake):
+            self.assertTrue(core.temp_pivot_active())
+
+
 class RelationshipInRange(unittest.TestCase):
     """2026-10-23, «прив'язку на всі ключі заміни на прив'язку тільки виділеної кількості ключів,
     умовно з 10 по 20»: the paste on the keys inside the Time Bar's highlight, none on all keys."""

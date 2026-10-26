@@ -14290,3 +14290,13 @@ Spec `docs/superpowers/specs/2026-10-26-atbar-compact-design.md`.
 - Proof: `tests/test_atbar.py` (the switch, the shrink), `test_hubqt` (the submenu), `test_skillbar_status`
   (the room); 8853 tests OK. **Seen in the animator's Maya through the port**: Full 172 px / Compact 115 /
   Off 115 / Full 172 again, the compact bar at x 915 in the F row, the Blend panel above its chip.
+
+## AT bar: Temp Controls / Temp Pivot in a scene tab (2026-10-26)
+
+«чому не працює Temp Control?»: in a scene tab the current namespace is the tab's, so Maya made
+`tab_x:AT_TEMP` while `_temp_group` returned the bare `AT_TEMP` (`cmds.parent` -> No object matches name),
+and `ls("AT_tempCtrl_*")` / `objExists("AT_tempPivot")` never saw the tab's nodes - every click left one
+more bare locator and group instead of baking back. Now every temp name is looked up in the current
+namespace (`core.here` / `_here`), the group is the node Maya made, and a locator's shape is asked
+(`_shape`: Maya numbers `AT_tempCtrl_IKArm_L3` but not always its shape). Tests `TempControlsInATab`;
+seen live in a tab: on, keyed, baked back, nothing left.
