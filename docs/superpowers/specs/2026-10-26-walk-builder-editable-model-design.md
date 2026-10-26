@@ -295,3 +295,67 @@ today's time, at parity (≤ 1e-6 cm with the arms re-swung every round, ≤ 0.1
 - turns, starts and stops, slopes, stairs, loads as gaits (the guide's sections 10, 12: they need part 2's poses);
 - a drag preview: a released slider re-keys, as today;
 - Gait Builder stays a standalone experiment; its fork is not removed.
+
+## Addendum: what the build changed, and the numbers (2026-10-26)
+
+**Storage (§6) is fewer optionVars than planned.** The card keeps the hand's changes and pins in ONE JSON optionVar,
+`skeldarWalk_params` (`{"changes": {key: [kind, x]}, "pins": [...]}`), the macros in `skeldarWalk_macros` (JSON),
+then `skeldarWalk_character`, `skeldarWalk_strength`, `skeldarWalk_physics`. One per parameter would leave orphans as
+the parameter list changes. The pose's share, In place, Seam and Smooth keep `skeldarWalk_knob_<name>`: they are the
+card's, not the walk's. The old model knobs (`skeldarWalk_knob_stride` ...) are read as parameters once, on the cycle
+the tempo was counted in (`panel._migrate_knobs`, gait.from_legacy); the memo of that is `skeldarWalk_params` existing.
+
+**The memo** is version 3: `params` (the card's, `scene.plain_params`) beside `knobs` (the engine knobs they gave, as
+every older reader expects). `memo_of` reads 2 and 3; `scene.memo_params` reads a 3's parameters and translates a 2's.
+
+**The card (§5)**: [Both | Left | Right] stands above Main (Arm swing and Arm lag are two-sided); the Physics tab ends
+in a Physics helpers chip (the helpers as a whole, `params["physics"]`); the tempo is frames a step and, kept as a
+ratio, means the same on every cycle - the old card's "the cycle the tempo is counted in" (`tempo_walk`,
+`walk_knobs`) is gone. A pin: a parameter's label ends in a dot; its right button: Back to the clip's (held there),
+Follow the links (free again). Speed released drops a hand's Step and Tempo; a Step or Tempo by hand drops Speed.
+Reset clears the parameters and the macros, not the pose or the clean.
+
+**Measured on the five real walks, and what it changed** (`verify_walk_gait.py readback`, physics off). 28 gates
+missed at first:
+- the engine clamped the gains gait solved for: `g_arm`, `g_elbow`, `g_head` at 5, the old `lift` at 3 (dw's right
+  arm asked x8 swung x5; asd's right foot asked 2.6x its lift rose 1.0x) - now 10, `stance` 2.5 -> 4;
+- a wide swing turned further wraps back past its widest (sadda's elbow 128 deg asked read 85): the gains are solved
+  on their rising branch (`_gain_branch`) and stop at its end;
+- an Elbow offset turns about the engine's hinge, and a rolled forearm's bend lies off it: dw's elbows straighten to
+  11 deg at most however far they are turned. Solved on the walk's own arm along its branch (`_elbow_branch`,
+  `_solved_elbow`);
+- Hip drop turns the pelvis about the walk's forward and the hip line, twisted with the step, takes it x cos of the
+  twist: 0.89 on dw (`_list_take`);
+- the verify itself: a two-sided lag's sides straddled the wrap and their mean read 6.5 for -3 (each side wrapped now),
+  turns were judged in centimetres (the head's pitch moved it 0.1 cm), and the identity's 1e-4 cm was asked of the
+  engine's own seam.
+
+`gait.reach(walk, key)` is what a walk's body reaches, apart from the sliders: Foot lift's floor (the straight swing),
+the Elbow's branch, the arm's and elbow's widest swing, Foot flat within half the foot's shortest contact (sadda's
+contacts are 9 frames). `gait.ranges(own, leg, walk)` takes a two-sided parameter's side keys from each side's own
+value and clips every range to the reach.
+
+**Tried and dropped**: Foot flat judged against each contact's planted pitch (its middle's median) instead of the
+floor's level. A dw foot planted at -4 deg never reached the absolute 3 deg, but the median moved with the edit
+itself and a real heel strike read shorter. **Foot flat stays approximate**: a heel strike's stretch reads at least
+half of what is asked (70-100 %), and a foot that lands flat has no foot-flat to move.
+
+**The numbers** (headless, the animator's walks read only):
+- identity: the parameters at the clip's own give the engine's own reading to 0.0 cm on all five; that reading is the
+  clip to 1.8e-4 cm (asd's right fingertips: the source's seam);
+- read-back: **504 of 505 gates**; the miss is dw's lower Foot lift (-4.74 asked, -3.53 read: its contacts and its
+  steps disagree on its floating second stances);
+- effect: every one of the 22 parameters moves its body part (5 deg, 3 cm, or a fifth of its range) on all five walks;
+- physics on (`complaints`), the pelvis's drop for the legs' reach at Step x1 / x1.15 / x1.3: asd 0.7 / 3.9 / 10.5 cm,
+  HavyRun 0.8 / 2.2 / 3.3, dw 4.5 / 11.4 / 20.2, sadda 4.2 / 14.9 / 29.0, TestStrefe 6.6 / 14.4 / 23.3; under the goblin
+  and the sword mostly 0 at x1 and x1.15. Push-off follows its link (asked +40 deg a +100 % step) to 1-3 deg on asd;
+  the arms keep their swing and lag under Whip (asd 48.0 against 48.4, lag -0.6 against -0.6). What is left: a long
+  step's geometry (the Step's range ends where it sinks the hips 8 % of the leg, `step_top`) and the lock holding a
+  sliding clip's feet still (dw, TestStrefe at x1);
+- the card: 91 unit tests on a fake cmds; `verify_walk_many.py` 16/16 and `verify_walk_own.py` 22/22 drive it with
+  parameters; `verify_walk.py` 79/79, `verify_walk_sprint.py` 12/12, `verify_walk_clean.py` 25/25,
+  `verify_walk_meanpose.py` 27/27, `verify_walk_pose_card.py` 6/6, `verify_walk_cycle_card.py` 6/6; the unit suite 9093
+  (the known `test_chat_deploy.Keys` failing).
+
+**Not seen in a GUI Maya**: the card itself (its rows in the 360 px dock, the right buttons, the Diagnosis) - the
+animator's after Check update.

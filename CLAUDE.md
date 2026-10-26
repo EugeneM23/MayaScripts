@@ -10760,6 +10760,82 @@ the pelvis's drop reaches instead; the heel-up roll at the push-off is untouched
      leg a little short of straight wherever something else has to give, and smooth what moves the ankle (a roll
      switching pivots) in time.
 
+## Walk Builder as an editable gait model (2026-10-26)
+
+The animator, with the gait guide («Ходьба и бег: полное руководство по анимации походки»,
+https://claude.ai/artifact/HvcPWpgGbPgHYD5GgsmHwG, rev 18): «проанализировать походку, построить её математическую
+модель, и при помощи ручек управления и умных помощников ... добиваясь более корректного и чистого результата из любой
+походки. Самое главное: я могу взять любую айдловую позу, насадить её на любой цикл». Their complaints: most knobs
+barely change anything; weight and character are hard; the balance is poor; the upper body's overlap is hard to
+control; the legs (the pelvis sinks, the knee clicks or goes stiff, the leading leg does not reach, the trailing leg
+does not push). Asked: Walk Builder as the base, an editable model («Главная идея walk builder в том что это
+математическая модель которую можно редактировать»), decomposition plus a Detail knob, «Физика сама, стиль советом».
+Spec `docs/superpowers/specs/2026-10-26-walk-builder-editable-model-design.md` (read its addendum), plan beside it.
+Part 2 - the four key poses found and put on rigs - is not built. **This replaces the knobs of the Walk Builder
+sections above** (Stride, Bob, Overlap, the drags...): they are engine knobs now, no animator sees them.
+
+- **The engine** (`maya_walk/model.py`) keeps its knobs and adds ENGINE_ONLY ones, each defaulting to no change:
+  - every body series decomposed (mean + 4 stride harmonics + residual), sampled `mean + g (R - mean) + detail E`,
+    the gains `g_bob`, `g_arm`, `g_elbow`, `g_head` ...;
+  - timing set directly: `duty` (Ground time, each contact by one factor), `push`, `heel_strike`, `slap` (Foot flat),
+    lags in frames (`arm_lag`, `elbow_lag`, `hand_lag`, `torso_lag`, `head_lag`), `bob_shift`, `double_bounce`,
+    `chest_phase`;
+  - the physics gait turns on: `lock_skim` (a pivot moving fast is no lock), `balance_reach` (the carry scaled back
+    when it would sink the hips), `double_force` 0 (no forced frame of double support), `knee_soft`, `spring_comp`
+    (Whip's springs keep the stride swing: the target advanced and scaled 1 / gain).
+- **The parameters** (`maya_walk/gait.py`, numpy): 47 named quantities in units (`PARAMS`, groups Main, Timing,
+  Pelvis, Legs, Trunk, Head, Arms, Physics), each MEASURED on a cycle by one function for the clip and the result
+  (`measure`, `own(walk)`, `of_result`), mapped onto engine knobs so asked X reads back X (`engine_knobs`):
+  - stored as a change from a cycle's own: a ratio for a size whose own is not quiet, else an offset
+    (`stored_change` / `apply_change`), so one change means the same on every cycle;
+  - `values(own, changes, pins, macros, character, strength)`; links on what nobody set: Arm swing x the speed
+    ratio, Push-off +40 deg and Heel strike +25 deg per +100 % of step;
+  - macros: Weight (`WEIGHT`), Speed (step and tempo each as the root of the speed ratio), 12 `CHARACTERS` x
+    Strength;
+  - `ranges(own, leg, walk)`: a side key's range from that side's own, clipped to `reach(walk, key)` - what the
+    body reaches: Foot lift's floor, the Elbow's branch, the arm's and elbow's widest swing, Foot flat within half the
+    shortest contact;
+  - solved where the engine's knob is not the unit 1:1: the swing gains on their rising branch (`_gain_branch`), the
+    Elbow on the walk's own arm (`_solved_elbow`), Hip drop through the twisted pelvis (`_list_take`), Knee bend past
+    the legs' margin (`_knee_cap`), Foot lift on the swing profile (`_lift_scale`);
+  - `diagnose(measured, own, info, leg=, fps=)` -> `Finding`s (arms in step, head pecks, a flat path, chest with the
+    hips, a tempo not the body's, no push, an exact mirror, hips reversed, physics gave way, a straight knee, a foot
+    short), each with a fix of visible parameters;
+  - `from_legacy(walk, knobs)` translates a version 2 memo's knobs.
+- **`scene.apply(..., params=)`** keys `params_knobs(walk, params)` (`normal_params`: changes, pins, macros,
+  character, strength, physics, the pose's share, In place, the clean's knobs); the memo is version 3 (`params` beside
+  the engine `knobs`), `memo_of` reads 2 and 3, `memo_params` translates a 2; info carries `values`, `measured` and
+  `diagnosis`. The Rig pose's re-key keeps a walker's parameters.
+- **The card**: the wells, Pose share and parts, Pick / Reset / In place, the walkers, [Both | Left | Right], **Main**
+  (Tempo frames a step, Step cm, Width, Bounce, Low point %, Lean, Arm swing, Arm lag, Detail), Speed m/s, Weight, a
+  Character and its Strength, tabs [Timing | Pelvis | Legs | Trunk | Head] / [Arms | Physics | Clean | Rig pose], the
+  status, the **Diagnosis** (four rows, a Fix each). Every slider shows the active cycle's value in its unit and its
+  range (`show_values`); a release keeps a change, pinned (a dot on the label; the right button: Back to the clip's,
+  Follow the links). optionVars `skeldarWalk_params` (JSON changes + pins), `_macros`, `_character`, `_strength`,
+  `_physics`; the old `skeldarWalk_knob_<model knob>` read as parameters once (`_migrate_knobs`). The tempo is a
+  ratio: `tempo_walk` / `walk_knobs` are gone.
+- **Proof** (headless, the animator's walks read only): `docs/superpowers/plans/walkparam/verify_walk_gait.py` on asd,
+  dw, HavyRun, sadda, TestStrefe - identity (the parameters at the clip's own give the engine's own reading to 0.0 cm,
+  which is the clip to 1.8e-4), read-back **504 of 505** with the physics off (each side within its reach; the miss dw's
+  lower Foot lift, its contacts and steps disagreeing), every parameter moving its body part, and the complaints with
+  the physics on (the pelvis's drop at Step x1 / x1.15 / x1.3: asd 0.7 / 3.9 / 10.5 cm, sadda 4.2 / 14.9 / 29.0;
+  under the goblin and the sword mostly 0). `verify_walk_many.py` 16/16 and `verify_walk_own.py` 22/22 drive the card
+  with parameters; the other walk verifies green. Unit tests `test_walkengine.py`, `test_walkgait.py`,
+  `test_walk_scene_params.py`, `test_walk_panel.py` (91, positive controls: a card that forgets its pins fails 6, one
+  that keys no parameters 33). **Not seen in a GUI Maya.**
+- **Known, not fixed**: Foot flat is approximate (a heel strike's stretch reads 70-100 % of a change; a foot landing
+  flat has none to move); a long step still sinks by its geometry (the Step's range ends at `step_top`, 8 % of the leg);
+  Foot placement holding a sliding clip's feet sinks dw and TestStrefe 4-7 cm at their own step.
+
+290. **An engine knob's range clamps what a solver above it asks, silently.** gait bisected the arm gain up to 10 and
+     the elbow's too, and the engine's `knobs()` clamped both to 5: dw's right arm asked x8 swung x5, every unit test
+     on the synthetic walker (small changes) green. A solver over an engine knob reads the knob's range and stops
+     there.
+291. **"Within 3 deg of the floor" is no foot-flat for a foot planted off level.** The sole pitch is measured against
+     one contact's sole, so dw's right foot stood at -4 deg on its other contact and never read flat; judging each
+     contact against its own middle's median read worse, because the edit moved that median. A feature read off a
+     reference the edit itself changes cannot read the edit back.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).
