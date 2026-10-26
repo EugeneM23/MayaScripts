@@ -265,6 +265,14 @@ def _camshake_module():
     return maya_camshake
 
 
+def _dynamics(func):
+    """Press a Dynamics button (2026-10-26). Its presses act on the selection with the remembered
+    settings when the card is closed, and then say their line in the viewport."""
+    from maya_dynamics import panel
+    message = getattr(panel, func)()
+    return message if panel.is_open() else _report(message)
+
+
 def _timebar():
     """The Time Bar or Maya's own time slider (2026-10-16), the switch said."""
     import maya_timebar
@@ -1121,6 +1129,15 @@ _OURS = (
     ("tailbuilder.restore", "Tail Builder", "Restore keys",
      "The selected objects back on the three keys their tail was built from",
      partial(_tailbuilder, "press_restore")),
+    ("window.dynamics", "Windows", "Dynamics",
+     "Open the Dynamics section: joint chains that swing after their animation",
+     partial(_show, "maya_dynamics.panel", "show_window")),
+    ("dynamics.simulate", "Dynamics", "Simulate dynamics",
+     "Bake the selection's chains (else every chain) onto a Dynamics layer each",
+     partial(_dynamics, "press_simulate")),
+    ("dynamics.add_chain", "Dynamics", "Add dynamics chain",
+     "Every selected node a chain's root, with the card's settings",
+     partial(_dynamics, "press_add_chain")),
     ("window.walk", "Windows", "Walk Builder",
      "Open the Walk Builder section: a walk cycle put on any skeleton and tuned by knobs",
      partial(_show, "maya_walk.panel", "show_window")),

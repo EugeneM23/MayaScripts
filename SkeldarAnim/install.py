@@ -137,6 +137,7 @@ _PAYLOAD = (
     "poses",                    # its shipped library; local cards survive an install
     "maya_tools",               # the Tools card: OverRig's knots, native (2026-10-12)
     "maya_tailbuilder.py",      # the Tail Builder card: a physical stop through three poses (2026-10-12)
+    "maya_dynamics",            # the Dynamics card: chains that swing - colliders, wind, loops (2026-10-26)
     "maya_walk",                # the Walk Builder card: a walk cycle rebuilt from knobs (2026-10-13)
     "maya_scenetabs",           # scene tabs: several scenes in one Maya (2026-10-15)
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)

@@ -93,12 +93,13 @@ class TheTable(unittest.TestCase):
         and Tools (OverRig's knots, native) on 2026-10-12, after the Pose Library;
         Tail Builder (the physical stop) the same day, after Tools; Walk Builder
         (the parametric walk) on 2026-10-13, after Tail Builder; Camera Shake the
-        same day, after Walk Builder; Ragdoll (a fall by physics) on 2026-10-16, after Camera Shake."""
+        same day, after Walk Builder; Ragdoll (a fall by physics) on 2026-10-16, after Camera Shake;
+        Dynamics (chains that swing) on 2026-10-26, after Tail Builder."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Chat", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
-                          "Walk Builder", "Camera Shake", "Ragdoll", "Studio", "Colour", "Radial Menu", "Hotkeys",
+                          "Dynamics", "Walk Builder", "Camera Shake", "Ragdoll", "Studio", "Colour", "Radial Menu", "Hotkeys",
                           "Update"])
 
     def test_the_pose_library_card(self):
@@ -163,7 +164,7 @@ class TheTable(unittest.TestCase):
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("tools", "animation"),
-            ("tailbuilder", "animation"), ("walk", "animation"),
+            ("tailbuilder", "animation"), ("dynamics", "animation"), ("walk", "animation"),
             ("camshake", "animation"), ("ragdoll", "animation"),
             ("studio", "look"),
             ("colour", "look"), ("radial", "settings"), ("hotkeys", "settings"),
@@ -185,7 +186,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "chat", "retarget", "graphoverlay", "com", "poses",
-                          "tools", "tailbuilder", "walk", "camshake", "ragdoll", "studio", "colour",
+                          "tools", "tailbuilder", "dynamics", "walk", "camshake", "ragdoll", "studio", "colour",
                           "radial", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -202,6 +203,7 @@ class TheTable(unittest.TestCase):
             "poses": ("maya_poselib.window", "build_panel"),
             "tools": ("maya_tools.panel", "build_panel"),
             "tailbuilder": ("maya_tailbuilder", "build_panel"),
+            "dynamics": ("maya_dynamics.panel", "build_panel"),
             "walk": ("maya_walk.panel", "build_panel"),
             "camshake": ("maya_camshake", "build_panel"),
             "ragdoll": ("maya_ragdoll.panel", "build_panel"),
@@ -763,7 +765,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "chat"), ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
-            ("card", "walk"), ("card", "camshake"), ("card", "ragdoll"), ("card", "studio"),
+            ("card", "dynamics"), ("card", "walk"), ("card", "camshake"), ("card", "ragdoll"), ("card", "studio"),
             ("card", "colour"), ("card", "radial"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])

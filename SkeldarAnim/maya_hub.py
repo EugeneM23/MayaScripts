@@ -159,6 +159,10 @@ SECTIONS = (
     Section("tailbuilder", "Tail Builder", "maya_tailbuilder",
             "build_panel", "skeldarHubFrameTailBuilder",
             "animation", "wave-sine"),
+    #  2026-10-26: joint chains that swing after their animation - colliders, wind, loops.
+    Section("dynamics", "Dynamics", "maya_dynamics.panel",
+            "build_panel", "skeldarHubFrameDynamics",
+            "animation", "wind"),
     #  2026-10-13: the parametric walk, out of its standalone script.
     Section("walk", "Walk Builder", "maya_walk.panel",
             "build_panel", "skeldarHubFrameWalk",
