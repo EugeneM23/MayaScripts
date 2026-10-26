@@ -112,6 +112,9 @@ knees' soft limit, Whip's springs) work on it, the retarget puts it on any skele
   0.000000 cm off; the right foot +6 on Passing (legs in IK) - taken 6.00, the walker 5.6 higher, the left foot 5.2
   higher at the right passing; the standing left foot's move not taken and said, its rig stood back (0.00 cm); Reset,
   Delete, Update refusing with no rig. Create 6.6 s for four rigs, Update 1.2 s.
+- **Live**, the animator's test Maya on port 7002 (an empty scene; a temporary walks folder, so their SkeldarWalks was
+  not written): the install's hub rebuild shows the Key poses row; Create 13.2 s; the card's own Update 1.4 s (+20 on
+  the Contact rig's FKShoulder_L: the key 20.00 deg, the walker 14.68); Reset 0.0000; Delete; the scene left as found.
 
 ## Not built
 

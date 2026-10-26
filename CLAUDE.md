@@ -10890,7 +10890,10 @@ animator away). Spec `docs/superpowers/specs/2026-10-26-walk-key-poses-design.md
   standalone** (asd on Manny: rigs on their frames to 0.0002 deg; +20 on Contact's shoulder - the cycle 20.000 at the
   contact, 0.000 at the Down, 20.000 mirrored onto the right arm at the right contact, the walker 14.7 through its
   arms' inertia; the pelvis -4 on Down, the cycle's feet 0.000000 off; the right foot +6 on Passing taken, the left
-  foot +5.2 at the right passing; a flat foot's move not taken and said). **Not seen in a GUI Maya** beyond the card.
+  foot +5.2 at the right passing; a flat foot's move not taken and said). **Live in a GUI Maya** (port 7002, the
+  animator's test Maya, an empty scene, a temporary walks folder - the SkeldarWalks folder untouched): the hub rebuilt
+  by the install shows the Key poses row; Create 13.2 s for four rigs; the card's own Update 1.4 s (+20 on Contact's
+  shoulder: the key 20.00 deg, the walker 14.7); Reset back to 0.0000; Delete; the scene left as found.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
