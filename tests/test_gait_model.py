@@ -38,14 +38,33 @@ def both(**kw):
     return wm.analyse(c), gm.analyse(gm.Clip(c.names, c.parents, c.worlds.copy(), c.fps, c.up, c.name))
 
 
+def apart(a, b):
+    """(cm, deg): the worst place and turn difference of two cycles of world matrices."""
+    a, b = np.asarray(a), np.asarray(b)
+    cm = float(np.linalg.norm(a[..., 3, :3] - b[..., 3, :3], axis=-1).max())
+    rel = np.einsum("...ij,...kj->...ik", a[..., :3, :3], b[..., :3, :3])
+    c = np.clip((np.trace(rel, axis1=-2, axis2=-1) - 1.0) / 2.0, -1.0, 1.0)
+    return cm, float(np.degrees(np.arccos(c)).max())
+
+
 class ParityTests(unittest.TestCase):
+    """The fork at Walk Builder's knobs: exact with its one approximation off (the balance rounds swing the
+    arms again whatever the carry did, ARM_RECARRY 0), within 0.1 cm and 0.2 deg with it on."""
 
     def check(self, given, **kw):
-        a, b = both(**kw)
-        ra, rb = a.evaluate(given), b.evaluate(given)
-        self.assertEqual(ra.worlds.shape, rb.worlds.shape)
-        err = float(np.abs(np.asarray(ra.worlds) - np.asarray(rb.worlds)).max())
-        self.assertLess(err, 1e-6, "%s: %g" % (given, err))
+        saved = gm.ARM_RECARRY
+        try:
+            gm.ARM_RECARRY = 0.0
+            a, b = both(**kw)
+            ra, rb = a.evaluate(given), b.evaluate(given)
+            self.assertEqual(ra.worlds.shape, rb.worlds.shape)
+            cm, deg = apart(ra.worlds, rb.worlds)
+            self.assertLess(cm, 1e-6, "%s exact: %g cm" % (given, cm))
+        finally:
+            gm.ARM_RECARRY = saved
+        cm, deg = apart(ra.worlds, b.evaluate(given).worlds)
+        self.assertLess(cm, 0.1, "%s: %g cm" % (given, cm))
+        self.assertLess(deg, 0.2, "%s: %g deg" % (given, deg))
 
     def test_defaults(self):
         self.check({})

@@ -141,6 +141,8 @@ FOLLOW_RANGE = (0.25, 1.25)  # how strongly the walk's own CoM follows its pendu
 CARRY_STEPS = 5            # secant steps of the pelvis carry a frame
 CARRY_TOL = 1e-4           # cm: a frame's CoM this near its target is done
 BALANCE_ROUNDS = 4         # the carry and the reach's drop solved in turn at most this often
+LT_STILL = 1e-5           # cm: a bone's place in its parent this still over the cycle is one place (keyed data: ~1e-6)
+ARM_RECARRY = 0.1          # cm: the arms swing again in a balance round only when the carry moved this far
 # de Leva (1996): % of the body and the centre's share from the proximal joint
 TRUNK_MASS = (11.17, 16.33, 15.96)   # lower, middle, upper trunk: at the thirds of the pelvis..neck_01 chain
 HEAD_MASS = 6.94                     # on the head joint
@@ -178,6 +180,10 @@ def sided(k):
 
 def _unit(v):
     v = np.asarray(v, float)
+    if v.shape == (3,):             # one vector: plain floats
+        x, y, z = float(v[0]), float(v[1]), float(v[2])
+        n = math.sqrt(x * x + y * y + z * z)
+        return np.array([x / n, y / n, z / n]) if n > 1e-12 else v * 0.0
     n = float(np.linalg.norm(v))
     return v / n if n > 1e-12 else v * 0.0
 
@@ -196,6 +202,8 @@ def _skew(w):
 def exp_rot(w):
     """The row-vector rotation by |w| radians about w (right hand); w may be (..., 3)."""
     w = np.asarray(w, float)
+    if w.shape == (3,):            # one vector: plain floats (the batched form costs ~80 us a call in numpy)
+        return _exp3(w)
     th = np.linalg.norm(w, axis=-1)[..., None, None]
     small = th < 1e-12
     k = _skew(w) / np.where(small, 1.0, th)
@@ -325,8 +333,9 @@ def periodic_cr(x, tau):
     if u < 1e-12:
         return np.array(p1, float)
     p0, p2, p3 = x[(i - 1) % p], x[(i + 1) % p], x[(i + 2) % p]
-    return 0.5 * (2.0 * p1 + (p2 - p0) * u + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u * u
-                  + (3.0 * p1 - p0 - 3.0 * p2 + p3) * u ** 3)
+    uu = u * u
+    return 0.5 * (2.0 * p1 + (p2 - p0) * u + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * uu
+                  + (3.0 * p1 - p0 - 3.0 * p2 + p3) * (uu * u))
 
 
 def warp(phi, beta, phi0, strides=1):
@@ -499,7 +508,7 @@ def swing_weight(s):
 
 
 def _frame(u, n):
-    return np.stack([u, n, np.cross(u, n)])
+    return np.array([u, n, _cross3(u, n)], float)
 
 
 def align(u_src, n_src, u_new, n_new):
@@ -720,7 +729,8 @@ class Walk(object):
         return exp_rot(gain * periodic_cr(self.llog[j], tau)) @ self.lmean[j]
 
     def lt_at(self, j, tau):
-        return periodic_cr(self.lt[j], tau)
+        still = self._lt_const.get(j)
+        return still if still is not None else periodic_cr(self.lt[j], tau)
 
     def source_world(self, j, tau):
         return matrix(self.wrot(j, tau), self.wpos(j, tau))
@@ -755,6 +765,10 @@ class Walk(object):
             self.lt[j] = np.einsum("fi,fij->fj", self.pos[j] - self.pos[p], back)
             self.lmean[j] = mean_rot(lrot)
             self.llog[j] = log_rot(lrot @ self.lmean[j].T)
+        # a bone whose place in its parent never changes (most: a rigid skeleton) answers its place without the
+        # spline (gaitbuilder speed: lt_at was a third of the sampler's calls)
+        self._lt_const = dict((j, self.lt[j][0].copy()) for j in range(count)
+                              if float(np.ptp(self.lt[j], axis=0).max()) <= LT_STILL)
 
     def _ancestors(self, j):
         out = []
@@ -1568,12 +1582,21 @@ class Walk(object):
                 + (u ** 3 - 2.0 * u * u + u) * length * out + (u ** 3 - u * u) * length * back)
 
     def _foot_free(self, side, t, ctx):
-        """The new foot at foot time t before the lock: foot_target and the pose's toe-out."""
+        """The new foot at foot time t before the lock: foot_target and the pose's toe-out. Kept for the
+        evaluation (ctx["_feet"]): the balance rounds, the lock and the growth ask for the same feet again and
+        again (gaitbuilder speed: a third of the calls were repeats)."""
+        kept = ctx.setdefault("_feet", {})
+        key = (side, t)
+        got = kept.get(key)
+        if got is not None:
+            return got[0].copy(), got[1].copy()
         k = ctx["ks"][side] if "ks" in ctx else ctx["k"]
         rot, ankle = self.foot_target(side, t, k["stride"], k["stance"], ctx["spread"], k["lift"] * ctx["ex"],
                                       k["swing_out"])
         toe = ctx["turns"][side][1]
-        return (rot @ exp_rot(self.up * toe) if toe else rot), ankle
+        out = ((rot @ exp_rot(self.up * toe) if toe else rot), ankle)
+        kept[key] = out
+        return out[0].copy(), out[1].copy()
 
     def _foot(self, side, tau, ctx):
         """The new foot at body time tau: (world rotation, ankle, the foot's own time)."""
@@ -1657,12 +1680,17 @@ class Walk(object):
             short = np.maximum(reach - limit, 0.0)       # eased in over ROLL_SOFT: a roll starts and ends gently
             short = np.where(short < ROLL_SOFT, short * short / (2.0 * ROLL_SOFT), short - 0.5 * ROLL_SOFT)
             return ROLL_COST * th * th + short * short
+        def cost1(th):                               # cost() for one angle, in plain floats (the search's 48)
+            reach = math.sqrt(max(base + alpha * math.cos(th) + beta * math.sin(th), 0.0))
+            short = max(reach - limit, 0.0)
+            short = short * short / (2.0 * ROLL_SOFT) if short < ROLL_SOFT else short - 0.5 * ROLL_SOFT
+            return ROLL_COST * th * th + short * short
         grid = np.linspace(0.0, most, ROLL_GRID + 1)
         k = int(np.argmin(cost(grid)))
-        lo, hi = grid[max(k - 1, 0)], grid[min(k + 1, ROLL_GRID)]
+        lo, hi = float(grid[max(k - 1, 0)]), float(grid[min(k + 1, ROLL_GRID)])
         for _ in range(24):                          # golden section in the bracket
             m1, m2 = hi - 0.618034 * (hi - lo), lo + 0.618034 * (hi - lo)
-            lo, hi = (lo, m2) if cost(m1) <= cost(m2) else (m1, hi)
+            lo, hi = (lo, m2) if cost1(m1) <= cost1(m2) else (m1, hi)
         best, knee = 0.5 * (lo + hi), 0.6 * cap      # eased into the cap: a roll running into it slows down
         if best > knee:
             best = knee + (cap - knee) * (1.0 - math.exp(-(best - knee) / (cap - knee)))
@@ -2064,13 +2092,18 @@ class Walk(object):
             need = said.pop("need")
             balance.update(said)
             caches, first, carry = [dict() for _ in bases], np.array(drop), np.zeros((n + 1, 3))
+            armed_at = carry.copy()
             for round_ in range(BALANCE_ROUNDS if need >= CARRY_TOL else 0):   # nothing to carry at the defaults     # the carry, then the reach's drop with it, till the drop holds
                 ctx["carry"] = carry = self._carry(times, ctx, bases, np.array(drop) - first, target, carry, caches)
                 again = self._lowering(times, ctx)
                 settled = float(np.abs(np.array(again) - np.array(drop)).max()) < CARRY_TOL
                 drop = again
-                if swinging:                  # the arms trail the carried body too: balance them again
+                # the arms trail the carried body too: balance them again - when the carry moved more than
+                # ARM_RECARRY since they last swung (the arms' share of the CoM barely changes under a small
+                # carry; each swing costs two arm integrations - gaitbuilder speed, 2026-10-26)
+                if swinging and float(np.abs(carry - armed_at).max()) > ARM_RECARRY:
                     bases = armed(carry)
+                    armed_at = carry.copy()
                 if settled and (not swinging or round_ > 0):
                     break
             balance["carry"] = float(np.linalg.norm(carry, axis=1).max()) if ctx["carry"] is not None else 0.0
@@ -2765,7 +2798,7 @@ class Walk(object):
                 knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
                 e2 = _unit(reached - sh)
                 bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
-                normal, normal2 = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
+                normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
                 mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal, _unit(knee - sh), normal2)
                 ml[f, :3, :3] = orthonormal(kin[low_j, f, :3, :3]) @ align(_unit(wr - el), normal,
                                                                           _unit(reached - knee), normal2)
@@ -2810,7 +2843,7 @@ class Walk(object):
         knee_bend = turned_about(bend, -e, knee_turn) if knee_turn else bend      # turned about the leg
         hang = self.swing_at(side, t)
         return {"joints": (th, ca, fo), "t": t, "hip": self.lt_at(th, tau), "foot_rot": foot_rot, "ankle": ankle,
-                "lengths": (l1, l2), "dirs": (_unit(kn - h), _unit(a - kn)), "normal": _unit(np.cross(e, bend)),
+                "lengths": (l1, l2), "dirs": (_unit(kn - h), _unit(a - kn)), "normal": _unit(_cross3(e, bend)),
                 "bend": knee_bend, "wrot": (self.wrot(th, t), self.wrot(ca, t)), "hang": hang,
                 "in_calf": (self.foot_in_calf(side, t - ctx["foot_lag"][side], ctx["ks"][side]["foot_flex"])
                             if hang > 0.0 else None)}
@@ -2841,7 +2874,7 @@ class Walk(object):
                                         ctx.get("reach", self.reach)[side])
         e2 = _unit(reached - hip)
         bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
-        n_new = _unit(np.cross(e2, bend2))
+        n_new = _unit(_cross3(e2, bend2))
         rots[th] = src["wrot"][0] @ align(src["dirs"][0], src["normal"], _unit(knee - hip), n_new)
         rots[ca] = src["wrot"][1] @ align(src["dirs"][1], src["normal"], _unit(reached - knee), n_new)
         rots[fo] = foot_rot if src["hang"] <= 0.0 else toward(foot_rot, src["in_calf"] @ rots[ca], src["hang"])
