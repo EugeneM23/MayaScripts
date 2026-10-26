@@ -52,16 +52,16 @@ class ParityTests(unittest.TestCase):
     arms again whatever the carry did, ARM_RECARRY 0), within 0.1 cm and 0.2 deg with it on."""
 
     def check(self, given, **kw):
-        saved = gm.ARM_RECARRY
+        saved, saved_wb = gm.ARM_RECARRY, wm.ARM_RECARRY
         try:
-            gm.ARM_RECARRY = 0.0
+            gm.ARM_RECARRY = wm.ARM_RECARRY = 0.0       # Walk Builder's engine took the approximation too (2026-10-26)
             a, b = both(**kw)
             ra, rb = a.evaluate(given), b.evaluate(given)
             self.assertEqual(ra.worlds.shape, rb.worlds.shape)
             cm, deg = apart(ra.worlds, rb.worlds)
             self.assertLess(cm, 1e-6, "%s exact: %g cm" % (given, cm))
         finally:
-            gm.ARM_RECARRY = saved
+            gm.ARM_RECARRY, wm.ARM_RECARRY = saved, saved_wb
         cm, deg = apart(ra.worlds, b.evaluate(given).worlds)
         self.assertLess(cm, 0.1, "%s: %g cm" % (given, cm))
         self.assertLess(deg, 0.2, "%s: %g deg" % (given, deg))

@@ -175,7 +175,7 @@ class KnobTests(unittest.TestCase):
             wm.knobs(strid=1.0)
 
     def test_every_knob_named_in_the_spec(self):
-        self.assertEqual([k[0] for k in wm.KNOBS],
+        self.assertEqual(list(wm.LEGACY),
                          ["pose", "stride", "tempo", "lift", "in_place", "foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "foot_flat", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "arms", "elbow",
@@ -1359,7 +1359,7 @@ class BalanceTests(unittest.TestCase):
 
     def test_every_knob_sits_in_one_window_group(self):
         panel = load("panel")      # the card: Pose under the pose's dropdown, In place a chip, the rest in groups
-        everything = dict(wm.DEFAULTS, **load("clean").DEFAULTS)       # the model's and the clean's
+        everything = dict(dict((k, wm.DEFAULTS[k]) for k in wm.LEGACY), **load("clean").DEFAULTS)   # the card's
         grouped = ["pose"] + list(panel.CHECKS) + [name for _, _, names in panel.GROUPS for name in names]
         self.assertEqual(sorted(grouped), sorted(everything))
         self.assertEqual(len(grouped), len(set(grouped)))
