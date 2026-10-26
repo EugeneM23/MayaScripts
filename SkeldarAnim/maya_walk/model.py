@@ -75,9 +75,30 @@ KNOBS = (
     # limit) it eases into the limit with no corner, and the pelvis, the growth and the swing's draw-in aim at
     # that start. 0: Walk Builder's hard limit (Gait Builder, 2026-10-26)
     ("knee_soft", 0.0, 0.0, 0.2),
+    # The decomposition (2026-10-26, the editable gait model): every body series is its regular part (the mean and
+    # HARMONICS stride harmonics) plus a residual (the clip's handwriting). Detail scales the residual; a regular gain
+    # scales one channel's regular part about its mean - so an amplitude read off the result's harmonics scales
+    # exactly. A step's print across the body is the side's mean plus its own irregularity x Detail.
+    ("detail", 1.0, 0.0, 1.0),
+    ("g_bob", 1.0, 0.0, 10.0),        # the pelvis's height
+    ("g_sway", 1.0, 0.0, 10.0),       # its side to side
+    ("g_surge", 1.0, 0.0, 10.0),      # its forward and back
+    ("g_head", 1.0, 0.0, 5.0),        # the head's world turn (0 holds the gaze)
+    ("g_arm", 1.0, 0.0, 5.0),         # the upper arm's swing
+    ("g_elbow", 1.0, 0.0, 5.0),       # the forearm's turn in the elbow
+    ("g_spine", 1.0, 0.0, 5.0),       # the spine's and the neck's local turns
+    # A swing added where the walk has (next to) none of its own: at its own phase when it has one (BOB_QUIET /
+    # ARM_QUIET), else at the guide's - the bob low 5 % of a step after each strike, an arm forward at the other
+    # foot's strike. Both peak to peak.
+    ("bob_add", 0.0, -30.0, 30.0),    # cm
+    ("arm_swing_add", 0.0, -90.0, 90.0),   # deg
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
-                "elbow_swing_add", "shoulder_add")
+                "elbow_swing_add", "shoulder_add", "arm_swing_add")
+HARMONICS = 4             # a body series' regular part: its mean and this many stride harmonics
+BOB_QUIET = 0.5           # cm: a walk's own bob under this peak to peak takes bob_add at the guide's phase
+ARM_QUIET = 2.0           # deg: an arm's own swing under this peak to peak takes arm_swing_add at the guide's phase
+BOB_LOW_AFTER = 0.05      # the guide's bob: lowest this share of a step after each strike (section 5: one frame)
 #  The knobs the card showed until 2026-10-26 (the first part of KNOBS, through Exaggeration): a walked skeleton's
 #  version 2 memo holds these; everything after them is an engine knob only maya_walk.gait sets
 _NAMES = [k[0] for k in KNOBS]
@@ -89,7 +110,8 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
-         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft")
+         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
+         "arm_swing_add")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -760,6 +782,7 @@ class Walk(object):
         self.reach = dict((s, self._reach(s)) for s in SIDES)
         self.follows = self._helpers()
         self.world_arms = set(self.index[n] for n in ("upperarm_l", "upperarm_r") if n in self.index)
+        self._decompose()
         self.root_mean = (self.pdev[root] @ self.basis.T).mean(axis=0)
         self.pelvis_mean = (self.pdev[self.index["pelvis"]] @ self.basis.T).mean(axis=0)
         bob = self.pdev[self.index["pelvis"]] @ self.up - self.pelvis_mean[2]
@@ -777,6 +800,71 @@ class Walk(object):
         self._own_pendulum()
         self._aspect_shapes()
 
+    # -- the decomposition: a regular part and a residual --
+
+    def stride_phases(self, taus):
+        """The stride phase (radians) at each source time of `taus`."""
+        return np.array([self.stride_phase(float(t)) for t in taus])
+
+    def harmonic_basis(self, taus=None, harmonics=HARMONICS):
+        """(len(taus), 1 + 2K): 1, cos k a, sin k a of the stride phase a at source times `taus` (the source's
+        whole frames when None)."""
+        a = self.stride_phases(np.arange(self.P, dtype=float) if taus is None else taus)
+        cols = [np.ones_like(a)]
+        for h in range(1, harmonics + 1):
+            cols += [np.cos(h * a), np.sin(h * a)]
+        return np.stack(cols, axis=1)
+
+    def regular_fit(self, y, taus=None, harmonics=HARMONICS):
+        """`y` (len(taus) or P samples, any trailing shape) fitted on the stride harmonics: (fit, coefficients)."""
+        y = np.asarray(y, float)
+        B = self.harmonic_basis(taus, harmonics)
+        flat = y.reshape(len(B), -1)
+        coef = np.linalg.lstsq(B, flat, rcond=None)[0]
+        return (B @ coef).reshape(y.shape), coef
+
+    def _decompose(self):
+        """`decomposed` {(series, joint): (regular (P, 3), residual (P, 3), mean (3,))} for the body series the
+        engine samples: the root's and the pelvis's place against the travel line ("pdev"); the pelvis's, the
+        head's and the world-held upper arms' world turns ("wlog"); the local turns of the spine, the neck, the
+        arms and the fingers ("llog", the joints below a thigh ride their feet and are left out)."""
+        self.decomposed = {}
+        B = self.harmonic_basis()
+        pinv = np.linalg.pinv(B)
+        thighs = set(self.index["thigh_" + s] for s in SIDES)
+        for series in ("pdev", "wlog", "llog"):
+            data = getattr(self, series)
+            for j, kind in enumerate(self.kind):
+                if series == "pdev":
+                    keep = kind in ("root", "pelvis")
+                elif series == "wlog":
+                    keep = kind in ("pelvis", "head") or j in self.world_arms
+                else:
+                    keep = (kind in ("spine", "arm", "finger", "local")
+                            and not thighs.intersection(self._ancestors(j)))
+                if not keep:
+                    continue
+                x = data[j]
+                reg = B @ (pinv @ x)
+                self.decomposed[(series, j)] = (reg, x - reg, x.mean(axis=0))
+
+    def _sample(self, series, j, tau, ctx, gain=1.0, axes=None, shift=0.0):
+        """The series' sample at source time tau: its mean + gain . (regular - mean) + detail . residual, the
+        regular part sampled `shift` frames earlier; `gain` per row of `axes` (3, 3) when given (a scalar else).
+        The series itself at gain 1, detail 1, no shift (Catmull-Rom is linear: exactly what it was)."""
+        got = self.decomposed.get((series, j))
+        d = ctx["k"].get("detail", 1.0) if ctx is not None else 1.0
+        plain = d == 1.0 and shift == 0.0 and (np.all(np.asarray(gain) == 1.0))
+        if got is None or plain:
+            return periodic_cr(getattr(self, series)[j], tau)
+        reg, res, mean = got
+        r = periodic_cr(reg, tau - shift) - mean
+        if axes is not None:
+            r = ((r @ axes.T) * np.asarray(gain, float)) @ axes
+        else:
+            r = r * float(gain)
+        return mean + r + d * periodic_cr(res, tau)
+
     # -- the operators: the shapes they add on, read off the walk (Gait Builder's) --
 
     def _aspect_shapes(self):
@@ -786,9 +874,13 @@ class Walk(object):
         P, idx = self.P, self.index
         phase = np.array([self.stride_phase(float(f)) for f in range(P)])
         pel = self.pdev[idx["pelvis"]]
-        self.aspect_phase = {"bob": _harmonic(pel @ self.up, phase, 2)[1],
+        bob = _harmonic(pel @ self.up, phase, 2)
+        self.aspect_phase = {"bob": bob[1],
                              "sway": _harmonic(pel @ self.lside, phase, 1)[1],
                              "surge": _harmonic(pel @ self.ahead, phase, 2)[1]}
+        self.aspect_amp = {"bob": 2.0 * bob[0]}
+        if self.aspect_amp["bob"] < BOB_QUIET:     # the guide's: lowest just after each strike (cos(2a - p) at -1)
+            self.aspect_phase["bob"] = 2.0 * math.pi * BOB_LOW_AFTER - math.pi
         self.leg_parts = dict((s, (float(np.linalg.norm(self.lt[idx["calf_" + s]], axis=1).mean()),
                                    float(np.linalg.norm(self.lt[idx["foot_" + s]], axis=1).mean()))) for s in SIDES)
         self.hinge = {}
@@ -803,7 +895,10 @@ class Walk(object):
             b = _units(self.pos[hand_j] - self.pos[low_j])
             fwd = np.degrees(np.arctan2(a @ self.ahead, -(a @ self.up)))
             bend = np.degrees(np.arccos(np.clip(np.sum(a * b, axis=1), -1.0, 1.0)))
-            self.aspect_phase["arm_" + side] = _harmonic(fwd, phase, 1)[1]
+            swing = _harmonic(fwd, phase, 1)
+            self.aspect_phase["arm_" + side], self.aspect_amp["arm_" + side] = swing[1], 2.0 * swing[0]
+            if 2.0 * swing[0] < ARM_QUIET:      # the guide's: forward as the other foot strikes (left at a = pi)
+                self.aspect_phase["arm_" + side] = math.pi if side == "l" else 0.0
             # where the upper arm points in its own axes (to its elbow): Arm out turns it toward its side about
             # the axis across the two, so an arm held forward (a run) still goes out
             self.arm_dir[up_j] = _unit(self.lt[low_j].mean(axis=0))
@@ -871,6 +966,8 @@ class Walk(object):
             return exp_rot(rad(ks["shoulder_add"]) * sign * self.ahead) if ks["shoulder_add"] else None
         if stem == "upperarm":
             fwd = ks["arm_fwd_add"]
+            if ks["arm_swing_add"] and ("arm_" + side) in self.aspect_phase:
+                fwd += 0.5 * ks["arm_swing_add"] * math.cos(a - self.aspect_phase["arm_" + side])
             out = ks["arm_out_add"]
             if not fwd and not out:
                 return None
@@ -1779,7 +1876,7 @@ class Walk(object):
             return got[0].copy(), got[1].copy()
         k = ctx["ks"][side] if "ks" in ctx else ctx["k"]
         rot, ankle = self.foot_target(side, t, k["stride"], k["stance"], ctx["spread"], k["lift"] * ctx["ex"],
-                                      k["swing_out"])
+                                      k["swing_out"], k["detail"])
         toe = ctx["turns"][side][1]
         out = ((rot @ exp_rot(self.up * toe) if toe else rot), ankle)
         kept[key] = out
@@ -2417,13 +2514,13 @@ class Walk(object):
         kept[side] = [(h - g, up) for h, up in rows]
         return kept[side]
 
-    def foot_target(self, side, tau, stride, stance=1.0, spread=0.0, lift=1.0, swing_out=0.0):
+    def foot_target(self, side, tau, stride, stance=1.0, spread=0.0, lift=1.0, swing_out=0.0, detail=1.0):
         """The new foot at source time tau: (world rotation, ankle position). Stance: the source's foot
         moved with its step's footprint - across the travel line, the walk's half-spread about the middle of
         its prints plus half the pose's `spread`, all x `stance`; swing: the source's swing between the new
         footprints of its step and the next, its lift scaled, bowed `swing_out` cm out (+) or in along
         sin(pi s) of its flight (from where it leaves the ground to where it lands: a foot that is down never
-        slides)."""
+        slides). A print stands across the body at its side's mean plus its own irregularity x `detail`."""
         steps, j, P = self.steps[side], self.index["foot_" + side], self.P
         rot, src = self.wrot(j, tau), self.wpos(j, tau)
         travel2 = self.travel * stride
@@ -2431,10 +2528,12 @@ class Walk(object):
         foot = steps[i]
         sign = 1.0 if side == "l" else -1.0
         middle = 0.5 * (self.body_print("l") + self.body_print("r"))
+        regular = self.body_print(side) - middle
 
         def shift(step, cycle):
-            half = self.print_across(step) - middle
-            across = stance * (half + sign * spread / 2.0) - half
+            own = self.print_across(step) - middle
+            half = regular + detail * (own - regular)
+            across = stance * (half + sign * spread / 2.0) - own
             return ((travel2 - self.travel) * ((step.mid + cycle * P) / P)
                     + (stride - 1.0) * step.coords[0] * self.fwd + across * self.across)
         here = shift(foot, k)
@@ -2460,9 +2559,13 @@ class Walk(object):
         line2 = self.origin + ctx["travel2"] * phi
         extra = self.pelvis_extra(tau, k, ex)
         out = {"extra": extra}
+        gains = (k["g_surge"], k["g_sway"], k["g_bob"])
         for name, mean in (("root", self.root_mean), ("pelvis", self.pelvis_mean)):
             j = self.index[name]
-            dev = periodic_cr(self.pdev[j], tau) @ self.basis.T
+            if name == "pelvis":
+                dev = self._sample("pdev", j, tau, ctx, gains, self.basis) @ self.basis.T
+            else:
+                dev = self._sample("pdev", j, tau, ctx) @ self.basis.T
             scale = k["stride"] if name == "root" else (1.0 - ctx["balance"]) * k["stride"] + ctx["balance"]
             # Surge: x the pelvis's forward and back - Bob's partner along the walk (the root keeps its own)
             surge = k["surge"] if name == "pelvis" else 1.0
@@ -2475,13 +2578,16 @@ class Walk(object):
             aside = mean[1] + gain * (dev[1] - mean[1])
             if name == "pelvis":
                 pose, a = ctx["pose"], ctx["alpha"]
-                v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"], self.strides) * self.P) @ self.up) - mean[2]
+                clock = warp(phi, ctx["beta"], ctx["phi0"], self.strides) * self.P
+                v = float(self._sample("pdev", j, clock, ctx, gains, self.basis) @ self.up) - mean[2]
+                if k["bob_add"]:       # a bob where the walk has (next to) none: at its own phase, else the guide's
+                    v += 0.5 * k["bob_add"] * math.cos(2.0 * self.stride_phase(clock) - self.aspect_phase["bob"])
                 own = mean[2] + self.fix["height"]          # the corrected walk's mean height
                 base = own if pose is None or "height" not in pose else (1.0 - a) * own + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
                 height = base + k["pelvis_height"] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
                 centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)
-                turn = periodic_cr(self.wlog[j], tau)
+                turn = self._sample("wlog", j, tau, ctx)
                 if centre is not self.wmean[j]:     # a tilted pelvis turns about the walk's world axes
                     turn = turn @ self.wmean[j] @ centre.T
                 rot = exp_rot(k["pelvis_rot"] * ex * turn) @ centre
@@ -2662,11 +2768,11 @@ class Walk(object):
                 pose, a = ctx["pose"], ctx["alpha"]
                 if kind == "head":
                     centre = self.wmean[j] if pose is None or "head" not in pose else toward(self.wmean[j], pose["head"], a)
-                    rots[j] = exp_rot(k["head"] * ex * periodic_cr(self.wlog[j], t)) @ centre
+                    rots[j] = exp_rot(k["head"] * ex * self._sample("wlog", j, t, ctx, k["g_head"])) @ centre
                 elif j in self.world_arms and (pose is None or "arms" not in pose):
                     # the upper arm hangs and swings in the world
-                    arms = ks[self._side(j)]["arms"]
-                    rots[j] = exp_rot(arms * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
+                    side_k = ks[self._side(j)]
+                    rots[j] = exp_rot(side_k["arms"] * ex * self._sample("wlog", j, t, ctx, side_k["g_arm"])) @ self.wmean[j]
                 else:
                     centre = self.lmean[j]
                     gain = ks[self._side(j)]["arms"] * ex if kind == "arm" else gains.get(kind, 1.0)
@@ -2682,7 +2788,15 @@ class Walk(object):
                                 gain *= 1.0 - a
                     if j in self.forearms:
                         gain *= ks[self._side(j)]["elbow"]
-                    turn = periodic_cr(self.llog[j], t)
+                    if kind == "spine":
+                        regular = k["g_spine"]
+                    elif j in self.forearms:
+                        regular = ks[self._side(j)]["g_elbow"]
+                    elif j in self.world_arms:
+                        regular = ks[self._side(j)]["g_arm"]
+                    else:
+                        regular = 1.0
+                    turn = self._sample("llog", j, t, ctx, regular)
                     if j in ctx["spine_map"]:      # about the world axis it turns about in the walk
                         turn = turn @ ctx["spine_map"][j]
                     local = exp_rot(gain * turn) @ centre
