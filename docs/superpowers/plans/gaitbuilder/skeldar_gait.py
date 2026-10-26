@@ -207,6 +207,7 @@ def apply(root=None, state=None, new_place=False):
     place = memo.get("place") if memo.get("source") == state["source"] or memo.get("place") else None
     retarget = target.Retarget(source.walk, source.statics, bones, place)
     pose = _pose(source, state, root)
+    _base(source, state)
     result, base, engine = gaitload.evaluate(source, state["gait"], pose, state["share"] if pose is not None else 0.0)
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
@@ -304,7 +305,7 @@ def _knob_changed(name, value):
         gait["speed"] = float(value)
     elif name == "step":                     # the cadence kept, the speed follows
         source = _source(state)
-        base = _modules()[0].baseline(source, *_pose_and_share(source, state))
+        base = _base(source, state)
         _, cadence = asp.timing(gait, base)
         gait["step"] = float(value)
         gait["speed"] = float(value) * cadence / 6000.0
@@ -314,7 +315,7 @@ def _knob_changed(name, value):
         # Both moves each side by the slider's change from what it showed (their mean), keeping the walk's own
         # difference: one value for both would jump a lopsided walk's side (HavyRun's planted knees, 52 and 15)
         source = _source(state)
-        base = _modules()[0].baseline(source, *_pose_and_share(source, state))
+        base = _base(source, state)
         sides = dict((s, asp.value(gait, base, name, s)) for s in ("l", "r"))
         delta = float(value) - 0.5 * (sides["l"] + sides["r"])
         gait.pop(name, None)
@@ -329,6 +330,22 @@ def _knob_changed(name, value):
     _refresh_values(state)
 
 
+def _base(source, state):
+    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (nine
+    evaluations, a few seconds, then kept on disk): said and under a wait cursor."""
+    gaitload = _modules()[0]
+    probing = gaitload.needs_probe(source)
+    if probing:
+        _say("reading %s's knobs - the first time only, a few seconds" % source.label)
+        cmds.refresh()
+        cmds.waitCursor(state=True)
+    try:
+        return gaitload.baseline(source, *_pose_and_share(source, state))
+    finally:
+        if probing:
+            cmds.waitCursor(state=False)
+
+
 def _pose_and_share(source, state):
     pose = _pose(source, state)
     return (pose, state["share"] if pose is not None else 0.0)
@@ -340,7 +357,7 @@ def _refresh_values(state=None):
     state = state or settings()
     try:
         source = _source(state)
-        base = gaitload.baseline(source, *_pose_and_share(source, state))
+        base = _base(source, state)
     except Exception:
         return
     _state()["quiet"] = True
@@ -527,7 +544,7 @@ def _build(state):
                             "skeldarGaitSide", query=True, select=True) - 1][0]))
     try:
         source = _source(state)
-        base = gaitload.baseline(source, *_pose_and_share(source, state))
+        base = _base(source, state)
     except Exception as exc:
         cmds.text(label="The walk cannot be read: %s" % exc, align="left", wordWrap=True, height=60)
         cmds.text(STATUS, label="", align="left", wordWrap=True, height=60)
