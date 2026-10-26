@@ -1,0 +1,5 @@
+gate  1 ok    redundancy asd: 34 knobs, no pair past 0.85 (by design: forward~balance 0.96); 90 % of the change in 23 directions, 99 % in 31
+gate  2 ok    redundancy dw: 34 knobs, no pair past 0.85; 90 % of the change in 26 directions, 99 % in 33
+gate  3 ok    redundancy HavyRun: 34 knobs, no pair past 0.85; 90 % of the change in 24 directions, 99 % in 32
+gate  4 ok    redundancy cat:Walk: 34 knobs, no pair past 0.85 (by design: forward~balance 0.93); 90 % of the change in 22 directions, 99 % in 30
+4 gates, 0 failed

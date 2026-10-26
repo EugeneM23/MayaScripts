@@ -16,7 +16,7 @@ import aspects as asp
 import gaitgen
 
 CACHE_KEPT = 12
-# The calibrated knobs' responses (aspects.calibrate: sixteen evaluations, 3-20 s CPU a walk) are kept on disk per walk
+# The calibrated knobs' responses (aspects.calibrate: twenty evaluations, 3-25 s CPU a walk) are kept on disk per walk
 # and code: a walk read again - in this Maya or the next - costs one evaluation. None: no disk.
 DISK = os.path.join(os.environ.get("MAYA_APP_DIR") or os.path.join(os.path.expanduser("~"), "Documents", "maya"),
                     "SkeldarGaitCache")
@@ -30,6 +30,7 @@ class Source(object):
         self.key, self.label, self.walk, self.statics, self.start, self.report = key, label, walk, statics, start, report
         self.ident = ident        # what the walk is made of, for the disk cache (None: not kept on disk)
         self.curves = None        # the calibrated knobs' responses, once read (curves())
+        self.posed = {}           # {pose_ident: the responses under that pose at full share}
 
 
 def _state():
@@ -98,17 +99,42 @@ def _stamp(module):
     return os.path.getmtime(path) if path and os.path.exists(path) else None
 
 
-def _disk_path(source):
-    """The file the source's responses live in (None: not on disk): named for the walk and the code that probed it,
-    so a changed walk, clean, mean pose correction, model or knob table is probed again."""
+def pose_ident(pose):
+    """What a prepared pose is made of (its parts and numbers to 1e-6), for the cache: a card edited, another card
+    or other parts are another pose."""
+    if pose is None:
+        return None
+    h = hashlib.sha1()
+
+    def feed(value):
+        if isinstance(value, dict):
+            for key in sorted(value, key=str):
+                h.update(repr(key).encode("utf-8"))
+                feed(value[key])
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                feed(v)
+        else:
+            try:
+                h.update(np.round(np.asarray(value, float), 6).tobytes())
+            except (TypeError, ValueError):
+                h.update(repr(value).encode("utf-8"))
+    feed(pose)
+    return h.hexdigest()
+
+
+def _disk_path(source, pose_id=None):
+    """The file the source's responses live in (None: not on disk): named for the walk, the pose (`pose_id`, None:
+    none) and the code that probed it, so a changed walk, clean, mean pose correction, pose, model or knob table is
+    probed again."""
     if not DISK or not source.ident:
         return None
-    ident = repr((source.ident, _stamp(gm), _stamp(asp)))
+    ident = repr((source.ident, _stamp(gm), _stamp(asp)) + ((pose_id,) if pose_id else ()))
     return os.path.join(DISK, hashlib.sha1(ident.encode("utf-8")).hexdigest() + ".json"), ident
 
 
-def _read_curves(source):
-    got = _disk_path(source)
+def _read_curves(source, pose_id=None):
+    got = _disk_path(source, pose_id)
     if got is None or not os.path.exists(got[0]):
         return None
     try:
@@ -123,8 +149,8 @@ def _read_curves(source):
         return None
 
 
-def _write_curves(source, curves):
-    got = _disk_path(source)
+def _write_curves(source, curves, pose_id=None):
+    got = _disk_path(source, pose_id)
     if got is None:
         return
     try:
@@ -150,16 +176,24 @@ def _plain(source, posed=None, share=0.0):
     return base
 
 
-def needs_probe(source):
-    """True when the source's knobs have not been probed yet and are not on disk (the next baseline takes sixteen
-    evaluations more)."""
-    if source.curves is not None:
-        return False
-    got = _read_curves(source)
-    if got is not None:
+def needs_probe(source, pose=None, share=0.0):
+    """True when the source's knobs have not been probed yet - with no pose, and under `pose` when it is shown at a
+    share - and are not on disk (the next baseline takes twenty evaluations more for each)."""
+    if source.curves is None:
+        got = _read_curves(source)
+        if got is None:
+            return True
         source.curves = got
+    if pose is None or share <= 0.0:
         return False
-    return True
+    pid = pose_ident(pose)
+    if pid in source.posed:
+        return False
+    got = _read_curves(source, pid)
+    if got is None:
+        return True
+    source.posed[pid] = got
+    return False
 
 
 def curves(source, plain=None):
@@ -178,15 +212,72 @@ def curves(source, plain=None):
     return source.curves
 
 
+def posed_curves(source, pose):
+    """The calibrated knobs' responses under `pose` at full share: probed once a walk and pose (a crouch's planted
+    knees and a two-handed grip's arms answer a knob otherwise than the bare walk: dw's Knee bend under the goblin
+    read +11.9 deg for +4.9 asked through the bare walk's curve), kept on the source and on disk."""
+    pid = pose_ident(pose)
+    if pid not in source.posed:
+        got = _read_curves(source, pid)
+        if got is None:
+            base = _plain(source, pose, 1.0)
+
+            def run(g):
+                e = asp.engine_knobs(source.walk, base, g)
+                e["pose"] = 1.0
+                return source.walk.evaluate(e, pose)
+            got = asp.calibrate(source.walk, base, run)
+            _write_curves(source, got, pid)
+        source.posed[pid] = got
+    return source.posed[pid]
+
+
+def _at(points, x):
+    """A response curve read at asked change x: linear between its points, held at its ends."""
+    if x <= points[0][0]:
+        return points[0][1]
+    for (a0, g0), (a1, g1) in zip(points, points[1:]):
+        if x <= a1:
+            return g0 if a1 - a0 <= 1e-12 else g0 + (x - a0) * (g1 - g0) / (a1 - a0)
+    return points[-1][1]
+
+
+def blend_curves(bare, posed, share):
+    """The responses at a pose's `share`: the bare walk's and the full pose's read at the asked changes of both and
+    mixed (1 - share, share); a curve only one of them has is taken as it is. A share moved costs no probe."""
+    if share <= 0.0:
+        return bare
+    if share >= 1.0:
+        return posed
+    out = {}
+    for name in set(bare) | set(posed):
+        a, b = bare.get(name), posed.get(name)
+        if a is None or b is None:
+            out[name] = a if b is None else b
+            continue
+        out[name] = {}
+        for side in set(a) | set(b):
+            pa, pb = a.get(side), b.get(side)
+            if pa is None or pb is None:
+                out[name][side] = pa if pb is None else pb
+                continue
+            xs = sorted(set(x for x, _ in pa) | set(x for x, _ in pb))
+            mixed = [(x, (1.0 - share) * _at(pa, x) + share * _at(pb, x)) for x in xs]
+            out[name][side] = mixed if name.startswith("_drop_") else asp._monotone(mixed)
+    return out
+
+
 def baseline(source, pose=None, share=0.0):
     """The walk as it stands under the pose's `share` (`pose` walkpose.prepare's, filtered to its parts): its
-    measure in units - the knobs' own values - with the calibrated knobs' responses (curves()), kept per source,
-    pose and share. One evaluation, sixteen more the first time a walk is read with no responses on disk."""
+    measure in units - the knobs' own values - with the calibrated knobs' responses: the bare walk's (curves()) and,
+    under a pose, the full pose's (posed_curves()) mixed by the share; kept per source, pose and share. One
+    evaluation; twenty more the first time a walk, and a walk under a pose, is read with nothing on disk."""
     posed = pose if share > 0.0 else None
 
     def make():
         base = _plain(source, posed, share)
-        base["_curve"] = curves(source, base if posed is None else None)
+        bare = curves(source, base if posed is None else None)
+        base["_curve"] = bare if posed is None else blend_curves(bare, posed_curves(source, posed), share)
         return base
     return _kept(("base", id(source), id(pose), float(share)), make)
 

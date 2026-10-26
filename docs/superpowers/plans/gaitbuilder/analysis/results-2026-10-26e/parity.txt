@@ -1,0 +1,17 @@
+gate  1 ok    parity asd []: 0.0228 cm, 0.0699 deg
+gate  2 ok    parity asd ['arm_drag', 'chest_sway', 'chest_twist']: 0.0000 cm, 0.0013 deg
+gate  3 ok    parity asd ['stride']: 0.0000 cm, 0.0013 deg
+gate  4 ok    parity asd ['ground_time', 'weight']: 0.0070 cm, 0.0214 deg
+gate  5 ok    parity dw []: 0.0021 cm, 0.0037 deg
+gate  6 ok    parity dw ['arm_drag', 'chest_sway', 'chest_twist']: 0.0000 cm, 0.0006 deg
+gate  7 ok    parity dw ['stride']: 0.0000 cm, 0.0006 deg
+gate  8 ok    parity dw ['ground_time', 'weight']: 0.0032 cm, 0.0058 deg
+gate  9 ok    parity HavyRun []: 0.0000 cm, 0.0004 deg
+gate 10 ok    parity HavyRun ['arm_drag', 'chest_sway', 'chest_twist']: 0.0000 cm, 0.0004 deg
+gate 11 ok    parity HavyRun ['stride']: 0.0046 cm, 0.0123 deg
+gate 12 ok    parity HavyRun ['ground_time', 'weight']: 0.0108 cm, 0.0236 deg
+gate 13 ok    parity cat:Walk []: 0.0152 cm, 0.0376 deg
+gate 14 ok    parity cat:Walk ['arm_drag', 'chest_sway', 'chest_twist']: 0.0000 cm, 0.0000 deg
+gate 15 ok    parity cat:Walk ['stride']: 0.0175 cm, 0.0478 deg
+gate 16 ok    parity cat:Walk ['ground_time', 'weight']: 0.0181 cm, 0.0637 deg
+16 gates, 0 failed

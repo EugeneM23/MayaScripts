@@ -581,7 +581,7 @@ The animator: «Продолжай». Done, committed on `main`, not pushed:
     `WEIGHT_GAIN` 2.0 (1.5 moved dw's legs 4 deg). Swept 1-3 % x gains 1.5 / 2: likeness to Knee bend 0.18-0.54
     plain, 0.79 under the goblin; to Ground time on cat:Walk 0.77 (was 0.91); effect asd 8.1 deg, dw 5.3,
     cat:Walk 6.2, HavyRun 24.8, asd under the sword 5.8.
-- **After the fixes** (`analysis/results-2026-10-26d/`):
+- **After the fixes, before the posed calibration** (`analysis/results-2026-10-26d/`):
   - plain: parity 16/16, identity 4/4, readback **172/172**, effect **136/136**, redundancy **4/4**, clicks 51/52
     (asd Weight +1: 14.0 deg/fr^2, limit 12 - Walk Builder's own Weight there is 10.8; no dip and gain pair kept
     it under 12 and dw's Weight visible, swept), speed 3/4 (dw 45.07 % of Walk Builder's against the 45 % bar;
@@ -591,11 +591,35 @@ The animator: «Продолжай». Done, committed on `main`, not pushed:
   - under the sword: clicks 52/52, effect 131/136 (Whip on four walks and cat:Walk's Head steady: a two-handed
     grip holds the arms, the CAT head barely moves), readback 161/172, redundancy 3/4 (cat:Walk Weight ~ Knee bend
     0.89);
-  - **readback under a pose is the open item**: the calibration is probed with no pose, and under a crouch or a
-    grip Knee bend overshoots (asked +4.9, got +11.9 on dw under the goblin), Bounce overshoots (HavyRun +2.91 ->
-    +4.82) and the arm knobs fall short (the pose holds the arms). The third session's claim that the share-0
-    curves read back as well as posed ones did not hold for these knobs. Next: probe the calibration per pose
-    (sixteen more evaluations a pose, cached the same way).
+  - readback under a pose was the open item: the calibration was probed with no pose, and under a crouch or a
+    grip Knee bend overshot (asked +4.9, got +11.9 on dw under the goblin), Bounce overshot (HavyRun +2.91 ->
+    +4.82) and the arm knobs fell short (the pose holds the arms). The third session's claim that the share-0
+    curves read back as well as posed ones did not hold for these knobs.
+- **Calibration under each pose** (the animator: «Да, сделай калибровку под каждую позу»):
+  - `gaitload.posed_curves`: the knobs probed once a walk and pose at full share, kept on the source
+    (`Source.posed`) and on disk, the pose known by its content (`pose_ident`: parts and numbers to 1e-6, so a
+    card edited is another pose);
+  - `blend_curves`: the bare walk's and the full pose's responses read at the asked changes of both and mixed by
+    the share, so moving Pose share costs no probe;
+  - `needs_probe(source, pose, share)` covers the posed probe too: the window says «reading X's knobs under this
+    pose» under a wait cursor;
+  - Arm swing, Swing out and Chest sway joined the calibrated knobs (one probe group; a pose damps them): twenty
+    evaluations a calibration;
+  - `gates.Bench` calibrates under its pose the same way.
+- **After it** (`analysis/results-2026-10-26e/`, the record of this addendum; `-c` before the session's fixes,
+  `-d` before the posed calibration):
+  - plain: parity 16/16, identity 4/4, readback 172/172, effect 136/136, redundancy 4/4, clicks 51/52 (asd Weight
+    +1, 14.0), speed 2/4 (asd 45 %, dw 46 % of Walk Builder's against a 45 % bar - the same code read 44 and 45 an
+    hour before: the bar sits inside this machine's noise);
+  - under the goblin: clicks **52/52**, readback **169/172**, effect 133/136, redundancy 3/4;
+  - under the sword: clicks **52/52**, readback **167/171**, effect 131/136, redundancy 3/4;
+  - what is left, and why: Knee bend under a crouch still reads ~2x (dw +4.9 -> +10.2, cat:Walk +3.5 -> +7.9:
+    the straightest planted knee of a crouch jumps between frames as the cap takes over); Knee bend has no effect
+    under the goblin on asd and HavyRun (their crouched knees are bent past anything it asks: its range is cut
+    to 66-70 deg); Whip and Head steady under the sword (the grip holds the arms); dw Ground time ~ Knee bend
+    0.85 and cat:Walk Weight ~ Knee bend 0.90 under the poses (a crouch's planted knees are what all three move);
+    a few elbow-swing and toe-out reads under the sword.
+  - `verify_gait.py` 33/33; 71 unit tests.
   - `verify_gait.py` 33/33 again; 64 unit tests (`tests/test_gait_*.py`, `test_gait_window.py` new).
 - **Measured, not fixed**: under the goblin asd's longest step (and top speed) click 14.5 (21.4) deg/fr^2: the
   leading leg's swing reaches for a print farther than the crouch's bent knee allows and straightens 53 -> 18.6

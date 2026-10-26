@@ -14261,18 +14261,18 @@ every decision and number), plan `docs/superpowers/plans/2026-10-26-gait-builder
   the cached calibration), `skeldar_gait` (the window, the `skeldarGait` memo), `gates.py`, `verify_gait.py`,
   `verify_gait_window.py`. Unit tests `tests/test_gait_*.py`.
 - **The calibration**: knobs whose engine change is not their unit 1:1 (Ground time, Knee bend, Elbow, Elbow
-  swing, Bounce) are probed once a walk (sixteen evaluations, with no pose) and asked through their response's
+  swing, Bounce, Arm swing, Swing out, Chest sway) are probed once a walk (twenty evaluations) with no pose and
+  once more under each pose at full share, the two mixed by the Pose share; asked through their response's
   inverse, their ranges cut to their reach; Step, Speed and Ground time stop where the pelvis drops 15 % of the
   leg (a lunge). Kept in memory and in `<maya>/SkeldarGaitCache/<sha1>.json`, keyed by the walk file, its clean,
-  its mean-pose correction and the code's mtimes.
+  its mean-pose correction, the pose's content and the code's mtimes.
 - **Knee clicks**: a soft limit (`knee_soft` 0.04) eases a leg into its reach from max(the source's own stretch
   - read from the hip a pose lowers - , 96 % of the limit).
 - **Weight** is the bob's shape and clock plus a loading dip (`weight_dip`), never a knee cap (that is Knee
   bend's mechanism).
-- **Proof**: the window 22/22 in a disposable GUI Maya; `verify_gait.py` 33/33 standalone; gates on asd, dw, HavyRun and CAT Walk with no pose: parity, identity, readback 172/172, effect 136/136, redundancy 4/4, clicks 51/52, speed 3/4 (dw at 45.07 % of Walk Builder's, bar 45 %).
-- **Open** (the spec's fourth addendum): readback under a pose (the calibration is probed with no pose; under
-  the goblin and the sword 158/172 and 161/172); the goblin's longest step clicks on asd (14.5); asd's Weight +1
-  clicks 14.0. Not built: the hub card (the tool moves into the plugin when asked).
+- **Proof**: the window 22/22 in a disposable GUI Maya; `verify_gait.py` 33/33 standalone; gates on asd, dw, HavyRun and CAT Walk with no pose: parity, identity, readback 172/172, effect 136/136, redundancy 4/4, clicks 51/52; speed 44-46 % of Walk Builder's against a 45 % bar (inside this machine's noise); under the goblin / the sword clicks 52/52 / 52/52, readback 169/172 / 167/171.
+- **Open** (the spec's fourth addendum): Knee bend under a crouch reads ~2x what is asked; asd's Weight +1
+  clicks 14.0 (limit 12). Not built: the hub card (the tool moves into the plugin when asked).
 
 Traps from this build:
 - **A grp control's `-q -changeCommand` answers None** (floatSliderGrp, radioButtonGrp), and `-q -precision`

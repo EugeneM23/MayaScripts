@@ -342,16 +342,18 @@ def _knob_changed(name, value):
 
 
 def _base(source, state):
-    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (sixteen
+    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (twenty
     evaluations, a few seconds, then kept on disk): said and under a wait cursor."""
     gaitload = _modules()[0]
-    probing = gaitload.needs_probe(source)
+    pose, share = _pose_and_share(source, state)
+    probing = gaitload.needs_probe(source, pose, share)
     if probing:
-        _say("reading %s's knobs - the first time only, a few seconds" % source.label)
+        _say("reading %s's knobs%s - the first time only, a few seconds" % (
+            source.label, " under this pose" if pose is not None and share > 0.0 else ""))
         cmds.refresh()
         cmds.waitCursor(state=True)
     try:
-        return gaitload.baseline(source, *_pose_and_share(source, state))
+        return gaitload.baseline(source, pose, share)
     finally:
         if probing:
             cmds.waitCursor(state=False)

@@ -26,6 +26,7 @@ for path in (HERE, PLUGIN):
 import gaitmodel as gm                                       # noqa: E402
 import aspects as asp                                        # noqa: E402
 import gaitgen                                               # noqa: E402
+import gaitload                                              # noqa: E402
 from maya_walk import model as wm, files as wf, clean as wc, meanpose as mp      # noqa: E402
 from maya_walk import pose as wp, target as wt                                  # noqa: E402
 
@@ -226,8 +227,8 @@ def read_pose(name, walk, statics):
 
 class Bench(object):
     """One walk under Gait Builder's knobs: its base measure and an evaluator by knob values; under a saved pose
-    at `share` when `pose` names one (the calibrated knobs' responses probed with no pose, as gaitload keeps
-    them)."""
+    at `share` when `pose` names one (the calibrated knobs' responses probed with no pose and under the pose, mixed
+    by the share, as gaitload keeps them)."""
 
     def __init__(self, name, pose=None, share=1.0):
         got = read(name)
@@ -251,12 +252,23 @@ class Bench(object):
         if self.pose is None:
             self.base_result, self.base = plain_result, plain
         else:
+            # the knobs probed under the pose at full share too, mixed by the share (gaitload.baseline's way)
             e = asp.base_engine(self.walk)
+            e["pose"] = 1.0
+            full_result = self.walk.evaluate(e, self.pose)
+            full = asp.measure(self.walk, full_result.worlds)
+            asp.annotate(self.walk, full, full_result)
+
+            def posed_run(g):
+                k = asp.engine_knobs(self.walk, full, g)
+                k["pose"] = 1.0
+                return self.walk.evaluate(k, self.pose)
+            posed_curves = asp.calibrate(self.walk, full, posed_run)
             e["pose"] = self.share
             self.base_result = self.walk.evaluate(e, self.pose)
             self.base = asp.measure(self.walk, self.base_result.worlds)
             asp.annotate(self.walk, self.base, self.base_result)
-            self.base["_curve"] = curves
+            self.base["_curve"] = gaitload.blend_curves(curves, posed_curves, self.share)
         self.range = asp.ranges(self.base, self.walk.leg_length)
         self.groups = groups_of(self.walk.names)
 

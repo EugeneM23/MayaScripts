@@ -532,10 +532,13 @@ def timing(gait, base):
 # range's ends and each knob's response kept as a curve (asked change -> measured change): Ground time (Walk
 # Builder's ground_time lengthens a contact by its own length, capped by its swing's room; a walk's duty cannot
 # fall below what Foot placement's double support leaves - asd's 53 %), Knee bend (the pelvis's cover), Elbow and
-# Elbow swing (the arms' springs: a run's elbow swing barely shrinks, HavyRun), Bounce (the legs' reach). The asked change goes through the
+# Elbow swing (the arms' springs: a run's elbow swing barely shrinks, HavyRun), Bounce (the legs' reach), and
+# Arm swing, Swing out and Chest sway, which a pose damps (under the goblin dw's arms swung +12.8 deg of +17.1 asked:
+# the pose holds the arms' mean, the springs and the crouch take the rest) - probed together, the arms forward, a
+# foot's sideways bow and the chest's sideways sway barely touching each other. The asked change goes through the
 # curve's inverse, and the range is cut to what the walk reaches. Probes in groups whose parts do not touch each
 # other (the legs' timing with the arms' swing, the stance with the arms' mean).
-CALIBRATED = (("duty", "elbow_swing"), ("knee_bend", "elbow"), ("bob",))
+CALIBRATED = (("duty", "elbow_swing"), ("knee_bend", "elbow"), ("bob",), ("arm_swing", "swing_out", "chest_sway"))
 PROBES = (-1.0, -0.35, 0.35, 1.0)    # shares of the way from the walk's own value to the range's end
 # Knee bend's response is steep near the walk's own: a toe-off knee 20 deg from straight bends 7 deg more for 0.6 cm
 # more of the pelvis's drop (dw; a knee near straight is the root of its reach) - a small probe first
@@ -581,7 +584,7 @@ def calibrate(walk, base, run):
     base["_curve"] = {knob: {side or "": [(asked change, measured change), ...] by asked, (0, 0) included}};
     `run(gait)` evaluates the animator's units (the pose the base was measured under included) into a Result (or
     its world matrices). Also the pelvis's drop at the duty probes and at STEP_PROBES of the step and the
-    speed: kept as "_drop_<knob>" curves {"": [(asked change, cm down)]} (ranges cut them there). Sixteen
+    speed: kept as "_drop_<knob>" curves {"": [(asked change, cm down)]} (ranges cut them there). Twenty
     evaluations."""
     base.pop("_curve", None)
     rng = ranges(base, walk.leg_length)
@@ -595,7 +598,9 @@ def calibrate(walk, base, run):
                     continue
                 k = BY_NAME[name]
                 lo, hi = rng[name]
-                sides = SIDES if k.sided else ("",)
+                sides = [x for x in SIDES if x in base[k.key]] if k.sided else ("",)
+                if not sides:
+                    continue
                 mean = float(np.mean([_own(base, name, s or None) for s in sides]))
                 d = share * ((hi - mean) if share > 0 else (mean - lo))
                 if abs(d) < 1e-3:
@@ -745,7 +750,8 @@ def engine_knobs(walk, base, gait):
     e["in_place"] = 1.0 if value(gait, base, "in_place") >= 0.5 else 0.0
     if getattr(walk, "chest_shape", None) is not None:
         e["chest_twist"] = walk.own_chest_twist + (value(gait, base, "chest_twist") - base["chest_twist"]) / gain
-        e["chest_sway"] = walk.own_chest_sway + (value(gait, base, "chest_sway") - base["chest_sway"])
+        e["chest_sway"] = walk.own_chest_sway + _calibrated(base, "chest_sway", None,
+                                                             value(gait, base, "chest_sway") - base["chest_sway"])
     e["chest_bounce_add"] = value(gait, base, "chest_bounce") - base["chest_bounce"]
     e["head"] = 1.0 - value(gait, base, "head_steady") / 100.0
     e["nod_add"] = value(gait, base, "nod")
@@ -760,8 +766,9 @@ def engine_knobs(walk, base, gait):
         own = base[BY_NAME[name].key]
         return dict((s, value(gait, base, name, s) - own[s]) for s in SIDES if s in own)
     knee_d = _calibrated_sides(base, "knee_bend", changes("knee_bend"))
+    out_d = _calibrated_sides(base, "swing_out", changes("swing_out"))
     arm_d = {}
-    for name in ("elbow", "elbow_swing"):
+    for name in ("elbow", "elbow_swing", "arm_swing"):
         d = changes(name)
         arm_d[name] = _calibrated_sides(base, name, d) if len(d) == 2 else d
     for side in SIDES:
@@ -771,9 +778,9 @@ def engine_knobs(walk, base, gait):
         change = value(gait, base, "lift", side) - base["lift"][side]
         if abs(change) > 1e-9:
             e["lift" + sfx] = lift_scale(walk.lift_profile(side), change)
-        e["arm_swing_add" + sfx] = value(gait, base, "arm_swing", side) - base["arm_swing"].get(side, 0.0)
+        e["arm_swing_add" + sfx] = arm_d["arm_swing"].get(side, 0.0)
         e["toe_add" + sfx] = value(gait, base, "toe_out", side) - base["toe_out"][side]
-        e["swing_out" + sfx] = value(gait, base, "swing_out", side) - base["swing_out"][side]
+        e["swing_out" + sfx] = out_d[side]
         # the cap from the straightest knee over the model's planted frames (annotate), the asked change from the
         # walk's own straightest as measured
         own_knee = base["knee_bend"][side]
