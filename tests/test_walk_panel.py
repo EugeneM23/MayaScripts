@@ -1,5 +1,6 @@
-"""Walk Builder (maya_walk.panel): the hub card of the parametric walk on a fake cmds - the controls, the one
-knob group shown, the presses, a walked skeleton read back by selecting it, the memory."""
+"""Walk Builder (maya_walk.panel): the hub card of the parametric walk on a fake cmds - the controls, the
+parameters (maya_walk.gait: Main shown, one tab of the others), a parameter kept as a change from the cycle's own
+and pinned, the macros, the Diagnosis, the presses, a walked skeleton's settings taken, the memory."""
 
 import json
 import os
@@ -15,6 +16,7 @@ if PLUGIN not in sys.path:
 
 from maya_walk import panel, scene             # noqa: E402
 from maya_walk import model as wm              # noqa: E402
+from maya_walk import gait                     # noqa: E402
 from maya_poselib import store                 # noqa: E402
 
 
@@ -42,6 +44,8 @@ class FakeCmds(object):
         self.selection = []
         self.current_menu = None
         self.labels = {}
+        self.enabled = {}
+        self.buttons = set()
 
     def _made(self, kind, name, **kw):
         self.created.append((kind, name, kw))
@@ -74,7 +78,14 @@ class FakeCmds(object):
             self._made("text", name, label=label, **kw)
         return name
 
-    def button(self, name=None, **kw):
+    def button(self, name=None, edit=False, exists=False, enable=None, **kw):
+        if exists:
+            return name in self.buttons
+        if edit:
+            if enable is not None:
+                self.enabled[name] = enable
+            return name
+        self.buttons.add(name)
         return self._made("button", name, **kw)
 
     def optionMenu(self, name, exists=False, query=False, edit=False, value=None, itemListLong=False, **kw):
@@ -201,13 +212,6 @@ class FakeCmds(object):
         return name
 
 
-class FakeWalk(object):
-    P = 90
-
-    def summary(self):
-        return "dw: cycle 90 frames"
-
-
 class FakeReport(object):
     changed = True
 
@@ -216,6 +220,17 @@ class FakeReport(object):
 
     def short(self):
         return "cleaned: 1 spike"
+
+
+_WALK = []
+
+
+def synthetic():
+    """The synthetic walker of tests/test_walkmodel.py (one per run: analysing it costs)."""
+    if not _WALK:
+        from tests import test_walkmodel as tw
+        _WALK.append(tw.walk())
+    return _WALK[0]
 
 
 class CardTests(unittest.TestCase):
@@ -227,12 +242,15 @@ class CardTests(unittest.TestCase):
         self.fake = FakeCmds()
         self.applied = []
         self.memos = {}
+        self.findings = None                      # what the fake apply's Diagnosis answers
         self.state = {"loaded": {}, "target": None}
         names = ("_cmds", "walk_names", "walk_exists", "load_walk", "apply", "selected_root", "selected_top",
                  "selected_roots", "memo_of", "pick", "target_root", "_state", "fix_posture", "folder", "walkers",
                  "walker_label", "set_listed", "has_source", "has_keys", "own_name", "capture_source",
                  "restore_source", "keys_changed", "drop_source")
-        self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library)
+        self.saved = (panel._cmds, dict((n, getattr(scene, n)) for n in names), dict(panel.JOB), panel._library,
+                      getattr(sys, "_skeldar_walk_diag", None))
+        sys._skeldar_walk_diag = None
         self.temp = tempfile.mkdtemp()
         self.library = os.path.join(self.temp, "library").replace("\\", "/")
         os.makedirs(self.library)
@@ -245,14 +263,12 @@ class CardTests(unittest.TestCase):
         scene.walk_names = lambda: ["asd", "dw"]
         scene.walk_exists = lambda name: name in ("asd", "dw") or scene.is_card(name)
         self.loaded = []
-
-        self.frames = {}                          # a cycle's own frames (FakeWalk.P otherwise)
+        self.walk = synthetic()
+        self.own = gait.own(self.walk)
 
         def load_walk(name, given=None):
             self.loaded.append((name, given))
-            walk = FakeWalk()
-            walk.P = self.frames.get(name, FakeWalk.P)
-            return walk, {}, 0, FakeReport()
+            return self.walk, {}, 0, FakeReport()
         scene.load_walk = load_walk
         scene._state = lambda: self.state
         self.fixed = []
@@ -262,12 +278,18 @@ class CardTests(unittest.TestCase):
             return FakeReport(), "Fix posture: %s foot_l out: mirrored" % name
         scene.fix_posture = fix_posture
 
-        def apply(root, walk, given, pose, parts, pose_card=None, record=True):
-            self.applied.append((root, walk, given, pose_card, parts))
+        def apply(root, walk, given, pose, parts, pose_card=None, record=True, params=None):
+            self.applied.append((root, walk, given, pose_card, parts, params))
             self.state["target"] = "uuid-" + root
-            self.memos[root] = dict(self.memos.get(root, {}), walk=walk, knobs=dict(given), listed=True,
-                                    parts=list(parts))
-            return None, {"clean": FakeReport()}, "%s on %s" % (walk, root)
+            memo = dict(self.memos.get(root, {}), walk=walk, knobs=dict(given), listed=True, parts=list(parts),
+                        version=3)
+            if params is not None:
+                memo["params"] = scene.plain_params(params)
+            self.memos[root] = memo
+            info = {"clean": FakeReport()}
+            if self.findings is not None:
+                info["diagnosis"] = list(self.findings)
+            return None, info, "%s on %s" % (walk, root)
         scene.apply = apply
         scene.walkers = lambda: sorted(r for r, m in self.memos.items() if m.get("walk") and m.get("listed", True))
         scene.walker_label = lambda root: root.rsplit("|", 1)[-1]
@@ -316,12 +338,6 @@ class CardTests(unittest.TestCase):
         scene.selected_top = lambda: self.fake.selection[0] if self.fake.selection else None
         scene.memo_of = lambda root: self.memos.get(root, {})
 
-        def pick(root):
-            memo = self.memos[root]
-            self.state["target"] = "uuid-" + root
-            return memo["walk"], wm.knobs(**memo["knobs"]), memo.get("pose") or None, tuple(memo["parts"])
-        scene.pick = pick
-
         def target_root():
             if not self.state["target"]:
                 raise scene.Refusal("select a skeleton and press Pick first")
@@ -329,7 +345,8 @@ class CardTests(unittest.TestCase):
         scene.target_root = target_root
 
     def tearDown(self):
-        panel._cmds, functions, job, panel._library = self.saved
+        panel._cmds, functions, job, panel._library, diag = self.saved
+        sys._skeldar_walk_diag = diag
         shutil.rmtree(self.temp, ignore_errors=True)
         for name, value in functions.items():
             setattr(scene, name, value)
@@ -340,6 +357,25 @@ class CardTests(unittest.TestCase):
     def made(self, kind):
         return [c for c in self.fake.created if c[0] == kind]
 
+    def command(self, control, flag="changeCommand"):
+        for c in self.fake.created:
+            if c[1] == control:
+                return c[2][flag]
+        raise KeyError(control)
+
+    def release(self, name, value):
+        """A parameter's slider (or chip) set and let go."""
+        control = panel._control(name) if name in gait.P else name
+        self.fake.values[control] = value
+        return self.command(control)()
+
+    def params(self):
+        return self.applied[-1][5]
+
+    def assertChange(self, change, kind, x):
+        self.assertEqual(change[0], kind)
+        self.assertAlmostEqual(change[1], x, places=9)
+
     def test_the_card(self):
         panel.build_panel()
         marks = dict((m.name, (m.role, m.icon)) for m in self.hubstyle.take_marks())
@@ -349,87 +385,93 @@ class CardTests(unittest.TestCase):
         self.assertEqual(marks[panel.RESET_BTN], ("secondary", "refresh"))
         self.assertEqual(marks[panel.SAVE_WALK_BTN], ("tool", "device-floppy"))
         self.assertFalse(hasattr(panel, "SAVE_POSE_BTN"))          # a pose is saved by the Pose Library
-        self.assertFalse(hasattr(panel, "POSE_MENU"))
         self.assertFalse(hasattr(panel, "WALK_MENU"))           # the walk is a card in the walk well
         self.assertIn(panel.WALK_WELL, [c[1] for c in self.made("columnLayout")])
         self.assertIn("Walk: asd", self.fake.values[panel.WALK_WELL_TEXT])        # no Qt here: its line
         self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
-        self.assertIn("none", self.fake.values[panel.POSE_WELL_TEXT])             # no Qt here: its line
-        self.assertEqual(len(self.made("popupMenu")), 3)          # the walks folder; Pick's own; the list
-        # the Rig pose tab: Create / Delete, Update (the press that takes the rig's edit) / Reset
-        self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
-        self.assertEqual(marks[panel.MEAN_DELETE_BTN], ("danger", "trash"))
+        #  the walks folder; Pick's own; the list; and every parameter's right button
+        self.assertEqual(len(self.made("popupMenu")), 3 + len(gait.PARAMS))
         self.assertEqual(marks[panel.MEAN_UPDATE_BTN], ("primary", "refresh"))
-        self.assertEqual(marks[panel.MEAN_RESET_BTN], ("secondary", "arrow-back-up"))
         self.assertIn("rigpose", [key for row in panel.GROUP_ROWS for key in row])
         chips = [c[1] for c in self.made("checkBox")]
-        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX])
+        toggles = [panel._control(p.name) for key, _, names in panel.GROUPS for p in gait.PARAMS
+                   if p.name in names and p.kind == "toggle"]
+        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX]
+                         + toggles + [panel.PHYSICS_BOX])
         self.assertTrue(all(marks[c][0] == "chip" for c in chips))
         tabs = [(c[1], c[2]["collection"]) for c in self.made("iconTextRadioButton")]
         rows = [key for row in panel.GROUP_ROWS for key in row]
         self.assertEqual(sorted(rows), sorted(k for k, _, _ in panel.GROUPS))
-        self.assertEqual(tabs, [(panel._group_tab(k), panel.GROUP_TABS) for k in rows]
-                         + [(panel._side_tab(m), panel.SIDE_TABS) for m, _ in panel.SIDE_MODES])
-        self.assertTrue(self.fake.values[panel._side_tab("both")])      # Both, the default
-        sliders = [c[1] for c in self.made("floatSliderGrp") + self.made("intSliderGrp")]
-        self.assertEqual(sorted(sliders), sorted(panel._control(k) for k in scene.ALL_DEFAULTS
-                                                 if k not in panel.CHECKS))
-        self.assertEqual(marks[panel.FIX_BTN][0], "secondary")
+        self.assertEqual(tabs, [(panel._side_tab(m), panel.SIDE_TABS) for m, _ in panel.SIDE_MODES]
+                         + [(panel._group_tab(k), panel.GROUP_TABS) for k in rows])
+        sliders = [c[1] for c in self.made("floatSliderGrp")]
+        self.assertEqual(sorted(sliders), sorted([panel._control(p.name) for p in gait.PARAMS if p.kind != "toggle"]
+                                                 + [panel._control(k) for k in ("pose", "seam", "smooth")]
+                                                 + [panel.SPEED, panel.WEIGHT, panel.STRENGTH]))
+        self.assertEqual(self.made("intSliderGrp"), [])
+        #  every parameter at the active cycle's own value, in its unit
+        self.assertAlmostEqual(self.fake.values[panel._control("step")], self.own["step"], places=6)
+        self.assertAlmostEqual(self.fake.values[panel._control("tempo")], self.own["tempo"], places=6)
+        self.assertEqual(self.fake.labels[panel._control("step")], "Step, cm")
+        self.assertAlmostEqual(self.fake.values[panel.SPEED], self.own["speed"], places=6)
+        self.assertEqual(self.fake.values[panel.CHARACTER], gait.CHARACTERS[0][0])
         self.assertEqual(marks[panel.CLEAN_REPORT][0], "caption")       # a note would hide (CLAUDE.md trap 226)
-        self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
-        self.assertTrue(all(callable(c[2]["changeCommand"])
-                            for c in self.made("floatSliderGrp") + self.made("intSliderGrp")))
+        self.assertEqual(marks[panel.DIAG_CAPTION][0], "caption")
+        self.assertEqual(self.fake.values[panel.DIAG_CAPTION], "Diagnosis: Pick a walker")
+        self.assertFalse(any(self.fake.managed[panel._diag_row(i)] for i in range(panel.DIAG_ROWS)))
         self.assertTrue(panel.is_open())
 
-    def test_one_knob_group_at_a_time(self):
+    def test_main_is_always_shown_and_one_tab_at_a_time(self):
         panel.build_panel()
         shown = [k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]]
-        self.assertEqual(shown, ["clean"])                       # the first, when none is remembered
+        self.assertEqual(shown, ["timing"])                      # the first, when none is remembered
         panel.group_changed("legs")()
         shown = [k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]]
         self.assertEqual(shown, ["legs"])
         self.assertEqual(self.fake.vars[panel.OPTION + "group"], "legs")
-        self.assertTrue(self.fake.values[panel._group_tab("legs")])
         self.fake.created, self.fake.managed = [], {}
         panel.build_panel()                                      # remembered across a rebuild
-        shown = [k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]]
-        self.assertEqual(shown, ["legs"])
-
-    def test_apply_puts_the_card_on_the_selection_and_remembers_it(self):
+        self.assertEqual([k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]], ["legs"])
+        self.fake.vars[panel.OPTION + "group"] = "chest"         # a tab of the knobs before: its parameters' tab
+        self.fake.created, self.fake.managed = [], {}
         panel.build_panel()
-        self.fake.vars[panel.OPTION + "walk"] = "dw"
-        card = write_card(self.library, "Walk poses", "goblin")
-        self.fake.vars[panel.OPTION + "poseCard"] = "Walk poses/goblin.pose"
-        self.fake.values[panel._control("pelvis_height")] = 8.0
-        self.fake.values[panel._part_control("arms")] = False
+        self.assertEqual([k for k, _, _ in panel.GROUPS if self.fake.managed[panel._group_column(k)]], ["trunk"])
+        main = [c[1] for c in self.made("floatSliderGrp") if c[1] in [panel._control(n) for n in panel.MAIN_PARAMS]]
+        self.assertEqual(len(main), len(panel.MAIN_PARAMS))       # Main stands in no tab
+
+    def test_a_released_parameter_is_a_change_from_the_cycle_s_own_and_pinned(self):
+        panel.build_panel()
         self.fake.selection = ["|root"]
-        self.assertEqual(panel.press_apply(), "dw on |root")
-        root, walk, given, pose, parts = self.applied[-1]
-        self.assertEqual((root, walk, pose), ("|root", "dw", "Walk poses/goblin.pose"))
-        self.assertTrue(os.path.isdir(card))
-        self.assertEqual(given["pelvis_height"], 8.0)
-        self.assertEqual(given["tempo"], 90.0)                  # the walk's own, shown in the card
-        self.assertNotIn("arms", parts)
-        self.assertEqual(self.fake.vars[panel.OPTION + "knob_pelvis_height"], 8.0)
-        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], "dw")
-        self.assertEqual(self.fake.values[panel.STATUS], "dw on |root")
+        panel.press_apply()
+        self.release("step", 1.2 * self.own["step"])
+        self.assertChange(self.params()["changes"]["step"], "ratio", 1.2)
+        self.assertIn("step", self.params()["pins"])
+        self.assertEqual(self.fake.labels[panel._control("step")], "Step, cm" + panel.PIN_MARK)
+        self.release("lean", self.own["lean"] + 5.0)              # an offset kind: degrees added
+        self.assertAlmostEqual(self.params()["changes"]["lean"][1], 5.0, places=6)
+        self.release("step", self.own["step"])                    # back at its own: no change, still held
+        self.assertNotIn("step", self.params()["changes"])
+        self.assertIn("step", self.params()["pins"])
+        self.assertEqual(self.applied[-1][:2], ("|root", "asd"))
+        self.assertEqual(self.fake.vars[panel.OPTION + "walk"], "asd")
 
     def test_nothing_selected_says_so(self):
         panel.build_panel()
         self.assertIn("select", panel.press_apply())
         self.assertEqual(self.applied, [])
 
-    def test_a_knob_rekeys_every_walker_and_none_says_so(self):
+    def test_a_parameter_rekeys_every_walker_with_the_same_change_and_none_says_so(self):
         panel.build_panel()
         self.assertIn("Pick", panel.slider_changed())
         self.assertEqual(self.applied, [])
-        self.fake.selection = ["|root"]
+        self.fake.selection = ["|a", "|b"]
         panel.press_apply()
         self.fake.selection = []                                 # the list stays the list
-        self.fake.values[panel._control("stride")] = 1.3
-        panel.slider_changed()
-        self.assertEqual(self.applied[-1][0], "|root")
-        self.assertEqual(self.applied[-1][2]["stride"], 1.3)
+        self.release("bounce", 1.5 * self.own["bounce"])
+        keyed = self.applied[-2:]
+        self.assertEqual([a[0] for a in keyed], ["|a", "|b"])
+        for a in keyed:
+            self.assertChange(a[5]["changes"]["bounce"], "ratio", 1.5)
 
     def test_pick_adds_every_selected_skeleton_to_the_list(self):
         panel.build_panel()
@@ -439,31 +481,206 @@ class CardTests(unittest.TestCase):
         self.assertEqual([a[0] for a in self.applied], ["|a|root", "|b|root"])
         self.assertEqual(self.fake.items[panel.WALKER_LIST], ["root - asd", "root - asd"])
 
-    def test_each_walker_keeps_its_cycle_and_the_tempo_ratio(self):
+    def test_the_pose_parts_and_clean_reach_apply(self):
         panel.build_panel()
-        self.frames["asd"] = 32
-        self.fake.vars[panel.OPTION + "walk"] = "asd"
-        panel._set_knobs({"tempo": 32}, 32)
-        self.fake.selection = ["|a"]
+        self.fake.vars[panel.OPTION + "walk"] = "dw"
+        card = write_card(self.library, "Walk poses", "goblin")
+        self.fake.vars[panel.OPTION + "poseCard"] = "Walk poses/goblin.pose"
+        self.fake.values[panel._part_control("arms")] = False
+        self.fake.values[panel._control("smooth")] = 2.0
+        self.fake.selection = ["|root"]
+        self.assertEqual(panel.press_apply(), "dw on |root")
+        root, walk, given, pose, parts, params = self.applied[-1]
+        self.assertEqual((root, walk, pose), ("|root", "dw", "Walk poses/goblin.pose"))
+        self.assertTrue(os.path.isdir(card))
+        self.assertNotIn("arms", parts)
+        self.assertEqual((given["smooth"], params["clean"]["smooth"]), (2.0, 2.0))
+        self.assertEqual(sorted(given), sorted(panel.CARD_KNOBS))   # the model's knobs are the parameters'
+
+    def test_the_right_button_back_to_the_clip_or_follow_the_links(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
         panel.press_apply()
-        panel.take_walk_card(os.path.join(self.library, "x"))    # not an animation card: refused, nothing changes
-        panel._walk_taken("dw")                                  # 90 frames: the ratio 1 kept, nobody re-keyed
+        self.release("arm_swing", 2.0 * self.own["arm_swing"])
+        panel.reset_param("arm_swing")                           # held at the clip's: the links leave it alone
+        self.assertNotIn("arm_swing", self.params()["changes"])
+        self.assertIn("arm_swing", self.params()["pins"])
+        self.assertIn(panel.PIN_MARK, self.fake.labels[panel._control("arm_swing")])
+        panel.free_param("arm_swing")                            # free again: it follows the speed
+        self.assertNotIn("arm_swing", self.params()["pins"])
+        self.assertNotIn(panel.PIN_MARK, self.fake.labels[panel._control("arm_swing")])
+
+    def test_speed_moves_step_and_tempo_and_gives_way_to_them(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.release("step", 1.1 * self.own["step"])
+        self.release(panel.SPEED, 2.0 * self.own["speed"])
+        params = self.params()
+        self.assertAlmostEqual(params["macros"]["speed"], 2.0 * self.own["speed"], places=6)
+        self.assertNotIn("step", params["changes"])               # Speed takes over the step set by hand
+        self.assertNotIn("step", params["pins"])
+        vals = scene.param_values(self.walk, params)[1]
+        self.assertAlmostEqual(vals["step"], self.own["step"] * 2.0 ** 0.5, places=4)
+        self.assertAlmostEqual(self.fake.values[panel.SPEED], 2.0 * self.own["speed"], places=4)
+        self.assertIn(panel.PIN_MARK, self.fake.labels[panel.SPEED])
+        self.release("tempo", 0.9 * self.own["tempo"])            # a Tempo by hand: the Speed macro gives way
+        self.assertNotIn("speed", self.params()["macros"])
+
+    def test_weight_a_character_its_strength_and_the_physics(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.release(panel.WEIGHT, 0.6)
+        self.release(panel.CHARACTER, "Tired")
+        self.release(panel.STRENGTH, 0.5)
+        self.release(panel.PHYSICS_BOX, False)
+        params = self.params()
+        self.assertEqual((params["macros"]["weight"], params["character"], params["strength"], params["physics"]),
+                         (0.6, "Tired", 0.5, False))
+        self.release(panel.CHARACTER, gait.CHARACTERS[0][0])      # Natural: none
+        self.assertEqual(self.params()["character"], "")
+
+    def test_reset_puts_the_clip_back_and_rekeys(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.release("bounce", 2.0 * self.own["bounce"])
+        self.release(panel.WEIGHT, 0.5)
+        panel.press_reset()
+        params = self.params()
+        self.assertEqual((params["changes"], params["pins"], params["macros"]), ({}, [], {}))
+        self.assertAlmostEqual(self.fake.values[panel._control("bounce")], self.own["bounce"], places=6)
+
+    def test_the_diagnosis_shows_the_walker_keyed_last_and_fix_sets_it(self):
+        self.findings = [gait.Finding("arms_in_step", "Arms in step with the legs", {"arm_lag": 3.0}),
+                         gait.Finding("physics", "Physics gave way", {})]
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertEqual(self.fake.values[panel.DIAG_CAPTION], "Diagnosis - root - asd")
+        self.assertEqual([self.fake.managed[panel._diag_row(i)] for i in range(panel.DIAG_ROWS)],
+                         [True, True, False, False])
+        self.assertEqual(self.fake.values[panel._diag_text(0)], "Arms in step with the legs")
+        self.assertEqual(self.fake.enabled[panel._diag_fix(1)], False)   # nothing to set: no Fix
+        self.findings = []
+        line = self.command(panel._diag_fix(0), "command")()
+        self.assertIn("fixed: Arms in step", line)
+        kind, x = self.params()["changes"]["arm_lag"]
+        self.assertAlmostEqual(self.own["arm_lag"] + x, 3.0, places=6)
+        self.assertIn("arm_lag", self.params()["pins"])
+        self.assertEqual(self.fake.values[panel.DIAG_CAPTION], "Diagnosis - root - asd: nothing to say")
+
+    def test_take_settings_puts_a_walker_s_parameters_in_the_card(self):
+        params = scene.plain_params({"changes": {"step": ("ratio", 1.25)}, "pins": ["step"],
+                                     "macros": {"weight": 0.4}, "character": "Happy", "pose": 1.0})
+        self.memos["|walked"] = {"walk": "dw", "pose": "", "pose_card": "Swords/sword.pose",
+                                 "parts": ["torso", "feet"], "knobs": {}, "params": params, "version": 3}
+        panel.build_panel()
+        self.fake.selection = ["|walked"]
+        panel.refresh()                                          # selecting it does not take its settings
+        self.assertNotIn("step", panel.card_params()["changes"])
+        panel.take_settings("|walked")
+        self.assertEqual(self.applied, [])                       # taking them keys nothing
+        p = panel.card_params()
+        self.assertEqual((p["changes"]["step"], p["macros"], p["character"], p["pose"]),
+                         (("ratio", 1.25), {"weight": 0.4}, "Happy", 1.0))
+        self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/sword.pose")
+        self.assertAlmostEqual(self.fake.values[panel._control("step")], 1.25 * self.own["step"], places=6)
+        self.assertFalse(self.fake.values[panel._part_control("knees")])
+
+    def test_a_walker_keyed_before_the_parameters_brings_its_knobs_read_as_parameters(self):
+        self.memos["|old"] = {"walk": "asd", "pose": "", "parts": list(scene.ALL_PARTS), "version": 2,
+                              "knobs": dict(wm.DEFAULTS, stride=1.2, bob=1.5, pose=0.5)}
+        panel.build_panel()
+        panel.take_settings("|old")
+        p = panel.card_params()
+        self.assertEqual((p["changes"]["step"], p["changes"]["bounce"], p["pose"]),
+                         (("ratio", 1.2), ("ratio", 1.5), 0.5))
+
+    def test_the_knobs_a_card_remembered_before_become_parameters_once(self):
+        self.fake.vars[panel.OPTION + "knob_stride"] = 1.3
+        self.fake.vars[panel.OPTION + "knob_bob"] = 1.0
+        self.fake.vars[panel.OPTION + "knob_overlap"] = 2.0
+        panel.build_panel()
+        p = panel.card_params()
+        self.assertEqual(p["changes"]["step"], ("ratio", 1.3))
+        self.assertNotIn("bounce", p["changes"])                  # at its default: nothing to translate
+        self.assertAlmostEqual(p["changes"]["arm_lag"][1], 1.6)   # Overlap: the upper arm's share
+        self.fake.vars[panel.OPTION + "knob_stride"] = 2.0        # done once: a later build leaves the card's
+        panel.build_panel()
+        self.assertEqual(panel.card_params()["changes"]["step"], ("ratio", 1.3))
+
+    def test_a_skeleton_not_walked_is_named(self):
+        panel.build_panel()
+        self.fake.selection = ["|a|root"]
+        panel.refresh()
+        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Pick adds it with asd")
+
+    def test_a_press_with_the_card_closed_reads_the_memory(self):
+        self.fake.vars[panel.OPTION + "params"] = json.dumps({"changes": {"step": ["ratio", 1.4]}, "pins": ["step"]})
+        self.fake.vars[panel.OPTION + "walk"] = "dw"
+        self.fake.vars[panel.OPTION + "parts"] = json.dumps(["torso"])
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        root, walk, given, pose, parts, params = self.applied[-1]
+        self.assertEqual((walk, params["changes"]["step"], parts, pose), ("dw", ("ratio", 1.4), ("torso",), None))
+        self.assertFalse(panel.is_open())
+
+    def test_the_clean_knobs_reach_apply_and_fix_posture_rekeys(self):
+        panel.build_panel()
+        self.fake.values[panel._control("smooth")] = 2.0
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        self.assertEqual(self.applied[-1][2]["smooth"], 2.0)
         count = len(self.applied)
-        self.assertEqual(self.fake.values[panel._control("tempo")], 90)
-        self.assertEqual(len(self.applied), count)
-        self.fake.selection = ["|b"]
+        self.fake.vars[panel.OPTION + "walk"] = "dw"
+        line = panel.press_fix_posture()
+        self.assertEqual(self.fixed[-1][0], "dw")
+        self.assertIn("Fix posture: dw", line)
+        self.assertEqual(len(self.applied), count)              # nobody walks dw: nothing keyed
+        self.fake.vars[panel.OPTION + "walk"] = "asd"
+        panel.press_fix_posture()
+        self.assertEqual(len(self.applied), count + 1)          # the walker on asd keyed again
+        self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
+
+    def test_fix_posture_with_no_target_only_writes_the_walk(self):
+        panel.build_panel()
+        line = panel.press_fix_posture()
+        self.assertIn("Fix posture", line)
+        self.assertEqual(self.applied, [])
+
+    def test_the_in_place_chip_rekeys_the_target(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
         panel.press_apply()
-        self.assertEqual(self.applied[-1][:2], ("|b", "dw"))
-        panel._set_knobs({"tempo": 45}, 90)                      # half the frames: twice as fast
-        self.fake.values[panel._control("bob")] = 2.0
-        line = panel.slider_changed()
-        keyed = dict((a[0], a) for a in self.applied[-2:])
-        self.assertEqual(keyed["|a"][1], "asd")                  # each on its own cycle
-        self.assertEqual(keyed["|b"][1], "dw")
-        self.assertEqual(keyed["|a"][2]["tempo"], 16.0)          # 45/90 of its own 32
-        self.assertEqual(keyed["|b"][2]["tempo"], 45.0)
-        self.assertEqual((keyed["|a"][2]["bob"], keyed["|b"][2]["bob"]), (2.0, 2.0))
-        self.assertIn("2 walkers keyed", line)
+        self.assertEqual(self.applied[-1][2]["in_place"], 0.0)
+        self.fake.values[panel.IN_PLACE_BOX] = True
+        panel.in_place_changed()
+        self.assertEqual((self.applied[-1][2]["in_place"], self.params()["in_place"]), (1.0, 1.0))
+        self.assertEqual(self.fake.vars[panel.OPTION + "knob_in_place"], 1.0)
+        panel._set_knobs({"in_place": 0.0})
+        self.assertFalse(self.fake.values[panel.IN_PLACE_BOX])
+
+    def test_a_failing_press_says_why(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+
+        def broken(*a, **kw):
+            raise RuntimeError("boom")
+        scene.apply = broken
+        self.assertEqual(panel.press_apply(), "Walk Builder failed: boom")
+
+    def test_one_selection_job_per_card(self):
+        panel.build_panel()
+        first = panel.JOB[""]
+        (event, job), parent = self.fake.jobs[first]
+        self.assertEqual((event, parent), ("SelectionChanged", panel.STATUS))
+        #  the refresh, run only while the card is on screen (maya_hubqt.when_seen)
+        self.assertEqual(job._skeldar_seen, (panel.STATUS, panel.refresh))
+        panel.build_panel()
+        self.assertEqual(self.fake.killed, [first])
+        self.assertEqual(len(self.fake.jobs), 1)
 
     def test_a_walker_that_fails_is_named_and_the_others_keyed(self):
         panel.build_panel()
@@ -517,18 +734,17 @@ class CardTests(unittest.TestCase):
     def test_pick_own_processes_each_skeleton_on_its_own_cycle(self):
         panel.build_panel()
         self.keyed = {"|a", "|b"}                                # both carry an animation of their own
-        self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
         self.fake.selection = ["|a", "|b", "|c"]                 # c has no keys: the walk well's card
         line = panel.press_apply_own()
         self.assertEqual([a[1] for a in self.applied], [scene.OWN + "a", scene.OWN + "b", "asd"])
         self.assertIn("3 skeletons processed", line)
         self.assertEqual(self.sources, {"|a": scene.OWN + "a", "|b": scene.OWN + "b"})
         self.fake.selection = []
-        self.fake.values[panel._control("bob")] = 1.5            # one knob, every cycle its own
-        panel.slider_changed()
+        self.release("bounce", 1.5 * self.own["bounce"])          # one change, every cycle from its own
         keyed = dict((a[0], a) for a in self.applied[-3:])
         self.assertEqual([keyed[r][1] for r in ("|a", "|b", "|c")], [scene.OWN + "a", scene.OWN + "b", "asd"])
-        self.assertTrue(all(keyed[r][2]["bob"] == 1.5 for r in keyed))
+        for r in keyed:
+            self.assertChange(keyed[r][5]["changes"]["bounce"], "ratio", 1.5)
         count = len(self.applied)
         self.keyed.discard("|a")                                 # its keys are the result now: the kept one stays
         self.fake.selection = ["|a"]
@@ -541,15 +757,13 @@ class CardTests(unittest.TestCase):
     def test_choosing_a_card_puts_it_on_card_walkers_and_leaves_own_cycles(self):
         panel.build_panel()
         self.keyed = {"|own"}
-        self.frames.update({scene.OWN + "own": 40, "asd": 32})
         self.fake.selection = ["|own"]
         panel.press_apply_own()
         self.fake.selection = ["|card"]
         panel.press_apply()
         self.assertEqual(self.memos["|card"]["walk"], "asd")
         self.fake.selection = []
-        panel._walk_taken("asd")                                 # the tempo counts asd's frames
-        panel._set_knobs({"tempo": 16}, 32)                      # twice as fast
+        self.release("tempo", 0.5 * self.own["tempo"])            # twice as fast: a ratio, on every cycle
         count = len(self.applied)
         rel = "Walk cycles/dw.anim"
         os.makedirs(os.path.join(self.library, rel))
@@ -563,7 +777,7 @@ class CardTests(unittest.TestCase):
         keyed = self.applied[count:]
         self.assertEqual([a[0] for a in keyed], ["|card"])      # nothing selected: every card walker, no own one
         self.assertEqual(keyed[0][1], scene.card_walk(rel))
-        self.assertEqual(keyed[0][2]["tempo"], 90.0)             # a chosen cycle starts at its own tempo
+        self.assertChange(keyed[0][5]["changes"]["tempo"], "ratio", 0.5)   # the change goes with the card
         self.assertEqual(self.memos["|own"]["walk"], scene.OWN + "own")
         self.fake.selection = ["|own"]                           # selected: the card reaches it too
         count = len(self.applied)
@@ -585,7 +799,7 @@ class CardTests(unittest.TestCase):
         self.assertEqual(self.applied[-1][1], scene.OWN + "a")   # no card: its own animation, never a saved file
         self.reloaded.add("|a")                                  # a new clip loaded onto it
         count = len(self.applied)
-        line = panel.slider_changed()                            # a knob does not wipe the new clip
+        line = panel.slider_changed()                            # a parameter does not wipe the new clip
         self.assertEqual(len(self.applied), count)
         self.assertIn("new keys on it since the walk", line)
         self.sources["|a"] = scene.OWN + "a"
@@ -605,179 +819,77 @@ class CardTests(unittest.TestCase):
         del self.fake.vars[panel.OPTION + "walk"]
         panel.build_panel()
         self.keyed = {"|a", "|b"}
-        self.frames.update({scene.OWN + "a": 40, scene.OWN + "b": 60})
         self.fake.selection = ["|a", "|b"]
         panel.press_apply()                                      # no card at all: each on its own animation
         self.assertEqual(self.fake.vars[panel.OPTION + "walk"], scene.OWN + "a")
-        tempos = dict((a[0], a[2]["tempo"]) for a in self.applied)
-        self.assertEqual(tempos, {"|a": 40.0, "|b": 60.0})        # each keeps its own tempo
-
-    def test_take_settings_puts_a_walker_s_knobs_in_the_card(self):
-        knobs = dict(wm.DEFAULTS, stance=0.33, tempo=90.0, pose=1.0)
-        self.memos["|walked"] = {"walk": "dw", "pose": "two_handed_sword", "pose_card": "Swords/sword.pose",
-                                 "parts": ["torso", "feet"], "knobs": knobs}
-        panel.build_panel()
-        self.fake.selection = ["|walked"]
-        panel.refresh()                                          # selecting it no longer loads its knobs
-        self.assertNotEqual(self.fake.values[panel._control("stance")], 0.33)
-        panel.take_settings("|walked")
-        self.assertEqual(self.applied, [])                       # taking them keys nothing
-        self.assertEqual(self.fake.vars[panel.OPTION + "poseCard"], "Swords/sword.pose")
-        self.assertEqual(self.fake.values[panel._control("stance")], 0.33)
-        self.assertFalse(self.fake.values[panel._part_control("knees")])
-
-    def test_a_skeleton_not_walked_is_named(self):
-        panel.build_panel()
-        self.fake.selection = ["|a|root"]
-        panel.refresh()
-        self.assertEqual(self.fake.values[panel.SUBTITLE], "root: Pick adds it with asd")
-
-    def test_a_press_with_the_card_closed_reads_the_memory(self):
-        self.fake.vars[panel.OPTION + "knob_stride"] = 1.4
-        self.fake.vars[panel.OPTION + "walk"] = "dw"
-        self.fake.vars[panel.OPTION + "parts"] = json.dumps(["torso"])
-        self.fake.selection = ["|root"]
-        panel.press_apply()
-        root, walk, given, pose, parts = self.applied[-1]
-        self.assertEqual((walk, given["stride"], parts, pose), ("dw", 1.4, ("torso",), None))
-        self.assertFalse(panel.is_open())
-
-    def test_reset_puts_the_defaults_back_and_rekeys(self):
-        panel.build_panel()
-        self.fake.selection = ["|root"]
-        panel.press_apply()
-        self.fake.values[panel._control("bob")] = 2.0
-        panel.press_reset()
-        self.assertEqual(self.fake.values[panel._control("bob")], wm.DEFAULTS["bob"])
-        self.assertEqual(self.fake.values[panel._control("tempo")], 90)
-        self.assertEqual(self.applied[-1][2]["bob"], wm.DEFAULTS["bob"])
-
-    def test_the_clean_knobs_reach_apply_and_fix_posture_rekeys(self):
-        panel.build_panel()
-        self.fake.values[panel._control("smooth")] = 2.0
-        self.fake.selection = ["|root"]
-        panel.press_apply()
-        self.assertEqual(self.applied[-1][2]["smooth"], 2.0)
-        count = len(self.applied)
-        self.fake.vars[panel.OPTION + "walk"] = "dw"
-        line = panel.press_fix_posture()
-        self.assertEqual(self.fixed[-1][0], "dw")
-        self.assertIn("Fix posture: dw", line)
-        self.assertEqual(len(self.applied), count)              # nobody walks dw: nothing keyed
-        self.fake.vars[panel.OPTION + "walk"] = "asd"
-        panel.press_fix_posture()
-        self.assertEqual(len(self.applied), count + 1)          # the walker on asd keyed again
-        self.assertEqual(self.fake.values[panel.CLEAN_REPORT], "spikes: hand_l 23 (91 deg)")
-
-    def test_fix_posture_with_no_target_only_writes_the_walk(self):
-        panel.build_panel()
-        line = panel.press_fix_posture()
-        self.assertIn("Fix posture", line)
-        self.assertEqual(self.applied, [])
-
-    def test_the_in_place_chip_rekeys_the_target(self):
-        panel.build_panel()
-        self.fake.selection = ["|root"]
-        panel.press_apply()
-        self.assertEqual(self.applied[-1][2]["in_place"], 0.0)
-        self.fake.values[panel.IN_PLACE_BOX] = True
-        panel.in_place_changed()
-        self.assertEqual(self.applied[-1][2]["in_place"], 1.0)
-        self.assertEqual(self.fake.vars[panel.OPTION + "knob_in_place"], 1.0)
-        panel._set_knobs({"in_place": 0.0}, 90)
-        self.assertFalse(self.fake.values[panel.IN_PLACE_BOX])
-
-    def test_a_failing_press_says_why(self):
-        panel.build_panel()
-        self.fake.selection = ["|root"]
-
-        def broken(*a, **kw):
-            raise RuntimeError("boom")
-        scene.apply = broken
-        self.assertEqual(panel.press_apply(), "Walk Builder failed: boom")
-
-    def test_one_selection_job_per_card(self):
-        panel.build_panel()
-        first = panel.JOB[""]
-        (event, job), parent = self.fake.jobs[first]
-        self.assertEqual((event, parent), ("SelectionChanged", panel.STATUS))
-        #  the refresh, run only while the card is on screen (maya_hubqt.when_seen)
-        self.assertEqual(job._skeldar_seen, (panel.STATUS, panel.refresh))
-        panel.build_panel()
-        self.assertEqual(self.fake.killed, [first])
-        self.assertEqual(len(self.fake.jobs), 1)
+        self.assertEqual([a[1] for a in self.applied], [scene.OWN + "a", scene.OWN + "b"])
+        self.assertTrue(all("tempo" not in a[5]["changes"] for a in self.applied))   # each at its own tempo
 
 
 class SideTests(CardTests):
-    """[Both | Left | Right]: the leg and arm knobs set both sides, or one side alone."""
-
-    def changed(self, name, value):
-        self.fake.values[panel._control(name)] = value
-        for c in self.made("floatSliderGrp"):
-            if c[1] == panel._control(name):
-                return c[2]["changeCommand"]()
+    """[Both | Left | Right]: a two-sided parameter sets both sides, or one side alone."""
 
     def test_left_sets_the_left_side_alone(self):
         panel.build_panel()
         self.fake.selection = ["|root"]
         panel.press_apply()
         panel.side_changed("l")()
-        self.assertEqual(self.fake.labels[panel._control("lift")], "Foot lift L")
-        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms L")
-        self.changed("lift", 2.0)
-        given = self.applied[-1][2]
-        self.assertEqual((given["lift"], given["lift_l"]), (1.0, 2.0))
-        self.assertNotIn("lift_r", given)
-        panel.side_changed("r")()                       # the right shows its own: the knob's
-        self.assertEqual(self.fake.values[panel._control("lift")], 1.0)
-        panel.side_changed("l")()
-        self.assertEqual(self.fake.values[panel._control("lift")], 2.0)
-        panel.side_changed("both")()                    # Both marks a knob whose sides differ
-        self.assertEqual(self.fake.labels[panel._control("lift")], "Foot lift *")
-        self.assertEqual(self.fake.values[panel._control("lift")], 1.0)
-        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms")
+        self.assertEqual(self.fake.labels[panel._control("foot_lift")], "Foot lift, cm L")
+        self.assertEqual(self.fake.labels[panel._control("step")], "Step, cm")           # one-sided: as it is
+        self.release("foot_lift", 2.0 * self.own["foot_lift_l"])
+        changes = self.params()["changes"]
+        self.assertChange(changes["foot_lift_l"], "ratio", 2.0)
+        self.assertNotIn("foot_lift", changes)
+        self.assertNotIn("foot_lift_r", changes)
+        panel.side_changed("r")()                       # the right shows its own
+        self.assertAlmostEqual(self.fake.values[panel._control("foot_lift")], self.own["foot_lift_r"], places=6)
+        panel.side_changed("both")()                    # Both marks a parameter whose sides differ
+        self.assertEqual(self.fake.labels[panel._control("foot_lift")], "Foot lift, cm *" + panel.PIN_MARK)
 
-    def test_both_links_a_knob_s_sides_again(self):
+    def test_both_links_a_parameter_s_sides_again(self):
         panel.build_panel()
         self.fake.selection = ["|root"]
         panel.press_apply()
         panel.side_changed("l")()
-        self.changed("arms", 0.0)
+        self.release("arm_swing", 0.0)
         panel.side_changed("both")()
-        self.changed("arms", 1.5)
-        given = self.applied[-1][2]
-        self.assertEqual(given["arms"], 1.5)
-        self.assertNotIn("arms_l", given)
-        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms")
+        self.release("arm_swing", 1.5 * self.own["arm_swing"])
+        changes = self.params()["changes"]
+        self.assertChange(changes["arm_swing"], "ratio", 1.5)
+        self.assertNotIn("arm_swing_l", changes)
+        self.assertNotIn("arm_swing_l", self.params()["pins"])
+        self.assertEqual(self.fake.labels[panel._control("arm_swing")], "Arm swing, deg" + panel.PIN_MARK)
 
-    def test_a_knob_without_sides_is_the_same_in_every_mode(self):
+    def test_a_one_sided_parameter_is_the_same_in_every_mode(self):
         panel.build_panel()
         self.fake.selection = ["|root"]
         panel.press_apply()
         panel.side_changed("r")()
-        self.changed("bob", 2.0)
-        given = self.applied[-1][2]
-        self.assertEqual(given["bob"], 2.0)
-        self.assertNotIn("bob_r", given)
+        self.release("bounce", 2.0 * self.own["bounce"])
+        self.assertEqual(list(self.params()["changes"]), ["bounce"])
+        self.assertChange(self.params()["changes"]["bounce"], "ratio", 2.0)
 
     def test_reset_links_every_side(self):
         panel.build_panel()
         self.fake.selection = ["|root"]
         panel.press_apply()
         panel.side_changed("l")()
-        self.changed("foot_lag", 3.0)
+        self.release("toe_out", self.own["toe_out_l"] + 10.0)
         panel.press_reset()
-        self.assertNotIn("foot_lag_l", self.applied[-1][2])
+        self.assertEqual(self.params()["changes"], {})
 
-    def test_a_walked_skeleton_brings_its_sides(self):
-        knobs = dict(wm.DEFAULTS, tempo=90.0, arm_drag_r=4.0)
-        self.memos["|walked"] = {"walk": "dw", "pose": "", "parts": list(scene.ALL_PARTS), "knobs": knobs}
+    def test_the_right_button_on_one_side_lets_that_side_go(self):
         panel.build_panel()
-        panel.take_settings("|walked")
-        self.assertEqual(self.fake.labels[panel._control("arm_drag")], "Arm drag, fr *")
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.side_changed("l")()
+        self.release("elbow", self.own["elbow_l"] + 20.0)
         panel.side_changed("r")()
-        self.assertEqual(self.fake.values[panel._control("arm_drag")], 4.0)
-        self.assertEqual(panel.values()["arm_drag_r"], 4.0)
+        self.release("elbow", self.own["elbow_r"] + 10.0)
+        panel.free_param("elbow")                       # the right's alone
+        changes = self.params()["changes"]
+        self.assertIn("elbow_l", changes)
+        self.assertNotIn("elbow_r", changes)
 
 
 class HubTests(unittest.TestCase):
@@ -965,15 +1077,15 @@ class RekeyLaterTests(unittest.TestCase):
         self.assertEqual([(a[0], a[3]) for a in self.applied], [("|a", "goblin.pose"), ("|b", "goblin.pose")])
         self.assertIn("pose card goblin | 2 walkers keyed", self.fake.values[panel.STATUS])
 
-    def test_knobs_released_in_a_row_key_every_walker_once_with_the_last_value(self):
+    def test_parameters_released_in_a_row_key_every_walker_once_with_the_last_value(self):
         panel.build_panel()
-        for value in (1.1, 1.2, 1.3):
-            self.fake.values[panel._control("stride")] = value
-            panel.knob_changed("stride")()
+        for ratio in (1.1, 1.2, 1.3):
+            self.fake.values[panel._control("step")] = ratio * self.own["step"]
+            panel.param_changed("step")()
         self.assertEqual(self.applied, [])
         self.run_jobs()
         self.assertEqual([a[0] for a in self.applied], ["|a", "|b"])
-        self.assertEqual(self.applied[-1][2]["stride"], 1.3)
+        self.assertAlmostEqual(self.applied[-1][5]["changes"]["step"][1], 1.3, places=9)
 
     def test_with_nobody_listed_there_is_nothing_to_wait_for(self):
         self.memos.clear()

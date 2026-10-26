@@ -20,8 +20,16 @@ pose. Selecting a walker makes its cycle the active one. Every value is remember
 comes back as it was and a hotkey row presses with the card closed. A press that re-keys every walker changes
 the card at once and keys them on Maya's next idle, once for a burst of presses, under a progress window Esc
 stops (_rekey).
+
+Since 2026-10-26 the knobs are the walk's PARAMETERS (maya_walk.gait; the animator: «главная идея walk builder в
+том что это математическая модель которую можно редактировать»): each a measured feature of a cycle in its unit
+(cm, deg, frames, % of a stride), shown at the active cycle's own value; Main always shown, the others in tabs. A
+value set by hand is kept as a change from the cycle's own (a ratio or an offset - gait.stored_change), so every
+walker takes the same change on its own cycle, and is pinned: its label marked, the physics' links leave it alone
+(its right button lets it go back to the clip's, or to the links). Speed, Weight and a Character move several at
+once. The Diagnosis under the status line reads the walker keyed last against the guide and offers a Fix.
 The design: docs/superpowers/specs/2026-10-13-walk-builder-card-design.md,
-2026-10-16-walk-builder-many-walkers-design.md.
+2026-10-16-walk-builder-many-walkers-design.md, 2026-10-26-walk-builder-editable-model-design.md.
 """
 import json
 import os
@@ -57,36 +65,45 @@ MEAN_UPDATE_BTN = "skeldarWalkMeanUpdate"
 MEAN_DELETE_BTN = "skeldarWalkMeanDelete"
 MEAN_RESET_BTN = "skeldarWalkMeanReset"
 MEAN_NOTE = "skeldarWalkMeanNote"
-#  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Apply
+#  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Pick
 CHECKS = {"in_place": IN_PLACE_BOX}
+#  The card's own knobs - the walk's parameters are maya_walk.gait's: the pose's share, In place and the clean's
+#  Seam and Smooth, remembered as before (knob_<name>) and handed to apply as `given`
+CARD_KNOBS = ("pose", "in_place", "seam", "smooth")
 #  [Both | Left | Right] (2026-10-13, «режим в котором левая и правая сторона станут раздельными, по
-#  умолчанию коррекция двух сторон»): which side the leg and arm knobs (model.SIDED) show and set
+#  умолчанию коррекция двух сторон»): which side a two-sided parameter shows and sets
 SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
 SIDE_MARK = {"l": " L", "r": " R"}
+PIN_MARK = " \u2022"     # a parameter set by hand (pinned): the physics' links leave it alone
 OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
-#  The card's two-sided knobs (the engine's own sided knobs past wm.LEGACY are gait's)
-CARD_SIDED = tuple(n for n in scene.wm.SIDED if n in scene.wm.LEGACY)
 NOTHING = "Select skeletons - Pick puts the walk on them and lists them"
+gait = scene.gait
+#  The macros (2026-10-26): Speed (the walk ratio: the step and the cadence each as its root), Weight, a Character
+#  at a Strength - and the physics' helpers as a whole
+SPEED = "skeldarWalkMacro_speed"
+WEIGHT = "skeldarWalkMacro_weight"
+CHARACTER = "skeldarWalkCharacter"
+STRENGTH = "skeldarWalkStrength"
+PHYSICS_BOX = "skeldarWalkPhysics"
+#  The Diagnosis: a caption and rows of a finding with its Fix
+DIAG_CAPTION = "skeldarWalkDiagnosis"
+DIAG_ROWS = 4
 
-#  The knobs but Pose (its share stands under the pose's dropdown) and In place (a chip by Apply), one group shown
-#  at a time; Clean's are the clean's (maya_walk.clean - scene.ALL_DEFAULTS), the rest the model's
-GROUPS = (
+
+def _names(group):
+    return tuple(p.name for p in gait.PARAMS if p.group == group)
+
+
+MAIN_PARAMS = _names(gait.MAIN)
+#  The tabs: gait's groups but Main (always shown), the clean's knobs, the Rig pose's buttons
+GROUPS = tuple((g, gait.GROUP_LABELS[g], _names(g)) for g in gait.GROUPS if g != gait.MAIN) + (
     ("clean", "Clean", ("seam", "smooth")),
-    ("step", "Step", ("stride", "tempo", "lift")),
-    ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_match", "leg_turn", "knee_foot",
-                      "foot_lag", "foot_flex", "foot_flat")),
-    ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
-                          "pelvis_twist", "pelvis_list",
-                          "root_sway")),
-    ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "gait_lean", "torso_drag", "torso_bounce", "head",
-                        "head_drag")),
-    ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
-    ("weight", "Weight", ("weight", "balance", "exaggeration")),
     ("rigpose", "Rig pose", ()),           # buttons, not knobs: the walk's mean pose on a Manny rig
 )
-#  The tabs on two rows (eight in a 360 px dock would not read)
-GROUP_ROWS = (("clean", "step", "legs", "pelvis"), ("chest", "arms", "weight", "rigpose"))
+#  The tabs on two rows (nine in a 360 px dock would not read)
+GROUP_ROWS = (("timing", "pelvis", "legs", "trunk", "head"), ("arms", "physics", "clean", "rigpose"))
+OLD_GROUPS = {"step": "timing", "chest": "trunk", "weight": "physics"}      # a tab remembered from before
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {
     "smooth": ("Smooth, fr", "Every joint through a soft periodic blur this many frames wide: quiets jitter that is "
@@ -95,97 +112,35 @@ LABELS = {
                          "many frames each side of its seam, in value and speed"),
     "pose": ("Pose", "How far the pose picked above replaces the walk's own (its parts below): 0 is the walk, "
                      "1 the pose"),
-    "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
-    "tempo": ("Tempo, fr", "Frames a cycle of two steps; fewer is faster"),
-    "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
-    "in_place": ("In place", "1: the walk on the spot - the root stays where the first frame has it (weaving "
-                             "aside only with Root sway), the body moves about it and the planted feet slide back; "
-                             "the stride and speed said are the walk's"),
-    "foot_placement": ("Foot placement", "1: a planted foot never slides (it rolls heel to ball about a still "
-                                         "point) and one foot is always on the ground - both are down a while "
-                                         "at every step; 0 is the walk's own feet, slides and all"),
-    "ground_time": ("Ground time", "x how long each foot stays on the ground at a step before it swings forward: "
-                                   "past 1 it leaves later - the leg stretches out behind, rises onto its toes and "
-                                   "swings through quicker; where even a straight leg on its toes falls short, the "
-                                   "pelvis sinks at the push-off. Under 1 it lifts sooner"),
-    "stance": ("Stance","x how far apart the feet stand on the ground (the pose's spread included); 0 puts "
-                         "them on one line, 1 is the walk with the pose"),
-    "swing_out": ("Swing out, cm", "The swinging foot's path bowed this far out to its side between the "
-                                   "steps (negative: in, toward the other leg), in the walk's size"),
-    "leg_match": ("Leg match", "Fits a pose's legs to the gait: a pose standing side-on gives its hips' turn to "
-                               "the spine (the hips face the walk, the shoulders keep the pose), and its knees' "
-                               "and toes' splay and its width are read against its own hips and kept as much as "
-                               "the gait allows - most at a walk, little at a sprint, where a leg swings in the "
-                               "line of travel. 0 takes the pose's legs as they stand"),
-    "leg_turn": ("Leg turn", "x how far the pose turns the knees and the toes out (or in); 0 walks on the "
-                             "walk's own knees and feet"),
-    "knee_foot": ("Knee <-> foot", "A knee turned against its foot past 15 deg (a shin twists that far) "
-                                   "meets it: 0 turns the knee to the foot, 1 the foot to the knee"),
-    "foot_lag": ("Foot lag, fr", "Frames the swinging foot trails its shin: it flicks through after it "
-                                 "leaves the ground and catches up before it lands (the toes 1.5x)"),
-    "foot_flex": ("Foot flex", "x how far the swinging foot turns in its ankle (and the toes in theirs)"),
-    "foot_flat": ("Foot flat", "1: a foot on the ground lies flat on it after its strike - a leg that falls short "
-                               "(a raised pelvis) sinks the pelvis instead of rocking the foot back on its heel, "
-                               "toes up; 0 lets the heel rock (the toes lift off the floor)"),
-    "pelvis_height": ("Pelvis height", "cm: raises (+) or lowers (-) the pelvis over the feet, the legs "
-                                       "following - a walk or a pose that crouches stands up; the legs never "
-                                       "straighten past the walk's straightest, so the feet stay down"),
-    "pelvis_forward": ("Pelvis forward", "cm: the hips this far ahead of (+) or behind (-) the feet, the body over "
-                                         "them going with them, the legs following; Balance keeps it"),
-    "bob": ("Bob", "x the pelvis's up and down"),
-    "sway": ("Sway", "x the pelvis's side to side"),
-    "surge": ("Surge", "x the pelvis's forward and back as it walks - Bob's partner along the walk (Pelvis "
-                       "forward moves it all ahead or behind)"),
-    "pelvis_rot": ("Pelvis motion", "x all the pelvis's turns and tilts (Twist and Hip drop included)"),
-    "pelvis_twist": ("Twist, deg", "The pelvis turns this far each way with the legs, the forward leg's hip "
-                                   "forward - at a normal step (0.8 of the leg); it grows with the step. "
-                                   "People: about 5; the lower back takes it back"),
-    "pelvis_list": ("Hip drop, deg", "The standing leg's hip this far up, the swinging leg's down, highest "
-                                     "just after the foot lands. People: about 4"),
-    "root_sway": ("Root sway", "0: the root runs straight down the walk's line (what a game's capsule "
-                               "wants); 1 weaves with the hips as the walk does"),
-    "spine": ("Spine", "x the spine's and the neck's motion (Chest twist and sway included)"),
-    "chest_twist": ("Chest twist", "deg: the shoulders turn this far each way against the hips' turn, at a "
-                                   "normal step; it grows with the step (before Torso drag's overlap). "
-                                   "People: about 7"),
-    "chest_sway": ("Chest sway", "deg: the shoulder line tilts this far each way over the steps. People: "
-                                 "about 5"),
-    "gait_lean": ("Gait lean", "Under a pose's torso, the walk's own forward lean (a run leans into it) is "
-                               "kept on top of the pose - as much of it as the room the pose leaves to "
-                               "horizontal: a bent pose leans further less. 0 is the pose's torso as it stands"),
-    "torso_drag": ("Torso drag, fr", "The trunk follows the pelvis with weight: the chest turns through a "
-                                     "spring that feels the hips' motion - about this many frames late, the "
-                                     "step's jolts smoothed into an overlap. 0: the trunk as the walk turns it"),
-    "torso_bounce": ("Torso bounce", "How far the trunk (and the head) overshoot as they catch up: 0 settles, "
-                                     "1 whips through"),
-    "head": ("Head", "x the head's own motion in the world (0 holds its gaze steady)"),
-    "head_drag": ("Head drag, fr", "The head keeps its gaze through a spring on the neck that feels the "
-                                   "body's motion - about this many frames late, the neck taking the "
-                                   "difference. 0: the head exactly where the walk looks"),
-    "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
-                     "hands holding one thing together hold it"),
-    "elbow": ("Elbow", "x the forearm's own swing in the elbow, on top of Arms"),
-    "arm_drag": ("Arm drag, fr", "The arms trail the body with weight: each limb follows through a spring "
-                                 "that feels the shoulder's motion - about this many frames late. A held "
-                                 "weapon trails the same way. 0: the arms exactly as the walk puts them"),
-    "arm_bounce": ("Arm bounce", "How far the arms overshoot as they catch up: 0 settles, 1 whips through"),
-    "overlap": ("Overlap, fr", "Frames the arms' own motion runs late against the body (the shoulders less); "
-                               "the trunk's and the head's overlap is Torso drag and Head drag"),
-    "weight": ("Weight", "Heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
-    "balance": ("Balance", "How far the centre of mass follows the feet like a pendulum: wider feet, a "
-                           "slower step, a crouch sway it more; a leaning pose takes the hips back over the "
-                           "feet. 0 leaves the pelvis to the other knobs"),
-    "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
+    "in_place": ("In place", "1: the walk on the spot - the root stays where the first frame has it, the body "
+                             "moves about it and the planted feet slide back; the stride and speed said are the "
+                             "walk's"),
+    "speed": ("Speed, m/s", "The walk's speed: the step and the cadence each change as its square root (the "
+                            "guide's walk ratio); a Step or a Tempo set by hand takes over again"),
+    "weight": ("Weight", "Heavier: a deeper bob lower after the strike, bent knees, flat feet longer, the arms and "
+                         "the trunk later, a slower step; negative: lighter (half as far)"),
+    "strength": ("Strength", "How far the Character moves the parameters: 0 none, 1 the character's"),
 }
+TIPS = {}
 TIPS = {
     "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
              "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
              "animation is kept on it first (Restore the original keys puts it back). Right button: each on its "
-             "own animation - for arrays of clips. Every released knob re-keys every walker, each on its own "
-             "cycle; the tempo counts the active cycle's frames, the others take the same ratio of theirs.",
+             "own animation - for arrays of clips. Every released parameter re-keys every walker, each on its own "
+             "cycle with the same change from that cycle's own.",
     "apply_own": "Every selected skeleton processed on the animation it carries (read on the first press and kept "
                  "on it) with the card's knobs and pose - one press for a whole array of clips",
-    "reset": "Every knob back to its default (the tempo to the walk's own); every walker is keyed again",
+    "reset": "Every parameter back to the clip's own (the macros and the character off); every walker is keyed "
+             "again",
+    "character": "A character's changes on top of the clip (the guide's styles and emotions), at the Strength "
+                 "beside it; Natural changes nothing",
+    "physics": "On: the physics' helpers - Foot placement, Balance, the knees' soft limit, Whip's springs and their "
+               "links; off: the clip's own feet and body, every parameter mapped straight (the clip itself at its "
+               "own values)",
+    "diagnosis": "What the walker keyed last does against the guide (Ходьба и бег: полное руководство) - Fix sets "
+                 "its parameters, pinned",
+    "param_menu": "Right button: back to the clip's (held there), or let it follow the links (the speed, the "
+                  "step) and the macros again",
     "walker_list": "The walkers: every skeleton Pick processed - «character - cycle». Click: select them (the "
                    "first one's cycle becomes the active one); right click: take a walker's settings into the card, "
                    "put the active walk card on it or its own cycle back, restore its original keys, or remove it "
@@ -253,11 +208,6 @@ def _side_tab(mode):
     return "skeldarWalkSide_" + mode
 
 
-def _override(name, side):
-    """The memory of a side's own value of a SIDED knob."""
-    return "knob_%s_%s" % (name, side)
-
-
 def side_mode():
     """"both" (the default: a knob sets both sides), "l" or "r"."""
     mode = _stored("side", "both")
@@ -281,52 +231,67 @@ def _remember(name, value):
 
 
 def _shown(name):
-    """The value a knob's slider (or checkbox) shows, or None without one."""
+    """The value a card knob's slider (or checkbox) shows, or None without one."""
     cmds = _cmds()
     control = _control(name)
     if name in CHECKS:
         box = CHECKS[name]
         return (1.0 if cmds.checkBox(box, query=True, value=True) else 0.0) \
             if cmds.checkBox(box, exists=True) else None
-    if name == "tempo":
-        return float(cmds.intSliderGrp(control, query=True, value=True)) \
-            if cmds.intSliderGrp(control, exists=True) else None
     return float(cmds.floatSliderGrp(control, query=True, value=True)) \
         if cmds.floatSliderGrp(control, exists=True) else None
 
 
 def values():
-    """The knobs: the card's where it stands (and remembered), else what was remembered; a side's own value
-    of a leg or arm knob as "<name>_l" / "<name>_r" where it has one (shown on the slider in Left / Right)."""
-    mode = side_mode()
+    """The card's own knobs (CARD_KNOBS: the pose's share, In place, Seam, Smooth): the card's where it stands (and
+    remembered), else what was remembered - what apply takes as `given`. The walk's parameters: card_params."""
     out = {}
-    for name, default in scene.ALL_DEFAULTS.items():
+    for name in CARD_KNOBS:
         shown = _shown(name)
-        if shown is not None and not (name in CARD_SIDED and mode != "both"):
+        if shown is not None:
             out[name] = shown
             _remember("knob_" + name, shown)
         else:
-            out[name] = float(_stored("knob_" + name, default))
-    for name in CARD_SIDED:
-        if mode != "both":                 # the slider shows this side: its value is this side's own
-            shown = _shown(name)
-            if shown is not None and (abs(shown - out[name]) > 1e-9 or _stored(_override(name, mode)) is not None):
-                _remember(_override(name, mode), shown)
-        for side in ("l", "r"):
-            own = _stored(_override(name, side))
-            if own is not None:
-                out["%s_%s" % (name, side)] = float(own)
+            out[name] = float(_stored("knob_" + name, scene.ALL_DEFAULTS[name]))
     return out
 
 
-def _forget_sides(name=None):
-    """A knob's sides linked again (every SIDED knob without `name`)."""
-    cmds = _cmds()
-    for each in ([name] if name else CARD_SIDED):
-        for side in ("l", "r"):
-            key = OPTION + _override(each, side)
-            if cmds.optionVar(exists=key):
-                cmds.optionVar(remove=key)
+def _json(name, default):
+    """A remembered JSON value, `default` when there is none or it is not of the default's type."""
+    try:
+        value = json.loads(_stored(name) or "null")
+    except (TypeError, ValueError):
+        value = None
+    return value if isinstance(value, type(default)) else default
+
+
+def _hand():
+    """(changes {key: (kind, x)}, pins {key}): the parameters the card set by hand."""
+    stored = _json("params", {})
+    p = scene.normal_params({"changes": stored.get("changes") or {}, "pins": stored.get("pins") or []})
+    return dict(p["changes"]), set(p["pins"])
+
+
+def _remember_hand(changes, pins):
+    _remember("params", json.dumps({"changes": dict((k, [kind, x]) for k, (kind, x) in changes.items()),
+                                    "pins": sorted(pins)}))
+
+
+def _macros():
+    return dict((k, float(v)) for k, v in _json("macros", {}).items() if k in ("speed", "weight"))
+
+
+def card_params():
+    """The card's parameters as scene.apply takes them (scene.normal_params): the changes and pins, the macros,
+    the character and its strength, the physics, the pose's share, In place, Seam and Smooth."""
+    changes, pins = _hand()
+    knobs = values()
+    return scene.normal_params({"changes": changes, "pins": sorted(pins), "macros": _macros(),
+                                "character": _stored("character", "") or "",
+                                "strength": float(_stored("strength", 1.0)),
+                                "physics": float(_stored("physics", 1.0)) >= 0.5, "pose": knobs["pose"],
+                                "in_place": knobs["in_place"],
+                                "clean": dict((k, knobs[k]) for k in ("seam", "smooth"))})
 
 
 NO_WALK = "no walk cycle yet - drop an animation card of a walk into the walk well, or select a bone of a " \
@@ -430,57 +395,13 @@ def _show_walk_line():
         pass
 
 
-def tempo_walk():
-    """The cycle the card's tempo is counted in (2026-10-16): the one it was set for - by choosing a cycle, by
-    moving the slider, by Reset - kept beside it, so an active cycle that changed some other way (a card gone, an
-    empty well) never reads a tempo meant for another cycle (Creep_Drunk squeezed into another walk's 31 frames
-    looked broken). None without one."""
-    stored = _stored("tempoWalk") or ""
-    if stored and scene.walk_exists(stored):
-        return stored
-    try:
-        return chosen_walk()
-    except scene.Refusal:
-        return None
-
-
-def _remember_tempo_walk(name=None):
-    """The tempo is counted in `name` (the active cycle without it) from now on."""
-    if name is None:
-        try:
-            name = chosen_walk()
-        except scene.Refusal:
-            name = ""
-    _remember("tempoWalk", name or "")
-
-
-def _active_frames():
-    """The frames of the cycle the card's tempo is counted in, or None without one."""
-    name = tempo_walk()
-    if not name:
-        return None
-    try:
-        return scene.load_walk(name, values())[0].P
-    except scene.REFUSALS:
-        return None
-
-
 def _walk_taken(name, say=True, keep_ratio=False):
-    """The walk `name` made the active one (what Pick puts on a skeleton walking a card, what the tempo counts).
-    The tempo: the cycle's own frames, as it always was when a cycle is chosen - or, `keep_ratio` (a walker
-    selected), the same ratio counted in the new cycle's frames. The line."""
-    old = _active_frames() if keep_ratio else None
-    tempo = float(values().get("tempo") or 0.0)
+    """The walk `name` made the active one (what Pick puts on a skeleton walking a card): the card's parameters
+    shown at its own values (the changes stay: every cycle takes them from its own). The line."""
     walk, _, _, report = scene.load_walk(name, values())      # refused here: nothing remembered
     _set_walk(name)
     show_report(report)
-    shown = walk.P if not (old and tempo >= 1) else max(4, int(round(tempo * walk.P / float(old))))
-    quiet, _QUIET[0] = _QUIET[0], True
-    try:
-        _set_knobs({"tempo": shown}, walk.P)
-    finally:
-        _QUIET[0] = quiet
-    _remember_tempo_walk(name)
+    show_values()
     line = "walk %s | %s" % (scene.walk_label(name), walk.summary())
     if report.changed:
         line += " | " + report.short()
@@ -693,7 +614,7 @@ def take_card(path):
         if float(values().get("pose", 0.0)) <= 0.0:
             quiet, _QUIET[0] = _QUIET[0], True
             try:
-                _set_knobs({"pose": 1.0}, 30)
+                _set_knobs({"pose": 1.0})
             finally:
                 _QUIET[0] = quiet
             note = " (Pose share set to 1)"
@@ -943,35 +864,365 @@ def report_height(text):
     return max(2, lines) * REPORT_LINE + 6
 
 
-def _set_knobs(knobs, frames):
-    """The knobs into the card (and the memory); the tempo's range follows the walk's own `frames`. A side's
-    own value ("lift_l") is remembered; given every knob (a walked skeleton read back), a side without one is
-    linked again."""
+def _set_knobs(knobs, frames=None):
+    """The card's own knobs (CARD_KNOBS) into the card and the memory; others are ignored."""
     cmds = _cmds()
-    if all(name in knobs for name in scene.wm.LEGACY):
-        _forget_sides()
-    for key, value in knobs.items():
-        if key in scene.wm.SIDE_KNOBS:
-            _remember("knob_" + key, value)
     for name, value in knobs.items():
-        if name not in scene.ALL_DEFAULTS:
+        if name not in CARD_KNOBS:
             continue
-        control = _control(name)
         if name in CHECKS:
             if cmds.checkBox(CHECKS[name], exists=True):
                 cmds.checkBox(CHECKS[name], edit=True, value=value >= 0.5)
             _remember("knob_" + name, 1.0 if value >= 0.5 else 0.0)
-        elif name == "tempo":
-            shown = int(round(value)) if value >= 1 else int(frames)
-            if cmds.intSliderGrp(control, exists=True):
-                cmds.intSliderGrp(control, edit=True, minValue=max(4, frames // 2), maxValue=2 * frames,
-                                  fieldMaxValue=4 * frames, value=shown)
-            _remember("knob_" + name, shown)
+            continue
+        if cmds.floatSliderGrp(_control(name), exists=True):
+            cmds.floatSliderGrp(_control(name), edit=True, value=value)
+        _remember("knob_" + name, value)
+
+
+# ---- the parameters in the card ----
+
+def _active():
+    """(the active cycle's name, its Walk, its own parameters, their ranges) - None without one."""
+    try:
+        name = chosen_walk()
+        walk = scene.load_walk(name, values())[0]
+    except scene.REFUSALS:
+        return None
+    own = gait.own(walk)
+    return name, walk, own, gait.ranges(own, float(getattr(walk, "leg_length", 0.0) or 0.0))
+
+
+def _key(name, mode=None):
+    """The key a parameter's slider shows and sets in side `mode`: a side's own in Left / Right."""
+    p = gait.P[name]
+    mode = side_mode() if mode is None else mode
+    return name if (mode == "both" or not p.sided) else name + "_" + mode
+
+
+def _keys(name):
+    p = gait.P[name]
+    return [name] + ([name + "_" + s for s in gait.SIDES] if p.sided else [])
+
+
+def _label(p, mode, changes, pins):
+    """The slider's label: its name and unit, marked L / R on a side, * where its sides differ, pinned when set by
+    hand."""
+    unit = ", " + p.unit if p.unit not in ("", "x") else ""
+    mark = ""
+    if p.sided and mode != "both":
+        mark = SIDE_MARK[mode]
+        held = any(k in changes or k in pins for k in (p.name, p.name + "_" + mode))
+    else:
+        if p.sided and any(k in changes for k in _keys(p.name)[1:]):
+            mark = " *"
+        held = any(k in changes or k in pins for k in _keys(p.name))
+    return p.label + unit + mark + (PIN_MARK if held else "")
+
+
+def _speed_of(own, vals):
+    """The speed (m/s) the parameters' step and tempo give on the cycle whose own are `own`."""
+    speed = float(own.get("speed", 0.0) or 0.0)
+    step, tempo = gait.own_value(own, "step"), gait.own_value(own, "tempo")
+    if not step or not tempo or not vals.get("tempo"):
+        return speed
+    return speed * (vals["step"] / step) / (vals["tempo"] / tempo)
+
+
+def show_values():
+    """Every parameter's slider (and checkbox) at its value on the active cycle - the card's changes, macros and
+    character on the cycle's own - in the cycle's range, its label marked; the macros' row. Quiet: nothing keyed."""
+    cmds = _cmds()
+    active = _active()
+    if active is None:
+        return
+    _, walk, own, rng = active
+    params = card_params()
+    vals = scene.param_values(walk, params)[1]
+    changes, pins = set(params["changes"]), set(params["pins"])
+    mode = side_mode()
+    quiet, _QUIET[0] = _QUIET[0], True
+    try:
+        for p in gait.PARAMS:
+            control = _control(p.name)
+            key = _key(p.name, mode)
+            value = float(vals.get(key, gait.own_value(own, key)))
+            label = _label(p, mode, changes, pins)
+            if p.kind == "toggle":
+                if cmds.checkBox(control, exists=True):
+                    cmds.checkBox(control, edit=True, value=value >= 0.5, label=label)
+                continue
+            if not cmds.floatSliderGrp(control, exists=True):
+                continue
+            lo, hi = rng.get(key, rng.get(p.name, (value - 1.0, value + 1.0)))
+            lo, hi = min(lo, value), max(hi, value)
+            if hi - lo < 1e-6:
+                hi = lo + 1.0
+            cmds.floatSliderGrp(control, edit=True, minValue=lo, maxValue=hi, fieldMinValue=min(lo, 0.0) - 2.0 * (hi - lo),
+                                fieldMaxValue=hi + 2.0 * (hi - lo), value=value, label=label)
+        own_speed = float(own.get("speed", 0.0) or 0.0)
+        if cmds.floatSliderGrp(SPEED, exists=True) and own_speed > 0.0:
+            value = _speed_of(own, vals)
+            cmds.floatSliderGrp(SPEED, edit=True, minValue=min(0.4 * own_speed, value),
+                                maxValue=max(2.0 * own_speed, value), value=value,
+                                label=LABELS["speed"][0] + (PIN_MARK if "speed" in params["macros"] else ""))
+        if cmds.floatSliderGrp(WEIGHT, exists=True):
+            cmds.floatSliderGrp(WEIGHT, edit=True, value=params["macros"].get("weight", 0.0))
+        if cmds.optionMenu(CHARACTER, exists=True):
+            cmds.optionMenu(CHARACTER, edit=True, value=params["character"] or gait.CHARACTERS[0][0])
+        if cmds.floatSliderGrp(STRENGTH, exists=True):
+            cmds.floatSliderGrp(STRENGTH, edit=True, value=params["strength"])
+        if cmds.checkBox(PHYSICS_BOX, exists=True):
+            cmds.checkBox(PHYSICS_BOX, edit=True, value=params["physics"])
+    finally:
+        _QUIET[0] = quiet
+
+
+def _set_key(key, value, own):
+    """The parameter key `key` set by hand to `value` (in its unit, on the cycle whose own are `own`): a change from
+    the own kept (none when it is the own), pinned; a two-sided parameter's own key links its sides again."""
+    p, side = gait.param_of(key)
+    changes, pins = _hand()
+    if side is None and p.sided:
+        for s in gait.SIDES:
+            changes.pop(p.name + "_" + s, None)
+            pins.discard(p.name + "_" + s)
+    if p.kind == "toggle":
+        value = 1.0 if value >= 0.5 else 0.0
+    kind, x = gait.stored_change(p, gait.own_value(own, key), float(value))
+    if (kind == "ratio" and abs(x - 1.0) < 1e-6) or (kind == "offset" and abs(x) < 1e-6):
+        changes.pop(key, None)
+    else:
+        changes[key] = (kind, x)
+    pins.add(key)
+    _remember_hand(changes, pins)
+    if p.name in ("step", "tempo"):            # set by hand: the Speed macro gives way
+        macros = _macros()
+        if macros.pop("speed", None) is not None:
+            _remember("macros", json.dumps(macros))
+
+
+def param_changed(name):
+    """A released parameter: its value kept as a change from the active cycle's own, pinned - in Left / Right the
+    side's alone, in Both the parameter's (its sides linked again). Every walker keyed again."""
+    def changed(*_):
+        if _QUIET[0]:
+            return None
+        active = _active()
+        if active is None:
+            return status(NO_WALK)
+        cmds = _cmds()
+        control = _control(name)
+        if gait.P[name].kind == "toggle":
+            if not cmds.checkBox(control, exists=True):
+                return None
+            value = 1.0 if cmds.checkBox(control, query=True, value=True) else 0.0
         else:
-            if cmds.floatSliderGrp(control, exists=True):
-                cmds.floatSliderGrp(control, edit=True, value=value)
-            _remember("knob_" + name, value)
-    show_side(side_mode())
+            if not cmds.floatSliderGrp(control, exists=True):
+                return None
+            value = float(cmds.floatSliderGrp(control, query=True, value=True))
+        _set_key(_key(name), value, active[2])
+        show_values()
+        return slider_changed()
+    return changed
+
+
+def _let_go(name, keep_pin):
+    """A parameter's change dropped - in Left / Right its side's, in Both every key of it: `keep_pin` holds it at the
+    clip's value, else it follows the links and the macros again. Every walker keyed again."""
+    def run():
+        changes, pins = _hand()
+        mode = side_mode()
+        keys = [_key(name, mode)] if (gait.P[name].sided and mode != "both") else _keys(name)
+        for key in keys:
+            changes.pop(key, None)
+            pins.discard(key)
+        if keep_pin:
+            pins.add(keys[0])
+        _remember_hand(changes, pins)
+        show_values()
+        return _rekey("%s %s" % (gait.P[name].label, "back to the clip's" if keep_pin else "follows the links"))
+    return _press(run)
+
+
+def reset_param(name):
+    return _let_go(name, True)
+
+
+def free_param(name):
+    return _let_go(name, False)
+
+
+def speed_changed(*_):
+    """The Speed macro: the step and the tempo each as its root (a Step or Tempo set by hand dropped)."""
+    if _QUIET[0]:
+        return None
+    active = _active()
+    if active is None:
+        return status(NO_WALK)
+    own_speed = float(active[2].get("speed", 0.0) or 0.0)
+    value = float(_cmds().floatSliderGrp(SPEED, query=True, value=True))
+    macros = _macros()
+    if own_speed <= 0.0 or abs(value - own_speed) < 0.005:
+        macros.pop("speed", None)
+    else:
+        macros["speed"] = value
+    _remember("macros", json.dumps(macros))
+    changes, pins = _hand()
+    for key in ("step", "tempo"):
+        changes.pop(key, None)
+        pins.discard(key)
+    _remember_hand(changes, pins)
+    show_values()
+    return slider_changed()
+
+
+def weight_changed(*_):
+    if _QUIET[0]:
+        return None
+    value = float(_cmds().floatSliderGrp(WEIGHT, query=True, value=True))
+    macros = _macros()
+    if abs(value) < 1e-3:
+        macros.pop("weight", None)
+    else:
+        macros["weight"] = value
+    _remember("macros", json.dumps(macros))
+    show_values()
+    return slider_changed()
+
+
+def character_changed(*_):
+    if _QUIET[0]:
+        return None
+    value = _cmds().optionMenu(CHARACTER, query=True, value=True) or ""
+    _remember("character", "" if value == gait.CHARACTERS[0][0] else value)
+    show_values()
+    return slider_changed()
+
+
+def strength_changed(*_):
+    if _QUIET[0]:
+        return None
+    _remember("strength", float(_cmds().floatSliderGrp(STRENGTH, query=True, value=True)))
+    show_values()
+    return slider_changed()
+
+
+def physics_changed(*_):
+    if _QUIET[0]:
+        return None
+    _remember("physics", 1.0 if _cmds().checkBox(PHYSICS_BOX, query=True, value=True) else 0.0)
+    return slider_changed()
+
+
+# ---- the Diagnosis ----
+
+def _diag_state():
+    """The Diagnosis of the walker keyed last: who, its cycle, the findings. On sys (trap 111)."""
+    state = getattr(sys, "_skeldar_walk_diag", None)
+    if not isinstance(state, dict):
+        state = {}
+        sys._skeldar_walk_diag = state
+    state.setdefault("who", "")
+    state.setdefault("walk", None)
+    state.setdefault("findings", [])
+    return state
+
+
+def _diag_row(i):
+    return "skeldarWalkDiag_%d" % i
+
+
+def _diag_text(i):
+    return "skeldarWalkDiagText_%d" % i
+
+
+def _diag_fix(i):
+    return "skeldarWalkDiagFix_%d" % i
+
+
+def show_diagnosis():
+    """The Diagnosis rows: a finding each, its Fix enabled where it has one."""
+    cmds = _cmds()
+    state = _diag_state()
+    findings = list(state["findings"])[:DIAG_ROWS]
+    if cmds.text(DIAG_CAPTION, exists=True):
+        if not state["who"]:
+            label = "Diagnosis: Pick a walker"
+        elif not findings:
+            label = "Diagnosis - %s: nothing to say" % state["who"]
+        else:
+            label = "Diagnosis - %s" % state["who"]
+        cmds.text(DIAG_CAPTION, edit=True, label=label)
+    for i in range(DIAG_ROWS):
+        if not cmds.columnLayout(_diag_row(i), exists=True):
+            continue
+        cmds.columnLayout(_diag_row(i), edit=True, manage=i < len(findings))
+        if i < len(findings):
+            cmds.text(_diag_text(i), edit=True, label=findings[i].text)
+            cmds.button(_diag_fix(i), edit=True, enable=bool(findings[i].fix))
+
+
+def fix_pressed(i):
+    """A Diagnosis row's Fix: its parameters set (pinned) on the cycle the finding read, every walker keyed again."""
+    def go(*_):
+        def run():
+            state = _diag_state()
+            if i >= len(state["findings"]):
+                return "nothing to fix"
+            finding = state["findings"][i]
+            if not finding.fix:
+                return finding.text
+            name = state["walk"] or chosen_walk()
+            own = gait.own(scene.load_walk(name, values())[0])
+            for key, value in finding.fix.items():
+                _set_key(key, value, own)
+            show_values()
+            return _rekey("fixed: %s" % finding.text)
+        return _press(run)
+    return go
+
+
+def _show_findings(root, walk, info):
+    """The Diagnosis of a walker just keyed."""
+    if info.get("diagnosis") is None:
+        return
+    state = _diag_state()
+    state.update(who="%s - %s" % (scene.walker_label(root), scene.walk_label(walk)), walk=walk,
+                 findings=list(info["diagnosis"]))
+    show_diagnosis()
+
+
+def _migrate_knobs():
+    """Once: the knobs a card remembered before the parameters (knob_<model knob>) read as parameters on the cycle
+    its tempo was counted in (gait.from_legacy); tried again while no walk can be read."""
+    cmds = _cmds()
+    if cmds.optionVar(exists=OPTION + "params"):
+        return
+    knobs = {}
+    for name in list(scene.wm.LEGACY) + [k for k, b in scene.wm.SIDE_KNOBS.items() if b in scene.wm.LEGACY]:
+        if name in CARD_KNOBS:
+            continue
+        stored = _stored("knob_" + name)
+        if stored is not None:
+            knobs[name] = float(stored)
+    if not knobs:
+        _remember_hand({}, set())
+        return
+    name = _stored("tempoWalk") or ""
+    try:
+        name = name if name and scene.walk_exists(name) else chosen_walk()
+        walk = scene.load_walk(name, values())[0]
+    except scene.REFUSALS:
+        return
+    changes, pins, macros = gait.from_legacy(walk, knobs)
+    for key, (kind, x) in list(changes.items()):
+        if (kind == "ratio" and abs(x - 1.0) < 1e-6) or (kind == "offset" and abs(x) < 1e-6):
+            del changes[key]
+            pins.discard(key)
+    _remember_hand(changes, pins)
+    if macros:
+        _remember("macros", json.dumps(macros))
 
 
 def _set_parts(parts):
@@ -983,30 +1234,14 @@ def _set_parts(parts):
 
 
 def show_side(mode):
-    """The leg and arm knobs' sliders on side `mode` ("both", "l", "r"): each shows that side's own value
-    (Both: the knob's, its label marked * where the sides differ), its segment lit, remembered."""
+    """The two-sided parameters on side `mode` ("both", "l", "r"): each slider shows that side's value (Both: the
+    parameter's, marked * where the sides differ), its segment lit, remembered."""
     cmds = _cmds()
     mode = mode if mode in dict(SIDE_MODES) else "both"
     _remember("side", mode)
     if cmds.iconTextRadioButton(_side_tab(mode), exists=True):
         cmds.iconTextRadioButton(_side_tab(mode), edit=True, select=True)
-    quiet, _QUIET[0] = _QUIET[0], True
-    try:
-        for name in CARD_SIDED:
-            control = _control(name)
-            if not cmds.floatSliderGrp(control, exists=True):
-                continue
-            base = float(_stored("knob_" + name, scene.wm.DEFAULTS[name]))
-            own = dict((side, _stored(_override(name, side))) for side in ("l", "r"))
-            if mode == "both":
-                split = any(v is not None and abs(float(v) - base) > 1e-9 for v in own.values())
-                value, mark = base, " *" if split else ""
-            else:
-                value = float(own[mode]) if own[mode] is not None else base
-                mark = SIDE_MARK[mode]
-            cmds.floatSliderGrp(control, edit=True, value=value, label=LABELS[name][0] + mark)
-    finally:
-        _QUIET[0] = quiet
+    show_values()
 
 
 def side_changed(mode):
@@ -1016,23 +1251,13 @@ def side_changed(mode):
 
 
 def knob_changed(name):
-    """A released slider: in Left / Right a leg or arm knob sets that side alone; in Both it sets the knob
-    and links its sides again. Then every walker is keyed again."""
+    """A released card knob (the pose's share, Seam, Smooth): remembered, every walker keyed again."""
     def changed(*_):
         if _QUIET[0]:
             return None
-        mode = side_mode()
         shown = _shown(name)
         if shown is not None:
-            if name in CARD_SIDED and mode != "both":
-                _remember(_override(name, mode), shown)
-            else:
-                _remember("knob_" + name, shown)
-                if name in CARD_SIDED:
-                    _forget_sides(name)
-                    show_side(mode)
-            if name == "tempo":                  # the frames shown are the active cycle's
-                _remember_tempo_walk()
+            _remember("knob_" + name, shown)
         return slider_changed()
     return changed
 
@@ -1040,6 +1265,7 @@ def knob_changed(name):
 def show_group(key):
     """Show the knob group `key` alone: its column managed, its tab lit, remembered."""
     cmds = _cmds()
+    key = OLD_GROUPS.get(key, key)
     if key not in dict((k, l) for k, l, _ in GROUPS):
         key = GROUPS[0][0]
     _remember("group", key)
@@ -1051,27 +1277,33 @@ def show_group(key):
 
 
 def take_settings(root):
-    """A walker's stored knobs, pose card and parts into the card (right button > Take its settings): they reach
-    every walker on the next re-key. Its cycle becomes the active one."""
+    """A walker's stored parameters, pose card and parts into the card (right button > Take its settings): they
+    reach every walker on the next re-key. Its cycle becomes the active one. A walker keyed before the parameters
+    brings its knobs read as parameters (scene.memo_params)."""
     def run():
-        name, knobs, pose, parts = scene.pick(root)
         memo = scene.memo_of(root)
+        if not memo.get("walk"):
+            raise scene.Refusal("%s carries no walk of this tool - Pick one first" % scene.walker_label(root))
+        params = scene.memo_params(root, memo)
+        name, pose = memo["walk"], memo.get("pose")
         card = memo.get("pose_card") or (scene.wcards.legacy_card(pose) if pose else "")
         quiet, _QUIET[0] = _QUIET[0], True
         try:
             _set_walk(name)
             _set_card(card)
-            _set_parts(parts)
-            frames = int(knobs.get("tempo") or 30)
+            _set_parts(tuple(memo.get("parts", scene.ALL_PARTS)))
+            _remember_hand(params["changes"], set(params["pins"]))
+            _remember("macros", json.dumps(params["macros"]))
+            _remember("character", params["character"])
+            _remember("strength", params["strength"])
+            _remember("physics", 1.0 if params["physics"] else 0.0)
+            _set_knobs(dict(params["clean"], pose=params["pose"], in_place=params["in_place"]))
             if scene.walk_exists(name):
-                walk, _, _, report = scene.load_walk(name, knobs)
-                frames = walk.P
-                show_report(report)
-            _set_knobs(knobs, frames)
+                show_report(scene.load_walk(name, values())[3])
+            show_values()
         finally:
             _QUIET[0] = quiet
-        _remember_tempo_walk(name)
-        return "%s's settings are the card's - move a knob (or press Pick) to put them on every walker" \
+        return "%s's settings are the card's - move a parameter (or press Pick) to put them on every walker" \
             % scene.walker_label(root)
     return _press(run)
 
@@ -1174,8 +1406,8 @@ def _press(action):
 # ---- the presses ----
 
 def _apply_to(root, walk=None):
-    """The walk `walk` (the active cycle) keyed onto `root` with the card's knobs - the tempo as a ratio of the
-    active cycle (walk_knobs) - the card's pose and parts. The line."""
+    """The walk `walk` (the active cycle) keyed onto `root` with the card's parameters (each a change from the
+    cycle's own), the card's pose and parts; the Diagnosis of it shown. The line."""
     try:
         active = chosen_walk()
     except scene.Refusal:                     # an empty walk well: only a walk named here can be keyed
@@ -1184,24 +1416,12 @@ def _apply_to(root, walk=None):
         active = None
     walk = walk or active
     _remember("parts", json.dumps(list(chosen_parts())))
-    result, info, text = scene.apply(root, walk, walk_knobs(walk), None, chosen_parts(), pose_card=chosen_card())
+    result, info, text = scene.apply(root, walk, values(), None, chosen_parts(), pose_card=chosen_card(),
+                                     params=card_params())
     if info.get("clean") is not None and walk == active:
         show_report(info["clean"])
+    _show_findings(root, walk, info)
     return text
-
-
-def walk_knobs(walk):
-    """The card's knobs for a walker on cycle `walk`: the card's tempo counts the frames of the cycle it was set
-    for (tempo_walk), so another cycle takes the same ratio of its own (at least 4 frames)."""
-    knobs = values()
-    counted = tempo_walk()
-    tempo = float(knobs.get("tempo") or 0.0)
-    if not counted or walk == counted or tempo < 1:
-        return knobs
-    own = scene.load_walk(walk, knobs)[0].P
-    base = scene.load_walk(counted, knobs)[0].P
-    knobs["tempo"] = float(max(4, int(round(tempo * own / float(base)))))
-    return knobs
 
 
 def rekey_all(walk=None, stop=None):
@@ -1406,13 +1626,16 @@ def in_place_changed(*_):
 
 
 def press_reset(*_):
+    """Every parameter back to the clip's own: the changes, the pins, the macros and the character gone, the
+    physics on (the pose's share, In place and the clean's knobs stay)."""
     def run():
-        knobs = dict(scene.ALL_DEFAULTS)
-        walk = scene.load_walk(chosen_walk(), knobs)[0]
-        knobs["tempo"] = walk.P
-        _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
-        _remember_tempo_walk()
-        return _rekey("the knobs are back at their defaults")
+        _remember_hand({}, set())
+        _remember("macros", "{}")
+        _remember("character", "")
+        _remember("strength", 1.0)
+        _remember("physics", 1.0)
+        show_values()
+        return _rekey("every parameter back to the clip's")
     return _press(run)
 
 
@@ -1431,13 +1654,8 @@ def press_save_walk(*_):
             return "nothing saved"
         name, line = scene.save_walk_card(root, name)
         _set_walk(name)
-        walk, _, _, report = scene.load_walk(name, values())
-        show_report(report)
-        quiet, _QUIET[0] = _QUIET[0], True
-        try:
-            _set_knobs({"tempo": walk.P}, walk.P)
-        finally:
-            _QUIET[0] = quiet
+        show_report(scene.load_walk(name, values())[3])
+        show_values()
         return line
     return _press(run)
 
@@ -1491,7 +1709,8 @@ def rekey_walkers(walk):
         return " (no walker on it - Pick puts it on skeletons)"
     keyed = []
     for root in roots:
-        scene.apply(root, walk, walk_knobs(walk), None, chosen_parts(), record=False, pose_card=chosen_card())
+        scene.apply(root, walk, values(), None, chosen_parts(), record=False, pose_card=chosen_card(),
+                    params=card_params())
         keyed.append(scene.walker_label(root))
     return " -> %s keyed again" % ", ".join(keyed)
 
@@ -1586,21 +1805,87 @@ def _pose_well():
 
 
 def _slider(name):
+    """A card knob's slider (the pose's share, Seam, Smooth)."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
     label, tip = LABELS[name]
-    default = scene.ALL_DEFAULTS[name]
-    common = dict(label=label, field=True, columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
-                  adjustableColumn=3, height=hubstyle.height("small", 22), annotation=tip,
-                  changeCommand=knob_changed(name))
-    if name == "tempo":
-        stored = int(round(float(_stored("knob_tempo", 0.0) or 0.0)))
-        cmds.intSliderGrp(_control(name), minValue=4, maxValue=120, fieldMinValue=4, fieldMaxValue=400,
-                          value=stored if stored >= 4 else 30, **common)
-        return
     low, high = scene.ALL_RANGES[name]
-    cmds.floatSliderGrp(_control(name), minValue=low, maxValue=high, fieldMinValue=low, fieldMaxValue=high,
-                        step=0.05, precision=2, value=float(_stored("knob_" + name, default)), **common)
+    cmds.floatSliderGrp(_control(name), label=label, field=True, columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
+                        adjustableColumn=3, height=hubstyle.height("small", 22), annotation=tip,
+                        changeCommand=knob_changed(name), minValue=low, maxValue=high, fieldMinValue=low,
+                        fieldMaxValue=high, step=0.05, precision=2,
+                        value=float(_stored("knob_" + name, scene.ALL_DEFAULTS[name])))
+
+
+def _param_menu(control, name):
+    """A parameter's right button: back to the clip's (held), or let it follow the links again."""
+    cmds = _cmds()
+    cmds.popupMenu(parent=control, button=3)
+    cmds.menuItem(label="Back to the clip's", annotation=TIPS["param_menu"], command=lambda *_: reset_param(name))
+    cmds.menuItem(label="Follow the links", annotation=TIPS["param_menu"], command=lambda *_: free_param(name))
+    cmds.setParent("..", menu=True)
+
+
+def _param_control(p):
+    """A parameter's slider (a toggle's chip), its range and value set by show_values."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    control = _control(p.name)
+    tip = p.tip + " | " + TIPS["param_menu"]
+    if p.kind == "toggle":
+        hubstyle.mark(cmds.checkBox(control, label=p.label, value=p.default >= 0.5, annotation=tip,
+                                    changeCommand=param_changed(p.name)), "chip")
+    else:
+        fine = p.unit in ("", "x")
+        cmds.floatSliderGrp(control, label=p.label, field=True,
+                            columnWidth3=hubstyle.pick((92, 44, 100), (110, 50, 150)), adjustableColumn=3,
+                            height=hubstyle.height("small", 22), annotation=tip, minValue=0.0, maxValue=1.0,
+                            fieldMinValue=-1000.0, fieldMaxValue=1000.0, value=0.0, step=0.01 if fine else 0.1,
+                            precision=2 if fine else 1, changeCommand=param_changed(p.name))
+    _param_menu(control, p.name)
+
+
+def _macro_rows():
+    """Speed, Weight; the Character and its Strength."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    common = dict(field=True, columnWidth3=hubstyle.pick((92, 44, 100), (110, 50, 150)), adjustableColumn=3,
+                  height=hubstyle.height("small", 22))
+    macros = _macros()
+    cmds.floatSliderGrp(SPEED, label=LABELS["speed"][0], annotation=LABELS["speed"][1], minValue=0.2, maxValue=3.0,
+                        fieldMinValue=0.05, fieldMaxValue=10.0, value=1.4, step=0.01, precision=2,
+                        changeCommand=speed_changed, **common)
+    cmds.floatSliderGrp(WEIGHT, label=LABELS["weight"][0], annotation=LABELS["weight"][1], minValue=-1.0,
+                        maxValue=1.0, fieldMinValue=-1.0, fieldMaxValue=1.0, value=macros.get("weight", 0.0),
+                        step=0.05, precision=2, changeCommand=weight_changed, **common)
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                                 columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+    cmds.optionMenu(CHARACTER, label="", annotation=TIPS["character"], changeCommand=character_changed)
+    for name, _ in gait.CHARACTERS:
+        cmds.menuItem(label=name, parent=CHARACTER)
+    cmds.floatSliderGrp(STRENGTH, label=LABELS["strength"][0], annotation=LABELS["strength"][1], field=True,
+                        columnWidth3=hubstyle.pick((56, 40, 60), (60, 44, 80)), adjustableColumn=3,
+                        height=hubstyle.height("small", 22), minValue=0.0, maxValue=1.5, fieldMinValue=0.0,
+                        fieldMaxValue=3.0, value=float(_stored("strength", 1.0)), step=0.05, precision=2,
+                        changeCommand=strength_changed)
+    cmds.setParent("..")
+
+
+def _diagnosis_rows():
+    """The Diagnosis: a caption, then DIAG_ROWS rows of a finding and its Fix (hidden while unused)."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    hubstyle.mark(cmds.text(DIAG_CAPTION, label="Diagnosis: Pick a walker", align="left",
+                            annotation=TIPS["diagnosis"]), "caption")
+    for i in range(DIAG_ROWS):
+        cmds.columnLayout(_diag_row(i), adjustableColumn=True, manage=False)
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "left", 0), (2, "left", 4)])
+        cmds.text(_diag_text(i), label="", align="left", wordWrap=True, height=30, annotation=TIPS["diagnosis"])
+        hubstyle.mark(cmds.button(_diag_fix(i), label="Fix", width=hubstyle.tool_width(44),
+                                  height=hubstyle.height("field", 24), annotation=TIPS["diagnosis"],
+                                  command=fix_pressed(i)), "secondary", "tool")
+        cmds.setParent("..")
+        cmds.setParent("..")
 
 
 LIST_ROW = 18            # logical px a row of the walkers' list
@@ -1706,8 +1991,9 @@ def _rig_pose_buttons():
 
 
 def build_panel():
-    """The card into the current layout: the subtitle; the walk and the pose with their save icons; the
-    pose's share and parts; Apply / Reset; the knob groups' tabs and the shown group; the status line."""
+    """The card into the current layout: the subtitle; the walk and the pose wells; the pose's share and parts;
+    Pick / Reset / In place; the walkers; [Both | Left | Right]; the Main parameters; the macros; the tabs of the
+    other parameters and the one shown; the status line; the Diagnosis."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
@@ -1744,21 +2030,6 @@ def build_panel():
                                 changeCommand=in_place_changed), "chip")
     cmds.setParent("..")
     _walker_list()
-    shown = _stored("group", GROUPS[0][0])
-    labels = dict((key, (label, names)) for key, label, names in GROUPS)
-    cmds.iconTextRadioCollection(GROUP_TABS)
-    for row in GROUP_ROWS:                # the tabs on two rows, one collection
-        segments = cmds.rowLayout(numberOfColumns=len(row),
-                                  columnAttach=[(i + 1, "both", 1) for i in range(len(row))])
-        hubstyle.mark(segments, "segments", layout=True)
-        for key in row:
-            label, names = labels[key]
-            hubstyle.mark(cmds.iconTextRadioButton(
-                _group_tab(key), style="textOnly", label=label, height=hubstyle.height("segment", 24),
-                select=key == shown, collection=GROUP_TABS,
-                annotation="The knobs of %s: %s" % (label.lower(), ", ".join(LABELS[n][0] for n in names)),
-                onCommand=group_changed(key)), "segment")
-        cmds.setParent("..")
     side = side_mode()
     sides = cmds.rowLayout(numberOfColumns=len(SIDE_MODES),
                            columnAttach=[(i + 1, "both", 1) for i in range(len(SIDE_MODES))])
@@ -1768,16 +2039,41 @@ def build_panel():
         hubstyle.mark(cmds.iconTextRadioButton(
             _side_tab(mode), style="textOnly", label=label, height=hubstyle.height("segment", 24),
             select=mode == side, collection=SIDE_TABS,
-            annotation=("The leg and arm knobs set both sides" if mode == "both" else
-                        "The leg and arm knobs (marked %s) set the %s side alone; Both links a knob's sides "
-                        "again when it is moved" % (SIDE_MARK[mode].strip(), "left" if mode == "l" else "right")),
+            annotation=("A two-sided parameter sets both sides" if mode == "both" else
+                        "A two-sided parameter (marked %s) sets the %s side alone; Both links its sides again "
+                        "when it is moved" % (SIDE_MARK[mode].strip(), "left" if mode == "l" else "right")),
             onCommand=side_changed(mode)), "segment")
     cmds.setParent("..")
+    for name in MAIN_PARAMS:
+        _param_control(gait.P[name])
+    _macro_rows()
+    shown = OLD_GROUPS.get(_stored("group", GROUPS[0][0]), _stored("group", GROUPS[0][0]))
+    labels = dict((key, (label, names)) for key, label, names in GROUPS)
+    cmds.iconTextRadioCollection(GROUP_TABS)
+    for row in GROUP_ROWS:                # the tabs on two rows, one collection
+        segments = cmds.rowLayout(numberOfColumns=len(row),
+                                  columnAttach=[(i + 1, "both", 1) for i in range(len(row))])
+        hubstyle.mark(segments, "segments", layout=True)
+        for key in row:
+            label, names = labels[key]
+            what = ", ".join(gait.P[n].label if n in gait.P else LABELS[n][0] for n in names) or "the walk's mean pose"
+            hubstyle.mark(cmds.iconTextRadioButton(
+                _group_tab(key), style="textOnly", label=label, height=hubstyle.height("segment", 24),
+                select=key == shown, collection=GROUP_TABS, annotation="%s: %s" % (label, what),
+                onCommand=group_changed(key)), "segment")
+        cmds.setParent("..")
     for key, label, names in GROUPS:
         cmds.columnLayout(_group_column(key), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
                           manage=key == shown)
         for name in names:
-            _slider(name)
+            if name in gait.P:
+                _param_control(gait.P[name])
+            else:
+                _slider(name)
+        if key == "physics":              # the helpers as a whole
+            hubstyle.mark(cmds.checkBox(PHYSICS_BOX, label="Physics helpers", annotation=TIPS["physics"],
+                                        value=float(_stored("physics", 1.0)) >= 0.5,
+                                        changeCommand=physics_changed), "chip")
         if key == "rigpose":              # the walk's mean pose on a Manny rig: create, pose it, Update
             _rig_pose_buttons()
         if key == "clean":                # the posture set right once, then what the clean found
@@ -1787,16 +2083,17 @@ def build_panel():
             hubstyle.mark(cmds.text(CLEAN_REPORT, label="", align="left", wordWrap=True, height=72), "caption")
         cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
+    _diagnosis_rows()
     cmds.setParent("..")
     try:
-        tempo = float(_stored("knob_tempo", 0.0) or 0.0)
+        _migrate_knobs()
         walk, _, _, report = scene.load_walk(chosen_walk(), values())
         show_report(report)
-        _set_knobs({"tempo": tempo if tempo >= 1 else walk.P}, walk.P)
     except Exception:                                        # noqa: BLE001 - no walk saved yet
         pass
     show_group(shown)
-    show_side(side)
+    show_side(side)                       # the parameters' values with it
+    show_diagnosis()
     start()
     refresh()
     return column

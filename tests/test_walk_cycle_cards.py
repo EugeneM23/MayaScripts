@@ -212,7 +212,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/run.anim"))
         panel.take_walk_card(stroll)                              # a click on it: the walker keyed with it at once
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/stroll.anim"))
-        self.assertEqual(self.case.applied[-1][2]["tempo"], 90.0)  # at the card's own tempo
+        self.assertNotIn("tempo", self.case.applied[-1][5]["changes"])     # at the card's own tempo
         panel.press_apply()                                       # and Pick keeps putting the chosen card on
         self.assertEqual(self.case.applied[-1][1], scene.card_walk(cards.WALK_FOLDER + "/stroll.anim"))
         self.assertEqual(len(panel.walk_list()), 2)
@@ -234,16 +234,18 @@ class Panel(unittest.TestCase):
         self.assertIn("back on their own animation: a", line)
         self.assertIn("no animation of their own to go back to (keep the card's keys): b", line)
 
-    def test_the_tempo_counts_the_cycle_it_was_set_for(self):
+    def test_a_tempo_set_on_one_cycle_is_the_same_ratio_on_another(self):
         panel = self.panel
         panel.build_panel()
-        self.case.frames.update({"asd": 32, "dw": 90})
-        panel._walk_taken("asd")                                  # the tempo counts asd's 32 frames
+        own = self.case.own
+        self.case.release("tempo", 0.8 * own["tempo"])            # set while asd is the active cycle
         self.fake.vars[panel.OPTION + "walk"] = "dw"              # the active cycle changed some other way
         self.fake.selection = ["|root"]
         panel.press_apply()
-        self.assertEqual(self.case.applied[-1][1:3][0], "dw")
-        self.assertEqual(self.case.applied[-1][2]["tempo"], 90.0)  # dw at its own 90, never squeezed into 32
+        self.assertEqual(self.case.applied[-1][1], "dw")
+        kind, x = self.case.applied[-1][5]["changes"]["tempo"]
+        self.assertEqual(kind, "ratio")
+        self.assertAlmostEqual(x, 0.8, places=9)                   # dw from its own tempo, never another's frames
 
     def test_a_pose_card_is_refused_by_the_walk_well(self):
         pose = self.tp.write_card(self.library, "", "goblin")

@@ -1358,12 +1358,15 @@ class BalanceTests(unittest.TestCase):
         self.assertEqual(r.info["balance"]["carry"], 0.0)
 
     def test_every_knob_sits_in_one_window_group(self):
-        panel = load("panel")      # the card: Pose under the pose's dropdown, In place a chip, the rest in groups
-        everything = dict(dict((k, wm.DEFAULTS[k]) for k in wm.LEGACY), **load("clean").DEFAULTS)   # the card's
-        grouped = ["pose"] + list(panel.CHECKS) + [name for _, _, names in panel.GROUPS for name in names]
+        #  the card (2026-10-26): every parameter (maya_walk.gait) in Main or in one tab; Pose under the pose's
+        #  well, In place a chip, the clean's knobs in Clean
+        panel, gait = load("panel"), load("gait")
+        grouped = ["pose"] + list(panel.CHECKS) + list(panel.MAIN_PARAMS) + [
+            name for _, _, names in panel.GROUPS for name in names]
+        everything = [p.name for p in gait.PARAMS] + list(panel.CARD_KNOBS)
         self.assertEqual(sorted(grouped), sorted(everything))
         self.assertEqual(len(grouped), len(set(grouped)))
-        self.assertEqual(sorted(panel.LABELS), sorted(everything))
+        self.assertTrue(set(panel.CARD_KNOBS) <= set(panel.LABELS))
 
     def test_a_long_stride_balances_forward(self):
         w = walk()
