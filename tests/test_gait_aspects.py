@@ -72,5 +72,65 @@ class MeasureTests(unittest.TestCase):
         self.assertAlmostEqual(m["sway"], 2.0, places=4)
 
 
+class MappingTests(unittest.TestCase):
+    """The animator's units into the model's knobs, relative to the walk: its own values change nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.walk = fork_walk()
+        cls.base = asp.measure(cls.walk, cls.walk.evaluate(asp.base_engine(cls.walk)).worlds)
+
+    def test_own_values_are_the_walk(self):
+        a = self.walk.evaluate(asp.base_engine(self.walk)).worlds
+        b = self.walk.evaluate(asp.engine_knobs(self.walk, self.base, {})).worlds
+        self.assertLess(float(np.abs(a - b).max()), 1e-9)
+        own = asp.defaults(self.base)
+        c = self.walk.evaluate(asp.engine_knobs(self.walk, self.base, own)).worlds
+        self.assertLess(float(np.abs(a - c).max()), 1e-9)
+
+    def test_speed_keeps_the_walk_ratio(self):
+        base = {"step": 60.0, "cadence": 150.0}
+        step, cadence = asp.speed_law(base, 3.0)
+        self.assertAlmostEqual(step, 60.0 * math.sqrt(2.0), places=9)
+        self.assertAlmostEqual(cadence, 150.0 * math.sqrt(2.0), places=9)
+        step, cadence = asp.speed_law(base, 6.0, (30.0, 96.0))
+        self.assertAlmostEqual(step, 96.0, places=9)
+        self.assertAlmostEqual(step * cadence / 6000.0, 6.0, places=9)
+
+    def test_speed_sets_stride_and_tempo(self):
+        e = asp.engine_knobs(self.walk, self.base, {"speed": self.base["speed"] * 2.0})
+        self.assertAlmostEqual(e["stride"], math.sqrt(2.0), places=9)
+        self.assertEqual(e["tempo"], float(round(self.walk.P / math.sqrt(2.0))))
+
+    def test_weight_spreads(self):
+        e = asp.engine_knobs(self.walk, self.base, {"weight": 1.0})
+        self.assertAlmostEqual(e["weight"], asp.WEIGHT_GAIN)
+        self.assertAlmostEqual(e["torso_drag"], 1.5 + asp.WEIGHT_FOLLOW)
+        for s in "lr":
+            self.assertAlmostEqual(e["knee_bend_" + s], self.base["knee_bend"][s] + asp.WEIGHT_KNEE)
+
+    def test_a_side_alone(self):
+        e = asp.engine_knobs(self.walk, self.base, {"arm_swing_l": self.base["arm_swing"]["l"] + 10.0})
+        self.assertAlmostEqual(e["arm_swing_add_l"], 10.0)
+        self.assertAlmostEqual(e["arm_swing_add_r"], 0.0)
+
+    def test_the_hip_drop_follows_the_hips(self):
+        e = asp.engine_knobs(self.walk, self.base, {"hips": 2.0 * self.base["hips"]})
+        self.assertAlmostEqual(e["pelvis_list"], self.walk.own_list + self.base["hip_drop"], places=9)
+        e = asp.engine_knobs(self.walk, self.base, {"hips": 2.0 * self.base["hips"], "hip_drop": 1.0})
+        self.assertAlmostEqual(e["pelvis_list"], self.walk.own_list + 1.0 - self.base["hip_drop"], places=9)
+
+    def test_every_knob_has_a_range(self):
+        r = asp.ranges(self.base, self.walk.leg_length)
+        for k in asp.KNOBS:
+            lo, hi = r[k.name]
+            self.assertLess(lo, hi, k.name)
+            if k.kind == "measured":
+                own = asp.defaults(self.base)[k.name]
+                own = [own] if not isinstance(own, dict) else own.values()
+                for v in own:
+                    self.assertTrue(lo - 1e-6 <= v <= hi + 1e-6 or k.sided, "%s %s %s" % (k.name, v, (lo, hi)))
+
+
 if __name__ == "__main__":
     unittest.main()
