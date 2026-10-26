@@ -124,6 +124,17 @@ KNOBS = (
     # spring's own phase delay at the stride's frequency and scales its swing by 1 / its gain there, so the stride
     # swing keeps its amplitude and timing and only the overshoot and the pivot's jolts are added (Whip)
     ("spring_comp", 0.0, 0.0, 1.0),
+    # Foot placement's lock lets a foot that moves faster than LOCK_SLOW .. LOCK_FAST of the walk's travel a frame
+    # move as the walk has it (1), rather than holding it still (0): a clip's foot still skimming into its contact
+    # or out of it, held, stood 10 cm off where the clip had it and the run sank 16 cm (sadda, 2026-10-26)
+    ("lock_skim", 0.0, 0.0, 1.0),
+    # Balance gives way to the legs: its carry scaled back where it would sink the pelvis more than BALANCE_SINK
+    # of the leg beyond what the step needs without it (1), else carried whole (0) - a leaning pose on a strafe
+    # carried its hips 17.8 cm and sank 39 cm (TestStrefe under the goblin, 2026-10-26)
+    ("balance_reach", 0.0, 0.0, 1.0),
+    # Foot placement's double support: at least a new frame of both feet down at every handoff (1), or only as far
+    # as the trailing leg reaches (0) - forced, a jog's 4 % flights were held 1.75 frames and sank it 16 cm (sadda)
+    ("double_force", 1.0, 0.0, 1.0),
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
@@ -217,6 +228,8 @@ SOLE_EASE = 15.0          # degrees: a roll eases into those limits over this mu
 SOLE_HARD = {True: 85.0, False: 60.0}   # degrees: an asked roll stands a sole no steeper (heel up, toes up)
 AIR_HOLD = 2.0            # cm: a foot just off the ground may hold the pelvis down this much (_just_off)
 GROWTH_SAMPLES = 12       # the lift-off and the swing's start tested at this many steps (_growth)
+LOCK_SLOW = 0.2           # lock_skim: a pivot slower than this share of the walk's travel a frame is held whole...
+LOCK_FAST = 0.6           # ...faster than this one moves as the walk has it
 PUSH_FROM = 0.55          # Push-off's roll comes in from this share of the contact to the lift-off...
 #                           ...and goes over the first SWING_EASE of the swing; Heel strike's comes in over the last
 FLAT_TOL = 3.0            # degrees: a sole this near the floor is flat (Walk.flat_after: the strike's foot-flat)
@@ -234,6 +247,7 @@ FOLLOW_RANGE = (0.25, 1.25)  # how strongly the walk's own CoM follows its pendu
 CARRY_STEPS = 5            # secant steps of the pelvis carry a frame
 CARRY_TOL = 1e-4           # cm: a frame's CoM this near its target is done
 BALANCE_ROUNDS = 4         # the carry and the reach's drop solved in turn at most this often
+BALANCE_SINK = 0.03        # balance_reach: the carry may sink the pelvis this share of the leg at most
 LT_STILL = 1e-5           # cm: a bone's place in its parent this still over the cycle is one place (keyed data: ~1e-6)
 ARM_RECARRY = 0.1          # cm: the arms swing again in a balance round only when the carry moved this far
 # de Leva (1996): % of the body and the centre's share from the proximal joint
@@ -1887,7 +1901,8 @@ class Walk(object):
             for i, (hs, to) in enumerate(self.contact[side]):
                 ds = self.double_src[side][i]
                 room = EXTEND_MAX * self.swing_len[side][i]
-                least = 0.0 if self.is_flight(ds) else min(room, v * max(0.0, ctx["frame"] - ds))
+                force = (ctx["ks"][side] if "ks" in ctx else ctx["k"]).get("double_force", 1.0)
+                least = 0.0 if self.is_flight(ds) else min(room, force * v * max(0.0, ctx["frame"] - ds))
                 most = max(least, min(room, v * self.extend[side][i]["to"]))
                 window = SWING_EASE * self.swing_len[side][i]
 
@@ -1972,6 +1987,15 @@ class Walk(object):
         flat = lambda v: v - np.dot(v, self.up) * self.up
         G, v = LOCK_STEPS, ctx["placement"]
         locks, slide = {}, 0.0
+        skim = float(ctx["k"].get("lock_skim", 0.0))
+        ref = float(np.linalg.norm(flat(self.travel))) * ctx["k"]["stride"] / float(self.P)
+
+        def held(d, dt):
+            """The share of a pivot's move `d` over `dt` frames the lock holds back (1 a still foot's)."""
+            if skim <= 0.0 or ref <= 1e-9 or dt <= 1e-12:
+                return 1.0
+            u = min(max((float(np.linalg.norm(d)) / dt / ref - LOCK_SLOW) / (LOCK_FAST - LOCK_SLOW), 0.0), 1.0)
+            return 1.0 - skim * u * u * (3.0 - 2.0 * u)
         for side in SIDES:
             locks[side] = []
             for c, (hs, to) in enumerate(self.contact[side]):
@@ -1984,7 +2008,8 @@ class Walk(object):
                 for i in range(len(offs) - 1):
                     lm = 0.5 * (lams[i] + lams[i + 1])
                     moved = (1.0 - lm) * (points[i + 1][0] - points[i][0]) + lm * (points[i + 1][1] - points[i][1])
-                    shifts.append(shifts[-1] - flat(moved))
+                    d = flat(moved)
+                    shifts.append(shifts[-1] - d * held(d, offs[i + 1] - offs[i]))
                 shifts = np.array(shifts)
                 slide = max(slide, float(np.linalg.norm(shifts, axis=1).max()))
                 # held where the walk's weight on the foot sits on average: the pressure (and Balance) stay the walk's
@@ -1996,7 +2021,8 @@ class Walk(object):
                 speed = []
                 for r, lam in ((0.0, lams[0]), (A - h, lams[-1])):
                     (h0, b0), (h1, b1) = self._pivots(side, hs + r, ctx), self._pivots(side, hs + r + h, ctx)
-                    speed.append(flat((1.0 - lam) * (h1 - h0) + lam * (b1 - b0)) / h)
+                    d = flat((1.0 - lam) * (h1 - h0) + lam * (b1 - b0))
+                    speed.append(d / h * held(d, h))
                 locks[side].append((hs, A, np.array(offs), v * shifts, -v * speed[1], -v * speed[0]))
         return locks, slide
 
@@ -2623,6 +2649,19 @@ class Walk(object):
                     armed_at = carry.copy()
                 if settled and (not swinging or round_ > 0):
                     break
+            if k["balance_reach"] > 0.0 and ctx["carry"] is not None:
+                allow = BALANCE_SINK * self.leg_length
+                if float(np.max(drop)) - float(np.max(first)) > allow:
+                    # the carry scaled back (bisected) until its sink is what the legs allow
+                    full, lo, hi = np.array(ctx["carry"]), 0.0, 1.0
+                    for _ in range(6):
+                        mid = 0.5 * (lo + hi)
+                        ctx["carry"] = mid * full
+                        trial = self._lowering(times, ctx)
+                        lo, hi = (mid, hi) if float(np.max(trial)) - float(np.max(first)) <= allow else (lo, mid)
+                    ctx["carry"] = carry = lo * full
+                    drop = self._lowering(times, ctx)
+                    balance["limited"] = lo
             balance["carry"] = float(np.linalg.norm(carry, axis=1).max()) if ctx["carry"] is not None else 0.0
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
         short, ctx["swing_in"] = 0.0, 0.0

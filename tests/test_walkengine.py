@@ -404,5 +404,23 @@ class WhipTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(r.worlds)))
 
 
+class PhysicsKnobTests(unittest.TestCase):
+    """The helpers gait turns on: each 0 / 1 away from the legacy engine's behaviour."""
+
+    def test_double_force_off_never_holds_a_foot_longer(self):
+        w = tw.walk(stance=0.4, lift=40.0)
+        forced = w.evaluate({"tempo": 96, "balance": 0.0})
+        free = w.evaluate({"tempo": 96, "balance": 0.0, "double_force": 0.0})
+        for side in "lr":
+            for (a, b), (c, d) in zip(free.info["contacts"][side], forced.info["contacts"][side]):
+                self.assertLessEqual(d - c - (b - a), 1e-6 + (d - c))
+                self.assertLessEqual(b - a, d - c + 1e-6)
+
+    def test_balance_reach_where_the_balance_sinks_nothing(self):
+        w = tw.walk()
+        a, b = w.evaluate({}), w.evaluate({"balance_reach": 1.0})
+        self.assertLess(apart(a, b), 1e-9)
+
+
 if __name__ == "__main__":
     unittest.main()

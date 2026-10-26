@@ -798,6 +798,9 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["foot_placement"] = 1.0 if get("foot_placement") >= 0.5 else 0.0
         e["balance"] = 1.0 if get("balance") >= 0.5 else 0.0
         e["knee_soft"] = KNEE_SOFT
+        e["lock_skim"] = 1.0
+        e["balance_reach"] = 1.0
+        e["double_force"] = 0.0
         e["root_sway"] = 0.0 if get("root_on_line") >= 0.5 else 1.0
         whip = min(max(get("whip"), 0.0), 1.0)
         on = 1.0 if whip > 0.0 else 0.0
@@ -915,6 +918,21 @@ def _lift_scale(profile, change):
     return 0.5 * (lo + hi)
 
 
+STEP_SINK = 0.08                          # the Step's range ends where its geometry alone sinks the hips this share
+#                                           of the leg at the double support (a lunge, and its knee clicks)
+
+
+def step_top(own_values, leg):
+    """The longest step whose double support the legs span with the hips sunk at most STEP_SINK of the leg: the
+    clip's legs reach sqrt(h^2 + (s / 2)^2) there (h the pelvis over the feet, s the step); None without them."""
+    h, s = own_value(own_values, "height"), own_value(own_values, "step")
+    if h <= 1.0 or s <= 1.0 or leg <= 1.0:
+        return None
+    reach = math.hypot(h, 0.5 * s)
+    low = h - STEP_SINK * leg
+    return 2.0 * math.sqrt(max(reach * reach - low * low, 0.0)) if low > 0.0 else None
+
+
 def ranges(own_values, leg):
     """{key: (low, high)}: each parameter's range from the walk's own value (a sided one's mean) and its leg."""
     out = {}
@@ -928,6 +946,11 @@ def ranges(own_values, leg):
         if p.sided:
             for s in SIDES:
                 out[p.name + "_" + s] = out[p.name]
+    top = step_top(own_values, leg)
+    if top is not None:
+        lo, hi = out["step"]
+        own_step = own_value(own_values, "step")
+        out["step"] = (lo, max(min(hi, top), 1.05 * own_step))
     return out
 
 
