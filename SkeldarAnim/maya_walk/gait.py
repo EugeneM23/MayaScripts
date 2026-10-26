@@ -735,7 +735,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["pelvis_twist"] = walk.own_twist * get("hips_twist") / own_of("hips_twist")
     elif gain > 1e-9:
         e["pelvis_twist"] = walk.own_twist + (get("hips_twist") - own_of("hips_twist")) / (gain * stride)
-    e["pelvis_list"] = walk.own_list + (get("hip_drop") - own_of("hip_drop"))
+    e["pelvis_list"] = walk.own_list + (get("hip_drop") - own_of("hip_drop")) / _list_take(walk)
     # the trunk
     if getattr(walk, "chest_shape", None) is not None:
         if "chest_twist" in pins and gain > 1e-9:
@@ -784,7 +784,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["arm_lag" + sfx] = sv("arm_lag") - so("arm_lag")
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
-        e["elbow_add" + sfx] = sv("elbow") - so("elbow")
+        e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))
         g = _ratio(sv("elbow_swing"), so("elbow_swing"), ARM_QUIET)
         if g is not None:
             e["g_elbow" + sfx] = _solved_gain(walk, "elbow", s, sv("elbow_swing"), e["detail"], g)
@@ -846,30 +846,178 @@ def _swing_of(walk, kind, side, gain, detail):
     return float(np.ptp(fine @ coef))
 
 
+GAIN_SCAN = 37                            # the regular gain's samples from 0 to the engine's most
+
+
+def _gain_branch(walk, kind, side, detail):
+    """(the gains, the swings) of an arm's ("arm") or elbow's ("elbow") regular gain from 0 up its rising branch
+    (_swing_of): a wide swing turned further wraps back past its widest. None without the joint."""
+    kept = walk.__dict__.setdefault("_gait_gain_branch", {})
+    key = (kind, side, round(float(detail), 6))
+    if key in kept:
+        return kept[key]
+    if _swing_of(walk, kind, side, 1.0, detail) is None:
+        kept[key] = None
+        return None
+    top = float(_model().RANGES["g_" + kind][1])            # the engine lets no more through
+    gains = sorted(set(np.linspace(0.0, top, GAIN_SCAN).tolist() + [1.0]))
+    swings = [_swing_of(walk, kind, side, g, detail) for g in gains]
+    end = gains.index(1.0)
+    while end + 1 < len(gains) and swings[end + 1] > swings[end]:
+        end += 1
+    kept[key] = (gains[:end + 1], swings[:end + 1])
+    return kept[key]
+
+
 def _solved_gain(walk, kind, side, asked, detail, guess):
-    """The regular gain giving an arm's swing `asked` deg peak to peak (_swing_of, bisected), else `guess`: the
-    engine scales the turn exactly, the angle the animator reads bends with it (a run's arm swings back past
-    horizontal and out to its side)."""
+    """The regular gain giving an arm's swing `asked` deg peak to peak (_swing_of, bisected on its rising branch -
+    _gain_branch), else `guess`: the engine scales the turn exactly, the angle the animator reads bends with it (a
+    run's arm swings back past horizontal and out to its side). Past the branch's widest: its widest."""
     if abs(guess - 1.0) < 1e-12 and detail == 1.0:
         return 1.0                            # the walk's own swing
     kept = walk.__dict__.setdefault("_gait_gains", {})
     key = (kind, side, round(float(asked), 6), round(float(detail), 6))
     if key in kept:
         return kept[key]
+    branch = _gain_branch(walk, kind, side, detail)
+    if branch is None:
+        return guess
+    gains, swings = branch
+    if asked >= swings[-1]:
+        kept[key] = float(gains[-1])
+        return kept[key]
+    i = int(np.searchsorted(swings, asked))
+    if i == 0:
+        kept[key] = float(gains[0])
+        return kept[key]
+    lo, hi = gains[i - 1], gains[i]
     at = lambda g: _swing_of(walk, kind, side, g, detail)
-    if at(1.0) is None:
-        return guess
-    lo, hi = 0.0, max(2.0, 2.0 * guess)
-    while at(hi) < asked and hi < 10.0:
-        lo, hi = hi, min(2.0 * hi, 10.0)
-    if at(hi) < asked or at(lo) > asked:
-        kept[key] = guess
-        return guess
     for _ in range(40):
         mid = 0.5 * (lo + hi)
         lo, hi = (mid, hi) if at(mid) < asked else (lo, mid)
     kept[key] = 0.5 * (lo + hi)
     return kept[key]
+
+
+def _list_take(walk):
+    """How much of the engine's added hip drop the measure reads (deg a deg): the drop turns the pelvis about the
+    walk's forward and the hip line, twisted with the step, takes it times the cosine of its turn (dw's 18 deg of
+    twist read 0.89 of it). Read off the walk's own hip line, the drop's shape applied as the engine applies it."""
+    kept = walk.__dict__.get("_gait_list_take")
+    if kept is not None:
+        return kept
+    idx, m = walk.index, _model()
+    take = 1.0
+    if "thigh_l" in idx and "thigh_r" in idx:
+        P = walk.P
+        W = walk.clip.worlds[:, :P]
+        d = W[idx["thigh_l"], :, 3, :3] - W[idx["thigh_r"], :, 3, :3]
+        up, fwd = np.asarray(walk.up), np.asarray(walk.fwd)
+        lists = np.array([walk.list_at(float(t)) for t in range(P)])
+        moved = np.array([d[t] @ m.exp_rot(walk.left * math.radians(1.0) * lists[t] * fwd) for t in range(P)])
+
+        def drop(v):
+            across = np.linalg.norm(v - np.outer(v @ up, up), axis=1)
+            return np.degrees(np.arctan2(v @ up, across))
+        y, x = drop(moved) - drop(d), lists - lists.mean()
+        y = y - y.mean()
+        got = float(np.dot(y, x) / np.dot(x, x)) if float(np.dot(x, x)) > 1e-12 else 1.0
+        take = got if 0.3 <= got <= 1.5 else 1.0
+    walk._gait_list_take = take
+    return take
+
+
+def _elbow_of(walk, side, add):
+    """The mean elbow bend (deg, as measure reads it) of the walk's own arm with `add` deg turned in about the
+    engine's hinge (maya_walk.model.Walk.aspect_turns: the forearm's local turned about the hinge in its upper
+    arm), or None without the arm."""
+    idx, m = walk.index, _model()
+    names = ("upperarm_" + side, "lowerarm_" + side, "hand_" + side)
+    if not all(n in idx for n in names):
+        return None
+    up, low, hand = (idx[n] for n in names)
+    hinge = getattr(walk, "hinge", {}).get(low)
+    if hinge is None:
+        return None
+    W = walk.clip.worlds[:, :walk.P]
+    Ru, Rl = W[up, :, :3, :3], W[low, :, :3, :3]
+    a = _unit(W[low, :, 3, :3] - W[up, :, 3, :3])
+    turn = m.exp_rot(math.radians(add) * np.asarray(hinge))
+    local = np.einsum("fij,fkj->fik", Rl, Ru)                      # the forearm in its upper arm (Rl Ru^T)
+    b = _unit(np.einsum("fi,fij->fj", walk.lt[hand], np.einsum("fij,jk,fkl->fil", local, turn, Ru)))
+    return float(np.degrees(np.arccos(np.clip(np.sum(a * b, axis=1), -1.0, 1.0))).mean())
+
+
+ELBOW_STEP = 2.0                          # deg: the Elbow offset's scan for its branch
+
+
+def _elbow_branch(walk, side):
+    """(the offsets, the mean bends) of an arm along the branch its own bend lies on: from the offset that
+    straightens it most (a rolled forearm's bend leaves the hinge's plane, so it straightens only so far and then
+    bends again) to the engine's most - mean bends rising. None without the arm."""
+    kept = walk.__dict__.setdefault("_gait_elbow_branch", {})
+    if side in kept:
+        return kept[side]
+    lo, hi = _model().RANGES["elbow_add"]
+    if _elbow_of(walk, side, 0.0) is None:
+        kept[side] = None
+        return None
+    xs = np.arange(0.0, lo - 1e-9, -ELBOW_STEP)[::-1].tolist() + np.arange(ELBOW_STEP, hi + 1e-9, ELBOW_STEP).tolist()
+    ys = [_elbow_of(walk, side, x) for x in xs]
+    zero = xs.index(0.0)
+    start = zero
+    while start > 0 and ys[start - 1] < ys[start]:
+        start -= 1
+    end = zero
+    while end + 1 < len(xs) and ys[end + 1] > ys[end]:
+        end += 1
+    kept[side] = (xs[start:end + 1], ys[start:end + 1])
+    return kept[side]
+
+
+def elbow_reach(walk, side):
+    """(the straightest, the most bent) mean bend an arm's Elbow offset gives (deg), or None."""
+    branch = _elbow_branch(walk, side)
+    return None if branch is None else (float(branch[1][0]), float(branch[1][-1]))
+
+
+def _solved_elbow(walk, side, asked, guess):
+    """The engine's Elbow offset (deg) that gives the mean bend `asked` on the walk's own arm (_elbow_of,
+    bisected on its branch - _elbow_branch): a bend measured off the hinge's plane (a rolled forearm) takes less
+    than the degrees asked, and straightens only so far. Past the branch's end its end; `guess` without the arm
+    or with nothing asked."""
+    if abs(guess) < 1e-9:
+        return 0.0
+    branch = _elbow_branch(walk, side)
+    if branch is None:
+        return guess
+    xs, ys = branch
+    if asked <= ys[0]:
+        return float(xs[0])
+    if asked >= ys[-1]:
+        return float(xs[-1])
+    i = int(np.searchsorted(ys, asked))
+    a, b = xs[i - 1], xs[i]
+    for _ in range(30):
+        mid = 0.5 * (a + b)
+        a, b = (mid, b) if _elbow_of(walk, side, mid) < asked else (a, mid)
+    return 0.5 * (a + b)
+
+
+def swing_reach(walk, kind, side):
+    """The widest swing (deg, peak to peak) an arm's ("arm") or elbow's ("elbow") regular gain gives on the walk's
+    own series (its rising branch's end) - or None."""
+    branch = _gain_branch(walk, kind, side, 1.0)
+    return None if branch is None else float(branch[1][-1])
+
+
+def lift_floor(walk, side):
+    """The lowest Foot lift (cm) the swing can take: its path's highest point with the engine's lift at 0 (the
+    straight blend between the prints - an uneven walk's floating prints hold it up)."""
+    profile = walk.lift_profile(side) if hasattr(walk, "lift_profile") else None
+    if not profile:
+        return 0.0
+    return max(0.0, float(max(h - over for h, over in profile)))
 
 
 def _knee_cap(walk, side, bend):
@@ -904,10 +1052,11 @@ def _lift_scale(profile, change):
 
     def at(L):
         return float((h + (L - 1.0) * over).max())
+    top = float(_model().RANGES["lift"][1])                  # the engine lets no more through
     if change > 0.0:
         lo, hi = 1.0, 2.0
-        while at(hi) < asked and hi < 64.0:
-            lo, hi = hi, 2.0 * hi
+        while at(hi) < asked and hi < top:
+            lo, hi = hi, min(2.0 * hi, top)
     else:
         if at(0.0) > asked:
             return 0.0
@@ -933,19 +1082,58 @@ def step_top(own_values, leg):
     return 2.0 * math.sqrt(max(reach * reach - low * low, 0.0)) if low > 0.0 else None
 
 
-def ranges(own_values, leg):
-    """{key: (low, high)}: each parameter's range from the walk's own value (a sided one's mean) and its leg."""
+FLAT_REACH = 0.5                          # Foot flat comes within this share of the foot's shortest contact
+REACHED = ("foot_lift", "elbow", "elbow_swing", "arm_swing", "foot_flat")    # what a walk's body bounds
+
+
+def reach(walk, key):
+    """(low, high) a walk's own body reaches for the parameter key `key`, None where it sets no bound: Foot lift
+    no lower than its swing takes (lift_floor), the Elbow no straighter than its hinge brings it nor more bent
+    than the engine turns it (elbow_reach), the arm's and the elbow's swing no wider than their gain turns them
+    (swing_reach), Foot flat within FLAT_REACH of the foot's shortest contact. A two-sided parameter's own key:
+    its sides' mean."""
+    p, side = param_of(key)
+    if p.name not in REACHED:
+        return None, None
+    if side is None and p.sided:
+        got = [reach(walk, p.name + "_" + s) for s in SIDES]
+        mean = lambda i: (sum(g[i] for g in got) / 2.0) if all(g[i] is not None for g in got) else None
+        return mean(0), mean(1)
+    if p.name == "foot_lift":
+        return lift_floor(walk, side), None
+    if p.name == "elbow":
+        return elbow_reach(walk, side) or (None, None)
+    if p.name in ("elbow_swing", "arm_swing"):
+        return None, swing_reach(walk, "arm" if p.name == "arm_swing" else "elbow", side)
+    contact = (getattr(walk, "contact", {}) or {}).get(side)
+    return None, (FLAT_REACH * min(b - a for a, b in contact) if contact else None)
+
+
+def ranges(own_values, leg, walk=None):
+    """{key: (low, high)}: each parameter's range from the walk's own value and its leg - a two-sided one's own
+    keys from each side's own value, its own key from their mean; with the `walk`, no further than its body
+    reaches (Foot lift no lower than its swing takes, the Elbow no straighter than its hinge brings it, the arm's
+    and the elbow's swing no wider than their gain turns them, Foot flat within half the foot's shortest
+    contact)."""
     out = {}
     for p in PARAMS:
         if p.kind == "toggle":
             rng = (0.0, 1.0)
         else:
-            b = own_value(own_values, p.name)
-            rng = p.rule(b, leg)
+            rng = p.rule(own_value(own_values, p.name), leg)
         out[p.name] = (float(min(rng)), float(max(rng)))
         if p.sided:
             for s in SIDES:
-                out[p.name + "_" + s] = out[p.name]
+                rng = (0.0, 1.0) if p.kind == "toggle" else p.rule(own_value(own_values, p.name + "_" + s), leg)
+                out[p.name + "_" + s] = (float(min(rng)), float(max(rng)))
+    if walk is not None:              # what the walk's own body reaches: each side's, the sides' mean
+        for name in REACHED:
+            for key in [name + "_" + s for s in SIDES] + [name]:
+                lo, hi = out[key]
+                a, b = reach(walk, key)
+                lo = max(lo, a) if a is not None else lo
+                hi = min(hi, b) if b is not None else hi
+                out[key] = (min(lo, hi), hi)
     top = step_top(own_values, leg)
     if top is not None:
         lo, hi = out["step"]

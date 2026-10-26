@@ -263,5 +263,45 @@ class LegacyTests(unittest.TestCase):
         self.assertAlmostEqual(own["hips_twist"] + changes["hips_twist"][1], w.twist_gain * 5.0, places=6)
 
 
+class ReachTests(unittest.TestCase):
+    """What a walk's own body reaches (2026-10-26, the read-back on real walks): an arm swings, an elbow
+    straightens and a foot lowers only so far; a side's range comes from its own value."""
+
+    def setUp(self):
+        self.w = tw.walk()
+        self.own = gait.own(self.w)
+
+    def test_each_side_s_range_comes_from_its_own_value(self):
+        rng = gait.ranges(self.own, self.w.leg_length, self.w)
+        for s in gait.SIDES:
+            lo, hi = rng["arm_lag_" + s]
+            self.assertAlmostEqual(0.5 * (lo + hi), self.own["arm_lag_" + s], places=9)
+
+    def test_an_arm_asked_past_its_widest_swing_stops_there(self):
+        lo, hi = gait.reach(self.w, "arm_swing_l")
+        self.assertIsNone(lo)
+        self.assertGreater(hi, self.own["arm_swing_l"])
+        g = gait._solved_gain(self.w, "arm", "l", hi + 50.0, 1.0, 3.0)
+        self.assertAlmostEqual(gait._swing_of(self.w, "arm", "l", g, 1.0), hi, places=6)
+        self.assertLessEqual(g, wm.RANGES["g_arm"][1])            # never past what the engine lets through
+
+    def test_an_elbow_straightens_only_as_far_as_its_hinge_brings_it(self):
+        lo, hi = gait.reach(self.w, "elbow_l")
+        self.assertLess(lo, self.own["elbow_l"])
+        x = gait._solved_elbow(self.w, "l", lo - 20.0, -40.0)
+        self.assertAlmostEqual(gait._elbow_of(self.w, "l", x), lo, places=6)
+        x = gait._solved_elbow(self.w, "l", self.own["elbow_l"] + 10.0, 10.0)
+        self.assertAlmostEqual(gait._elbow_of(self.w, "l", x), self.own["elbow_l"] + 10.0, places=4)
+
+    def test_a_foot_lowers_no_further_than_its_swing_takes(self):
+        floor = gait.lift_floor(self.w, "l")
+        self.assertGreaterEqual(floor, 0.0)
+        self.assertLess(floor, self.own["foot_lift_l"])
+        self.assertEqual(gait.reach(self.w, "foot_lift_l"), (floor, None))
+
+    def test_the_hip_drop_s_take_through_the_twisted_pelvis(self):
+        self.assertTrue(0.3 <= gait._list_take(self.w) <= 1.5)
+
+
 if __name__ == "__main__":
     unittest.main()

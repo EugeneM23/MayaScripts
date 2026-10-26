@@ -7,6 +7,7 @@ The animator (2026-10-16): «обрабатывать сразу несколь�
 но каждый цикл уникальный». Three Manny skeletons, two on asd and one on dw (walks/, git-ignored, copied into a
 temporary walks folder); the card's presses through maya_walk.panel with no window (its knobs in optionVars).
 """
+import json
 import math
 import os
 import shutil
@@ -74,6 +75,12 @@ def memo(ns):
     return sw.memo_of(roots[ns])
 
 
+def set_params(changes):
+    """The card's parameters set by hand ({key: (kind, x)}, every one pinned) - as its sliders leave them."""
+    cmds.optionVar(stringValue=(panel.OPTION + "params", json.dumps(
+        {"changes": dict((k, list(v)) for k, v in changes.items()), "pins": sorted(changes)})))
+
+
 def upper_mean(ns):
     """The mean local rotation of ns:upperarm_l in its clavicle over the keyed cycle."""
     arm, clav = (cmds.ls("%s:%s" % (ns, n), long=True)[0] for n in ("upperarm_l", "clavicle_l"))
@@ -104,17 +111,16 @@ gate(sorted(listed) == sorted(roots.values()), "the list is the three walked ske
 gate([memo(n)["walk"] for n in "ABC"] == ["asd", "asd", "dw"], "A and B walk asd, C walks dw")
 gate([sw.walker_label(roots[n]) for n in "ABC"] == ["A", "B", "C"], "labels: their namespaces")
 
-# ---- a knob: every walker keyed again, each on its own cycle, the tempo as a ratio ----
+# ---- a parameter: every walker keyed again, each on its own cycle, the same change from its own ----
 cmds.select(clear=True)
-cmds.optionVar(floatValue=(panel.OPTION + "knob_stride", 1.3))
-half = int(round(P_dw / 2.0))
-cmds.optionVar(floatValue=(panel.OPTION + "knob_tempo", float(half)))    # half of dw's frames: twice as fast
+set_params({"step": ("ratio", 1.3), "tempo": ("ratio", 0.5)})   # a step x1.3, twice as fast
 line = panel.slider_changed()
 print(line)
-gate("3 walkers keyed" in line, "a knob re-keys all three")
+gate("3 walkers keyed" in line, "a parameter re-keys all three")
 gate([memo(n)["walk"] for n in "ABC"] == ["asd", "asd", "dw"], "each keeps its own cycle")
-gate(all(abs(memo(n)["knobs"]["stride"] - 1.3) < 1e-9 for n in "ABC"), "stride 1.3 on every walker")
-want = max(4, int(round(half * P_asd / float(P_dw))))
+gate(all(abs(memo(n)["knobs"]["stride"] - 1.3) < 1e-9 and memo(n)["params"]["changes"]["step"] == ["ratio", 1.3]
+         for n in "ABC"), "Step x1.3 on every walker, a stride of 1.3 on each cycle")
+half, want = int(round(P_dw / 2.0)), int(round(P_asd / 2.0))
 gate(int(memo("C")["knobs"]["tempo"]) == half and int(memo("A")["knobs"]["tempo"]) == want,
      "the tempo: C %d of dw's %d, A %d of asd's %d (the same ratio)" %
      (memo("C")["knobs"]["tempo"], P_dw, memo("A")["knobs"]["tempo"], P_asd))
@@ -123,10 +129,10 @@ gate(len(keys) == want + 1, "A's cycle is keyed over %d frames (%d keys)" % (wan
 
 # ---- out of the list: a knob no longer reaches it ----
 sw.set_listed(roots["A"], False)
-cmds.optionVar(floatValue=(panel.OPTION + "knob_stride", 1.1))
+set_params({"step": ("ratio", 1.1)})
 panel.slider_changed()
 gate(abs(memo("A")["knobs"]["stride"] - 1.3) < 1e-9 and abs(memo("B")["knobs"]["stride"] - 1.1) < 1e-9,
-     "A out of the list keeps stride 1.3; B takes 1.1")
+     "A out of the list keeps Step x1.3; B takes x1.1")
 panel._walk_taken("asd")                                  # Pick puts the ACTIVE cycle on
 cmds.select(roots["A"], replace=True)
 panel.press_apply()

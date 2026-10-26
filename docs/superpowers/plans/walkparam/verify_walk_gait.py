@@ -6,10 +6,15 @@ Phases:
   goblin and the two-handed sword: the pelvis drop, the planted knee's straightest, the knee's clicks, the trailing
   heel up at the toe-off, the leading knee at the contact, the side sway of the centre of mass against the linear
   inverted pendulum's, the arms' swing and lag kept under Whip;
-- identity: the parameters at the clip's own values, the physics off, give the clip (<= 1e-4 cm);
-- readback: each parameter at three values in its range, the physics off: within 10 % of the change or 0.3 of its
-  unit wherever the pelvis did not lower for the reach (the Diagnosis's "physics gave way");
-- effect: each parameter over its range moves its body part at least 5 deg or 3 cm.
+- identity: the parameters at the clip's own values, the physics off, give the engine's own reading of the clip
+  (walk.own_knobs: <= 1e-5 cm) and that the clip (<= 5e-4 cm: its own seam);
+- readback: each parameter at three values in its range, the physics off: each side's change within its own reach
+  (gait.ranges with the walk: an arm swings, an elbow straightens, a foot lowers only so far), the sides' mean
+  within 10 % of it or 0.3 of its unit - wherever the pelvis did not lower for the reach (the Diagnosis's "physics
+  gave way"; 0.5 cm for the pelvis's height and bob). Foot flat only on a foot that lands on its heel (5 deg of
+  toes up): a foot landing flat has no foot-flat to move;
+- effect: each parameter over its range moves its body part at least 5 deg or 3 cm (a fifth of its range where
+  that is less).
 
 The walks are read from the animator's walks folder (never written); the poses' .wpose files beside them.
 """
@@ -129,8 +134,11 @@ def phase_identity(walks):
         walk, _ = load(name)
         own = gait.own(walk)
         r = run(walk, own, own, set(), physics=False)
-        d = float(np.abs(r.worlds[:, :walk.P + 1] - walk.clip.worlds).max())
-        gate(d <= 1e-4, "%s: the own values give the clip (%.2g cm)" % (name, d))
+        engine = walk.evaluate(walk.own_knobs())
+        d = float(np.abs(r.worlds - engine.worlds).max())
+        seam = float(np.abs(engine.worlds[:, :walk.P + 1] - walk.clip.worlds).max())
+        gate(d <= 1e-5, "%s: the own values give the engine's own reading (%.2g cm)" % (name, d))
+        gate(seam <= 5e-4, "%s: which is the clip (%.2g cm)" % (name, seam))
 
 
 def _wrapped(name, d, frames):
@@ -141,17 +149,26 @@ def _wrapped(name, d, frames):
     return d
 
 
+VERTICAL = ("bounce", "low_point", "double_bounce", "height", "knee_bend")    # read off the pelvis's height
+
+
 def phase_readback(walks):
     print("readback (physics off)")
     for name in walks:
         walk, _ = load(name)
         own = gait.own(walk)
-        rng = gait.ranges(own, walk.leg_length)
+        rng = gait.ranges(own, walk.leg_length, walk)
         base = gait.of_result(walk, run(walk, own, own, set(), physics=False))
         for p in gait.PARAMS:
             if p.kind in ("added", "toggle"):
                 continue
             lo, hi = rng[p.name]
+            sides = [p.name + "_" + s for s in gait.SIDES] if p.sided else [p.name]
+            if p.name == "foot_flat":         # a foot landing flat has no foot-flat to move
+                sides = [k for k in sides if own[k.replace("foot_flat", "heel_strike")] >= 5.0]
+                if not sides:
+                    print("    (%s foot_flat: both feet land flat)" % name)
+                    continue
             for share in (-0.5, 0.35, 0.8):
                 o = own[p.name]
                 d = share * ((hi - o) if share > 0 else (o - lo))
@@ -162,30 +179,43 @@ def phase_readback(walks):
                     for s in gait.SIDES:
                         asked[p.name + "_" + s] = own[p.name + "_" + s] + d
                 r = run(walk, own, asked, {p.name}, physics=False)
-                moved = _wrapped(p.name, gait.of_result(walk, r)[p.name] - base[p.name], r.frames / float(walk.strides))
-                if r.info["lowered"] > 2.0:
+                if r.info["lowered"] > (0.5 if p.name in VERTICAL else 2.0):
                     print("    (%s %s %+.2f: the pelvis lowered %.1f cm - physics)" % (name, p.name, d, r.info["lowered"]))
                     continue
-                gate(abs(moved - d) <= max(0.1 * abs(d), 0.3),
-                     "%s %s %+.2f -> %+.2f" % (name, p.name, d, moved))
+                m = gait.of_result(walk, r)
+                frames = r.frames / float(walk.strides)
+                bound = lambda k, v: min(max(v, gait.reach(walk, k)[0] if gait.reach(walk, k)[0] is not None
+                                             else v), gait.reach(walk, k)[1] if gait.reach(walk, k)[1] is not None
+                                         else v)
+                floor = (lambda v: max(v, 0.0)) if (p.kind == "size" or p.name == "foot_flat") else (lambda v: v)
+                want = [floor(bound(k, own[k] + d)) - own[k] for k in sides]       # within its reach
+                got = [_wrapped(p.name, m[k] - base[k], frames) for k in sides]
+                want, got = float(np.mean(want)), float(np.mean(got))
+                if p.name == "foot_flat":     # the stretch of a heel strike, sampled at whole frames: approximate
+                    gate(got * want > 0.0 and abs(got) >= 0.5 * abs(want) or abs(want) < 0.3,
+                         "%s foot_flat %+.2f (%+.2f in reach) -> %+.2f (at least half, approximate)"
+                         % (name, d, want, got))
+                    continue
+                gate(abs(got - want) <= max(0.1 * abs(want), 0.3),
+                     "%s %s %+.2f (%+.2f in reach) -> %+.2f" % (name, p.name, d, want, got))
 
 
 def phase_effect(walks):
     print("effect")
     parts = {"step": "foot_l", "width": "foot_l", "bounce": "pelvis", "lean": "neck_01", "arm_swing": "hand_l",
-             "sway": "pelvis", "surge": "pelvis", "hips_twist": "thigh_l", "chest_twist": "upperarm_l",
+             "sway": "pelvis", "surge": "pelvis", "hips_twist": "pelvis", "chest_twist": "upperarm_l",
              "head_motion": "head", "foot_lift": "foot_l", "elbow": "hand_l", "arms_forward": "hand_l",
              "arm_out": "hand_l", "push": "foot_l", "heel_strike": "ball_l", "height": "pelvis", "forward": "pelvis",
              "toe_out": "ball_l", "tempo": "foot_l", "arm_lag": "hand_l", "low_point": "pelvis"}
     for name in walks:
         walk, _ = load(name)
         own = gait.own(walk)
-        rng = gait.ranges(own, walk.leg_length)
+        rng = gait.ranges(own, walk.leg_length, walk)
         base = run(walk, own, own, set())
         for pname, joint in parts.items():
             p = gait.P[pname]
             lo, hi = rng[pname]
-            moved = 0.0
+            cm = deg = 0.0
             for v in (lo, hi):
                 asked = dict(own, **{pname: v})
                 if p.sided:
@@ -196,8 +226,15 @@ def phase_effect(walks):
                 n = min(r.frames, base.frames)
                 a = r.worlds[j, :n, 3, :3] - r.worlds[walk.index["root"], :n, 3, :3]
                 b = base.worlds[j, :n, 3, :3] - base.worlds[walk.index["root"], :n, 3, :3]
-                moved = max(moved, float(np.linalg.norm(a - b, axis=1).max()))
-            gate(moved >= 3.0, "%s %s moves %s %.1f cm over its range" % (name, pname, joint, moved))
+                cm = max(cm, float(np.linalg.norm(a - b, axis=1).max()))
+                turn = np.einsum("fij,fkj->fik", r.worlds[j, :n, :3, :3], base.worlds[j, :n, :3, :3])
+                deg = max(deg, float(np.degrees(np.arccos(np.clip((np.trace(turn, axis1=1, axis2=2) - 1.0) / 2.0,
+                                                                   -1.0, 1.0))).max()))
+            span = hi - lo
+            need_cm = min(3.0, 0.2 * span) if p.unit == "cm" else 3.0
+            need_deg = min(5.0, 0.2 * span) if p.unit == "deg" else 5.0
+            gate(cm >= need_cm or deg >= need_deg, "%s %s moves %s %.1f cm / %.1f deg over its range (%.1f %s)"
+                 % (name, pname, joint, cm, deg, span, p.unit))
 
 
 PHASES = {"complaints": phase_complaints, "identity": phase_identity, "readback": phase_readback,

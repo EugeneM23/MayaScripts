@@ -890,7 +890,7 @@ def _active():
     except scene.REFUSALS:
         return None
     own = gait.own(walk)
-    return name, walk, own, gait.ranges(own, float(getattr(walk, "leg_length", 0.0) or 0.0))
+    return name, walk, own, gait.ranges(own, float(getattr(walk, "leg_length", 0.0) or 0.0), walk)
 
 
 def _key(name, mode=None):

@@ -7,6 +7,7 @@ The animator (2026-10-16): «pick ко всем скелетам в сцене �
 анимаций». Three Manny skeletons are keyed with three different cycles (asd, dw, asd at stride 1.3 - made by the
 tool, then stripped of everything but their keys, as an imported animation stands); Pick on all three.
 """
+import json
 import os
 import shutil
 import sys
@@ -102,10 +103,11 @@ gate(travel(pelvis_track("C")) > 1.15 * travel(pelvis_track("A")), "C (the longe
 
 # ---- one knob: every cycle stretched alike ----
 before = dict((n, travel(pelvis_track(n))) for n in "ABC")
-cmds.optionVar(floatValue=(panel.OPTION + "knob_stride", 1.2))
+cmds.optionVar(stringValue=(panel.OPTION + "params",
+                            json.dumps({"changes": {"step": ["ratio", 1.2]}, "pins": ["step"]})))
 print(panel.slider_changed())
 after = dict((n, travel(pelvis_track(n))) for n in "ABC")
-gate(all(abs(after[n] / before[n] - 1.2) < 0.02 for n in "ABC"), "stride 1.2 lengthens every cycle x1.2 (%s)"
+gate(all(abs(after[n] / before[n] - 1.2) < 0.02 for n in "ABC"), "Step x1.2 lengthens every cycle x1.2 (%s)"
      % ", ".join("%s x%.3f" % (n, after[n] / before[n]) for n in "ABC"))
 
 # ---- Pick again: the kept cycle, not the keys it now carries ----
@@ -121,7 +123,7 @@ shutil.rmtree(os.path.join(TEMP, sw.OWN_CACHE), ignore_errors=True)
 sw._state()["loaded"] = {}
 cmds.file(path, open=True, force=True)
 roots = dict((ns, cmds.ls(ns + ":root", long=True)[0]) for ns in "ABC")
-cmds.optionVar(floatValue=(panel.OPTION + "knob_stride", 1.0))
+cmds.optionVar(stringValue=(panel.OPTION + "params", json.dumps({"changes": {}, "pins": []})))
 print(panel.slider_changed())
 gate(len(sw.walkers()) == 3 and all(abs(travel(pelvis_track(n)) / before[n] - 1.0) < 0.02 for n in "ABC"),
      "reopened with no walk file left: the list re-keys from the cycles kept in the scene")

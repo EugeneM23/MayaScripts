@@ -21,11 +21,11 @@ KNOBS = (
     ("pose", 0.0, 0.0, 1.0),
     ("stride", 1.0, 0.4, 1.8),
     ("tempo", 0.0, 0.0, 2000.0),
-    ("lift", 1.0, 0.0, 3.0),
+    ("lift", 1.0, 0.0, 10.0),
     ("in_place", 0.0, 0.0, 1.0),
     ("foot_placement", 1.0, 0.0, 1.0),
     ("ground_time", 1.0, 0.7, 1.8),
-    ("stance", 1.0, 0.0, 2.5),
+    ("stance", 1.0, 0.0, 4.0),
     ("swing_out", 0.0, -30.0, 40.0),
     ("leg_match", 1.0, 0.0, 1.0),
     ("leg_turn", 1.0, 0.0, 2.0),
@@ -84,9 +84,9 @@ KNOBS = (
     ("g_bob", 1.0, 0.0, 10.0),        # the pelvis's height
     ("g_sway", 1.0, 0.0, 10.0),       # its side to side
     ("g_surge", 1.0, 0.0, 10.0),      # its forward and back
-    ("g_head", 1.0, 0.0, 5.0),        # the head's world turn (0 holds the gaze)
-    ("g_arm", 1.0, 0.0, 5.0),         # the upper arm's swing
-    ("g_elbow", 1.0, 0.0, 5.0),       # the forearm's turn in the elbow
+    ("g_head", 1.0, 0.0, 10.0),       # the head's world turn (0 holds the gaze)
+    ("g_arm", 1.0, 0.0, 10.0),        # the upper arm's swing
+    ("g_elbow", 1.0, 0.0, 10.0),      # the forearm's turn in the elbow
     ("g_spine", 1.0, 0.0, 5.0),       # the spine's and the neck's local turns
     # A swing added where the walk has (next to) none of its own: at its own phase when it has one (BOB_QUIET /
     # ARM_QUIET), else at the guide's - the bob low 5 % of a step after each strike, an arm forward at the other
