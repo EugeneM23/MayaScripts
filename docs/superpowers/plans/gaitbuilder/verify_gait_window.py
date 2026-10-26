@@ -1,6 +1,7 @@
 """The Gait Builder window driven in a DISPOSABLE GUI Maya (scratch MAYA_APP_DIR, its own port), one phase a send:
 a runner execs this file with PHASE = "a".."g" in its globals, a separate send for each (a UI change and its read
-need the event loop between them). Not run yet (2026-10-26: the first send got no answer)."""
+need the event loop between them). A grp control's -q -changeCommand answers None in Maya, so a slider or a
+radio group is fired through the handler its command calls (the lambda in skeldar_gait._build)."""
 import json
 import os
 import sys
@@ -12,6 +13,10 @@ for p in (REPO + "/SkeldarAnim", REPO + "/docs/superpowers/plans/gaitbuilder"):
     if p not in sys.path:
         sys.path.insert(0, p)
 HERE = os.environ.get("TEMP", ".")          # where the window's picture goes
+
+if PHASE == "a":                   # the tool as it stands in the repo now
+    for name in ("skeldar_gait", "aspects", "gaitload", "gaitmodel", "gaitgen"):
+        sys.modules.pop(name, None)
 
 import numpy as np                 # noqa: E402
 import skeldar_gait as tool        # noqa: E402
@@ -61,7 +66,17 @@ def command_of(kind, control, flag):
         return "error: %s" % exc
 
 
+def fire(kind, control, handler, *args):
+    """Run the control's own command where Maya answers it, else the handler that command calls."""
+    cmd = command_of(kind, control, "changeCommand")
+    if callable(cmd):
+        cmd(*args)
+    else:
+        handler(*args)
+
+
 def phase_a():
+    G["failed"], G["count"] = [], 0
     cmds.file(new=True, force=True)
     cmds.currentUnit(time="ntsc")
     cmds.playbackOptions(minTime=1, maxTime=120)
@@ -113,12 +128,13 @@ def phase_b():
 
 
 def phase_c():
-    asked = round(cmds.floatSliderGrp("skeldarGait_speed", query=True, value=True) * 1.2, 3)
+    # two decimals: the slider shows a step under 0.1 at precision 2 (skeldar_gait._build)
+    asked = round(cmds.floatSliderGrp("skeldarGait_speed", query=True, value=True) * 1.2, 2)
     G["asked_speed"] = asked
     cmds.floatSliderGrp("skeldarGait_speed", edit=True, value=asked)
-    cmd = command_of("floatSliderGrp", "skeldarGait_speed", "changeCommand")
-    gate(callable(cmd), "the Speed slider carries its command")
-    cmd(asked)
+    took = cmds.floatSliderGrp("skeldarGait_speed", query=True, value=True)
+    gate(abs(took - asked) < 1e-6, "the Speed slider takes %.2f (%.3f)" % (asked, took))
+    fire("floatSliderGrp", "skeldarGait_speed", tool._knob_changed, "speed", asked)
 
 
 def phase_d():
@@ -132,11 +148,11 @@ def phase_d():
     gate(abs(step - dist / 2.0) < 1.0, "the Step slider follows the speed: %.1f cm (keyed %.1f)" % (step, dist / 2.0))
     # Left alone
     cmds.radioButtonGrp("skeldarGaitSide", edit=True, select=2)
-    command_of("radioButtonGrp", "skeldarGaitSide", "changeCommand")()
+    tool._side_changed("l")
     own = cmds.floatSliderGrp("skeldarGait_arm_swing", query=True, value=True)
     G["left_swing"] = own + 8.0
     cmds.floatSliderGrp("skeldarGait_arm_swing", edit=True, value=own + 8.0)
-    command_of("floatSliderGrp", "skeldarGait_arm_swing", "changeCommand")(own + 8.0)
+    fire("floatSliderGrp", "skeldarGait_arm_swing", tool._knob_changed, "arm_swing", own + 8.0)
 
 
 def phase_e():
@@ -144,12 +160,12 @@ def phase_e():
     gate("arm_swing_l" in gait and "arm_swing_r" not in gait,
          "Left sets the left arm alone (%s)" % dict((k, round(v, 2)) for k, v in gait.items()))
     cmds.radioButtonGrp("skeldarGaitSide", edit=True, select=1)
-    command_of("radioButtonGrp", "skeldarGaitSide", "changeCommand")()
+    tool._side_changed("both")
     label = cmds.floatSliderGrp("skeldarGait_arm_swing", query=True, label=True)
     gate(label.endswith("*"), "Both marks the knob whose sides differ: %r" % label)
     # another source through the menu
     cmds.optionMenu("skeldarGaitSource", edit=True, value="CAT Run")
-    command_of("optionMenu", "skeldarGaitSource", "changeCommand")("CAT Run")
+    fire("optionMenu", "skeldarGaitSource", tool._source_chosen, "CAT Run")
 
 
 def phase_f():
@@ -167,6 +183,9 @@ def phase_f():
             cmds.button(b, query=True, command=True)()
     line = status()
     gate(line and line.startswith("Reset to the walk's own"), "Reset: %s" % line)
+    # CAT Run's own feet lift 55.214 / 55.214 cm (they differ in the fifth digit): one value, no mark
+    label = cmds.floatSliderGrp("skeldarGait_lift", query=True, label=True)
+    gate(not label.endswith("*"), "a knob whose sides agree at its shown digits is not marked: %r" % label)
 
 
 def phase_g():

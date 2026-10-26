@@ -3,7 +3,8 @@
 & 'C:/Program Files/Autodesk/Maya2027/bin/mayapy.exe' docs/superpowers/plans/gaitbuilder/gates.py <gate> [walk ...]
 
 Gates: parity (the fork against Walk Builder at Walk Builder's knobs), speed, clicks, identity, readback, effect,
-redundancy, all. The walks: the animator's saved walks (WALKS_HOME, default <Documents>/maya/SkeldarWalks) - asd,
+redundancy, all. GATE_POSE=<pose> (GATE_POSE_SHARE, default 1) runs readback, effect, redundancy and clicks under a
+saved pose. The walks: the animator's saved walks (WALKS_HOME, default <Documents>/maya/SkeldarWalks) - asd,
 dw, HavyRun when there - and the CAT Walk preset. A walk not on this machine is skipped and named.
 """
 import json
@@ -33,6 +34,9 @@ PARITY_APPROX = (0.1, 0.2)        # cm, deg: the fork's speed-ups against Walk B
 FAILED = []
 COUNT = [0]
 ONLY = [k for k in os.environ.get("GATE_KNOBS", "").split(",") if k]     # the knobs to gate (none: all)
+# readback, effect, redundancy and clicks under a saved pose (WALKS/<name>.wpose.gz) at its share, when set
+POSE = os.environ.get("GATE_POSE") or None
+POSE_SHARE = float(os.environ.get("GATE_POSE_SHARE", "1.0"))
 
 
 def gate(ok, text):
@@ -319,7 +323,7 @@ def gate_identity(names):
 
 def gate_readback(names):
     for name in names:
-        b = Bench(name)
+        b = Bench(name, POSE, POSE_SHARE)
         if not b.ok:
             continue
         for knob in asp.KNOBS:
@@ -355,7 +359,7 @@ def _effect_of(b, knob, under=None):
 
 def gate_effect(names):
     for name in names:
-        b = Bench(name)
+        b = Bench(name, POSE, POSE_SHARE)
         if not b.ok:
             continue
         head_own = own_motion(b.base_result.worlds, b.groups.get("head", []))
@@ -392,7 +396,7 @@ def gate_effect(names):
 
 def gate_redundancy(names):
     for name in names:
-        b = Bench(name)
+        b = Bench(name, POSE, POSE_SHARE)
         if not b.ok:
             continue
         idx = np.concatenate(list(b.groups.values()))
@@ -424,10 +428,17 @@ def gate_redundancy(names):
 
 def gate_clicks(names):
     for name in names:
-        b = Bench(name)
+        b = Bench(name, POSE, POSE_SHARE)
         if not b.ok:
             continue
         clip_click, _ = knee_click(b.walk.clip.worlds, b.walk.names)
+        ref = "the clip's own"
+        if b.pose is not None:
+            # under a pose the engine's own walk is the reference: Walk Builder at its own knobs under the goblin
+            # clicks 21 deg/fr^2 on dw's knees with nothing asked (Gait Builder's defaults 21.1, the bare clip 12.9)
+            posed, _ = knee_click(b.base_result.worlds, b.walk.names)
+            if posed > clip_click:
+                clip_click, ref = posed, "the posed walk's own"
         configs = [("defaults", {})]
         for knob in ("step", "duty", "bob", "lift"):
             lo, hi = b.range[knob]
@@ -441,8 +452,8 @@ def gate_clicks(names):
             # deg / frame^2 grow as the cadence squared: the clip's own motion played faster is not a click
             pace = (b.walk.P / float(r.frames)) ** 2
             limit = max(CLICK_ABS, CLICK_SHARE * clip_click * pace)
-            gate(click <= limit, "clicks %s %s: %.1f deg/fr^2 (the clip's own %.1f x%.2f the pace, limit %.1f), "
-                 "straightest %.1f, pelvis down %.1f" % (name, label, click, clip_click, pace, limit, straight,
+            gate(click <= limit, "clicks %s %s: %.1f deg/fr^2 (%s %.1f x%.2f the pace, limit %.1f), "
+                 "straightest %.1f, pelvis down %.1f" % (name, label, click, ref, clip_click, pace, limit, straight,
                                                         r.info["lowered"]))
 
 
@@ -456,6 +467,8 @@ def main(argv):
     for key, fn in GATES.items():
         if which in (key, "all"):
             fn(names)
+    if POSE:
+        print("under the %s pose at %.2f" % (POSE, POSE_SHARE))
     print("%d gates, %d failed" % (COUNT[0], len(FAILED)))
     return 1 if FAILED else 0
 

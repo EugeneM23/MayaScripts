@@ -14243,22 +14243,44 @@ The animator: «любое открытое окно подсвечено ора
   (`Light._watch`, taken off when the target changes or the watch stops). Tests
   `test_the_ring_follows_a_dragged_window_with_no_poll`, `test_the_old_window_is_no_longer_followed`.
 
-## Gait Builder: Walk Builder and our CAT as one tool (IN PROGRESS, paused 2026-10-26)
+## Gait Builder: Walk Builder and our CAT as one tool (standalone, 2026-10-26)
 
 The animator: «Я бы хотел проанализировать работу этих двух инструментов и объеденить их ... сильно много
-ручек контроля ... эти ручки часто не сильно влияют на финальный результат». Standalone first, in
-`docs/superpowers/plans/gaitbuilder/`; nothing in `SkeldarAnim/` changed.
+ручек контроля ... эти ручки часто не сильно влияют на финальный результат». A standalone tool in
+`docs/superpowers/plans/gaitbuilder/`, dropped into a viewport (`skeldar_gait.py`); nothing in `SkeldarAnim/`
+changed - it reads the plugin's `maya_walk` and `maya_poselib`. Spec
+`docs/superpowers/specs/2026-10-26-gait-builder-design.md` (the analysis, the design, four session addenda with
+every decision and number), plan `docs/superpowers/plans/2026-10-26-gait-builder.md`.
 
-- **The design**: aspects over a clip. Every knob is a measured feature of the walk in its unit (m/s, cm, deg,
-  % of a cycle). It starts at the clip's own value and drives a fork of Walk Builder's model (`gaitmodel.py`);
-  12 main knobs and ~30 details replace 38 + 77. Spec: `docs/superpowers/specs/2026-10-26-gait-builder-design.md`.
-- **Handed over to another agent**. READ ITS LAST SECTION, "Status at the pause", FIRST: what exists and what
-  is verified, the gate results, the diagnoses, the ordered next steps, the traps.
-- **The plan**: `docs/superpowers/plans/2026-10-26-gait-builder.md`, its checkboxes current.
-- **The state**:
-  - the fork is at parity with Walk Builder and 2.2× faster;
-  - `aspects.measure`, the operators and the knob mapping are unit-tested (28 tests);
-  - `gates.py` measures them on the animator's walks;
-  - the Maya window `skeldar_gait.py` is written and NEVER run;
-  - open: the chest-bounce bug, the read-back gains (duty, lift, elbow swing, arm out), the knob-set
-    redundancies (Weight / Follow-through / Arm timing), the knee clicks at long steps, `verify_gait.py`.
+- **Aspects over a clip**: 37 knobs, each a measured feature of the walk in its unit (m/s, cm, deg, % of a
+  cycle), starting at the walk's own value; Main (Speed, Step length, Ground time, Weight, Bounce, Hips, Lean, Arm
+  swing, Width, Foot lift, Energy) and details in collapsed groups. Untouched, the walk is itself.
+- **Modules**: `gaitmodel` (a fork of `maya_walk/model.py`, at parity with Walk Builder and ~2x faster; its new
+  knobs default to Walk Builder's behaviour: `weight_lag` 1, `knee_soft` 0, `weight_dip` 0), `aspects` (measure,
+  the knob table, ranges, `engine_knobs`, `calibrate`), `gaitgen` (CAT presets as clips), `gaitload` (sources,
+  the cached calibration), `skeldar_gait` (the window, the `skeldarGait` memo), `gates.py`, `verify_gait.py`,
+  `verify_gait_window.py`. Unit tests `tests/test_gait_*.py`.
+- **The calibration**: knobs whose engine change is not their unit 1:1 (Ground time, Knee bend, Elbow, Elbow
+  swing, Bounce) are probed once a walk (sixteen evaluations, with no pose) and asked through their response's
+  inverse, their ranges cut to their reach; Step, Speed and Ground time stop where the pelvis drops 15 % of the
+  leg (a lunge). Kept in memory and in `<maya>/SkeldarGaitCache/<sha1>.json`, keyed by the walk file, its clean,
+  its mean-pose correction and the code's mtimes.
+- **Knee clicks**: a soft limit (`knee_soft` 0.04) eases a leg into its reach from max(the source's own stretch
+  - read from the hip a pose lowers - , 96 % of the limit).
+- **Weight** is the bob's shape and clock plus a loading dip (`weight_dip`), never a knee cap (that is Knee
+  bend's mechanism).
+- **Proof**: the window 22/22 in a disposable GUI Maya; `verify_gait.py` 33/33 standalone; gates on asd, dw, HavyRun and CAT Walk with no pose: parity, identity, readback 172/172, effect 136/136, redundancy 4/4, clicks 51/52, speed 3/4 (dw at 45.07 % of Walk Builder's, bar 45 %).
+- **Open** (the spec's fourth addendum): readback under a pose (the calibration is probed with no pose; under
+  the goblin and the sword 158/172 and 161/172); the goblin's longest step clicks on asd (14.5); asd's Weight +1
+  clicks 14.0. Not built: the hub card (the tool moves into the plugin when asked).
+
+Traps from this build:
+- **A grp control's `-q -changeCommand` answers None** (floatSliderGrp, radioButtonGrp), and `-q -precision`
+  too: a verify fires the handler the command calls.
+- **`Remove-Item` on a path with an 8.3 short name (`MYPC~1`) failed**, so a port sender polled the PREVIOUS
+  run's output file and reported three phases from before - identical down to a lambda's address, which gave it
+  away. Delete with `[System.IO.File]::Delete` and check the file is gone before sending.
+- **`PrintWindow` at the widget's width crops a top-level window's right edge** (its invisible border sits on the
+  left): a "clipped" button was only the photograph.
+- **A bash-wrapped `powershell -Command "...$i..."` loses every `$`** to bash; put the script in a `.ps1` and run
+  it with `-ExecutionPolicy Bypass` (this machine refuses scripts otherwise).

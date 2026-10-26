@@ -1,0 +1,5 @@
+gate  1 ok    speed asd: 0.375 s CPU, 44 % of Walk Builder's 0.844 s
+gate  2 FAIL  speed dw: 1.000 s CPU, 45 % of Walk Builder's 2.219 s
+gate  3 ok    speed HavyRun: 0.219 s CPU, 38 % of Walk Builder's 0.578 s
+gate  4 ok    speed cat:Walk: 0.344 s CPU, 35 % of Walk Builder's 0.969 s
+4 gates, 1 failed

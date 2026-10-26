@@ -80,6 +80,10 @@ KNOBS = (
     # limit) it eases into the limit with no corner, and the pelvis, the growth and the swing's draw-in aim at
     # that start. 0: Walk Builder's hard limit (Gait Builder, 2026-10-26)
     ("knee_soft", 0.0, 0.0, 0.2),
+    # A heavy walker sinks into each step: the pelvis dips this share of the leg x weight (0 when light) in the
+    # bob's low half, shaped by it whatever its size - Walk Builder's weight only scales the walk's own bob, so a
+    # crouched walk (the goblin's) kept none and Weight's knees were Knee bend's (0.99). 0: Walk Builder's
+    ("weight_dip", 0.0, 0.0, 0.2),
 )
 ASPECT_KNOBS = ("bob_add", "sway_add", "surge_add", "lean_add", "chest_bounce_add", "nod_add", "arm_swing_add",
                 "arm_fwd_add", "arm_out_add", "elbow_add", "elbow_swing_add", "shoulder_add", "arm_lag_add")
@@ -93,6 +97,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
+BOB_LOW_MIN = 0.5         # cm: a bob shallower than this shapes weight_dip as if this deep (no division by nothing)
 WEIGHT_BOB_UP = 0.15      # its high half x max(0, 1 - this . weight)
 WEIGHT_WARP = 0.3         # the bob's clock: beta = this . weight
 WEIGHT_WARP_AFTER = 0.05  # slowest this share of a cycle after each low
@@ -764,6 +769,7 @@ class Walk(object):
         self.pelvis_mean = (self.pdev[self.index["pelvis"]] @ self.basis.T).mean(axis=0)
         bob = self.pdev[self.index["pelvis"]] @ self.up - self.pelvis_mean[2]
         self.low_phase = float(np.argmin(bob)) / P
+        self.bob_low = max(float(-bob.min()), BOB_LOW_MIN)     # the bob's low half's depth (weight_dip's shape)
         self.balance_note = ""
         # the legs' share of the animator's correction of the walk's mean pose (maya_walk.meanpose: the upper
         # body's is in the clip's frames already): the pelvis raised, the feet's spread, each knee's and foot's
@@ -1960,20 +1966,24 @@ class Walk(object):
             return reach[side]
         return ctx.get("reach", self.reach)[side]
 
-    def own_stretch(self, side, t):
-        """The source leg's hip-to-ankle distance over its length at foot time t."""
+    def own_stretch(self, side, t, lower=0.0):
+        """The source leg's hip-to-ankle distance over its length at foot time t - from a hip `lower` cm lower
+        (a pose's)."""
         th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
-        d = float(np.linalg.norm(self.wpos(fo, t) - self.wpos(th, t)))
+        d = float(np.linalg.norm(self.wpos(fo, t) - self.wpos(th, t) + self.up * lower))
         return d / (float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t))))
 
     def _soft_from(self, side, t, ctx, reach):
         """Where a leg at foot time t starts easing into its limit `reach` (knee_soft): never below what the
-        source has there, so the walk's own legs are untouched; `reach` itself when knee_soft is 0."""
+        source has there, so the walk's own legs are untouched; `reach` itself when knee_soft is 0. Under a pose
+        the source's leg is read from the hip the pose lowers (ctx["pose_lower"]): the goblin's crouched legs
+        never straighten, and read off the bare walk's push-off (0.99) a long step went straight from a bent
+        knee to the hard limit with no soft zone - 18 deg/fr^2 at the knee (2026-10-26)."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         soft = ks[side].get("knee_soft", 0.0)
         if soft <= 0.0:
             return reach
-        return min(reach, max(self.own_stretch(side, t), reach * (1.0 - soft)))
+        return min(reach, max(self.own_stretch(side, t, ctx.get("pose_lower", 0.0)), reach * (1.0 - soft)))
 
     def swing_at(self, side, tau):
         """How far the foot hangs off its shin at source time tau: swing_weight of its flight's progress (0 on
@@ -2243,6 +2253,12 @@ class Walk(object):
                             "hips_deg": math.degrees(match * yaw) if "pelvis" in (ctx["pose"] or {}) else 0.0}
         ctx["pose"] = self.leaned_pose(self.matched_pose(ctx["pose"], match, keep), k["gait_lean"])
         fix = self.fix
+        # how far a pose holds the pelvis below the walk's own (its height at its share, _body's base): the soft
+        # knee limit reads the source's legs from a hip lowered that much (_soft_from)
+        if ctx["pose"] and "height" in ctx["pose"]:
+            ctx["pose_lower"] = ctx["alpha"] * (self.pelvis_mean[2] + fix["height"] - ctx["pose"]["height"])
+        else:
+            ctx["pose_lower"] = 0.0
         if ctx["pose"] and "width" in ctx["pose"]:      # a pose's width replaces the corrected walk's at its share
             ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] + (1.0 - ctx["alpha"]) * fix["width"]
         else:
@@ -2478,6 +2494,9 @@ class Walk(object):
                 base = own if pose is None or "height" not in pose else (1.0 - a) * own + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
                 height = base + k["pelvis_height"] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
+                if k["weight_dip"] > 0.0 and k["weight"] > 0.0:      # a heavy walker sinks into each step
+                    # squared: it eases in where the bob crosses its mean (a corner there clicked asd's knee, 14.6)
+                    height -= k["weight_dip"] * k["weight"] * self.leg_length * min(max(-v / self.bob_low, 0.0), 1.0) ** 2
                 if ctx.get("aspects"):       # Bounce, in phase with the walk's own bob
                     height += k["bob_add"] * math.cos(2.0 * ctx["a"] - self.aspect_phase["bob"])
                 centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)

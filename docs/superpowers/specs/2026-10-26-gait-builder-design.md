@@ -544,6 +544,69 @@ Done, committed on `main`, not pushed (`ac7444c`, `2026e84`, `6e0636b`, and the 
    and the sword (`Bench(name, pose)`).
 3. **Write-up**: the final numbers here, a CLAUDE.md section, the plan's checkboxes.
 
+### Fourth session: the window run, every gate again (2026-10-26, afternoon)
+
+The animator: «Продолжай». Done, committed on `main`, not pushed:
+- **The window in a GUI Maya: 22/22** (`verify_gait_window.py`, a disposable Maya: scratch `MAYA_APP_DIR`,
+  `MAYA_NO_HOME=1`, port 7072, killed after). It opens with every knob's control, CAT Walk at its own 1.68 m/s;
+  Apply keys the Manny skeleton (0.5 s); the Speed slider let go keys 2.04 m/s for 2.02 asked and the Step slider
+  follows (95.1 cm keyed 95.1); Left sets the left arm alone and Both marks it; the menu's CAT Run keys the same
+  skeleton in 15 frames; Reset; a DWM picture; a re-drop reads the walked skeleton's source back. The third
+  session's "no answer" is not reproduced: this Maya answered its first send.
+  - A grp control's `-q -changeCommand` (and `-q -precision`) answers None: the verify fires the handler its
+    command calls.
+  - **A two-sided knob is marked `*` only when its sides differ at the digits its slider shows**
+    (`skeldar_gait._slider_step`, `_display(..., digits)`): a CAT preset's sides differ in the fifth digit
+    (Run's foot lift 55.214 / 55.214) and every such knob read as lopsided after Reset.
+- **Every gate again, plain and under the goblin and the sword** (`GATE_POSE` / `GATE_POSE_SHARE` in
+  `gates.py`: readback, effect, redundancy, clicks under a saved pose). Before this session's fixes
+  (`analysis/results-2026-10-26c/`): plain parity 16/16, identity 4/4, clicks 52/52, readback 171/172 (HavyRun
+  Bounce 2.65 of 4.22 cm), effect 134/136 (Weight: dw 2.9 cm, cat:Walk 3.0), redundancy 3/4 (cat:Walk
+  Ground time ~ Weight 0.91); under the goblin clicks 42/52, readback 162/172; under the sword clicks 49/52,
+  readback 161/172. The fixes:
+  - **The soft knee start under a pose** (`gaitmodel._soft_from`, `own_stretch(..., lower)`, ctx `pose_lower`):
+    the source's leg is read from the hip the pose lowers (a x (the walk's pelvis height - the pose's)). Read off
+    the bare walk's push-off (0.99) the goblin's crouched legs had no soft zone, and a long step went from a bent
+    knee to the hard limit. Under the goblin dw's posed defaults clicked 21.1 deg/fr^2 (Walk Builder's own 21.3):
+    now 5.2, and every dw configuration passes.
+  - **The click gate under a pose** is referenced to the posed walk's own click when that is larger than the
+    clip's (Walk Builder's engine clicks there with nothing asked).
+  - **Bounce is calibrated** (`CALIBRATED` gains ("bob",), probes (-1, 0.35, 1)): the planted legs stop at the
+    soft start, so a bounce up at a run's push-off read back short; now its asked change goes through its curve
+    and its range stops at its reach. Sixteen evaluations a walk (was thirteen), cached as before.
+  - **Weight is a loading dip, not a knee cap.** Its +6 deg on the straightest planted knee was Knee bend's own
+    mechanism: under the goblin, whose crouch has little bob, it was all Weight did (asd 0.99 against Knee bend).
+    Now a fork knob `weight_dip` (Gait Builder `WEIGHT_DIP` 0.01 of the leg x the model weight, Walk Builder 0):
+    the pelvis sinks into each step in the bob's low half, shaped by the walk's own bob whatever its size; and
+    `WEIGHT_GAIN` 2.0 (1.5 moved dw's legs 4 deg). Swept 1-3 % x gains 1.5 / 2: likeness to Knee bend 0.18-0.54
+    plain, 0.79 under the goblin; to Ground time on cat:Walk 0.77 (was 0.91); effect asd 8.1 deg, dw 5.3,
+    cat:Walk 6.2, HavyRun 24.8, asd under the sword 5.8.
+- **After the fixes** (`analysis/results-2026-10-26d/`):
+  - plain: parity 16/16, identity 4/4, readback **172/172**, effect **136/136**, redundancy **4/4**, clicks 51/52
+    (asd Weight +1: 14.0 deg/fr^2, limit 12 - Walk Builder's own Weight there is 10.8; no dip and gain pair kept
+    it under 12 and dw's Weight visible, swept), speed 3/4 (dw 45.07 % of Walk Builder's against the 45 % bar;
+    asd 44, HavyRun 38, cat:Walk 35);
+  - under the goblin: clicks 50/52, effect 134/136, readback 158/172, redundancy 3/4 (dw Ground time ~ Knee bend
+    0.92 - a crouch's planted knees are what both move);
+  - under the sword: clicks 52/52, effect 131/136 (Whip on four walks and cat:Walk's Head steady: a two-handed
+    grip holds the arms, the CAT head barely moves), readback 161/172, redundancy 3/4 (cat:Walk Weight ~ Knee bend
+    0.89);
+  - **readback under a pose is the open item**: the calibration is probed with no pose, and under a crouch or a
+    grip Knee bend overshoots (asked +4.9, got +11.9 on dw under the goblin), Bounce overshoots (HavyRun +2.91 ->
+    +4.82) and the arm knobs fall short (the pose holds the arms). The third session's claim that the share-0
+    curves read back as well as posed ones did not hold for these knobs. Next: probe the calibration per pose
+    (sixteen more evaluations a pose, cached the same way).
+  - `verify_gait.py` 33/33 again; 64 unit tests (`tests/test_gait_*.py`, `test_gait_window.py` new).
+- **Measured, not fixed**: under the goblin asd's longest step (and top speed) click 14.5 (21.4) deg/fr^2: the
+  leading leg's swing reaches for a print farther than the crouch's bent knee allows and straightens 53 -> 18.6
+  deg in two frames before landing; no planted leg needs the pelvis lowered, so the lowering never acts. A
+  landing that sinks the pelvis under a crouch (the margin pass's landing hold, when a swing passes its soft
+  start) is the likely fix.
+- **The animator's Mayas crashed four times today** (07:28, 11:43, 12:15, 12:16; dumps in `%TEMP%`): every one
+  an access violation in `shiboken6.abi3.dll` with Python, PySide and Qt6Gui on the stack - the plugin's Qt
+  family (CLAUDE.md traps 135/148), not this tool. The 12:15/12:16 pair came 19 and 36 s after a disposable Maya
+  was stopped; stopping this session's disposable Maya left the animator's running.
+
 ### Traps met in this build
 
 - **`a` is the pose's share inside `Walk._frame`'s joint loop** (`pose, a = ctx["pose"], ctx["alpha"]`). A

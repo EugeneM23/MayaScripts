@@ -170,7 +170,7 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
 - `gaitload.evaluate(source, gait, pose)` → Result.
 
 - [x] Step 1: Test: a preset clip analyses, closes, and its measure's stride and duty are the preset's.
-- [x] Step 2: Implement, commit. (gaitgen.py and gaitload.py; checked by hand: the four presets analyse; the unit test of Step 1 is not written)
+- [x] Step 2: Implement, commit. (gaitgen.py and gaitload.py; `tests/test_gait_gen.py`)
 
 ### Task 8: The Maya window
 
@@ -182,13 +182,13 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
   - `skeldarGait` memo on the top joint;
   - re-key on slider release;
   - follow `skeldar_cat.py`'s structure.
-- [x] Step 2 (33/33; the window itself not yet run in a GUI Maya): `verify_gait.py` in mayapy standalone: a walk on the plugin's Manny UE5 skeleton reproduces the
+- [x] Step 2 (33/33; the window 22/22 in a disposable GUI Maya, `verify_gait_window.py`): `verify_gait.py` in mayapy standalone: a walk on the plugin's Manny UE5 skeleton reproduces the
   model, closes, one undo, a re-key from the stored place, a CAT preset applied.
-- [ ] Step 3: Commit.
+- [x] Step 3: Commit.
 
 ### Task 9: Gates on real walks
 
-- [ ] `gates.py all`: identity, parity, read-back, effect, redundancy, helpers, speed on asd, dw, HavyRun and a
-  CAT Walk.
-- [ ] Write the numbers into the spec's addendum and CLAUDE.md.
-- [ ] Commit.
+- [x] `gates.py all`: identity, parity, read-back, effect, redundancy, helpers, speed on asd, dw, HavyRun and a
+  CAT Walk; and under the goblin and the sword (`GATE_POSE`). Results in `analysis/results-2026-10-26d/`.
+- [x] Write the numbers into the spec's addendum and CLAUDE.md.
+- [x] Commit.

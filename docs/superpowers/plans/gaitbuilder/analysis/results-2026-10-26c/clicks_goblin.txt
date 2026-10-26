@@ -1,0 +1,54 @@
+gate  1 ok    clicks asd defaults: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 33.4, pelvis down 0.0
+gate  2 ok    clicks asd step low: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 47.7, pelvis down 0.0
+gate  3 FAIL  clicks asd step high: 18.3 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 12.4, pelvis down 0.0
+gate  4 ok    clicks asd duty low: 10.7 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 23.0, pelvis down 0.0
+gate  5 ok    clicks asd duty high: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 39.6, pelvis down 0.5
+gate  6 ok    clicks asd bob low: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 28.7, pelvis down 0.0
+gate  7 ok    clicks asd bob high: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 37.4, pelvis down 0.0
+gate  8 FAIL  clicks asd lift low: 18.3 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 22.5, pelvis down 0.0
+gate  9 ok    clicks asd lift high: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 47.7, pelvis down 0.0
+gate 10 FAIL  clicks asd height +10: 13.2 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 12.4, pelvis down 0.0
+gate 11 ok    clicks asd height -15: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 57.4, pelvis down 0.0
+gate 12 ok    clicks asd weight +1: 0.0 deg/fr^2 (the clip's own 7.4 x1.00 the pace, limit 12.0), straightest 42.5, pelvis down 2.7
+gate 13 FAIL  clicks asd speed high: 26.0 deg/fr^2 (the clip's own 7.4 x1.54 the pace, limit 17.1), straightest 12.4, pelvis down 0.0
+gate 14 FAIL  clicks dw defaults: 21.1 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 18.1, pelvis down 0.0
+gate 15 ok    clicks dw step low: 2.6 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 23.5, pelvis down 0.0
+gate 16 ok    clicks dw step high: 14.9 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 16.1, pelvis down 0.0
+gate 17 ok    clicks dw duty low: 12.2 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 16.1, pelvis down 0.0
+gate 18 ok    clicks dw duty high: 0.0 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 31.2, pelvis down 16.0
+gate 19 FAIL  clicks dw bob low: 21.4 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 18.0, pelvis down 0.0
+gate 20 FAIL  clicks dw bob high: 19.5 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 16.9, pelvis down 0.0
+gate 21 FAIL  clicks dw lift low: 23.9 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 16.1, pelvis down 0.0
+gate 22 ok    clicks dw lift high: 4.8 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 21.9, pelvis down 0.0
+gate 23 ok    clicks dw height +10: 17.7 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 16.1, pelvis down 24.6
+gate 24 ok    clicks dw height -15: 3.5 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 23.9, pelvis down 0.0
+gate 25 ok    clicks dw weight +1: 0.0 deg/fr^2 (the clip's own 12.9 x1.00 the pace, limit 19.3), straightest 34.1, pelvis down 20.9
+gate 26 FAIL  clicks dw speed high: 27.3 deg/fr^2 (the clip's own 12.9 x1.27 the pace, limit 24.5), straightest 16.1, pelvis down 0.0
+gate 27 ok    clicks HavyRun defaults: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 54.4, pelvis down 0.0
+gate 28 ok    clicks HavyRun step low: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 73.4, pelvis down 0.0
+gate 29 ok    clicks HavyRun step high: 36.9 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 8.5, pelvis down 0.0
+gate 30 ok    clicks HavyRun duty low: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 68.2, pelvis down 0.0
+gate 31 ok    clicks HavyRun duty high: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 32.3, pelvis down 0.8
+gate 32 ok    clicks HavyRun bob low: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 68.0, pelvis down 0.0
+gate 33 ok    clicks HavyRun bob high: 50.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 8.5, pelvis down 0.0
+gate 34 ok    clicks HavyRun lift low: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 27.6, pelvis down 0.0
+gate 35 ok    clicks HavyRun lift high: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 66.3, pelvis down 0.0
+gate 36 ok    clicks HavyRun height +10: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 26.0, pelvis down 0.0
+gate 37 ok    clicks HavyRun height -15: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 77.0, pelvis down 0.0
+gate 38 ok    clicks HavyRun weight +1: 0.0 deg/fr^2 (the clip's own 36.5 x1.00 the pace, limit 54.8), straightest 59.8, pelvis down 0.6
+gate 39 ok    clicks HavyRun speed high: 47.8 deg/fr^2 (the clip's own 36.5 x1.87 the pace, limit 102.7), straightest 8.5, pelvis down 0.0
+gate 40 ok    clicks cat:Walk defaults: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 35.2, pelvis down 0.0
+gate 41 ok    clicks cat:Walk step low: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 51.3, pelvis down 0.0
+gate 42 FAIL  clicks cat:Walk step high: 18.8 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 22.3, pelvis down 15.8
+gate 43 ok    clicks cat:Walk duty low: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 29.9, pelvis down 0.0
+gate 44 ok    clicks cat:Walk duty high: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 41.0, pelvis down 5.3
+gate 45 ok    clicks cat:Walk bob low: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 25.5, pelvis down 0.0
+gate 46 ok    clicks cat:Walk bob high: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 47.8, pelvis down 0.0
+gate 47 ok    clicks cat:Walk lift low: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 26.1, pelvis down 0.0
+gate 48 ok    clicks cat:Walk lift high: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 47.8, pelvis down 0.0
+gate 49 ok    clicks cat:Walk height +10: 7.3 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 20.9, pelvis down 5.1
+gate 50 ok    clicks cat:Walk height -15: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 60.0, pelvis down 0.0
+gate 51 ok    clicks cat:Walk weight +1: 0.0 deg/fr^2 (the clip's own 9.1 x1.00 the pace, limit 13.7), straightest 43.9, pelvis down 0.5
+gate 52 ok    clicks cat:Walk speed high: 0.0 deg/fr^2 (the clip's own 9.1 x1.99 the pace, limit 27.1), straightest 25.9, pelvis down 13.6
+under the goblin pose at 1.00
+52 gates, 10 failed

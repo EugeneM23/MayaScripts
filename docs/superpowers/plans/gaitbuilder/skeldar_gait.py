@@ -275,9 +275,17 @@ def _quiet():
     return _state().get("quiet", False)
 
 
-def _display(asp, base, state, name):
+def _slider_step(lo, hi):
+    """(step, decimals) of a knob's slider over its range."""
+    span = hi - lo
+    step = 0.01 if span < 3.0 else (0.1 if span < 30.0 else 0.5)
+    return step, (2 if step < 0.1 else 1)
+
+
+def _display(asp, base, state, name, digits=6):
     """(value, marked) a knob's slider shows on the window's side: the asked or the walk's own; a sided knob
-    in Both its sides' mean, marked when they differ."""
+    in Both its sides' mean, marked when they differ at the digits its slider shows (a CAT preset's sides
+    differ in the fifth digit)."""
     gait, side = state["gait"], state["side"]
     if name in ("speed", "step"):
         step, cadence = asp.timing(gait, base)
@@ -289,7 +297,7 @@ def _display(asp, base, state, name):
         if side in ("l", "r"):
             return asp.value(gait, base, name, side), False
         l, r = asp.value(gait, base, name, "l"), asp.value(gait, base, name, "r")
-        return 0.5 * (l + r), abs(l - r) > 1e-6
+        return 0.5 * (l + r), round(l, digits) != round(r, digits)
     return asp.value(gait, base, name), False
 
 
@@ -331,7 +339,7 @@ def _knob_changed(name, value):
 
 
 def _base(source, state):
-    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (thirteen
+    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (sixteen
     evaluations, a few seconds, then kept on disk): said and under a wait cursor."""
     gaitload = _modules()[0]
     probing = gaitload.needs_probe(source)
@@ -364,13 +372,14 @@ def _refresh_values(state=None):
     try:
         for knob in asp.KNOBS:
             control = "skeldarGait_" + knob.name
-            value, marked = _display(asp, base, state, knob.name)
             if knob.kind == "toggle":
+                value = _display(asp, base, state, knob.name)[0]
                 if cmds.checkBox(control, exists=True):
                     cmds.checkBox(control, edit=True, value=value >= 0.5)
             elif cmds.floatSliderGrp(control, exists=True):
                 lo = cmds.floatSliderGrp(control, query=True, minValue=True)
                 hi = cmds.floatSliderGrp(control, query=True, maxValue=True)
+                value, marked = _display(asp, base, state, knob.name, _slider_step(lo, hi)[1])
                 cmds.floatSliderGrp(control, edit=True, value=min(max(value, lo), hi),
                                     label=_label(knob) + (" *" if marked else ""))
     finally:
@@ -557,17 +566,16 @@ def _build(state):
             if knob.group != group:
                 continue
             control = "skeldarGait_" + knob.name
-            value, marked = _display(asp, base, state, knob.name)
+            lo, hi = ranges.get(knob.name, (0.0, 1.0))
+            step, digits = _slider_step(lo, hi)
+            value, marked = _display(asp, base, state, knob.name, digits)
             if knob.kind == "toggle":
                 cmds.checkBox(control, label=knob.label, value=value >= 0.5, annotation=knob.tip,
                               changeCommand=lambda v, n=knob.name: _knob_changed(n, 1.0 if v else 0.0))
                 continue
-            lo, hi = ranges[knob.name]
-            span = hi - lo
-            step = 0.01 if span < 3.0 else (0.1 if span < 30.0 else 0.5)
             cmds.floatSliderGrp(control, label=_label(knob) + (" *" if marked else ""), field=True,
                                 minValue=lo, maxValue=hi, fieldMinValue=lo, fieldMaxValue=hi,
-                                value=min(max(value, lo), hi), step=step, precision=2 if step < 0.1 else 1,
+                                value=min(max(value, lo), hi), step=step, precision=digits,
                                 columnWidth3=(130, 60, 190), annotation=knob.tip,
                                 changeCommand=lambda v, n=knob.name: _knob_changed(n, v))
         cmds.setParent("..")

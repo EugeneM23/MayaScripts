@@ -1,0 +1,55 @@
+Warning: line 1: displayRGBColor is unavailable in batch mode
+File read in  1.8 seconds.
+Error: Plug-in, "mtoa", was not found on MAYA_PLUG_IN_PATH.
+# Traceback (most recent call last):
+#   File "<maya console>", line 1, in <module>
+# RuntimeError: Plug-in, "mtoa", was not found on MAYA_PLUG_IN_PATH.
+Error: [UsdSceneSettingsManager] could not apply requested name 'UsdDefaultRenderSettings' to a freshly created UsdDefaultSettings (got 'manny:UsdDefaultRenderSettings2').
+File read in  0.89 seconds.
+Error: [UsdSceneSettingsManager] could not apply requested name 'UsdDefaultRenderSettings' to a freshly created UsdDefaultSettings (got 'other:UsdDefaultRenderSettings1').
+gate  1 ok    a first read of the CAT walk probes its knobs (nothing on disk)
+Gait Builder: reading CAT Walk's knobs - the first time only, a few seconds
+gate  2 ok    CAT Walk: the keys place every bone as the model and the retarget do (worst 2.66e-05 cm), 8.7 s CPU
+gate  3 ok    CAT Walk: bone lengths constant over the cycle (worst 7.10e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate  4 ok    CAT Walk: the cycle closes on its travel (2.42e-13 cm)
+   CAT Walk on root x1.00 | 31 fr (1-32), 1.68 m/s, step 87 cm, 116 steps/min, ground 55 % | 8.90 s
+gate  5 ok    its responses kept on disk (['970309e1156c7dcd173a9c3fbc5c179ee0f75608.json'])
+gate  6 ok    the keyed walk's speed is the walk's own: 1.676 m/s (measured 1.676 x1.00)
+gate  7 ok    Speed x1.25: the keys place every bone as the model and the retarget do (worst 2.68e-05 cm), 0.8 s CPU
+gate  8 ok    Speed x1.25: bone lengths constant over the cycle (worst 6.95e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate  9 ok    Speed x1.25: the cycle closes on its travel (1.42e-13 cm)
+   CAT Walk on root x1.00 | 28 fr (1-29), 2.08 m/s, step 97 cm, 129 steps/min, ground 54 % | 0.82 s
+gate 10 ok    Speed asked 2.096 m/s, keyed 2.075
+gate 11 ok    Step +10 cm: the keys place every bone as the model and the retarget do (worst 2.66e-05 cm), 0.7 s CPU
+gate 12 ok    Step +10 cm: bone lengths constant over the cycle (worst 7.04e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate 13 ok    Step +10 cm: the cycle closes on its travel (1.42e-13 cm)
+   CAT Walk on root x1.00 | 31 fr (1-32), 1.87 m/s, step 97 cm, 116 steps/min, ground 54 % | 0.71 s
+gate 14 ok    Step asked 96.6 cm, keyed 96.6 (the root's travel over 2 step(s))
+gate 15 ok    a re-key at another frame, the root moved, keys the same first frame (the place is kept)
+Gait Builder: reading CAT Run's knobs - the first time only, a few seconds
+gate 16 ok    CAT Run on the walked skeleton: the keys place every bone as the model and the retarget do (worst 1.72e-05 cm), 5.3 s CPU
+gate 17 ok    CAT Run on the walked skeleton: bone lengths constant over the cycle (worst 4.67e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate 18 ok    CAT Run on the walked skeleton: the cycle closes on its travel (7.96e-13 cm)
+   CAT Run on root x1.00 | 15 fr (1-16), 7.00 m/s, step 175 cm, 240 steps/min, ground 22 % | 5.40 s
+gate 19 ok    another source on a walked skeleton starts where the first did
+Undo: skeldarGait
+Gait Builder: reading CAT Sneak's knobs - the first time only, a few seconds
+gate 20 ok    one Ctrl+Z takes a press away (it moved 106.4, back to 0.0e+00)
+gate 21 ok    nothing selected and no target: refused
+Gait Builder: reading asd's knobs - the first time only, a few seconds
+gate 22 ok    asd: the keys place every bone as the model and the retarget do (worst 2.87e-05 cm), 9.6 s CPU
+gate 23 ok    asd: bone lengths constant over the cycle (worst 7.81e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate 24 ok    asd: the cycle closes on its travel (3.13e-13 cm)
+   asd on root x1.00 | 31 fr (1-32), 1.68 m/s, step 87 cm, 116 steps/min, ground 54 % | 9.66 s
+gate 25 ok    asd under the goblin: the keys place every bone as the model and the retarget do (worst 2.97e-05 cm), 1.9 s CPU
+gate 26 ok    asd under the goblin: bone lengths constant over the cycle (worst 4.87e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate 27 ok    asd under the goblin: the cycle closes on its travel (9.24e-13 cm)
+   asd on root x1.00 | 31 fr (1-32), 1.68 m/s, step 87 cm, 116 steps/min, ground 58 % | pose goblin x1.00 | 1.91 s
+gate 28 ok    the goblin lowers the pelvis: 68.8 cm against 92.3
+gate 29 ok    asd under the goblin at 0.5: the keys place every bone as the model and the retarget do (worst 2.61e-05 cm), 2.0 s CPU
+gate 30 ok    asd under the goblin at 0.5: bone lengths constant over the cycle (worst 6.42e-06 cm), the skeleton's own to 0.0064 cm (calf_l)
+gate 31 ok    asd under the goblin at 0.5: the cycle closes on its travel (5.97e-13 cm)
+   asd on root x1.00 | 31 fr (1-32), 1.68 m/s, step 87 cm, 116 steps/min, ground 58 % | pose goblin x0.50 | 2.03 s
+gate 32 ok    at half the share half way: 81.0 between 68.8 and 92.3
+gate 33 ok    asd read again (another session): its knobs off disk
+33 gates, 0 failed

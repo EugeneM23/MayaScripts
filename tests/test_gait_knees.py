@@ -80,6 +80,35 @@ class SoftKnees(unittest.TestCase):
         self.assertLess(hard, self.w.reach["l"] + 1e-9)
 
 
+class WeightDip(unittest.TestCase):
+    """A heavy walker's pelvis sinks into each step (gaitmodel weight_dip), in the bob's low half."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.w = walk()
+        cls.pelvis = cls.w.index["pelvis"]
+
+    def heights(self, **knobs):
+        r = self.w.evaluate(dict(QUIET, **knobs))
+        return np.asarray(r.worlds)[self.pelvis, :-1, 3, :3] @ self.w.up
+
+    def test_nothing_at_weight_naught_or_light_or_off(self):
+        plain = self.heights()
+        self.assertLess(np.abs(self.heights(weight_dip=0.05) - plain).max(), 1e-9)
+        light, light_dip = self.heights(weight=-1.0), self.heights(weight=-1.0, weight_dip=0.05)
+        self.assertLess(np.abs(light_dip - light).max(), 1e-9)
+        heavy, heavy_dip = self.heights(weight=1.0), self.heights(weight=1.0, weight_dip=0.0)
+        self.assertLess(np.abs(heavy - heavy_dip).max(), 1e-9)         # Walk Builder's own weight: no dip
+
+    def test_heavy_sinks_where_the_bob_is_low_never_where_it_is_high(self):
+        heavy = self.heights(weight=1.0)
+        sunk = self.heights(weight=1.0, weight_dip=0.05)
+        dip = heavy - sunk
+        self.assertGreaterEqual(dip.min(), -1e-6)                        # never raised
+        self.assertGreater(dip.max(), 0.04 * self.w.leg_length)         # the low half: most of the share asked
+        self.assertLess(dip[int(np.argmax(heavy))], 0.25 * dip.max())  # the high half: little or none
+
+
 class DropTop(unittest.TestCase):
 
     def test_between_the_probes(self):

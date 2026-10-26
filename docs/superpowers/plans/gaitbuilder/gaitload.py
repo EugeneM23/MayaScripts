@@ -16,7 +16,7 @@ import aspects as asp
 import gaitgen
 
 CACHE_KEPT = 12
-# The calibrated knobs' responses (aspects.calibrate: thirteen evaluations, 3-17 s CPU a walk) are kept on disk per walk
+# The calibrated knobs' responses (aspects.calibrate: sixteen evaluations, 3-20 s CPU a walk) are kept on disk per walk
 # and code: a walk read again - in this Maya or the next - costs one evaluation. None: no disk.
 DISK = os.path.join(os.environ.get("MAYA_APP_DIR") or os.path.join(os.path.expanduser("~"), "Documents", "maya"),
                     "SkeldarGaitCache")
@@ -151,7 +151,7 @@ def _plain(source, posed=None, share=0.0):
 
 
 def needs_probe(source):
-    """True when the source's knobs have not been probed yet and are not on disk (the next baseline takes thirteen
+    """True when the source's knobs have not been probed yet and are not on disk (the next baseline takes sixteen
     evaluations more)."""
     if source.curves is not None:
         return False
@@ -181,7 +181,7 @@ def curves(source, plain=None):
 def baseline(source, pose=None, share=0.0):
     """The walk as it stands under the pose's `share` (`pose` walkpose.prepare's, filtered to its parts): its
     measure in units - the knobs' own values - with the calibrated knobs' responses (curves()), kept per source,
-    pose and share. One evaluation, thirteen more the first time a walk is read with no responses on disk."""
+    pose and share. One evaluation, sixteen more the first time a walk is read with no responses on disk."""
     posed = pose if share > 0.0 else None
 
     def make():

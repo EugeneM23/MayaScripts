@@ -1,0 +1,5 @@
+gate  1 ok    identity asd: the physics off gives the clip to 0.0002 cm, 0.0529 deg (Walk Builder's own knobs: 0.0002 cm, 0.0529 deg)
+gate  2 ok    identity dw: the physics off gives the clip to 0.0000 cm, 0.0025 deg (Walk Builder's own knobs: 0.0000 cm, 0.0025 deg)
+gate  3 ok    identity HavyRun: the physics off gives the clip to 0.0001 cm, 0.0980 deg (Walk Builder's own knobs: 0.0001 cm, 0.0980 deg)
+gate  4 ok    identity cat:Walk: the physics off gives the clip to 0.0000 cm, 0.0529 deg (Walk Builder's own knobs: 0.0000 cm, 0.0529 deg)
+4 gates, 0 failed

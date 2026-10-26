@@ -326,8 +326,7 @@ KNOBS = (
     Knob("duty", MAIN, "Ground time", "%", "measured", rule=lambda b, L: (max(15.0, 0.7 * b), min(85.0, 1.45 * b)),
          tip="How much of a cycle each foot is on the ground; under 50 % both feet leave it at once - a run"),
     Knob("weight", MAIN, "Weight", "", "added", 0.0, _fixed(-1.0, 1.0),
-         tip="Light (-1) to heavy (+1): a deeper bob and lower body, the knees bent on the load, a slower strike, "
-             "more follow-through"),
+         tip="Light (-1) to heavy (+1): a deeper bob and lower body, the knees bent on the load, a slower strike"),
     Knob("bob", MAIN, "Bounce", "cm", "measured", rule=lambda b, L: (0.0, max(3.0 * b, 0.08 * L)),
          tip="The pelvis's bob, up and down twice a stride"),
     Knob("hips", MAIN, "Hips", "deg", "measured", rule=lambda b, L: (min(-5.0, b - 5.0), max(25.0, 2.5 * abs(b))),
@@ -407,8 +406,11 @@ GROUPS = []
 for _knob in KNOBS:
     if _knob.group not in GROUPS:
         GROUPS.append(_knob.group)
-WEIGHT_KNEE = 6.0         # deg: Weight +1 bends a planted knee this much more than the walk's own straightest (12 duplicated Knee bend: 0.86 on dw)
-WEIGHT_GAIN = 1.5         # the model's weight at Weight +1
+# Weight +1 sinks the pelvis into each step (the model's weight_dip, a share of the leg x the model's weight); it
+# used to raise a planted knee's straightest by 6-12 deg - Knee bend's own mechanism: 0.86 on dw at 12, 0.99 on asd
+# under the goblin at 6 (a crouch has little bob of its own, so the knees were all Weight did)
+WEIGHT_DIP = 0.01          # of the leg x the model weight: Weight +1 (2.0) sinks the pelvis 2 % of the leg, swept 1-3 % (2026-10-26)
+WEIGHT_GAIN = 2.0         # the model's weight at Weight +1 (1.5 moved dw's and the CAT walk's legs 4 deg: unseen)
 HEAD_DRAG = 4.0 / 3.0     # the head's spring x Follow-through (Walk Builder's 2.0 over 1.5)
 TORSO_WHIP = 2.0 / 3.0    # the trunk's bounce x Whip (Walk Builder's 0.2 over 0.3)
 # A leg straightened past the source eases into its limit from this share below it (the model's knee_soft): a
@@ -420,7 +422,8 @@ KNEE_SOFT = 0.04
 def base_engine(walk):
     """The model's knobs that give the walk as it is, the helpers on: Walk Builder's defaults with the walk's own
     hip twist and drop and chest twist and sway (Walk Builder's defaults set them to people's)."""
-    out = {"pelvis_twist": walk.own_twist, "pelvis_list": walk.own_list, "knee_soft": KNEE_SOFT}
+    out = {"pelvis_twist": walk.own_twist, "pelvis_list": walk.own_list, "knee_soft": KNEE_SOFT,
+           "weight_dip": WEIGHT_DIP}
     if getattr(walk, "chest_shape", None) is not None:
         out["chest_twist"], out["chest_sway"] = walk.own_chest_twist, walk.own_chest_sway
     return out
@@ -529,14 +532,17 @@ def timing(gait, base):
 # range's ends and each knob's response kept as a curve (asked change -> measured change): Ground time (Walk
 # Builder's ground_time lengthens a contact by its own length, capped by its swing's room; a walk's duty cannot
 # fall below what Foot placement's double support leaves - asd's 53 %), Knee bend (the pelvis's cover), Elbow and
-# Elbow swing (the arms' springs: a run's elbow swing barely shrinks, HavyRun). The asked change goes through the
+# Elbow swing (the arms' springs: a run's elbow swing barely shrinks, HavyRun), Bounce (the legs' reach). The asked change goes through the
 # curve's inverse, and the range is cut to what the walk reaches. Probes in groups whose parts do not touch each
 # other (the legs' timing with the arms' swing, the stance with the arms' mean).
-CALIBRATED = (("duty", "elbow_swing"), ("knee_bend", "elbow"))
+CALIBRATED = (("duty", "elbow_swing"), ("knee_bend", "elbow"), ("bob",))
 PROBES = (-1.0, -0.35, 0.35, 1.0)    # shares of the way from the walk's own value to the range's end
 # Knee bend's response is steep near the walk's own: a toe-off knee 20 deg from straight bends 7 deg more for 0.6 cm
 # more of the pelvis's drop (dw; a knee near straight is the root of its reach) - a small probe first
-KNOB_PROBES = {"knee_bend": (0.12, 0.35, 1.0)}
+KNOB_PROBES = {"knee_bend": (0.12, 0.35, 1.0),
+               # Bounce up is held by the legs' soft reach at the stance's ends (a run's push-off: HavyRun read 2.65
+               # of +4.22 cm once the planted legs stop at the soft limit's start); down is free
+               "bob": (-1.0, 0.35, 1.0)}
 REACH_MIN = 1e-3                     # a reach this small each way: the knob is left its range (nothing to cut to)
 # A step or a ground time the legs take only by sinking the pelvis far is a lunge, and its swinging knee snaps (the
 # hip falls 4 cm a frame at the contact: asd at 1.4 legs a step, 19 cm down, 14 deg/frame^2; dw at 1.2, 30 cm, 21;
@@ -575,7 +581,7 @@ def calibrate(walk, base, run):
     base["_curve"] = {knob: {side or "": [(asked change, measured change), ...] by asked, (0, 0) included}};
     `run(gait)` evaluates the animator's units (the pose the base was measured under included) into a Result (or
     its world matrices). Also the pelvis's drop at the duty probes and at STEP_PROBES of the step and the
-    speed: kept as "_drop_<knob>" curves {"": [(asked change, cm down)]} (ranges cut them there). Thirteen
+    speed: kept as "_drop_<knob>" curves {"": [(asked change, cm down)]} (ranges cut them there). Sixteen
     evaluations."""
     base.pop("_curve", None)
     rng = ranges(base, walk.leg_length)
@@ -715,7 +721,7 @@ def engine_knobs(walk, base, gait):
     weight = value(gait, base, "weight")
     if weight:
         e["weight"] = weight * (WEIGHT_GAIN if weight > 0 else 1.0)
-    e["bob_add"] = value(gait, base, "bob") - base["bob"]
+    e["bob_add"] = _calibrated(base, "bob", None, value(gait, base, "bob") - base["bob"])
     hips = value(gait, base, "hips")
     gain = walk.twist_gain
     e["pelvis_twist"] = walk.own_twist + (hips - base["hips"]) / gain
@@ -773,8 +779,7 @@ def engine_knobs(walk, base, gait):
         own_knee = base["knee_bend"][side]
         cap_own = base.get("_knee_planted", {}).get(side, own_knee)
         asked = cap_own + knee_d[side]
-        knee = max(asked, cap_own + WEIGHT_KNEE * max(weight, 0.0))
-        e["knee_bend" + sfx] = knee if knee > cap_own + 0.25 else 0.0
+        e["knee_bend" + sfx] = asked if asked > cap_own + 0.25 else 0.0
         e["foot_lag" + sfx] = value(gait, base, "foot_lag", side)
         e["foot_flex" + sfx] = value(gait, base, "ankle_flex", side) / 100.0
         for name, key in (("elbow", "elbow_add"), ("elbow_swing", "elbow_swing_add")):

@@ -115,8 +115,9 @@ class MappingTests(unittest.TestCase):
         self.assertAlmostEqual(e["weight"], asp.WEIGHT_GAIN)
         self.assertAlmostEqual(e["torso_drag"], 1.5)          # Weight does not drag (Follow-through does)
         self.assertEqual(e["weight_lag"], 0.0)
+        self.assertEqual(e["weight_dip"], asp.WEIGHT_DIP)         # the pelvis sinks into each step...
         for s in "lr":
-            self.assertAlmostEqual(e["knee_bend_" + s], self.base["knee_bend"][s] + asp.WEIGHT_KNEE)
+            self.assertEqual(e["knee_bend_" + s], 0.0)            # ...and Knee bend's cap is left to Knee bend
 
     def test_a_side_alone(self):
         e = asp.engine_knobs(self.walk, self.base, {"arm_swing_l": self.base["arm_swing"]["l"] + 10.0})

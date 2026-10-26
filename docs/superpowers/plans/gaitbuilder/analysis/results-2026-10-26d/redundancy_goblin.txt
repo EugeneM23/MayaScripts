@@ -1,0 +1,6 @@
+gate  1 ok    redundancy asd: 34 knobs, no pair past 0.85; 90 % of the change in 24 directions, 99 % in 32
+gate  2 FAIL  redundancy dw: 34 knobs, duty~knee_bend 0.92; step~knee_bend 0.85; 90 % of the change in 24 directions, 99 % in 31
+gate  3 ok    redundancy HavyRun: 33 knobs, no pair past 0.85; 90 % of the change in 24 directions, 99 % in 31
+gate  4 ok    redundancy cat:Walk: 34 knobs, no pair past 0.85; 90 % of the change in 23 directions, 99 % in 31
+under the goblin pose at 1.00
+4 gates, 1 failed
