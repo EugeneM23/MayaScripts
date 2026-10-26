@@ -100,10 +100,12 @@ def _arm(c, side):
 
 
 def _pitch_series(c, j):
-    """(n,) a joint's world turn about the body's side axis against its mean, radians (forward down +)."""
+    """(n,) a joint's world turn about the body's side axis against its mean, radians (forward down +). In the
+    WORLD: r = mean . E (row vectors, E applied after the mean), so E = mean^T . r; `r . mean^T` is the turn in
+    the mean's own axes, and on a UE spine joint (its axes far from the world's) a pitch then read ~0."""
     r = c.rot[j]
     mean = _mean_rot(r)
-    rel = r @ mean.T
+    rel = mean.T @ r
     w = _log_rot(rel)
     return w @ c.lside
 

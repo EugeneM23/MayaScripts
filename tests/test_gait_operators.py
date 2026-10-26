@@ -21,6 +21,19 @@ def walk():
 # the gates' business, on real walks)
 QUIET = {"balance": 0.0, "arm_drag": 0.0, "torso_drag": 0.0, "head_drag": 0.0, "foot_placement": 0.0}
 
+# a joint's own axes turned, its world places and motion kept: v . R becomes v . (Q . R) - the frame a UE
+# skeleton's spine joints stand in (asd's spine_05: its X along the world's Y, its Y along -Z)
+SPINE_AXES = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, -1.0], [-1.0, 0.0, 0.0]])
+
+
+def turned_spine_walk():
+    c = tw.clip()
+    worlds = c.worlds.copy()
+    for j, name in enumerate(c.names):
+        if name.startswith("spine_"):
+            worlds[j, :, :3, :3] = SPINE_AXES[None] @ worlds[j, :, :3, :3]
+    return gm.analyse(gm.Clip(c.names, c.parents, worlds, c.fps, c.up, c.name))
+
 
 class OperatorTests(unittest.TestCase):
 
@@ -89,6 +102,16 @@ class OperatorTests(unittest.TestCase):
 
     def test_chest_bounce(self):
         self.assertAlmostEqual(self.moved("chest_bounce", chest_bounce_add=4.0), 4.0, delta=0.8)
+
+    def test_chest_bounce_on_spine_axes_far_from_the_world(self):
+        # a UE spine joint's axes stand ~90 deg off the world's: the bounce is a WORLD pitch, read and added the
+        # same whatever the joints' own axes (it read 0.13 of 5 deg on asd while both were taken in them)
+        w = turned_spine_walk()
+        base = w.evaluate(QUIET)
+        m0 = asp.measure(w, base.worlds)
+        self.assertAlmostEqual(m0["chest_bounce"], self.base["chest_bounce"], delta=0.05)
+        m = asp.measure(w, w.evaluate(dict(QUIET, chest_bounce_add=4.0)).worlds)
+        self.assertAlmostEqual(m["chest_bounce"] - m0["chest_bounce"], 4.0, delta=0.8)
 
     def test_arm_timing_shifts_the_swing(self):
         # the swing's amplitude stays, its phase moves: the arm's forward angle at frame f is the old at f - 3

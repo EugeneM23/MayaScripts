@@ -794,7 +794,7 @@ class Walk(object):
         self.lean_set = set(self.lean_joints)
         top = self.lean_joints[-1] if self.lean_joints else idx["pelvis"]
         r = self.rot[top]
-        pitch = log_rot(r @ mean_rot(r).T) @ self.lside
+        pitch = log_rot(mean_rot(r).T @ r) @ self.lside        # the world's pitch (aspects._pitch_series)
         self.aspect_phase["chest"] = _harmonic(pitch, phase, 2)[1]
         self.lean_gain = self._lean_gain()
 
