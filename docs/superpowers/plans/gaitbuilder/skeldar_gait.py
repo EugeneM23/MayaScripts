@@ -102,7 +102,10 @@ def sources():
     except Exception:                                 # no library: the other sources still list
         pass
     try:
-        out += [(name, name) for name in scene.walk_names()]
+        # a saved walk Walk Builder moved into the library is its card already: listed once, as the card (a menu
+        # picks by label, so two "asd" rows were one choice and the file never chosen)
+        shown = set(label for _, label in out)
+        out += [(name, name) for name in scene.walk_names() if name not in shown]
     except Exception:
         pass
     out += [("cat:" + name, "CAT " + name) for name in gaitgen.PRESETS]
