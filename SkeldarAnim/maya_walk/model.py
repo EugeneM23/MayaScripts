@@ -8,6 +8,7 @@ knobs are maya_walk.gait's parameters, mapped onto these engine knobs
 no change, so an old caller reads the engine as before; the speed-ups and the operators came from Gait Builder's fork
 (docs/superpowers/plans/gaitbuilder/gaitmodel.py).
 """
+import cmath
 import math
 import re
 
@@ -39,11 +40,11 @@ KNOBS = (
     ("pelvis_height", 0.0, -40.0, 40.0),
     ("pelvis_forward", 0.0, -30.0, 30.0),
     ("pelvis_rot", 1.0, 0.0, 3.0),
-    ("pelvis_twist", 5.0, -5.0, 40.0),
-    ("pelvis_list", 4.0, -5.0, 10.0),
+    ("pelvis_twist", 5.0, -40.0, 60.0),
+    ("pelvis_list", 4.0, -30.0, 30.0),
     ("spine", 1.0, 0.0, 3.0),
-    ("chest_twist", 7.0, -5.0, 60.0),
-    ("chest_sway", 5.0, -5.0, 15.0),
+    ("chest_twist", 7.0, -40.0, 90.0),
+    ("chest_sway", 5.0, -30.0, 40.0),
     ("gait_lean", 1.0, 0.0, 1.0),
     ("torso_drag", 1.5, 0.0, 8.0),
     ("torso_bounce", 0.2, 0.0, 1.0),
@@ -115,6 +116,14 @@ KNOBS = (
     ("bob_shift", 0.0, -30.0, 30.0),
     ("double_bounce", 0.0, 0.0, 20.0),     # cm
     ("chest_phase", 0.0, -180.0, 180.0),   # deg: the chest's twist later than its own against the hips'
+    # Balance's swing on each axis (1 the pendulum's change of the side / forward sway, 0 none: a Sway or a Surge
+    # the animator set holds its value)
+    ("balance_sway", 1.0, 0.0, 1.0),
+    ("balance_surge", 1.0, 0.0, 1.0),
+    # The springs (Arm, Torso, Head drag) with their stride swing kept: 1 samples a spring's target ahead by the
+    # spring's own phase delay at the stride's frequency and scales its swing by 1 / its gain there, so the stride
+    # swing keeps its amplitude and timing and only the overshoot and the pivot's jolts are added (Whip)
+    ("spring_comp", 0.0, 0.0, 1.0),
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
@@ -134,7 +143,8 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
-         "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag")
+         "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
+         "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -204,11 +214,14 @@ ROLL_SENSE = 0.3          # the roll changes from the heel to the ball over this
 SOLE_HEEL_UP = 65.0       # degrees: no roll stands a sole steeper than this off the ground, heel up
 SOLE_TOES_UP = 30.0       # degrees: nor toes up
 SOLE_EASE = 15.0          # degrees: a roll eases into those limits over this much
+SOLE_HARD = {True: 85.0, False: 60.0}   # degrees: an asked roll stands a sole no steeper (heel up, toes up)
 AIR_HOLD = 2.0            # cm: a foot just off the ground may hold the pelvis down this much (_just_off)
 GROWTH_SAMPLES = 12       # the lift-off and the swing's start tested at this many steps (_growth)
 PUSH_FROM = 0.55          # Push-off's roll comes in from this share of the contact to the lift-off...
 #                           ...and goes over the first SWING_EASE of the swing; Heel strike's comes in over the last
 FLAT_TOL = 3.0            # degrees: a sole this near the floor is flat (Walk.flat_after: the strike's foot-flat)
+ROLL_HOLD = 1.0           # Push-off and Heel strike held whole this many new frames either side of the lift-off /
+#                           strike: the frames there read them exactly
 SLAP_LEAST = 0.08         # a Heel strike's toes come down over at least this share of a stride (the
 #                           loading response: the foot flat ~8 % of the gait cycle after the strike)
 
@@ -907,6 +920,9 @@ class Walk(object):
                              "sway": _harmonic(pel @ self.lside, phase, 1)[1],
                              "surge": _harmonic(pel @ self.ahead, phase, 2)[1]}
         self.aspect_amp = {"bob": 2.0 * bob[0]}
+        double = _harmonic(pel @ self.up, phase, 4)
+        # Double bounce: added in phase with the walk's own (twice a step); with next to none, lows at the strikes
+        self.aspect_phase["double"] = double[1] if 2.0 * double[0] >= BOB_QUIET else math.pi
         if self.aspect_amp["bob"] < BOB_QUIET:     # the guide's: lowest just after each strike (cos(2a - p) at -1)
             self.aspect_phase["bob"] = 2.0 * math.pi * BOB_LOW_AFTER - math.pi
         self.leg_parts = dict((s, (float(np.linalg.norm(self.lt[idx["calf_" + s]], axis=1).mean()),
@@ -1389,13 +1405,13 @@ class Walk(object):
             gain = k["spine"] * ex
             own = (gain * self.twist_gain * self.own_chest_twist, gain * self.own_chest_sway)
         twist, sway = target[0] - own[0], target[1] - own[1]
-        late = math.radians(k.get("chest_phase", 0.0))
-        if abs(twist) < 1e-9 and abs(sway) < 1e-9 and not late:
+        # Chest timing: the shoulders' yaw added as a stride harmonic (complex, degrees) _chest_own solved for
+        added = own[2] if len(own) > 2 else None
+        if abs(twist) < 1e-9 and abs(sway) < 1e-9 and added is None:
             return None
         a, b = self.chest_shapes(tau)
-        if late:         # Chest timing: the target's twist later on its shape, the walk's own taken away where it was
-            turned = math.cos(self.stride_phase(tau) - self.chest_shape[0] - late)
-            tw = math.radians(target[0]) * turned - math.radians(own[0]) * a
+        if added is not None:
+            tw = math.radians(abs(added) * math.cos(self.stride_phase(tau) - cmath.phase(added)))
         else:
             tw = math.radians(twist) * a
         return self.left * (tw * -self.up + math.radians(sway) * b * self.fwd)
@@ -1416,14 +1432,42 @@ class Walk(object):
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         own = self.chest_fit(worlds)
+        before = self.chest_yaw(worlds)
         # once more with the turn added: a bent spine does not take a world turn one for one - what it misses
-        # of the target is asked for again
+        # of the target is asked for again (its amplitudes, and the phase Chest timing turns it by)
         ctx["chest_own"] = own
         for f, (phi, tau) in enumerate(times):
             worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
         got, target = self.chest_fit(worlds), self.chest_targets(ctx["k"], ctx["ex"])
         ctx["chest_own"] = None
-        return own[0] + got[0] - target[0], own[1] + got[1] - target[1]
+        out = (own[0] + got[0] - target[0], own[1] + got[1] - target[1])
+        late = math.radians(ctx["k"].get("chest_phase", 0.0))
+        if late:
+            # the shoulders' yaw a stride harmonic H (complex, degrees: cos(a - arg H) x |H|): the built cycle's
+            # without the turn added (B) brought to the target's amplitude and turned `late` later; the turn that
+            # adds it asked, its take by the spine measured (the yaw it moved over the yaw asked) and divided out
+            ratio = target[0] / own[0] if abs(own[0]) > 1e-6 else 1.0
+            want = abs(before) * ratio * cmath.exp(1j * (cmath.phase(before) + late))
+            asked = want - before
+            ctx["chest_own"] = (own[0], own[1], asked)
+            for f, (phi, tau) in enumerate(times):
+                worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
+            ctx["chest_own"] = None
+            take = (self.chest_yaw(worlds) - before) / asked if abs(asked) > 1e-9 else 1.0
+            if 0.3 <= abs(take) <= 3.0:
+                asked = asked / take
+            out = out + (asked,)
+        return out
+
+    def chest_yaw(self, worlds):
+        """The shoulder line's yaw's first stride harmonic in a cycle of world matrices: complex, degrees
+        (A e^(i phi) for A cos(a - phi), a the stride phase)."""
+        n = worlds.shape[1] - 1
+        d = worlds[self.index["upperarm_l"], :n, 3, :3] - worlds[self.index["upperarm_r"], :n, 3, :3]
+        yaw = np.degrees(np.arctan2(d @ self.fwd, d @ self.lside))
+        a = np.array([self.stride_phase(f * self.P / float(n)) for f in range(n)])
+        yaw = yaw - yaw.mean()
+        return complex(2.0 / n * float(np.dot(yaw, np.cos(a))), 2.0 / n * float(np.dot(yaw, np.sin(a))))
 
     def chest_fit(self, worlds):
         """The shoulder line's twist and sway amplitudes (degrees) in a cycle of world matrices (J, n+1, 4, 4),
@@ -1883,8 +1927,9 @@ class Walk(object):
                 floor = -0.5 * (to - hs)
                 if v > 0.0:
                     floor = floor if self.is_flight(ds) else max(floor, ctx["frame"] - ds)
-                if duty > 0.0:                    # Ground time's share of a stride: the contact set to it directly
-                    want = duty * P / float(self.strides) - (to - hs)
+                if duty > 0.0:     # Ground time's share of a stride: each contact by the factor that gives it on average
+                    factor = duty * P / float(self.strides) / float(np.mean([b - a for a, b in self.contact[side]]))
+                    want = (factor - 1.0) * (to - hs)
                     e = min(max(want, floor), GROUND_ROOM * self.swing_len[side][i])
                     asked.append((duty, (to - hs + e) * self.strides / P))     # asked, held (share of a stride)
                     out.append({"hs": 0.0, "to": e})
@@ -2135,20 +2180,35 @@ class Walk(object):
             out -= (1.0 - ball) * self._roll_cost(side, t, rot, ankle, hip, limit, ctx, -1.0)
         return held * out
 
-    def _roll_turn(self, side, t, rot, ankle, roll):
+    def _roll_turn(self, side, t, rot, ankle, roll, asked=0.0):
         """The foot (rot, ankle) rolled `roll` radians: + about its ball (heel up), - about its heel (toes up),
-        eased into the sole's limit; the point it rolls on stays where it is. Returns (rotation, ankle, the
-        world turn about the ball or None)."""
-        sense = 1.0 if roll > 0.0 else -1.0
-        geometry = None if roll == 0.0 else self._roll_frame(side, t, rot, ankle, sense)
-        if geometry is None:
-            return rot, ankle, None
-        pivot, axis = geometry
-        angle = self._sole_eased(side, rot, axis, sense, abs(roll))
-        if angle <= 0.0:
-            return rot, ankle, None
-        turn = exp_rot(axis * sense * angle)             # heel up about the ball (+), toes up about the heel (-)
-        return rot @ turn, pivot + (ankle - pivot) @ turn, (turn if sense > 0.0 else None)
+        eased into the sole's limit; the point it rolls on stays where it is. `asked` of the roll (Push-off,
+        Heel strike, Foot flat: what the animator asked for) is turned whole after the rest, held only by the
+        sole's hard limits (SOLE_HARD). Returns (rotation, ankle, the world turn about the ball or None)."""
+        need = roll - asked
+        sense = 1.0 if need > 0.0 else -1.0
+        geometry = None if need == 0.0 else self._roll_frame(side, t, rot, ankle, sense)
+        ball = None
+        if geometry is not None:
+            pivot, axis = geometry
+            angle = self._sole_eased(side, rot, axis, sense, abs(need))
+            if angle > 0.0:
+                turn = exp_rot(axis * sense * angle)     # heel up about the ball (+), toes up about the heel (-)
+                rot, ankle = rot @ turn, pivot + (ankle - pivot) @ turn
+                ball = turn if sense > 0.0 else None
+        if asked:
+            sense = 1.0 if asked > 0.0 else -1.0
+            geometry = self._roll_frame(side, t, rot, ankle, sense)
+            if geometry is not None:
+                pivot, axis = geometry
+                lift, _ = self._sole_lift(side, rot, axis, sense)
+                angle = min(abs(asked), max(0.0, math.radians(SOLE_HARD[sense > 0.0]) - lift))
+                if angle > 0.0:
+                    turn = exp_rot(axis * sense * angle)
+                    rot, ankle = rot @ turn, pivot + (ankle - pivot) @ turn
+                    if sense > 0.0:
+                        ball = turn if ball is None else ball @ turn
+        return rot, ankle, ball
 
     def _rolled(self, side, t, rot, ankle, hip, limit, ctx):
         """Foot placement's reach at one instant: the foot rolled as far as _roll_need says. Returns
@@ -2163,6 +2223,14 @@ class Walk(object):
             return 0.0
         f = int(round(tau * (len(rolls[side]) - 1) / float(self.P)))
         return float(rolls[side][f % len(rolls[side])])
+
+    def _asked_of(self, side, tau, ctx):
+        """The part of the frame's roll (radians) the animator asked for (Push-off, Heel strike, Foot flat)."""
+        asked = ctx.get("asked_rolls")
+        if not asked:
+            return 0.0
+        f = int(round(tau * (len(asked[side]) - 1) / float(self.P)))
+        return float(asked[side][f % len(asked[side])])
 
     def _leg_reach(self, side, t, ctx):
         """The share of its length a leg (its foot at foot time t) straightens to at most: Knee bend on stance's
@@ -2359,7 +2427,8 @@ class Walk(object):
         cop_dev = ((cop - line) @ self.basis.T)[:, :2]
         l_new = pendulum(cop_dev, n / self.fps, m_dev[:, 2].mean())
         l_src = np.array([periodic_cr(self.l_dev, tau) for tau in taus])
-        gain = self.follow * np.array([k["surge"] * ctx["ex"], k["sway"] * ctx["ex"]])
+        gain = self.follow * np.array([k["surge"] * ctx["ex"] * k["balance_surge"],
+                                       k["sway"] * ctx["ex"] * k["balance_sway"]])
         swing = gain * ((l_new - l_new.mean(axis=0)) - (l_src - l_src.mean(axis=0)))
         mean = ((cop_dev.mean(axis=0) - self.cop_dev.mean(axis=0))
                 - (m_dev[:, :2].mean(axis=0) - self.s_dev[:, :2].mean(axis=0)))
@@ -2705,8 +2774,9 @@ class Walk(object):
                 v = float(self._sample("pdev", j, clock, ctx, gains, self.basis, late) @ self.up) - mean[2]
                 if k["bob_add"]:       # a bob where the walk has (next to) none: at its own phase, else the guide's
                     v += 0.5 * k["bob_add"] * math.cos(2.0 * self.stride_phase(clock - late) - self.aspect_phase["bob"])
-                if k["double_bounce"]:  # two lows a step: at each strike and each passing
-                    v -= 0.5 * k["double_bounce"] * math.cos(4.0 * self.stride_phase(clock - late))
+                if k["double_bounce"]:  # two lows a step: the walk's own, else at each strike and each passing
+                    v += 0.5 * k["double_bounce"] * math.cos(4.0 * self.stride_phase(clock - late)
+                                                            - self.aspect_phase["double"])
                 own = mean[2] + self.fix["height"]          # the corrected walk's mean height
                 base = own if pose is None or "height" not in pose else (1.0 - a) * own + a * pose["height"]
                 # Pelvis height raises or lowers it over the feet (the reach's drop still holds the legs)
@@ -2779,6 +2849,8 @@ class Walk(object):
                 needs[side] = needs[side] + asked[side]
         ctx["rolls"] = (dict((side, np.append(needs[side], needs[side][0])) for side in SIDES)
                         if ctx["placement"] > 0.0 or asked is not None else None)
+        ctx["asked_rolls"] = (None if asked is None else
+                              dict((side, np.append(asked[side], asked[side][0])) for side in SIDES))
         # Near straight a knee turns tens of degrees for a millimetre of reach, so a leg held exactly at its
         # limit by the drop's cover, or a swinging leg clamped there, snaps (2026-10-16, a raised pelvis): once
         # the legs fall short anywhere (by MARGIN_FULL cm, eased in from nothing - so the defaults are untouched)
@@ -2796,7 +2868,8 @@ class Walk(object):
                     share = 0.0 if down or self._just_off(side, t, ctx) or margin <= 0.0 else 1.0 - self.swing_at(side, t)
                     if not down and share <= 0.0 and not self._just_off(side, t, ctx):
                         continue
-                    ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx))[1]
+                    ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx),
+                                            self._asked_of(side, tau, ctx))[1]
                     q = ankle - hip
                     if np.linalg.norm(q) <= limit * (1.0 + 1e-9):
                         continue
@@ -2831,11 +2904,12 @@ class Walk(object):
             ctx["reel"] = reel
         return np.append(drop, drop[0])
 
-    def roll_profiles(self, side, t, k):
+    def roll_profiles(self, side, t, k, hold=0.0):
         """Push-off's and Heel strike's shares (0..1) at foot time t: (push, heel strike). Push-off comes in from
         PUSH_FROM of the contact to its lift-off and goes over the first SWING_EASE of the swing; Heel strike comes
         in over the last SWING_EASE of the swing and goes from the strike to the walk's own foot-flat + slap
-        (at least SLAP_LEAST of a stride)."""
+        (at least SLAP_LEAST of a stride); both held whole `hold` source frames either side of the lift-off /
+        strike."""
         i, r = self._contact_at(side, t)
         hs, to = self.contact[side][i]
         A, swing = to - hs, self.swing_len[side][i]
@@ -2844,32 +2918,60 @@ class Walk(object):
         clamp = lambda u: min(max(u, 0.0), 1.0)
         least = SLAP_LEAST * self.P / float(self.strides)
         slap = lambda m: max(self.flat_after[side][m] + float(k.get("slap", 0.0)), least)
+        hold = min(hold, 0.25 * A, 0.25 * swing)
         if r <= A:
-            push = smooth(clamp((r - PUSH_FROM * A) / max((1.0 - PUSH_FROM) * A, 1e-9)))
-            strike = 1.0 - smooth(clamp(r / slap(i)))
+            push = smooth(clamp((r - PUSH_FROM * A) / max((1.0 - PUSH_FROM) * A - hold, 1e-9)))
+            strike = 1.0 - smooth(clamp((r - hold) / slap(i)))
         else:
             after = r - A
-            push = 1.0 - smooth(clamp(after / max(ease, 1e-9)))
+            push = 1.0 - smooth(clamp((after - hold) / max(ease, 1e-9)))
             before = swing - after
-            strike = smooth(clamp(1.0 - before / max(ease, 1e-9)))
+            strike = smooth(clamp(1.0 - (before - hold) / max(ease, 1e-9)))
         return push, strike
 
     def _asked_rolls(self, legs, ctx):
         """Push-off's and Heel strike's rolls on every frame ({side: radians, + heel up}), or None when neither
         is asked (they need the contacts: not on a walk Foot placement cannot read)."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
-        if self.placement_note or not any(ks[s]["push"] or ks[s]["heel_strike"] for s in SIDES):
+        if self.placement_note or not any(ks[s]["push"] or ks[s]["heel_strike"] or ks[s]["slap"] for s in SIDES):
             return None
         out = {}
         for side in SIDES:
             push, strike = math.radians(ks[side]["push"]), math.radians(ks[side]["heel_strike"])
+            slap = float(ks[side]["slap"])
             roll = np.zeros(len(legs))
             for f, frame in enumerate(legs):
+                t = frame[side][0]
                 if push or strike:
-                    a, b = self.roll_profiles(side, frame[side][0], ks[side])
+                    a, b = self.roll_profiles(side, t, ks[side], ROLL_HOLD * ctx["frame"])
                     roll[f] = push * a - strike * b
+                if slap:
+                    roll[f] += self._flat_stretch(side, t, slap, ctx["frame"])
             out[side] = roll
         return out
+
+    def _flat_stretch(self, side, t, slap, frame):
+        """Foot flat: the walk's own heel strike's toes coming down `slap` source frames later (or sooner) -
+        its sole's pitch from the strike to its own foot-flat stretched over the foot-flat + slap; the roll
+        (radians, + heel up) that does it at foot time t, eased out over a frame past it."""
+        i, r = self._contact_at(side, t)
+        hs, to = self.contact[side][i]
+        F = self.flat_after[side][i]
+        F2 = max(F + slap, 0.0)
+        if F <= 0.0 or r > to - hs:
+            return 0.0
+        fo = self.index["foot_" + side]
+        pitch = lambda u: self.sole_pitch(side, self.wrot(fo, hs + u))
+        own = pitch(r)
+        if r <= F2:
+            return pitch(r * F / F2) - own
+        if F2 < F:          # sooner: the clip's own from its foot-flat on, rejoining the clip's time over what was cut
+            span = (F - F2) + max(frame, 1e-6)
+            u = min((r - F2) / span, 1.0)
+            return (pitch(F + (r - F2)) - own) * (1.0 - u * u * (3.0 - 2.0 * u))
+        fade = max(frame, 1e-6)
+        u = min((r - F2) / fade, 1.0)
+        return (pitch(F) - pitch(F2)) * (1.0 - u * u * (3.0 - 2.0 * u))
 
     def _swing_excess(self, times, legs, ctx, drop, margin, only=None):
         """How far (cm, a frame) a swinging foot's ankle lies past its leg's reach (less `margin` of it) from the
@@ -2883,7 +2985,8 @@ class Walk(object):
                     continue
                 if drop is not None:
                     hip = hip - self.up * drop[f]
-                ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx))[1]
+                ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx),
+                                        self._asked_of(side, tau, ctx))[1]
                 out[f] = max(out[f], float(np.linalg.norm(ankle - hip)) - limit * (1.0 - margin))
         return np.maximum(out, 0.0)
 
@@ -3020,7 +3123,7 @@ class Walk(object):
             self._trunk = (spine, necks, head) if spine else None
         return self._trunk
 
-    def _body_motion(self, kin_rot, pivot, lever, n, drag, bounce, inertia=1.0):
+    def _body_motion(self, kin_rot, pivot, lever, n, drag, bounce, inertia=1.0, comp=0.0):
         """One rigid body's world rotation (n+1, 3, 3), following `kin_rot` (n+1, 3, 3) through a damped spring
         `drag` frames late (zeta = 1 - 0.75 bounce, the arms' spring) and feeling the acceleration of its pivot's
         path `pivot` (n, 3, the travel out) on its `lever` (in the body's frame) - a rod about its end. Integrated
@@ -3029,7 +3132,7 @@ class Walk(object):
         w0 = 2.0 * zeta / drag
         S = max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0)))
         dt = 1.0 / S
-        target = self._resampled(kin_rot, n, S)
+        target = self._compensated(self._resampled(kin_rot, n, S), n, S, w0, zeta, comp)
         accel = self._smooth_accel(pivot, n, S)
         kk, cc = w0 * w0, 2.0 * zeta * w0
         R, w = kin_rot[0].copy(), np.zeros(3)
@@ -3098,7 +3201,7 @@ class Walk(object):
                 com = kin[spine[-1], :n, 3, :3]
             lever = np.einsum("fi,fij->fj", com - base, np.swapaxes(chest[:n], -1, -2)).mean(axis=0)
             dyn = self._body_motion(chest, flat(kin[spine[0], :, 3, :3]), lever, n, k["torso_drag"],
-                                    k["torso_bounce"], BODY_INERTIA)
+                                    k["torso_bounce"], BODY_INERTIA, k["spring_comp"])
             turn = log_rot(np.swapaxes(chest, -1, -2) @ dyn)
             new = self._spread_turn(worlds, kin, spine, [(i + 1.0) / len(spine) for i in range(len(spine))], turn)
             # the upper arms the frames hang in the world (no pose's arms) keep hanging there on the moving chest
@@ -3113,7 +3216,7 @@ class Walk(object):
                 reach = np.einsum("fi,fij->fj", kin[head, :n, 3, :3] - kin[pivot, :n, 3, :3],
                                   np.swapaxes(gaze[:n], -1, -2)).mean(axis=0)
                 dyn = self._body_motion(gaze, flat(kin[pivot, :, 3, :3]), reach * (1.0 + HEAD_LIFT), n,
-                                        k["head_drag"], k["torso_bounce"], HEAD_INERTIA)
+                                        k["head_drag"], k["torso_bounce"], HEAD_INERTIA, k["spring_comp"])
             else:
                 dyn = gaze             # Head drag 0: the head keeps the gaze the frames give it, the neck takes it
             turn = log_rot(np.swapaxes(carried, -1, -2) @ dyn)
@@ -3178,12 +3281,27 @@ class Walk(object):
             for side, chain in chains.items():
                 if own[side][0] <= 0.0:           # this arm as the frames put it
                     continue
-                got, used = self._limb_motion(kin, n, chain, *spring(*own[side]))
+                got, used = self._limb_motion(kin, n, chain, *spring(*own[side]), comp=ks[side]["spring_comp"])
                 new.update(got)
                 cycles = max(cycles, used)
         out["cycles"] = cycles
         self._reattach(worlds, kin, new, only)
         return out
+
+    def _compensated(self, target, n, S, w0, zeta, comp):
+        """A spring's target (n * S, 3, 3, at every 1/S frame) made so the spring's output keeps the target's
+        stride swing: sampled ahead by the spring's phase delay at the stride's frequency and its turn about its
+        mean scaled by 1 / the spring's gain there - each x `comp` (0 the target itself)."""
+        if comp <= 0.0:
+            return target
+        w = 2.0 * math.pi * self.strides / float(n)          # the stride, radians a frame
+        kk, cc = w0 * w0, 2.0 * zeta * w0
+        delay = math.atan2(cc * w, kk - w * w) / w            # frames
+        gain = kk / math.hypot(kk - w * w, cc * w)
+        ahead = np.roll(target, -int(round(comp * delay * S)), axis=0)
+        mean = mean_rot(ahead)
+        scale = 1.0 + comp * (1.0 / max(gain, 1e-6) - 1.0)
+        return exp_rot(scale * log_rot(ahead @ mean.T)) @ mean
 
     def _resampled(self, rots, n, S):
         """A rotation series (n+1, 3, 3) (the last the first) at every 1/S frame of the cycle, slerped:
@@ -3222,7 +3340,7 @@ class Walk(object):
             out += 2.0 * np.real(np.outer(np.exp(1j * w * u), coeffs[k])) * -(w * w)
         return out
 
-    def _limb_motion(self, kin, n, chain, w0, zeta, S):
+    def _limb_motion(self, kin, n, chain, w0, zeta, S, comp=0.0):
         """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took."""
         dt = 1.0 / S
         top, base = chain[0], self.parents[chain[0]]
@@ -3242,7 +3360,7 @@ class Walk(object):
         path = np.array([kin[top, f, 3, :3] - travel * f for f in range(n)])
         a_shoulder = self._smooth_accel(path, n, S)
         base_rot = self._resampled(R[base], n, S)
-        rel_s = dict((j, self._resampled(rel[j], n, S)) for j in chain)
+        rel_s = dict((j, self._compensated(self._resampled(rel[j], n, S), n, S, w0, zeta, comp)) for j in chain)
         levers = [lever.get(j) for j in chain]
         state, spin = [], []
         parent = base_rot[0]
@@ -3415,7 +3533,7 @@ class Walk(object):
         pelvis = self.parents[th]
         hip = src["hip"] @ rots[pelvis] + poss[pelvis]
         foot_rot, ankle, turn = self._roll_turn(side, src["t"], src["foot_rot"], src["ankle"],
-                                                self._roll_of(side, tau, ctx))
+                                                self._roll_of(side, tau, ctx), self._asked_of(side, tau, ctx))
         if turn is not None and rolls is not None:
             rolls[side] = turn
         reel = self._reel_of(side, tau, ctx) * self.swing_at(side, src["t"])     # in the air only

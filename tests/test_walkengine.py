@@ -369,5 +369,40 @@ class LagTests(unittest.TestCase):
         self.assertLess(sooner, -30.0)
 
 
+def arm_forward(w, r, side="l"):
+    """The upper arm's forward angle a frame (degrees): its direction forward of hanging."""
+    a = r.worlds[w.index["lowerarm_" + side], :-1, 3, :3] - r.worlds[w.index["upperarm_" + side], :-1, 3, :3]
+    a = a / np.linalg.norm(a, axis=1, keepdims=True)
+    return np.degrees(np.arctan2(a @ w.ahead, -(a @ w.up)))
+
+
+def first_harmonic(w, y):
+    """(amplitude, time of its peak in frames) of a cycle's first stride harmonic."""
+    n = len(y)
+    a = np.array([w.stride_phase(f * w.P / float(n)) for f in range(n)])
+    y = y - y.mean()
+    c, s = 2.0 / n * float(np.dot(y, np.cos(a))), 2.0 / n * float(np.dot(y, np.sin(a)))
+    return math.hypot(c, s), math.atan2(s, c) / (2.0 * math.pi) * n / w.strides
+
+
+class WhipTests(unittest.TestCase):
+
+    def test_spring_comp_keeps_the_stride_swing(self):
+        w = tw.walk()
+        own = still(w)
+        bare = first_harmonic(w, arm_forward(w, w.evaluate(own)))
+        plain = first_harmonic(w, arm_forward(w, w.evaluate(dict(own, arm_drag=1.5, arm_bounce=0.3))))
+        kept = first_harmonic(w, arm_forward(w, w.evaluate(dict(own, arm_drag=1.5, arm_bounce=0.3, spring_comp=1.0))))
+        self.assertLess(abs(kept[0] / bare[0] - 1.0), 0.05)
+        self.assertLess(abs(kept[1] - bare[1]), 0.3)
+        self.assertGreater(abs(plain[1] - bare[1]), 0.5)          # a plain spring lags it
+
+    def test_spring_comp_on_the_trunk(self):
+        w = tw.walk()
+        own = still(w)
+        r = w.evaluate(dict(own, torso_drag=1.5, head_drag=2.0, spring_comp=1.0))
+        self.assertTrue(np.all(np.isfinite(r.worlds)))
+
+
 if __name__ == "__main__":
     unittest.main()
