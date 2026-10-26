@@ -310,6 +310,16 @@ def _knob_changed(name, value):
         gait["speed"] = float(value) * cadence / 6000.0
     elif knob.sided and state["side"] in ("l", "r"):
         gait[name + "_" + state["side"]] = float(value)
+    elif knob.sided and knob.kind == "measured":
+        # Both moves each side by the slider's change from what it showed (their mean), keeping the walk's own
+        # difference: one value for both would jump a lopsided walk's side (HavyRun's planted knees, 52 and 15)
+        source = _source(state)
+        base = _modules()[0].baseline(source, *_pose_and_share(source, state))
+        sides = dict((s, asp.value(gait, base, name, s)) for s in ("l", "r"))
+        delta = float(value) - 0.5 * (sides["l"] + sides["r"])
+        gait.pop(name, None)
+        for side in ("l", "r"):
+            gait[name + "_" + side] = sides[side] + delta
     else:
         gait[name] = float(value)
         for side in ("l", "r"):              # Both links the sides again

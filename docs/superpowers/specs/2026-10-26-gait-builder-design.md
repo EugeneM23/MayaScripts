@@ -469,6 +469,46 @@ The real dimensions are now 22-24 for 90 % and 30-33 for 99 % (were 5-9 and 14-2
      traps below);
    - the plan's checkboxes.
 
+### Second session, paused again (2026-10-26, evening)
+
+Done ("Next" 1 and 2), committed on `main`, not pushed:
+- **Chest bounce was a measurement bug, not the spring.** `aspects._pitch_series` and the model's chest phase read
+  the turn as `r . mean^T` (in the spine joint's own axes); asd's spine_05 stands ~90 deg off the world, so 5 deg
+  read 0.13. Now `mean^T . r` (the world's pitch): +5 asked reads +5.0 with the springs off, +4.55 under them.
+- **Foot lift** is solved exactly on the model's own swing (`Walk.lift_profile`: each swinging frame's height and
+  foot_target's lift_up; `aspects.lift_scale` bisects the convex max). A profile read off the result's contacts
+  overshot 17-34 %.
+- **Arm out** turns the upper arm about `arm_dir x side` (`Walk.arm_dir`, `ARM_OUT_AXIS`): about the body's front
+  a run's forward arm only spun about itself.
+- **Knee bend** caps only a PLANTED leg (`ctx["stance_reach"]`, `Walk._leg_reach`), from the straightest knee over
+  the MODEL's planted frames (`aspects.annotate`, `base["_knee_planted"]`, read off `result.info["placement"]`).
+  Capped on both legs, a run's swinging leg was drawn in (3x overshoot); capped from the measure's own, HavyRun's
+  push-off frame jumped 5-7 deg at the first ask. A soft cap (by the ground weight) was tried and dropped:
+  HavyRun then under-responded.
+- **Duty** is measured to a fraction of a frame (`Cycle.margin` / `down_share`: a 26-frame run is 3.8 % a frame).
+- **Response curves** (`aspects.calibrate`, CALIBRATED = (duty, elbow_swing), (knee_bend, elbow); PROBES, and
+  KNOB_PROBES for knee_bend): each source probed once out to its range's ends, `base["_curve"]`; the asked change
+  goes through `_inverse` (past the reach: the first asked reaching it, never the end - a run's right elbow swing
+  turns back and grew the wrong way); a Both ask through the sides' MEAN curve (`_calibrated_sides`: the legs
+  share the pelvis); the range cut to what the walk reaches (asd's duty floor ~53 % under Foot placement; a run's
+  elbow swing). Probed together, arm and leg knobs read within 6 % of alone (measured).
+- **Elbow swing's range** stops at the elbow's bend (past it the unsigned bend folds back).
+- **A sided knob moves each side from its own** (HavyRun's planted knees straighten to 52 and 15 deg): `gates.Bench.ask`
+  / `change`, and the window's Both (`skeldar_gait._knob_changed`) for a measured knob.
+
+Numbers: readback **172 of 172** on asd, dw, HavyRun, cat:Walk (was 152); parity and identity unchanged; speed
+alone 27 % (HavyRun) / 44 % (asd) of Walk Builder's. 38 unit tests green (`test_gait_*`).
+
+**Open, before the rest of "Next":**
+- **The calibration is slow**: 9 evaluations a source - asd 6.5 s CPU, dw ~30 s (one dw evaluation ~3.3 s under
+  load). Too slow for the window's source load. Options: cache it on disk per walk file (mtime) and pose; fewer
+  probes (elbow needs only +-1); a lazy curve per knob on its first move; speed up the evaluation (profile dw).
+- The baseline is still keyed by pose share in `gaitload.baseline`, so a share change recalibrates: key the
+  curves by source and pose only.
+- Then "Next" 3 (the knob set), 4 (knee clicks), 5 (verify_gait.py), 6 (all gates), 7 (write-up). The effect and
+  redundancy gates were not re-run after this session's changes; the ranges of the calibrated knobs are now cut
+  to their reach, so effect numbers may move.
+
 ### Traps met in this build
 
 - **`a` is the pose's share inside `Walk._frame`'s joint loop** (`pose, a = ctx["pose"], ctx["alpha"]`). A

@@ -103,6 +103,33 @@ class OperatorTests(unittest.TestCase):
     def test_chest_bounce(self):
         self.assertAlmostEqual(self.moved("chest_bounce", chest_bounce_add=4.0), 4.0, delta=0.8)
 
+    def test_arm_out_on_an_arm_held_forward(self):
+        # a run holds the upper arm forward: turned about the body's front it only spun about itself (HavyRun read
+        # 4.2 of 10 deg); about the axis across the arm and its side it goes out as asked
+        ahead = self.read(arm_fwd_add=70.0)
+        out = self.read(arm_fwd_add=70.0, arm_out_add=10.0)
+        for s in "lr":
+            self.assertAlmostEqual(out["arm_out"][s] - ahead["arm_out"][s], 10.0, delta=1.5, msg=s)
+
+    def test_lift_is_solved_on_the_walk_s_own_swing(self):
+        # Foot lift's engine knob scales the swing's height over the line from where the foot leaves the ground to
+        # where it lands; aspects.lift_scale solves it on that profile for the asked height over the ground
+        m = self.base
+        for s in "lr":
+            for change in (4.0, -3.0):
+                L = asp.lift_scale(self.w.lift_profile(s), change)
+                got = self.read(**{"lift_" + s: L})
+                self.assertAlmostEqual(got["lift"][s] - m["lift"][s], change, delta=0.3, msg=(s, change))
+
+    def test_knee_bend_holds_only_the_planted_leg(self):
+        # the swinging leg keeps its own reach: capped too, a run's leg reaching for the ground was drawn in and
+        # held the pelvis down - Knee bend overshot 3x (HavyRun)
+        own = min(self.base["knee_bend"].values())          # the walker's knees: 46 deg at their straightest
+        m = asp.measure(self.w, self.w.evaluate(dict(QUIET, knee_bend=own + 10.0)).worlds)
+        for s in "lr":
+            self.assertGreater(m["knee_bend"][s], own + 10.0 - 1.0, msg=s)
+            self.assertLess(m["knee_bend"][s], own + 10.0 + 4.0, msg=s)
+
     def test_chest_bounce_on_spine_axes_far_from_the_world(self):
         # a UE spine joint's axes stand ~90 deg off the world's: the bounce is a WORLD pitch, read and added the
         # same whatever the joints' own axes (it read 0.13 of 5 deg on asd while both were taken in them)

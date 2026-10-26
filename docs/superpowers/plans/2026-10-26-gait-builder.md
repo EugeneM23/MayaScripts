@@ -3,6 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Status (2026-10-26, paused and handed over):** Tasks 1-5 done; 7 implemented without its unit test; 8 written but never run; 6 and 9 open. Read the spec's "Status at the pause" (docs/superpowers/specs/2026-10-26-gait-builder-design.md) first: what exists, the gate results, the diagnoses and the ordered next steps. Task 2's 0.35 s became "<= 0.35 s or <= 45 % of Walk Builder's CPU time in the same run" (reached: 43-45 %).
+**Second session (paused again):** "Next" 1-2 done - readback 172/172; see the spec's "Second session" section for
+what changed and what is open (the calibration's cost first).
 
 **Goal:** One standalone walk tool whose knobs are measured aspects of the clip in physical units (CAT's
 language) over Walk Builder's engine (clip, planted feet, balance, inertia, poses), faster and without knee

@@ -44,6 +44,14 @@ class MeasureTests(unittest.TestCase):
     def test_duty_within_a_frame(self):
         self.assertLess(abs(self.m["duty"] - 60.0), 100.0 / 24 + 1e-9)
 
+    def test_duty_is_finer_than_a_frame(self):
+        # the contact's ends are found between frames: a foot down 60 % of the cycle reads it closer than a
+        # frame's share on any cycle length (a 26-frame run is 3.8 % a frame)
+        for P in (17, 24, 31):
+            walk = fork_walk(P=P)
+            m = asp.measure(walk, walk.clip.worlds)
+            self.assertLess(abs(m["duty"] - 60.0), 0.5 * 100.0 / P, msg=P)
+
     def test_pelvis_swings(self):
         self.assertAlmostEqual(self.m["bob"], 3.0, places=6)
         self.assertAlmostEqual(self.m["sway"], 2.0, places=6)
@@ -120,6 +128,26 @@ class MappingTests(unittest.TestCase):
         e = asp.engine_knobs(self.walk, self.base, {"hips": 2.0 * self.base["hips"], "hip_drop": 1.0})
         self.assertAlmostEqual(e["pelvis_list"], self.walk.own_list + 1.0 - self.base["hip_drop"], places=9)
 
+    def test_a_response_curve_is_inverted(self):
+        base = dict(self.base)
+        # duty: 0.8 measured a unit upward; downward 0.5 a unit to -3, then nothing (a floor)
+        base["_curve"] = {"duty": {"": asp._monotone([(-10.0, -3.0), (-6.0, -3.0), (0.0, 0.0), (5.0, 4.0)])},
+                          "elbow": {"l": [(-4.0, -4.0), (0.0, 0.0), (12.0, 6.0)], "r": [(0.0, 0.0), (12.0, 12.0)]}}
+        up = asp.engine_knobs(self.walk, base, {"duty": base["duty"] + 4.0})
+        self.assertAlmostEqual(up["ground_time"], 1.0 + 5.0 / base["duty"], places=9)
+        down = asp.engine_knobs(self.walk, base, {"duty": base["duty"] - 1.5})
+        self.assertAlmostEqual(down["ground_time"], 1.0 - 3.0 / base["duty"], places=9)
+        floor = asp.engine_knobs(self.walk, base, {"duty": base["duty"] - 3.0})
+        self.assertAlmostEqual(floor["ground_time"], 1.0 - 6.0 / base["duty"], places=9)      # the first that reaches
+        e = asp.engine_knobs(self.walk, base, {"elbow_l": base["elbow"]["l"] + 3.0})
+        self.assertAlmostEqual(e["elbow_add_l"], 6.0, places=9)
+        lo, hi = asp.ranges(base, self.walk.leg_length)["duty"]
+        self.assertAlmostEqual(lo, base["duty"] - 3.0, places=9)                        # cut to the floor
+
+    def test_monotone_never_turns_back(self):
+        pts = asp._monotone([(-6.0, -1.0), (-3.0, -2.0), (0.0, 0.0), (2.0, -0.5), (6.0, 3.0)])
+        self.assertEqual(pts, [(-6.0, -2.0), (-3.0, -2.0), (0.0, 0.0), (2.0, 0.0), (6.0, 3.0)])
+
     def test_every_knob_has_a_range(self):
         r = asp.ranges(self.base, self.walk.leg_length)
         for k in asp.KNOBS:
@@ -130,6 +158,38 @@ class MappingTests(unittest.TestCase):
                 own = [own] if not isinstance(own, dict) else own.values()
                 for v in own:
                     self.assertTrue(lo - 1e-6 <= v <= hi + 1e-6 or k.sided, "%s %s %s" % (k.name, v, (lo, hi)))
+
+
+class CalibrationTests(unittest.TestCase):
+    """A walk probed once: the calibrated knobs then read back what is asked under the physics."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.walk = fork_walk()
+        cls.base = asp.measure(cls.walk, cls.walk.evaluate(asp.base_engine(cls.walk)).worlds)
+        cls.gains = asp.calibrate(cls.walk, cls.base, lambda g: cls.walk.evaluate(
+            asp.engine_knobs(cls.walk, cls.base, g)).worlds)          # the response curves
+
+    def test_the_elbow_swing_range_stops_at_the_bend(self):
+        r = asp.ranges(self.base, self.walk.leg_length)
+        self.assertLessEqual(r["elbow_swing"][1], min(self.base["elbow"].values()) + 1e-9)
+
+    def test_gains_kept_for_every_calibrated_knob(self):
+        for group in asp.CALIBRATED:
+            for name in group:
+                self.assertIn(name, self.gains)
+
+    def test_reads_back(self):
+        # (not Elbow swing: the walker's elbows are bent 12 deg, so a swing folds through straight - its range is
+        # capped there, aspects.ranges)
+        for name, change in (("duty", 4.0), ("duty", -4.0), ("elbow", 8.0), ("elbow", -4.0)):
+            own = asp.defaults(self.base)[name]
+            own = 0.5 * (own["l"] + own["r"]) if isinstance(own, dict) else own
+            m = asp.measure(self.walk, self.walk.evaluate(asp.engine_knobs(
+                self.walk, self.base, {name: own + change})).worlds)
+            got = m[name]
+            got = 0.5 * (got["l"] + got["r"]) if isinstance(got, dict) else got
+            self.assertLess(abs(got - own - change), max(0.15 * abs(change), 1.0), msg=(name, change, got - own))
 
 
 if __name__ == "__main__":

@@ -85,12 +85,21 @@ def load(key, clean=None, fps=30.0):
 def baseline(source, pose=None, share=0.0):
     """The walk as it stands under the pose's `share` (`pose` walkpose.prepare's, filtered to its parts): its
     measure in units - the knobs' own values - kept per source, pose and share."""
-    def make():
-        e = asp.base_engine(source.walk)
-        if pose is not None and share > 0.0:
+    posed = pose if share > 0.0 else None
+
+    def engine(gait, base):
+        e = asp.engine_knobs(source.walk, base, gait) if base is not None else asp.base_engine(source.walk)
+        if posed is not None:
             e["pose"] = share
-        result = source.walk.evaluate(e, pose if share > 0.0 else None)
-        return asp.measure(source.walk, result.worlds)
+        return e
+
+    def make():
+        result = source.walk.evaluate(engine({}, None), posed)
+        base = asp.measure(source.walk, result.worlds)
+        asp.annotate(source.walk, base, result)
+        # the knobs the engine does not give 1:1, probed once (aspects.CALIBRATED)
+        asp.calibrate(source.walk, base, lambda g: source.walk.evaluate(engine(g, base), posed).worlds)
+        return base
     return _kept(("base", id(source), id(pose), float(share)), make)
 
 

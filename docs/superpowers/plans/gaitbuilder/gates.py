@@ -184,6 +184,8 @@ class Bench(object):
         self.walk, self.theirs, self.statics = got
         self.base_result = self.walk.evaluate(asp.base_engine(self.walk))
         self.base = asp.measure(self.walk, self.base_result.worlds)
+        asp.annotate(self.walk, self.base, self.base_result)
+        asp.calibrate(self.walk, self.base, lambda g: self.walk.evaluate(asp.engine_knobs(self.walk, self.base, g)).worlds)
         self.range = asp.ranges(self.base, self.walk.leg_length)
         self.groups = groups_of(self.walk.names)
 
@@ -193,6 +195,23 @@ class Bench(object):
     def own(self, knob):
         v = asp.defaults(self.base)[knob]
         return 0.5 * (v["l"] + v["r"]) if isinstance(v, dict) else v
+
+    def ask(self, knob, delta):
+        """The gait moving `knob` by `delta` from the walk's own value - a sided knob each side from its own
+        (HavyRun's planted knees straighten to 52 and 15 deg: one value for both moved one side 24 and the
+        other none)."""
+        v = asp.defaults(self.base)[knob]
+        if isinstance(v, dict):
+            return dict((knob + "_" + s, v[s] + delta) for s in "lr")
+        return {knob: v + delta}
+
+    def change(self, knob, m):
+        """The measured change of `knob` in the measure `m` against the walk's own (both sides' mean)."""
+        got = m[asp.BY_NAME[knob].key]
+        own = self.base[asp.BY_NAME[knob].key]
+        if isinstance(got, dict):
+            return 0.5 * sum(got[s] - own[s] for s in "lr")
+        return got - own
 
 
 def knee_click(worlds, names):
@@ -241,10 +260,7 @@ def gate_readback(names):
                 asked = target - own
                 if abs(asked) < 1e-3:
                     continue
-                m = asp.measure(b.walk, b.run({knob.name: target}).worlds)
-                got = m[knob.key]
-                got = 0.5 * (got["l"] + got["r"]) if isinstance(got, dict) else got
-                change = got - own
+                change = b.change(knob.name, asp.measure(b.walk, b.run(b.ask(knob.name, asked)).worlds))
                 unit = 0.05 if knob.name == "speed" else READBACK_UNIT
                 ok = abs(change - asked) <= max(READBACK_SHARE * abs(asked), unit)
                 gate(ok, "readback %s %s: asked %+.2f %s, got %+.2f" % (name, knob.name, asked, knob.unit, change))
@@ -258,8 +274,10 @@ def gate_effect(names):
         for knob in asp.KNOBS:
             lo, hi = b.range[knob.name]
             best = (0.0, 0.0, "")
+            own = b.own(knob.name) if knob.kind == "measured" else knob.default
             for end in (lo, hi):
-                change = group_change(b.base_result.worlds, b.run({knob.name: end}).worlds, b.groups)
+                gait = b.ask(knob.name, end - own) if knob.kind == "measured" else {knob.name: end}
+                change = group_change(b.base_result.worlds, b.run(gait).worlds, b.groups)
                 for g, (deg, cm) in change.items():
                     if deg / EFFECT_DEG + cm / EFFECT_CM > best[0] / EFFECT_DEG + best[1] / EFFECT_CM:
                         best = (deg, cm, g)
@@ -280,7 +298,8 @@ def gate_redundancy(names):
             own = b.own(knob.name) if knob.kind == "measured" else knob.default
             step = 0.15 * (hi - lo)
             target = own + step if own + step <= hi else own - step
-            v = signed_change(b.base_result.worlds, b.run({knob.name: target}).worlds, idx)
+            gait = b.ask(knob.name, target - own) if knob.kind == "measured" else {knob.name: target}
+            v = signed_change(b.base_result.worlds, b.run(gait).worlds, idx)
             if np.linalg.norm(v) > 1e-6:
                 vecs.append(v / np.linalg.norm(v))
                 labels.append(knob.name)
@@ -304,7 +323,8 @@ def gate_clicks(names):
         configs = [("defaults", {})]
         for knob in ("step", "duty", "bob", "lift"):
             lo, hi = b.range[knob]
-            configs += [(knob + " low", {knob: lo}), (knob + " high", {knob: hi})]
+            own = b.own(knob)
+            configs += [(knob + " low", b.ask(knob, lo - own)), (knob + " high", b.ask(knob, hi - own))]
         configs += [("height +10", {"height": 10.0}), ("height -15", {"height": -15.0}), ("weight +1", {"weight": 1.0}),
                     ("speed high", {"speed": b.range["speed"][1]})]
         for label, gait in configs:
