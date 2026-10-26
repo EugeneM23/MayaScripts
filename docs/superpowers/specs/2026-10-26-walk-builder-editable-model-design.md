@@ -159,13 +159,16 @@ overshoot and the pivot's jolts are added. Whip 0 is no spring at all. The clip'
 at the start.
 
 **Pins and physics.** A parameter the animator set is **pinned** and holds its value. A parameter not set **follows
-physics** when what it depends on changes (`gait.LINKS`), from the clip's own value:
-- Sway (the pelvis's side) follows Width and Tempo by the linear inverted pendulum: `b (1 - sech(omega T / 2))`, b
-  half the width, T the step time, `omega = sqrt(g / z)` (section 13);
-- Bounce follows Step length by the pendulum's arc: `L (1 - cos theta)`, `sin theta = s / 2L`;
-- Hips twist and Chest twist follow Step length (as today);
-- Push-off and Heel strike follow Step length (a longer step rolls further);
-- Arm swing follows the speed (50-53 deg at 1.43 m/s, 60-65 at 1.75: section 2).
+physics** when what it depends on changes, from the clip's own value:
+- Sway and Surge (the pelvis's side and forward) follow Width, Tempo and a pose by the balance's linear inverted
+  pendulum over the new prints (`pendulum`: a wider stance or a slower step sways more, section 13); pinned, the
+  balance's swing term on that axis is off and the regular gain sets it exactly;
+- Hips twist and Chest twist follow Step length (the engine's own: the twist grows with the step);
+- Push-off and Heel strike follow Step length (a longer step rolls further: `gait.LINKS`);
+- Arm swing follows the speed (50-53 deg at 1.43 m/s, 60-65 at 1.75: section 2; `gait.LINKS`).
+
+The bounce is not linked: a longer step already lowers the pelvis at the contacts (the lowering), which is the
+pendulum's arc growing; a link would count it twice.
 
 A pinned row is marked in its label; its right button: Follow physics (unpin), Reset to the clip's. Reset (the card's
 button) unpins everything.
