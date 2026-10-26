@@ -1,0 +1,22 @@
+export default () => <claude.Visualize data-claude-component='walk-pelvis' sources={{rows:{kind:'data', data:__WPELVIS__}, panels:{kind:'data', data:[{key:'tilt', label:'Таз: наклон вперёд, °', lo:5, hi:15, step:5},{key:'obl', label:'Таз: боковой наклон, + правая сторона выше, °', lo:-8, hi:8, step:4},{key:'rot', label:'Таз: поворот, + правая сторона вперёд, °', lo:-8, hi:8, step:4}]}, speeds:{kind:'data', data:[{speed:'0,88', name:'медленно', toe:63.5, op:0.35},{speed:'1,24', name:'удобно', toe:61.8, op:0.65},{speed:'1,57', name:'быстро', toe:60.6, op:1}]}, phases:{kind:'data', data:[{name:'двойная', a:0, b:11.8, both:1},{name:'на правой', a:11.8, b:50, both:0},{name:'двойная', a:50, b:61.8, both:1},{name:'на левой', a:61.8, b:100, both:0}]}}}>{({rows, panels, speeds, phases, datum}) => {
+const left = 72, right = 664, ph = 120, gap = 52, y0 = 112;
+const x = q => left + q / 100 * (right - left);
+const val = (r, key) => key === 'tilt' ? r.tilt : key === 'obl' ? r.obl : r.rot;
+const fmt = v => String(v).replace('.', ',');
+const xt = Array.from({length: 11}, (_, i) => i * 10);
+const last = y0 + 3 * ph + 2 * gap;
+return <svg viewBox='0 0 760 640' role='img' aria-label='Чем быстрее шаг, тем сильнее таз качается и поворачивается' fontSize='12'>
+<text data-claude-text-id='title' x='24' y='30' fontSize='16' fontWeight='600' fill='var(--cds-text-primary)'>Чем быстрее шаг, тем сильнее таз качается и поворачивается</text>
+<text data-claude-text-id='subtitle' x='24' y='52' fill='var(--cds-text-secondary)'>Средние 24 взрослых 21–37 лет, 0 % — касание правой пяткой. Серые полосы — двойная опора</text>
+<g data-claude-anchor='legend'>{speeds.map((s, k) => <g key={s.speed}><line x1={left + k * 150} x2={left + k * 150 + 26} y1='78' y2='78' stroke='var(--cds-chart-categorical-1)' strokeOpacity={s.op} strokeWidth='2.5'/><text x={left + k * 150 + 32} y='82' fill='var(--cds-text-secondary)'>{`${s.name}, ${s.speed} м/с`}</text></g>)}</g>
+{panels.map((pn, k) => { const py = y0 + k * (ph + gap); const y = v => py + ph - (v - pn.lo) / (pn.hi - pn.lo) * ph; const ticks = Array.from({length: Math.round((pn.hi - pn.lo) / pn.step) + 1}, (_, i) => pn.lo + i * pn.step); return <g key={pn.key} data-claude-anchor={`panel-${pn.key}`}>
+{phases.filter(f => f.both === 1).map(f => <rect key={f.a} x={x(f.a)} y={py} width={x(f.b) - x(f.a)} height={ph} fill='var(--cds-chart-reference-tint)'/>)}
+<text x={left} y={py - 12} fontWeight='600' fill='var(--cds-text-primary)'>{pn.label}</text>
+{ticks.map(v => <g key={v}><line x1={left} x2={right} y1={y(v)} y2={y(v)} stroke={v === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)'}/><text x={left - 8} y={y(v) + 4} textAnchor='end' fill='var(--cds-text-secondary)'>{`${v > 0 && pn.key !== 'tilt' ? '+' : ''}${v}`}</text></g>)}
+{speeds.map(s => { const pts = rows.filter(r => r.speed === s.speed); const d = pts.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(r.pct)} ${y(val(r, pn.key))}`).join(' '); return <g key={s.speed} data-claude-anchor={`${pn.key}-${s.speed.replace(',', '')}`}><path d={d} fill='none' stroke='var(--cds-chart-categorical-1)' strokeOpacity={s.op} strokeWidth='2.5'/>{pts.map(r => <circle key={r.pct} cx={x(r.pct)} cy={y(val(r, pn.key))} r='3.5' fill='var(--cds-chart-categorical-1)' fillOpacity={s.op} {...datum(r, pn.key)}><title>{`${pn.label.split(',').at(0)}, ${s.name} ${s.speed} м/с, ${r.pct} % цикла: ${fmt(val(r, pn.key))}°`}</title></circle>)}</g>; })}
+{pn.key !== 'tilt' ? <g data-claude-anchor={`range-${pn.key}`}><text x={right + 14} y={py + 10} fill='var(--cds-text-secondary)'>размах</text>{speeds.map((s, j) => { const vs = rows.filter(r => r.speed === s.speed).map(r => val(r, pn.key)); return <text key={s.speed} x={right + 14} y={py + 36 + (2 - j) * 20} fontSize='14' fontWeight='600' fill='var(--cds-chart-categorical-1)' fillOpacity={Math.max(s.op, 0.55)}>{`${fmt(Math.round((Math.max(...vs) - Math.min(...vs)) * 10) / 10)}°`}</text>; })}</g> : null}
+</g>; })}
+<g data-claude-anchor='phases'>{phases.map(f => <text key={f.a} x={x((f.a + f.b) / 2)} y={last + 18} textAnchor='middle' fill='var(--cds-text-secondary)'>{f.name}</text>)}</g>
+<g data-claude-anchor='x-axis'>{xt.map(q => <text key={q} x={x(q)} y={last + 40} textAnchor='middle' fill='var(--cds-text-secondary)'>{`${q} %`}</text>)}</g>
+<text data-claude-text-id='x-label' x={right} y={last + 62} textAnchor='end' fill='var(--cds-text-secondary)'>доля двойного шага от касания правой пяткой</text>
+</svg>; }}</claude.Visualize>;

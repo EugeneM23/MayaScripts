@@ -1,0 +1,31 @@
+export default () => <claude.Visualize data-claude-component='walk-ground-force' sources={{rows:{kind:'data', data:__WGRF__}, speeds:{kind:'data', data:[{speed:'0,88', name:'медленно', toe:63.5, op:0.35},{speed:'1,24', name:'удобно', toe:61.8, op:0.65},{speed:'1,57', name:'быстро', toe:60.6, op:1}]}}}>{({rows, speeds, datum}) => {
+const left = 72, right = 664, ph = 150, y0 = 112, y1 = 330;
+const x = p => left + p / 100 * (right - left);
+const yv = v => y0 + ph - v / 1.2 * ph;
+const ya = v => y1 + ph - (v + 0.3) / 0.6 * ph;
+const fmt = v => String(Math.round(v * 100) / 100).replace('.', ',');
+const vt = [0, 0.4, 0.8, 1.2];
+const at = [-0.3, -0.15, 0, 0.15, 0.3];
+const xt = Array.from({length: 11}, (_, i) => i * 10);
+const last = y1 + ph;
+return <svg viewBox='0 0 760 560' role='img' aria-label='В ходьбе сила опоры — два горба; чем быстрее шаг, тем глубже провал между ними' fontSize='12'>
+<text data-claude-text-id='title' x='24' y='30' fontSize='16' fontWeight='600' fill='var(--cds-text-primary)'>В ходьбе сила опоры — два горба; чем быстрее шаг, тем глубже провал между ними</text>
+<text data-claude-text-id='subtitle' x='24' y='52' fill='var(--cds-text-secondary)'>Средние 24 взрослых 21–37 лет, правая стопа; 1 = вес тела</text>
+<g data-claude-anchor='legend'>{speeds.map((s, k) => <g key={s.speed}><line x1={left + k * 150} x2={left + k * 150 + 26} y1='78' y2='78' stroke='var(--cds-chart-categorical-1)' strokeOpacity={s.op} strokeWidth='2.5'/><text x={left + k * 150 + 32} y='82' fill='var(--cds-text-secondary)'>{`${s.name}, ${s.speed} м/с`}</text></g>)}</g>
+<g data-claude-anchor='panel-vertical'>
+<text data-claude-text-id='label-vertical' x={left} y={y0 - 12} fontWeight='600' fill='var(--cds-text-primary)'>Вертикальная сила, в весах тела</text>
+{vt.map(v => <g key={v}><line x1={left} x2={right} y1={yv(v)} y2={yv(v)} stroke={v === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)'}/><text x={left - 8} y={yv(v) + 4} textAnchor='end' fill='var(--cds-text-secondary)'>{`${v}`}</text></g>)}
+{speeds.map(s => { const pts = rows.filter(r => r.speed === s.speed); const d = pts.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(r.pct)} ${yv(r.vert)}`).join(' '); return <g key={s.speed} data-claude-anchor={`vertical-${s.speed.replace(',', '')}`}><path d={d} fill='none' stroke='var(--cds-chart-categorical-1)' strokeOpacity={s.op} strokeWidth='2.5'/>{pts.map(r => <circle key={r.pct} cx={x(r.pct)} cy={yv(r.vert)} r='3.5' fill='var(--cds-chart-categorical-1)' fillOpacity={s.op} {...datum(r, 'vert')}><title>{`Вертикальная, ${s.name} ${s.speed} м/с, ${r.pct} % опоры: ${fmt(r.vert)} веса тела`}</title></circle>)}</g>; })}
+<text x={right + 14} y={y0 + 10} fill='var(--cds-text-secondary)'>провал</text>
+{speeds.map((s, j) => { const pk = rows.filter(r => r.speed === s.speed && r.pct >= 30 && r.pct <= 70).reduce((a, r) => r.vert < a.vert ? r : a); return <text key={s.speed} x={right + 14} y={y0 + 36 + (2 - j) * 20} fontSize='14' fontWeight='600' fill='var(--cds-chart-categorical-1)' fillOpacity={Math.max(s.op, 0.55)} {...datum(pk, 'vert')}>{fmt(pk.vert)}</text>; })}
+</g>
+<g data-claude-anchor='panel-fore-aft'>
+<text data-claude-text-id='label-fore-aft' x={left} y={y1 - 12} fontWeight='600' fill='var(--cds-text-primary)'>Сила вдоль хода, в весах тела</text>
+{at.map(v => <g key={v}><line x1={left} x2={right} y1={ya(v)} y2={ya(v)} stroke={v === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)'}/><text x={left - 8} y={ya(v) + 4} textAnchor='end' fill='var(--cds-text-secondary)'>{`${v > 0 ? '+' : ''}${fmt(v)}`}</text></g>)}
+{speeds.map(s => { const pts = rows.filter(r => r.speed === s.speed); const d = pts.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(r.pct)} ${ya(r.ap)}`).join(' '); return <g key={s.speed} data-claude-anchor={`fore-aft-${s.speed.replace(',', '')}`}><path d={d} fill='none' stroke='var(--cds-chart-categorical-1)' strokeOpacity={s.op} strokeWidth='2.5'/>{pts.map(r => <circle key={r.pct} cx={x(r.pct)} cy={ya(r.ap)} r='3.5' fill='var(--cds-chart-categorical-1)' fillOpacity={s.op} {...datum(r, 'ap')}><title>{`Вдоль хода, ${s.name} ${s.speed} м/с, ${r.pct} % опоры: ${fmt(r.ap)} веса тела`}</title></circle>)}</g>; })}
+<text data-claude-text-id='braking' x={right + 14} y={ya(-0.2) + 4} fill='var(--cds-text-secondary)'>− торможение</text>
+<text data-claude-text-id='propulsion' x={right + 14} y={ya(0.2) + 4} fill='var(--cds-text-secondary)'>+ разгон</text>
+</g>
+<g data-claude-anchor='x-axis'>{xt.map(p => <text key={p} x={x(p)} y={last + 20} textAnchor='middle' fill='var(--cds-text-secondary)'>{`${p} %`}</text>)}</g>
+<text data-claude-text-id='x-label' x={right} y={last + 42} textAnchor='end' fill='var(--cds-text-secondary)'>доля опоры одной стопы, от касания до отрыва</text>
+</svg>; }}</claude.Visualize>;

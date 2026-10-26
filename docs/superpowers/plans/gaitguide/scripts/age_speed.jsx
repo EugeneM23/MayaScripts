@@ -1,0 +1,15 @@
+export default () => <claude.Visualize data-claude-component='walk-speed-by-age' sources={{rows:{kind:'data', data:[{age:'20–29', sex:'мужчины', v:1.36},{age:'30–39', sex:'мужчины', v:1.43},{age:'40–49', sex:'мужчины', v:1.43},{age:'50–59', sex:'мужчины', v:1.43},{age:'60–69', sex:'мужчины', v:1.34},{age:'70–79', sex:'мужчины', v:1.26},{age:'80–99', sex:'мужчины', v:0.97},{age:'20–29', sex:'женщины', v:1.34},{age:'30–39', sex:'женщины', v:1.34},{age:'40–49', sex:'женщины', v:1.39},{age:'50–59', sex:'женщины', v:1.31},{age:'60–69', sex:'женщины', v:1.24},{age:'70–79', sex:'женщины', v:1.13},{age:'80–99', sex:'женщины', v:0.94}]}, groups:{kind:'data', data:[{sex:'мужчины', op:1, dash:'none'},{sex:'женщины', op:0.55, dash:'6 4'}]}}}>{({rows, groups, datum}) => {
+const left = 72, right = 640, y0 = 80, h = 260;
+const ages = rows.filter(r => r.sex === 'мужчины').map(r => r.age);
+const x = i => left + i * (right - left) / (ages.length - 1);
+const y = v => y0 + h - (v - 0.8) / 0.7 * h;
+const fmt = v => v.toFixed(2).replace('.', ',');
+const ticks = [0.8, 1.0, 1.2, 1.4];
+return <svg viewBox='0 0 760 400' role='img' aria-label='Удобная скорость ходьбы держится до 60 лет и падает к 80' fontSize='12'>
+<text data-claude-text-id='title' x='24' y='30' fontSize='16' fontWeight='600' fill='var(--cds-text-primary)'>Удобная скорость ходьбы держится до 60 лет и падает к 80</text>
+<text data-claude-text-id='subtitle' x='24' y='52' fill='var(--cds-text-secondary)'>Метаанализ 41 исследования, 23 111 взрослых; м/с</text>
+<g data-claude-anchor='y-axis'>{ticks.map(v => <g key={v}><line x1={left} x2={right} y1={y(v)} y2={y(v)} stroke='var(--cds-chart-grid)'/><text x={left - 8} y={y(v) + 4} textAnchor='end' fill='var(--cds-text-secondary)'>{fmt(v)}</text></g>)}</g>
+{groups.map(g => { const pts = rows.filter(r => r.sex === g.sex); const d = pts.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(i)} ${y(r.v)}`).join(' '); const end = pts.at(-1); return <g key={g.sex} data-claude-anchor={`series-${g.sex === 'мужчины' ? 'men' : 'women'}`}><path d={d} fill='none' stroke='var(--cds-chart-categorical-1)' strokeOpacity={g.op} strokeWidth='2.5' strokeDasharray={g.dash}/>{pts.map((r, i) => <circle key={r.age} cx={x(i)} cy={y(r.v)} r='4' fill='var(--cds-chart-categorical-1)' fillOpacity={g.op} {...datum(r, 'v')}><title>{`${r.sex}, ${r.age} лет: ${fmt(r.v)} м/с`}</title></circle>)}<text x={right + 12} y={y(end.v) + (g.sex === 'мужчины' ? -4 : 12)} fill='var(--cds-text-primary)'>{`${g.sex} ${fmt(end.v)}`}</text></g>; })}
+<g data-claude-anchor='x-axis'>{ages.map((a, i) => <text key={a} x={x(i)} y={y0 + h + 22} textAnchor='middle' fill='var(--cds-text-secondary)'>{a}</text>)}</g>
+<text data-claude-text-id='x-label' x={right} y={y0 + h + 44} textAnchor='end' fill='var(--cds-text-secondary)'>возраст, лет</text>
+</svg>; }}</claude.Visualize>;
