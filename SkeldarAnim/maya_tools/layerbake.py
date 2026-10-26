@@ -72,15 +72,22 @@ _BLEND_INPUT2 = {"tx": "inTranslateX2", "ty": "inTranslateY2", "tz": "inTranslat
 
 # ------------------------------------------------------------------- writer
 
-def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None, step=None):
+def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None, step=None,
+                 layer=None):
     """`tracks` {(node, channel): (times, values[, {time: (in, out)}])} keyed on a new additive
     layer `name` (marked `marker` = `value`, rotation by component) - a tangent type None is
     Maya's default; zero one frame outside when `ranged`; cycled curves cycle. `moves`
     {(node, channel): (curve, value)}: the base curve itself moved onto the layer (`_move`), the
-    base left on `value`. `step(text)` after each channel (the press's progress). The layer's
+    base left on `value`. `step(text)` after each channel (the press's progress). `layer`: a
+    standing layer written again in place of a new one - every plug it held taken off first
+    (their curves with them), its name, place in the stack, weight and mute kept. The layer's
     name."""
     moves = moves or {}
-    layer = cmds.animLayer(name)
+    if layer and cmds.objExists(layer) and cmds.nodeType(layer) == "animLayer":
+        for plug in cmds.animLayer(layer, query=True, attribute=True) or []:
+            cmds.animLayer(layer, edit=True, removeAttribute=plug)
+    else:
+        layer = cmds.animLayer(name)
     knots._set_string(layer, marker, value)
     cmds.setAttr(layer + ".rotationAccumulationMode", 0)          # by component
     #  scale ADDED, not multiplied (Maya's default, 1): the layer holds the difference, 0 its

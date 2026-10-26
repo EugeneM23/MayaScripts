@@ -236,6 +236,15 @@ def _chain_deltas(chain, settings, first, last):
     out = slice(window.index(first), window.index(last) + 1)
     count = last - first + 1
     weights = (plan.edge_weights(count) if settings.edges else np.ones(count))[:, None]
+    return deltas_for(chain, data, frames, new, out, weights)
+
+
+def deltas_for(chain, data, frames, new, out, weights):
+    """{(node, channel): delta values over the samples `out`} turning `chain`'s members from
+    their sampled `frames` (n, F, 4, 4) onto `new` (n, F, 4, 4), each value times `weights`
+    (count, 1): rotate deltas on the free rotate channels, the euler nearest the base (trap 108);
+    translate deltas where a member does not ride the one above (what its pivot moved). `data` is
+    `_sample`'s. Shared with Dynamics (`maya_dynamics.run`)."""
     deltas = {}
     for i, node in enumerate(chain):
         index = _rides(knots._parent(node), chain[:i])
