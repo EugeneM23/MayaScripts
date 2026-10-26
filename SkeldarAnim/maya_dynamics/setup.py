@@ -281,10 +281,22 @@ def remove(chain):
     layer = layer_of(chain)
     if layer:
         cmds.delete(layer)
+        _drop_empty_root()
     group = (cmds.listRelatives(chain, parent=True, fullPath=True) or [None])[0]
     cmds.delete(chain)
     _prune(group)
     return layer
+
+
+def _drop_empty_root():
+    """Maya's BaseAnimation gone with the last layer, as its own editor does - never Scene Tabs'
+    roots (they hold the tabs' layers)."""
+    root = cmds.animLayer(query=True, root=True)
+    if not root or leaf(root).startswith("skeldarTabs") or leaf(root) == "AnimLayerRoot":
+        return
+    if not (cmds.animLayer(root, query=True, children=True) or []) \
+            and not (cmds.animLayer(root, query=True, attribute=True) or []):
+        cmds.delete(root)
 
 
 def _prune(group):
