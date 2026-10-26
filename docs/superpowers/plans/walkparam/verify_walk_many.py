@@ -111,12 +111,17 @@ gate(sorted(listed) == sorted(roots.values()), "the list is the three walked ske
 gate([memo(n)["walk"] for n in "ABC"] == ["asd", "asd", "dw"], "A and B walk asd, C walks dw")
 gate([sw.walker_label(roots[n]) for n in "ABC"] == ["A", "B", "C"], "labels: their namespaces")
 
-# ---- a parameter: every walker keyed again, each on its own cycle, the same change from its own ----
+# ---- a parameter: the SELECTED walkers keyed again, each on its own cycle, the same change from its own ----
 cmds.select(clear=True)
 set_params({"step": ("ratio", 1.3), "tempo": ("ratio", 0.5)})   # a step x1.3, twice as fast
 line = panel.slider_changed()
 print(line)
-gate("3 walkers keyed" in line, "a parameter re-keys all three")
+gate("select the walkers" in line and all(abs(memo(n)["knobs"].get("stride", 1.0) - 1.0) < 1e-9 for n in "ABC"),
+     "nothing selected: a parameter keys nobody (2026-10-26) and says so")
+cmds.select([roots[n] for n in "ABC"], replace=True)
+line = panel.slider_changed()
+print(line)
+gate("3 walkers keyed" in line, "a parameter re-keys the three selected")
 gate([memo(n)["walk"] for n in "ABC"] == ["asd", "asd", "dw"], "each keeps its own cycle")
 gate(all(abs(memo(n)["knobs"]["stride"] - 1.3) < 1e-9 and memo(n)["params"]["changes"]["step"] == ["ratio", 1.3]
          for n in "ABC"), "Step x1.3 on every walker, a stride of 1.3 on each cycle")

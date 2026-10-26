@@ -460,18 +460,24 @@ class CardTests(unittest.TestCase):
         self.assertIn("select", panel.press_apply())
         self.assertEqual(self.applied, [])
 
-    def test_a_parameter_rekeys_every_walker_with_the_same_change_and_none_says_so(self):
+    def test_a_parameter_rekeys_only_the_selected_walkers_and_none_says_so(self):
         panel.build_panel()
         self.assertIn("Pick", panel.slider_changed())
         self.assertEqual(self.applied, [])
         self.fake.selection = ["|a", "|b"]
         panel.press_apply()
-        self.fake.selection = []                                 # the list stays the list
+        count = len(self.applied)
+        self.fake.selection = []                                 # nobody selected: nobody keyed
+        line = self.release("bounce", 1.5 * self.own["bounce"])
+        self.assertEqual(len(self.applied), count)
+        self.fake.selection = ["|b"]                             # only b: a keeps its walk
         self.release("bounce", 1.5 * self.own["bounce"])
-        keyed = self.applied[-2:]
-        self.assertEqual([a[0] for a in keyed], ["|a", "|b"])
-        for a in keyed:
-            self.assertChange(a[5]["changes"]["bounce"], "ratio", 1.5)
+        keyed = self.applied[count:]
+        self.assertEqual([a[0] for a in keyed], ["|b"])
+        self.assertChange(keyed[0][5]["changes"]["bounce"], "ratio", 1.5)
+        self.fake.selection = ["|a", "|b"]
+        self.release("bounce", 1.6 * self.own["bounce"])
+        self.assertEqual([a[0] for a in self.applied[-2:]], ["|a", "|b"])
 
     def test_pick_adds_every_selected_skeleton_to_the_list(self):
         panel.build_panel()
@@ -578,8 +584,9 @@ class CardTests(unittest.TestCase):
                                  "parts": ["torso", "feet"], "knobs": {}, "params": params, "version": 3}
         panel.build_panel()
         self.fake.selection = ["|walked"]
-        panel.refresh()                                          # selecting it does not take its settings
-        self.assertNotIn("step", panel.card_params()["changes"])
+        panel.refresh()                                          # selecting it takes its settings
+        self.assertEqual(panel.card_params()["changes"]["step"], ("ratio", 1.25))
+        self.fake.vars[panel.OPTION + "params"] = '{"changes": {}, "pins": []}'
         panel.take_settings("|walked")
         self.assertEqual(self.applied, [])                       # taking them keys nothing
         p = panel.card_params()
@@ -714,6 +721,7 @@ class CardTests(unittest.TestCase):
         self.assertFalse(self.memos["|a"]["listed"])
         self.assertEqual(self.fake.items[panel.WALKER_LIST], ["b - dw"])
         count = len(self.applied)
+        self.fake.selection = ["|a", "|b"]                       # a out of the list: only b keyed
         panel.slider_changed()
         self.assertEqual([a[0] for a in self.applied[count:]], ["|b"])
 
@@ -739,7 +747,7 @@ class CardTests(unittest.TestCase):
         self.assertEqual([a[1] for a in self.applied], [scene.OWN + "a", scene.OWN + "b", "asd"])
         self.assertIn("3 skeletons processed", line)
         self.assertEqual(self.sources, {"|a": scene.OWN + "a", "|b": scene.OWN + "b"})
-        self.fake.selection = []
+        self.fake.selection = ["|a", "|b", "|c"]
         self.release("bounce", 1.5 * self.own["bounce"])          # one change, every cycle from its own
         keyed = dict((a[0], a) for a in self.applied[-3:])
         self.assertEqual([keyed[r][1] for r in ("|a", "|b", "|c")], [scene.OWN + "a", scene.OWN + "b", "asd"])
@@ -762,8 +770,21 @@ class CardTests(unittest.TestCase):
         self.fake.selection = ["|card"]
         panel.press_apply()
         self.assertEqual(self.memos["|card"]["walk"], "asd")
-        self.fake.selection = []
+        self.fake.selection = []                                 # nothing selected: the card waits for Pick
         self.release("tempo", 0.5 * self.own["tempo"])            # twice as fast: a ratio, on every cycle
+        count = len(self.applied)
+        rel0 = "Walk cycles/none.anim"
+        os.makedirs(os.path.join(self.library, rel0))
+        from maya_poselib import store as st
+        real = st.is_anim
+        st.is_anim = lambda path: True
+        try:
+            panel.take_walk_card(os.path.join(self.library, rel0))
+        finally:
+            st.is_anim = real
+        self.assertEqual(len(self.applied), count)
+        self.fake.selection = ["|card"]                          # the card walker selected
+        self.release("tempo", 0.5 * self.own["tempo"])
         count = len(self.applied)
         rel = "Walk cycles/dw.anim"
         os.makedirs(os.path.join(self.library, rel))
@@ -775,7 +796,7 @@ class CardTests(unittest.TestCase):
         finally:
             st.is_anim = real
         keyed = self.applied[count:]
-        self.assertEqual([a[0] for a in keyed], ["|card"])      # nothing selected: every card walker, no own one
+        self.assertEqual([a[0] for a in keyed], ["|card"])      # the selected card walker, the own one not selected
         self.assertEqual(keyed[0][1], scene.card_walk(rel))
         self.assertChange(keyed[0][5]["changes"]["tempo"], "ratio", 0.5)   # the change goes with the card
         self.assertEqual(self.memos["|own"]["walk"], scene.OWN + "own")
@@ -1049,6 +1070,7 @@ class RekeyLaterTests(unittest.TestCase):
         self.fake.about = lambda **kw: False                  # a Maya with its UI: there is an idle
         for root in ("|a", "|b"):
             self.memos[root] = {"walk": "asd", "knobs": {}, "listed": True, "parts": []}
+        self.fake.selection = ["|a", "|b"]                    # a press keys the selected walkers
 
     def tearDown(self):
         panel._later = self.saved_later

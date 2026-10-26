@@ -105,6 +105,7 @@ gate(travel(pelvis_track("C")) > 1.15 * travel(pelvis_track("A")), "C (the longe
 before = dict((n, travel(pelvis_track(n))) for n in "ABC")
 cmds.optionVar(stringValue=(panel.OPTION + "params",
                             json.dumps({"changes": {"step": ["ratio", 1.2]}, "pins": ["step"]})))
+cmds.select(list(roots.values()), replace=True)             # a knob keys the selected walkers
 print(panel.slider_changed())
 after = dict((n, travel(pelvis_track(n))) for n in "ABC")
 gate(all(abs(after[n] / before[n] - 1.2) < 0.02 for n in "ABC"), "Step x1.2 lengthens every cycle x1.2 (%s)"
@@ -124,6 +125,7 @@ sw._state()["loaded"] = {}
 cmds.file(path, open=True, force=True)
 roots = dict((ns, cmds.ls(ns + ":root", long=True)[0]) for ns in "ABC")
 cmds.optionVar(stringValue=(panel.OPTION + "params", json.dumps({"changes": {}, "pins": []})))
+cmds.select(list(roots.values()), replace=True)
 print(panel.slider_changed())
 gate(len(sw.walkers()) == 3 and all(abs(travel(pelvis_track(n)) / before[n] - 1.0) < 0.02 for n in "ABC"),
      "reopened with no walk file left: the list re-keys from the cycles kept in the scene")
@@ -175,7 +177,7 @@ old_walk = sw.memo_of(roots["B"]).get("walk")
 load_clip("B", "asd")
 loaded = pelvis_track("B")
 gate(sw.keys_changed(roots["B"]), "B carries a clip loaded by hand: its keys are not the walk's any more")
-cmds.select(clear=True)
+cmds.select(list(roots.values()), replace=True)
 line = panel.slider_changed()
 print(line)
 same = sorted(pelvis_track("B")) == sorted(loaded) and all(

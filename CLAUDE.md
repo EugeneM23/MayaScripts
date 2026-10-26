@@ -10826,6 +10826,15 @@ sections above** (Stride, Bob, Overlap, the drags...): they are engine knobs now
 - **Known, not fixed**: Foot flat is approximate (a heel strike's stretch reads 70-100 % of a change; a foot landing
   flat has none to move); a long step still sinks by its geometry (the Step's range ends at `step_top`, 8 % of the leg);
   Foot placement holding a sliding clip's feet sinks dw and TestStrefe 4-7 cm at their own step.
+- **A parameter keys only the SELECTED walkers** (the same evening, the animator: «моя походка которую я применил
+  на скелет перезаписалась настройками когда я тестировал»). Until then a released parameter, a pose card, a part,
+  In place, Reset or a walk card clicked re-keyed every walker in the list: tuning one skeleton overwrote a finished
+  walk on another. Now `panel._rekey` and `card_walkers` take `_selected_walkers` (a bone, the top or a skinned mesh
+  of a walker); nothing selected keys nobody and says «set for the next Pick - select the walkers to key it onto».
+  Selecting one walker puts ITS settings in the card (`_activate` -> `_take`, what right button > Take its settings
+  does), so tuning starts from what it walks; Pick and a walk card mark the selection as taken, so their own keys are
+  not read back over the card. Selecting several and moving a parameter is still the array road. Proof:
+  `verify_walk_many.py` 17/17 (gate 5: nothing selected, nobody keyed), `verify_walk_own.py` 22/22, the card's tests.
 
 290. **An engine knob's range clamps what a solver above it asks, silently.** gait bisected the arm gain up to 10 and
      the elbow's too, and the engine's `knobs()` clamped both to 5: dw's right arm asked x8 swung x5, every unit test

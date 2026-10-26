@@ -14,10 +14,11 @@ were moved into the library once. Apply is called Pick («мне кажется 
 Select skeletons and press Pick: each is processed on its OWN cycle - the animation it carries, read on its
 first Pick and kept on it (scene.capture_source) - and joins the card's list of walkers (2026-10-16,
 «обрабатывать сразу несколько циклов на разных персонажах ... для обработки массивов анимаций»): the list is
-every walked skeleton in the scene (scene.walkers). A skeleton with no keys takes the walk well's card. The knobs and the pose are shared - a released knob re-keys every
-walker, each on its own cycle (the tempo as a ratio of the active cycle) - and each cycle keeps its own mean
-pose. Selecting a walker makes its cycle the active one. Every value is remembered (optionVars), so the card
-comes back as it was and a hotkey row presses with the card closed. A press that re-keys every walker changes
+every walked skeleton in the scene (scene.walkers). A skeleton with no keys takes the walk well's card. The knobs and the pose are the card's - a released knob re-keys the
+SELECTED walkers only (since 2026-10-26: a knob moved while testing one skeleton had overwritten a finished walk
+on another), each on its own cycle (the tempo as a ratio of the active cycle) - and each cycle keeps its own mean
+pose. Selecting a walker makes its cycle the active one and puts its own settings in the card. Every value is remembered (optionVars), so the card
+comes back as it was and a hotkey row presses with the card closed. A press that re-keys the walkers changes
 the card at once and keys them on Maya's next idle, once for a burst of presses, under a progress window Esc
 stops (_rekey).
 
@@ -126,12 +127,13 @@ TIPS = {
     "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
              "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
              "animation is kept on it first (Restore the original keys puts it back). Right button: each on its "
-             "own animation - for arrays of clips. Every released parameter re-keys every walker, each on its own "
-             "cycle with the same change from that cycle's own.",
+             "own animation - for arrays of clips. A released parameter re-keys the selected walkers only, each on "
+             "its own cycle with the same change from that cycle's own; selecting one walker puts its settings "
+             "in the card.",
     "apply_own": "Every selected skeleton processed on the animation it carries (read on the first press and kept "
                  "on it) with the card's knobs and pose - one press for a whole array of clips",
-    "reset": "Every parameter back to the clip's own (the macros and the character off); every walker is keyed "
-             "again",
+    "reset": "Every parameter back to the clip's own (the macros and the character off); the selected walkers are "
+             "keyed again",
     "character": "A character's changes on top of the clip (the guide's styles and emotions), at the Strength "
                  "beside it; Natural changes nothing",
     "physics": "On: the physics' helpers - Foot placement, Balance, the knees' soft limit, Whip's springs and their "
@@ -409,13 +411,9 @@ def _walk_taken(name, say=True, keep_ratio=False):
 
 
 def card_walkers():
-    """The walkers a chosen walk card re-keys (the card comes first): the selected walkers, whatever they walk -
-    none selected, every walker that walks a card (one on its own cycle keeps it)."""
-    listed = scene.walkers()
-    chosen = _selected_walkers(listed)
-    if chosen:
-        return chosen
-    return [r for r in listed if not scene.is_own(scene.memo_of(r).get("walk"))]
+    """The walkers a chosen walk card re-keys: the selected walkers, whatever they walk; none selected, none - the
+    card waits for Pick (every card walker took it once, and a finished walk was overwritten, 2026-10-26)."""
+    return _selected_walkers(scene.walkers())
 
 
 def _selected_walkers(listed):
@@ -452,7 +450,7 @@ def take_walk_card(path):
         if not roots:
             return line
         lines = [_apply_to(root, name) for root in roots]
-        _SELECTED[0] = None
+        _SELECTED[0] = scene.selected_top()          # keyed with the card: nothing to take back from it
         return lines[0] if len(lines) == 1 else "%s | %d walkers take it: %s" % (
             line, len(roots), ", ".join(scene.walker_label(r) for r in roots))
     return _press(run)
@@ -606,7 +604,7 @@ def _set_card(rel):
 
 def take_card(path):
     """A Pose Library card dropped into the well (or Use in Walk Builder): the walk's pose. A share of 0 is set
-    to 1 (a pose dropped to do nothing reads as broken); every walker is keyed again. Answers the line."""
+    to 1 (a pose dropped to do nothing reads as broken); the selected walkers keyed again. Answers the line."""
     def run():
         name, _bones = scene.wcards.read_card(path)          # refused: an animation or an objects card
         _set_card(scene.wcards.relative(path, _library()))
@@ -636,7 +634,7 @@ def take_card(path):
 #  let through the progress window) does nothing - that re-key stops between walkers and queues one more job for
 #  the press. In batch mode (a verify, a test) no idle comes: it keys at once.
 
-REKEY_STATE = {"wanted": 0, "served": 0, "running": False, "line": ""}
+REKEY_STATE = {"wanted": 0, "served": 0, "running": False, "line": "", "roots": None}
 
 
 def _rekey_state():
@@ -675,14 +673,20 @@ def _later(job):
 
 
 def _rekey(line):
-    """`line`, and every walker keyed again - on Maya's next idle, once for a burst of presses (above); none: how to
-    get one. The line the card shows now: in batch the re-key's own, else that it is coming."""
-    walkers = scene.walkers()
-    if not walkers:
+    """`line`, and the SELECTED walkers keyed again - on Maya's next idle, once for a burst of presses (above). Only
+    the selected: a knob moved while testing one skeleton re-keyed every walker in the scene and overwrote a walk
+    the animator had finished (2026-10-26). None selected: nothing keyed, said. The line the card shows now: in
+    batch the re-key's own, else that it is coming."""
+    listed = scene.walkers()
+    if not listed:
         return (line + " - " if line else "") + "select skeletons and press Pick"
+    walkers = _selected_walkers(listed)
+    if not walkers:
+        return (line + " - " if line else "") + "set for the next Pick - select the walkers to key it onto"
     state = _rekey_state()
     state["wanted"] += 1
     state["line"] = line
+    state["roots"] = list(walkers)
     if _batch():
         text = _serve()
         return line if text is None else text
@@ -699,7 +703,7 @@ def _serve():
     target, line = state["wanted"], state["line"]
     state["running"] = True
     try:
-        text = rekey_all(stop=lambda: _rekey_state()["wanted"] != target)
+        text = rekey_all(stop=lambda: _rekey_state()["wanted"] != target, roots=state.get("roots"))
     finally:
         state["running"] = False
         state["served"] = target
@@ -778,7 +782,7 @@ def pick_card(path):
 
 
 def clear_card():
-    """No card active: the walk's own posture (the well keeps its cards); every walker keyed again."""
+    """No card active: the walk's own posture (the well keeps its cards); the selected walkers keyed again."""
     def run():
         _set_card("")
         return _rekey("no pose card - the walk's own posture")
@@ -1164,7 +1168,7 @@ def show_diagnosis():
 
 
 def fix_pressed(i):
-    """A Diagnosis row's Fix: its parameters set (pinned) on the cycle the finding read, every walker keyed again."""
+    """A Diagnosis row's Fix: its parameters set (pinned) on the cycle the finding read, the selected walkers keyed again."""
     def go(*_):
         def run():
             state = _diag_state()
@@ -1251,7 +1255,7 @@ def side_changed(mode):
 
 
 def knob_changed(name):
-    """A released card knob (the pose's share, Seam, Smooth): remembered, every walker keyed again."""
+    """A released card knob (the pose's share, Seam, Smooth): remembered, the selected walkers keyed again."""
     def changed(*_):
         if _QUIET[0]:
             return None
@@ -1277,10 +1281,15 @@ def show_group(key):
 
 
 def take_settings(root):
-    """A walker's stored parameters, pose card and parts into the card (right button > Take its settings): they
-    reach every walker on the next re-key. Its cycle becomes the active one. A walker keyed before the parameters
-    brings its knobs read as parameters (scene.memo_params)."""
-    def run():
+    """A walker's stored parameters, pose card and parts into the card (right button > Take its settings; selecting
+    the walker does it too). Its cycle becomes the active one. A walker keyed before the parameters brings its knobs
+    read as parameters (scene.memo_params)."""
+    return _press(lambda: _take(root))
+
+
+def _take(root):
+    """take_settings's body: the card set from `root`'s memo, nobody keyed. The line."""
+    if True:
         memo = scene.memo_of(root)
         if not memo.get("walk"):
             raise scene.Refusal("%s carries no walk of this tool - Pick one first" % scene.walker_label(root))
@@ -1303,9 +1312,8 @@ def take_settings(root):
             show_values()
         finally:
             _QUIET[0] = quiet
-        return "%s's settings are the card's - move a parameter (or press Pick) to put them on every walker" \
+        return "%s's settings are in the card - a parameter moved keys the selected walkers" \
             % scene.walker_label(root)
-    return _press(run)
 
 
 _SELECTED = [None]       # the walker the selection named last: only a NEW one activates its cycle (a press that
@@ -1318,6 +1326,10 @@ def _activate(root):
     if root == _SELECTED[0]:
         return
     _SELECTED[0] = root
+    try:                                     # its own settings in the card: tuning starts from what it walks
+        _take(root)
+    except Exception:                                        # noqa: BLE001 - a memo the card cannot read
+        print(traceback.format_exc())
     name = scene.memo_of(root).get("walk")
     if not name or scene.is_own(name) or not scene.walk_exists(name):
         return
@@ -1424,18 +1436,18 @@ def _apply_to(root, walk=None):
     return text
 
 
-def rekey_all(walk=None, stop=None):
-    """Every listed walker (only those on the cycle `walk` when given) keyed again, each on its own cycle with the
+def rekey_all(walk=None, stop=None, roots=None):
+    """Every listed walker (only those on the cycle `walk` when given, only `roots` when given) keyed again, each on its own cycle with the
     card's knobs and pose. A walker that fails is named, the others still keyed. Several walkers: a progress window
     names each in turn and Esc stops after the one it is on; `stop` (asked before each walker) True - a newer press
     waits, the rest are left to it. The line."""
     import time
     started = time.time()
     done, failed, lines, left, why = [], [], [], [], ""
-    roots = []
+    only, roots = roots, []
     for root in scene.walkers():
         name = scene.memo_of(root).get("walk")
-        if walk is None or name == walk:
+        if (walk is None or name == walk) and (only is None or root in only):
             roots.append((root, name, "%s - %s" % (scene.walker_label(root), scene.walk_label(name))))
     with _Progress(len(roots)) as progress:
         for index, (root, name, label) in enumerate(roots):
@@ -1548,6 +1560,7 @@ def press_apply(*_, **kw):
         except scene.Refusal:
             _walk_taken(walks[0], say=False)
         lines = [_apply_to(root, walk) for root, walk in zip(roots, walks)]
+        _SELECTED[0] = scene.selected_top()          # keyed with the card: nothing to take back from it
         if len(lines) == 1:
             return lines[0]
         if len(set(walks)) == 1:
@@ -1595,7 +1608,7 @@ def restore_picked(*_):
 
 
 def slider_changed(*_):
-    """A released knob (a pose, a part): every walker keyed again; none - say how to get one."""
+    """A released knob (a pose, a part): the selected walkers keyed again; none - say how to get one."""
     if _QUIET[0]:
         return None
 
@@ -1616,7 +1629,7 @@ def walk_changed(*_):
 
 
 def in_place_changed(*_):
-    """The In place chip: remembered, every walker keyed again."""
+    """The In place chip: remembered, the selected walkers keyed again."""
     if _QUIET[0]:
         return None
     shown = _shown("in_place")
