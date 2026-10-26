@@ -5,6 +5,8 @@
 **Status (2026-10-26, paused and handed over):** Tasks 1-5 done; 7 implemented without its unit test; 8 written but never run; 6 and 9 open. Read the spec's "Status at the pause" (docs/superpowers/specs/2026-10-26-gait-builder-design.md) first: what exists, the gate results, the diagnoses and the ordered next steps. Task 2's 0.35 s became "<= 0.35 s or <= 45 % of Walk Builder's CPU time in the same run" (reached: 43-45 %).
 **Second session (paused again):** "Next" 1-2 done - readback 172/172; see the spec's "Second session" section for
 what changed and what is open (the calibration's cost first).
+**Third session (paused):** the calibration cached, the knob set trimmed, Task 6 done (clicks 52/52), Task 7's test,
+Task 8 Step 2 (verify_gait 33/33 standalone); the window never run in a GUI Maya - see the spec's "Third session".
 
 **Goal:** One standalone walk tool whose knobs are measured aspects of the clip in physical units (CAT's
 language) over Walk Builder's engine (clip, planted feet, balance, inertia, poses), faster and without knee
@@ -150,12 +152,12 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
 
 **Files:** Modify `gaitmodel.py`. Gates in `gates.py`.
 
-- [ ] Step 1: `gates.py clicks`: asd, dw, HavyRun at Stride ×1.4, ×0.6, Ground time ×1.3, pelvis +10 / −15,
+- [x] Step 1: `gates.py clicks`: asd, dw, HavyRun at Stride ×1.4, ×0.6, Ground time ×1.3, pelvis +10 / −15,
   lift ×2 against the acceptance. Record the before numbers.
-- [ ] Step 2: Find where the clicks come from by frame (the leg's distance against its reach, the roll), fix in
+- [x] Step 2: Find where the clicks come from by frame (the leg's distance against its reach, the roll), fix in
   `_lowering` / `_leg`.
-- [ ] Step 3: Test: the synthetic walker at stride 1.4 keeps its knee's second difference within the acceptance.
-- [ ] Step 4: Pass, commit.
+- [x] Step 3 (the walker never meets its limit: the mechanism unit-tested, the clicks gated on real walks): Test: the synthetic walker at stride 1.4 keeps its knee's second difference within the acceptance.
+- [x] Step 4: Pass, commit.
 
 ### Task 7: Sources and CAT presets
 
@@ -167,7 +169,7 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
   "walk" (a saved walk file), "card" (a Walk cycles card) or "preset".
 - `gaitload.evaluate(source, gait, pose)` → Result.
 
-- [ ] Step 1: Test: a preset clip analyses, closes, and its measure's stride and duty are the preset's.
+- [x] Step 1: Test: a preset clip analyses, closes, and its measure's stride and duty are the preset's.
 - [x] Step 2: Implement, commit. (gaitgen.py and gaitload.py; checked by hand: the four presets analyse; the unit test of Step 1 is not written)
 
 ### Task 8: The Maya window
@@ -180,7 +182,7 @@ clean, meanpose, pose, target, scene readers and writer) and `maya_poselib` are 
   - `skeldarGait` memo on the top joint;
   - re-key on slider release;
   - follow `skeldar_cat.py`'s structure.
-- [ ] Step 2: `verify_gait.py` in mayapy standalone: a walk on the plugin's Manny UE5 skeleton reproduces the
+- [x] Step 2 (33/33; the window itself not yet run in a GUI Maya): `verify_gait.py` in mayapy standalone: a walk on the plugin's Manny UE5 skeleton reproduces the
   model, closes, one undo, a re-key from the stored place, a CAT preset applied.
 - [ ] Step 3: Commit.
 

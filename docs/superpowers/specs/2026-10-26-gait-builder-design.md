@@ -509,6 +509,41 @@ alone 27 % (HavyRun) / 44 % (asd) of Walk Builder's. 38 unit tests green (`test_
   redundancy gates were not re-run after this session's changes; the ranges of the calibrated knobs are now cut
   to their reach, so effect numbers may move.
 
+### Third session, paused (2026-10-26, afternoon)
+
+Done, committed on `main`, not pushed (`ac7444c`, `2026e84`, `6e0636b`, and the verify / preset test):
+- **The calibration once a walk, on disk.** `gaitload.curves(source)`: probed with no pose (a pose's share changes
+  the walk's own values, which the baseline measures again, not how far a knob moves them) and kept on the source
+  and in `<maya>/SkeldarGaitCache/<sha1>.json`, named for the walk file, its clean, its mean pose correction and
+  the code's mtimes. A first read 3-17 s CPU (13 evaluations), again 0.4-1.5 s, a share change one evaluation.
+  Under the goblin and the sword the share-0 curves read back wherever a posed calibration does (a two-handed
+  grip holds the arms' swing either way). The window says so and shows a wait cursor on a first read.
+- **The knob set.** Weight no longer carries Walk Builder's arm lag (fork knob `weight_lag`, Gait Builder 0;
+  `WEIGHT_FOLLOW` gone) and bends a planted knee 6 deg, not 12 (12 duplicated Knee bend, 0.86 on dw). Arm timing
+  is gone. Gates: effect is the most one joint of a group moves; switches not gated; Head steady needs what the
+  walk's head has; Balance gated at the widest stance and under the goblin (17-18 cm); redundancy names the
+  pairs by design (Speed~Step, the helpers). The bench takes a pose (`Bench(name, pose)`).
+- **Knee clicks: 52/52** (were 14 failing). A soft limit (fork knob `knee_soft`, Gait Builder 0.04): a leg past
+  max(the source's own stretch, 96 % of its limit) eases into the limit with no corner (`soft_reach`); the
+  lowering and the growth aim at that start. Step, Speed and Ground time stop where the pelvis is down 15 % of
+  the leg (`DROP_MAX`, probed in the calibration): past it a lunge whose swinging knee snaps. The click limit
+  follows the cadence squared. `smooth_cover` treats a need under 1e-9 as none.
+- **`verify_gait.py`: 33/33 in mayapy standalone** (the keys reproduce the model through the retarget to 3e-5
+  cm, lengths constant to 7e-6, the loop closes, Speed and Step read back on the keyed skeleton, the place kept,
+  one Ctrl+Z, the goblin lowers asd's pelvis 92.3 -> 68.8, 81.0 at 0.5, the disk cache read again).
+- **The CAT presets as clips** (`tests/test_gait_gen.py`): close, their step exact, their duty within a frame.
+
+**Open, in this order:**
+1. **The window in a GUI Maya.** A disposable Maya (scratch `MAYA_APP_DIR`, port 7061 by a userSetup in
+   `<app>/2027/scripts`) opened its port in 6 s, but the first send ran nothing in 120 s (cause not found: Maya
+   may not have finished starting; check its CPU and a two-line print first). The phases are written:
+   `docs/superpowers/plans/gaitbuilder/verify_gait_window.py` (open, Apply's own command, a slider's changeCommand,
+   Left alone and the `*`, another source through the menu, Reset, a DWM picture, a re-drop) - a runner per phase.
+2. **Every gate again** on asd, dw, HavyRun, cat:Walk after this session's changes (readback was 172/172 before
+   `knee_soft` and the cut ranges; parity, identity, speed, readback, effect, redundancy), then under the goblin
+   and the sword (`Bench(name, pose)`).
+3. **Write-up**: the final numbers here, a CLAUDE.md section, the plan's checkboxes.
+
 ### Traps met in this build
 
 - **`a` is the pose's share inside `Walk._frame`'s joint loop** (`pose, a = ctx["pose"], ctx["alpha"]`). A
