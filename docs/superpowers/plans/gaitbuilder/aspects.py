@@ -411,12 +411,16 @@ WEIGHT_KNEE = 6.0         # deg: Weight +1 bends a planted knee this much more t
 WEIGHT_GAIN = 1.5         # the model's weight at Weight +1
 HEAD_DRAG = 4.0 / 3.0     # the head's spring x Follow-through (Walk Builder's 2.0 over 1.5)
 TORSO_WHIP = 2.0 / 3.0    # the trunk's bounce x Whip (Walk Builder's 0.2 over 0.3)
+# A leg straightened past the source eases into its limit from this share below it (the model's knee_soft): a
+# corner at the limit is a knee click - a grown lift-off, a long step's swing, the pelvis's cover (asd step high
+# 27.8 deg/frame^2, duty low 20.8 -> 3.5, lift high 19.5 -> 2.9)
+KNEE_SOFT = 0.04
 
 
 def base_engine(walk):
     """The model's knobs that give the walk as it is, the helpers on: Walk Builder's defaults with the walk's own
     hip twist and drop and chest twist and sway (Walk Builder's defaults set them to people's)."""
-    out = {"pelvis_twist": walk.own_twist, "pelvis_list": walk.own_list}
+    out = {"pelvis_twist": walk.own_twist, "pelvis_list": walk.own_list, "knee_soft": KNEE_SOFT}
     if getattr(walk, "chest_shape", None) is not None:
         out["chest_twist"], out["chest_sway"] = walk.own_chest_twist, walk.own_chest_sway
     return out
@@ -467,6 +471,18 @@ def ranges(base, leg):
             lo, hi = max(lo, own + got[0]), min(hi, own + got[1])
             if hi - lo > REACH_MIN:
                 out[name] = (lo, hi)
+    # a step and a ground time the legs reach without a lunge (DROP_MAX of the leg down), never under a tenth past
+    # the walk's own: a walk already crouched keeps a little room
+    for name in DROP_CUT:
+        points = base.get("_curve", {}).get("_drop_" + name, {}).get("")
+        if not points or name not in out:
+            continue
+        top = drop_top(points, DROP_MAX * leg)
+        if top is None:
+            continue
+        own = base[BY_NAME[name].key]
+        lo, hi = out[name]
+        out[name] = (lo, max(min(hi, own + top), min(hi, own + 0.1 * abs(own))))
     return out
 
 
@@ -522,6 +538,13 @@ PROBES = (-1.0, -0.35, 0.35, 1.0)    # shares of the way from the walk's own val
 # more of the pelvis's drop (dw; a knee near straight is the root of its reach) - a small probe first
 KNOB_PROBES = {"knee_bend": (0.12, 0.35, 1.0)}
 REACH_MIN = 1e-3                     # a reach this small each way: the knob is left its range (nothing to cut to)
+# A step or a ground time the legs take only by sinking the pelvis far is a lunge, and its swinging knee snaps (the
+# hip falls 4 cm a frame at the contact: asd at 1.4 legs a step, 19 cm down, 14 deg/frame^2; dw at 1.2, 30 cm, 21;
+# asd's top Ground time 75 cm down): their ranges stop where the pelvis is down this share of the leg, probed
+DROP_MAX = 0.15
+DROP_CUT = ("step", "duty", "speed")    # (a walk at twice its speed: asd 3.4 m/s, 19 cm down, 26 deg/frame^2)
+DROP_PROBES = ("step", "speed")      # probed for it here (Ground time's drop comes with its own probes)
+STEP_PROBES = (0.5, 1.0)             # shares of the way from the walk's own value to the rule's top
 
 
 def _own(base, name, side):
@@ -543,17 +566,21 @@ def annotate(walk, base, result):
             continue
         own[s] = min(float(_knee_bend(c, s)[mask].min()), float(base["knee_bend"][s]))
     base["_knee_planted"] = own
+    base["_lowered"] = float(result.info.get("lowered", 0.0))
     return own
 
 
 def calibrate(walk, base, run):
     """Probe the CALIBRATED knobs on the walk measured `base` (at base_engine) and keep each one's response in
     base["_curve"] = {knob: {side or "": [(asked change, measured change), ...] by asked, (0, 0) included}};
-    `run(gait)` evaluates the animator's units into world matrices (the pose the base was measured under
-    included). Nine evaluations."""
+    `run(gait)` evaluates the animator's units (the pose the base was measured under included) into a Result (or
+    its world matrices). Also the pelvis's drop at the duty probes and at STEP_PROBES of the step and the
+    speed: kept as "_drop_<knob>" curves {"": [(asked change, cm down)]} (ranges cut them there). Thirteen
+    evaluations."""
     base.pop("_curve", None)
     rng = ranges(base, walk.leg_length)
     curves = {}
+    drops = dict((name, [(0.0, float(base.get("_lowered", 0.0)))]) for name in DROP_CUT)
     for group in CALIBRATED:
         for share in sorted(set(s for name in group for s in KNOB_PROBES.get(name, PROBES))):
             gait, asked = {}, {}
@@ -572,16 +599,43 @@ def calibrate(walk, base, run):
                     asked[(name, s)] = d
             if not gait:
                 continue
-            m = measure(walk, run(gait))
+            res = run(gait)
+            m = measure(walk, getattr(res, "worlds", res))
             for (name, s), d in asked.items():
+                if name in drops and hasattr(res, "info"):
+                    drops[name].append((d, float(res.info.get("lowered", 0.0))))
                 got = m[BY_NAME[name].key]
                 got = float(got[s]) if s else float(got)
                 curves.setdefault(name, {}).setdefault(s, [(0.0, 0.0)]).append((d, got - _own(base, name, s or None)))
+    for name in DROP_PROBES:
+        own = base[BY_NAME[name].key]
+        for share in STEP_PROBES:
+            d = share * (rng[name][1] - own)
+            if d < 1e-3:
+                continue
+            res = run({name: own + d})
+            if hasattr(res, "info"):
+                drops[name].append((d, float(res.info.get("lowered", 0.0))))
     for name, sides in curves.items():
         for s, points in sides.items():
             sides[s] = _monotone(sorted(points))
+    for name, points in drops.items():
+        if len(points) > 1:
+            curves["_drop_" + name] = {"": sorted(set(points))}
     base["_curve"] = curves
     return curves
+
+
+def drop_top(points, most):
+    """The asked change (above the walk's own) at which the pelvis's drop `points` [(asked, cm down)] first
+    reaches `most` cm, linear between the probes; None when it never does."""
+    up = sorted(p for p in points if p[0] >= 0.0)
+    for (a0, g0), (a1, g1) in zip(up, up[1:]):
+        if g1 >= most > g0 - 1e-12 or (g0 >= most and a0 == 0.0):
+            if g0 >= most:
+                return a0
+            return a0 + (most - g0) * (a1 - a0) / (g1 - g0)
+    return None
 
 
 def _monotone(points):

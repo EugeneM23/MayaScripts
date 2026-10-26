@@ -243,7 +243,7 @@ class Bench(object):
         plain = asp.measure(self.walk, plain_result.worlds)
         asp.annotate(self.walk, plain, plain_result)
         curves = asp.calibrate(self.walk, plain,
-                               lambda g: self.walk.evaluate(asp.engine_knobs(self.walk, plain, g)).worlds)
+                               lambda g: self.walk.evaluate(asp.engine_knobs(self.walk, plain, g)))
         if self.pose is None:
             self.base_result, self.base = plain_result, plain
         else:
@@ -427,8 +427,7 @@ def gate_clicks(names):
         b = Bench(name)
         if not b.ok:
             continue
-        own, _ = knee_click(b.walk.clip.worlds, b.walk.names)
-        limit = max(CLICK_ABS, CLICK_SHARE * own)
+        clip_click, _ = knee_click(b.walk.clip.worlds, b.walk.names)
         configs = [("defaults", {})]
         for knob in ("step", "duty", "bob", "lift"):
             lo, hi = b.range[knob]
@@ -437,9 +436,14 @@ def gate_clicks(names):
         configs += [("height +10", {"height": 10.0}), ("height -15", {"height": -15.0}), ("weight +1", {"weight": 1.0}),
                     ("speed high", {"speed": b.range["speed"][1]})]
         for label, gait in configs:
-            click, straight = knee_click(b.run(gait).worlds, b.walk.names)
-            gate(click <= limit, "clicks %s %s: %.1f deg/fr^2 (the clip's own %.1f, limit %.1f), straightest %.1f"
-                 % (name, label, click, own, limit, straight))
+            r = b.run(gait)
+            click, straight = knee_click(r.worlds, b.walk.names)
+            # deg / frame^2 grow as the cadence squared: the clip's own motion played faster is not a click
+            pace = (b.walk.P / float(r.frames)) ** 2
+            limit = max(CLICK_ABS, CLICK_SHARE * clip_click * pace)
+            gate(click <= limit, "clicks %s %s: %.1f deg/fr^2 (the clip's own %.1f x%.2f the pace, limit %.1f), "
+                 "straightest %.1f, pelvis down %.1f" % (name, label, click, clip_click, pace, limit, straight,
+                                                        r.info["lowered"]))
 
 
 GATES = {"parity": gate_parity, "speed": gate_speed, "identity": gate_identity, "readback": gate_readback,

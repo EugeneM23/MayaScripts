@@ -169,7 +169,7 @@ class CalibrationTests(unittest.TestCase):
         cls.walk = fork_walk()
         cls.base = asp.measure(cls.walk, cls.walk.evaluate(asp.base_engine(cls.walk)).worlds)
         cls.gains = asp.calibrate(cls.walk, cls.base, lambda g: cls.walk.evaluate(
-            asp.engine_knobs(cls.walk, cls.base, g)).worlds)          # the response curves
+            asp.engine_knobs(cls.walk, cls.base, g)))                 # the response curves
 
     def test_the_elbow_swing_range_stops_at_the_bend(self):
         r = asp.ranges(self.base, self.walk.leg_length)

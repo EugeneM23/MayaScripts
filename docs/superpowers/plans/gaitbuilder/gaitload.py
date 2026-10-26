@@ -16,7 +16,7 @@ import aspects as asp
 import gaitgen
 
 CACHE_KEPT = 12
-# The calibrated knobs' responses (aspects.calibrate: nine evaluations, 2-10 s CPU a walk) are kept on disk per walk
+# The calibrated knobs' responses (aspects.calibrate: thirteen evaluations, 3-17 s CPU a walk) are kept on disk per walk
 # and code: a walk read again - in this Maya or the next - costs one evaluation. None: no disk.
 DISK = os.path.join(os.environ.get("MAYA_APP_DIR") or os.path.join(os.path.expanduser("~"), "Documents", "maya"),
                     "SkeldarGaitCache")
@@ -151,7 +151,7 @@ def _plain(source, posed=None, share=0.0):
 
 
 def needs_probe(source):
-    """True when the source's knobs have not been probed yet and are not on disk (the next baseline takes nine
+    """True when the source's knobs have not been probed yet and are not on disk (the next baseline takes thirteen
     evaluations more)."""
     if source.curves is not None:
         return False
@@ -163,7 +163,8 @@ def needs_probe(source):
 
 
 def curves(source, plain=None):
-    """The calibrated knobs' responses on the source's walk (aspects.calibrate), probed once a walk with no pose -
+    """The calibrated knobs' responses on the source's walk (aspects.calibrate: their curves, the pelvis's drop
+    along Step and Ground time), probed once a walk with no pose -
     a pose's share changes the walk's own values, which a baseline measures again, not how far a knob moves them -
     and kept on the source and on disk. `plain` is the walk's own unposed measure when already made."""
     if source.curves is None:
@@ -171,7 +172,7 @@ def curves(source, plain=None):
         if got is None:
             base = dict(plain) if plain is not None else _plain(source)
             got = asp.calibrate(source.walk, base,
-                                lambda g: source.walk.evaluate(asp.engine_knobs(source.walk, base, g)).worlds)
+                                lambda g: source.walk.evaluate(asp.engine_knobs(source.walk, base, g)))
             _write_curves(source, got)
         source.curves = got
     return source.curves
@@ -180,7 +181,7 @@ def curves(source, plain=None):
 def baseline(source, pose=None, share=0.0):
     """The walk as it stands under the pose's `share` (`pose` walkpose.prepare's, filtered to its parts): its
     measure in units - the knobs' own values - with the calibrated knobs' responses (curves()), kept per source,
-    pose and share. One evaluation, nine more the first time a walk is read with no responses on disk."""
+    pose and share. One evaluation, thirteen more the first time a walk is read with no responses on disk."""
     posed = pose if share > 0.0 else None
 
     def make():

@@ -74,6 +74,12 @@ KNOBS = (
     # Walk Builder's weight also delays the arms (WEIGHT_LAG frames a unit): the same motion as Follow-through's
     # drag, correlated 0.93. Gait Builder takes it off (0) so Weight is the bob's shape, its clock and the knees
     ("weight_lag", 1.0, 0.0, 1.0),
+    # A leg straightened past where the source has it at that phase meets its limit (the walk's straightest)
+    # with a corner, and a knee near straight is the root of its reach: the knee clicks (a grown lift-off, a
+    # swing reaching for a long step, the pelvis's cover). Past max(the source's own, (1 - knee_soft) x the
+    # limit) it eases into the limit with no corner, and the pelvis, the growth and the swing's draw-in aim at
+    # that start. 0: Walk Builder's hard limit (Gait Builder, 2026-10-26)
+    ("knee_soft", 0.0, 0.0, 0.2),
 )
 ASPECT_KNOBS = ("bob_add", "sway_add", "surge_add", "lean_add", "chest_bounce_add", "nod_add", "arm_swing_add",
                 "arm_fwd_add", "arm_out_add", "elbow_add", "elbow_swing_add", "shoulder_add", "arm_lag_add")
@@ -83,7 +89,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_swing_add", "arm_fwd_add", "arm_out_add", "elbow_add",
-         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "arm_lag_add")
+         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "arm_lag_add", "knee_soft")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -393,7 +399,7 @@ def smooth_cover(need, sigma):
     of `sigma` frames, then scaled by the least factor that covers every frame's need."""
     need = np.asarray(need, float)
     n = len(need)
-    if n == 0 or need.max() <= 0.0:
+    if n == 0 or need.max() <= 1e-9:          # (a need this small is no need: "wanted" below)
         return np.zeros(n)
     reach = int(round(sigma))
     wide = np.max([np.roll(need, s) for s in range(-reach, reach + 1)], axis=0)
@@ -470,13 +476,26 @@ def _fill_periodic(values, known):
     return out
 
 
-def two_bone(hip, ankle, l1, l2, bend, reach):
+def soft_reach(d, soft, hard):
+    """The distance a leg takes for a wanted hip-to-ankle distance `d`: itself up to `soft`, then easing into
+    `hard` with no corner (C1 at `soft`, never past `hard`); `soft` >= `hard` is the hard limit."""
+    if d <= soft or soft >= hard:
+        return min(d, hard)
+    band = hard - soft
+    return soft + band * (1.0 - math.exp(-(d - soft) / band))
+
+
+def two_bone(hip, ankle, l1, l2, bend, reach, soft=None):
     """The knee of a hip-knee-ankle chain bending toward `bend`, the leg never straighter than
-    reach . (l1 + l2). Returns (knee, the ankle it reaches, how far it falls short)."""
+    reach . (l1 + l2) - eased into it from soft . (l1 + l2) when given (soft_reach). Returns (knee, the ankle
+    it reaches, how far it falls short)."""
     v = np.asarray(ankle, float) - hip
     d = float(np.linalg.norm(v))
     e = v / d if d > 1e-9 else np.array([0.0, -1.0, 0.0])
-    d_eff = max(min(d, reach * (l1 + l2)), abs(l1 - l2) + 1e-6)
+    if soft is not None and soft < reach:
+        d_eff = max(soft_reach(d, soft * (l1 + l2), reach * (l1 + l2)), abs(l1 - l2) + 1e-6)
+    else:
+        d_eff = max(min(d, reach * (l1 + l2)), abs(l1 - l2) + 1e-6)
     p = bend - np.dot(bend, e) * e
     p = _unit(p) if np.linalg.norm(p) > 1e-9 else _any_perpendicular(e)
     along = (l1 * l1 - l2 * l2 + d_eff * d_eff) / (2.0 * d_eff)
@@ -1642,7 +1661,8 @@ class Walk(object):
                         t = self.foot_time(side, tau, v, test)
                         rot, ankle = self._foot_free(side, t, ctx)
                         ankle = ankle + self._lock_at(side, t, ctx)
-                        limit = ctx.get("reach", self.reach)[side] * (np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
+                        limit = self._soft_from(side, t, ctx, ctx.get("reach", self.reach)[side]) * (
+                            np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
                         pelvis_rot, pelvis_pos = self._body(tau / P, tau, plain)["pelvis"]
                         hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
                         rolled = self._rolled(side, t, rot, ankle, hip, limit, ctx)[1]
@@ -1939,6 +1959,21 @@ class Walk(object):
         if reach is not None and reach[side] < ctx["reach"][side] and self.planted(side, t, ctx):
             return reach[side]
         return ctx.get("reach", self.reach)[side]
+
+    def own_stretch(self, side, t):
+        """The source leg's hip-to-ankle distance over its length at foot time t."""
+        th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
+        d = float(np.linalg.norm(self.wpos(fo, t) - self.wpos(th, t)))
+        return d / (float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t))))
+
+    def _soft_from(self, side, t, ctx, reach):
+        """Where a leg at foot time t starts easing into its limit `reach` (knee_soft): never below what the
+        source has there, so the walk's own legs are untouched; `reach` itself when knee_soft is 0."""
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        soft = ks[side].get("knee_soft", 0.0)
+        if soft <= 0.0:
+            return reach
+        return min(reach, max(self.own_stretch(side, t), reach * (1.0 - soft)))
 
     def swing_at(self, side, tau):
         """How far the foot hangs off its shin at source time tau: swing_weight of its flight's progress (0 on
@@ -2483,7 +2518,8 @@ class Walk(object):
                 th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
                 hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
                 rot, ankle = self._foot(side, tau, ctx)[:2]
-                limit = self._leg_reach(side, t, ctx) * (np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
+                limit = self._soft_from(side, t, ctx, self._leg_reach(side, t, ctx)) * (
+                    np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
                 needs[side][f] = self._roll_need(side, t, rot, ankle, hip, limit, ctx)
                 legs[f][side] = (t, rot, ankle, hip, limit)
         # the heel's roll lets go gradually: never earlier than a frame needs it, and after its peak it eases
@@ -3106,8 +3142,9 @@ class Walk(object):
             reach = ankle - hip
             d = float(np.linalg.norm(reach))
             ankle = hip + reach * max(0.0, 1.0 - reel / d) if d > 1e-9 else ankle
-        knee, reached, short = two_bone(hip, ankle, src["lengths"][0], src["lengths"][1], src["bend"],
-                                        self._leg_reach(side, src["t"], ctx))
+        reach = self._leg_reach(side, src["t"], ctx)
+        knee, reached, short = two_bone(hip, ankle, src["lengths"][0], src["lengths"][1], src["bend"], reach,
+                                        self._soft_from(side, src["t"], ctx, reach))
         e2 = _unit(reached - hip)
         bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
         n_new = _unit(_cross3(e2, bend2))

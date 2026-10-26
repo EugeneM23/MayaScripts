@@ -331,7 +331,7 @@ def _knob_changed(name, value):
 
 
 def _base(source, state):
-    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (nine
+    """The source's baseline under the pose (gaitload.baseline); the first read of a walk probes its knobs (thirteen
     evaluations, a few seconds, then kept on disk): said and under a wait cursor."""
     gaitload = _modules()[0]
     probing = gaitload.needs_probe(source)
