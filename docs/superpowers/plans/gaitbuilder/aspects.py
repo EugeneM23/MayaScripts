@@ -392,8 +392,6 @@ KNOBS = (
          tip="The upper arms held out to their sides"),
     Knob("shoulders", "Arms", "Shoulders", "deg", "added", 0.0, _fixed(-20.0, 25.0), sided=True,
          tip="The shoulders raised (+) or dropped"),
-    Knob("arm_timing", "Arms", "Arm timing", "fr", "added", 0.0, _fixed(-6.0, 6.0), sided=True,
-         tip="The arms' motion later (+) or earlier, in frames"),
     # the helpers
     Knob("placement", "Physics", "Foot placement", "", "toggle", 1.0,
          tip="On: a planted foot never slides and one foot is always down (a walk); off: the walk's own feet"),
@@ -409,8 +407,7 @@ GROUPS = []
 for _knob in KNOBS:
     if _knob.group not in GROUPS:
         GROUPS.append(_knob.group)
-WEIGHT_KNEE = 12.0        # deg: Weight +1 bends a planted knee this much more than the walk's own straightest
-WEIGHT_FOLLOW = 1.0       # frames: Weight +1 adds this much follow-through (-1 takes it off)
+WEIGHT_KNEE = 6.0         # deg: Weight +1 bends a planted knee this much more than the walk's own straightest (12 duplicated Knee bend: 0.86 on dw)
 WEIGHT_GAIN = 1.5         # the model's weight at Weight +1
 HEAD_DRAG = 4.0 / 3.0     # the head's spring x Follow-through (Walk Builder's 2.0 over 1.5)
 TORSO_WHIP = 2.0 / 3.0    # the trunk's bounce x Whip (Walk Builder's 0.2 over 0.3)
@@ -694,7 +691,8 @@ def engine_knobs(walk, base, gait):
     e["nod_add"] = value(gait, base, "nod")
     e["foot_placement"] = 1.0 if value(gait, base, "placement") >= 0.5 else 0.0
     e["balance"] = value(gait, base, "balance") / 100.0
-    follow = max(0.0, value(gait, base, "follow") + WEIGHT_FOLLOW * weight)
+    e["weight_lag"] = 0.0                                  # Weight is not Follow-through (gaitmodel)
+    follow = value(gait, base, "follow")
     whip = value(gait, base, "whip")
     e.update({"torso_drag": follow, "head_drag": HEAD_DRAG * follow, "arm_drag": follow,
               "torso_bounce": TORSO_WHIP * whip, "arm_bounce": whip})
@@ -732,5 +730,4 @@ def engine_knobs(walk, base, gait):
             if side in base[name]:
                 e[key + sfx] = value(gait, base, name, side) - base[name][side]
         e["shoulder_add" + sfx] = value(gait, base, "shoulders", side)
-        e["arm_lag_add" + sfx] = value(gait, base, "arm_timing", side)
     return e

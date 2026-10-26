@@ -1,0 +1,53 @@
+gate  1 ok    clicks asd defaults: 9.9 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 12.4
+gate  2 ok    clicks asd step low: 6.9 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 14.9
+gate  3 FAIL  clicks asd step high: 27.8 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 12.4
+gate  4 FAIL  clicks asd duty low: 20.8 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 13.7
+gate  5 ok    clicks asd duty high: 0.0 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 32.5
+gate  6 ok    clicks asd bob low: 10.6 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 17.6
+gate  7 ok    clicks asd bob high: 9.6 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 19.0
+gate  8 FAIL  clicks asd lift low: 16.0 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 12.4
+gate  9 FAIL  clicks asd lift high: 19.5 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 19.3
+gate 10 ok    clicks asd height +10: 11.6 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 14.1
+gate 11 ok    clicks asd height -15: 0.0 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 43.5
+gate 12 ok    clicks asd weight +1: 0.0 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 26.5
+gate 13 FAIL  clicks asd speed high: 26.9 deg/fr^2 (the clip's own 12.5, limit 12.0), straightest 12.4
+gate 14 ok    clicks dw defaults: 12.4 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 19.6
+gate 15 ok    clicks dw step low: 15.1 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 16.2
+gate 16 FAIL  clicks dw step high: 31.4 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 13.9
+gate 17 ok    clicks dw duty low: 11.1 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 17.0
+gate 18 ok    clicks dw duty high: 0.0 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 35.5
+gate 19 ok    clicks dw bob low: 12.2 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 17.7
+gate 20 ok    clicks dw bob high: 12.4 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 19.1
+gate 21 ok    clicks dw lift low: 15.5 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 13.9
+gate 22 FAIL  clicks dw lift high: 28.1 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 20.5
+gate 23 ok    clicks dw height +10: 12.1 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 19.4
+gate 24 ok    clicks dw height -15: 0.0 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 36.8
+gate 25 ok    clicks dw weight +1: 0.0 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 25.5
+gate 26 FAIL  clicks dw speed high: 44.2 deg/fr^2 (the clip's own 12.1, limit 19.3), straightest 13.9
+gate 27 ok    clicks HavyRun defaults: 33.5 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 28 ok    clicks HavyRun step low: 0.0 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 35.1
+gate 29 ok    clicks HavyRun step high: 37.2 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 30 ok    clicks HavyRun duty low: 28.3 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 31 ok    clicks HavyRun duty high: 0.0 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 35.5
+gate 32 ok    clicks HavyRun bob low: 33.0 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 15.8
+gate 33 ok    clicks HavyRun bob high: 46.1 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 34 ok    clicks HavyRun lift low: 41.8 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 35 ok    clicks HavyRun lift high: 35.8 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 16.6
+gate 36 ok    clicks HavyRun height +10: 26.9 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 37 ok    clicks HavyRun height -15: 0.0 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 59.2
+gate 38 ok    clicks HavyRun weight +1: 36.8 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 10.8
+gate 39 ok    clicks HavyRun speed high: 47.4 deg/fr^2 (the clip's own 26.8, limit 54.8), straightest 8.5
+gate 40 FAIL  clicks cat:Walk defaults: 34.0 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 12.3
+gate 41 ok    clicks cat:Walk step low: 4.2 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 18.2
+gate 42 FAIL  clicks cat:Walk step high: 47.4 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 12.2
+gate 43 ok    clicks cat:Walk duty low: 8.3 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 17.9
+gate 44 ok    clicks cat:Walk duty high: 0.0 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 32.5
+gate 45 FAIL  clicks cat:Walk bob low: 25.4 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 12.2
+gate 46 ok    clicks cat:Walk bob high: 8.9 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 19.0
+gate 47 FAIL  clicks cat:Walk lift low: 14.8 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 12.2
+gate 48 FAIL  clicks cat:Walk lift high: 48.6 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 15.3
+gate 49 ok    clicks cat:Walk height +10: 6.2 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 19.0
+gate 50 ok    clicks cat:Walk height -15: 0.0 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 65.2
+gate 51 ok    clicks cat:Walk weight +1: 0.0 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 26.2
+gate 52 FAIL  clicks cat:Walk speed high: 49.7 deg/fr^2 (the clip's own 11.8, limit 13.7), straightest 12.2
+52 gates, 14 failed

@@ -77,6 +77,9 @@ class ParityTests(unittest.TestCase):
         self.check({"stride": 1.3})
         self.check({"ground_time": 1.2})
 
+    def test_weight_with_its_arm_lag(self):
+        self.check({"weight": 1.0})
+
     def test_two_strides_a_cycle(self):
         self.check({"stride": 1.2, "bob": 2.0}, strides=2)
 

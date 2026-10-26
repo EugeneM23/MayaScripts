@@ -71,6 +71,9 @@ KNOBS = (
     ("arm_lag_add", 0.0, -10.0, 10.0),        # frames: the arms' motion later
     ("toe_add", 0.0, -60.0, 60.0),            # deg: the foot turned out
     ("knee_bend", 0.0, 0.0, 90.0),            # deg: a planted knee bent at least this (0: off)
+    # Walk Builder's weight also delays the arms (WEIGHT_LAG frames a unit): the same motion as Follow-through's
+    # drag, correlated 0.93. Gait Builder takes it off (0) so Weight is the bob's shape, its clock and the knees
+    ("weight_lag", 1.0, 0.0, 1.0),
 )
 ASPECT_KNOBS = ("bob_add", "sway_add", "surge_add", "lean_add", "chest_bounce_add", "nod_add", "arm_swing_add",
                 "arm_fwd_add", "arm_out_add", "elbow_add", "elbow_swing_add", "shoulder_add", "arm_lag_add")
@@ -2192,7 +2195,7 @@ class Walk(object):
         P = self.P
         n = max(int(round(k["tempo"])), 4) if k["tempo"] >= 1.0 else P
         ctx = {"k": k, "ex": k["exaggeration"], "travel2": self.travel * k["stride"],
-               "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"]) * P / float(n),
+               "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"] * k["weight_lag"]) * P / float(n),
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
                "phi0": self.low_phase + (WEIGHT_WARP_AFTER - 0.25) / self.strides,
                "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"],

@@ -26,11 +26,13 @@ import gaitmodel as gm                                       # noqa: E402
 import aspects as asp                                        # noqa: E402
 import gaitgen                                               # noqa: E402
 from maya_walk import model as wm, files as wf, clean as wc, meanpose as mp      # noqa: E402
+from maya_walk import pose as wp, target as wt                                  # noqa: E402
 
 SPEED_SHARE = 0.45                # an evaluation's CPU time against Walk Builder's
 PARITY_APPROX = (0.1, 0.2)        # cm, deg: the fork's speed-ups against Walk Builder
 FAILED = []
 COUNT = [0]
+ONLY = [k for k in os.environ.get("GATE_KNOBS", "").split(",") if k]     # the knobs to gate (none: all)
 
 
 def gate(ok, text):
@@ -121,6 +123,17 @@ SKIP = ("twist", "ik_", "weapon", "camera", "interaction", "center_of_mass", "me
 READBACK_SHARE, READBACK_UNIT = 0.15, 1.0     # within 15 % of the asked change, or 1 unit
 EFFECT_DEG, EFFECT_CM = 5.0, 3.0              # a knob over its range moves its part at least this (rms)
 SIMILAR = 0.85                                # no two knobs' signed effects correlated past this
+# Pairs that move together by design, not a duplicate: Speed sets the step by the walk ratio (the macro), and a
+# helper (Foot placement, Balance) acts through what the other knobs change
+REDUNDANT_OK = (("speed", "step"),)
+HELPERS = ("placement", "balance")
+# A switch is on or off, not a range of motion: its effect is whatever the walk's own motion there is (the root's
+# weave, the travel), so it has no effect to gate
+SWITCHES = ("root_line", "in_place", "placement")
+# Balance acts on what changes the feet's support: gated at the widest stance, and under a pose that leans the
+# body off its feet (the animator's goblin, when on this machine)
+BALANCE_UNDER = {"width": "hi"}
+BALANCE_POSE = "goblin"
 CLICK_ABS, CLICK_SHARE = 12.0, 1.5            # knee clicks: at most max(12, 1.5 x the clip's own) deg/frame^2
 
 
@@ -165,6 +178,31 @@ def group_change(a, b, groups):
     return dict((g, (float(np.sqrt(np.mean(ang[i] ** 2))), float(np.sqrt(np.mean(d[i] ** 2))))) for g, i in groups.items())
 
 
+def joint_change(a, b, groups):
+    """{group: (deg, cm)} of cycle b against cycle a: the most any one joint of the group moves (rms over the
+    cycle) - a chest knob turns the top spine joint far and the lumbar little, which a group rms dilutes"""
+    pa, ra = against_line(a)
+    pb, rb = resampled(*against_line(b), pa.shape[1])
+    rel = np.einsum("jfab,jfcb->jfac", rb, ra)
+    c = np.clip((np.trace(rel, axis1=-2, axis2=-1) - 1.0) / 2.0, -1.0, 1.0)
+    ang = np.sqrt(np.mean(np.degrees(np.arccos(c)) ** 2, axis=1))
+    d = np.sqrt(np.mean(np.linalg.norm(pb - pa, axis=-1) ** 2, axis=1))
+    return dict((g, (float(ang[i].max()), float(d[i].max()))) for g, i in groups.items())
+
+
+def own_motion(worlds, idx):
+    """deg: the most any joint of `idx` turns about its own mean over the cycle (rms) - what a knob that holds it
+    still can take away"""
+    _, r = against_line(worlds)
+    out = 0.0
+    for j in idx:
+        u, _, vt = np.linalg.svd(np.sum(r[j], axis=0))
+        mean = u @ vt
+        c = np.clip((np.einsum("fab,ab->f", r[j], mean) - 1.0) / 2.0, -1.0, 1.0)
+        out = max(out, float(np.sqrt(np.mean(np.degrees(np.arccos(c)) ** 2))))
+    return out
+
+
 def signed_change(a, b, idx):
     pa, ra = against_line(a)
     pb, rb = resampled(*against_line(b), pa.shape[1])
@@ -172,25 +210,58 @@ def signed_change(a, b, idx):
     return np.concatenate([np.degrees(gm.log_rot(rel)).ravel(), (pb[idx] - pa[idx]).ravel()])
 
 
-class Bench(object):
-    """One walk under Gait Builder's knobs: its base measure and an evaluator by knob values."""
+def read_pose(name, walk, statics):
+    """The saved pose `name` (WALKS/<name>.wpose.gz) carried onto the walk (walkpose.prepare with the fork), or
+    None when absent."""
+    path = os.path.join(WALKS, name + ".wpose.gz")
+    if not os.path.exists(path):
+        print("skip: no pose %s in %s" % (name, WALKS))
+        return None
+    return wp.prepare(walk, statics, wf.load_pose(path)[1], gm, wt)
 
-    def __init__(self, name):
+
+class Bench(object):
+    """One walk under Gait Builder's knobs: its base measure and an evaluator by knob values; under a saved pose
+    at `share` when `pose` names one (the calibrated knobs' responses probed with no pose, as gaitload keeps
+    them)."""
+
+    def __init__(self, name, pose=None, share=1.0):
         got = read(name)
         self.ok = got is not None
         if not self.ok:
             return
         self.name = name
         self.walk, self.theirs, self.statics = got
-        self.base_result = self.walk.evaluate(asp.base_engine(self.walk))
-        self.base = asp.measure(self.walk, self.base_result.worlds)
-        asp.annotate(self.walk, self.base, self.base_result)
-        asp.calibrate(self.walk, self.base, lambda g: self.walk.evaluate(asp.engine_knobs(self.walk, self.base, g)).worlds)
+        self.pose, self.share = None, 0.0
+        if pose:
+            self.pose = read_pose(pose, self.walk, self.statics)
+            self.ok = self.pose is not None
+            if not self.ok:
+                return
+            self.share = share
+        plain_result = self.walk.evaluate(asp.base_engine(self.walk))
+        plain = asp.measure(self.walk, plain_result.worlds)
+        asp.annotate(self.walk, plain, plain_result)
+        curves = asp.calibrate(self.walk, plain,
+                               lambda g: self.walk.evaluate(asp.engine_knobs(self.walk, plain, g)).worlds)
+        if self.pose is None:
+            self.base_result, self.base = plain_result, plain
+        else:
+            e = asp.base_engine(self.walk)
+            e["pose"] = self.share
+            self.base_result = self.walk.evaluate(e, self.pose)
+            self.base = asp.measure(self.walk, self.base_result.worlds)
+            asp.annotate(self.walk, self.base, self.base_result)
+            self.base["_curve"] = curves
         self.range = asp.ranges(self.base, self.walk.leg_length)
         self.groups = groups_of(self.walk.names)
 
     def run(self, gait):
-        return self.walk.evaluate(asp.engine_knobs(self.walk, self.base, gait))
+        e = asp.engine_knobs(self.walk, self.base, gait)
+        if self.pose is None:
+            return self.walk.evaluate(e)
+        e["pose"] = self.share
+        return self.walk.evaluate(e, self.pose)
 
     def own(self, knob):
         v = asp.defaults(self.base)[knob]
@@ -266,24 +337,57 @@ def gate_readback(names):
                 gate(ok, "readback %s %s: asked %+.2f %s, got %+.2f" % (name, knob.name, asked, knob.unit, change))
 
 
+def _effect_of(b, knob, under=None):
+    """(deg, cm, group): the most a knob moves any joint over its range, from its own value to either end, with
+    the gait `under` held."""
+    lo, hi = b.range[knob.name]
+    best = (0.0, 0.0, "")
+    own = b.own(knob.name) if knob.kind == "measured" else knob.default
+    start = b.run(under).worlds if under else b.base_result.worlds
+    for end in (lo, hi):
+        gait = dict(under or {})
+        gait.update(b.ask(knob.name, end - own) if knob.kind == "measured" else {knob.name: end})
+        for g, (deg, cm) in joint_change(start, b.run(gait).worlds, b.groups).items():
+            if deg / EFFECT_DEG + cm / EFFECT_CM > best[0] / EFFECT_DEG + best[1] / EFFECT_CM:
+                best = (deg, cm, g)
+    return best
+
+
 def gate_effect(names):
     for name in names:
         b = Bench(name)
         if not b.ok:
             continue
+        head_own = own_motion(b.base_result.worlds, b.groups.get("head", []))
         for knob in asp.KNOBS:
+            if ONLY and knob.name not in ONLY:
+                continue
             lo, hi = b.range[knob.name]
-            best = (0.0, 0.0, "")
-            own = b.own(knob.name) if knob.kind == "measured" else knob.default
-            for end in (lo, hi):
-                gait = b.ask(knob.name, end - own) if knob.kind == "measured" else {knob.name: end}
-                change = group_change(b.base_result.worlds, b.run(gait).worlds, b.groups)
-                for g, (deg, cm) in change.items():
-                    if deg / EFFECT_DEG + cm / EFFECT_CM > best[0] / EFFECT_DEG + best[1] / EFFECT_CM:
-                        best = (deg, cm, g)
-            gate(best[0] >= EFFECT_DEG or best[1] >= EFFECT_CM,
-                 "effect %s %s over %.1f..%.1f %s: %.1f deg, %.1f cm (%s)" % (name, knob.name, lo, hi, knob.unit,
-                                                                             best[0], best[1], best[2]))
+            deg, cm, g = _effect_of(b, knob)
+            text = "effect %s %s over %.1f..%.1f %s: %.1f deg, %.1f cm (%s)" % (name, knob.name, lo, hi, knob.unit,
+                                                                              deg, cm, g)
+            if knob.name in SWITCHES:
+                print("        %s - a switch, not gated" % text)
+                continue
+            need = EFFECT_DEG
+            if knob.name == "head_steady":
+                # holds the head still: it can take away the walk's own head motion and no more
+                need = min(EFFECT_DEG, 0.8 * head_own)
+                text += " - the walk's head turns %.1f deg of its own" % head_own
+            if knob.name == "balance":
+                under = {}
+                for other, end in BALANCE_UNDER.items():
+                    lo2, hi2 = b.range[other]
+                    under.update(b.ask(other, (hi2 if end == "hi" else lo2) - b.own(other)))
+                deg2, cm2, g2 = _effect_of(b, knob, under)
+                text += "; at the widest stance %.1f deg, %.1f cm (%s)" % (deg2, cm2, g2)
+                deg, cm = max(deg, deg2), max(cm, cm2)
+                posed = Bench(name, BALANCE_POSE) if BALANCE_POSE else None
+                if posed is not None and posed.ok:
+                    deg3, cm3, g3 = _effect_of(posed, knob)
+                    text += "; under the %s pose %.1f deg, %.1f cm (%s)" % (BALANCE_POSE, deg3, cm3, g3)
+                    deg, cm = max(deg, deg3), max(cm, cm3)
+            gate(deg >= need or cm >= EFFECT_CM, text)
 
 
 def gate_redundancy(names):
@@ -306,11 +410,16 @@ def gate_redundancy(names):
         sim = np.abs(np.array(vecs) @ np.array(vecs).T)
         pairs = [(sim[i, j], labels[i], labels[j]) for i in range(len(labels)) for j in range(i + 1, len(labels))
                  if sim[i, j] > SIMILAR]
+        declared = [p for p in pairs if tuple(sorted(p[1:])) in [tuple(sorted(x)) for x in REDUNDANT_OK]
+                    or p[1] in HELPERS or p[2] in HELPERS]
+        pairs = [p for p in pairs if p not in declared]
         sv = np.linalg.svd(np.array(vecs), compute_uv=False)
         share = np.cumsum(sv ** 2) / np.sum(sv ** 2)
-        gate(not pairs, "redundancy %s: %d knobs, %s; 90 %% of the change in %d directions, 99 %% in %d" % (
+        gate(not pairs, "redundancy %s: %d knobs, %s%s; 90 %% of the change in %d directions, 99 %% in %d" % (
             name, len(labels), "; ".join("%s~%s %.2f" % (a, c, v) for v, a, c in sorted(pairs, reverse=True)) or
-            "no pair past %.2f" % SIMILAR, np.searchsorted(share, 0.9) + 1, np.searchsorted(share, 0.99) + 1))
+            "no pair past %.2f" % SIMILAR,
+            " (by design: %s)" % "; ".join("%s~%s %.2f" % (a, c, v) for v, a, c in sorted(declared, reverse=True))
+            if declared else "", np.searchsorted(share, 0.9) + 1, np.searchsorted(share, 0.99) + 1))
 
 
 def gate_clicks(names):
