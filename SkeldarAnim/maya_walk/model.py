@@ -92,6 +92,15 @@ KNOBS = (
     # foot's strike. Both peak to peak.
     ("bob_add", 0.0, -30.0, 30.0),    # cm
     ("arm_swing_add", 0.0, -90.0, 90.0),   # deg
+    # The step's timing set directly (each per side): Ground time's share of a stride a contact lasts (0 = the
+    # walk's own, else every contact lengthened or shortened to it - not x the walk's own, as ground_time); a
+    # roll over the ball late in the stance (Push-off, heel up at the toe-off) and back on the heel at the strike
+    # (Heel strike, toes up), gone by the foot-flat the walk's own frames + slap later. Both added to what Foot
+    # placement's reach rolls, past Foot flat (they are asked for)
+    ("duty", 0.0, 0.0, 0.9),
+    ("push", 0.0, 0.0, 60.0),         # deg
+    ("heel_strike", 0.0, 0.0, 40.0),  # deg
+    ("slap", 0.0, -10.0, 20.0),       # source frames
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
@@ -111,7 +120,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
-         "arm_swing_add")
+         "arm_swing_add", "duty", "push", "heel_strike", "slap")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -183,6 +192,11 @@ SOLE_TOES_UP = 30.0       # degrees: nor toes up
 SOLE_EASE = 15.0          # degrees: a roll eases into those limits over this much
 AIR_HOLD = 2.0            # cm: a foot just off the ground may hold the pelvis down this much (_just_off)
 GROWTH_SAMPLES = 12       # the lift-off and the swing's start tested at this many steps (_growth)
+PUSH_FROM = 0.55          # Push-off's roll comes in from this share of the contact to the lift-off...
+#                           ...and goes over the first SWING_EASE of the swing; Heel strike's comes in over the last
+FLAT_TOL = 3.0            # degrees: a sole this near the floor is flat (Walk.flat_after: the strike's foot-flat)
+SLAP_LEAST = 0.08         # a Heel strike's toes come down over at least this share of a stride (the
+#                           loading response: the foot flat ~8 % of the gait cycle after the strike)
 
 # the balance: the centre of mass a pendulum over the feet's pressure (the walks are in centimetres - UE's)
 GRAVITY = 981.0            # cm / s^2
@@ -1539,6 +1553,7 @@ class Walk(object):
         grid = np.arange(cells) / float(G)
         self.contact, self.pivot, self.heel_loc, self.placement_note = {}, {}, {}, ""
         self.foot_side, self.sole_up, self.swing_len, self.handoff = {}, {}, {}, {}
+        self.flat_after = {}
         self.extend = dict((side, [{"hs": 0.0, "to": 0.0} for _ in self.steps[side]]) for side in SIDES)
         self.double_src = {}
         self.leg_side = {}
@@ -1617,6 +1632,14 @@ class Walk(object):
             # own side (a near-vertical foot's flat direction is no axis: it flips as the foot passes upright)
             self.foot_side[side] = _unit(np.cross(self.up, reach - rise * self.up)) @ rot.T
             self.sole_up[side] = self.up @ rot.T
+        for side in SIDES:     # each strike's foot-flat: the first moment the sole lies within FLAT_TOL of the floor
+            fo, flats = self.index["foot_" + side], []
+            for hs, to in self.contact[side]:
+                steps = np.arange(0.0, to - hs + 1e-9, 0.125)
+                pitch = [abs(self.sole_pitch(side, self.wrot(fo, hs + r))) for r in steps]
+                flat = [r for r, p in zip(steps, pitch) if p <= math.radians(FLAT_TOL)]
+                flats.append(float(flat[0]) if flat else float(steps[int(np.argmin(pitch))]))
+            self.flat_after[side] = flats
         wrap = lambda d: (d + 0.5 * P) % P - 0.5 * P
         stride = P / float(self.strides)
         for s, o in (("l", "r"), ("r", "l")):     # the trailing foot stays longer: it can roll over its ball
@@ -1720,6 +1743,22 @@ class Walk(object):
         r -= to - hs
         return 0.0 < r <= SWING_EASE * self.swing_len[side][i]
 
+    def ground_factor(self, side, k):
+        """How many times its own a contact lasts (Ground time) under knobs k: ground_time, or duty's share of a
+        stride over the walk's own mean contact."""
+        duty = float(k.get("duty", 0.0))
+        if duty <= 0.0 or not self.contact.get(side):
+            return float(k["ground_time"])
+        own = float(np.mean([to - hs for hs, to in self.contact[side]]))
+        return duty * self.P / float(self.strides) / max(own, 1e-6)
+
+    def _gt(self, ctx, side):
+        """Ground time's factor for side in this evaluation (ctx["gt"]), else the knob's."""
+        got = (ctx.get("gt") or {}).get(side)
+        if got is not None:
+            return got
+        return ((ctx.get("ks") or {}).get(side) or ctx.get("k") or DEFAULTS)["ground_time"]
+
     def _clock(self, side, tau, ctx):
         """The foot's own source time at body time tau in this cycle (Foot placement's clock)."""
         return self.foot_time(side, tau, ctx["placement"], ctx.get("grown"))
@@ -1739,7 +1778,8 @@ class Walk(object):
         for side in SIDES:
             th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
             out, asked = [], []
-            ground = (ctx["ks"][side] if "ks" in ctx else ctx["k"])["ground_time"]
+            ks = ctx["ks"][side] if "ks" in ctx else ctx["k"]
+            ground, duty = ks["ground_time"], float(ks.get("duty", 0.0))
             for i, (hs, to) in enumerate(self.contact[side]):
                 ds = self.double_src[side][i]
                 room = EXTEND_MAX * self.swing_len[side][i]
@@ -1780,13 +1820,19 @@ class Walk(object):
                 # longer stance takes its swing's time, at most GROUND_ROOM of it; a shorter one keeps half its
                 # contact and, at Foot placement, a frame of both feet down.
                 length, own = to - hs + 1.0, e
+                floor = -0.5 * (to - hs)
+                if v > 0.0:
+                    floor = floor if self.is_flight(ds) else max(floor, ctx["frame"] - ds)
+                if duty > 0.0:                    # Ground time's share of a stride: the contact set to it directly
+                    want = duty * P / float(self.strides) - (to - hs)
+                    e = min(max(want, floor), GROUND_ROOM * self.swing_len[side][i])
+                    asked.append((duty, (to - hs + e) * self.strides / P))     # asked, held (share of a stride)
+                    out.append({"hs": 0.0, "to": e})
+                    continue
                 ask = (ground - 1.0) * length
                 if ask > 0.0:
                     e = max(e, min(GROUND_ROOM * self.swing_len[side][i], e + ask))
                 elif ask < 0.0:
-                    floor = -0.5 * (to - hs)
-                    if v > 0.0:
-                        floor = floor if self.is_flight(ds) else max(floor, ctx["frame"] - ds)
                     e = max(floor, min(e, e + ask))
                 out.append({"hs": 0.0, "to": e})
                 asked.append((ground, 1.0 + (e - own) / length))     # asked, held (x the contact)
@@ -1900,12 +1946,23 @@ class Walk(object):
             return None
         return pivot, _unit(axis)
 
+    def sole_pitch(self, side, rot, axis=None):
+        """How far the foot (world rotation `rot`) stands off the ground about its side: radians, + heel up,
+        - toes up. `axis` the foot's level side (else read off rot)."""
+        if axis is None:
+            axis = self.foot_side[side] @ rot
+            axis = axis - np.dot(axis, self.up) * self.up
+            if np.linalg.norm(axis) < 1e-6:
+                return 0.0
+            axis = _unit(axis)
+        n = self.sole_up[side] @ rot
+        n = n - np.dot(n, axis) * axis
+        return math.atan2(float(np.dot(n, np.cross(axis, self.up))), float(np.dot(n, self.up)))
+
     def _sole_lift(self, side, rot, axis, sense):
         """(how far the foot (rot) already stands off the ground about its side `axis` in the roll's sense -
         heel up for +1, toes up for -1 - and the sole's limit there), radians."""
-        n = self.sole_up[side] @ rot
-        n = n - np.dot(n, axis) * axis
-        heel_up = math.atan2(float(np.dot(n, np.cross(axis, self.up))), float(np.dot(n, self.up)))
+        heel_up = self.sole_pitch(side, rot, axis)
         return (heel_up, math.radians(SOLE_HEEL_UP)) if sense > 0.0 else (-heel_up, math.radians(SOLE_TOES_UP))
 
     def _sole_room(self, side, rot, axis, sense):
@@ -1938,7 +1995,7 @@ class Walk(object):
         pivot, axis = geometry
         # Ground time past 1 stretches the trailing leg: its foot may stand that much higher on its toes
         ks = (ctx.get("ks") or {}).get(side) or ctx.get("k") or DEFAULTS
-        knob = ks["ground_time"]
+        knob = self._gt(ctx, side)
         stretch = max(1.0, knob) if sense > 0.0 else 1.0
         # Foot flat: a foot on the ground after its strike stays flat on it - rolled back on its heel for a leg
         # that falls short (a raised pelvis) its toes stood up off the floor and wavered (2026-10-16, a sword
@@ -2373,7 +2430,8 @@ class Walk(object):
         # knee near straight turns tens of degrees for millimetres of reach - so it is kept STRETCH_REACH of
         # its length at most and the pelvis sinks the rest (at 0.993, the walk's own straightest, it clicked:
         # 2026-10-13)
-        stretch = dict((s, min(1.0, max(0.0, ks[s]["ground_time"] - 1.0) / GROUND_STRETCH)) for s in SIDES)
+        ctx["gt"] = dict((s, self.ground_factor(s, ks[s])) for s in SIDES)
+        stretch = dict((s, min(1.0, max(0.0, ctx["gt"][s] - 1.0) / GROUND_STRETCH)) for s in SIDES)
         ctx["reach"] = dict((s, r + (min(r, STRETCH_REACH) - r) * stretch[s]) for s, r in self.reach.items())
         # Knee bend on stance: a PLANTED leg straightens this far at most (_leg_reach). Not the swinging leg: a
         # run's leg reaches forward nearly straight before it lands, and capped too it was drawn in and held the
@@ -2389,7 +2447,7 @@ class Walk(object):
         ctx["frame"], ctx["grown"] = P / float(n), None
         ctx["locks"], held = self._locks(ctx) if ctx["placement"] > 0.0 else ({}, 0.0)
         ctx["ground"] = {}
-        timed = any(ks[s]["ground_time"] != 1.0 for s in SIDES)
+        timed = any(ks[s]["ground_time"] != 1.0 or ks[s]["duty"] > 0.0 for s in SIDES)
         if not self.placement_note and (ctx["placement"] > 0.0 or timed):
             ctx["grown"] = self._growth(ctx)        # Ground time retimes the feet with or without Foot placement
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
@@ -2459,6 +2517,9 @@ class Walk(object):
                 "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
                 "drop": [float(d) for d in drop], "short": short, "swing_in": ctx["swing_in"],
                 "lag": ctx["lag"] * n / float(P), "knobs": k, "ground": ctx["ground"],
+                "contacts": ({} if self.placement_note else
+                             dict((s, [(a * n / float(P), b * n / float(P)) for a, b in
+                                       self.placed_contact(s, ctx["placement"], ctx["grown"])]) for s in SIDES)),
                 "placement": {"on": ctx["placement"] > 0.0, "slide": held, "note": self.placement_note,
                               "planted": dict((side, [self.planted(side, self._clock(side, tau, ctx), ctx)
                                                       for _, tau in times[:-1]]) for side in SIDES),
@@ -2641,15 +2702,19 @@ class Walk(object):
         # asked for none would move the foot's still point
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         for side in SIDES:
-            if ks[side]["ground_time"] > 1.0:
+            if self._gt(ctx, side) > 1.0:
                 up, back = np.maximum(needs[side], 0.0), np.maximum(-needs[side], 0.0)
                 sigma = LOWER_BLUR * n / self.strides
                 needs[side] = smooth_cover(up, sigma) - smooth_cover(back, sigma)
             needs[side] = released(needs[side], ROLL_RELEASE * n / self.strides)
-            if ks[side]["ground_time"] <= 1.0:
+            if self._gt(ctx, side) <= 1.0:
                 needs[side] = rate_limited(needs[side], math.radians(ROLL_RATE) * self.strides / float(n))
+        asked = self._asked_rolls(legs, ctx)
+        if asked is not None:
+            for side in SIDES:
+                needs[side] = needs[side] + asked[side]
         ctx["rolls"] = (dict((side, np.append(needs[side], needs[side][0])) for side in SIDES)
-                        if ctx["placement"] > 0.0 else None)
+                        if ctx["placement"] > 0.0 or asked is not None else None)
         # Near straight a knee turns tens of degrees for a millimetre of reach, so a leg held exactly at its
         # limit by the drop's cover, or a swinging leg clamped there, snaps (2026-10-16, a raised pelvis): once
         # the legs fall short anywhere (by MARGIN_FULL cm, eased in from nothing - so the defaults are untouched)
@@ -2681,7 +2746,7 @@ class Walk(object):
             out = np.zeros(n)
             for side in SIDES:     # a foot just off the ground holds the pelvis no lower than its stance did...
                 cap = held[side].max()
-                if (ctx.get("ks") or {}).get(side, ctx["k"])["ground_time"] > 1.0:
+                if self._gt(ctx, side) > 1.0:
                     cap = np.inf   # ...unless Ground time held it longer: its swing leaves from further behind
                 out = np.maximum(out, np.maximum(held[side], np.minimum(aloft[side], cap)))
             return out
@@ -2701,6 +2766,46 @@ class Walk(object):
                 reel[side] = np.append(reel[side], reel[side][0])
             ctx["reel"] = reel
         return np.append(drop, drop[0])
+
+    def roll_profiles(self, side, t, k):
+        """Push-off's and Heel strike's shares (0..1) at foot time t: (push, heel strike). Push-off comes in from
+        PUSH_FROM of the contact to its lift-off and goes over the first SWING_EASE of the swing; Heel strike comes
+        in over the last SWING_EASE of the swing and goes from the strike to the walk's own foot-flat + slap
+        (at least SLAP_LEAST of a stride)."""
+        i, r = self._contact_at(side, t)
+        hs, to = self.contact[side][i]
+        A, swing = to - hs, self.swing_len[side][i]
+        ease = SWING_EASE * swing
+        smooth = lambda u: u * u * (3.0 - 2.0 * u)
+        clamp = lambda u: min(max(u, 0.0), 1.0)
+        least = SLAP_LEAST * self.P / float(self.strides)
+        slap = lambda m: max(self.flat_after[side][m] + float(k.get("slap", 0.0)), least)
+        if r <= A:
+            push = smooth(clamp((r - PUSH_FROM * A) / max((1.0 - PUSH_FROM) * A, 1e-9)))
+            strike = 1.0 - smooth(clamp(r / slap(i)))
+        else:
+            after = r - A
+            push = 1.0 - smooth(clamp(after / max(ease, 1e-9)))
+            before = swing - after
+            strike = smooth(clamp(1.0 - before / max(ease, 1e-9)))
+        return push, strike
+
+    def _asked_rolls(self, legs, ctx):
+        """Push-off's and Heel strike's rolls on every frame ({side: radians, + heel up}), or None when neither
+        is asked (they need the contacts: not on a walk Foot placement cannot read)."""
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        if self.placement_note or not any(ks[s]["push"] or ks[s]["heel_strike"] for s in SIDES):
+            return None
+        out = {}
+        for side in SIDES:
+            push, strike = math.radians(ks[side]["push"]), math.radians(ks[side]["heel_strike"])
+            roll = np.zeros(len(legs))
+            for f, frame in enumerate(legs):
+                if push or strike:
+                    a, b = self.roll_profiles(side, frame[side][0], ks[side])
+                    roll[f] = push * a - strike * b
+            out[side] = roll
+        return out
 
     def _swing_excess(self, times, legs, ctx, drop, margin, only=None):
         """How far (cm, a frame) a swinging foot's ankle lies past its leg's reach (less `margin` of it) from the

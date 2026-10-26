@@ -157,5 +157,110 @@ class DecompositionTests(unittest.TestCase):
         self.assertAlmostEqual(regular_p2p(w, y), 4.0, delta=0.05)
 
 
+def pitches(w, r, side):
+    """The foot's sole pitch on each frame of a result, degrees (+ heel up, - toes up)."""
+    fo = w.index["foot_" + side]
+    return np.array([math.degrees(w.sole_pitch(side, r.worlds[fo, f, :3, :3])) for f in range(r.frames)])
+
+
+def added_near(w, a, b, side, at, before, after):
+    """The most the foot's pitch changes from result a to result b (b - a, signed by the larger) on the frames
+    from `before` frames before each contact's `at` ("hs" / "to") to `after` after it, the mean over the
+    contacts, degrees."""
+    pa, pb, n = pitches(w, a, side), pitches(w, b, side), a.frames
+    out = []
+    for hs, to in b.info["contacts"][side]:
+        c = int(round(hs if at == "hs" else to))
+        d = [pb[(c + i) % n] - pa[(c + i) % n] for i in range(-before, after + 1)]
+        out.append(max(d, key=abs))
+    return float(np.mean(out))
+
+
+class TimingTests(unittest.TestCase):
+
+    def test_contacts_are_reported_in_the_new_cycle_s_frames(self):
+        w = tw.walk()
+        r = w.evaluate({"tempo": 48})
+        self.assertEqual(r.frames, 48)
+        for side in "lr":
+            self.assertEqual(len(r.info["contacts"][side]), len(w.contact[side]))
+            for hs, to in r.info["contacts"][side]:
+                self.assertGreater(to, hs)
+
+    def test_duty_sets_each_contact_directly(self):
+        w = tw.walk()
+        r = w.evaluate({"duty": 0.68})
+        stride = r.frames / float(w.strides)
+        for side in "lr":
+            for hs, to in r.info["contacts"][side]:
+                self.assertAlmostEqual((to - hs) / stride, 0.68, delta=1e-6)
+            self.assertAlmostEqual(r.info["ground"][side][0][1], 0.68, delta=1e-6)
+
+    def test_duty_shortens_too(self):
+        w = tw.walk()
+        r = w.evaluate({"duty": 0.55})
+        stride = r.frames / float(w.strides)
+        for side in "lr":
+            for hs, to in r.info["contacts"][side]:
+                self.assertAlmostEqual((to - hs) / stride, 0.55, delta=1e-6)
+
+    def test_duty_per_side(self):
+        w = tw.walk()
+        r = w.evaluate({"duty_l": 0.7})
+        stride = r.frames / float(w.strides)
+        own = w.evaluate({})
+        for (hs, to), (hs0, to0) in zip(r.info["contacts"]["r"], own.info["contacts"]["r"]):
+            self.assertAlmostEqual(to - hs, to0 - hs0, delta=1e-6)
+        self.assertAlmostEqual((r.info["contacts"]["l"][0][1] - r.info["contacts"]["l"][0][0]) / stride, 0.7,
+                               delta=1e-6)
+
+    def test_push_lifts_the_heel_at_the_toe_off(self):
+        w = tw.walk()
+        a, b = w.evaluate({}), w.evaluate({"push": 15.0})
+        self.assertAlmostEqual(added_near(w, a, b, "l", "to", 2, 1), 15.0, delta=0.5)
+
+    def test_push_keeps_the_ball_on_the_ground(self):
+        w = tw.walk()
+        b = w.evaluate({"push": 20.0})
+        a = w.evaluate({})
+        ball = w.index["ball_l"]
+        for hs, to in b.info["contacts"]["l"]:
+            f = int(math.floor(to)) % b.frames
+            ha = a.worlds[ball, f, 3, :3] @ w.up
+            hb = b.worlds[ball, f, 3, :3] @ w.up
+            self.assertLess(abs(hb - ha), 0.05)
+
+    def test_heel_strike_lifts_the_toes_at_the_contact(self):
+        w = tw.walk()
+        a, b = w.evaluate({}), w.evaluate({"heel_strike": 10.0})
+        self.assertAlmostEqual(-added_near(w, a, b, "r", "hs", 1, 1), 10.0, delta=0.5)
+
+    def test_heel_strike_is_gone_by_the_foot_flat(self):
+        w = tw.walk()
+        a, b = w.evaluate({}), w.evaluate({"heel_strike": 10.0})
+        pa, pb = pitches(w, a, "r"), pitches(w, b, "r")
+        n = a.frames
+        for hs, to in b.info["contacts"]["r"]:
+            mid = int(round(0.5 * (hs + to))) % n
+            self.assertLess(abs(pb[mid] - pa[mid]), 0.05)
+
+    def test_slap_slows_the_toes_coming_down(self):
+        w = tw.walk()
+        fast = pitches(w, w.evaluate({"heel_strike": 10.0}), "r")
+        slow = pitches(w, w.evaluate({"heel_strike": 10.0, "slap": 4.0}), "r")
+        base = pitches(w, w.evaluate({}), "r")
+        hs = int(round(w.evaluate({}).info["contacts"]["r"][0][0]))
+        n = len(base)
+        later = sum(-(slow[(hs + d) % n] - base[(hs + d) % n]) for d in range(1, 6))
+        sooner = sum(-(fast[(hs + d) % n] - base[(hs + d) % n]) for d in range(1, 6))
+        self.assertGreater(later, sooner + 1.0)
+
+    def test_rolls_work_without_foot_placement(self):
+        w = tw.walk()
+        a = w.evaluate({"foot_placement": 0.0})
+        b = w.evaluate({"foot_placement": 0.0, "push": 15.0})
+        self.assertAlmostEqual(added_near(w, a, b, "l", "to", 2, 1), 15.0, delta=0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
