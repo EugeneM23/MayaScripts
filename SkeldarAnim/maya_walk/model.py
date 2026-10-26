@@ -135,6 +135,12 @@ KNOBS = (
     # Foot placement's double support: at least a new frame of both feet down at every handoff (1), or only as far
     # as the trailing leg reaches (0) - forced, a jog's 4 % flights were held 1.75 frames and sank it 16 cm (sadda)
     ("double_force", 1.0, 0.0, 1.0),
+    # Height's step: a raised pelvis the legs cannot reach shortens the step (1) toward HEIGHT_STEP_FLOOR until
+    # it keeps all but HEIGHT_KEEP of the raise - only where a shorter step helps (2026-10-26); 0 the step as asked
+    ("height_step", 0.0, 0.0, 1.0),
+    # how far a raised Height straightens the planted knees (0..1 of STRAIGHT_KNEE): evaluate sets it from what the
+    # raise needs (_height_plan)
+    ("height_straighten", 0.0, 0.0, 1.0),
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
@@ -164,6 +170,13 @@ WEIGHT_WARP = 0.3         # the bob's clock: beta = this . weight
 WEIGHT_WARP_AFTER = 0.05  # slowest this share of a cycle after each low
 WEIGHT_LAG = 1.0          # frames of overlap per unit of weight
 LOWER_BLUR = 0.06         # the reach's drop of the pelvis, smoothed over this share of a cycle (sigma)
+PLANTED_SOFT = 0.012      # knee_soft for a planted leg: it eases into its limit from this share below it
+STRAIGHT_KNEE = 12.0      # deg: a raised Height lets a planted knee straighten to this...
+STRAIGHT_FULL = 10.0      # ...all of it once Height asks this many cm
+STRAIGHT_SOFT = 1.0       # the share of the soft zone a full straightening takes away
+HEIGHT_KEEP = 0.2         # Height's step: a raise losing more than this share of itself to the legs' reach...
+HEIGHT_STEP_FLOOR = 0.6   # ...shortens the step (Height's own, not the animator's Step) to this at most
+HEIGHT_STEP_GAIN = 1.5    # cm: ...when the shortest step would keep at least this much more of the raise
 
 # the legs and the pelvis (docs/superpowers/specs/2026-10-12-walk-legs-design.md)
 TWIST_FREE_DEG = 15.0     # the shin's own twist a knee may keep against its foot; past it they meet (Knee <-> foot)
@@ -941,6 +954,10 @@ class Walk(object):
             self.aspect_phase["bob"] = 2.0 * math.pi * BOB_LOW_AFTER - math.pi
         self.leg_parts = dict((s, (float(np.linalg.norm(self.lt[idx["calf_" + s]], axis=1).mean()),
                                    float(np.linalg.norm(self.lt[idx["foot_" + s]], axis=1).mean()))) for s in SIDES)
+        self.straight_reach = {}
+        for s, (l1, l2) in self.leg_parts.items():
+            c = math.cos(math.radians(STRAIGHT_KNEE))
+            self.straight_reach[s] = math.sqrt(l1 * l1 + l2 * l2 + 2.0 * l1 * l2 * c) / (l1 + l2)
         self.hinge = {}
         self.arm_dir = {}
         self.arm_set =set(j for j, kind in enumerate(self.kind) if kind in ("arm", "finger"))
@@ -2264,7 +2281,22 @@ class Walk(object):
         reach = ctx.get("stance_reach")
         if reach is not None and reach[side] < ctx["reach"][side] and self.planted(side, t, ctx):
             return reach[side]
-        return ctx.get("reach", self.reach)[side]
+        out = ctx.get("reach", self.reach)[side]
+        share = self._straighten(ctx)
+        if share > 0.0 and self.planted(side, t, ctx):
+            # Height raised: a planted leg may straighten toward STRAIGHT_KNEE (a crouched pose's knees held the
+            # pelvis down whatever Height asked, 2026-10-26); all of it at STRAIGHT_FULL cm
+            out += (max(out, self.straight_reach[side]) - out) * share
+        return out
+
+    def _straighten(self, ctx):
+        """How far (0..1) a raised Height lets planted legs straighten past the walk's own: Height over
+        STRAIGHT_FULL, none when Knee bend caps the stance or Height is not raised."""
+        k = ctx["k"]
+        ks = ctx.get("ks") or {"l": k, "r": k}
+        if k["pelvis_height"] <= 0.0 or any(ks[side]["knee_bend"] > 0.0 for side in SIDES):
+            return 0.0
+        return min(1.0, k["pelvis_height"] / STRAIGHT_FULL) * k["height_straighten"]
 
     def own_stretch(self, side, t, lower=0.0):
         """The source leg's hip-to-ankle distance over its length at foot time t - from a hip `lower` cm lower
@@ -2283,7 +2315,15 @@ class Walk(object):
         soft = ks[side].get("knee_soft", 0.0)
         if soft <= 0.0:
             return reach
-        return min(reach, max(self.own_stretch(side, t, ctx.get("pose_lower", 0.0)), reach * (1.0 - soft)))
+        if self.planted(side, t, ctx):
+            # a planted leg straightens to PLANTED_SOFT of its limit: held at its own (or the pose's crouched)
+            # stretch, no Height could straighten a planted knee - the sword walked on 40 deg knees (2026-10-26)
+            soft = min(soft, PLANTED_SOFT)
+        out = min(reach, max(self.own_stretch(side, t, ctx.get("pose_lower", 0.0)), reach * (1.0 - soft)))
+        share = self._straighten(ctx)
+        if share > 0.0 and self.planted(side, t, ctx):
+            out += (reach - out) * share * STRAIGHT_SOFT    # a raised Height straightens it: the soft zone gives way
+        return out
 
     def swing_at(self, side, tau):
         """How far the foot hangs off its shin at source time tau: swing_weight of its flight's progress (0 on
@@ -2533,11 +2573,56 @@ class Walk(object):
         return out
 
     # -- the new cycle --
-    def evaluate(self, given=None, pose=None):
+    def _height_plan(self, given, pose, k):
+        """What a raised Height may take from the legs to reach (the asks of 2026-10-26): (the planted knees'
+        straightening, 0..1 of STRAIGHT_KNEE; the step's share, HEIGHT_STEP_FLOOR..1). Each only when the raise
+        loses more than HEIGHT_KEEP of itself to the legs' reach (the pelvis's mean drop, read on the drop alone)
+        without it - straightened knees near their limit click, a shorter step is a shorter walk: knees first,
+        then the step, and the step only where it helps (a walk already on straight legs mid-stance gains
+        nothing by it) and the animator left Step alone (height_step)."""
+        raised = k["pelvis_height"]
+        ks = sided(k)
+        if raised <= 0.0 or self.placement_note or not any(ks[s]["knee_soft"] > 0.0 for s in SIDES):
+            return k["height_straighten"], 1.0     # the bare engine (no physics helpers): the old rule
+        keep = HEIGHT_KEEP * raised
+        def eaten(straight, f):
+            trial = dict(given or {}, stride=k["stride"] * f, height_step=0.0, height_straighten=straight)
+            return float(np.mean(self.evaluate(trial, pose, _drop_only=True)))
+        bare = eaten(0.0, 1.0)
+        if bare <= keep:
+            return 0.0, 1.0
+        straight = 1.0
+        full = eaten(1.0, 1.0)
+        if full <= keep:                          # straightened enough: how little is enough
+            half = eaten(0.5, 1.0)
+            straight = 0.5 if half <= keep else 1.0
+            return straight, 1.0
+        if bare - full < 0.25 * keep:
+            straight = 0.0                        # straightening did not help: the knees keep their soft zone
+        if k["height_step"] <= 0.0:
+            return straight, 1.0
+        floor = eaten(straight, HEIGHT_STEP_FLOOR)
+        now = full if straight else bare
+        if now - floor < max(HEIGHT_STEP_GAIN, 0.1 * raised):     # the step bought too little
+            return straight, 1.0
+        target = floor + HEIGHT_KEEP * (now - floor)
+        lo, hi = HEIGHT_STEP_FLOOR, 1.0
+        for _ in range(3):
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if eaten(straight, mid) <= target else (lo, mid)
+        return straight, 1.0 - (1.0 - lo) * k["height_step"]
+
+    def evaluate(self, given=None, pose=None, _drop_only=False):
         """The cycle rebuilt from knobs (the spec's model); own_knobs() give the source back. `pose` (from
         walkpose.prepare: {"spine": {joint: local 3x3}, "head": 3x3, "pelvis": 3x3, "height": cm over the
         travel line, "knee_turn": {side: radians}}) replaces the mean pose the knob `pose`'s share."""
         k = knobs(**(given or {}))
+        if _drop_only:                      # the Height plan's own trials (_height_plan): the drop, nothing more
+            height_straighten, height_scale = k["height_straighten"], 1.0
+        else:
+            height_straighten, height_scale = self._height_plan(given, pose, k)
+        if height_scale < 1.0 or height_straighten != k["height_straighten"]:
+            k = knobs(**dict(given or {}, stride=k["stride"] * height_scale, height_straighten=height_straighten))
         P = self.P
         n = max(int(round(k["tempo"])), 4) if k["tempo"] >= 1.0 else P
         ctx = {"k": k, "ex": k["exaggeration"], "travel2": self.travel * k["stride"],
@@ -2663,6 +2748,8 @@ class Walk(object):
                     drop = self._lowering(times, ctx)
                     balance["limited"] = lo
             balance["carry"] = float(np.linalg.norm(carry, axis=1).max()) if ctx["carry"] is not None else 0.0
+        if _drop_only:
+            return np.array(drop[:-1])
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
         short, ctx["swing_in"] = 0.0, 0.0
         for f, (phi, tau) in enumerate(times):
@@ -2684,6 +2771,7 @@ class Walk(object):
         flat = ctx["travel2"] - np.dot(ctx["travel2"], self.up) * self.up
         info = {"frames": n, "stride_cm": float(np.linalg.norm(flat)) / (2.0 * self.strides),
                 "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
+                "height_step": height_scale, "height_straighten": height_straighten,
                 "drop": [float(d) for d in drop], "short": short, "swing_in": ctx["swing_in"],
                 "lag": ctx["lag"] * n / float(P), "knobs": k, "ground": ctx["ground"],
                 "contacts": ({} if self.placement_note else
@@ -3607,6 +3695,10 @@ def describe(result):
         text += " in place" if info["in_place"] >= 1.0 else " (%.0f %% in place)" % (100.0 * info["in_place"])
     if info["lowered"] > 0.05:
         text += " | pelvis lowered up to %.1f cm at the contacts for the reach" % info["lowered"]
+    if info.get("height_straighten", 0.0) > 0.0 and info["knobs"]["pelvis_height"] > 0.0:
+        text += " | the planted knees straightened for the Height"
+    if info.get("height_step", 1.0) < 0.999:
+        text += " | Height shortened the step to %.0f %% (the legs could not reach it)" % (100.0 * info["height_step"])
     if info["short"] > 0.005:
         text += " | a foot falls %.1f cm short of its step" % info["short"]
     if info.get("swing_in", 0.0) > 0.5:

@@ -1576,6 +1576,46 @@ class PelvisHeightTests(unittest.TestCase):
         self.assertLess(float(one["l"].min()), math.radians(-5.0))
         self.assertGreaterEqual(float(one["r"].min()), 0.0)
 
+    def test_the_bare_engine_keeps_its_rule_for_a_raised_pelvis(self):
+        """Height's plan needs the helpers (knee_soft): the bare engine neither straightens the knees nor
+        shortens the step - the own knobs give the clip back."""
+        r = walk().evaluate({"balance": 0.0, "pelvis_height": 12.0, "height_step": 1.0})
+        self.assertEqual((r.info["height_straighten"], r.info["height_step"]), (0.0, 1.0))
+
+    def test_a_raised_pelvis_straightens_the_knees_then_shortens_the_step(self):
+        """«Straighten the knees, and when the legs still can't reach, let Height shorten the step by itself»
+        (2026-10-26): with the helpers on, a raise past the legs' reach keeps most of itself, where with neither
+        (STRAIGHT_FULL out of reach, height_step 0) the legs ate nearly all of it; a Step the animator set
+        (height_step 0) is never shortened, the knees still straighten."""
+        for kw in ({}, {"slip": 6.0}, {"stance": 0.5, "lift": 20.0}):
+            w = walk(**kw)
+            pelvis = w.index["pelvis"]
+            on = {"balance": 0.0, "knee_soft": 0.04, "height_step": 1.0}
+            level = float(np.mean(w.evaluate(dict(on, pelvis_height=0.0)).worlds[pelvis, :-1, 3, 1]))
+            rise = lambda r: float(np.mean(r.worlds[pelvis, :-1, 3, 1])) - level
+            planned = w.evaluate(dict(on, pelvis_height=12.0))
+            self.assertGreater(rise(planned), 0.8 * 12.0, kw)
+            self.assertLess(planned.info["height_step"], 1.0, kw)
+            self.assertGreaterEqual(planned.info["height_step"], wm.HEIGHT_STEP_FLOOR, kw)
+            pinned = w.evaluate(dict(on, pelvis_height=12.0, height_step=0.0))
+            self.assertEqual(pinned.info["height_step"], 1.0, kw)
+            self.assertAlmostEqual(pinned.info["stride_cm"], planned.info["stride_cm"] / planned.info["height_step"],
+                                   places=6, msg=kw)
+            keep = wm.STRAIGHT_FULL
+            try:
+                wm.STRAIGHT_FULL = 1e9
+                neither = w.evaluate(dict(on, pelvis_height=12.0, height_step=0.0))
+            finally:
+                wm.STRAIGHT_FULL = keep
+            self.assertLess(rise(neither), 0.25 * 12.0, kw)
+            self.assertGreater(rise(pinned), rise(neither) + 0.3, kw)       # the knees alone keep some
+
+    def test_a_lowered_pelvis_is_left_alone(self):
+        """Only a raise is planned: a lowered pelvis changes neither the knees nor the step."""
+        w = walk()
+        r = w.evaluate({"balance": 0.0, "knee_soft": 0.04, "height_step": 1.0, "pelvis_height": -8.0})
+        self.assertEqual((r.info["height_straighten"], r.info["height_step"]), (0.0, 1.0))
+
     def test_a_raised_pelvis_rolls_the_feet_without_a_flip(self):
         """Pelvis height past what the stance legs reach (2026-10-16, «сильно дергаются колени»): the foot rolled
         toes up over its heel, then heel up over its ball, flipping 15-22 deg in one frame at the heel-to-ball

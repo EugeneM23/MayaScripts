@@ -801,6 +801,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["lock_skim"] = 1.0
         e["balance_reach"] = 1.0
         e["double_force"] = 0.0
+        e["height_step"] = 0.0 if "step" in pins else 1.0       # Height shortens a step nobody set
         e["root_sway"] = 0.0 if get("root_on_line") >= 0.5 else 1.0
         whip = min(max(get("whip"), 0.0), 1.0)
         on = 1.0 if whip > 0.0 else 0.0
