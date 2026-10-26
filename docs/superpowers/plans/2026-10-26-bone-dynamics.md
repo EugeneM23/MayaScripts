@@ -47,10 +47,10 @@ Test `tests/test_dynamics_model.py`.
   direction inside the cone alone and puts one outside on its edge; each push moves a point inside to the
   surface plus its radius and leaves one outside alone; `noise` with `period` P is periodic in t and has RMS
   ≈ 1 over a period; the module imports nothing but numpy / stdlib (subprocess).
-- [ ] **Step 2: run, see them fail.**
-- [ ] **Step 3: implement** (Rodrigues for `turn_between`: `v = a×b, c = a·b`, column form `I + [v]× + [v]×² /(1+c)`,
+- [x] **Step 2: run, see them fail.**
+- [x] **Step 3: implement** (Rodrigues for `turn_between`: `v = a×b, c = a·b`, column form `I + [v]× + [v]×² /(1+c)`,
   transposed for rows; `c < -1 + 1e-9`: a half turn about any perpendicular).
-- [ ] **Step 4: run, see them pass. Step 5: commit.**
+- [x] **Step 4: run, see them pass. Step 5: commit.**
 
 ### Task 2: the simulation (`model.simulate`, no loop)
 
@@ -73,7 +73,7 @@ The step (every tail at once, flattened over the chains, a parent index per join
 Out: `R_new = R_anim @ turn_between(d_anim, d_sim)`, the pivot of member i>0 at the simulated tail of
 member i-1. Inputs interpolated linearly between frames for the substeps.
 
-- [ ] **Step 1: tests** - (a) a chain with gravity 0, wind none, a still animation stays on the animation to
+- [x] **Step 1: tests** - (a) a chain with gravity 0, wind none, a still animation stays on the animation to
   1e-9; (b) gravity 1, stiffness 0, a horizontal chain hangs straight down after 300 frames (every direction
   within 1° of -Y); (c) lengths equal the animation's on every frame to 1e-6; (d) stiffness 1 keeps a
   gravity-1 chain within 15° of its pose, stiffness 0 lets it hang; (e) limit 20 keeps every joint within
@@ -83,7 +83,7 @@ member i-1. Inputs interpolated linearly between frames for the substeps.
   toward +X; a chain pointing along the wind is not pushed; (j) a root that jumps 50 cm along X: with
   inertia 1 the chain keeps its shape, with 0 it lags; (k) preroll 30 lets a chain start sagged; (l) a tail
   inside a collider at the first frame ignores it (`info["ignored"]`).
-- [ ] **Steps 2-5** as Task 1.
+- [x] **Steps 2-5** as Task 1.
 
 ### Task 3: Loop
 
@@ -92,11 +92,11 @@ member i-1. Inputs interpolated linearly between frames for the substeps.
 `SETTLE_CM` 0.01 between cycles (≤ `MAX_CYCLES` 8), records one more, spreads the miss
 (`exp(-miss * f / T)` on every direction), `info["cycles"]`, `info["settled"]`.
 
-- [ ] **Step 1: tests** - a pendulum chain under a swinging root, Loop: the step from the last frame to the
+- [x] **Step 1: tests** - a pendulum chain under a swinging root, Loop: the step from the last frame to the
   first (directions) no larger than the largest step inside the cycle × 1.5; `info["settled"]` True within
   8 cycles at damping 0.2; damping 0 reports not settled when it does not; wind is periodic (noise at t and
   t + P equal); a closed range (last = first + travel) is detected; travel extrapolated otherwise.
-- [ ] **Steps 2-5** as Task 1.
+- [x] **Steps 2-5** as Task 1.
 
 ### Task 4: shared writers (`overlap.deltas_for`, `layerbake.write_deltas(layer=)`)
 
@@ -110,7 +110,7 @@ tests in `tests/test_tools_overlap.py` / `tests/test_tools_layerbake.py` (existi
   (`cutKey`) and keyed again, its weight / mute untouched; plugs of the layer not in `tracks` removed
   from it.
 
-- [ ] Steps: the existing Overlap tests stay green; a fake-cmds test that `layer=` reuses the layer and
+- [x] Steps: the existing Overlap tests stay green; a fake-cmds test that `layer=` reuses the layer and
   clears its keys; commit.
 
 ### Task 5: the setup (`setup.py`)
@@ -121,7 +121,7 @@ tests in `tests/test_tools_overlap.py` / `tests/test_tools_layerbake.py` (existi
 `auto_body(node) -> (paths, refusal)`, `add_floor(node) -> path`, `wind()`, `add_wind() -> path`,
 `redraw(collider)`, `layer_of(chain)`, `layers_of(chains)`, `carrier_of(node)`.
 
-- [ ] Steps: fake-cmds unit tests for names, the settings round trip and refusals; the scene behaviour
+- [x] Steps: fake-cmds unit tests for names, the settings round trip and refusals; the scene behaviour
   is proven in Task 8's verify; commit.
 
 ### Task 6: the press (`run.py`)
@@ -131,7 +131,7 @@ tests in `tests/test_tools_overlap.py` / `tests/test_tools_layerbake.py` (existi
 dropped by the key-edit / undo / redo / scene callbacks); `inputs(...)` to the model; the layer written
 per chain (`Dynamics_<root leaf>`, `skeldarDynamics` = the chain's UUID, reused when standing).
 
-- [ ] Steps: fake-cmds tests for the range, the line and the refusals; the bake proven in Task 8; commit.
+- [x] Steps: fake-cmds tests for the range, the line and the refusals; the bake proven in Task 8; commit.
 
 ### Task 7: the card and the hub
 
@@ -139,17 +139,17 @@ per chain (`Dynamics_<root leaf>`, `skeldarDynamics` = the chain's UUID, reused 
 `SkeldarAnim/maya_hotkeys.py` (rows), `SkeldarAnim/maya_hubicons.py` (`wind`), `SkeldarAnim/install.py`
 (payload row); Test `tests/test_dynamics_panel.py`, the hub / hotkeys / payload tests.
 
-- [ ] Steps: the card builds on a fake cmds with every control the spec lists; a released knob writes the
+- [x] Steps: the card builds on a fake cmds with every control the spec lists; a released knob writes the
   picked chains' settings and calls `run.simulate` for the baked ones; presses call through; commit.
 
 ### Task 8: proof and record
 
 **Files:** Create `docs/superpowers/plans/verify_dynamics.py`; Modify `CLAUDE.md`.
 
-- [ ] mayapy standalone: a prop chain under a keyed parent, an FK finger chain on Manny_Rig, a capsule, a
+- [x] mayapy standalone: a prop chain under a keyed parent, an FK finger chain on Manny_Rig, a capsule, a
   floor, the wind; the layer plays the solver's frames to 0.001°; base untouched; a re-simulation keeps the
   layer and its weight; Loop's seam; one undo; Remove; Delete character takes the group.
-- [ ] the whole unit suite; CLAUDE.md section; commit.
+- [x] the whole unit suite; CLAUDE.md section; commit.
 
 ## What the build changed in Tasks 1-3 (2026-10-26)
 
@@ -176,4 +176,6 @@ The step differs from the plan's in three places, each measured:
   child's goal, every member index of every substep). 10 chains x 8 joints x 230 frames x 4
   substeps with a capsule and wind: ~2.5 s.
 
-Next: Tasks 4-8 as written above.
+Tasks 4-8 done the same day (2026-10-26), each committed; what they changed is the spec's addendum.
+`verify_dynamics.py` 39/39 mayapy standalone; 78 unit tests of Dynamics; the whole suite 8998, the
+known `test_chat_deploy.Keys` failing. Not pushed; not seen in a GUI Maya.

@@ -185,7 +185,8 @@ def write_settings(chain, s):
 
 def carrier_of(node):
     """What Inertia leaves the travel of for a chain rooted at `node`: the rig's Main, else the
-    skeleton's top joint, else the top ancestor."""
+    skeleton's top joint above it, else the top ancestor (a joint chain hanging from a prop: the
+    prop's top, never the chain's own root)."""
     import maya_rigs
     path = _long(node)
     rig = maya_rigs.rig_of(path, maya_rigs.rigs())
@@ -193,7 +194,7 @@ def carrier_of(node):
         main = _long(maya_rigs.node(rig, "Main"))
         if main:
             return main
-    top, walk = None, path
+    top, walk = None, (cmds.listRelatives(path, parent=True, fullPath=True) or [None])[0]
     while walk:
         if cmds.nodeType(walk) == "joint":
             top = walk

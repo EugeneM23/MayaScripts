@@ -203,3 +203,34 @@ Interface checklist (docs/interface-motion.md §8) - the card is cmds controls u
   stands in), a capsule on a bone the chain swings into, a floor, the wind; the baked layer plays what
   the solver said to 0.001 deg; the base untouched; a second Simulate replaces the curves and keeps the
   layer's weight; Loop's seam; one undo; Remove; Delete character takes the group.
+
+## Addendum: what the build changed (2026-10-26)
+
+- **The step (§4, 5-6) is not Jacobi.** Read from the parents' UNPROJECTED points, the directions of
+  points falling together never turned: a horizontal chain hung by its first joint only. The lengths
+  are now four equal-mass Gauss-Seidel passes (`RELAX`), then the exact follow-the-leader projection
+  root to tip, one member index at a time across every chain (pull, cone, length from the parent's
+  NEW place). Plain follow-the-leader gained energy at 16 substeps and differed by 44 cm between 4 and
+  16 substeps over 2 s; Mueller 2012's velocity fix was tried and damped a gentle swing harder than
+  nothing. With the passes: stable, 6.7 cm.
+- **Contacts are solved inside that walk, exactly**: the tail onto the circle where its bone's length
+  sphere meets the collider's sphere (round the capsule's nearest axis point) or plane, nearest where
+  it was (`_onto`). A push and then the length took most of the push back (0.055 cm left in a resting
+  contact after 3 passes); now 0.0 cm, the lengths to 5e-15.
+- **Dynamics spaces stand where the weapon spaces do** (`weaponspace.ensure_marked_space`): in the
+  rig's AdvancedSkeleton group, else the character group, else at world level - not in the Dynamics
+  group. Delete character takes them either way. **A chain collides with its character's colliders
+  and those of no character.**
+- **The carrier**: a rig's Main, else the top joint ABOVE the chain's root, else the root's top
+  ancestor - a joint chain hanging from a prop took its own root (the topmost joint) and Inertia would
+  have removed the chain's whole motion.
+- **The reading**: Simulate always reads afresh; a released knob re-solves the last reading
+  (`reuse=True`). It is dropped by a key edit, an undo, a redo, a new or opened scene, a time unit change.
+- **Loop's input** is decided for every chain together: a range whose last frame repeats its first
+  (that frame is the next cycle's first), else the frame after the range when it repeats the first less
+  the travel (cycled curves), else the first frame moved on by the range's travel. The layer keys the
+  cycle's first frame again at its end, so its curves cycle with the right period.
+- **The range** is the highlight, else the playback range (not the animation range).
+- **Remove** also deletes Maya's BaseAnimation when it was left empty (Scene Tabs' roots never).
+- Proof: 78 unit tests (`test_dynamics_model` 35, `_setup` 18, `_run` 11, `_panel` 10, `_writers` 4);
+  `docs/superpowers/plans/verify_dynamics.py` **39/39 mayapy standalone**. Not seen in a GUI Maya.

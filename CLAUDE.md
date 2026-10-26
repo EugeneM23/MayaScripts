@@ -14284,3 +14284,54 @@ Traps from this build:
   left): a "clipped" button was only the photograph.
 - **A bash-wrapped `powershell -Command "...$i..."` loses every `$`** to bash; put the script in a `.ps1` and run
   it with `-ExecutionPolicy Bypass` (this machine refuses scripts otherwise).
+
+## Dynamics: joint chains that swing after their animation (2026-10-26)
+
+The animator: «Давай сделаем свою систему кинематической симуляции для костей чтобы мы могли удобно
+анимировать всякие висюльки и ткань на костях. Система должна включать в себя коллайдеры, возможность
+зациклить анимацию, ветер и разные настройки гибкости»; asked, all the recommendation: any chain by the
+selection, the setup kept in the scene and baked again, colliders automatic on the body plus by hand, the
+wind an arrow in the scene, our own numpy solver. The guide behind it:
+`docs/superpowers/specs/2026-10-26-bone-dynamics-research.md` (VRM SpringBone, Dynamic Bone, Kawaii
+Physics, with sources). Spec `docs/superpowers/specs/2026-10-26-bone-dynamics-design.md` - **read its
+addendum**; plan beside it. Package `SkeldarAnim/maya_dynamics/` (a payload row); hub section **Dynamics**
+(Animation, after Tail Builder, Tabler `wind`); hotkey rows `window.dynamics`, `dynamics.simulate`,
+`dynamics.add_chain`.
+
+- **The solver** (`model.py`, numpy, a test pins it): every joint's TAIL (the next member's pivot, the
+  last's a virtual tip) a Verlet point - Damping per 1/30 s, gravity and the wind in g, Inertia (the
+  carrier's travel left out) - pulled toward the animated direction carried by its parent's turn
+  (Stiffness, an exact spring share `1 - exp(-k dt^2)`) and caged (Limit). Then four equal-mass length
+  passes (`relax`) and the exact follow-the-leader projection root to tip, one member index at a time
+  across every chain, the colliders solved inside it (`_onto`: the nearest point on the circle where the
+  bone's length sphere meets the collider). A joint starting inside a collider ignores it. A member's
+  rotation is its animated one turned the least onto its new direction (twist kept, lengths exact).
+  Wind: harmonics of the period (periodic in a loop), delayed along the wind. Loop: the cycle again and
+  again to a steady state (the state moved back by the root's travel at each wrap), its seam spread.
+- **The setup** (`setup.py`, markers all `skeldar*`): a chain node `<root>_dyn` in the character's locked
+  `Dynamics` group (members by UUID, settings JSON, the carrier: the rig's Main, else the top joint above
+  the root, else the top ancestor); sphere / capsule colliders (`radius`, `length`, keyable `enabled`) in
+  a dynamics space of their bone (the weapon spaces' rule); Auto body (the Ragdoll's capsules, radii from
+  the skin, a second press replacing them) and a `Floor`; one `Wind` arrow (its +Z, strength / turbulence
+  / gust / frequency keyable, seed). A chain uses its character's colliders and those of no character.
+- **The press** (`run.py`): the picked chains, else the selection's characters' and chains, else every
+  chain; the highlight, else the playback range; one time walk with each chain's own layer MUTED; the
+  reading kept on `sys` for a knob's release (dropped by key edits, undo, redo, a scene, the time unit;
+  Simulate reads afresh); `overlap.deltas_for` (split out of Overlap) turns the solve into rotate deltas on
+  `Dynamics_<root>` (marked with the chain's UUID), written again in place by `layerbake.write_deltas(layer=)`
+  so its weight and mute stay. Loop keys the first frame again at the cycle's end and cycles the curves.
+  One undo chunk; Remove takes the layers and setups (and an emptied BaseAnimation), the colliders stay.
+- **The card** (`panel.py`): the Chains list (multi-select) + Chain / Remove, five presets, a slider and a
+  Tip x field per knob, Colliders (Auto body, + Sphere, + Capsule, + Floor, the selected one's Radius /
+  Length), Wind (+ Wind, its channels at the current frame), Loop / Pre-roll / Substeps, Simulate (the one
+  orange). A released knob writes every picked chain and re-solves the baked ones.
+
+Proof: 78 unit tests (`test_dynamics_model`, `_setup`, `_run`, `_panel`, `_writers`);
+`docs/superpowers/plans/verify_dynamics.py` **39/39 mayapy standalone** - the scene plays the solver to
+0.000001 deg, lengths 0.0, muted the animation exact; a re-solve keeps the layer and its weight; no joint
+inside a capsule or under the floor; the wind; Loop settled, f and f + 24 equal, the seam 11.6 deg
+against 24.1 inside; one undo; Remove; on Manny_Rig an FK finger chain through the FKX joints, Auto body's
+12 capsules and a floor, the game finger moving, Delete character taking it all. 8998 unit tests, the
+known `test_chat_deploy.Keys` failing. **Not seen in a GUI Maya** (the card, the colliders' drawings, a
+real press): the animator's to try after Check update. Not built: chains on chains, an `inside` collider,
+bone-to-bone constraints (skirts), wind from a field, per-joint radius drawn.

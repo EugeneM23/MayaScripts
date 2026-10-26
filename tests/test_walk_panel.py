@@ -789,7 +789,9 @@ class HubTests(unittest.TestCase):
                          ("Walk Builder", "maya_walk.panel", "build_panel", "skeldarHubFrameWalk",
                           "animation", "walk"))
         keys = [s.key for s in maya_hub.SECTIONS]
-        self.assertEqual(keys.index("walk"), keys.index("tailbuilder") + 1)
+        #  after Tail Builder, and Dynamics (2026-10-26) between them
+        self.assertEqual(keys.index("walk"), keys.index("dynamics") + 1)
+        self.assertEqual(keys.index("dynamics"), keys.index("tailbuilder") + 1)
         self.assertEqual(panel.HUB_SECTION, "walk")
 
     def test_the_icons(self):
