@@ -2616,7 +2616,7 @@ class Walk(object):
         """The cycle rebuilt from knobs (the spec's model); own_knobs() give the source back. `pose` (from
         walkpose.prepare: {"spine": {joint: local 3x3}, "head": 3x3, "pelvis": 3x3, "height": cm over the
         travel line, "knee_turn": {side: radians}}) replaces the mean pose the knob `pose`'s share."""
-        k = knobs(**(given or {}))
+        k = asked = knobs(**(given or {}))
         if _drop_only:                      # the Height plan's own trials (_height_plan): the drop, nothing more
             height_straighten, height_scale = k["height_straighten"], 1.0
         else:
@@ -2773,7 +2773,7 @@ class Walk(object):
                 "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
                 "height_step": height_scale, "height_straighten": height_straighten,
                 "drop": [float(d) for d in drop], "short": short, "swing_in": ctx["swing_in"],
-                "lag": ctx["lag"] * n / float(P), "knobs": k, "ground": ctx["ground"],
+                "lag": ctx["lag"] * n / float(P), "knobs": asked, "ground": ctx["ground"],
                 "contacts": ({} if self.placement_note else
                              dict((s, [(a * n / float(P), b * n / float(P)) for a, b in
                                        self.placed_contact(s, ctx["placement"], ctx["grown"])]) for s in SIDES)),

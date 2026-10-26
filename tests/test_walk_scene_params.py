@@ -29,7 +29,7 @@ class FakeCmds(object):
 
 class Patched(unittest.TestCase):
     NAMES = ("_cmds", "load_walk", "read_bones", "evaluated", "channel_values", "write_curves", "keys_print",
-             "_set_memo", "walk_fix", "_Chunk", "_state")
+             "_set_memo", "walk_fix", "walk_keys", "_Chunk", "_state")
 
     def setUp(self):
         self.saved = dict((n, getattr(scene, n)) for n in self.NAMES)
@@ -169,6 +169,7 @@ class Apply(Patched):
         scene.write_curves = lambda values, static, start, in_place=False: (None, {})
         scene.keys_print = lambda root: "keys"
         scene.walk_fix = lambda name: ({}, "")
+        scene.walk_keys = lambda name: ({}, "")
         scene._Chunk = Nothing
         self.state = {"loaded": {}, "target": None}
         scene._state = lambda: self.state

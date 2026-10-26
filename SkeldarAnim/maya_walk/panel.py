@@ -66,6 +66,12 @@ MEAN_UPDATE_BTN = "skeldarWalkMeanUpdate"
 MEAN_DELETE_BTN = "skeldarWalkMeanDelete"
 MEAN_RESET_BTN = "skeldarWalkMeanReset"
 MEAN_NOTE = "skeldarWalkMeanNote"
+#  ... and the cycle's four key poses on four Manny rigs (2026-10-26), taken by the same Update
+KEY_CREATE_BTN = "skeldarWalkKeyCreate"
+KEY_DELETE_BTN = "skeldarWalkKeyDelete"
+KEY_RESET_BTN = "skeldarWalkKeyReset"
+MEAN_CAPTION = "skeldarWalkMeanCaption"
+KEY_CAPTION = "skeldarWalkKeyCaption"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Pick
 CHECKS = {"in_place": IN_PLACE_BOX}
 #  The card's own knobs - the walk's parameters are maya_walk.gait's: the pose's share, In place and the clean's
@@ -163,14 +169,24 @@ TIPS = {
     "mean_create": "Create: a Manny rig beside the first walker on the active cycle, standing in the cycle's mean "
                    "pose (each bone's mean - an abstract pose) with every correction made so far; every cycle has "
                    "its own rig, and pressed again the active cycle's is posed again",
-    "mean_update": "Update: what you changed on the rig pose goes into the walk for the whole cycle - the spine, the "
-                   "arms, the head and the pelvis's turn, its height, the feet's width, the knees' and the feet's "
-                   "turn - kept beside the walk's file. Every rig pose in the scene is read, each into its own "
-                   "cycle, and the walkers on the cycles that changed are keyed again. Undo on the rig, then "
-                   "Update, takes a change back",
+    "mean_update": "Update: what you changed on the rig pose and on the key poses goes into the walk - the mean pose "
+                   "for the whole cycle (the spine, the arms, the head and the pelvis's turn, its height, the feet's "
+                   "width, the knees' and the feet's turn), a key pose at its key, fading to the keys on either side "
+                   "and mirrored onto the other foot's steps - kept beside the walk's file. Every rig in the scene is "
+                   "read, each into its own cycle, and the walkers on the cycles that changed are keyed again, each "
+                   "with its own settings. Undo on the rig, then Update, takes a change back",
     "mean_delete": "Delete: the active cycle's rig pose out of the scene; the cycle keeps its correction",
     "mean_reset": "Reset: the active cycle's correction dropped - its rig pose back in the plain mean pose, the "
                   "walkers on it keyed again",
+    "key_create": "Create key poses: four Manny rigs beside the first walker on the active cycle, standing in its key "
+                  "poses - Contact, Down, Passing and Up of the cycle's first step of the left foot, found in the "
+                  "cycle (a run's Up is its flight) - with every edit made so far. Pose their controls, then "
+                  "Update: each key's edit is exact at its key, fades to the keys on either side, and the right "
+                  "foot's steps take it mirrored. A foot planted flat on the ground stays where it is planted (Step "
+                  "and Width move it); the helpers keep the feet and the knees right",
+    "key_delete": "Delete key poses: the active cycle's four key rigs out of the scene; the cycle keeps their edits",
+    "key_reset": "Reset key poses: the active cycle's key pose edits dropped - its key rigs back in the cycle's own key "
+                 "poses, the walkers on it keyed again",
     "pose_well": "The pose the walk takes at the Pose share: drag a pose card from the Pose Library here (or its "
                  "right button: Use in Walk Builder). The walk follows the card - its Update from selection is taken "
                  "on the next re-key; a copy kept on the walked skeleton walks on when the card is gone. Click: the "
@@ -1698,9 +1714,33 @@ def press_mean_create(*_):
 
 
 def press_mean_update(*_):
-    """Rig pose > Update: every rig pose's change into its cycle, the walkers on those cycles keyed again."""
-    from . import meanrig
-    return _press(lambda: meanrig.update(rekey=rekey_walkers))
+    """Rig pose > Update: every rig pose's and every key rig's change into its cycle, the walkers on the cycles
+    that changed keyed again - once a cycle, after both are read."""
+    from . import keyrig, meanrig
+
+    def run():
+        changed, lines = [], []
+
+        def later(walk):
+            if walk not in changed:
+                changed.append(walk)
+            return ""
+        for module, quiet in ((meanrig, (meanrig.NO_RIG, meanrig.NOTHING_MOVED)),
+                              (keyrig, (keyrig.NO_RIG, keyrig.NOTHING_MOVED))):
+            try:
+                line = module.update(rekey=later)
+            except module.Refusal as error:
+                if str(error) != module.NO_RIG:
+                    raise
+                continue
+            if line not in quiet:
+                lines.append(line)
+        if not meanrig.rigs() and not keyrig.rigs():
+            raise scene.Refusal("no rig pose and no key poses in the scene - press Create first")
+        if not lines:
+            return "nothing moved on the rig pose or the key poses since the last Update"
+        return " | ".join(lines) + "".join(rekey_walkers(walk) for walk in changed)
+    return _press(run)
 
 
 def press_mean_delete(*_):
@@ -1715,17 +1755,35 @@ def press_mean_reset(*_):
     return _press(lambda: meanrig.reset(chosen_walk(), values(), rekey=rekey_walkers))
 
 
+def press_key_create(*_):
+    """Rig pose > Key poses > Create: the cycle's four key poses on four Manny rigs (maya_walk.keyrig)."""
+    from . import keyrig
+
+    def run():
+        name = chosen_walk()
+        _remember("walk", name)
+        return keyrig.press(name, values())
+    return _press(run)
+
+
+def press_key_delete(*_):
+    """Rig pose > Key poses > Delete: the active cycle's key rigs out of the scene."""
+    from . import keyrig
+    return _press(lambda: keyrig.delete(chosen_walk()))
+
+
+def press_key_reset(*_):
+    """Rig pose > Key poses > Reset: the active cycle's key pose edits dropped, its key rigs and walkers with it."""
+    from . import keyrig
+    return _press(lambda: keyrig.reset(chosen_walk(), values(), rekey=rekey_walkers))
+
+
 def rekey_walkers(walk):
-    """The Rig pose's re-key: the walkers on the cycle `walk`, unrecorded (Ctrl+Z is the rig's). « -> ...»."""
-    roots = [r for r in scene.walkers() if scene.memo_of(r).get("walk") == walk]
-    if not roots:
-        return " (no walker on it - Pick puts it on skeletons)"
-    keyed = []
-    for root in roots:
-        scene.apply(root, walk, values(), None, chosen_parts(), record=False, pose_card=chosen_card(),
-                    params=card_params())
-        keyed.append(scene.walker_label(root))
-    return " -> %s keyed again" % ", ".join(keyed)
+    """The Rig pose's re-key: the walkers on the cycle `walk`, each as it was keyed last - its own settings (the
+    correction is the cycle's, the settings each walker's: keyed with the card's, a finished walk on another
+    skeleton took the card's parameters, 2026-10-26) - unrecorded (Ctrl+Z is the rig's). « -> ...»."""
+    from . import meanrig
+    return meanrig.rekey_target(walk)
 
 
 def show_folder(*_):
@@ -1985,22 +2043,33 @@ def _walker_list():
 
 
 def _rig_pose_buttons():
-    """The Rig pose tab: Create / Delete, Update / Reset, a line on what it does."""
+    """The Rig pose tab: the mean pose's Create / Reset / Delete, the key poses' Create / Reset / Delete, one Update
+    for both, a line on what they do."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
-    rows = (((MEAN_CREATE_BTN, "Create", "secondary", "user", "mean_create", press_mean_create),
-             (MEAN_DELETE_BTN, "Delete", "danger", "trash", "mean_delete", press_mean_delete)),
-            ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),
-             (MEAN_RESET_BTN, "Reset", "secondary", "arrow-back-up", "mean_reset", press_mean_reset)))
-    for row in rows:
-        hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                                     columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+    sections = (
+        (MEAN_CAPTION, "Mean pose", ((MEAN_CREATE_BTN, "Create", "secondary", "user", "mean_create", press_mean_create),
+                                     (MEAN_RESET_BTN, "Reset", "secondary", "arrow-back-up", "mean_reset",
+                                      press_mean_reset),
+                                     (MEAN_DELETE_BTN, "Delete", "danger", "trash", "mean_delete", press_mean_delete))),
+        (KEY_CAPTION, "Key poses", ((KEY_CREATE_BTN, "Create", "secondary", "walk", "key_create", press_key_create),
+                                    (KEY_RESET_BTN, "Reset", "secondary", "arrow-back-up", "key_reset", press_key_reset),
+                                    (KEY_DELETE_BTN, "Delete", "danger", "trash", "key_delete", press_key_delete))),
+        (None, None, ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),)))
+    for caption, title, row in sections:
+        if caption:
+            hubstyle.mark(cmds.text(caption, label=title, align="left"), "heading")
+        columns = len(row)
+        attach = [(1, "both", 0)] + [(i, "both", 4) for i in range(2, columns + 1)]
+        hubstyle.mark(cmds.rowLayout(numberOfColumns=columns, adjustableColumn=1, columnAttach=attach), "fill",
+                      layout=True)
         for name, label, role, icon, tip, action in row:
             hubstyle.mark(cmds.button(name, label=label, height=hubstyle.height("button", 28), annotation=TIPS[tip],
                                       command=(lambda act: lambda *_: act())(action)), role, icon)
         cmds.setParent("..")
-    hubstyle.mark(cmds.text(MEAN_NOTE, label="Create a Manny rig in the walk's mean pose, pose its controls, then "
-                            "Update: the whole cycle takes it.", align="left", wordWrap=True, height=36), "caption")
+    hubstyle.mark(cmds.text(MEAN_NOTE, label="Create a rig, pose its controls, then Update: the mean pose changes "
+                            "the whole cycle, a key pose its key.", align="left", wordWrap=True, height=36),
+                  "caption")
 
 
 def build_panel():

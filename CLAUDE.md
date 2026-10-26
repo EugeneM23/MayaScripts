@@ -10845,6 +10845,53 @@ sections above** (Stride, Bob, Overlap, the drags...): they are engine knobs now
      contact against its own middle's median read worse, because the edit moved that median. A feature read off a
      reference the edit itself changes cannot read the edit back.
 
+**…Height: the knees straighten, then the step shortens** (the same evening: «сложно контролировать высоту таза ...
+таз не поднимается высоко персонаж идет на согнутых ногах»; asked, both: straighten the knees, and when the legs still
+cannot reach, let Height shorten the step by itself). Measured first: a plain walk is already on near-straight legs
+mid-stance (asd +10 asked: legs 0.95 of their length mid-stance, nothing to gain); under a crouched pose the planted
+knees were held at the POSE's stretch by the soft limit and Height could not straighten them (the two-handed sword
++10 read +4.4).
+- A planted leg's soft zone is `PLANTED_SOFT` (1.2 %) of its limit, not knee_soft's 4 %.
+- `Walk._height_plan` (only with the physics helpers, `knee_soft` > 0 - the bare engine keeps its old rule): a raise
+  losing more than `HEIGHT_KEEP` (20 %) of itself to the reach's drop (its mean, read on the drop alone,
+  `evaluate(_drop_only=True)`) first lets the planted knees straighten toward `STRAIGHT_KNEE` 12 deg (all of it at
+  `STRAIGHT_FULL` 10 cm, half when half does), then - when the animator left Step alone (`height_step`, which
+  gait sets 0 for a pinned step) and the shortest step keeps at least `HEIGHT_STEP_GAIN` 1.5 cm more - shortens the
+  step to the longest that keeps all but 20 % of what the shortest (`HEIGHT_STEP_FLOOR` 0.6) would. Up to ~7 drop-only
+  trials, only when Height is raised. The line says it («the planted knees straightened for the Height | Height
+  shortened the step to 75 %»); `info["knobs"]` stays what was asked, the plan in `height_step` / `height_straighten`.
+- asd under the sword +10: +4.4 -> +8.6 (step x0.75), clicks 11.1; dw under the sword +10 -> +8.3. Unit tests in
+  `PelvisHeightTests` (the bare engine untouched, the plan keeping 80 % of a 12 cm raise on the synthetic walker where
+  the old rule kept under 25 %, a pinned step never shortened, a lowered pelvis left alone).
+
+**…and the four key poses on four rigs** (part 2, the same night: «Мы находим в нашем цикле 4 ключевые позы через
+которые строится походка или бег, выносим эти позы каждую на свой риг и изменяя риги контролируем весь наш цикл а
+умные обработчики нам помогают ... отдельную кнопку как сейчас для создания одной средней позы»; built alone, the
+animator away). Spec `docs/superpowers/specs/2026-10-26-walk-key-poses-design.md`.
+- **The Rig pose tab**: «Mean pose» Create / Reset / Delete, «Key poses» Create / Reset / Delete (`KEY_*_BTN`), one
+  Update for both (`press_mean_update` reads `meanrig` and `keyrig`, then keys each cycle that changed once).
+- **`maya_walk/keyposes.py`** (numpy): `find(walk)` - every step's Contact (the heel strike), Down (the pelvis lowest
+  between Contact and Passing, `KEY_MARGIN` 35 % of that span from both), Passing (the swinging foot passes the
+  standing one), Up (the pelvis highest before the next contact, a run's flight peak); `measure` / `combine` (the
+  upper body's local turns in the parent frame, the pelvis's move in travel coordinates, a foot's move and turn -
+  none of it for a foot flat on the ground, only the turn for one on its heel or ball, said; a knee's turn about its
+  leg from `KNEE_MIN` 1.5 deg); `correct` - the edits in the analysed clip's frames, exact at each key and fading to
+  the keys on either side (smoothstep, log space), the right foot's steps mirrored across the walk's middle, the legs
+  solved again from the hips onto the feet; the file `<walk>.walkkeys.json`.
+- **`maya_walk/keyrig.py`**: four Manny rigs (`MARKER` `skeldarWalkKey` on Main: walk, clean, key, frame, base) in a
+  row at x - 150 - 110 i beside the first walker, stood by the Pose Library's solve (no keys) in the first left step's
+  key frames, legs in IK; Update stands a changed rig again in what the cycle does; Reset; Delete.
+- **`scene.load_walk`**: after the mean pose's correction the walk is analysed, its steps found (`walk.key_steps`,
+  `walk.key_note`), the key edits put in and the walk analysed again; cached by the key file's time.
+- **Fixed on the way**: the Rig pose's re-key keyed every walker on the cycle with the CARD's settings (a finished
+  walk took the card's parameters on each Update); it keys each walker with its own memo now (`rekey_walkers` ->
+  `meanrig.rekey_target`).
+- Proof: `tests/test_walk_keyposes.py` 18, `test_walk_panel.RigPoseTests` 5; `verify_walk_keyposes.py` **22/22 mayapy
+  standalone** (asd on Manny: rigs on their frames to 0.0002 deg; +20 on Contact's shoulder - the cycle 20.000 at the
+  contact, 0.000 at the Down, 20.000 mirrored onto the right arm at the right contact, the walker 14.7 through its
+  arms' inertia; the pelvis -4 on Down, the cycle's feet 0.000000 off; the right foot +6 on Passing taken, the left
+  foot +5.2 at the right passing; a flat foot's move not taken and said). **Not seen in a GUI Maya** beyond the card.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

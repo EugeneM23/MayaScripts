@@ -1250,3 +1250,92 @@ class EvaluatedTests(unittest.TestCase):
         self.assertEqual(walk.calls, scene.EVALS_KEPT + 2)
         scene.evaluated(walk, {"stride": float(scene.EVALS_KEPT)}, None)
         self.assertEqual(walk.calls, scene.EVALS_KEPT + 2)
+
+
+class RigPoseTests(unittest.TestCase):
+    """The Rig pose tab: the mean pose and the key poses (2026-10-26, «4 ключевые позы ... каждую на свой риг ...
+    отдельную кнопку как сейчас для создания одной средней позы»), one Update for both."""
+
+    def setUp(self):
+        CardTests.setUp(self)
+        from maya_walk import keyrig, meanrig
+        self.keyrig, self.meanrig = keyrig, meanrig
+        self.saved_modules = {"keyrig": dict((n, getattr(keyrig, n)) for n in ("update", "rigs", "press", "reset", "delete")),
+                              "meanrig": dict((n, getattr(meanrig, n)) for n in ("update", "rigs", "press", "reset", "delete"))}
+        self.calls = []
+        self.memos["|a"] = {"walk": "asd", "knobs": {"stride": 1.3}, "listed": True, "parts": ["torso"]}
+        self.memos["|b"] = {"walk": "asd", "knobs": {"stride": 0.8}, "listed": True, "parts": []}
+        self.memos["|c"] = {"walk": "dw", "knobs": {}, "listed": True, "parts": []}
+        self.fake.selection = []
+        panel._remember("walk", "asd")
+
+    def tearDown(self):
+        for key, module in (("keyrig", self.keyrig), ("meanrig", self.meanrig)):
+            for name, value in self.saved_modules[key].items():
+                setattr(module, name, value)
+        CardTests.tearDown(self)
+
+    made = CardTests.made
+
+    def test_the_tab_has_both_rows_and_one_update(self):
+        panel.build_panel()
+        marks = dict((m.name, (m.role, m.icon)) for m in self.hubstyle.take_marks())
+        self.assertEqual(marks[panel.KEY_CREATE_BTN], ("secondary", "walk"))
+        self.assertEqual(marks[panel.KEY_RESET_BTN], ("secondary", "arrow-back-up"))
+        self.assertEqual(marks[panel.KEY_DELETE_BTN], ("danger", "trash"))
+        self.assertEqual(marks[panel.MEAN_CREATE_BTN], ("secondary", "user"))
+        self.assertEqual(marks[panel.MEAN_UPDATE_BTN], ("primary", "refresh"))
+        self.assertEqual(marks[panel.MEAN_CAPTION][0], "heading")
+        self.assertEqual(marks[panel.KEY_CAPTION][0], "heading")
+        for name in (panel.KEY_CREATE_BTN, panel.KEY_RESET_BTN, panel.KEY_DELETE_BTN):
+            self.assertIn(name, [c[1] for c in self.made("button")])
+
+    def test_update_reads_both_and_keys_each_cycle_once_with_each_walker_s_own_settings(self):
+        """Keyed with the card's settings, a finished walk on another skeleton took the card's (2026-10-26)."""
+        self.meanrig.update = lambda rekey=None: "mean pose of asd: spine_02 5.0 deg" + rekey("asd")
+        self.keyrig.update = lambda rekey=None: "key poses of asd: Down: pelvis 2.0 cm" + rekey("asd")
+        self.meanrig.rigs = lambda walk=None: ["mean"]
+        self.keyrig.rigs = lambda walk=None: ["key"]
+        panel.build_panel()
+        line = panel.press_mean_update()
+        self.assertIn("mean pose of asd", line)
+        self.assertIn("key poses of asd", line)
+        self.assertEqual(sorted(a[0] for a in self.applied), ["|a", "|b"])        # once each, dw's not
+        given = dict((a[0], a[2]) for a in self.applied)
+        self.assertEqual(given["|a"], {"stride": 1.3})
+        self.assertEqual(given["|b"], {"stride": 0.8})
+        self.assertEqual(dict((a[0], tuple(a[4])) for a in self.applied)["|a"], ("torso",))
+
+    def test_update_with_only_key_rigs_and_nothing_moved(self):
+        def none(rekey=None):
+            raise self.meanrig.Refusal(self.meanrig.NO_RIG)
+        self.meanrig.update = none
+        self.keyrig.update = lambda rekey=None: self.keyrig.NOTHING_MOVED
+        self.meanrig.rigs = lambda walk=None: []
+        self.keyrig.rigs = lambda walk=None: ["key"]
+        panel.build_panel()
+        self.assertIn("nothing moved", panel.press_mean_update())
+        self.assertEqual(self.applied, [])
+
+    def test_update_with_no_rig_at_all_says_so(self):
+        def none_mean(rekey=None):
+            raise self.meanrig.Refusal(self.meanrig.NO_RIG)
+
+        def none_key(rekey=None):
+            raise self.keyrig.Refusal(self.keyrig.NO_RIG)
+        self.meanrig.update, self.keyrig.update = none_mean, none_key
+        self.meanrig.rigs = lambda walk=None: []
+        self.keyrig.rigs = lambda walk=None: []
+        panel.build_panel()
+        self.assertIn("press Create first", panel.press_mean_update())
+
+    def test_the_key_presses_act_on_the_active_cycle(self):
+        self.keyrig.press = lambda walk, clean=None: self.calls.append(("press", walk)) or "4 key poses of %s" % walk
+        self.keyrig.delete = lambda walk=None: self.calls.append(("delete", walk)) or "deleted"
+        self.keyrig.reset = lambda walk, clean=None, rekey=None: self.calls.append(("reset", walk)) or "reset"
+        panel.build_panel()
+        walk = panel.chosen_walk()
+        self.assertIn("4 key poses", panel.press_key_create())
+        panel.press_key_reset()
+        panel.press_key_delete()
+        self.assertEqual(self.calls, [("press", walk), ("reset", walk), ("delete", walk)])

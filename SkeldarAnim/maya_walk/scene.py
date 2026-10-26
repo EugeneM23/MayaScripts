@@ -25,6 +25,7 @@ from . import target as wt
 from . import pose as wp
 from . import clean as wc
 from . import meanpose as mp
+from . import keyposes as kp
 from . import cards as wcards
 from . import gait
 
@@ -61,7 +62,7 @@ class Refusal(Exception):
     """What a press does not do, and why (the status line shows it)."""
 
 
-REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, wcards.Refusal)
+REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, kp.Refusal, wcards.Refusal)
 #  The pose's bones as a walked skeleton last used them (packed, maya_walk.cards): the walk keeps walking when
 #  its Pose Library card is renamed or deleted (2026-10-15)
 POSE_COPY = "skeldarWalkPose"
@@ -664,7 +665,9 @@ def load_walk(name, given=None):
     knobs = wc.knobs(given)
     fix_path = mp.path_for(path)
     fix_stamp = os.path.getmtime(fix_path) if os.path.exists(fix_path) else None
-    key = ("walk", path, stamp, tuple(sorted(knobs.items())), fix_stamp)
+    keys_path = kp.path_for(path)
+    keys_stamp = os.path.getmtime(keys_path) if os.path.exists(keys_path) else None
+    key = ("walk", path, stamp, tuple(sorted(knobs.items())), fix_stamp, keys_stamp)
     walk = _state()["loaded"].get(key)
     report = _cleaned(path, stamp, data, knobs)[1]
     if walk is None:
@@ -672,6 +675,17 @@ def load_walk(name, given=None):
         # the frames before the analysis, the legs' on the walk
         fix = mp.load(fix_path)
         walk = wm.analyse(mp.correct(_cleaned(path, stamp, data, knobs)[0], fix))
+        # then the key poses' edits (maya_walk.keyrig): found on the walk as the mean pose leaves it, put in its
+        # frames, read again
+        steps, note = None, ""
+        try:
+            steps = kp.find(walk)
+        except kp.Refusal as error:
+            note = str(error)
+        keys = kp.load(keys_path)
+        if steps and not kp.is_empty(keys):
+            walk = wm.analyse(kp.correct(walk.clip, keys, steps, walk))
+        walk.key_steps, walk.key_note = steps, note
         walk.fix = mp.model_fix(fix)
         _cache(key, walk)
     return walk, data["statics"], int(data["start"]), report
@@ -681,6 +695,12 @@ def walk_fix(name):
     """(the correction of the saved walk `name`, its file's path)."""
     path = mp.path_for(walk_path(name))
     return mp.load(path), path
+
+
+def walk_keys(name):
+    """(the key poses' edits of the saved walk `name`, their file's path)."""
+    path = kp.path_for(walk_path(name))
+    return kp.load(path), path
 
 
 BACKUP = ".orig"          # Fix posture keeps the walk's file as it was beside it: <name>.walk.gz.orig
@@ -1196,6 +1216,12 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     fix = walk_fix(walk_name)[0]
     if not mp.is_empty(fix):
         text += " | mean pose corrected (%s)" % mp.summary(fix)
+    try:
+        keys = walk_keys(walk_name)[0]
+    except kp.Refusal:
+        keys = {}
+    if not kp.is_empty(keys):
+        text += " | key poses: %s" % kp.summary(keys)
     if report.changed:
         text += " | " + report.short()
     if pose_note:
