@@ -33,8 +33,8 @@ class Rows(unittest.TestCase):
 
     def test_the_parts_follow_the_second_creep_in_the_grid(self):
         keys = [m.key for m in catalog.MODELS]
-        self.assertEqual(keys.index("Creep2_ArmR"), keys.index("Creep2") + 1)
-        self.assertEqual(keys.index("Creep2_Head"), keys.index("Creep2") + 2)
+        self.assertEqual(keys.index("Creep2_ArmR"), keys.index("Creep2_Body") + 1)
+        self.assertEqual(keys.index("Creep2_Head"), keys.index("Creep2_Body") + 2)
 
     def test_the_rig_assets_are_part_rigs_built_manny_s_way(self):
         for key in ("Creep2_ArmR_Rig", "Creep2_Head_Rig"):

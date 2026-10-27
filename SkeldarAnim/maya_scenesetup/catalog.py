@@ -105,6 +105,12 @@ CHARACTERS = [
     # docs/superpowers/plans/make_creep2_source.py -> rebuild_creep2_rig.py -> make_creep2_assets.py
     # from sources/creep2/. After the first Creep's rows: the Auto card ties to table order.
     Character("Creep2_Rig", "Creep 2 [rig]", "Creep2_Rig.ma", "rig", model="Creep2"),
+    # The second Creep's body as the animator cut it (2026-10-27, «разрезанного персонажа ... насадить
+    # само тело на риг ... свой риг скелет и карточки»): Creep_Split/Creep_Body.fbx - the whole skeleton,
+    # the mesh without the right arm and the head - on Creep 2's own rig and skeleton, its weights the
+    # FBX's. A whole character (no `part`), Creep 2's twin: after Creep 2's rows, so the Auto card ties
+    # to Creep 2. Built by docs/superpowers/plans/make_creep2_body_assets.py.
+    Character("Creep2_Body_Rig", "Creep 2 Body [rig]", "Creep2_Body_Rig.ma", "rig", model="Creep2_Body"),
     # The second Creep's right arm with its shoulder and its head cut at mid neck (2026-10-27, «руку
     # и голову ... риг на адванцед скелетоне и встроить в наш пайплайн как и персонажей ... рука на
     # правую руку голова на голову»): each skinned to its own skeleton from the character's `root`
@@ -135,6 +141,8 @@ CHARACTERS = [
               textured=True, model="Playerchar"),
     # The second Creep without its rig (2026-10-27), made from Creep2_Rig.ma the Creep skeleton's way.
     Character("Creep2", "Creep 2 [skeleton]", "Creep2_Skeleton.ma", "skeleton", model="Creep2"),
+    Character("Creep2_Body", "Creep 2 Body [skeleton]", "Creep2_Body_Skeleton.ma", "skeleton",
+              model="Creep2_Body"),
     # The two parts without their rigs (2026-10-27), read from their FBX: `Armature` > root, the mesh beside.
     Character("Creep2_ArmR", "Creep 2 Arm R [skeleton]", "Creep2_ArmR_Skeleton.ma", "skeleton",
               model="Creep2_ArmR", part="spine_05"),
@@ -164,6 +172,7 @@ KINDS = ("rig", "skeleton")
 AUTO = "Auto"
 
 MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Creep 2"),
+          Model("Creep2_Body", "Creep 2 Body"),
           Model("Creep2_ArmR", "Creep 2 Arm R"), Model("Creep2_Head", "Creep 2 Head"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]

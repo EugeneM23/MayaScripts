@@ -14946,3 +14946,29 @@ addendum).
 299. **AdvancedSkeleton wants its middle fit joints on x = 0** (within 1 % of its scale): a skeleton 0.32
      cm off centre built as «"RootSide" is on the Left side». Put Root / Neck / Head fit joints on x = 0
      and let the -mo constraints carry the step.
+
+## The second Creep's cut body as a character of its own (2026-10-27)
+
+The animator, after the arm and the head: «нам нужно сделать разрезанного персонажа ... насадить само
+тело на риг. И для разрезанного сделаем тоже свой риг скелет и карточки». `Creep_Split/Creep_Body.fbx`
+is the whole 91-bone skeleton with the mesh cut (51999 of the 102822 vertices: no right arm, no head),
+and **its weights are the animator's own** - 2619 of the shared vertices differ from Creep 2's whole
+mesh (the left hand, the chest and neck by the cuts); 578 vertices are the cut's own edges.
+- **A third model «Creep 2 Body»** (card after Creep 2), rows «Creep 2 Body [rig]» (`Creep2_Body_Rig.ma`,
+  25.1 MB) and «[skeleton]» (`Creep2_Body_Skeleton.ma`, 23.4 MB), untextured, fire `rust`, a whole
+  character (no `part`), Creep 2's twin: after its rows, so the Auto card ties to Creep 2.
+- `docs/superpowers/plans/make_creep2_body_assets.py` (mayapy, a step a process): `Creep2_Rig.ma`
+  opened, its whole mesh out, the FBX imported into a namespace and its bind checked against the rig's
+  game joints (9.3e-5; the weapon sockets excepted - Creep 2's are turned into UE's convention, the
+  body carries no weight on them), a copy `Creep2_BodySplit` at its bind in `Group|Geometry` skinned
+  to the game joints with the FBX's weights, its faces on the rig's own materials by name, one bind
+  pose over 93 joints; the skeleton is make_creep2_assets.py's skeleton step on that rig. So the body
+  rig is Creep 2's rig exactly (rotation-only, FK translations carrying, Main, IK, camera bones).
+- `character_skeletons.json` rewritten; the portrait rendered in a disposable GUI Maya (port 7063,
+  scratch `MAYA_APP_DIR`, killed after).
+
+Proof: `docs/superpowers/plans/verify_creep2_body.py <clip>` **8/8 standalone** on AS_Creep_Jog_B_Loop:
+both rigs added, the body's skin at its bind, every vertex on the FBX's (1.9e-5 cm); the clip through the
+Retarget button: every body vertex where the FBX's own skin puts it with its joints on the rig's bones to
+0.00007 cm over 606 cm of travel; the export 93 joints, no mesh; the skeleton row; Delete character.
+Unit tests `test_scenesetup_catalog.Creep2Body`. Not seen in the animator's Maya (after Check update).
