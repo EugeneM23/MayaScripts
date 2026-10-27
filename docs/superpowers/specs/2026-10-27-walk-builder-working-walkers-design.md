@@ -149,5 +149,9 @@ Built into the retarget, after the target's legs are solved (`target.Retarget.fr
   likewise (`meanrig.press` again).
 - **The headings' Reset is a small button at the right** (the Walk cycle row's Save), not a row-wide button beside a
   squeezed heading (seen on 7002).
+- **The Diagnosis of an In place walker** (seen on 7002): «The tempo is not the body's: 15.5 fr a step, 35864562.6
+  for its size». In place takes the travel off the keys, the result measured 7.5e-18 m/s, and the Froude tempo's
+  Fr^-0.2 ran away. An In place result reads the walk's speed and step from its info; `froude_tempo` answers 0 under
+  0.1 m/s. Recomputed live: nothing to say (1.72 m/s, 89 cm, 15.5 fr).
 - The verify `verify_walk_working.py` **24/24 standalone**; the older `verify_walk_keyposes.py` and
   `verify_walk_meanpose.py` call the rigs with a walk's name (the per-cycle files): history.

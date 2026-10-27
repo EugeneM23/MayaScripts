@@ -10953,6 +10953,15 @@ file (here and in the mean pose rig section), and the rigs standing in the sourc
   for its whole stance (spread 0.000 cm); a 25 cm raise reads no knee flip; the mean pose rig B's; Reset; Delete;
   HavyRun's pops gone. 468 walk unit tests, 9156 in all (the known `test_chat_deploy.Keys` failing).
   `verify_walk_keyposes.py` and `verify_walk_meanpose.py` call the rigs with a walk's name: history.
+- **Seen on 7002** (a snapshot of each commit installed; the animator's walker and rigs only read): the card's
+  headings, a tab's own Reset, the Rig pose tab; and the Diagnosis told «The tempo is not the body's: 15.5 fr a step,
+  35864562.6 for its size» - the animator's walker is In place, its result's root does not travel, so
+  `gait.of_result` measured 7.5e-18 m/s and `froude_tempo`'s Fr^-0.2 ran away. An In place result now reads the
+  walk's speed and step from its info (`speed`, `stride_cm`), and `froude_tempo` answers 0 under
+  `FROUDE_MIN_SPEED` 0.1 m/s; recomputed live, «nothing to say». The Fix button is as wide as its word.
+- The animator's walk folder still holds what the old build wrote for their own cycle: `own/5f70....walk.gz.orig`
+  (the old Fix posture wrote into the walk's file and kept the original) and `5f70....walkkeys.json` (old key edits,
+  not read any more). Left as they are.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
