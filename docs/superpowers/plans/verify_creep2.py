@@ -125,13 +125,16 @@ c, c2, manny = rigs.get("Creep2_Rig"), rigs.get("Creep2_Rig1"), rigs.get("Manny_
 H, H2, M = bones_of(c.skeleton_root), bones_of(c2.skeleton_root), bones_of(manny.skeleton_root)
 n_sk, err = bind_error("Creep2_Rig:")
 geo = cmds.listRelatives(cmds.ls("Creep2_Rig:Geometry", long=True)[0], children=True) or []
+# the three cut pieces since 2026-10-27 (make_creep2_split_rig.py), switched by Main.armR / Main.head
+PIECES = ["Creep2_Rig:Creep2_Body", "Creep2_Rig:Creep2_ArmR", "Creep2_Rig:Creep2_Head"]
 mats = set()
-for sg in cmds.listConnections(cmds.ls("Creep2_Rig:Creep2_BodyShape", long=True)[0], type="shadingEngine") or []:
-    mats.update(cmds.listConnections(sg + ".surfaceShader") or [])
+for piece in PIECES:
+    for sg in cmds.listConnections(cmds.ls(piece + "Shape", long=True)[0], type="shadingEngine") or []:
+        mats.update(cmds.listConnections(sg + ".surfaceShader") or [])
 gate(3, ar.rotation_mode(c) and ar.rotation_mode(c2) and not ar.rotation_mode(manny) and len(H) == 93
      and all(b in H for b in ("camera_root", "camera_bone", "weapon_r", "weapon_l"))
      and not [s for s in cmds.ls(type="script") if s.startswith("Creep2_Rig")]
-     and n_sk == 1 and err < 1e-3 and not ar.posed_controls(rig=c) and geo == ["Creep2_Rig:Creep2_Body"]
+     and n_sk == 3 and err < 1e-3 and not ar.posed_controls(rig=c) and sorted(geo) == sorted(PIECES)
      and len(mats) == 1 and any(cmds.attributeQuery("skeldarColour", node=m, exists=True) for m in mats),
      "rotation-only, %d joints, no script node, skin at its bind (%.2e), controls at default, Geometry %s, "
      "worn %s" % (len(H), err, geo, sorted(mats)))
@@ -140,13 +143,35 @@ gate(3, ar.rotation_mode(c) and ar.rotation_mode(c2) and not ar.rotation_mode(ma
 src_nodes = import_fbx(SOURCE, "ue")
 src_mesh = [n for n in src_nodes if cmds.nodeType(n) == "transform"
             and cmds.listRelatives(n, shapes=True, type="mesh")][0]
-a, b = points(src_mesh), points(cmds.ls("Creep2_Rig:Creep2_Body", long=True)[0])
-worst_v = max(a[i].distanceTo(b[i]) for i in range(len(a))) if len(a) == len(b) else -1
+a = [om.MVector(p.x, p.y, p.z) for p in points(src_mesh)]    # copies: an MPoint of a freed array dies
+grid = {}
+for p in a:
+    grid.setdefault((round(p.x, 1), round(p.y, 1), round(p.z, 1)), []).append(p)
+
+
+def nearest(p):
+    best = None
+    kx, ky, kz = round(p.x, 1), round(p.y, 1), round(p.z, 1)
+    for dx in (-0.1, 0, 0.1):
+        for dy in (-0.1, 0, 0.1):
+            for dz in (-0.1, 0, 0.1):
+                for q in grid.get((round(kx + dx, 1), round(ky + dy, 1), round(kz + dz, 1)), ()):
+                    d = (p - q).length()
+                    best = d if best is None or d < best else best
+    return 1e9 if best is None else best
+
+
+b = [om.MVector(q.x, q.y, q.z) for piece in PIECES for q in points(cmds.ls(piece, long=True)[0])]
+dist = [nearest(p) for p in b]
+# the animator's cut made new vertices along the cut (its cap): those stand on no vertex of the whole
+new = sum(1 for d in dist if d > 1e-3)
+worst_v = max(d for d in dist if d <= 1e-3)
+print("   piece vertices on no vertex of the whole mesh (made by the cut): %d of %d" % (new, len(b)))
 src_j = dict((p.split("|")[-1].split(":")[-1], p) for p in src_nodes if cmds.nodeType(p) == "joint")
 worst_j = max((pos(src_j[k]) - pos(H[k])).length() for k in src_j if k in H)
-gate(4, len(a) == len(b) and 0 <= worst_v < 1e-3 and worst_j < 1e-3,
-     "every one of %d vertices where SK_Creep_skinned.FBX has it (%.2e cm), every joint (%.2e cm)"
-     % (len(b), worst_v, worst_j))
+gate(4, worst_v < 1e-3 and worst_j < 1e-3 and new < 0.03 * len(b),
+     "%d of %d piece vertices on a vertex of SK_Creep_skinned.FBX (%.2e cm; %d made by the cut), "
+     "every joint (%.2e cm)" % (len(b) - new, len(b), worst_v, new, worst_j))
 cmds.delete([n for n in src_nodes if cmds.objExists(n) and not cmds.listRelatives(n, parent=True)] or [])
 cmds.namespace(removeNamespace="ue", deleteNamespaceContent=True)
 

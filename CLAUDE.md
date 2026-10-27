@@ -15053,3 +15053,25 @@ onto a fresh arm rig 0.0011; the Body rig 0.0010; the arm skeleton 0.0000); `ver
 20/20, `verify_part_drop.py` 16/16, `verify_creep2_body.py` all; `verify_poselib_solve.py` 122/122,
 `_apply.py` 117/117, `_anim.py` 113/113; 11798 unit tests, the known `test_chat_deploy.Keys` failing.
 Not seen in a GUI Maya. A part added before this has the old skeleton: re-add it.
+
+## Creep 2's rig made of its three cut pieces, with switches on Main (2026-10-27)
+
+The animator: «для нового крипа нужно добавить тело руку и голову в основной риг и сделать переключатели
+на главном контроле которые могут включать или отключать отрезанные части». Asked: the three pieces in
+place of the whole mesh, keyable switches, the Body / Arm R / Head cards kept. Spec
+`docs/superpowers/specs/2026-10-27-creep2-split-rig-switches-design.md`.
+- `docs/superpowers/plans/make_creep2_split_rig.py` (mayapy; after make_creep2_body_assets.py, which
+  wants the whole mesh): `Creep2_Rig.ma`'s whole mesh out; `Creep2_Body`, `Creep2_ArmR`, `Creep2_Head`
+  copied from `Creep_Split/*.fbx` at their bind, skinned to the rig's game joints with the FBX weights,
+  on the rig's materials; one bind pose over 93 joints (44.9 MB).
+- `Main.armR` («Arm R») and `Main.head` («Head»): bool, keyable, default on, each wired to its piece's
+  visibility; the body always shown.
+- A retarget replaces the take: `maya_asretarget.reset_build_pose` deletes the switches' keys with the
+  rest and turns them back on (`PIECE_SWITCHES`), or a curve deleted leaves the piece hidden (trap 58).
+- 924 of the pieces' 103969 vertices are new, made by the cut; the cut seams meet the body exactly where
+  they share vertices (258 at the arm, 282 at the head, to 1e-3 cm).
+Proof: `verify_creep2_split_rig.py <clip>` **0 failed** on AS_Creep_Jog_B_Loop (each piece on its FBX at
+the bind 2e-5 cm; a switch hides only its piece; a key at 20 hides it from 20; under the retarget each
+piece where its FBX's own skin puts it 7e-5 cm; the export 93 joints, no mesh; Delete takes all three);
+`verify_creep2.py` all (its gates 3 / 4 now ask for the three pieces); `verify_part_drop.py` 16/16.
+Not seen in a GUI Maya. A Creep 2 rig added before this has the whole mesh: re-add it.

@@ -1306,6 +1306,10 @@ def set_exact_neck(rig):
 TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 
 
+# the switches on Main that show Creep 2's cut pieces (`make_creep2_split_rig.py`)
+PIECE_SWITCHES = ("armR", "head")
+
+
 def reset_build_pose(rig=None):
     """The controls back to the build pose: the previous take's keys deleted,
     translate/rotate zeroed where the channel is free. Returns (curves deleted,
@@ -1340,6 +1344,14 @@ def reset_build_pose(rig=None):
                 cmds.setAttr(plug, default)
                 touched = True
         zeroed += 1 if touched else 0
+    # Creep 2's cut pieces (2026-10-27): a take that keyed a piece off goes with the take, and the
+    # piece is shown again - a curve deleted leaves the plug at its last value (trap 58)
+    main = getattr(rig, "main", None) if rig else None
+    for attr in PIECE_SWITCHES:
+        plug = "%s.%s" % (main, attr)
+        if main and cmds.objExists(plug) and cmds.getAttr(plug, settable=True) \
+                and not cmds.getAttr(plug):
+            cmds.setAttr(plug, True)
     # the IK chains' lengths, roots and feet a take gave them (`maya_ikmatch`)
     reshaped = ikmatch.restore(rig) if rig else 0
     return len(curves), zeroed + (1 if reshaped else 0)

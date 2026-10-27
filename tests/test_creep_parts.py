@@ -62,6 +62,20 @@ class Rows(unittest.TestCase):
             for name, parent in manny.items():                # AS's own joints beside them
                 self.assertEqual(part[name], parent, (key, name))
 
+    def test_creep2_s_rig_is_its_three_pieces_with_switches_on_main(self):
+        """2026-10-27, «тело руку и голову в основной риг ... переключатели на главном контроле»."""
+        with open(catalog.character_file(catalog.character_by_key("Creep2_Rig")), encoding="utf-8",
+                  errors="replace") as fh:
+            text = fh.read()
+        for mesh in ("Creep2_Body", "Creep2_ArmR", "Creep2_Head"):
+            self.assertIn('createNode transform -n "%s" -p "Geometry"' % mesh, text)
+        for attr, nice in (("armR", "Arm R"), ("head", "Head")):
+            self.assertIn('addAttr -ci true -k true -sn "%s" -ln "%s" -nn "%s" -dv 1 -min 0 -max 1 -at "bool"'
+                          % (attr, attr, nice), text)
+            self.assertIn('connectAttr "Main.%s" "%s.v"' % (attr, {"armR": "Creep2_ArmR",
+                                                                   "head": "Creep2_Head"}[attr]), text)
+        self.assertEqual(text.count("createNode skinCluster"), 3)
+
     def test_the_arm_rig_has_no_left_arm(self):
         with open(catalog.character_file(catalog.character_by_key("Creep2_ArmR_Rig")), encoding="utf-8",
                   errors="replace") as fh:

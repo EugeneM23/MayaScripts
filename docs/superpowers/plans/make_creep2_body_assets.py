@@ -16,6 +16,10 @@ skeleton, the mesh without the right arm and the head) on Creep 2's own rig:
   FBX's weights vertex for vertex, its faces on the rig's own materials by name; one bind pose over
   every joint (traps 79/91); the FBX's namespace out.
 - **skeleton**: make_creep2_assets.py's skeleton step on that rig.
+
+Since 2026-10-27 `Creep2_Rig.ma` itself is made of the three cut pieces (`make_creep2_split_rig.py`,
+run after this one): this script wants the rig with its WHOLE mesh, so rebuild Creep2_Rig.ma with
+make_creep2_assets.py first, then this, then the split.
 """
 import os
 import subprocess
