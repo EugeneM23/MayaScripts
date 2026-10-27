@@ -172,15 +172,65 @@ def free_transform_attrs(node):
             if cmds.getAttr("%s.%s" % (node, a), keyable=True) and cmds.getAttr("%s.%s" % (node, a), settable=True)]
 
 
+def _key_layer():
+    """The Pose Library's active layer (`keys.active_layer`: the selected one, else the real base -
+    never a scene tab's holder), or None with no layers. 2026-10-27, «по одному працює, але виділені
+    ні»: without `animLayer` Maya keyed IKArm_R into its own "best" layer, the MUTED _3P_Upper_Body -
+    nothing moved and that layer's keys were overwritten."""
+    try:
+        from maya_poselib import keys
+        layer, _refusal = keys.active_layer()
+    except Exception:                                        # noqa: BLE001 - no layers to ask
+        return None
+    return layer
+
+
+def overriding_above(stack, target, affected, override, muted, weight):
+    """The layers over `target` in `stack` (bottom to top) that hide it: an unmuted override layer at
+    a weight over 0 holding the node (`affected`). An additive one above is fine - Maya keys the
+    selected layer so the sum lands (2026-10-27, measured). Pure."""
+    if target not in stack:
+        return []
+    return [name for name in stack[stack.index(target) + 1:]
+            if name in affected and override.get(name) and not muted.get(name) and weight.get(name, 1.0) > 0]
+
+
+def _hidden_by(nodes):
+    """The override layers over the layer `key_transform` keys that hide `nodes`' keys."""
+    layer = _key_layer()
+    if layer is None:
+        return []
+    try:
+        from maya_poselib import keys
+        stack = keys._walk(cmds.animLayer(query=True, root=True))
+        affected = set(cmds.animLayer(nodes, query=True, affectedLayers=True) or [])
+        return overriding_above(stack, layer.name, affected,
+                                dict((n, cmds.animLayer(n, query=True, override=True)) for n in stack),
+                                dict((n, keys._muted(n, stack[0], {})) for n in stack),
+                                dict((n, cmds.getAttr(n + ".weight")) for n in stack if n != stack[0]))
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
 def key_transform(node, t=None, force=False, channels="tr"):
     if not (force or is_animated(node) or cmds.autoKeyframe(q=True, state=True)):
         return
     attrs = [a for a in free_transform_attrs(node) if a[0] in channels]
-    if attrs:
+    if not attrs:
+        return
+    layer = _key_layer()
+    if layer is None:
         if t is None:
             cmds.setKeyframe(node, attribute=attrs)
         else:
             cmds.setKeyframe(node, attribute=attrs, t=t)
+        return
+    time = current_time() if t is None else t
+    for a in attrs:
+        plug = "%s.%s" % (node, a)
+        if not layer.base:
+            cmds.animLayer(layer.name, edit=True, attribute=plug)
+        cmds.setKeyframe(plug, time=time, value=cmds.getAttr(plug), animLayer=layer.name)
 
 
 def key_times(nodes):
@@ -874,6 +924,10 @@ def paste_relationship(in_range=False, channels="tr"):
         message("relationship pasted on %d keys (%g-%g)" % (len(times), times[0], times[-1]))
     else:
         apply()
+    hidden = _hidden_by([item[0] for item in items])
+    if hidden:
+        warn("keyed, but the override layer %s above hides it - mute it or key that layer"
+             % ", ".join(strip_ns(n) for n in hidden))
 
 
 # ---------------------------------------------------------------- space switch

@@ -400,6 +400,43 @@ class RelationshipInRange(unittest.TestCase):
         import inspect
         self.assertNotIn("all_keys", inspect.signature(core.paste_relationship).parameters)
 
+    def _keyed(self, layer):
+        fake = mock.MagicMock()
+        fake.getAttr.return_value = 5.0
+        with mock.patch.object(core, "cmds", fake), \
+                mock.patch.object(core, "free_transform_attrs", return_value=["tx", "ry"]), \
+                mock.patch.object(core, "_key_layer", return_value=layer):
+            core.key_transform("arm", 12.0, force=True)
+        return fake
+
+    def test_a_layered_scene_keys_the_active_layer_with_the_final_value(self):
+        # 2026-10-27, «по одному працює, але виділені ні»: no animLayer flag - Maya keyed the muted layer
+        base = types.SimpleNamespace(name="skeldarTabsLayerRoot", base=True)
+        fake = self._keyed(base)
+        for call in fake.setKeyframe.call_args_list:
+            self.assertEqual(call.kwargs["animLayer"], "skeldarTabsLayerRoot")
+            self.assertEqual((call.kwargs["time"], call.kwargs["value"]), (12.0, 5.0))
+        self.assertEqual([c.args[0] for c in fake.setKeyframe.call_args_list], ["arm.tx", "arm.ry"])
+        fake.animLayer.assert_not_called()
+
+    def test_a_selected_layer_takes_the_plug_first(self):
+        fake = self._keyed(types.SimpleNamespace(name="Upper", base=False))
+        fake.animLayer.assert_any_call("Upper", edit=True, attribute="arm.tx")
+        self.assertEqual(fake.setKeyframe.call_args_list[0].kwargs["animLayer"], "Upper")
+
+    def test_only_a_live_override_above_hides_the_selected_layer(self):
+        stack = ["root", "Lower", "Upper", "Over", "Off"]
+        affected = {"root", "Lower", "Upper", "Over", "Off"}
+        override = {"Over": True, "Off": True}
+        self.assertEqual(core.overriding_above(stack, "Lower", affected, override, {"Off": True}, {}), ["Over"])
+        self.assertEqual(core.overriding_above(stack, "Lower", affected, override, {}, {"Over": 0.0}), ["Off"])
+        self.assertEqual(core.overriding_above(stack, "Lower", affected - {"Over", "Off"}, override, {}, {}), [])
+        self.assertEqual(core.overriding_above(stack, "Over", affected, {"Over": True}, {}, {}), [])
+
+    def test_no_layers_keys_as_before(self):
+        fake = self._keyed(None)
+        fake.setKeyframe.assert_called_once_with("arm", attribute=["tx", "ry"], t=12.0)
+
 
 class SetLibrary(unittest.TestCase):
     """2026-10-23, «щоб селекшн сет зберігався в ядрі АТ ... в будь-якій сцені»: the sets in a library

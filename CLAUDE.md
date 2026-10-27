@@ -15012,3 +15012,13 @@ group `<weapon>_aim` left empty with its marker. `is_aimed` read the group alone
 («in Aim Mode already») and Default had nothing to bake. Now `broken(controllers, constraint)` (pure)
 decides: `is_aimed` is a whole aim only, `enter` deletes a broken one's leftovers first, `leave` on a
 broken one clears it and says so (`CLEARED`), the rotation as it is. Verified on the backup copy.
+
+## AT bar keys name their layer (2026-10-27)
+
+«по одному працює, але виділені ні» - Paste Relationship on the highlighted keys, IKArm_R following the
+dagger in a scene tab: nothing moved. `key_transform` called `setKeyframe` with no `animLayer`, and with
+no layer selected Maya chose its own "best" layer - the MUTED additive `_3P_Upper_Body`: the keys landed
+there, invisible, overwriting that layer's values on 31-43 (the base untouched). Now `key_transform`
+keys each plug with `animLayer=` the Pose Library's `keys.active_layer()` (selected, else the real base,
+never a tab's holder) and the final value, as `maya_poselib/keys.py` does; no layers - as before.
+Measured on a session backup: the range paste 0.0 cm on every key 33-43, the muted layer unchanged.
