@@ -14991,3 +14991,24 @@ standalone** on AS_Creep_Jog_B_Loop: onto a Creep 2 rig and a Manny UE5 skeleton
 character's every bone as before at every sampled frame; on Creep 2 the part's hand_r / head on the
 character's to 0.000 cm (the head rig 0.137, the AS neck in-between's own), on Manny 3.7-14.9 cm (other
 proportions, rotations), turning as the character's to 0.000 deg. Not seen in a GUI Maya.
+
+## Aim Mode: Default keys the frames a fast swing needs (2026-10-26)
+
+«при запіканні на дефолт змінюється позиція ножа»: Default keyed the weapon's rotate on the keys of the
+controllers and of its translate alone. Between two keys the aimConstraint's turn is not what Euler
+curves interpolate: measured on the animator's dagger, frame 22 between keys 21 and 23 (a swing of over
+100 degrees in two frames) came out 27 degrees off - the tip 9.7 cm away - and 25 / 33 / 34 about 3.
+The pivot never moved; the blade did. Now `leave` samples the aim on every frame of the span, keys the
+keys as before, then `_fill_between` adds a key on each frame between them turned more than
+`TOLERANCE` (0.1 degree, `turn_between` on quaternions) off the aim, re-checking up to `FILL_PASSES`
+times (an added key re-shapes its neighbours' auto tangents). On the dagger: 4 keys added, every frame
+on the aim. Tests `test_the_angle_between_two_rotations_...`, `test_only_the_frames_the_bake_missed_...`.
+
+## Aim Mode: a broken aim is cleared, not refused (2026-10-27)
+
+«Aim не працює» in a scene tab: the dagger was keyed in Aim Mode (a pairBlend on its rotate), then
+its controllers and constraint were deleted - the session backups show it went within a minute, the
+group `<weapon>_aim` left empty with its marker. `is_aimed` read the group alone, so Aim Mode refused
+(«in Aim Mode already») and Default had nothing to bake. Now `broken(controllers, constraint)` (pure)
+decides: `is_aimed` is a whole aim only, `enter` deletes a broken one's leftovers first, `leave` on a
+broken one clears it and says so (`CLEARED`), the rotation as it is. Verified on the backup copy.

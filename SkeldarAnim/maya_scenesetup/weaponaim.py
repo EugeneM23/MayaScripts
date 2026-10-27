@@ -47,10 +47,15 @@ LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
 UP_SHARE = 0.5
 UP_ALONG = 0.5
 LINE_MARKER = "skeldarWeaponAimLine"  # on a line from the weapon to a controller: its role
+# Default keys the rotation on the keys, then on every frame between them that still turns more than
+# this off the aim (2026-10-26: a fast swing between two keys came out 27 degrees off)
+TOLERANCE = 0.1         # degrees
+FILL_PASSES = 4         # a key added re-shapes its neighbours' auto tangents: checked again
 
 NO_WEAPON = "no weapon in the scene - Inventory > Equip first"
 ALREADY = "%s is in Aim Mode already - Default first"
 NOT_AIMED = "%s is not in Aim Mode"
+CLEARED = "%s: its Aim Mode was broken (the controllers or the constraint deleted) - cleared, the rotation left as it is"
 NO_GEOMETRY = "%s has no geometry to measure - cannot place the aim"
 
 
@@ -120,6 +125,28 @@ def left_message(label, keys):
         label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1])
 
 
+def turn_between(a, b, order=0):
+    """Degrees between two rotations given as Euler angles (degrees) in rotate order `order`, however
+    each is written (173 and -187 are one turn)."""
+    qa = om.MEulerRotation(*([math.radians(v) for v in a] + [int(order)])).asQuaternion()
+    qb = om.MEulerRotation(*([math.radians(v) for v in b] + [int(order)])).asQuaternion()
+    dot = abs(qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w)
+    return math.degrees(2.0 * math.acos(min(1.0, dot)))
+
+
+def frames_off(aimed, baked, tolerance=TOLERANCE, order=0):
+    """The frames of `baked` ({frame: euler}) turned more than `tolerance` off `aimed`, in order."""
+    return sorted(f for f, rotate in baked.items()
+                  if f in aimed and turn_between(aimed[f], rotate, order) > tolerance)
+
+
+def broken(made, constraint):
+    """An aim group whose controllers ({role: path}) or constraint are gone (2026-10-27, «Aim не
+    працює»: in a tab the dagger was keyed in Aim Mode, then its controllers and constraint deleted -
+    the empty group left made Aim Mode refuse and Default bake nothing). Pure."""
+    return not constraint or "target" not in made or "up" not in made
+
+
 # ------------------------------------------------------------------- scene
 
 def _long(node):
@@ -165,7 +192,18 @@ def group_of(weapon):
 
 
 def is_aimed(weapon):
-    return group_of(weapon) is not None
+    group = group_of(weapon)
+    return group is not None and not broken(controllers(group), _constraint(weapon))
+
+
+def _clear_broken(weapon, group):
+    """What is left of a broken Aim Mode on `weapon` deleted: our constraint, the group."""
+    con = _constraint(weapon)
+    if con:
+        cmds.delete(con)
+    _drop_lines(group)
+    if cmds.objExists(group):
+        cmds.delete(group)
 
 
 def controllers(group):
@@ -412,6 +450,9 @@ def enter(weapon):
     cmds.undoInfo(openChunk=True, chunkName="Connections: Aim Mode")
     try:
         cmds.autoKeyframe(state=False)
+        stale = group_of(weapon)
+        if stale:
+            _clear_broken(weapon, stale)
         with maya_timewarp.unwarped():
             sample, keys, tangents = fkik.own_keys([weapon], [], span)
             fkik._suspend(True)
@@ -464,9 +505,28 @@ def _into_1p(weapon):
     return firstperson.aim_into_chest(weapon)
 
 
+def _fill_between(weapon, aimed, keyed, order):
+    """Keys added on the frames between the keys where the baked rotation turns off the aim
+    (`aimed` {frame: euler} on every frame), until none does. How many."""
+    added = 0
+    for _ in range(FILL_PASSES):
+        baked = dict((f, [cmds.getAttr(weapon + "." + ch, time=f) for ch in ROTATE])
+                     for f in aimed if f not in keyed)
+        missed = frames_off(aimed, baked, TOLERANCE, order)
+        if not missed:
+            break
+        for f in missed:
+            for axis, ch in enumerate(ROTATE):
+                cmds.setKeyframe(weapon, attribute=ch, time=f, value=aimed[f][axis])
+            keyed.add(f)
+        added += len(missed)
+    return added
+
+
 def leave(weapon):
     """Default on `weapon`: its rotation keyed back on the keys of the controllers and of its
-    translate, the controllers and the constraint deleted. The status line."""
+    translate, then on every frame between them the keys alone would miss (`_fill_between`), the
+    controllers and the constraint deleted. The status line."""
     weapon = _long(weapon)
     if not weapon:
         return NO_WEAPON
@@ -474,8 +534,15 @@ def leave(weapon):
     group = group_of(weapon)
     if group is None:
         return NOT_AIMED % label
-    from maya_poselib import helpers
     made = controllers(group)
+    if broken(made, _constraint(weapon)):
+        cmds.undoInfo(openChunk=True, chunkName="Connections: Default")
+        try:
+            _clear_broken(weapon, group)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        return CLEARED % label
+    from maya_poselib import helpers
     span = _span()
     weapon_uuid = _uuid(weapon)
     auto = cmds.autoKeyframe(query=True, state=True)
@@ -491,18 +558,22 @@ def leave(weapon):
                 w = _long(weapon_uuid)
                 return _world(w) * om.MMatrix(cmds.getAttr(w + ".parentInverseMatrix[0]"))
 
+            every = list(range(span[0], span[1] + 1)) if keys else []
             fkik._suspend(True)
             try:
-                locals_ = _walk(sample, read)
+                locals_ = _walk(sorted(set(sample) | set(every)), read)
             finally:
                 fkik._suspend(False)
             frames = list(sample)
+            #  one Euler path through every frame in time order: the keys and the frames between
+            #  them on the same turn (no 360 between neighbours)
             previous = [cmds.getAttr(weapon + "." + ch) for ch in ROTATE]
-            values = []
-            for f in frames:
+            aimed = {}
+            for f in sorted(locals_):
                 rotate, _t = helpers.driver_channels(locals_[f], attrs, previous)
-                values.append(rotate)
+                aimed[f] = list(rotate)
                 previous = list(rotate)
+            values = [aimed[f] for f in frames]
             con = _constraint(weapon)
             if con:
                 cmds.delete(con)
@@ -515,8 +586,13 @@ def leave(weapon):
                     fkik._write(plug, frames, [v[axis] for v in values], span, False, tangents)
                 else:
                     cmds.setAttr(plug, values[0][axis])
+            added = 0
+            if keys:
+                added = _fill_between(weapon, dict((f, aimed[f]) for f in every), set(frames),
+                                      int(attrs.get("rotateOrder", 0)))
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
-    return left_message(label, keys)
+    line = left_message(label, keys)
+    return line + (" + %d between them where the aim turned faster" % added if added else "")
 

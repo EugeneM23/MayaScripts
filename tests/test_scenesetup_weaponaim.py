@@ -39,6 +39,29 @@ class Pure(unittest.TestCase):
     def test_nothing_to_measure_is_none(self):
         self.assertIsNone(wa.vectors((0, 0, 0), (0, 0, 0)))
 
+    def test_the_angle_between_two_rotations_ignores_how_euler_writes_them(self):
+        self.assertAlmostEqual(wa.turn_between((10, 20, 30), (10, 20, 30)), 0.0, 4)
+        self.assertAlmostEqual(wa.turn_between((173.45, -49.15, 96.29), (-186.55, -49.15, 96.29)), 0.0, 4)
+        self.assertAlmostEqual(wa.turn_between((0, 0, 0), (0, 90, 0)), 90.0, 4)
+        self.assertAlmostEqual(wa.turn_between((0, 0, 0), (0, 0, 10), order=3), 10.0, 4)
+
+    def test_only_the_frames_the_bake_missed_get_a_key(self):
+        # 2026-10-26, «при запіканні на дефолт змінюється позиція ножа»: keyed on the controllers' keys
+        # alone, frame 22 between 21 and 23 turned 27 degrees off the aim
+        aimed = {21: (-162.99, -41.47, 85.79), 22: (-162.87, -6.29, 83.84), 23: (-127.58, 66.1, 124.45),
+                 24: (-82.11, 71.33, 167.82)}
+        baked = {22: (-148.38, 12.79, 98.28), 24: (-82.13, 71.33, 167.80)}
+        self.assertEqual(wa.frames_off(aimed, baked, tolerance=0.1), [22])
+        self.assertEqual(wa.frames_off(aimed, {}, tolerance=0.1), [])
+
+    def test_an_aim_without_its_controllers_or_constraint_is_broken(self):
+        # 2026-10-27, «Aim не працює»: an empty group left in a tab made Aim Mode refuse
+        both = {"target": "|g|t", "up": "|g|u"}
+        self.assertFalse(wa.broken(both, "|w|con"))
+        self.assertTrue(wa.broken({}, None))
+        self.assertTrue(wa.broken(both, None))
+        self.assertTrue(wa.broken({"target": "|g|t"}, "|w|con"))
+
     def test_point_of_reads_the_frame(self):
         # a frame turned 90 about Z and moved: its +X is world +Y
         m = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 10, 20, 30, 1]
