@@ -29,8 +29,25 @@ from maya_uebridge import animexport  # noqa: E402
 
 CLIP = sys.argv[1].replace("\\", "/")
 SPLIT = "C:/!!!Work/Animations/Rigs/Characters/Creep_Split"
-PIECES = (("Creep2_Body", "Creep_Body.fbx", None), ("Creep2_ArmR", "Creep_Arm_R.fbx", "armR"),
-          ("Creep2_Head", "Creep_Head.fbx", "head"))
+# the elbow cut since 2026-10-27 (make_creep2_elbow_cut.py): the body and the forearm come from its file
+ELBOW = "C:/!!!Work/MayaScripts/sources/creep2/Creep2_ElbowCut.ma"
+PIECES = (("Creep2_Body", ELBOW, None), ("Creep2_ArmR", ELBOW, "armR"),
+          ("Creep2_Head", SPLIT + "/Creep_Head.fbx", "head"))
+REF_MESH = {"Creep2_Body": "Creep2_BodyElbow", "Creep2_ArmR": "Creep2_Forearm"}
+
+
+def import_ref(path, ns):
+    if path.endswith(".ma"):
+        cmds.file(path, i=True, namespace=ns, executeScriptNodes=False)
+    else:
+        import_fbx(path, ns)
+
+
+def ref_mesh(piece):
+    found = [cmds.listRelatives(s, parent=True, fullPath=True)[0]
+             for s in cmds.ls("ref_%s:*" % piece, type="mesh", long=True, noIntermediate=True)]
+    want = REF_MESH.get(piece)
+    return [m for m in found if not want or leaf(m) == want][0]
 FAILS = []
 
 
@@ -77,9 +94,8 @@ ns = rig.namespace
 geo = cmds.listRelatives("%s:Geometry" % ns, children=True) or []
 gate("1 three pieces, no whole mesh", sorted(leaf(g) for g in geo) == sorted(p[0] for p in PIECES), str(geo))
 for piece, fbx, switch in PIECES:
-    import_fbx("%s/%s" % (SPLIT, fbx), "ref_" + piece)
-    src = [cmds.listRelatives(s, parent=True, fullPath=True)[0]
-           for s in cmds.ls("ref_%s:*" % piece, type="mesh", long=True, noIntermediate=True)][0]
+    import_ref(fbx, "ref_" + piece)
+    src = ref_mesh(piece)
     a, b = points("%s:%s" % (ns, piece)), points(src)
     off = max(a[i].distanceTo(b[i]) for i in range(len(a))) if len(a) == len(b) else -1
     gate("1 %s on its FBX at the bind" % piece, 0 <= off < 1e-3, "%d vertices, %.2e cm" % (len(a), off))
@@ -127,7 +143,7 @@ worst = dict((p[0], 0.0) for p in PIECES)
 for t in [round(first + (last - first) * k / 4.0) for k in range(5)]:
     evaluate(t)
     for piece, fbx, switch in PIECES:
-        ref = [s for s in src if s.split("|")[1].startswith("ref_%s:" % piece) or ("ref_%s:" % piece) in s][0]
+        ref = ref_mesh(piece)
         a, b = points("%s:%s" % (ns, piece)), points(ref)
         worst[piece] = max(worst[piece], max(a[i].distanceTo(b[i]) for i in range(len(a))))
 for piece in worst:

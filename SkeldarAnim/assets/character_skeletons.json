@@ -1210,7 +1210,7 @@ null,
 "spine_05",
 -1.1098,
 146.1705,
--0.2935
+-0.2936
 ],
 "foot_l": [
 "calf_l",
@@ -1304,8 +1304,8 @@ null,
 ],
 "index_02_r": [
 "index_01_r",
--53.2753,
-77.6595,
+-53.2752,
+77.6596,
 33.0873
 ],
 "index_03_l": [
@@ -1329,7 +1329,7 @@ null,
 "index_metacarpal_r": [
 "hand_r",
 -51.868,
-89.7499,
+89.7498,
 26.8566
 ],
 "interaction": [
@@ -1394,7 +1394,7 @@ null,
 ],
 "middle_02_r": [
 "middle_01_r",
--56.3766,
+-56.3765,
 76.498,
 31.2196
 ],
@@ -1419,7 +1419,7 @@ null,
 "middle_metacarpal_r": [
 "hand_r",
 -53.9669,
-89.4753,
+89.4752,
 24.8143
 ],
 "neck_01": [
@@ -1449,7 +1449,7 @@ null,
 "pinky_01_r": [
 "pinky_metacarpal_r",
 -58.7544,
-82.8114,
+82.8113,
 23.5415
 ],
 "pinky_02_l": [
@@ -1460,8 +1460,8 @@ null,
 ],
 "pinky_02_r": [
 "pinky_01_r",
--59.9875,
-77.1363,
+-59.9876,
+77.1364,
 24.6911
 ],
 "pinky_03_l": [
@@ -1484,9 +1484,9 @@ null,
 ],
 "pinky_metacarpal_r": [
 "hand_r",
--55.6595,
-88.3804,
-22.0147
+-55.6596,
+88.3803,
+22.0148
 ],
 "ring_01_l": [
 "ring_metacarpal_l",
@@ -1510,7 +1510,7 @@ null,
 "ring_01_r",
 -58.4539,
 75.8539,
-28.042
+28.0421
 ],
 "ring_03_l": [
 "ring_02_l",
@@ -1522,7 +1522,7 @@ null,
 "ring_02_r",
 -57.2478,
 72.5351,
-28.1843
+28.1844
 ],
 "ring_metacarpal_l": [
 "hand_l",
@@ -1534,7 +1534,7 @@ null,
 "hand_r",
 -54.8299,
 88.9149,
-23.4543
+23.4544
 ],
 "root": [
 null,
@@ -1640,7 +1640,7 @@ null,
 ],
 "thumb_03_r": [
 "thumb_02_r",
--47.1873,
+-47.1872,
 82.4269,
 32.4142
 ],
@@ -1652,7 +1652,7 @@ null,
 ],
 "upperarm_r": [
 "clavicle_r",
--18.9041,
+-18.9042,
 146.1171,
 0.4346
 ],
@@ -1664,7 +1664,7 @@ null,
 ],
 "upperarm_twist_01_r": [
 "upperarm_r",
--23.4425,
+-23.4424,
 138.7341,
 0.1651
 ],
@@ -1676,8 +1676,8 @@ null,
 ],
 "upperarm_twist_02_r": [
 "upperarm_r",
--27.9806,
-131.3509,
+-27.9807,
+131.351,
 -0.1044
 ],
 "weapon_l": [
@@ -1696,7 +1696,7 @@ null,
 "file": "Creep2_ArmR_Skeleton.ma",
 "kind": "skeleton",
 "model": "Creep2_ArmR",
-"sha1": "7b063f5731e211ec0a58a37e2ac59d88f8bc58a1"
+"sha1": "1bfb0e94833e02e1c6f5298719dc9cceebcf54fb"
 },
 "Creep2_ArmR_Rig": {
 "bones": {
@@ -1776,7 +1776,7 @@ null,
 "spine_05",
 -1.1098,
 146.1705,
--0.2935
+-0.2936
 ],
 "foot_l": [
 "calf_l",
@@ -1870,8 +1870,8 @@ null,
 ],
 "index_02_r": [
 "index_01_r",
--53.2753,
-77.6595,
+-53.2752,
+77.6596,
 33.0873
 ],
 "index_03_l": [
@@ -1895,7 +1895,7 @@ null,
 "index_metacarpal_r": [
 "hand_r",
 -51.868,
-89.7499,
+89.7498,
 26.8566
 ],
 "interaction": [
@@ -1960,7 +1960,7 @@ null,
 ],
 "middle_02_r": [
 "middle_01_r",
--56.3766,
+-56.3765,
 76.498,
 31.2196
 ],
@@ -1985,7 +1985,7 @@ null,
 "middle_metacarpal_r": [
 "hand_r",
 -53.9669,
-89.4753,
+89.4752,
 24.8143
 ],
 "neck_01": [
@@ -2026,8 +2026,8 @@ null,
 ],
 "pinky_02_r": [
 "pinky_01_r",
--59.9875,
-77.1363,
+-59.9876,
+77.1364,
 24.6911
 ],
 "pinky_03_l": [
@@ -2050,9 +2050,9 @@ null,
 ],
 "pinky_metacarpal_r": [
 "hand_r",
--55.6595,
-88.3804,
-22.0147
+-55.6596,
+88.3803,
+22.0148
 ],
 "ring_01_l": [
 "ring_metacarpal_l",
@@ -2076,7 +2076,7 @@ null,
 "ring_01_r",
 -58.4539,
 75.8539,
-28.042
+28.0421
 ],
 "ring_03_l": [
 "ring_02_l",
@@ -2088,7 +2088,7 @@ null,
 "ring_02_r",
 -57.2478,
 72.5351,
-28.1843
+28.1844
 ],
 "ring_metacarpal_l": [
 "hand_l",
@@ -2100,7 +2100,7 @@ null,
 "hand_r",
 -54.8299,
 88.9149,
-23.4543
+23.4544
 ],
 "root": [
 null,
@@ -2206,7 +2206,7 @@ null,
 ],
 "thumb_03_r": [
 "thumb_02_r",
--47.1873,
+-47.1872,
 82.4269,
 32.4142
 ],
@@ -2218,8 +2218,8 @@ null,
 ],
 "upperarm_r": [
 "clavicle_r",
--18.9041,
-146.1171,
+-18.9042,
+146.1172,
 0.4346
 ],
 "upperarm_twist_01_l": [
@@ -2230,7 +2230,7 @@ null,
 ],
 "upperarm_twist_01_r": [
 "upperarm_r",
--23.4425,
+-23.4424,
 138.7341,
 0.1651
 ],
@@ -2242,8 +2242,8 @@ null,
 ],
 "upperarm_twist_02_r": [
 "upperarm_r",
--27.9806,
-131.3509,
+-27.9807,
+131.351,
 -0.1044
 ],
 "weapon_l": [
@@ -2262,7 +2262,7 @@ null,
 "file": "Creep2_ArmR_Rig.ma",
 "kind": "rig",
 "model": "Creep2_ArmR",
-"sha1": "32a547a133e97b83b6fc6c796496710975d9ea90"
+"sha1": "890f5faf17ecd69f3b87c920c1942e1c9b70527d"
 },
 "Creep2_Body": {
 "bones": {
@@ -2828,7 +2828,7 @@ null,
 "file": "Creep2_Body_Skeleton.ma",
 "kind": "skeleton",
 "model": "Creep2_Body",
-"sha1": "ec53e0786476369d2d7a9613eebaea0983b4fa78"
+"sha1": "cae1bb74c55f41b038fa3bed71afb1e2120f3e8e"
 },
 "Creep2_Body_Rig": {
 "bones": {
@@ -3394,7 +3394,7 @@ null,
 "file": "Creep2_Body_Rig.ma",
 "kind": "rig",
 "model": "Creep2_Body",
-"sha1": "7d568c72530c760cc5f0532bcbcd36cae66ae3fb"
+"sha1": "73dfc97119ceb24a656e39638ee32190944df4e3"
 },
 "Creep2_Head": {
 "bones": {
@@ -5092,7 +5092,7 @@ null,
 "file": "Creep2_Rig.ma",
 "kind": "rig",
 "model": "Creep2",
-"sha1": "b5f48541f27059c02d0b34d8c3734dc9daae2cd9"
+"sha1": "517fbf575ba7a88349e02f1deddcafec8c313641"
 },
 "Creep_Rig": {
 "bones": {

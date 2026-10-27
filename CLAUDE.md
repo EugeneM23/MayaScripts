@@ -15075,3 +15075,23 @@ the bind 2e-5 cm; a switch hides only its piece; a key at 20 hides it from 20; u
 piece where its FBX's own skin puts it 7e-5 cm; the export 93 joints, no mesh; Delete takes all three);
 `verify_creep2.py` all (its gates 3 / 4 now ask for the three pieces); `verify_part_drop.py` 16/16.
 Not seen in a GUI Maya. A Creep 2 rig added before this has the whole mesh: re-add it.
+## Creep 2's arm cut at the elbow (2026-10-27)
+
+The animator: «мы отрезали руку по плече а нужно по локоть давай переделаем и руку и меш тело без головы
+и руки». Spec `docs/superpowers/specs/2026-10-27-creep2-elbow-cut-design.md`. **This replaces the shoulder
+cut of the two sections above** for the arm and the body; the head is unchanged.
+- `docs/superpowers/plans/make_creep2_elbow_cut.py`:
+  - step `cut`: the animator's arm piece cut with `polyCut -deleteFaces` on a plane through
+    `lowerarm_r` (normal the bisector of the upper arm and the forearm). The forearm with the hand is
+    `Creep2_Forearm` (7056 vertices); the upper arm is united with the body into `Creep2_BodyElbow`
+    (54092). Weights by closest point from the arm piece. Saved as `sources/creep2/Creep2_ElbowCut.ma`;
+  - step `swap`: that mesh put in place of the old one in each asset, under the old name, with the
+    weights vertex for vertex. The assets are Creep2_Rig (Creep2_Body, Creep2_ArmR), Creep2_Body_Rig /
+    _Skeleton (Creep2_BodySplit) and Creep2_ArmR_Rig / _Skeleton (Creep2_ArmR).
+- Pipeline order: make_creep2_assets -> make_creep2_body_assets -> make_creep2_split_rig ->
+  make_creep2_elbow_cut.
+- The elbow seam: the forearm's 106 cut vertices on the body's to 1e-3 cm.
+- Proof: `verify_creep2_split_rig.py` 0 failed, `verify_creep2_body.py` all 8,
+  `verify_creep2.py` all, `verify_creep_parts.py` all, `verify_creep_parts_manny.py` 0 failed,
+  `verify_part_drop.py` all.
+- The Arm R portrait still shows the shoulder arm (a GUI Maya renders it).

@@ -7,7 +7,7 @@ mayapy STANDALONE, an empty scene, 2026-10-27 (make_creep2_body_assets.py):
 1. both rows in the catalog and the grid, whole (no part), untextured, a portrait;
 2. «Creep 2 Body [rig]» and «Creep 2 [rig]» added: each in its namespace, rotation-only, the body's one
    mesh Creep2_BodySplit in Group|Geometry, its skin at its bind, painted, controls at default;
-3. the cut body where Creep_Body.fbx has it, every vertex, at the bind;
+3. the cut body where the elbow cut has it, every vertex, at the bind;
 4. every body vertex on a vertex of Creep 2's whole mesh at the bind (the cut is a piece of it);
 5. the clip retarget through the Retarget button onto both rigs: every body vertex on its whole-mesh
    vertex on every sampled frame - the body deforms exactly as Creep 2 does;
@@ -32,7 +32,9 @@ for p in ("matrixNodes", "quatNodes", "fbxmaya"):
     except Exception:                                                   # noqa: BLE001
         pass
 CLIP = sys.argv[1].replace("\\", "/")
-SOURCE = "C:/!!!Work/Animations/Rigs/Characters/Creep_Split/Creep_Body.fbx"
+# the elbow cut since 2026-10-27 (make_creep2_elbow_cut.py): the body without the head and the forearm
+SOURCE = "C:/!!!Work/MayaScripts/sources/creep2/Creep2_ElbowCut.ma"
+SOURCE_MESH = "Creep2_BodyElbow"
 FAILS = []
 
 
@@ -75,6 +77,16 @@ def import_fbx(path, ns):
     mel.eval('FBXImport -f "%s";' % path)
     cmds.namespace(set=":")
     return [n for n in cmds.ls(long=True, dag=True) if n not in before]
+
+
+def import_src(ns):
+    before = set(cmds.ls(long=True, dag=True))
+    cmds.file(SOURCE, i=True, namespace=ns, executeScriptNodes=False)
+    return [n for n in cmds.ls(long=True, dag=True) if n not in before]
+
+
+def src_mesh_of(nodes):
+    return [n for n in nodes if cmds.nodeType(n) == "transform" and n.split(":")[-1] == SOURCE_MESH][0]
 
 
 def nearest_map(cut, whole, cell=0.05):
@@ -128,11 +140,11 @@ gate(2, b and w and ar.rotation_mode(b) and geo == ["Creep2_Body_Rig:Creep2_Body
 
 body = cmds.ls("Creep2_Body_Rig:Creep2_BodySplit", long=True)[0]
 whole = cmds.ls("Creep2_Rig:Creep2_Body", long=True)[0]
-src_nodes = import_fbx(SOURCE, "ue")
-src_mesh = [n for n in src_nodes if cmds.nodeType(n) == "transform" and cmds.listRelatives(n, shapes=True, type="mesh")][0]
+src_nodes = import_src("ue")
+src_mesh = src_mesh_of(src_nodes)
 a, c = points(src_mesh), points(body)
 worst_v = max(a[i].distanceTo(c[i]) for i in range(len(a))) if len(a) == len(c) else -1
-gate(3, len(a) == len(c) and 0 <= worst_v < 1e-3, "every one of %d vertices where Creep_Body.fbx has it (%.2e cm)"
+gate(3, len(a) == len(c) and 0 <= worst_v < 1e-3, "every one of %d vertices where the elbow cut has it (%.2e cm)"
      % (len(c), worst_v))
 cmds.delete([n for n in src_nodes if cmds.objExists(n) and not cmds.listRelatives(n, parent=True)] or [])
 cmds.namespace(removeNamespace="ue", deleteNamespaceContent=True)
@@ -144,8 +156,8 @@ gate(4, shared > 0.95 * len(dist),
      "the weights are the animator's own, the FBX's" % (shared, len(dist)))
 
 # the FBX itself beside the rig, its joints put on the rig's game bones every sampled frame
-src_nodes = import_fbx(SOURCE, "ue")
-src_mesh = [n for n in src_nodes if cmds.nodeType(n) == "transform" and cmds.listRelatives(n, shapes=True, type="mesh")][0]
+src_nodes = import_src("ue")
+src_mesh = src_mesh_of(src_nodes)
 ue_j = sorted((n for n in src_nodes if cmds.nodeType(n) == "joint"), key=lambda n: n.count("|"))
 game = dict((p.split("|")[-1].split(":")[-1], p)
             for p in [b.skeleton_root] + cmds.listRelatives(b.skeleton_root, ad=True, type="joint", fullPath=True))
@@ -189,8 +201,8 @@ print("   ", character.add_character(skel_row).splitlines()[0])
 joints = cmds.ls(type="joint", long=True)
 n_sk, err = bind_error("")
 meshes = [cmds.listRelatives(s, parent=True, fullPath=True)[0] for s in cmds.ls(type="mesh", noIntermediate=True, long=True)]
-src_nodes = import_fbx(SOURCE, "ue")
-src_mesh = [n for n in src_nodes if cmds.nodeType(n) == "transform" and cmds.listRelatives(n, shapes=True, type="mesh")][0]
+src_nodes = import_src("ue")
+src_mesh = src_mesh_of(src_nodes)
 mine = [m for m in meshes if "Creep2_BodySplit" in m]
 a, c = points(src_mesh), points(mine[0]) if mine else []
 worst_v = max(a[i].distanceTo(c[i]) for i in range(len(a))) if len(a) == len(c) else -1
