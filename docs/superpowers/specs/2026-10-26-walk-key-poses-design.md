@@ -123,3 +123,25 @@ knees' soft limit, Whip's springs) work on it, the retarget puts it on any skele
 - curves of an edit drawn or eased differently;
 - the walker's arms follow an edit through their inertia (Whip): a sharp arm edit reads 70-75 % at its key on the
   walker (14.7 of 20 deg on asd) - Whip's springs smooth it.
+
+## Addendum 2026-10-27: four distinct poses, the rigs in a line
+
+The animator: «Опция которая создает ключевые позы должна ставить не в шеренгу риги а в линию один за одним начиная с
+контакта и продолжая дальше. Сейчас позы определяются не верно по 2 одинаковые а должны определятся 4 ключевые (смотри
+документацию)». **This replaces the table above and the row's places.**
+
+- **What was wrong**: the raw events crowd together on a run. AGS_Sprint (a 7-frame step) read Contact 0, Down 1,
+  Passing 2 - its swinging foot passes the standing one right after the strike - and Up 5, beside the next contact at
+  7: two pairs of nearly the same pose. Even on dw a crossing just outside the step's middle put Passing 35 and Up 36.
+- **Now**: each key looks for its event only within a sixteenth of the step of its share of it, the gait guide's
+  layout (Williams): Down near a quarter (the pelvis lowest), Passing the middle (the feet crossing, else where they
+  come nearest), Up three quarters (the pelvis highest, a run's flight preferred); then kept in order a frame apart
+  (`_band`, `_ordered`, `SHARES`). AGS_Sprint 0, 2, 4, 5; asd 9, 12, 17, 20; HavyRun 10, 13, 16, 19; RunFast 9, 13,
+  15, 19; dw 12, 20, 33, 39.
+- **The rigs** stand one behind another along the walker's travel (`keyrig.line_point`, `_travel`: its root at the
+  playback end less its start, +Z in place): Contact first, 150 cm to the walker's right, then 110 cm apart forward.
+- The asd walker's arm reads 12.9 deg at the contact and 14.6 at the right one for a 20 deg edit (the steps are 16 and
+  15 frames, so the fades before them are 5 and 4); the cycle itself is exact on both.
+- Proof: `test_walk_keyposes` 21 (new: each key in its own quarter on a walk and two runs; the line), `verify_walk_keyposes.py`
+  22/22 standalone; live on 7002 (installed from `cceeee5`): AGS_Sprint and asd on Manny skeletons, Create on each,
+  the four rigs' legs read off the scene as four different poses, standing in a line along +Z.

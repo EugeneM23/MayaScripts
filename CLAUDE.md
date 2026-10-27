@@ -10870,16 +10870,19 @@ knees were held at the POSE's stretch by the soft limit and Height could not str
 animator away). Spec `docs/superpowers/specs/2026-10-26-walk-key-poses-design.md`.
 - **The Rig pose tab**: «Mean pose» Create / Reset / Delete, «Key poses» Create / Reset / Delete (`KEY_*_BTN`), one
   Update for both (`press_mean_update` reads `meanrig` and `keyrig`, then keys each cycle that changed once).
-- **`maya_walk/keyposes.py`** (numpy): `find(walk)` - every step's Contact (the heel strike), Down (the pelvis lowest
-  between Contact and Passing, `KEY_MARGIN` 35 % of that span from both), Passing (the swinging foot passes the
-  standing one), Up (the pelvis highest before the next contact, a run's flight peak); `measure` / `combine` (the
+- **`maya_walk/keyposes.py`** (numpy): `find(walk)` - every step's Contact (the heel strike) and, each searched only
+  within a sixteenth of the step of its own share (`SHARES`, the guide's layout; `_band`, `_ordered`), Down near a
+  quarter (the pelvis lowest), Passing the middle (the feet crossing, else nearest), Up three quarters (the pelvis
+  highest, a run's flight preferred). Since 2026-10-27: the raw events gave a sprint 0, 1, 2 and Up beside the next
+  contact («по 2 одинаковые»); now 0, 2, 4, 5 of a 7-frame step, asd 9, 12, 17, 20; `measure` / `combine` (the
   upper body's local turns in the parent frame, the pelvis's move in travel coordinates, a foot's move and turn -
   none of it for a foot flat on the ground, only the turn for one on its heel or ball, said; a knee's turn about its
   leg from `KNEE_MIN` 1.5 deg); `correct` - the edits in the analysed clip's frames, exact at each key and fading to
   the keys on either side (smoothstep, log space), the right foot's steps mirrored across the walk's middle, the legs
   solved again from the hips onto the feet; the file `<walk>.walkkeys.json`.
 - **`maya_walk/keyrig.py`**: four Manny rigs (`MARKER` `skeldarWalkKey` on Main: walk, clean, key, frame, base) in a
-  row at x - 150 - 110 i beside the first walker, stood by the Pose Library's solve (no keys) in the first left step's
+  line along the first walker's travel, Contact first, 150 cm to its right, 110 cm apart (`line_point`, since
+  2026-10-27; was a row side by side), stood by the Pose Library's solve (no keys) in the first left step's
   key frames, legs in IK; Update stands a changed rig again in what the cycle does; Reset; Delete.
 - **`scene.load_walk`**: after the mean pose's correction the walk is analysed, its steps found (`walk.key_steps`,
   `walk.key_note`), the key edits put in and the walk analysed again; cached by the key file's time.
