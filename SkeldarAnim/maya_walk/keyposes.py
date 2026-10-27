@@ -41,7 +41,7 @@ LABELS = {"contact": "Contact", "down": "Down", "passing": "Passing", "up": "Up"
 REF_SIDE = "l"                      # the rigs show the first step of this foot; the other foot's are mirrored
 MIN_STEP = 4                        # frames: a step shorter than this has no room for four key poses
 FLAT_CM = 0.2                       # cm: a pelvis moving less than this over a span has no Down or Up there
-KEY_MARGIN = 0.35                   # Down and Up kept this share of their span away from the keys on either side
+SHARES = (0.25, 0.5, 0.75)          # Down, Passing, Up: their share of the step (the guide's layout)
 GROUND_CM = wm.GROUND_TOL           # a foot point this near its own lowest is on the ground
 MIN_TURN = mp.MIN_TURN
 MIN_CM = mp.MIN_CM
@@ -173,15 +173,23 @@ def find(walk):
                           % (nxt - c, wm.SIDE_WORD.get(side, side), c))
         stand, swing = idx["foot_" + side], idx["foot_" + OTHER[side]]
         ahead = lambda f: float(np.dot(_at(walk, swing, f) - _at(walk, stand, f), walk.fwd))
-        inner = list(range(c + 1, nxt))
-        crossing = [f for f in inner[1:-1] if ahead(f - 1) < 0.0 <= ahead(f)]
-        if crossing:
-            passing = crossing[0]
+        span = nxt - c
+        down_band, pass_band, up_band = (_band(c, span, share) for share in SHARES)
+        crossing = [f for f in range(c + 1, nxt) if ahead(f - 1) < 0.0 <= ahead(f)]
+        middle = c + 0.5 * span
+        inside = [f for f in crossing if f in pass_band]
+        if inside:
+            passing = min(inside, key=lambda f: abs(f - middle))
+        elif crossing:                      # the feet pass outside the band (a sprint's: right after the strike)
+            passing = min(pass_band, key=lambda f: abs(ahead(f)))
         else:                               # a strafe: the feet never pass - where they come nearest
-            passing = max(inner[1:-1], key=ahead)
-        passing = min(max(passing, c + 2), nxt - 2)
-        down = _down(walk, side, c, passing, height)
-        up = _up(walk, side, passing, nxt, height)
+            passing = max(pass_band, key=ahead)
+        down = _extreme(down_band, height, min, down_band[0], down_band[-1])
+        frames = up_band
+        other = OTHER[side]
+        flight = [f for f in frames if not _is_down(walk, side, f) and not _is_down(walk, other, f)]
+        up = _extreme(flight or frames, height, max, frames[0], frames[-1])
+        down, passing, up = _ordered(c, down, passing, up, nxt)
         steps.append({"side": side, "contact": c, "down": down, "passing": passing, "up": up, "next": nxt})
     return steps
 
@@ -190,30 +198,31 @@ def _is_down(walk, side, f):
     return max(ground(walk, side, f)) >= 0.5
 
 
-def _window(lo, hi):
-    """The frames between lo and hi kept KEY_MARGIN of the span away from both (at least a frame): a key pose
-    between two others is a pose of its own, never their neighbour's frame."""
-    margin = max(1, int(math.ceil(KEY_MARGIN * (hi - lo))))
-    a, b = lo + margin, hi - margin
-    if a > b:
-        a = b = (lo + hi) // 2
-    return list(range(a, b + 1))
+def _band(c, span, share):
+    """The frames a key pose may take: within a sixteenth of the step of its own share of it (the guide's layout
+    - Down near a quarter, Passing the middle, Up three quarters), inside the step. Each key looks for its event
+    (the pelvis lowest, the feet passing, the pelvis highest) only there, so the four are poses of their own: a
+    sprint's raw events fell on three frames in a row (2026-10-27)."""
+    target = c + share * span
+    half = span / 16.0
+    lo = max(c + 1, int(math.ceil(target - half)))
+    hi = min(c + span - 1, int(math.floor(target + half)))
+    if lo > hi:
+        lo = hi = min(max(int(round(target)), c + 1), c + span - 1)
+    return list(range(lo, hi + 1))
 
 
-def _down(walk, side, c, passing, height):
-    """Down: the pelvis lowest between the strike and the passing (in their window, _window) - the weight taken
-    on the front leg. A mocap pelvis is flat about the contact: its lowest frame sat beside it, and the trailing
-    foot's toe-off is a frame after it on a brisk walk (asd)."""
-    return _extreme(_window(c, passing), height, min, c, passing)
-
-
-def _up(walk, side, passing, nxt, height):
-    """Up: the pelvis highest between the passing and the next contact (in their window) - a run's flight peak
-    when it has one there."""
-    frames = _window(passing, nxt)
-    other = OTHER[side]
-    flight = [f for f in frames if not _is_down(walk, side, f) and not _is_down(walk, other, f)]
-    return _extreme(flight or frames, height, max, passing, nxt)
+def _ordered(c, down, passing, up, nxt):
+    """Down, Passing and Up kept apart and in order between the contact and the next one (a frame at least
+    between any two), nearest to where they were found."""
+    keys = [down, passing, up]
+    for i in range(3):
+        keys[i] = min(max(keys[i], c + 1 + i), nxt - 3 + i)
+    for i in (1, 2):
+        keys[i] = max(keys[i], keys[i - 1] + 1)
+    for i in (1, 0):
+        keys[i] = min(keys[i], keys[i + 1] - 1)
+    return keys
 
 
 def _extreme(frames, value, pick, lo, hi):

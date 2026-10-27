@@ -103,8 +103,10 @@ gate(len(rigs) == 4 and [keyrig.memo_of(r)["key"] for r in rigs] == list(kp.KEYS
      "Create key poses added four rigs, Contact Down Passing Up (%s)" % ", ".join(r.namespace for r in rigs))
 tx, _, tz = cmds.xform(target, query=True, worldSpace=True, translation=True)
 places = [cmds.xform(r.main, query=True, worldSpace=True, translation=True) for r in rigs]
-gate(all(abs(p[0] - (tx - keyrig.OFFSET - keyrig.GAP * i)) < 1e-3 and abs(p[2] - tz) < 1e-3
-         for i, p in enumerate(places)), "they stand in a row beside the walker (x %s)" % [round(p[0], 1) for p in places])
+travel = keyrig._travel(target)
+gate(all(max(abs(a - b) for a, b in zip(p, keyrig.line_point((tx, 0.0, tz), travel, i))) < 1e-3
+         for i, p in enumerate(places)) and places[1][2] - places[0][2] > 100.0,
+     "they stand in a line beside the walker along its travel, Contact first (z %s)" % [round(p[2], 1) for p in places])
 statics = sw.load_walk("asd", {})[1]
 worst_turn, worst_pelvis = 0.0, 0.0
 for rig in rigs:
@@ -152,7 +154,7 @@ gate(abs(in_cycle[0] - turned) < 0.01 and in_cycle[1] < 0.01 and abs(in_cycle[2]
      "foot's contact upperarm_r %.3f (the mirror), upperarm_l %.3f" % in_cycle)
 at_key = deg(local("upperarm_l", FR["contact"]) @ before["arm_contact"].T)
 mirrored = deg(local("upperarm_r", OTHER["contact"]) @ before["arm_r_contact"].T)
-gate(at_key > 0.6 * turned and abs(mirrored - at_key) < 1.0,
+gate(at_key > 0.6 * turned and abs(mirrored - at_key) < 2.5,      # the steps are 16 and 15 frames: fades of 5 and 4
      "the walker: upperarm_l %.2f deg at the contact, upperarm_r %.2f at the right foot's (its arms' inertia smooths "
      "the edit)" % (at_key, mirrored))
 gate(keyrig.update() == keyrig.NOTHING_MOVED, "read again with nothing moved: no change")

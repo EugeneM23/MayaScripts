@@ -25,8 +25,8 @@ from . import meanrig
 from . import scene
 
 MARKER = "skeldarWalkKey"          # on a key rig's Main: {"walk", "clean", "key", "frame", "base": {bone: 16}}
-OFFSET = 150.0                     # cm beside the first walker on the cycle (along -X: the mean pose rig is +X)...
-GAP = 110.0                        # ...the next key this much further
+OFFSET = 150.0                     # cm beside the first walker on the cycle (to its right: the mean pose rig is +X)...
+GAP = 110.0                        # ...Contact first, each next key this much further along the walk's travel
 LABEL = "%s - %s"
 
 
@@ -80,16 +80,45 @@ def _set_memo(rig, memo):
 
 # ---- the presses ----
 
+def line_point(origin, travel, i):
+    """The `i`th key's place: OFFSET to the right of `origin` (the walker), then GAP a key along `travel` (a flat
+    direction): Contact first and the others after it, one behind another the way the walk goes - not side by
+    side (2026-10-27, «не в шеренгу а в линию один за одним начиная с контакта»)."""
+    x, z = float(travel[0]), float(travel[2])
+    length = (x * x + z * z) ** 0.5
+    if length < 1e-6:
+        x, z, length = 0.0, 1.0, 1.0
+    x, z = x / length, z / length
+    right = (-z, x)                    # up x travel, then turned to the walker's right (-X for a walk along +Z)
+    return (origin[0] + OFFSET * right[0] + GAP * i * x, 0.0, origin[2] + OFFSET * right[1] + GAP * i * z)
+
+
+def _travel(top):
+    """Where the walker `top` goes: its root's world place at the playback end less its start (flat); +Z for a
+    walker in place."""
+    cmds = _cmds()
+    a = cmds.playbackOptions(query=True, minTime=True)
+    b = cmds.playbackOptions(query=True, maxTime=True)
+    try:
+        p = cmds.getAttr(top + ".worldMatrix[0]", time=a)[12:15]
+        q = cmds.getAttr(top + ".worldMatrix[0]", time=b)[12:15]
+    except (RuntimeError, ValueError, TypeError):
+        return (0.0, 0.0, 1.0)
+    d = (q[0] - p[0], 0.0, q[2] - p[2])
+    return d if (d[0] * d[0] + d[2] * d[2]) > 1.0 else (0.0, 0.0, 1.0)
+
+
 def _point(walk, i):
-    """The `i`th key's place: beside the first walker on the cycle `walk` (else the first walker, else the
-    origin), the row going along -X."""
+    """The `i`th key's place beside the first walker on the cycle `walk` (else the first walker, else the
+    origin), in a line along its travel (line_point)."""
     cmds = _cmds()
     walkers = scene.walkers()
     on = [r for r in walkers if scene.memo_of(r).get("walk") == walk] or walkers
-    x, z = 0.0, 0.0
+    origin, travel = (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)
     if on:
-        x, _, z = cmds.xform(on[0], query=True, worldSpace=True, translation=True)
-    return (x - OFFSET - GAP * i, 0.0, z)
+        origin = cmds.xform(on[0], query=True, worldSpace=True, translation=True)
+        travel = _travel(on[0])
+    return line_point(origin, travel, i)
 
 
 def _add(walk, i):

@@ -78,6 +78,19 @@ class FindTests(unittest.TestCase):
             self.assertGreaterEqual(s["up"] - s["passing"], 1)
             self.assertGreaterEqual(s["next"] - s["up"], 1)
 
+    def test_each_key_stands_in_its_own_quarter_of_the_step(self):
+        """Four distinct poses, as the guide lays them out: Down near a quarter of the step, Passing near its
+        middle, Up near three quarters - on a walk and on a run alike. A sprint read the raw events: its swinging
+        foot passes the standing one right after the strike, so Contact, Down and Passing fell on three frames
+        in a row and Up beside the next contact (2026-10-27, «по 2 одинаковые»)."""
+        for kw in ({}, {"P": 28, "stance": 0.25, "lift": 30.0}, {"P": 16, "stance": 0.3, "lift": 30.0}):
+            w = T.walk(**kw)
+            for s in kp.find(w):
+                span = s["next"] - s["contact"]
+                band = span / 16.0 + 1.0
+                for share, key in ((0.25, "down"), (0.5, "passing"), (0.75, "up")):
+                    self.assertLessEqual(abs(s[key] - (s["contact"] + share * span)), band, (kw, key, s))
+
     def test_a_walk_with_no_steps_is_refused(self):
         w = T.walk()
         w.placement_note = "the left foot never lifts"
@@ -301,3 +314,20 @@ class MirrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineTests(unittest.TestCase):
+
+    def test_the_rigs_stand_one_behind_another_along_the_travel(self):
+        """Contact first beside the walker, then each key further along where the walk goes (2026-10-27)."""
+        kr = T.load("keyrig")
+        points = [kr.line_point((10.0, 0.0, 5.0), (0.0, 0.0, 300.0), i) for i in range(4)]
+        self.assertEqual(points[0], (10.0 - kr.OFFSET, 0.0, 5.0))
+        for i, p in enumerate(points):
+            self.assertAlmostEqual(p[0], 10.0 - kr.OFFSET)
+            self.assertAlmostEqual(p[2], 5.0 + kr.GAP * i)
+        back = [kr.line_point((0.0, 0.0, 0.0), (-50.0, 0.0, 0.0), i) for i in range(2)]   # walking along -X
+        self.assertAlmostEqual(back[1][0] - back[0][0], -kr.GAP)
+        self.assertAlmostEqual(back[0][2], -kr.OFFSET)     # its right is -Z
+        still = kr.line_point((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 1)
+        self.assertAlmostEqual(still[2], kr.GAP)            # in place: along +Z
