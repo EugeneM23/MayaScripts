@@ -14972,3 +14972,22 @@ both rigs added, the body's skin at its bind, every vertex on the FBX's (1.9e-5 
 Retarget button: every body vertex where the FBX's own skin puts it with its joints on the rig's bones to
 0.00007 cm over 606 cm of travel; the export 93 joints, no mesh; the skeleton row; Delete character.
 Unit tests `test_scenesetup_catalog.Creep2Body`. Not seen in the animator's Maya (after Check update).
+
+## A part portrait dropped on a character keeps it (2026-10-27)
+
+The animator: «Для рига головы и руки крипа нужно сделать исключение. При драге в сцену на скелет или
+риг анимация должна перепечься на руку или голову но старый скелет должен остаться ... просто должны
+разместить их там где эти части тела у скелета и перекинуть анимацию». A portrait of a PART row
+(`catalog.Character.part`: Creep 2 Arm R / Head, rig or skeleton) dropped on a character in the scene
+no longer swaps it: `swap.swap` hands it to `swap.attach_part` - the character's take baked into a
+plain copy (`bake_copy`, as the swap does), the part added and retargeted from it by the same roads
+(`_onto_rig` / `_onto_skeleton`; its anchor follows the copy's chest, so it stands where that body part
+is), the copy deleted, and nothing carried, re-bound or deleted. The ghost: «Creep 2 Arm R [rig] onto
+Creep2_Rig's right arm - Creep2_Rig kept» (`swap_caption(..., part)`); the line `part_line`.
+`skeletonimport.choose_for` now treats a part SKELETON as the part rigs are treated (a twin whole,
+else rotations, never asked): «the same proportions at another size» had scaled a head-only take about
+the floor and stood the head 174 cm off the chest. Proof `verify_part_drop.py <clip>` **16/16 mayapy
+standalone** on AS_Creep_Jog_B_Loop: onto a Creep 2 rig and a Manny UE5 skeleton, each part row - the
+character's every bone as before at every sampled frame; on Creep 2 the part's hand_r / head on the
+character's to 0.000 cm (the head rig 0.137, the AS neck in-between's own), on Manny 3.7-14.9 cm (other
+proportions, rotations), turning as the character's to 0.000 deg. Not seen in a GUI Maya.

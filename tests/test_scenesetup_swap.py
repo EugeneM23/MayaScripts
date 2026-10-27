@@ -68,5 +68,34 @@ class Pure(unittest.TestCase):
         self.assertEqual(swap.swap_caption("root", "Creep [rig]"), "swap root for Creep [rig]")
 
 
+class Parts(unittest.TestCase):
+    """A part row dropped on a character keeps it (2026-10-27)."""
+
+    def test_a_part_caption_names_the_body_part_and_keeps_the_character(self):
+        self.assertEqual(swap.swap_caption("Manny_Rig", "Creep 2 Arm R [rig]", "spine_05"),
+                         "Creep 2 Arm R [rig] onto Manny_Rig's right arm - Manny_Rig kept")
+        self.assertIn("head", swap.swap_caption("root", "Creep 2 Head [skeleton]", "spine_05"))
+
+    def test_the_part_line_never_says_deleted(self):
+        line = swap.part_line("Creep2_Rig", "Creep2_Head_Rig", "rotations")
+        self.assertEqual(line, "Creep2_Head_Rig on Creep2_Rig's head  |  rotations  |  "
+                               "Creep2_Rig kept")
+
+    def test_a_rig_line_reads_the_body_part_off_the_row(self):
+        line = swap.part_line("Manny_Rig", "Creep2_ArmR_Rig1", "", "Creep 2 Arm R [rig]")
+        self.assertTrue(line.startswith("Creep2_ArmR_Rig1 on Manny_Rig's right arm"))
+
+    def test_a_part_skeleton_is_known_by_its_label(self):
+        from maya_uebridge import skeletonimport
+        self.assertTrue(skeletonimport._is_part("Creep 2 Head [skeleton] (root)"))
+        self.assertFalse(skeletonimport._is_part("Manny UE5 [skeleton]"))
+
+    def test_a_part_entry_never_reaches_the_delete(self):
+        import inspect
+        src = inspect.getsource(swap.swap)
+        self.assertLess(src.index("attach_part"), src.index("deletion.execute"))
+        self.assertNotIn("deletion", inspect.getsource(swap.attach_part))
+
+
 if __name__ == "__main__":
     unittest.main()

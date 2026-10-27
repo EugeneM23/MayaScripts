@@ -216,7 +216,7 @@ class Scene(object):
 
     def target(self, gx, gy):
         """kind "swap" (root, label, text) over a character, else the floor (`floor_at`)."""
-        from maya_scenesetup import droptarget, swap
+        from maya_scenesetup import catalog, droptarget, swap
         snap = self._snap
         if snap is None:
             try:
@@ -226,8 +226,10 @@ class Scene(object):
         if snap:
             aim = droptarget.character_target(gx, gy, snap, self.scale())
             if aim.get("kind") == "character":
+                entry = catalog.character_by_label(self._label) if self._label else None
                 return dict(kind="swap", root=aim["root"], label=aim["label"],
-                            text=swap.swap_caption(aim["label"], self._label or "it"))
+                            text=swap.swap_caption(aim["label"], self._label or "it",
+                                                   getattr(entry, "part", "")))
         return droptarget.floor_at(gx, gy)
 
     def over_hub(self, gx, gy):

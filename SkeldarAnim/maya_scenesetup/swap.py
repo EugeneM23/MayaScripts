@@ -75,8 +75,32 @@ def map_target(kind, name, new_kind, new_bones, new_controls, near_bone=None, we
     return None, False
 
 
-def swap_caption(old_label, new_label):
+def swap_caption(old_label, new_label, part=""):
+    """The ghost's caption over a character. A PART (2026-10-27, the Creep 2's arm and head) is
+    put on that character's body part, the character kept. Pure."""
+    if part:
+        return "{0} onto {1}'s {2} - {1} kept".format(new_label, old_label, part_word(new_label))
     return "swap {0} for {1}".format(old_label, new_label)
+
+
+def part_word(label):
+    """What body part a part row stands for, read off its label. Pure."""
+    low = (label or "").lower()
+    if "head" in low:
+        return "head"
+    if "arm" in low:
+        return "right arm" if "arm r" in low else "arm"
+    return "body part"
+
+
+def part_line(old_label, new_label, retarget, row_label=None):
+    """The status after a part was put on a character; the body part read off `row_label` (the
+    catalog row's), else `new_label`. Pure."""
+    parts = ["{0} on {1}'s {2}".format(new_label, old_label, part_word(row_label or new_label))]
+    if retarget:
+        parts.append(retarget)
+    parts.append("{0} kept".format(old_label))
+    return "  |  ".join(parts)
 
 
 def swap_line(old_label, new_label, retarget, carried, rebound, baked, deleted, notes=()):
@@ -499,6 +523,8 @@ def swap(entry, root):
     char = old_character(root)
     if char is None:
         return "no character at {0}".format(leaf(root))
+    if getattr(entry, "part", ""):
+        return attach_part(entry, char)
     refusal = deletion._refusal([char])
     if refusal:
         return refusal
@@ -545,6 +571,44 @@ def swap(entry, root):
     new_label = maya_rigs.label(new_rig) if new_rig is not None else entry.label
     return swap_line(char.label, new_label, line, texts, rebound, baked, _first_line(deleted),
                      notes)
+
+
+def attach_part(entry, char):
+    """A PART row (Creep 2 Arm R / Head) dropped on a character (2026-10-27, «старый скелет должен
+    остаться ... разместить их там где эти части тела у скелета и перекинуть анимацию»): the part
+    added and the character's take retargeted onto it - its anchor on the character's chest, so it
+    stands where that body part is - and the character left exactly as it was: nothing carried,
+    re-bound or deleted. Returns the status line."""
+    import maya_retargetmode
+    from maya_uebridge import rigimport
+    start, end = range_of(char)
+    name = clip_name(char)
+    timing = rigimport.time_state()
+    frame = cmds.currentTime(query=True)
+    namespace, source, info = bake_copy(char.root, start, end)
+    try:
+        if catalog.is_rig(entry):
+            new_root, new_rig, line, failure = _onto_rig(entry, namespace, info, source, name)
+        else:
+            new_root, new_rig, line, failure = _onto_skeleton(entry, namespace, info, source, name)
+    except maya_retargetmode.Cancelled:
+        _drop_namespace(namespace)
+        rigimport.restore_time(timing)
+        return CANCELLED
+    except Exception:
+        _drop_namespace(namespace)
+        raise
+    _drop_namespace(namespace)
+    if failure or not new_root:
+        return "{0}: {1} - {2} untouched".format(entry.label, failure or "it did not arrive",
+                                                 char.label)
+    cmds.currentTime(frame)
+    try:
+        cmds.select(new_rig.main if new_rig is not None else new_root, replace=True)
+    except Exception:                                        # noqa: BLE001
+        pass
+    new_label = maya_rigs.label(new_rig) if new_rig is not None else entry.label
+    return part_line(char.label, new_label, line, entry.label)
 
 
 def _first_line(text):

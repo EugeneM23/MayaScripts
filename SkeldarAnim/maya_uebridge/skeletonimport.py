@@ -994,8 +994,28 @@ def choose_for(source, root, label, start):
     `root` (2026-10-02): the Retarget card's setting and the measured clip,
     asked when the stretch would break the skeleton's proportions. Raises
     `maya_retargetmode.Cancelled`."""
-    import maya_retargetmode
-    return maya_retargetmode.choose(measure(source, root, start, label))
+    import maya_retargetmode as rm
+    m = measure(source, root, start, label)
+    if _is_part(label) and m is not None:
+        # a part skeleton (the Creep 2's arm, its head; 2026-10-27) has no body to be scaled about:
+        # «the same proportions at another size» scaled a head-only clip about the floor and stood it
+        # 174 cm off the chest. As the part rigs: a twin whole, anything else by rotation, never asked.
+        if m.twin:
+            return rm.Decision(rm.STRETCH, False, "stretch - {0} is the clip's twin, exact".format(
+                label), True)
+        return rm.Decision(rm.ROTATION, False, "rotations - {0} is a part: it keeps its "
+                                               "proportions on the clip's chest".format(label), False)
+    return rm.choose(m)
+
+
+def _is_part(label):
+    """Whether `label` names a part row of the catalog (its own label, "(root)" suffix allowed)."""
+    try:
+        from maya_scenesetup import catalog
+        entry = catalog.character_by_label((label or "").split(" (")[0])
+    except Exception:                                        # noqa: BLE001
+        return False
+    return bool(getattr(entry, "part", ""))
 
 
 def discard_new(root):
