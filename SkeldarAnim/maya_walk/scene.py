@@ -805,6 +805,8 @@ def memo_of(root):
         memo = json.loads(cmds.getAttr(root + "." + MARKER) or "{}")
     except ValueError:
         return {}
+    if not isinstance(memo, dict):        # JSON, but no memo: one such attribute broke `walkers()` (2026-10-27)
+        return {}
     return memo if memo.get("version") in READ_VERSIONS else {}
 
 
@@ -859,11 +861,17 @@ def edits_of(root):
         raw = json.loads(cmds.getAttr(root + "." + EDITS_ATTR) or "{}")
     except ValueError:
         return None
+    if not isinstance(raw, dict):
+        return None
     out = empty_edits(raw.get("walk"))
+    # each read on its own (2026-10-27): a correction this build cannot read took the key poses' edits with it
     try:
         out["fix"] = mp.loads(raw.get("fix") or {})
+    except mp.Refusal:
+        pass
+    try:
         out["keys"] = kp.loads(raw.get("keys") or {})
-    except (mp.Refusal, kp.Refusal):
+    except kp.Refusal:
         pass
     out["posture"] = bool(raw.get("posture", False))
     return out

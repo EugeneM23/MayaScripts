@@ -1340,9 +1340,11 @@ def _take(root):
             _remember("physics", 1.0 if params["physics"] else 0.0)
             _remember("knee_pops", 1.0 if params.get("knee_pops", True) else 0.0)
             cmds = _cmds()
-            for box, name in ((PHYSICS_BOX, "physics"), (KNEE_POPS_BOX, "knee_pops")):
+            # `flag`, not `name`: the walk's name below is asked after the loop (2026-10-27: the
+            # loop overwrote it, and the Clean tab kept the previous cycle's report)
+            for box, flag in ((PHYSICS_BOX, "physics"), (KNEE_POPS_BOX, "knee_pops")):
                 if cmds.checkBox(box, exists=True):
-                    cmds.checkBox(box, edit=True, value=bool(params.get(name, True)))
+                    cmds.checkBox(box, edit=True, value=bool(params.get(flag, True)))
             _set_knobs(dict(params["clean"], pose=params["pose"], in_place=params["in_place"]))
             if scene.walk_exists(name):
                 show_report(scene.load_walk(name, values())[3])

@@ -373,6 +373,8 @@ def update(rekey=None, shift=None):
         frames = kp.frames_of(anim.steps, anim.rw.P)
         for rig in list(stood_again) + [r for r in older if r not in stood_again]:
             key = memo_of(rig)["key"]
+            if key not in frames:
+                continue        # a rig of no key the walk has (an old memo): left alone, as the reading leaves it
             _stand(rig, anim, root, key, frames[key])
             _label(rig, root, key, frames[key])
         line = "key poses of %s: %s" % (scene.walker_label(root), "; ".join(said) if said else "nothing taken")

@@ -13301,6 +13301,23 @@ the window since 2026-10-01) and `maya_pmretarget`.
    Written as an `int` (`hubqt.Card` and `hubpop.PopupCard`). Nothing showed it, since the elide filter
    paints the subtitle right-aligned.
 
+**Walk Builder, the same day** («потом давай Walk Builder покроем тестами»; the session building it had
+broken): seven new test files, 401 tests. `scene` 47 → 99.6 %, `meanrig` 14 → 99 %, `keyrig` 18 → 99 %,
+`panel` 87 → 99.9 %, `posewell` and `cards` 100 %. Its bugs, fixed:
+- `keyrig.update`: a whole-walk change stood EVERY rig of the walker again, a rig whose memo names no key
+  too, and died on `frames[key]`. That rig is left alone, as the reading leaves it.
+- `panel._take`: the checkbox loop `for box, name in ...` overwrote the walk's `name`, so taking a walker's
+  settings never refreshed the Clean tab's report.
+- `files.load` / `load_pose`: a `.walk.gz` / `.wpose.gz` cut short raised `EOFError`, and the migration of
+  the old walks and poses into the library died on it every session.
+- `scene.memo_of` / `edits_of`: valid JSON that is no object (`"[1, 2]"`) raised `AttributeError`, and one
+  such attribute broke `walkers()` and the whole list.
+- `scene.edits_of`: the mean pose's correction and the key poses' edits were read in one `try`, so a
+  correction this build cannot read took the key edits with it.
+- Left as a question for the animator, pinned as an expected failure: `restore_source` takes the walk off
+  but keeps the walker's own edits (Fix posture, the corrections), and a later Pick of the same walk brings
+  them back.
+
 **The interface, fixed** (the same scene, build before → after):
 1. **Selecting a skinned mesh cost 1.85 s.**
    - The Time Bar's key read, `cmds.keyframe(q=True)` with no objects, walks the selection's shape plugs.

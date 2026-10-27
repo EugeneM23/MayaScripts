@@ -66,7 +66,7 @@ def load(path):
     try:
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, EOFError) as error:     # EOFError: a file cut short (2026-10-27)
         raise Refusal("%s is not a saved walk (%s)" % (os.path.basename(path), error))
     if data.get("format") != FORMAT or int(data.get("version", 0)) > VERSION:
         raise Refusal("%s is not a walk this tool reads (format %s, version %s)"
@@ -155,7 +155,7 @@ def load_pose(path):
     try:
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, EOFError) as error:     # EOFError: a file cut short (2026-10-27)
         raise Refusal("%s is not a saved pose (%s)" % (os.path.basename(path), error))
     if data.get("format") != POSE_FORMAT or int(data.get("version", 0)) > VERSION:
         raise Refusal("%s is not a pose this tool reads" % os.path.basename(path))
