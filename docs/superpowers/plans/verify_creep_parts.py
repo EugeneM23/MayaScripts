@@ -102,7 +102,8 @@ for n_clip, clip in enumerate(sys.argv[1:]):
          and ar.part_anchor(arm)[0] == "spine_05" and ar.part_anchor(head)[0] == "spine_05",
          "both rigs, in their namespaces, no left arm, anchored on spine_05")
     A, H = bones_of(arm.skeleton_root), bones_of(head.skeleton_root)
-    gate("2b", len(A) == 29 and len(H) == 4, "the game skeletons: arm %d, head %d joints" % (len(A), len(H)))
+    # Manny's whole skeleton since 2026-10-27 (the part's mesh on its own bones, the rest at the bind)
+    gate("2b", len(A) == 93 and len(H) == 93, "the game skeletons: arm %d, head %d joints" % (len(A), len(H)))
     if n_clip == 0:
         socket = [0.9023638608, -0.3496252732, 0.2519985282, 0.0, 0.3490667668, 0.9358437785, 0.0484502887, 0.0,
                   -0.2527707062, 0.044244523, 0.9665141917, 0.0, -9.8019504547, -4.6126813889, 1.0132220984, 1.0]

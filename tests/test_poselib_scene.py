@@ -199,6 +199,30 @@ class Limbs(unittest.TestCase):
             scene.limb_bones(manny(), "tail", "l")
 
 
+class MembersOnAPartRig(unittest.TestCase):
+    """A part rig (Creep 2 Arm R / Head) carries the whole skeleton, but drives only its part: a
+    card from it holds what the rig drives, so it never puts the bind bones on another body."""
+
+    LIMIT = ["spine_05", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "weapon_r"]
+
+    def members(self, *selection):
+        return scene.members_from_selection(RIG, list(selection), manny(), limit=self.LIMIT)
+
+    def test_nothing_selected_names_only_the_driven_bones(self):
+        self.assertEqual(self.members(), ["spine_05", "clavicle_r", "upperarm_r", "lowerarm_r",
+                                          "hand_r"])
+
+    def test_the_whole_body_named_by_a_mesh_is_the_driven_bones(self):
+        self.assertNotIn("pelvis", self.members(("Creep2_ArmR", "mesh")))
+        self.assertIn("hand_r", self.members(("Creep2_ArmR", "mesh")))
+
+    def test_a_control_keeps_its_own_bones_within_the_limit(self):
+        self.assertEqual(self.members(("Manny_Rig1:FKWrist_R", "transform")), ["hand_r"])
+
+    def test_no_limit_is_the_whole_body(self):
+        self.assertIn("pelvis", scene.members_from_selection(RIG, [], manny()))
+
+
 class MembersOnARig(unittest.TestCase):
 
     def members(self, *selection):

@@ -300,6 +300,24 @@ def transfer_bones(pairs, start, end, relative=False):
                 hierarchy="none", controlPoints=False, shape=True)
 
 
+def part_held(rig_bones):
+    """The helper bones a PART rig leaves at the bind: [] for a whole rig (it drives the pelvis);
+    on a part rig every helper whose parent the rig does not drive, and the camera bones."""
+    def driven(path):
+        return bool(cmds.listRelatives(path, children=True, type="constraint"))
+    if "pelvis" not in rig_bones or driven(rig_bones["pelvis"]):
+        return []
+    held = []
+    for name in HELPER_BONES:
+        path = rig_bones.get(name)
+        if not path:
+            continue
+        parent = (cmds.listRelatives(path, parent=True, fullPath=True) or [""])[0]
+        if name.startswith("camera") or not (parent and driven(parent)):
+            held.append(name)
+    return held
+
+
 def carry_helpers(source_root, rig_root, start, end, relative=False):
     """The after-bake step. Returns (moved names, skipped pairs, camera text).
 
@@ -313,6 +331,13 @@ def carry_helpers(source_root, rig_root, start, end, relative=False):
     """
     from maya_scenesetup import bonedrive, camera
     src, dst = _bones_under(source_root), _bones_under(rig_root)
+    held = part_held(dst)
+    if held:
+        # a part rig (Creep 2 Arm R / Head, 2026-10-27) carries the whole skeleton and drives only its
+        # part: a helper on a bone it does not drive stays at the bind, and it gets no camera (a camera
+        # is a control, and a part has none)
+        for name in held:
+            dst.pop(name, None)
     #  the camera stands on camera_root (2026-09-18); a camera an older
     #  build left on camera_bone is torn down too, or the transfer onto
     #  that bone would splice a pairBlend into our own constraint

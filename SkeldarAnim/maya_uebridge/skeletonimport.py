@@ -563,6 +563,19 @@ def measure(source_root, target_root, start=None, label=""):
         target=label or leaf(target_root))
 
 
+PART_ANCHOR = "skeldarPartAnchor"
+
+
+def part_anchor(root):
+    """The bone a part skeleton's root names as its anchor (`skeldarPartAnchor`), else None."""
+    try:
+        if cmds.attributeQuery(PART_ANCHOR, node=root, exists=True):
+            return cmds.getAttr(root + "." + PART_ANCHOR) or None
+    except Exception:                                        # noqa: BLE001
+        pass
+    return None
+
+
 def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=None):
     """The clip under `source_root` onto the skeleton under `target_root`,
     baked over start..end: dict(twin, moved, skipped, missing, mode).
@@ -601,12 +614,14 @@ def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=N
         space, scaled, _made = maya_retargetmode.scale_space(
             source_root, scale, None, STRETCH_TEMP)
         temp.append(space)
+    anchor = part_anchor(target_root)
     for dst, src, name, is_root in plan:
-        # a bone hanging straight on the root - a part's top bone (the second Creep's arm: root >
-        # clavicle_r; its head: root > neck_01, 2026-10-27) - takes the clip's place as the pelvis does,
-        # or a part's arm stays at the root while the clip's chest moves (measured 458 cm off)
+        # a bone hanging straight on the root takes the clip's place as the pelvis does; so does a
+        # part skeleton's anchor bone (the second Creep's arm and head carry the whole skeleton since
+        # 2026-10-27, `spine_05` marked on the root): the part stands on the clip's chest, not on
+        # its own body's (measured 5.9 cm off on a first-Creep clip)
         on_root = (cmds.listRelatives(dst, parent=True, fullPath=True) or [""])[0] == target_root
-        how = drive_for(name, is_root or on_root, twin, mode)
+        how = drive_for(name, is_root or on_root or name == anchor, twin, mode)
         if how is None:
             skipped.append(name)
             continue

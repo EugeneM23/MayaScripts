@@ -380,24 +380,45 @@ def _item_bones(ref, name, kind, bones, root):
     return _WHOLE                                   # a mesh, a group, anything else
 
 
-def members_from_selection(ref, selection, bones):
+def members_from_selection(ref, selection, bones, limit=None):
     """The member bones a selection names, in skeleton order (the spec's Save rules - the module
     docstring). `selection` is a list of `(name, kind)`: the node's name or path (namespaces
     ignored) and `joint` / `transform` / `mesh` / `accessory` / `camera` (`members_of` builds
     it from the scene). Nothing named, or the whole body named by any item, gives
-    `whole_body(bones)`."""
+    `whole_body(bones)`. `limit`, when given, is the only bones a card may hold: a part rig's
+    (Creep 2 Arm R / Head) driven bones - its other bones stand at the bind (2026-10-27)."""
+    keep = (lambda names: names) if limit is None else (
+        lambda names: [b for b in names if b in set(limit)])
     root = posemath.root_of(bones)
     riders = _riders(bones)
     chosen = set()
     for name, kind in selection or ():
         found = _item_bones(ref, leaf(name), kind, bones, root)
         if found == _WHOLE:
-            return whole_body(bones)
+            return keep(whole_body(bones))
         chosen.update(riders.get(b, b) for b in found)
     if not chosen:
-        return whole_body(bones)
+        return keep(whole_body(bones))
     chosen.update(r for r, carrier in riders.items() if carrier in chosen)
-    return [b for b in bones if b in chosen]
+    return keep([b for b in bones if b in chosen])
+
+
+PART_ANCHOR_ATTR = "skeldarPartAnchor"
+
+
+def driven_bones(ref, bones):
+    """The bones a part rig drives (each has a constraint of the rig under it), or None for any
+    other character: a part rig carries the whole skeleton and poses only its part."""
+    if ref.kind != "rig" or ref.rig is None:
+        return None
+    group = getattr(ref.rig, "group", None)
+    if not group or not cmds.attributeQuery(PART_ANCHOR_ATTR, node=group, exists=True):
+        return None
+    out = []
+    for joint in cmds.ls(ref.root, dag=True, type="joint", long=True) or []:
+        if cmds.listRelatives(joint, children=True, type="constraint"):
+            out.append(leaf(joint))
+    return [b for b in bones if b in set(out)]
 
 
 def describe(refs, loose):
@@ -960,4 +981,4 @@ def members_of(ref, nodes, bones=None):
         path = dag_object(node)
         if path is not None:
             selection.append((path, _kind(path, ref)))
-    return members_from_selection(ref, selection, bones)
+    return members_from_selection(ref, selection, bones, limit=driven_bones(ref, bones))

@@ -15022,3 +15022,34 @@ there, invisible, overwriting that layer's values on 31-43 (the base untouched).
 keys each plug with `animLayer=` the Pose Library's `keys.active_layer()` (selected, else the real base,
 never a tab's holder) and the final value, as `maya_poselib/keys.py` does; no layers - as before.
 Measured on a session backup: the range paste 0.0 cm on every key 33-43, the muted layer unchanged.
+
+## Creep 2 Arm R and Head on Manny's whole skeleton (2026-10-27)
+
+The animator: «риги крипа и скелеты нужно переделать под новые требования. Структура рига должна
+сохраниться нам лишние контроллеры не нужны, но скелеты долдны быть от менни. Так же должна работать
+библеотека поз». Asked: Manny's hierarchy and axes with Creep 2's proportions; only Creep 2 Body / Arm R /
+Head; no control added; variant A (the bones without controls stand at the bind). Spec
+`docs/superpowers/specs/2026-10-27-creep-parts-manny-skeleton-design.md` (read its addendum), plan beside it.
+**This replaces the 29 / 4 joint skeletons of "The second Creep's right arm and head" above.**
+- Measured first: Creep 2 Body already had Manny's 93 bones, parents and axes. Arm R had 29 bones
+  (`clavicle_r` on `root`) and Head 4 (`neck_01` on `root`); their own bones' axes were Manny's.
+- `docs/superpowers/plans/make_creep_parts_whole.py <rig|skeleton> <arm|head>` (mayapy, in place,
+  idempotent; the parts pipeline's last step): the missing joints copied from `Creep2_Skeleton.ma` with
+  Creep 2's locals; the top joint under `spine_05`; on a rig the top joint's point / orient / scale
+  remade `-mo` and `spine_05` parent-constrained to `Root_M` `-mo`; one bind pose over 93 joints;
+  `|Armature|root` kept. Part joints moved 7e-6, vertices 1.5e-5, the controls the same (31 / 7).
+- A part skeleton's root carries `skeldarPartAnchor` = `spine_05`; `skeletonimport.transfer` puts
+  that bone on the clip's place (`part_anchor`), so the part stands on the clip's chest.
+- The retarget onto a part rig carries only the helpers on driven bones (`maya_rig_retarget.part_held`:
+  the arm's `weapon_r`) and makes no Camera Setup; every other bone stays at the bind.
+- Pose Library: `rigsolve.root_leaf` - RootX_M stands for the pelvis, or a part rig's anchor bone
+  (`self.pelvis` in the solver); a card saved from a part rig holds only the bones the rig drives
+  (`scene.driven_bones`, `members_from_selection(limit=)`), so it never puts bind bones on Manny.
+Proof: `verify_creep_parts_manny.py <clip> <old assets>` **0 failed** on AS_Creep_Death and
+AS_Longsword_Attack_Back_Combo_2_Hold_1_3P (the same controls as the old assets; 93 joints, Manny's
+parents; under a retarget the undriven bones' locals 2e-6; a part card applied back 0.0000; an arm card
+onto Manny_Rig leaves its body 0.0; a Manny card onto the arm rig, the bind bones 2e-6; an animation card
+onto a fresh arm rig 0.0011; the Body rig 0.0010; the arm skeleton 0.0000); `verify_creep_parts.py`
+20/20, `verify_part_drop.py` 16/16, `verify_creep2_body.py` all; `verify_poselib_solve.py` 122/122,
+`_apply.py` 117/117, `_anim.py` 113/113; 11798 unit tests, the known `test_chat_deploy.Keys` failing.
+Not seen in a GUI Maya. A part added before this has the old skeleton: re-add it.

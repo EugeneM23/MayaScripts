@@ -613,11 +613,39 @@ def bases(rig):
             if not (fk or fkx or deform):
                 continue
             out[leaf] = Base(leaf, base, side, fk, fkx, ikx, deform, LIMB_OF.get(base))
-    if PELVIS in game:
-        deform = _driver(game[PELVIS]) or _one(rig, ROOT_DEFORM)
-        out[PELVIS] = Base(PELVIS, "Root", "_M", _one(rig, ROOT_CONTROL), None, None, deform,
-                           None)
+    leaf = root_leaf(rig, game)
+    if leaf:
+        deform = _driver(game[leaf]) or _one(rig, ROOT_DEFORM)
+        out[leaf] = Base(leaf, "Root", "_M", _one(rig, ROOT_CONTROL), None, None, deform, None)
     return out
+
+
+PART_ANCHOR_ATTR = "skeldarPartAnchor"
+
+
+def root_leaf(rig, game):
+    """The game bone RootX_M stands for: the pelvis, or on a part rig (Creep 2 Arm R / Head,
+    2026-10-27: the whole skeleton, only the part driven) its anchor bone (`spine_05`, the
+    group's `skeldarPartAnchor`) when the pelvis follows nothing."""
+    if PELVIS in game and _driver(game[PELVIS]):
+        return PELVIS
+    group = getattr(rig, "group", None)
+    try:
+        anchor = cmds.getAttr(group + "." + PART_ANCHOR_ATTR) if group and cmds.attributeQuery(
+            PART_ANCHOR_ATTR, node=group, exists=True) else None
+    except Exception:                                        # noqa: BLE001
+        anchor = None
+    if anchor and anchor in game and _driver(game[anchor]):
+        return anchor
+    return PELVIS if PELVIS in game else None
+
+
+def _root_of(all_bases):
+    """The leaf whose base is RootX_M's (`root_leaf`), else PELVIS."""
+    for leaf, base in all_bases.items():
+        if base.base == "Root":
+            return leaf
+    return PELVIS
 
 
 def _blend(rig, kind, side):
@@ -878,6 +906,7 @@ class Solver(object):
         self.steady = bool(steady)
         self.game = game_bones(rig)
         self.bases = bases(rig)
+        self.pelvis = _root_of(self.bases)       # RootX_M's bone: a part rig's anchor, else the pelvis
         self.root = maya_rigs.leaf(rig.skeleton_root) if rig.skeleton_root else None
         # the members as `measure` reads them: plain leaves, the root out
         self.leaves = [leaf for leaf in _plain(members) if leaf != self.root]
@@ -997,6 +1026,7 @@ class _Job(object):
     def __init__(self, solver, wanted, seed=None):
         self.rig, self.game, self.bases, self.root = solver.rig, solver.game, solver.bases, \
             solver.root
+        self.pelvis = getattr(solver, "pelvis", PELVIS)
         self.wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
         self.seed = dict(seed or {})
         self.spelled = solver.spelled
@@ -1056,9 +1086,9 @@ class _Job(object):
                 self.knot_offset[control] = pm.rigid(_world(control)) * \
                     pm.rigid(_world(knot)).inverse()
                 self._remember(knot)
-        if PELVIS in self.members:
-            self.root_offset = pm.rigid(_world(self.bases[PELVIS].fk)) * \
-                pm.rigid(_world(self.game[PELVIS])).inverse()
+        if self.pelvis in self.members:
+            self.root_offset = pm.rigid(_world(self.bases[self.pelvis].fk)) * \
+                pm.rigid(_world(self.game[self.pelvis])).inverse()
         self.blends = dict((key, _blend(self.rig, key[0], "_" + key[1])) for key in self.limbs)
         self.ik = {}
         for key in self.limbs:
@@ -1304,10 +1334,10 @@ class _Job(object):
             self._move(self.main, pm.position(aim))
 
     def _root(self):
-        base = self.bases[PELVIS]
-        pelvis = self.wanted.get(PELVIS)
+        base = self.bases[self.pelvis]
+        pelvis = self.wanted.get(self.pelvis)
         if pelvis is None:
-            pelvis = pm.rigid(_world(self.game[PELVIS]))
+            pelvis = pm.rigid(_world(self.game[self.pelvis]))
         aim = self.root_offset * pelvis
         if self._turn(base.fk, aim):
             self._move(base.fk, pm.position(aim))
@@ -1344,8 +1374,8 @@ class _Job(object):
             return
         for name in names:
             self.session.set(name, self.session.get(name))   # its original, before the fit
-        root_base = self.bases.get(PELVIS)
-        root = self.target(PELVIS)
+        root_base = self.bases.get(self.pelvis)
+        root = self.target(self.pelvis)
         if root is None and root_base is not None and root_base.deform:
             root = pm.rigid(_world(root_base.deform))
         joints = []
@@ -1607,7 +1637,7 @@ class _Job(object):
             if info:
                 self.ends.setdefault(info["game"][2], []).append(key)
         depths = dict((leaf, depth_of(self.game[leaf])) for leaf in self.members
-                      if leaf != PELVIS and leaf in self.game)
+                      if leaf != self.pelvis and leaf in self.game)
         for leaf in self.ends:
             if leaf in self.game:
                 depths.setdefault(leaf, depth_of(self.game[leaf]))
@@ -1616,7 +1646,7 @@ class _Job(object):
     def run_pass(self):
         if self.main_wanted:
             self._main()                          # first: everything hangs below Main
-        if PELVIS in self.members:
+        if self.pelvis in self.members:
             self._root()
         if self.spine is not None:
             self._ik_spine()                      # before Spine5 and all above read Spine4
@@ -1683,7 +1713,7 @@ def _rows(rig, all_bases, game, wanted, members, placed=()):
                 pm.rotation(actual).inverse()
             direction = (offset.x, offset.y, offset.z)
         rows.append((leaf, actual, pm.matrix(wanted[leaf]), direction,
-                     leaf == PELVIS or leaf in placed))
+                     base.base == "Root" or leaf in placed))
     return rows
 
 

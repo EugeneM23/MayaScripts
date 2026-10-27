@@ -47,6 +47,21 @@ class Rows(unittest.TestCase):
             self.assertNotIn('"skeldarRetarget"', text, key)             # not rotation-only
             self.assertNotIn("createNode script", text, key)
 
+    def test_every_part_asset_carries_manny_s_whole_skeleton(self):
+        """2026-10-27, «скелеты должны быть от менни»: 93 joints, each under Manny's parent."""
+        import re
+        def joints(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                found = dict(re.findall(r'createNode joint -n "([^"]+)" -p "([^"]+)"', fh.read()))
+            found.pop("root", None)                     # under Armature in the parts, at world in Manny's
+            return found
+        manny = joints(catalog.character_file(catalog.character_by_key("Manny")))
+        for key in ("Creep2_ArmR_Rig", "Creep2_Head_Rig", "Creep2_ArmR", "Creep2_Head"):
+            part = joints(catalog.character_file(catalog.character_by_key(key)))
+            self.assertEqual(len(manny), 92, "Manny's 93 bones less the root")
+            for name, parent in manny.items():                # AS's own joints beside them
+                self.assertEqual(part[name], parent, (key, name))
+
     def test_the_arm_rig_has_no_left_arm(self):
         with open(catalog.character_file(catalog.character_by_key("Creep2_ArmR_Rig")), encoding="utf-8",
                   errors="replace") as fh:

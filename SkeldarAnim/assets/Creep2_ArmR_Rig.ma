@@ -1,6 +1,6 @@
 //Maya ASCII 2027 scene
 //Name: Creep2_ArmR_Rig.ma
-//Last modified: Tue, Oct 27, 2026 01:04:45 PM
+//Last modified: Tue, Oct 27, 2026 04:08:43 PM
 //Codeset: 1252
 requires maya "2027";
 requires -nodeType "UsdDefaultSettings" -dataType "pxrUsdStageData" "mayaUsdPlugin" "0.37.0";
@@ -12,7 +12,7 @@ fileInfo "product" "Maya 2027";
 fileInfo "version" "2027";
 fileInfo "cutIdentifier" "202607171511-52c21617ee";
 fileInfo "osv" "Windows 11 Pro v2009 (Build: 26200)";
-fileInfo "UUID" "6A2D6D42-4574-7812-B5B4-E487646E6D9A";
+fileInfo "UUID" "1E1FE84A-4EC1-2640-FCFF-399C3DDC5967";
 createNode transform -s -n "persp";
 	rename -uid "D2785283-4FCD-B802-9CA8-2EAA8E0C4F03";
 	setAttr ".v" no;
@@ -89,12 +89,253 @@ createNode joint -n "root" -p "Armature";
 	setAttr ".radi" 3;
 	setAttr -k on ".liw";
 	setAttr ".fbxID" 5;
-createNode joint -n "clavicle_r" -p "root";
+createNode parentConstraint -n "root_parentConstraint1" -p "root";
+	rename -uid "AB784B2A-4491-D0FE-EF2F-A6A7EDBDB281";
+	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "MainW0" -dv 1 -min 0 -at "double";
+	setAttr -k on ".nds";
+	setAttr -k off ".v";
+	setAttr -k off ".tx";
+	setAttr -k off ".ty";
+	setAttr -k off ".tz";
+	setAttr -k off ".rx";
+	setAttr -k off ".ry";
+	setAttr -k off ".rz";
+	setAttr -k off ".sx";
+	setAttr -k off ".sy";
+	setAttr -k off ".sz";
+	setAttr ".erp" yes;
+	setAttr ".tg[0].tot" -type "double3" 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 ;
+	setAttr ".tg[0].tor" -type "double3" -89.999977111846093 -2.7320747615670031e-05 
+		4.2579530432477909e-05 ;
+	setAttr ".lr" -type "double3" 2.2888174198621892e-05 -4.2579530432473078e-05 -2.7320747615677583e-05 ;
+	setAttr ".rst" -type "double3" 0.0016906299861148 -2.4012360572814937 -1.000000006354282e-07 ;
+	setAttr ".rsrr" -type "double3" 2.2888174198621892e-05 -4.2579530432473085e-05 -2.7320747615677579e-05 ;
+	setAttr -k on ".w0";
+createNode joint -n "pelvis" -p "root";
+	rename -uid "3CB434AC-43EE-F2E4-AA54-59A180300C53";
+	setAttr ".t" -type "double3" 0.31661874055862521 1.9667112827301054 90.585777282714872 ;
+	setAttr ".r" -type "double3" -89.998543004860039 -86.964654098747346 89.998642199859148 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "spine_01" -p "pelvis";
+	rename -uid "74F973EA-400A-3C53-8D0A-5E898C65315F";
+	setAttr ".t" -type "double3" 4.0794310569763184 -0.16668426990509033 -0.00064359710086137056 ;
+	setAttr ".r" -type "double3" 0.0016241965247098403 -0.00070191621582252632 -18.102238644287716 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "spine_02" -p "spine_01";
+	rename -uid "660BD278-46C0-CA3E-CED3-21A323B5F83D";
+	setAttr ".t" -type "double3" 7.467130184173584 0.45530101656913757 -0.00073213275754824281 ;
+	setAttr ".r" -type "double3" -0.0017507044444410344 0.0012674567677090972 1.1568225669496657 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "spine_03" -p "spine_02";
+	rename -uid "F1BCDF6B-43F1-FDC6-76F0-6388237C99A5";
+	setAttr ".t" -type "double3" 8.0279407501220703 0.15393421053886414 -0.00080706132575858458 ;
+	setAttr ".r" -type "double3" -0.0084693397836338932 0.0043687277680948249 9.2573211419883297 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "spine_04" -p "spine_03";
+	rename -uid "BB51929A-4E60-30AE-B189-FCAFCB515E95";
+	setAttr ".t" -type "double3" 9.5009384155273438 1.2614507675170898 0.0023912352044142549 ;
+	setAttr ".r" -type "double3" 0.0084414103972802711 -0.0050870444920092083 7.2696576617068684 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "spine_05" -p "spine_04";
+	rename -uid "2756A1ED-47DF-568C-47FE-59AA1AEB1849";
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "neck_01" -p "spine_05";
+	rename -uid "2F2F1AA7-4422-C2CE-4023-1EAF365D3226";
+	setAttr ".t" -type "double3" 12.999959945678711 1.3902984857559311 0.00020870631851721555 ;
+	setAttr ".r" -type "double3" 0.0036700057545167217 0.02022262889591301 -51.449617609582859 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "neck_02" -p "neck_01";
+	rename -uid "5397F1CD-4F80-4EB4-9CCD-5F9ABC4593B8";
+	setAttr ".t" -type "double3" 6.582491397857666 0.06654040515422821 -1.4177334151099785e-06 ;
+	setAttr ".r" -type "double3" -2.0994644617172875e-05 -0.00061948070946290189 1.9135396704027656 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "head" -p "neck_02";
+	rename -uid "464BB79C-451E-E1FB-8A61-FBA8894D7331";
+	setAttr ".t" -type "double3" 7.0115528106689453 0.64836114645004272 0.0024183883797377348 ;
+	setAttr ".r" -type "double3" 7.3129023444591995e-05 -5.1441986102602749e-05 11.880167856441963 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "clavicle_l" -p "spine_05";
+	rename -uid "3D2229BF-446D-7BEE-D0F3-59BC3FD3D36F";
+	setAttr ".t" -type "double3" 5.2474207878112793 2.0264697074890137 -1.4241201877593992 ;
+	setAttr ".r" -type "double3" 88.703436321216003 92.336485276767576 81.213984004764598 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "upperarm_l" -p "clavicle_l";
+	rename -uid "2AE73065-42E6-9E2E-CBB1-0FB1F8D24E01";
+	setAttr ".t" -type "double3" 17.812782287597649 4.7084922689677455e-06 -7.9969481703301426e-08 ;
+	setAttr ".r" -type "double3" -0.10457177389388329 58.324235488142222 0.84779953262835006 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "lowerarm_l" -p "upperarm_l";
+	rename -uid "D1143F9A-47DA-CD45-4B82-8A87F0B05EA0";
+	setAttr ".t" -type "double3" 32.608692169189453 -0.25492918491362015 -4.3639145545171232e-05 ;
+	setAttr ".r" -type "double3" -0.012453753692771612 -0.91891520295235063 -37.457556257445738 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "lowerarm_twist_02_l" -p "lowerarm_l";
+	rename -uid "8D9E0A47-4465-24FA-F866-AD8CD74D4E76";
+	setAttr ".t" -type "double3" 12.588920593261719 -0.00016004937060642987 7.1933784056454897e-05 ;
+	setAttr ".r" -type "double3" 2.5121488198106219 -3.4978874958722752 3.9350886711137467 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "lowerarm_twist_01_l" -p "lowerarm_l";
+	rename -uid "9F9E95E2-4831-DB3E-7F58-F2A9BC15CD36";
+	setAttr ".t" -type "double3" 25.177682876586914 -0.0002894208300858736 0.0001747933856677264 ;
+	setAttr ".r" -type "double3" 2.512196407992993 -3.4978878018413329 3.9350399477358335 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "hand_l" -p "lowerarm_l";
+	rename -uid "B4D8DD91-4225-921F-1C64-409A8218AE8F";
+	setAttr ".t" -type "double3" 37.766422271728551 -7.8150704204915655e-05 9.2975918889237619e-05 ;
+	setAttr ".r" -type "double3" -67.770532959029993 1.4734561452570196 1.8488788566345848 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "index_metacarpal_l" -p "hand_l";
+	rename -uid "DC72FDD2-4A26-A4B7-2607-E09ADBB1930F";
+	setAttr ".t" -type "double3" 4.5479211807250906 -0.50791049003603916 -3.1415174007415638 ;
+	setAttr ".r" -type "double3" 15.598369126078623 5.7599819123448013 19.465189222583831 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "index_01_l" -p "index_metacarpal_l";
+	rename -uid "59A2A0C7-4941-23D6-CC7F-96BC5307ADFD";
+	setAttr ".t" -type "double3" 7.7499837875365785 0.05475860461588411 0.28324571251869912 ;
+	setAttr ".r" -type "double3" -3.2715363599840763e-06 -0.00011699548146030218 23.372832200823975 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "index_02_l" -p "index_01_l";
+	rename -uid "4423420F-443D-5938-C55C-25B2C275330A";
+	setAttr ".t" -type "double3" 6.7029638290405842 -0.59105598926540637 -1.6515052318573265 ;
+	setAttr ".r" -type "double3" 3.0969998631706734e-05 9.0367010328029709e-06 14.892605673437915 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "index_03_l" -p "index_02_l";
+	rename -uid "3F78A646-457C-A3B7-5711-819178409664";
+	setAttr ".t" -type "double3" 4.3138494491577006 -0.25462189316748152 -0.86326503753662465 ;
+	setAttr ".r" -type "double3" -3.0902206438261956e-06 -2.7943080324990589e-05 12.516371737409123 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "middle_metacarpal_l" -p "hand_l";
+	rename -uid "6750BFFD-4E73-46AA-0CE0-ACAE7D4F78D9";
+	setAttr ".t" -type "double3" 4.4572520256042338 -0.99497133493426304 -0.24144023656844116 ;
+	setAttr ".r" -type "double3" -4.2725579695700651 -0.13083437141650681 -2.318407813359384 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "middle_01_l" -p "middle_metacarpal_l";
+	rename -uid "6BAEB64D-4AE5-F53B-45A3-8DABDEC80E6D";
+	setAttr ".t" -type "double3" 8.0474691390991104 0.0024985864292972337 -0.034740541130299007 ;
+	setAttr ".r" -type "double3" -0.00013689770314217488 -9.9998598391452376 51.572744981580236 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "middle_02_l" -p "middle_01_l";
+	rename -uid "6185C4EE-4F53-C0E1-D404-5E9A82CB894A";
+	setAttr ".t" -type "double3" 7.3334231376647665 -0.76327043771748748 -2.010416269302377 ;
+	setAttr ".r" -type "double3" 2.8069126522050803e-05 -2.1645756546579466e-05 20.769198497584906 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "middle_03_l" -p "middle_02_l";
+	rename -uid "EA223D6C-4F3A-BD83-01F5-2091FB073FCC";
+	setAttr ".t" -type "double3" 3.5868170261383057 -0.38079684972762351 -0.60731744766232887 ;
+	setAttr ".r" -type "double3" 2.7386561719634086e-05 3.7481182951202198e-05 10.000027851191808 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thumb_01_l" -p "hand_l";
+	rename -uid "9E4E17D2-4BDE-55D6-0FA5-C398274501FC";
+	setAttr ".t" -type "double3" 2.6204540729522563 1.7906389236449769 -3.4150705337524316 ;
+	setAttr ".r" -type "double3" 91.202906870955275 42.613721272764707 46.980235780888485 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thumb_02_l" -p "thumb_01_l";
+	rename -uid "3EA8F51F-4C09-5F46-4C6B-2D9F7BB08687";
+	setAttr ".t" -type "double3" 5.3496675491333008 1.9419555664062074 -1.0029668807983541 ;
+	setAttr ".r" -type "double3" 3.530622756505486 -1.9322699240945014 23.245939475044445 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thumb_03_l" -p "thumb_02_l";
+	rename -uid "F98CA1FD-41AC-0B26-53D8-E498FE140668";
+	setAttr ".t" -type "double3" 4.7894263267517516 -0.51693409681318059 1.1617100238799907 ;
+	setAttr ".r" -type "double3" -1.4171862840918281e-05 6.1453356587270861e-06 9.9999923693713857 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "pinky_metacarpal_l" -p "hand_l";
+	rename -uid "C5A9CE74-4C5F-275C-9349-4F995A88A220";
+	setAttr ".t" -type "double3" 4.3761096000671174 -0.40391579270367117 3.1570858955383363 ;
+	setAttr ".r" -type "double3" -27.769003910794357 -19.527744079535815 11.850616978093719 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "pinky_01_l" -p "pinky_metacarpal_l";
+	rename -uid "5355498B-4AA2-18D7-8421-0CB17D6F2FE8";
+	setAttr ".t" -type "double3" 6.5462045669555735 -0.17619626224040985 -0.29278579354285483 ;
+	setAttr ".r" -type "double3" 10.075841070354675 -3.000911688310028 34.513559607068046 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "pinky_02_l" -p "pinky_01_l";
+	rename -uid "BBE6FA1B-4C98-2971-8A8B-618123402F98";
+	setAttr ".t" -type "double3" 5.8101544380187846 -1.1354200839996196 0.030939511954780841 ;
+	setAttr ".r" -type "double3" -9.4151602924134948e-06 1.1933836052003379e-05 21.286992681302848 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "pinky_03_l" -p "pinky_02_l";
+	rename -uid "34EC149E-460C-168E-9703-5796B3F3647B";
+	setAttr ".t" -type "double3" 2.811470508575411 -1.3557237386703314 -0.52317386865616555 ;
+	setAttr ".r" -type "double3" 1.2018713106705343e-05 3.7116105435722648e-06 4.9169858746620791 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ring_metacarpal_l" -p "hand_l";
+	rename -uid "12EF248F-4721-B94F-A8E4-8E9A11636151";
+	setAttr ".t" -type "double3" 4.455232143402089 -0.71630871295936061 1.4414938688278403 ;
+	setAttr ".r" -type "double3" -13.299868286971424 -11.809351157711276 -1.5945659073005565 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ring_01_l" -p "ring_metacarpal_l";
+	rename -uid "3DF11BD2-43F1-FDA1-8D6D-C38F64C3F17B";
+	setAttr ".t" -type "double3" 7.4519586563110245 -0.04715665057297258 -0.060217965394276263 ;
+	setAttr ".r" -type "double3" 5.4864305107892104 -3.2945381895864729 59.263048628525361 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ring_02_l" -p "ring_01_l";
+	rename -uid "CCD7112F-419D-686D-489B-7DAE5842F2EC";
+	setAttr ".t" -type "double3" 7.4487986564635946 -2.1414504051208496 -0.48639121651649653 ;
+	setAttr ".r" -type "double3" 3.8808515769171328e-05 -2.9157859600168839e-05 18.963969215174629 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ring_03_l" -p "ring_02_l";
+	rename -uid "5294E2FF-49EA-4492-F7C0-D6BB6DEFD51A";
+	setAttr ".t" -type "double3" 3.3884565830230571 -0.98340368270875445 -0.20101138949393516 ;
+	setAttr ".r" -type "double3" -6.4041732218234022e-06 1.7275940433182815e-05 9.1680072582478385 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "weapon_l" -p "hand_l";
+	rename -uid "6A9C98CF-4D41-60C0-3C01-73B98B3A7F76";
+	setAttr ".t" -type "double3" 9.8136043548583984 4.6203603744506836 -1.095196008682251 ;
+	setAttr ".r" -type "double3" 2.7839432675288789 -14.365209958794715 -21.215442802006063 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "upperarm_twist_01_l" -p "upperarm_l";
+	rename -uid "C121C1EE-4BB0-F2B3-2B52-449427340DAB";
+	setAttr ".t" -type "double3" 8.6709651947021484 -0.00045828457223251462 -0.0070056384429335594 ;
+	setAttr ".r" -type "double3" 0.012389743175501991 -4.3069457007313714 -0.65423771843189504 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "upperarm_twist_02_l" -p "upperarm_l";
+	rename -uid "858E3F7F-4BC3-A076-9F10-C4B16C3AC8C8";
+	setAttr ".t" -type "double3" 17.341865539550781 -0.00095172366127371788 -0.013935220427811146 ;
+	setAttr ".r" -type "double3" 3.6364544954511936e-05 0 0 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "clavicle_r" -p "spine_05";
 	rename -uid "65CB8B2A-4186-D3AB-2148-F3B6340527BD";
 	addAttr -is true -ci true -k true -sn "liw" -ln "lockInfluenceWeights" -min 0 -max 
 		1 -at "bool";
 	addAttr -ci true -h true -sn "fbxID" -ln "filmboxTypeID" -at "short";
-	setAttr ".jo" -type "double3" -90.022088256578982 -85.428689949948406 90.010148001062845 ;
 	setAttr ".ssc" no;
 	setAttr ".bps" -type "matrix" 0.99915900000000002 0.0029727500000000001 -0.040889200000000001 0
 		 0.040987599999999999 -0.050836800000000001 0.99786600000000003 0 0.00088772999999999999 -0.99870300000000001 -0.0509159 0
@@ -171,7 +412,7 @@ createNode orientConstraint -n "lowerarm_twist_02_r_orientConstraint1" -p "lower
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.2154700343062279 179.99984460224019 2.1077770039216593e-05 ;
+	setAttr ".lr" -type "double3" 1.2154700343062532 179.99984460224019 2.1077770039216593e-05 ;
 	setAttr ".o" -type "double3" 3.7272810383364559 176.41938362569428 -3.8601412935373984 ;
 	setAttr ".rsrr" -type "double3" 2.5122942882790893 356.50185239878357 3.9351702493927698 ;
 	setAttr -k on ".w0";
@@ -237,7 +478,7 @@ createNode orientConstraint -n "lowerarm_twist_01_r_orientConstraint1" -p "lower
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.2154700343062279 179.99984460224019 2.1077770039216593e-05 ;
+	setAttr ".lr" -type "double3" 1.2154700343062532 179.99984460224019 2.1077770039216593e-05 ;
 	setAttr ".o" -type "double3" 3.7269909768474521 176.41938362569428 -3.8601412935373984 ;
 	setAttr ".rsrr" -type "double3" 2.5120042267900851 356.50185239878357 3.9351702493927698 ;
 	setAttr -k on ".w0";
@@ -366,9 +607,9 @@ createNode orientConstraint -n "pinky_03_r_orientConstraint1" -p "pinky_03_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -66.925616016312503 -179.99870020273809 -0.00019866524442962346 ;
-	setAttr ".o" -type "double3" 113.15065061903692 -4.5224901904909469 178.06758354143278 ;
-	setAttr ".rsrr" -type "double3" 180.00001009769557 -179.9999901365139 184.91705567237187 ;
+	setAttr ".lr" -type "double3" -66.925616016312503 -179.99870020273801 -0.00019866524442962346 ;
+	setAttr ".o" -type "double3" 113.15065061903692 -4.5224901904909469 178.06758354143281 ;
+	setAttr ".rsrr" -type "double3" 180.00001009769557 -179.9999901365139 184.9170556723719 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "pinky_03_r_scaleConstraint1" -p "pinky_03_r";
 	rename -uid "5E5ED09F-4BBF-665C-5854-1CB5FBB95DDC";
@@ -420,7 +661,7 @@ createNode orientConstraint -n "pinky_02_r_orientConstraint1" -p "pinky_02_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -66.925595230635267 -179.99868368302734 21.286768278824642 ;
+	setAttr ".lr" -type "double3" -66.925595230635324 -179.99868368302731 21.286768278824617 ;
 	setAttr ".o" -type "double3" 113.07435610238326 0.00030652689732852995 -180.00129342353438 ;
 	setAttr ".rsrr" -type "double3" 179.9999513390743 -180.00000623571304 -158.71300679836347 ;
 	setAttr -k on ".w0";
@@ -474,7 +715,7 @@ createNode orientConstraint -n "pinky_01_r_orientConstraint1" -p "pinky_01_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 98.447984118318033 -0.60463484430774339 -165.16616260492592 ;
+	setAttr ".lr" -type "double3" 98.447984118318018 -0.60463484430772751 -165.16616260492586 ;
 	setAttr ".o" -type "double3" 108.93956426530859 0 -179.9996270125632 ;
 	setAttr ".rsrr" -type "double3" 370.49157956853611 0.60500378469799776 -345.166217404115 ;
 	setAttr -k on ".w0";
@@ -528,7 +769,7 @@ createNode orientConstraint -n "pinky_metacarpal_r_orientConstraint1" -p "pinky_
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -61.113341488485844 161.75324566073613 9.1850720409513134 ;
+	setAttr ".lr" -type "double3" -61.113341488485894 161.7532456607361 9.1850720409512636 ;
 	setAttr ".o" -type "double3" 92.012978293223142 -1.5714444334082025 -182.35215942434277 ;
 	setAttr ".rsrr" -type "double3" 152.23102300723704 199.52767563661484 -168.14942292764783 ;
 	setAttr -k on ".w0";
@@ -630,8 +871,8 @@ createNode orientConstraint -n "ring_03_r_orientConstraint1" -p "ring_03_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -67.351815137165573 179.9998122922407 0.0025061050452589773 ;
-	setAttr ".o" -type "double3" 112.91101467473962 -8.4534235768687349 -183.55507680869329 ;
+	setAttr ".lr" -type "double3" -67.351815137165573 179.99981229224079 0.0025061050452080884 ;
+	setAttr ".o" -type "double3" 112.91101467473963 -8.4534235768687349 -183.55507680869329 ;
 	setAttr ".rsrr" -type "double3" 179.99999476754431 180.00001509610252 -170.83195634028445 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "ring_03_r_scaleConstraint1" -p "ring_03_r";
@@ -684,7 +925,7 @@ createNode orientConstraint -n "ring_02_r_orientConstraint1" -p "ring_02_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -67.351825853559703 179.99982270318125 18.966464390230044 ;
+	setAttr ".lr" -type "double3" -67.351825853559859 179.99982270318134 18.966464390230069 ;
 	setAttr ".o" -type "double3" 112.64817914550301 0.002244712113848705 -179.9988657737521 ;
 	setAttr ".rsrr" -type "double3" 180.00000498061411 179.99999490889388 -161.03604398300774 ;
 	setAttr -k on ".w0";
@@ -738,8 +979,8 @@ createNode orientConstraint -n "ring_01_r_orientConstraint1" -p "ring_01_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 102.041422327446 1.2233648146198475 -140.64479244426079 ;
-	setAttr ".o" -type "double3" 108.32075716421167 0.001509178083169831 -180.00007128979743 ;
+	setAttr ".lr" -type "double3" 102.041422327446 1.2233648146199045 -140.64479244426076 ;
+	setAttr ".o" -type "double3" 108.32075716421168 0.001509178083169831 -180.00007128979743 ;
 	setAttr ".rsrr" -type "double3" 366.2793660443723 -1.2237493783441749 -320.64625387688659 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "ring_01_r_scaleConstraint1" -p "ring_01_r";
@@ -792,7 +1033,7 @@ createNode orientConstraint -n "ring_metacarpal_r_orientConstraint1" -p "ring_me
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -72.144303984668511 168.29770382762663 -2.0601504519958591 ;
+	setAttr ".lr" -type "double3" -72.144303984668511 168.29770382762661 -2.0601504519959097 ;
 	setAttr ".o" -type "double3" 94.651576960402679 -0.40085638135900714 -180.24196082715727 ;
 	setAttr ".rsrr" -type "double3" 166.70017373056885 191.80931048543769 -181.59455787683285 ;
 	setAttr -k on ".w0";
@@ -894,7 +1135,7 @@ createNode orientConstraint -n "middle_03_r_orientConstraint1" -p "middle_03_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -66.035679639325238 -179.99807128748748 0.0012232231543333081 ;
+	setAttr ".lr" -type "double3" -66.035679639325238 -179.99807128748742 0.0012232231542824194 ;
 	setAttr ".o" -type "double3" 114.29143048153998 -9.1283535567740444 175.90230412340074 ;
 	setAttr ".rsrr" -type "double3" 180.00002423449214 -179.99998074005788 190.00000258189957 ;
 	setAttr -k on ".w0";
@@ -948,7 +1189,7 @@ createNode orientConstraint -n "middle_02_r_orientConstraint1" -p "middle_02_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -66.03574835286615 -179.99804474849284 20.770421783068763 ;
+	setAttr ".lr" -type "double3" -66.03574835286625 -179.99804474849279 20.770421783068709 ;
 	setAttr ".o" -type "double3" 113.96429440298763 0.0018836560886139196 -180.00126921652887 ;
 	setAttr ".rsrr" -type "double3" 180.00004275582387 -180.00003036449533 -159.23078398674718 ;
 	setAttr -k on ".w0";
@@ -1002,7 +1243,7 @@ createNode orientConstraint -n "middle_01_r_orientConstraint1" -p "middle_01_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 108.94393153308924 -0.001202535880087617 -138.42676649443825 ;
+	setAttr ".lr" -type "double3" 108.94393153308921 -0.0012025358800653537 -138.42676649443825 ;
 	setAttr ".o" -type "double3" 108.94371149172206 0.00092223655643422096 -180.00085572643908 ;
 	setAttr ".rsrr" -type "double3" 359.99977995879476 9.3760997364004587e-05 -318.42736097426462 ;
 	setAttr -k on ".w0";
@@ -1056,7 +1297,7 @@ createNode orientConstraint -n "middle_metacarpal_r_orientConstraint1" -p "middl
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -77.912368893266859 179.86963057736526 -2.3148097077412682 ;
+	setAttr ".lr" -type "double3" -77.912368893266859 179.86963057736523 -2.3148097077412682 ;
 	setAttr ".o" -type "double3" 97.815101528784481 0.0035757591099475736 180.00032762557032 ;
 	setAttr ".rsrr" -type "double3" 175.72747853708165 180.13079785146445 177.68162519668019 ;
 	setAttr -k on ".w0";
@@ -1158,7 +1399,7 @@ createNode orientConstraint -n "index_03_r_orientConstraint1" -p "index_03_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -73.370451471086497 -179.99901450986638 0.00084765405803340218 ;
+	setAttr ".lr" -type "double3" -73.370451471086554 -179.99901450986636 0.0008476540580079578 ;
 	setAttr ".o" -type "double3" 107.01115496095848 -11.983882466514912 176.36414312906177 ;
 	setAttr ".rsrr" -type "double3" 179.99996237641943 -180.0000137417986 192.51641820210105 ;
 	setAttr -k on ".w0";
@@ -1212,7 +1453,7 @@ createNode orientConstraint -n "index_02_r_orientConstraint1" -p "index_02_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -73.370525464742073 -179.99903125565555 14.893366193191666 ;
+	setAttr ".lr" -type "double3" -73.370525464742016 -179.99903125565552 14.893366193191641 ;
 	setAttr ".o" -type "double3" 106.62953969408646 0.001082833249581092 -180.00069813901362 ;
 	setAttr ".rsrr" -type "double3" 180.00006515841702 -179.99998991801309 -165.10747155673627 ;
 	setAttr -k on ".w0";
@@ -1266,7 +1507,7 @@ createNode orientConstraint -n "index_01_r_orientConstraint1" -p "index_01_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 102.17662916481122 0.00030975579535404428 -136.62583603060588 ;
+	setAttr ".lr" -type "double3" 102.17662916481116 0.00030975579535404434 -136.62583603060585 ;
 	setAttr ".o" -type "double3" 102.17659616661547 0.0012556122285890849 -179.99960129620209 ;
 	setAttr ".rsrr" -type "double3" 359.99996700309629 -0.00018486341226274904 -316.62714749111984 ;
 	setAttr -k on ".w0";
@@ -1410,7 +1651,7 @@ createNode orientConstraint -n "thumb_03_r_orientConstraint1" -p "thumb_03_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -84.847154319051327 -179.99859123350595 -0.00025063449243723862 ;
+	setAttr ".lr" -type "double3" -84.847154319051214 -179.99859123350595 -0.00025063449238634975 ;
 	setAttr ".o" -type "double3" 95.231916216734021 -9.9593619056252329 179.09128243782456 ;
 	setAttr ".rsrr" -type "double3" 180.00001437761574 -180 190.0000654358893 ;
 	setAttr -k on ".w0";
@@ -1464,7 +1705,7 @@ createNode orientConstraint -n "thumb_02_r_orientConstraint1" -p "thumb_02_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 91.622250132778447 1.930783865136293 -156.75416972427288 ;
+	setAttr ".lr" -type "double3" 91.622250132778433 1.9307838651362896 -156.75416972427297 ;
 	setAttr ".o" -type "double3" 95.152871087685284 -0.00011686215612034212 -180.00144064349337 ;
 	setAttr ".rsrr" -type "double3" 363.5306156385675 -1.9322206228606218 -336.7540120349326 ;
 	setAttr -k on ".w0";
@@ -1518,7 +1759,7 @@ createNode orientConstraint -n "thumb_01_r_orientConstraint1" -p "thumb_01_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -0.33047373356324605 -39.903458426644107 -159.49123900963704 ;
+	setAttr ".lr" -type "double3" -0.33047373356329152 -39.903458426644079 -159.49123900963701 ;
 	setAttr ".o" -type "double3" 73.233885263681287 0.00069912482510199288 179.99988497766995 ;
 	setAttr ".rsrr" -type "double3" 73.564266184574294 39.90415820317849 20.508616308707346 ;
 	setAttr -k on ".w0";
@@ -1572,7 +1813,7 @@ createNode orientConstraint -n "hand_r_orientConstraint1" -p "hand_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 169.49292039324459 8.9989626264679803 174.21523632133912 ;
+	setAttr ".lr" -type "double3" 169.49292039324462 8.9989626264679803 174.21523632133912 ;
 	setAttr ".o" -type "double3" 102.80889535446312 -11.628689937574432 174.27682696112342 ;
 	setAttr ".rsrr" -type "double3" 292.22890690855661 1.473478116379014 361.84890815072737 ;
 	setAttr -k on ".w0";
@@ -1626,7 +1867,7 @@ createNode orientConstraint -n "lowerarm_r_orientConstraint1" -p "lowerarm_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -178.77326365874245 0.92503912027295421 142.4595880326132 ;
+	setAttr ".lr" -type "double3" -178.77326365874254 0.92503912027293778 142.45958803261323 ;
 	setAttr ".o" -type "double3" -178.78452941527462 -0.0001562313481485184 180.00002136839288 ;
 	setAttr ".rsrr" -type "double3" -360.01126535758783 -0.9248833822074698 322.45956332114901 ;
 	setAttr -k on ".w0";
@@ -1692,8 +1933,8 @@ createNode orientConstraint -n "upperarm_twist_01_r_orientConstraint1" -p "upper
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -178.46362483262314 9.7212939914753671e-05 179.4692310594443 ;
-	setAttr ".o" -type "double3" -178.44668488760703 4.3016218344490094 180.23908884224232 ;
+	setAttr ".lr" -type "double3" -178.4636248326232 9.7212939951403065e-05 179.46923105944433 ;
+	setAttr ".o" -type "double3" -178.44668488760706 4.3016218344490094 180.23908884224232 ;
 	setAttr ".rsrr" -type "double3" -359.9873974911809 -4.3065800714148876 359.34577847823152 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "upperarm_twist_01_r_scaleConstraint1" -p "upperarm_twist_01_r";
@@ -1758,8 +1999,8 @@ createNode orientConstraint -n "upperarm_twist_02_r_orientConstraint1" -p "upper
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -178.46362483262314 9.7212939914753671e-05 179.4692310594443 ;
-	setAttr ".o" -type "double3" -178.46337186034546 0.01442517149526166 179.46973321741078 ;
+	setAttr ".lr" -type "double3" -178.4636248326232 9.7212939951403065e-05 179.46923105944433 ;
+	setAttr ".o" -type "double3" -178.46337186034549 0.01442517149526166 179.46973321741078 ;
 	setAttr ".rsrr" -type "double3" -359.99968211472117 -0.00030010118471367588 359.99969396973029 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "upperarm_twist_02_r_scaleConstraint1" -p "upperarm_twist_02_r";
@@ -1812,7 +2053,7 @@ createNode orientConstraint -n "upperarm_r_orientConstraint1" -p "upperarm_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -177.64430379946808 -58.320280897945402 179.99744778097346 ;
+	setAttr ".lr" -type "double3" -177.64430355227927 -58.320280895816076 179.99744742767334 ;
 	setAttr ".o" -type "double3" 1.5363087648638738 179.98584828923512 -0.5305799955650049 ;
 	setAttr ".rsrr" -type "double3" -179.95919798377861 121.67603416886267 181.00814540965604 ;
 	setAttr -k on ".w0";
@@ -1834,7 +2075,7 @@ createNode scaleConstraint -n "upperarm_r_scaleConstraint1" -p "upperarm_r";
 	setAttr ".o" -type "double3" 0.99999956195482664 0.99999992253552739 1.0000003822478067 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "clavicle_r_pointConstraint1" -p "clavicle_r";
-	rename -uid "B8DB97FA-4EA5-B67A-189E-A7B42C280E36";
+	rename -uid "5B4678DD-4700-762F-C080-1C9B555295E8";
 	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "Scapula_RW0" -dv 1 -min 0 -at "double";
 	setAttr -k on ".nds";
 	setAttr -k off ".v";
@@ -1848,11 +2089,11 @@ createNode pointConstraint -n "clavicle_r_pointConstraint1" -p "clavicle_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".o" -type "double3" 6.4392935428259079e-15 -4.2437462433042583e-09 2.0408208456501598e-09 ;
-	setAttr ".rst" -type "double3" -1.1113712787628174 2.6948449611663818 146.17051696777344 ;
+	setAttr ".o" -type "double3" -2.2370271608451731e-06 -2.6866006130887854e-07 2.1181515430512832e-08 ;
+	setAttr ".rst" -type "double3" 5.2480316162109375 2.0260190963745117 1.4284877777099612 ;
 	setAttr -k on ".w0";
 createNode orientConstraint -n "clavicle_r_orientConstraint1" -p "clavicle_r";
-	rename -uid "48A1BA68-4F8D-7430-798C-B5BD9F9CFDA1";
+	rename -uid "672AB406-4F0D-04A0-1963-34930884192D";
 	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "Scapula_RW0" -dv 1 -min 0 -at "double";
 	setAttr -k on ".nds";
 	setAttr -k off ".v";
@@ -1866,12 +2107,12 @@ createNode orientConstraint -n "clavicle_r_orientConstraint1" -p "clavicle_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" -87.830872159302942 -87.638858311746688 -98.698504616376226 ;
-	setAttr ".o" -type "double3" -179.04052037036624 0.001371580172942889 -179.99973207248328 ;
-	setAttr ".rsrr" -type "double3" -91.176165069132665 87.638642086225389 -278.6649930173088 ;
+	setAttr ".lr" -type "double3" -87.830872302822215 -87.638856741286162 -98.698504536795866 ;
+	setAttr ".o" -type "double3" -179.04052024055261 0.0013715804432756042 -179.99973221544207 ;
+	setAttr ".rsrr" -type "double3" -91.17616494074295 87.638640658631203 -278.66499308275934 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "clavicle_r_scaleConstraint1" -p "clavicle_r";
-	rename -uid "BBE80A5B-4F1C-2B5A-295F-6B8091C48C1D";
+	rename -uid "1370418C-4341-43AD-B552-6AB3E308C1ED";
 	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "Scapula_RW0" -dv 1 -min 0 -at "double";
 	setAttr -k on ".nds";
 	setAttr -k off ".v";
@@ -1885,11 +2126,11 @@ createNode scaleConstraint -n "clavicle_r_scaleConstraint1" -p "clavicle_r";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".o" -type "double3" 0.99999973562328626 1.0000004619447256 1.0000004524526656 ;
+	setAttr ".o" -type "double3" 0.99999973562328648 1.000000461944726 1.0000004524526656 ;
 	setAttr -k on ".w0";
-createNode parentConstraint -n "root_parentConstraint1" -p "root";
-	rename -uid "AB784B2A-4491-D0FE-EF2F-A6A7EDBDB281";
-	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "MainW0" -dv 1 -min 0 -at "double";
+createNode parentConstraint -n "spine_05_parentConstraint1" -p "spine_05";
+	rename -uid "662567C0-44A8-CD5D-951C-01A5592C08DB";
+	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "Root_MW0" -dv 1 -min 0 -at "double";
 	setAttr -k on ".nds";
 	setAttr -k off ".v";
 	setAttr -k off ".tx";
@@ -1902,13 +2143,171 @@ createNode parentConstraint -n "root_parentConstraint1" -p "root";
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".tg[0].tot" -type "double3" 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 ;
-	setAttr ".tg[0].tor" -type "double3" -89.999977111846093 -2.7320747615670031e-05 
-		4.2579530432477909e-05 ;
-	setAttr ".lr" -type "double3" 2.2888174198621892e-05 -4.2579530432473085e-05 -2.7320747615677579e-05 ;
-	setAttr ".rst" -type "double3" 0.0016906299861148 -2.4012360572814937 -1.000000006354282e-07 ;
-	setAttr ".rsrr" -type "double3" 2.2888174198621892e-05 -4.2579530432473085e-05 -2.7320747615677579e-05 ;
+	setAttr ".tg[0].tot" -type "double3" 1.608136983577424e-07 1.8068817908556412e-07 
+		0.3183529876761087 ;
+	setAttr ".tg[0].tor" -type "double3" 179.987995282105 0.00084882853944345175 -0.93817890781610269 ;
+	setAttr ".lr" -type "double3" -0.012715744598905286 -0.0017256961196046542 1.9544007508068921 ;
+	setAttr ".rst" -type "double3" 21.726778030395451 0.043762501329187131 0.0010169945890085019 ;
+	setAttr ".rsrr" -type "double3" -0.012715744598905286 -0.0017256961196046542 1.9544007508068921 ;
 	setAttr -k on ".w0";
+createNode joint -n "thigh_r" -p "pelvis";
+	rename -uid "4E57D2D4-4A99-F2B1-044F-B79BF736F238";
+	setAttr ".t" -type "double3" 0.59784066677093506 -2.1705117225646973 9.9671716690063477 ;
+	setAttr ".r" -type "double3" 8.2846389646777947 -4.0829924091745378 179.01012469101539 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_r" -p "thigh_r";
+	rename -uid "986C623A-4D91-839A-64AB-62A6164A85BC";
+	setAttr ".t" -type "double3" 39.99562072753907 -3.0968250941398878e-05 3.2934476603685425e-06 ;
+	setAttr ".r" -type "double3" 0.069000827347196397 -0.90199345448516977 -13.730897234394805 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "foot_r" -p "calf_r";
+	rename -uid "4A3B5BB4-47C6-9F93-C95A-8D8324360960";
+	setAttr ".t" -type "double3" 42.22113037109375 -1.0476748684595805e-05 8.8533961406511708e-06 ;
+	setAttr ".r" -type "double3" -1.7782542126416279 4.1992921678228878 6.4307726525972502 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ball_r" -p "foot_r";
+	rename -uid "C7A231EF-463C-470A-0B4D-C99B829B96D9";
+	setAttr ".t" -type "double3" 7.8790526390075595 17.128019332885746 -0.60582411289215621 ;
+	setAttr ".r" -type "double3" -0.00016845094148912139 0.00022850952798920111 -89.999816245703769 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_twist_02_r" -p "calf_r";
+	rename -uid "880AAA01-4E25-5EC0-B5D1-A88463BB9FA3";
+	setAttr ".t" -type "double3" 14.073735237121582 7.6151627581566572e-05 0.037732493132352829 ;
+	setAttr ".r" -type "double3" -0.0045892553587361853 0.25817213970545055 2.6643171486708099 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_twist_01_r" -p "calf_r";
+	rename -uid "699FE5B8-41C2-8FDB-44B3-98B7A1CE6BD4";
+	setAttr ".t" -type "double3" 28.14759635925293 0.00016631656035315245 0.075312256813049316 ;
+	setAttr ".r" -type "double3" 0.0030544599820915264 0.51596486685665244 5.328702049509161 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thigh_twist_01_r" -p "thigh_r";
+	rename -uid "E5186ABE-4124-4A40-E1B2-FB90E2424F10";
+	setAttr ".t" -type "double3" 13.331866264343262 3.1458259854844073e-06 -4.6274250053102151e-05 ;
+	setAttr ".r" -type "double3" -0.0056799115367145133 0.51594822618757696 -2.6141956529718429 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thigh_twist_02_r" -p "thigh_r";
+	rename -uid "68A2231B-4AE5-28AF-2FFA-AF9B5C907F08";
+	setAttr ".t" -type "double3" 26.663713455200195 -5.3758571993967053e-07 7.7763324668467249e-09 ;
+	setAttr ".r" -type "double3" -0.00011654913795556377 0.25819588084665235 -1.3072973232879959 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thigh_l" -p "pelvis";
+	rename -uid "DFFF8715-4EDC-86A4-6970-8685579C0925";
+	setAttr ".t" -type "double3" 0.59785139560699463 -2.1705365180969238 -9.9671659469604492 ;
+	setAttr ".r" -type "double3" 8.284205418449119 -4.0830336925209743 -0.98988849455253525 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_l" -p "thigh_l";
+	rename -uid "D10A451A-4032-ED95-7A96-7381C01EAE3D";
+	setAttr ".t" -type "double3" -39.99562072753907 1.2853640328103211e-05 -1.674055056355428e-05 ;
+	setAttr ".r" -type "double3" 0.068943409507566653 -0.9018993132427594 -13.730934795886659 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "foot_l" -p "calf_l";
+	rename -uid "F519D764-49DC-564B-198B-D593DCDF15B6";
+	setAttr ".t" -type "double3" -42.221122741699212 -3.6410714526979859e-05 -4.0226394048659131e-05 ;
+	setAttr ".r" -type "double3" -1.7782031119710482 4.1992805343930995 6.4308815022278152 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ball_l" -p "foot_l";
+	rename -uid "B77699B4-4BDF-A077-3CA2-3F8F615C8903";
+	setAttr ".t" -type "double3" -7.8790597915649405 -17.128013610839844 0.6057279109954834 ;
+	setAttr ".r" -type "double3" 0.0001676176251593955 0.00022863363571387656 -89.999793404067134 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_twist_02_l" -p "calf_l";
+	rename -uid "570E0A8D-470E-3A12-5E68-CAB46E0F80B8";
+	setAttr ".t" -type "double3" -14.073705673217773 -3.0192143185558962e-06 9.1056307383041712e-07 ;
+	setAttr ".r" -type "double3" -0.0045879701049110497 0.25818132159222162 2.6643718942260768 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "calf_twist_01_l" -p "calf_l";
+	rename -uid "77F8A7FB-4FD9-0FEA-0855-5B85EF35D834";
+	setAttr ".t" -type "double3" -28.147420883178711 -0.00022107100812718272 -0.075636222958564758 ;
+	setAttr ".r" -type "double3" 0.0027489184140738103 0.51627737387762662 5.3287666778414113 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thigh_twist_01_l" -p "thigh_l";
+	rename -uid "C8AE3374-42A7-F66F-5AF0-E9B9BA5B2AFE";
+	setAttr ".t" -type "double3" -13.33195686340332 -6.4738296714494936e-06 -2.3072483600117266e-05 ;
+	setAttr ".r" -type "double3" -0.0059157401370799299 0.51593013137593025 -2.6142090950115855 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "thigh_twist_02_l" -p "thigh_l";
+	rename -uid "4FE95DA1-4BA2-D6AB-7427-98AFA15546F9";
+	setAttr ".t" -type "double3" -26.663751602172852 -1.8985286942552193e-06 -7.6643673310172744e-06 ;
+	setAttr ".r" -type "double3" -5.9257642692853687e-05 0.258196834998485 -1.307295119868964 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_foot_root" -p "root";
+	rename -uid "5383E5FE-443A-5BC2-FE8B-D9AE8726F6B6";
+	setAttr ".t" -type "double3" 9.9999999999406119e-09 4.8849813083506888e-15 -7.4315317600412369e-15 ;
+	setAttr ".r" -type "double3" -9.0996399349122512e-21 4.3999276079363843e-20 9.0996399349122512e-21 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_foot_l" -p "ik_foot_root";
+	rename -uid "35CA3A86-429A-74E4-5690-C48599B6E524";
+	setAttr ".t" -type "double3" 15.267310097929064 6.9502716429140197 10.13647179064094 ;
+	setAttr ".r" -type "double3" 90.033944308380313 -88.191539582633126 -81.516933430539325 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_foot_r" -p "ik_foot_root";
+	rename -uid "260E4710-48CB-AB52-7F41-1AA1E177C2E1";
+	setAttr ".t" -type "double3" -14.634197235107418 6.9502573013305717 10.136494636535682 ;
+	setAttr ".r" -type "double3" -89.922503080311586 88.190830399469448 81.560934285317813 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_hand_root" -p "root";
+	rename -uid "12FDB906-4411-E5D6-D35B-648442E9B953";
+	setAttr ".t" -type "double3" 9.9999999999406119e-09 4.8849813083506888e-15 -7.4315317600412369e-15 ;
+	setAttr ".r" -type "double3" -9.0996399349122512e-21 4.3999276079363843e-20 9.0996399349122512e-21 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_hand_gun" -p "ik_hand_root";
+	rename -uid "B28FB000-48E3-67E2-D248-058664861B3F";
+	setAttr ".t" -type "double3" -51.655036926269446 -19.391530990600575 92.009704589843608 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_hand_l" -p "ik_hand_gun";
+	rename -uid "5609D0E5-4D29-78EF-3826-13891088D04D";
+	setAttr ".t" -type "double3" 103.94333648681626 4.9563997869483956e-05 -7.7245822353688709e-05 ;
+	setAttr ".r" -type "double3" -111.52714754363534 39.410998664250528 -53.666837176828601 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "ik_hand_r" -p "ik_hand_gun";
+	rename -uid "CE664291-4F33-4B81-B7C5-7884590BACEB";
+	setAttr ".t" -type "double3" -7.1054273576010019e-15 -3.5527136788005009e-15 -1.4210854715202004e-14 ;
+	setAttr ".r" -type "double3" 68.473496514561475 -39.409929370602782 53.666605342003116 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "interaction" -p "root";
+	rename -uid "32F70E73-4F4B-8A8E-F0F5-52BB2295A568";
+	setAttr ".r" -type "double3" -9.0996399349122512e-21 4.3999276079363843e-20 9.0996399349122512e-21 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "center_of_mass" -p "root";
+	rename -uid "6C1BDC02-4A38-0DF1-A14B-B09CDA5F13E2";
+	setAttr ".r" -type "double3" -9.0996399349122512e-21 4.3999276079363843e-20 9.0996399349122512e-21 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "camera_root" -p "root";
+	rename -uid "29D428F4-4BBD-87D3-20CC-5EA12272739D";
+	setAttr ".t" -type "double3" 2.8421709430404007e-14 3.6415315207705135e-14 164 ;
+	setAttr ".r" -type "double3" -1.2722218725854067e-14 0 0 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
+createNode joint -n "camera_bone" -p "camera_root";
+	rename -uid "32EDA430-4271-4BAB-B6ED-3EBDE31430F8";
+	setAttr ".r" -type "double3" -1.2722218725854067e-14 0 0 ;
+	setAttr ".ssc" no;
+	setAttr ".radi" 3;
 createNode transform -n "Group";
 	rename -uid "69C32A14-4DFB-C176-18E7-F9B2FFF495DE";
 	addAttr -ci true -sn "skeldarPartAnchor" -ln "skeldarPartAnchor" -dt "string";
@@ -2139,7 +2538,7 @@ createNode joint -n "MiddleFinger1" -p "MiddleFinger0";
 	setAttr ".r" -type "double3" 8.2932963319161186e-13 6.1126285284378355e-14 -1.9242355822854232e-13 ;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr ".jo" -type "double3" 8.5493796181435933 41.099575923855205 -6.8750875391983817 ;
+	setAttr ".jo" -type "double3" 8.5493796181435933 41.099575923855213 -6.8750875391983817 ;
 	setAttr ".pa" -type "double3" -2.490303168013669e-17 3.8068719241856406 -4.0949047407001542 ;
 	setAttr ".typ" 18;
 	setAttr ".otp" -type "string" "21";
@@ -2215,7 +2614,7 @@ createNode joint -n "ThumbFinger1" -p "Wrist";
 	setAttr ".r" -type "double3" 1.2950821093584223e-13 -1.2722218725854102e-13 3.1268828212138184e-13 ;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr ".jo" -type "double3" -78.726844397354 32.73975653167814 36.563258719771255 ;
+	setAttr ".jo" -type "double3" -78.726844397354 32.739756531678147 36.563258719771255 ;
 	setAttr ".pa" -type "double3" -34.462082586865911 -8.7285733235282201 -1.7903981777634761 ;
 	setAttr ".typ" 18;
 	setAttr ".otp" -type "string" "4";
@@ -2286,7 +2685,7 @@ createNode joint -n "IndexFinger0" -p "Wrist";
 	addAttr -ci true -sn "fatFrontAbs" -ln "fatFrontAbs" -at "double";
 	addAttr -ci true -sn "fatWidthAbs" -ln "fatWidthAbs" -at "double";
 	setAttr ".t" -type "double3" 4.7076598846148396 2.7193447716426782 -1.1128878364281007 ;
-	setAttr ".r" -type "double3" -1.1946958522247303e-13 2.2983234786091269e-13 1.5544961005652913e-13 ;
+	setAttr ".r" -type "double3" -1.1946958522247303e-13 2.2983234786091274e-13 1.5544961005652913e-13 ;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
 	setAttr ".jo" -type "double3" -11.212273127108251 12.376950152910187 -0.70125755983429539 ;
@@ -2324,7 +2723,7 @@ createNode joint -n "IndexFinger2" -p "IndexFinger1";
 	addAttr -ci true -sn "fatFrontAbs" -ln "fatFrontAbs" -at "double";
 	addAttr -ci true -sn "fatWidthAbs" -ln "fatWidthAbs" -at "double";
 	setAttr ".t" -type "double3" 6.9286795236034067 -2.1316282072803006e-14 6.3948846218409017e-14 ;
-	setAttr ".r" -type "double3" 3.7957932276591128e-13 -1.9232416589474763e-13 1.8546609486284069e-13 ;
+	setAttr ".r" -type "double3" 3.7957932276591133e-13 -1.9232416589474763e-13 1.8546609486284069e-13 ;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
 	setAttr ".jo" -type "double3" 4.043201235524811 14.549752964523865 -3.2093512118567951 ;
@@ -2650,7 +3049,7 @@ createNode orientConstraint -n "FKParentConstraintToWrist_R_orientConstraint1" -
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 84.574335215225531 -41.364603484157314 -132.3905041995645 ;
+	setAttr ".lr" -type "double3" 84.574335215225531 -41.364603484157321 -132.39050419956453 ;
 	setAttr ".rsrr" -type "double3" 84.574335193679602 -41.364603466467592 -132.39050418630745 ;
 	setAttr -k on ".w0";
 createNode transform -n "FKOffsetMiddleFinger0_R" -p "FKParentConstraintToWrist_R";
@@ -2763,7 +3162,7 @@ createNode nurbsCurve -n "FKMiddleFinger1_RShape" -p "FKMiddleFinger1_R";
 		-6.9201206891807577e-15 -1.6690927743911743 -1.6690927743911743
 		-7.1054273576010019e-15 -2.3604536056518555 2.6930430529127256e-16
 		-7.2907336025047724e-15 -1.6690927743911743 1.6690927743911743
-		-6.421580389832926e-15 -4.4194702117480913e-15 2.3604536056518555
+		-6.4215803898329252e-15 -4.4194702117480913e-15 2.3604536056518555
 		-7.2907336025047724e-15 1.6690927743911743 1.6690927743911743
 		-7.1054273576010019e-15 2.3604536056518555 7.9484444157732512e-16
 		-6.9201206891807577e-15 1.6690927743911743 -1.6690927743911743
@@ -2904,7 +3303,7 @@ createNode nurbsCurve -n "FKMiddleFinger3_RShape" -p "FKMiddleFinger3_R";
 		-6.9201206891807577e-15 -1.6690927743911743 -1.6690927743911743
 		-7.1054273576010019e-15 -2.3604536056518555 2.6930430529127256e-16
 		-7.2907336025047724e-15 -1.6690927743911743 1.6690927743911743
-		-6.421580389832926e-15 -4.4194702117480913e-15 2.3604536056518555
+		-6.4215803898329252e-15 -4.4194702117480913e-15 2.3604536056518555
 		-7.2907336025047724e-15 1.6690927743911743 1.6690927743911743
 		-7.1054273576010019e-15 2.3604536056518555 7.9484444157732512e-16
 		-6.9201206891807577e-15 1.6690927743911743 -1.6690927743911743
@@ -2983,7 +3382,7 @@ createNode nurbsCurve -n "FKThumbFinger1_RShape" -p "FKThumbFinger1_R";
 createNode transform -n "CustomOrientReverseFKThumbFinger1_R" -p "FKThumbFinger1_R";
 	rename -uid "0E1DD367-43BC-110B-2840-F6A3FACEFD41";
 	setAttr ".t" -type "double3" -7.1054273576010019e-15 -1.4210854715202004e-14 0 ;
-	setAttr ".r" -type "double3" 73.233884249934647 0.00010608256196368943 -179.99928667957798 ;
+	setAttr ".r" -type "double3" 73.233884249934661 0.00010608256196368943 -179.99928667957798 ;
 	setAttr ".s" -type "double3" 1 1 0.99999999999999978 ;
 createNode joint -n "FKXThumbFinger1_R" -p "CustomOrientReverseFKThumbFinger1_R";
 	rename -uid "9E87F13E-4949-A284-8094-959F804D883F";
@@ -3174,7 +3573,7 @@ createNode nurbsCurve -n "FKIndexFinger0_RShape" -p "FKIndexFinger0_R";
 		6.9201206891807577e-15 1.6690927743911743 1.6690927743911743
 		7.1054273576010019e-15 2.3604536056518555 7.9484444157732512e-16
 		7.2907336025047724e-15 1.6690927743911743 -1.6690927743911743
-		6.421580389832926e-15 1.267799422539071e-15 -2.3604536056518555
+		6.4215803898329252e-15 1.267799422539071e-15 -2.3604536056518555
 		7.2907336025047724e-15 -1.6690927743911743 -1.6690927743911743
 		7.1054273576010019e-15 -2.3604536056518555 2.6930430529127256e-16
 		6.9201206891807577e-15 -1.6690927743911743 1.6690927743911743
@@ -3241,7 +3640,7 @@ createNode nurbsCurve -n "FKIndexFinger1_RShape" -p "FKIndexFinger1_R";
 		-6.9201206891807577e-15 -1.6690927743911743 -1.6690927743911743
 		-7.1054273576010019e-15 -2.3604536056518555 2.6930430529127256e-16
 		-7.2907336025047724e-15 -1.6690927743911743 1.6690927743911743
-		-6.421580389832926e-15 -7.3572508880944158e-16 2.3604536056518555
+		-6.4215803898329252e-15 -7.3572508880944158e-16 2.3604536056518555
 		-7.2907336025047724e-15 1.6690927743911743 1.6690927743911743
 		-7.1054273576010019e-15 2.3604536056518555 7.9484444157732512e-16
 		-6.9201206891807577e-15 1.6690927743911743 -1.6690927743911743
@@ -3410,7 +3809,7 @@ createNode joint -n "FKXIndexFinger3_R" -p "CustomOrientReverseFKIndexFinger3_R"
 createNode transform -n "FKOffsetPinkyFinger0_R" -p "FKParentConstraintToWrist_R";
 	rename -uid "EE520745-4336-7564-C7B6-7F98A14A89E8";
 	setAttr ".t" -type "double3" 4.1855262968977662 -3.4228708334590081 0.18919825774931098 ;
-	setAttr ".r" -type "double3" 9.7350284966578151 15.413160267854408 -26.306661418506298 ;
+	setAttr ".r" -type "double3" 9.7350284966578169 15.413160267854408 -26.306661418506298 ;
 	setAttr ".s" -type "double3" 1 1 1.0000000000000004 ;
 createNode transform -n "CustomOrientFKPinkyFinger0_R" -p "FKOffsetPinkyFinger0_R";
 	rename -uid "B0F8C376-4A33-6DA6-F70C-97AD0521686C";
@@ -3474,7 +3873,7 @@ createNode joint -n "FKXPinkyFinger0_R" -p "CustomOrientReverseFKPinkyFinger0_R"
 createNode transform -n "FKOffsetPinkyFinger1_R" -p "FKXPinkyFinger0_R";
 	rename -uid "9E36773E-497E-393A-49EA-A5B0F1A04E37";
 	setAttr ".t" -type "double3" 6.551511369810612 7.1054273576010019e-15 1.4210854715202004e-14 ;
-	setAttr ".r" -type "double3" 6.5283379242673671 16.417037566400733 -2.2593710821532005 ;
+	setAttr ".r" -type "double3" 6.528337924267368 16.417037566400733 -2.2593710821532005 ;
 	setAttr ".s" -type "double3" 1 1.0000000000000002 1.0000000000000002 ;
 createNode transform -n "UEAxisSDKFKPinkyFinger1_R" -p "FKOffsetPinkyFinger1_R";
 	rename -uid "43D8206F-4FBD-84CC-14F2-44B3C1063B84";
@@ -3686,7 +4085,7 @@ createNode joint -n "FKXPinkyFinger3_R" -p "CustomOrientReverseFKPinkyFinger3_R"
 createNode transform -n "FKOffsetRingFinger0_R" -p "FKParentConstraintToWrist_R";
 	rename -uid "8746B896-4010-A93E-E381-BC9AC1ECDFF2";
 	setAttr ".t" -type "double3" 4.4207546753429519 -1.695684880836442 0.099737249287727536 ;
-	setAttr ".r" -type "double3" 3.4781171673649149 6.8682422883130032 -16.754643571790751 ;
+	setAttr ".r" -type "double3" 3.4781171673649149 6.8682422883130041 -16.754643571790751 ;
 	setAttr ".s" -type "double3" 0.99999999999999989 0.99999999999999989 1.0000000000000002 ;
 createNode transform -n "CustomOrientFKRingFinger0_R" -p "FKOffsetRingFinger0_R";
 	rename -uid "FF10B17E-46FB-05C0-4330-78B716C9AA27";
@@ -4465,13 +4864,13 @@ createNode transform -n "IKParentConstraintShoulder_R" -p "IKJoints";
 createNode transform -n "IKXOffsetShoulder_R" -p "IKParentConstraintShoulder_R";
 	rename -uid "F67F6CED-45DA-DB08-681D-A0B30EB7782E";
 	setAttr ".t" -type "double3" 17.8093367275874 -2.042810365310288e-14 0 ;
-	setAttr ".r" -type "double3" 3.5148092724223727 58.240753617185263 -3.8050133081988697 ;
+	setAttr ".r" -type "double3" 3.5148092724223732 58.240753617185263 -3.8050133081988697 ;
 	setAttr ".ro" 5;
 	setAttr ".s" -type "double3" 0.99999999999999956 0.99999999999999944 0.99999999999999978 ;
 createNode joint -n "IKXShoulder_R" -p "IKXOffsetShoulder_R";
 	rename -uid "6641BFB2-4A05-FD47-466B-0BAFEE6A4EB9";
 	setAttr ".t" -type "double3" 0 4.4408920985006262e-16 -1.4210854715202004e-14 ;
-	setAttr ".r" -type "double3" -8.0373290263553925e-07 -2.8801350313073032e-07 1.32541308979433e-05 ;
+	setAttr ".r" -type "double3" -8.0373291091033498e-07 -2.8801348029055651e-07 1.3254130897937833e-05 ;
 	setAttr ".ro" 5;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
@@ -4483,13 +4882,11 @@ createNode transform -n "IKX2Shoulder_R" -p "IKXShoulder_R";
 createNode joint -n "IKXElbow_R" -p "IKXShoulder_R";
 	rename -uid "3D086350-4153-DA3B-B950-1DACDFD42CA8";
 	setAttr ".t" -type "double3" 32.609676361083984 2.4868995751603507e-14 8.5265128291212022e-14 ;
-	setAttr ".r" -type "double3" 6.5170498823403418e-19 7.4971441773854786e-19 -2.5196519529207721e-05 ;
+	setAttr ".r" -type "double3" 6.5170499349608656e-19 7.4971442379195637e-19 -2.5196519732651621e-05 ;
 	setAttr ".ro" 5;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
 	setAttr ".jo" -type "double3" 0 0 37.019545132600214 ;
-	setAttr -av ".is" -type "double3" 1 1 1 ;
-	setAttr -av ".is";
 	setAttr ".ds" 2;
 createNode transform -n "IKX2Elbow_R" -p "IKXElbow_R";
 	rename -uid "717E0AC7-4C8C-989C-5FAA-06AAE10D9FF5";
@@ -4501,8 +4898,6 @@ createNode joint -n "IKXWrist_R" -p "IKXElbow_R";
 	setAttr ".ro" 5;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr -av ".is" -type "double3" 1 1 1 ;
-	setAttr -av ".is";
 	setAttr ".ds" 2;
 createNode transform -n "IKX2Wrist_R" -p "IKXWrist_R";
 	rename -uid "BBC450C9-4C8F-25D2-692A-429B943D0B19";
@@ -4660,7 +5055,7 @@ createNode poleVectorConstraint -n "IKArmHandle_R_poleVectorConstraint1" -p "IKA
 createNode transform -n "IKFKAlignedOffsetArm_R" -p "CustomOrientReverseIKArm_R";
 	rename -uid "FD129F3C-404E-C2B6-173F-888E48468F20";
 	setAttr ".t" -type "double3" -2.1316282072803006e-14 2.8421709430404007e-14 0 ;
-	setAttr ".r" -type "double3" 84.574335193679829 -41.364603466467578 -132.39050418630757 ;
+	setAttr ".r" -type "double3" 84.574335193679843 -41.364603466467578 -132.39050418630757 ;
 	setAttr ".s" -type "double3" 1.0000000000000004 1.0000000000000002 0.99999999999999967 ;
 createNode transform -n "IKFKAlignedArm_R" -p "IKFKAlignedOffsetArm_R";
 	rename -uid "223663C7-4AA8-FE2C-5FD7-DE9F82706397";
@@ -4814,7 +5209,7 @@ createNode transform -n "FKIKArm_R" -p "FKIKParentConstraintArm_R";
 	setAttr -l on -k off ".tx";
 	setAttr -l on -k off ".ty";
 	setAttr -l on -k off ".tz";
-	setAttr ".r" -type "double3" 88.04008904382485 0.091551333635880208 177.65237696565987 ;
+	setAttr ".r" -type "double3" 88.04008904382485 0.091551333635880208 177.6523769656599 ;
 	setAttr -l on -k off ".rx";
 	setAttr -l on -k off ".ry";
 	setAttr -l on -k off ".rz";
@@ -5118,8 +5513,8 @@ createNode orientConstraint -n "MiddleFinger2_R_orientConstraint1" -p "Constrain
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 9.9392333795740658e-16 8.1203536711115411e-14 8.1104144377319682e-14 ;
-	setAttr ".rsrr" -type "double3" -2.0872390097104327e-14 1.4262799899687956e-14 -9.0447023754118785e-15 ;
+	setAttr ".lr" -type "double3" -2.4649298781342207e-14 9.4621501773539642e-14 5.9933577278828122e-14 ;
+	setAttr ".rsrr" -type "double3" -2.0872390097104327e-14 1.426279989968796e-14 -9.0447023754118785e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "MiddleFinger1_R_pointConstraint1" -p "ConstraintSystem";
 	rename -uid "75A18C41-446A-3457-7D56-8AB6E88ED7CA";
@@ -5161,7 +5556,7 @@ createNode orientConstraint -n "MiddleFinger1_R_orientConstraint1" -p "Constrain
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 4.9298596412688678e-14 -1.4045073424776103e-06 9.3826362498938658e-14 ;
+	setAttr ".lr" -type "double3" 2.98176991933849e-14 -1.4045073644433162e-06 7.712845066002549e-14 ;
 	setAttr ".rsrr" -type "double3" 4.3732627552324251e-15 -1.4045072848300567e-06 -5.5659707461626538e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "MiddleFinger0_R_pointConstraint1" -p "ConstraintSystem";
@@ -5204,7 +5599,7 @@ createNode orientConstraint -n "MiddleFinger0_R_orientConstraint1" -p "Constrain
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.6707851311063035e-13 -7.676504780504963e-14 1.0023095661213528e-14 ;
+	setAttr ".lr" -type "double3" 1.4163407565892219e-13 -7.4755459056117096e-14 7.1531420228617023e-15 ;
 	setAttr ".rsrr" -type "double3" 5.8740869273279327e-14 -6.8534120162590361e-15 5.5597586716989174e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "ThumbFinger3_R_pointConstraint1" -p "ConstraintSystem";
@@ -5288,7 +5683,7 @@ createNode orientConstraint -n "ThumbFinger2_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.5743745673244406e-13 -3.4812164911956087e-14 -3.6576378836830479e-14 ;
+	setAttr ".lr" -type "double3" 1.3731050913880771e-13 -2.1816617268163781e-14 -2.0673605429512883e-14 ;
 	setAttr ".rsrr" -type "double3" 3.6824859671319763e-14 -3.143282556290116e-14 1.7890620083232265e-14 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "ThumbFinger1_R_pointConstraint1" -p "ConstraintSystem";
@@ -5331,7 +5726,7 @@ createNode orientConstraint -n "ThumbFinger1_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 6.0728715949194039e-14 6.3611093629270801e-15 -8.5874976399514962e-14 ;
+	setAttr ".lr" -type "double3" 7.9911436371770862e-14 1.9083328088781161e-14 -8.1899283047685562e-14 ;
 	setAttr ".rsrr" -type "double3" -3.200433148222665e-14 -1.9083328088781101e-14 8.5477407064332098e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "IndexFinger3_R_pointConstraint1" -p "ConstraintSystem";
@@ -5415,8 +5810,8 @@ createNode orientConstraint -n "IndexFinger2_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 3.945875651690675e-14 2.012694759363597e-15 9.8000841122594594e-14 ;
-	setAttr ".rsrr" -type "double3" 8.9453100416161616e-16 3.6998796255462307e-14 6.8580710319057069e-15 ;
+	setAttr ".lr" -type "double3" 4.3335057534940408e-14 1.6399735076295926e-15 8.6371938068493618e-14 ;
+	setAttr ".rsrr" -type "double3" 8.9453100416161616e-16 3.6998796255462313e-14 6.8580710319057069e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "IndexFinger1_R_pointConstraint1" -p "ConstraintSystem";
 	rename -uid "3FFB9000-4781-2CDA-2C00-1599A3BC64F7";
@@ -5458,7 +5853,7 @@ createNode orientConstraint -n "IndexFinger1_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.4650430001491322e-13 -4.6316827548812534e-14 5.3274290914513851e-14 ;
+	setAttr ".lr" -type "double3" 1.2821611059649803e-13 -5.3423379415207564e-14 4.4925334875672124e-14 ;
 	setAttr ".rsrr" -type "double3" 2.0872390097104327e-14 5.6653630263568904e-14 -1.5107634736951698e-14 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "IndexFinger0_R_pointConstraint1" -p "ConstraintSystem";
@@ -5501,7 +5896,7 @@ createNode orientConstraint -n "IndexFinger0_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.0403892540068553e-13 -8.0489154311958586e-14 8.7465253740246009e-15 ;
+	setAttr ".lr" -type "double3" 9.440408104336146e-14 -8.053263845799423e-14 8.7465253740246072e-15 ;
 	setAttr ".rsrr" -type "double3" 3.7644846425134591e-15 -1.0746796091663835e-15 -5.1684013573782151e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "PinkyFinger3_R_pointConstraint1" -p "ConstraintSystem";
@@ -5585,7 +5980,7 @@ createNode orientConstraint -n "PinkyFinger2_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.9083328088781097e-13 -8.3539256555315351e-14 9.4720894107335232e-14 ;
+	setAttr ".lr" -type "double3" 1.7890620083232277e-13 -9.3975451603867506e-14 9.1341554758280242e-14 ;
 	setAttr ".rsrr" -type "double3" 3.6576378836830441e-14 1.4809457735564499e-14 -2.1866313435061632e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "PinkyFinger1_R_pointConstraint1" -p "ConstraintSystem";
@@ -5598,7 +5993,7 @@ createNode pointConstraint -n "PinkyFinger1_R_pointConstraint1" -p "ConstraintSy
 	setAttr -k off ".tx";
 	setAttr -k off ".ty";
 	setAttr -k off ".tz";
-	setAttr ".r" -type "double3" 94.824363031770346 -11.1978000299999 -102.25969043846389 ;
+	setAttr ".r" -type "double3" 94.824363031770346 -11.197800029999902 -102.25969043846389 ;
 	setAttr -k off ".rx";
 	setAttr -k off ".ry";
 	setAttr -k off ".rz";
@@ -5619,7 +6014,7 @@ createNode orientConstraint -n "PinkyFinger1_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".tx";
 	setAttr -k off ".ty";
 	setAttr -k off ".tz";
-	setAttr ".r" -type "double3" 94.824363031770346 -11.1978000299999 -102.25969043846389 ;
+	setAttr ".r" -type "double3" 94.824363031770346 -11.197800029999902 -102.25969043846389 ;
 	setAttr -k off ".rx";
 	setAttr -k off ".ry";
 	setAttr -k off ".rz";
@@ -5628,8 +6023,8 @@ createNode orientConstraint -n "PinkyFinger1_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.8173888234550116e-13 -8.5253774313291696e-14 6.3014739626495774e-14 ;
-	setAttr ".rsrr" -type "double3" 4.7907104889544212e-14 -3.0563142642188483e-14 7.7526020360673077e-15 ;
+	setAttr ".lr" -type "double3" 1.715014719645405e-13 -9.8149929623288275e-14 6.4008662964453111e-14 ;
+	setAttr ".rsrr" -type "double3" 4.7907104889544218e-14 -3.0563142642188483e-14 7.7526020360673077e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "PinkyFinger0_R_pointConstraint1" -p "ConstraintSystem";
 	rename -uid "07BA5655-4F27-C47B-5433-30A81DDA784D";
@@ -5671,8 +6066,8 @@ createNode orientConstraint -n "PinkyFinger0_R_orientConstraint1" -p "Constraint
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.0774128983457664e-13 -1.510763473695171e-14 6.3611093629270193e-15 ;
-	setAttr ".rsrr" -type "double3" 9.1440947092076087e-15 8.3489560388417335e-15 -1.5703988739726114e-14 ;
+	setAttr ".lr" -type "double3" 9.7006917784637269e-14 -2.7034714792439894e-14 2.3854160110976147e-15 ;
+	setAttr ".rsrr" -type "double3" 9.1440947092076087e-15 8.3489560388417351e-15 -1.5703988739726114e-14 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "RingFinger3_R_pointConstraint1" -p "ConstraintSystem";
 	rename -uid "DA560E04-4C6F-A46D-15A5-14BDAC6FB8CE";
@@ -5755,7 +6150,7 @@ createNode orientConstraint -n "RingFinger2_R_orientConstraint1" -p "ConstraintS
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 6.8381925651465603e-14 -1.4362192233483751e-14 9.7802056455003124e-14 ;
+	setAttr ".lr" -type "double3" 5.9436615609849453e-14 -3.4389747493324322e-14 9.0248239086527264e-14 ;
 	setAttr ".rsrr" -type "double3" -4.0949641523842781e-14 1.7194873746662139e-14 3.5781240166464497e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "RingFinger1_R_pointConstraint1" -p "ConstraintSystem";
@@ -5798,7 +6193,7 @@ createNode orientConstraint -n "RingFinger1_R_orientConstraint1" -p "ConstraintS
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 7.0767342613201849e-14 1.565730969073171e-06 6.9574634623949696e-14 ;
+	setAttr ".lr" -type "double3" 6.877949588296495e-14 1.5657309495922738e-06 6.5598941244959197e-14 ;
 	setAttr ".rsrr" -type "double3" 3.9756932866427475e-15 1.5657310378526659e-06 -4.7708319678730684e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "RingFinger0_R_pointConstraint1" -p "ConstraintSystem";
@@ -5841,8 +6236,8 @@ createNode orientConstraint -n "RingFinger0_R_orientConstraint1" -p "ConstraintS
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.1628903054100981e-13 -2.8724384466967376e-14 -4.8702243559910385e-15 ;
-	setAttr ".rsrr" -type "double3" 2.5842006786891072e-15 1.9878466759146985e-16 -3.081162347667781e-15 ;
+	setAttr ".lr" -type "double3" 1.0833764383735102e-13 -3.4290355159528524e-14 -8.4483483726374953e-15 ;
+	setAttr ".rsrr" -type "double3" 2.5842006786891076e-15 1.9878466759146985e-16 -3.0811623476677814e-15 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "Wrist_R_pointConstraint1" -p "ConstraintSystem";
 	rename -uid "002082DE-4F23-C05C-1F38-0DA29BB53832";
@@ -5889,7 +6284,7 @@ createNode orientConstraint -n "Wrist_R_orientConstraint1" -p "ConstraintSystem"
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
 	setAttr -s 2 ".tg";
-	setAttr ".lr" -type "double3" -6.5147669292083125e-10 -7.328900468480061e-10 -4.8287379962813322e-11 ;
+	setAttr ".lr" -type "double3" -6.5146322525960199e-10 -7.3287295136659314e-10 -4.8287379962813141e-11 ;
 	setAttr ".rsrr" -type "double3" 1.1281029885815903e-14 8.8459177078204085e-15 5.2479152244148016e-14 ;
 	setAttr ".int" 2;
 	setAttr -k on ".w0";
@@ -5989,7 +6384,7 @@ createNode orientConstraint -n "Shoulder_R_orientConstraint1" -p "ConstraintSyst
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
 	setAttr -s 2 ".tg";
-	setAttr ".lr" -type "double3" 1.3755004466594261e-11 -9.8167219230352638e-10 3.1367326015047603e-11 ;
+	setAttr ".lr" -type "double3" 1.3756395959267386e-11 -9.8164674476006416e-10 3.1366431484043449e-11 ;
 	setAttr ".rsrr" -type "double3" 2.1071174764695788e-14 7.7029058691695215e-16 3.8365440845153652e-14 ;
 	setAttr ".int" 2;
 	setAttr -k on ".w0";
@@ -6032,7 +6427,7 @@ createNode orientConstraint -n "Scapula_R_orientConstraint1" -p "ConstraintSyste
 	setAttr -k off ".sy";
 	setAttr -k off ".sz";
 	setAttr ".erp" yes;
-	setAttr ".lr" -type "double3" 1.7265757798908055e-06 -9.8229603074498606e-10 1.5086019772665879e-06 ;
+	setAttr ".lr" -type "double3" 1.7265757759151124e-06 -9.8228981872410156e-10 1.5086019822362049e-06 ;
 	setAttr ".rsrr" -type "double3" 1.7026152023829492e-06 -1.2161071970960778e-15 1.5085636187980067e-06 ;
 	setAttr -k on ".w0";
 createNode pointConstraint -n "Root_M_pointConstraint1" -p "ConstraintSystem";
@@ -6152,7 +6547,7 @@ createNode parentConstraint -n "Fingers_R_parentConstraint1" -p "Fingers_R";
 	setAttr ".tg[0].tor" -type "double3" -39.706665931248871 23.951627930195176 -8.1602594173694634 ;
 	setAttr ".lr" -type "double3" 31.268482052940566 -28.170481867605986 -105.99673361508012 ;
 	setAttr ".rst" -type "double3" -51.653425893502295 92.00966467737922 21.792785344601331 ;
-	setAttr ".rsrr" -type "double3" 31.268482052940584 -28.170481867606007 -105.9967336150801 ;
+	setAttr ".rsrr" -type "double3" 31.268482052940584 -28.170481867606011 -105.9967336150801 ;
 	setAttr -k on ".w0";
 createNode scaleConstraint -n "Fingers_R_scaleConstraint1" -p "Fingers_R";
 	rename -uid "618D3F1B-49EC-E2C5-A8CA-2698C9FB3B6E";
@@ -6206,7 +6601,7 @@ createNode joint -n "Scapula_R" -p "Root_M";
 	setAttr ".ro" 2;
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr ".jo" -type "double3" 92.233884174422542 87.650595014912199 97.825029217670789 ;
+	setAttr ".jo" -type "double3" 92.233884174422556 87.650595014912199 97.825029217670789 ;
 createNode joint -n "Shoulder_R" -p "Scapula_R";
 	rename -uid "C3C28C57-4D12-9631-A2E1-2BB164093B8B";
 	addAttr -ci true -sn "fat" -ln "fat" -dv 7.5500000000000007 -at "double";
@@ -6319,7 +6714,7 @@ createNode joint -n "MiddleFinger2_R" -p "MiddleFinger1_R";
 	addAttr -ci true -sn "fatWidth" -ln "fatWidth" -dv 1 -at "double";
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr ".jo" -type "double3" 3.8075307877322744 19.597660294937072 -7.018199518427461 ;
+	setAttr ".jo" -type "double3" 3.8075307877322744 19.597660294937072 -7.0181995184274619 ;
 	setAttr ".ssc" no;
 createNode joint -n "MiddleFinger3_R" -p "MiddleFinger2_R";
 	rename -uid "1F507CBE-4E21-73F0-BAA3-2EBA6B8E6C83";
@@ -6490,7 +6885,7 @@ createNode joint -n "RingFinger2_R" -p "RingFinger1_R";
 	addAttr -ci true -sn "fatWidth" -ln "fatWidth" -dv 1 -at "double";
 	setAttr ".mnrl" -type "double3" -360 -360 -360 ;
 	setAttr ".mxrl" -type "double3" 360 360 360 ;
-	setAttr ".jo" -type "double3" 3.3516380721921375 17.969693244000993 -6.1658815562427254 ;
+	setAttr ".jo" -type "double3" 3.3516380721921379 17.969693244000993 -6.1658815562427254 ;
 	setAttr ".ssc" no;
 createNode joint -n "RingFinger3_R" -p "RingFinger2_R";
 	rename -uid "9808E457-4D2F-1C60-29DF-C0A43047B3E1";
@@ -73493,34 +73888,40 @@ createNode parentConstraint -n "PartAnchor_parentConstraint1" -p "PartAnchor";
 	setAttr ".rsrr" -type "double3" -90.01193685699954 4.5712872118235808 90.000851534835846 ;
 	setAttr -k on ".w0";
 createNode UsdDefaultSettings -n "UsdDefaultRenderSettings";
+	rename -uid "BCD33A09-41FB-DC30-6070-ADA4E4275442";
+	setAttr ".srl" -type "string" "#usda 1.0\n(\n    renderSettingsPrimPath = \"/Render/SceneRenderSettings\"\n)\n\ndef Scope \"Render\"\n{\n    def RenderSettings \"SceneRenderSettings\"\n    {\n        custom string adskUsd:externalCamera = \"|persp\" (\n            displayName = \"External Camera\"\n        )\n        rel products = </Render/BeautyProduct>\n    }\n\n    def RenderVar \"color\"\n    {\n        uniform string sourceName = \"color\"\n    }\n\n    def RenderProduct \"BeautyProduct\"\n    {\n        rel orderedVars = </Render/color>\n        token productName = \"./default.png\"\n    }\n}\n\n";
+	setAttr ".ssl" -type "string" "#usda 1.0\n\n";
+	setAttr ".asp" -type "string" "UsdDefaultRenderSettings,/Render/SceneRenderSettings";
+lockNode -l 1 ;
+createNode UsdDefaultSettings -n "UsdDefaultRenderSettings1";
 	rename -uid "496FC916-4240-2A3F-1787-77A901C5CCAA";
 	setAttr ".srl" -type "string" "#usda 1.0\n(\n    renderSettingsPrimPath = \"/Render/SceneRenderSettings\"\n)\n\ndef Scope \"Render\"\n{\n    def RenderSettings \"SceneRenderSettings\"\n    {\n        custom string adskUsd:externalCamera = \"|persp\" (\n            displayName = \"External Camera\"\n        )\n        rel products = </Render/BeautyProduct>\n    }\n\n    def RenderVar \"color\"\n    {\n        uniform string sourceName = \"color\"\n    }\n\n    def RenderProduct \"BeautyProduct\"\n    {\n        rel orderedVars = </Render/color>\n        token productName = \"./default.png\"\n    }\n}\n\n";
 	setAttr ".ssl" -type "string" "#usda 1.0\n\n";
 	setAttr ".asp" -type "string" "UsdDefaultRenderSettings,/Render/SceneRenderSettings";
 lockNode -l 1 ;
 createNode lightLinker -s -n "lightLinker1";
-	rename -uid "EECE13A7-4E81-4F09-A08B-758E776C40A6";
-	setAttr -s 3 ".lnk";
-	setAttr -s 3 ".slnk";
-createNode UsdDefaultSettings -n "UsdDefaultRenderSettings1";
+	rename -uid "E3C5B05E-4264-939A-9318-02AA48C48B56";
+	setAttr -s 6 ".lnk";
+	setAttr -s 6 ".slnk";
+createNode UsdDefaultSettings -n "UsdDefaultRenderSettings2";
 	rename -uid "8EB63859-44CF-B76E-AF8A-B38441FCDD40";
 	setAttr ".srl" -type "string" "#usda 1.0\n(\n    renderSettingsPrimPath = \"/Render/SceneRenderSettings\"\n)\n\ndef Scope \"Render\"\n{\n    def RenderSettings \"SceneRenderSettings\"\n    {\n        custom string adskUsd:externalCamera = \"|persp\" (\n            displayName = \"External Camera\"\n        )\n        rel products = </Render/BeautyProduct>\n    }\n\n    def RenderVar \"color\"\n    {\n        uniform string sourceName = \"color\"\n    }\n\n    def RenderProduct \"BeautyProduct\"\n    {\n        rel orderedVars = </Render/color>\n        token productName = \"./default.png\"\n    }\n}\n\n";
 	setAttr ".ssl" -type "string" "#usda 1.0\n\n";
 	setAttr ".asp" -type "string" "UsdDefaultRenderSettings,/Render/SceneRenderSettings";
 lockNode -l 1 ;
 createNode shapeEditorManager -n "shapeEditorManager";
-	rename -uid "231CE91A-4DCF-3590-05DF-EB856D218DC5";
+	rename -uid "E1B0B83A-467F-4549-49BA-748F28AE6465";
 createNode poseInterpolatorManager -n "poseInterpolatorManager";
-	rename -uid "792D736F-4500-0972-C7E6-D8A53475BC52";
+	rename -uid "55809662-4EFC-F56C-72BC-1FA988CC6EB0";
 createNode displayLayerManager -n "layerManager";
-	rename -uid "C94A71CC-4F00-EB93-E740-6A8A55DE8FFE";
-	setAttr -s 2 ".dli[1]"  1;
+	rename -uid "BDE071F0-4CA7-996A-8FEF-E89A6A753053";
+	setAttr -s 3 ".dli[1:2]"  1 2;
 	setAttr -s 2 ".dli";
 createNode displayLayer -n "defaultLayer";
 	rename -uid "111892FF-4DD7-0A53-55E1-38ADA8C4CEE3";
 	setAttr ".ufem" -type "stringArray" 0  ;
 createNode renderLayerManager -n "renderLayerManager";
-	rename -uid "B1CE63E5-4DC5-4C1A-734E-50B0B25A4305";
+	rename -uid "D8A7614A-4EAC-5D22-58AE-AA9B8295A422";
 createNode renderLayer -n "defaultRenderLayer";
 	rename -uid "C7635CFF-477F-24DF-E854-298CC453F5F8";
 	setAttr ".g" yes;
@@ -89752,134 +90153,6 @@ createNode skinCluster -n "skinCluster1";
 	setAttr ".ucm" yes;
 	setAttr -s 29 ".ifcl";
 	setAttr -s 29 ".ifcl";
-createNode dagPose -n "bindPose1";
-	rename -uid "AC7201AB-4038-F15A-F669-4A81EDB176C7";
-	setAttr -s 30 ".wm";
-	setAttr ".wm[0]" -type "matrix" 1 0 0 0 0 2.2204460492503131e-16 -1.0000000000000002 0
-		 0 1.0000000000000002 2.2204460492503131e-16 0 0 0 0 1;
-	setAttr -s 30 ".xm";
-	setAttr ".xm[0]" -type "matrix" "xform" 1 1 1 -1.5707963267948963 -0 0 0 0 0
-		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
-	setAttr ".xm[1]" -type "matrix" "xform" 1.0000000000003897 1.0000000000001932 1.0000000000003557 3.9947399977799925e-07
-		 -7.4315299999977989e-07 -4.76836999999964e-07 0 0.0016906299861148 -2.4012360572814937
-		 -1.000000006354282e-07 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
-	setAttr ".xm[2]" -type "matrix" "xform" 0.99999971345619831 1.0000003821029013 1.0000003972211791 -1.5913242775573899
-		 1.5295828314652855 1.4195636678381938 0 -1.1113713296497547 2.6948448795533984
-		 146.17051486198565 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 -0.02827418779071289 -0.70655214453692838 0.028126946257065633 0.70653627808435648 0.99999999999961031
-		 0.99999999999980682 0.99999999999964428 no;
-	setAttr ".xm[3]" -type "matrix" "xform" 0.99999982511072749 0.99999947006474266 0.99999992154224315 0.00071212952451583141
-		 1.0179452365740174 0.017595456737365098 0 -17.809341430664059 -7.6128962975374748e-05
-		 0.00042770372238010168 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000002865438837
-		 0.99999961789724467 0.9999996027789787 no;
-	setAttr ".xm[4]" -type "matrix" "xform" 1.0000000127843507 0.99999989496900055 1.0000001590763286 -0.00019661758132198475
-		 -0.01614226021650151 -0.65520422268239542 0 -32.608276367187543 0.30208089947700589
-		 -5.4734420700697228e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.000000174889303
-		 1.0000005299355381 1.000000078457763 no;
-	setAttr ".xm[5]" -type "matrix" "xform" 0.99999986424755827 0.9999995606579527 0.99999996275281711 0.043847807109517613
-		 -0.061054193361968379 0.068681677478430181 0 -12.588767051696763 8.5871870410869633e-05
-		 -0.0001444341178284958 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999998721564942
-		 1.0000001050310106 0.99999984092369676 no;
-	setAttr ".xm[6]" -type "matrix" "xform" 0.99999986424755827 1.000000240212028 1.0000002138118393 0.043842744581501301
-		 -0.061054193361968379 0.068681677478430181 0 -25.177722930908203 6.1092658157235746e-05
-		 -0.00037832584348507226 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999998721564942
-		 1.0000001050310106 0.99999984092369676 no;
-	setAttr ".xm[7]" -type "matrix" "xform" 0.99999921947310433 0.99999994269724246 1.0000005279057491 -1.1828287121212697
-		 0.02571704458689808 0.032269534797151743 0 -37.766422271728516 -1.3919047866295386e-05
-		 -0.00010187975568953789 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999998721564942
-		 1.0000001050310106 0.99999984092369676 no;
-	setAttr ".xm[8]" -type "matrix" "xform" 1.0000008135918121 0.99999930797698566 1.00000014525504 0.05008701060461445
-		 -0.25474466610919616 -0.36964505084282584 0 -9.801950454711907 -4.6126813888549947
-		 1.0132220983505107 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[9]" -type "matrix" "xform" 1.0000011905919997 0.99999969537550182 0.99999953013577669 -0.48466007843426728
-		 -0.34082223512040916 0.20683158817389602 0 -4.3753781318664338 0.40383541584014893
-		 -3.1564981937408589 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[10]" -type "matrix" "xform" 0.99999995579658696 0.99999980467038008
-		 1.0000006600897533 0.18311260699247014 0.010559305027793566 0.2588983266083042 0 -6.5435252189636159
-		 0.18884733319282532 0.2624143660068512 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999880940941788
-		 1.0000003046245909 1.000000469864444 no;
-	setAttr ".xm[11]" -type "matrix" "xform" 0.9999998256676268 1.0000005339893507 0.99999999999999978 -8.4929337036559673e-07
-		 1.0883372323031341e-07 0.37152811921820661 0 -5.920135498046875 -1.4173476316159395e-05
-		 -3.6456502133574986e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000000442034149
-		 1.000000195329658 0.99999933991068246 no;
-	setAttr ".xm[12]" -type "matrix" "xform" 0.99999974523152824 0.99999904672346918
-		 0.99999999999999944 1.7623803430419588e-07 -1.7215030848527446e-07 0.085818810986752647 0 -3.1647908687591695
-		 1.0906455841563911e-05 7.1765396565837136e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
-		0 0 0 1 1.0000001743324036 0.99999946601093437 1.0000000000000002 no;
-	setAttr ".xm[13]" -type "matrix" "xform" 1.0000010075439443 0.99999959368936797 0.99999930675519566 -0.23212575834480842
-		 -0.20611135036117831 -0.027830285064343242 0 -4.4539589881896724 0.71675038337706098
-		 -1.4411514997482442 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[14]" -type "matrix" "xform" 0.99999955892837478 1.0000001059771249 1.0000003157476496 0.10959561241222832
-		 -0.021358455871340155 0.68685244284228264 0 -7.4519581794738876 0.054516587406396866
-		 0.027140730991966677 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999899245707091
-		 1.000000406310797 1.000000693245285 no;
-	setAttr ".xm[15]" -type "matrix" "xform" 1.0000004100593762 1.000000600248546 0.99999999999999956 8.692811504152758e-08
-		 8.8856564127102223e-08 0.33098347169990489 0 -7.7657537460327291 -0.00019504503869427481
-		 7.3515315301975193e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000004410718197
-		 0.99999989402288636 0.99999968425245012 no;
-	setAttr ".xm[16]" -type "matrix" "xform" 0.99999952022668748 1.0000001175863766 1.0000000000000002 -9.1323579840212465e-08
-		 -2.6347669407670916e-07 0.16001254782862731 0 -3.5340113639831543 -0.00015469222855557518
-		 -1.1555185665201861e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999958994079197
-		 0.99999939975181429 1.0000000000000004 no;
-	setAttr ".xm[17]" -type "matrix" "xform" 1.0000004831719933 0.99999992465171672 0.99999905166456704 -0.074569566890049607
-		 -0.0022828531625885295 -0.040463273613207 0 -4.4560589790344167 0.99528664350508222
-		 0.24130192399023542 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[18]" -type "matrix" "xform" 0.99999978249759214 0.9999994399645763 1.0000006499825855 -3.8404435207722992e-06
-		 1.636438113176383e-06 0.72557942974217071 0 -8.0494222640991282 -0.00050404068315401673
-		 2.2992613597949685e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999951682824018
-		 1.0000000753482889 1.0000009483363324 no;
-	setAttr ".xm[19]" -type "matrix" "xform" 1.0000005302198034 1.0000004336485864 0.99999999999999978 7.4622990073414134e-07
-		 5.2996041849927965e-07 0.36249120248919237 0 -7.6422195434570312 -8.0005564100815718e-05
-		 0.00014840631047263741 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000002175024552
-		 1.0000005600357373 0.99999935001783691 no;
-	setAttr ".xm[20]" -type "matrix" "xform" 0.99999936313668847 1.0000003483038644 1.0000005728957875 4.2297168001811167e-07
-		 -3.3614940381479885e-07 0.1745329702620815 0 -3.6577682495117188 -7.809397355629244e-05
-		 0.00012314450577122216 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999946978047771
-		 0.9999995663516017 1.0000000000000002 no;
-	setAttr ".xm[21]" -type "matrix" "xform" 1.0000013096450435 1.0000004435464884 0.99999987611843422 0.057381902987021796
-		 0.12785414429316141 -0.010579866076495813 0 -4.5467615127563334 0.50842142105101118
-		 3.1406860351562287 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[22]" -type "matrix" "xform" 0.99999934431186766 0.99999912749808162
-		 0.99999981432803542 -5.7590461221509075e-07 -3.2264752105420278e-06 0.75699908226184143 0 -7.7574825286865234
-		 -0.057576283812522888 -0.3178482055664027 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
-		0 0 0 1 0.99999869035667166 0.9999995564537083 1.0000001238815812 no;
-	setAttr ".xm[23]" -type "matrix" "xform" 0.99999958855670235 1.0000002948843767 0.99999999999999989 1.1372289120879779e-06
-		 -1.7596386740545992e-07 0.25992365528185757 0 -6.9286785125732422 -0.00016065254749264568
-		 -1.409334709023824e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000006556885623
-		 1.0000008725026797 1.0000001856719991 no;
-	setAttr ".xm[24]" -type "matrix" "xform" 1.0000004331950116 0.99999986970365606 1 -6.5665535821709449e-07
-		 2.3983963080021515e-07 0.21845270818321219 0 -4.4067211151122905 -6.5334737875843985e-05
-		 7.5839976499736395e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000004114434669
-		 0.99999970511571024 1.0000000000000002 no;
-	setAttr ".xm[25]" -type "matrix" "xform" 1.0000006337150604 1.0000003258481529 1.0000001174876556 1.283938656734348
-		 0.69645894588216894 0.35794287961514903 0 -2.6299610137939347 -1.790658235549941
-		 3.4077463150024236 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275049
-		 1.0000000573027608 0.99999947209452955 no;
-	setAttr ".xm[26]" -type "matrix" "xform" 0.99999945268016932 0.99999947379599363
-		 1.000000287266094 0.061620867515404659 -0.033723611743853944 0.40571902786940195 0 -5.7789444923400808
-		 -7.1947222750168294e-05 -1.0704969099606387e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
-		0 0 0 1 0.99999936628534114 0.99999967415195323 0.99999988251235816 no;
-	setAttr ".xm[27]" -type "matrix" "xform" 0.99999996932518587 1.0000004422083344 0.99999912525181944 2.5093673361501623e-07
-		 3.3087224502121107e-24 0.17453406727114995 0 -4.9553518295287944 2.1611602285531717e-05
-		 0.0001218314137076959 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000005473201303
-		 1.0000005262042833 0.99999971273398847 no;
-	setAttr ".xm[28]" -type "matrix" "xform" 0.99999938288336954 0.99999990805689487
-		 1.0000001994026537 0.00021995527290517722 -0.075164001746962375 -0.01141831959226882 0 -8.6705694198608683
-		 0.00043086271034553647 0.0081595433876060497 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
-		0 0 0 1 1.000000174889303 1.0000005299355381 1.000000078457763 no;
-	setAttr ".xm[29]" -type "matrix" "xform" 0.99999936977819004 1.0000000980813579 1.0000003290405852 5.5481447587960706e-06
-		 -5.2377537623844884e-06 -5.3412358165734228e-06 0 -17.3411159515381 0.00083814363460898988
-		 0.016365250572562218 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.000000174889303
-		 1.0000005299355381 1.000000078457763 no;
-	setAttr -s 30 ".m";
-	setAttr -s 30 ".p";
-	setAttr -s 30 ".g[0:29]" yes no no no no no no no no no no no no no 
-		no no no no no no no no no no no no no no no no;
-	setAttr ".bp" yes;
 createNode animCurveUA -n "SDKFKIndexFinger2_R_rotateY";
 	rename -uid "5EFE106B-481A-01EF-9408-A584E0DC79DE";
 	addAttr -s false -ci true -sn "drivingSystemOut" -ln "drivingSystemOut" -at "message";
@@ -90272,7 +90545,7 @@ createNode multMatrix -n "PoleOffsetArmMMRoot_R";
 	setAttr ".ihi" 0;
 	setAttr -s 3 ".i";
 	setAttr ".i[0]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 -46.187925335408963 103.98048759838561 -56.86217240576255 1;
-	setAttr ".i[1]" -type "matrix" 1 -0 0 -0 -0 1 -0 0 0 -0 1 -0 -0 -141.10069483995179 -2.1445850051664261 1;
+	setAttr ".i[1]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 -141.10069483995179 -2.1445850051664261 1;
 createNode multDL -n "PoleArm_RFollowArmMDL_R";
 	rename -uid "3E192A6B-43C7-BC56-9C6A-089F235B206E";
 	setAttr ".ihi" 0;
@@ -90314,7 +90587,7 @@ createNode multMatrix -n "IKOffsetArmMMRoot_R";
 	setAttr ".ihi" 0;
 	setAttr -s 3 ".i";
 	setAttr ".i[0]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 -51.653425893502273 92.009664669155896 21.792785324055156 1;
-	setAttr ".i[1]" -type "matrix" 1 -0 0 -0 -0 1 -0 0 0 -0 1 -0 -0 -141.10069483995179 -2.1445850051664261 1;
+	setAttr ".i[1]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 -141.10069483995179 -2.1445850051664261 1;
 createNode decomposeMatrix -n "IKOffsetArmDM_R";
 	rename -uid "E9CF8097-42E8-018C-DFAE-1BA61D64C42A";
 	setAttr ".ihi" 0;
@@ -90392,9 +90665,9 @@ createNode animCurveUU -n "IKdistanceArm_RShape_antiPop";
 	rename -uid "BB78231D-43F7-7E47-84B1-C392AD10FE99";
 	setAttr ".tan" 9;
 	setAttr ".wgt" no;
-	setAttr -s 5 ".ktv[0:4]"  7.0376101310599299 70.376101310599296 49.263270917419504 
-		70.376101310599296 59.8196861140094 63.338491179539368 70.3760986328125 70.376101310599296 
-		84.451321572719152 84.451321572719152;
+	setAttr -s 5 ".ktv[0:4]"  7.0376100540161133 70.376101310599296 49.263271331787109 
+		70.376101310599296 59.819686889648438 63.338491179539368 70.3760986328125 70.376101310599296 
+		84.451324462890625 84.451321572719152;
 	setAttr -s 5 ".kit[1:4]"  2 9 9 9;
 	setAttr -s 5 ".kot[3:4]"  2 9;
 	setAttr ".pst" 1;
@@ -90402,7 +90675,7 @@ createNode animCurveUU -n "IKdistanceArm_RShape_normal";
 	rename -uid "E8336935-4B1C-5B16-F98D-998AC504B700";
 	setAttr ".tan" 9;
 	setAttr ".wgt" no;
-	setAttr -s 2 ".ktv[0:1]"  70.3760986328125 70.376101310599296 84.451321572719152 
+	setAttr -s 2 ".ktv[0:1]"  70.3760986328125 70.376101310599296 84.451324462890625 
 		84.451321572719152;
 	setAttr -s 2 ".kot[0:1]"  2 9;
 	setAttr ".pst" 1;
@@ -90949,6 +91222,1022 @@ createNode displayLayer -n "Creep2_ArmR_Skeleton";
 	rename -uid "2B855F94-48B6-79B5-E572-BF8BD3ECD901";
 	setAttr ".ufem" -type "stringArray" 0  ;
 	setAttr ".do" 1;
+createNode dagPose -n "bindPose1";
+	rename -uid "F26720DD-406C-C1A1-E7DF-728E61D37D15";
+	setAttr -s 177 ".wm";
+	setAttr ".wm[0]" -type "matrix" 1 0 0 0 0 0 -1 0 0 1 0 0 0 0 0 1;
+	setAttr ".wm[1]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 1;
+	setAttr ".wm[2]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 1;
+	setAttr ".wm[3]" -type "matrix" 5.3799983644049135e-07 0.99859707971242717 -0.052951604227193722 0
+		 -1.2490071794681713e-06 -0.052951604226497667 -0.99859707971166611 0 -0.99999999999946498 6.0338199939062602e-07 1.2187669675422273e-06 0
+		 0.3182429892354639 90.58577820366105 0.43456111215757121 1;
+	setAttr ".wm[4]" -type "matrix" -1.1351294785054006e-05 0.96562289326691375 0.25994697126658728 0
+		 -2.9367599011832559e-05 0.25994697084938012 -0.96562289299922044 0 -0.99999999950473584 -1.859508852613227e-05 2.5407291231500371e-05 0
+		 0.31888898925941617 94.668312343148244 0.38499911773313811 1;
+	setAttr ".wm[5]" -type "matrix" 1.017941034200999e-05 0.97067414871367075 0.24039903684512301 0
+		 1.4231146129906779e-06 0.24039903684331212 -0.97067414876630331 0 -0.99999999994756683 1.0223005850946121e-05 1.0657398763639997e-06 0
+		 0.31952298932299861 101.99709832968651 1.8864078897558887 1;
+	setAttr ".wm[6]" -type "matrix" 8.6524449999753633e-05 0.99670458527146932 0.081116966246633629 0
+		 0.00014758489500392465 0.081116952939250045 -0.9967045791832897 0 -0.9999999853664987 9.8210954472585885e-05 -0.00014007994182841892 0
+		 0.32041198941783616 109.82661851093522 3.6668971542940065 1;
+	setAttr ".wm[7]" -type "matrix" 1.5718547448024278e-05 0.99895715673296503 -0.045657406470675767 0
+		 -1.1880601042171303e-05 -0.04565740628655033 -0.99895715679423558 0 -0.99999999980627896 1.6244592898500087e-05 1.1150543330290373e-05 0
+		 0.31902898879837571 119.39857267146253 3.1802903636950357 1;
+	setAttr ".wm[8]" -type "matrix" -1.4814852797652429e-05 0.99681894356524037 -0.079699394795115161 0
+		 0.00020952185148500509 -0.079699389960335057 -0.99681892204197864 0 -0.99999997794094642 -3.1466490355674454e-05 -0.00020767461592067696 0
+		 0.31835298767610881 141.10069501189199 2.144585175301156 1;
+	setAttr ".wm[9]" -type "matrix" 0.00017986004479293811 0.68354984043851263 0.72990381783313496 0
+		 5.4934763848478799e-05 0.7299038217840913 -0.6835498576751432 0 -0.99999998231665754 0.00016304040188437887 9.372988501741574e-05 0
+		 0.31824298678207724 153.94849540358911 -0.27737964596100273 1;
+	setAttr ".wm[10]" -type "matrix" 0.00017078211498152513 0.70754114351061737 0.70667213124171391 0
+		 4.9264783922724906e-05 0.70667213473693402 -0.70754115891577229 0 -0.9999999842036148 0.00015564942540590595 8.5830100217346394e-05 0
+		 0.3194319870945786 158.49652444407658 4.481722271583374 1;
+	setAttr ".wm[11]" -type "matrix" 0.00017636809967968989 0.83786522063666302 0.54587712989498249 0
+		 1.1775063536584639e-05 0.54587713660714188 -0.83786523474328423 0 -0.99999998437821036 0.00015420043712698899 8.640939703385232e-05 0
+		 0.3182429879431371 163.91566566938548 8.9778492502279228 1;
+	setAttr ".wm[12]" -type "matrix" 0.9991602657233366 -0.0029647909165648541 0.040865308212117493 0
+		 0.040963253894387978 0.050849775658613566 -0.99786587883654987 0 0.00088047193871825143 0.99870191265011654 0.050928522842063333 0
+		 1.7428199939393172 146.16995987064448 -0.29335868147961408 1;
+	setAttr ".wm[13]" -type "matrix" 0.52418229202726097 -0.85109017306821577 -0.029638522778499841 0
+		 0.024621248085315111 0.049934280031227712 -0.99844897807593125 0 0.85125009184642586 0.52263953637778771 0.047129567651560324 0
+		 19.540644470492079 146.11714885507956 0.43456145430190762 1;
+	setAttr ".wm[14]" -type "matrix" 0.41472430913773556 -0.69749498660404241 0.58438385593124187 0
+		 0.33815464472582363 -0.47808853992396722 -0.81060642993022614 0 0.84478114542250515 0.53379030682123418 0.037586229966476342 0
+		 36.627229649216602 118.35145888042553 -0.27738028386703151 1;
+	setAttr ".wm[15]" -type "matrix" 0.48768040786489003 -0.69473510095545021 0.52868796022397879 0
+		 0.34438987682212202 -0.40338086326256722 -0.84774966345995995 0 0.80222405382035133 0.59550568314221652 0.042538791921248383 0
+		 41.848167691913318 109.57086479519566 7.0795141152041392 1;
+	setAttr ".wm[16]" -type "matrix" 0.48768015003420145 -0.694734733657147 0.52868868071256103 0
+		 0.34439091493415586 -0.40338098851089654 -0.84774918214013784 0 0.80222376490242031 0.59550602680326947 0.042539429562759988 0
+		 47.069076579056684 100.79038297149675 14.436292295177045 1;
+	setAttr ".wm[17]" -type "matrix" 0.40355520762699559 -0.72604682485187211 0.55677572012460153 0
+		 -0.66906029813669099 -0.64925414875803678 -0.36170066046168514 0 0.62410056229357358 -0.22655034417034847 -0.74777899790091618 0
+		 52.289935151742853 92.009655676523948 21.792774032090829 1;
+	setAttr ".wm[18]" -type "matrix" 0.094104963353769874 -0.87361707200226468 0.47742797088043853 0
+		 -0.56589223022191959 -0.44148968803824157 -0.69631375049681032 0 0.81909110582854439 -0.20464619923858207 -0.53591948414891488 0
+		 52.504472395733984 89.74912678479069 26.85781841607524 1;
+	setAttr ".wm[19]" -type "matrix" -0.13811197168881029 -0.9770755073386449 0.16201400012302336 0
+		 -0.55678939798651883 -0.058687318213329911 -0.82857791726019747 0 0.81909135605670957 -0.20464420744445316 -0.53591986228658883 0
+		 53.434800911050637 82.896468122471106 30.367951384622653 1;
+	setAttr ".wm[20]" -type "matrix" -0.27657218830706543 -0.95933789615145559 -0.056379301729056849 0
+		 -0.50259009293087864 0.19440021716043879 -0.84238456423192054 0 0.81909158410006389 -0.2046444638302847 -0.53591941584600877 0
+		 51.485401409005711 76.719824808726415 32.828735764237713 1;
+	setAttr ".wm[21]" -type "matrix" -0.37891941541076507 -0.89440835064172319 -0.23760003983126704 0
+		 -0.43070731222368808 0.39768647580461342 -0.81014608445616976 0 0.81909174566869536 -0.20464400617943934 -0.53591934366367389 0
+		 49.713187940680143 72.708549413281901 33.262653991686634 1;
+	setAttr ".wm[22]" -type "matrix" 0.43171425039967454 -0.69970386773635285 0.56924274565184729 0
+		 -0.69679808545231192 -0.6594496054984027 -0.2821323198761761 0 0.57279597948363781 -0.27484671233889757 -0.77224610753594569 0
+		 54.603695248967341 89.474169631561963 24.814889465563741 1;
+	setAttr ".wm[23]" -type "matrix" -0.17387079254169538 -0.98476280936958471 -0.003340177264658073 0
+		 -0.77127979589437412 0.13828533724121059 -0.62129271841044786 0 0.61228786036213045 -0.10544844611144849 -0.78357143979753552 0
+		 58.056262103443238 83.851224981124815 29.421976209528886 1;
+	setAttr ".wm[24]" -type "matrix" -0.43607099727708881 -0.87173287491201856 -0.22343652372005107 0
+		 -0.65950364972360243 0.47850019856663262 -0.5797348497145679 0 0.61228834819535272 -0.10544835119636295 -0.78357107137432824 0
+		 56.138935601900442 76.735988771531254 31.447000412153823 1;
+	setAttr ".wm[25]" -type "matrix" -0.54396838536448777 -0.77539823464777247 -0.32071166712448868 0
+		 -0.57376081629208187 0.62260585702132254 -0.53212824816131488 0 0.61228826659717761 -0.10544915603537898 -0.78357102682487412 0
+		 54.454112239601102 73.491071708852886 31.342212072191305 1;
+	setAttr ".wm[26]" -type "matrix" -0.57991844604834286 -0.56049076795075525 0.59122305010500809 0
+		 0.33022625313637466 -0.82514886249827957 -0.45834482265861465 0 0.74474506891497216 -0.07056524470643448 0.66360781231610044 0
+		 50.018040186733927 89.718188971870305 25.157821975771817 1;
+	setAttr ".wm[27]" -type "matrix" -0.37716666539107635 -0.84255969648888496 0.38449767797869305 0
+		 0.57796199810389326 -0.53852721141755366 -0.61314628867114662 0 0.72367481320432281 -0.0090332948641352398 0.69008199825685845 0
+		 46.80999936645734 85.188121875709044 26.765006803930731 1;
+	setAttr ".wm[28]" -type "matrix" -0.27107477066798258 -0.92327353824981995 0.27218457391198886 0
+		 0.6346755457015606 -0.38403693786796977 -0.67059867435151754 0 0.72367494111410768 -0.0090334888809497412 0.69008186158072804 0
+		 45.545519430706918 81.42063329193634 29.725161503039502 1;
+	setAttr ".wm[29]" -type "matrix" 0.45135450830887047 -0.87108934230226198 0.19360388828064151 0
+		 -0.88665640716378258 -0.462253162777301 -0.012744769066572348 0 0.10059584218768858 -0.1659077190202618 -0.98099699556341291 0
+		 56.296520073299448 88.379400304143616 22.014579687751429 1;
+	setAttr ".wm[30]" -type "matrix" -0.1250227893692874 -0.98702611426459896 0.10074101398516419 0
+		 -0.95235347106312196 0.090916636752930657 -0.29113060869016283 0 0.27819447926428365 -0.13233901511638255 -0.95136439747623647 0
+		 59.377951528258698 82.807093975996622 23.571417909876359 1;
+	setAttr ".wm[31]" -type "matrix" -0.46223512722556831 -0.88667856712230919 -0.011823948808156329 0
+		 -0.84198969673966728 0.44304342233345062 -0.30784066741097643 0 0.27819424462735687 -0.1323391269946419 -0.95136445052510388 0
+		 59.741478273280016 76.964996737882473 24.457859549397551 1;
+	setAttr ".wm[32]" -type "matrix" -0.53270295707514481 -0.8454412504706611 -0.038166104421755664 0
+		 -0.79927182340945369 0.51741221888046773 -0.3056945339021328 0 0.27819437777910516 -0.13233929029773225 -0.95136438887316543 0
+		 59.437879305443957 73.940717983957356 25.339692786648857 1;
+	setAttr ".wm[33]" -type "matrix" 0.54081016191468645 -0.73908467028724223 0.40159459522868052 0
+		 -0.76060021319115911 -0.63356243823410319 -0.14172491860349246 0 0.35918196567221183 -0.22880665856999927 -0.90478496259074292 0
+		 55.466758139528643 88.913443996406855 23.454509610915263 1;
+	setAttr ".wm[34]" -type "matrix" -0.3560811900157933 -0.9339305601629887 0.031303273172352652 0
+		 -0.81331107450119755 0.29324892811554421 -0.5025237927237538 0 0.46014267592935126 -0.20439856886348839 -0.86399649468942696 0
+		 59.511091258329841 83.449470543876771 26.50834351318797 1;
+	setAttr ".wm[35]" -type "matrix" -0.60105852388451131 -0.78794170188093282 -0.13370312376112353 0
+		 -0.65344982962364584 0.58083483244047052 -0.48542169048090777 0 0.46014342441393241 -0.20439856130007686 -0.86399609785436038 0
+		 58.376570142611669 75.964249474753871 28.237885377966229 1;
+	setAttr ".wm[36]" -type "matrix" -0.6974945114075094 -0.68533159404588506 -0.20933707927564277 0
+		 -0.54933567659319138 0.69895763949194445 -0.45791760461726422 0 0.46014315270259115 -0.20439868981744175 -0.86399621215738909 0
+		 56.890020330382434 72.764234553527047 28.43587668231978 1;
+	setAttr ".wm[37]" -type "matrix" 0.7538295099205331 -0.48428192543146525 0.44408567492551165 0
+		 -0.45520117460865805 -0.87230077088430635 -0.17855882994200664 0 0.47384909054323077 -0.067545405585789753 -0.87801176391668034 0
+		 52.475454160267724 82.132848285158119 26.404527838652726 1;
+	setAttr ".wm[38]" -type "matrix" 0.58631615484266264 -0.80994993022376693 -0.014645036762143954 0
+		 0.030779989926820479 0.040339501945752747 -0.99871182870899267 0 0.80949734946533303 0.58511010512039108 0.048581952362591538 0
+		 24.07983604643352 138.73369127911403 0.1776942559190236 1;
+	setAttr ".wm[39]" -type "matrix" 0.52418229202726097 -0.85109017306821577 -0.029638522778499841 0
+		 0.024621788357604125 0.049934611740622387 -0.99844894816348717 0 0.85125007621961513 0.5226395046853417 0.047130201348187066 0
+		 28.619057506748934 131.35032689091804 -0.079132335910632068 1;
+	setAttr ".wm[40]" -type "matrix" 0.99915900010136971 0.0029727501148809677 -0.040889198082470261 0
+		 0.04098753640451705 -0.050836819020436096 0.9978660048226482 0 0.00088772974393226895 -0.99870300166310244 -0.050915923942036513 0
+		 -1.109788012066421 146.17051490783447 -0.29355060071156869 1;
+	setAttr ".wm[41]" -type "matrix" 0.52421599967828392 0.85101800239009973 0.031082233090349212 0
+		 0.024007633451781103 -0.051253417652651651 0.99839700736422676 0 0.85124642875634093 -0.52262993864106555 -0.047298781364504168 0
+		 -18.90415450602093 146.11715111615419 0.43456094785483501 1;
+	setAttr ".wm[42]" -type "matrix" 0.41472303106813174 0.69749393657434033 -0.5843860556189584 0
+		 0.33828601562879013 0.47800818749907897 0.81059886537185077 0 0.84472886168676065 -0.53386425448948172 -0.037711442044333021 0
+		 -35.990729044604628 118.35146682810712 -0.27737784397338838 1;
+	setAttr ".wm[43]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451975707299598 0.40329476603431508 0.84773717545563121 0 0.80216258146861652 -0.59557965597176088 -0.042663020548109158 0
+		 -41.211673632110042 109.57099629627166 7.0793971329331491 1;
+	setAttr ".wm[44]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451975707299598 0.40329476603431508 0.84773717545563121 0 0.80216258146861652 -0.59557965597176088 -0.042663020548109158 0
+		 -41.211673632110042 109.57099629627166 7.0793971329331491 1;
+	setAttr ".wm[45]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451975707299598 0.40329476603431508 0.84773717545563121 0 0.80216258146861652 -0.59557965597176088 -0.042663020548109158 0
+		 -41.211673632110042 109.57099629627166 7.0793971329331491 1;
+	setAttr ".wm[46]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451975707299598 0.40329476603431508 0.84773717545563121 0 0.80216258146861652 -0.59557965597176088 -0.042663020548109158 0
+		 -41.211673632110042 109.57099629627166 7.0793971329331491 1;
+	setAttr ".wm[47]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451593021681975 0.40329805522940004 0.84773796751106989 0 0.80216452699055962 -0.59557776379739491 -0.042658739562494691 0
+		 -46.43280952987174 100.79038892448523 14.436196137939522 1;
+	setAttr ".wm[48]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451593021681975 0.40329805522940004 0.84773796751106989 0 0.80216452699055962 -0.59557776379739491 -0.042658739562494691 0
+		 -46.43280952987174 100.79038892448523 14.436196137939522 1;
+	setAttr ".wm[49]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451593021681975 0.40329805522940004 0.84773796751106989 0 0.80216452699055962 -0.59557776379739491 -0.042658739562494691 0
+		 -46.43280952987174 100.79038892448523 14.436196137939522 1;
+	setAttr ".wm[50]" -type "matrix" 0.48768902356834198 0.69472193415743844 -0.528697054968574 0
+		 0.34451593021681975 0.40329805522940004 0.84773796751106989 0 0.80216452699055962 -0.59557776379739491 -0.042658739562494691 0
+		 -46.43280952987174 100.79038892448523 14.436196137939522 1;
+	setAttr ".wm[51]" -type "matrix" 0.40355903510235686 0.72604494921981533 -0.55677406397547446 0
+		 -0.66896859067619885 0.6492896422502511 0.36180671748995658 0 0.62419604801304263 0.22645426956974696 0.74772880621587801 0
+		 -51.653424931124192 92.009664024011471 21.792785261510076 1;
+	setAttr ".wm[52]" -type "matrix" 0.75534190067242113 0.48521479757842539 -0.44048300775797777 0
+		 -0.45493856732740917 0.87204360983740714 0.1804709198192381 0 0.47168824034602452 0.064075881210836072 0.87943464173069807 0
+		 -51.890902401258309 82.127489625274862 26.338973288968809 1;
+	setAttr ".wm[53]" -type "matrix" 0.45140812765095961 0.87106316757400204 -0.1936001784646019 0
+		 -0.88661579371926136 0.46232719614410545 0.012862218607731402 0 0.10071102151210126 0.16584334921948474 0.98099569102528683 0
+		 -55.659575215321247 88.38034649026001 22.014788065401639 1;
+	setAttr ".wm[54]" -type "matrix" 0.20830114544210071 0.95859121250371304 -0.19420324296749766 0
+		 -0.93763367240012174 0.25221310031715449 0.23922874564777125 0 0.27830389395373945 0.13226054220523617 0.95134372778602461 0
+		 -58.754382692000945 82.811351621325429 23.541472073579452 1;
+	setAttr ".wm[55]" -type "matrix" -0.1463087455492556 0.98475323442437601 -0.094104018730593292 0
+		 -0.9492846961440945 -0.11300132968970565 0.2934098842737014 0 0.27830307180974506 0.13226055340843673 0.95134396673561639 0
+		 -59.987550553874435 77.136353359573235 24.691143512739586 1;
+	setAttr ".wm[56]" -type "matrix" -0.22713672044118252 0.97144320530283634 -0.06860832747684005 0
+		 -0.93324958797830904 -0.19699190924686191 0.30039595161709204 0 0.2783032753856492 0.13226042089165199 0.95134392560535008 0
+		 -59.524504352741815 74.019823574572982 24.989034525570705 1;
+	setAttr ".wm[57]" -type "matrix" -0.22713672044118252 0.97144320530283634 -0.06860832747684005 0
+		 -0.93324958797830904 -0.19699190924686191 0.30039595161709204 0 0.2783032753856492 0.13226042089165199 0.95134392560535008 0
+		 -59.524504352741815 74.019823574572982 24.989034525570705 1;
+	setAttr ".wm[58]" -type "matrix" -0.22713672044118252 0.97144320530283634 -0.06860832747684005 0
+		 -0.93324958797830904 -0.19699190924686191 0.30039595161709204 0 0.2783032753856492 0.13226042089165199 0.95134392560535008 0
+		 -59.524504352741815 74.019823574572982 24.989034525570705 1;
+	setAttr ".wm[59]" -type "matrix" -0.22713672044118252 0.97144320530283634 -0.06860832747684005 0
+		 -0.93324958797830904 -0.19699190924686191 0.30039595161709204 0 0.2783032753856492 0.13226042089165199 0.95134392560535008 0
+		 -59.524504352741815 74.019823574572982 24.989034525570705 1;
+	setAttr ".wm[60]" -type "matrix" -0.1463087455492556 0.98475323442437601 -0.094104018730593292 0
+		 -0.9492846961440945 -0.11300132968970565 0.2934098842737014 0 0.27830307180974506 0.13226055340843673 0.95134396673561639 0
+		 -59.987550553874435 77.136353359573235 24.691143512739586 1;
+	setAttr ".wm[61]" -type "matrix" -0.1463087455492556 0.98475323442437601 -0.094104018730593292 0
+		 -0.9492846961440945 -0.11300132968970565 0.2934098842737014 0 0.27830307180974506 0.13226055340843673 0.95134396673561639 0
+		 -59.987550553874435 77.136353359573235 24.691143512739586 1;
+	setAttr ".wm[62]" -type "matrix" -0.1463087455492556 0.98475323442437601 -0.094104018730593292 0
+		 -0.9492846961440945 -0.11300132968970565 0.2934098842737014 0 0.27830307180974506 0.13226055340843673 0.95134396673561639 0
+		 -59.987550553874435 77.136353359573235 24.691143512739586 1;
+	setAttr ".wm[63]" -type "matrix" 0.20830114544210071 0.95859121250371304 -0.19420324296749766 0
+		 -0.93763367240012174 0.25221310031715449 0.23922874564777125 0 0.27830389395373945 0.13226054220523617 0.95134372778602461 0
+		 -58.754382692000945 82.811351621325429 23.541472073579452 1;
+	setAttr ".wm[64]" -type "matrix" 0.20830114544210071 0.95859121250371304 -0.19420324296749766 0
+		 -0.93763367240012174 0.25221310031715449 0.23922874564777125 0 0.27830389395373945 0.13226054220523617 0.95134372778602461 0
+		 -58.754382692000945 82.811351621325429 23.541472073579452 1;
+	setAttr ".wm[65]" -type "matrix" 0.20830114544210071 0.95859121250371304 -0.19420324296749766 0
+		 -0.93763367240012174 0.25221310031715449 0.23922874564777125 0 0.27830389395373945 0.13226054220523617 0.95134372778602461 0
+		 -58.754382692000945 82.811351621325429 23.541472073579452 1;
+	setAttr ".wm[66]" -type "matrix" 0.45140812765095961 0.87106316757400204 -0.1936001784646019 0
+		 -0.88661579371926136 0.46232719614410545 0.012862218607731402 0 0.10071102151210126 0.16584334921948474 0.98099569102528683 0
+		 -55.659575215321247 88.38034649026001 22.014788065401639 1;
+	setAttr ".wm[67]" -type "matrix" 0.45140812765095961 0.87106316757400204 -0.1936001784646019 0
+		 -0.88661579371926136 0.46232719614410545 0.012862218607731402 0 0.10071102151210126 0.16584334921948474 0.98099569102528683 0
+		 -55.659575215321247 88.38034649026001 22.014788065401639 1;
+	setAttr ".wm[68]" -type "matrix" 0.45140812765095961 0.87106316757400204 -0.1936001784646019 0
+		 -0.88661579371926136 0.46232719614410545 0.012862218607731402 0 0.10071102151210126 0.16584334921948474 0.98099569102528683 0
+		 -55.659575215321247 88.38034649026001 22.014788065401639 1;
+	setAttr ".wm[69]" -type "matrix" 0.54083103302318358 0.73906298798925329 -0.40160709456120791 0
+		 -0.76053191534136699 0.6336181122294825 0.14184012810124766 0 0.35929447023427097 0.22872370571474604 0.90476080824161331 0
+		 -54.82990488734881 88.914913286394949 23.454368721130848 1;
+	setAttr ".wm[70]" -type "matrix" -0.056374910757768112 0.97792105557904674 -0.20122599598642005 0
+		 -0.88599786371793421 0.043907877576656748 0.46160527091285269 0 0.46024935540102491 0.20430916868072141 0.86396073619435021 0
+		 -58.891865217673768 83.448197233667955 26.479416503830898 1;
+	setAttr ".wm[71]" -type "matrix" -0.34124087131350295 0.93911188278870483 -0.040294808164766605 0
+		 -0.81958884634538798 -0.27627366010966742 0.50194426125382519 0 0.46024939632482192 0.20430927614288086 0.86396068898085632 0
+		 -58.453864898410238 75.853909588819945 28.042061516489625 1;
+	setAttr ".wm[72]" -type "matrix" -0.46746684847552489 0.88309577911055992 0.040195232287643969 0
+		 -0.75474885176235118 -0.42237366521033526 0.50195224181827303 0 0.46024945056515909 0.20430900489495221 0.86396072423044812 0
+		 -57.247794315574936 72.535117899549661 28.184376196350907 1;
+	setAttr ".wm[73]" -type "matrix" -0.46746684847552489 0.88309577911055992 0.040195232287643969 0
+		 -0.75474885176235118 -0.42237366521033526 0.50195224181827303 0 0.46024945056515909 0.20430900489495221 0.86396072423044812 0
+		 -57.247794315574936 72.535117899549661 28.184376196350907 1;
+	setAttr ".wm[74]" -type "matrix" -0.46746684847552489 0.88309577911055992 0.040195232287643969 0
+		 -0.75474885176235118 -0.42237366521033526 0.50195224181827303 0 0.46024945056515909 0.20430900489495221 0.86396072423044812 0
+		 -57.247794315574936 72.535117899549661 28.184376196350907 1;
+	setAttr ".wm[75]" -type "matrix" -0.46746684847552489 0.88309577911055992 0.040195232287643969 0
+		 -0.75474885176235118 -0.42237366521033526 0.50195224181827303 0 0.46024945056515909 0.20430900489495221 0.86396072423044812 0
+		 -57.247794315574936 72.535117899549661 28.184376196350907 1;
+	setAttr ".wm[76]" -type "matrix" -0.34124087131350295 0.93911188278870483 -0.040294808164766605 0
+		 -0.81958884634538798 -0.27627366010966742 0.50194426125382519 0 0.46024939632482192 0.20430927614288086 0.86396068898085632 0
+		 -58.453864898410238 75.853909588819945 28.042061516489625 1;
+	setAttr ".wm[77]" -type "matrix" -0.34124087131350295 0.93911188278870483 -0.040294808164766605 0
+		 -0.81958884634538798 -0.27627366010966742 0.50194426125382519 0 0.46024939632482192 0.20430927614288086 0.86396068898085632 0
+		 -58.453864898410238 75.853909588819945 28.042061516489625 1;
+	setAttr ".wm[78]" -type "matrix" -0.34124087131350295 0.93911188278870483 -0.040294808164766605 0
+		 -0.81958884634538798 -0.27627366010966742 0.50194426125382519 0 0.46024939632482192 0.20430927614288086 0.86396068898085632 0
+		 -58.453864898410238 75.853909588819945 28.042061516489625 1;
+	setAttr ".wm[79]" -type "matrix" -0.056374910757768112 0.97792105557904674 -0.20122599598642005 0
+		 -0.88599786371793421 0.043907877576656748 0.46160527091285269 0 0.46024935540102491 0.20430916868072141 0.86396073619435021 0
+		 -58.891865217673768 83.448197233667955 26.479416503830898 1;
+	setAttr ".wm[80]" -type "matrix" -0.056374910757768112 0.97792105557904674 -0.20122599598642005 0
+		 -0.88599786371793421 0.043907877576656748 0.46160527091285269 0 0.46024935540102491 0.20430916868072141 0.86396073619435021 0
+		 -58.891865217673768 83.448197233667955 26.479416503830898 1;
+	setAttr ".wm[81]" -type "matrix" -0.056374910757768112 0.97792105557904674 -0.20122599598642005 0
+		 -0.88599786371793421 0.043907877576656748 0.46160527091285269 0 0.46024935540102491 0.20430916868072141 0.86396073619435021 0
+		 -58.891865217673768 83.448197233667955 26.479416503830898 1;
+	setAttr ".wm[82]" -type "matrix" 0.54083103302318358 0.73906298798925329 -0.40160709456120791 0
+		 -0.76053191534136699 0.6336181122294825 0.14184012810124766 0 0.35929447023427097 0.22872370571474604 0.90476080824161331 0
+		 -54.82990488734881 88.914913286394949 23.454368721130848 1;
+	setAttr ".wm[83]" -type "matrix" 0.54083103302318358 0.73906298798925329 -0.40160709456120791 0
+		 -0.76053191534136699 0.6336181122294825 0.14184012810124766 0 0.35929447023427097 0.22872370571474604 0.90476080824161331 0
+		 -54.82990488734881 88.914913286394949 23.454368721130848 1;
+	setAttr ".wm[84]" -type "matrix" 0.54083103302318358 0.73906298798925329 -0.40160709456120791 0
+		 -0.76053191534136699 0.6336181122294825 0.14184012810124766 0 0.35929447023427097 0.22872370571474604 0.90476080824161331 0
+		 -54.82990488734881 88.914913286394949 23.454368721130848 1;
+	setAttr ".wm[85]" -type "matrix" 0.43171401862513148 0.6997009238964752 -0.56924605293721497 0
+		 -0.69671351731960629 0.65949174330461169 0.28224262712921627 0 0.57289819499517136 0.27475328209418026 0.7722027114545259 0
+		 -53.966903588954303 89.475238068498811 24.814333121592433 1;
+	setAttr ".wm[86]" -type "matrix" -0.13934666577488738 0.96107443629917433 -0.23857528702809963 0
+		 -0.80769567418723387 0.029074764708922417 0.58888071692411503 0 0.57289523742824822 0.27475514508175147 0.7722050845314079 0
+		 -57.441587677815107 83.842723780102972 29.396310467047762 1;
+	setAttr ".wm[87]" -type "matrix" -0.4167045719592401 0.90893067911700531 -0.014252368756226642 0
+		 -0.70579555170862407 -0.31361601155009411 0.63521384606739606 0 0.57289554327719261 0.27475586080843972 0.77220460296318294 0
+		 -56.376520223898147 76.498020389554938 31.219622674533365 1;
+	setAttr ".wm[88]" -type "matrix" -0.53293350061728029 0.84066266679356361 0.096268110116002753 0
+		 -0.62271289237707206 -0.46668571991455038 0.62803895932067311 0 0.57289631402219232 0.27475593302124718 0.77220474735279898 0
+		 -54.8521858038416 73.173420936668805 31.271800022831101 1;
+	setAttr ".wm[89]" -type "matrix" -0.53293350061728029 0.84066266679356361 0.096268110116002753 0
+		 -0.62271289237707206 -0.46668571991455038 0.62803895932067311 0 0.57289631402219232 0.27475593302124718 0.77220474735279898 0
+		 -54.8521858038416 73.173420936668805 31.271800022831101 1;
+	setAttr ".wm[90]" -type "matrix" -0.53293350061728029 0.84066266679356361 0.096268110116002753 0
+		 -0.62271289237707206 -0.46668571991455038 0.62803895932067311 0 0.57289631402219232 0.27475593302124718 0.77220474735279898 0
+		 -54.8521858038416 73.173420936668805 31.271800022831101 1;
+	setAttr ".wm[91]" -type "matrix" -0.53293350061728029 0.84066266679356361 0.096268110116002753 0
+		 -0.62271289237707206 -0.46668571991455038 0.62803895932067311 0 0.57289631402219232 0.27475593302124718 0.77220474735279898 0
+		 -54.8521858038416 73.173420936668805 31.271800022831101 1;
+	setAttr ".wm[92]" -type "matrix" -0.4167045719592401 0.90893067911700531 -0.014252368756226642 0
+		 -0.70579555170862407 -0.31361601155009411 0.63521384606739606 0 0.57289554327719261 0.27475586080843972 0.77220460296318294 0
+		 -56.376520223898147 76.498020389554938 31.219622674533365 1;
+	setAttr ".wm[93]" -type "matrix" -0.4167045719592401 0.90893067911700531 -0.014252368756226642 0
+		 -0.70579555170862407 -0.31361601155009411 0.63521384606739606 0 0.57289554327719261 0.27475586080843972 0.77220460296318294 0
+		 -56.376520223898147 76.498020389554938 31.219622674533365 1;
+	setAttr ".wm[94]" -type "matrix" -0.4167045719592401 0.90893067911700531 -0.014252368756226642 0
+		 -0.70579555170862407 -0.31361601155009411 0.63521384606739606 0 0.57289554327719261 0.27475586080843972 0.77220460296318294 0
+		 -56.376520223898147 76.498020389554938 31.219622674533365 1;
+	setAttr ".wm[95]" -type "matrix" -0.13934666577488738 0.96107443629917433 -0.23857528702809963 0
+		 -0.80769567418723387 0.029074764708922417 0.58888071692411503 0 0.57289523742824822 0.27475514508175147 0.7722050845314079 0
+		 -57.441587677815107 83.842723780102972 29.396310467047762 1;
+	setAttr ".wm[96]" -type "matrix" -0.13934666577488738 0.96107443629917433 -0.23857528702809963 0
+		 -0.80769567418723387 0.029074764708922417 0.58888071692411503 0 0.57289523742824822 0.27475514508175147 0.7722050845314079 0
+		 -57.441587677815107 83.842723780102972 29.396310467047762 1;
+	setAttr ".wm[97]" -type "matrix" -0.13934666577488738 0.96107443629917433 -0.23857528702809963 0
+		 -0.80769567418723387 0.029074764708922417 0.58888071692411503 0 0.57289523742824822 0.27475514508175147 0.7722050845314079 0
+		 -57.441587677815107 83.842723780102972 29.396310467047762 1;
+	setAttr ".wm[98]" -type "matrix" 0.43171401862513148 0.6997009238964752 -0.56924605293721497 0
+		 -0.69671351731960629 0.65949174330461169 0.28224262712921627 0 0.57289819499517136 0.27475328209418026 0.7722027114545259 0
+		 -53.966903588954303 89.475238068498811 24.814333121592433 1;
+	setAttr ".wm[99]" -type "matrix" 0.43171401862513148 0.6997009238964752 -0.56924605293721497 0
+		 -0.69671351731960629 0.65949174330461169 0.28224262712921627 0 0.57289819499517136 0.27475328209418026 0.7722027114545259 0
+		 -53.966903588954303 89.475238068498811 24.814333121592433 1;
+	setAttr ".wm[100]" -type "matrix" 0.43171401862513148 0.6997009238964752 -0.56924605293721497 0
+		 -0.69671351731960629 0.65949174330461169 0.28224262712921627 0 0.57289819499517136 0.27475328209418026 0.7722027114545259 0
+		 -53.966903588954303 89.475238068498811 24.814333121592433 1;
+	setAttr ".wm[101]" -type "matrix" 0.32767402439680954 0.68439190852587317 -0.6513360357766641 0
+		 -0.62505960767306512 0.67399361348770759 0.39374374664098977 0 0.70847039495689368 0.27810390003932589 0.64863564637784732 0
+		 -51.868025770368511 89.749845316993515 26.85663585211298 1;
+	setAttr ".wm[102]" -type "matrix" -0.19106671284025362 0.96034535481538541 -0.2030531999964155 0
+		 -0.67938363111965949 0.019924403874895757 0.73351194715608625 0 0.70847048862947515 0.27810076134734907 0.64863660352750363 0
+		 -54.599148724094043 84.313486170663154 31.680525791980799 1;
+	setAttr ".wm[103]" -type "matrix" -0.35925462768156236 0.93320734389268767 -0.0077149068595098414 0
+		 -0.60745679885771531 -0.22755987562367072 0.7610599985811427 0 0.70847124266303374 0.27810085592428663 0.64863573938629937 0
+		 -53.275209736379168 77.659554825827456 33.087289153681468 1;
+	setAttr ".wm[104]" -type "matrix" -0.48236459293855727 0.86171236267466755 0.15740479774920491 0
+		 -0.51516291127373215 -0.42439590496896307 0.74464405223878671 0 0.70847078868858204 0.27810078391516041 0.64863626611291947 0
+		 -51.691981364399901 73.547206277444886 33.121286065504172 1;
+	setAttr ".wm[105]" -type "matrix" -0.48236459293855727 0.86171236267466755 0.15740479774920491 0
+		 -0.51516291127373215 -0.42439590496896307 0.74464405223878671 0 0.70847078868858204 0.27810078391516041 0.64863626611291947 0
+		 -51.691981364399901 73.547206277444886 33.121286065504172 1;
+	setAttr ".wm[106]" -type "matrix" -0.48236459293855727 0.86171236267466755 0.15740479774920491 0
+		 -0.51516291127373215 -0.42439590496896307 0.74464405223878671 0 0.70847078868858204 0.27810078391516041 0.64863626611291947 0
+		 -51.691981364399901 73.547206277444886 33.121286065504172 1;
+	setAttr ".wm[107]" -type "matrix" -0.48236459293855727 0.86171236267466755 0.15740479774920491 0
+		 -0.51516291127373215 -0.42439590496896307 0.74464405223878671 0 0.70847078868858204 0.27810078391516041 0.64863626611291947 0
+		 -51.691981364399901 73.547206277444886 33.121286065504172 1;
+	setAttr ".wm[108]" -type "matrix" -0.35925462768156236 0.93320734389268767 -0.0077149068595098414 0
+		 -0.60745679885771531 -0.22755987562367072 0.7610599985811427 0 0.70847124266303374 0.27810085592428663 0.64863573938629937 0
+		 -53.275209736379168 77.659554825827456 33.087289153681468 1;
+	setAttr ".wm[109]" -type "matrix" -0.35925462768156236 0.93320734389268767 -0.0077149068595098414 0
+		 -0.60745679885771531 -0.22755987562367072 0.7610599985811427 0 0.70847124266303374 0.27810085592428663 0.64863573938629937 0
+		 -53.275209736379168 77.659554825827456 33.087289153681468 1;
+	setAttr ".wm[110]" -type "matrix" -0.35925462768156236 0.93320734389268767 -0.0077149068595098414 0
+		 -0.60745679885771531 -0.22755987562367072 0.7610599985811427 0 0.70847124266303374 0.27810085592428663 0.64863573938629937 0
+		 -53.275209736379168 77.659554825827456 33.087289153681468 1;
+	setAttr ".wm[111]" -type "matrix" -0.19106671284025362 0.96034535481538541 -0.2030531999964155 0
+		 -0.67938363111965949 0.019924403874895757 0.73351194715608625 0 0.70847048862947515 0.27810076134734907 0.64863660352750363 0
+		 -54.599148724094043 84.313486170663154 31.680525791980799 1;
+	setAttr ".wm[112]" -type "matrix" -0.19106671284025362 0.96034535481538541 -0.2030531999964155 0
+		 -0.67938363111965949 0.019924403874895757 0.73351194715608625 0 0.70847048862947515 0.27810076134734907 0.64863660352750363 0
+		 -54.599148724094043 84.313486170663154 31.680525791980799 1;
+	setAttr ".wm[113]" -type "matrix" -0.19106671284025362 0.96034535481538541 -0.2030531999964155 0
+		 -0.67938363111965949 0.019924403874895757 0.73351194715608625 0 0.70847048862947515 0.27810076134734907 0.64863660352750363 0
+		 -54.599148724094043 84.313486170663154 31.680525791980799 1;
+	setAttr ".wm[114]" -type "matrix" 0.32767402439680954 0.68439190852587317 -0.6513360357766641 0
+		 -0.62505960767306512 0.67399361348770759 0.39374374664098977 0 0.70847039495689368 0.27810390003932589 0.64863564637784732 0
+		 -51.868025770368511 89.749845316993515 26.85663585211298 1;
+	setAttr ".wm[115]" -type "matrix" 0.32767402439680954 0.68439190852587317 -0.6513360357766641 0
+		 -0.62505960767306512 0.67399361348770759 0.39374374664098977 0 0.70847039495689368 0.27810390003932589 0.64863564637784732 0
+		 -51.868025770368511 89.749845316993515 26.85663585211298 1;
+	setAttr ".wm[116]" -type "matrix" 0.32767402439680954 0.68439190852587317 -0.6513360357766641 0
+		 -0.62505960767306512 0.67399361348770759 0.39374374664098977 0 0.70847039495689368 0.27810390003932589 0.64863564637784732 0
+		 -51.868025770368511 89.749845316993515 26.85663585211298 1;
+	setAttr ".wm[117]" -type "matrix" -0.29025989557026244 0.55089296319438952 -0.7824749975797396 0
+		 0.33034293093059486 0.82509500689851245 0.45835877681091797 0 0.89812175395234228 -0.12544261128087392 -0.42147466273492129 0
+		 -49.389773561533545 89.709236970791551 25.157277248909832 1;
+	setAttr ".wm[118]" -type "matrix" -0.10595693964340323 0.82711594831203006 -0.55195267998898434 0
+		 0.47285080860905199 0.53021242883792652 0.70376644399050381 0 0.87474875003171859 -0.18642328080643975 -0.4472818720036994 0
+		 -47.712411118302605 86.525599094835499 29.679128360799357 1;
+	setAttr ".wm[119]" -type "matrix" -0.022236980902331106 0.90662102507933295 -0.42135860411807968 0
+		 0.48406683077794049 0.37852921870160772 0.78892094524020606 0 0.87474786337687938 -0.18642321271977938 -0.4472816787136924 0
+		 -47.187240412648954 82.426937313663288 32.414208799933775 1;
+	setAttr ".wm[120]" -type "matrix" -0.022236980902331106 0.90662102507933295 -0.42135860411807968 0
+		 0.48406683077794049 0.37852921870160772 0.78892094524020606 0 0.87474786337687938 -0.18642321271977938 -0.4472816787136924 0
+		 -47.187240412648954 82.426937313663288 32.414208799933775 1;
+	setAttr ".wm[121]" -type "matrix" -0.022236980902331106 0.90662102507933295 -0.42135860411807968 0
+		 0.48406683077794049 0.37852921870160772 0.78892094524020606 0 0.87474786337687938 -0.18642321271977938 -0.4472816787136924 0
+		 -47.187240412648954 82.426937313663288 32.414208799933775 1;
+	setAttr ".wm[122]" -type "matrix" -0.022236980902331106 0.90662102507933295 -0.42135860411807968 0
+		 0.48406683077794049 0.37852921870160772 0.78892094524020606 0 0.87474786337687938 -0.18642321271977938 -0.4472816787136924 0
+		 -47.187240412648954 82.426937313663288 32.414208799933775 1;
+	setAttr ".wm[123]" -type "matrix" -0.10595693964340323 0.82711594831203006 -0.55195267998898434 0
+		 0.47285080860905199 0.53021242883792652 0.70376644399050381 0 0.87474875003171859 -0.18642328080643975 -0.4472818720036994 0
+		 -47.712411118302605 86.525599094835499 29.679128360799357 1;
+	setAttr ".wm[124]" -type "matrix" -0.10595693964340323 0.82711594831203006 -0.55195267998898434 0
+		 0.47285080860905199 0.53021242883792652 0.70376644399050381 0 0.87474875003171859 -0.18642328080643975 -0.4472818720036994 0
+		 -47.712411118302605 86.525599094835499 29.679128360799357 1;
+	setAttr ".wm[125]" -type "matrix" -0.10595693964340323 0.82711594831203006 -0.55195267998898434 0
+		 0.47285080860905199 0.53021242883792652 0.70376644399050381 0 0.87474875003171859 -0.18642328080643975 -0.4472818720036994 0
+		 -47.712411118302605 86.525599094835499 29.679128360799357 1;
+	setAttr ".wm[126]" -type "matrix" -0.29025989557026244 0.55089296319438952 -0.7824749975797396 0
+		 0.33034293093059486 0.82509500689851245 0.45835877681091797 0 0.89812175395234228 -0.12544261128087392 -0.42147466273492129 0
+		 -49.389773561533545 89.709236970791551 25.157277248909832 1;
+	setAttr ".wm[127]" -type "matrix" -0.29025989557026244 0.55089296319438952 -0.7824749975797396 0
+		 0.33034293093059486 0.82509500689851245 0.45835877681091797 0 0.89812175395234228 -0.12544261128087392 -0.42147466273492129 0
+		 -49.389773561533545 89.709236970791551 25.157277248909832 1;
+	setAttr ".wm[128]" -type "matrix" -0.29025989557026244 0.55089296319438952 -0.7824749975797396 0
+		 0.33034293093059486 0.82509500689851245 0.45835877681091797 0 0.89812175395234228 -0.12544261128087392 -0.42147466273492129 0
+		 -49.389773561533545 89.709236970791551 25.157277248909832 1;
+	setAttr ".wm[129]" -type "matrix" 0.40355903510235686 0.72604494921981533 -0.55677406397547446 0
+		 -0.66896859067619885 0.6492896422502511 0.36180671748995658 0 0.62419604801304263 0.22645426956974696 0.74772880621587801 0
+		 -51.653424931124192 92.009664024011471 21.792785261510076 1;
+	setAttr ".wm[130]" -type "matrix" 0.40355903510235686 0.72604494921981533 -0.55677406397547446 0
+		 -0.66896859067619885 0.6492896422502511 0.36180671748995658 0 0.62419604801304263 0.22645426956974696 0.74772880621587801 0
+		 -51.653424931124192 92.009664024011471 21.792785261510076 1;
+	setAttr ".wm[131]" -type "matrix" 0.40355903510235686 0.72604494921981533 -0.55677406397547446 0
+		 -0.66896859067619885 0.6492896422502511 0.36180671748995658 0 0.62419604801304263 0.22645426956974696 0.74772880621587801 0
+		 -51.653424931124192 92.009664024011471 21.792785261510076 1;
+	setAttr ".wm[132]" -type "matrix" 0.41472303106813174 0.69749393657434033 -0.5843860556189584 0
+		 0.33828601562879013 0.47800818749907897 0.81059886537185077 0 0.84472886168676065 -0.53386425448948172 -0.037711442044333021 0
+		 -35.990729044604628 118.35146682810712 -0.27737784397338838 1;
+	setAttr ".wm[133]" -type "matrix" 0.41472303106813174 0.69749393657434033 -0.5843860556189584 0
+		 0.33828601562879013 0.47800818749907897 0.81059886537185077 0 0.84472886168676065 -0.53386425448948172 -0.037711442044333021 0
+		 -35.990729044604628 118.35146682810712 -0.27737784397338838 1;
+	setAttr ".wm[134]" -type "matrix" 0.41472303106813174 0.69749393657434033 -0.5843860556189584 0
+		 0.33828601562879013 0.47800818749907897 0.81059886537185077 0 0.84472886168676065 -0.53386425448948172 -0.037711442044333021 0
+		 -35.990729044604628 118.35146682810712 -0.27737784397338838 1;
+	setAttr ".wm[135]" -type "matrix" 0.58635095754040634 0.80989693096004012 0.016073042108530694 0
+		 0.030169654705281927 -0.041661783096274052 0.99867600743033824 0 0.80949456242941087 -0.58509075335112248 -0.048862777043080771 0
+		 -23.442449596070269 138.73405394403309 0.16510452370253575 1;
+	setAttr ".wm[136]" -type "matrix" 0.58635095754040634 0.80989693096004012 0.016073042108530694 0
+		 0.030169654705281927 -0.041661783096274052 0.99867600743033824 0 0.80949456242941087 -0.58509075335112248 -0.048862777043080771 0
+		 -23.442449596070269 138.73405394403309 0.16510452370253575 1;
+	setAttr ".wm[137]" -type "matrix" 0.58635095754040634 0.80989693096004012 0.016073042108530694 0
+		 0.030169654705281927 -0.041661783096274052 0.99867600743033824 0 0.80949456242941087 -0.58509075335112248 -0.048862777043080771 0
+		 -23.442449596070269 138.73405394403309 0.16510452370253575 1;
+	setAttr ".wm[138]" -type "matrix" 0.58635095754040634 0.80989693096004012 0.016073042108530694 0
+		 0.030169654705281927 -0.041661783096274052 0.99867600743033824 0 0.80949456242941087 -0.58509075335112248 -0.048862777043080771 0
+		 -23.442449596070269 138.73405394403309 0.16510452370253575 1;
+	setAttr ".wm[139]" -type "matrix" 0.52421999967728405 0.85101500238739691 0.031076633091070376 0
+		 0.024015158590961431 -0.051251776841426573 0.99839700885489169 0 0.851243829898225 -0.52263428368170295 -0.047304498953420898 0
+		 -27.980693957142798 131.35095333223285 -0.10437691650991654 1;
+	setAttr ".wm[140]" -type "matrix" 0.52421999967728405 0.85101500238739691 0.031076633091070376 0
+		 0.024015158590961431 -0.051251776841426573 0.99839700885489169 0 0.851243829898225 -0.52263428368170295 -0.047304498953420898 0
+		 -27.980693957142798 131.35095333223285 -0.10437691650991654 1;
+	setAttr ".wm[141]" -type "matrix" 0.52421999967728405 0.85101500238739691 0.031076633091070376 0
+		 0.024015158590961431 -0.051251776841426573 0.99839700885489169 0 0.851243829898225 -0.52263428368170295 -0.047304498953420898 0
+		 -27.980693957142798 131.35095333223285 -0.10437691650991654 1;
+	setAttr ".wm[142]" -type "matrix" 0.52421999967728405 0.85101500238739691 0.031076633091070376 0
+		 0.024015158590961431 -0.051251776841426573 0.99839700885489169 0 0.851243829898225 -0.52263428368170295 -0.047304498953420898 0
+		 -27.980693957142798 131.35095333223285 -0.10437691650991654 1;
+	setAttr ".wm[143]" -type "matrix" 0.52421599967828392 0.85101800239009973 0.031082233090349212 0
+		 0.024007633451781103 -0.051253417652651651 0.99839700736422676 0 0.85124642875634093 -0.52262993864106555 -0.047298781364504168 0
+		 -18.90415450602093 146.11715111615419 0.43456094785483501 1;
+	setAttr ".wm[144]" -type "matrix" 0.52421599967828392 0.85101800239009973 0.031082233090349212 0
+		 0.024007633451781103 -0.051253417652651651 0.99839700736422676 0 0.85124642875634093 -0.52262993864106555 -0.047298781364504168 0
+		 -18.90415450602093 146.11715111615419 0.43456094785483501 1;
+	setAttr ".wm[145]" -type "matrix" 0.52421599967828392 0.85101800239009973 0.031082233090349212 0
+		 0.024007633451781103 -0.051253417652651651 0.99839700736422676 0 0.85124642875634093 -0.52262993864106555 -0.047298781364504168 0
+		 -18.90415450602093 146.11715111615419 0.43456094785483501 1;
+	setAttr ".wm[146]" -type "matrix" 0.99915900010136971 0.0029727501148809677 -0.040889198082470261 0
+		 0.04098753640451705 -0.050836819020436096 0.9978660048226482 0 0.00088772974393226895 -0.99870300166310244 -0.050915923942036513 0
+		 -1.109788012066421 146.17051490783447 -0.29355060071156869 1;
+	setAttr ".wm[147]" -type "matrix" 0.99915900010136971 0.0029727501148809677 -0.040889198082470261 0
+		 0.04098753640451705 -0.050836819020436096 0.9978660048226482 0 0.00088772974393226895 -0.99870300166310244 -0.050915923942036513 0
+		 -1.109788012066421 146.17051490783447 -0.29355060071156869 1;
+	setAttr ".wm[148]" -type "matrix" 0.99915900010136971 0.0029727501148809677 -0.040889198082470261 0
+		 0.04098753640451705 -0.050836819020436096 0.9978660048226482 0 0.00088772974393226895 -0.99870300166310244 -0.050915923942036513 0
+		 -1.109788012066421 146.17051490783447 -0.29355060071156869 1;
+	setAttr ".wm[149]" -type "matrix" -1.4814852797652429e-05 0.99681894356524037 -0.079699394795115161 0
+		 0.00020952185148500509 -0.079699389960335057 -0.99681892204197864 0 -0.99999997794094642 -3.1466490355674454e-05 -0.00020767461592067696 0
+		 0.31835298767610881 141.10069501189199 2.144585175301156 1;
+	setAttr ".wm[150]" -type "matrix" -0.071201920480403497 -0.99682636629763921 0.03560171308320674 0
+		 -0.14372396282197414 0.045572765122951192 0.98856792664449311 0 -0.98705304266357918 0.065271115614834285 -0.14651270400800101 0
+		 -9.6489256471426472 91.297718239346025 2.5703833050724292 1;
+	setAttr ".wm[151]" -type "matrix" -0.050586397666393751 -0.97800673397925153 -0.20234585407928116 0
+		 -0.15770491963137143 -0.19224107648232069 0.96859306565625891 0 -0.98618972550720663 0.080908570651494774 -0.14451168983830781 0
+		 -12.49668945367705 51.429027765352885 3.9942648220474846 1;
+	setAttr ".wm[152]" -type "matrix" 0.0044655041250679789 -0.996642278787639 -0.081757124500564535 0
+		 -0.12029901221848355 -0.081699580024730961 0.98937016646118592 0 -0.99272766000194923 0.0054172647596886087 -0.1202599114848818 0
+		 -14.632511423447353 10.13648067658437 -4.5490172902095205 1;
+	setAttr ".wm[153]" -type "matrix" 0.12030298577807634 0.081696362069412054 -0.98936994902710607 0
+		 0.004468036953255922 -0.9966425567262015 -0.081753597894858421 0 -0.99272716708038355 0.0054146604321564209 -0.12026409769226415 0
+		 -16.056392934427294 0.88124980398653641 11.825621714956036 1;
+	setAttr ".wm[154]" -type "matrix" -0.053418227552754279 -0.98624028862959234 -0.15644994742614865 0
+		 -0.15510395568115479 -0.1465773845638344 0.97696357827039149 0 -0.98645286552270706 0.0764536684466878 -0.14513986593577496 0
+		 -13.245852427564826 37.667858173822495 1.1411238190004886 1;
+	setAttr ".wm[155]" -type "matrix" -0.056130300097445796 -0.99232177925670106 -0.1102128659662464 0
+		 -0.15237804203888075 -0.10057955271967443 0.98319107292504782 0 -0.98672707559696926 0.07198083069982647 -0.14556248931777194 0
+		 -13.994873359272928 23.90655041485034 -1.7120070119749435 1;
+	setAttr ".wm[156]" -type "matrix" -0.055681593928040833 -0.99841486522826217 -0.0082046931433015259 0
+		 -0.14672403987078073 5.4016483201393949e-05 0.98917746294919828 0 -0.98760904016843098 0.056282803538579382 -0.14649447021713383 0
+		 -10.598134905743056 78.008159558086717 3.0450304723074346 1;
+	setAttr ".wm[157]" -type "matrix" -0.06345567478589087 -0.9978906366628949 0.013698707920886406 0
+		 -0.14530899253946039 0.022818521897906018 0.98912315297234721 0 -0.98734931712409346 0.060774931671118061 -0.14645044778261332 0
+		 -11.547433182703779 64.71862561980565 3.5196566486579735 1;
+	setAttr ".wm[158]" -type "matrix" -0.071201523027666053 0.99682640914403409 -0.035601308294256354 0
+		 -0.14371895124890216 -0.045571973780285907 -0.98856869172459627 0 -0.98705380105201757 -0.065271013777104342 0.14650764003984193 0
+		 10.285411968850227 91.297718238073102 2.5703832023972142 1;
+	setAttr ".wm[159]" -type "matrix" -0.050585489680810086 0.97800659586785121 0.20234674861096308 0
+		 -0.15769899263445983 0.19224258042717082 -0.96859373216699474 0 -0.98619071986944218 -0.080906666662219601 0.14450596988972664 0
+		 13.133175755600256 51.429027753660577 3.9942644670135232 1;
+	setAttr ".wm[160]" -type "matrix" 0.0044666519603913518 0.99664232327514046 0.081756519481349696 0
+		 -0.12029395550313289 0.081699145042379601 -0.98937081722130316 0 -0.99272826759917254 -0.0054156400162837376 0.12025496893489818 0
+		 15.268997337192204 10.13648748222635 -4.5490129882379167 1;
+	setAttr ".wm[161]" -type "matrix" 0.12029793299968641 -0.081695529758366997 0.98937063213635856 0
+		 0.0044633140021591699 0.99664260200918142 0.081753303842694844 0 -0.99272780063061627 -0.0054188816724309967 0.12025867776295154 0
+		 16.69287760676858 0.88125855374370055 11.82562112107227 1;
+	setAttr ".wm[162]" -type "matrix" -0.05341703075487448 0.98624036429937134 0.15644987904335284 0
+		 -0.15509804406042785 0.14657794941867636 -0.97696443204102823 0 -0.98645385982048939 -0.07645160934585124 0.14513419264411223 0
+		 13.845100626841775 37.664850122858624 1.1464989391041067 1;
+	setAttr ".wm[163]" -type "matrix" -0.056123626577262761 0.99232227026797348 0.11021184360466245 0
+		 -0.15236688978218102 0.10058032865360826 -0.98319272189456119 0 -0.98672917735247911 -0.071972977004279126 0.14555212517587013 0
+		 14.631653428070706 23.906741448660739 -1.7119903882465994 1;
+	setAttr ".wm[164]" -type "matrix" -0.055681696100322281 0.99841485325808266 0.008205456339790293 0
+		 -0.14671496547236304 -5.2758221037681606e-05 -0.9891788089740946 0 -0.98761038250243904 -0.056283017073738811 0.14648533839000372 0
+		 11.234691306658338 78.008073352053202 3.0450213283871692 1;
+	setAttr ".wm[165]" -type "matrix" -0.063455377504801194 0.99789066111934444 -0.013698303443571525 0
+		 -0.14530495786634193 -0.022817828919066654 -0.98912376167154936 0 -0.98734993000757498 -0.060774790291114815 0.14644637441698088 0
+		 12.183919530553764 64.718587060951378 3.519648397405299 1;
+	setAttr ".wm[166]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906399861147999 -1.0000000063542802e-07 2.4012360572814937 1;
+	setAttr ".wm[167]" -type "matrix" 0.0046546385293916364 0.99950190228005253 0.031213485537954853 0
+		 -0.14802911481024988 0.031558627336852982 -0.9884793544680146 0 -0.98897204991315812 -1.9490545510971554e-05 0.14810227584833208 0
+		 15.268996519108443 10.136485813041048 -4.549024256360843 1;
+	setAttr ".wm[168]" -type "matrix" 0.0046339977037147349 -0.99950150467828225 -0.03122928452338845 0
+		 -0.14802259459546346 -0.031571195422038109 0.98847992954295527 0 -0.9889731227668872 4.2025998841659541e-05 -0.14809510687155658 0
+		 -14.632510813951853 10.136486437535183 -4.5490241729133203 1;
+	setAttr ".wm[169]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906399861147999 -1.0000000063542802e-07 2.4012360572814937 1;
+	setAttr ".wm[170]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 -51.653423910182553 92.009658355835498 21.792779172301302 1;
+	setAttr ".wm[171]" -type "matrix" 0.45775681696281351 -0.63487874613899953 0.62240475112714599 0
+		 -0.64551626569344911 -0.71871764159864382 -0.25836737870866289 0 0.61136523228757189 -0.28350296181268825 -0.73882245728859375 0
+		 52.289912576714741 92.009658355835285 21.792779172301316 1;
+	setAttr ".wm[172]" -type "matrix" 0.45776600532704226 0.63486500738839646 -0.62241200724379786 0
+		 -0.64550380624692794 0.71873089094094589 0.25836165065404149 0 0.6113715077499362 0.28350013897999604 0.7388183475729686 0
+		 -51.653423910182561 92.009658355835484 21.792779172301305 1;
+	setAttr ".wm[173]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 1;
+	setAttr ".wm[174]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0016906299861148 -1.000000006354282e-07 2.4012360572814937 1;
+	setAttr ".wm[175]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0015687528629038758 163.99999989999998 2.4013015709592658 1;
+	setAttr ".wm[176]" -type "matrix" 0.99999999999999989 7.431530000000017e-07 4.7683700000000031e-07 0
+		 4.7683670312969904e-07 3.99473999535923e-07 -0.99999999999999967 0 -7.4315319048381618e-07 0.99999999999999978 3.9947364517320569e-07 0
+		 0.0015687528629038758 163.99999989999998 2.4013015709592658 1;
+	setAttr -s 177 ".xm";
+	setAttr ".xm[0]" -type "matrix" "xform" 1 1 1 -1.5707963267948966 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[1]" -type "matrix" "xform" 1.0000000000003897 1.0000000000001932 1.0000000000003557 3.9947399953596657e-07
+		 -7.4315299999978031e-07 -4.7683699999996416e-07 0 0.0016906299861148 -2.4012360572814937
+		 -1.000000006354282e-07 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[2]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[3]" -type "matrix" "xform" 1 1 1 -1.5707708974325187 -1.5178195468811231
+		 1.5707726287118546 0 0.31661874055862521 1.9667112827301054 90.585777282714872 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[4]" -type "matrix" "xform" 1 1 1 2.8347577055636153e-05 -1.2250749039242203e-05
+		 -0.31594366632457527 0 4.0794310569763184 -0.16668426990509033 -0.00064359710086137056 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[5]" -type "matrix" "xform" 1 1 1 -3.0555556784794188e-05 2.2121293723208692e-05
+		 0.020190362654644203 0 7.467130184173584 0.45530101656913757 -0.00073213275754824281 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[6]" -type "matrix" "xform" 1 1 1 -0.00014781786469455561 7.6248683676557972e-05
+		 0.16157073384217785 0 8.0279407501220703 0.15393421053886414 -0.00080706132575858458 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[7]" -type "matrix" "xform" 1 1 1 0.00014733040494462331 -8.8785675581003057e-05
+		 0.12687946168961695 0 9.5009384155273438 1.2614507675170898 0.0023912352044142549 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[8]" -type "matrix" "xform" 1 1 1 -0.00022193161009358297 -3.0119079175991082e-05
+		 0.034110728005029491 0 21.726778030395451 0.043762501329187131 0.0010169945890085019 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[9]" -type "matrix" "xform" 1 1 1 6.4053683983455545e-05 0.00035295145764262768
+		 -0.89796522617927532 0 12.999959945678711 1.3902984857559311 0.00020870631851721555 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[10]" -type "matrix" "xform" 1 1 1 -3.664256738557711e-07 -1.0811978032718031e-05
+		 0.033397567616055349 0 6.582491397857666 0.06654040515422821 -1.4177334151099785e-06 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[11]" -type "matrix" "xform" 1 1 1 1.2763422378762553e-06 -8.9783203125558356e-07
+		 0.20734804478450927 0 7.0115528106689453 0.64836114645004272 0.0024183883797377348 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[12]" -type "matrix" "xform" 1 1 1 1.5481670216383456 1.6115756877988618
+		 1.4174514195451524 0 5.2474207878112793 2.0264697074890137 -1.4241201877593992 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[13]" -type "matrix" "xform" 1 1 1 -0.001825121759099315 1.0179499429766039
+		 0.014796893241233804 0 17.812782287597649 4.7084922689677455e-06 -7.9969481703301426e-08 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[14]" -type "matrix" "xform" 1 1 1 -0.00021735900617126698 -0.016038095838150437
+		 -0.65375768644343291 0 32.608692169189453 -0.25492918491362015 -4.3639145545171232e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[15]" -type "matrix" "xform" 1 1 1 0.043845268205785104 -0.061049653667310765
+		 0.068680253668863156 0 12.588920593261719 -0.00016004937060642987 7.1933784056454897e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[16]" -type "matrix" "xform" 1 1 1 0.043846098776252521 -0.061049659007478232
+		 0.068679403285495877 0 25.177682876586914 -0.0002894208300858736 0.0001747933856677264 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[17]" -type "matrix" "xform" 1 1 1 -1.1828189359664087 0.025716661118478822
+		 0.032269023518781713 0 37.766422271728551 -7.8150704204915655e-05 9.2975918889237619e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[18]" -type "matrix" "xform" 1 1 1 0.27224289919150246 0.10053064922573619
+		 0.33973164145780321 0 4.5479211807250906 -0.50791049003603916 -3.1415174007415638 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[19]" -type "matrix" "xform" 1 1 1 -5.7099081080432598e-08 -2.0419563614382566e-06
+		 0.40793287742053086 0 7.7499837875365785 0.05475860461588411 0.28324571251869912 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[20]" -type "matrix" "xform" 1 1 1 5.4052844546142121e-07 1.5772018654078395e-07
+		 0.25992500320267903 0 6.7029638290405842 -0.59105598926540637 -1.6515052318573265 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[21]" -type "matrix" "xform" 1 1 1 -5.3934524847866097e-08 -4.8769875482033292e-07
+		 0.21845189722135233 0 4.3138494491577006 -0.25462189316748152 -0.86326503753662465 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[22]" -type "matrix" "xform" 1 1 1 -0.074570204051321337 -0.0022834905559952013
+		 -0.040463849747083426 0 4.4572520256042338 -0.99497133493426304 -0.24144023656844116 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[23]" -type "matrix" "xform" 1 1 1 -2.3893156582487388e-06 -0.17453047893103493
+		 0.90011420421995747 0 8.0474691390991104 0.0024985864292972337 -0.034740541130299007 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[24]" -type "matrix" "xform" 1 1 1 4.8989867596865123e-07 -3.7778972082292902e-07
+		 0.36249089678311619 0 7.3334231376647665 -0.76327043771748748 -2.010416269302377 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[25]" -type "matrix" "xform" 1 1 1 4.7798567280825496e-07 6.5417005004084352e-07
+		 0.17453341129443062 0 3.5868170261383057 -0.38079684972762351 -0.60731744766232887 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[26]" -type "matrix" "xform" 1 1 1 1.5917910122879286 0.74374974273689276
+		 0.81995979773975336 0 2.6204540729522563 1.7906389236449769 -3.4150705337524316 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[27]" -type "matrix" "xform" 1 1 1 0.061620991746858776 -0.033724472212709959
+		 0.40571818155884776 0 5.3496675491333008 1.9419555664062074 -1.0029668807983541 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[28]" -type "matrix" "xform" 1 1 1 -2.4734566771506136e-07 1.0725634088500225e-07
+		 0.17453279201983965 0 4.7894263267517516 -0.51693409681318059 1.1617100238799907 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[29]" -type "matrix" "xform" 1 1 1 -0.48466054824254329 -0.34082342967472939
+		 0.20683228466047612 0 4.3761096000671174 -0.40391579270367117 3.1570858955383363 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[30]" -type "matrix" "xform" 1 1 1 0.17585660158535871 -0.052375789522591816
+		 0.60237525172665785 0 6.5462045669555735 -0.17619626224040985 -0.29278579354285483 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[31]" -type "matrix" "xform" 1 1 1 -1.6432554670564759e-07 2.082847315006602e-07
+		 0.3715281101366707 0 5.8101544380187846 -1.1354200839996196 0.030939511954780841 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[32]" -type "matrix" "xform" 1 1 1 2.0976611556460481e-07 6.4779824537072475e-08
+		 0.08581759278690651 0 2.811470508575411 -1.3557237386703314 -0.52317386865616555 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[33]" -type "matrix" "xform" 1 1 1 -0.23212649168922941 -0.20611206022626591
+		 -0.027830425222445398 0 4.455232143402089 -0.71630871295936061 1.4414938688278403 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[34]" -type "matrix" "xform" 1 1 1 0.095756276595146003 -0.057500538740977117
+		 1.0343353233372774 0 7.4519586563110245 -0.04715665057297258 -0.060217965394276263 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[35]" -type "matrix" "xform" 1 1 1 6.7733637798417932e-07 -5.0890065285718362e-07
+		 0.33098370205164229 0 7.4487986564635946 -2.1414504051208496 -0.48639121651649653 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[36]" -type "matrix" "xform" 1 1 1 -1.1177390858887154e-07 3.0152204193745558e-07
+		 0.16001191250316285 0 3.3884565830230571 -0.98340368270875445 -0.20101138949393516 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[37]" -type "matrix" "xform" 1 1 1 0.048588976207108281 -0.25072021152124674
+		 -0.37027932916353723 0 9.8136043548583984 4.6203603744506836 -1.095196008682251 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[38]" -type "matrix" "xform" 1 1 1 0.0002162418118890074 -0.075170383182376774
+		 -0.011418602277372162 0 8.6709651947021484 -0.00045828457223251462 -0.0070056384429335594 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[39]" -type "matrix" "xform" 1 1 1 6.3468104044572491e-07 0 0 0 17.341865539550781
+		 -0.00095172366127371788 -0.013935220427811146 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1 1 1 no;
+	setAttr ".xm[40]" -type "matrix" "xform" 0.99999973562289635 1.0000004619443699 1.0000004524524722 -1.591324277557385
+		 1.5295828314652866 -4.8636216393413827 0 5.2480316162109659 2.0260190963745046
+		 1.4284877777099629 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[41]" -type "matrix" "xform" 0.9999998251107276 0.9999994700647431 0.99999992154224293 -3.1408805283805581
+		 2.1236474170129678 3.159188104159893 0 -17.809341384839282 -7.6636942104357786e-05
+		 0.0004255179069332371 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000002643771735
+		 0.99999953805584352 0.99999954754773257 no;
+	setAttr ".xm[42]" -type "matrix" "xform" 1.0000000127843511 0.99999989496900077 1.0000001590763279 -6.2833819247609073
+		 -0.016142260216502096 5.6279810844971898 0 -32.608276367187514 0.3020808994770956
+		 -5.4734420714908083e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.000000174889303
+		 1.0000005299355377 1.0000000784577632 no;
+	setAttr ".xm[43]" -type "matrix" "xform" 0.99999986424755893 0.99999956065795315
+		 0.99999996275281644 0.043847807109516815 6.2221311138176176 0.06868167747842939 0 -12.588767051696706
+		 8.587187041797506e-05 -0.00014443411792797178 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 0.99999998721564898 1.0000001050310103 0.99999984092369743 no;
+	setAttr ".xm[44]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[45]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[46]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[47]" -type "matrix" "xform" 0.99999986424755893 1.0000002402120283 1.0000002138118387 0.043842744581500448
+		 6.2221311138176176 0.06868167747842939 0 -25.177722930908118 6.1092658164341174e-05
+		 -0.00037832584359875909 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999998721564898
+		 1.0000001050310103 0.99999984092369743 no;
+	setAttr ".xm[48]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[49]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[50]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[51]" -type "matrix" "xform" 0.99999921947310477 0.99999994269724257
+		 1.0000005279057482 5.1003565950583161 0.025717044586898045 6.3154548419767371 0 -37.766422271728409
+		 -1.3919047844979104e-05 -0.00010187975577480302 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 0.99999998721564898 1.0000001050310103 0.99999984092369743 no;
+	setAttr ".xm[52]" -type "matrix" "xform" 1.0000008135918121 0.99999930797698566 1.00000014525504 0.05008701060461445
+		 -0.25474466610919616 -0.36964505084282584 0 -9.801950454711907 -4.6126813888549947
+		 1.0132220983505107 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[53]" -type "matrix" "xform" 1.0000011905920005 0.99999969537550193 0.99999953013577603 2.6569325751555253
+		 3.4824148887102027 -2.934761065415898 0 -4.3753781318664444 0.40383541584013471
+		 -3.1564981937408838 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[54]" -type "matrix" "xform" 0.99999995579658796 0.99999980467037963
+		 1.0000006600897533 6.4662979143855095 0.010559308030005472 -6.0242869603563607 0 -6.5435252189635804
+		 0.18884733319281111 0.26241436600682633 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999880940941699
+		 1.0000003046245909 1.0000004698644447 no;
+	setAttr ".xm[55]" -type "matrix" "xform" 0.99999982566762791 1.0000005339893492 0.99999999999999944 3.1415918042964237
+		 -3.1415927624235178 -2.7700645343715866 0 -5.9201354980469034 -1.4173476287737685e-05
+		 -3.6456502112258704e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.000000044203414
+		 1.0000001953296584 0.99999933991068246 no;
+	setAttr ".xm[56]" -type "matrix" "xform" 0.99999974523153057 0.99999904672346673
+		 0.99999999999999967 3.1415928298278275 -3.1415924814394862 3.2274114645765457 0 -3.1647908687591553
+		 1.0906455813142202e-05 7.1765396583600705e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1.0000001743324025 0.99999946601093592 1.0000000000000007 no;
+	setAttr ".xm[57]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[58]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[59]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[60]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[61]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[62]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[63]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[64]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[65]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[66]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[67]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[68]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[69]" -type "matrix" "xform" 1.0000010075439452 0.99999959368936808 0.99999930675519499 2.9094668952449849
+		 3.3477040039509718 -3.1694229386541375 0 -4.4539589881896688 0.71675038337706098
+		 -1.4411514997482797 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[70]" -type "matrix" "xform" 0.99999955892837522 1.0000001059771244 1.0000003157476491 6.3927809195918153
+		 -0.021358455871340935 -5.5963328643373043 0 -7.451958179473877 0.054516587406396866
+		 0.027140730991956019 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999899245707002
+		 1.000000406310797 1.0000006932452856 no;
+	setAttr ".xm[71]" -type "matrix" "xform" 1.0000004100593771 1.0000006002485455 1 3.1415927405179112
+		 3.141592564733227 -2.8106091818898871 0 -7.7657537460327575 -0.00019504503872269652
+		 7.3515315330396902e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000004410718193
+		 0.9999998940228868 0.99999968425245056 no;
+	setAttr ".xm[72]" -type "matrix" "xform" 0.99999952022668837 1.0000001175863753 1 3.1415925622662138
+		 3.1415929170664851 -2.9815801057611666 0 -3.5340113639830832 -0.00015469222852004805
+		 -1.155518564921465e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.99999958994079108
+		 0.99999939975181473 1 no;
+	setAttr ".xm[73]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[74]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[75]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[76]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[77]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[78]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[79]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[80]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[81]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[82]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[83]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[84]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[85]" -type "matrix" "xform" 1.0000004831719942 0.99999992465171683 0.99999905166456637 3.0670230866997432
+		 3.1438755067523831 3.1011293799765864 0 -4.4560589790343776 0.99528664350509644
+		 0.24130192399022832 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[86]" -type "matrix" "xform" 0.99999978249759258 0.99999943996457608
+		 1.0000006499825849 6.2831814667360657 1.6364381135116102e-06 -5.5576058774374166 0 -8.0494222640991602
+		 -0.00050404068316822759 2.2992613564198905e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 0.99999951682823929 1.0000000753482889 1.000000948336333 no;
+	setAttr ".xm[87]" -type "matrix" "xform" 1.0000005302198045 1.0000004336485859 0.99999999999999978 3.1415933998196959
+		 -3.1415931835502131 -2.7791014511006011 0 -7.6422195434569886 -8.0005564115026573e-05
+		 0.00014840631051349362 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000002175024547
+		 1.0000005600357376 0.99999935001783757 no;
+	setAttr ".xm[88]" -type "matrix" "xform" 0.99999936313668969 1.0000003483038635 1.0000005728957877 3.1415930765614739
+		 -3.1415923174403901 3.3161256238518737 0 -3.657768249511733 -7.8093973542081585e-05
+		 0.00012314450574280045 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 0.9999994697804766
+		 0.99999956635160214 1.0000000000000002 no;
+	setAttr ".xm[89]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[90]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[91]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[92]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[93]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[94]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[95]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[96]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[97]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[98]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[99]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[100]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[101]" -type "matrix" "xform" 1.0000013096450444 1.0000004435464884 0.99999987611843355 3.1989745565768151
+		 -3.2694467978829529 3.1310127875132974 0 -4.5467615127563086 0.50842142105105381
+		 3.140686035156218 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[102]" -type "matrix" "xform" 0.99999934431186877 0.9999991274980814
+		 0.99999981432803486 6.2831847312749742 -3.2264752100943565e-06 -5.526186224917744 0 -7.7574825286865234
+		 -0.057576283812466045 -0.31784820556640803 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 0.99999869035667077 0.9999995564537083 1.0000001238815819 no;
+	setAttr ".xm[103]" -type "matrix" "xform" 0.9999995885567039 1.0000002948843756 0.99999999999999944 3.141593790818705
+		 -3.141592477625927 -2.8816689983079362 0 -6.9286785125732564 -0.00016065254753527825
+		 -1.409334707336285e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000006556885612
+		 1.0000008725026799 1.0000001856719996 no;
+	setAttr ".xm[104]" -type "matrix" "xform" 1.0000004331950134 0.99999986970365362
+		 1.0000000000000004 3.1415919969344372 -3.1415928934294248 3.3600453617730048 0 -4.4067211151123047
+		 -6.5334737826105993e-05 7.5839976540592602e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1.0000004114434653 0.99999970511571135 1.0000000000000007 no;
+	setAttr ".xm[105]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[106]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[107]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[108]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[109]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[110]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[111]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[112]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[113]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[114]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[115]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[116]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[117]" -type "matrix" "xform" 1.0000006337150606 1.0000003258481527 1.0000001174876547 1.283938656734348
+		 0.69645894588216817 0.35794287961514931 0 -2.6299610137939169 -1.7906582355499694
+		 3.4077463150024618 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1.0000007805275044
+		 1.0000000573027608 0.99999947209453044 no;
+	setAttr ".xm[118]" -type "matrix" "xform" 0.99999945268017043 0.9999994737959933
+		 1.0000002872660934 6.3448061746949911 -0.033723611743853014 -5.8774662793101866 0 -5.778944492340095
+		 -7.194722267911402e-05 -1.0704969099606387e-05 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 0.99999936628534092 0.99999967415195345 0.99999988251235905 no;
+	setAttr ".xm[119]" -type "matrix" "xform" 0.99999996932518742 1.0000004422083335
+		 0.99999912525181867 3.141592904526525 -3.1415926535897936 3.3161267208609448 0 -4.9553518295288157
+		 2.1611602242899153e-05 0.00012183141369348505 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1.0000005473201292 1.0000005262042837 0.99999971273398913 no;
+	setAttr ".xm[120]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[121]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[122]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[123]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[124]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[125]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[126]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[127]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[128]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[129]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[130]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[131]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[132]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[133]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[134]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[135]" -type "matrix" "xform" 0.99999938288337009 0.99999990805689531
+		 1.0000001994026535 -6.2829653519066797 -0.075164001746962611 6.271766987587319 0 -8.6705694198608541
+		 0.00043086271034464829 0.008159543387577628 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1.000000174889303 1.0000005299355377 1.0000000784577632 no;
+	setAttr ".xm[136]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[137]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[138]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[139]" -type "matrix" "xform" 0.99999936977819059 1.0000000980813584
+		 1.000000329040585 -6.2831797590348257 -5.2377537626978838e-06 6.2831799659437699 0 -17.341115951538086
+		 0.00083814363460632535 0.016365250572505374 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 
+		0 0 0 1 1.000000174889303 1.0000005299355377 1.0000000784577632 no;
+	setAttr ".xm[140]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[141]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[142]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[143]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[144]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[145]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[146]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[147]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[148]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[149]" -type "matrix" "xform" 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 yes;
+	setAttr ".xm[150]" -type "matrix" "xform" 1 1 1 0.14459422727264173 -0.071261660874031213
+		 3.1243160702638155 0 0.59784066677093506 -2.1705117225646973 9.9671716690063477 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[151]" -type "matrix" "xform" 1 1 1 0.0012042916238087216 -0.015742755612203826
+		 -0.23964936599317294 0 39.99562072753907 -3.0968250941398878e-05 3.2934476603685425e-06 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[152]" -type "matrix" "xform" 1 1 1 -0.031036390948055777 0.073291474581719668
+		 0.11223815623503149 0 42.22113037109375 -1.0476748684595805e-05 8.8533961406511708e-06 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[153]" -type "matrix" "xform" 1 1 1 -2.9400235570694881e-06 3.9882436355896969e-06
+		 -1.5707931196774128 0 7.8790526390075595 17.128019332885746 -0.60582411289215621 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[154]" -type "matrix" "xform" 1 1 1 -8.0097616224739953e-05 0.0045059538747788952
+		 0.046501106561652898 0 14.073735237121582 7.6151627581566572e-05 0.037732493132352829 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[155]" -type "matrix" "xform" 1 1 1 5.331038355790417e-05 0.00900528575126275
+		 0.093003395621704746 0 28.14759635925293 0.00016631656035315245 0.075312256813049316 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[156]" -type "matrix" "xform" 1 1 1 -9.9133157537679043e-05 0.0090049953167976489
+		 -0.045626321435681745 0 13.331866264343262 3.1458259854844073e-06 -4.6274250053102151e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[157]" -type "matrix" "xform" 1 1 1 -2.0341661976856804e-06 0.0045063682358610479
+		 -0.02281664259388427 0 26.663713455200195 -5.3758571993967053e-07 7.7763324668467249e-09 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[158]" -type "matrix" "xform" 1 1 1 0.14458666046349172 -0.071262381404352773
+		 -0.017276813457551693 0 0.59785139560699463 -2.1705365180969238 -9.9671659469604492 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[159]" -type "matrix" "xform" 1 1 1 0.0012032894934578006 -0.015741112537561847
+		 -0.23965002156487775 0 -39.99562072753907 1.2853640328103211e-05 -1.674055056355428e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[160]" -type "matrix" "xform" 1 1 1 -0.031035499073104187 0.073291271540066566
+		 0.11224005601947443 0 -42.221122741699212 -3.6410714526979859e-05 -4.0226394048659131e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[161]" -type "matrix" "xform" 1 1 1 2.9254794434051366e-06 3.9904097240124421e-06
+		 -1.5707927210156469 0 -7.8790597915649405 -17.128013610839844 0.6057279109954834 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[162]" -type "matrix" "xform" 1 1 1 -8.0075184313767477e-05 0.0045061141289345959
+		 0.046502062051843138 0 -14.073705673217773 -3.0192143185558962e-06 9.1056307383041712e-07 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[163]" -type "matrix" "xform" 1 1 1 4.7977677194288823e-05 0.0090107400277143496
+		 0.093004523598892594 0 -28.147420883178711 -0.00022107100812718272 -0.075636222958564758 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[164]" -type "matrix" "xform" 1 1 1 -0.00010324914308442547 0.0090046795027568845
+		 -0.045626556043533439 0 -13.33195686340332 -6.4738296714494936e-06 -2.3072483600117266e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[165]" -type "matrix" "xform" 1 1 1 -1.0342409719606557e-06 0.0045063848889520912
+		 -0.022816604136967362 0 -26.663751602172852 -1.8985286942552193e-06 -7.6643673310172744e-06 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[166]" -type "matrix" "xform" 1 1 1 -1.5881867761018129e-22 7.6793223607888092e-22
+		 1.5881867761018129e-22 0 9.9999999999406119e-09 4.8849813083506888e-15 -7.4315317600412369e-15 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[167]" -type "matrix" "xform" 1 1 1 1.5713887667384454 -1.5392327381198538
+		 -1.4227388844919475 0 15.267310097929064 6.9502716429140197 10.13647179064094 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[168]" -type "matrix" "xform" 1 1 1 -1.5694437503861802 1.5392203605386479
+		 1.423506844281524 0 -14.634197235107418 6.9502573013305717 10.136494636535682 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[169]" -type "matrix" "xform" 1 1 1 -1.5881867761018129e-22 7.6793223607888092e-22
+		 1.5881867761018129e-22 0 9.9999999999406119e-09 4.8849813083506888e-15 -7.4315317600412369e-15 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[170]" -type "matrix" "xform" 1 1 1 0 0 0 0 -51.655036926269446
+		 -19.391530990600575 92.009704589843608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1
+		 1 1 no;
+	setAttr ".xm[171]" -type "matrix" "xform" 1 1 1 -1.946515929993943 0.68785168819025899
+		 -0.93666300786735734 0 103.94333648681626 4.9563997869483956e-05 -7.7245822353688709e-05 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[172]" -type "matrix" "xform" 1 1 1 1.1950879645319592 -0.68783302549543512
+		 0.93665896158633188 0 -7.1054273576010019e-15 -3.5527136788005009e-15 -1.4210854715202004e-14 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[173]" -type "matrix" "xform" 1 1 1 -1.5881867761018129e-22 7.6793223607888092e-22
+		 1.5881867761018129e-22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1
+		 1 1 no;
+	setAttr ".xm[174]" -type "matrix" "xform" 1 1 1 -1.5881867761018129e-22 7.6793223607888092e-22
+		 1.5881867761018129e-22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1
+		 1 1 no;
+	setAttr ".xm[175]" -type "matrix" "xform" 1 1 1 -2.2204460492503131e-16 0 0 0 2.8421709430404007e-14
+		 3.6415315207705135e-14 164 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr ".xm[176]" -type "matrix" "xform" 1 1 1 -2.2204460492503131e-16 0 0 0 0
+		 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 1 1 1 1 no;
+	setAttr -s 94 ".m";
+	setAttr -s 94 ".p";
+	setAttr -s 177 ".g[0:176]" yes no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no no no no no no no no no no no no no no no no no no no no no no no no no no no 
+		no;
+	setAttr ".bp" yes;
 select -ne :time1;
 	setAttr ".o" 0;
 select -ne :hardwareRenderingGlobals;
@@ -91006,7 +92295,63 @@ connectAttr "root_parentConstraint1.crx" "root.rx";
 connectAttr "root_parentConstraint1.cry" "root.ry";
 connectAttr "root_parentConstraint1.crz" "root.rz";
 connectAttr "Creep2_ArmR_Skeleton.di" "root.do";
-connectAttr "root.s" "clavicle_r.is";
+connectAttr "root.ro" "root_parentConstraint1.cro";
+connectAttr "root.pim" "root_parentConstraint1.cpim";
+connectAttr "root.rp" "root_parentConstraint1.crp";
+connectAttr "root.rpt" "root_parentConstraint1.crt";
+connectAttr "root.jo" "root_parentConstraint1.cjo";
+connectAttr "Main.t" "root_parentConstraint1.tg[0].tt";
+connectAttr "Main.rp" "root_parentConstraint1.tg[0].trp";
+connectAttr "Main.rpt" "root_parentConstraint1.tg[0].trt";
+connectAttr "Main.r" "root_parentConstraint1.tg[0].tr";
+connectAttr "Main.ro" "root_parentConstraint1.tg[0].tro";
+connectAttr "Main.s" "root_parentConstraint1.tg[0].ts";
+connectAttr "Main.pm" "root_parentConstraint1.tg[0].tpm";
+connectAttr "root_parentConstraint1.w0" "root_parentConstraint1.tg[0].tw";
+connectAttr "Creep2_ArmR_Skeleton.di" "pelvis.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "spine_01.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "spine_02.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "spine_03.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "spine_04.do";
+connectAttr "spine_05_parentConstraint1.ctx" "spine_05.tx";
+connectAttr "spine_05_parentConstraint1.cty" "spine_05.ty";
+connectAttr "spine_05_parentConstraint1.ctz" "spine_05.tz";
+connectAttr "spine_05_parentConstraint1.crx" "spine_05.rx";
+connectAttr "spine_05_parentConstraint1.cry" "spine_05.ry";
+connectAttr "spine_05_parentConstraint1.crz" "spine_05.rz";
+connectAttr "Creep2_ArmR_Skeleton.di" "spine_05.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "neck_01.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "neck_02.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "head.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "clavicle_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "upperarm_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "lowerarm_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "lowerarm_twist_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "lowerarm_twist_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "hand_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "index_metacarpal_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "index_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "index_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "index_03_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "middle_metacarpal_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "middle_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "middle_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "middle_03_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thumb_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thumb_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thumb_03_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "pinky_metacarpal_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "pinky_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "pinky_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "pinky_03_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ring_metacarpal_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ring_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ring_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ring_03_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "weapon_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "upperarm_twist_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "upperarm_twist_02_l.do";
+connectAttr "spine_05.s" "clavicle_r.is";
 connectAttr "clavicle_r_scaleConstraint1.csx" "clavicle_r.sx";
 connectAttr "clavicle_r_scaleConstraint1.csy" "clavicle_r.sy";
 connectAttr "clavicle_r_scaleConstraint1.csz" "clavicle_r.sz";
@@ -92061,19 +93406,50 @@ connectAttr "Scapula_R.s" "clavicle_r_scaleConstraint1.tg[0].ts";
 connectAttr "Scapula_R.pm" "clavicle_r_scaleConstraint1.tg[0].tpm";
 connectAttr "clavicle_r_scaleConstraint1.w0" "clavicle_r_scaleConstraint1.tg[0].tw"
 		;
-connectAttr "root.ro" "root_parentConstraint1.cro";
-connectAttr "root.pim" "root_parentConstraint1.cpim";
-connectAttr "root.rp" "root_parentConstraint1.crp";
-connectAttr "root.rpt" "root_parentConstraint1.crt";
-connectAttr "root.jo" "root_parentConstraint1.cjo";
-connectAttr "Main.t" "root_parentConstraint1.tg[0].tt";
-connectAttr "Main.rp" "root_parentConstraint1.tg[0].trp";
-connectAttr "Main.rpt" "root_parentConstraint1.tg[0].trt";
-connectAttr "Main.r" "root_parentConstraint1.tg[0].tr";
-connectAttr "Main.ro" "root_parentConstraint1.tg[0].tro";
-connectAttr "Main.s" "root_parentConstraint1.tg[0].ts";
-connectAttr "Main.pm" "root_parentConstraint1.tg[0].tpm";
-connectAttr "root_parentConstraint1.w0" "root_parentConstraint1.tg[0].tw";
+connectAttr "spine_05.ro" "spine_05_parentConstraint1.cro";
+connectAttr "spine_05.pim" "spine_05_parentConstraint1.cpim";
+connectAttr "spine_05.rp" "spine_05_parentConstraint1.crp";
+connectAttr "spine_05.rpt" "spine_05_parentConstraint1.crt";
+connectAttr "spine_05.jo" "spine_05_parentConstraint1.cjo";
+connectAttr "Root_M.t" "spine_05_parentConstraint1.tg[0].tt";
+connectAttr "Root_M.rp" "spine_05_parentConstraint1.tg[0].trp";
+connectAttr "Root_M.rpt" "spine_05_parentConstraint1.tg[0].trt";
+connectAttr "Root_M.r" "spine_05_parentConstraint1.tg[0].tr";
+connectAttr "Root_M.ro" "spine_05_parentConstraint1.tg[0].tro";
+connectAttr "Root_M.s" "spine_05_parentConstraint1.tg[0].ts";
+connectAttr "Root_M.pm" "spine_05_parentConstraint1.tg[0].tpm";
+connectAttr "Root_M.jo" "spine_05_parentConstraint1.tg[0].tjo";
+connectAttr "Root_M.ssc" "spine_05_parentConstraint1.tg[0].tsc";
+connectAttr "Root_M.is" "spine_05_parentConstraint1.tg[0].tis";
+connectAttr "spine_05_parentConstraint1.w0" "spine_05_parentConstraint1.tg[0].tw"
+		;
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "foot_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ball_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_twist_02_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_twist_01_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_twist_01_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_twist_02_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "foot_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ball_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_twist_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "calf_twist_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_twist_01_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "thigh_twist_02_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_foot_root.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_foot_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_foot_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_hand_root.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_hand_gun.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_hand_l.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "ik_hand_r.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "interaction.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "center_of_mass.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "camera_root.do";
+connectAttr "Creep2_ArmR_Skeleton.di" "camera_bone.do";
 connectAttr "SDKFKIndexFinger1_R_rotateZ.drivingSystemOut" "FitSkeleton.drivingSystem"
 		 -na;
 connectAttr "SDKFKRingFinger1_R_rotateZ.drivingSystemOut" "FitSkeleton.drivingSystem"
@@ -93628,95 +95004,6 @@ connectAttr "thumb_02_r.obcc" "skinCluster1.ifcl[25]";
 connectAttr "thumb_03_r.obcc" "skinCluster1.ifcl[26]";
 connectAttr "upperarm_twist_01_r.obcc" "skinCluster1.ifcl[27]";
 connectAttr "upperarm_twist_02_r.obcc" "skinCluster1.ifcl[28]";
-connectAttr "Armature.msg" "bindPose1.m[0]";
-connectAttr "root.msg" "bindPose1.m[1]";
-connectAttr "clavicle_r.msg" "bindPose1.m[2]";
-connectAttr "upperarm_r.msg" "bindPose1.m[3]";
-connectAttr "lowerarm_r.msg" "bindPose1.m[4]";
-connectAttr "lowerarm_twist_02_r.msg" "bindPose1.m[5]";
-connectAttr "lowerarm_twist_01_r.msg" "bindPose1.m[6]";
-connectAttr "hand_r.msg" "bindPose1.m[7]";
-connectAttr "weapon_r.msg" "bindPose1.m[8]";
-connectAttr "pinky_metacarpal_r.msg" "bindPose1.m[9]";
-connectAttr "pinky_01_r.msg" "bindPose1.m[10]";
-connectAttr "pinky_02_r.msg" "bindPose1.m[11]";
-connectAttr "pinky_03_r.msg" "bindPose1.m[12]";
-connectAttr "ring_metacarpal_r.msg" "bindPose1.m[13]";
-connectAttr "ring_01_r.msg" "bindPose1.m[14]";
-connectAttr "ring_02_r.msg" "bindPose1.m[15]";
-connectAttr "ring_03_r.msg" "bindPose1.m[16]";
-connectAttr "middle_metacarpal_r.msg" "bindPose1.m[17]";
-connectAttr "middle_01_r.msg" "bindPose1.m[18]";
-connectAttr "middle_02_r.msg" "bindPose1.m[19]";
-connectAttr "middle_03_r.msg" "bindPose1.m[20]";
-connectAttr "index_metacarpal_r.msg" "bindPose1.m[21]";
-connectAttr "index_01_r.msg" "bindPose1.m[22]";
-connectAttr "index_02_r.msg" "bindPose1.m[23]";
-connectAttr "index_03_r.msg" "bindPose1.m[24]";
-connectAttr "thumb_01_r.msg" "bindPose1.m[25]";
-connectAttr "thumb_02_r.msg" "bindPose1.m[26]";
-connectAttr "thumb_03_r.msg" "bindPose1.m[27]";
-connectAttr "upperarm_twist_01_r.msg" "bindPose1.m[28]";
-connectAttr "upperarm_twist_02_r.msg" "bindPose1.m[29]";
-connectAttr "bindPose1.w" "bindPose1.p[0]";
-connectAttr "bindPose1.m[0]" "bindPose1.p[1]";
-connectAttr "bindPose1.m[1]" "bindPose1.p[2]";
-connectAttr "bindPose1.m[2]" "bindPose1.p[3]";
-connectAttr "bindPose1.m[3]" "bindPose1.p[4]";
-connectAttr "bindPose1.m[4]" "bindPose1.p[5]";
-connectAttr "bindPose1.m[4]" "bindPose1.p[6]";
-connectAttr "bindPose1.m[4]" "bindPose1.p[7]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[8]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[9]";
-connectAttr "bindPose1.m[9]" "bindPose1.p[10]";
-connectAttr "bindPose1.m[10]" "bindPose1.p[11]";
-connectAttr "bindPose1.m[11]" "bindPose1.p[12]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[13]";
-connectAttr "bindPose1.m[13]" "bindPose1.p[14]";
-connectAttr "bindPose1.m[14]" "bindPose1.p[15]";
-connectAttr "bindPose1.m[15]" "bindPose1.p[16]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[17]";
-connectAttr "bindPose1.m[17]" "bindPose1.p[18]";
-connectAttr "bindPose1.m[18]" "bindPose1.p[19]";
-connectAttr "bindPose1.m[19]" "bindPose1.p[20]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[21]";
-connectAttr "bindPose1.m[21]" "bindPose1.p[22]";
-connectAttr "bindPose1.m[22]" "bindPose1.p[23]";
-connectAttr "bindPose1.m[23]" "bindPose1.p[24]";
-connectAttr "bindPose1.m[7]" "bindPose1.p[25]";
-connectAttr "bindPose1.m[25]" "bindPose1.p[26]";
-connectAttr "bindPose1.m[26]" "bindPose1.p[27]";
-connectAttr "bindPose1.m[3]" "bindPose1.p[28]";
-connectAttr "bindPose1.m[3]" "bindPose1.p[29]";
-connectAttr "root.bps" "bindPose1.wm[1]";
-connectAttr "clavicle_r.bps" "bindPose1.wm[2]";
-connectAttr "upperarm_r.bps" "bindPose1.wm[3]";
-connectAttr "lowerarm_r.bps" "bindPose1.wm[4]";
-connectAttr "lowerarm_twist_02_r.bps" "bindPose1.wm[5]";
-connectAttr "lowerarm_twist_01_r.bps" "bindPose1.wm[6]";
-connectAttr "hand_r.bps" "bindPose1.wm[7]";
-connectAttr "weapon_r.bps" "bindPose1.wm[8]";
-connectAttr "pinky_metacarpal_r.bps" "bindPose1.wm[9]";
-connectAttr "pinky_01_r.bps" "bindPose1.wm[10]";
-connectAttr "pinky_02_r.bps" "bindPose1.wm[11]";
-connectAttr "pinky_03_r.bps" "bindPose1.wm[12]";
-connectAttr "ring_metacarpal_r.bps" "bindPose1.wm[13]";
-connectAttr "ring_01_r.bps" "bindPose1.wm[14]";
-connectAttr "ring_02_r.bps" "bindPose1.wm[15]";
-connectAttr "ring_03_r.bps" "bindPose1.wm[16]";
-connectAttr "middle_metacarpal_r.bps" "bindPose1.wm[17]";
-connectAttr "middle_01_r.bps" "bindPose1.wm[18]";
-connectAttr "middle_02_r.bps" "bindPose1.wm[19]";
-connectAttr "middle_03_r.bps" "bindPose1.wm[20]";
-connectAttr "index_metacarpal_r.bps" "bindPose1.wm[21]";
-connectAttr "index_01_r.bps" "bindPose1.wm[22]";
-connectAttr "index_02_r.bps" "bindPose1.wm[23]";
-connectAttr "index_03_r.bps" "bindPose1.wm[24]";
-connectAttr "thumb_01_r.bps" "bindPose1.wm[25]";
-connectAttr "thumb_02_r.bps" "bindPose1.wm[26]";
-connectAttr "thumb_03_r.bps" "bindPose1.wm[27]";
-connectAttr "upperarm_twist_01_r.bps" "bindPose1.wm[28]";
-connectAttr "upperarm_twist_02_r.bps" "bindPose1.wm[29]";
 connectAttr "FitSkeleton.drivingSystem_Fingers_R[6]" "SDKFKIndexFinger2_R_rotateY.indexCurl"
 		;
 connectAttr "bwFingers_R_indexCurl.o" "SDKFKIndexFinger2_R_rotateY.i";
@@ -95065,6 +96352,194 @@ connectAttr "bwSDKFKThumbFinger3_R_rotateY.o" "bwSDKFKThumbFinger3_R_rotateY_out
 connectAttr "SDKFKThumbFinger3_R_rotateY.o" "SDKFKThumbFinger3_R_rotateY_outputUC.i"
 		;
 connectAttr "layerManager.dli[1]" "Creep2_ArmR_Skeleton.id";
+connectAttr "Armature.msg" "bindPose1.m[0]";
+connectAttr "root.msg" "bindPose1.m[1]";
+connectAttr "pelvis.msg" "bindPose1.m[3]";
+connectAttr "spine_01.msg" "bindPose1.m[4]";
+connectAttr "spine_02.msg" "bindPose1.m[5]";
+connectAttr "spine_03.msg" "bindPose1.m[6]";
+connectAttr "spine_04.msg" "bindPose1.m[7]";
+connectAttr "spine_05.msg" "bindPose1.m[8]";
+connectAttr "neck_01.msg" "bindPose1.m[9]";
+connectAttr "neck_02.msg" "bindPose1.m[10]";
+connectAttr "head.msg" "bindPose1.m[11]";
+connectAttr "clavicle_l.msg" "bindPose1.m[12]";
+connectAttr "upperarm_l.msg" "bindPose1.m[13]";
+connectAttr "lowerarm_l.msg" "bindPose1.m[14]";
+connectAttr "lowerarm_twist_02_l.msg" "bindPose1.m[15]";
+connectAttr "lowerarm_twist_01_l.msg" "bindPose1.m[16]";
+connectAttr "hand_l.msg" "bindPose1.m[17]";
+connectAttr "index_metacarpal_l.msg" "bindPose1.m[18]";
+connectAttr "index_01_l.msg" "bindPose1.m[19]";
+connectAttr "index_02_l.msg" "bindPose1.m[20]";
+connectAttr "index_03_l.msg" "bindPose1.m[21]";
+connectAttr "middle_metacarpal_l.msg" "bindPose1.m[22]";
+connectAttr "middle_01_l.msg" "bindPose1.m[23]";
+connectAttr "middle_02_l.msg" "bindPose1.m[24]";
+connectAttr "middle_03_l.msg" "bindPose1.m[25]";
+connectAttr "thumb_01_l.msg" "bindPose1.m[26]";
+connectAttr "thumb_02_l.msg" "bindPose1.m[27]";
+connectAttr "thumb_03_l.msg" "bindPose1.m[28]";
+connectAttr "pinky_metacarpal_l.msg" "bindPose1.m[29]";
+connectAttr "pinky_01_l.msg" "bindPose1.m[30]";
+connectAttr "pinky_02_l.msg" "bindPose1.m[31]";
+connectAttr "pinky_03_l.msg" "bindPose1.m[32]";
+connectAttr "ring_metacarpal_l.msg" "bindPose1.m[33]";
+connectAttr "ring_01_l.msg" "bindPose1.m[34]";
+connectAttr "ring_02_l.msg" "bindPose1.m[35]";
+connectAttr "ring_03_l.msg" "bindPose1.m[36]";
+connectAttr "weapon_l.msg" "bindPose1.m[37]";
+connectAttr "upperarm_twist_01_l.msg" "bindPose1.m[38]";
+connectAttr "upperarm_twist_02_l.msg" "bindPose1.m[39]";
+connectAttr "clavicle_r.msg" "bindPose1.m[40]";
+connectAttr "upperarm_r.msg" "bindPose1.m[41]";
+connectAttr "lowerarm_r.msg" "bindPose1.m[42]";
+connectAttr "lowerarm_twist_02_r.msg" "bindPose1.m[43]";
+connectAttr "lowerarm_twist_01_r.msg" "bindPose1.m[47]";
+connectAttr "hand_r.msg" "bindPose1.m[51]";
+connectAttr "weapon_r.msg" "bindPose1.m[52]";
+connectAttr "pinky_metacarpal_r.msg" "bindPose1.m[53]";
+connectAttr "pinky_01_r.msg" "bindPose1.m[54]";
+connectAttr "pinky_02_r.msg" "bindPose1.m[55]";
+connectAttr "pinky_03_r.msg" "bindPose1.m[56]";
+connectAttr "ring_metacarpal_r.msg" "bindPose1.m[69]";
+connectAttr "ring_01_r.msg" "bindPose1.m[70]";
+connectAttr "ring_02_r.msg" "bindPose1.m[71]";
+connectAttr "ring_03_r.msg" "bindPose1.m[72]";
+connectAttr "middle_metacarpal_r.msg" "bindPose1.m[85]";
+connectAttr "middle_01_r.msg" "bindPose1.m[86]";
+connectAttr "middle_02_r.msg" "bindPose1.m[87]";
+connectAttr "middle_03_r.msg" "bindPose1.m[88]";
+connectAttr "index_metacarpal_r.msg" "bindPose1.m[101]";
+connectAttr "index_01_r.msg" "bindPose1.m[102]";
+connectAttr "index_02_r.msg" "bindPose1.m[103]";
+connectAttr "index_03_r.msg" "bindPose1.m[104]";
+connectAttr "thumb_01_r.msg" "bindPose1.m[117]";
+connectAttr "thumb_02_r.msg" "bindPose1.m[118]";
+connectAttr "thumb_03_r.msg" "bindPose1.m[119]";
+connectAttr "upperarm_twist_01_r.msg" "bindPose1.m[135]";
+connectAttr "upperarm_twist_02_r.msg" "bindPose1.m[139]";
+connectAttr "thigh_r.msg" "bindPose1.m[150]";
+connectAttr "calf_r.msg" "bindPose1.m[151]";
+connectAttr "foot_r.msg" "bindPose1.m[152]";
+connectAttr "ball_r.msg" "bindPose1.m[153]";
+connectAttr "calf_twist_02_r.msg" "bindPose1.m[154]";
+connectAttr "calf_twist_01_r.msg" "bindPose1.m[155]";
+connectAttr "thigh_twist_01_r.msg" "bindPose1.m[156]";
+connectAttr "thigh_twist_02_r.msg" "bindPose1.m[157]";
+connectAttr "thigh_l.msg" "bindPose1.m[158]";
+connectAttr "calf_l.msg" "bindPose1.m[159]";
+connectAttr "foot_l.msg" "bindPose1.m[160]";
+connectAttr "ball_l.msg" "bindPose1.m[161]";
+connectAttr "calf_twist_02_l.msg" "bindPose1.m[162]";
+connectAttr "calf_twist_01_l.msg" "bindPose1.m[163]";
+connectAttr "thigh_twist_01_l.msg" "bindPose1.m[164]";
+connectAttr "thigh_twist_02_l.msg" "bindPose1.m[165]";
+connectAttr "ik_foot_root.msg" "bindPose1.m[166]";
+connectAttr "ik_foot_l.msg" "bindPose1.m[167]";
+connectAttr "ik_foot_r.msg" "bindPose1.m[168]";
+connectAttr "ik_hand_root.msg" "bindPose1.m[169]";
+connectAttr "ik_hand_gun.msg" "bindPose1.m[170]";
+connectAttr "ik_hand_l.msg" "bindPose1.m[171]";
+connectAttr "ik_hand_r.msg" "bindPose1.m[172]";
+connectAttr "interaction.msg" "bindPose1.m[173]";
+connectAttr "center_of_mass.msg" "bindPose1.m[174]";
+connectAttr "camera_root.msg" "bindPose1.m[175]";
+connectAttr "camera_bone.msg" "bindPose1.m[176]";
+connectAttr "bindPose1.w" "bindPose1.p[0]";
+connectAttr "bindPose1.m[0]" "bindPose1.p[1]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[3]";
+connectAttr "bindPose1.m[3]" "bindPose1.p[4]";
+connectAttr "bindPose1.m[4]" "bindPose1.p[5]";
+connectAttr "bindPose1.m[5]" "bindPose1.p[6]";
+connectAttr "bindPose1.m[6]" "bindPose1.p[7]";
+connectAttr "bindPose1.m[7]" "bindPose1.p[8]";
+connectAttr "bindPose1.m[8]" "bindPose1.p[9]";
+connectAttr "bindPose1.m[9]" "bindPose1.p[10]";
+connectAttr "bindPose1.m[10]" "bindPose1.p[11]";
+connectAttr "bindPose1.m[8]" "bindPose1.p[12]";
+connectAttr "bindPose1.m[12]" "bindPose1.p[13]";
+connectAttr "bindPose1.m[13]" "bindPose1.p[14]";
+connectAttr "bindPose1.m[14]" "bindPose1.p[15]";
+connectAttr "bindPose1.m[14]" "bindPose1.p[16]";
+connectAttr "bindPose1.m[14]" "bindPose1.p[17]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[18]";
+connectAttr "bindPose1.m[18]" "bindPose1.p[19]";
+connectAttr "bindPose1.m[19]" "bindPose1.p[20]";
+connectAttr "bindPose1.m[20]" "bindPose1.p[21]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[22]";
+connectAttr "bindPose1.m[22]" "bindPose1.p[23]";
+connectAttr "bindPose1.m[23]" "bindPose1.p[24]";
+connectAttr "bindPose1.m[24]" "bindPose1.p[25]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[26]";
+connectAttr "bindPose1.m[26]" "bindPose1.p[27]";
+connectAttr "bindPose1.m[27]" "bindPose1.p[28]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[29]";
+connectAttr "bindPose1.m[29]" "bindPose1.p[30]";
+connectAttr "bindPose1.m[30]" "bindPose1.p[31]";
+connectAttr "bindPose1.m[31]" "bindPose1.p[32]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[33]";
+connectAttr "bindPose1.m[33]" "bindPose1.p[34]";
+connectAttr "bindPose1.m[34]" "bindPose1.p[35]";
+connectAttr "bindPose1.m[35]" "bindPose1.p[36]";
+connectAttr "bindPose1.m[17]" "bindPose1.p[37]";
+connectAttr "bindPose1.m[13]" "bindPose1.p[38]";
+connectAttr "bindPose1.m[13]" "bindPose1.p[39]";
+connectAttr "bindPose1.m[8]" "bindPose1.p[40]";
+connectAttr "bindPose1.m[40]" "bindPose1.p[41]";
+connectAttr "bindPose1.m[41]" "bindPose1.p[42]";
+connectAttr "bindPose1.m[42]" "bindPose1.p[43]";
+connectAttr "bindPose1.m[42]" "bindPose1.p[47]";
+connectAttr "bindPose1.m[42]" "bindPose1.p[51]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[52]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[53]";
+connectAttr "bindPose1.m[53]" "bindPose1.p[54]";
+connectAttr "bindPose1.m[54]" "bindPose1.p[55]";
+connectAttr "bindPose1.m[55]" "bindPose1.p[56]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[69]";
+connectAttr "bindPose1.m[69]" "bindPose1.p[70]";
+connectAttr "bindPose1.m[70]" "bindPose1.p[71]";
+connectAttr "bindPose1.m[71]" "bindPose1.p[72]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[85]";
+connectAttr "bindPose1.m[85]" "bindPose1.p[86]";
+connectAttr "bindPose1.m[86]" "bindPose1.p[87]";
+connectAttr "bindPose1.m[87]" "bindPose1.p[88]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[101]";
+connectAttr "bindPose1.m[101]" "bindPose1.p[102]";
+connectAttr "bindPose1.m[102]" "bindPose1.p[103]";
+connectAttr "bindPose1.m[103]" "bindPose1.p[104]";
+connectAttr "bindPose1.m[51]" "bindPose1.p[117]";
+connectAttr "bindPose1.m[117]" "bindPose1.p[118]";
+connectAttr "bindPose1.m[118]" "bindPose1.p[119]";
+connectAttr "bindPose1.m[41]" "bindPose1.p[135]";
+connectAttr "bindPose1.m[41]" "bindPose1.p[139]";
+connectAttr "bindPose1.m[3]" "bindPose1.p[150]";
+connectAttr "bindPose1.m[150]" "bindPose1.p[151]";
+connectAttr "bindPose1.m[151]" "bindPose1.p[152]";
+connectAttr "bindPose1.m[152]" "bindPose1.p[153]";
+connectAttr "bindPose1.m[151]" "bindPose1.p[154]";
+connectAttr "bindPose1.m[151]" "bindPose1.p[155]";
+connectAttr "bindPose1.m[150]" "bindPose1.p[156]";
+connectAttr "bindPose1.m[150]" "bindPose1.p[157]";
+connectAttr "bindPose1.m[3]" "bindPose1.p[158]";
+connectAttr "bindPose1.m[158]" "bindPose1.p[159]";
+connectAttr "bindPose1.m[159]" "bindPose1.p[160]";
+connectAttr "bindPose1.m[160]" "bindPose1.p[161]";
+connectAttr "bindPose1.m[159]" "bindPose1.p[162]";
+connectAttr "bindPose1.m[159]" "bindPose1.p[163]";
+connectAttr "bindPose1.m[158]" "bindPose1.p[164]";
+connectAttr "bindPose1.m[158]" "bindPose1.p[165]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[166]";
+connectAttr "bindPose1.m[166]" "bindPose1.p[167]";
+connectAttr "bindPose1.m[166]" "bindPose1.p[168]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[169]";
+connectAttr "bindPose1.m[169]" "bindPose1.p[170]";
+connectAttr "bindPose1.m[170]" "bindPose1.p[171]";
+connectAttr "bindPose1.m[170]" "bindPose1.p[172]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[173]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[174]";
+connectAttr "bindPose1.m[1]" "bindPose1.p[175]";
+connectAttr "bindPose1.m[175]" "bindPose1.p[176]";
 connectAttr "SK_Creep_arm_rSG.pa" ":renderPartition.st" -na;
 connectAttr "MI_Creep_Body.msg" ":defaultShaderList1.s" -na;
 connectAttr "bump2d1.msg" ":defaultRenderUtilityList1.u" -na;

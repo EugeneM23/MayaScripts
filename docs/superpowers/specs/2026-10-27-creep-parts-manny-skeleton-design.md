@@ -86,6 +86,26 @@ again (the rows now carry 93 bones; the Auto card still never matches a part).
 
 Unit tests: the catalog pins 93 joints and Manny's parents for the part rows.
 
+## Addendum: what the build changed
+
+- **`|Armature|root` is kept**: the part assets' layout since their build. Only the joints beneath it
+  changed; the exports read the layout as they always did.
+- **`spine_05` follows `Root_M`, not `PartAnchor`.** `PartAnchor` follows `Root_M` itself, so the
+  place is the same. The Pose Library's rig solve finds a bone's control through the AS joint its
+  constraint names (`rigsolve._driver`), and a transform names none.
+- **The rig solve's root bone is the rig's** (`rigsolve.root_leaf`): `pelvis` when it is driven, else
+  the group's `skeldarPartAnchor` bone. Before this a part's `spine_05` read «no control»: RootX_M
+  stood for the pelvis by name.
+- **The retarget's helper bones on a part rig** (`maya_rig_retarget.part_held`): only a helper whose
+  parent the rig drives is carried (the arm's `weapon_r`). The camera bones and the rest stay at the
+  bind, and no Camera Setup is made (a camera is a control).
+- **A part skeleton's root carries `skeldarPartAnchor` = `spine_05`.** The skeleton road
+  (`skeletonimport.transfer`) puts that bone on the clip's place, as it did the old top bone, so the
+  part stands on the clip's chest. The clavicle and the neck now stand on Creep 2's own chest offset:
+  1.0-2.5 cm off the clip's, against 0.0 before.
+- A Manny card onto a part rig says «39 member(s) have no control»: true (the part has no pelvis or
+  legs), left as it is.
+
 ## Not built
 
 - The extra bones following the clip (variant B).
