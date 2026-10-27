@@ -14473,3 +14473,41 @@ against 24.1 inside; one undo; Remove; on Manny_Rig an FK finger chain through t
 known `test_chat_deploy.Keys` failing. **Not seen in a GUI Maya** (the card, the colliders' drawings, a
 real press): the animator's to try after Check update. Not built: chains on chains, an `inside` collider,
 bone-to-bone constraints (skirts), wind from a field, per-joint radius drawn.
+
+## AT bar: Full / Compact / Off (2026-10-26)
+
+The animator, with a screenshot of the F row: a button for the full layout as it is, and a compact one
+«де оці всі фічі будуть умовно викатуватися з 1 загальної кнопки Blend, а все інше компактно ... десь
+отут» (the free room at the F row's right). Why: two animators, one keeps everything open, the other has a
+small screen and wants the most viewport. Asked: «Time Bar - AT bar - 2 варіанта розкладки», Off kept.
+Spec `docs/superpowers/specs/2026-10-26-atbar-compact-design.md`.
+- **⋮ -> Time bar ▸ AT bar ▸ Full / Compact / Off** (`maya_hubqt` `skeldarHubATBarMenu`, callback
+  `("timebar_at", choice)` -> `maya_hub.set_timebar_at` -> `maya_atbar.set_layout`). optionVars:
+  `skeldarATBar` on / off as before, `skeldarATBarLayout` full / compact (kept through Off). An older
+  caller's True / False = Full / Off (`choice_of`).
+- **Compact = one `ATBar(compact=True)`**, not a second bar: every handler, the toggles' sync and Anim
+  Recovery's timer stay one implementation. It is a child of `maya_skillbar.grid.PageTabs`, named
+  `skeldarATBarCompact` (so `embedded()` / `docked_height()` never count it), placed right after the
+  status tools (`place_in_row`, again on the row's Resize and the tools' Move); `PageTabs.extra_room` is
+  the room it takes, and the F tabs fold to keys first. 18 px faces in the 22 px row, no captions, Blend
+  first as a text chip (`ATButton(text=...)`) opening `BlendPopup` (the four tracks, a card above the
+  chip, fading in from 4 px lower). Without our Time Bar there is no F row: Compact stands Full and says so.
+- **Trap, measured live: a fixed workspaceControl never shrinks.** The Time Bar's control is
+  `heightProperty="fixed"`; Maya keeps that height as the control widget's minimumSizeHint (172 for a
+  115 px page after the AT row left), so neither `resizeHeight` nor the splitter could take the 57 px
+  back - Full -> Off had the same hole. `scene.page_height` now, when shrinking: `heightProperty="free"`,
+  one idle later `_settle_layouts()` (the pending LayoutRequests of the row just taken away) and
+  `_fit_splitter`, one more idle later `fixed` again (fixed at once took the old height back).
+- Proof: `tests/test_atbar.py` (the switch, the shrink), `test_hubqt` (the submenu), `test_skillbar_status`
+  (the room); 8853 tests OK. **Seen in the animator's Maya through the port**: Full 172 px / Compact 115 /
+  Off 115 / Full 172 again, the compact bar at x 915 in the F row, the Blend panel above its chip.
+
+## AT bar: Temp Controls / Temp Pivot in a scene tab (2026-10-26)
+
+«чому не працює Temp Control?»: in a scene tab the current namespace is the tab's, so Maya made
+`tab_x:AT_TEMP` while `_temp_group` returned the bare `AT_TEMP` (`cmds.parent` -> No object matches name),
+and `ls("AT_tempCtrl_*")` / `objExists("AT_tempPivot")` never saw the tab's nodes - every click left one
+more bare locator and group instead of baking back. Now every temp name is looked up in the current
+namespace (`core.here` / `_here`), the group is the node Maya made, and a locator's shape is asked
+(`_shape`: Maya numbers `AT_tempCtrl_IKArm_L3` but not always its shape). Tests `TempControlsInATab`;
+seen live in a tab: on, keyed, baked back, nothing left.

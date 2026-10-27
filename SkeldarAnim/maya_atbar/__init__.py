@@ -6,8 +6,11 @@ then «а зроби не полку, а окреме меню такого ж �
 control (then «прибери ще сірі роздєлітєльні лінії»: a control of its own stood behind Maya's splitter
 line); the Time Bar's height counts it (`maya_timebar.extra_height`). Without a docked Time Bar it is a
 workspaceControl `skeldarATBar` of its own, with no tab and no title, docked where the Time Bar would be.
-⋮ -> Time bar ▸ AT bar turns it on and off (optionVar skeldarATBar, off by default). Nothing heavy at
-import.
+⋮ -> Time bar ▸ AT bar ▸ Full / Compact / Off (2026-10-26, «2 варіанта розкладки»: one animator keeps it
+all open, the other has a small screen): optionVar skeldarATBar on / off (off by default) and
+skeldarATBarLayout. Compact has no row of its own: the same buttons, smaller, in the Time Bar's F row
+after the status-line tools, the four blend tracks behind one Blend chip (spec
+docs/superpowers/specs/2026-10-26-atbar-compact-design.md). Nothing heavy at import.
 
 Its look is layout B of the mockups (https://claude.ai/artifact/FG74SWkoW6u2UoQ2Xw6Ak4): every animBot icon
 redrawn 1:1 in our line style (`glyphs`), a caption over each group in its colour, the Time Bar's controls
@@ -20,12 +23,25 @@ CONTROL = "skeldarATBar"
 TIMEBAR = "skeldarTimeBar"
 LABEL = "AT"
 OPTIONVAR = "skeldarATBar"
+LAYOUT_OPT = "skeldarATBarLayout"
 HEIGHT = 57                 # logical px: the caption row and one row of 24 px controls
+LAYOUTS = ("full", "compact", "off")
 
 MESSAGES = {
-    True: "AT bar on, above the Time Bar",
-    False: "AT bar off - ⋮ -> Time bar ▸ AT bar brings it back",
+    "full": "AT bar on, above the Time Bar",
+    "compact": "AT bar compact, in the Time Bar's F row",
+    "off": "AT bar off - ⋮ -> Time bar ▸ AT bar brings it back",
 }
+NO_ROW = "AT bar compact needs our Time Bar's F row - shown full until then"
+
+
+def choice_of(value):
+    """A menu row or an older caller's True / False as one of LAYOUTS (anything else: Full). Pure."""
+    if value is True:
+        return "full"
+    if value is False or value is None:
+        return "off"
+    return value if value in LAYOUTS else "full"
 
 
 def plugin_root():
@@ -42,6 +58,18 @@ def wanted():
     """The animator turned the bar on (⋮ -> Time bar ▸ AT bar); off until then."""
     import maya.cmds as cmds
     return bool(cmds.optionVar(q=OPTIONVAR)) if cmds.optionVar(exists=OPTIONVAR) else False
+
+
+def _kept_layout():
+    """Full or Compact as last chosen (kept through Off); Full before the layouts existed."""
+    import maya.cmds as cmds
+    kept = cmds.optionVar(q=LAYOUT_OPT) if cmds.optionVar(exists=LAYOUT_OPT) else "full"
+    return kept if kept in ("full", "compact") else "full"
+
+
+def layout():
+    """⋮ -> Time bar ▸ AT bar's row: "full", "compact" or "off"."""
+    return _kept_layout() if wanted() else "off"
 
 
 def dock_target(exists, visible):
@@ -79,12 +107,22 @@ def _timebar_host():
 
 
 def ensure():
-    """The bar standing: the Time Bar's top row while it stands docked (our own control deleted), else
-    our own control made (or restored) with the strip in it. Where it stands."""
+    """The bar standing. Compact: in the Time Bar's F row (the full strip and our own control away) while
+    that row exists. Full (or Compact without the row): the Time Bar's top row while it stands docked (our
+    own control deleted), else our own control made (or restored) with the strip in it. Where it stands."""
     import maya.cmds as cmds
     if cmds.about(batch=True):
         return ""
     from . import bar
+    if layout() == "compact":
+        tabs = bar.compact_host()
+        if tabs is not None:
+            bar.detach()
+            if _exists(CONTROL):
+                cmds.workspaceControl(CONTROL, edit=True, visible=False)
+            bar.attach_compact(tabs)
+            return "compact"
+    bar.detach_compact()
     host = _timebar_host()
     if host is not None:
         if _exists(CONTROL):
@@ -112,6 +150,7 @@ def hide():
         return
     from . import bar
     bar.detach()
+    bar.detach_compact()
     if _exists(CONTROL):
         cmds.workspaceControl(CONTROL, edit=True, visible=False)
 
@@ -125,16 +164,25 @@ def docked_height():
     return strip.logical_height() if strip is not None else 0
 
 
-def set_on(on):
-    """⋮ -> Time bar ▸ AT bar: remembered, the bar shown or hidden. What to say."""
+def set_layout(choice):
+    """⋮ -> Time bar ▸ AT bar ▸ Full / Compact / Off: remembered, the bar shown that way or hidden (Off
+    keeps the layout for the next on). What to say."""
     import maya.cmds as cmds
-    on = bool(on)
-    cmds.optionVar(intValue=(OPTIONVAR, 1 if on else 0))
-    if on:
-        ensure()
-    else:
+    choice = choice_of(choice)
+    cmds.optionVar(intValue=(OPTIONVAR, 0 if choice == "off" else 1))
+    if choice == "off":
         hide()
-    return MESSAGES[on]
+        return MESSAGES["off"]
+    cmds.optionVar(stringValue=(LAYOUT_OPT, choice))
+    where = ensure()
+    if choice == "compact" and where in (TIMEBAR, CONTROL):
+        return NO_ROW
+    return MESSAGES[choice]
+
+
+def set_on(on):
+    """On in the layout last chosen, or Off (an older caller's switch). What to say."""
+    return set_layout(_kept_layout() if on else "off")
 
 
 def ensure_wanted():

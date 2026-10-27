@@ -2648,11 +2648,21 @@ class Skin(object):
         self.timebar_steel_action.setChecked(True)          # the default since 2026-10-20
         self.timebar_steel_action.triggered.connect(
             lambda checked=False: self._call("timebar_steel", bool(checked)))
-        # 2026-10-21 «зроби галочку на АТ в панельці налаштувань Timebar»: the AT bar above it
-        self.timebar_at_action = sub.addAction("AT bar")
-        self.timebar_at_action.setCheckable(True)
-        self.timebar_at_action.triggered.connect(
-            lambda checked=False: self._call("timebar_at", bool(checked)))
+        # 2026-10-21 «зроби галочку на АТ в панельці налаштувань Timebar»: the AT bar above it;
+        # 2026-10-26 «Time Bar - AT bar - 2 варіанта розкладки»: Full / Compact / Off
+        at_menu = sub.addMenu("AT bar")
+        at_menu.setObjectName("skeldarHubATBarMenu")
+        self._timebar_at_group = group_class(at_menu)
+        self._timebar_at_group.setExclusive(True)
+        self.timebar_at_actions = {}
+        for label, choice in (("Full", "full"), ("Compact", "compact"), ("Off", "off")):
+            action = at_menu.addAction(label)
+            action.setCheckable(True)
+            self._timebar_at_group.addAction(action)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("timebar_at", c))
+            self.timebar_at_actions[choice] = action
+        self.timebar_at_actions["off"].setChecked(True)
 
     def _build_sidepanel_menu(self, text):
         """⋮ -> Side panel ▸ Maya's / Right edge (2026-10-17): exclusive rows; a
@@ -2710,14 +2720,18 @@ class Skin(object):
 
     def paint_timebar(self, choice, steel=None, at=None):
         """The menu's Time bar shows `choice` (2026-10-16; no callback) and, given,
-        whether the keys are steel and whether the AT bar is on. An older caller's
-        True / False reads as Docked / Maya's."""
-        for row, value in ((getattr(self, "timebar_steel_action", None), steel),
-                           (getattr(self, "timebar_at_action", None), at)):
-            if row is not None and value is not None:
-                row.blockSignals(True)
-                row.setChecked(bool(value))
-                row.blockSignals(False)
+        whether the keys are steel and the AT bar's layout (full / compact / off). An
+        older caller's True / False reads as Docked / Maya's, for the AT bar Full / Off."""
+        row = getattr(self, "timebar_steel_action", None)
+        if row is not None and steel is not None:
+            row.blockSignals(True)
+            row.setChecked(bool(steel))
+            row.blockSignals(False)
+        if at is not None:
+            at = "full" if at is True else "off" if at is False else at
+            row = getattr(self, "timebar_at_actions", {}).get(at)
+            if row is not None:
+                row.setChecked(True)            # `triggered` is the call; the group unchecks the others
         if choice is True:
             choice = "docked"
         elif choice is False:

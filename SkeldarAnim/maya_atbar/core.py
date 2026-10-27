@@ -15,6 +15,7 @@ import maya.mel as mel
 ANIM_CURVE_TYPES = ["animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT"]
 DATA_NODE = "AT_data"
 TEMP_GRP = "AT_TEMP"
+TEMP_CTRL, TEMP_PIVOT = "AT_tempCtrl_", "AT_tempPivot"
 TRAIL_GRP = "AT_MOTION_TRAILS"
 SELSET_PREFIX = "AT_sel_"
 TRANSFORM_ATTRS = ("tx", "ty", "tz", "rx", "ry", "rz")
@@ -920,10 +921,33 @@ def space_switch(attr, index, all_keys=False):
 
 # ---------------------------------------------------------------- temp controls / pivot
 
+def here(name, namespace):
+    """`name` (or a pattern) in `namespace`, absolute: what a node made now is called. In a scene tab the
+    current namespace is the tab's (2026-10-26: the tab's temp controls were never found). Pure."""
+    namespace = (namespace or ":").strip(":")
+    return ":%s:%s" % (namespace, name) if namespace else ":" + name
+
+
+def _here(name):
+    return here(name, cmds.namespaceInfo(currentNamespace=True, absoluteName=True))
+
+
+def _shape(node):
+    #  Maya numbers the transform, not always the shape (AT_tempCtrl_IKArm_L3 over AT_tempCtrl_IKArm_LShape)
+    return (cmds.listRelatives(node, shapes=True, fullPath=True) or [node + "Shape"])[0]
+
+
 def _temp_group():
-    if not cmds.objExists(TEMP_GRP):
-        cmds.createNode("transform", name=TEMP_GRP, skipSelect=True)
-    return TEMP_GRP
+    found = _here(TEMP_GRP)
+    if cmds.objExists(found):
+        return found
+    return cmds.createNode("transform", name=TEMP_GRP, skipSelect=True)
+
+
+def _drop_empty_temp_group():
+    grp = _here(TEMP_GRP)
+    if cmds.objExists(grp) and not cmds.listRelatives(grp, children=True):
+        cmds.delete(grp)
 
 
 def _constrain(driver, driven):
@@ -935,13 +959,17 @@ def _constrain(driver, driven):
                                  skipRotate=skip_r or "none")[0]
 
 
+def _temp_controls():
+    return cmds.ls(_here(TEMP_CTRL + "*"), type="transform", long=True) or []
+
+
 def temp_controls_active():
-    return bool(cmds.ls("AT_tempCtrl_*", type="transform"))
+    return bool(_temp_controls())
 
 
 @undoable
 def toggle_temp_controls():
-    locs = cmds.ls("AT_tempCtrl_*", type="transform", long=True) or []
+    locs = _temp_controls()
     if locs:
         return _release_temp_controls(locs)
     sel = selection()
@@ -951,9 +979,9 @@ def toggle_temp_controls():
     times = key_times(sel) or [current_time()]
     pairs = []
     for n in sel:
-        loc = cmds.spaceLocator(name="AT_tempCtrl_" + strip_ns(n))[0]
+        loc = cmds.spaceLocator(name=TEMP_CTRL + strip_ns(n))[0]
         loc = cmds.parent(loc, grp)[0]
-        cmds.setAttr(loc + "Shape.localScale", 10, 10, 10)
+        cmds.setAttr(_shape(loc) + ".localScale", 10, 10, 10)
         cmds.addAttr(loc, longName="atTarget", dataType="string")
         cmds.setAttr(loc + ".atTarget", n, type="string")
         pairs.append((n, loc))
@@ -984,8 +1012,7 @@ def _release_temp_controls(locs):
         if cons:
             cmds.delete(cons)
     cmds.delete(locs)
-    if cmds.objExists(TEMP_GRP) and not cmds.listRelatives(TEMP_GRP, children=True):
-        cmds.delete(TEMP_GRP)
+    _drop_empty_temp_group()
 
     def apply(t):
         for n in nodes:
@@ -997,13 +1024,13 @@ def _release_temp_controls(locs):
 
 
 def temp_pivot_active():
-    return cmds.objExists("AT_tempPivot")
+    return cmds.objExists(_here(TEMP_PIVOT))
 
 
 @undoable
 def toggle_temp_pivot():
     if temp_pivot_active():
-        piv = "AT_tempPivot"
+        piv = _here(TEMP_PIVOT)
         nodes = cmds.getAttr(piv + ".atTargets").split(";") if cmds.attributeQuery("atTargets", node=piv, exists=True) else []
         nodes = [n for n in nodes if cmds.objExists(n)]
         mats = {n: world_matrix(n) for n in nodes}
@@ -1012,8 +1039,7 @@ def toggle_temp_pivot():
             if cons:
                 cmds.delete(cons)
         cmds.delete(piv)
-        if cmds.objExists(TEMP_GRP) and not cmds.listRelatives(TEMP_GRP, children=True):
-            cmds.delete(TEMP_GRP)
+        _drop_empty_temp_group()
         for n in nodes:
             set_world_matrix(n, mats[n])
             key_transform(n)
@@ -1023,9 +1049,9 @@ def toggle_temp_pivot():
     if not sel:
         return warn("select the objects to pivot (the last one is the pivot)")
     pos = cmds.xform(sel[-1], q=True, ws=True, rotatePivot=True)
-    piv = cmds.spaceLocator(name="AT_tempPivot")[0]
+    piv = cmds.spaceLocator(name=TEMP_PIVOT)[0]
     piv = cmds.parent(piv, _temp_group())[0]
-    cmds.setAttr(piv + "Shape.localScale", 8, 8, 8)
+    cmds.setAttr(_shape(piv) + ".localScale", 8, 8, 8)
     cmds.xform(piv, ws=True, t=pos)
     cmds.addAttr(piv, longName="atTargets", dataType="string")
     cmds.setAttr(piv + ".atTargets", ";".join(sel), type="string")

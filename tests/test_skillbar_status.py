@@ -296,6 +296,19 @@ class Widget(unittest.TestCase):
         self.assertLessEqual(rects[-1][0] + rects[-1][1], self.strip.tabs.width() - self.tools.room() + 0.5)
         self.assertLessEqual(self.tools.geometry().right() + 1, self.strip.tabs.width())
 
+    def test_the_compact_at_bar_s_room_is_left_free(self):
+        #  2026-10-26: the compact AT bar stands at the row's right, after the tools
+        tabs = self.strip.tabs
+        self.strip.resize(1200, 160)
+        self.app.processEvents()
+        wide = tabs.rects()[-1]
+        tabs.extra_room = 200
+        self.tools.place()
+        rects = tabs.rects()
+        self.assertLess(rects[-1][0] + rects[-1][1], wide[0] + wide[1])
+        self.assertLessEqual(rects[-1][0] + rects[-1][1], tabs.width() - self.tools.room() - 200 + 0.5)
+        self.assertLessEqual(self.tools.geometry().right() + 1, tabs.width() - 200)
+
     def test_a_click_presses_its_button(self):
         self.click(self.centre_of("snap", "grid"))
         self.assertIn(("press", "snap", "grid"), self.model.log)

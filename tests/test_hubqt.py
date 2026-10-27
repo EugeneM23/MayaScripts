@@ -270,15 +270,24 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertTrue(steel.isChecked())
         self.assertTrue(rows[1].isChecked())
         self.assertEqual(self.calls[-1], ("timebar_steel", False))
-        #  the AT bar (2026-10-21): a checkbox, off by default, painted without a call
-        at = rows[-1]
-        self.assertTrue(at.isCheckable() and not at.isChecked())
-        at.trigger()
-        self.assertEqual(self.calls[-1], ("timebar_at", True))
-        self.skin.paint_timebar("docked", True, False)
-        self.assertFalse(at.isChecked())
+        #  the AT bar (2026-10-26): Full / Compact / Off, Off until chosen, painted without a call
+        at = rows[-1].menu()
+        self.assertEqual(at.objectName(), "skeldarHubATBarMenu")
+        layouts = at.actions()
+        self.assertEqual([a.text() for a in layouts], ["Full", "Compact", "Off"])
+        self.assertTrue(all(a.isCheckable() for a in layouts))
+        self.assertTrue(layouts[2].isChecked())
+        layouts[1].trigger()
+        self.assertEqual(self.calls[-1], ("timebar_at", "compact"))
+        self.skin.paint_timebar("docked", True, "full")
+        self.assertTrue(layouts[0].isChecked() and not layouts[1].isChecked())
         self.assertTrue(steel.isChecked())
-        self.assertEqual(self.calls[-1], ("timebar_at", True))
+        self.assertEqual(self.calls[-1], ("timebar_at", "compact"))
+        #  an older caller's True / False: Full / Off
+        self.skin.paint_timebar("docked", True, False)
+        self.assertTrue(layouts[2].isChecked())
+        self.skin.paint_timebar("docked", True, True)
+        self.assertTrue(layouts[0].isChecked())
         #  the side panel (2026-10-17): Maya's / Right edge
         self.assertEqual(actions[10].menu().objectName(), "skeldarHubSidePanelMenu")
         side = actions[10].menu().actions()

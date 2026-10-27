@@ -98,6 +98,8 @@ def classes():
             self.drop_on = None         # a drag over this tab
             self._was_busy = False
             self.index = strip.register(self)
+            #  px kept free at the row's right for the compact AT bar (2026-10-26, maya_atbar)
+            self.extra_room = 0
             #  Maya's status-line tools at the row's right (2026-10-20)
             self.tools = StatusTools(self)
 
@@ -118,7 +120,7 @@ def classes():
             def measure(text):
                 return (km if text[:1] == "F" and text[1:].isdigit() else nm).horizontalAdvance(text)
             rects = look.tab_rects(texts, measure, ui, x0=2 * ui)
-            room = self.width() - self.tools.room()
+            room = self.width() - self.tools.room() - self.extra_room
             if rects and rects[-1][0] + rects[-1][1] > room:              # no room: keys only
                 rects = look.tab_rects([(k, "") for k, _n in texts], measure, ui, x0=2 * ui)
             return rects
@@ -310,7 +312,7 @@ def classes():
             w = int(round(status.width_of(self.mode(), self.strip.ui)))
             rects = self.tabs.rects()
             x = rects[-1][0] + rects[-1][1] + status.TABS_GAP * self.strip.ui if rects else 0
-            x = int(round(min(x, self.tabs.width() - w)))
+            x = int(round(min(x, self.tabs.width() - w - self.tabs.extra_room)))
             geo = QtCore.QRect(max(0, x), 0, w, self.tabs.height())
             if self.geometry() != geo:
                 self.setGeometry(geo)
