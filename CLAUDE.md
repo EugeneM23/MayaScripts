@@ -14792,3 +14792,52 @@ more bare locator and group instead of baking back. Now every temp name is looke
 namespace (`core.here` / `_here`), the group is the node Maya made, and a locator's shape is asked
 (`_shape`: Maya numbers `AT_tempCtrl_IKArm_L3` but not always its shape). Tests `TempControlsInATab`;
 seen live in a tab: on, keyed, baked back, nothing left.
+
+## Export to uasset: the FBX plugin's stuck bake rate (2026-10-27)
+
+The animator: «Наш экспортер в uasset может проставить фрейм рейт не такой как в сцене. в сцене 30 фпс
+после экспорта в uassete 120». Read off the staged FBXs in `%TEMP%/maya_uebridge/`: three of the last
+eight (AS_Dg_Atk_Cmb_F_1_Lt_1P of 10-23, AS_Dg_Atk_JA_Active_Miss_1P and AS_Dg_Atk_JA_Passive_1P of
+10-27) carried a 30 fps header (TimeMode 6) and bone keys every **1/24 s**, the last one at 59/30; the
+others were 1/30. Unreal's legacy import (`SkeletalMeshEdit.cpp` GetMaxSampleRate, CustomSampleRate 0 in
+the project's config) takes the rate that passes through every key: LCM(24, the last step's 120) = 120.
+- **Measured in mayapy: Maya 2027's FBX plugin latches its BAKE step at the first export of a session
+  made at a rate other than 30** (trap 297). After it every baked export steps at that rate under a
+  header naming the scene's; exports never at another rate are right, and a first 30 -> 24 is right.
+  Curves exported unbaked are right (Stash's FBX does not bake). FBXResetExport, a 30 fps export,
+  FBXRead, an FBXImport with the default sampling, FBXPopSettings: none clears it. Reloading `fbxmaya`
+  does, and mayapy then died on exit with 0xC0000374 - not for a live Maya.
+- **What clears it: an FBXImport whose sampling rate is taken from the File**
+  (`Import|IncludeGrp|Animation|SamplingPanel|SamplingRateSelector "File"`) - the plugin takes that
+  file's rate as its own. In exmerge mode onto a node of a name no scene has it creates nothing, and the
+  undo queue survives it; it moves the current frame to 0.
+- **`maya_uebridge/fbxkeys.py`** (stdlib, a subprocess test pins it): `read_key_times(path)` reads a
+  binary FBX's Model Lcl T/R/S curves (what Unreal reads; a layer's weight is not), `key_rate`,
+  `bake_problem(curves, fps)` - keys off the scene's frame grid, or the densest curve missing frames
+  (latched at 15, every key lands on a 30 frame and half are gone).
+- **`animexport._export_checked`**, in `_export_hierarchy` (Export to uasset, Export FBX..., the
+  checkouts' EXPORT): export, read the file back (~12 ms), and on a problem `rearm_bake_rate()` - a probe
+  `skeldarFbxRateProbe` exported at the scene's rate (`PROBE_FOLDER`, the temp folder) and imported back
+  that way, the animator's import mode, sampling, timeline, animation and set-frame-rate settings, the
+  unit and the frame (`_put_time`, MAnimControl: no undo step) put back - then the options again, the
+  bones selected again, a second export, a second read. Still wrong: the file is removed and the press
+  refuses («... restart Maya and export again»), so nothing at the wrong rate reaches Unreal. A reset
+  says itself on the status line («the FBX plugin was baking keys every 1/24 s, the scene is 30 fps (left
+  by an earlier FBX export in this session) - reset, exported again»).
+- Found on the way, not fixed: **any export of a grouped character leaves its root selected**
+  (`chargroup.lifted` puts the root back with `cmds.parent`, which selects; before this fix too).
+
+Proof: `tests/test_uebridge_fbxkeys.py` (a hand-built binary FBX) and `test_uebridge_export_rate.py` (a
+fake plugin that latches as the real one does); `docs/superpowers/plans/verify_uebridge_fbx_rate.py`
+**12/12 mayapy standalone** - the control (a bare 30 fps export after a 24 one bakes at 1/24, Unreal's
+rule reads 120), the plugin's Manny skeleton in its character group on the uasset road's layout at 1/30 on
+every frame (Unreal's rule 30), the note, no node added or lost, the frame and unit, the animator's import
+settings, the first undo a net nothing and the queue reaching a cube made before, the file's pelvis /
+hand_r / foot_l re-imported on the scene's to 3e-6, a second export with no reset; latched at 60, a 24
+fps scene at 24. **Not seen in a GUI Maya or against a live editor.** The three clips above want
+exporting again.
+
+297. **Maya 2027's FBX plugin keeps the bake step of the first export at a rate other than 30 for the
+     rest of the session**, and writes the scene's rate in the header over it: a file that SAYS 30 fps
+     and holds keys every 1/24 s. Every check that reads the header or Maya's unit passes. Read the key
+     times out of the file.

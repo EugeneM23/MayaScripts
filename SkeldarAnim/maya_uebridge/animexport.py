@@ -10,11 +10,12 @@ it is put back.
 import contextlib
 import math
 import os
+import tempfile
 
 import maya.cmds as cmds
 import maya.mel as mel
 
-from maya_uebridge import animimport, fbxlayout
+from maya_uebridge import animimport, fbxkeys, fbxlayout
 
 NO_TARGET_MESSAGE = ("no skeleton in the scene to export - select a joint of "
                      "the one you mean")
@@ -56,6 +57,25 @@ LAYOUT = "cascadeur"
 # docs/superpowers/plans/verify_cascadeur_layout_unreal.py (spec: "verified before the switch is
 # kept"). One word here switches both.
 UNREAL_LAYOUT = "plain"
+
+# The FBX plugin's stuck bake rate (2026-10-27, «в сцене 30 фпс после экспорта в uasset 120»;
+# fbxkeys says what was measured). The only thing found to set it back without reloading the
+# plugin -- a reload put it right and crashed mayapy on exit, 0xC0000374 -- is an FBXImport that
+# samples at the FILE's rate: the plugin takes that file's rate as its own. So a probe holding
+# one empty transform is exported at the scene's rate (the header is always right) and imported
+# back in exmerge mode, which merges onto a node of the probe's name and creates nothing.
+# Measured: the undo queue survives it, the current frame does not (it goes to 0).
+PROBE = "skeldarFbxRateProbe"
+PROBE_FILE = "skeldar_fbx_rate_probe.fbx"
+PROBE_FOLDER = os.path.join(tempfile.gettempdir(), "maya_uebridge")
+_PROBE_IMPORT = (("Import|IncludeGrp|Animation", True),
+                 ("Import|IncludeGrp|Animation|ExtraGrp|TimeLine", False),
+                 ("Import|IncludeGrp|Animation|SamplingPanel|SamplingRateSelector", "File"))
+
+REARMED = ("the FBX plugin was baking {0} (left by an earlier FBX export in this session) - "
+           "reset, exported again")
+STUCK = ("the FBX plugin bakes {0} and would not let go - nothing was exported; restart Maya "
+         "and export again")
 
 
 def union_range(animation, playback):
@@ -158,6 +178,94 @@ def _apply_export_options(start, end):
     return missing
 
 
+def _export_checked(fbx_path, start, end, select):
+    """Export the selection, read the file back, and put a stuck bake rate right.
+
+    Returns "" when the bones were baked on every frame of the scene's rate, else the note that
+    the plugin had to be reset (the file is then the second export's). Raises RuntimeError, the
+    file removed, when even the reset does not help: a clip at the wrong rate must not reach
+    Unreal or a colleague. `select` puts the export's own selection back after the reset."""
+    mel.eval(export_command(fbx_path))
+    fps = animimport.scene_fps()
+    problem = fbxkeys.bake_problem(fbxkeys.read_key_times(fbx_path), fps)
+    if not problem:
+        return ""
+    rearm_bake_rate()
+    _apply_export_options(start, end)
+    select()
+    mel.eval(export_command(fbx_path))
+    still = fbxkeys.bake_problem(fbxkeys.read_key_times(fbx_path), fps)
+    if still:
+        try:
+            os.remove(fbx_path)
+        except OSError:
+            pass
+        raise RuntimeError(STUCK.format(still))
+    return REARMED.format(problem)
+
+
+def rearm_bake_rate():
+    """Set the FBX plugin's bake rate to the scene's (see PROBE). The animator's FBX import
+    settings, the time unit and the current frame are what they were afterwards."""
+    if not os.path.isdir(PROBE_FOLDER):
+        os.makedirs(PROBE_FOLDER)
+    probe = os.path.join(PROBE_FOLDER, PROBE_FILE)
+    node = cmds.createNode("transform", name=PROBE, skipSelect=True)
+    try:
+        cmds.select(node, replace=True)
+        mel.eval("FBXResetExport")
+        mel.eval(export_command(probe))
+    finally:
+        if cmds.objExists(node):
+            cmds.delete(node)
+    unit = cmds.currentUnit(query=True, time=True)
+    frame = cmds.currentTime(query=True)
+    mode = mel.eval("FBXImportMode -q")
+    set_rate = mel.eval("FBXImportSetMayaFrameRate -q")
+    saved = [(path, mel.eval('FBXProperty "{0}" -q'.format(path))) for path, _ in _PROBE_IMPORT]
+    try:
+        mel.eval("FBXImportMode -v exmerge")
+        mel.eval("FBXImportSetMayaFrameRate -v false")
+        for path, value in _PROBE_IMPORT:
+            mel.eval(_property(path, value))
+        mel.eval('FBXImport -f "{0}"'.format(probe.replace("\\", "/")))
+    finally:
+        for path, value in saved:
+            mel.eval(_property(path, value))
+        mel.eval("FBXImportMode -v {0}".format(mode))
+        mel.eval("FBXImportSetMayaFrameRate -v {0}".format("true" if set_rate else "false"))
+        if cmds.currentUnit(query=True, time=True) != unit:
+            # the probe is at the scene's rate, so this should never run; if it does, the keys
+            # go back with the unit (trap 179)
+            cmds.currentUnit(time=unit, updateAnimation=True)
+        _put_time(frame)
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
+
+
+def _property(path, value):
+    """MEL setting one FBXProperty to `value` as `FBXProperty -q` answered it: a bool comes back
+    1 or 0, an enum as its word."""
+    if isinstance(value, str):
+        text = '"{0}"'.format(value)
+    else:
+        text = "true" if value else "false"
+    return 'FBXProperty "{0}" -v {1}'.format(path, text)
+
+
+def _put_time(frame):
+    """The current frame back where it was, as no undo step (the export runs in one chunk)."""
+    if abs(cmds.currentTime(query=True) - frame) < 1e-9:
+        return
+    try:
+        from maya.api import OpenMaya, OpenMayaAnim
+        OpenMayaAnim.MAnimControl.setCurrentTime(OpenMaya.MTime(frame, OpenMaya.MTime.uiUnit()))
+    except Exception:
+        cmds.currentTime(frame, edit=True)
+
+
 def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
     """Write `root`'s hierarchy (resolved when not given) to `fbx_path` with
     the animation baked in, and report what was written.
@@ -218,6 +326,7 @@ def _export_hierarchy(fbx_path, root, start, end, layout, shown=None):
     # One name for every character since 2026-09-25's evening: `Armature`.
     name = fbxlayout.WRAPPER_NAME if layout == "cascadeur" else ""
     wrapper_used = ""
+    rearmed = ""
     try:
         # The same name Maya decorated on arrival would go into the file,
         # and the UE skeleton has no bone called `Manny_Skeleton_root` --
@@ -244,8 +353,11 @@ def _export_hierarchy(fbx_path, root, start, end, layout, shown=None):
                 if not bones:
                     bones = [(cmds.ls(root_uuid, long=True) or [root])[0]
                              if root_uuid else root]
-                cmds.select(bones + ([wrapper] if wrapper else []), replace=True)
-                mel.eval(export_command(fbx_path))
+                chosen = bones + ([wrapper] if wrapper else [])
+                cmds.select(chosen, replace=True)
+                # read back: the plugin may bake at another session export's rate (fbxkeys)
+                rearmed = _export_checked(fbx_path, start, end,
+                                          lambda: cmds.select(chosen, replace=True))
                 # a Null went into the file -- ours, or the one the root stands under
                 wrapper_used = fbxlayout.WRAPPER_NAME if wrapper else ""
     finally:
@@ -261,6 +373,7 @@ def _export_hierarchy(fbx_path, root, start, end, layout, shown=None):
     warning = "  |  ".join(text for text in (
         outside_keys_warning(times, start, end),
         animimport.root_note(leaf, exported_as),
+        rearmed,
     ) if text)
 
     return {"root": exported_as,
