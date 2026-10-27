@@ -374,6 +374,8 @@ def create(char, model, info):
     made.append(group)
     cmds.addAttr(group, longName=MARKER, dataType="string")
     cmds.setAttr(group + "." + MARKER, VERSION, type="string")
+    import maya_markers
+    maya_markers.touch()
     cmds.addAttr(group, longName=ROOT_LINK, attributeType="message")
     cmds.connectAttr(char.root + ".message", group + "." + ROOT_LINK)
     for attr, kind, value in (("trail", "bool", 1), ("floor", "bool", 1),
@@ -451,9 +453,10 @@ def create(char, model, info):
 def find_all():
     """Every CoM group in the scene (long paths)."""
     # the marker asked of Maya once, every namespace (recursive): an attributeQuery on every
-    # transform of every tab took 0.18 s on each selection change (2026-10-16)
-    found = cmds.ls("*." + MARKER, recursive=True, objectsOnly=True, type="transform",
-                    long=True) or []
+    # transform of every tab took 0.18 s on each selection change (2026-10-16); and the
+    # answer kept until the scene changes (maya_markers, 2026-10-27: ~12 ms a selection)
+    import maya_markers
+    found = maya_markers.find(MARKER, "transform", commands=cmds)
     return scope.active_only(found, cmds)
 
 

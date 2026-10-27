@@ -651,21 +651,15 @@ def plan(node, given=None):
     if cmds.referenceQuery(node, isNodeReferenced=True):
         raise Refusal("%s: referenced - not touched" % _short(node))
     t_a, t_m, t_b, b_time = source(node)
-    poses = (pose_at(node, t_a), pose_at(node, t_m), pose_at(node, b_time))
     fixed, order = fixed_parts(node)
 
     def parent_at(t):
         return om.MMatrix(cmds.getAttr(node + ".parentMatrix[0]", time=t))
 
+    pose_b, bottom, height = _pose_b(node, t_b, b_time, order, fixed, parent_at)
+    poses = (pose_at(node, t_a), pose_at(node, t_m), pose_b)
     worlds = [local_matrix(p[0], p[1], order, fixed) * parent_at(t) for p, t in zip(poses, (t_a, t_m, t_b))]
-    rows = tuple(tuple(worlds[2].getElement(i, j) for j in range(3)) for i in range(3))
-    index, sign = up_axis(rows)
     notes = []
-    box = object_box(node)
-    if box:
-        bottom, height = bottom_and_height(box[0], box[1], index, sign, rows)
-    else:
-        bottom, height = fixed["rotatePivot"], 0.0
     if height < 1e-6:
         height = FALLBACK_HEIGHT
         notes.append("no geometry - its pivot taken as the bottom, %g cm as the height" % FALLBACK_HEIGHT)
@@ -684,6 +678,41 @@ def plan(node, given=None):
     if info["lag_deg"] > 0.05 and not info["readable"]:
         notes.append("the breakdown sits where the top barely lags - its lag taken as the peak")
     return Plan(node, (t_a, t_m, t_b), transition, frames, info, height, notes)
+
+
+def _bottom(node, world, fixed):
+    """(bottom in object space, height) of the node standing at `world`: the low end of its shapes'
+    box along the axis nearest world up; the rotate pivot and 0 with no geometry."""
+    rows = tuple(tuple(world.getElement(i, j) for j in range(3)) for i in range(3))
+    index, sign = up_axis(rows)
+    box = object_box(node)
+    if box:
+        return bottom_and_height(box[0], box[1], index, sign, rows)
+    return fixed["rotatePivot"], 0.0
+
+
+def _pose_b(node, t_b, b_time, order, fixed, parent_at):
+    """(pose B, bottom, height): the channels at B's frame - read where B is read (`source`), and
+    when that is a tail's own last key, given back in the parent's space at B's frame.
+
+    The settle ends with the object's BOTTOM on B's world place at B's frame and its turn the
+    parent's at the end frame (`path_world`), so the last key's translate holds that place in the
+    parent's space at the END frame. Read back as it stands, a parent that moves walked B by its
+    travel between B and the end on every re-run and every Restore (2026-10-27: 46 cm a press
+    under a parent moving 2 cm a frame). The turn is the key's own; the translate is moved so the
+    bottom lands where the last key has it - exact, since the translate is linear in the place."""
+    om = _om()
+    end = pose_at(node, b_time)
+    end_world = local_matrix(end[0], end[1], order, fixed) * parent_at(b_time)
+    bottom, height = _bottom(node, end_world, fixed)
+    if abs(b_time - t_b) < 1e-6:
+        return end, bottom, height
+    here = om.MPoint(bottom) * end_world
+    parent = parent_at(t_b)
+    there = om.MPoint(bottom) * (local_matrix(end[0], end[1], order, fixed) * parent)
+    shift = om.MVector(here - there) * parent.inverse()
+    move = (end[0][0] + shift.x, end[0][1] + shift.y, end[0][2] + shift.z)
+    return (move, tuple(end[1])), bottom, height
 
 
 def _write(p, skip):
@@ -761,7 +790,14 @@ def restore(nodes):
             keys = []
             if "tM" in memo:
                 keys.append((memo["tM"], pose_at(node, memo["tM"])))
-            keys.append((memo["tB"], pose_at(node, memo["tE"])))
+            fixed, order = fixed_parts(node)
+            om = _om()
+
+            def parent_at(t, node=node):
+                return om.MMatrix(cmds.getAttr(node + ".parentMatrix[0]", time=t))
+            # B's own key back: the last key's place given back in the parent's space at B's frame
+            pose_b = _pose_b(node, float(memo["tB"]), float(memo["tE"]), order, fixed, parent_at)[0]
+            keys.append((memo["tB"], pose_b))
             skip = blocked(node)
             for i, ch in enumerate(CHANNELS):
                 if ch in skip:

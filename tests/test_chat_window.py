@@ -774,7 +774,7 @@ class Files(Base):
         self.win.file_action = lambda item, action, at=None: done.append(action)
         with mock.patch.object(self.win, "drag_aim", lambda gp: {"kind": "import", "text": "import into the scene"}):
             self.assertTrue(self.win.start_drag(self.card().item, QtCore.QPoint(5, 5)))
-            self.assertIn("import into the scene", self.win._drag["ghost"].caption_text())
+            self.assertIn("import into the scene", self.win._card_drag["ghost"].caption_text())
             self.assertEqual(self.win.drag_end(QtCore.QPoint(6, 6)), "import")
         self.assertEqual(done, ["import"])
 

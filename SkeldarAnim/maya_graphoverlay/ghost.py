@@ -53,6 +53,7 @@ LAYOUT = "skeldarGraphOverlayLayout"
 PANE = "skeldarGraphOverlayPane"
 LABEL = "Graph Editor"
 CANVAS_CLASS = "TanimCurveCanvas"
+SEEN = "skeldarGhostSeen"   # a property on the canvas the cache was made from (2026-10-27)
 CONTAINER_CLASS = "QWindowContainer"
 GHOST_OPACITY = winstyle.GHOST_ALPHA / 255.0
 GLASS_NAME = "skeldarGraphOverlayGlass"      # glass.NAME, not imported here
@@ -116,6 +117,9 @@ def delete_leftovers():
 
 class Ghost(object):
     """The panel, its window, and the canvas wrapper, held together."""
+
+    _marks = 0          # how many canvases were ever cached: each gets a mark of its own
+    _seen = None
 
     def __init__(self, parent, rect, borrow=True):
         """`rect` is the window's frame on screen (global pixels). `borrow`:
@@ -316,12 +320,18 @@ class Ghost(object):
                 pointer = int(shiboken6.getCppPointer(window)[0])
             except RuntimeError:
                 continue
-            if self._canvas is not None and self._canvas_pointer == pointer:
+            # The address alone is no identity: a canvas Maya made again can
+            # land at the freed address. The cache holds only while the live
+            # window carries the mark it was given (a new object has none).
+            if self._canvas is not None and self._canvas_pointer == pointer                     and window.property(SEEN) == self._seen:
                 return self._canvas
             if not isinstance(window, QtOpenGL.QOpenGLWindow):
                 shiboken6.invalidate(window)
                 window = shiboken6.wrapInstance(pointer,
                                                 QtOpenGL.QOpenGLWindow)
+            Ghost._marks += 1
+            self._seen = "%d:%d" % (id(self), Ghost._marks)
+            window.setProperty(SEEN, self._seen)
             self._canvas, self._canvas_pointer = window, pointer
             return self._canvas
         self._canvas, self._canvas_pointer = None, None

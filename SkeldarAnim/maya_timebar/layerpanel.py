@@ -221,7 +221,10 @@ class Panel(object):
         return None
 
     def _lanes_wanted(self):
-        return self.is_open() and self.lanes_on and self.tab == "anim"
+        return self._lanes_wanted_on(self.tab)
+
+    def _lanes_wanted_on(self, tab):
+        return self.is_open() and self.lanes_on and tab == "anim"
 
     def _lanes_shown(self):
         return self.lanes.isVisible()
@@ -664,6 +667,10 @@ class Panel(object):
             self.lane_live = None
             self._quiet_strip()
             self._call("lane_live_end", tuple(self.lane_preview) if self.lane_preview else None)
+        # the drag is over: its preview and copies go with it, as `lane_release` lets them go -
+        # left standing, the next Shift-press read as the old key drag (2026-10-27)
+        self.lane_preview = None
+        self.lane_stamped = None
 
     def lane_stamp(self):
         """S during a drag on the lanes: a key drag leaves a copy of the dragged keys
@@ -944,6 +951,11 @@ class Panel(object):
         if tab == self.tab:
             return
         self._drop_editor()
+        folded = not self._lanes_wanted_on(tab) and self._lanes_shown()
+        if folded:
+            # folded from the tab they stand on: built after the switch, they folded the new
+            # tab's rows (2026-10-27)
+            self._hide_lanes(burst=True)
         self.tab = tab
         self.scroll = 0.0
         self._set_option(TAB_VAR, tab)
@@ -957,7 +969,7 @@ class Panel(object):
         if self._lanes_wanted():
             if not self._lanes_shown():
                 self._show_lanes(burst=True)
-        elif self._lanes_shown():
+        elif self._lanes_shown() and not folded:
             self._hide_lanes(burst=True)
         self.column.invalidate()
 

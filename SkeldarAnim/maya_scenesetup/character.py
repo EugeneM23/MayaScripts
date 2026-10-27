@@ -688,7 +688,8 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
     if root_uuid:
         root = (cmds.ls(root_uuid, long=True) or [root])[0]
     if new_uuids:
-        new = [path for uuid in new_uuids for path in (cmds.ls(uuid, long=True) or [])]
+        # ONE ls for every UUID (2026-10-27): an ls each cost 0.1-0.15 s of an Add
+        new = cmds.ls(new_uuids, long=True) or []
     if root and not namespace:
         # What this import brought, for Characters > Delete (2026-10-01): a skeleton's asset can
         # carry nodes connected to nothing of it (Manny's: the dead half of a rig, a camera1),

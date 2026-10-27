@@ -1289,6 +1289,25 @@ class CardGrips(unittest.TestCase):
         self.edge._place_grips()
         self.assertEqual(self.edge.grip.geometry().x(), 60)
 
+    def test_the_follow_leaves_still_grips_alone(self):
+        """2026-10-27: placed again every 150 ms with nothing changed, a raise_ each
+        time repainted the card under the grips six times a second."""
+        self.edge.reveal()
+        self.edge._place_grips()
+        touched = []
+        for widget in (self.edge.grip, self.edge.hgrip):
+            for name in ("setGeometry", "raise_", "show", "hide"):
+                real = getattr(widget, name)
+                setattr(widget, name, lambda *a, _n=name, _r=real: (touched.append(_n), _r(*a)))
+        for _ in range(5):
+            self.edge._place_grips()
+        self.assertEqual(touched, [])
+        self.card[3] = 260                                   # the card grew: the grips move
+        self.edge._place_grips()
+        self.assertIn("setGeometry", touched)
+        g = hubstyle.px(edgerules.GRIP_PX, 1.0)
+        self.assertEqual(self.edge.hgrip.geometry().getRect(), (60, 270 - g, 280, g))
+
 
 class CardGripRules(unittest.TestCase):
 

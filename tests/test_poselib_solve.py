@@ -982,6 +982,9 @@ class SteadySession(object):
     def set(self, plug, value):
         self.last[plug] = float(value)
 
+    def keep(self, plug):
+        self.last.setdefault(plug, self.get(plug))
+
     def get(self, plug):
         return self.last.get(plug, 7.0)
 

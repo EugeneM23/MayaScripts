@@ -230,6 +230,30 @@ def _drawing_top(edge, side="left"):
         return None
 
 
+def _on_top(widget, beside=()):
+    """The widget stands above its visible siblings but those in `beside` (Qt keeps
+    them in stacking order) - two grips need not fight over the top."""
+    parent = widget.parentWidget()
+    if parent is None:
+        return True
+    try:
+        pointer = hubqt.qt().shiboken.getCppPointer
+        me = pointer(widget)[0]
+        others = set(pointer(w)[0] for w in beside if w is not None)
+        above = False
+        for child in parent.children():
+            if not (child.isWidgetType() and child.isVisible()):
+                continue
+            at = pointer(child)[0]
+            if at == me:
+                above = True
+            elif above and at not in others:
+                return False
+        return above
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def _qt_cursor():
     pos = hubqt.qt().QtGui.QCursor.pos()
     return (pos.x(), pos.y())
@@ -1268,10 +1292,17 @@ class Edge(object):
             if widget is None or not hubqt._valid(widget):
                 continue
             if out and at is not None:
-                widget.setGeometry(*at)
-                widget.show()
-                widget.raise_()
-            elif widget is self.hgrip or self.card is not None:
+                #  touched only when something changed: the follow asks every 150 ms,
+                #  and a raise_ each time repainted the card under it (a 2 ms paint
+                #  six times a second, 2026-10-27)
+                if tuple(widget.geometry().getRect()) != tuple(int(v) for v in at):
+                    widget.setGeometry(*at)
+                if not widget.isVisible():
+                    widget.show()
+                    widget.raise_()
+                elif not _on_top(widget, (self.grip, self.hgrip)):
+                    widget.raise_()
+            elif (widget is self.hgrip or self.card is not None) and widget.isVisible():
                 widget.hide()
 
     def set_height(self, logical, save=True):

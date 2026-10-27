@@ -166,6 +166,8 @@ from maya_poselib import skelsolve
 from maya_poselib import timewalk
 from maya_poselib import upper
 
+_PRESSING = keys.pressing      # bound here: a test faking `keys` keeps the press's memo
+
 __all__ = ["apply", "apply_onto", "drop_floor", "select_objects", "Blend", "UNDO_CHUNK"]
 
 UNDO_CHUNK = "skeldarAnimApply"
@@ -382,7 +384,8 @@ def _chunk(steps=None):
         cmds.autoKeyframe(state=False)
         if steps is not None:
             steps.recorded = True
-        yield
+        with _PRESSING():
+            yield
     finally:
         try:
             if auto is not None:

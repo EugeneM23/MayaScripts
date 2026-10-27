@@ -87,6 +87,8 @@ def _draw(arrow):
 def _attributes(arrow, key, frame):
     cmds.addAttr(arrow, longName=MARKER, dataType="string")
     cmds.setAttr(arrow + "." + MARKER, key, type="string")
+    import maya_markers
+    maya_markers.touch()
     cmds.addAttr(arrow, longName="frame", attributeType="long", defaultValue=int(frame))
     cmds.addAttr(arrow, longName="speed", attributeType="double", minValue=0.0,
                  defaultValue=DEFAULT_SPEED)
@@ -148,7 +150,8 @@ def create(selection=None):
 
 def arrows(rig):
     """The rig's arrows (long paths)."""
-    found = cmds.ls("*." + MARKER, recursive=True, objectsOnly=True, long=True) or []
+    import maya_markers
+    found = maya_markers.find(MARKER, commands=cmds)
     group = getattr(rig, "group", None)
     import maya_rigs
     return sorted(p for p in found if group and maya_rigs.under(p, group))

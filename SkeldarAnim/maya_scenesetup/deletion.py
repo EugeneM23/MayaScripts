@@ -451,6 +451,16 @@ def _marked(node, attr):
     return bool(node) and cmds.objExists(node) and cmds.attributeQuery(attr, node=node, exists=True)
 
 
+def _having(nodes, attr):
+    """The long paths among `nodes` that carry `attr`: ONE `ls` of their plugs (a node without
+    the attribute answers nothing). An attributeQuery a node cost 0.74 s on a rig's 1500
+    transforms for four markers; this 0.09 s (2026-10-27)."""
+    nodes = [node for node in nodes if node]
+    if not nodes:
+        return set()
+    return set(cmds.ls([node + "." + attr for node in nodes], objectsOnly=True, long=True) or [])
+
+
 def _drivers(joints):
     """Our weapons and cameras driving any of `joints` (a weapon on the floor, a camera on
     camera_root): the targets of the parentConstraints under them that carry our markers."""
@@ -677,12 +687,11 @@ def _exclusive_namespace(root, tops):
 def _armor_namespaces(core):
     from maya_scenesetup import armor
     out = []
-    for uuid in core:
-        path = _path(uuid)
-        if path and cmds.objectType(path, isAType="transform") and _marked(path, armor.NAMESPACE):
-            namespace = cmds.getAttr(path + "." + armor.NAMESPACE)
-            if namespace and namespace not in out:
-                out.append(namespace)
+    transforms = cmds.ls(list(core), type="transform", long=True) or []
+    for path in sorted(_having(transforms, armor.NAMESPACE)):
+        namespace = cmds.getAttr(path + "." + armor.NAMESPACE)
+        if namespace and namespace not in out:
+            out.append(namespace)
     return out
 
 
@@ -694,11 +703,10 @@ def _summary(char):
     counts = collections.Counter()
     nodes = list(char.parts) + (cmds.listRelatives(char.parts, allDescendents=True,
                                                    type="transform", fullPath=True) or [])
-    for node in nodes:
-        for key, attr in (("weapon", bonedrive.MARKER), ("armor piece", armor.MARKER),
-                          ("camera", camera.MARKER), ("CoM", COM_MARKER)):
-            if cmds.attributeQuery(attr, node=node, exists=True):
-                counts[key] += 1
+    nodes = cmds.ls(nodes, long=True) or []
+    for key, attr in (("weapon", bonedrive.MARKER), ("armor piece", armor.MARKER),
+                      ("camera", camera.MARKER), ("CoM", COM_MARKER)):
+        counts[key] += len(_having(nodes, attr))
     out = []
     for key in ("weapon", "armor piece"):
         if counts[key]:
@@ -839,9 +847,9 @@ def plan(chars):
     for char in chars:
         if char.kind == "skeleton":
             provenance |= recorded(char.root)[0]
-    for node in cmds.ls(list(core), type="transform", long=True) or []:
-        if cmds.attributeQuery(RECORD_NODES, node=node, exists=True):
-            provenance.update((cmds.getAttr(node + "." + RECORD_NODES) or "").split())
+    for node in sorted(_having(cmds.ls(list(core), type="transform", long=True) or [],
+                               RECORD_NODES)):
+        provenance.update((cmds.getAttr(node + "." + RECORD_NODES) or "").split())
     for uuid in sorted(provenance - core):
         path = _path(uuid)
         if not path or not cmds.objectType(path, isAType="dagNode"):
@@ -889,6 +897,27 @@ def _delete(names):
                 cmds.delete(name)
 
 
+def _existing(paths):
+    """`paths` that still stand, in their order."""
+    if not paths:
+        return []
+    standing = set(cmds.ls(paths, long=True) or [])
+    return [path for path in paths if path in standing]
+
+
+def _unlock(paths):
+    """Unlock the locked among `paths`: one query for all, one at a time when Maya
+    answers a list of another length."""
+    if not paths:
+        return
+    locks = cmds.lockNode(paths, query=True, lock=True) or []
+    if len(locks) != len(paths):
+        locks = [cmds.lockNode(path, query=True, lock=True)[0] for path in paths]
+    locked = [path for path, on in zip(paths, locks) if on]
+    if locked:
+        cmds.lockNode(locked, lock=False)
+
+
 def _untrack_com(core):
     import sys
     engine = sys.modules.get("maya_com.engine")
@@ -923,15 +952,15 @@ def execute(p, unowned=0):
             notes.append(kept_note(moved))
         _untrack_com(p.core)
         everything = set(p.core) | set(p.doomed)
-        for uuid in everything:
-            path = _path(uuid)
-            if path and cmds.lockNode(path, query=True, lock=True)[0]:
-                cmds.lockNode(path, lock=False)
+        #  every UUID resolved ONCE (a delete renames nothing that stays), the locks
+        #  read in one query (2026-10-27: a query a node cost 0.25 s on one rig)
+        paths = [path for path in (_path(uuid) for uuid in everything) if path]
+        _unlock(paths)
         _delete(outermost([path for path in (_path(_uuid(t)) for t in p.tops) if path]))
-        left = [path for path in (_path(uuid) for uuid in everything) if path]
+        left = _existing(paths)
         dag = outermost([path for path in left if cmds.objectType(path, isAType="dagNode")])
         _delete(dag)
-        _delete([path for path in (_path(uuid) for uuid in everything) if path])
+        _delete(_existing(paths))
         layers = _delete_layers(p.layers)
         if layers:
             notes.append("{0} deleted: {1}.".format(

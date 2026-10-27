@@ -46,19 +46,75 @@ def _scope():
         return None
 
 
-def _kq(**flags):
-    """`keyframe -q` over the scope: the selection's, or the active layer's curves."""
+#  shapes Maya's `-shape` walk combs attribute by attribute (a skinned mesh's every
+#  vertex plug): a keyframe query on a selected character mesh took 0.9-1.0 s,
+#  and the strip asks twice a selection (2026-10-27, measured in a GUI Maya)
+GEOMETRY = ["mesh", "nurbsSurface", "subdiv", "lattice"]
+
+
+def _geometry_targets():
+    """None while Maya's own walk of the selection is quick (no geometry shape under
+    it - a rig control's curve is no cost). Else what to name instead, with
+    `shape=False`: the selection without its shapes, plus the time curves keying
+    any shape under it directly - what the walk would have found, controlPoints
+    left out as Maya leaves them out."""
+    sel = cmds.ls(selection=True, long=True) or []
+    if not sel:
+        return None
+    picked = cmds.ls(sel, shapes=True, long=True) or []
+    transforms = cmds.ls(sel, transforms=True, long=True) or []
+    heavy = cmds.ls(picked, type=GEOMETRY) if picked else []
+    if not heavy and transforms:
+        heavy = cmds.listRelatives(transforms, shapes=True, fullPath=True, type=GEOMETRY) or []
+    if not heavy:
+        return None
+    shapes = set(picked)
+    if transforms:
+        shapes.update(cmds.listRelatives(transforms, shapes=True, fullPath=True) or [])
+    pairs = cmds.listConnections(sorted(shapes), source=True, destination=False,
+                                 type="animCurve", connections=True, plugs=True) or []
+    curves = set()
+    for dest, src in zip(pairs[0::2], pairs[1::2]):
+        attr = dest.split(".", 1)[-1]
+        if attr.startswith(("controlPoints", "pnts")):
+            continue
+        curves.add(src.split(".")[0])
+    picked = set(picked)
+    return [n for n in sel if n not in picked] + sorted(curves)
+
+
+_WALK = object()     # Maya's own walk of the selection
+
+
+def _where():
+    """What a key read or command acts on: the active layer's curves (a list, maybe
+    empty), the selection named explicitly (`("named", targets)`), or `_WALK`."""
     scope = _scope()
-    if scope is None:
+    if scope is not None:
+        return scope
+    targets = _geometry_targets()
+    return _WALK if targets is None else ("named", targets)
+
+
+def _kq(where=None, **flags):
+    """`keyframe -q` over the scope: the selection's, or the active layer's curves.
+    `where` (from `_where()`) saves the lookup when one read asks twice."""
+    where = _where() if where is None else where
+    if where is _WALK:
         return cmds.keyframe(q=True, **flags)
-    return cmds.keyframe(scope, q=True, **flags) if scope else []
+    if isinstance(where, tuple):
+        return cmds.keyframe(where[1], q=True, shape=False, **flags) if where[1] else []
+    return cmds.keyframe(where, q=True, **flags) if where else []
 
 
 def _on(command, **flags):
     """A key command over the scope; nothing when the active layer holds none."""
     scope = _scope()
     if scope is None:
-        return command(**flags)
+        targets = None if command is cmds.pasteKey else _geometry_targets()
+        if targets is None:
+            return command(**flags)
+        return command(targets, shape=False, **flags) if targets else None
     return command(scope, **flags) if scope else None
 
 
@@ -68,8 +124,9 @@ def keys():
     if not cmds.ls(selection=True):
         return [], []
     try:
-        times = _kq(timeChange=True) or []
-        broken = _kq(breakdown=True) or []
+        where = _where()
+        times = _kq(where, timeChange=True) or []
+        broken = _kq(where, breakdown=True) or []
     except Exception:                                        # noqa: BLE001 - nothing keyable picked
         return [], []
     bd = sorted(set(round(t, 4) for t in broken))
@@ -600,21 +657,26 @@ def _put_key(curve, t, data):
     """`data` (`_key_data`) written at `t`, replacing a key standing there."""
     span = (t, t)
     cmds.setKeyframe(curve, time=(t,), value=data["value"], breakdown=data["breakdown"])
-    cmds.keyTangent(curve, edit=True, time=span, lock=False)
-    for key, flag in (("itt", "inTangentType"), ("ott", "outTangentType")):
-        if data[key]:
-            cmds.keyTangent(curve, edit=True, time=span, **{flag: data[key]})
+    # three keyTangent calls a key where there were up to seven (2026-10-27: a scale drag
+    # over a rig's 271 curves made 77k calls, 1.6 s): unlocked with its types, then the
+    # fixed sides' angles and weights, then the lock
+    types = dict((flag, data[key]) for key, flag in (("itt", "inTangentType"),
+                                                       ("ott", "outTangentType")) if data[key])
+    cmds.keyTangent(curve, edit=True, time=span, lock=False, **types)
+    fixed = {}
     if data["itt"] == "fixed" and data["ia"] is not None:
-        cmds.keyTangent(curve, edit=True, time=span, inAngle=data["ia"])
+        fixed["inAngle"] = data["ia"]
     if data["ott"] == "fixed" and data["oa"] is not None:
-        cmds.keyTangent(curve, edit=True, time=span, outAngle=data["oa"])
+        fixed["outAngle"] = data["oa"]
     # a weight only on a fixed side: Maya works an auto / spline / linear side's weight
     # out from the neighbours, and a weight written on it turns it fixed (measured
     # 2026-10-20: an auto key on a weighted curve came back fixed, its angle 0)
     if data["weighted"] and data["itt"] == "fixed" and data["iw"] is not None:
-        cmds.keyTangent(curve, edit=True, time=span, inWeight=data["iw"])
+        fixed["inWeight"] = data["iw"]
     if data["weighted"] and data["ott"] == "fixed" and data["ow"] is not None:
-        cmds.keyTangent(curve, edit=True, time=span, outWeight=data["ow"])
+        fixed["outWeight"] = data["ow"]
+    if fixed:
+        cmds.keyTangent(curve, edit=True, time=span, **fixed)
     if data["lock"] is not None:
         cmds.keyTangent(curve, edit=True, time=span, lock=bool(data["lock"]))
 

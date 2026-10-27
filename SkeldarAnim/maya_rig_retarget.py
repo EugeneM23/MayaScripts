@@ -246,29 +246,46 @@ def _parent_space_driver(src, dst):
 
 
 def transfer_bone(src, dst, start, end, relative=False):
-    """The rig's bone onto the source bone's track: constrain, bake, release.
+    """One rig bone onto one source bone's track (`transfer_bones` with one pair)."""
+    transfer_bones([(src, dst)], start, end, relative=relative)
 
-    World space by default; `relative` takes the source bone's pose relative to its
-    parent onto the rig bone's parent instead (`helper_space`). The bone's own keys
+
+def transfer_bones(pairs, start, end, relative=False):
+    """The rig's bones onto the source bones' tracks: constrain, bake, release.
+
+    World space by default; `relative` takes each source bone's pose relative to its
+    parent onto the rig bone's parent instead (`helper_space`). The bones' own keys
     are cut FIRST: constraining a keyed channel splices a pairBlend in (trap 37's
     mechanism) and a second Bake on the same rig would otherwise blend the new take
     with the old one.
+
+    Every pair is constrained first and baked in ONE simulated walk (2026-10-27): one
+    bakeResults a bone walked the take four times, 1.84 s for Manny's four helpers
+    against 0.50 s together, every key the same.
     """
-    cmds.cutKey(dst, attribute=_CHANNELS, clear=True)
-    driver, temp = (_parent_space_driver(src, dst) if relative else (src, []))
-    constraint = cmds.parentConstraint(driver, dst)[0]
-    maya_timewarp.call(cmds.bakeResults, dst, time=(start, end), attribute=_CHANNELS, simulation=False,
-                     sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=False,
-                     sparseAnimCurveBake=False)
+    pairs = [(src, dst) for src, dst in pairs]
+    if not pairs:
+        return
+    dsts = [dst for _src, dst in pairs]
+    cmds.cutKey(dsts, attribute=_CHANNELS, clear=True)
+    constraints, temp = [], []
+    for src, dst in pairs:
+        driver, nodes = (_parent_space_driver(src, dst) if relative else (src, []))
+        temp.extend(nodes)
+        constraints.append(cmds.parentConstraint(driver, dst)[0])
+    maya_timewarp.call(cmds.bakeResults, dsts, time=(start, end), attribute=_CHANNELS, simulation=True,
+                       sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=False,
+                       sparseAnimCurveBake=False)
     # the relative driver's decomposed rotation wraps, so the bake keeps a
     # different euler from key to key: made continuous (2026-09-30)
     from maya_scenesetup import bonedrive
-    bonedrive.euler_filter(dst)
-    cmds.delete(constraint)
+    for dst in dsts:
+        bonedrive.euler_filter(dst)
+    cmds.delete(constraints)
     for node in temp:
         if cmds.objExists(node):
             cmds.delete(node)
-    cmds.delete(dst, staticChannels=True, unitlessAnimationCurves=False,
+    cmds.delete(dsts, staticChannels=True, unitlessAnimationCurves=False,
                 hierarchy="none", controlPoints=False, shape=True)
 
 
@@ -300,8 +317,8 @@ def carry_helpers(source_root, rig_root, start, end, relative=False):
                 links[dst[name]] = weapon
                 bonedrive.unlink(dst[name])
     moves, skipped = helper_plan(src, dst, _foreign(dst))
-    for _name, source_path, rig_path in moves:
-        transfer_bone(source_path, rig_path, start, end, relative=relative)
+    transfer_bones([(source_path, rig_path) for _name, source_path, rig_path in moves],
+                   start, end, relative=relative)
     for bone, weapon in links.items():
         if cmds.objExists(weapon) and cmds.objExists(bone):
             bonedrive.relink(weapon, bone)

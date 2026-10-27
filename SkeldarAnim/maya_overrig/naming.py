@@ -77,11 +77,15 @@ def detect_prefix(names, known_names):
     leaves = set(names)
     baseline = len(leaves & known)
 
+    # every proper suffix of a name looked up in the known set: the same (name,
+    # prefix) pairs as testing each name against each known name, without the
+    # names x known-names loop (2.5 ms a call on a UE skeleton, asked several times
+    # a selection by the weapon and connection cards - 2026-10-27)
     counts = {}
     for leaf_name in leaves:
-        for known_name in known:
-            if len(leaf_name) > len(known_name) and leaf_name.endswith(known_name):
-                candidate = leaf_name[:-len(known_name)]
+        for cut in range(1, len(leaf_name)):
+            if leaf_name[cut:] in known:
+                candidate = leaf_name[:cut]
                 counts[candidate] = counts.get(candidate, 0) + 1
 
     if not counts:

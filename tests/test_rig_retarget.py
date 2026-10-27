@@ -350,16 +350,64 @@ class TestBakeOrchestration(unittest.TestCase):
 
 
 class HelperBake(unittest.TestCase):
+    """The helper bones carried from the source: cut, constrained, baked in ONE
+    simulated walk (2026-10-27: one bake a bone walked the take four times),
+    euler-filtered, released."""
+
+    class Cmds(object):
+        def __init__(self):
+            self.log = []
+
+        def cutKey(self, nodes, **kw):
+            self.log.append(("cut", tuple(nodes)))
+
+        def parentConstraint(self, driver, dst):
+            self.log.append(("constrain", driver, dst))
+            return [dst + "_pc"]
+
+        def bakeResults(self, nodes, **kw):
+            self.log.append(("bake", tuple(nodes), kw["simulation"], kw["time"]))
+
+        def delete(self, nodes, **kw):
+            self.log.append(("delete", tuple(nodes) if isinstance(nodes, list) else nodes,
+                             bool(kw.get("staticChannels"))))
+
+        def objExists(self, node):
+            return True
+
+    def setUp(self):
+        self.cmds = self.Cmds()
+        self.saved = rr.cmds
+        rr.cmds = self.cmds
+        from maya_scenesetup import bonedrive
+        self.bonedrive, self.filter = bonedrive, bonedrive.euler_filter
+        bonedrive.euler_filter = lambda node: self.cmds.log.append(("filter", node))
+
+    def tearDown(self):
+        rr.cmds = self.saved
+        self.bonedrive.euler_filter = self.filter
+
+    def test_every_bone_is_baked_in_one_simulated_walk(self):
+        rr.transfer_bones([("s|weapon_r", "d|weapon_r"), ("s|camera_root", "d|camera_root")], 0, 40)
+        bakes = [entry for entry in self.cmds.log if entry[0] == "bake"]
+        self.assertEqual(bakes, [("bake", ("d|weapon_r", "d|camera_root"), True, (0, 40))])
+        kinds = [entry[0] for entry in self.cmds.log]
+        self.assertEqual(kinds, ["cut", "constrain", "constrain", "bake", "filter", "filter",
+                                 "delete", "delete"])
 
     def test_a_carried_helper_bone_is_euler_filtered_after_its_bake(self):
         """2026-09-30: the relative driver's decomposed rotation wraps, and a UE
         take on the Creep baked the same rotations as different eulers from
         key to key - the filter follows the bake, before the constraint goes."""
-        import inspect
-        source = inspect.getsource(rr.transfer_bone)
-        self.assertIn("bonedrive.euler_filter(dst)", source)
-        self.assertLess(source.index("bakeResults"), source.index("euler_filter"))
-        self.assertLess(source.index("euler_filter"), source.index("cmds.delete(constraint)"))
+        rr.transfer_bone("s|weapon_r", "d|weapon_r", 0, 40)
+        kinds = [entry[0] for entry in self.cmds.log]
+        self.assertLess(kinds.index("bake"), kinds.index("filter"))
+        self.assertLess(kinds.index("filter"), kinds.index("delete"))
+        self.assertEqual(self.cmds.log[kinds.index("delete")], ("delete", ("d|weapon_r_pc",), False))
+
+    def test_nothing_to_carry_touches_nothing(self):
+        rr.transfer_bones([], 0, 40)
+        self.assertEqual(self.cmds.log, [])
 
 
 if __name__ == "__main__":

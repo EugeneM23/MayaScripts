@@ -423,10 +423,11 @@ def _wind_sliders():
 def refresh(*_):
     if not cmds.text(SUBTITLE, exists=True):
         return
-    _fill_list()
-    _subtitle()
-    _collider_fields()
-    _wind_sliders()
+    with setup.reading():                    # the chains and the wind looked up once
+        _fill_list()
+        _subtitle()
+        _collider_fields()
+        _wind_sliders()
 
 
 # --------------------------------------------------------------------- build

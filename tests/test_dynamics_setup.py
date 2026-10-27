@@ -187,3 +187,54 @@ class Names(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadingMemo(unittest.TestCase):
+    """2026-10-27: a marker lookup scans the whole scene (~12 ms with three rigs); inside
+    `setup.reading()` each marker is looked up once, outside it every call looks again."""
+
+    class Ls(object):
+        def __init__(self):
+            self.asked = []
+
+        def ls(self, pattern, **kw):
+            self.asked.append(pattern)
+            return ["|a|" + pattern.split(".")[1]]
+
+        def nodeType(self, node):
+            return "transform"
+
+    def test_inside_one_lookup_a_marker_outside_every_time(self):
+        fake = self.Ls()
+        with mock.patch.object(setup, "cmds", fake), \
+                mock.patch.object(setup.scope, "active_only", lambda found, cmds: list(found)):
+            with setup.reading():
+                first = setup.chains()
+                second = setup.chains()
+                setup.wind()
+                setup.wind()
+            self.assertEqual(first, second)
+            self.assertEqual(sorted(fake.asked), sorted(["*." + setup.CHAIN_MARKER,
+                                                         "*." + setup.WIND_MARKER]))
+            setup.chains()
+            setup.chains()
+            self.assertEqual(len(fake.asked), 4)
+
+    def test_nested_passes_share_the_outer_memo(self):
+        fake = self.Ls()
+        with mock.patch.object(setup, "cmds", fake), \
+                mock.patch.object(setup.scope, "active_only", lambda found, cmds: list(found)):
+            with setup.reading():
+                setup.chains()
+                with setup.reading():
+                    setup.chains()
+            self.assertEqual(len(fake.asked), 1)
+            self.assertEqual(setup._MEMO, [])
+
+    def test_a_returned_list_is_the_caller_s_own(self):
+        fake = self.Ls()
+        with mock.patch.object(setup, "cmds", fake), \
+                mock.patch.object(setup.scope, "active_only", lambda found, cmds: list(found)):
+            with setup.reading():
+                setup._marked("m").append("junk")
+                self.assertEqual(setup._marked("m"), ["|a|m"])

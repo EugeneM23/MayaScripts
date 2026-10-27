@@ -215,6 +215,8 @@ from maya_poselib import keys
 from maya_poselib import posemath as pm
 from maya_poselib.skelsolve import Solution, joint_channels
 
+_MEMO = keys.memo      # bound here: a test faking `keys` keeps the press's memo
+
 __all__ = ["Solution", "Base", "Solver", "bases", "drive_matrices", "solve", "controls_for",
            "measure", "MAIN_KEPT"]
 
@@ -503,17 +505,64 @@ def _one(rig, leaf):
     return found[0] if len(found) == 1 else None
 
 
+_DAG = []       # {node: MDagPath} while a `_fresh` block reads under DG, innermost last
+
+
+def _dag_path(node):
+    """The node's MDagPath while the solve reads under DG, else None: the matrices are read off
+    the path, 0.011 ms against getAttr's 0.032 a read and equal in DG after a setAttr (measured
+    2026-10-27; under the parallel manager a scripted set can read stale either way, trap 207,
+    which is why the solve reads under DG at all)."""
+    if not _DAG or _DAG[-1] is None:
+        return None
+    paths = _DAG[-1]
+    if node not in paths:
+        try:
+            selection = om.MSelectionList()
+            selection.add(node)
+            paths[node] = selection.getDagPath(0)
+        except (RuntimeError, ValueError, TypeError, AttributeError):
+            paths[node] = None
+    return paths[node]
+
+
+def _live():
+    """Is `cmds` Maya's own, in a running Maya? A test's fake never has a DAG path read: an
+    OpenMaya selection asked outside a running Maya crashes the interpreter."""
+    import sys
+    real = sys.modules.get("maya.cmds")
+    return cmds is real and hasattr(real, "ls")
+
+
 def _world(node):
+    path = _dag_path(node)
+    if path is not None:
+        try:
+            return path.inclusiveMatrix()
+        except RuntimeError:
+            pass
     return om.MMatrix(cmds.getAttr(node + ".worldMatrix[0]"))
 
 
 def _parent_world(node):
+    path = _dag_path(node)
+    if path is not None:
+        try:
+            return path.exclusiveMatrix()
+        except RuntimeError:
+            pass
     return om.MMatrix(cmds.getAttr(node + ".parentMatrix[0]"))
 
 
 def _name(path):
+    names = _MEMO("names")
+    if names is not None and path in names:
+        return names[path]
     found = cmds.ls(path) or []
-    return found[0] if len(found) == 1 else path
+    name = found[0] if len(found) == 1 else path
+    if names is not None:
+        names[path] = name
+    return name
 
 
 def game_bones(rig):
@@ -645,9 +694,11 @@ def _fresh(tweaks=None, skip=()):
             tweaks = keys.Tweaks()
         cmds.evaluationManager(mode=FRESH_MODE)
         tweaks.restore(skip)
+    _DAG.append({} if (FRESH_MODE if switch else mode) == "off" and _live() else None)
     try:
         yield
     finally:
+        _DAG.pop()
         if switch:
             cmds.evaluationManager(mode=mode)
             tweaks.restore(skip)
@@ -704,6 +755,15 @@ class _Session(object):
         cmds.setAttr(plug, value)
         self.last[plug] = float(value)
 
+    def keep(self, plug):
+        """The plug's value recorded as written, without writing it: what an animation's walk
+        keys for a channel the solve left as it stands. Setting a channel to its own value
+        dirtied the rig for nothing (2026-10-27)."""
+        if plug not in self.last:
+            value = float(cmds.getAttr(plug))
+            self.original.setdefault(plug, value)
+            self.last[plug] = value
+
     def get(self, plug):
         return self.last[plug] if plug in self.last else float(cmds.getAttr(plug))
 
@@ -716,7 +776,11 @@ class _Session(object):
         return _name(node) + "." + attr
 
     def restore(self):
+        """Every original back, newest first - but a plug whose last write WAS its original:
+        it holds that value already."""
         for plug in reversed(list(self.original)):
+            if self.last.get(plug) == self.original[plug]:
+                continue
             try:
                 cmds.setAttr(plug, self.original[plug])
             except RuntimeError:
@@ -1351,7 +1415,7 @@ class _Job(object):
         plugs = [node + "." + ch for ch in TRANSLATE]
         if self.session.allowed(plugs):
             for plug in plugs:
-                self.session.set(plug, self.session.get(plug))
+                self.session.keep(plug)
 
     def _shows_fk(self, leaf):
         """Does the member's game bone follow its FK half - its limb, or the spine for

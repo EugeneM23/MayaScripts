@@ -40,6 +40,7 @@ STATUS = "skeldarGraphOverlayStatus"
 BUTTON = "skeldarGraphOverlayButton"
 
 FOLLOW_MS = 100
+CONNECTED = "skeldarOverlayConnected"   # a property on the canvas whose frames we key
 MIN_UPDATE_S = 0.015
 MIN_CHROME_S = 0.03
 # The chrome is first captured this long after switching on: the borrowed
@@ -268,9 +269,23 @@ def _connect_canvas():
     if canvas is None:
         return
     canvas.frameSwapped.connect(_on_swap)
+    try:
+        canvas.setProperty(CONNECTED, True)
+    except (RuntimeError, AttributeError):
+        pass
     _STATE.canvas = canvas
     _STATE.canvas_pointer = _STATE.ghost.canvas_pointer()
     _on_swap()
+
+
+def _connected(canvas):
+    """Does the live canvas carry the mark `_connect_canvas` gave the one it connected?"""
+    if canvas is None:
+        return True                     # nothing to connect: nothing to follow
+    try:
+        return bool(canvas.property(CONNECTED))
+    except (RuntimeError, AttributeError):
+        return True
 
 
 def _on_swap():
@@ -513,8 +528,10 @@ def _follow_once():
         glass_.keep_click_through()
     ghost_.keep_invisible()
     # Re-parenting a panel can recreate its canvas window: follow the new
-    # one, compared by address - never by asking the old wrapper.
-    if ghost_.canvas_pointer() != _STATE.canvas_pointer:
+    # one, compared by address - never by asking the old wrapper - and, at the
+    # same address, by the mark the connected one carries (2026-10-27: a new
+    # canvas can land where the old one was freed, and nothing drove the glass).
+    if ghost_.canvas_pointer() != _STATE.canvas_pointer or not _connected(ghost_.canvas()):
         _connect_canvas()
     _STATE.ticks += 1
     if _STATE.ticks % REWATCH_TICKS == 0:

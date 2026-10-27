@@ -289,7 +289,46 @@ def classes():
             halos[key] = picture
         return picture
 
+    ingots = {}
+    glows = {}
+
+    def _ratio(p):
+        try:
+            return float(p.device().devicePixelRatioF()) or 1.0
+        except Exception:                                    # noqa: BLE001
+            return 1.0
+
     def ingot(p, rect, hex_, ui, shadow=True):
+        """A steel key on a whole frame, drawn once per size, place within its pixel,
+        colour and scale into a picture (2026-10-27: playback lights twenty keys at a
+        time, and drawing each ingot's gradient and faces cost 3.7 ms a frame - with a
+        picture it is one drawPixmap). Sizes and the place inside the pixel are kept to
+        a quarter pixel."""
+        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        if w <= 0 or h <= 0:
+            return
+        dpr = _ratio(p)
+        qw, qh = round(w * 4) / 4.0, round(h * 4) / 4.0
+        bx, by = math.floor(x), math.floor(y)
+        ox, oy = round((x - bx) * 4) / 4.0, round((y - by) * 4) / 4.0
+        pad = int(math.ceil(3 * ui)) + 1
+        key = (qw, qh, ox, oy, hex_, round(ui, 3), bool(shadow), dpr)
+        picture = ingots.get(key)
+        if picture is None:
+            if len(ingots) >= 800:
+                ingots.clear()
+            pw, ph = qw + ox + 2 * pad, qh + oy + 2 * pad
+            picture = QtGui.QPixmap(int(math.ceil(pw * dpr)), int(math.ceil(ph * dpr)))
+            picture.setDevicePixelRatio(dpr)
+            picture.fill(Qt.transparent)
+            ip = QtGui.QPainter(picture)
+            ip.setRenderHint(QtGui.QPainter.Antialiasing)
+            draw_ingot(ip, QtCore.QRectF(pad + ox, pad + oy, qw, qh), hex_, ui, shadow)
+            ip.end()
+            ingots[key] = picture
+        p.drawPixmap(QtCore.QPointF(bx - pad, by - pad), picture)
+
+    def draw_ingot(p, rect, hex_, ui, shadow=True):
         """A steel key on a whole frame (2026-10-20, the mockup's «фаска»): a bevelled bar -
         a soft shadow under it, the face lit at its top and shaded to its bottom, a light
         left face and a dark right one, a light top edge and a dark bottom edge."""
@@ -330,13 +369,35 @@ def classes():
         if level <= 0.01:
             return
         c = rect.center()
-        reach = max(rect.width(), rect.height()) * look.STEEL_GLOW_REACH
-        g = QtGui.QRadialGradient(c, reach)
-        g.setColorAt(0.0, colour(hex_, 255 * min(1.0, level)))
-        g.setColorAt(1.0, colour(hex_, 0))
+        reach = round(max(rect.width(), rect.height()) * look.STEEL_GLOW_REACH * 2) / 2.0
+        if reach <= 0:
+            return
+        dpr = _ratio(p)
+        key = (hex_, reach, dpr)
+        picture = glows.get(key)
+        if picture is None:
+            if len(glows) >= 200:
+                glows.clear()
+            side = int(math.ceil(2 * reach * dpr))
+            picture = QtGui.QPixmap(side, side)
+            picture.setDevicePixelRatio(dpr)
+            picture.fill(Qt.transparent)
+            gp = QtGui.QPainter(picture)
+            g = QtGui.QRadialGradient(QtCore.QPointF(reach, reach), reach)
+            g.setColorAt(0.0, colour(hex_, 255))
+            g.setColorAt(1.0, colour(hex_, 0))
+            gp.fillRect(QtCore.QRectF(0, 0, 2 * reach, 2 * reach), QtGui.QBrush(g))
+            gp.end()
+            glows[key] = picture
+        #  the full-strength picture at `level` of it: a premultiplied texel times the
+        #  painter's opacity is the gradient drawn with that alpha
+        opacity = p.opacity()
+        p.setOpacity(opacity * min(1.0, level))
         p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-        p.fillRect(QtCore.QRectF(c.x() - reach, c.y() - reach, 2 * reach, 2 * reach), QtGui.QBrush(g))
+        p.drawPixmap(QtCore.QRectF(c.x() - reach, c.y() - reach, 2 * reach, 2 * reach), picture,
+                     QtCore.QRectF(picture.rect()))
         p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+        p.setOpacity(opacity)
 
     def add_key(path, x, h, ui, whole, width=None, cell=None, grow=0.0):
         """A key's mark into `path`: on a whole frame its frame's cell filled, with a
@@ -1301,7 +1362,8 @@ def classes():
                     #  a steel ingot: the mockup's round glow, then the bevelled bar
                     p.setOpacity(opacity * burst)
                     ingot_glow(p, rect, hex_, look.steel_glow(heat, max(self.key_lift.get(frame, 0.0), lit)))
-                    face = hex_ if tint <= 0.01 else blend(hex_, RIM, tint * 0.7).name()
+                    #  the tint in 32 steps: a fading key reuses its pictures
+                    face = hex_ if tint <= 0.01 else blend(hex_, RIM, round(tint * 32) / 32.0 * 0.7).name()
                     ingot(p, rect, face, ui, shadow=False)
                     continue
                 if lift > 0.01:
@@ -1348,13 +1410,13 @@ def classes():
         def update(self, *args):
             super(Timeline, self).update(*args)
             caret = getattr(self.strip, "caret", None)
-            if caret is not None:
+            if caret is not None and caret.stale():
                 caret.update()
 
         def repaint(self, *args):
             super(Timeline, self).repaint(*args)
             caret = getattr(self.strip, "caret", None)
-            if caret is not None:
+            if caret is not None and caret.stale():
                 caret.repaint()
 
         # input ------------------------------------------------------------
@@ -1666,6 +1728,22 @@ def classes():
             return font
 
         # painting -------------------------------------------------------------
+        def _shown(self):
+            """What the line's picture reads: the time, the track, the flag's lift."""
+            st = self.strip
+            t = st.timeline.track()
+            return (st.state.get("now"), t.v0, t.v1, t.left, t.right, self.width(), self.height(),
+                    round(self.lift, 3), self.aim, st.opening_of(self.index), st.ui)
+
+        def stale(self):
+            """The timeline repainting asks the line too only when the line would look
+            different: the keys' glow and fade repaint the timeline sixty times a
+            second, the line stays as it was (2026-10-27, half a millisecond a paint)."""
+            try:
+                return self._shown() != getattr(self, "_painted", None)
+            except Exception:                                # noqa: BLE001
+                return True
+
         def paintEvent(self, _event):
             try:
                 self._paint()
@@ -1677,6 +1755,10 @@ def classes():
         def _paint(self):
             st = self.strip
             tk, ui = st.tokens, st.ui
+            try:
+                self._painted = self._shown()
+            except Exception:                                # noqa: BLE001
+                self._painted = None
             t = st.timeline.track()
             w, h = float(self.width()), float(self.height())
             scale, opacity = st.opening_of(self.index)
@@ -2261,7 +2343,10 @@ def classes():
             self.call(name, *args)
             self.refresh()
 
-        def refresh(self, keys=False, force=False):
+        def refresh(self, keys=False, force=False, idle=False):
+            """Everything read again and painted. `idle` (the 250 ms tick): painted only
+            when what the strip shows changed - four repaints a second of an unchanged
+            strip cost ~5 ms a second for nothing (2026-10-27)."""
             light = self.call("light")
             if light:
                 self.state.update(light)
@@ -2286,7 +2371,14 @@ def classes():
                     self.keys_set = []
                 self.marks = self.call("bookmarks") or []
             self._sound()
+            if idle and not read_keys:
+                shown = self._shown()
+                if shown == getattr(self, "_shown_last", None):
+                    if self.layer_panel is not None and self.layer_panel.is_open():
+                        self.layer_panel.refresh(keys=False, force=force)
+                    return
             self._paint_widgets()
+            self._shown_last = self._shown()
             self.timeline.update()
             self.range.update()
             #  the open layer panel reads with the strip (2026-10-18 final review): the
@@ -2448,7 +2540,7 @@ def classes():
         def tick(self):
             try:
                 if not self.timeline.drag and not self.range.drag:
-                    self.refresh()
+                    self.refresh(idle=True)
             except Exception:                                # noqa: BLE001 - four times a second
                 if not getattr(self, "_tick_failed", False):
                     print(traceback.format_exc())
@@ -2457,6 +2549,14 @@ def classes():
         def show_now(self):
             if not self.field.hasFocus():
                 self.field.setText(look.frame_text(self.state["now"]))
+
+        def _shown(self):
+            """What the strip's painting reads, to tell an idle refresh that changed
+            nothing (`refresh(idle=True)`)."""
+            return (tuple(sorted((k, repr(v)) for k, v in self.state.items())),
+                    tuple(self.keys), tuple(self.breakdowns), repr(self.marks),
+                    repr(self.call("layer_state")), self.steel, self.motion,
+                    bool(self.layer_panel and self.layer_panel.is_open()))
 
         def _paint_widgets(self):
             s = self.state

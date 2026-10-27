@@ -150,14 +150,35 @@ def _shown():
         return True
 
 
+def _read(box):
+    """The box read whole, remembered as current for what changed last."""
+    state = _state()
+    state["read_gen"], state["read_box"], state["missed"] = state.get("gen", 0), id(box), False
+    box.refresh()
+    _watch_nodes(box.objects)
+
+
+def _current_read(box):
+    """The box already read for every change since (2026-10-27: a selection read it
+    twice - its own callback and the side panel's refresh - 6-9 ms each)."""
+    state = _state()
+    return (not state.get("missed") and state.get("read_box") == id(box)
+            and state.get("read_gen") == state.get("gen", 0))
+
+
 def refresh():
-    """Everything read again (the side panel's refresh, a selection)."""
+    """Everything read again (the side panel's refresh, a selection) - unless the
+    box is current already."""
     box = current()
     if box is None:
         return
+    state = _state()
+    if state.get("pending") == "full":
+        state["pending"] = None          # this read is the one the callbacks asked for
+    if _current_read(box):
+        return
     try:
-        box.refresh()
-        _watch_nodes(box.objects)
+        _read(box)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -166,6 +187,8 @@ def _schedule(kind):
     """A full read ('full') or the values only ('values'), once, when the event loop
     next turns - many callbacks in one command make one read."""
     state = _state()
+    if kind == "full":
+        state["gen"] = state.get("gen", 0) + 1
     if state.get("pending") == "full":
         return
     first = state.get("pending") is None
@@ -204,13 +227,18 @@ def _run_pending():
     if state.get("after_drag") and not _dragging_keys():
         state["after_drag"] = False
         kind = "full"                   # the drag let go: everything read again, once
+    if kind is None:
+        return                          # read already (the side panel's refresh)
     box = current()
-    if box is None or not _shown():
+    if box is None:
+        return
+    if not _shown():
+        state["missed"] = True          # the next refresh reads it whole
         return
     try:
         if kind == "full":
-            box.refresh()
-            _watch_nodes(box.objects)
+            if not _current_read(box):
+                _read(box)
         else:
             box.on_values()
     except Exception:                                        # noqa: BLE001
@@ -219,7 +247,10 @@ def _run_pending():
 
 def _time_changed(*_args):
     box = current()
-    if box is None or not _shown():
+    if box is None:
+        return
+    if not _shown():
+        _state()["missed"] = True       # values moved unseen: read again when shown
         return
     try:
         box.on_time()

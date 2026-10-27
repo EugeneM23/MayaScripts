@@ -310,3 +310,46 @@ class MarkedNearTop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadingPass(unittest.TestCase):
+    """2026-10-27: inside `maya_rigs.reading()` the rigs are read once - a card's refresh
+    asked four times a selection; outside every call reads; nested passes share one."""
+
+    def setUp(self):
+        self.saved = maya_rigs._rigs
+        self.reads = []
+        maya_rigs._rigs = lambda: self.reads.append(1) or ["rigA", "rigB"]
+
+    def tearDown(self):
+        maya_rigs._rigs = self.saved
+
+    def test_once_inside_every_time_outside(self):
+        with maya_rigs.reading():
+            first = maya_rigs.rigs()
+            first.append("junk")                       # the caller's own list
+            self.assertEqual(maya_rigs.rigs(), ["rigA", "rigB"])
+            with maya_rigs.reading():
+                maya_rigs.rigs()
+        self.assertEqual(len(self.reads), 1)
+        maya_rigs.rigs()
+        maya_rigs.rigs()
+        self.assertEqual(len(self.reads), 3)
+        self.assertEqual(maya_rigs._PASS, [])
+
+    def test_a_card_refresh_runs_in_a_pass(self):
+        import maya_hubqt
+        seen = []
+
+        def refresh():
+            maya_rigs.rigs()
+            maya_rigs.rigs()
+            seen.append(bool(maya_rigs._PASS))
+        saved = maya_hubqt.available
+        maya_hubqt.available = lambda: False           # no Qt: run now
+        try:
+            maya_hubqt.when_seen("anything", refresh)
+        finally:
+            maya_hubqt.available = saved
+        self.assertEqual(seen, [True])
+        self.assertEqual(len(self.reads), 1)

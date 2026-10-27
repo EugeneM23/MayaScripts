@@ -171,6 +171,7 @@ def when_seen(name, fn):
     next time it is shown - the last one asked for wins. Now without Maya's UI,
     for a control Qt cannot find, or when anything about the widgets goes
     wrong: a refresh is never lost."""
+    fn = _in_a_pass(fn)
     host = None
     try:
         if available():
@@ -188,6 +189,21 @@ def when_seen(name, fn):
     except Exception:                                        # noqa: BLE001
         return fn()
     return None
+
+
+def _in_a_pass(fn):
+    """`fn` run inside one read-only pass over the scene's rigs (`maya_rigs.reading`):
+    a card's refresh asks for them from several places (2026-10-27)."""
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            import maya_rigs
+            pass_ = maya_rigs.reading()
+        except Exception:                                    # noqa: BLE001 - no Maya side
+            return fn(*args, **kwargs)
+        with pass_:
+            return fn(*args, **kwargs)
+    return run
 
 
 def _shown_host(widget):
@@ -1774,8 +1790,9 @@ class Card(object):
         q = qt()
         widget.setProperty("wordWrap", False)
         widget.setProperty("skRole", "subtitle")
-        widget.setProperty("alignment", q.QtCore.Qt.AlignRight
-                           | q.QtCore.Qt.AlignVCenter)
+        # as an int: PySide6 6.8 refuses the flag combination for a property (2026-10-27)
+        widget.setProperty("alignment", int(q.QtCore.Qt.AlignRight
+                                            | q.QtCore.Qt.AlignVCenter))
         widget.setMinimumHeight(0)
         widget.setMaximumHeight(16777215)
         widget.setMinimumWidth(0)

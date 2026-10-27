@@ -153,11 +153,41 @@ def _source(plug):
     return "driven"
 
 
-def channel(node, attr, objects_=None, frame=None, main=False):
-    """One row's facts: the value, its kind, its limits, its state."""
+#  (node type, attribute) -> (kind, lo, hi): what an attribute's definition says,
+#  read once - never for a user-defined attribute, whose limits a node can change
+#  (2026-10-27: a rig control's ten channels cost ~25 queries a selection)
+_STATIC = {}
+
+
+def _static_of(node):
+    """(node type, its user-defined attributes), or None when they cannot be read."""
+    try:
+        return cmds.nodeType(node), set(cmds.listAttr(node, userDefined=True) or [])
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _definition(node, attr, plug, static):
+    """(kind, lo, hi) of a channel: from the cache for a built-in attribute."""
+    key = (static[0], attr) if static is not None and attr not in static[1] else None
+    found = _STATIC.get(key) if key is not None else None
+    if found is not None:
+        return found
+    kind = cmds.getAttr(plug, type=True) or "double"
+    lo, hi = _range(node, attr)
+    if key is not None:
+        if len(_STATIC) > 4000:
+            _STATIC.clear()
+        _STATIC[key] = (kind, lo, hi)
+    return kind, lo, hi
+
+
+def channel(node, attr, objects_=None, frame=None, main=False, static=None):
+    """One row's facts: the value, its kind, its limits, its state. `static` is
+    `_static_of(node)`, read once for a node's channels."""
     plug = node + "." + attr
     frame = now() if frame is None else frame
-    kind = cmds.getAttr(plug, type=True) or "double"
+    kind, lo, hi = _definition(node, attr, plug, static)
     value = cmds.getAttr(plug)
     if isinstance(value, (list, tuple)):
         value = value[0] if value else 0
@@ -167,7 +197,6 @@ def channel(node, attr, objects_=None, frame=None, main=False):
         nice = cmds.attributeName(plug, nice=True)
     except Exception:                                        # noqa: BLE001
         nice = attr
-    lo, hi = _range(node, attr)
     source = _source(plug)
     try:
         muted = bool(cmds.mute(plug, q=True))
@@ -190,6 +219,9 @@ def channel(node, attr, objects_=None, frame=None, main=False):
     if main:
         targets = []
         for obj in objects_ or [node]:
+            if obj == node:
+                targets.append(plug)                     # the lead's own channel: it exists
+                continue
             try:
                 if cmds.attributeQuery(attr, node=obj, exists=True):
                     targets.append(obj + "." + attr)
@@ -206,9 +238,10 @@ def channel(node, attr, objects_=None, frame=None, main=False):
 def channels(node, objects_=None, main=False):
     out = []
     frame = now()
+    static = _static_of(node)
     for attr in _attrs(node):
         try:
-            out.append(channel(node, attr, objects_, frame, main))
+            out.append(channel(node, attr, objects_, frame, main, static))
         except Exception:                                    # noqa: BLE001 - a plug the box cannot show
             pass
     return out

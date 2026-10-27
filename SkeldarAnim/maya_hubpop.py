@@ -339,8 +339,9 @@ class PopupCard(object):
         q = hubqt.qt()
         widget.setProperty("wordWrap", False)
         widget.setProperty("skRole", "subtitle")
-        widget.setProperty("alignment", q.QtCore.Qt.AlignRight
-                           | q.QtCore.Qt.AlignVCenter)
+        # as an int: PySide6 6.8 refuses the flag combination for a property (2026-10-27)
+        widget.setProperty("alignment", int(q.QtCore.Qt.AlignRight
+                                            | q.QtCore.Qt.AlignVCenter))
         widget.setMinimumHeight(0)
         widget.setMaximumHeight(16777215)
         widget.setMinimumWidth(0)

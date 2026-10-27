@@ -57,11 +57,12 @@ def current_time():
 
 
 def time_range():
-    """Highlighted time-slider range if any, else the playback range."""
-    slider = mel.eval("$t=$gPlayBackSlider")
-    if cmds.timeControl(slider, q=True, rangeVisible=True):
-        a, b = cmds.timeControl(slider, q=True, rangeArray=True)
-        return a, b - 1
+    """The highlighted range if any - the Time Bar's while ours stands, else Maya's time slider's
+    (`highlighted_range`) - else the playback range. Until 2026-10-27 only Maya's hidden slider
+    was asked, so Bake selection and the trails ignored the Time Bar's highlight."""
+    span = highlighted_range()
+    if span is not None:
+        return span
     return cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True)
 
 
@@ -1227,10 +1228,9 @@ def _bookmarks():
 @undoable
 def add_bookmark():
     tsb = _bookmarks()
-    slider = mel.eval("$t=$gPlayBackSlider")
-    if cmds.timeControl(slider, q=True, rangeVisible=True):
-        a, b = cmds.timeControl(slider, q=True, rangeArray=True)
-        tsb.createBookmark(start=a, stop=b - 1)
+    span = highlighted_range()                  # the Time Bar's highlight too (2026-10-27)
+    if span is not None:
+        tsb.createBookmark(start=span[0], stop=span[1])
     else:
         ct = current_time()
         tsb.createBookmark(start=ct, stop=ct)

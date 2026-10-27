@@ -13159,6 +13159,205 @@ Measuring traps, each cost a run:
 - A widget's `repaint()` while it is hidden costs nothing: the Time Bar measured 0.000 ms a repaint
   until it was brought out.
 
+## Speed pass 2 and tests where none ran (2026-10-27)
+
+The animator: «Нужно просмотреть весь наш код и покрыть его тестированием там где этого нету. Нужно
+пройтись по нашему плагину и исследовать его на вопрос быстродействия ... максимальная скорость работы
+инструментов и интерфейса»; then «Делай всё до самого конца». Built in a worktree (`perf-and-tests`,
+from b1a2dfe).
+
+**How it was measured:**
+- **The interface:** a disposable GUI Maya (port 7091, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, minimized,
+  killed after).
+  - The scene: three rigs (two Manny_Rig, a Creep_Rig), each with a UE clip retargeted.
+  - The interface as the animator runs it: the rail, the Time Bar at the bottom edge, the side panel with
+    our Channel Box, every card opened in turn.
+  - The tool: a tracer timing each entry from Maya or Qt into our code on the main thread (scratchpad
+    `entries.py`).
+  - cProfile was not used: in Python 3.12+ it profiles every thread, so the Shared listener's `urlopen`
+    read as the hub's cost.
+- **The tools:** mayapy standalone, best of 2-3 runs, on a Manny_Rig carrying a 38-frame UE take.
+- **Coverage:** `sys.monitoring` LINE / PY_START over the whole unit suite and over 68 of the 69 verify
+  scripts (each in its own `MAYA_APP_DIR` and `TEMP`).
+
+**Coverage, before** (105 261 lines of plugin code):
+- 67 % run by the unit suite, 30 % by the verifies, 78.5 % by either.
+- At 0 %: AT bar's `bar.py` (1 206 lines) and Graph Overlay's `ghost.py`.
+- Under 50 %: AT bar's `core.py`, the side panel's `__init__`, the Time Bar's `__init__`, Center of Mass's
+  `engine` / `drag` / `panel`, and the bridge's `nativeimport`.
+
+**Coverage, after:** 76.6 % by the unit suite (11 307 tests, was 9 169), 87.5 % by either. What is left
+is mostly Walk Builder's `scene` / `meanrig` / `keyrig` (another session was building it that day),
+OverRig's picker and FK modules and Overshoot (switched off), the bridge's Perforce `checkouts` (out of
+the window since 2026-10-01) and `maya_pmretarget`.
+
+**Tests added:** 44 new test files, one per gap. Two rules held:
+- Only new files. A bug was pinned with `expectedFailure`, then fixed and un-pinned.
+- A test checks what the code is for, never a line count.
+
+**Bugs the tests found, fixed:**
+1. **Graph Overlay stopped updating when Maya made its canvas again at the freed address.**
+   - The ghost's cache and the mode's follow tick compared the C++ address only.
+   - Now the cached canvas carries a property mark (`ghost.SEEN`), and the connected one carries
+     `mode.CONNECTED`.
+   - A new object at the old address has neither, so it is taken and connected.
+2. **Tail Builder moved pose B on every re-run under a moving parent** (46 cm a press at 2 cm a frame), and
+   Restore gave B back moved.
+   - The settle ends with the bottom on B's WORLD place, so the last key holds that place in the parent's
+     space at the END frame.
+   - `_pose_b` gives it back in the parent's space at B's frame: the key's own turn, the translate moved so
+     the bottom lands where the last key has it. This is exact, since the translate is linear in the place.
+3. **Animation Setup forgot the picked Unreal editor after a Refresh with no editor up.**
+   - «no project (? ?)» was stored over the choice.
+   - `_refresh_unreal` keeps the choice when `pick_node` finds nobody.
+4. **The CoM engine walked frames for ever** (`engine.py`), in two ways:
+   - A curve snapshot taken over a span that has since moved reported frames outside the new span, which
+     no slice clears. The change is now cut to the span.
+   - A current frame holding a tweak, dirtied again by a curve edit, was never cleared (`continue` before
+     `discard`).
+5. **AT bar's Bake selection, motion trails and Add bookmark ignored the Time Bar's highlight.**
+   - `core.time_range()` and `add_bookmark()` asked only Maya's slider, which the Time Bar hides.
+   - Both now go through `highlighted_range()`, which asks the Time Bar first.
+   - Not checked in a GUI Maya: `_release_temp_controls`, `space_switch(all_keys=True)` and
+     `toggle_temp_controls` read `worldMatrix` with `getAttr(time=)` on constrained nodes (trap 69's
+     family).
+6. **The chat window kept its card drag in `self._drag`, the name of its title-drag method.**
+   - Before any card drag, `drag_end` / `drag_move` found the method, and raised.
+   - After one, the instance attribute shadowed the method for good.
+   - It is `self._card_drag` now.
+7. **The Time Bar's layer panel:**
+   - A lanes key drag whose release never came left its preview and copies standing after the next press
+     set the keys down. A Shift-press that started a new highlight then read as the old key drag:
+     `active_lane_drag` / `drag_view` answered it, and the timeline showed a phantom drag.
+     `_lane_end_live` lets them go, as `lane_release` does.
+   - A switch to Display folded the lanes from the Display tab's layout: only as many lanes as display
+     layers folded, and the rest vanished. They fold from the tab they stand on now.
+8. **A card's subtitle alignment was never set:** PySide6 6.8 refuses the flag combination for a property.
+   Written as an `int` (`hubqt.Card` and `hubpop.PopupCard`). Nothing showed it, since the elide filter
+   paints the subtitle right-aligned.
+
+**The interface, fixed** (the same scene, build before → after):
+1. **Selecting a skinned mesh cost 1.85 s.**
+   - The Time Bar's key read, `cmds.keyframe(q=True)` with no objects, walks the selection's shape plugs.
+   - `timebar.scene._geometry_targets`: the selection minus picked geometry shapes, plus the animCurves
+     keying any of their plugs (controlPoints / pnts left out), asked with `shape=False`. Now 0.4 ms.
+   - Cut / Copy / Delete / Tangents / Snap on such a selection take the same targets (`_on`). Paste keeps
+     Maya's own target.
+2. **The Time Bar's idle tick read and repainted when nothing had changed.**
+   - `Strip.refresh(idle=True)` compares `_shown()` (what the strip shows) and returns.
+   - The caret line repaints only when its frame or hover changed (`CaretLine.stale`).
+3. **Our Channel Box:**
+   - A time change repainted every row; now only the rows whose value, key cell or change state moved
+     (`Box.on_time`, a region).
+   - The full read ran more than once a selection, and while hidden. Now it runs once a generation; a
+     hidden box marks itself missed and reads when shown.
+   - `scene.channel` asked `attributeQuery` for each attribute's kind and limits on every read. Now cached
+     per node type and its user attributes (`_static_of`).
+4. **The rail's grips raised themselves every 150 ms follow**, and `QWidget.raise_` repaints what is under
+   it. Now they raise only when something stands above them (`hubedge._on_top`).
+5. **The viewport bar's watch walked every child of every model panel.** Now
+   `findChildren(QWidget, QRegularExpression("^flowLayout"))`.
+6. **Our marked nodes.**
+   - `ls("*.marker", recursive=True)` costs 12-16 ms in a three-rig scene, however it is filtered (a name
+     pattern costs 0.9).
+   - `SkeldarAnim/maya_markers.py` (a payload row): `find(marker, node_type)` keeps the answer until a
+     node is added or removed, a scene is opened / imported / referenced, or an Undo / Redo or `touch()`
+     happens.
+   - Call `touch()` after adding a marker attribute: an added attribute is no node change.
+   - Used by Dynamics' setup, the CoM network and Ragdoll's impulses.
+   - Dynamics' card reads each marker once a refresh (`setup.reading()`).
+   - Proof: `verify_markers.py` 15/15.
+7. **`maya_rigs.rigs()` ran several times a card refresh.**
+   - Within a `maya_rigs.reading()` pass it is computed once.
+   - `hubqt.when_seen` runs every card refresh in one pass, and so does the Inventory panel.
+8. **`naming.detect_prefix` counted suffixes in O(n·len²).** Now a set lookup a cut.
+
+**Interface numbers** (main-thread time in our code, the same scene):
+
+| case | before | after |
+|---|---|---|
+| a selection, 12 kinds in turn, averaged | 215 ms | 41 ms |
+| a selected mesh | 1 845 ms | 2 ms |
+| a scrub step at 25 a second (Maya's frame change included) | median 21.1, p95 25.4, worst 53.6 ms | 16.8 / 18.4 / 20.6 ms |
+| playback unlocked, a frame | 22.1 ms (ours 10.9) | 16.5-17.7 ms (ours 6.2-6.8) |
+| idle | 3.2 % of the wall, 0.50 s CPU in 10 s | 1.7 %, 0.12 s |
+
+With one card on show a selection costs 9-21 ms; the Inventory panel's refresh is the most, 12 ms.
+
+**Tools, fixed** (mayapy; each compared with HEAD on the same scene, keys equal):
+1. **Retarget:** the four helper bones were baked one `bakeResults` each, which walked the take four times.
+   - `maya_rig_retarget.transfer_bones`: every pair constrained, then ONE `simulation=True` bake.
+   - 1.84 → 0.50 s for Manny's four, every key the same; a whole retarget onto a new Manny_Rig
+     5.5 → 3.7 s.
+   - Simulation also evaluates a constraint chain a frame at a time (trap 69's family).
+2. **Delete character:** `attributeQuery` a node for every marker cost 0.74 s on one rig.
+   - `deletion._having(nodes, attr)` does ONE `ls` of `node.attr` plugs; a node without the attribute
+     answers nothing.
+   - `_summary`, `_armor_namespaces` and the `RECORD_NODES` loop use it.
+   - `execute` resolves every UUID once and reads the locks in one `lockNode -q` (`_unlock`, `_existing`).
+   - A rig's delete 2.0 → 0.95 s.
+3. **Pose Library paste:**
+   - `keys.pressing()` (inside `apply._press` and `animapply._chunk`): `keys.writable` answers each plug
+     once a press, and a plug is added to a layer once. It was 34k calls on 38 frames.
+   - `rigsolve._name` is memoized for the press.
+   - `_Session.keep` records a channel the walk leaves as it stands without `setAttr` (it dirtied the rig
+     for nothing); `restore` skips plugs whose last write was their original.
+   - Inside `_fresh` under DG, `_world` / `_parent_world` read a cached `MDagPath.inclusiveMatrix()` /
+     `exclusiveMatrix()`. This happens only in a running Maya with the real `cmds` (`_live`): an OpenMaya
+     selection asked outside a running Maya kills the interpreter.
+   - The press memo is bound at import (`_PRESSING`, `_MEMO`), so a test faking the module's `keys`
+     keeps it.
+   - 10.8 → 8.1 s on 38 frames; all 500 curves equal to HEAD's (difference 0.0).
+4. **Time Bar key writes:** `_put_key` makes three `keyTangent` calls a key where it made up to seven:
+   - unlock with both types;
+   - then the fixed sides' angles and weights;
+   - then the lock.
+   A scale drag over a rig's 271 curves made 77k calls.
+5. **Add Character:** one `ls` for every new UUID (1.49 → 1.36 s beside a rig; the rest is Maya's import).
+6. **Ragdoll's Auto body:** `np.fromiter` over the skin weights (69 → 31 ms per 1.9 M).
+
+**Measured and left alone:**
+- Knot / Snapshot / Layer: 110-150 ms, Maya's own `bakeResults`.
+- FK/IK switch: 0.4-0.6 s, two thirds of it time changes.
+- Dynamics' read walk: the evaluation itself.
+- `maya_ikmatch` / `fkik` / `dynamics.run` `_world` reads: their gain is ~50 ms a press, with stale-read
+  risk outside DG.
+
+**Proof:**
+- **Unit tests:** the new modules each run under 5 s, with no sleeps. The whole suite 11 307 tests, the
+  one failure the known `test_chat_deploy.Keys` (it reads the animator's own saved keys).
+- **Verifies green on the worktree:** poselib_anim 113, apply 117, solve 122, selected_only 13, lower 42,
+  delete_character 93, delete_layers 14, rig_pipeline 30, many_rigs 32, creep_rig_asset 16, orc_d 22,
+  character_groups 161, open_scene_files 73, timebar_live_shift 36, timebar_key_drag 39, time_bar 48,
+  timebar_weight_keys_move 12, physstop 31.
+- **Seven verifies fail on clean HEAD exactly as on the worktree**, same gates, same numbers. They are
+  stale scripts or inputs, not regressions:
+  - ragdoll gates 8 and 26 on the sprint loop;
+  - poselib_upper_1p gates 5, 11 and 15 (other inputs than its proof's);
+  - spear03_weapon gates 12 and 18, written before the 2026-09-30 socket;
+  - timewarp gate 10;
+  - fkik_tab_layers, run on version _19 of its scene;
+  - poselib_objects (stale since 2026-10-20);
+  - clip_labels gate 13 crashing in `clip_name_of`.
+- **Not seen in the animator's Maya:** after Check update.
+
+292. **`cmds.keyframe(q=True)` with no objects, on a selected skinned mesh, walks every plug of its shape.**
+     It took 0.8-1.85 s for one Manny body mesh, on EVERY selection change: the Time Bar reads the
+     selection's keys. Maya's own slider pays the same. Name the targets: the transforms and the curves
+     keying the shapes' plugs, with `shape=False`.
+293. **`QWidget.raise_()` repaints what is under the widget, even when it is already on top.** A follow tick
+     that raised two grips every 150 ms repainted the hub card beneath them three times a second. Raise
+     only when something stands above (compare the siblings' order by `shiboken6.getCppPointer`).
+294. **`ls("*.attr", recursive=True)` is not a cheap index:** 12-16 ms in a three-rig scene with or without
+     `type=`, against 0.9 ms for a node-name pattern. Called by four cards on every selection, it was the
+     largest cost left. Keep the answer and invalidate it on node add / remove, scene and undo messages.
+295. **`mock.patch.dict(sys.modules, ...)` refills the whole of `sys.modules` when it stops**, so a module
+     imported inside the block is dropped, and the next import makes a second copy (`PySide6.QtWidgets` lost
+     `QApplication` in the next test). Swap the one entry and put it back.
+296. **`MSelectionList.add` outside an initialized Maya kills mayapy** (a segfault, no traceback). The whole
+     test process died in silence: no output, exit 139. Code that may run under a test's fake `cmds` reads a
+     DAG path only when `cmds` is Maya's own in a running Maya.
+
 ## Our Channel Box in the side panel, variant A "Rows" (2026-10-18)
 
 The animator: «Давай попробуем сделать свое меню для Chenel box. Предложи несколько вариантов в стиле

@@ -410,10 +410,16 @@ def _refresh_unreal():
     labels = uelink.node_labels(nodes)
     fill_project_menu(labels)
     _STATE["unreal_labels"] = list(labels)
-    chosen = uelink.node_label(uelink.pick_node(nodes, project_choice()))
-    if cmds.optionMenu(_PROJECT, query=True, numberOfItems=True):
-        cmds.optionMenu(_PROJECT, edit=True, value=chosen)
-    _STATE["choice"] = chosen
+    picked = uelink.pick_node(nodes, project_choice())
+    if picked is None:
+        # no editor up: the one picked stays picked (2026-10-27: «no project (? ?)» was
+        # stored over it, and the next Refresh with two editors up read the first by name)
+        chosen = project_choice()
+    else:
+        chosen = uelink.node_label(picked)
+        if cmds.optionMenu(_PROJECT, query=True, numberOfItems=True):
+            cmds.optionMenu(_PROJECT, edit=True, value=chosen)
+        _STATE["choice"] = chosen
 
     out = os.path.join(temp_folder(), "list.json")
     payload = uelink.run_script(uescripts.list_script(out), out, project=chosen)

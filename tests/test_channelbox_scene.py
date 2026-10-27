@@ -134,3 +134,77 @@ class SceneTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CountingCmds(FakeCmds):
+    """The fake, counting the queries a channel's definition costs; `swivel` is the
+    user-defined attribute."""
+
+    def __init__(self):
+        super(CountingCmds, self).__init__()
+        self.asked = []
+
+    def nodeType(self, node):
+        if node.startswith("|IKLeg"):
+            return "transform"
+        return super(CountingCmds, self).nodeType(node)
+
+    def listAttr(self, node, keyable=False, channelBox=False, userDefined=False):
+        if userDefined:
+            return ["swivel"] if node == "|IKLeg_L" else []
+        return super(CountingCmds, self).listAttr(node, keyable=keyable, channelBox=channelBox)
+
+    def getAttr(self, plug, type=False, lock=False):             # noqa: A002
+        if type:
+            self.asked.append(("type", plug))
+        return super(CountingCmds, self).getAttr(plug, type=type, lock=lock)
+
+    def attributeQuery(self, attr, node=None, **kw):
+        self.asked.append(("query", node, attr, tuple(sorted(kw))))
+        return super(CountingCmds, self).attributeQuery(attr, node=node, **kw)
+
+
+class DefinitionCache(unittest.TestCase):
+    """2026-10-27: a built-in attribute's kind and limits are its type's - read once;
+    the lead's own channel needs no `exists` query."""
+
+    def setUp(self):
+        self.saved = scene.cmds
+        self.fake = CountingCmds()
+        scene.cmds = self.fake
+        scene._STATIC.clear()
+
+    def tearDown(self):
+        scene.cmds = self.saved
+        scene._STATIC.clear()
+
+    def test_a_second_read_asks_only_for_the_user_defined_attribute(self):
+        scene.snapshot()
+        first = list(self.fake.asked)
+        self.fake.asked[:] = []
+        snap = scene.snapshot()
+        asked = [a for a in self.fake.asked if a[0] == "type" or "exists" not in a[3]]
+        self.assertTrue(all("swivel" in str(a) for a in asked), asked)
+        self.assertTrue(any("translateX" in str(a) for a in first))
+        main = dict((c["attr"], c) for c in snap["sections"][0]["channels"])
+        self.assertEqual(main["translateX"]["kind"], "doubleLinear")
+        self.assertEqual(main["swivel"]["kind"], "double")
+
+    def test_the_lead_s_own_channel_is_not_asked_whether_it_exists(self):
+        scene.snapshot()
+        exists = [a for a in self.fake.asked if a[0] == "query" and "exists" in a[3]]
+        self.assertTrue(exists)
+        self.assertTrue(all(a[1] == "|IKLeg_R" for a in exists), exists)
+
+    def test_targets_keep_the_selection_order(self):
+        snap = scene.snapshot()
+        main = dict((c["attr"], c) for c in snap["sections"][0]["channels"])
+        self.assertEqual(main["translateX"]["targets"], ["|IKLeg_R.translateX", "|IKLeg_L.translateX"])
+        self.assertEqual(main["swivel"]["targets"], ["|IKLeg_L.swivel"])
+
+    def test_a_node_whose_type_cannot_be_read_reads_everything(self):
+        def boom(node):
+            raise RuntimeError("no type")
+        self.fake.nodeType = boom
+        scene.snapshot()
+        self.assertEqual(scene._STATIC, {})

@@ -435,7 +435,29 @@ class BreakdownsAndWeights(unittest.TestCase):
         scene._put_key("c", 5.0, data)
         flags = set(k for edit in fake.tangents for k in edit)
         self.assertNotIn("inWeight", flags)               # an auto side's weight is Maya's
-        self.assertIn({"time": (5.0, 5.0), "outWeight": 7.5}, fake.tangents)
+        # the fixed side's angle and weight in one call (2026-10-27: three calls a key)
+        self.assertIn({"time": (5.0, 5.0), "outAngle": 20.0, "outWeight": 7.5}, fake.tangents)
+
+    def test_a_key_is_written_in_at_most_three_tangent_calls(self):
+        fake = FakeCmds({"c": [(0, 0.0), (10, 1.0)]})
+        scene.cmds = fake
+        data = {"value": 2.0, "breakdown": False, "itt": "fixed", "ott": "fixed",
+                "ia": 10.0, "oa": 20.0, "iw": 3.0, "ow": 7.5, "lock": True, "weighted": True}
+        scene._put_key("c", 5.0, data)
+        span = {"time": (5.0, 5.0)}
+        self.assertEqual(fake.tangents, [
+            dict(span, lock=False, inTangentType="fixed", outTangentType="fixed"),
+            dict(span, inAngle=10.0, outAngle=20.0, inWeight=3.0, outWeight=7.5),
+            dict(span, lock=True)])
+
+    def test_an_auto_key_takes_no_angle_call(self):
+        fake = FakeCmds({"c": [(0, 0.0), (10, 1.0)]})
+        scene.cmds = fake
+        data = {"value": 2.0, "breakdown": False, "itt": "auto", "ott": "auto",
+                "ia": 10.0, "oa": 20.0, "iw": None, "ow": None, "lock": None, "weighted": False}
+        scene._put_key("c", 5.0, data)
+        self.assertEqual(fake.tangents, [{"time": (5.0, 5.0), "lock": False,
+                                          "inTangentType": "auto", "outTangentType": "auto"}])
 
 
 class HighlightUnrecorded(unittest.TestCase):

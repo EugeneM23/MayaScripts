@@ -94,6 +94,27 @@ def _prune():
             _PANELS.pop(key, None)
 
 
+class _rigs_read_once(object):
+    """The scene's rigs read once for one refresh (`maya_rigs.reading`): the hand
+    reads asked for them eleven times a selection (2026-10-27); nothing without
+    Maya's side (the tests' scene)."""
+
+    def __enter__(self):
+        try:
+            import maya_rigs
+            self.inner = maya_rigs.reading()
+        except Exception:                                    # noqa: BLE001
+            self.inner = None
+        if self.inner is not None:
+            self.inner.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        if self.inner is not None:
+            self.inner.__exit__(*exc)
+        return False
+
+
 def _last_line(error_text):
     lines = [line for line in (error_text or "").strip().splitlines() if line.strip()]
     return lines[-1] if lines else "failed"
@@ -485,10 +506,11 @@ def _classes():
             """Re-read the scene; a field being typed in keeps its text
             (unless `force` names its hand - just applied)."""
             try:
-                self.root = self.scene.current()
-                self.holding = self.scene.holdings(self.root) if self.root else {}
-                self.grips = self.scene.grips(self.root)
-                self.picked_key, self.picked_side = self.scene.picked()
+                with _rigs_read_once():
+                    self.root = self.scene.current()
+                    self.holding = self.scene.holdings(self.root) if self.root else {}
+                    self.grips = self.scene.grips(self.root)
+                    self.picked_key, self.picked_side = self.scene.picked()
             except Exception:                                # noqa: BLE001
                 self.holding = {}
                 self._say(_last_line(traceback.format_exc()))

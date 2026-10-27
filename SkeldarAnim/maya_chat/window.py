@@ -3579,14 +3579,14 @@ class ChatWindow(object):
             pixmap = q.QtGui.QPixmap()
         ghost = maya_hubqt.ghost_class()(pixmap, size, size, self.scale, anchor=(0.5, 0.5),
                                          name="skeldarChatGhost", backdrop="field")
-        self._drag = {"item": item, "ghost": ghost, "aim": None}
+        self._card_drag = {"item": item, "ghost": ghost, "aim": None}
         ghost.follow(gp)
         ghost.show()
         self.drag_move(gp)
         return True
 
     def drag_aim(self, gp):
-        drag = getattr(self, "_drag", None) or {}
+        drag = getattr(self, "_card_drag", None) or {}
         from . import files
         if files.is_card((drag.get("item") and drag["item"].message.get("file")) or {}):
             return self.card_aim(gp, drag)
@@ -3634,7 +3634,7 @@ class ChatWindow(object):
         return {"kind": "none", "text": u"во вьюпорт или в библиотеку поз"}
 
     def drag_move(self, gp):
-        drag = getattr(self, "_drag", None)
+        drag = getattr(self, "_card_drag", None)
         if not drag:
             return
         aim = self.drag_aim(gp)
@@ -3647,16 +3647,16 @@ class ChatWindow(object):
             drag["ghost"].set_caption(aim["text"], False)
 
     def drag_end(self, gp, cancel=False):
-        drag, self._drag = getattr(self, "_drag", None), None
+        drag, self._card_drag = getattr(self, "_card_drag", None), None
         if not drag:
             return None
         drag["ghost"].hide()
         drag["ghost"].deleteLater()
         if cancel:
             return None
-        self._drag = drag
+        self._card_drag = drag
         aim = self.drag_aim(gp)
-        self._drag = None
+        self._card_drag = None
         item = drag["item"]
         if aim["kind"] in ("library", "apply"):
             target = dict(aim)

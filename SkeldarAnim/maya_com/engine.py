@@ -320,7 +320,10 @@ def _tick(sc, st):
                 tr = st["tracks"][uuid]
                 if tr.span[0] <= frame <= tr.span[1]:
                     if frame == current and frame in st["live_frames"]:
-                        continue        # the live (tweaked) point wins here
+                        # the live (tweaked) point wins here - and the frame is done, or it
+                        # was walked again every slice until the time moved (2026-10-27)
+                        tr.dirty.discard(frame)
+                        continue
                     tr.points[frame] = point
                     tr.dirty.discard(frame)
                     touched.add(uuid)
@@ -506,7 +509,9 @@ def _absorb_curves(st, groups):
             key = (uuid, name)
             before = st["snapshots"].get(key)
             st["snapshots"][key] = after
-            tr.dirty |= (frames.changed_frames(before, after) if before is not None
+            # only frames inside the span: a snapshot taken over a span since moved reports
+            # frames no slice clears, and the engine walked them for ever (2026-10-27)
+            tr.dirty |= (frames.changed_frames(before, after) & set(after) if before is not None
                          else set(after))
             _remember_curve_plug(uuid, fn)
 

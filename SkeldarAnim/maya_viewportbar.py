@@ -478,10 +478,15 @@ def remove_all():
 def signature(widget):
     """What tells a panel's bar apart from the one we skinned: the names of its
     flowLayouts (Maya makes the bar's controls anew when it rebuilds it, under
-    new names) and our mark."""
-    _, _, QtWidgets = _qt()                                  # noqa: N806
-    flows = sorted(child.objectName() for child in widget.findChildren(QtWidgets.QWidget)
-                   if child.objectName().startswith("flowLayout"))
+    new names) and our mark. The name is filtered by Qt itself: a Python wrapper
+    for each of a panel's widgets cost 1.4 ms a panel every 1.5 s (2026-10-27)."""
+    QtCore, _, QtWidgets = _qt()                             # noqa: N806
+    try:
+        found = widget.findChildren(QtWidgets.QWidget, QtCore.QRegularExpression("^flowLayout"))
+    except TypeError:                                        # a binding without the overload
+        found = [c for c in widget.findChildren(QtWidgets.QWidget)
+                 if c.objectName().startswith("flowLayout")]
+    flows = sorted(child.objectName() for child in found)
     return (widget.property(MARK), tuple(flows))
 
 

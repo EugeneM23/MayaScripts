@@ -296,6 +296,32 @@ def _feeds(plug):
     return nodes or _compound_feed(plug)
 
 
+_PRESS = []    # the memos of the press standing (`pressing`), innermost last
+
+
+class pressing(object):
+    """For the length of one press: `writable` answers each plug once, a plug is added to a
+    layer once, and `memo(name)` hands the press's own dict for a caller's reads.
+
+    A paste walked every frame asking every plug again: `keys.writable` 34k times on a 38-frame
+    card, 2.6 of 12.7 s (2026-10-27). What it answers cannot change inside a press - lock is
+    nobody's to change there, and keying only turns a free or keyed plug into a keyed or
+    layered one, all writable. A nested press shares the outer one's memos."""
+
+    def __enter__(self):
+        _PRESS.append(_PRESS[-1] if _PRESS else {})
+        return self
+
+    def __exit__(self, *exc):
+        _PRESS.pop()
+        return False
+
+
+def memo(name):
+    """The press's dict named `name`, else None when no press stands."""
+    return _PRESS[-1].setdefault(name, {}) if _PRESS else None
+
+
 def writable(plug):
     """(True, "") when a value can be set and keyed on `plug`, else (False, why).
 
@@ -303,7 +329,17 @@ def writable(plug):
     "driven by <node>", whether the node feeds the plug itself or its compound parent
     (`_compound_feed`). A free plug, one keyed by a time curve and one inside an animation
     layer are writable. Lock is asked first - a locked plug is locked whatever drives it.
+    Inside a press (`pressing`) each plug is asked once.
     """
+    kept = memo("writable")
+    if kept is None:
+        return _writable(plug)
+    if plug not in kept:
+        kept[plug] = _writable(plug)
+    return kept[plug]
+
+
+def _writable(plug):
     try:
         if cmds.getAttr(plug, lock=True):
             return False, "locked"
@@ -414,6 +450,7 @@ def write(values, frame, layer):
     grouped by reason, so one constraint holding twenty channels is one line.
     """
     added = layer is not None and not layer.base
+    held = memo("layer plugs")
     count = 0
     keyed = []
     skipped = {}
@@ -423,8 +460,10 @@ def write(values, frame, layer):
             skipped.setdefault(reason, []).append(plug)
             continue
         try:
-            if added:
+            if added and (held is None or (layer.name, plug) not in held):
                 cmds.animLayer(layer.name, edit=True, attribute=plug)
+                if held is not None:
+                    held[(layer.name, plug)] = True
             made = _key(plug, value, frame, layer) or 0
         except RuntimeError as error:
             skipped.setdefault(_why(error), []).append(plug)

@@ -289,7 +289,37 @@ def _still_root(joint, namespace, group):
         return False
 
 
+#  a read-only pass (`reading()`): rigs() asked once inside it - a card's refresh on a
+#  selection asked four times, 2.4 ms each with three rigs (2026-10-27)
+_PASS = []
+
+
+class reading(object):
+    """`with maya_rigs.reading():` - the scene's rigs read once inside it. Only around
+    reads: nothing inside may add, delete or rename a rig."""
+
+    def __enter__(self):
+        _PASS.append({})
+        return self
+
+    def __exit__(self, *exc):
+        _PASS.pop()
+        return False
+
+
 def rigs():
+    """Every rig in the scene, sorted by namespace (the root one first) - once a
+    `reading()` pass."""
+    memo = _PASS[0] if _PASS else None
+    if memo is not None and "rigs" in memo:
+        return list(memo["rigs"])
+    out = _rigs()
+    if memo is not None:
+        memo["rigs"] = list(out)
+    return out
+
+
+def _rigs():
     """Every rig in the scene, sorted by namespace (the root one first).
 
     A rig is a `ControlSet` with exactly one `Main` beside it in the same

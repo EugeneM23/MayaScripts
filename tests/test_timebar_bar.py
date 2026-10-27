@@ -372,11 +372,24 @@ class CaretLine(Strip):
         self.assertEqual(self.calls("scrub_only"), [("scrub_only", 20), ("scrub_only", 25)])
         self.assertFalse(self.calls("set_time"))
 
-    def test_a_timeline_repaint_repaints_the_caret(self):
+    def test_a_timeline_repaint_repaints_the_caret_when_the_time_moved(self):
+        seen = []
+        self.strip.caret.paintEvent = lambda e: seen.append(1)
+        self.strip.state["now"] = self.strip.state["now"] + 3
+        self.tl.repaint()
+        self.assertTrue(seen)
+
+    def test_a_timeline_repaint_leaves_a_still_caret_alone(self):
+        """2026-10-27: the keys' glow repaints the timeline sixty times a second; the
+        line under the same time and view need not be painted again."""
+        self.strip.caret.repaint()                       # painted as it stands
+        self.assertFalse(self.strip.caret.stale())
         seen = []
         self.strip.caret.paintEvent = lambda e: seen.append(1)
         self.tl.repaint()
-        self.assertTrue(seen)
+        self.tl.update()
+        self.app.processEvents()
+        self.assertEqual(seen, [])
 
 
 class TimeCallback(Strip):

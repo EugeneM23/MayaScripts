@@ -328,6 +328,49 @@ class BoxTests(unittest.TestCase):
         tx = self.box.rows[self.row_of("translateX")[0]]["channel"]
         self.assertTrue(tx["on_key"])
 
+    def _repaints(self):
+        painted = []
+        canvas = self.box.canvas
+        real = canvas.repaint
+
+        def record(*args):
+            painted.append(args)
+            return real(*args)
+        canvas.repaint = record
+        return painted
+
+    def test_time_moving_with_nothing_changed_paints_nothing(self):
+        self.box.on_time()                       # settle the cells for this frame
+        painted = self._repaints()
+        self.box.on_time()
+        self.assertEqual(painted, [])
+
+    def test_time_moving_paints_only_the_rows_that_changed(self):
+        self.box.on_time()
+        painted = self._repaints()
+        next(c for c in self.link.chans if c["key"] == "rotateX")["value"] = 30.0
+        self.box.on_time()
+        self.assertEqual(len(painted), 1)
+        region = painted[0][0]
+        i, parts = self.row_of("rotateX")
+        y, h = self.box.placed[i][0], self.box.placed[i][1]
+        self.assertTrue(region.contains(QT.QtCore.QPoint(5, int(y + h / 2.0))))
+        j, _ = self.row_of("visibility")
+        yj, hj = self.box.placed[j][0], self.box.placed[j][1]
+        self.assertFalse(region.contains(QT.QtCore.QPoint(5, int(yj + hj / 2.0))))
+        rx = self.box.rows[i]["channel"]
+        self.assertEqual(rx["value"], 30.0)
+
+    def test_a_key_cell_coming_onto_the_frame_repaints_its_row(self):
+        self.box.on_time()
+        painted = self._repaints()
+        self.link.frame = 6.0                    # translateY has a key on 6, translateX does not
+        self.box.on_time()
+        self.assertEqual(len(painted), 1)
+        i, _ = self.row_of("translateY")
+        y, h = self.box.placed[i][0], self.box.placed[i][1]
+        self.assertTrue(painted[0][0].contains(QT.QtCore.QPoint(5, int(y + h / 2.0))))
+
     def test_animations_off_adds_no_effect(self):
         self.box.motion = False
         self.link.frame = 24.0

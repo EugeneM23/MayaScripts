@@ -9,6 +9,7 @@ the playhead reached) live on a mouse-deaf layer over the canvas.
 Spec: docs/superpowers/specs/2026-10-18-channel-box-rows-design.md
 """
 
+import math
 import traceback
 
 from . import look
@@ -873,7 +874,9 @@ def classes():
             self.frame = frame
             chans = self.channels()
             values = self.link.values([ch["plug"] for ch in chans])
+            moved = set()
             for ch, v in zip(chans, values):
+                before = (ch.get("value"), ch.get("on_key"), ch.get("changed"), ch.get("breakdown"))
                 if v is not None:
                     ch["value"] = v
                 ks = ch.get("keys") or []
@@ -881,7 +884,19 @@ def classes():
                 ch["changed"] = False
                 ch["breakdown"] = ch["on_key"] and any(abs(b - frame) < 1e-3
                                                        for b in ch.get("breakdowns") or [])
-            self.canvas.repaint()
+                if (ch.get("value"), ch["on_key"], ch["changed"], ch["breakdown"]) != before:
+                    moved.add(id(ch))
+            #  only the rows that changed, painted now (2026-10-27: the whole box every
+            #  frame of playback cost 1.8 ms; most channels hold still)
+            if moved and self.canvas.isVisible():
+                region = QtGui.QRegion()
+                width = self.canvas.width()
+                for row, place in zip(self.rows, self.placed):
+                    if row["kind"] == "channel" and id(row["channel"]) in moved:
+                        y, h = place[0], place[1]
+                        region += QtCore.QRect(0, int(math.floor(y)), width, int(math.ceil(h)) + 1)
+                if not region.isEmpty():
+                    self.canvas.repaint(region)
 
         def _key_hex(self, ch):
             if ch.get("muted"):

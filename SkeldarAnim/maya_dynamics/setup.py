@@ -102,6 +102,9 @@ def _get(node, attr, fallback=None):
 def _set_string(node, attr, value):
     if not _has(node, attr):
         cmds.addAttr(node, longName=attr, dataType="string")
+        if attr in (CHAIN_MARKER, COLLIDER_MARKER, WIND_MARKER, GROUP_MARKER):
+            import maya_markers
+            maya_markers.touch()             # a marker on a node: the kept answers ask again
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
@@ -119,10 +122,36 @@ def _number(node, attr, value, low=None, high=None, keyable=True, kind="double")
     cmds.setAttr(node + "." + attr, value)
 
 
+#  {marker: nodes} while a read-only pass stands (`reading()`): a marker lookup scans
+#  every node of the scene - ~12 ms with three rigs (2026-10-27) - and one refresh of
+#  the card asked for the chains three times
+_MEMO = []
+
+
+class reading(object):
+    """`with setup.reading():` - each marker looked up once inside it. Only around
+    reads: nothing inside may make or delete our nodes."""
+
+    def __enter__(self):
+        _MEMO.append({})
+        return self
+
+    def __exit__(self, *exc):
+        _MEMO.pop()
+        return False
+
+
 def _marked(marker):
     """Our nodes carrying `marker`, in the active tab, long paths."""
-    found = cmds.ls("*." + marker, recursive=True, objectsOnly=True, long=True) or []
-    return scope.active_only(sorted(set(found)), cmds)
+    memo = _MEMO[0] if _MEMO else None
+    if memo is not None and marker in memo:
+        return list(memo[marker])
+    import maya_markers
+    found = maya_markers.find(marker, commands=cmds)
+    out = scope.active_only(sorted(set(found)), cmds)
+    if memo is not None:
+        memo[marker] = list(out)
+    return out
 
 
 def group_for(node):

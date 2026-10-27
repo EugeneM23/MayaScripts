@@ -147,6 +147,7 @@ _PAYLOAD = (
     "maya_camflight_rules.py",
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
+    "maya_markers.py",          # our marked nodes found without combing the scene each time (2026-10-27)
     "maya_ragdoll",             # the Ragdoll card: a rig falls by physics, baked into its controls (2026-10-16)
     "maya_timebar",             # the Time Bar: Maya's time slider as one bar in the hub's look (2026-10-16)
     "maya_atbar",               # the AT bar: animBot's tools, native, a bar on top of the Time Bar (2026-10-21)

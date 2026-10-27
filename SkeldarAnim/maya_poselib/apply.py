@@ -148,6 +148,8 @@ from maya_poselib import scene
 from maya_poselib import skelsolve
 from maya_poselib import upper
 
+_PRESSING = keys.pressing      # bound here: a test faking `keys` keeps the press's memo
+
 __all__ = ["Plan", "Result", "plan_for", "apply", "apply_onto", "drop_floor", "apply_objects",
            "select_objects", "mix", "Blend", "summary"]
 
@@ -499,7 +501,8 @@ def _press():
     auto = cmds.autoKeyframe(query=True, state=True)
     try:
         cmds.autoKeyframe(state=False)
-        yield
+        with _PRESSING():
+            yield
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
