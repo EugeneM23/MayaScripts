@@ -5811,6 +5811,56 @@ re-add it.
      `5.4972704566268963e-05`). A text check allows a hunk that replaces lines one for one with the same text but
      for numbers within 1e-5 — nothing looser.
 
+## Creep 2: a second Creep as a rig, a skeleton and a portrait (2026-10-27)
+
+The animator, with `Downloads/SK_Creep_skinned.FBX` imported into a Maya on port 7003 (read only): «новый крип его
+нужно встроить в наш пайплайн, риг скелет, карточки». Asked: a **second** Creep beside the first (not a
+replacement), **in a palette colour** (its textures are not on this machine: the FBX's normal maps name a
+colleague's `C:/Users/User/Downloads/creep_textures/`, and it has no colour maps). Spec
+`docs/superpowers/specs/2026-10-27-creep2-design.md`.
+
+**Measured first**: Unreal's export, 91 joints on Manny's names under the importer's -90 X wrapper, one mesh of
+102822 vertices in three slots (`MI_Creep_Body / _Chainmail / _Head`). **Not the first Creep re-posed**: the
+pelvis 5.3 cm lower, calves 3.3 and forearms 2.2 cm shorter, hands 1.8 cm longer. And **not the skeleton of
+Atone's AS_Creep clips**: those carry the FIRST Creep's lengths exactly (calf 43.34, forearm 34.81, hand 35.98;
+Creep 2 40.00 / 32.61 / 37.77) - the Auto card reads `AS_Creep_Jog_B_Loop` as Creep_Rig (89.7 % of its bones)
+against Creep 2's 61.5 %. Its midline stands 0.32 cm off x = 0; its weapon bones hold the grip line along +Y
+(zero-weight influences); its ik_hand helpers stand on the hands (Manny's layout).
+
+**The pipeline** (docs/superpowers/plans/, sources in `sources/creep2/`):
+- `make_creep2_source.py` (mayapy) → `Creep2_Source.mb`: the Orc's road - the wrapper out into Manny's shape,
+  `Creep2_Body`, Manny's camera bones, **the weapon sockets turned a quarter about their own X into UE's
+  convention** (grip line +Z 0.995 / -Z 0.973; bindPreMatrix re-expressed, no vertex moves), the dead normal
+  maps dropped, the bind pose whole over 93 joints;
+- `rebuild_creep2_rig.py` (LIVE, a disposable GUI Maya on port 7057): the Creep procedure as the Orc's build
+  runs it, Manny's ik_hand rule - and **the midline fit joints put on x = 0** (trap 298);
+- `make_creep2_assets.py` (mayapy) → `assets/Creep2_Rig.ma` (43.6 MB) and `Creep2_Skeleton.ma` (42.1 MB), root at
+  world level (Manny's shape, not the first Creep's Armature), the FBX-named shading groups renamed by material.
+
+**The catalog**: «Creep 2 [rig]» (`Creep2_Rig`) after Playerchar's rig, «Creep 2 [skeleton]» (`Creep2`) after
+Playerchar's skeleton, model `Creep2` right after the Creep in the grid (seven cards: five a row, two on the
+second); untextured (a palette colour on Add); fire `blood` (a new crimson palette); the portrait by
+`make_character_portraits.py` in that disposable Maya; `character_skeletons.json` re-run (rows added, the others
+unchanged).
+
+Proof: `verify_creep2.py <clip>` **10/10 mayapy standalone** on `AS_Creep_Jog_B_Loop`: two Creep 2 and a Manny each
+in its namespace, rotation-only, skin at its bind, controls at default, painted; every vertex where Unreal's FBX
+has it (7.6e-6 cm); a Long Sword at zero grip 5.8° off the fist's grip line; the Retarget button - orientations
+0.0009°, the limb bones pointing 0.012°, lengths kept 0.000000, the other rigs 0.0; the export 93 joints, 0
+meshes; the skeleton row; Delete character through the mesh. Unit tests `Creep2` in `test_scenesetup_catalog`.
+**Not seen in the animator's Maya** (after Check update). Not built: its textures, a 1P mesh, its own weapon.
+
+298. **AdvancedSkeleton refuses a midline that is not on x = 0.** A fit joint past 1 % of AS's scale on +X counts
+     as a LEFT-side joint unless its parent stands on -X, and the build dies «"HeadEnd" is on the Left side,
+     FitSkeleton side-joints must start on the Right side». Creep 2's whole body stands 0.32 cm right of its root.
+     The midline fit joints (Root, Spine1-5, Neck, Head, HeadEnd) are moved onto x = 0 parents-first and every
+     side joint put back on its recorded place; the rig's middle joints then stand 0.32 cm beside their bones,
+     which keep their places (orientation constraints with offsets, the pelvis its position too).
+299. **The retarget's "twin" is a median, and Creep 2 is the first Creep's clips' "twin"**: 61.5 % of the bones match
+     to 1 %, so the median does, and the line reads «STRETCH (twin, exact)» onto a body whose calves are 8 %
+     shorter - no proportions question. On this rotation-only rig the lengths are kept anyway (gate 6, 0.000000);
+     on a rig that stretches, a median twin rule would let a different body through unasked.
+
 ## The weapon inventory: two hands, the floor, a Diablo window (2026-09-29)
 
 The animator: «Возможно ли сделать во вкладке Weapon кнопку которая будет инвентарь похожий на

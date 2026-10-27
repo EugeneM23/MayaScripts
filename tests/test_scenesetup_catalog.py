@@ -566,8 +566,10 @@ class OrcD(unittest.TestCase):
         self.assertTrue(catalog.is_rig(entry))
 
     def test_every_row_but_the_ue4_mannequin_is_textured(self):
-        """The Orc D since 2026-09-28, both Manny rows and both Creep rows since 2026-09-30."""
-        self.assertEqual([c.key for c in catalog.CHARACTERS if not c.textured], ["UE4_Mannequin"])
+        """The Orc D since 2026-09-28, both Manny rows and both Creep rows since 2026-09-30. Creep 2
+        (2026-10-27) arrives in a palette colour until its textures come."""
+        self.assertEqual([c.key for c in catalog.CHARACTERS if not c.textured],
+                         ["Creep2_Rig", "Creep2", "UE4_Mannequin"])
 
     def test_textured_defaults_to_false(self):
         self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
@@ -761,7 +763,7 @@ class Models(unittest.TestCase):
 
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
-                         ["Manny", "Creep", "Orc_D", "Playerchar", "UE4_Mannequin", "Auto"])
+                         ["Manny", "Creep", "Creep2", "Orc_D", "Playerchar", "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -783,9 +785,9 @@ class Models(unittest.TestCase):
 
     def test_the_rows_of_a_kind(self):
         self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
-                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig"])
+                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig", "Creep2_Rig"])
         self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
-                         ["Manny", "Creep", "Playerchar", "UE4_Mannequin"])
+                         ["Manny", "Creep", "Playerchar", "Creep2", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
@@ -796,6 +798,7 @@ class Models(unittest.TestCase):
                 ("Creep", "rig"): "Creep_Rig", ("Creep", "skeleton"): "Creep",
                 ("Orc_D", "rig"): "Orc_D_Rig",
                 ("Playerchar", "rig"): "Playerchar_Rig", ("Playerchar", "skeleton"): "Playerchar",
+                ("Creep2", "rig"): "Creep2_Rig", ("Creep2", "skeleton"): "Creep2",
                 ("UE4_Mannequin", "skeleton"): "UE4_Mannequin"}
         for (model, kind), key in want.items():
             self.assertEqual(catalog.character_for(model, kind).key, key)
@@ -862,6 +865,46 @@ def _main_curve(path):
     flat = [float(v) for v in values[7 + knots:]]
     cvs = [tuple(flat[i * dim:i * dim + 3]) for i in range(count)]
     return degree, spans, form, cvs
+
+
+class Creep2(unittest.TestCase):
+    """2026-10-27: a second Creep beside the first, as a rig and a skeleton, in a palette colour (its
+    textures are not here). Unreal's SK_Creep_skinned on its own AdvancedSkeleton rig
+    (make_creep2_source.py -> rebuild_creep2_rig.py -> make_creep2_assets.py)."""
+
+    def test_both_rows_ship_untextured(self):
+        for key, kind, name in (("Creep2_Rig", "rig", "Creep2_Rig.ma"),
+                                ("Creep2", "skeleton", "Creep2_Skeleton.ma")):
+            entry = catalog.character_by_key(key)
+            self.assertEqual((entry.kind, entry.file, entry.model), (kind, name, "Creep2"))
+            self.assertFalse(entry.textured, key)
+            self.assertTrue(os.path.isfile(catalog.character_file(entry)), key)
+
+    def test_its_card_follows_the_first_creep(self):
+        keys = [m.key for m in catalog.MODELS]
+        self.assertEqual(keys.index("Creep2"), keys.index("Creep") + 1)
+
+    def test_after_the_first_creep_s_rows(self):
+        """The Auto card ties to table order."""
+        keys = catalog.character_keys()
+        self.assertLess(keys.index("Creep_Rig"), keys.index("Creep2_Rig"))
+        self.assertLess(keys.index("Creep"), keys.index("Creep2"))
+
+    def test_nothing_of_the_source_machine_in_the_assets(self):
+        banned = ("createNode script", "vaccine", "C:/", "c:/", "Downloads", "creep_textures",
+                  "SK_Creep_skinned", "scratchpad")
+        for key in ("Creep2_Rig", "Creep2"):
+            with open(catalog.character_file(catalog.character_by_key(key)), encoding="utf-8",
+                      errors="replace") as handle:
+                for line in handle:
+                    for word in banned:
+                        self.assertNotIn(word, line, key)
+
+    def test_the_rig_is_rotation_only(self):
+        with open(catalog.character_file(catalog.character_by_key("Creep2_Rig")), encoding="utf-8",
+                  errors="replace") as handle:
+            text = handle.read()
+        self.assertIn('".skeldarRetarget" -type "string" "rotation"', text)
 
 
 class MainControlSize(unittest.TestCase):

@@ -35,6 +35,7 @@ SPARK_RATE = 30.0           # sparks a second while it burns
 FIRES = {"Manny": "ember", "Creep": "spectral", "Orc_D": "toxic",
          "UE4_Mannequin": "arcane",
          "Playerchar": "gold",       # the player character (2026-10-21)
+         "Creep2": "blood",          # the second Creep (2026-10-27)
          #  the unknown rig or skeleton (the «?» card) burns as Manny's does
          #  («сделаем так же как и карточка менни»; a black fire was tried
          #  first and dropped the same evening)
@@ -69,6 +70,10 @@ PALETTES = {
              (0.24, (140, 98, 10), 0.55), (0.36, (210, 160, 24), 0.88),
              (0.52, (244, 206, 60), 1.0), (0.70, (255, 232, 120), 1.0),
              (0.86, (255, 246, 190), 1.0), (1.00, (255, 253, 236), 1.0)],
+    "blood": [(0.00, (0, 0, 0), 0.0), (0.14, (50, 2, 10), 0.04),
+              (0.24, (120, 6, 24), 0.55), (0.36, (190, 16, 44), 0.88),
+              (0.52, (230, 44, 70), 1.0), (0.70, (250, 104, 120), 1.0),
+              (0.86, (255, 178, 186), 1.0), (1.00, (255, 238, 240), 1.0)],
 }
 
 

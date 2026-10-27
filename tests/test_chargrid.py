@@ -92,7 +92,8 @@ class Grid(unittest.TestCase):
     def test_the_card_holds_five_a_row_at_the_docks_width(self):
         """2026-10-08, the compact hub: five a row, and the grid is as tall as
         its squares - the name lies over them. Six cards since 2026-10-21 (the
-        Playerchar): the sixth on a second row."""
+        Playerchar), seven since 2026-10-27 (Creep 2): the sixth and seventh on a
+        second row."""
         count = len(catalog.MODELS)
         cols, cell, rects, height = look.grid(330, count)
         self.assertEqual(cols, 5)
@@ -173,7 +174,7 @@ class Grid(unittest.TestCase):
         self.assertEqual(self.grid.selected, "Orc_D")
 
     def test_the_model_under_a_point(self):
-        p = self.centre(2)
+        p = self.centre(self.keys().index("Orc_D"))
         self.assertEqual(self.grid.model_at(p.x(), p.y()), "Orc_D")
         self.assertIsNone(self.grid.model_at(-5, -5))
 
@@ -230,7 +231,7 @@ class Grid(unittest.TestCase):
 
     def test_a_click_without_travel_is_no_drag(self):
         E, L, N = QT.QtCore.QEvent, QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
-        start = self.centre(2)
+        start = self.centre(self.keys().index("Orc_D"))
         self._mouse(E.MouseButtonPress, start, L, L)
         self._mouse(E.MouseButtonRelease, start, L, N)
         self.assertEqual(self.acts("place"), [])

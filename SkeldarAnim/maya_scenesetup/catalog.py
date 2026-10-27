@@ -93,6 +93,15 @@ CHARACTERS = [
     # stays Manny's.
     Character("Playerchar_Rig", "Playerchar [rig]", "Playerchar_Rig.ma", "rig",
               textured=True, model="Playerchar"),
+    # The second Creep (2026-10-27, «новый крип его нужно встроить в наш пайплайн, риг скелет,
+    # карточки»; asked, a second Creep beside the first, in a palette colour): Unreal's
+    # SK_Creep_skinned, Manny's bone names on its own body (the pelvis 5.3 cm lower than the first
+    # Creep's, calves and forearms shorter), one mesh in three slots; its textures are not on this
+    # machine. Its own AdvancedSkeleton rig by the Creep's procedure (rotation-only), the weapon
+    # sockets turned into UE's convention, Manny's camera bones added. Built by
+    # docs/superpowers/plans/make_creep2_source.py -> rebuild_creep2_rig.py -> make_creep2_assets.py
+    # from sources/creep2/. After the first Creep's rows: the Auto card ties to table order.
+    Character("Creep2_Rig", "Creep 2 [rig]", "Creep2_Rig.ma", "rig", model="Creep2"),
     # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton", textured=True, model="Manny"),
@@ -109,6 +118,8 @@ CHARACTERS = [
     # skeleton's way.
     Character("Playerchar", "Playerchar [skeleton]", "Playerchar_Skeleton.ma", "skeleton",
               textured=True, model="Playerchar"),
+    # The second Creep without its rig (2026-10-27), made from Creep2_Rig.ma the Creep skeleton's way.
+    Character("Creep2", "Creep 2 [skeleton]", "Creep2_Skeleton.ma", "skeleton", model="Creep2"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -132,7 +143,7 @@ KINDS = ("rig", "skeleton")
 # Spec: docs/superpowers/specs/2026-10-02-auto-character-import-design.md.
 AUTO = "Auto"
 
-MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"),
+MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Creep 2"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
 
