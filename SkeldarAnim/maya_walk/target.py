@@ -20,6 +20,17 @@ from . import model as _walkmodel
 SIDES = ("l", "r")
 UP = np.array([0.0, 1.0, 0.0])
 LEG_TWIN = 0.01        # legs within 1 % of the walk's, on a twin: carried at the walk's own size
+#  The knee pop fix (2026-10-27, the gait guide's section 12: «колено щёлкает, когда нога в IK выпрямляется до
+#  конца и сразу сгибается ... никогда не выпрямляют ногу до конца, а на кадрах, где она почти прямая, опускают
+#  корень»): a CLICK is a local minimum of a leg's knee bend under POP_STRAIGHT whose curvature (its two
+#  neighbours less twice it) is over POP_CURVE; around it (POP_WINDOW frames a side) the bend may not fall under
+#  its own smoothed curve (Gaussian, POP_SIGMA frames) - the pelvis lowered for it while the foot stands, the
+#  ankle drawn in while it swings (a centimetre in the air slides nothing)
+POP_STRAIGHT = np.radians(15.0)
+POP_CURVE = np.radians(6.0)
+POP_WINDOW = 3
+POP_SIGMA = 1.5
+POP_ROUNDS = 3
 
 
 def _model():
@@ -37,6 +48,78 @@ def _np(m):
 
 def _om(a):
     return om.MMatrix([float(v) for v in np.asarray(a, float).reshape(16)])
+
+
+def _angle(a, b):
+    """The angle between two vectors (radians)."""
+    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+    if na < 1e-12 or nb < 1e-12:
+        return 0.0
+    return float(np.arccos(max(-1.0, min(1.0, float(np.dot(a, b)) / (na * nb)))))
+
+
+def pops(bends):
+    """{side: [frames]} - the clicks in each leg's knee bends (one value a frame, periodic): a local minimum under
+    POP_STRAIGHT whose curvature is over POP_CURVE."""
+    out = {}
+    for side, m in bends.items():
+        m = np.asarray(m, float)
+        n = len(m)
+        at = []
+        for f in range(n):
+            left, right = m[(f - 1) % n], m[(f + 1) % n]
+            if m[f] <= left and m[f] <= right and m[f] < POP_STRAIGHT and left + right - 2.0 * m[f] > POP_CURVE:
+                at.append(f)
+        out[side] = at
+    return out
+
+
+def _smoothed(values, sigma):
+    """A periodic Gaussian blur of `values` (one a frame)."""
+    v = np.asarray(values, float)
+    n = len(v)
+    offsets = np.arange(n)
+    distance = np.minimum(offsets, n - offsets)
+    kernel = np.exp(-0.5 * (distance / max(sigma, 1e-6)) ** 2)
+    return np.real(np.fft.ifft(np.fft.fft(v) * np.fft.fft(kernel / kernel.sum())))
+
+
+def _stance(result, side, n):
+    """(n,) bools: the foot `side` stands (the model's contacts, in the result's frames); all True without them."""
+    contacts = ((result.info or {}).get("contacts") or {}).get(side)
+    if not contacts:
+        return np.ones(n, bool)
+    out = np.zeros(n, bool)
+    for a, b in contacts:
+        span = (b - a) % n if b - a < n else n
+        for f in range(n):
+            if (f - a) % n <= span:
+                out[f] = True
+    return out
+
+
+def _drop_for(hip, goal, limit):
+    """The least pelvis drop (along UP) that brings `goal` within `limit` of `hip`; 0 when it is."""
+    q = np.asarray(goal, float) - np.asarray(hip, float)
+    if float(np.linalg.norm(q)) <= limit:
+        return 0.0
+    qu = float(np.dot(q, UP))
+    disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
+    if disc < 0.0:
+        return 0.0
+    return max(0.0, -qu - disc ** 0.5)
+
+
+def pops_line(pops):
+    """«knee pops smoothed: 3 (L 9, 24; R 33), pelvis down up to 0.8 cm»."""
+    found = pops.get("found") or {}
+    where = "; ".join("%s %s" % (side.upper(), ", ".join(str(f) for f in at)) for side, at in sorted(found.items()) if at)
+    text = "knee pops smoothed: %d (%s)" % (pops.get("fixed", 0), where)
+    if pops.get("drop", 0.0) > 0.05:
+        text += ", pelvis down up to %.1f cm" % pops["drop"]
+    if pops.get("left"):
+        text += ", %d left" % pops["left"]
+    return text
 
 
 def _unit(v):
@@ -180,8 +263,9 @@ class Retarget(object):
         p = pm.position(root_world) + d_t * pm.rotation(root_world)
         return np.array([p.x, p.y, p.z])
 
-    def frames(self, result):
-        """([{target leaf: om.MMatrix} a frame], info {"drop": [cm a frame], "short": cm, "scale", "pairs"})."""
+    def frames(self, result, knee_pops=True):
+        """([{target leaf: om.MMatrix} a frame], info {"drop": [cm a frame], "short": cm, "scale", "pairs",
+        "pops"}). `knee_pops`: the knee pop fix after the legs are solved (fix_pops)."""
         model = _model()
         n = result.frames
         first = self._bones(result.worlds[:, 0])
@@ -196,14 +280,84 @@ class Retarget(object):
         need = np.array([self._need(out, goal) for out, goal in zip(outs[:-1], goals[:-1])])
         drop = model.smooth_cover(need, model.LOWER_BLUR * len(need) / getattr(self.walk, "strides", 1))   # a stride
         drop = np.append(drop, drop[0])
+        relations = [self._relations(result.worlds[:, f]) for f in range(n + 1)]
+        frames, short = self._solve_all(outs, goals, drop, relations)
+        pops = {"found": {}, "fixed": 0, "left": 0, "drop": 0.0}
+        if knee_pops:
+            frames, short, drop, pops = self.fix_pops(outs, goals, need, drop, relations, frames, short, result)
+        info = {"drop": [float(d) for d in drop], "short": short, "scale": self.scale,
+                "pairs": len(self.pairs), "frames": n, "pops": pops}
+        return frames, info
+
+    def _solve_all(self, outs, goals, drop, relations):
         frames, short = [], 0.0
         for f, (out, goal, d) in enumerate(zip(outs, goals, drop)):
-            final, frame_short = self._solve(out, goal, float(d), self._relations(result.worlds[:, f]))
+            final, frame_short = self._solve(out, goal, float(d), relations[f])
             frames.append(final)
             short = max(short, frame_short)
-        info = {"drop": [float(d) for d in drop], "short": short, "scale": self.scale,
-                "pairs": len(self.pairs), "frames": n}
-        return frames, info
+        return frames, short
+
+    def bends(self, frames):
+        """{side: (n,) knee bends, radians} of solved frames (the closing frame left out)."""
+        out = {}
+        for side in SIDES:
+            th, ca, fo = self.legs[side]
+            values = []
+            for final in frames[:-1]:
+                hip, knee, ankle = (_np(final[leaf])[3, :3] for leaf in (th, ca, fo))
+                values.append(_angle(knee - hip, ankle - knee))
+            out[side] = np.array(values)
+        return out
+
+    def fix_pops(self, outs, goals, need, drop, relations, frames, short, result):
+        """The knee pop fix (POP_* above), up to POP_ROUNDS times. (frames, short, drop, {"found": {side:
+        [frames]}, "fixed", "left", "drop": the extra pelvis drop at most, cm})."""
+        model = _model()
+        n = len(outs) - 1
+        stance = dict((side, _stance(result, side, n)) for side in SIDES)
+        found = pops(self.bends(frames))
+        first = dict((side, list(frames_)) for side, frames_ in found.items())
+        goals = [dict(goal) for goal in goals]
+        base = np.array(drop[:-1], float)
+        original = base.copy()
+        for _ in range(POP_ROUNDS):
+            if not any(found.values()):
+                break
+            bends = self.bends(frames)
+            want_need = np.zeros(n)
+            for side, at in found.items():
+                if not at:
+                    continue
+                smooth = _smoothed(bends[side], POP_SIGMA)
+                l1, l2 = self.lengths[side]
+                th = self.legs[side][0]
+                window = sorted(set((f + k) % n for f in at for k in range(-POP_WINDOW, POP_WINDOW + 1)))
+                for f in window:
+                    want = max(float(bends[side][f]), float(smooth[f]))
+                    if want <= float(bends[side][f]) + 1e-9:
+                        continue
+                    limit = float(np.sqrt(l1 * l1 + l2 * l2 + 2.0 * l1 * l2 * np.cos(want)))
+                    hip = _np(outs[f][th])[3, :3] - UP * float(drop[f])
+                    if stance[side][f]:
+                        want_need[f] = max(want_need[f], float(drop[f]) + _drop_for(hip, goals[f][side], limit))
+                    else:
+                        q = goals[f][side] - hip
+                        d = float(np.linalg.norm(q))
+                        if d > limit:
+                            goals[f][side] = hip + q * (limit / d)
+                            if f == 0:
+                                goals[n][side] = goals[n][side] + (goals[0][side] - (hip + q))
+            total = np.maximum(np.asarray(need, float), want_need)
+            if total.max() > base.max() + 1e-9 or (want_need > base + 1e-9).any():
+                cover = model.smooth_cover(total, model.LOWER_BLUR * n / getattr(self.walk, "strides", 1))
+                base = np.maximum(base, cover)
+            drop = np.append(base, base[0])
+            frames, short = self._solve_all(outs, goals, drop, relations)
+            found = pops(self.bends(frames))
+        left = sum(len(v) for v in found.values())
+        fixed = sum(len(v) for v in first.values()) - left
+        added = float(np.max(base - original)) if n else 0.0
+        return frames, short, drop, {"found": first, "fixed": max(fixed, 0), "left": left, "drop": max(added, 0.0)}
 
     def _reach(self, side):
         return self.walk.reach[side] * sum(self.lengths[side])

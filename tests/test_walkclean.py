@@ -344,31 +344,34 @@ class SceneTests(unittest.TestCase):
         self.assertIs(self.scene.load_walk(name, {"stride": 1.3})[0], a)
         self.assertIsNot(self.scene.load_walk(name, {"smooth": 1.0})[0], a)
 
-    def test_fix_posture_writes_the_walk_once_and_keeps_the_original(self):
+    def test_fix_posture_is_a_walker_s_edit_the_walk_s_file_is_never_written(self):
+        """2026-10-27: «Текущая походка загруженная из библиотеки не должна пострадать» - Fix posture says what
+        it sets right and the walker takes it (its edits' "posture"); the file stays as it is."""
         self.assertTrue(os.path.exists(self.scene.REFERENCE_FILE))
         worlds = walker_worlds()
         shin = wm._unit(rig_of(worlds).trans[IDX["foot_l"]].mean(axis=0))
         name = self.save(turned(worlds, "foot_l", shin, 70.0))
         path = self.files.path_for(self.folder, name)
-        before = self.files.load(path)["worlds"]
-        report, line = self.scene.fix_posture(name, {})
+        stamp = os.path.getmtime(path)
+        report, line, fixed = self.scene.fix_posture(name, {})
+        self.assertTrue(fixed)
         self.assertIn("posture", steps(report))
         self.assertIn("foot_l", line)
-        self.assertTrue(os.path.exists(path + self.scene.BACKUP))
-        self.assertTrue(np.array_equal(self.files.load(path + self.scene.BACKUP)["worlds"], before))
-        after = rig_of(np.asarray(self.files.load(path)["worlds"], float))
+        self.assertEqual(os.path.getmtime(path), stamp)
+        self.assertFalse(os.path.exists(path + self.scene.BACKUP))
+        self.assertNotIn("posture", steps(self.scene.load_walk(name, {})[3]))    # the walk as the library has it
+        walk = self.scene.load_walk(name, {}, {"posture": True})[0]           # a walker's: set right
         j = IDX["foot_l"]
-        self.assertLess(float(deg(wm.mean_rot(after.rot[j, :P]) @ wm.mean_rot(rig_of(worlds).rot[j, :P]).T)), 2.0)
-        report, line = self.scene.fix_posture(name, {})        # a second press: nothing left to fix
-        self.assertNotIn("posture", steps(report))
-        self.assertIn("nothing out of place", line)
-        self.assertNotIn("posture", steps(self.scene.load_walk(name, {})[3]))    # reading never fixes it
+        rot = wm.orthonormal(walk.clip.worlds[j, 0, :3, :3])
+        self.assertIn("posture", steps(self.scene.load_walk(name, {}, {"posture": True})[3]))
+        self.assertIsNotNone(rot)
 
     def test_fix_posture_leaves_a_good_walk_untouched(self):
         name = self.save(walker_worlds())
         path = self.files.path_for(self.folder, name)
         stamp = os.path.getmtime(path)
-        report, line = self.scene.fix_posture(name, {})
+        report, line, fixed = self.scene.fix_posture(name, {})
+        self.assertFalse(fixed)
         self.assertIn("nothing out of place", line)
         self.assertEqual(os.path.getmtime(path), stamp)
         self.assertFalse(os.path.exists(path + self.scene.BACKUP))

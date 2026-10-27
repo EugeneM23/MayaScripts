@@ -69,15 +69,17 @@ POSE_COPY = "skeldarWalkPose"
 NO_POSE = "(none)"
 ALL_PARTS = tuple(part for part, keys in wp.PARTS)
 MARKER = "skeldarWalk"
-#  The memo: 3 (2026-10-26) holds the parameters the card set (maya_walk.gait, `params`) beside the model's knobs
-#  they gave; 2 holds the model's knobs alone - still read, and translated into parameters (memo_params)
-VERSION = 3
-READ_VERSIONS = (2, 3)
+#  The memo: 4 (2026-10-27) the walker's own edits beside it (EDITS_ATTR) and "working" (Pick chose it); 3
+#  (2026-10-26) holds the parameters the card set (maya_walk.gait, `params`) beside the model's knobs they gave; 2
+#  holds the model's knobs alone - still read, and translated into parameters (memo_params)
+VERSION = 4
+READ_VERSIONS = (2, 3, 4)
+EDITS_ATTR = "skeldarWalkEdits"     # on a walker's top joint: its own edits (2026-10-27)
 #  The parameters as a memo and the card hold them: the hand's changes {key: [kind, x]} (gait.stored_change), the
 #  keys set by hand (pinned), the macros, the character and its strength, the physics, the pose's share, In place
 #  and the clean's knobs (Seam, Smooth)
 DEFAULT_PARAMS = {"changes": {}, "pins": [], "macros": {}, "character": "", "strength": 1.0, "physics": True,
-                  "pose": 0.0, "in_place": 0.0, "clean": {}}
+                  "pose": 0.0, "in_place": 0.0, "clean": {}, "knee_pops": True}
 CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ")
 TRANSLATE = CHANNELS[:3]
 ROTATE = CHANNELS[3:]
@@ -316,13 +318,13 @@ def _clean_data(data, knobs, posture_fix=False):
     return clip, report
 
 
-def _cleaned(path, stamp, data, given):
-    """_clean_data of a loaded walk file, cached by the file's time and the knobs."""
+def _cleaned(path, stamp, data, given, posture=False):
+    """_clean_data of a loaded walk file, cached by the file's time, the knobs and the posture fix."""
     knobs = wc.knobs(given)
-    key = ("clean", path, stamp, tuple(sorted(knobs.items())))
+    key = ("clean", path, stamp, tuple(sorted(knobs.items())), bool(posture))
     cached = _state()["loaded"].get(key)
     if cached is None:
-        cached = _clean_data(data, knobs)
+        cached = _clean_data(data, knobs, posture_fix=bool(posture))
         _cache(key, cached)
     return cached
 
@@ -650,9 +652,12 @@ def save_walk_card(root, name=None):
     return card_walk(wcards.relative(path, library)), line + (" | " + note if note else "")
 
 
-def load_walk(name, given=None):
+def load_walk(name, given=None, edits=None):
     """(Walk, statics, first frame, clean Report) of a saved walk (or an animation card, `walk_path`) read under
-    the clean knobs in `given`, cached by the file's time and the knobs."""
+    the clean knobs in `given` and a walker's `edits` (edits_of: its Fix posture, its mean pose correction) - none:
+    the walk as the library has it. Nothing beside the walk's file is read: a walker's edits are its own
+    (2026-10-27, «Текущая походка загруженная из библиотеки не должна пострадать»). The key poses' edits go on the
+    evaluated animation (keyposes.on_result), not here. Cached by the file's time, the knobs and the edits."""
     path = walk_path(name)
     if not os.path.exists(path):
         raise Refusal("no saved walk named %s" % name)
@@ -663,28 +668,19 @@ def load_walk(name, given=None):
         _state()["loaded"][path] = loaded
     data = loaded[1]
     knobs = wc.knobs(given)
-    fix_path = mp.path_for(path)
-    fix_stamp = os.path.getmtime(fix_path) if os.path.exists(fix_path) else None
-    keys_path = kp.path_for(path)
-    keys_stamp = os.path.getmtime(keys_path) if os.path.exists(keys_path) else None
-    key = ("walk", path, stamp, tuple(sorted(knobs.items())), fix_stamp, keys_stamp)
+    edits = edits or {}
+    fix = edits.get("fix") or mp.empty()
+    posture = bool(edits.get("posture"))
+    key = ("walk", path, stamp, tuple(sorted(knobs.items())), json.dumps(mp.dumps(fix), sort_keys=True), posture)
     walk = _state()["loaded"].get(key)
-    report = _cleaned(path, stamp, data, knobs)[1]
+    report = _cleaned(path, stamp, data, knobs, posture)[1]
     if walk is None:
-        # the animator's correction of the mean pose (the Mean pose rig, maya_walk.meanrig): the upper body's in
-        # the frames before the analysis, the legs' on the walk
-        fix = mp.load(fix_path)
-        walk = wm.analyse(mp.correct(_cleaned(path, stamp, data, knobs)[0], fix))
-        # then the key poses' edits (maya_walk.keyrig): found on the walk as the mean pose leaves it, put in its
-        # frames, read again
+        walk = wm.analyse(mp.correct(_cleaned(path, stamp, data, knobs, posture)[0], fix))
         steps, note = None, ""
         try:
             steps = kp.find(walk)
         except kp.Refusal as error:
             note = str(error)
-        keys = kp.load(keys_path)
-        if steps and not kp.is_empty(keys):
-            walk = wm.analyse(kp.correct(walk.clip, keys, steps, walk))
         walk.key_steps, walk.key_note = steps, note
         walk.fix = mp.model_fix(fix)
         _cache(key, walk)
@@ -707,28 +703,21 @@ BACKUP = ".orig"          # Fix posture keeps the walk's file as it was beside i
 
 
 def fix_posture(name, given=None):
-    """Fix posture (the card's button): the saved walk `name` read as it will be read (looped, its seam closed at
-    the Seam in `given`, not smoothed), its posture set right against the UE5 idle, and written back into its
-    file - the file as it was kept once beside it (BACKUP). Nothing out of place: the file untouched. Returns
-    (the clean Report, the status line)."""
+    """What Fix posture sets right on the walk `name` - read as it will be read (looped, its seam closed at the
+    Seam in `given`, not smoothed), its posture against the UE5 idle: (the clean Report, the status line, whether
+    anything was out of place). Nothing is written: the working walkers take it as their edit (edits "posture",
+    2026-10-27 - the library's walk is never touched)."""
     path = walk_path(name)
     if not os.path.exists(path):
         raise Refusal("no saved walk named %s" % name)
     data = wf.load(path)
     knobs = wc.knobs(dict(given or {}, smooth=0.0))
-    clip, report = _clean_data(data, knobs, posture_fix=True)
+    report = _clean_data(data, knobs, posture_fix=True)[1]
     fixed = [text for step, text, _ in report.lines if step == "posture"]
     if not fixed:
         why = ("; " + report.notes[0]) if report.notes else ""
-        return report, "Fix posture: %s - nothing out of place%s" % (walk_label(name), why)
-    backup = path + BACKUP
-    if not os.path.exists(backup):
-        shutil.copy2(path, backup)
-    clip.name = data.get("name") or name
-    wf.save(path, clip, data["statics"], int(data["start"]))
-    _forget(path)
-    return report, "Fix posture: %s %s | saved, the original in %s" % (walk_label(name), "; ".join(fixed),
-                                                                       os.path.basename(backup))
+        return report, "Fix posture: %s - nothing out of place%s" % (walk_label(name), why), False
+    return report, "Fix posture: %s %s" % (walk_label(name), "; ".join(fixed)), True
 
 
 def walk_names():
@@ -824,6 +813,110 @@ def _set_memo(root, memo):
     if not cmds.attributeQuery(MARKER, node=root, exists=True):
         cmds.addAttr(root, longName=MARKER, dataType="string")
     cmds.setAttr(root + "." + MARKER, json.dumps(memo), type="string")
+
+
+# ---- the walkers Pick chose, and their own edits (2026-10-27) ----
+
+def working():
+    """The walkers Pick chose (or rows clicked in the card's list): every change the card makes keys them,
+    whatever is selected (2026-10-27, «все наши изменения попадут на нее в независимости от выделения»)."""
+    return [r for r in walkers() if memo_of(r).get("working")]
+
+
+def set_working(roots):
+    """`roots` the working walkers, every other walker not (unrecorded)."""
+    keep = set()
+    for root in roots or ():
+        try:
+            keep.add(_long(root))
+        except Refusal:
+            pass
+    with Unrecorded():
+        for root in walkers():
+            memo = memo_of(root)
+            want = root in keep
+            if memo and bool(memo.get("working")) != want:
+                memo["working"] = want
+                _set_memo(root, memo)
+
+
+def empty_edits(walk=""):
+    return {"walk": walk or "", "fix": mp.empty(), "keys": kp.empty(), "posture": False}
+
+
+def edits_empty(edits):
+    return (not edits or (mp.is_empty(edits.get("fix") or mp.empty()) and kp.is_empty(edits.get("keys"))
+                          and not edits.get("posture")))
+
+
+def edits_of(root):
+    """The walker `root`'s own edits {"walk", "fix" (the mean pose's correction), "keys" (the key poses'),
+    "posture" (Fix posture on)}, or None when it keeps none."""
+    cmds = _cmds()
+    if not root or not cmds.objExists(root) or not cmds.attributeQuery(EDITS_ATTR, node=root, exists=True):
+        return None
+    try:
+        raw = json.loads(cmds.getAttr(root + "." + EDITS_ATTR) or "{}")
+    except ValueError:
+        return None
+    out = empty_edits(raw.get("walk"))
+    try:
+        out["fix"] = mp.loads(raw.get("fix") or {})
+        out["keys"] = kp.loads(raw.get("keys") or {})
+    except (mp.Refusal, kp.Refusal):
+        pass
+    out["posture"] = bool(raw.get("posture", False))
+    return out
+
+
+def set_edits(root, edits):
+    """The walker `root`'s own edits written - unrecorded (Ctrl+Z is the rig's, or the press's own)."""
+    cmds = _cmds()
+    data = {"walk": (edits or {}).get("walk") or "", "fix": mp.dumps((edits or {}).get("fix") or mp.empty()),
+            "keys": kp.dumps((edits or {}).get("keys") or {}), "posture": bool((edits or {}).get("posture"))}
+    with Unrecorded():
+        if not cmds.attributeQuery(EDITS_ATTR, node=root, exists=True):
+            cmds.addAttr(root, longName=EDITS_ATTR, dataType="string")
+        cmds.setAttr(root + "." + EDITS_ATTR, json.dumps(data), type="string")
+
+
+def walker_edits(root, walk_name):
+    """(the edits `root` walks `walk_name` with, a note): its own; another walk's dropped (a new walk starts clean,
+    said); none kept by a walker keyed before them (memo version under 4): its cycle's old mean pose file, once, so
+    it walks as it did (the old key pose files were read with a measure that misread the rigs, 2026-10-27 - not
+    carried)."""
+    edits = edits_of(root)
+    note = ""
+    if edits is None:
+        memo = memo_of(root)
+        edits = empty_edits(walk_name)
+        if memo.get("walk") == walk_name and int(memo.get("version", 0) or 0) < VERSION and walk_exists(walk_name):
+            try:
+                legacy = mp.load(mp.path_for(walk_path(walk_name)))
+            except mp.Refusal:
+                legacy = mp.empty()
+            if not mp.is_empty(legacy):
+                edits["fix"] = legacy
+                note = "the cycle's old mean pose correction carried onto %s" % walker_label(root)
+        return edits, note
+    if edits.get("walk") and edits["walk"] != walk_name:
+        if not edits_empty(edits):
+            note = "%s's edits of %s dropped (another walk)" % (walker_label(root), walk_label(edits["walk"]))
+        return empty_edits(walk_name), note
+    edits["walk"] = walk_name
+    return edits, note
+
+
+def edits_line(edits):
+    """«mean pose corrected (...) | key poses: Contact edited | posture fixed» - what a walker's edits hold."""
+    parts = []
+    if edits and not mp.is_empty(edits.get("fix") or mp.empty()):
+        parts.append("mean pose corrected (%s)" % mp.summary(edits["fix"]))
+    if edits and not kp.is_empty(edits.get("keys")):
+        parts.append("key poses: %s" % kp.summary(edits["keys"]))
+    if edits and edits.get("posture"):
+        parts.append("posture fixed")
+    return " | ".join(parts)
 
 
 # ---- the keys ----
@@ -1025,9 +1118,26 @@ def normal_params(params):
     out["character"] = out.get("character") if out.get("character") in gait.CHARACTER else ""
     out["strength"] = float(out.get("strength", 1.0) or 0.0)
     out["physics"] = bool(out.get("physics", True))
+    out["knee_pops"] = bool(out.get("knee_pops", True))
     out["pose"] = float(out.get("pose", 0.0) or 0.0)
     out["in_place"] = 1.0 if float(out.get("in_place", 0.0) or 0.0) >= 0.5 else 0.0
     out["clean"] = wc.knobs(out.get("clean") or {})
+    return out
+
+
+def shift_params(params, common):
+    """`params` (normal_params) with the parameters in `common` ({"height": cm, "forward": cm} - what the key rigs
+    moved alike on all four keys, keyposes.split_common) moved by that many cm, each an offset change pinned
+    (2026-10-27, «цикл должен измениться по умному»)."""
+    out = normal_params(params)
+    changes, pins = dict(out["changes"]), set(out["pins"])
+    for key, d in (common or {}).items():
+        if abs(float(d)) < 1e-9 or key not in gait.P:
+            continue
+        kind, x = changes.get(key, ("offset", 0.0))
+        changes[key] = ("offset", (float(x) if kind == "offset" else 0.0) + float(d))
+        pins.add(key)
+    out["changes"], out["pins"] = changes, sorted(pins)
     return out
 
 
@@ -1119,31 +1229,36 @@ def evaluated(walk, knobs, pose, prepared=None, parts=()):
     return result
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None, params=None):
-    """The saved walk `walk_name` - read under the clean knobs in `given` - keyed onto the
-    skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
-    - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
-    stands). `params` (2026-10-26, the card's parameters - normal_params): the model's knobs are the parameters'
-    (params_knobs) and `given` gives only the clean's knobs where `params` has none. One undo step; `record` False
-    (the Mean pose rig's live update): no undo step at all, the curves re-keyed in place - Ctrl+Z belongs to the
-    rig. The pose: the Pose Library card `pose_card` (relative to the library; the copy kept on the skeleton when
-    the card is gone), else an old saved pose `pose_name`. Returns (Result, info, the status line); with `params`
-    info carries "values" (the parameters asked), "measured" (the result's, gait.measure) and "diagnosis"."""
-    started = time.time()
+class Animation(object):
+    """What a walker walks, read and evaluated (animate): the walk, its statics and first frame, the clean Report,
+    the knobs and the parameters asked, the pose's label / note / packed bones, the walker's edits and their notes,
+    the evaluated Result (In place in, the key poses' edits on it), `moving` - its frames before In place - and the
+    result read as a walk (`rw`) with its key poses (`steps`; None when the result could not be read)."""
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_card=None, params=None,
+            with_steps=False):
+    """The walker `root`'s animation of the saved walk `walk_name` (an Animation), nothing written: the walk read
+    under its clean knobs and the walker's own edits (walker_edits: its Fix posture, its mean pose correction),
+    evaluated with the parameters (or the model's knobs in `given`), the pose `pose_card` / `pose_name`'s `parts`;
+    then the walker's key poses' edits put on the evaluated frames (keyposes.on_result: after the parameters, the
+    pose and the physics - the walker shows at each key what its rig shows), In place last. `with_steps`: the
+    result read as a walk even with no key edit (the key rigs stand in it)."""
     root = _long(root)
     if params is not None:              # the clean's knobs: the parameters' own, else `given`'s - kept on them
         raw = dict((params or {}).get("clean") or {})
         params = normal_params(dict(params, clean=dict(wc.knobs(given), **raw)))
         given = dict(given or {}, **params["clean"])
-    walk, statics, start, report = load_walk(walk_name, given)
-    bones, note = read_bones(root)
-    memo = memo_of(root)
-    retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
-    pose = prepared = None
+    edits, edits_note = walker_edits(root, walk_name)
+    walk, statics, start, report = load_walk(walk_name, given, edits)
     if params is not None:
         knobs, values_asked = params_knobs(walk, params)
     else:
         knobs, values_asked = model_knobs(given), None
+    pose = prepared = None
     pose_label, pose_note, packed = pose_name or "", "", None
     if not pose_card and pose_name:         # an old pose name: its card when it was moved into the library
         migrated = wcards.legacy_card(pose_name)
@@ -1158,40 +1273,94 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         prepared = prepared_pose(walk_name, pose_label, given, bones=pose_bones, ident=ident)  # clean: given
         pose = wp.filtered(prepared, parts)
         packed = wcards.pack(pose_bones)
-    result = evaluated(walk, knobs, pose, prepared, parts)
-    frames, info = retarget.frames(result)
+    keys = edits.get("keys") or {}
+    amount = float(wm.knobs(**knobs).get("in_place", 0.0))
+    rw = steps = None
+    layer_note = ""
+    if kp.is_empty(keys) and not with_steps:
+        result = evaluated(walk, knobs, pose, prepared, parts)
+        moving = result.worlds if amount <= 0.0 else None
+    else:
+        base = evaluated(walk, dict(knobs, in_place=0.0), pose, prepared, parts)
+        moving, rw, steps, layer_note = kp.on_result(walk, base.worlds, keys)
+        worlds = kp.in_place(moving, walk, amount) if amount > 0.0 else moving
+        result = wm.Result(worlds, base.frames, dict(base.info, knobs=dict(base.info["knobs"], in_place=amount),
+                                                     in_place=amount))
+    return Animation(root=root, walk_name=walk_name, given=given, params=params, walk=walk, statics=statics,
+                     start=start, report=report, knobs=knobs, values_asked=values_asked, pose=pose,
+                     pose_label=pose_label, pose_note=pose_note, packed=packed, parts=tuple(parts), edits=edits,
+                     edits_note=edits_note, result=result, moving=moving, rw=rw, steps=steps,
+                     layer_note=layer_note, pose_card=pose_card)
+
+
+def walker_animation(root, with_steps=True):
+    """The walker `root`'s animation as it was keyed last (its own memo - its walk, settings, pose and parts):
+    what the rig poses stand in (maya_walk.keyrig)."""
+    memo = memo_of(root)
+    if not memo.get("walk"):
+        raise Refusal("%s walks nothing of this tool - Pick puts a walk on it" % walker_label(root))
+    return animate(root, memo["walk"], memo.get("knobs"), memo.get("pose") or None,
+                   tuple(memo.get("parts", ALL_PARTS)), pose_card=memo.get("pose_card") or None,
+                   params=memo_params(root, memo, translate=False), with_steps=with_steps)
+
+
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None, params=None):
+    """The saved walk `walk_name` - read under the clean knobs in `given` and the walker's own edits - keyed onto
+    the skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
+    - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
+    stands). `params` (2026-10-26, the card's parameters - normal_params): the model's knobs are the parameters'
+    (params_knobs) and `given` gives only the clean's knobs where `params` has none. One undo step; `record` False
+    (the rig poses' Update): no undo step at all, the curves re-keyed in place - Ctrl+Z belongs to the rig. The
+    pose: the Pose Library card `pose_card` (relative to the library; the copy kept on the skeleton when the card
+    is gone), else an old saved pose `pose_name`. Returns (Result, info, the status line); with `params` info
+    carries "values" (the parameters asked), "measured" (the result's, gait.measure) and "diagnosis"."""
+    started = time.time()
+    root = _long(root)
+    anim = animate(root, walk_name, given, pose_name, parts, pose_card, params)
+    walk, statics, start, report = anim.walk, anim.statics, anim.start, anim.report
+    given, params, result = anim.given, anim.params, anim.result
+    bones, note = read_bones(root)
+    memo = memo_of(root)
+    retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
+    knee_pops = True if params is None else bool(params.get("knee_pops", True))
+    frames, info = retarget.frames(result, knee_pops=knee_pops)
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
     with (_Chunk("skeldarWalkApply") if record else Unrecorded()):
         _, driven = write_curves(values, static, start, in_place=not record)
-        if packed is not None and packed != pose_copy(root):
+        if anim.packed is not None and anim.packed != pose_copy(root):
             if not _cmds().attributeQuery(POSE_COPY, node=root, exists=True):
                 _cmds().addAttr(root, longName=POSE_COPY, dataType="string")
-            _cmds().setAttr(root + "." + POSE_COPY, packed, type="string")
-        stored = {"walk": walk_name, "pose": pose_label or "", "pose_card": pose_card or "",
+            _cmds().setAttr(root + "." + POSE_COPY, anim.packed, type="string")
+        stored = {"walk": walk_name, "pose": anim.pose_label or "", "pose_card": anim.pose_card or "",
                   "parts": list(parts),
                   "knobs": dict(result.info["knobs"], **wc.knobs(given)),
                   "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
-                  "listed": True, "keys": keys_print(root)}
+                  "listed": True, "keys": keys_print(root), "working": bool(memo.get("working"))}
         if params is not None:
             stored["params"] = plain_params(params)
         _set_memo(root, stored)
+    if anim.edits_note or edits_of(root) is None:          # an edit carried over or dropped: kept as it now is
+        set_edits(root, anim.edits)
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
     #  short: the card's status line holds three lines (2026-10-13, «интерфейс рисуй компактным»)
     text = ("%s on %s, %d bones x%.2f | %d fr (%d-%d), stride %.0f cm, %.2f m/s"
             % (walk_label(walk_name), _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
                target_stride, result.info["speed"] * info["scale"]))
-    if pose is not None:
-        text += " | pose %s x%.2f%s" % (pose_label, result.info["knobs"]["pose"],
+    if anim.pose is not None:
+        text += " | pose %s x%.2f%s" % (anim.pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
     matched = result.info.get("leg_match") or {}
-    if pose is not None and matched.get("on"):
+    if anim.pose is not None and matched.get("on"):
         text += " | legs matched x%.2f" % matched["keep"]
         if abs(matched.get("hips_deg", 0.0)) >= 1.0:
             text += ", hips %.0f deg to the spine" % abs(matched["hips_deg"])
     if max(info["drop"]) > 0.05:
         text += " | pelvis down %.1f cm where the legs fall short" % max(info["drop"])
+    pops = info.get("pops") or {}
+    if pops.get("fixed"):
+        text += " | " + wt.pops_line(pops)
     if result.info["lowered"] > 0.05:
         text += " | the walk sinks %.1f cm at the contacts" % result.info["lowered"]
     if info["short"] > 0.05:
@@ -1213,26 +1382,23 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     used = result.info["knobs"]
     if used.get("in_place", 0.0) >= 0.5:
         text += " | in place"
-    fix = walk_fix(walk_name)[0]
-    if not mp.is_empty(fix):
-        text += " | mean pose corrected (%s)" % mp.summary(fix)
-    try:
-        keys = walk_keys(walk_name)[0]
-    except kp.Refusal:
-        keys = {}
-    if not kp.is_empty(keys):
-        text += " | key poses: %s" % kp.summary(keys)
+    edited = edits_line(anim.edits)
+    if edited:
+        text += " | " + edited
+    for extra in (anim.edits_note, anim.layer_note):
+        if extra:
+            text += " | " + extra
     if report.changed:
         text += " | " + report.short()
-    if pose_note:
-        text += " | " + pose_note
+    if anim.pose_note:
+        text += " | " + anim.pose_note
     if driven:
         text += " | left to their drivers: " + ", ".join("%s (%s)" % item for item in sorted(driven.items()))
     if note:
         text += " | " + note
     info["clean"] = report
     if params is not None:
-        info["values"] = values_asked
+        info["values"] = anim.values_asked
         try:
             info["measured"], info["diagnosis"] = diagnosis(walk, result)
         except Exception:                                    # noqa: BLE001 - a measure never fails the keys

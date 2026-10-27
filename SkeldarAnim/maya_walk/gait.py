@@ -569,8 +569,17 @@ def own(walk):
 
 
 def of_result(walk, result):
-    """A result's parameters (measure on the result's own contacts)."""
-    return measure(walk, result.worlds, (result.info or {}).get("contacts") or _contacts_scaled(walk, result.frames))
+    """A result's parameters (measure on the result's own contacts). An In place result walks at the speed and the
+    step its info keeps: the travel is off its keys, not out of the walk (measured on the keys it read 7.5e-18 m/s,
+    2026-10-27)."""
+    info = result.info or {}
+    out = measure(walk, result.worlds, info.get("contacts") or _contacts_scaled(walk, result.frames))
+    if float(info.get("in_place", 0.0) or 0.0) > 0.0:
+        if "speed" in info:
+            out["speed"] = float(info["speed"])
+        if "stride_cm" in info:
+            out["step"] = float(info["stride_cm"])
+    return out
 
 
 def _contacts_scaled(walk, n):
@@ -1156,10 +1165,13 @@ class Finding(object):
         return "Finding(%r, %r, %r)" % (self.key, self.text, self.fix)
 
 
+FROUDE_MIN_SPEED = 0.1    # m/s: under it a body stands rather than walks, and Fr^-0.2 runs away (110 million frames)
+
+
 def froude_tempo(leg, fps, speed):
     """The guide's step time for a body of leg length `leg` (cm) at `speed` (m/s), frames:
-    1.15 . f . sqrt(h / g) . Fr^-0.2."""
-    if leg <= 0.0 or speed <= 0.0:
+    1.15 . f . sqrt(h / g) . Fr^-0.2; 0 for a body under FROUDE_MIN_SPEED."""
+    if leg <= 0.0 or speed < FROUDE_MIN_SPEED:
         return 0.0
     h = leg / 100.0
     fr = speed * speed / (9.81 * h)

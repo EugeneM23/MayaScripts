@@ -174,6 +174,47 @@ class RetargetTests(unittest.TestCase):
             stance = [f for f in stance if f <= 24]
             self.assertLess(float(np.ptp(foot[stance], axis=0).max()), 1e-6)
 
+    def test_the_knee_pop_fix_takes_the_clicks_away_and_keeps_the_feet(self):
+        """2026-10-27 («инструмент который будет чинить щелчки в колене», the gait guide's «никогда не
+        выпрямляют ногу до конца, а на кадрах, где она почти прямая, опускают корень»): legs 20 % shorter go
+        straight at the reach and click; with the fix the clicks are gone, the planted feet stay planted, the
+        bones keep their lengths and the pelvis only goes down."""
+        w, c = walk(), clip()
+        target = target_of(c)
+        for side in "lr":
+            at = lambda leaf: np.array(target[leaf]["rest"][12:15])
+            hip, knee, ankle, ball = (at(b + "_" + side) for b in ("thigh", "calf", "foot", "ball"))
+            knee2 = hip + 0.8 * (knee - hip)
+            ankle2 = knee2 + 0.8 * (ankle - knee)
+            for leaf, point in (("calf", knee2), ("foot", ankle2), ("ball", ankle2 + (ball - ankle))):
+                for key in ("rest", "world"):
+                    target[leaf + "_" + side][key][12:15] = [float(v) for v in point]
+        w.reach = dict((s, 1.0) for s in w.reach)          # legs that may go fully straight: they click
+        result = w.evaluate({"pelvis_height": 6.0})
+        rough, info0 = wt.Retarget(w, statics_of(c), target, scale=1.0).frames(result, knee_pops=False)
+        rt = wt.Retarget(w, statics_of(c), target, scale=1.0)
+        fixed, info = rt.frames(result, knee_pops=True)
+        before = wt.pops(rt.bends(rough))
+        after = wt.pops(rt.bends(fixed))
+        self.assertTrue(any(before.values()), "the fixture clicks")
+        self.assertFalse(any(after.values()), after)
+        self.assertEqual(info["pops"]["fixed"], sum(len(v) for v in before.values()))
+        self.assertGreaterEqual(min(np.array(info["drop"]) - np.array(info0["drop"])), -1e-9)
+        self.assertIn("knee pops smoothed", wt.pops_line(info["pops"]))
+        for side in "lr":
+            hip, knee, ankle = (worlds(fixed, b + "_" + side)[:, 3, :3] for b in ("thigh", "calf", "foot"))
+            self.assertLess(float(np.abs(np.linalg.norm(knee - hip, axis=1) - 0.8 * 48.0).max()), 1e-6)
+            stance = [w.feet[side].on + i for i in range(w.feet[side].length + 1)]
+            stance = [f for f in stance if f <= 24]
+            self.assertLess(float(np.ptp(ankle[stance], axis=0).max()), 1e-6)
+
+    def test_a_click_is_a_sharp_minimum_near_straight(self):
+        smooth = np.radians(20.0 + 15.0 * np.cos(np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)))
+        self.assertEqual(wt.pops({"l": smooth})["l"], [])
+        sharp = np.array(smooth)
+        sharp[12] = np.radians(1.0)                # a V into straight
+        self.assertEqual(wt.pops({"l": sharp})["l"], [12])
+
     def test_a_target_without_legs_is_refused(self):
         w, c = walk(), clip()
         target = target_of(c)
