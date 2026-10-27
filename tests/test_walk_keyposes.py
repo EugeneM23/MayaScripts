@@ -223,37 +223,182 @@ class CombineTests(unittest.TestCase):
         keys = kp.combine(keys, "up", kp.measure(one, w), kp.measure(two, w), w, f)[0]
         self.assertAlmostEqual(T.angle(keys["up"]["rot"]["spine_02"]), 20.0, places=6)
 
-    def test_a_flat_foot_s_move_is_not_taken_and_said(self):
-        w = T.walk()
+    def planted(self, w, side="l"):
+        """A key frame of the reference step where `side`'s foot stands flat."""
         steps = kp.find(w)
-        f = kp.frames_of(steps, w.P)["passing"]
-        base = worlds_at(w, f)
-        now = dict((n, np.array(m)) for n, m in base.items())
-        for name in ("foot_l", "ball_l"):
-            now[name][3, :3] = now[name][3, :3] + np.array([3.0, 0.0, 0.0])
-        keys, moved, ignored = kp.combine({}, "passing", kp.measure(base, w), kp.measure(now, w), w, f)
-        self.assertTrue(kp.is_empty(keys))
-        self.assertEqual(len(ignored), 1)
-        self.assertIn("flat", ignored[0])
+        ref = kp.frames_of(steps, w.P)
+        for key in kp.KEYS:
+            heel, ball = kp.ground(w, side, ref[key])
+            if heel > 0.5 and ball > 0.5:
+                return steps, key, ref[key]
+        self.fail("no key with the %s foot flat" % side)
 
-    def test_a_flat_foot_s_knee_stays_with_it_and_a_lowered_pelvis_reads_minus(self):
-        """A foot planted flat moved on the rig, its knee following it: neither is taken (the knee only followed
-        the foot). The pelvis lowered reads «pelvis -2.0 cm»."""
+    def test_a_planted_foot_s_move_is_its_print_for_the_whole_stance(self):
+        """2026-10-27 («реагирует на изменения всех контроллеров»): a planted foot moved along the ground is where
+        it stands for its whole stance - held still there (no slide), the other foot's stances mirrored; a lift
+        is not taken, said."""
+        w = T.walk()
+        steps, key, f = self.planted(w)
+        base = worlds_at(w, f)
+        now = dict((n, np.array(m)) for n, m in base.items())
+        move = 3.0 * np.asarray(w.fwd) + 2.0 * np.asarray(w.side) + 1.5 * np.asarray(w.up)
+        for name in ("foot_l", "ball_l"):
+            now[name][3, :3] = now[name][3, :3] + move
+        keys, moved, ignored = kp.combine({}, key, kp.measure(base, w), kp.measure(now, w), w, f)
+        self.assertTrue(np.allclose(keys[key]["print"]["l"]["t"], [3.0, 2.0, 0.0], atol=1e-9))
+        self.assertTrue(any("lifted 1.5 cm" in text for text in ignored), ignored)
+        out = kp.correct(w.clip, keys, steps, w)
+        weights = kp.stance_weights(w, "l", w.clip.worlds.shape[1])
+        j = w.index["foot_l"]
+        shift = 3.0 * np.asarray(w.fwd) + 2.0 * np.asarray(w.side)
+        held = [g for g in range(w.P) if weights[g] >= 1.0]
+        self.assertTrue(held)
+        for g in held:
+            self.assertTrue(np.allclose(out.worlds[j, g, 3, :3] - w.clip.worlds[j, g, 3, :3], shift, atol=1e-6), g)
+        r = w.index["foot_r"]
+        mirror = 3.0 * np.asarray(w.fwd) - 2.0 * np.asarray(w.side)
+        for g in [g for g in range(w.P) if kp.stance_weights(w, "r", w.clip.worlds.shape[1])[g] >= 1.0]:
+            self.assertTrue(np.allclose(out.worlds[r, g, 3, :3] - w.clip.worlds[r, g, 3, :3], mirror, atol=1e-6))
+        for leg in ("thigh_l", "calf_l"):
+            child = {"thigh_l": "calf_l", "calf_l": "foot_l"}[leg]
+            lengths = np.linalg.norm(out.worlds[w.index[child], :, 3, :3] - out.worlds[w.index[leg], :, 3, :3], axis=1)
+            self.assertLess(float(np.ptp(lengths)), 1e-6)
+
+    def test_a_flat_foot_turned_about_up_is_its_toe_out_a_tilt_is_not(self):
+        w = T.walk()
+        steps, key, f = self.planted(w)
+        base = worlds_at(w, f)
+        now = dict((n, np.array(m)) for n, m in base.items())
+        pivot = now["foot_l"][3, :3].copy()
+        turn = wm.exp_rot(math.radians(12.0) * np.asarray(w.up)) @ wm.exp_rot(math.radians(5.0) * np.asarray(w.fwd))
+        for name in ("foot_l", "ball_l"):
+            now[name][:3, :3] = now[name][:3, :3] @ turn
+            now[name][3, :3] = pivot + (now[name][3, :3] - pivot) @ turn
+        keys, moved, ignored = kp.combine({}, key, kp.measure(base, w), kp.measure(now, w), w, f)
+        self.assertAlmostEqual(math.degrees(keys[key]["print"]["l"]["yaw"]), 12.0, delta=0.6)
+        self.assertTrue(any("tilted" in text for text in ignored), ignored)
+
+    def test_a_knee_of_a_straight_leg_or_a_flipped_one_is_not_read(self):
+        """The IK solver flips a nearly straight knee; the live rigs read 78-161 deg there (2026-10-27)."""
         w = T.walk()
         steps = kp.find(w)
         f = kp.frames_of(steps, w.P)["passing"]
+        base = kp.measure(worlds_at(w, f), w)
+        hip, thigh, ankle = base["knee"]["l"]
+        straight = (hip, mp._unit(ankle - hip) * np.linalg.norm(thigh), ankle)
+        now = dict(base, knee=dict(base["knee"], l=straight))
+        flat_base = dict(base, knee=dict(base["knee"], l=straight))
+        flipped = (hip, -thigh + 2.0 * np.dot(thigh, mp._unit(ankle - hip)) * mp._unit(ankle - hip), ankle)
+        for b, n, word in ((base, now, "nearly straight"), (flat_base, now, "nearly straight")):
+            inc, moved, ignored = kp.increment("passing", b, n, w, f)
+            self.assertEqual(inc["knee"]["l"], 0.0)
+        bent = kp.bend(base["knee"]["l"])
+        if bent > kp.KNEE_BENT:
+            inc, moved, ignored = kp.increment("passing", base, dict(base, knee=dict(base["knee"], l=flipped)), w, f)
+            self.assertEqual(inc["knee"]["l"], 0.0)
+            self.assertTrue(ignored, "the flip is said")
+
+    def test_a_leg_the_pelvis_pulled_straight_gives_no_foot_and_no_toes(self):
+        """2026-10-27: the pelvis +5 cm on a rig pulls an IK leg straight and drags its foot with the hip (1.4 cm
+        lifts, 0.8 cm prints, 7 deg toes read live) - the solver's, not the animator's: the pelvis is taken, that
+        leg's foot and toes are not, said."""
+        w = T.walk()
+        steps = kp.find(w)
+        f = kp.frames_of(steps, w.P)["up"]
         base = worlds_at(w, f)
         now = dict((n, np.array(m)) for n, m in base.items())
-        for name in ("foot_l", "ball_l"):
-            now[name][3, :3] = now[name][3, :3] + np.array([4.0, 0.0, 0.0])
-        now["calf_l"][3, :3] = now["calf_l"][3, :3] + np.array([6.0, 0.0, 0.0])
+        up = np.asarray(w.up, float)
         kids = mp._children(w.parents)
         for k in mp._below(w.index["pelvis"], kids):
-            if w.names[k] not in ("foot_l", "ball_l", "calf_l"):
+            now[w.names[k]][3, :3] = now[w.names[k]][3, :3] + 5.0 * up
+        hip = now["thigh_l"][3, :3]
+        thigh = np.linalg.norm(base["calf_l"][3, :3] - base["thigh_l"][3, :3])
+        calf = np.linalg.norm(base["foot_l"][3, :3] - base["calf_l"][3, :3])
+        line = mp._unit(base["foot_l"][3, :3] - hip)
+        knee, ankle = hip + line * thigh, hip + line * (thigh + calf)
+        drag = ankle - now["foot_l"][3, :3]
+        now["calf_l"][3, :3] = knee
+        for name in ("foot_l", "ball_l"):
+            now[name][3, :3] = now[name][3, :3] + drag
+        now["ball_l"][:3, :3] = wm.exp_rot(np.array([math.radians(7.0), 0.0, 0.0])) @ now["ball_l"][:3, :3]
+        self.assertLess(kp.bend(kp.measure(now, w)["knee"]["l"]), kp.KNEE_BENT)
+        inc, moved, ignored = kp.increment("up", kp.measure(base, w), kp.measure(now, w), w, f)
+        self.assertAlmostEqual(float(inc["pelvis"][2]), 5.0, places=6)
+        self.assertNotIn("ball_l", inc["rot"])
+        self.assertLess(float(np.linalg.norm(inc["foot"]["l"]["t"])), 1e-9)
+        self.assertLess(float(np.linalg.norm(inc["print"]["l"]["t"])), 1e-9)
+        self.assertTrue(any("leg_l" in text and "pulled straight" in text for text in ignored), ignored)
+
+    def test_a_straight_leg_with_the_pelvis_still_keeps_its_foot_move(self):
+        """A foot moved on a nearly straight leg with the pelvis where it was is the animator's."""
+        w = T.walk()
+        steps = kp.find(w)
+        f = kp.frames_of(steps, w.P)["up"]
+        base = worlds_at(w, f)
+        now = dict((n, np.array(m)) for n, m in base.items())
+        for name in ("foot_l", "ball_l"):
+            now[name][3, :3] = now[name][3, :3] + 4.0 * np.asarray(w.fwd, float)
+        inc, moved, ignored = kp.increment("up", kp.measure(base, w), kp.measure(now, w), w, f)
+        self.assertFalse(any("pulled straight" in text for text in ignored), ignored)
+        self.assertGreater(float(np.linalg.norm(inc["foot"]["l"]["t"])
+                                 + np.linalg.norm(inc["print"]["l"]["t"])), 3.0)
+
+    def test_a_knee_is_read_only_on_the_sides_given(self):
+        """keyrig.knees_taken: an IK leg whose pole control stayed turns by itself when the pelvis or the foot
+        moves (1.6-2.3 deg on the live rigs) - that knee is not read."""
+        w = T.walk()
+        steps = kp.find(w)
+        f = kp.frames_of(steps, w.P)["passing"]
+        base = worlds_at(w, f)
+        hip = base["thigh_l"][3, :3].copy()
+        line = mp._unit(base["foot_l"][3, :3] - hip)
+        now = turned_subtree(w, base, "thigh_l", wm.exp_rot(math.radians(12.0) * line))
+        b, n = kp.measure(base, w), kp.measure(now, w)
+        if kp.bend(b["knee"]["l"]) <= kp.KNEE_BENT:
+            self.skipTest("the synthetic leg is straight at the passing")
+        taken = kp.increment("passing", b, n, w, f)[0]
+        self.assertAlmostEqual(math.degrees(abs(taken["knee"]["l"])), 12.0, delta=0.5)
+        skipped = kp.increment("passing", b, n, w, f, knees={"l": False, "r": True})[0]
+        self.assertEqual(skipped["knee"]["l"], 0.0)
+
+    def test_knees_taken_by_the_poles(self):
+        kr = T.load("keyrig")
+        still = {"l": {"ik": True, "t": [1.0, 2.0, 3.0]}, "r": {"ik": True, "t": [4.0, 5.0, 6.0]}}
+        moved = {"l": {"ik": True, "t": [1.0, 2.0, 9.0]}, "r": {"ik": True, "t": [4.0, 5.0, 6.0]}}
+        fk = {"l": {"ik": False, "t": [1.0, 2.0, 3.0]}, "r": {"ik": True, "t": [4.0, 5.0, 6.0]}}
+        self.assertEqual(kr.knees_taken(still, still), {"l": False, "r": False})
+        self.assertEqual(kr.knees_taken(still, moved), {"l": True, "r": False})
+        self.assertEqual(kr.knees_taken(still, fk), {"l": True, "r": False})
+        self.assertIsNone(kr.knees_taken(None, still))
+
+    def test_the_toes_turn_in_the_foot_s_frame(self):
+        w = T.walk()
+        steps = kp.find(w)
+        f = kp.frames_of(steps, w.P)["up"]
+        base = worlds_at(w, f)
+        now = dict((n, np.array(m)) for n, m in base.items())
+        now["ball_l"][:3, :3] = wm.exp_rot(np.array([math.radians(20.0), 0.0, 0.0])) @ now["ball_l"][:3, :3]
+        keys = kp.combine({}, "up", kp.measure(base, w), kp.measure(now, w), w, f)[0]
+        self.assertIn("ball_l", keys["up"]["rot"])
+        out = kp.correct(w.clip, keys, steps, w)
+        rot = lambda c, n, g: wm.orthonormal(c[w.index[n], g, :3, :3])
+        local = lambda c, g: rot(c, "ball_l", g) @ rot(c, "foot_l", g).T
+        got = local(out.worlds, f) @ local(w.clip.worlds, f).T
+        self.assertAlmostEqual(math.degrees(float(np.linalg.norm(wm.log_rot(got)))), 20.0, delta=0.01)
+        foot = w.index["foot_l"]
+        self.assertTrue(np.allclose(out.worlds[foot, f], w.clip.worlds[foot, f], atol=1e-6))
+
+    def test_a_lowered_pelvis_reads_minus(self):
+        w = T.walk()
+        steps = kp.find(w)
+        f = kp.frames_of(steps, w.P)["passing"]
+        base = worlds_at(w, f)
+        now = dict((n, np.array(m)) for n, m in base.items())
+        kids = mp._children(w.parents)
+        for k in mp._below(w.index["pelvis"], kids):
+            if w.names[k] not in ("foot_l", "ball_l", "foot_r", "ball_r"):
                 now[w.names[k]][3, :3] = now[w.names[k]][3, :3] - 2.0 * w.up
         keys, moved, ignored = kp.combine({}, "passing", kp.measure(base, w), kp.measure(now, w), w, f)
-        self.assertEqual(keys["passing"]["knee"]["l"], 0.0)
-        self.assertTrue(any("foot_l stands flat" in text for text in ignored), ignored)
         pelvis = [m for m in moved if m[0] == "pelvis"]
         self.assertEqual(len(pelvis), 1)
         self.assertAlmostEqual(pelvis[0][1], -2.0, places=6)
@@ -331,3 +476,61 @@ class LineTests(unittest.TestCase):
         self.assertAlmostEqual(back[0][2], -kr.OFFSET)     # its right is -Z
         still = kr.line_point((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 1)
         self.assertAlmostEqual(still[2], kr.GAP)            # in place: along +Z
+
+
+class SplitTests(unittest.TestCase):
+
+    def incs(self, ups, forwards=(0.0, 0.0, 0.0, 0.0)):
+        out = {}
+        for key, up, fwd in zip(kp.KEYS, ups, forwards):
+            e = kp.empty_key()
+            e["pelvis"] = np.array([fwd, 0.0, up])
+            out[key] = e
+        return out
+
+    def test_the_pelvis_raised_alike_on_all_four_is_the_height(self):
+        """2026-10-27 («цикл должен измениться по умному»): all four alike is a setting of the whole walk."""
+        common, rest = kp.split_common(self.incs((5.0, 5.0, 6.0, 5.5), (-3.0, -3.0, -3.0, -2.5)))
+        self.assertAlmostEqual(common["height"], 5.0)
+        self.assertAlmostEqual(common["forward"], -2.5)
+        self.assertAlmostEqual(rest["passing"]["pelvis"][2], 1.0)
+        self.assertAlmostEqual(rest["contact"]["pelvis"][0], -0.5)
+
+    def test_one_key_or_mixed_signs_stay_the_keys(self):
+        for ups in ((0.0, -4.0, 0.0, 0.0), (3.0, -3.0, 3.0, 3.0), (5.0, 1.0, 5.0, 5.0)):
+            common, rest = kp.split_common(self.incs(ups))
+            self.assertEqual(common["height"], 0.0, ups)
+            self.assertTrue(np.allclose([rest[k]["pelvis"][2] for k in kp.KEYS], ups))
+
+    def test_a_foot_moved_alike_on_two_rigs_is_one_print(self):
+        incs = self.incs((0.0, 0.0, 0.0, 0.0))
+        incs["down"]["print"]["l"]["t"] = np.array([4.0, 0.0, 0.0])
+        incs["passing"]["print"]["l"]["t"] = np.array([4.2, 0.0, 0.0])
+        one = kp.one_print(incs)
+        self.assertTrue(np.allclose(kp.stance_prints(one)["l"]["t"], [4.2, 0.0, 0.0]))
+
+
+class ResultTests(unittest.TestCase):
+
+    def test_an_edit_on_the_result_is_exact_at_the_result_s_key(self):
+        """The key edits go on the walker's evaluated animation (after the parameters, the pose and the physics):
+        exact at the key found on the result, nothing at the other keys."""
+        w = T.walk()
+        r = w.evaluate({"tempo": 18, "balance": 0.0})
+        keys = {"contact": kp.empty_key()}
+        Y = wm.exp_rot(np.array([0.0, 0.0, math.radians(15.0)]))
+        keys["contact"]["rot"]["upperarm_l"] = Y
+        worlds, rw, steps, note = kp.on_result(w, r.worlds, keys)
+        self.assertEqual(note, "")
+        ref = kp.frames_of(steps, rw.P)
+        local = lambda W, g: (wm.orthonormal(W[w.index["upperarm_l"], g, :3, :3]) @
+                              wm.orthonormal(W[w.index["clavicle_l"], g, :3, :3]).T)
+        got = local(r.worlds, ref["contact"]).T @ local(worlds, ref["contact"])
+        self.assertLess(float(np.abs(got - Y).max()), 1e-9)
+        self.assertLess(float(np.abs(local(worlds, ref["down"]) - local(r.worlds, ref["down"])).max()), 1e-9)
+
+    def test_in_place_is_the_model_s(self):
+        w = T.walk()
+        moving = w.evaluate({"balance": 0.0})
+        still = w.evaluate({"balance": 0.0, "in_place": 1.0})
+        self.assertLess(float(np.abs(kp.in_place(moving.worlds, w, 1.0) - still.worlds).max()), 1e-6)

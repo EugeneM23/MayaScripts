@@ -10898,6 +10898,58 @@ animator away). Spec `docs/superpowers/specs/2026-10-26-walk-key-poses-design.md
   by the install shows the Key poses row; Create 13.2 s for four rigs; the card's own Update 1.4 s (+20 on Contact's
   shoulder: the key 20.00 deg, the walker 14.7); Reset back to 0.0000; Delete; the scene left as found.
 
+**…the walkers Pick chose, edits on the walker, every rig control, knee pops** (2026-10-27, after trying the key
+poses: «Позы плохо обновляются. Вообще тут что-то не так кардинально», seven points; asked: Pick chooses the walkers
+every change keys, whatever is selected; the edits live on the walker, the library's card never changes). Spec
+`docs/superpowers/specs/2026-10-27-walk-builder-working-walkers-design.md` (read its addendum). **This replaces** «a
+parameter keys only the SELECTED walkers», the per-cycle `<walk>.walkfix.json` / `.walkkeys.json` beside the walk's
+file (here and in the mean pose rig section), and the rigs standing in the source cycle.
+- **Measured first** (the animator's scene on 7002, read only): the pelvis was read from the rig's `root` bone, which
+  the solve never poses (23.5 cm of "forward" nobody made); a straightened IK leg's knee flipped (78-161 deg read as an
+  edit); a planted foot's move was dropped; the rigs stood in the source cycle while the walker showed the parameters,
+  the pose and the physics on top (an edit read back 70 %); the edits lived beside the walk's file.
+- **Working walkers**: Pick (and a row clicked in the list) marks its skeletons `"working": true` in the memo (version
+  4; `scene.working()`, `set_working`, which writes only a flag that changes). Every change the card makes keys them,
+  whatever is selected; none marked: «press Pick on a skeleton, or click one in the list». The list marks them ▶; a
+  row click takes the first one's settings and keys nobody; a viewport selection takes nothing.
+- **Edits on the walker**: `skeldarWalkEdits` on its top joint (JSON: `walk`, `fix` the mean pose's correction, `keys`
+  the key poses' edits, `posture`). `scene.load_walk(name, given, edits)` reads no file beside the walk; Fix posture
+  turns the working walkers' posture on and never writes the walk's file. A memo version 3 walker takes its cycle's
+  old `.walkfix.json` once; old key files are not carried (read with the broken measure).
+- **The key layer**: `keyposes.on_result` puts the key edits on the walker's EVALUATED animation (parameters, pose,
+  physics) - the result read as a walk (`wm.analyse`, 0.08-0.19 s), its key steps found, the edits put in
+  (`correct`), then In place (`kp.in_place`) - so the walker shows a rig's pose exactly at its key.
+- **Rigs per walker** (`meanrig`, `keyrig`; the rig's memo: `walker` = its UUID, `main0` / `root0` where it stood,
+  `poles`): stood beside the working walker in what IT does (`scene.walker_animation`), read in Main's frame as it
+  stood with the root held (`meanrig._held`: Main or Root_ctrl moved by hand is no pose change).
+- **What a key rig reads** (`keyposes.increment`): every game bone above the legs, the pelvis's move (travel
+  coordinates), the toes in the foot's frame; a foot in the air its move and turn; a planted foot's move along the
+  ground its PRINT for the whole stance (held still, mirrored), flat its toe out about up, a lift or a tilt not taken
+  (said); a knee's turn about its leg only bent at least 10 deg, under 120 deg, and in IK only when its pole control's
+  channels moved (`keyrig.knees_taken`: a moved pelvis or foot turns an IK leg's plane by itself, 1.6-8.5 deg read);
+  a leg the pelvis pulled straight (its bend under 10 deg, the pelvis moved) gives no foot, toes or knee, said.
+- **Update splits** (`kp.one_print`, `kp.split_common`): what the pelvis did alike on all four keys (same sign, each
+  at least 60 % of the largest) is Height / Forward, a pinned change of the walker's parameters
+  (`scene.shift_params`); the rest is each key's. A raise past the legs' reach is said: asd walks on near-straight
+  legs (Height +1 raises it 0.69 cm on average, +5 0.92, +8 2.45 with the step at 0.8) - «(the walk moves +0.9 cm -
+  its legs reach no further, a shorter Step raises it more)»; a lowering is kept (-5 asked, -4.74).
+- **The knee pop fix** (the guide's section 12; `target.Retarget.fix_pops`, after the target's legs are solved): a
+  click is a local minimum of the bend under 15 deg with a curvature over 6 deg; within 3 frames of it the bend may
+  not fall under its Gaussian-smoothed curve (1.5 frames) - a stance leg by lowering the pelvis (`_drop_for`), a
+  swinging one by drawing its ankle toward the hip; up to 3 rounds; «knee pops smoothed: 2 (L 7; R 4), pelvis down
+  up to 1.3 cm». The Physics tab's chip **Fix knee pops** (`knee_pops`, on). asd, dw and an own cycle are untouched;
+  HavyRun has 2 fixed, AGS_Sprint 1.
+- **The card**: a heading **Main** with its own Reset over the main parameters and the macros, **Details** over the
+  tabs, every tab its name and a Reset (`press_reset_group`).
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_working.py` **23/23 mayapy standalone** (asd on two Manny
+  skeletons, A and B, a temporary walks folder): Pick makes B working; four rigs B's, standing in B's animation
+  (0.0014 deg); Main moved reads no edit; an arm +20 on Contact is B's edit, 20.00 at the contact and 0.00 at the
+  Down; A key for key untouched; the library's file unchanged; the pelvis +5 on all four is Height +5 pinned, B
+  +0.92 said, the pulled legs' feet not taken; -10 from there Height -5, B -4.74; a planted foot +6 is its print, held
+  for its whole stance (spread 0.000 cm); a 25 cm raise reads no knee flip; the mean pose rig B's; Reset; Delete;
+  HavyRun's pops gone. 468 walk unit tests, 9156 in all (the known `test_chat_deploy.Keys` failing).
+  `verify_walk_keyposes.py` and `verify_walk_meanpose.py` call the rigs with a walk's name: history.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

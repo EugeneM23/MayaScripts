@@ -29,7 +29,7 @@ class FakeCmds(object):
 
 class Patched(unittest.TestCase):
     NAMES = ("_cmds", "load_walk", "read_bones", "evaluated", "channel_values", "write_curves", "keys_print",
-             "_set_memo", "walk_fix", "walk_keys", "_Chunk", "_state")
+             "_set_memo", "walk_fix", "walk_keys", "_Chunk", "_state", "walker_edits", "edits_of", "set_edits")
 
     def setUp(self):
         self.saved = dict((n, getattr(scene, n)) for n in self.NAMES)
@@ -38,16 +38,30 @@ class Patched(unittest.TestCase):
         self.walk = tw.walk()
         self.loads = []
 
-        def load_walk(name, given=None):
+        def load_walk(name, given=None, edits=None):
             self.loads.append((name, dict(given or {})))
             return self.walk, {}, 0, Report()
         scene._cmds = lambda: FakeCmds(self.memos)
         scene.load_walk = load_walk
+        scene.walker_edits = lambda root, walk: (scene.empty_edits(walk), "")
+        scene.edits_of = lambda root: scene.empty_edits("")
+        scene.set_edits = lambda root, edits: None
 
     def tearDown(self):
         for name, value in self.saved.items():
             setattr(scene, name, value)
         scene.wt.Retarget = self.saved_retarget
+
+
+class Shift(unittest.TestCase):
+
+    def test_what_all_four_keys_did_moves_height_and_forward_pinned(self):
+        p = scene.shift_params({"changes": {"height": ("offset", 2.0), "step": ("ratio", 1.1)}}, {"height": 3.0,
+                                                                                                   "forward": -1.5})
+        self.assertEqual(p["changes"]["height"], ("offset", 5.0))
+        self.assertEqual(p["changes"]["forward"], ("offset", -1.5))
+        self.assertEqual(p["changes"]["step"], ("ratio", 1.1))
+        self.assertEqual(p["pins"], ["forward", "height"])
 
 
 class Report(object):
@@ -130,7 +144,8 @@ class FakeRetarget(object):
     def __init__(self, walk, statics, bones, place):
         self.place = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
 
-    def frames(self, result):
+    def frames(self, result, knee_pops=True):
+        self.knee_pops = knee_pops
         return {}, {"scale": 1.0, "drop": [0.0], "short": 0.0}
 
     def written(self):
@@ -179,14 +194,14 @@ class Apply(Patched):
             self.memos[root] = json.dumps(memo)
         scene._set_memo = set_memo
 
-    def test_apply_keys_the_parameters_engine_knobs_and_writes_a_version_three_memo(self):
+    def test_apply_keys_the_parameters_engine_knobs_and_writes_a_version_four_memo(self):
         params = {"changes": {"step": ("ratio", 1.15)}, "pins": ["step"], "macros": {"weight": 0.5}}
         result, info, line = scene.apply("|root", "asd", {"seam": 4.0}, params=params)
         want = scene.params_knobs(self.walk, scene.normal_params(params))[0]
         for key, value in want.items():
             self.assertAlmostEqual(self.evaluated[-1][key], value, places=9, msg=key)
         memo = self.written["|root"]
-        self.assertEqual(memo["version"], 3)
+        self.assertEqual(memo["version"], 4)
         self.assertEqual(memo["params"]["changes"], {"step": ["ratio", 1.15]})
         self.assertEqual(memo["params"]["clean"]["seam"], wc.knobs({"seam": 4.0})["seam"])   # the given's clean
         self.assertEqual(self.loads[-1][1]["seam"], wc.knobs({"seam": 4.0})["seam"])

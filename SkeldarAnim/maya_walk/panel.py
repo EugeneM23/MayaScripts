@@ -93,6 +93,10 @@ WEIGHT = "skeldarWalkMacro_weight"
 CHARACTER = "skeldarWalkCharacter"
 STRENGTH = "skeldarWalkStrength"
 PHYSICS_BOX = "skeldarWalkPhysics"
+KNEE_POPS_BOX = "skeldarWalkKneePops"
+MAIN_HEAD = "skeldarWalkMainHead"
+DETAILS_HEAD = "skeldarWalkDetailsHead"
+NO_WORKING = "no working walker - press Pick on a skeleton, or click one in the list"
 #  The Diagnosis: a caption and rows of a finding with its Fix
 DIAG_CAPTION = "skeldarWalkDiagnosis"
 DIAG_ROWS = 4
@@ -128,7 +132,7 @@ LABELS = {
                          "the trunk later, a slower step; negative: lighter (half as far)"),
     "strength": ("Strength", "How far the Character moves the parameters: 0 none, 1 the character's"),
 }
-TIPS = {}
+TIPS = {}         # filled below
 TIPS = {
     "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
              "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
@@ -145,6 +149,9 @@ TIPS = {
     "physics": "On: the physics' helpers - Foot placement, Balance, the knees' soft limit, Whip's springs and their "
                "links; off: the clip's own feet and body, every parameter mapped straight (the clip itself at its "
                "own values)",
+    "knee_pops": "Fix knee pops (the gait guide, «Колено щёлкает»): a knee that straightens fully and bends at once "
+                 "clicks - around each click the leg keeps the bend of its own smoothed curve, the pelvis lowered "
+                 "for it while the foot stands, the ankle drawn in while it swings",
     "diagnosis": "What the walker keyed last does against the guide (Ходьба и бег: полное руководство) - Fix sets "
                  "its parameters, pinned",
     "param_menu": "Right button: back to the clip's (held there), or let it follow the links (the speed, the "
@@ -308,6 +315,7 @@ def card_params():
                                 "character": _stored("character", "") or "",
                                 "strength": float(_stored("strength", 1.0)),
                                 "physics": float(_stored("physics", 1.0)) >= 0.5, "pose": knobs["pose"],
+                                "knee_pops": float(_stored("knee_pops", 1.0)) >= 0.5,
                                 "in_place": knobs["in_place"],
                                 "clean": dict((k, knobs[k]) for k in ("seam", "smooth"))})
 
@@ -427,9 +435,9 @@ def _walk_taken(name, say=True, keep_ratio=False):
 
 
 def card_walkers():
-    """The walkers a chosen walk card re-keys: the selected walkers, whatever they walk; none selected, none - the
-    card waits for Pick (every card walker took it once, and a finished walk was overwritten, 2026-10-26)."""
-    return _selected_walkers(scene.walkers())
+    """The walkers a chosen walk card re-keys: the working ones (Pick chose them, or rows clicked in the list),
+    whatever is selected (2026-10-27, «все наши изменения попадут на нее в независимости от выделения»)."""
+    return scene.working()
 
 
 def _selected_walkers(listed):
@@ -696,9 +704,9 @@ def _rekey(line):
     listed = scene.walkers()
     if not listed:
         return (line + " - " if line else "") + "select skeletons and press Pick"
-    walkers = _selected_walkers(listed)
+    walkers = scene.working()
     if not walkers:
-        return (line + " - " if line else "") + "set for the next Pick - select the walkers to key it onto"
+        return (line + " - " if line else "") + NO_WORKING
     state = _rekey_state()
     state["wanted"] += 1
     state["line"] = line
@@ -1135,6 +1143,14 @@ def physics_changed(*_):
     return slider_changed()
 
 
+def knee_pops_changed(*_):
+    """Fix knee pops (the Physics tab): the knee pop fix of the retarget on or off (maya_walk.target.fix_pops)."""
+    if _QUIET[0]:
+        return None
+    _remember("knee_pops", 1.0 if _cmds().checkBox(KNEE_POPS_BOX, query=True, value=True) else 0.0)
+    return slider_changed()
+
+
 # ---- the Diagnosis ----
 
 def _diag_state():
@@ -1322,13 +1338,18 @@ def _take(root):
             _remember("character", params["character"])
             _remember("strength", params["strength"])
             _remember("physics", 1.0 if params["physics"] else 0.0)
+            _remember("knee_pops", 1.0 if params.get("knee_pops", True) else 0.0)
+            cmds = _cmds()
+            for box, name in ((PHYSICS_BOX, "physics"), (KNEE_POPS_BOX, "knee_pops")):
+                if cmds.checkBox(box, exists=True):
+                    cmds.checkBox(box, edit=True, value=bool(params.get(name, True)))
             _set_knobs(dict(params["clean"], pose=params["pose"], in_place=params["in_place"]))
             if scene.walk_exists(name):
                 show_report(scene.load_walk(name, values())[3])
             show_values()
         finally:
             _QUIET[0] = quiet
-        return "%s's settings are in the card - a parameter moved keys the selected walkers" \
+        return "%s's settings are in the card - a parameter moved keys the working walkers" \
             % scene.walker_label(root)
 
 
@@ -1386,8 +1407,7 @@ def selection_line(root):
     count = len(scene.walkers())
     if not count:
         return NOTHING
-    return "%d walker%s in the list - every knob re-keys %s" % (count, "" if count == 1 else "s",
-                                                               "it" if count == 1 else "them all")
+    return "%d walker%s in the list - Pick or click one to work on it" % (count, "" if count == 1 else "s")
 
 
 def status(text):
@@ -1402,21 +1422,26 @@ def status(text):
 
 
 def refresh(*_):
-    """The subtitle and the list from the selection; a listed walker selected makes its cycle the active one."""
+    """The subtitle and the list: the working walkers (the selection no longer chooses them, 2026-10-27)."""
     cmds = _cmds()
     if not cmds.text(SUBTITLE, exists=True):
         return
     try:
-        root = scene.selected_top()
-        memo = scene.memo_of(root) if root else {}
-        if memo.get("walk") and memo.get("listed", True):
-            _activate(root)
-        else:
-            _SELECTED[0] = None
-        cmds.text(SUBTITLE, edit=True, label=selection_line(root))
+        cmds.text(SUBTITLE, edit=True, label=working_line())
         show_list()
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
+
+
+def working_line():
+    """The card's subtitle: the walkers it works on (Pick chose them), else what the selection would take."""
+    working = scene.working()
+    if working:
+        names = ", ".join("%s (%s)" % (scene.walker_label(r), scene.walk_label(scene.memo_of(r).get("walk")))
+                          for r in working[:3])
+        more = " +%d" % (len(working) - 3) if len(working) > 3 else ""
+        return "Working on %s%s - every change keys %s" % (names, more, "it" if len(working) == 1 else "them")
+    return selection_line(scene.selected_top())
 
 
 def _press(action):
@@ -1576,6 +1601,7 @@ def press_apply(*_, **kw):
         except scene.Refusal:
             _walk_taken(walks[0], say=False)
         lines = [_apply_to(root, walk) for root, walk in zip(roots, walks)]
+        scene.set_working(roots)                     # the card works on them now, whatever is selected
         _SELECTED[0] = scene.selected_top()          # keyed with the card: nothing to take back from it
         if len(lines) == 1:
             return lines[0]
@@ -1663,6 +1689,7 @@ def press_reset(*_):
         _remember("character", "")
         _remember("strength", 1.0)
         _remember("physics", 1.0)
+        _remember("knee_pops", 1.0)
         show_values()
         return _rekey("every parameter back to the clip's")
     return _press(run)
@@ -1690,45 +1717,75 @@ def press_save_walk(*_):
 
 
 def press_fix_posture(*_):
-    """Fix posture: the picked walk's posture set right in its file (scene.fix_posture), the report shown, the
-    walkers on it keyed again."""
+    """Fix posture: the working walkers' walk posture set right - their own edit (scene.fix_posture says what it
+    changes; the library's walk is never written, 2026-10-27) - the report shown, they keyed again."""
     def run():
-        name = chosen_walk()
-        report, line = scene.fix_posture(name, values())
-        show_report(report)
-        if not any(scene.memo_of(r).get("walk") == name for r in scene.walkers()):
-            return line
-        return line + " | " + rekey_all(name)
+        roots = scene.working()
+        if not roots:
+            raise scene.Refusal(NO_WORKING)
+        lines = []
+        for walk in sorted(set(scene.memo_of(r).get("walk") for r in roots)):
+            report, line, fixed = scene.fix_posture(walk, values())
+            show_report(report)
+            lines.append(line)
+            if fixed:
+                for root in [r for r in roots if scene.memo_of(r).get("walk") == walk]:
+                    edits = scene.walker_edits(root, walk)[0]
+                    edits["posture"] = True
+                    scene.set_edits(root, edits)
+        return " | ".join(lines) + " | " + rekey_all(roots=roots)
     return _press(run)
+
+
+def _working_root():
+    working = scene.working()
+    if not working:
+        raise scene.Refusal(NO_WORKING)
+    return working[0]
+
+
+def _rekey_root(root):
+    """The Rig pose's re-key of one walker, unrecorded (Ctrl+Z is the rig's): a working walker with the card's
+    settings - the card works on it - another as it was keyed last."""
+    from . import meanrig
+    if root not in scene.working():
+        return meanrig.rekey_root(root)
+    memo = scene.memo_of(root)
+    scene.apply(root, memo["walk"], values(), None, chosen_parts(), record=False, pose_card=chosen_card(),
+                params=card_params())
+    return " -> %s keyed again" % scene.walker_label(root)
+
+
+def _shift(root, common):
+    """What the key rigs moved alike on all four keys ({"height", "forward"} cm): the card's parameters when the
+    walker is working (pinned changes, the sliders show them), else the walker's own."""
+    from . import keyrig
+    if root not in scene.working():
+        return keyrig.shift_memo(root, common)
+    params = scene.shift_params(card_params(), common)
+    _remember_hand(params["changes"], set(params["pins"]))
+    show_values()
+    return ""
 
 
 def press_mean_create(*_):
-    """Rig pose > Create: the walk's mean pose on a Manny rig (maya_walk.meanrig)."""
+    """Rig pose > Create: the working walker's mean pose on a Manny rig (maya_walk.meanrig)."""
     from . import meanrig
-
-    def run():
-        name = chosen_walk()
-        _remember("walk", name)
-        return meanrig.press(name, values())
-    return _press(run)
+    return _press(lambda: meanrig.press(_working_root(), values()))
 
 
 def press_mean_update(*_):
-    """Rig pose > Update: every rig pose's and every key rig's change into its cycle, the walkers on the cycles
-    that changed keyed again - once a cycle, after both are read."""
+    """Rig pose > Update: every rig pose's and every key rig's change into its walker's edits, that walker keyed
+    again (unrecorded)."""
     from . import keyrig, meanrig
 
     def run():
-        changed, lines = [], []
-
-        def later(walk):
-            if walk not in changed:
-                changed.append(walk)
-            return ""
-        for module, quiet in ((meanrig, (meanrig.NO_RIG, meanrig.NOTHING_MOVED)),
-                              (keyrig, (keyrig.NO_RIG, keyrig.NOTHING_MOVED))):
+        lines = []
+        for module, quiet, kw in ((meanrig, (meanrig.NO_RIG, meanrig.NOTHING_MOVED), {"rekey": _rekey_root}),
+                                  (keyrig, (keyrig.NO_RIG, keyrig.NOTHING_MOVED),
+                                   {"rekey": _rekey_root, "shift": _shift})):
             try:
-                line = module.update(rekey=later)
+                line = module.update(**kw)
             except module.Refusal as error:
                 if str(error) != module.NO_RIG:
                     raise
@@ -1739,51 +1796,113 @@ def press_mean_update(*_):
             raise scene.Refusal("no rig pose and no key poses in the scene - press Create first")
         if not lines:
             return "nothing moved on the rig pose or the key poses since the last Update"
-        return " | ".join(lines) + "".join(rekey_walkers(walk) for walk in changed)
+        return " | ".join(lines)
     return _press(run)
 
 
 def press_mean_delete(*_):
-    """Rig pose > Delete: the active cycle's rig out of the scene."""
+    """Rig pose > Delete: the working walker's rig out of the scene."""
     from . import meanrig
-    return _press(lambda: meanrig.delete(chosen_walk()))
+    working = scene.working()
+    return _press(lambda: meanrig.delete(working[0] if working else None))
 
 
 def press_mean_reset(*_):
-    """Rig pose > Reset: the active cycle's correction dropped, its rig and its walkers with it."""
+    """Rig pose > Reset: the working walker's mean pose correction dropped, its rig and the walker with it."""
     from . import meanrig
-    return _press(lambda: meanrig.reset(chosen_walk(), values(), rekey=rekey_walkers))
+    return _press(lambda: meanrig.reset(_working_root(), values(), rekey=_rekey_root))
 
 
 def press_key_create(*_):
-    """Rig pose > Key poses > Create: the cycle's four key poses on four Manny rigs (maya_walk.keyrig)."""
+    """Rig pose > Key poses > Create: the working walker's four key poses on four Manny rigs (maya_walk.keyrig)."""
     from . import keyrig
-
-    def run():
-        name = chosen_walk()
-        _remember("walk", name)
-        return keyrig.press(name, values())
-    return _press(run)
+    return _press(lambda: keyrig.press(_working_root()))
 
 
 def press_key_delete(*_):
-    """Rig pose > Key poses > Delete: the active cycle's key rigs out of the scene."""
+    """Rig pose > Key poses > Delete: the working walker's key rigs out of the scene."""
     from . import keyrig
-    return _press(lambda: keyrig.delete(chosen_walk()))
+    working = scene.working()
+    return _press(lambda: keyrig.delete(working[0] if working else None))
 
 
 def press_key_reset(*_):
-    """Rig pose > Key poses > Reset: the active cycle's key pose edits dropped, its key rigs and walkers with it."""
+    """Rig pose > Key poses > Reset: the working walker's key pose edits dropped, its key rigs and it with them."""
     from . import keyrig
-    return _press(lambda: keyrig.reset(chosen_walk(), values(), rekey=rekey_walkers))
+    return _press(lambda: keyrig.reset(_working_root(), rekey=_rekey_root))
 
 
-def rekey_walkers(walk):
-    """The Rig pose's re-key: the walkers on the cycle `walk`, each as it was keyed last - its own settings (the
-    correction is the cycle's, the settings each walker's: keyed with the card's, a finished walk on another
-    skeleton took the card's parameters, 2026-10-26) - unrecorded (Ctrl+Z is the rig's). « -> ...»."""
-    from . import meanrig
-    return meanrig.rekey_target(walk)
+# ---- Reset, a tab at a time (2026-10-27, «у каждой вкладки должна быть кнопка ресет») ----
+
+def _group_params(key):
+    """The parameters (base names) a tab's Reset takes back: a gait group's; Main's own."""
+    if key == "main":
+        return MAIN_PARAMS
+    return dict((k, names) for k, _, names in GROUPS).get(key, ())
+
+
+def reset_changes(changes, pins, names):
+    """(changes, pins) less every key of the parameters `names` (both sides of a sided one) - pure."""
+    def of(key):
+        for name in names:
+            if key == name or (key.startswith(name + "_") and key[len(name) + 1:] in gait.SIDES):
+                return True
+        return False
+    return dict((k, v) for k, v in changes.items() if not of(k)), set(k for k in pins if not of(k))
+
+
+def press_reset_group(key):
+    """A tab's Reset: its parameters back to the clip's own (their changes and pins). Main: with Speed, Weight, the
+    character and its strength. Physics: with Physics helpers and Fix knee pops on. Clean: Seam and Smooth back to
+    their defaults and the working walkers' Fix posture off. Rig pose: the working walker's mean pose correction
+    and key edits dropped. The working walkers keyed again."""
+    from . import keyrig, meanrig
+
+    def run():
+        if key == "rigpose":
+            root = _working_root()
+            line = meanrig.reset(root, values(), rekey=lambda r: "")
+            return line + " | " + keyrig.reset(root, rekey=_rekey_root)
+        label = dict((k, name) for k, name, _ in GROUPS).get(key, "Main")
+        if key == "clean":
+            quiet, _QUIET[0] = _QUIET[0], True
+            try:
+                _set_knobs(dict((k, scene.ALL_DEFAULTS[k]) for k in ("seam", "smooth")))
+            finally:
+                _QUIET[0] = quiet
+            for root in scene.working():
+                walk = scene.memo_of(root).get("walk")
+                edits = scene.walker_edits(root, walk)[0]
+                if edits.get("posture"):
+                    edits["posture"] = False
+                    scene.set_edits(root, edits)
+            return _rekey("Clean back to its defaults, Fix posture off")
+        changes, pins = _hand()
+        changes, pins = reset_changes(changes, pins, _group_params(key))
+        _remember_hand(changes, pins)
+        if key == "main":
+            _remember("macros", "{}")
+            _remember("character", "")
+            _remember("strength", 1.0)
+        if key == "physics":
+            _remember("physics", 1.0)
+            _remember("knee_pops", 1.0)
+        show_values()
+        return _rekey("%s back to the clip's own" % label)
+    return _press(run)
+
+
+def _section_head(name, label, tip, key):
+    """A section's head: its name (a heading) and its Reset (press_reset_group(key)) on one row."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                                 columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+    hubstyle.mark(cmds.text(name, label=label, align="left", annotation=tip), "heading")
+    hubstyle.mark(cmds.button(name + "Reset", label="Reset", height=hubstyle.height("small", 22),
+                              annotation="%s: every setting here back to the clip's own" % label,
+                              command=lambda *_: press_reset_group(key)), "secondary", "arrow-back-up")
+    cmds.setParent("..")
 
 
 def show_folder(*_):
@@ -1963,10 +2082,17 @@ LIST_ROW = 18            # logical px a row of the walkers' list
 LIST_ROWS = (2, 6)       # rows shown at least / at most (it scrolls past)
 
 
+WORKING_MARK = "\u25b6 "
+
+
 def _list_rows():
-    """[(walker root, its row text)] - the card's list as the scene has it now."""
-    return [(root, "%s - %s" % (scene.walker_label(root), scene.walk_label(scene.memo_of(root).get("walk"))))
-            for root in scene.walkers()]
+    """[(walker root, its row text)] - the card's list as the scene has it now; a working walker marked."""
+    rows = []
+    for root in scene.walkers():
+        memo = scene.memo_of(root)
+        rows.append((root, "%s%s - %s" % (WORKING_MARK if memo.get("working") else "   ", scene.walker_label(root),
+                                          scene.walk_label(memo.get("walk")))))
+    return rows
 
 
 def show_list():
@@ -1983,8 +2109,7 @@ def show_list():
             cmds.textScrollList(WALKER_LIST, edit=True, append=text)
     count = min(max(len(rows), LIST_ROWS[0]), LIST_ROWS[1])
     cmds.textScrollList(WALKER_LIST, edit=True, height=count * LIST_ROW + 4, deselectAll=True)
-    picked = set(cmds.ls(selection=True, long=True) or [])
-    lit = [i + 1 for i, (root, _) in enumerate(rows) if root in picked]
+    lit = [i + 1 for i, (root, _) in enumerate(rows) if scene.memo_of(root).get("working")]
     if lit:
         cmds.textScrollList(WALKER_LIST, edit=True, selectIndexedItem=lit)
 
@@ -2000,10 +2125,20 @@ def _picked_walkers():
 
 
 def list_selected(*_):
-    """Rows clicked: those walkers selected in the scene (the first one's cycle then becomes the active one)."""
+    """Rows clicked: those walkers are the working ones (and selected in the scene); the first one's settings come
+    into the card, nobody is keyed (2026-10-27)."""
     roots = _picked_walkers()
-    if roots:
-        _cmds().select(roots, replace=True)
+    if not roots:
+        return None
+    scene.set_working(roots)
+    try:
+        _take(roots[0])
+    except scene.REFUSALS as refusal:
+        status(str(refusal))
+    _cmds().select(roots, replace=True)
+    refresh()
+    return status("working on %s - every change keys %s" % (", ".join(scene.walker_label(r) for r in roots),
+                                                            "it" if len(roots) == 1 else "them"))
 
 
 def remove_from_list(*_):
@@ -2126,9 +2261,13 @@ def build_panel():
                         "when it is moved" % (SIDE_MARK[mode].strip(), "left" if mode == "l" else "right")),
             onCommand=side_changed(mode)), "segment")
     cmds.setParent("..")
+    _section_head(MAIN_HEAD, "Main", "The whole walk at once: tempo, step, width, bounce, lean, the arms - and the "
+                  "macros under them", "main")
     for name in MAIN_PARAMS:
         _param_control(gait.P[name])
     _macro_rows()
+    hubstyle.mark(cmds.text(DETAILS_HEAD, label="Details", align="left",
+                            annotation="A part of the walk at a time - each tab has its own Reset"), "heading")
     shown = OLD_GROUPS.get(_stored("group", GROUPS[0][0]), _stored("group", GROUPS[0][0]))
     labels = dict((key, (label, names)) for key, label, names in GROUPS)
     cmds.iconTextRadioCollection(GROUP_TABS)
@@ -2147,6 +2286,7 @@ def build_panel():
     for key, label, names in GROUPS:
         cmds.columnLayout(_group_column(key), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
                           manage=key == shown)
+        _section_head("skeldarWalkHead_" + key, label, "The %s settings" % label, key)
         for name in names:
             if name in gait.P:
                 _param_control(gait.P[name])
@@ -2156,6 +2296,9 @@ def build_panel():
             hubstyle.mark(cmds.checkBox(PHYSICS_BOX, label="Physics helpers", annotation=TIPS["physics"],
                                         value=float(_stored("physics", 1.0)) >= 0.5,
                                         changeCommand=physics_changed), "chip")
+            hubstyle.mark(cmds.checkBox(KNEE_POPS_BOX, label="Fix knee pops", annotation=TIPS["knee_pops"],
+                                        value=float(_stored("knee_pops", 1.0)) >= 0.5,
+                                        changeCommand=knee_pops_changed), "chip")
         if key == "rigpose":              # the walk's mean pose on a Manny rig: create, pose it, Update
             _rig_pose_buttons()
         if key == "clean":                # the posture set right once, then what the clean found

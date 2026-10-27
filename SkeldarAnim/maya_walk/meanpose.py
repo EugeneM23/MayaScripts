@@ -65,17 +65,12 @@ def path_for(walk_path):
     return base + SUFFIX
 
 
-def load(path):
-    """The correction in `path`, or an empty one when there is none."""
-    if not os.path.exists(path):
+def loads(data, what="the correction"):
+    """The correction from the plain data `dumps` gives (a file's, a walker's attribute); empty for none."""
+    if not data:
         return empty()
-    try:
-        with open(path) as handle:
-            data = json.load(handle)
-    except (OSError, ValueError) as error:
-        raise Refusal("%s is not a walk correction (%s)" % (os.path.basename(path), error))
     if data.get("format") != FORMAT or int(data.get("version", 0)) > VERSION:
-        raise Refusal("%s is not a correction this tool reads" % os.path.basename(path))
+        raise Refusal("%s is not a correction this tool reads" % what)
     fix = empty()
     fix["rot"] = dict((name, np.array(m, float).reshape(3, 3)) for name, m in data.get("rot", {}).items())
     fix["height"] = float(data.get("height", 0.0))
@@ -85,16 +80,35 @@ def load(path):
     return fix
 
 
+def dumps(fix):
+    """The plain data (JSON) of the correction `fix`; {} for none."""
+    if is_empty(fix):
+        return {}
+    return {"format": FORMAT, "version": VERSION,
+            "rot": dict((name, [round(float(v), 12) for v in np.asarray(m).reshape(9)]) for name, m in fix["rot"].items()),
+            "height": float(fix["height"]), "width": float(fix["width"]),
+            "knee": dict((s, float(fix["knee"][s])) for s in SIDES), "toe": dict((s, float(fix["toe"][s])) for s in SIDES)}
+
+
+def load(path):
+    """The correction in `path`, or an empty one when there is none."""
+    if not os.path.exists(path):
+        return empty()
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise Refusal("%s is not a walk correction (%s)" % (os.path.basename(path), error))
+    return loads(data, os.path.basename(path))
+
+
 def save(path, fix):
     """`fix` to `path`; an empty correction removes the file."""
     if is_empty(fix):
         if os.path.exists(path):
             os.remove(path)
         return
-    data = {"format": FORMAT, "version": VERSION,
-            "rot": dict((name, [round(float(v), 12) for v in np.asarray(m).reshape(9)]) for name, m in fix["rot"].items()),
-            "height": float(fix["height"]), "width": float(fix["width"]),
-            "knee": dict((s, float(fix["knee"][s])) for s in SIDES), "toe": dict((s, float(fix["toe"][s])) for s in SIDES)}
+    data = dumps(fix)
     folder = os.path.dirname(path)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder)
@@ -168,6 +182,26 @@ def knee_turn(base, now):
     if np.linalg.norm(ref) < 1e-6 or np.linalg.norm(cur) < 1e-6:
         return 0.0
     return math.atan2(float(np.dot(np.cross(ref, cur), a)), float(np.dot(ref, cur)))
+
+
+KNEE_BENT = math.radians(10.0)      # a knee's turn is read only while the leg is bent this much in both readings...
+KNEE_FLIP = math.radians(120.0)     # ...and under this: past it the IK solver flipped the knee (2026-10-27)
+
+
+def leg_bend(knee):
+    """A leg's knee bend (radians, 0 straight) from a reading's (hip, knee - hip, ankle)."""
+    hip, thigh, ankle = (np.asarray(v, float) for v in knee)
+    shin = ankle - (hip + thigh)
+    a, b = float(np.linalg.norm(thigh)), float(np.linalg.norm(shin))
+    if a < 1e-9 or b < 1e-9:
+        return 0.0
+    return math.acos(max(-1.0, min(1.0, float(np.dot(thigh, shin)) / (a * b))))
+
+
+def knee_readable(base, now, turn):
+    """A knee's turn is the animator's only while the leg is bent KNEE_BENT in both readings and the turn is under
+    KNEE_FLIP: a straightened IK leg flips its knee (the live key rigs read 78-161 deg there, 2026-10-27)."""
+    return min(leg_bend(base), leg_bend(now)) >= KNEE_BENT and abs(turn) <= KNEE_FLIP
 
 
 def _wrapped(angle):
@@ -325,6 +359,8 @@ def combine(fix, base, now):
         for side in SIDES:
             d = knee_turn(base[key][side], now[key][side]) if key == "knee" \
                 else _wrapped(now[key][side] - base[key][side])
+            if key == "knee" and not knee_readable(base[key][side], now[key][side], d):
+                continue
             if abs(d) >= MIN_TURN:
                 out[key][side] = _wrapped(out[key][side] + d)
                 moved.append(("%s_%s" % ("knee" if key == "knee" else "foot", side), math.degrees(d), "deg"))

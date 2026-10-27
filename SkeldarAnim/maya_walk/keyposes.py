@@ -46,6 +46,9 @@ GROUND_CM = wm.GROUND_TOL           # a foot point this near its own lowest is o
 MIN_TURN = mp.MIN_TURN
 MIN_CM = mp.MIN_CM
 KNEE_MIN = math.radians(1.5)        # a knee turned less than this on a rig is its IK solver following the hips
+KNEE_BENT = mp.KNEE_BENT           # a knee's turn about its leg is read only while the leg is bent this much...
+KNEE_FLIP = mp.KNEE_FLIP           # ...and under this: past it the IK solver flipped the knee (2026-10-27)
+COMMON_SHARE = 0.6                  # a pelvis move alike on all four keys: each at least this share of the largest
 OTHER = {"l": "r", "r": "l"}
 
 
@@ -57,16 +60,30 @@ def empty():
     return {}
 
 
+def empty_print():
+    return dict((s, {"t": np.zeros(3), "yaw": 0.0}) for s in SIDES)
+
+
 def empty_key():
+    """A key's edit: "rot" {bone: 3x3 in its parent's frame} (the toes, ball_l / ball_r, among them), "pelvis" (a move
+    in travel coordinates), "knee" {side: radians about the leg}, "foot" {side: a move and turn in the air}, "print"
+    {side: {"t": where the foot stands for its whole stance, travel coordinates, "yaw": its turn about up}}."""
     return {"rot": {}, "pelvis": np.zeros(3), "knee": {"l": 0.0, "r": 0.0},
-            "foot": dict((s, {"t": np.zeros(3), "r": np.eye(3)}) for s in SIDES)}
+            "foot": dict((s, {"t": np.zeros(3), "r": np.eye(3)}) for s in SIDES), "print": empty_print()}
+
+
+def _print_empty(entry):
+    prints = entry.get("print") or {}
+    return all(float(np.abs(prints[s]["t"]).max()) < 1e-9 and abs(prints[s]["yaw"]) < 1e-12
+               for s in SIDES if s in prints)
 
 
 def key_empty(entry):
     return (not entry.get("rot") and float(np.abs(entry["pelvis"]).max()) < 1e-9
             and all(abs(entry["knee"][s]) < 1e-12 for s in SIDES)
             and all(float(np.abs(entry["foot"][s]["t"]).max()) < 1e-9
-                    and float(np.abs(entry["foot"][s]["r"] - np.eye(3)).max()) < 1e-12 for s in SIDES))
+                    and float(np.abs(entry["foot"][s]["r"] - np.eye(3)).max()) < 1e-12 for s in SIDES)
+            and _print_empty(entry))
 
 
 def is_empty(keys):
@@ -86,17 +103,12 @@ def _m3(values):
     return np.array(values, float).reshape(3, 3)
 
 
-def load(path):
-    """The key poses' edits in `path` ({key: entry}), or none when there is no file."""
-    if not os.path.exists(path):
+def loads(data, what="the key poses"):
+    """{key: entry} from the plain data `dumps` gives (a file's, a walker's attribute)."""
+    if not data:
         return empty()
-    try:
-        with open(path) as handle:
-            data = json.load(handle)
-    except (OSError, ValueError) as error:
-        raise Refusal("%s is not a key poses file (%s)" % (os.path.basename(path), error))
     if data.get("format") != FORMAT or int(data.get("version", 0)) > VERSION:
-        raise Refusal("%s is not a key poses file this tool reads" % os.path.basename(path))
+        raise Refusal("%s are not key pose edits this tool reads" % what)
     out = {}
     for key, raw in (data.get("keys") or {}).items():
         if key not in KEYS:
@@ -109,8 +121,43 @@ def load(path):
             foot = (raw.get("foot") or {}).get(s) or {}
             entry["foot"][s] = {"t": np.array(foot.get("t", [0.0, 0.0, 0.0]), float),
                                 "r": _m3(foot["r"]) if "r" in foot else np.eye(3)}
+            stance = (raw.get("print") or {}).get(s) or {}
+            entry["print"][s] = {"t": np.array(stance.get("t", [0.0, 0.0, 0.0]), float),
+                                 "yaw": float(stance.get("yaw", 0.0))}
         out[key] = entry
     return out
+
+
+def dumps(keys):
+    """The plain data (JSON) of `keys`; {} for no edit at all."""
+    if is_empty(keys):
+        return {}
+    flat = lambda m: [round(float(v), 12) for v in np.asarray(m, float).reshape(-1)]
+    data = {"format": FORMAT, "version": VERSION, "keys": {}}
+    for key, entry in keys.items():
+        if key_empty(entry):
+            continue
+        prints = entry.get("print") or empty_print()
+        data["keys"][key] = {"rot": dict((n, flat(m)) for n, m in entry["rot"].items()),
+                             "pelvis": flat(entry["pelvis"]),
+                             "knee": dict((s, float(entry["knee"][s])) for s in SIDES),
+                             "foot": dict((s, {"t": flat(entry["foot"][s]["t"]), "r": flat(entry["foot"][s]["r"])})
+                                          for s in SIDES),
+                             "print": dict((s, {"t": flat(prints[s]["t"]), "yaw": float(prints[s]["yaw"])})
+                                           for s in SIDES)}
+    return data
+
+
+def load(path):
+    """The key poses' edits in `path` ({key: entry}), or none when there is no file."""
+    if not os.path.exists(path):
+        return empty()
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise Refusal("%s is not a key poses file (%s)" % (os.path.basename(path), error))
+    return loads(data, os.path.basename(path))
 
 
 def save(path, keys):
@@ -119,16 +166,7 @@ def save(path, keys):
         if os.path.exists(path):
             os.remove(path)
         return
-    flat = lambda m: [round(float(v), 12) for v in np.asarray(m, float).reshape(-1)]
-    data = {"format": FORMAT, "version": VERSION, "keys": {}}
-    for key, entry in keys.items():
-        if key_empty(entry):
-            continue
-        data["keys"][key] = {"rot": dict((n, flat(m)) for n, m in entry["rot"].items()),
-                             "pelvis": flat(entry["pelvis"]),
-                             "knee": dict((s, float(entry["knee"][s])) for s in SIDES),
-                             "foot": dict((s, {"t": flat(entry["foot"][s]["t"]), "r": flat(entry["foot"][s]["r"])})
-                                          for s in SIDES)}
+    data = dumps(keys)
     folder = os.path.dirname(path)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder)
@@ -270,7 +308,26 @@ def measure(worlds, walk):
         hip, knee, ankle = (W("%s_%s" % (b, side))[3, :3] for b in mp.LEGS)
         out["knee"][side] = (hip, knee - hip, ankle)
         out["foot"][side] = ((ankle - root) @ walk.basis.T, rot("foot_" + side))
+        ball = "ball_" + side
+        if ball in worlds and ball in walk.index:            # the toes: a turn in the foot's frame
+            out["local"][ball] = rot(ball) @ rot("foot_" + side).T
     return out
+
+
+bend = mp.leg_bend            # a leg's knee bend from measure's (hip, knee - hip, ankle)
+
+
+def yaw_of(r, up):
+    """The turn about `up` (radians) in a world 3x3 `r` (its twist about up)."""
+    q = wm.log_rot(wm.orthonormal(r))
+    angle = float(np.linalg.norm(q))
+    if angle < 1e-12:
+        return 0.0
+    axis = q / angle
+    # swing-twist: the twist about up of the rotation (half angle formulation)
+    w = math.cos(angle / 2.0)
+    v = math.sin(angle / 2.0) * float(np.dot(axis, up))
+    return 2.0 * math.atan2(v, w)
 
 
 def ground(walk, side, f):
@@ -284,59 +341,156 @@ def ground(walk, side, f):
     return tuple(out)
 
 
-def combine(keys, key, base, now, walk, frame):
-    """(the new edits, [(what moved, how much, unit)], [what was not taken]): `keys` with the key `key`'s edit
-    moved by what changed from the reading `base` to `now`, read on the rig at the walk's frame `frame`. A bone's
-    local turned to now = base . Y adds Y (in its parent's frame); the pelvis's move, each knee's turn and each
-    foot's move and turn are added - a foot flat on the ground at the key takes none of it, one on its heel or
-    ball takes its turn and not its move (said)."""
-    out = dict((k, _copy(v)) for k, v in keys.items())
-    entry = out.get(key) or empty_key()
+def increment(key, base, now, walk, frame, knees=None):
+    """(the edit that turns the reading `base` into `now`, [(what moved, how much, unit)], [what was not taken]):
+    read on the rig standing in the key `key` at the walk's frame `frame` (2026-10-27, «нужно убедиться что наша
+    анимация реагирует на изменения всех контроллеров»):
+    - a bone's local turned to now = base . Y gives Y (in its parent's frame) - every bone above the legs, the
+      toes;
+    - the pelvis's move;
+    - a foot in the air: its move and its turn;
+    - a foot on the ground (its heel or its ball, `ground`): its move along the ground is its PRINT - where it
+      stands for its whole stance -; its turn about the point it stands on; flat on the ground, only the turn
+      about up (its toe out) as the print's; a lift of a planted foot, and a tilt of a flat one, not taken (said);
+    - a knee: its turn about the leg's line, only while the leg is bent KNEE_BENT in both readings and the turn
+      is under KNEE_FLIP - else the IK solver straightened or flipped it (said) - and only on the sides `knees`
+      gives (keyrig.knees_taken: an IK leg whose pole stayed turns by itself); None every side."""
+    entry = empty_key()
     moved, ignored = [], []
+    label = LABELS.get(key, key)
+    # a leg the pelvis pulled straight (moved past the IK leg's reach): its foot and toes follow the hip - the
+    # solver's, not the animator's (a rig's pelvis +5 cm read 1.4 cm lifts, 0.8 cm prints, 7 deg toes, 2026-10-27)
+    d = np.asarray(now["pelvis"], float) - np.asarray(base["pelvis"], float)
+    pulled = set()
+    for side in SIDES:
+        b_now, b_base = bend(now["knee"][side]), bend(base["knee"][side])
+        if float(np.linalg.norm(d)) >= MIN_CM and b_now < KNEE_BENT and b_now < b_base - math.radians(0.5):
+            pulled.add(side)
+            ignored.append("leg_%s at %s is pulled straight by the pelvis: its foot and toes not taken"
+                           % (side, label))
     for name, rot_now in now["local"].items():
         if name not in base["local"]:
+            continue
+        if name.startswith("ball_") and name[-1] in pulled:
             continue
         turn = base["local"][name].T @ rot_now
         deg = float(np.linalg.norm(wm.log_rot(turn)))
         if deg < MIN_TURN:
             continue
-        entry["rot"][name] = wm.orthonormal(entry["rot"].get(name, np.eye(3)) @ turn)
+        entry["rot"][name] = wm.orthonormal(turn)
         moved.append((name, math.degrees(deg), "deg"))
-    d = np.asarray(now["pelvis"], float) - np.asarray(base["pelvis"], float)
     if float(np.linalg.norm(d)) >= MIN_CM:
-        entry["pelvis"] = entry["pelvis"] + d
+        entry["pelvis"] = d
         moved.append(("pelvis", _signed(d), "cm"))
+    up = np.asarray(walk.up, float)
     for side in SIDES:
+        if side in pulled:
+            continue
         name = "foot_" + side
         t = np.asarray(now["foot"][side][0], float) - np.asarray(base["foot"][side][0], float)
         r = wm.orthonormal(base["foot"][side][1].T @ now["foot"][side][1])
         angle = float(np.linalg.norm(wm.log_rot(r)))
         shifted, turned = float(np.linalg.norm(t)) >= MIN_CM, angle >= MIN_TURN
         heel, ball = ground(walk, side, frame)
-        knee_too = True                   # a knee that only followed a foot the cycle does not move stays too
-        if (shifted or turned) and heel > 0.5 and ball > 0.5:
-            ignored.append("%s stands flat at %s: its move not taken (Step and Width move a planted foot)"
-                           % (name, LABELS[key]))
-            knee_too = False
-        elif shifted or turned:
-            if turned:
-                entry["foot"][side]["r"] = wm.orthonormal(entry["foot"][side]["r"] @ r)
-                moved.append((name, math.degrees(angle), "deg"))
-            if shifted and max(heel, ball) > 0.5:
-                ignored.append("%s is on the ground at %s: its turn taken, not its move (Step and Width move "
-                               "a planted foot)" % (name, LABELS[key]))
-                knee_too = False
-            elif shifted:
-                entry["foot"][side]["t"] = entry["foot"][side]["t"] + t
-                moved.append((name, _signed(t), "cm"))
+        planted = max(heel, ball) > 0.5
+        if planted and shifted:
+            along = np.array([t[0], t[1], 0.0])
+            if float(np.linalg.norm(along)) >= MIN_CM:
+                entry["print"][side]["t"] = along
+                moved.append((name + " print", float(np.linalg.norm(along)), "cm"))
+            if abs(float(t[2])) >= MIN_CM:
+                ignored.append("%s stands on the ground at %s: lifted %.1f cm, not taken (a planted foot stays "
+                               "on the ground)" % (name, label, float(t[2])))
+        elif shifted:
+            entry["foot"][side]["t"] = t
+            moved.append((name, _signed(t), "cm"))
+        if turned and heel > 0.5 and ball > 0.5:          # flat: only its toe out, for the whole stance
+            yaw = yaw_of(r, up)
+            if abs(yaw) >= MIN_TURN:
+                entry["print"][side]["yaw"] = yaw
+                moved.append((name + " toe out", math.degrees(yaw), "deg"))
+            if angle - abs(yaw) >= MIN_TURN:
+                ignored.append("%s stands flat at %s: tilted %.1f deg, not taken (only its turn about up)"
+                               % (name, label, math.degrees(angle - abs(yaw))))
+        elif turned:
+            entry["foot"][side]["r"] = r
+            moved.append((name, math.degrees(angle), "deg"))
+        if knees is not None and not knees.get(side, True):
+            continue
         turn = mp.knee_turn(base["knee"][side], now["knee"][side])
-        if abs(turn) >= KNEE_MIN and knee_too:
-            entry["knee"][side] = entry["knee"][side] + turn
-            moved.append(("knee_" + side, math.degrees(turn), "deg"))
+        if abs(turn) >= KNEE_MIN:
+            if min(bend(base["knee"][side]), bend(now["knee"][side])) < KNEE_BENT:
+                ignored.append("knee_%s is nearly straight at %s: its turn (%.0f deg) not taken - the IK leg "
+                               "flips there" % (side, label, math.degrees(turn)))
+            elif abs(turn) > KNEE_FLIP:
+                ignored.append("knee_%s flipped at %s (%.0f deg): not taken" % (side, label, math.degrees(turn)))
+            else:
+                entry["knee"][side] = turn
+                moved.append(("knee_" + side, math.degrees(turn), "deg"))
+    return entry, moved, ignored
+
+
+def add(keys, key, inc):
+    """`keys` with the edit `inc` added to the key `key`'s: turns composed, moves added."""
+    out = dict((k, _copy(v)) for k, v in keys.items())
+    entry = out.get(key) or empty_key()
+    for name, turn in inc["rot"].items():
+        entry["rot"][name] = wm.orthonormal(entry["rot"].get(name, np.eye(3)) @ turn)
+    entry["pelvis"] = entry["pelvis"] + inc["pelvis"]
+    for side in SIDES:
+        entry["knee"][side] = entry["knee"][side] + inc["knee"][side]
+        entry["foot"][side]["t"] = entry["foot"][side]["t"] + inc["foot"][side]["t"]
+        entry["foot"][side]["r"] = wm.orthonormal(entry["foot"][side]["r"] @ inc["foot"][side]["r"])
+        entry["print"][side]["t"] = entry["print"][side]["t"] + inc["print"][side]["t"]
+        entry["print"][side]["yaw"] = entry["print"][side]["yaw"] + inc["print"][side]["yaw"]
     for name in [n for n, m in entry["rot"].items() if float(np.linalg.norm(wm.log_rot(m))) < 1e-9]:
         del entry["rot"][name]
     out[key] = entry
-    return out, moved, ignored
+    return out
+
+
+def combine(keys, key, base, now, walk, frame):
+    """(the new edits, [(what moved, how much, unit)], [what was not taken]): `keys` with the key `key`'s edit
+    moved by what changed from the reading `base` to `now` (increment), read on the rig at the walk's frame
+    `frame`."""
+    inc, moved, ignored = increment(key, base, now, walk, frame)
+    return add(keys, key, inc), moved, ignored
+
+
+def one_print(incs):
+    """The four keys' increments with each foot's print kept on one key only - the largest: the rigs of one stance
+    show the same print, and a foot moved alike on two rigs is one move, not two."""
+    out = dict((k, _copy(v)) for k, v in incs.items())
+    for side in SIDES:
+        best = max(out, key=lambda k: float(np.linalg.norm(out[k]["print"][side]["t"])), default=None)
+        turn = max(out, key=lambda k: abs(out[k]["print"][side]["yaw"]), default=None)
+        for k in out:
+            if k != best:
+                out[k]["print"][side]["t"] = np.zeros(3)
+            if k != turn:
+                out[k]["print"][side]["yaw"] = 0.0
+    return out
+
+
+def split_common(incs):
+    """({"forward": cm, "height": cm}, the increments less it): what the pelvis did alike on all four keys is a
+    setting of the whole walk (2026-10-27, «цикл должен измениться по умному»: Forward and Height, the guide's
+    knobs, and the walk's physics does the rest); alike = the same sign on all four, each at least COMMON_SHARE of
+    the largest, the largest at least MIN_CM; the common part is the smallest. What is left is each key's."""
+    common = {"forward": 0.0, "height": 0.0}
+    if any(k not in incs for k in KEYS):
+        return common, incs
+    out = dict((k, _copy(v)) for k, v in incs.items())
+    for axis, what in ((0, "forward"), (2, "height")):
+        v = np.array([float(out[k]["pelvis"][axis]) for k in KEYS])
+        big = float(np.abs(v).max())
+        if big < MIN_CM or not (np.all(v > 0.0) or np.all(v < 0.0)) or float(np.abs(v).min()) < COMMON_SHARE * big:
+            continue
+        c = math.copysign(float(np.abs(v).min()), float(v[0]))
+        common[what] = c
+        for k in KEYS:
+            out[k]["pelvis"][axis] = out[k]["pelvis"][axis] - c
+    return common, out
 
 
 def _signed(d):
@@ -347,10 +501,12 @@ def _signed(d):
 
 
 def _copy(entry):
+    prints = entry.get("print") or empty_print()
     return {"rot": dict((n, np.array(m, float)) for n, m in entry["rot"].items()),
             "pelvis": np.array(entry["pelvis"], float), "knee": dict(entry["knee"]),
             "foot": dict((s, {"t": np.array(entry["foot"][s]["t"], float), "r": np.array(entry["foot"][s]["r"], float)})
-                         for s in SIDES)}
+                         for s in SIDES),
+            "print": dict((s, {"t": np.array(prints[s]["t"], float), "yaw": float(prints[s]["yaw"])}) for s in SIDES)}
 
 
 def describe(moved, limit=4):
@@ -483,11 +639,13 @@ def correct(clip, keys, steps, walk):
             lt[j] = np.einsum("fi,fij->fj", Pos[j] - Pos[p], back)
     points = knots(keys, steps, walk)
     upper = [n for n in mp.upper_bones(walk) if n in index]
+    toes = ["ball_" + s for s in SIDES if "ball_" + s in index]
     pelvis, root = index["pelvis"], index["root"]
     frames = []
     for f in range(F):
         a, b, wa, wb = blended(points, f, P)
-        frames.append(_mix(a, b, wa, wb, upper))
+        frames.append(_mix(a, b, wa, wb, upper + toes))
+    prints = stance_prints(keys)
     for name in upper:                                   # the upper body's turns, in the parent's frame
         j = index[name]
         for f in range(F):
@@ -515,7 +673,8 @@ def correct(clip, keys, steps, walk):
         newP[j] = np.einsum("fi,fij->fj", lt[j], newR[p]) + newP[p]
         for s, th in legs.items():
             if parents[th] == j:
-                _solve_leg(s, th, index, lr, lt, R, Pos, newR, newP, kids, feet[s], frames, shares[s], walk)
+                _solve_leg(s, th, index, lr, lt, R, Pos, newR, newP, kids, feet[s], frames, shares[s], walk,
+                           prints[s], stance_weights(walk, s, F))
     out = np.array(W, copy=True)
     out[..., :3, :3], out[..., 3, :3] = newR, newP
     for j in order:                         # a helper that followed a bone rigidly follows it again
@@ -531,7 +690,90 @@ def correct(clip, keys, steps, walk):
     return wm.Clip(names, parents, out, clip.fps, clip.up, clip.name)
 
 
-def _solve_leg(side, th, index, lr, lt, R, Pos, newR, newP, kids, foot_tree, frames, shares, walk):
+def stance_prints(keys):
+    """{side: {"t", "yaw"}} - where each foot stands for its stances: its own prints (any key's) and the other foot's
+    mirrored (the side axis flipped, the turn reversed) - the edits always mirror (the module docstring)."""
+    total = empty_print()
+    for entry in (keys or {}).values():
+        for side in SIDES:
+            stance = (entry.get("print") or {}).get(side)
+            if stance:
+                total[side]["t"] = total[side]["t"] + np.asarray(stance["t"], float)
+                total[side]["yaw"] += float(stance["yaw"])
+    flip = np.array([1.0, -1.0, 1.0])
+    return dict((s, {"t": total[s]["t"] + total[OTHER[s]]["t"] * flip,
+                     "yaw": total[s]["yaw"] - total[OTHER[s]]["yaw"]}) for s in SIDES)
+
+
+def stance_weights(walk, side, F):
+    """(F,) 0..1: 1 while the foot `side` stands (walk.contact, its strike to its lift-off), fading to 0 over half
+    of the swing on either side (smoothstep) - a print holds the planted foot still and moves the swing toward it."""
+    P = walk.P
+    stances = sorted((float(a), float(b)) for a, b in walk.contact.get(side, []))
+    out = np.zeros(F)
+    if not stances:
+        return out
+    n = len(stances)
+    for i, (a, b) in enumerate(stances):
+        span = b - a
+        before = (a - stances[i - 1][1]) % P if n > 1 else P - span
+        after = (stances[(i + 1) % n][0] - b) % P if n > 1 else P - span
+        for f in range(F):
+            x = float(f)
+            if (x - a) % P <= span:
+                w = 1.0
+            else:
+                past = (x - b) % P
+                ahead = (a - x) % P
+                w = 0.0
+                if after > 1e-9 and past <= 0.5 * after:
+                    w = max(w, 1.0 - _smooth(past / (0.5 * after)))
+                if before > 1e-9 and ahead <= 0.5 * before:
+                    w = max(w, 1.0 - _smooth(ahead / (0.5 * before)))
+            out[f] = max(out[f], w)
+    return out
+
+
+def result_walk(walk, worlds, name="result"):
+    """The walk `walk`'s evaluated frames (J, N+1, 4, 4) read as a walk of their own (model.analyse): its steps and
+    feet are what the walker does."""
+    clip = wm.Clip(walk.clip.names, walk.clip.parents, np.asarray(worlds, float), walk.clip.fps, walk.clip.up, name)
+    return wm.analyse(clip)
+
+
+def on_result(walk, worlds, keys):
+    """(the frames with the key poses' edits in them, the result read as a walk, its steps, a note): the edits put
+    on the walker's evaluated animation (`worlds`, before In place) - after the parameters, the pose and the
+    physics, so the walker shows at each key exactly what its rig shows (2026-10-27). Its key poses are found on
+    the result itself. A result that cannot be read gets no edit, said."""
+    try:
+        rw = result_walk(walk, worlds)
+        steps = find(rw)
+    except (wm.Refusal, Refusal) as error:
+        return np.asarray(worlds, float), None, None, "the key poses: %s" % error
+    if is_empty(keys):
+        return np.asarray(worlds, float), rw, steps, ""
+    out = correct(rw.clip, keys, steps, rw)
+    return np.asarray(out.worlds, float), rw, steps, ""
+
+
+def in_place(worlds, walk, amount):
+    """The model's In place on `worlds` (J, n+1, 4, 4): every joint moved back by the root's progress along the walk
+    and by the line's climb, x `amount` (model.Walk._in_place, for frames edited after the evaluation)."""
+    if amount <= 0.0:
+        return worlds
+    out = np.array(worlds, float, copy=True)
+    root = walk.index["root"]
+    n = out.shape[1] - 1
+    along = (out[root, :, 3, :3] - out[root, 0, 3, :3]) @ np.asarray(walk.fwd, float)
+    climb = float(np.dot(out[root, n, 3, :3] - out[root, 0, 3, :3], walk.up)) * np.arange(n + 1) / float(max(n, 1))
+    shift = np.outer(along, walk.fwd) + np.outer(climb, walk.up)
+    out[:, :, 3, :3] -= amount * shift[None]
+    return out
+
+
+def _solve_leg(side, th, index, lr, lt, R, Pos, newR, newP, kids, foot_tree, frames, shares, walk, stance=None,
+               weights=None):
     """A leg on every frame: its foot (and what is under it) given the frame's edit - turned about its heel or its
     ball where that point is down, moved and turned where it is in the air, untouched where it stands flat - then
     the leg solved from its new hip onto the foot (its lengths, its plane turned the least, the knee turned about
@@ -555,6 +797,25 @@ def _solve_leg(side, th, index, lr, lt, R, Pos, newR, newP, kids, foot_tree, fra
         for j in foot_tree:
             newR[j, f] = R[j, f] @ D
             newP[j, f] = pivot + (Pos[j, f] - pivot) @ D + T
+        w = float(weights[f]) if weights is not None else 0.0
+        if stance is not None and w > 0.0:               # the print: where the foot stands for its whole stance
+            centre = newP[fo, f] if ball is None else 0.5 * (newP[fo, f] + newP[ball, f])
+            Dy = wm.exp_rot(w * float(stance["yaw"]) * np.asarray(walk.up, float))
+            shift = w * (np.asarray(stance["t"], float) @ walk.basis)
+            for j in foot_tree:
+                newR[j, f] = newR[j, f] @ Dy
+                newP[j, f] = centre + (newP[j, f] - centre) @ Dy + shift
+        if ball is not None:                              # the toes turned in the foot's frame
+            v = frames[f]["rot"].get("ball_" + side)
+            if v is not None and float(np.linalg.norm(v)) > 1e-12:
+                local = R[ball, f] @ R[fo, f].T
+                newR[ball, f] = local @ wm.exp_rot(v) @ newR[fo, f]
+                for j in mp._below(ball, kids):
+                    if j == ball:
+                        continue
+                    q = [k for k, c in kids.items() if j in c][0]
+                    newR[j, f] = (R[j, f] @ R[q, f].T) @ newR[q, f]
+                    newP[j, f] = ((Pos[j, f] - Pos[q, f]) @ R[q, f].T) @ newR[q, f] + newP[q, f]
         a1 = newP[fo, f]
         l1, l2 = float(np.linalg.norm(k0 - h0)), float(np.linalg.norm(a0 - k0))
         e = mp._unit(a1 - hip[f])
