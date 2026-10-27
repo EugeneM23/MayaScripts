@@ -1130,7 +1130,7 @@ null,
 "file": "Creep2_Skeleton.ma",
 "kind": "skeleton",
 "model": "Creep2",
-"sha1": "f24b0fc02c0438d1b31acc55b4c6f5f5d10d355f"
+"sha1": "632b3f474f09344a5c4c8c20b9cae6717f62e4cb"
 },
 "Creep2_Rig": {
 "bones": {
@@ -1696,7 +1696,7 @@ null,
 "file": "Creep2_Rig.ma",
 "kind": "rig",
 "model": "Creep2",
-"sha1": "a548f89569bb84a7cf75930ace426acb90fa6090"
+"sha1": "56744eb3c82a51e3e5d75a1ea12c5f8c53334446"
 },
 "Creep_Rig": {
 "bones": {

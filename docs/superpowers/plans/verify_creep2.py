@@ -191,7 +191,7 @@ print("   ", text.splitlines()[0][:200])
 POINT = ("upperarm_r", "lowerarm_l", "thigh_l", "calf_r")
 WHOLE = ("pelvis", "spine_01", "spine_03", "spine_05", "neck_01", "head", "clavicle_l", "hand_l", "hand_r",
          "foot_l", "ball_r", "middle_02_r", "thumb_02_l")
-worst_rot, worst_dir, worst_len, moved, worst_at = 0.0, 0.0, 0.0, 0.0, ""
+worst_rot, worst_dir, worst_len, moved, worst_at, worst_len_at = 0.0, 0.0, 0.0, 0.0, "", ""
 
 
 def direction(B, k):
@@ -212,13 +212,18 @@ for t in range(int(first), int(last) + 1, max(1, int((last - first) / 12))):
         worst_dir = max(worst_dir, math.degrees(math.acos(max(-1.0, min(1.0, d)))))
     for n, p in H.items():
         if n not in ("root", "pelvis", "weapon_r", "weapon_l", "camera_root", "camera_bone") and not n.startswith("ik_"):
-            worst_len = max(worst_len, (om.MVector(cmds.getAttr(p + ".translate")[0]) - om.MVector(rest_t[n])).length())
+            d_ = (om.MVector(cmds.getAttr(p + ".translate")[0]) - om.MVector(rest_t[n])).length()
+            if d_ > worst_len:
+                worst_len, worst_len_at = d_, "%s at %d" % (n, t)
     moved = max(moved, max(max(abs(x - y) for x, y in zip(list(mm), list(wm(p)))) for p, mm in still.items()))
+# the game bones follow their AS joints' positions since 2026-10-27 (Manny's way, so FK translations
+# carry): a rotations take keeps the lengths as far as the AS rig keeps its own - Manny_Rig's foot
+# moves 0.10 cm in its own rig under the same rule
 gate(6, ok and not cmds.objExists(ar.holder_of(c)) and worst_rot < 0.05 and worst_dir < 0.5
-     and worst_len < 1e-3,
+     and worst_len < 0.05,
      "the Retarget button (%d..%d): ok=%s, on the clip's orientations to %.5f deg (worst %s), the limb bones "
-     "pointing as the clip's to %.4f deg, Creep 2's lengths kept to %.6f cm"
-     % (first, last, ok, worst_rot, worst_at, worst_dir, worst_len))
+     "pointing as the clip's to %.4f deg, Creep 2's lengths kept to %.6f cm (worst %s)"
+     % (first, last, ok, worst_rot, worst_at, worst_dir, worst_len, worst_len_at))
 gate(7, moved < 1e-6, "the second Creep 2 and the Manny did not move: %.9f" % moved)
 
 # which of our skeletons the clip's is (the Auto card) - said, not gated
@@ -257,6 +262,26 @@ gate(9, len(K) == 93 and n_sk == 1 and err < 1e-3 and len(meshes) == 1 and 0 <= 
      % (len(K), err, worst_v))
 cmds.delete([n for n in src_nodes if cmds.objExists(n) and not cmds.listRelatives(n, parent=True)] or [])
 cmds.namespace(removeNamespace="ue", deleteNamespaceContent=True)
+
+# a translated FK control carries its bone, as on Manny (2026-10-27: «когда переношу контролы фк рук то
+# они не следуют за ригом» - the Creep's procedure bound by orientation only)
+cmds.file(new=True, force=True)
+character.add_character(rig_row)
+ns = maya_rigs.rigs()[0].namespace
+carried = []
+for ctrl, bone in (("FKScapula_L", "clavicle_l"), ("FKShoulder_L", "upperarm_l"), ("FKElbow_R", "lowerarm_r"),
+                   ("FKWrist_L", "hand_l"), ("FKSpine3_M", "spine_03"), ("FKNeck_M", "neck_01"),
+                   ("FKNeck_M", "head")):          # the head rides the neck (it follows no Part joint)
+    b, c = ns + ":" + bone, ns + ":" + ctrl
+    p0, a0 = pos(b), pos(c)
+    cmds.setAttr(c + ".tx", 5)
+    cmds.setAttr(c + ".ty", 5)
+    p1, a1 = pos(b), pos(c)
+    cmds.setAttr(c + ".tx", 0)
+    cmds.setAttr(c + ".ty", 0)
+    carried.append((ctrl, round((a1 - a0).length(), 3), round((p1 - p0).length(), 3), round((pos(b) - p0).length(), 6)))
+gate(11, all(abs(m - n) < 1e-3 and back < 1e-6 for _c, m, n, back in carried),
+     "FK controls moved 7.071 carry their bones (control, moved, bone, back at zero): %s" % carried)
 
 # Delete character, through the mesh
 cmds.file(new=True, force=True)

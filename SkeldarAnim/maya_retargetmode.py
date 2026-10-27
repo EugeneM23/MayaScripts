@@ -32,7 +32,10 @@ The rule (`decide`):
 
 Twin = the MEDIAN relative difference of the paired bone lengths within 1 %
 (the bridge's rule since 2026-10-01, trap 152: a 3P clip animates some of its
-bones' lengths, so a share-within-1 % test read 0.90 against its own skeleton).
+bones' lengths, so a share-within-1 % test read 0.90 against its own skeleton)
+AND at least TWIN_SHARE (80 %) of the bones within it (2026-10-27: a body
+sharing its fingers and limbs with the clip's but not its spine and calves,
+Creep 2 under the first Creep's clips, read 0.71 and passed the median).
 Lengths are measured between each paired bone and its nearest PAIRED ancestor,
 on both skeletons - so a 3-joint Mixamo spine against our 5 compares like with
 like - ours at the bind (the skinCluster's bindPreMatrix: a rig carrying a
@@ -51,7 +54,8 @@ SETTINGS = (AUTO, ROTATION, STRETCH)
 LABELS = {AUTO: "Auto", ROTATION: "Rotations", STRETCH: "Stretch"}
 OPTIONVAR = "skeldarRetargetBones"
 
-TWIN_TOLERANCE = 0.01      # the median paired bone within 1 % makes a twin
+TWIN_TOLERANCE = 0.01      # the median paired bone within 1 % makes a twin ...
+TWIN_SHARE = 0.8           # ... with this share of the bones within it (2026-10-27, Creep 2)
 SHORTEST = 1.0             # cm: shorter bones do not vote (the bridge's rule)
 SHOWN_REGIONS = 3          # regions a status line names
 SAMPLES = 24               # frames the clip's own stretch is sampled at
@@ -186,6 +190,15 @@ def scale_of(rows):
     return tgt / src
 
 
+def share_within(rows, tolerance=TWIN_TOLERANCE, shortest=SHORTEST):
+    """The share of the bones longer than `shortest` whose relative difference is within
+    `tolerance`, or None with nothing to vote. Pure."""
+    diffs = [abs(s - t) / max(s, t) for _, s, t in rows if max(s, t) > shortest]
+    if not diffs:
+        return None
+    return sum(1 for d in diffs if d <= tolerance) / float(len(diffs))
+
+
 def median_difference(rows, scale=1.0, shortest=SHORTEST):
     """The median relative difference |s*clip - ours| / max over the rows whose
     longer side passes `shortest`, or None with nothing to vote. Pure."""
@@ -227,7 +240,11 @@ def measure(rows, stretch=None, source="", target="", tolerance=TWIN_TOLERANCE):
     scale = scale_of(rows)
     median = median_difference(rows, 1.0)
     scaled = median_difference(rows, scale)
-    twin = median is not None and median <= tolerance
+    # the median alone let Creep 2 read as the first Creep's clips' twin (2026-10-27): its fingers,
+    # thighs and upper arms are the first Creep's, its calves, spine and head 8-13 % off - 29 % of its
+    # bones. Real twins, 3P and 1P clips included, read 0.87-1.0 of their bones within 1 %.
+    share = share_within(rows, tolerance)
+    twin = median is not None and median <= tolerance and share is not None and share >= TWIN_SHARE
     bone, cm = (stretch or ("", 0.0))
     return Measure(source=source, target=target, twin=twin,
                    median=1.0 if median is None else median,

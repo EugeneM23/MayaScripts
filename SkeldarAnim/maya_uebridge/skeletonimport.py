@@ -33,7 +33,8 @@ from maya_scenetabs import scope
 
 from maya_uebridge import rigimport
 
-TWIN_TOLERANCE = 0.01     # the median bone within 1 % of the clip's makes a twin
+TWIN_TOLERANCE = 0.01     # the median bone within 1 % of the clip's makes a twin ...
+TWIN_SHARE = 0.8           # ... with 80 % of the bones within it (maya_retargetmode.TWIN_SHARE)
 SHORTEST = 1.0            # cm: shorter bones do not vote
 HELPERS = "ik_"           # helper bones a body of its own leaves at rest
 CARRIED = ("weapon_", "camera_")   # carried on their parent onto another body (2026-10-20)
@@ -92,7 +93,10 @@ def is_twin(lengths, tolerance=TWIN_TOLERANCE, shortest=SHORTEST):
                    if max(a, b) > shortest)
     if not diffs:
         return False
-    return diffs[len(diffs) // 2] <= tolerance
+    # and TWIN_SHARE of them within it (maya_retargetmode's rule, 2026-10-27: Creep 2 under the
+    # first Creep's clips read a median of 0.0 with 29 % of its bones 8-13 % off)
+    share = sum(1 for d in diffs if d <= tolerance) / float(len(diffs))
+    return diffs[len(diffs) // 2] <= tolerance and share >= TWIN_SHARE
 
 
 # The bones a UE clip always carries: with all of them paired by leaf name the clip is

@@ -96,6 +96,10 @@ class Twin(unittest.TestCase):
     def test_another_body(self):
         self.assertFalse(si.is_twin([(10.0, 10.0)] * 29 + [(10.0, 14.0)] * 54))
 
+    def test_a_body_sharing_the_median_bone_but_not_enough_bones(self):
+        """2026-10-27: Creep 2 under the first Creep's clips - the median bone alike, 29 % 8-13 % off."""
+        self.assertFalse(si.is_twin([(10.0, 10.0)] * 44 + [(10.0, 9.0)] * 18))
+
     def test_short_bones_do_not_vote(self):
         self.assertTrue(si.is_twin([(0.2, 0.9)] * 50 + [(30.0, 30.1)] * 10))
         self.assertFalse(si.is_twin([(0.2, 0.2)] * 5))

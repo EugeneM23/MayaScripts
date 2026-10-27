@@ -123,8 +123,21 @@ class Measuring(unittest.TestCase):
         self.assertTrue(all(abs(p) < 1e-9 for _, p in m.regions))
 
     def test_a_3p_clip_stretching_a_few_bones_is_still_a_twin(self):
-        rows = rows_twin() + [("spine_03", 10.5, 10.0), ("spine_04", 10.4, 10.0)]
+        # a skeleton's worth of bones, a few of them stretched - a real 3P clip on Manny reads 8 %
+        # of its 62 bones off (2026-10-27), so a twin also passes TWIN_SHARE
+        fingers = [("finger_%02d" % i, 3.0, 3.0) for i in range(14)]
+        rows = rows_twin() + fingers + [("spine_03", 10.5, 10.0), ("spine_04", 10.4, 10.0)]
         self.assertTrue(rm.measure(rows).twin)
+
+    def test_a_body_sharing_most_but_not_enough_bones_is_no_twin(self):
+        """2026-10-27, Creep 2 under the first Creep's clips: the median bone matched to 0.0 (fingers,
+        thighs, upper arms) while 29 % of the bones - calves, spine, neck, head, toes - stood 8-13 %
+        off; read as a twin, the stretch put the first Creep's proportions on Creep 2 unasked. A twin
+        also needs TWIN_SHARE of its bones within the tolerance (real twins read 0.87-1.0)."""
+        same = [("b%02d" % i, 10.0, 10.0) for i in range(71)]
+        off = [("c%02d" % i, 10.0, 9.0) for i in range(29)]
+        self.assertFalse(rm.measure(same + off).twin)
+        self.assertTrue(rm.measure(same + off[:10]).twin)       # 88 % alike: a twin
 
     def test_short_bones_do_not_vote(self):
         rows = rows_twin() + [("index_03_l", 0.9, 0.5)] * 20

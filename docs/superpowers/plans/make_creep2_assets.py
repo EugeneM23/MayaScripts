@@ -139,6 +139,63 @@ def unused_shading(deleted):
         drop(sorted(set(doomed)), deleted)
 
 
+def position_follows():
+    """Every game bone that turns with its AdvancedSkeleton joint (one orientConstraint, nothing moving
+    it) follows that joint's POSITION too, offset kept - Manny's rig's way (2026-10-27, the animator:
+    «когда переношу контролы фк рук то они не следуют за ригом»; asked, Creep 2 only). The Creep's
+    procedure binds by orientation only, so a translated FK control moved its AS joint and no game bone.
+    maintainOffset: the rig's midline joints stand 0.32 cm beside their bones (trap 298); at rest
+    nothing moves. The retarget's own stretch follows (maya_asretarget.follow_plan) skip a bone that
+    already has a point constraint, and take away only theirs. Returns (made, worst drift)."""
+    root = cmds.ls("|root", type="joint", long=True)[0]
+    joints = [root] + cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True)
+    before = dict((j, wm(j)) for j in joints)
+    made = 0
+    # The pelvis: the procedure's point + orient constraints from Root_M. A pointConstraint keeps its
+    # offset in the constrained node's PARENT space - `root`, riding Main, not Root_M - and Root_M stands
+    # 0.32 cm beside the pelvis (trap 298), so as the hips turned the offset did not turn with them and
+    # the pelvis slid against Root_M: the thighs, now following their AS joints, moved 0.25 cm in it under
+    # a creep clip. One parentConstraint keeps the offset in Root_M's own frame.
+    for j in joints:
+        cons = cmds.listRelatives(j, children=True, type="constraint", fullPath=True) or []
+        point = [c for c in cons if cmds.nodeType(c) == "pointConstraint"]
+        orient = [c for c in cons if cmds.nodeType(c) == "orientConstraint"]
+        if len(point) == 1 and len(orient) == 1:
+            pt = cmds.pointConstraint(point[0], q=True, targetList=True) or []
+            ot = cmds.orientConstraint(orient[0], q=True, targetList=True) or []
+            if len(pt) == 1 and pt == ot:
+                cmds.delete(point + orient)
+                cmds.parentConstraint(pt[0], j, maintainOffset=True)
+                print("  %s: point + orient from %s made one parentConstraint" % (j.split("|")[-1], pt[0]))
+    # parents first: a bone follows only when its parent does (or is placed by a point / parent
+    # constraint of its own), so whatever rides rigidly carries its children rigidly
+    placed = set()
+    for j in sorted(joints, key=lambda p: p.count("|")):
+        cons = cmds.listRelatives(j, children=True, type="constraint", fullPath=True) or []
+        kinds = [cmds.nodeType(c) for c in cons]
+        if "pointConstraint" in kinds or "parentConstraint" in kinds:
+            placed.add(j)
+            continue
+        if kinds.count("orientConstraint") != 1 or j.rsplit("|", 1)[0] not in placed:
+            continue
+        orient = cons[kinds.index("orientConstraint")]
+        targets = cmds.orientConstraint(orient, q=True, targetList=True) or []
+        if len(targets) != 1 or not cmds.ls(targets[0], long=True)[0].startswith("|Group|"):
+            continue
+        # the twists and neck_02 turn with AS's Part joints, which do not stay put on their segments
+        # (followed, neck_02 moved 0.14 cm in neck_01 under a creep clip, and the head after it 0.24):
+        # they and everything under them ride their parents rigidly, which follow - an FK translation
+        # of the neck still carries neck and head (maya_asretarget.follow_plan skips twists too)
+        if "Part" in targets[0].split("|")[-1]:
+            continue
+        cmds.pointConstraint(targets[0], j, maintainOffset=True)
+        placed.add(j)
+        made += 1
+    drift = max(max(abs(a - b) for a, b in zip(list(m), list(wm(j)))) for j, m in before.items())
+    assert drift < 1e-4, "the follows moved the skeleton: %.2e" % drift
+    return made, drift
+
+
 # ------------------------------------------------------------------ rig
 def build_rig(built):
     cmds.file(built, open=True, force=True, executeScriptNodes=False)
@@ -159,6 +216,9 @@ def build_rig(built):
         mats = cmds.listConnections(sg + ".surfaceShader") or []
         if sg.startswith("SK_Creep_skinned") and mats:
             cmds.rename(sg, mats[0] + "SG")
+    followed = position_follows()
+    print("position follows added (game bone <- its AS joint, offset kept): %d, the skeleton moved %.2e"
+          % followed)
     root = cmds.ls("|root", type="joint", long=True)
     below = cmds.listRelatives(root[0], allDescendents=True, type="joint") if root else []
     assert root and len(below) == JOINTS - 1, "the skeleton, %d joints (%d below root)" % (JOINTS, len(below or []))

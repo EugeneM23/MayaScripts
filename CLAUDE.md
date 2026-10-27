@@ -5850,16 +5850,36 @@ has it (7.6e-6 cm); a Long Sword at zero grip 5.8° off the fist's grip line; th
 meshes; the skeleton row; Delete character through the mesh. Unit tests `Creep2` in `test_scenesetup_catalog`.
 **Not seen in the animator's Maya** (after Check update). Not built: its textures, a 1P mesh, its own weapon.
 
+**…and FK translations carry its bones, Manny's way** (the same day, after using it: «когда переношу контролы фк
+рук то они не следуют за ригом»; asked, Creep 2 only). Measured first: on every rotation-only rig (Creep, Orc D,
+Creep 2) a FK control moved 7.1 cm moved its bone 0.0 - the Creep procedure binds by orientation only; on Manny
+7.1. `make_creep2_assets.py rig` now (`position_follows`):
+- gives each game bone that turns with its AS joint a `pointConstraint` from it, offset kept (60 bones), parents
+  first and only under a bone that is placed itself; the twists and neck_02 turn with AS's Part joints, which do not
+  stay put (followed, neck_02 moved 0.14 cm and the head 0.24 under a clip), so they and the head ride rigidly - a
+  translated `FKNeck_M` carries neck and head, `FKHead_M` alone does not;
+- makes the pelvis's point + orient from Root_M ONE parentConstraint: a pointConstraint keeps its offset in the
+  PARENT's space (`root`, riding Main), Root_M stands 0.32 cm beside the pelvis (trap 298), and as the hips turned the
+  pelvis slid against Root_M - the followed thighs moved 0.25 cm.
+The retarget's own stretch follows skip a bone that has a point constraint. `verify_creep2.py` **11/11** (gate 11 the
+translations; gate 6 the rotations take keeping lengths to 0.014 cm, the AS rig's own - Manny's foot 0.10).
+
+**…and a twin needs 80 % of its bones** (found on the way): with the follows, Auto's "twin, exact" stretch put the
+first Creep's proportions on Creep 2 (3.7 cm) unasked - trap 299. `maya_retargetmode.TWIN_SHARE` 0.8 and the same in
+`skeletonimport.is_twin`: a twin is the median bone within 1 % AND 80 % of the bones within it. Measured: real
+twins 0.87-1.0 (UE 3P and 1P clips on Manny, creep clips on the first Creep), Creep 2 under creep clips 0.71-0.73.
+Now it is asked (rotations in batch), its line naming spine -12 %.
+
 298. **AdvancedSkeleton refuses a midline that is not on x = 0.** A fit joint past 1 % of AS's scale on +X counts
      as a LEFT-side joint unless its parent stands on -X, and the build dies «"HeadEnd" is on the Left side,
      FitSkeleton side-joints must start on the Right side». Creep 2's whole body stands 0.32 cm right of its root.
      The midline fit joints (Root, Spine1-5, Neck, Head, HeadEnd) are moved onto x = 0 parents-first and every
      side joint put back on its recorded place; the rig's middle joints then stand 0.32 cm beside their bones,
      which keep their places (orientation constraints with offsets, the pelvis its position too).
-299. **The retarget's "twin" is a median, and Creep 2 is the first Creep's clips' "twin"**: 61.5 % of the bones match
-     to 1 %, so the median does, and the line reads «STRETCH (twin, exact)» onto a body whose calves are 8 %
-     shorter - no proportions question. On this rotation-only rig the lengths are kept anyway (gate 6, 0.000000);
-     on a rig that stretches, a median twin rule would let a different body through unasked.
+299. **The retarget's "twin" was a median, and Creep 2 read as the first Creep's clips' twin**: the median bone
+     matched while 29 % of the bones stood 8-13 % off, the line read «STRETCH (twin, exact)» and, once Creep 2's
+     bones followed their AS joints, the stretch put the first Creep's proportions on it unasked (3.7 cm). A twin
+     also needs 80 % of its bones within 1 % (`TWIN_SHARE`) since.
 
 ## The weapon inventory: two hands, the floor, a Diablo window (2026-09-29)
 
