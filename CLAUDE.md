@@ -10921,7 +10921,10 @@ file (here and in the mean pose rig section), and the rigs standing in the sourc
   (`correct`), then In place (`kp.in_place`) - so the walker shows a rig's pose exactly at its key.
 - **Rigs per walker** (`meanrig`, `keyrig`; the rig's memo: `walker` = its UUID, `main0` / `root0` where it stood,
   `poles`): stood beside the working walker in what IT does (`scene.walker_animation`), read in Main's frame as it
-  stood with the root held (`meanrig._held`: Main or Root_ctrl moved by hand is no pose change).
+  stood with the root held (`meanrig._held`: Main or Root_ctrl moved by hand is no pose change). A rig an older build
+  stood (no `main0` on its memo: the source cycle, read without its Main frame) is adopted by the first working walker
+  on its walk, else the first walker on it; the next Update stands it again in that walker's animation and reads
+  nothing from it, said («Manny_Rig2 stood by an older build: stood again ... pose them again, then Update»).
 - **What a key rig reads** (`keyposes.increment`): every game bone above the legs, the pelvis's move (travel
   coordinates), the toes in the foot's frame; a foot in the air its move and turn; a planted foot's move along the
   ground its PRINT for the whole stance (held still, mirrored), flat its toe out about up, a lift or a tilt not taken
@@ -10939,12 +10942,13 @@ file (here and in the mean pose rig section), and the rigs standing in the sourc
   swinging one by drawing its ankle toward the hip; up to 3 rounds; «knee pops smoothed: 2 (L 7; R 4), pelvis down
   up to 1.3 cm». The Physics tab's chip **Fix knee pops** (`knee_pops`, on). asd, dw and an own cycle are untouched;
   HavyRun has 2 fixed, AGS_Sprint 1.
-- **The card**: a heading **Main** with its own Reset over the main parameters and the macros, **Details** over the
-  tabs, every tab its name and a Reset (`press_reset_group`).
-- Proof: `docs/superpowers/plans/walkparam/verify_walk_working.py` **23/23 mayapy standalone** (asd on two Manny
+- **The card**: a heading **Main** over the main parameters and the macros, **Details** over the tabs, every tab its
+  name; each heading carries a small Reset at its right (`press_reset_group`), as the Walk cycle row carries Save.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_working.py` **24/24 mayapy standalone** (asd on two Manny
   skeletons, A and B, a temporary walks folder): Pick makes B working; four rigs B's, standing in B's animation
   (0.0014 deg); Main moved reads no edit; an arm +20 on Contact is B's edit, 20.00 at the contact and 0.00 at the
-  Down; A key for key untouched; the library's file unchanged; the pelvis +5 on all four is Height +5 pinned, B
+  Down; A key for key untouched; the library's file unchanged; a rig whose memo is an older build's is B's, stood
+  again, nothing read; the pelvis +5 on all four is Height +5 pinned, B
   +0.92 said, the pulled legs' feet not taken; -10 from there Height -5, B -4.74; a planted foot +6 is its print, held
   for its whole stance (spread 0.000 cm); a 25 cm raise reads no knee flip; the mean pose rig B's; Reset; Delete;
   HavyRun's pops gone. 468 walk unit tests, 9156 in all (the known `test_chat_deploy.Keys` failing).

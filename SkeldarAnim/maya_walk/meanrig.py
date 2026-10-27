@@ -349,6 +349,12 @@ def update(rekey=None):
         if root is None or not scene.memo_of(root).get("walk"):
             lines.append("%s stands for no walker in the scene - Delete it and Create again" % rig.namespace)
             continue
+        if not memo.get("main0"):
+            # stood by a build before 2026-10-27 (the cycle's mean pose, read without its Main frame)
+            press(root, memo.get("clean"))
+            lines.append("%s stood by an older build: stood again in the mean pose of %s, nothing read - pose it "
+                         "again, then Update" % (rig.namespace, scene.walker_label(root)))
+            continue
         anim = scene.walker_animation(root, with_steps=False)
         now = _read(rig, anim.walk, anim.statics, memo)
         base = _unflat(memo.get("base") or {})

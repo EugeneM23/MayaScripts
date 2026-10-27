@@ -161,6 +161,22 @@ gate(digest(WALK_FILE) == FILE_HASH and not [f for f in os.listdir(TEMP) if f.en
                                                                                       ".walkfix.json"))],
      "the library's walk file is unchanged, nothing written beside it")
 
+# ---- a rig an older build stood (no walker, no Main frame): stood again, nothing read ----
+old = by_key["passing"]
+memo = keyrig.memo_of(old)
+keyrig._set_memo(old, dict((k, v) for k, v in memo.items() if k not in ("walker", "main0", "root0", "poles")))
+plug = old.namespace + ":RootX_M.translateY"
+stood_y = cmds.getAttr(plug)
+cmds.setAttr(plug, stood_y + 7.0)
+keys_before = kp.dumps(sw.edits_of(B)["keys"])
+line = keyrig.update()
+print(line)
+memo = keyrig.memo_of(old)
+gate("older build" in line and kp.dumps(sw.edits_of(B)["keys"]) == keys_before and memo.get("main0")
+     and memo.get("walker") == meanrig.uuid_of(B) and abs(cmds.getAttr(plug) - stood_y) < 0.05,
+     "a rig an older build stood is B's, stood again (RootX_M %+.2f from its stand), nothing read - said"
+     % (cmds.getAttr(plug) - stood_y))
+
 # ---- the pelvis raised alike on all four: Height, as far as the legs reach ----
 def mean_pelvis():
     return float(np.mean([world("B", "pelvis", f)[3, 1] for f in range(len(times("B")) - 1)]))

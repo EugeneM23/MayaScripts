@@ -1893,15 +1893,16 @@ def press_reset_group(key):
 
 
 def _section_head(name, label, tip, key):
-    """A section's head: its name (a heading) and its Reset (press_reset_group(key)) on one row."""
+    """A section's head: its name (a heading, the row's width) and a small Reset at its right
+    (press_reset_group(key)), as the Walk cycle row carries its Save."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
-    hubstyle.mark(cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                                 columnAttach=[(1, "both", 0), (2, "both", 4)]), "fill", layout=True)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0), (2, "right", 3)])
     hubstyle.mark(cmds.text(name, label=label, align="left", annotation=tip), "heading")
-    hubstyle.mark(cmds.button(name + "Reset", label="Reset", height=hubstyle.height("small", 22),
-                              annotation="%s: every setting here back to the clip's own" % label,
-                              command=lambda *_: press_reset_group(key)), "secondary", "arrow-back-up")
+    hubstyle.mark(cmds.button(name + "Reset", label=hubstyle.tool_label("Reset"), width=hubstyle.tool_width(56),
+                              height=hubstyle.height("field", 24),
+                              annotation="Reset %s: every setting here back to the clip's own" % label,
+                              command=lambda *_: press_reset_group(key)), "tool", "arrow-back-up")
     cmds.setParent("..")
 
 

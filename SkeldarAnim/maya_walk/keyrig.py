@@ -316,11 +316,16 @@ def update(rekey=None, shift=None):
             continue
         frames = kp.frames_of(anim.steps, anim.rw.P)
         incs = dict((key, kp.empty_key()) for key in kp.KEYS)
-        said, ignored, stood_again = [], [], []
+        said, ignored, stood_again, older = [], [], [], []
         for rig in own:
             memo = memo_of(rig)
             key = memo.get("key")
             if key not in kp.KEYS:
+                continue
+            if not memo.get("main0"):
+                # stood by a build before 2026-10-27: in the source cycle, read without its Main frame - its base
+                # is not what the rig showed (the animator's rigs read 23.5 cm of pelvis nobody moved)
+                older.append(rig)
                 continue
             now = meanrig._read(rig, anim.walk, anim.statics, memo)
             base = meanrig._unflat(memo.get("base") or {})
@@ -337,6 +342,8 @@ def update(rekey=None, shift=None):
                 said.append("%s: %s" % (kp.LABELS[key], kp.describe(moved, 3)))
             if moved or not_taken:
                 stood_again.append(rig)
+        if older:
+            lines.append(_stand_older(older, root, anim if not stood_again else None))
         if not stood_again:
             continue
         incs = kp.one_print(incs)
@@ -364,7 +371,7 @@ def update(rekey=None, shift=None):
                 whole += " (%sthe walk moves %+.1f cm%s)" % (
                     total, rose, " - its legs reach no further, a shorter Step raises it more" if asked > 0.0 else "")
         frames = kp.frames_of(anim.steps, anim.rw.P)
-        for rig in stood_again:
+        for rig in list(stood_again) + [r for r in older if r not in stood_again]:
             key = memo_of(rig)["key"]
             _stand(rig, anim, root, key, frames[key])
             _label(rig, root, key, frames[key])
@@ -378,6 +385,19 @@ def update(rekey=None, shift=None):
     if not lines:
         return NOTHING_MOVED
     return " | ".join(lines)
+
+
+def _stand_older(older, root, anim):
+    """The rigs `older` (stood by a build before 2026-10-27) stood again in the walker's animation `anim` (None: the
+    caller stands them after its own Update). Their line."""
+    if anim is not None:
+        frames = kp.frames_of(anim.steps, anim.rw.P)
+        for rig in older:
+            key = memo_of(rig)["key"]
+            _stand(rig, anim, root, key, frames[key])
+            _label(rig, root, key, frames[key])
+    return ("%s stood by an older build: stood again in %s's animation, nothing read - pose them again, then "
+            "Update" % (", ".join(r.namespace for r in older), scene.walker_label(root)))
 
 
 def reset(root, rekey=None):

@@ -142,5 +142,12 @@ Built into the retarget, after the target's legs are solved (`target.Retarget.fr
   pelvis -10 cm read 1.6-2.3 deg knees, a foot moved 6 cm read 8.5 deg). The rig's memo keeps each leg's FK/IK and its
   pole control's translate as it stood (`keyrig._poles`); a knee turn is the animator's in FK, or when the pole's
   channels changed (`keyrig.knees_taken`). A rig stood by a build before reads every knee.
-- The verify `verify_walk_working.py` **23/23 standalone**; the older `verify_walk_keyposes.py` and
+- **Rigs an older build stood are stood again, not read.** The animator's four rigs (read on 7002 after the install)
+  carry no walker, no `main0`: their bases were read in the source cycle without Main's frame, the very reading that
+  gave 23.5 cm of pelvis nobody moved. Such a rig is adopted (the first working walker on its walk, else the first
+  walker on it); Update stands it again in the walker's animation and reads nothing from it, said; a mean pose rig
+  likewise (`meanrig.press` again).
+- **The headings' Reset is a small button at the right** (the Walk cycle row's Save), not a row-wide button beside a
+  squeezed heading (seen on 7002).
+- The verify `verify_walk_working.py` **24/24 standalone**; the older `verify_walk_keyposes.py` and
   `verify_walk_meanpose.py` call the rigs with a walk's name (the per-cycle files): history.
