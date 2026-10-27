@@ -2072,7 +2072,7 @@ def _diagnosis_rows():
         cmds.columnLayout(_diag_row(i), adjustableColumn=True, manage=False)
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "left", 0), (2, "left", 4)])
         cmds.text(_diag_text(i), label="", align="left", wordWrap=True, height=30, annotation=TIPS["diagnosis"])
-        hubstyle.mark(cmds.button(_diag_fix(i), label="Fix", width=hubstyle.tool_width(44),
+        hubstyle.mark(cmds.button(_diag_fix(i), label="Fix", width=hubstyle.pick(60, 44),
                                   height=hubstyle.height("field", 24), annotation=TIPS["diagnosis"],
                                   command=fix_pressed(i)), "secondary", "tool")
         cmds.setParent("..")

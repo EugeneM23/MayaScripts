@@ -224,6 +224,25 @@ class DiagnosisTests(unittest.TestCase):
                                "arm_lag_l": 3.0, "arm_lag_r": 3.0, "chest_timing": 150.0}, info={"lowered": 4.0})
         self.assertIn("physics", [f.key for f in found])
 
+    def test_no_tempo_is_told_for_a_body_standing_still(self):
+        """2026-10-27, seen on 7002: an In place result measured 7.5e-18 m/s and the Froude tempo read 110 million
+        frames a step («The tempo is not the body's: 15.5 fr a step, 35864562.6 for its size»)."""
+        self.assertEqual(gait.froude_tempo(85.0, 30.0, 7.5e-18), 0.0)
+        self.assertEqual(gait.froude_tempo(85.0, 30.0, 0.01), 0.0)
+        self.assertGreater(gait.froude_tempo(85.0, 30.0, 1.7), 5.0)
+        found = gait.diagnose({"arm_lag_l": 3.0, "arm_lag_r": 3.0, "bounce": 4.0, "push_l": 30.0, "push_r": 30.0,
+                               "chest_timing": 150.0, "ground_time": 60.0, "tempo": 15.5, "speed": 7.5e-18},
+                              leg=85.0, fps=30.0)
+        self.assertNotIn("tempo_size", [f.key for f in found])
+
+    def test_an_in_place_result_reads_the_walk_s_speed_and_step(self):
+        """In place takes the travel off the keys; the walk still walks at its speed and its step."""
+        w = tw.walk()
+        walking, standing = gait.of_result(w, w.evaluate({})), gait.of_result(w, w.evaluate({"in_place": 1.0}))
+        self.assertGreater(walking["speed"], 1.0)
+        self.assertAlmostEqual(standing["speed"], walking["speed"], places=6)
+        self.assertAlmostEqual(standing["step"], walking["step"], places=6)
+
     def test_every_fix_names_parameters(self):
         found = gait.diagnose({"arm_lag_l": 0.0, "arm_lag_r": 0.0, "bounce": 1.0, "head_motion": 9.0,
                                "chest_timing": 30.0, "push_l": 2.0, "push_r": 2.0, "arm_swing_l": 40.0,
