@@ -14911,3 +14911,38 @@ exporting again.
      rest of the session**, and writes the scene's rate in the header over it: a file that SAYS 30 fps
      and holds keys every 1/24 s. Every check that reads the header or Maya's unit passes. Read the key
      times out of the file.
+
+## The second Creep's right arm and head as rigs and skeletons of their own (2026-10-27)
+
+The animator split the Creep 2 (`SK_Creep_skinned`, Unreal's) on port 7004 into a body, the right arm with
+its shoulder and the head cut at mid neck, each skinned to its own skeleton from the character's `root`
+(`Animations/Rigs/Characters/Creep_Split/Creep_{Body,Arm_R,Head}.fbx`), then: «Руку и голову ... риг на
+адванцед скелетоне и встроить в наш пайплайн как и персонажей. Рука должна переноситься по всем нашим
+правилам на правую руку голова на голову» and «ФК контролы работают как у менни при смени позиции
+растягиваются кости». Asked: the part lands where the clip's body would hold it; rig and skeleton cards;
+the arm FK + IK + fingers. Spec `docs/superpowers/specs/2026-10-27-creep-arm-head-parts-design.md` (its
+addendum).
+- **Four rows, two models** «Creep 2 Arm R» / «Creep 2 Head» after Creep 2 (`Creep2_ArmR_Rig.ma`,
+  `_Skeleton.ma`, `Creep2_Head_*`), palette colours, fires `frost` / `ash`; `catalog.Character.part` =
+  `spine_05` (the chest). The Auto card never matches a part (`autoimport.match_clip`).
+- **The rigs** (`as_creep_part_procedure.py`, LIVE on 7004, then `make_creep_part_assets.py`): UE5.ma cut to
+  Root + the right arm chain (`noMirror`: no left arm) or Root + Neck (in-between) + Head; every game bone
+  follows its AS joint by **point + orient + scale -mo, Manny's way** (an FK translate moves the bone 5.000
+  for 5) - not marked rotation-only; `Group.skeldarPartAnchor = "spine_05"` and `Group|PartAnchor` on the
+  chest's place following Root_M. weapon_r on Creep 2's UE socket (`WEAPON_SOCKET`).
+- **The retarget**: `maya_asretarget.part_anchor`; RootX_M follows the clip's chest (`source_name`) in place
+  of the pelvis; `maya_rig_retarget.rig_module` sends a part to it; a part's own clip goes whole (twin),
+  any other by rotation, never asked (`decide_for`); the twin measure drops the root and anchor pairs.
+  The Skeleton road: a bone straight on root takes the clip's place (`skeletonimport.transfer`, `on_root`).
+- Proof: `verify_creep_parts.py <clips>` **all gates standalone** on AS_Creep_Death (the arm a twin: every
+  bone on the clip's world place 0.0001 cm) and a Longsword 3P clip (rotations: bones turned as the clip's
+  0.0004 deg, the anchor on the chest 0.0000, root 0.0000, the other rig 0); onto the part skeletons the
+  top bone on the clip's place 0.0000 cm; `tests/test_creep_parts.py`. Not seen in the animator's GUI hub.
+- The shipped Creep and Orc D still take orientation only (FK translations do not stretch them); not changed.
+
+298. **The FBX importer locks a skinned mesh's compound `translate` / `rotate` / `scale` too.** Unlocking
+     tx..sz alone leaves `rotate` locked: `setAttr rotate` is refused, and `cmds.parent` / `xform -ws -m`
+     are SILENT no-ops - the mesh lost its -90 X group turn and lay on its side. Unlock both levels.
+299. **AdvancedSkeleton wants its middle fit joints on x = 0** (within 1 % of its scale): a skeleton 0.32
+     cm off centre built as «"RootSide" is on the Left side». Put Root / Neck / Head fit joints on x = 0
+     and let the -mo constraints carry the step.

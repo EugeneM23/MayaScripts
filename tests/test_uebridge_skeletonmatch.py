@@ -193,13 +193,14 @@ class ShippedTemplates(unittest.TestCase):
         return key
 
     def test_each_rig_is_its_own_match_among_the_rigs(self):
-        rigs = [e.key for e in self.catalog.CHARACTERS if e.kind == "rig"]
+        # a part (the second Creep's arm, its head - 2026-10-27) is never offered to the Auto card
+        rigs = [e.key for e in self.catalog.CHARACTERS if e.kind == "rig" and not e.part]
         for key in rigs:
             found = sm.match(clip_of(self.templates[key]), self.templates, rigs)
             self.assertEqual(found.key, self.own_match(key, rigs), key)
 
     def test_each_skeleton_is_its_own_match_among_the_skeletons(self):
-        bare = [e.key for e in self.catalog.CHARACTERS if e.kind == "skeleton"]
+        bare = [e.key for e in self.catalog.CHARACTERS if e.kind == "skeleton" and not e.part]
         for key in bare:
             found = sm.match(clip_of(self.templates[key]), self.templates, bare)
             self.assertEqual(found.key, self.own_match(key, bare), key)

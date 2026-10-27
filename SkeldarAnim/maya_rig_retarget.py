@@ -56,6 +56,10 @@ def rig_module(rig=None):
     if not root:
         return None, ("the rig %s drives no skeleton - nothing to retarget onto"
                       % maya_rigs.label(rig))
+    import maya_asretarget as ar
+    if ar.part_anchor(rig)[0]:
+        # a part (the Creep's arm, its head): UE names, too few of them for detect_schema
+        return ar, ""
     names = [pm.leaf(p) for p in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])]
     return pick(names, root)
 
@@ -218,6 +222,13 @@ def decide_for(mod, rig, source_root=None, bones=None, setting=None):
     m, refusal = probe(source_root=source_root, rig=rig)
     if refusal or m is None:
         return rm.Decision(None, False, "")
+    if getattr(mod, "part_anchor", None) and mod.part_anchor(rig)[0]:
+        # a part (the Creep's arm, its head) has no body to be scaled about: its own clip (a twin) goes
+        # whole, any other by rotation, never asked - squash & stretch would carry it off the chest
+        if m.twin:
+            return rm.Decision(rm.STRETCH, False, "stretch - %s is the clip's twin, exact" % maya_rigs.label(rig), True)
+        return rm.Decision(rm.ROTATION, False, "rotations - %s is a part: it keeps its proportions on the clip's "
+                                               "chest" % maya_rigs.label(rig), False)
     return rm.choose(m, setting)
 
 

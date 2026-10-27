@@ -34,8 +34,11 @@ Weapon = collections.namedtuple("Weapon",
 # the asset -- rather than in a palette colour (colour.relink_images).
 # `model` (2026-09-30, the portrait grid) groups the rows by what they look
 # like: one portrait per model, the kind chosen by a [Rig | Skeleton] switch.
-Character = collections.namedtuple("Character", "key label file kind textured model",
-                                   defaults=(False, ""))
+# `part` (2026-10-27, the second Creep's right arm and head) marks a row that is a PART of a body: the
+# UE bone its rig's RootX_M stands for (`spine_05`), "" for a whole character.  The Auto card never
+# matches a part - a full-body clip must not land on an arm.
+Character = collections.namedtuple("Character", "key label file kind textured model part",
+                                   defaults=(False, "", ""))
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
@@ -102,6 +105,18 @@ CHARACTERS = [
     # docs/superpowers/plans/make_creep2_source.py -> rebuild_creep2_rig.py -> make_creep2_assets.py
     # from sources/creep2/. After the first Creep's rows: the Auto card ties to table order.
     Character("Creep2_Rig", "Creep 2 [rig]", "Creep2_Rig.ma", "rig", model="Creep2"),
+    # The second Creep's right arm with its shoulder and its head cut at mid neck (2026-10-27, «руку
+    # и голову ... риг на адванцед скелетоне и встроить в наш пайплайн как и персонажей ... рука на
+    # правую руку голова на голову»): each skinned to its own skeleton from the character's `root`
+    # (root > clavicle_r ..., root > neck_01 > neck_02 > head), an AdvancedSkeleton rig whose game
+    # bones follow by point + orient + scale as Manny's (an FK translation stretches the bone), and
+    # `part` = the chest: a clip lands on a part where the clip's body would hold it.  Built by
+    # docs/superpowers/plans/as_creep_part_procedure.py -> make_creep_part_assets.py from
+    # Animations/Rigs/Characters/Creep_Split/.  Spec 2026-10-27-creep-arm-head-parts-design.md.
+    Character("Creep2_ArmR_Rig", "Creep 2 Arm R [rig]", "Creep2_ArmR_Rig.ma", "rig",
+              model="Creep2_ArmR", part="spine_05"),
+    Character("Creep2_Head_Rig", "Creep 2 Head [rig]", "Creep2_Head_Rig.ma", "rig",
+              model="Creep2_Head", part="spine_05"),
     # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton", textured=True, model="Manny"),
@@ -120,6 +135,11 @@ CHARACTERS = [
               textured=True, model="Playerchar"),
     # The second Creep without its rig (2026-10-27), made from Creep2_Rig.ma the Creep skeleton's way.
     Character("Creep2", "Creep 2 [skeleton]", "Creep2_Skeleton.ma", "skeleton", model="Creep2"),
+    # The two parts without their rigs (2026-10-27), read from their FBX: `Armature` > root, the mesh beside.
+    Character("Creep2_ArmR", "Creep 2 Arm R [skeleton]", "Creep2_ArmR_Skeleton.ma", "skeleton",
+              model="Creep2_ArmR", part="spine_05"),
+    Character("Creep2_Head", "Creep 2 Head [skeleton]", "Creep2_Head_Skeleton.ma", "skeleton",
+              model="Creep2_Head", part="spine_05"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -144,6 +164,7 @@ KINDS = ("rig", "skeleton")
 AUTO = "Auto"
 
 MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Creep 2"),
+          Model("Creep2_ArmR", "Creep 2 Arm R"), Model("Creep2_Head", "Creep 2 Head"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
 

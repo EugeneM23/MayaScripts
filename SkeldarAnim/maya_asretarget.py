@@ -237,6 +237,37 @@ Drive = collections.namedtuple("Drive", "control bone translate rotate own")
 Drive.__new__.__defaults__ = (False,)
 
 
+# A PART rig (2026-10-27, the Creep's right arm and head on their own): no pelvis, no spine - its
+# `Group` carries PART_ATTR naming the UE bone its RootX_M stands for (`spine_05`, the chest) and
+# holds PART_NODE on that bone's place, following Root_M.  A retarget then drives RootX_M from the
+# clip's bone of that name as a whole rig's from the pelvis, so the arm / the neck land where the
+# clip's body would carry them (the animator's choice).
+PART_ATTR = "skeldarPartAnchor"
+PART_NODE = "PartAnchor"
+
+
+def part_anchor(rig):
+    """(the UE bone a part rig's RootX_M stands for, the anchor node's path), or (None, None)."""
+    if rig is None or not rig.group or not cmds.objExists(rig.group):
+        return None, None
+    if not cmds.attributeQuery(PART_ATTR, node=rig.group, exists=True):
+        return None, None
+    bone = cmds.getAttr(rig.group + "." + PART_ATTR) or None
+    node = [c for c in cmds.listRelatives(rig.group, children=True, fullPath=True) or []
+            if leaf(c) == PART_NODE]
+    return (bone, node[0]) if bone and node else (None, None)
+
+
+def source_name(ue_bone, schema):
+    """Pure: the source's name for one of OUR (UE) middle bones through the schema's rows, or None."""
+    for as_base, ue_base in ROWS:
+        if ue_base == ue_bone:
+            for base, src_base in schema.rows:
+                if base == as_base:
+                    return bone_name(src_base, schema.sides[0][1], schema)
+    return None
+
+
 def rotation_mode(rig):
     """Does this rig take rotations only?  Read off the rig's group (`MODE_ATTR`), which the
     rig procedure writes -- the Creep's since 2026-09-24.  No attribute, no rig: False."""
@@ -274,7 +305,8 @@ def candidates(schema=UE5):
     return out
 
 
-def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_lengths=False):
+def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_lengths=False,
+               pelvis=None):
     """Pure: what to constrain to what.
 
     controls -- control names that exist in this rig
@@ -285,6 +317,8 @@ def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_l
                 (2026-10-02): every FK control takes position as well, from the
                 clip's joint at our size (`maya_retargetmode.scaled_follower`)
     keep_lengths -- an older caller's name for `rotation`
+    pelvis   -- the source bone RootX_M follows instead of the schema's pelvis: a part rig's
+                anchor (`part_anchor`)
     The IK ends and poles follow the rig's OWN FKX joints in every case (2026-10-02,
     the IK must match the FK): the IK hand and foot on
     the FK's, the pole on the FK plane - never the clip's hands, feet and upper
@@ -309,7 +343,7 @@ def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_l
         drives.append(Drive(control, bone, translate, rotate))
 
     add("Main", schema.root_bone, True, True)
-    add("RootX_M", schema.pelvis, True, True)
+    add("RootX_M", pelvis or schema.pelvis, True, True)
     # An FK control of a twin takes the bone's POSITION too: the clip may animate
     # the bone's translation (the Longsword clip slides its clavicles 3.65 cm),
     # and only a twin's positions are ours to reproduce -- see Schema.twin.  A
@@ -473,13 +507,14 @@ def segment_lengths(positions):
     return out
 
 
-def our_bone_map():
+def our_bone_map(anchor=None):
     """Pure: {control: the UE bone it drives on OUR rig}.
 
     Our rig is always the UE5 Manny, whatever the source is, so this comes from
-    the UE5 tables and never from the schema.
+    the UE5 tables and never from the schema.  A part rig's RootX_M stands for its
+    anchor bone (`part_anchor`).
     """
-    out = {"Main": "root", "RootX_M": "pelvis"}
+    out = {"Main": "root", "RootX_M": anchor or "pelvis"}
     for base, ue in ROWS:
         for side, ue_side in SIDES:
             out["FK" + base + side] = ue + ue_side
@@ -1355,7 +1390,7 @@ FK_POSITION_ATTR = "asrtFkPosition"       # on the holder: the FK controls took 
 
 def _drive_offset(drive, plan):
     """The constant rest offset for one drive: reference * source_rest^-1."""
-    ours = our_bone_map()[drive.control]
+    ours = our_bone_map(part_anchor(plan.rig)[0])[drive.control]
     reference = reference_matrix(
         cmds.getAttr(_n(plan.rig, drive.control) + ".worldMatrix[0]"),
         plan.align.get(drive.control, list(om.MMatrix())),
@@ -1368,9 +1403,9 @@ def _drive_offset(drive, plan):
     return offset_local(reference, plan.src_rest[drive.bone])
 
 
-def pairs_of(drives, rig_bones):
+def pairs_of(drives, rig_bones, anchor=None):
     """Pure: {our bone: the clip's bone} for the drives that read a source bone."""
-    ours = our_bone_map()
+    ours = our_bone_map(anchor)
     return dict((ours[d.control], d.bone) for d in drives
                 if not d.own and ours.get(d.control) in rig_bones)
 
@@ -1378,7 +1413,14 @@ def pairs_of(drives, rig_bones):
 def _measure(root, bones, rig_bones, drives, rig):
     """The clip against the rig's game skeleton (`maya_retargetmode`)."""
     start, end = retargetmode.key_span(list(bones.values()))
-    return retargetmode.measure_scene(pairs_of(drives, rig_bones), rig_bones, bones,
+    anchor = part_anchor(rig)[0]
+    pairs = pairs_of(drives, rig_bones, anchor)
+    if anchor:
+        # a part's chest is no bone of its skeleton: the top bone's length from root is the clip's spine
+        # moving, not a length - the part's own bones decide (the head was read as no twin of its own clip)
+        pairs.pop("root", None)
+        pairs.pop(anchor, None)
+    return retargetmode.measure_scene(pairs, rig_bones, bones,
                                       start, end, source=retargetmode.clip_name(root),
                                       target=maya_rigs.label(rig))
 
@@ -1437,7 +1479,15 @@ def _plan(source_root=None, rig=None, bones_mode=None):
         # upper-body UE clip: the old road drives the bones it has and names the rest
     rotation = rotation_mode(rig)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
-    ours = our_bone_map()
+    anchor, anchor_node = part_anchor(rig)
+    pelvis = None
+    if anchor:
+        rig_bones[anchor] = anchor_node
+        pelvis = source_name(anchor, schema)
+        if pelvis is None or pelvis not in bones:
+            return empty._replace(refusal="%s is a part standing on the clip's %s, which %s has not"
+                                  % (maya_rigs.label(rig), anchor, leaf(source_root)))
+    ours = our_bone_map(anchor)
     scaled, scale, remembered = False, 1.0, ""
     if bones_mode is None:
         rotation = rotation_mode(rig)
@@ -1448,16 +1498,19 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     elif bones_mode == retargetmode.STRETCH:
         # measured, never assumed: the Creep has UE names (the UE5 schema says
         # twin) and arms 26 % longer than a UE clip's
-        probe, _ = drive_plan(controls, list(bones), schema)
+        probe, _ = drive_plan(controls, list(bones), schema, pelvis=pelvis)
         m = _measure(source_root, bones, rig_bones,
                      [d for d in probe if ours.get(d.control) in rig_bones], rig)
         exact = m.twin and schema.twin
         rotation, scaled, scale = (False, False, 1.0) if exact else (True, True, m.scale)
         remembered = "twin" if exact else retargetmode.STRETCH
+        if anchor and not exact:
+            # a part has no body to be scaled about (`maya_rig_retarget.decide_for` never asks this)
+            rotation, scaled, scale, remembered = True, False, 1.0, retargetmode.ROTATION
     else:
         return empty._replace(refusal="unknown retarget version %r" % (bones_mode,))
     drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation,
-                                 scaled=scaled)
+                                 scaled=scaled, pelvis=pelvis)
     drives = [d for d in drives if ours.get(d.control) in rig_bones]
     # an own drive needs the rig's FKX joints -- the whole limb, for a pole
     drives = [d for d in drives if not d.own or (

@@ -104,7 +104,8 @@ def clip_bones(source, start=None, end=None):
 def match_clip(source, info, kind):
     """The skeletonmatch.Match of the imported clip among our rows of `kind`."""
     from maya_scenesetup import catalog
-    keys = [entry.key for entry in catalog.rows_of_kind(kind)]
+    # a part (the Creep's arm, its head) is never matched: a full-body clip must not land on an arm
+    keys = [entry.key for entry in catalog.rows_of_kind(kind) if not getattr(entry, "part", "")]
     return skeletonmatch.match(clip_bones(source, info.get("start"), info.get("end")),
                                skeletonmatch.load_templates(), keys)
 

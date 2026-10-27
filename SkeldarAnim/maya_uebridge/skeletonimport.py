@@ -602,7 +602,11 @@ def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=N
             source_root, scale, None, STRETCH_TEMP)
         temp.append(space)
     for dst, src, name, is_root in plan:
-        how = drive_for(name, is_root, twin, mode)
+        # a bone hanging straight on the root - a part's top bone (the second Creep's arm: root >
+        # clavicle_r; its head: root > neck_01, 2026-10-27) - takes the clip's place as the pelvis does,
+        # or a part's arm stays at the root while the clip's chest moves (measured 458 cm off)
+        on_root = (cmds.listRelatives(dst, parent=True, fullPath=True) or [""])[0] == target_root
+        how = drive_for(name, is_root or on_root, twin, mode)
         if how is None:
             skipped.append(name)
             continue

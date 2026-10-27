@@ -198,15 +198,24 @@ def render(model, out_dir):
     print(character.add_character(entry))
     cmds.select(clear=True)
     root = _root_of(entry)
-    head = _world(_joint(root, "head"))
-    left = _world(_joint(root, "upperarm_l"))
-    right = _world(_joint(root, "upperarm_r"))
     meshes = _meshes()
     crown = max(cmds.exactWorldBoundingBox(mesh)[4] for mesh in meshes)
+    if getattr(entry, "part", ""):
+        # a part (2026-10-27: the Creep 2's arm, its head) has no head and shoulders to frame:
+        # the whole piece, from its meshes' box
+        box = [cmds.exactWorldBoundingBox(mesh) for mesh in meshes]
+        lo = [min(b[i] for b in box) for i in range(3)]
+        hi = [max(b[i + 3] for b in box) for i in range(3)]
+        centre = [(lo[i] + hi[i]) / 2.0 for i in range(3)]
+        side = max(hi[i] - lo[i] for i in range(3)) * 1.12
+    else:
+        head = _world(_joint(root, "head"))
+        left = _world(_joint(root, "upperarm_l"))
+        right = _world(_joint(root, "upperarm_r"))
+        centre, side = framing(head, left, right, crown)
     if not getattr(entry, "textured", False):
         _clay(meshes)
     _lights()
-    centre, side = framing(head, left, right, crown)
     camera = _camera(centre, side)
     _panel(camera)
     # Viewport 2.0 loads textures in the background: the first try at the

@@ -569,7 +569,8 @@ class OrcD(unittest.TestCase):
         """The Orc D since 2026-09-28, both Manny rows and both Creep rows since 2026-09-30. Creep 2
         (2026-10-27) arrives in a palette colour until its textures come."""
         self.assertEqual([c.key for c in catalog.CHARACTERS if not c.textured],
-                         ["Creep2_Rig", "Creep2", "UE4_Mannequin"])
+                         ["Creep2_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig", "Creep2", "Creep2_ArmR",
+                          "Creep2_Head", "UE4_Mannequin"])
 
     def test_textured_defaults_to_false(self):
         self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
@@ -763,7 +764,8 @@ class Models(unittest.TestCase):
 
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
-                         ["Manny", "Creep", "Creep2", "Orc_D", "Playerchar", "UE4_Mannequin", "Auto"])
+                         ["Manny", "Creep", "Creep2", "Creep2_ArmR", "Creep2_Head", "Orc_D", "Playerchar",
+                          "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -785,9 +787,10 @@ class Models(unittest.TestCase):
 
     def test_the_rows_of_a_kind(self):
         self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
-                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig", "Creep2_Rig"])
+                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig", "Creep2_Rig",
+                          "Creep2_ArmR_Rig", "Creep2_Head_Rig"])
         self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
-                         ["Manny", "Creep", "Playerchar", "Creep2", "UE4_Mannequin"])
+                         ["Manny", "Creep", "Playerchar", "Creep2", "Creep2_ArmR", "Creep2_Head", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
