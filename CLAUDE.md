@@ -15045,16 +15045,23 @@ The animator: «Во вкладке конекшен нужно добавить
   Default keyed a camera on Head 1.6 deg off on one frame; now `nearest_euler` (the euler or its
   alternate, each at its closest cut). And a card applied onto a camera in Position only solved it
   against the follow group where it stood before the body was keyed (4.25 cm off); now `follow_parent`.
-  `fkik`, `fkikspine` and `apply._euler` still call `closestSolution` (not touched here).
+  The final review then found `nearest_euler` broke channel continuity at EXACT lock: XYZ, previous
+  (30, 90, 30), rotation (31, 90, 31) came back (0, 90, 0) - right rotation, x/z jumping 30;
+  `closestSolution(previous)` is now a third candidate, taken only when it is the same rotation
+  (quaternion angle < 1e-9), so it gives (30, 90, 30) there and still never its near-lock trade.
+  Still calling `closestSolution` directly (not touched here, same near-lock hazard):
+  `maya_poselib/apply.py:254`, `maya_scenesetup/fkik.py:320`, `fkikspine.py:366`,
+  `maya_tailbuilder.py:387`, `maya_uebridge/formats.py:387` and `:762`.
 Proof: `docs/superpowers/plans/verify_camera_tab.py [out.txt] [rig]` **33/33** on Manny_Rig (1P Setup,
 the control keyed 0/10/20 moved and turned): Aim Mode on the keys 2.8e-14 deg, the controllers keyed on
 exactly 0/10/20, Default every frame to 3e-6 deg; Main → Head → Head (position) → Root (position) →
-Chest (position) → World → Main every frame 0..20 6e-14 cm / 3e-6 deg; Position only turns with Main
-(2.4e-6 deg); 1P's direct `move_control` out of a follow group drops it; aimed through Main → Head →
+Chest (position) → World → Main every frame 0..20 5.7e-14 cm / 3.0e-6 deg; Position only turns with Main
+(2.4e-6 deg); 1P's direct `move_control` out of a follow group drops it (1.1e-13 cm); aimed through Main → Head →
 Head (position) → Main still aimed, the group beside the control, every key 3e-6 deg; the chest baked
 off with the camera following its position: back under Main, 7e-15 cm; a whole card applied with the
 camera on Head 1.9e-6 cm, in Position only 3.8e-7, aimed under Main 2.8e-14, aimed in Position only
-4.7e-7; one Ctrl+Z of each press. Re-run: `verify_weapon_aim_mode` 23/24 (the gate red on main
+4.7e-7; undo-tested: one Ctrl+Z of Aim Mode and one of a parent press (Head (position)) - Default
+and an aimed camera's parent press share the one-chunk road but have no undo gate. Re-run: `verify_weapon_aim_mode` 23/24 (the gate red on main
 before this, unchanged), `verify_camera_control` 29/29, `verify_1p_setup` 30/30,
 `verify_camera_weapon_bones` 24/24; 11822 unit tests, the known `test_chat_deploy.Keys` failing.
 Not seen in a GUI Maya.
