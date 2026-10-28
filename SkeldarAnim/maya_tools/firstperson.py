@@ -68,9 +68,12 @@ EXTRA = (("IKhybridExtra", "IKhybrid"), ("IKcvExtra", "IKcv"), ("RollExtra", "Ro
          ("FKExtra", "FK"), ("IKExtra", "IK"), ("PoleExtra", "Pole"), ("RootExtraX", "RootX"))
 
 #  The game's crosshair in the 1P camera (2026-10-28, the animator: «Щоб одразу з побудовою системи
-#  1п з'являвся приціл в камері»). Atone draws it at the viewport's centre (the HUD slot
-#  `UI.Slot.Player.Crosshair`, anchors 0.5 / 0.5) - the camera's own axis, `camera.lens` setting no
-#  film offset. A ring and a dot on the camera, drawn on top. Reference on the SHAPES is the one
+#  1п з'являвся приціл в камері»). Not the frame's centre (the same day: «б'є нижче зараз ніж
+#  треба»): CR_MannySimple_1p sets camera_root to the look pitch TIMES the take's own camera turn,
+#  while a hit goes along the control rotation alone - so a take whose camera looks 3-8 degrees
+#  down hits that much above the centre. The crosshair stands before the camera along the root's
+#  forward (the look held level): AXIS_OFFSET on the root, as the camera on its bone. A ring and a
+#  dot, drawn on top. Reference on the SHAPES is the one
 #  thing a marquee over the frame's centre skips (measured 2026-10-28; on the transform it does
 #  not), and Maya draws a Reference curve black whatever its colour.
 CROSSHAIR_NAME = "Crosshair_1P"
@@ -484,12 +487,14 @@ def crosshairs_of(namespace):
 
 
 def _crosshair(bone, namespace):
-    """The crosshair on the camera driving `bone`: a ring and a dot at the frame's centre. Its
-    long path, None without a camera."""
+    """The crosshair on the camera driving `bone`: a ring and a dot where a hit goes - at the
+    camera, turned as the root (the look held level). Its long path, None without a camera."""
+    import maya.api.OpenMaya as om
     from maya_scenesetup import camera, curvectrl
     from maya_scenetabs import scope
     cam = camera.camera_for(bone)
-    if not cam:
+    root = (cmds.listRelatives(bone, parent=True, fullPath=True) or [None])[0]
+    if not cam or not root:
         return None
     for old in crosshairs_of(namespace):
         cmds.delete(old)
@@ -509,8 +514,14 @@ def _crosshair(bone, namespace):
         curvectrl._dress(shape, WHITE)
         cmds.setAttr(shape + ".overrideDisplayType", 2)      # Reference: never selected
         cmds.setAttr(shape + ".alwaysDrawOnTop", 1)
+    level = om.MMatrix(camera.rotation_only(camera.AXIS_OFFSET)) * om.MMatrix(
+        cmds.xform(root, query=True, matrix=True, worldSpace=True))
+    cmds.xform(node, matrix=list(level), worldSpace=True)
+    cmds.xform(node, translation=(0.0, 0.0, 0.0), objectSpace=True)    # at the camera, its child
+    knots._constrain(cmds.orientConstraint, root, node, maintainOffset=True)
+    node = knots._by_uuid(uuid)
     for ch in knots.plan.CHANNELS + ("scaleX", "scaleY", "scaleZ"):
-        cmds.setAttr(node + "." + ch, lock=True, keyable=False, channelBox=False)
+        cmds.setAttr(node + "." + ch, keyable=False, channelBox=False)
     knots._set_string(node, CROSSHAIR_MARKER, namespace)
     return node
 

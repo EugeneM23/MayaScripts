@@ -15161,11 +15161,17 @@ cut of the two sections above** for the arm and the body; the head is unchanged.
 ## 1P Setup: the game's crosshair in the camera (2026-10-28)
 
 «додай його в сетап 1П. Щоб одразу з побудовою системи 1п з'являвся приціл в камері». Atone draws its
-crosshair at the viewport's centre (the HUD slot `UI.Slot.Player.Crosshair`, anchors 0.5 / 0.5), and
-`camera.lens` sets no film offset, so the centre is the camera's own axis. 1P Setup now puts
+crosshair at the viewport's centre (the HUD slot `UI.Slot.Player.Crosshair`, anchors 0.5 / 0.5), but
+the first build put ours there and it hit low («б'є нижче зараз ніж треба»). Why, from the game's
+rig: `CR_MannySimple_1p` sets camera_root (GlobalSpace) to the look pitch TIMES the take's own camera
+turn, and a hit goes along the control rotation alone (`AtoneCombatStatics`: «fires along control
+rotation») - so where the take's camera looks down (measured: -7.8 deg at frame 0, -3 to -4 after, in
+`AS_Dg_Atk_*_1P`), a level look hits that much ABOVE the frame's centre. The crosshair now stands at
+the camera turned as the camera's bone's parent (the game root): `AXIS_OFFSET` on the root, the same
+turn as the camera on its bone, held by an orientConstraint - the root's forward, level. 1P Setup puts
 `<ns>:Crosshair_1P` under the camera (`firstperson._crosshair`): one transform, a ring (`CROSSHAIR_RING`
-of the frame's half width) and a dot (`CROSSHAIR_DOT`) 10 cm before the lens (`crosshair_curves`, pure,
-read from the camera's own focal and aperture), drawn on top, channels locked, marked
+of the frame's half width) and a dot (`CROSSHAIR_DOT`) 10 cm along it (`crosshair_curves`, pure,
+read from the camera's own focal and aperture), drawn on top, channels hidden, marked
 `skeldar1PCrosshair` = the rig's namespace (`crosshairs_of`). It goes with the chest: Bake / Remove
 (`knots._delete_knot` -> `firstperson.drop_crosshair`). Not in the 1P display layers: always shown.
 **Reference on the SHAPES, not the transform** - measured live with `MGlobal.selectFromScreen` over the

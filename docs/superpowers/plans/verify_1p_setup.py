@@ -13,6 +13,7 @@ A rig added, the clip retargeted through the button, then the press:
 - a second press refused.
 """
 
+import math
 import os
 import sys
 
@@ -262,7 +263,8 @@ for f in (frames if HAS_CAM else []):
     offs.append(wm(bone) * wm(cam).inverse())
 spread = max([apart(offs[0], o)[0] for o in offs] or [0.0])
 HAS_CAM and gate(spread < 1e-3, "camera_root follows the camera (%.6f)" % spread)
-#  the game's crosshair on the camera (2026-10-28): at the frame's centre, never selected
+#  the game's crosshair on the camera (2026-10-28): where a hit goes - the root's forward held
+#  level from the camera, whatever the take's own camera turn - never selected
 hairs = fp.crosshairs_of(rig.namespace)
 if HAS_CAM:
     hair = hairs[0] if len(hairs) == 1 else None
@@ -273,10 +275,18 @@ if HAS_CAM:
                                     for c in cvs for a in (0, 1))
     ahead = len(cvs) == 2 and all(abs(z + fp.CROSSHAIR_DISTANCE) < 1e-6 for c in cvs for z in c[2::3])
     ref = len(shapes) == 2 and all(cmds.getAttr(s + ".overrideDisplayType") == 2 for s in shapes)
-    gate(on_cam and centred and ahead and ref and "crosshair" in line,
-         "the crosshair on the camera, a ring and a dot on its axis, Reference (%s: on %s, "
-         "centred %s, ahead %s, ref %s, said %s)" % (hair, on_cam, centred, ahead, ref,
-                                                     "crosshair" in line))
+    root_bone = cmds.listRelatives(bone, parent=True, fullPath=True)[0]
+    off_aim, off_cam = 0.0, 0.0
+    for f in frames:
+        cmds.currentTime(f)
+        aim = om.MVector(0, 0, -1) * wm(hair)
+        fwd = om.MVector(0, -1, 0) * wm(root_bone)
+        off_aim = max(off_aim, math.degrees(aim.angle(fwd)))
+        off_cam = max(off_cam, math.degrees(aim.angle(om.MVector(0, 0, -1) * wm(cam))))
+    gate(on_cam and centred and ahead and ref and "crosshair" in line and off_aim < 1e-3,
+         "the crosshair on the camera along the root's forward (%.4f deg off it, the camera's "
+         "axis up to %.2f deg away), Reference (%s: on %s, centred %s, ahead %s, ref %s, said %s)"
+         % (off_aim, off_cam, hair, on_cam, centred, ahead, ref, "crosshair" in line))
 else:
     gate(not hairs, "no camera: no crosshair")
 nodes = len(cmds.ls())
