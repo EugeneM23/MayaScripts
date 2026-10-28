@@ -1119,8 +1119,9 @@ def _release_children(top):
     try:
         from maya_scenesetup import camera
         camera.release_followers(top)       # a camera following the chest's position only
-    except Exception:                       # noqa: BLE001 - never stop a Bake / Remove over it
-        pass
+    except Exception:                       # never stop a Bake / Remove over it
+        import traceback
+        traceback.print_exc()
 
 
 def _aim_group(node):
