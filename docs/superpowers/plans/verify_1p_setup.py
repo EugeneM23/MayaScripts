@@ -13,6 +13,7 @@ A rig added, the clip retargeted through the button, then the press:
 - a second press refused.
 """
 
+import os
 import sys
 
 import maya.standalone
@@ -22,7 +23,8 @@ import maya.cmds as cmds  # noqa: E402
 import maya.mel as mel  # noqa: E402
 import maya.api.OpenMaya as om  # noqa: E402
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))).replace("\\", "/")
 sys.path.insert(0, REPO + "/SkeldarAnim")
 for p in ("matrixNodes", "quatNodes", "fbxmaya"):
     try:
@@ -260,6 +262,23 @@ for f in (frames if HAS_CAM else []):
     offs.append(wm(bone) * wm(cam).inverse())
 spread = max([apart(offs[0], o)[0] for o in offs] or [0.0])
 HAS_CAM and gate(spread < 1e-3, "camera_root follows the camera (%.6f)" % spread)
+#  the game's crosshair on the camera (2026-10-28): at the frame's centre, never selected
+hairs = fp.crosshairs_of(rig.namespace)
+if HAS_CAM:
+    hair = hairs[0] if len(hairs) == 1 else None
+    on_cam = bool(hair) and cmds.listRelatives(hair, parent=True, fullPath=True)[0] == cam
+    shapes = cmds.listRelatives(hair, shapes=True, fullPath=True) or [] if hair else []
+    cvs = [cmds.xform(s + ".cv[*]", query=True, translation=True, objectSpace=True) for s in shapes]
+    centred = len(cvs) == 2 and all(abs(sum(c[:-3][a::3])) < 1e-6      # closed: the last repeats
+                                    for c in cvs for a in (0, 1))
+    ahead = len(cvs) == 2 and all(abs(z + fp.CROSSHAIR_DISTANCE) < 1e-6 for c in cvs for z in c[2::3])
+    ref = len(shapes) == 2 and all(cmds.getAttr(s + ".overrideDisplayType") == 2 for s in shapes)
+    gate(on_cam and centred and ahead and ref and "crosshair" in line,
+         "the crosshair on the camera, a ring and a dot on its axis, Reference (%s: on %s, "
+         "centred %s, ahead %s, ref %s, said %s)" % (hair, on_cam, centred, ahead, ref,
+                                                     "crosshair" in line))
+else:
+    gate(not hairs, "no camera: no crosshair")
 nodes = len(cmds.ls())
 again = fp.setup([N("Main")])
 gate(again.startswith("1P Setup:") and "already" in again and len(cmds.ls()) == nodes,
@@ -286,6 +305,7 @@ if HAS_CAM:
     gate(not knots.knots() and bool(cam2) and bool(home) and home[0] == N("Main")
          and camera.parent_choice(cam2) == "Main",
          "chest baked off (%s), camera control back under Main (%s)" % (bline, home))
+    gate(not fp.crosshairs_of(rig.namespace), "the crosshair gone with the chest")
     cm, deg = worst(before, track(bones + [bone], frames))
     gate(cm < 0.02 and deg < 0.05, "after the knot's Bake: body and camera_root as before (%.4f cm, "
          "%.4f deg)" % (cm, deg))

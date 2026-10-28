@@ -1,6 +1,7 @@
 """Tools > 1P Setup: the split of a rig's controls and the line (2026-10-16); the chest control,
 the curves, the camera's control and the Root control (2026-10-21)."""
 
+import math
 import sys
 import types
 import unittest
@@ -104,6 +105,30 @@ class ChestSquare(unittest.TestCase):
         r, g, b = curvectrl.RED
         self.assertGreater(r, 0.8)
         self.assertLess(max(g, b), 0.3)
+
+
+class Crosshair(unittest.TestCase):
+    """«Щоб одразу з побудовою системи 1п з'являвся приціл в камері» (2026-10-28)."""
+
+    def test_on_the_axis_before_the_lens(self):
+        ring, dot = fp.crosshair_curves(15.1, 1.417)
+        for points in (ring, dot):
+            self.assertEqual(points[0], points[-1])
+            self.assertTrue(all(p[2] == -fp.CROSSHAIR_DISTANCE for p in points))
+            self.assertAlmostEqual(sum(p[0] for p in points[:-1]), 0.0)
+            self.assertAlmostEqual(sum(p[1] for p in points[:-1]), 0.0)
+
+    def test_a_part_of_the_frame_s_half_width(self):
+        from maya_scenesetup import camera
+        ring, dot = fp.crosshair_curves(camera.FOCAL, camera.APERTURE)
+        half = fp.CROSSHAIR_DISTANCE * math.tan(math.radians(camera.GAME_FOV) / 2.0)
+        self.assertAlmostEqual(max(p[0] for p in ring), half * fp.CROSSHAIR_RING)
+        self.assertAlmostEqual(max(p[0] for p in dot), half * fp.CROSSHAIR_DOT)
+
+    def test_the_same_on_screen_at_any_distance(self):
+        near = fp.crosshair_curves(15.1, 1.417, 5.0)[0]
+        far = fp.crosshair_curves(15.1, 1.417, 20.0)[0]
+        self.assertAlmostEqual(max(p[0] for p in far) / 20.0, max(p[0] for p in near) / 5.0)
 
 
 class Curves(unittest.TestCase):

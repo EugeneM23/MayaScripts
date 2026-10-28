@@ -14,11 +14,14 @@ One press on any part of a rig, in one undo chunk:
   Lower to Upper (both add by component, so the sum is the take exactly);
 - Camera Setup on `camera_root` when it has none; the camera's control (`Camera_ctrl`, under
   Main) moved under the chest control, its motion kept as local keys in the chest's space
-  (2026-10-20, through the control since 2026-10-21). A Bake of the chest sends it back to Main.
+  (2026-10-20, through the control since 2026-10-21). A Bake of the chest sends it back to Main;
+- the game's crosshair on the camera (2026-10-28), gone with the chest.
 
 Maya will not start a node name with a digit (`3P_...` becomes `P_...`), hence the `_`.
 Spec: docs/superpowers/specs/2026-10-16-tools-1p-setup-design.md.
 """
+
+import math
 
 import maya.cmds as cmds
 import maya_timewarp
@@ -63,6 +66,20 @@ LOWER_WORDS = ("Hip_", "Knee", "Ankle", "Toes", "Heel", "Leg", "Foot", "IKSpine"
 LOWER_PREFIXES = ("IKhybridSpine", "IKcvSpine")
 EXTRA = (("IKhybridExtra", "IKhybrid"), ("IKcvExtra", "IKcv"), ("RollExtra", "Roll"),
          ("FKExtra", "FK"), ("IKExtra", "IK"), ("PoleExtra", "Pole"), ("RootExtraX", "RootX"))
+
+#  The game's crosshair in the 1P camera (2026-10-28, the animator: «Щоб одразу з побудовою системи
+#  1п з'являвся приціл в камері»). Atone draws it at the viewport's centre (the HUD slot
+#  `UI.Slot.Player.Crosshair`, anchors 0.5 / 0.5) - the camera's own axis, `camera.lens` setting no
+#  film offset. A ring and a dot on the camera, drawn on top. Reference on the SHAPES is the one
+#  thing a marquee over the frame's centre skips (measured 2026-10-28; on the transform it does
+#  not), and Maya draws a Reference curve black whatever its colour.
+CROSSHAIR_NAME = "Crosshair_1P"
+CROSSHAIR_MARKER = "skeldar1PCrosshair"  # the rig's namespace
+CROSSHAIR_DISTANCE = 10.0                # cm before the lens, past its 0.5 cm near clip
+CROSSHAIR_RING = 0.018                   # of the frame's half width
+CROSSHAIR_DOT = 0.003
+CROSSHAIR_SIDES = 32
+WHITE = (1.0, 1.0, 1.0)
 
 NO_RIG = "1P Setup: select any part of a rig"
 NO_KNOT_CONTROL = "1P Setup: %s has no %s - the setup needs AdvancedSkeleton's spine"
@@ -123,6 +140,22 @@ def chest_square(box, grow=CHEST_GROW, least=CHEST_LEAST):
     half = max(extents[curvectrl.AXES[axes[0]]], extents[curvectrl.AXES[axes[1]]]) / 2.0
     centre = tuple((lo[i] + hi[i]) / 2.0 for i in range(3))
     return curvectrl.square(max(half * grow, 1e-3), axes, centre)
+
+
+def circle(radius, distance, sides=CROSSHAIR_SIDES):
+    """A closed circle of `radius` across a camera's axis, `distance` before its lens (Maya's
+    camera space: looking down -Z)."""
+    points = [(radius * math.cos(2.0 * math.pi * i / sides),
+               radius * math.sin(2.0 * math.pi * i / sides), -distance) for i in range(sides)]
+    return points + [points[0]]
+
+
+def crosshair_curves(focal, aperture, distance=CROSSHAIR_DISTANCE):
+    """(ring, dot) of the crosshair on a camera of `focal` mm over `aperture` inches fitted
+    horizontally (pure): sized as parts of the frame's half width, so the same on screen."""
+    half = distance * (aperture * 25.4 / 2.0) / focal
+    return (circle(half * CROSSHAIR_RING, distance),
+            circle(half * CROSSHAIR_DOT, distance, 12))
 
 
 # ------------------------------------------------------------------- scene
@@ -441,6 +474,55 @@ def _camera(bone, chest):
     control = camera.move_control(control, chest, "Chest")
     return "%s follows %s with its motion, %s follows the camera" % (
         leaf(control), CHEST_NAME, CAMERA_BONE)
+
+
+def crosshairs_of(namespace):
+    """Our 1P crosshairs standing for the rig in `namespace` (long paths)."""
+    return [node for node in cmds.ls(type="transform", long=True) or []
+            if knots._has(node, CROSSHAIR_MARKER)
+            and knots._get(node, CROSSHAIR_MARKER) == namespace]
+
+
+def _crosshair(bone, namespace):
+    """The crosshair on the camera driving `bone`: a ring and a dot at the frame's centre. Its
+    long path, None without a camera."""
+    from maya_scenesetup import camera, curvectrl
+    from maya_scenetabs import scope
+    cam = camera.camera_for(bone)
+    if not cam:
+        return None
+    for old in crosshairs_of(namespace):
+        cmds.delete(old)
+    lens = cmds.listRelatives(cam, shapes=True, type="camera", fullPath=True)[0]
+    ring, dot = crosshair_curves(cmds.getAttr(lens + ".focalLength"),
+                                 cmds.getAttr(lens + ".horizontalFilmAperture"))
+    name = (namespace + ":" if namespace else "") + CROSSHAIR_NAME
+    node = curvectrl.make(scope.as_created(name), cam, ring, WHITE)
+    uuid = knots._uuid(node)
+    temp = cmds.curve(degree=1, point=dot)
+    cmds.parent(cmds.listRelatives(temp, shapes=True, fullPath=True)[0], node, shape=True,
+                relative=True)
+    cmds.delete(temp)
+    node = knots._by_uuid(uuid)
+    cmds.rename(cmds.listRelatives(node, shapes=True, fullPath=True)[1], leaf(node) + "DotShape")
+    for shape in cmds.listRelatives(node, shapes=True, fullPath=True):
+        curvectrl._dress(shape, WHITE)
+        cmds.setAttr(shape + ".overrideDisplayType", 2)      # Reference: never selected
+        cmds.setAttr(shape + ".alwaysDrawOnTop", 1)
+    for ch in knots.plan.CHANNELS + ("scaleX", "scaleY", "scaleZ"):
+        cmds.setAttr(node + "." + ch, lock=True, keyable=False, channelBox=False)
+    knots._set_string(node, CROSSHAIR_MARKER, namespace)
+    return node
+
+
+def drop_crosshair(chest):
+    """The crosshair of `chest`'s rig gone with it (its Bake / Remove). How many."""
+    if not knots._has(chest, CHEST_MARKER):
+        return 0
+    gone = crosshairs_of(knots._get(chest, CHEST_MARKER))
+    for node in gone:
+        cmds.delete(node)
+    return len(gone)
 
 
 #  In 1P the hands and the weapon ride the chest (2026-10-21, the animator: «в режиме 1P IK руки
@@ -858,6 +940,8 @@ def setup(selection=None):
                 knots._set_string(layer, MARKER, rig.namespace)
             if bone:
                 words = _camera(bone, knot)
+                if _crosshair(bone, rig.namespace):
+                    notes.append("the crosshair in the camera")
             else:
                 words = "no %s on this rig - no camera" % CAMERA_BONE
             arms, arm_notes = _arms_into(rig, knot, upper_layer)

@@ -15157,3 +15157,19 @@ cut of the two sections above** for the arm and the body; the head is unchanged.
   `verify_creep2.py` all, `verify_creep_parts.py` all, `verify_creep_parts_manny.py` 0 failed,
   `verify_part_drop.py` all.
 - The Arm R portrait still shows the shoulder arm (a GUI Maya renders it).
+
+## 1P Setup: the game's crosshair in the camera (2026-10-28)
+
+«додай його в сетап 1П. Щоб одразу з побудовою системи 1п з'являвся приціл в камері». Atone draws its
+crosshair at the viewport's centre (the HUD slot `UI.Slot.Player.Crosshair`, anchors 0.5 / 0.5), and
+`camera.lens` sets no film offset, so the centre is the camera's own axis. 1P Setup now puts
+`<ns>:Crosshair_1P` under the camera (`firstperson._crosshair`): one transform, a ring (`CROSSHAIR_RING`
+of the frame's half width) and a dot (`CROSSHAIR_DOT`) 10 cm before the lens (`crosshair_curves`, pure,
+read from the camera's own focal and aperture), drawn on top, channels locked, marked
+`skeldar1PCrosshair` = the rig's namespace (`crosshairs_of`). It goes with the chest: Bake / Remove
+(`knots._delete_knot` -> `firstperson.drop_crosshair`). Not in the 1P display layers: always shown.
+**Reference on the SHAPES, not the transform** - measured live with `MGlobal.selectFromScreen` over the
+frame's centre: Reference on the transform (shapes with their own override) is still taken by a marquee,
+on the shapes it is skipped; and Maya draws a Reference curve black whatever its RGB / object colour,
+so the crosshair is dark, not the game's white. Proof: `verify_1p_setup.py` (the crosshair gates; its
+`REPO` now follows the script's own folder), unit tests `test_tools_firstperson.Crosshair`.

@@ -1193,7 +1193,18 @@ def _move_out(child, home):
 def _delete_knot(top):
     _release_arms(top)
     _release_children(top)
+    _drop_crosshair(top)
     cmds.delete(top)
+
+
+def _drop_crosshair(top):
+    """1P Setup's crosshair in the camera goes with its chest (2026-10-28)."""
+    try:
+        from maya_tools import firstperson
+        firstperson.drop_crosshair(top)
+    except Exception:                       # never stop a Bake / Remove over a passenger
+        import traceback
+        traceback.print_exc()
 
 
 def _release_arms(top):
