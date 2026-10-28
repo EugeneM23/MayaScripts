@@ -300,16 +300,17 @@ def fill_between(node, aimed, keyed, order):
 
 # ------------------------------------------------------------------- engine
 
-def aim_on(node, kind, vec, home_of, place, size=None):
+def aim_on(node, kind, vec, home_of, place, size=None, cleanup=None):
     """Aim Mode's work on `node` (the caller holds the undo chunk and autoKey): controllers keyed on
     the node's own keys in `home_of(node)`'s space, `place(group, node)` putting the group there,
-    the rotate keys cut and an aimConstraint (no offset) on. (keys, the node's long path)."""
+    the rotate keys cut and an aimConstraint (no offset) on; `cleanup(group)` runs on a broken one left
+    over. (keys, the node's long path)."""
     aim_v, up_v, d_aim, d_up = vec
     window = span()
     key = uuid(node)
     stale = group_of(node, kind)
     if stale:
-        clear_broken(node, kind, stale)
+        clear_broken(node, kind, stale, cleanup)
     with maya_timewarp.unwarped():
         sample, keys, tangents = fkik.own_keys([long_(key)], [], window)
         fkik._suspend(True)
