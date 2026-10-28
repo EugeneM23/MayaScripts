@@ -196,8 +196,9 @@ IK_CONTROL = "IKArm_{0}"
 FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
 FKIK_BOX_LEG = "skeldarConnectionsFKIKLeg_{0}_{1}"
 FKIK_BOX_SPINE = "skeldarConnectionsFKIKSpine_{0}"
-#  World (2026-10-28): IK presses put the IK control on a world control (`ikworld`)
-WORLD_BOX = "skeldarConnectionsFKIKWorld"
+#  W (2026-10-28): a third box beside each limb's IK - lit while its IK control rides a world
+#  control (`ikworld`), a press toggles it; named as the mode boxes with the mode "W"
+W_MODE = "W"
 #  The skin's Arm L column, logical px (2026-10-08): about half the row at the
 #  animator's 360 px dock. Maya's rowLayout has ONE adjustable column, so Arm
 #  R's [FK | IK] took the row and Arm L's stood at its texts' width (live:
@@ -1095,7 +1096,7 @@ def _highlight():
         return None
 
 
-def switch_arm(side, mode, rig=None, highlight=None, world=None):
+def switch_arm(side, mode, rig=None, highlight=None, world=False):
     """The arm on `side` to FK or IK (see `switch_limb`)."""
     return switch_limb(side, mode, rig=rig, highlight=highlight, kind=fkik.ARM, world=world)
 
@@ -1124,17 +1125,16 @@ def switch_spine(mode, rig=None, highlight=None):
         cmds.undoInfo(closeChunk=True)
 
 
-def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM, world=None):
+def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM, world=False):
     """The arm (or, kind=LEG, the leg) on `side` to FK or IK over the highlighted
     range, else the whole take, keeping what it shows (`fkik.switch`). FK on a
     hand that rides a weapon releases it first (over the whole take - the link is
     the take's; arms only, a weapon is never on a leg). `highlight` overrides the
     slider (a verify has none). One undo chunk; refusals before anything moves.
 
-    World (2026-10-28, `world` - None reads the card's box, `ikworld.is_on`): an IK
-    press puts the IK control on a world control (Tools' Double knot World) keyed on
-    the switch's keys; an IK press without it brings a limb in world back into Main's
-    space; FK takes the world control off after the switch (`ikworld`)."""
+    World (2026-10-28, `world`, the rows' W through `toggle_world`): IK puts the IK
+    control on a world control (Tools' Double knot World) keyed on the switch's keys; FK
+    takes the world control off after the switch (`ikworld`)."""
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
@@ -1161,17 +1161,13 @@ def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM, world=None)
         return "%s follows %s - set it Free first" % (ROW_LABEL[side],
                                                       weapon_label(rides))
     shown = fkik.mode_of(fkik.blend_values(arm))
-    to_world = mode == fkik.IK and (ikworld.is_on() if world is None else bool(world))
+    to_world = mode == fkik.IK and bool(world)
     if top and mode == fkik.IK:
         if shown != fkik.IK:
             return ikworld.LEFT_OVER % (label, arm.ik.split("|")[-1])
         if to_world:
             return ikworld.ALREADY % (label, top.split("|")[-1])
-        cmds.undoInfo(openChunk=True, chunkName="Connections: %s out of world" % label)
-        try:
-            return ikworld.leave(arm, top)
-        finally:
-            cmds.undoInfo(closeChunk=True)
+        return ikworld.IN_WORLD_IK % label
     if top and shown == fkik.FK:
         #  FK already: the world control drives an IK nobody sees - it only comes off
         cmds.undoInfo(openChunk=True, chunkName="Connections: %s world control off" % label)
@@ -1205,6 +1201,31 @@ def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM, world=None)
         if top:
             notes.append(ikworld.drop(top))
         return "; ".join(notes)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
+def toggle_world(side, rig=None, highlight=None, kind=fkik.ARM):
+    """The rows' W (2026-10-28): a limb in world back into Main's space on its world control's
+    keys (`ikworld.leave`); a world control left on an IK nobody sees taken off; else the limb
+    to IK on a world control (`switch_limb(..., world=True)`). One undo chunk."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
+        return RETARGETING
+    arm, text = fkik.limb(rig, side) if kind == fkik.ARM else fkik.limb(rig, side, kind)
+    if arm is None:
+        return text
+    top = ikworld.limb_knot(arm)
+    if not top:
+        return switch_limb(side, fkik.IK, rig=rig, highlight=highlight, kind=kind, world=True)
+    label = fkik.LABEL[kind].format(side)
+    cmds.undoInfo(openChunk=True, chunkName="Connections: %s out of world" % label)
+    try:
+        if fkik.mode_of(fkik.blend_values(arm)) != fkik.IK:
+            return ikworld.drop(top)
+        return ikworld.leave(arm, top)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -1398,19 +1419,17 @@ def refresh(*_args):
     scheme = read_scheme(rig, bones, weapon) if weapon else {"L": None, "R": None}
     _set_chooser(weapons, weapon, [_side_of(rig, bones, w) for w in weapons])
     _set_menus(menus_from_scheme(scheme))
-    worlds = []
-    modes = _limb_modes(rig, fkik.ARM, worlds)
-    _set_fkik(modes)
-    leg_modes = _limb_modes(rig, fkik.LEG, worlds)
-    _set_world()
-    _set_fkik(leg_modes, fkik.LEG)
+    worlds = {fkik.ARM: [], fkik.LEG: []}
+    modes = _limb_modes(rig, fkik.ARM, worlds[fkik.ARM])
+    _set_fkik(modes, worlds=worlds[fkik.ARM])
+    leg_modes = _limb_modes(rig, fkik.LEG, worlds[fkik.LEG])
+    _set_fkik(leg_modes, fkik.LEG, worlds[fkik.LEG])
     spine_mode, spine_mixed = _spine_state(rig)
     _set_spine(spine_mode)
     others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
                        for w in weapons if not _same(w, weapon))
     mixed = ", ".join(part for part in (arms_text(modes), arms_text(leg_modes, fkik.LEG),
-                                        "Spine mixed FK/IK (keyed)" if spine_mixed else "",
-                                        ikworld.world_text(worlds))
+                                        "Spine mixed FK/IK (keyed)" if spine_mixed else "")
                       if part)
     text = header_text(rig, weapon, scheme, others, mixed)
     if weapon and weaponaim.is_aimed(weapon):
@@ -1452,7 +1471,7 @@ def _set_spine(mode):
 
 def _limb_modes(rig, kind, worlds=None):
     """{side: FK / IK / None (mixed)} for each limb of `kind` the rig has; the
-    labels of those in world appended to `worlds` (2026-10-28)."""
+    sides of those in world appended to `worlds` (2026-10-28)."""
     modes = {}
     for side in SIDES:
         if not rig:
@@ -1461,36 +1480,25 @@ def _limb_modes(rig, kind, worlds=None):
         if arm:
             modes[side] = fkik.mode_of(fkik.blend_values(arm))
             if worlds is not None and ikworld.limb_knot(arm):
-                worlds.append(fkik.LABEL[kind].format(side))
+                worlds.append(side)
     return modes
 
 
 _FKIK_QUIET = {"on": False}
 
 
-def _set_world():
-    """The World chip shows what is remembered (quiet, as the boxes)."""
-    if not cmds.checkBox(WORLD_BOX, exists=True):
-        return
-    _FKIK_QUIET["on"] = True
-    try:
-        cmds.checkBox(WORLD_BOX, edit=True, value=ikworld.is_on(cmds))
-    finally:
-        _FKIK_QUIET["on"] = False
-
-
-def _set_fkik(modes, kind=fkik.ARM):
-    """Light each limb's mode, neither when mixed or missing. Quiet: a box's
-    own command must not fire from here (trap 116 - an edit ran a radio's
-    onCommand in one hub build)."""
+def _set_fkik(modes, kind=fkik.ARM, worlds=()):
+    """Light each limb's mode, neither when mixed or missing; its W while it is in
+    world (`worlds` its sides). Quiet: a box's own command must not fire from here
+    (trap 116 - an edit ran a radio's onCommand in one hub build)."""
     _FKIK_QUIET["on"] = True
     try:
         for side in SIDES:
-            for mode in fkik.MODES:
+            for mode in fkik.MODES + (W_MODE,):
                 name = fkik_box(side, mode, kind)
                 if cmds.iconTextCheckBox(name, exists=True):
-                    cmds.iconTextCheckBox(name, edit=True,
-                                          value=modes.get(side) == mode)
+                    lit = side in worlds if mode == W_MODE else modes.get(side) == mode
+                    cmds.iconTextCheckBox(name, edit=True, value=lit)
     finally:
         _FKIK_QUIET["on"] = False
 
@@ -1585,6 +1593,8 @@ def _press_fkik(side, mode, kind=fkik.ARM):
     def go(*_args):
         if _FKIK_QUIET["on"]:
             return None
+        if mode == W_MODE:
+            return _run(lambda: toggle_world(side, kind=kind))
         if kind == fkik.ARM:
             return _run(lambda: switch_arm(side, mode))
         return _run(lambda: switch_limb(side, mode, kind=kind))
@@ -1761,7 +1771,8 @@ def _press_disconnect(*_args):
 
 def _fkik_row(kind):
     """One row of FK | IK check boxes per side of `kind` (arms or legs): Arm R
-    [FK|IK]  Arm L [FK|IK]. The skin's segments leave their tracks for a row of
+    [FK|IK|W]  Arm L [FK|IK|W] - W beside IK since 2026-10-28 (the limb on a world
+    control, `toggle_world`). The skin's segments leave their tracks for a row of
     ours, so the right-hand track is as wide as its column is given
     (ARM_L_WIDTH); the classic hub's track holds its buttons and sizes itself."""
     cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
@@ -1770,18 +1781,26 @@ def _fkik_row(kind):
                    **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
     for side in SIDES[::-1]:
         _row_label(fkik.LABEL[kind].format(side).replace("_", " "))
-        segments = cmds.rowLayout(numberOfColumns=2,
-                                  columnAttach=[(1, "both", 1), (2, "both", 1)])
+        segments = cmds.rowLayout(numberOfColumns=3,
+                                  columnAttach=[(1, "both", 1), (2, "both", 1),
+                                                (3, "both", 1)])
         hubstyle.mark(segments, "segments", layout=True)
         noun = "leg" if kind == fkik.LEG else "arm"
-        for mode in fkik.MODES:
+        end = "foot" if kind == fkik.LEG else "hand"
+        for mode in fkik.MODES + (W_MODE,):
+            if mode == W_MODE:
+                tip = ("{0} in world: the IK {1} on a world control (Tools > World x2: a "
+                       "Move box, Rotate rings), keyed on its IK keys - it stays in the scene "
+                       "while Main moves. Press again: back into Main's space".format(
+                           fkik.LABEL[kind].format(side), end))
+            else:
+                tip = ("{0} to {1} - over the highlighted range, else the whole take; "
+                       "the {2} keeps what it shows".format(
+                           fkik.LABEL[kind].format(side), mode, noun))
             hubstyle.mark(cmds.iconTextCheckBox(
                 fkik_box(side, mode, kind), style="textOnly", label=mode,
                 height=hubstyle.height("segment", 22),
-                value=False,
-                annotation="{0} to {1} - over the highlighted range, else the "
-                           "whole take; the {2} keeps what it shows".format(
-                               fkik.LABEL[kind].format(side), mode, noun),
+                value=False, annotation=tip,
                 onCommand=_press_fkik(side, mode, kind),
                 offCommand=_press_fkik(side, mode, kind)), "segment")
         cmds.setParent("..")
@@ -1808,28 +1827,6 @@ def _spine_row():
     cmds.setParent("..")
     cmds.setParent("..")
 
-
-
-def _press_world(*_args):
-    """The World chip remembered: every IK press of an arm or a leg reads it."""
-    if _FKIK_QUIET["on"]:
-        return None
-    on = bool(cmds.checkBox(WORLD_BOX, query=True, value=True))
-    ikworld.set_on(on, cmds)
-    return on
-
-
-def _world_row():
-    """World (2026-10-28, «галочку WORLD»): an IK press puts the IK control on a world control,
-    Tools' Double knot World, keyed on the switch's keys. One chip for the arms and the legs."""
-    cmds.rowLayout(numberOfColumns=1, columnAttach=[(1, "left", 0)])
-    hubstyle.mark(cmds.checkBox(
-        WORLD_BOX, label="World", value=ikworld.is_on(cmds),
-        annotation="IK presses put the hand or foot on a world control (Tools > World x2: Move "
-                   "carries its place, Rotate its turn), keyed on the IK's keys - it stays in "
-                   "the scene while Main moves. IK without World takes it back; FK takes it off",
-        changeCommand=_press_world), "chip")
-    cmds.setParent("..")
 
 
 def _any_object_rows():
@@ -1897,7 +1894,6 @@ def build_panel():
     #  the legs (2026-10-10): the same row under the arms, one per leg
     _fkik_row(fkik.LEG)
     _spine_row()
-    _world_row()
     _any_object_rows()
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["weapon"], adjustableColumn=True,

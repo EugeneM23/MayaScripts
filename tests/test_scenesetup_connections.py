@@ -496,7 +496,7 @@ class Panel(unittest.TestCase):
         boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
         self.assertEqual(boxes, [cx.fkik_box(side, mode)
                                  for side in ("R", "L")
-                                 for mode in ("FK", "IK")])
+                                 for mode in ("FK", "IK", cx.W_MODE)])
 
     def test_both_legs_share_a_row_of_their_own(self):
         index, _call = self._made("rowLayout", numberOfColumns=4)[1]
@@ -506,7 +506,7 @@ class Panel(unittest.TestCase):
         boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
         self.assertEqual(boxes, [cx.fkik_box(side, mode, cx.fkik.LEG)
                                  for side in ("R", "L")
-                                 for mode in ("FK", "IK")])
+                                 for mode in ("FK", "IK", cx.W_MODE)])
         self.assertTrue(all(name.startswith("skeldarConnectionsFKIKLeg_")
                             for name in boxes))
 
@@ -842,10 +842,9 @@ class SwitchArm(unittest.TestCase):
         self.saved_fkik = dict((name, getattr(cx.fkik, name)) for name in
                                ("limb", "whole_take", "refusal", "switch",
                                 "blend_values"))
-        #  the World box (2026-10-28) off, no world control: the switch as it always was
-        self.saved_world = (cx.ikworld.limb_knot, cx.ikworld.is_on)
+        #  no world control on the limb (2026-10-28): the switch as it always was
+        self.saved_world = cx.ikworld.limb_knot
         cx.ikworld.limb_knot = lambda arm: None
-        cx.ikworld.is_on = lambda: False
 
         class Cmds(object):
             existing = set()
@@ -878,7 +877,7 @@ class SwitchArm(unittest.TestCase):
             setattr(cx, name, value)
         for name, value in self.saved_fkik.items():
             setattr(cx.fkik, name, value)
-        cx.ikworld.limb_knot, cx.ikworld.is_on = self.saved_world
+        cx.ikworld.limb_knot = self.saved_world
 
     def test_a_free_arm_is_switched_over_the_whole_take(self):
         text = cx.switch_arm("R", "FK", highlight=False)

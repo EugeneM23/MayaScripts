@@ -1,11 +1,13 @@
 """Connections: IK into a world control (2026-10-28).
 
-The press's order of things on stubs (`switch_limb` with the World box), the card's World chip,
-the messages, and the knot keyed on frames only (`knots._key_samples`).
+The press's order of things on stubs (`switch_limb(world=True)`, the rows' W through
+`toggle_world`), the W boxes in the limb rows, the controls' shapes, the messages, and the knot
+keyed on frames only (`knots._key_samples`).
 
 Spec: docs/superpowers/specs/2026-10-28-connections-ik-world-design.md
 """
 
+import math
 import unittest
 
 import maya_rigs
@@ -18,17 +20,14 @@ from tests.test_scenesetup_connections import FakeMenuCmds
 
 class Messages(unittest.TestCase):
 
-    def test_world_text_names_the_limbs(self):
-        self.assertEqual(ikworld.world_text(["Arm_R", "Leg_L"]), "Arm_R, Leg_L IK in world")
-        self.assertEqual(ikworld.world_text([]), "")
-
     def test_entered_names_the_control_and_its_keys(self):
-        self.assertEqual(ikworld.entered_message("|g|IKArm_R", "|K|IKArm_R_dknotMove", [0, 12, 24]),
-                         "IKArm_R in world on IKArm_R_dknotMove, 3 keys (0..24)")
-        self.assertEqual(ikworld.entered_message("|g|IKArm_R", "|K|IKArm_R_dknotMove", [12]),
-                         "IKArm_R in world on IKArm_R_dknotMove, 1 key (12)")
-        self.assertEqual(ikworld.entered_message("|g|IKArm_R", "|K|IKArm_R_dknotMove", []),
-                         "IKArm_R in world on IKArm_R_dknotMove, no keys - set at the "
+        move = "|K|IKArm_R_worldMove_ctrl"
+        self.assertEqual(ikworld.entered_message("|g|IKArm_R", move, [0, 12, 24]),
+                         "IKArm_R in world on IKArm_R_worldMove_ctrl, 3 keys (0..24)")
+        self.assertEqual(ikworld.entered_message("|g|IKArm_R", move, [12]),
+                         "IKArm_R in world on IKArm_R_worldMove_ctrl, 1 key (12)")
+        self.assertEqual(ikworld.entered_message("|g|IKArm_R", move, []),
+                         "IKArm_R in world on IKArm_R_worldMove_ctrl, no keys - set at the "
                          "current frame")
 
     def test_left_says_where_the_control_is_and_how_well_the_limb_held(self):
@@ -41,8 +40,40 @@ class Messages(unittest.TestCase):
                       ikworld.left_message("Leg_L", "|g|IKLeg_L", [12], moved, kind="Leg"))
 
 
+class Shapes(unittest.TestCase):
+    """The controls (2026-10-28, «вместо локатора мы будем создавать контроллер»)."""
+
+    def test_the_move_is_a_cube_through_its_twelve_edges(self):
+        points = ikworld.box(2.0)
+        self.assertEqual(set(points), set((x, y, z) for x in (-2.0, 2.0) for y in (-2.0, 2.0)
+                                          for z in (-2.0, 2.0)))
+        edges = set()
+        for a, b in zip(points, points[1:]):
+            # every step runs along ONE axis: an edge, never a diagonal
+            self.assertEqual(sum(1 for i in range(3) if a[i] != b[i]), 1)
+            edges.add(frozenset((a, b)))
+        self.assertEqual(len(edges), 12)
+
+    def test_the_rotate_is_three_rings_in_one_line_with_no_chord(self):
+        radius, sides = 3.0, 24
+        points = ikworld.rings(radius, sides)
+        step = 2.0 * radius * math.sin(math.pi / sides)
+        for a, b in zip(points, points[1:]):
+            self.assertLessEqual(math.dist(a, b), step + 1e-9)
+        for p in points:
+            self.assertAlmostEqual(math.sqrt(sum(c * c for c in p)), radius)
+        for axis in range(3):
+            # a ring in each plane: points with that axis at zero all round
+            flat = [p for p in points if abs(p[axis]) < 1e-9]
+            self.assertGreaterEqual(len(set(flat)), sides)
+
+    def test_the_size_follows_the_ik_controls_drawing(self):
+        self.assertEqual(ikworld.control_half(((-1.0, -4.0, -2.0), (1.0, 4.0, 2.0))), 4.0)
+        self.assertEqual(ikworld.control_half(None), ikworld.LEAST)
+
+
 class SwitchWorld(unittest.TestCase):
-    """`switch_limb`'s order with the World box, on stubs."""
+    """`switch_limb(world=True)` and `toggle_world`, on stubs."""
 
     def setUp(self):
         self.rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
@@ -55,7 +86,7 @@ class SwitchWorld(unittest.TestCase):
                                ("limb", "whole_take", "refusal", "switch",
                                 "blend_values", "key_plan"))
         self.saved_world = dict((name, getattr(cx.ikworld, name)) for name in
-                                ("is_on", "knot_of", "limb_knot", "enter", "leave", "drop", "refusal",
+                                ("knot_of", "limb_knot", "enter", "leave", "drop", "refusal",
                                  "nodes_of", "key_times"))
         done = self.done
 
@@ -86,7 +117,7 @@ class SwitchWorld(unittest.TestCase):
 
         self.arms = {"R": Arm("R"), "L": Arm("L")}
         cx.fkik.limb = lambda rig, side, kind="Arm": (self.arms[side], "")
-        cx.fkik.whole_take = lambda arm, extra=(): (0.0, 24.0)
+        cx.fkik.whole_take = lambda arm: (0.0, 24.0)
         cx.fkik.refusal = lambda arm, mode, span, ignore=(): ""
         cx.fkik.key_plan = lambda arm, span, extra=(): (
             [0.0, 12.0, 24.0], [0.0, 12.0, 24.0], {12.0: ("step", "step")})
@@ -98,8 +129,6 @@ class SwitchWorld(unittest.TestCase):
         self.blend = [0.0]
         cx.fkik.blend_values = lambda arm: list(self.blend)
         self.top = None
-        self.on = False
-        cx.ikworld.is_on = lambda: self.on
         cx.ikworld.knot_of = lambda control: self.top
         cx.ikworld.limb_knot = lambda limb: self.top
         cx.ikworld.nodes_of = lambda top: [top, top + "|inner"]
@@ -121,145 +150,161 @@ class SwitchWorld(unittest.TestCase):
     def kinds(self):
         return [d[0] for d in self.done]
 
-    def test_world_off_switches_as_it_always_did(self):
+    def test_plain_ik_switches_as_it_always_did(self):
         cx.switch_arm("R", "IK", highlight=False)
         self.assertEqual(self.kinds(), ["undo", "switch", "undo"])
 
-    def test_world_on_switches_then_puts_the_ik_on_a_world_control_on_the_same_keys(self):
-        self.on = True
-        text = cx.switch_arm("R", "IK", highlight=False)
+    def test_world_switches_then_puts_the_ik_on_a_world_control_on_the_same_keys(self):
+        text = cx.switch_arm("R", "IK", highlight=False, world=True)
         self.assertEqual(self.kinds(), ["undo", "switch", "enter", "undo"])
         self.assertEqual(self.done[2], ("enter", "R", [0.0, 12.0, 24.0],
                                         {12.0: ("step", "step")}, None))
         self.assertEqual(text, "Arm_R to IK; in world")
 
-    def test_the_box_is_read_only_when_the_press_says_nothing(self):
-        cx.switch_limb("R", "IK", highlight=False, world=True)
-        self.assertIn("enter", self.kinds())
-
     def test_a_highlight_reaches_the_world_control_as_the_slider_answers_it(self):
-        self.on = True
-        cx.switch_arm("L", "IK", highlight=(10.0, 16.0))
+        cx.switch_arm("L", "IK", highlight=(10.0, 16.0), world=True)
         self.assertEqual(self.done[1][3], (10, 15, True))
         self.assertEqual(self.done[2][4], (10.0, 16.0))
 
     def test_an_unkeyed_limb_takes_its_world_control_at_the_current_frame(self):
-        self.on = True
         cx.fkik.key_plan = lambda arm, span, extra=(): ([7.0], [], {})
-        cx.switch_arm("R", "IK", highlight=False)
+        cx.switch_arm("R", "IK", highlight=False, world=True)
         self.assertEqual(self.done[2][2], [7.0])
 
     def test_world_on_an_ik_limb_makes_the_world_control_only(self):
-        self.on, self.blend = True, [10.0]
-        cx.switch_arm("R", "IK", highlight=False)
+        self.blend = [10.0]
+        cx.switch_arm("R", "IK", highlight=False, world=True)
         self.assertEqual(self.kinds(), ["undo", "enter", "undo"])
 
     def test_world_on_an_ik_limb_in_world_is_refused(self):
-        self.on, self.blend, self.top = True, [10.0], "|K|IKArm_R_dknotMove"
-        text = cx.switch_arm("R", "IK", highlight=False)
-        self.assertEqual(text, "Arm_R is already IK in world (IKArm_R_dknotMove)")
+        self.blend, self.top = [10.0], "|K|IKArm_R_worldMove_ctrl"
+        text = cx.switch_arm("R", "IK", highlight=False, world=True)
+        self.assertEqual(text, "Arm_R is already IK in world (IKArm_R_worldMove_ctrl)")
         self.assertEqual(self.done, [])
 
-    def test_ik_without_world_on_a_limb_in_world_brings_it_back(self):
-        self.blend, self.top = [10.0], "|K|IKArm_R_dknotMove"
+    def test_plain_ik_on_a_limb_in_world_names_the_w(self):
+        self.blend, self.top = [10.0], "|K|IKArm_R_worldMove_ctrl"
         text = cx.switch_arm("R", "IK", highlight=False)
-        self.assertEqual(self.kinds(), ["undo", "leave", "undo"])
-        self.assertEqual(text, "back")
+        self.assertEqual(text, "Arm_R is already IK, in world - W takes it back into Main's "
+                               "space")
+        self.assertEqual(self.done, [])
 
     def test_fk_on_a_limb_in_world_switches_on_its_keys_then_takes_the_control_off(self):
-        self.blend, self.top = [10.0], "|K|IKArm_R_dknotMove"
+        self.blend, self.top = [10.0], "|K|IKArm_R_worldMove_ctrl"
         text = cx.switch_arm("R", "FK", highlight=False)
         self.assertEqual(self.kinds(), ["undo", "switch", "drop", "undo"])
-        self.assertEqual(self.done[1][4], ("|K|IKArm_R_dknotMove", "|K|IKArm_R_dknotMove|inner"))
+        self.assertEqual(self.done[1][4], ("|K|IKArm_R_worldMove_ctrl",
+                                           "|K|IKArm_R_worldMove_ctrl|inner"))
         self.assertEqual(text, "Arm_R to FK; dropped")
 
     def test_the_world_controls_keys_widen_the_whole_take(self):
-        self.blend, self.top = [10.0], "|K|IKArm_R_dknotMove"
+        self.blend, self.top = [10.0], "|K|IKArm_R_worldMove_ctrl"
         cx.switch_arm("R", "FK", highlight=False)
         self.assertEqual(self.done[1][3], (0, 30, False))
 
     def test_fk_on_an_fk_limb_with_a_world_control_left_takes_it_off(self):
-        self.blend, self.top = [0.0], "|K|IKArm_R_dknotMove"
+        self.blend, self.top = [0.0], "|K|IKArm_R_worldMove_ctrl"
         text = cx.switch_arm("R", "FK", highlight=False)
         self.assertEqual(self.kinds(), ["undo", "drop", "undo"])
         self.assertIn("Arm_R is already FK", text)
 
     def test_ik_on_a_limb_that_shows_fk_with_a_world_control_left_asks_for_fk(self):
-        self.blend, self.top = [0.0], "|K|IKArm_R_dknotMove"
-        text = cx.switch_arm("R", "IK", highlight=False)
+        self.blend, self.top = [0.0], "|K|IKArm_R_worldMove_ctrl"
+        text = cx.switch_arm("R", "IK", highlight=False, world=True)
         self.assertEqual(text, "Arm_R shows FK with a world control left on IKArm_R - "
                                "press FK to take it off first")
         self.assertEqual(self.done, [])
 
     def test_the_world_controls_refusal_moves_nothing(self):
-        self.on = True
         cx.ikworld.refusal = lambda limb: "IKArm_R.rotateX is locked"
-        self.assertEqual(cx.switch_arm("R", "IK", highlight=False), "IKArm_R.rotateX is locked")
+        self.assertEqual(cx.switch_arm("R", "IK", highlight=False, world=True),
+                         "IKArm_R.rotateX is locked")
         self.assertEqual(self.done, [])
 
     def test_the_switchs_refusal_comes_first(self):
-        self.on = True
         cx.fkik.refusal = lambda arm, mode, span, ignore=(): "Arm_R: layer locked"
-        self.assertEqual(cx.switch_arm("R", "IK", highlight=False), "Arm_R: layer locked")
+        self.assertEqual(cx.switch_arm("R", "IK", highlight=False, world=True),
+                         "Arm_R: layer locked")
         self.assertEqual(self.done, [])
 
-    def test_a_leg_takes_the_world_control_too(self):
-        self.on = True
-        cx.switch_limb("L", "IK", highlight=False, kind=cx.fkik.LEG)
+    #  --- the rows' W ---
+
+    def test_w_on_a_limb_not_in_world_puts_it_in_world(self):
+        cx.toggle_world("R", highlight=False)
         self.assertEqual(self.kinds(), ["undo", "switch", "enter", "undo"])
 
+    def test_w_on_a_leg_too(self):
+        cx.toggle_world("L", highlight=False, kind=cx.fkik.LEG)
+        self.assertEqual(self.kinds(), ["undo", "switch", "enter", "undo"])
+
+    def test_w_on_a_limb_in_world_brings_it_back(self):
+        self.blend, self.top = [10.0], "|K|IKArm_R_worldMove_ctrl"
+        self.assertEqual(cx.toggle_world("R", highlight=False), "back")
+        self.assertEqual(self.kinds(), ["undo", "leave", "undo"])
+
+    def test_w_on_a_world_control_left_on_an_unseen_ik_takes_it_off(self):
+        self.blend, self.top = [0.0], "|K|IKArm_R_worldMove_ctrl"
+        self.assertEqual(cx.toggle_world("R", highlight=False), "dropped")
+        self.assertEqual(self.kinds(), ["undo", "drop", "undo"])
+
+    def test_w_is_refused_while_a_retarget_stands(self):
+        self.cmds.existing.add("Manny_Rig:MoCapConstraints")
+        self.assertEqual(cx.toggle_world("R", highlight=False), cx.RETARGETING)
+        self.assertEqual(self.done, [])
+
     def test_a_hand_in_world_cannot_follow_a_weapon(self):
-        self.top = "|K|IKArm_R_dknotMove"
+        self.top = "|K|IKArm_R_worldMove_ctrl"
         self.assertEqual(cx.world_refusal(self.rig, "R"),
-                         "Arm_R is IK in world - press IK without World first")
+                         "Arm_R is IK in world - press its W first")
         self.top = None
         self.assertEqual(cx.world_refusal(self.rig, "R"), "")
 
 
-class PanelWorld(unittest.TestCase):
+class PanelW(unittest.TestCase):
+    """The W box beside each limb's IK."""
 
     def setUp(self):
-        self.real = (cx.cmds, cx.refresh, cx.ikworld.cmds)
+        self.real = (cx.cmds, cx.refresh, cx.toggle_world)
         self.fake = FakeMenuCmds()
         cx.cmds = self.fake
-        cx.ikworld.cmds = self.fake
         cx.refresh = lambda *a: ""
+        self.asked = []
+        cx.toggle_world = lambda side, rig=None, highlight=None, kind=cx.fkik.ARM: \
+            self.asked.append((side, kind)) or "toggled"
         cx.hubstyle.take_marks()
+        cx.build_panel()
+        self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
 
     def tearDown(self):
-        cx.cmds, cx.refresh, cx.ikworld.cmds = self.real
+        cx.cmds, cx.refresh, cx.toggle_world = self.real
 
-    def build(self):
-        cx.build_panel()
-        return dict((m.name, m) for m in cx.hubstyle.take_marks())
+    def test_every_limb_has_a_w_segment_after_its_ik(self):
+        names = [c[1][0] for c in self.fake.calls if c[0] == "iconTextCheckBox" and c[1]
+                 and not (c[2].get("edit") or c[2].get("exists") or c[2].get("query"))]
+        for kind in (cx.fkik.ARM, cx.fkik.LEG):
+            for side in ("R", "L"):
+                ik, w = cx.fkik_box(side, "IK", kind), cx.fkik_box(side, cx.W_MODE, kind)
+                self.assertEqual(names.index(w), names.index(ik) + 1)
+                self.assertEqual(self.fake.boxes[w]["label"], "W")
+                self.assertEqual(self.marks[w].role, "segment")
 
-    def box(self):
-        return [c for c in self.fake.calls if c[0] == "checkBox" and c[1]
-                and c[1][0] == cx.WORLD_BOX and not c[2].get("edit")
-                and not c[2].get("query")][0]
+    def test_either_press_of_w_toggles_that_limb(self):
+        self.fake.press_box(cx.fkik_box("R", cx.W_MODE))
+        self.fake.press_box(cx.fkik_box("R", cx.W_MODE))
+        self.fake.press_box(cx.fkik_box("L", cx.W_MODE, cx.fkik.LEG))
+        self.assertEqual(self.asked, [("R", cx.fkik.ARM), ("R", cx.fkik.ARM),
+                                      ("L", cx.fkik.LEG)])
 
-    def test_a_world_chip_stands_under_the_fkik_rows(self):
-        marks = self.build()
-        self.assertEqual(marks[cx.WORLD_BOX].role, "chip")
-        call = self.box()
-        self.assertEqual(call[2]["label"], "World")
-        self.assertFalse(call[2]["value"])
-        names = [c[1][0] for c in self.fake.calls if c[1] and c[0] in ("checkBox",
-                                                                          "iconTextCheckBox")]
-        self.assertGreater(names.index(cx.WORLD_BOX),
-                           names.index(cx.fkik_box("L", "IK", cx.fkik.LEG)))
+    def test_the_refresh_lights_w_for_a_limb_in_world_only(self):
+        cx._set_fkik({"R": "IK", "L": "IK"}, worlds=["R"])
+        value = lambda side, mode: self.fake.boxes[cx.fkik_box(side, mode)]["value"]
+        self.assertEqual((value("R", "IK"), value("R", "W")), (True, True))
+        self.assertEqual((value("L", "IK"), value("L", "W")), (True, False))
+        self.assertEqual(self.asked, [])
 
-    def test_the_chip_shows_what_was_remembered_and_remembers_a_change(self):
-        self.fake.optionvars[ikworld.OPTIONVAR] = 1
-        self.build()
-        call = self.box()
-        self.assertTrue(call[2]["value"])
-        self.fake.optionvars.clear()
-        original = self.fake.checkBox
-        self.fake.checkBox = lambda *a, **k: True if k.get("query") else original(*a, **k)
-        call[2]["changeCommand"](True)
-        self.assertEqual(self.fake.optionvars[ikworld.OPTIONVAR], 1)
-        self.assertTrue(ikworld.is_on())
+    def test_no_world_chip_any_more(self):
+        self.assertFalse([c for c in self.fake.calls if c[0] == "checkBox"
+                          and c[1] and "FKIKWorld" in str(c[1][0])])
 
 
 class KeyedOnFrames(unittest.TestCase):

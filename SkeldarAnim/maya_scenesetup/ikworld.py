@@ -15,7 +15,13 @@ character work on it unchanged.
 A limb is IN WORLD when a `double_world` knot drives its IK control (`knot_of`); one the
 animator made in Tools counts too. `enter` makes it (`knots.create_keyed`: sampled and keyed on
 the IK's keys, not baked on every frame), `leave` takes the limb back into Main's space keyed on
-the world control's keys, `drop` takes the control off. Connections' `switch_limb` decides which.
+the world control's keys, `drop` takes the control off. Connections' `switch_limb` and
+`toggle_world` (the rows' W) decide which.
+
+The same day, after using it («вместо локатора мы будем создавать контроллер», and a W toggle
+beside each limb's IK in place of one World chip): the knot's two locators are made CONTROLS
+(`curvectrl.reshape`, as 1P Setup's chest) - the Move a box in world axes, the Rotate three rings
+- named `<ik>_worldMove_ctrl` / `<ik>_worldRotate_ctrl`; still a knot to Tools.
 
 Spec: docs/superpowers/specs/2026-10-28-connections-ik-world-design.md
 """
@@ -24,15 +30,26 @@ import math
 
 import maya.cmds as cmds
 
+from maya_scenesetup import curvectrl
 from maya_scenesetup import fkik
+from maya_tools import knotplan
 from maya_tools import knots
 
 KIND = "double_world"
-OPTIONVAR = "skeldarConnectionsIKWorld"
 ALREADY = "%s is already IK in world (%s)"
-IN_WORLD = "%s is IK in world - press IK without World first"
+IN_WORLD_IK = "%s is already IK, in world - W takes it back into Main's space"
+IN_WORLD = "%s is IK in world - press its W first"
 LEFT_OVER = ("%s shows FK with a world control left on %s - press FK to take it off "
              "first")
+# the controls (2026-10-28, «вместо локатора мы будем создавать контроллер»)
+MOVE_NAME = "{0}_worldMove_ctrl"
+ROTATE_NAME = "{0}_worldRotate_ctrl"
+MOVE_COLOUR = knotplan.kind(KIND).colour
+ROTATE_COLOUR = knotplan.kind(KIND).inner_colour
+BOX_GROW = 1.6            # the Move box's half side over the IK control's drawing's half extent
+RING_GROW = 1.3           # the Rotate rings' radius over it
+LEAST = 6.0               # cm: the half extent when the IK control draws nothing
+RING_SIDES = 24
 
 
 # ------------------------------------------------------------------- pure
@@ -49,9 +66,44 @@ def _keys_words(keys):
     return "%s (%s)" % (count, first if len(keys) == 1 else "%s..%s" % (first, last))
 
 
-def world_text(labels):
-    """«Arm_R, Leg_L IK in world» for the card's subtitle; '' for none. Pure."""
-    return ", ".join(labels) + " IK in world" if labels else ""
+def box(half):
+    """A cube of half side `half` about the origin, one degree-1 line through its 12 edges.
+    Pure."""
+    h = half
+    return [(-h, -h, -h), (h, -h, -h), (h, h, -h), (-h, h, -h), (-h, -h, -h),
+            (-h, -h, h), (h, -h, h), (h, h, h), (-h, h, h), (-h, -h, h),
+            (-h, h, h), (-h, h, -h), (h, h, -h), (h, h, h), (h, -h, h), (h, -h, -h)]
+
+
+def _ring(radius, axes, start, sides):
+    """A closed circle in the plane of `axes`, from the angle step `start` round to it. Pure."""
+    out = []
+    for i in range(sides + 1):
+        a = 2.0 * math.pi * (start + i) / sides
+        p = [0.0, 0.0, 0.0]
+        p[curvectrl.AXES[axes[0]]] = radius * math.cos(a)
+        p[curvectrl.AXES[axes[1]]] = radius * math.sin(a)
+        out.append(tuple(p))
+    return out
+
+
+def rings(radius, sides=RING_SIDES):
+    """Three rings about the origin (XY, XZ, YZ) as ONE degree-1 line with no chord between
+    them: the XY ring, then the XZ ring as far as +Z, the YZ ring whole from there, the rest of
+    the XZ ring. `sides` a multiple of 4. Pure."""
+    quarter = sides // 4
+    xy = _ring(radius, ("x", "y"), 0, sides)                      # +X round to +X
+    xz = _ring(radius, ("x", "z"), 0, sides)                      # +X, +Z at a quarter
+    yz = _ring(radius, ("y", "z"), quarter, sides)                # +Z round to +Z
+    return xy + xz[1:quarter + 1] + yz[1:] + xz[quarter + 1:]
+
+
+def control_half(extent_box):
+    """The IK control's drawing's largest half extent ((min, max) of its CVs, or None). Pure."""
+    if not extent_box:
+        return LEAST
+    lo, hi = extent_box
+    return max(max(hi[i] - lo[i] for i in range(3)) / 2.0, 1e-3)
 
 
 def entered_message(control, top, keys):
@@ -72,19 +124,6 @@ def left_message(label, control, keys, m, kind=fkik.ARM):
 
 
 # ------------------------------------------------------------------ scene
-
-def is_on(c=None):
-    """The World box: IK presses put the IK control on a world control. `c` the caller's
-    `cmds` (the card's tests hand it theirs)."""
-    c = c or cmds
-    return bool(c.optionVar(query=OPTIONVAR)) if c.optionVar(exists=OPTIONVAR) else False
-
-
-def set_on(on, c=None):
-    c = c or cmds
-    c.optionVar(intValue=(OPTIONVAR, int(bool(on))))
-    return is_on(c)
-
 
 def knot_of(control):
     """The Double knot World that drives the IK control, or None."""
@@ -122,9 +161,30 @@ def enter(limb, frames, tangents, highlight):
     top, line = knots.create_keyed(KIND, limb.ik, frames, tangents, highlight=highlight)
     if top is None:
         return "World: " + line
+    top = make_controls(top, limb.ik)
     #  a whole take's still channel is a plain value, as the switch writes it: no keys at all
     keyed = bool(cmds.keyframe(nodes_of(top), query=True, keyframeCount=True))
     return entered_message(limb.ik, top, sorted(frames) if keyed else [])
+
+
+def make_controls(top, ik):
+    """The knot's two locators made controls: the Move (`top`, no rotation) a box in world axes,
+    the Rotate three rings in its own axes, both sized from the IK control's drawing; renamed.
+    The Move's long path."""
+    half = control_half(curvectrl.local_box(ik))
+    leaf = _leaf(ik).split(":")[-1]
+    uuid = cmds.ls(top, uuid=True)[0]
+    inner = cmds.ls([n for n in nodes_of(top) if n != top][0], uuid=True)[0]
+    #  by UUID: renaming the Move renames the path of the Rotate under it (trap 16)
+    for node_uuid, points, colour, name in (
+            (uuid, box(half * BOX_GROW), MOVE_COLOUR, MOVE_NAME),
+            (inner, rings(half * RING_GROW), ROTATE_COLOUR, ROTATE_NAME)):
+        curvectrl.reshape(cmds.ls(node_uuid, long=True)[0], points, colour)
+        node = cmds.rename(cmds.ls(node_uuid, long=True)[0], name.format(leaf))
+        node = cmds.ls(node_uuid, long=True)[0]
+        for shape in cmds.listRelatives(node, shapes=True, fullPath=True) or []:
+            cmds.rename(shape, node.split("|")[-1].split(":")[-1] + "Shape")
+    return cmds.ls(uuid, long=True)[0]
 
 
 def drop(top):

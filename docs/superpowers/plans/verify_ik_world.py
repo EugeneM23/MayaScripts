@@ -10,8 +10,9 @@ A  two Manny_Rigs, the right FK arm keyed alike on 0, 12, 24 under Main travelli
    character's Knots group, keyed on exactly 0, 12, 24, the arm where the plain IK has it on them
    (and the hand where FK had it - an IK elbow does not twist, so the arm's roll is not asked); Main moved 3 cm more and the hand stays, the shoulder goes; the Move
    control moved 2 cm moves the hand 2 cm; one Ctrl+Z takes the press back, redo gives it again; a
-   second press refused; IK without World back in Main's space on the same keys, the arm kept; World
-   on that IK arm with no switch; FK from world keyed on the keys, the world control gone.
+   second press refused, plain IK names the W; the W back in Main's space on the same keys, the
+   arm kept; W on that IK arm with no switch; FK from world keyed on the keys, the control gone.
+   The world control is CONTROLS (2026-10-28): curves, no locator - a Move box, Rotate rings.
 B  the right leg switched to IK, its IK control keyed on 0, 12, 24: World on it - no switch, the
    leg where it stood on the keys, the foot stays when Main moves.
 C  a highlight 8..16: the switch over the range, the world control ranged (attach 0 / 1 / 1 / 0
@@ -147,6 +148,12 @@ def knot_ok(top, frames, label, still_turn=False):
          "%s: keyed on exactly %s (Move %s, Rotate %s)" % (label, frames, t_keys, r_keys))
     gate(not times([top], ["rotateX", "rotateY", "rotateZ"]),
          "%s: the Move control carries no rotation" % label)
+    shapes = [cmds.nodeType(sh) for n in (top, inner[0])
+              for sh in cmds.listRelatives(n, shapes=True, fullPath=True) or []]
+    gate(shapes == ["nurbsCurve", "nurbsCurve"] and top.endswith("_worldMove_ctrl")
+         and inner[0].endswith("_worldRotate_ctrl"),
+         "%s: two controls, curves and no locator (%s, %s: %s)" % (
+             label, top.split("|")[-1], inner[0].split("|")[-1], shapes))
     return inner[0]
 
 
@@ -174,7 +181,8 @@ def case_a():
     gate(fkik.mode_of(fkik.blend_values(arm)) == fkik.IK and bool(top),
          "redo gives it again: IK on a world control")
     knot_ok(top, KEYS, "A")
-    gate("in world on IKArm_R_dknotMove, 3 keys (0..24)" in text, "the line says it: " + text)
+    gate("in world on IKArm_R_worldMove_ctrl, 3 keys (0..24)" in text,
+         "the line says it: " + text)
     world = track(arm.deform, KEYS)
     cm, deg = diff(plain, world)
     gate(cm <= 1e-4 and deg <= 1e-3,
@@ -201,8 +209,12 @@ def case_a():
     gate(abs(d.x - 2.0) <= 0.05 and abs(d.y) + abs(d.z) <= 0.05,
          "the Move control +2 cm in X moves the hand (%.4f, %.4f, %.4f)" % (d.x, d.y, d.z))
     again = cx.switch_arm("R", "IK", rig=rig, highlight=False, world=True)
-    gate(again == "Arm_R is already IK in world (IKArm_R_dknotMove)", "a second press: " + again)
-    back = cx.switch_arm("R", "IK", rig=rig, highlight=False, world=False)
+    gate(again == "Arm_R is already IK in world (IKArm_R_worldMove_ctrl)",
+         "a second press: " + again)
+    plain_ik = cx.switch_arm("R", "IK", rig=rig, highlight=False)
+    gate(plain_ik == "Arm_R is already IK, in world - W takes it back into Main's space",
+         "plain IK on it names the W: " + plain_ik)
+    back = cx.toggle_world("R", rig=rig, highlight=False)
     print("   ", back)
     ik = node(rig, "IKArm_R")
     gate(not ikworld.limb_knot(arm) and not cmds.objExists(top),
@@ -212,8 +224,8 @@ def case_a():
     cm, deg = diff(world, track(arm.deform, KEYS))
     gate(cm <= KEPT_CM and deg <= KEPT_DEG and "back from world on 3 keys" in back,
          "back in Main's space, the arm kept: %.5f cm, %.4f deg" % (cm, deg))
-    gate(not cmds.ls("*_dknot*", long=True), "no knot node left")
-    text = cx.switch_arm("R", "IK", rig=rig, highlight=False, world=True)
+    gate(not cmds.ls("*_world*_ctrl", long=True), "no world control left")
+    text = cx.toggle_world("R", rig=rig, highlight=False)
     print("   ", text)
     top = ikworld.limb_knot(arm)
     gate(bool(top) and "to IK" not in text, "World on an IK arm: a world control, no switch")
@@ -267,8 +279,9 @@ def case_b():
     text = cx.switch_arm("R", "IK", rig=rig, highlight=False)
     print("    the arm, World off:", text)
     gate(not ikworld.limb_knot(fkik.limb(rig, "R")[0]), "World off: the arm in plain IK")
-    gate("Leg_R IK in world" in cx.ikworld.world_text(
-        [fkik.LABEL[fkik.LEG].format("R")]), "the subtitle's words")
+    worlds = []
+    cx._limb_modes(rig, fkik.LEG, worlds)
+    gate(worlds == ["R"], "the card lights the right leg's W (%s)" % worlds)
 
 
 def case_c():
