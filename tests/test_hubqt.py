@@ -1755,6 +1755,25 @@ class Menu(unittest.TestCase):
     def test_no_rows_shows_no_menu(self):
         self.assertIsNone(hubqt.run_menu(self.parent, QtCore.QPoint(0, 0), []))
 
+    def test_a_row_is_run_when_its_wrapper_died_before_exec_answered(self):
+        """2026-10-28: the scene tabs' «+» - every row wrapper dead, the row
+        answered through a fresh one, and nothing ran."""
+        from tests import menurows
+        rows = [("Other", lambda: "other"), None, ("Empty tab", lambda: "went")]
+        with menurows.dead_rows(QtWidgets, "Empty tab"):
+            self.assertEqual(hubqt.run_menu(self.parent, QtCore.QPoint(0, 0), rows), "went")
+        with menurows.dead_rows(QtWidgets, None):
+            self.assertIsNone(hubqt.run_menu(self.parent, QtCore.QPoint(0, 0), rows))
+
+    def test_a_row_value_is_read_through_any_wrapper(self):
+        from tests import menurows
+        go = lambda: None                                    # noqa: E731
+        menu, rows = hubqt.build_menu(self.parent, [("Go", go)])
+        self.addCleanup(menu.deleteLater)
+        self.assertEqual(hubqt.row_value(menurows.answer_dead(menu, "Go")), 0)
+        self.assertIsNone(hubqt.row_value(None))
+        self.assertIsNone(hubqt.row_value(rows[0][0]))      # the dead wrapper itself
+
 
 class CardMotion(SeamsMixin, unittest.TestCase):
     """2026-10-01: «открывать закрывать с какими-то анимациями» - the body

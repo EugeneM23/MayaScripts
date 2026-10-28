@@ -330,6 +330,12 @@ class Widget(unittest.TestCase):
         self.assertEqual(seen["checked"], [True, False])
         self.assertIn(("run", "selectType -b #1", False), self.model.log)
 
+    def test_a_type_runs_when_its_row_wrapper_died_before_exec_answered(self):
+        from tests import menurows
+        self.tools.exec_menu = lambda menu, *_a: menurows.answer_dead(menu, "Type B")
+        self.click(self.centre_of("mask", "Marker"), QT.QtCore.Qt.RightButton)
+        self.assertIn(("run", "selectType -b #1", False), self.model.log)
+
     def test_the_all_button_clears_every_type_then_turns_them_back_on(self):
         self.click(self.centre_of("all", "all"))
         self.assertFalse(any(self.tools.state["masks"].values()))

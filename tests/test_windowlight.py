@@ -114,6 +114,20 @@ class Watch(unittest.TestCase):
             if not self.light.tick_timer.isActive():
                 break
 
+    def test_a_widget_hiding_parentwidget_under_its_own_attribute_is_walked_past(self):
+        """2026-10-28: animBot's widgets carry an attribute named parentWidget
+        (`'SliderWidget' object is not callable`, 20 times a second in the
+        Script Editor) - the walk asks Qt's own QWidget.parentWidget."""
+        outliner, leaf = self.window("Outliner")
+        leaf.parentWidget = QtWidgets.QWidget()           # what animBot's classes do
+        self.made.append(leaf.parentWidget)
+        self.under = leaf
+        nodes, _widgets = self.light.chain(leaf)
+        self.assertEqual([n["name"] for n in nodes][:2], ["", "Outliner"])
+        self.light.poll(force=True)
+        self.settle()
+        self.assertEqual(self.light.overlays[wl._ptr(self.light.q, outliner)].level, 1.0)
+
     def test_the_window_under_the_mouse_is_lit_and_the_other_goes_out(self):
         outliner, leaf_a = self.window("Outliner")
         graph, leaf_b = self.window("Graph")

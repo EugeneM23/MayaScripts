@@ -15186,3 +15186,52 @@ frame's centre: Reference on the transform (shapes with their own override) is s
 on the shapes it is skipped; and Maya draws a Reference curve black whatever its RGB / object colour,
 so the crosshair is dark, not the game's white. Proof: `verify_1p_setup.py` (the crosshair gates; its
 `REPO` now follows the script's own folder), unit tests `test_tools_firstperson.Crosshair`.
+
+## Menus: a row is found by its data, never by its wrapper (2026-10-28)
+
+The animator, on port 7004: «нужно поченить вкладки сейчас они перестали работать нажимаю по + или
+на открытие сцены через наше меню ничего не делают». Traced live, the menu took the real click and
+`exec` answered the row, but nothing ran. The Script Editor showed `RuntimeError: Internal C++ object
+(PySide6.QtGui.QAction) already deleted` from the row wrappers `build_menu` held (trap 300).
+- **`maya_hubqt.tag_row(action, value)` / `row_value(action)`**: a row carries its number (or the
+  callable it runs) in `QAction.setData`. After the press it is read off whatever `exec` answers,
+  straight away, before the menu's `deleteLater`.
+- Every menu that matched by `picked is row`, or by a dict keyed by row wrappers, reads `row_value`
+  now:
+  - `run_menu`: the scene tabs' «+» and tab menu, the portraits' and inventory's Open scene, armor,
+    Pose Library, Walk Builder's wells, the rail's right button;
+  - Channel Box;
+  - the skill bar's status tools;
+  - the Time Bar's menus (`menu_rows` tags each row with its callable; the dict stays for tests);
+  - the layer panel's two menus;
+  - the call's screen picker.
+- Menus that act through `action.triggered.connect` were left as they are.
+- **Window light** walked up with `widget.parentWidget()`, and animBot's widgets carry an attribute of
+  that name. It raised «'SliderWidget' object is not callable» 20 times a second in the Script Editor.
+  It asks Qt's own `QWidget.parentWidget` now (`_parent_of`), and the walk stops on TypeError and
+  AttributeError.
+- Proof:
+  - `tests/menurows.py`: `answer_dead` / `dead_rows`, a menu whose exec kills every row wrapper and
+    answers through a fresh one. One test per site; the six failed before the fix;
+  - `test_windowlight.Watch.test_a_widget_hiding_parentwidget...`;
+  - 958 tests of the touched modules OK;
+  - live in the animator's Maya:
+    - the animator opened scenes and empty tabs through «+» with a probe that read the row's number
+      off `exec`'s answer;
+    - the repo's functions were then loaded over the port, and `run_menu` over dead rows ran the
+      right row.
+
+300. **A menu's QAction wrappers can die while the menu shows, and `exec` then answers the row through
+     a new wrapper.** In the animator's Maya (animBot, AdvancedSkeleton, OverRig loaded) the rows'
+     wrappers were dead after a real click on some presses and alive on others, with the menu itself
+     alive. `shiboken6.invalidate` and `delete`, watched, were never called. Synthetic clicks and Enter
+     never showed it. What kills them is not found; the fix needs nothing from the old wrappers.
+     PySide 6.8.3 does it offscreen the same way. A wrapper reached through a temporary dies with the
+     temporary: `m.actions()[1].menu().actions()` raised «QMenu already deleted», and a row found
+     through `a.menu()` was dead once the walk returned. A submenu's row wrapper was also dead right
+     after the menu's `deleteLater`. Find a row by what it carries (`QAction.data()`), read right off
+     `exec`'s answer, and find submenus among the menu's children, not through `QAction.menu()`
+     (`test_atbar_bar` already did).
+301. **A real mouse click sent by script lands on whatever window is in front.** Twice that afternoon
+     Maya was behind Unreal, then Discord, and the clicks meant for its menu went to them. Read
+     `GetForegroundWindow` first, and prefer Qt events, Enter on a menu, or the animator's own click.

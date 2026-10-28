@@ -1074,17 +1074,17 @@ def classes():
                     menu.addSeparator()
                     continue
                 label, call = row
-                action = menu.addAction(label)
+                action = maya_hubqt.tag_row(menu.addAction(label), len(picked))
                 action.setEnabled(call is not None)
                 picked.append((action, call))
             try:
-                chosen = menu.exec(point)
+                #  by the row's number, never its wrapper (maya_hubqt.tag_row, 2026-10-28)
+                index = maya_hubqt.row_value(menu.exec(point))
             finally:
                 menu.deleteLater()
-            for action, call in picked:
-                if chosen is action and call is not None:
-                    guarded(self, call)
-                    return True
+            if isinstance(index, int) and 0 <= index < len(picked) and picked[index][1] is not None:
+                guarded(self, picked[index][1])
+                return True
             return False
 
         def layer_menu(self, point):

@@ -3231,24 +3231,55 @@ def build_menu(parent, actions):
             menu.addSeparator()
             continue
         label, action = item
-        row = menu.addAction(label)
+        row = tag_row(menu.addAction(label), len(rows))
         row.setEnabled(action is not None)
         rows.append((row, action))
     return menu, rows
 
 
+def tag_row(action, value):
+    """`value` written on a menu row (its QAction's data): what the row stands
+    for, read back by `row_value` off whatever exec answers. A row's Python
+    wrapper is no identity - measured 2026-10-28 in the animator's Maya
+    (animBot, AdvancedSkeleton and OverRig loaded): after a real click every
+    row wrapper of a menu still showing could be dead («Internal C++ object
+    (PySide6.QtGui.QAction) already deleted»), exec answered the row through a
+    NEW wrapper, `picked is row` was False and the scene tabs' «+» did
+    nothing. No Python code invalidated them (shiboken.invalidate and delete
+    were watched). The QAction itself lives, and its data reads through any
+    wrapper. Returns `action`."""
+    action.setData(value)
+    return action
+
+
+def row_value(action):
+    """What `tag_row` wrote on the row a menu's exec answered; None for no row
+    (dismissed), an untagged row, or a wrapper that cannot be read. Read it
+    straight off exec's answer, before the menu's deleteLater: a submenu's
+    row wrapper was dead right after it (PySide 6.8.3, measured offscreen)."""
+    if action is None:
+        return None
+    try:
+        return action.data()
+    except RuntimeError:
+        return None
+
+
 def run_menu(parent, point, actions):
     """`build_menu` shown at the global `point`; the picked row's callable is
-    run and what it returns handed back (None when nothing was picked)."""
+    run and what it returns handed back (None when nothing was picked). The
+    row is found by its number on the QAction (`row_value`), never by its
+    wrapper."""
     if not actions:
         return None
     menu, rows = build_menu(parent, actions)
     try:
-        picked = menu.exec(point)
+        index = row_value(menu.exec(point))     # read before deleteLater (see row_value)
     finally:
         menu.deleteLater()
-    for row, action in rows:
-        if picked is row and action is not None:
+    if isinstance(index, int) and 0 <= index < len(rows):
+        action = rows[index][1]
+        if action is not None:
             return action()
     return None
 

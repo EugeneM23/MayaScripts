@@ -2890,16 +2890,17 @@ def classes():
                 if action is None:
                     row.setEnabled(False)
                 else:
-                    picked[row] = action
+                    #  what the row runs is read off exec's answer, never found by its
+                    #  wrapper (maya_hubqt.tag_row, 2026-10-28)
+                    picked[maya_hubqt.tag_row(row, action)] = action
             return menu, picked
 
         def _menu(self, where, rows):
-            menu, picked = self.menu_rows(rows)
+            menu, _picked = self.menu_rows(rows)
             point = where if isinstance(where, QtCore.QPoint) else where.mapToGlobal(QtCore.QPoint(0, where.height()))
-            chosen = menu.exec(point)
+            action = maya_hubqt.row_value(menu.exec(point))     # before deleteLater
             menu.deleteLater()
-            action = picked.get(chosen)
-            if action is not None:
+            if callable(action):
                 try:
                     action()
                 except Exception:                            # noqa: BLE001

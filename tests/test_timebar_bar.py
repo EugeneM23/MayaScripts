@@ -709,6 +709,19 @@ class Menus(Strip):
     def labels(self, rows):
         return [r[0] for r in rows if r is not None]
 
+    def test_a_row_runs_when_its_wrapper_died_before_exec_answered(self):
+        """2026-10-28: a submenu's row too - found by what it carries, never by
+        its wrapper (the dict of wrappers found nothing)."""
+        from tests import menurows
+        ran = []
+        rows = [("Top", lambda: ran.append("top")), None,
+                ("Sub", [("Inner", lambda: ran.append("inner"))])]
+        with menurows.dead_rows(QT.QtWidgets, "Inner"):
+            self.strip._menu(QT.QtCore.QPoint(0, 0), rows)
+        with menurows.dead_rows(QT.QtWidgets, None):
+            self.strip._menu(QT.QtCore.QPoint(0, 0), rows)
+        self.assertEqual(ran, ["inner"])
+
     def test_the_key_menu(self):
         rows = self.strip.key_rows(30)
         self.assertEqual(rows[0], ("Keys at frame 30", None))

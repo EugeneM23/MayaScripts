@@ -155,15 +155,17 @@ def _pick_screen(win, choices):
     q = W._q()
     menu = q.QtWidgets.QMenu(win.root)
     menu.setStyleSheet(hubstyle.stylesheet(win.scale))
-    chosen, section = {}, None
+    chosen, section = [], None
     for kind, row, label in choices:
         if kind != section:
             menu.addSection(u"Экран" if kind == "screen" else u"Окно")
             section = kind
-        chosen[menu.addAction(label)] = (kind, row)
+        hubqt.tag_row(menu.addAction(label), len(chosen))
+        chosen.append((kind, row))
     b = win.buttons["screen"]
-    action = menu.exec(b.mapToGlobal(b.rect().topLeft()))
-    return chosen.get(action)
+    #  by the row's number, never its wrapper (maya_hubqt.tag_row, 2026-10-28)
+    index = hubqt.row_value(menu.exec(b.mapToGlobal(b.rect().topLeft())))
+    return chosen[index] if isinstance(index, int) and 0 <= index < len(chosen) else None
 
 
 REFUSALS = {

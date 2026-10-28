@@ -266,6 +266,13 @@ def _follower_class():
     return _CLASSES["follower"]
 
 
+def _parent_of(q, widget):
+    """`widget`'s parent widget by Qt's own method: animBot's widgets carry an
+    attribute named `parentWidget`, and `widget.parentWidget()` raised «object
+    is not callable» on every poll over them (2026-10-28)."""
+    return q.QtWidgets.QWidget.parentWidget(widget)
+
+
 def _ptr(q, widget):
     try:
         return int(q.shiboken.getCppPointer(widget)[0])
@@ -478,8 +485,8 @@ class Light(object):
                 widgets.append((widget, framed))
                 if top:
                     break
-                widget = widget.parentWidget()
-            except RuntimeError:
+                widget = _parent_of(self.q, widget)
+            except (RuntimeError, TypeError, AttributeError):
                 break
         return nodes, widgets
 
@@ -550,8 +557,8 @@ class Light(object):
                 watched.append(widget)
                 if widget.isWindow():
                     break
-                widget = widget.parentWidget()
-        except RuntimeError:
+                widget = _parent_of(self.q, widget)
+        except (RuntimeError, TypeError, AttributeError):
             pass
         self.watched = watched
 

@@ -402,21 +402,22 @@ def classes():
             menu = QtWidgets.QMenu(self)
             picks = []
             for label, checked, command in rows:
-                action = menu.addAction(label)
+                action = maya_hubqt.tag_row(menu.addAction(label), len(picks))
                 if command and "#1" in command:
                     action.setCheckable(True)
                     action.setChecked(bool(checked))
                 picks.append((action, command, checked if command and "#1" in command else None))
             try:
-                picked = self.exec_menu(menu, point)
+                #  by the row's number, never its wrapper (maya_hubqt.tag_row, 2026-10-28)
+                index = maya_hubqt.row_value(self.exec_menu(menu, point))
             finally:
                 menu.deleteLater()
-            for action, command, checked in picks:
-                if picked is action:
-                    self.model.run(command, checked)
-                    self.poll()
-                    self.update()
-                    return command
+            if isinstance(index, int) and 0 <= index < len(picks):
+                _action, command, checked = picks[index]
+                self.model.run(command, checked)
+                self.poll()
+                self.update()
+                return command
             return None
 
         def exec_menu(self, menu, point):

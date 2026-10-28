@@ -852,17 +852,18 @@ class Panel(object):
         builder = getattr(self.strip, "menu_rows", None)
         try:
             if builder is not None:
-                menu, picked = builder(rows, QtWidgets.QMenu(self.lanes))
+                menu, _picked = builder(rows, QtWidgets.QMenu(self.lanes))
             else:
-                menu, picked = _menu_rows(QtWidgets, rows, QtWidgets.QMenu(self.lanes))
+                menu, _picked = _menu_rows(QtWidgets, rows, QtWidgets.QMenu(self.lanes))
             menu.setStyleSheet(bar.stylesheet(self.tokens, self.ui))
-            chosen = menu.exec(global_point)
+            #  what the row runs, read off exec's answer before deleteLater - never
+            #  found by its wrapper (maya_hubqt.tag_row, 2026-10-28)
+            action = maya_hubqt.row_value(menu.exec(global_point))
             menu.deleteLater()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
             return
-        action = picked.get(chosen)
-        if action is not None:
+        if callable(action):
             try:
                 action()
             except Exception:                                # noqa: BLE001
@@ -1155,17 +1156,18 @@ class Panel(object):
         builder = getattr(self.strip, "menu_rows", None)
         try:
             if builder is not None:
-                menu, picked = builder(rows, QtWidgets.QMenu(self.column))
+                menu, _picked = builder(rows, QtWidgets.QMenu(self.column))
             else:
-                menu, picked = _menu_rows(QtWidgets, rows, QtWidgets.QMenu(self.column))
+                menu, _picked = _menu_rows(QtWidgets, rows, QtWidgets.QMenu(self.column))
             menu.setStyleSheet(bar.stylesheet(self.tokens, self.ui))
-            chosen = menu.exec(global_point)
+            #  what the row runs, read off exec's answer before deleteLater - never
+            #  found by its wrapper (maya_hubqt.tag_row, 2026-10-28)
+            action = maya_hubqt.row_value(menu.exec(global_point))
             menu.deleteLater()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
             return
-        action = picked.get(chosen)
-        if action is not None:
+        if callable(action):
             try:
                 action()
             except Exception:                                # noqa: BLE001
@@ -1427,7 +1429,7 @@ def _menu_rows(QtWidgets, rows, menu):
         if action is None:
             row.setEnabled(False)
         else:
-            picked[row] = action
+            picked[maya_hubqt.tag_row(row, action)] = action
     return menu, picked
 
 

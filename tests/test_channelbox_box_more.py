@@ -699,6 +699,15 @@ class Menus(Base):
         with auto_menu("Grey"):
             self.assertFalse(self.box._menu(QT.QtCore.QPoint(0, 0), [("Grey", None)]))
 
+    def test_a_row_runs_when_its_wrapper_died_before_exec_answered(self):
+        from tests import menurows
+        ran = []
+        with menurows.dead_rows(QT.QtWidgets, "Go"):
+            self.assertTrue(self.box._menu(QT.QtCore.QPoint(0, 0),
+                                           [("Other", lambda: ran.append("other")), None,
+                                            ("Go", lambda: ran.append("go"))]))
+        self.assertEqual(ran, ["go"])
+
 
 if __name__ == "__main__":
     unittest.main()

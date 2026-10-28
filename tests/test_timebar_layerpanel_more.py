@@ -20,6 +20,7 @@ try:
     QT = maya_hubqt.qt()
 except Exception:                                            # noqa: BLE001
     QT = None
+REAL_QMENU = QT.QtWidgets.QMenu if QT is not None else None     # auto_menu swaps the module's
 
 import maya_hubstyle
 from maya_timebar import layerlook as L, look
@@ -140,11 +141,14 @@ def boom(*_a, **_k):
 
 
 def find_action(menu, label):
+    #  submenus by the menu's children: QAction.menu() hands back a wrapper that dies with
+    #  the temporary it came through, the row found in it with it (PySide6 6.8)
+    subs = dict((c.title(), c) for c in menu.children() if isinstance(c, REAL_QMENU))
     for a in menu.actions():
         if a.text() == label:
             return a
-        if a.menu() is not None:
-            found = find_action(a.menu(), label)
+        if a.text() in subs:
+            found = find_action(subs[a.text()], label)
             if found is not None:
                 return found
     return None
@@ -682,6 +686,12 @@ class Column(Base):
         with auto_menu("Merge down"):
             self.panel.menu_at(1, QT.QtCore.QPoint(10, 10))
         self.assertEqual(built, [11])
+        self.assertIn(("merge_down", "A1"), self.link.log)
+
+    def test_a_row_runs_when_its_wrapper_died_before_exec_answered(self):
+        from tests import menurows
+        with menurows.dead_rows(QT.QtWidgets, "Merge down"):
+            self.panel.menu_at(1, QT.QtCore.QPoint(10, 10))
         self.assertIn(("merge_down", "A1"), self.link.log)
 
     def test_a_menu_whose_builder_or_row_fails_is_printed(self):

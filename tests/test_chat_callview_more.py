@@ -157,6 +157,12 @@ class ScreenMenu(Base):
             self.assertEqual(V._pick_screen(w, choices), ("window", 0))
         self.assertEqual(sections, [u"Экран", u"Окно"])
 
+    def test_a_pick_counts_when_its_row_wrapper_died_before_exec_answered(self):
+        from tests import menurows
+        w = self.live()
+        with answered_menus(lambda menu: menurows.answer_dead(menu, "Maya")):
+            self.assertEqual(V._pick_screen(w, V.screen_choices(FakeRequest())), ("window", 0))
+
     def test_closing_the_menu_picks_nothing(self):
         w = self.live()
         with answered_menus(lambda menu: None):
