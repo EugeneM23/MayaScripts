@@ -143,7 +143,7 @@ class CameraControl(unittest.TestCase):
 
     def test_the_parents(self):
         from maya_scenesetup import camera
-        self.assertEqual(camera.PARENTS, ("Main", "Root", "Chest", "World"))
+        self.assertEqual(camera.PARENTS, ("Main", "Root", "Chest", "Head", "World"))
         self.assertTrue(camera.is_main("|a|Manny_Rig:Main"))
         self.assertFalse(camera.is_main("|a|Manny_Rig:MainSystem"))
 

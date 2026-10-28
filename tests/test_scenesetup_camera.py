@@ -207,3 +207,20 @@ class Messages(unittest.TestCase):
 
     def test_ambiguous_asks_for_the_picker(self):
         self.assertIn("select", camera.AMBIGUOUS_BONE.lower())
+
+
+class Parents(unittest.TestCase):
+
+    def test_five_parents_head_before_world(self):
+        self.assertEqual(camera.PARENTS, ("Main", "Root", "Chest", "Head", "World"))
+
+    def test_position_only_means_nothing_for_main_and_world(self):
+        self.assertFalse(camera.position_applies("Main"))
+        self.assertFalse(camera.position_applies("World"))
+        for choice in ("Root", "Chest", "Head"):
+            self.assertTrue(camera.position_applies(choice), choice)
+
+    def test_the_follow_group_is_named_in_the_bone_s_namespace(self):
+        self.assertEqual(camera.follow_name_for("|g|Manny:root|Manny:camera_root"),
+                         "Manny:Camera_follow")
+        self.assertEqual(camera.follow_name_for("camera_root"), "Camera_follow")

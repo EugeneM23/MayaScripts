@@ -42,7 +42,14 @@ CAMERA_NAME = "SceneSetup_camera"
 CONTROL_MARKER = "mayaSceneSetupCameraControl"
 CONTROL_NAME = "Camera_ctrl"
 PARENT_MARKER = "skeldarCameraParent"       # which of PARENTS it stands under
-PARENTS = ("Main", "Root", "Chest", "World")
+PARENTS = ("Main", "Root", "Chest", "Head", "World")
+HEAD = "FKHead_M"
+# Position only (2026-10-28, «опцией которая может привязать только позицию как поинт констрейн»):
+# the control in a group under Main, point-constrained to the chosen node - its rotation stays Main's
+FOLLOW_MARKER = "skeldarCameraFollow"       # on the group: the followed node's UUID
+FOLLOW_NAME = "Camera_follow"
+POSITION_MARKER = "skeldarCameraPosition"   # on the control: 1 while it follows a position only
+NO_CONTROL = "no camera with a control on %s - press Camera Setup first"
 PARENT_LINE = "%s follows %s now - its motion kept"
 CONTROL_WORDS = " - animate %s (under %s)"
 CONTROL_SIZE = 9.0                          # cm: the drawing's half width is 0.6 of it
@@ -172,6 +179,19 @@ def control_name_for(bone):
     return namespace + ":" + CONTROL_NAME if namespace else CONTROL_NAME
 
 
+def position_applies(choice):
+    """Does Position only change anything for `choice`? Main is the rotation space already; World
+    has no position to follow. Pure."""
+    return choice not in ("Main", "World")
+
+
+def follow_name_for(bone):
+    """The follow group's name, in the bone's own namespace. Pure."""
+    short = (bone or "").split("|")[-1]
+    namespace = short.rsplit(":", 1)[0] if ":" in short else ""
+    return namespace + ":" + FOLLOW_NAME if namespace else FOLLOW_NAME
+
+
 def is_main(node):
     """Is `node` a rig's Main (its leaf)?"""
     return leaf(node) == "Main"
@@ -258,8 +278,13 @@ def teardown(bone, start, end):
     if constraints:
         _bake(bone, start, end)
         cmds.delete(constraints)
+    old = None
     if control:
+        from maya_scenesetup import cameraaim
+        cameraaim.discard(control)
+        old = follow_of(control)
         cmds.delete(control)            # its camera with it
+        _drop_follow(old)
     elif camera_node:
         cmds.delete(camera_node)
     return True
@@ -319,13 +344,18 @@ def go_home(control):
     """The control back under its default parent (its rig's Main, else its character group, else
     world level), its motion kept - a knot it rode is going (1P Setup's chest baked off). Its
     long path."""
+    old = follow_of(control)
     rig = _rig_of(control)
     main = getattr(rig, "main", None) if rig else None
     if main and cmds.objExists(main):
-        return move_control(control, (cmds.ls(main, long=True) or [main])[0], "Main")
-    from maya_scenesetup import chargroup
-    group = chargroup.group_of(control)
-    return move_control(control, group if group != control else None, "World")
+        control = move_control(control, (cmds.ls(main, long=True) or [main])[0], "Main")
+    else:
+        from maya_scenesetup import chargroup
+        group = chargroup.group_of(control)
+        control = move_control(control, group if group != control else None, "World")
+    _mark_position(control, False)
+    _drop_follow(old)
+    return control
 
 
 def parent_target(bone, choice):
@@ -348,7 +378,72 @@ def parent_target(bone, choice):
         chest = firstperson.chest_of(rig)
         return (chest, "") if chest else (None, "Chest: no 1P Setup on %s"
                                           % rig.namespace.split(":")[-1])
+    if choice == "Head":
+        import maya_rigs
+        head = maya_rigs.node(rig, HEAD)
+        if not cmds.objExists(head):
+            return None, "Head: no %s on %s" % (HEAD, maya_rigs.label(rig))
+        return (cmds.ls(head, long=True) or [head])[0], ""
     return None, "no parent called %s" % choice
+
+
+def follow_of(control):
+    """The Camera_follow group the control stands in, or None."""
+    parents = (cmds.listRelatives(control, parent=True, fullPath=True) or []) if control else []
+    if parents and cmds.attributeQuery(FOLLOW_MARKER, node=parents[0], exists=True):
+        return parents[0]
+    return None
+
+
+def is_position_only(control):
+    return bool(control) and cmds.attributeQuery(POSITION_MARKER, node=control, exists=True) \
+        and bool(cmds.getAttr(control + "." + POSITION_MARKER))
+
+
+def _make_follow(bone, target):
+    """A group under the rig's Main at identity, point-constrained (no offset) to `target`."""
+    rig = _rig_of(bone)
+    main = (cmds.ls(rig.main, long=True) or [rig.main])[0]
+    group = cmds.createNode("transform", name=scope.as_created(follow_name_for(bone)),
+                            parent=main, skipSelect=True)
+    group = cmds.ls(group, long=True)[0]
+    cmds.addAttr(group, longName=FOLLOW_MARKER, dataType="string")
+    cmds.setAttr(group + "." + FOLLOW_MARKER, cmds.ls(target, uuid=True)[0], type="string")
+    cmds.pointConstraint(target, group, maintainOffset=False)
+    return group
+
+
+def _drop_follow(group):
+    """An emptied follow group deleted (its point constraint with it)."""
+    if not group or not cmds.objExists(group):
+        return
+    kids = [c for c in cmds.listRelatives(group, children=True, fullPath=True) or []
+            if not cmds.objectType(c, isAType="constraint")]
+    if not kids:
+        cmds.delete(group)
+
+
+def _mark_position(control, on):
+    if not cmds.attributeQuery(POSITION_MARKER, node=control, exists=True):
+        cmds.addAttr(control, longName=POSITION_MARKER, attributeType="bool")
+    cmds.setAttr(control + "." + POSITION_MARKER, lock=False)
+    cmds.setAttr(control + "." + POSITION_MARKER, bool(on))
+    cmds.setAttr(control + "." + POSITION_MARKER, lock=True)
+
+
+def release_followers(node):
+    """Every control following `node`'s position only (a follow group pointing at it) back home -
+    `node` is going (1P Setup's chest baked off). The lines."""
+    key = (cmds.ls(node, uuid=True) or [None])[0]
+    lines = []
+    for group in cmds.ls("*." + FOLLOW_MARKER, recursive=True, objectsOnly=True, long=True) or []:
+        if cmds.getAttr(group + "." + FOLLOW_MARKER) != key:
+            continue
+        for child in cmds.listRelatives(group, children=True, fullPath=True) or []:
+            if is_control(child):
+                go_home(child)
+                lines.append("%s back under Main" % leaf(child))
+    return lines
 
 
 def parent_choice(control):
@@ -369,13 +464,18 @@ def _mark_parent(control, choice):
 
 def move_control(control, parent, choice):
     """The control under `parent` (None: world level) with its motion kept: its world track
-    baked back in its new space (Tools > Inside's road, `reparent._rebake`). Its long path."""
+    baked back in its new space (Tools > Inside's road, `reparent._rebake`). Its long path. A
+    control in Aim Mode leaves it first and enters it again in its new parent (2026-10-28)."""
     from maya_tools import knots, reparent
     current = cmds.listRelatives(control, parent=True, fullPath=True)
     current = current[0] if current else None
     if current == parent:
         _mark_parent(control, choice)
         return control
+    from maya_scenesetup import cameraaim
+    aimed = cameraaim.is_aimed(control)
+    if aimed:
+        cameraaim.leave(control)
     span = reparent._take([control], [parent])
     scales, refusal = reparent._scale_plans([(control, parent)], span)
     if refusal:            # a camera's scale is its own: left as it stands rather than refused
@@ -392,22 +492,35 @@ def move_control(control, parent, choice):
 
     control = reparent._rebake([control], span, operate, scales)[0]
     _mark_parent(control, choice)
+    if aimed:
+        cameraaim.enter(control)
     return control
 
 
-def set_parent(bone, choice):
-    """The camera's control for `bone` under the parent `choice` names, its motion kept. The
+def set_parent(bone, choice, position_only=False):
+    """The camera's control for `bone` under the parent `choice` names, its motion kept; with
+    `position_only` (Root / Chest / Head) in a follow group under Main point-constrained to it. The
     line."""
     control = control_for(bone)
     if not control:
-        return "no camera with a control on %s - press Camera Setup first" % leaf(bone)
+        return NO_CONTROL % leaf(bone)
     target, refusal = parent_target(bone, choice)
     if refusal:
         return refusal
+    follow = bool(position_only) and position_applies(choice)
     from maya_tools import knots
     with knots._press("skeldarCameraParent"):       # one undo step, autoKey off
+        old = follow_of(control)
+        if follow:
+            target = _make_follow(bone, target)
         control = move_control(control, target, choice)
-    return PARENT_LINE % (leaf(control), choice)
+        _mark_position(control, follow)
+        if old and old != target:
+            _drop_follow(old)
+    line = PARENT_LINE % (leaf(control), choice + (" (position)" if follow else ""))
+    if position_only and not follow:
+        line += " - Position only changes nothing for %s" % choice
+    return line
 
 
 def _control_points(size):
