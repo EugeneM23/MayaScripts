@@ -40,18 +40,30 @@ ANIMATION = "Import|IncludeGrp|Animation"
 
 
 class FakePlugin(object):
-    """mel.eval for the FBX commands the export sends, and the plugin's latch."""
+    """mel.eval for the FBX commands the export sends, and the plugin's latch.
 
-    def __init__(self, scene_fps, latched=None, import_resets=True):
+    `outside`: frames a bone keeps keys at past the baked range - the plugin writes them into the
+    file as they are (measured 2026-10-28) unless a split take cut to the range is set and the
+    original take deleted. The split list and the delete flag outlive FBXResetExport (measured)."""
+
+    def __init__(self, scene_fps, latched=None, import_resets=True, outside=(),
+                 honours_split=True, split_missing=False, export_raises=False):
         self.fps = scene_fps
         self.latched = latched
         self.import_resets = import_resets
+        self.outside = outside
+        self.honours_split = honours_split
+        self.split_missing = split_missing
+        self.export_raises = export_raises
         self.calls = []
         self.props = {SELECTOR: "Custom", TIMELINE: 1, ANIMATION: 0}
         self.mode = "merge"
         self.set_rate = 1
         self.exports = []
         self.imports = []
+        self.splits = []
+        self.delete = 0
+        self.exported_with = []
 
     def eval(self, text):
         self.calls.append(text)
@@ -62,14 +74,24 @@ class FakePlugin(object):
         return None
 
     def _one(self, text):
+        if text.startswith("FBXExportSplitAnimationIntoTakes") or text.startswith(
+                "FBXExportDeleteOriginalTakeOnSplitAnimation"):
+            return self._split(text)
         if text.startswith("FBXExport -f"):
+            if self.export_raises:
+                raise RuntimeError("FBXExport failed")
             path = text.split('"')[1]
             rate = self.latched or self.fps
-            write_fbx(path, [("root", "Lcl Rotation", frames(rate, 0, 59 * rate / self.fps))],
-                      extra_layer_curve=False)
+            times = frames(rate, 0, 59 * rate / self.fps) + [f / float(self.fps)
+                                                             for f in self.outside]
+            if self.honours_split and self.splits and self.delete:
+                _name, start, end = self.splits[0]
+                times = [t for t in times if start / self.fps - 1e-9 <= t <= end / self.fps + 1e-9]
+            write_fbx(path, [("root", "Lcl Rotation", sorted(times))], extra_layer_curve=False)
             if self.latched is None and self.fps != 30:
                 self.latched = self.fps
             self.exports.append(path)
+            self.exported_with.append((list(self.splits), self.delete))
             return None
         if text.startswith("FBXImport -f"):
             self.imports.append((self.mode, self.props[SELECTOR], self.props[TIMELINE],
@@ -98,6 +120,24 @@ class FakePlugin(object):
             else:
                 self.props[path] = 1 if value == "true" else 0
             return None
+        return None
+
+    def _split(self, text):
+        if self.split_missing:
+            raise RuntimeError("Cannot find procedure \"%s\"." % text.split()[0])
+        if text == "FBXExportDeleteOriginalTakeOnSplitAnimation -q":
+            return self.delete
+        if text.startswith("FBXExportDeleteOriginalTakeOnSplitAnimation -v"):
+            self.delete = 1 if text.split()[-1] == "true" else 0
+            return None
+        if text == "FBXExportSplitAnimationIntoTakes -q":
+            return ["name=%s start=%d end=%d" % s for s in self.splits] or 0
+        if text == "FBXExportSplitAnimationIntoTakes -c":
+            self.splits = []
+            return None
+        name = text.split('"')[1]
+        start, end = text.split('"')[2].split()
+        self.splits.append((name, int(float(start)), int(float(end))))
         return None
 
 
@@ -153,9 +193,9 @@ class Rig(unittest.TestCase):
          animexport._apply_export_options, animexport._put_time,
          animexport.PROBE_FOLDER) = self.saved
 
-    def plugin(self, fps, latched=None, import_resets=True):
+    def plugin(self, fps, latched=None, import_resets=True, **fake):
         self.cmds = FakeCmds()
-        self.fake = FakePlugin(fps, latched, import_resets)
+        self.fake = FakePlugin(fps, latched, import_resets, **fake)
         animexport.cmds = self.cmds
         animexport.mel = types.SimpleNamespace(eval=self.fake.eval)
         animexport.animimport.scene_fps = lambda: float(fps)
@@ -235,6 +275,80 @@ class ExportChecked(Rig):
         select = self.plugin(24)
         self.assertEqual(animexport._export_checked(self.path, 0, 59, select), "")
         self.assertEqual(self.fake.imports, [])
+
+
+class OnlyTheRangeReachesTheFile(Rig):
+    """2026-10-28, «чому не експортиться анімація»: a 0-62 scene whose weapon_l and camera_bone
+    keep their own keys to 65. The plugin wrote 0..62 and 64, 65; the check read the hole as a
+    latched rate, reset, exported again, and refused with «restart Maya» - which could not help."""
+
+    def frames_in_file(self):
+        return sorted(set(round(t * 30.0, 6) for c in self.keys() for t in c))
+
+    def test_keys_past_the_range_never_reach_the_file(self):
+        select = self.plugin(30, outside=(-5, 64, 65))
+        self.assertEqual(animexport._export_checked(self.path, 0, 59, select), "")
+        got = self.frames_in_file()
+        self.assertEqual((got[0], got[-1], len(got)), (0.0, 59.0, 60))
+        self.assertEqual(len(self.fake.exports), 1)
+        self.assertEqual(self.fake.imports, [])
+
+    def test_the_file_is_one_take_cut_to_the_range_under_its_usual_name(self):
+        select = self.plugin(30, outside=(64, 65))
+        animexport._export_checked(self.path, 0, 59, select)
+        self.assertEqual(self.fake.exported_with, [([("Take 001", 0, 59)], 1)])
+
+    def test_nothing_is_left_split_for_the_next_export(self):
+        """FBXResetExport keeps a split (measured): left set, every later FBX export of the
+        session - Stash's included - would come out cut to this clip's range."""
+        select = self.plugin(30, outside=(64, 65))
+        animexport._export_checked(self.path, 0, 59, select)
+        self.assertEqual((self.fake.splits, self.fake.delete), ([], 0))
+
+    def test_the_animators_own_split_takes_come_back(self):
+        select = self.plugin(30)
+        self.fake.splits, self.fake.delete = [("walk", 5, 20), ("run b", 21, 40)], 0
+        animexport._export_checked(self.path, 0, 59, select)
+        self.assertEqual(self.fake.exported_with, [([("Take 001", 0, 59)], 1)])
+        self.assertEqual(self.fake.splits, [("walk", 5, 20), ("run b", 21, 40)])
+        self.assertEqual(self.fake.delete, 0)
+
+    def test_the_split_is_put_back_when_the_export_fails(self):
+        select = self.plugin(30, export_raises=True)
+        self.fake.delete = 1
+        with self.assertRaises(RuntimeError):
+            animexport._export_checked(self.path, 0, 59, select)
+        self.assertEqual((self.fake.splits, self.fake.delete), ([], 1))
+
+    def test_a_reset_export_is_cut_to_the_range_too(self):
+        select = self.plugin(30, latched=24, outside=(64, 65))
+        note = animexport._export_checked(self.path, 0, 59, select)
+        self.assertIn("exported again", note)
+        self.assertEqual(fbxkeys.bake_problem(self.keys(), 30.0), "")
+        self.assertEqual(self.frames_in_file()[-1], 59.0)
+        # the clip twice, cut; the rate probe between them is not
+        self.assertEqual([w for w, _d in self.fake.exported_with],
+                         [[("Take 001", 0, 59)], [], [("Take 001", 0, 59)]])
+        self.assertEqual(self.fake.splits, [])
+
+    def test_keys_outside_in_the_file_refuse_as_what_they_are_not_as_a_stuck_rate(self):
+        """Should the plugin ever ignore the split: no reset (it cannot help), the file gone, and
+        the words name the keys and the range."""
+        select = self.plugin(30, outside=(64, 65), honours_split=False)
+        with self.assertRaises(RuntimeError) as caught:
+            animexport._export_checked(self.path, 0, 59, select)
+        text = str(caught.exception)
+        self.assertIn("64", text)
+        self.assertIn("65", text)
+        self.assertIn("0-59", text)
+        self.assertNotIn("restart Maya", text)
+        self.assertEqual(self.fake.imports, [])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_a_plugin_without_split_takes_still_exports(self):
+        select = self.plugin(30, split_missing=True)
+        self.assertEqual(animexport._export_checked(self.path, 0, 59, select), "")
+        self.assertTrue(os.path.exists(self.path))
 
 
 class EveryRoadIsChecked(unittest.TestCase):

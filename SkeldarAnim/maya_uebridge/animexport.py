@@ -10,6 +10,7 @@ it is put back.
 import contextlib
 import math
 import os
+import re
 import tempfile
 
 import maya.cmds as cmds
@@ -77,6 +78,17 @@ REARMED = ("the FBX plugin was baking {0} (left by an earlier FBX export in this
 STUCK = ("the FBX plugin bakes {0} and would not let go - nothing was exported; restart Maya "
          "and export again")
 
+# The file's one take cut to the exported range (2026-10-28, «чому не експортиться анімація»):
+# the bake writes start..end, but a bone keyed on its own keeps every key it has past them
+# (measured: a 0-62 export of a scene keyed to 65 held 0..62, 64 and 65) - a clip longer than the
+# scene says, and a hole the rate check took for a latched plugin. A split take over the range
+# with the original take deleted holds start..end only, every key inside as before, under the
+# take's usual name. The split outlives FBXResetExport (measured), so it is set for the length of
+# one export and the animator's own is put back.
+TAKE = "Take 001"
+OUTSIDE = ("{0} reached the file - nothing was exported; set the range over every key, or delete "
+           "the keys past it")
+
 
 def union_range(animation, playback):
     """The exported range: animation range UNION playback range, snapped to
@@ -132,6 +144,34 @@ def export_command(fbx_path):
     return 'FBXExport -f "{0}" -s;'.format(fbx_path.replace("\\", "/"))
 
 
+def _frame(value):
+    return "%d" % value if float(value) == int(value) else "%g" % value
+
+
+def split_command(name, start, end):
+    """MEL adding one split take `name` over frames `start`..`end`. Pure."""
+    return 'FBXExportSplitAnimationIntoTakes -v "{0}" {1} {2}'.format(name, _frame(start),
+                                                                      _frame(end))
+
+
+def parse_split_takes(answer):
+    """[(name, start, end)] out of `FBXExportSplitAnimationIntoTakes -q`: 0 with nothing set,
+    else "name=<name> start=<frame> end=<frame>" for each (measured). Pure."""
+    if not answer:
+        return []
+    if isinstance(answer, str):
+        answer = [answer]
+    out = []
+    for text in answer:
+        match = re.match(r"^name=(.*) start=(\S+) end=(\S+)$", str(text))
+        if match:
+            try:
+                out.append((match.group(1), float(match.group(2)), float(match.group(3))))
+            except ValueError:
+                pass
+    return out
+
+
 def resolve_root():
     """The skeleton the export takes - the import merge's own rule.
 
@@ -178,30 +218,79 @@ def _apply_export_options(start, end):
     return missing
 
 
+@contextlib.contextmanager
+def _range_take(start, end):
+    """The file's one take cut to `start`..`end` for the length of an export (see TAKE). A plugin
+    without splits exports as before: the read-back still refuses keys past the range."""
+    prior, delete = None, None
+    try:
+        prior = parse_split_takes(mel.eval("FBXExportSplitAnimationIntoTakes -q"))
+        delete = mel.eval("FBXExportDeleteOriginalTakeOnSplitAnimation -q")
+        mel.eval("FBXExportSplitAnimationIntoTakes -c")
+        mel.eval(split_command(TAKE, start, end))
+        mel.eval("FBXExportDeleteOriginalTakeOnSplitAnimation -v true")
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        yield
+    finally:
+        if prior is not None:
+            try:
+                mel.eval("FBXExportSplitAnimationIntoTakes -c")
+                for name, first, last in prior:
+                    mel.eval(split_command(name, first, last))
+                if delete is not None:
+                    mel.eval("FBXExportDeleteOriginalTakeOnSplitAnimation -v {0}".format(
+                        "true" if delete else "false"))
+            except Exception:                                    # noqa: BLE001
+                pass
+
+
+def _export_range(fbx_path, start, end):
+    with _range_take(start, end):
+        mel.eval(export_command(fbx_path))
+
+
+def _discard(fbx_path):
+    try:
+        os.remove(fbx_path)
+    except OSError:
+        pass
+
+
 def _export_checked(fbx_path, start, end, select):
-    """Export the selection, read the file back, and put a stuck bake rate right.
+    """Export the selection cut to `start`..`end`, read the file back, and put a stuck bake rate
+    right.
 
     Returns "" when the bones were baked on every frame of the scene's rate, else the note that
     the plugin had to be reset (the file is then the second export's). Raises RuntimeError, the
-    file removed, when even the reset does not help: a clip at the wrong rate must not reach
-    Unreal or a colleague. `select` puts the export's own selection back after the reset."""
-    mel.eval(export_command(fbx_path))
+    file removed, when even the reset does not help, or when keys past the range reached the file
+    (no reset: it cannot help): a clip at the wrong rate or length must not reach Unreal or a
+    colleague. `select` puts the export's own selection back after the reset."""
+    _export_range(fbx_path, start, end)
     fps = animimport.scene_fps()
-    problem = fbxkeys.bake_problem(fbxkeys.read_key_times(fbx_path), fps)
+    problem = _read_back(fbx_path, fps, start, end)
     if not problem:
         return ""
     rearm_bake_rate()
     _apply_export_options(start, end)
     select()
-    mel.eval(export_command(fbx_path))
-    still = fbxkeys.bake_problem(fbxkeys.read_key_times(fbx_path), fps)
+    _export_range(fbx_path, start, end)
+    still = _read_back(fbx_path, fps, start, end)
     if still:
-        try:
-            os.remove(fbx_path)
-        except OSError:
-            pass
+        _discard(fbx_path)
         raise RuntimeError(STUCK.format(still))
     return REARMED.format(problem)
+
+
+def _read_back(fbx_path, fps, start, end):
+    """The file's bake problem inside the range; keys past it refuse there and then."""
+    keys = fbxkeys.read_key_times(fbx_path)
+    outside = fbxkeys.outside_range(keys, fps, start, end)
+    if outside:
+        _discard(fbx_path)
+        raise RuntimeError(OUTSIDE.format(outside))
+    return fbxkeys.bake_problem(keys, fps, start, end)
 
 
 def rearm_bake_rate():

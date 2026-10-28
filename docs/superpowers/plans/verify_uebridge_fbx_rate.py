@@ -32,7 +32,8 @@ import sys
 import tempfile
 import traceback
 
-REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
+REPO = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))), "SkeldarAnim")
 sys.path.insert(0, REPO)
 
 import maya.standalone  # noqa: E402

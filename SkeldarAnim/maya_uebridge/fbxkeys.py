@@ -153,15 +153,26 @@ def key_rate(curves):
     return round(1.0 / step, 3)
 
 
-def bake_problem(curves, fps):
+def _inside(seconds, fps, start, end):
+    frame = seconds * fps
+    return start - TOLERANCE <= frame <= end + TOLERANCE
+
+
+def bake_problem(curves, fps, start=None, end=None):
     """"" when every bone key lies on the scene's frame grid and the densest curve has a key on
     every frame, else what was wrong ("keys every 1/24 s, the scene is 30 fps"). Pure.
 
     Both halves are needed: latched at 24 in a 30 scene the keys leave the grid, but latched at 15
-    every key lands on a 30 frame and half the frames are missing."""
+    every key lands on a 30 frame and half the frames are missing.
+
+    Given the exported range (frames), only the keys inside it are looked at: keys past it are
+    `outside_range`'s to tell (2026-10-28: a bone's own keys at 64 and 65 after a 0..62 bake left
+    a hole the check read as a latched plugin)."""
     if not fps or not curves:
         return ""
     fps = float(fps)
+    if start is not None and end is not None:
+        curves = [[t for t in times if _inside(t, fps, start, end)] for times in curves]
     densest = max(curves, key=len)
     if len(densest) < 2:
         return ""
@@ -171,3 +182,16 @@ def bake_problem(curves, fps):
         return ""
     rate = key_rate(curves)
     return "keys every 1/{0:g} s, the scene is {1:g} fps".format(rate or 0, fps)
+
+
+def outside_range(curves, fps, start, end):
+    """"" when every bone key lies inside frames `start`..`end`, else what reached the file past
+    them ("24 keys at frames 64 to 65, outside 0-62"). Pure."""
+    if not fps or not curves:
+        return ""
+    fps = float(fps)
+    out = [round(t * fps, 3) for times in curves for t in times if not _inside(t, fps, start, end)]
+    if not out:
+        return ""
+    return "{0} key{1} at frames {2:g} to {3:g}, outside {4:g}-{5:g}".format(
+        len(out), "" if len(out) == 1 else "s", min(out), max(out), start, end)

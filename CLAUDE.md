@@ -15235,3 +15235,41 @@ The animator, on port 7004: «нужно поченить вкладки сей�
 301. **A real mouse click sent by script lands on whatever window is in front.** Twice that afternoon
      Maya was behind Unreal, then Discord, and the clicks meant for its menu went to them. Read
      `GetForegroundWindow` first, and prefer Qt events, Enter on a menu, or the animator's own click.
+
+## Export: keys past the range stay out of the file (2026-10-28)
+
+«чому не експортиться анімація» (port 7003, `AS_Dg_Atk_NLt_NLt_NHd_1P_5`): Export to uasset refused
+with «the FBX plugin bakes keys every 1/30 s, the scene is 30 fps and would not let go ... restart
+Maya». The rate was right. The scene ran 0-62 and `weapon_l` / `camera_bone` carried keys of their
+own to 65: **the FBX plugin bakes BakeComplexStart..End and writes every key a bone has past them as
+it is** (trap 302) - the file held 0..62, 64 and 65 on 12 curves, and `bake_problem` read the hole
+62 -> 64 as a latched rate, reset, exported again and refused. A restart could never help, and the
+«keys outside ... are not in the clip» warning had never been true.
+- **`animexport._range_take`** around every export of the clip (`_export_range`, both exports of
+  `_export_checked`; the rate probe between them is not cut): `FBXExportSplitAnimationIntoTakes` one
+  take `TAKE` = `Take 001` over start..end, `FBXExportDeleteOriginalTakeOnSplitAnimation` true. The file
+  is one `Take 001` over the range, as before, every key inside unchanged (re-imported to 2e-6). The
+  split and the delete flag **outlive FBXResetExport** (trap 303), so the animator's own are read
+  (`parse_split_takes` of `-q`: 0, or "name=... start=... end=...") and put back, also when the export
+  raises; a plugin without the commands exports as before.
+- **`fbxkeys.bake_problem(curves, fps, start, end)`** looks only inside the range;
+  **`fbxkeys.outside_range`** names what is past it. `_read_back` refuses keys past the range by name
+  (`OUTSIDE`, the file removed, no reset - it cannot help) before any rate question.
+Proof: unit tests `test_uebridge_fbxkeys.TheExportedRange`, `test_uebridge_export.SplitTakes`,
+`test_uebridge_export_rate.OnlyTheRangeReachesTheFile` (the fake plugin keeps the stray keys and the
+split as the real one does); `docs/superpowers/plans/verify_uebridge_export_range.py` **12/12** and
+`latched` **1/1** in mayapy standalone (the control: a bare bake of 0-40 holds -5 and 45; Manny in its
+character group with a bone keyed to -5, 44, 45 exports 0..40 at Unreal's 30, one take, the scene and the
+splits as they were, Cascadeur's layout too, a 24 latch reset and cut); `verify_uebridge_fbx_rate.py`
+11/11 + 1/1 again (both verify scripts find the repo from their own folder now). Live on 7003, the
+animator's scene through the new code: 771 curves, frames 0..62, one take, the split cleared, no node
+or key changed. **Not seen through Unreal's import.**
+
+302. **The FBX plugin's bake keeps a bone's own keys past BakeComplexStart / End.** It bakes the
+     range and writes the curve's keys outside it as they are: a 0-62 export of a bone keyed to 65
+     holds 64 and 65. Cut the file's take to the range (`animexport._range_take`).
+
+303. **`FBXExportSplitAnimationIntoTakes` and `FBXExportDeleteOriginalTakeOnSplitAnimation` outlive
+     FBXResetExport** and new scenes: a split left set cuts every later FBX export of the session, and
+     a file exported after it carries `Take 001` plus the split. Set them for one export, put the
+     animator's back.

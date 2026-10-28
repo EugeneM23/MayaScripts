@@ -183,6 +183,46 @@ class BakeProblem(unittest.TestCase):
         self.assertEqual(fbxkeys.bake_problem([frames(24, 0, 47)], 24.0), "")
 
 
+class TheExportedRange(unittest.TestCase):
+    """2026-10-28, the animator: «чому не експортиться анімація». A 0-62 scene whose weapon_l and
+    camera_bone carry their own keys to frame 65: the plugin baked 0..62 and kept 64 and 65, and
+    the rate check read the hole 62 -> 64 as a latched plugin («bakes keys every 1/30 s, the scene
+    is 30 fps and would not let go»)."""
+
+    MEASURED = frames(30, 0, 62) + [64 / 30.0, 65 / 30.0]
+
+    def test_the_measured_file_was_read_as_a_stuck_rate(self):
+        self.assertIn("1/30", fbxkeys.bake_problem([self.MEASURED], 30.0))
+
+    def test_with_the_range_the_rate_check_looks_only_inside_it(self):
+        self.assertEqual(fbxkeys.bake_problem([self.MEASURED], 30.0, 0, 62), "")
+
+    def test_a_real_latch_is_still_caught_inside_the_range(self):
+        times = frames(24, 0, 47) + [59 / 30.0, 64 / 30.0]
+        self.assertIn("1/24", fbxkeys.bake_problem([times], 30.0, 0, 59))
+
+    def test_keys_inside_the_range_are_nothing_to_say(self):
+        self.assertEqual(fbxkeys.outside_range([frames(30, 0, 62)], 30.0, 0, 62), "")
+        self.assertEqual(fbxkeys.outside_range([frames(30, -12, 40)], 30.0, -12, 40), "")
+
+    def test_keys_outside_are_counted_and_placed(self):
+        text = fbxkeys.outside_range([[-5 / 30.0] + frames(30, 0, 62) + [64 / 30.0, 65 / 30.0]],
+                                     30.0, 0, 62)
+        self.assertIn("3 keys", text)
+        self.assertIn("-5", text)
+        self.assertIn("65", text)
+        self.assertIn("0-62", text)
+
+    def test_the_last_frame_read_back_a_hair_over_is_inside(self):
+        """FBX ticks read back as 62.00000000000001 (measured)."""
+        self.assertEqual(fbxkeys.outside_range([[0.0, 62.00000000000001 / 30.0]], 30.0, 0, 62), "")
+
+    def test_no_keys_or_no_rate_say_nothing(self):
+        self.assertEqual(fbxkeys.outside_range([], 30.0, 0, 62), "")
+        self.assertEqual(fbxkeys.outside_range(None, 30.0, 0, 62), "")
+        self.assertEqual(fbxkeys.outside_range([[9.0]], None, 0, 62), "")
+
+
 class KeyRate(unittest.TestCase):
 
     def test_the_rate_is_the_commonest_step(self):

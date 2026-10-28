@@ -110,6 +110,37 @@ class ExportCommand(unittest.TestCase):
                          'FBXExport -f "C:/a/b.fbx" -s;')
 
 
+class SplitTakes(unittest.TestCase):
+    """The file's one take cut to the exported range (2026-10-28): the plugin's split, written
+    and read back as `FBXExportSplitAnimationIntoTakes -q` answers it (measured)."""
+
+    def test_the_command_names_the_take_and_the_whole_frames(self):
+        self.assertEqual(animexport.split_command("Take 001", 0.0, 62.0),
+                         'FBXExportSplitAnimationIntoTakes -v "Take 001" 0 62')
+        self.assertEqual(animexport.split_command("a", -4.0, 61.0),
+                         'FBXExportSplitAnimationIntoTakes -v "a" -4 61')
+
+    def test_no_split_reads_as_none(self):
+        """The plugin answers 0 with nothing set."""
+        for answer in (0, None, [], ""):
+            self.assertEqual(animexport.parse_split_takes(answer), [])
+
+    def test_the_answer_reads_back_name_start_end(self):
+        answer = ["name=a b start=1 end=20", "name=c start=-3 end=4"]
+        self.assertEqual(animexport.parse_split_takes(answer),
+                         [("a b", 1.0, 20.0), ("c", -3.0, 4.0)])
+
+    def test_one_answer_as_a_bare_string_and_junk_skipped(self):
+        self.assertEqual(animexport.parse_split_takes("name=x start=2 end=9"), [("x", 2.0, 9.0)])
+        self.assertEqual(animexport.parse_split_takes(["nonsense", "name=y start=0 end=1"]),
+                         [("y", 0.0, 1.0)])
+
+    def test_the_read_back_writes_the_same_command(self):
+        name, start, end = animexport.parse_split_takes(["name=run b start=21 end=40"])[0]
+        self.assertEqual(animexport.split_command(name, start, end),
+                         'FBXExportSplitAnimationIntoTakes -v "run b" 21 40')
+
+
 class ExportLine(unittest.TestCase):
 
     def info(self, **over):
