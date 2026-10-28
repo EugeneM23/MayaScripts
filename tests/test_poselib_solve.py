@@ -87,6 +87,14 @@ class JointChannels(unittest.TestCase):
         for g, w in zip(got, alternate):
             self.assertAlmostEqual(g, w, places=9)
 
+    def test_near_gimbal_the_rotation_is_kept(self):
+        """Seeded at (0, 90, 0) - a camera control at rest - a turn at 88.3 deg in Y comes back the
+        same rotation: Maya's `closestSolution` trades x for z there and lands 1.6 deg off."""
+        channels = (-58.0441, 88.3303, -58.2093)
+        local = self.local(channels, order=0, jo=(0, 0, 0), ra=(0, 0, 0))
+        got = skelsolve.joint_channels(local, (0, 0, 0), (0, 0, 0), 0, (0.0, 90.0, 0.0))
+        self.assertLess(angle(euler(got), euler(channels)), 1e-9)
+
     def test_scale_in_the_local_matrix_is_ignored(self):
         channels = (5.0, 15.0, -25.0)
         local = om.MMatrix([[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 1]]) * \

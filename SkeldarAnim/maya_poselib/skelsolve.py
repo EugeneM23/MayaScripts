@@ -78,8 +78,22 @@ def joint_channels(local, joint_orient, rotate_axis, rotate_order, current):
     turn = ra.inverse() * pm.rotation(local) * jo.inverse()
     euler = om.MTransformationMatrix(turn).rotation().reorder(int(rotate_order))
     previous = om.MEulerRotation(*([math.radians(v) for v in current] + [int(rotate_order)]))
-    euler = euler.closestSolution(previous)
+    euler = nearest_euler(euler, previous)
     return (math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z))
+
+
+def nearest_euler(euler, previous):
+    """The writing of `euler`'s rotation nearest `previous`: it or its alternate triple, each wound
+    to its closest cut. Not `closestSolution`, which near gimbal lock trades x for z and returns
+    another rotation (1.6 deg off at y 88.3, measured 2026-10-28). Pure (OpenMaya)."""
+    best = None
+    for candidate in (om.MEulerRotation(euler), om.MEulerRotation(euler).alternateSolution()):
+        candidate.setToClosestCut(previous)
+        far = sum(abs(a - b) for a, b in zip((candidate.x, candidate.y, candidate.z),
+                                             (previous.x, previous.y, previous.z)))
+        if best is None or far < best[0]:
+            best = (far, candidate)
+    return best[1]
 
 
 def pelvis_of(bones):
