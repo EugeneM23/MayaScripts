@@ -344,7 +344,6 @@ def go_home(control):
     """The control back under its default parent (its rig's Main, else its character group, else
     world level), its motion kept - a knot it rode is going (1P Setup's chest baked off). Its
     long path."""
-    old = follow_of(control)
     rig = _rig_of(control)
     main = getattr(rig, "main", None) if rig else None
     if main and cmds.objExists(main):
@@ -353,8 +352,6 @@ def go_home(control):
         from maya_scenesetup import chargroup
         group = chargroup.group_of(control)
         control = move_control(control, group if group != control else None, "World")
-    _mark_position(control, False)
-    _drop_follow(old)
     return control
 
 
@@ -462,12 +459,16 @@ def _mark_parent(control, choice):
     cmds.setAttr(control + "." + PARENT_MARKER, lock=True)
 
 
+_aim_note = []        # why the last move could not re-enter Aim Mode, for `set_parent`'s line
+
+
 def move_control(control, parent, choice):
     """The control under `parent` (None: world level) with its motion kept: its world track
     baked back in its new space (Tools > Inside's road, `reparent._rebake`). Its long path. A
     control in Aim Mode leaves it first and enters it again in its new parent (2026-10-28)."""
     from maya_tools import knots, reparent
     current = cmds.listRelatives(control, parent=True, fullPath=True)
+    del _aim_note[:]
     current = current[0] if current else None
     if current == parent:
         _mark_parent(control, choice)
@@ -490,10 +491,16 @@ def move_control(control, parent, choice):
             else:
                 cmds.parent(node, world=True)
 
+    old = follow_of(control)
     control = reparent._rebake([control], span, operate, scales)[0]
+    if old and old != parent:
+        _mark_position(control, False)
+        _drop_follow(old)
     _mark_parent(control, choice)
     if aimed:
-        cameraaim.enter(control)
+        line = cameraaim.enter(control)
+        if " in Aim Mode" not in line:
+            _aim_note.append(line)
     return control
 
 
@@ -510,16 +517,16 @@ def set_parent(bone, choice, position_only=False):
     follow = bool(position_only) and position_applies(choice)
     from maya_tools import knots
     with knots._press("skeldarCameraParent"):       # one undo step, autoKey off
-        old = follow_of(control)
         if follow:
             target = _make_follow(bone, target)
         control = move_control(control, target, choice)
         _mark_position(control, follow)
-        if old and old != target:
-            _drop_follow(old)
+        note = list(_aim_note)
     line = PARENT_LINE % (leaf(control), choice + (" (position)" if follow else ""))
     if position_only and not follow:
         line += " - Position only changes nothing for %s" % choice
+    if note:
+        line += " | " + note[0]
     return line
 
 
