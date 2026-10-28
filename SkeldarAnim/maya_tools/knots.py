@@ -1098,6 +1098,8 @@ def _release_children(top):
     home = _parent(group) if group else None
     for node in [top] + [c for c in _children(top) if _has(c, plan.INNER_MARKER)]:
         for child in _children(node):
+            if not cmds.objExists(child):   # a camera's Aim Mode group went with its control
+                continue
             if cmds.objectType(child, isAType="constraint") or _has(child, plan.INNER_MARKER):
                 continue
             if _aim_group(child):           # a weapon's Aim Mode: its controllers keep moving
@@ -1114,6 +1116,11 @@ def _release_children(top):
                 except Exception:           # never stop a Bake / Remove over a passenger
                     pass
             _move_out(child, home)
+    try:
+        from maya_scenesetup import camera
+        camera.release_followers(top)       # a camera following the chest's position only
+    except Exception:                       # noqa: BLE001 - never stop a Bake / Remove over it
+        pass
 
 
 def _aim_group(node):
