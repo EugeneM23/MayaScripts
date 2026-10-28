@@ -78,26 +78,50 @@ def refusal(control):
     return aimcore.rotate_refusal(control)
 
 
-def enter(control):
-    """Aim Mode on the camera's control. The status line."""
+def enter(control, frames=None, tangents=None, track=None):
+    """Aim Mode on the camera's control. The status line. `frames` (and their `tangents`): the
+    controllers keyed there instead of on the control's own keys (`aimcore.aim_on`); `track`
+    ({frame: world matrix}, the control's before a parent move): then keyed too on the frames
+    between where the control would turn off it (`aimcore.fill_controllers`)."""
     why = refusal(control)
     if why:
         return why
     control = aimcore.long_(control)
     label = aimcore.leaf(control)
     auto = cmds.autoKeyframe(query=True, state=True)
+    added = 0
     cmds.undoInfo(openChunk=True, chunkName=KIND.enter_chunk)
     try:
         cmds.autoKeyframe(state=False)
-        keys, _control = aimcore.aim_on(control, KIND, camera_vectors(), home_of, _place,
-                                        size=CONTROL_SIZE)
+        vec = camera_vectors()
+        keys, control = aimcore.aim_on(control, KIND, vec, home_of, _place,
+                                       size=CONTROL_SIZE, frames=frames, tangents=tangents)
+        if track and keys:
+            added = aimcore.fill_controllers(control, controllers(group_of(control)), vec,
+                                             home_of(control), track, set(keys))
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
     if not keys:
         return "%s in Aim Mode - no keys of its own: the controllers set at the current frame" % label
-    return "%s in Aim Mode on %d key%s (%g..%g) - animate %s_aimTarget / _aimUp" % (
-        label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1], label)
+    return "%s in Aim Mode on %d key%s (%g..%g)%s - animate %s_aimTarget / _aimUp" % (
+        label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1],
+        " + %d between them to keep its track" % added if added else "", label)
+
+
+def track(control):
+    """The control's world matrix on every frame of the playback span: {frame: matrix}."""
+    import maya_timewarp
+    from maya_scenesetup import fkik
+    window = aimcore.span()
+    key = aimcore.uuid(control)
+    with maya_timewarp.unwarped():
+        fkik._suspend(True)
+        try:
+            return aimcore.walk(range(window[0], window[1] + 1),
+                                lambda: aimcore.world(aimcore.long_(key)))
+        finally:
+            fkik._suspend(False)
 
 
 def leave(control):
@@ -124,6 +148,23 @@ def leave(control):
     line = ("%s back to Default on %d key%s" % (label, len(keys), "" if len(keys) == 1 else "s")
             if keys else "%s back to Default - no keys: its rotation set at the current frame" % label)
     return line + (" + %d between them where the aim turned faster" % added if added else "")
+
+
+def controller_keys(control):
+    """(frames, tangents): the key times of the aim controllers of `control` inside the playback
+    span (their union), with their tangent types; ([], {}) when it is not aimed."""
+    from maya_scenesetup import fkik
+    import maya_timewarp
+    group = group_of(control) if control else None
+    made = controllers(group) if group else {}
+    nodes = [n for n in (made.get("target"), made.get("up")) if n]
+    if not nodes:
+        return [], {}
+    window = aimcore.span()
+    with maya_timewarp.unwarped():
+        _sample, keys, tangents = fkik.own_keys(nodes, [], window)
+    frames = aimcore.keys_in(keys, window)
+    return frames, dict((f, tangents[f]) for f in frames if f in tangents)
 
 
 def discard(control):

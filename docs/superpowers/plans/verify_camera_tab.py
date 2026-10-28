@@ -18,8 +18,10 @@ keyed on 0 / 10 / 20 with a motion of its own (moved and turned).
                              -> World -> Main: the camera's world matrix on every frame 0..20 to
                              1e-4 cm / deg; Position only rotates with Main; the follow group gone.
   direct move                1P's own `move_control(control, chest, "Chest")` out of a follow group.
-  aim + parent               Aim Mode, then Main -> Head -> Head (position) -> Main: still aimed, the
-                             group beside the control, the camera on every key where it was.
+  aim + parent               Aim Mode (the control re-keyed 0 / 10 / 20), then Main -> Head -> Head
+                             (position) -> Main: still aimed, the group beside the control, the
+                             camera on every key where it was; the controllers keep their key times
+                             plus only fill keys; every frame 0..20 within 0.1 deg of before the move.
   chest gone                 a camera following the chest's position, the chest baked off.
   pose card                  a fresh rig: a whole-body card from frame 10 applied with the camera on
                              Head, in Position only on Head, in Aim Mode under Main - camera_root on
@@ -62,6 +64,14 @@ TOL = 1e-4
 TIGHT = 1e-6
 KEYS = (0, 10, 20)
 FRAMES = list(range(0, 21))
+#  aim + parent between the keys: the controllers are keyed again on their own key times in the new
+#  parent's space and filled where the control turns more than aimcore.TOLERANCE (0.1 deg) or moves
+#  more than aimcore.FILL_CM off its track from before the move. The camera stands in the control at
+#  a pure turn (camera.AXIS_OFFSET), so it turns by the control's angle and moves with its place:
+#  the fill's own bounds, plus 1e-5 deg for this script's acos-based measure (floor ~3e-6 deg)
+BETWEEN_DEG = aimcore.TOLERANCE + 1e-5
+BETWEEN_CM = aimcore.FILL_CM
+FILLS = []
 
 
 def say(*parts):
@@ -342,21 +352,49 @@ def part_a():
 
     # ---------------------------------------------------------------- 5 aim + parent
     control = camera.control_for(bone)
+    key_camera(control)         # the parent moves above baked it on every frame: keys 0/10/20 again
     say("   enter:", cameraaim.enter(control))
     aimed = track(bone)
+    made = cameraaim.controllers(cameraaim.group_of(control))
+    before = dict((role, key_times(c, TR)) for role, c in made.items())
+    gate("aim + parent: the controllers keyed on exactly 0/10/20 before the moves",
+         all(v == list(KEYS) for v in before.values()), before)
+    previous = aimed
+    held = before
     for bone_choice, position in (("Head", False), ("Head", True), ("Main", False)):
+        label = "%s%s" % (bone_choice, " (position)" if position else "")
         line = camera.set_parent(bone, bone_choice, position)
         control = camera.control_for(bone)
         group = cameraaim.group_of(control)
-        keys = sorted(set(t for c in cameraaim.controllers(group).values()
-                          for t in key_times(c, TR))) if group else []
-        now = track(bone, [int(round(t)) for t in keys if 0 <= t <= 20] or FRAMES)
-        cm, deg = worst(dict((t, aimed[t]) for t in now), now)
-        gate("aim + parent: %s%s - still aimed, the group beside the control, the camera on "
-             "every key" % (bone_choice, " (position)" if position else ""),
+        made = cameraaim.controllers(group) if group else {}
+        after = dict((role, key_times(c, TR)) for role, c in made.items())
+        now = track(bone)
+        cm, deg = worst(dict((t, aimed[t]) for t in KEYS), dict((t, now[t]) for t in KEYS))
+        gate("aim + parent: %s - still aimed, the group beside the control, the camera on "
+             "every key" % label,
              cameraaim.is_aimed(control) and bool(group) and parent_of(group) == parent_of(control)
              and cm < TOL and deg < TOL,
-             "%d keys %.2e cm %.2e deg | %s" % (len(now), cm, deg, line))
+             "%.2e cm %.2e deg | %s" % (cm, deg, line))
+        extra = dict((r, [t for t in v if t not in held[r]]) for r, v in after.items())
+        fills = extra.get("target", [])
+        gate("aim + parent: %s - the controllers keep their key times, plus only fill keys"
+             % label,
+             sorted(after) == ["target", "up"]
+             and all(set(held[r]) <= set(after[r]) for r in held)
+             and extra.get("up") == fills
+             and all(t == int(t) and 0 < t < 20 and t not in KEYS for t in fills),
+             "%d fill keys %s | %s -> %s" % (len(fills), fills,
+                                             dict((r, len(v)) for r, v in held.items()),
+                                             dict((r, len(v)) for r, v in after.items())))
+        FILLS.append((label, len(fills)))
+        held = after
+        cm, deg = worst(aimed, now)
+        step_cm, step_deg = worst(previous, now)
+        gate("aim + parent: %s - every frame 0..20 within %g deg / %g cm of before this move"
+             % (label, BETWEEN_DEG, BETWEEN_CM), step_cm < BETWEEN_CM and step_deg < BETWEEN_DEG,
+             "this move %.2e cm %.2e deg (since before the first move %.2e cm %.2e deg)"
+             % (step_cm, step_deg, cm, deg))
+        previous = now
         if position:
             follow = camera.follow_of(control)
             gate("aim + parent: the aim group under Camera_follow",
@@ -428,6 +466,7 @@ try:
 except Exception:                                            # noqa: BLE001
     say(traceback.format_exc())
     RESULTS.append(False)
+say("   fill keys per move:", FILLS)
 say("%d/%d" % (RESULTS.count(True), len(RESULTS)))
 if OUT is not None:
     OUT.close()

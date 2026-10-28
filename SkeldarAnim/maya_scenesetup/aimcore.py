@@ -27,6 +27,7 @@ UP_COLOUR = (0.25, 0.75, 1.0)
 # this off the aim (2026-10-26: a fast swing between two keys came out 27 degrees off)
 TOLERANCE = 0.1         # degrees
 FILL_PASSES = 4         # a key added re-shapes its neighbours' auto tangents: checked again
+FILL_CM = 0.01          # cm: a camera re-aimed after a parent move kept on its old place to this
 
 
 # ------------------------------------------------------------------- pure
@@ -66,6 +67,16 @@ def frames_off(aimed, baked, tolerance=TOLERANCE, order=0):
     """The frames of `baked` ({frame: euler}) turned more than `tolerance` off `aimed`, in order."""
     return sorted(f for f, rotate in baked.items()
                   if f in aimed and turn_between(aimed[f], rotate, order) > tolerance)
+
+
+def keys_in(times, window, tolerance=fkik.KEY_TOLERANCE):
+    """The key times inside the window's frames (start, end, ...), each once, in order. Pure."""
+    start, end = window[0], window[1]
+    out = []
+    for t in sorted(float(t) for t in times):
+        if start - tolerance <= t <= end + tolerance and (not out or t - out[-1] > tolerance):
+            out.append(t)
+    return out
 
 
 def broken(made, constraint):
@@ -280,31 +291,90 @@ def write_series(node, frames, points, window, tangents):
         fkik._write(plug, frames, [p[axis] for p in points], window, False, tangents)
 
 
+def fill_passes(open_frames, missed, key):
+    """Default's fill loop, for any channel: up to FILL_PASSES times `missed(frames)` names the
+    frames of `open_frames` still off, each is keyed by `key(frame)` and leaves the open set (a key
+    re-shapes its neighbours' auto tangents, so they are checked again). How many keyed. Pure."""
+    todo = sorted(open_frames)
+    added = 0
+    for _ in range(FILL_PASSES):
+        off = missed(todo)
+        if not off:
+            break
+        for f in off:
+            key(f)
+        done = set(off)
+        todo = [f for f in todo if f not in done]
+        added += len(off)
+    return added
+
+
+def track_off(wanted, now, degrees=TOLERANCE, cm=FILL_CM):
+    """The frames of `now` ({frame: world matrix}) turned more than `degrees` or moved more than
+    `cm` off `wanted`, in order. Pure (OpenMaya)."""
+    out = []
+    for f in sorted(now):
+        if f not in wanted:
+            continue
+        a, b = om.MMatrix(wanted[f]), om.MMatrix(now[f])
+        d = (om.MTransformationMatrix(a).rotation(asQuaternion=True).inverse() *
+             om.MTransformationMatrix(b).rotation(asQuaternion=True))
+        turn = math.degrees(2.0 * math.atan2(math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z), abs(d.w)))
+        moved = max(abs(a[12 + i] - b[12 + i]) for i in range(3))
+        if turn > degrees or moved > cm:
+            out.append(f)
+    return out
+
+
 def fill_between(node, aimed, keyed, order):
     """Keys added on the frames between the keys where the baked rotation turns off the aim
     (`aimed` {frame: euler} on every frame), until none does. How many."""
-    added = 0
-    for _ in range(FILL_PASSES):
-        baked = dict((f, [cmds.getAttr(node + "." + ch, time=f) for ch in ROTATE])
-                     for f in aimed if f not in keyed)
-        missed = frames_off(aimed, baked, TOLERANCE, order)
-        if not missed:
-            break
-        for f in missed:
-            for axis, ch in enumerate(ROTATE):
-                cmds.setKeyframe(node, attribute=ch, time=f, value=aimed[f][axis])
-            keyed.add(f)
-        added += len(missed)
-    return added
+    def missed(todo):
+        baked = dict((f, [cmds.getAttr(node + "." + ch, time=f) for ch in ROTATE]) for f in todo)
+        return frames_off(aimed, baked, TOLERANCE, order)
+
+    def key(f):
+        for axis, ch in enumerate(ROTATE):
+            cmds.setKeyframe(node, attribute=ch, time=f, value=aimed[f][axis])
+        keyed.add(f)
+
+    return fill_passes([f for f in aimed if f not in keyed], missed, key)
+
+
+def fill_controllers(node, made, vec, home, wanted, keyed):
+    """Controller keys added on the frames between `keyed` where the aimed `node` turns more than
+    TOLERANCE (or moves more than FILL_CM) off `wanted` ({frame: world matrix}, its track before a
+    parent move): both controllers keyed where that track puts them, in `home`'s space. How many."""
+    aim_v, up_v, d_aim, d_up = vec
+    every = sorted(wanted)
+    with maya_timewarp.unwarped():
+        fkik._suspend(True)
+        try:
+            spaces = walk(every, lambda: world(home)) if home and home != WORLD else None
+
+            def missed(todo):
+                return track_off(wanted, walk(todo, lambda: world(node)))
+
+            def key(f):
+                for role, direction, distance in (("target", aim_v, d_aim), ("up", up_v, d_up)):
+                    point = local(point_of(wanted[f], direction, distance), spaces, f)
+                    for axis, ch in enumerate(TRANSLATE):
+                        cmds.setKeyframe(made[role], attribute=ch, time=f, value=point[axis])
+
+            return fill_passes([f for f in every if f not in keyed], missed, key)
+        finally:
+            fkik._suspend(False)
 
 
 # ------------------------------------------------------------------- engine
 
-def aim_on(node, kind, vec, home_of, place, size=None, cleanup=None):
+def aim_on(node, kind, vec, home_of, place, size=None, cleanup=None, frames=None, tangents=None):
     """Aim Mode's work on `node` (the caller holds the undo chunk and autoKey): controllers keyed on
     the node's own keys in `home_of(node)`'s space, `place(group, node)` putting the group there,
     the rotate keys cut and an aimConstraint (no offset) on; `cleanup(group)` runs on a broken one left
-    over. (keys, the node's long path)."""
+    over. `frames` (with their `tangents` {frame: (in, out)}, absent: Maya's default) key the
+    controllers on those frames instead of the node's own keys - a re-entry after a bake that keyed
+    the node on every frame. (keys, the node's long path)."""
     aim_v, up_v, d_aim, d_up = vec
     window = span()
     key = uuid(node)
@@ -312,7 +382,10 @@ def aim_on(node, kind, vec, home_of, place, size=None, cleanup=None):
     if stale:
         clear_broken(node, kind, stale, cleanup)
     with maya_timewarp.unwarped():
-        sample, keys, tangents = fkik.own_keys([long_(key)], [], window)
+        if frames:
+            sample, keys, tangents = list(frames), list(frames), dict(tangents or {})
+        else:
+            sample, keys, tangents = fkik.own_keys([long_(key)], [], window)
         fkik._suspend(True)
         try:
             home = home_of(long_(key))

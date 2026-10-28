@@ -465,7 +465,11 @@ _aim_note = []        # why the last move could not re-enter Aim Mode, for `set_
 def move_control(control, parent, choice):
     """The control under `parent` (None: world level) with its motion kept: its world track
     baked back in its new space (Tools > Inside's road, `reparent._rebake`). Its long path. A
-    control in Aim Mode leaves it first and enters it again in its new parent (2026-10-28)."""
+    control in Aim Mode leaves it first and enters it again in its new parent (2026-10-28): the
+    bake keys the control on every frame, so the controllers are keyed again on their own key
+    times from before the move (not the control's), re-placed at the default distances; then keyed
+    on a frame between only where the camera would turn more than 0.1 deg off its track from before
+    the move (the animator, 2026-10-28: «Добивать по нужде»)."""
     from maya_tools import knots, reparent
     current = cmds.listRelatives(control, parent=True, fullPath=True)
     del _aim_note[:]
@@ -475,6 +479,8 @@ def move_control(control, parent, choice):
         return control
     from maya_scenesetup import cameraaim
     aimed = cameraaim.is_aimed(control)
+    times, tangents = cameraaim.controller_keys(control) if aimed else ([], {})
+    before = cameraaim.track(control) if aimed and times else None
     if aimed:
         cameraaim.leave(control)
     span = reparent._take([control], [parent])
@@ -498,7 +504,7 @@ def move_control(control, parent, choice):
         _drop_follow(old)
     _mark_parent(control, choice)
     if aimed:
-        line = cameraaim.enter(control)
+        line = cameraaim.enter(control, frames=times or None, tangents=tangents, track=before)
         if " in Aim Mode" not in line:
             _aim_note.append(line)
     return control
