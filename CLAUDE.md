@@ -15033,7 +15033,14 @@ The animator: «Во вкладке конекшен нужно добавить
   world track rebaked; Position only - `<ns>:Camera_follow` under Main at identity, `pointConstraint`
   (no offset) to the node, the control in it (Main / World ignore the option, said in the line).
   Leaving it by ANY move (`move_control`, `go_home`, teardown) drops the group. A move in Aim Mode:
-  Default, the move, Aim Mode again, in one undo chunk.
+  Default, the move, Aim Mode again, in one undo chunk. The bake keys the control on every frame, so
+  re-entry keys the controllers on THEIR key times from before the move (re-placed at the default
+  distances), then fills by need - the animator: «Добивать по нужде»: a frame between is keyed only
+  where the control would turn more than 0.1 deg (`aimcore.TOLERANCE`) or move more than 0.01 cm
+  (`FILL_CM`) off its track from before the move, re-checked up to `FILL_PASSES` (4) times -
+  `aimcore.fill_passes`, the loop Default's `fill_between` uses too. Main → Head in the proof needs all
+  18 frames between (the head swings ~45 deg between keys: unfilled the camera was 23.5 deg off);
+  Head → Head (position) and → Main 0.
 - `knots._release_children` → `camera.release_followers`: the chest baked off sends a camera
   following its position home under Main, motion kept.
 - Pose Library: under `FKHead_M` the camera's carrier is `head`; in `Camera_follow` it is carried by
@@ -15052,12 +15059,14 @@ The animator: «Во вкладке конекшен нужно добавить
   Still calling `closestSolution` directly (not touched here, same near-lock hazard):
   `maya_poselib/apply.py:254`, `maya_scenesetup/fkik.py:320`, `fkikspine.py:366`,
   `maya_tailbuilder.py:387`, `maya_uebridge/formats.py:387` and `:762`.
-Proof: `docs/superpowers/plans/verify_camera_tab.py [out.txt] [rig]` **33/33** on Manny_Rig (1P Setup,
+Proof: `docs/superpowers/plans/verify_camera_tab.py [out.txt] [rig]` **40/40** on Manny_Rig (1P Setup,
 the control keyed 0/10/20 moved and turned): Aim Mode on the keys 2.8e-14 deg, the controllers keyed on
 exactly 0/10/20, Default every frame to 3e-6 deg; Main → Head → Head (position) → Root (position) →
 Chest (position) → World → Main every frame 0..20 5.7e-14 cm / 3.0e-6 deg; Position only turns with Main
 (2.4e-6 deg); 1P's direct `move_control` out of a follow group drops it (1.1e-13 cm); aimed through Main → Head →
-Head (position) → Main still aimed, the group beside the control, every key 3e-6 deg; the chest baked
+Head (position) → Main (the control re-keyed 0/10/20 first) still aimed, the group beside the control,
+every key 2.8e-14 cm / 0 deg, the controllers' key times kept plus only fill keys (18 / 0 / 0), every
+frame within 2.4e-6 deg of before the move (gate 0.1 deg + 1e-5 acos slack, 0.01 cm); the chest baked
 off with the camera following its position: back under Main, 7e-15 cm; a whole card applied with the
 camera on Head 1.9e-6 cm, in Position only 3.8e-7, aimed under Main 2.8e-14, aimed in Position only
 4.7e-7; undo-tested: one Ctrl+Z of Aim Mode and one of a parent press (Head (position)) - Default
