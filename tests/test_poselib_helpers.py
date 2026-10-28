@@ -98,6 +98,7 @@ class FakeScene(object):
         self.weapons, self.cameras, self.followers, self.carriers = {}, {}, {}, {}
         self.unwritable = {}
         self.attrs = {}
+        self.follows = {}
 
     def install(self, test):
         saved = {}
@@ -109,7 +110,8 @@ class FakeScene(object):
                  "_camera_of": lambda p: self.cameras.get(p),
                  "_followers": lambda w: self.followers.get(w, []),
                  "_carrier_of": lambda d: self.carriers.get(d),
-                 "_camera_carrier": lambda d: self.carriers.get(d)}
+                 "_camera_carrier": lambda d: self.carriers.get(d),
+                 "_camera_follow": lambda d: self.follows.get(d)}
         for name, fn in seams.items():
             saved[name] = getattr(helpers, name)
             setattr(helpers, name, fn)
@@ -226,6 +228,42 @@ class WriterTests(unittest.TestCase):
                     [out.values[ctrl + ".rotate" + a] for a in "XYZ"])
         main_new = main_now * root_now.inverse() * root_wanted       # Main moved with the root
         close(self, K * local * main_new, wanted_bone, 1e-6, "camera_root lands")
+
+    def test_a_follow_group_turns_with_the_root_and_rides_its_node_s_place(self):
+        """2026-10-28: Camera_follow (Position only) stands under Main at identity, point-constrained
+        to a node - a card moves the node and Main, and the group follows both: Main's turn
+        (carried by the root), the node's place (carried by its bone)."""
+        root_now, root_wanted = trs((0, 0, 0)), trs((50, 0, -20), (0, 30, 0))
+        head_now, head_wanted = trs((5, 160, 2), (10, 0, 0)), trs((40, 150, -15), (0, 0, 25))
+        group_now = trs((5, 160, 2))
+        got = helpers.follow_parent(group_now, root_now, root_wanted, head_now, head_wanted)
+        want = om.MTransformationMatrix(root_wanted)
+        want.setTranslation(om.MVector(40, 150, -15), om.MSpace.kTransform)
+        close(self, got, want.asMatrix(), 1e-9)
+        close(self, helpers.follow_parent(group_now, None, None, None, None), group_now)
+
+    def test_the_camera_control_in_a_follow_group_lands(self):
+        bones = bones_of({"root": "|r", "camera_root": "|r|camera_root"})
+        bones["head"] = {"path": "|r|head", "parent": "root", "jointOrient": (0, 0, 0),
+                         "rotateAxis": (0, 0, 0), "rotateOrder": 0}
+        ctrl = "|Main|Camera_follow|Camera_ctrl"
+        root_now, head_now = trs((0, 0, 0)), trs((5, 160, 2), (10, 0, 0))
+        group_now = trs((5, 160, 2))
+        bone_now = trs((8, 165, 10), (-90, 0, 0))
+        self.scene.worlds.update({"|r": root_now, "|r|head": head_now, "|r|camera_root": bone_now,
+                                  ctrl: bone_now})
+        self.scene.parents[ctrl] = group_now
+        self.scene.cameras["|r|camera_root"] = ctrl
+        self.scene.follows[ctrl] = ("root", "head")
+        writer = helpers.Writer(None, bones, ["camera_root"])
+        root_wanted = trs((50, 0, -20), (0, 30, 0))
+        head_wanted = trs((40, 150, -15), (0, 0, 25))
+        wanted_bone = trs((60, 150, -10), (-80, 20, 0))
+        out = writer.solve({"root": root_wanted, "head": head_wanted, "camera_root": wanted_bone})
+        local = trs([out.values[ctrl + ".translate" + a] for a in "XYZ"],
+                    [out.values[ctrl + ".rotate" + a] for a in "XYZ"])
+        group_new = helpers.follow_parent(group_now, root_now, root_wanted, head_now, head_wanted)
+        close(self, local * group_new, wanted_bone, 1e-6, "camera_root lands")
 
     def test_the_camera_to_set_up_is_a_free_camera_root(self):
         bones = bones_of({"camera_root": "|root|camera_root"})

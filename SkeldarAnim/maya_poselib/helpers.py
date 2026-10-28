@@ -57,8 +57,8 @@ CAMERA_SET = "camera set up on %s"
 CAMERA_FAILED = "camera not set up on %s: %s"
 
 # leaf, path, mode ("joint" | "driver"), driver path, K (W_bone · W_driver⁻¹), carrier leaf
-Entry = namedtuple("Entry", "leaf path mode driver K carrier aim camera")
-Entry.__new__.__defaults__ = (None, False)
+Entry = namedtuple("Entry", "leaf path mode driver K carrier aim camera follow")
+Entry.__new__.__defaults__ = (None, False, None)
 # a weapon in Connections' Aim Mode (2026-10-21): its rotation aims at two world controllers, so
 # its translate and theirs are keyed - (target path, up path, aim vector, up vector, distances)
 Aim = namedtuple("Aim", "target up aim_v up_v d_aim d_up")
@@ -116,6 +116,16 @@ def carried_parent(parent_now, carrier_now, carrier_wanted):
     if carrier_now is None or carrier_wanted is None:
         return pm.matrix(parent_now)
     return pm.matrix(parent_now) * pm.matrix(carrier_now).inverse() * pm.matrix(carrier_wanted)
+
+
+def follow_parent(parent_now, turn_now, turn_wanted, place_now, place_wanted):
+    """A Camera_follow group's world once its carriers stand where wanted: the turn of `parent_now`
+    carried by the turn carrier (Main's, the root), the place carried by the place carrier (the
+    followed node's bone) - the group turns with Main and rides a point constraint."""
+    turned = om.MTransformationMatrix(carried_parent(parent_now, turn_now, turn_wanted))
+    placed = pm.position(carried_parent(parent_now, place_now, place_wanted))
+    turned.setTranslation(om.MVector(placed.x, placed.y, placed.z), om.MSpace.kTransform)
+    return turned.asMatrix()
 
 
 def driver_channels(local, attrs, current):
@@ -245,6 +255,32 @@ def _camera_carrier(driver):
     return None
 
 
+def _camera_follow(driver):
+    """(turn carrier, place carrier) of the Camera_follow group a camera control stands in - the
+    root for Main's turn; head / root / spine_03 for FKHead_M / Root_ctrl / the 1P chest it
+    follows, None for anything else - or None out of a follow group."""
+    try:
+        from maya_scenesetup import camera, rootcontrol
+    except ImportError:
+        return None
+    if not camera.is_control(driver):
+        return None
+    group = camera.follow_of(driver)
+    if not group:
+        return None
+    followed = cmds.ls(cmds.getAttr(group + "." + camera.FOLLOW_MARKER) or "", long=True) or []
+    place = None
+    if followed:
+        node = followed[0]
+        if node.split("|")[-1].split(":")[-1] == camera.HEAD:
+            place = HEAD_BONE
+        elif cmds.attributeQuery(rootcontrol.MARKER, node=node, exists=True):
+            place = "root"
+        elif cmds.attributeQuery(CHEST_MARKER, node=node, exists=True):
+            place = CHEST_BONE
+    return ("root", place)
+
+
 def _aim_of(driver):
     """An `Aim` when `driver` (a weapon or the camera's control) stands in Aim Mode, else None."""
     try:
@@ -327,11 +363,14 @@ class Writer(object):
                 else _camera_carrier(driver))
             if carrier_leaf not in self.bones:
                 carrier_leaf = None
+            follow = None if weapon else _camera_follow(driver)
+            if follow:
+                follow = tuple(c if c in self.bones else None for c in follow)
             K = _world(path) * _world(driver).inverse()
             self.notes.append(THROUGH % (leaf, _leaf(driver) + (" (Aim Mode: its controllers)"
                                                                 if aimed else "")))
             return Entry(leaf, path, "aimed" if aimed else "driver", driver, K, carrier_leaf,
-                         aimed, camera=not weapon)
+                         aimed, camera=not weapon, follow=follow)
         why = self._unwritable(path)
         if why:
             self.skipped[leaf] = why
@@ -361,6 +400,13 @@ class Writer(object):
         if seed and all(p in seed for p in plugs):
             return [float(seed[p]) for p in plugs]
         return [_get(p) for p in plugs]
+
+    def _followed(self, entry, parent_now, wanted):
+        """`parent_now` (a Camera_follow group, or an aim group repeating it) where the card puts
+        its carriers (`follow_parent`)."""
+        now = [_world(self.bones[c]["path"]) if c and c in wanted else None for c in entry.follow]
+        want = [wanted[c] if c and c in wanted else None for c in entry.follow]
+        return follow_parent(parent_now, now[0], want[0], now[1], want[1])
 
     def solve(self, wanted, seed=None):
         """skelsolve.Solution: the FINAL values of every prepared helper's plugs for `wanted`
@@ -392,7 +438,8 @@ class Writer(object):
                 if entry.carrier is not None:
                     carrier_now = _world(self.bones[entry.carrier]["path"])
                     carrier_wanted = wanted.get(entry.carrier)
-                parent_new = carried_parent(_parent_world(node), carrier_now, carrier_wanted)
+                parent_new = self._followed(entry, _parent_world(node), wanted) if entry.follow \
+                    else carried_parent(_parent_world(node), carrier_now, carrier_wanted)
                 local = target * parent_new.inverse()
                 plugs = ["%s.%s" % (node, ch) for ch in ROTATE]
                 rotate, translate = driver_channels(local, _attrs(node),
@@ -404,7 +451,9 @@ class Writer(object):
                                                   (aim.up, aim.up_v, aim.d_up)):
                     point = om.MPoint(*_point(target, direction, distance))
                     ctrl_parent = _parent_world(ctrl)
-                    if entry.camera and entry.carrier is not None and entry.carrier in wanted:
+                    if entry.follow:
+                        ctrl_parent = self._followed(entry, ctrl_parent, wanted)
+                    elif entry.camera and entry.carrier is not None and entry.carrier in wanted:
                         # a camera's controllers repeat the control's parent: carried with it
                         ctrl_parent = carried_parent(ctrl_parent,
                                                      _world(self.bones[entry.carrier]["path"]),
