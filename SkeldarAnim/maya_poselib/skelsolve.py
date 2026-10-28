@@ -10,9 +10,10 @@ A member's local is `W*[t] . W*[parent]^-1` - its own target against its PARENT'
 chain of members solves parents and children alike from the targets, with no scene write in
 between - and a joint's local rotation is `RA . R . JO` (row vectors, Maya's joint matrix
 `S . RA . R . JO . IS . T`), so its rotate channels are `R = RA^-1 . rot(local) . JO^-1` in the
-joint's rotate order, the euler NEAREST the channel's current value (`closestSolution`: the
+joint's rotate order, the euler NEAREST the channel's current value (`nearest_euler`: the
 alternate triple and the 360 multiples both count - a key next to the old one carries no flip,
-trap 108). Only the PELVIS (canonical `pelvis`, else the leaf) also takes its translate: every
+trap 108 - and `closestSolution` only where it is the same rotation, as at exact gimbal lock;
+alone it trades x for z near lock and returns another rotation). Only the PELVIS (canonical `pelvis`, else the leaf) also takes its translate: every
 other bone keeps the target's own length (the spec's "rotations only"; `posemath.targets` already
 placed it by the bone's own local translation). The ROOT is never written by a pose - the
 character stays where it stands - and a member that is the root is left out without a word; an
@@ -82,18 +83,33 @@ def joint_channels(local, joint_orient, rotate_axis, rotate_order, current):
     return (math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z))
 
 
+def _same_turn(a, b, tolerance=1e-9):
+    """Whether two eulers are one rotation (the quaternion angle between them under `tolerance`
+    radians)."""
+    d = a.asQuaternion().inverse() * b.asQuaternion()
+    return 2.0 * math.atan2(math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z), abs(d.w)) < tolerance
+
+
 def nearest_euler(euler, previous):
     """The writing of `euler`'s rotation nearest `previous`: it or its alternate triple, each wound
-    to its closest cut. Not `closestSolution`, which near gimbal lock trades x for z and returns
+    to its closest cut, or `closestSolution` when that is the same rotation - at exact gimbal lock
+    only it keeps x and z where they were ((31, 90, 31) after (30, 90, 30) is (30, 90, 30), not
+    (0, 90, 0)). `closestSolution` alone is not enough: near lock it trades x for z and returns
     another rotation (1.6 deg off at y 88.3, measured 2026-10-28). Pure (OpenMaya)."""
-    best = None
-    for candidate in (om.MEulerRotation(euler), om.MEulerRotation(euler).alternateSolution()):
+    candidates = [om.MEulerRotation(euler), om.MEulerRotation(euler).alternateSolution()]
+    for candidate in candidates:
         candidate.setToClosestCut(previous)
+    closest = om.MEulerRotation(euler).closestSolution(previous)
+    if _same_turn(closest, euler):
+        candidates.append(closest)
+    best = None
+    for candidate in candidates:
         far = sum(abs(a - b) for a, b in zip((candidate.x, candidate.y, candidate.z),
                                              (previous.x, previous.y, previous.z)))
         if best is None or far < best[0]:
             best = (far, candidate)
     return best[1]
+
 
 
 def pelvis_of(bones):

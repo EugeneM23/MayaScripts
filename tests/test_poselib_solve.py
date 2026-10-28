@@ -95,6 +95,20 @@ class JointChannels(unittest.TestCase):
         got = skelsolve.joint_channels(local, (0, 0, 0), (0, 0, 0), 0, (0.0, 90.0, 0.0))
         self.assertLess(angle(euler(got), euler(channels)), 1e-9)
 
+    def test_at_exact_gimbal_lock_x_and_z_stay_where_they_were(self):
+        """(31, 90, 31) after (30, 90, 30), XYZ: one rotation with (30, 90, 30), which is the nearest
+        writing; the euler or its alternate alone would jump x and z to (0, 90, 0)."""
+        local = self.local((31.0, 90.0, 31.0), order=0, jo=(0, 0, 0), ra=(0, 0, 0))
+        got = skelsolve.joint_channels(local, (0, 0, 0), (0, 0, 0), 0, (30.0, 90.0, 30.0))
+        for g, w in zip(got, (30.0, 90.0, 30.0)):
+            self.assertAlmostEqual(g, w, places=6)
+        self.assertLess(angle(euler(got), euler((31.0, 90.0, 31.0))), 1e-6)
+
+    def test_nearest_euler_takes_closest_solution_only_as_the_same_rotation(self):
+        r = [math.radians(v) for v in (-58.0441, 88.3303, -58.2093)]
+        got = skelsolve.nearest_euler(om.MEulerRotation(*r), om.MEulerRotation(0, math.pi / 2, 0))
+        self.assertLess(angle(got.asMatrix(), om.MEulerRotation(*r).asMatrix()), 1e-9)
+
     def test_scale_in_the_local_matrix_is_ignored(self):
         channels = (5.0, 15.0, -25.0)
         local = om.MMatrix([[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 1]]) * \
