@@ -242,6 +242,13 @@ of the `.ma` needs `matrixNodes`/`quatNodes`; interactive Maya auto-loads
 them, mayapy does not (`loadPlugin` in the verify). `requires mtoa /
 materialx / mayaUsdPlugin` in the file print warnings and import fine.
 
+**The neck in-between control is shown** (2026-10-28, «FKNeckPart1_M ... его должно быть
+видно во всех ригах»): every shipped rig has AdvancedSkeleton's `FKNeck_M.inbetweenVis` at 0,
+which hides `FKNeckPart1_MShape`. Add Character sets it to 1 (`character.show_neck_inbetween`,
+after the Root control; a rig with no such switch, a locked one: left alone). The assets are
+not edited (their sha1 is pinned by `character_skeletons.json`); a rig added before this keeps
+the switch off until it is turned on in its Channel Box.
+
 Three things measured on the way, each a trap of its own:
 
 58. **`cutKey` leaves a channel at whatever the DG last EVALUATED, and a

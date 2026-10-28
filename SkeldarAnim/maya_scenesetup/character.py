@@ -247,6 +247,26 @@ def add_root_control(namespace):
     return ""
 
 
+#: AdvancedSkeleton's switch for the neck in-between control (FKNeckPart1_M), off in every
+#: shipped rig; the animator wants the control seen (2026-10-28).
+NECK_SWITCH = ("FKNeck_M", "inbetweenVis")
+
+
+def show_neck_inbetween(namespace):
+    """Turn the new rig's neck in-between control on. True when it was set; best effort, as
+    the Root control: a rig without the switch (a part rig with no neck) just says False."""
+    try:
+        import maya_rigs
+        plug = "{0}.{1}".format(maya_rigs.node(namespace, NECK_SWITCH[0]), NECK_SWITCH[1])
+        if not cmds.objExists(plug) or cmds.getAttr(plug, lock=True):
+            return False
+        cmds.setAttr(plug, 1)
+        return True
+    except Exception as exc:                                     # noqa: BLE001
+        print("Add Character: neck in-between left as it is ({0})".format(exc))
+    return False
+
+
 def connect(root):
     """Hand the new character to the picker. True when one took it.
 
@@ -702,6 +722,7 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
             print("Add Character: no record for Delete ({0})".format(exc))
     if namespace:
         add_root_control(namespace)
+        show_neck_inbetween(namespace)
     connected = connect(root)
     selected = select_rig(namespace) if namespace else False
 

@@ -641,3 +641,43 @@ class Placed(unittest.TestCase):
         first_move = self.cmds.log.index([e for e in self.cmds.log if e[0] == "move"][0])
         self.assertLess(self.cmds.log.index(("undo", False)), first_move)
         self.assertEqual(self.cmds.log[-1], ("undo", True))
+
+
+class NeckInbetween(unittest.TestCase):
+    """2026-10-28: Add Character turns AdvancedSkeleton's neck in-between control on
+    (FKNeck_M.inbetweenVis, off in every shipped rig)."""
+
+    class Cmds(object):
+        def __init__(self, plugs, locked=()):
+            self.plugs = dict(plugs)
+            self.locked = set(locked)
+
+        def objExists(self, name):
+            return name in self.plugs
+
+        def getAttr(self, plug, lock=False):
+            return plug in self.locked if lock else self.plugs[plug]
+
+        def setAttr(self, plug, value):
+            self.plugs[plug] = value
+
+    def setUp(self):
+        self.saved = character.cmds
+
+    def tearDown(self):
+        character.cmds = self.saved
+
+    def test_the_rig_s_switch_is_turned_on(self):
+        character.cmds = self.Cmds({"Manny_Rig1:FKNeck_M.inbetweenVis": 0})
+        self.assertTrue(character.show_neck_inbetween("Manny_Rig1"))
+        self.assertEqual(character.cmds.plugs["Manny_Rig1:FKNeck_M.inbetweenVis"], 1)
+
+    def test_a_rig_with_no_neck_switch_is_left_alone(self):
+        character.cmds = self.Cmds({})
+        self.assertFalse(character.show_neck_inbetween("Creep2_ArmR_Rig"))
+
+    def test_a_locked_switch_is_left_alone(self):
+        plug = "Manny_Rig:FKNeck_M.inbetweenVis"
+        character.cmds = self.Cmds({plug: 0}, locked=[plug])
+        self.assertFalse(character.show_neck_inbetween("Manny_Rig"))
+        self.assertEqual(character.cmds.plugs[plug], 0)
