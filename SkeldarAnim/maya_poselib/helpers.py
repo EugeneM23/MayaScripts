@@ -121,7 +121,9 @@ def carried_parent(parent_now, carrier_now, carrier_wanted):
 def follow_parent(parent_now, turn_now, turn_wanted, place_now, place_wanted):
     """A Camera_follow group's world once its carriers stand where wanted: the turn of `parent_now`
     carried by the turn carrier (Main's, the root), the place carried by the place carrier (the
-    followed node's bone) - the group turns with Main and rides a point constraint."""
+    followed node's bone) - the group turns with Main and rides a point constraint. It assumes the
+    aim group of a camera in Aim Mode stands at identity under `Camera_follow` (it does: `aimcore.put`
+    parents it there relatively)."""
     turned = om.MTransformationMatrix(carried_parent(parent_now, turn_now, turn_wanted))
     placed = pm.position(carried_parent(parent_now, place_now, place_wanted))
     turned.setTranslation(om.MVector(placed.x, placed.y, placed.z), om.MSpace.kTransform)
@@ -234,8 +236,10 @@ def _carrier_for_parent(parent, head, follow):
 
 def _camera_carrier(driver):
     """The game bone that carries a camera control's parent rigidly: `root` when it stands under
-    the rig's Main or its Root control (the root follows them), `spine_03` under 1P Setup's chest
-    (2026-10-21: a card that turns the chest turns the camera with it), else None (the world)."""
+    the rig's Main or its Root control (the root follows them), `head` under FKHead_M, `spine_03`
+    under 1P Setup's chest (2026-10-21: a card that turns the chest turns the camera with it), else
+    None (the world). None too in a Camera_follow group, which no one bone carries rigidly: it
+    turns with Main and takes the followed bone's place (`Entry.follow`, `follow_parent`)."""
     try:
         from maya_scenesetup import camera, rootcontrol
     except ImportError:
