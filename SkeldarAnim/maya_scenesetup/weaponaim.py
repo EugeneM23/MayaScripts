@@ -18,13 +18,14 @@ character's group. Spec: docs/superpowers/specs/2026-10-21-connections-weapon-ai
 
 import math
 
-import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
 import maya_rigs
-import maya_timewarp
 from maya_scenesetup import aim as aimplace
-from maya_scenesetup import fkik
+from maya_scenesetup import aimcore
+from maya_scenesetup.aimcore import (broken, diamond, frames_off, point_of, turn_between,  # noqa: F401
+                                     up_axis, TOLERANCE, FILL_PASSES, ROTATE, TRANSLATE, LOCKED,
+                                     TARGET_COLOUR, UP_COLOUR)
 
 MARKER = "skeldarWeaponAim"          # on the group: the weapon's UUID
 CTRL_MARKER = "skeldarWeaponAimCtrl"  # on a controller: "target" | "up"
@@ -33,11 +34,6 @@ VECTORS = "skeldarWeaponAimVectors"   # on the group: aim and up vectors, the di
 GROUP_NAME = "{0}_aim"
 TARGET_NAME = "{0}_aimTarget"
 UP_NAME = "{0}_aimUp"
-TARGET_COLOUR = (1.0, 0.45, 0.12)
-UP_COLOUR = (0.25, 0.75, 1.0)
-ROTATE = fkik.ROTATE
-TRANSLATE = fkik.TRANSLATE
-LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
 # the up beside the weapon (2026-10-21, after using it: «AIm up должен быть с другой стороны
 # оружия и не так далеко от него»): on the other side of the next longest axis. 2026-10-23 «другий
 # контрол який ближче до рукоятки дуже часто приводить до крашу ... давай його розмістимо далі від
@@ -47,10 +43,6 @@ LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
 UP_SHARE = 0.5
 UP_ALONG = 0.5
 LINE_MARKER = "skeldarWeaponAimLine"  # on a line from the weapon to a controller: its role
-# Default keys the rotation on the keys, then on every frame between them that still turns more than
-# this off the aim (2026-10-26: a fast swing between two keys came out 27 degrees off)
-TOLERANCE = 0.1         # degrees
-FILL_PASSES = 4         # a key added re-shapes its neighbours' auto tangents: checked again
 
 NO_WEAPON = "no weapon in the scene - Inventory > Equip first"
 ALREADY = "%s is in Aim Mode already - Default first"
@@ -82,28 +74,6 @@ def vectors(lo, hi):
     return aim_v, tuple(v / d_up for v in point), d_top, d_up
 
 
-def up_axis(aim_v, up_v):
-    """The weapon's own axis the aimConstraint turns toward the up controller: `up_v` without its
-    part along the blade (the controller stands opposite the blade's middle, not beside the grip),
-    so the weapon stands as it stood. Pure."""
-    dot = sum(a * u for a, u in zip(aim_v, up_v))
-    perp = [u - dot * a for a, u in zip(aim_v, up_v)]
-    n = math.sqrt(sum(v * v for v in perp))
-    return tuple(v / n for v in perp) if n > 1e-9 else tuple(up_v)
-
-
-def point_of(matrix, direction, distance):
-    """The world point `direction · distance` in the frame of the row-vector `matrix`."""
-    p = om.MPoint(*[v * distance for v in direction]) * om.MMatrix(matrix)
-    return (p.x, p.y, p.z)
-
-
-def diamond(r):
-    """A three-ring diamond (an octahedron's edges), degree 1."""
-    return [(r, 0, 0), (0, r, 0), (-r, 0, 0), (0, -r, 0), (r, 0, 0), (0, 0, r), (-r, 0, 0),
-            (0, 0, -r), (r, 0, 0), (0, r, 0), (0, 0, r), (0, -r, 0), (0, 0, -r), (0, r, 0)]
-
-
 def square(half):
     """A closed square of half side `half` on X and Z, degree 1."""
     return [(-half, 0, -half), (half, 0, -half), (half, 0, half), (-half, 0, half),
@@ -125,185 +95,6 @@ def left_message(label, keys):
         label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1])
 
 
-def turn_between(a, b, order=0):
-    """Degrees between two rotations given as Euler angles (degrees) in rotate order `order`, however
-    each is written (173 and -187 are one turn)."""
-    qa = om.MEulerRotation(*([math.radians(v) for v in a] + [int(order)])).asQuaternion()
-    qb = om.MEulerRotation(*([math.radians(v) for v in b] + [int(order)])).asQuaternion()
-    dot = abs(qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w)
-    return math.degrees(2.0 * math.acos(min(1.0, dot)))
-
-
-def frames_off(aimed, baked, tolerance=TOLERANCE, order=0):
-    """The frames of `baked` ({frame: euler}) turned more than `tolerance` off `aimed`, in order."""
-    return sorted(f for f, rotate in baked.items()
-                  if f in aimed and turn_between(aimed[f], rotate, order) > tolerance)
-
-
-def broken(made, constraint):
-    """An aim group whose controllers ({role: path}) or constraint are gone (2026-10-27, «Aim не
-    працює»: in a tab the dagger was keyed in Aim Mode, then its controllers and constraint deleted -
-    the empty group left made Aim Mode refuse and Default bake nothing). Pure."""
-    return not constraint or "target" not in made or "up" not in made
-
-
-# ------------------------------------------------------------------- scene
-
-def _long(node):
-    found = cmds.ls(node, long=True) if node else None
-    return found[0] if found else None
-
-
-def _uuid(node):
-    found = cmds.ls(node, uuid=True) if node else None
-    return found[0] if found else None
-
-
-def _leaf(path):
-    return (path or "").split("|")[-1].split(":")[-1]
-
-
-def groups():
-    """Every aim group in the scene (long paths); none where the scene cannot be asked (a fake
-    `cmds` in a test of another module)."""
-    try:
-        found = cmds.ls("*." + MARKER, recursive=True, objectsOnly=True, long=True,
-                        type="transform") or []
-    except (AttributeError, RuntimeError, TypeError):
-        return []
-    return list(dict.fromkeys(found))
-
-
-def group_of(weapon):
-    """The aim group of `weapon`, or None."""
-    found = groups()
-    if not found:
-        return None
-    uuid = _uuid(weapon)
-    if not uuid:
-        return None
-    for group in found:
-        try:
-            if cmds.getAttr(group + "." + MARKER) == uuid:
-                return group
-        except (RuntimeError, ValueError):
-            continue
-    return None
-
-
-def is_aimed(weapon):
-    group = group_of(weapon)
-    return group is not None and not broken(controllers(group), _constraint(weapon))
-
-
-def _clear_broken(weapon, group):
-    """What is left of a broken Aim Mode on `weapon` deleted: our constraint, the group."""
-    con = _constraint(weapon)
-    if con:
-        cmds.delete(con)
-    _drop_lines(group)
-    if cmds.objExists(group):
-        cmds.delete(group)
-
-
-def controllers(group):
-    """{"target": path, "up": path} under an aim group."""
-    out = {}
-    for child in cmds.listRelatives(group, children=True, fullPath=True, type="transform") or []:
-        if cmds.attributeQuery(CTRL_MARKER, node=child, exists=True):
-            out[cmds.getAttr(child + "." + CTRL_MARKER)] = child
-    return out
-
-
-def is_controller(node):
-    try:
-        return bool(cmds.attributeQuery(CTRL_MARKER, node=node, exists=True))
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        return False
-
-
-def weapon_of_group(group):
-    uuid = cmds.getAttr(group + "." + MARKER)
-    return _long(uuid)
-
-
-def stored_vectors(group):
-    """(aim vector, up vector, aim distance, up distance) kept on the group."""
-    values = [float(v) for v in cmds.getAttr(group + "." + VECTORS).split()]
-    return tuple(values[0:3]), tuple(values[3:6]), values[6], values[7]
-
-
-def _constraint(weapon):
-    for con in cmds.listRelatives(weapon, children=True, fullPath=True,
-                                  type="aimConstraint") or []:
-        if cmds.attributeQuery(CON_MARKER, node=con, exists=True):
-            return con
-    return None
-
-
-def refusal(weapon):
-    """'' or why `weapon` cannot go into Aim Mode."""
-    if not weapon or not cmds.objExists(weapon):
-        return NO_WEAPON
-    label = _leaf(weapon)
-    if is_aimed(weapon):
-        return ALREADY % label
-    for ch in ROTATE:
-        plug = weapon + "." + ch
-        if cmds.getAttr(plug, lock=True):
-            return "%s.%s is locked" % (label, ch)
-        if fkik._layered(plug):
-            return "%s.%s is on animation layers - bake its layers first" % (label, ch)
-        driver = fkik._foreign(plug)
-        if driver:
-            return "%s.%s is driven by %s" % (label, ch, driver)
-    return ""
-
-
-def _span():
-    start = cmds.playbackOptions(query=True, min=True)
-    end = cmds.playbackOptions(query=True, max=True)
-    return (int(math.floor(start)), int(math.ceil(end)), False)
-
-
-def _walk(frames, read):
-    """{frame: read()} over the frames, the time put back."""
-    now = cmds.currentTime(query=True)
-    out = {}
-    try:
-        for frame in frames:
-            fkik._goto(frame)
-            out[frame] = read()
-    finally:
-        fkik._goto(now)
-    return out
-
-
-def _world(node):
-    return om.MMatrix(cmds.getAttr(node + ".worldMatrix[0]"))
-
-
-def _control(name, parent, points, colour):
-    """A curve control: a transform under `parent` with one degree-1 curve through `points`,
-    coloured through the shape's RGB override, 2 px wide. Its long path."""
-    temp = cmds.curve(degree=1, point=list(points))
-    uuid = _uuid(temp)
-    cmds.parent(temp, parent, relative=True)
-    node = cmds.rename(_long(uuid), name.split(":")[-1])
-    node = _long(uuid)
-    shape = cmds.listRelatives(node, shapes=True, fullPath=True)[0]
-    cmds.rename(shape, _leaf(node) + "Shape")
-    shape = cmds.listRelatives(node, shapes=True, fullPath=True)[0]
-    cmds.setAttr(shape + ".overrideEnabled", 1)
-    cmds.setAttr(shape + ".overrideRGBColors", 1)
-    cmds.setAttr(shape + ".overrideColorRGB", *colour)
-    try:
-        cmds.setAttr(shape + ".lineWidth", 2.0)
-    except Exception:                                        # noqa: BLE001 - an older Maya
-        pass
-    return node
-
-
 def _drop_lines(group):
     """A group made by 45012f1..2026-10-21 holds two lines (gone since: «векторы ... не нужны»):
     their decomposeMatrix nodes deleted (the group takes the lines themselves)."""
@@ -317,31 +108,6 @@ def _drop_lines(group):
                     cmds.delete(node)
 
 
-def _make_controls(weapon, group_parent, size_target, size_up):
-    """The aim group and its two controllers (world space) for `weapon`."""
-    label = _leaf(weapon)
-    group = cmds.createNode("transform", name=GROUP_NAME.format(label), skipSelect=True)
-    uuid = _uuid(group)
-    if group_parent:
-        cmds.parent(group, group_parent, relative=True)
-    group = _long(uuid)
-    cmds.addAttr(group, longName=MARKER, dataType="string")
-    cmds.setAttr(group + "." + MARKER, _uuid(weapon), type="string")
-    cmds.addAttr(group, longName=VECTORS, dataType="string")
-    made = {}
-    for role, name, points, colour in (
-            ("target", TARGET_NAME, diamond(size_target), TARGET_COLOUR),
-            ("up", UP_NAME, diamond(size_up), UP_COLOUR)):
-        ctrl = _control(name.format(label), group, points, colour)
-        cmds.addAttr(ctrl, longName=CTRL_MARKER, dataType="string")
-        cmds.setAttr(ctrl + "." + CTRL_MARKER, role, type="string")
-        for attr in LOCKED:
-            cmds.setAttr(ctrl + "." + attr, lock=True, keyable=False, channelBox=False)
-        made[role] = _uuid(ctrl)
-    return _long(uuid), dict((r, _long(u)) for r, u in made.items())
-
-
-WORLD = "world"          # home_of's answer for the world level
 
 
 def home_of(weapon, chest=True):
@@ -374,20 +140,6 @@ def home_of(weapon, chest=True):
     return None
 
 
-def _put(group, home):
-    """`group` under `home` (WORLD: the world level; None: where it stands), relative. Its path."""
-    if not home:
-        return group
-    uuid = _uuid(group)
-    parents = cmds.listRelatives(group, parent=True, fullPath=True) or []
-    if home == WORLD:
-        if parents:
-            cmds.parent(group, world=True, relative=True)
-    elif not parents or parents[0] != home:
-        cmds.parent(group, home, relative=True)
-    return _long(uuid)
-
-
 def _park(group, weapon):
     try:
         from maya_scenesetup import chargroup
@@ -417,19 +169,64 @@ def rehome(weapon):
     return "the aim follows %s" % ("the world" if home == WORLD else _leaf(home))
 
 
-def _local(point, spaces, frame):
-    """A world point in the group's space at `frame` (the group stands at identity under Main,
-    whose world `spaces` holds per frame); as it is without one."""
-    if not spaces:
-        return point
-    p = om.MPoint(*point) * spaces[frame].inverse()
-    return (p.x, p.y, p.z)
+def _into_1p(weapon):
+    try:
+        from maya_tools import firstperson
+    except ImportError:
+        return ""
+    return firstperson.aim_into_chest(weapon)
 
 
-def _write_series(node, frames, points, span, tangents):
-    for axis, ch in enumerate(TRANSLATE):
-        plug = node + "." + ch
-        fkik._write(plug, frames, [p[axis] for p in points], span, False, tangents)
+
+KIND = aimcore.AimKind(MARKER, CTRL_MARKER, CON_MARKER, VECTORS, GROUP_NAME, TARGET_NAME, UP_NAME,
+                       "Connections: Aim Mode", "Connections: Default")
+WORLD = aimcore.WORLD          # home_of's answer for the world level
+_long, _uuid, _leaf, _put = aimcore.long_, aimcore.uuid, aimcore.leaf, aimcore.put
+
+
+def groups():
+    """Every aim group in the scene (long paths)."""
+    return aimcore.groups(KIND)
+
+
+def group_of(weapon):
+    """The aim group of `weapon`, or None."""
+    return aimcore.group_of(weapon, KIND)
+
+
+def is_aimed(weapon):
+    return aimcore.is_aimed(weapon, KIND)
+
+
+def controllers(group):
+    """{"target": path, "up": path} under an aim group."""
+    return aimcore.controllers(group, KIND)
+
+
+def is_controller(node):
+    return aimcore.is_controller(node, KIND)
+
+
+def weapon_of_group(group):
+    return aimcore.owner_of_group(group, KIND)
+
+
+def stored_vectors(group):
+    """(aim vector, up vector, aim distance, up distance) kept on the group."""
+    return aimcore.stored_vectors(group, KIND)
+
+
+def _constraint(weapon):
+    return aimcore.constraint(weapon, KIND)
+
+
+def refusal(weapon):
+    """'' or why `weapon` cannot go into Aim Mode."""
+    if not weapon or not cmds.objExists(weapon):
+        return NO_WEAPON
+    if is_aimed(weapon):
+        return ALREADY % _leaf(weapon)
+    return aimcore.rotate_refusal(weapon)
 
 
 def enter(weapon):
@@ -443,53 +240,13 @@ def enter(weapon):
     vec = vectors(*extents) if extents else None
     if vec is None:
         return NO_GEOMETRY % label
-    aim_v, up_v, d_aim, d_up = vec
-    span = _span()
-    weapon_uuid = _uuid(weapon)
     auto = cmds.autoKeyframe(query=True, state=True)
-    cmds.undoInfo(openChunk=True, chunkName="Connections: Aim Mode")
+    cmds.undoInfo(openChunk=True, chunkName=KIND.enter_chunk)
     try:
         cmds.autoKeyframe(state=False)
-        stale = group_of(weapon)
-        if stale:
-            _clear_broken(weapon, stale)
-        with maya_timewarp.unwarped():
-            sample, keys, tangents = fkik.own_keys([weapon], [], span)
-            fkik._suspend(True)
-            try:
-                home = home_of(_long(weapon_uuid))
-                worlds = _walk(sample, lambda: _world(_long(weapon_uuid)))
-                spaces = (_walk(sample, lambda: _world(home)) if home and home != WORLD
-                          else None)
-            finally:
-                fkik._suspend(False)
-            size = max(d_aim, d_up) * 0.06
-            group, made = _make_controls(weapon, None, size, size * 0.8)
-            cmds.setAttr(group + "." + VECTORS, " ".join(
-                "%.12g" % v for v in tuple(aim_v) + tuple(up_v) + (d_aim, d_up)), type="string")
-            group = _park(group, weapon)
-            made = controllers(group)
-            frames = list(sample)
-            if keys:
-                targets = [_local(point_of(worlds[f], aim_v, d_aim), spaces, f) for f in frames]
-                ups = [_local(point_of(worlds[f], up_v, d_up), spaces, f) for f in frames]
-                _write_series(made["target"], frames, targets, span, tangents)
-                _write_series(made["up"], frames, ups, span, tangents)
-            else:
-                now = frames[0]
-                for role, direction, distance in (("target", aim_v, d_aim), ("up", up_v, d_up)):
-                    cmds.xform(made[role], worldSpace=True,
-                               translation=point_of(worlds[now], direction, distance))
-            weapon = _long(weapon_uuid)
-            for ch in ROTATE:
-                cmds.cutKey(weapon + "." + ch, clear=True)
-            con = cmds.aimConstraint(made["target"], weapon, maintainOffset=False,
-                                     aimVector=aim_v, upVector=up_axis(aim_v, up_v), worldUpType="object",
-                                     worldUpObject=made["up"])[0]
-            cmds.addAttr(con, longName=CON_MARKER, dataType="string")
-            cmds.setAttr(con + "." + CON_MARKER, weapon_uuid, type="string")
-            #  a rig in 1P (Tools > 1P Setup, 2026-10-21): the controllers ride its chest
-            in_1p = _into_1p(_long(weapon_uuid))
+        keys, weapon = aimcore.aim_on(weapon, KIND, vec, home_of, _park)
+        #  a rig in 1P (Tools > 1P Setup, 2026-10-21): the controllers ride its chest
+        in_1p = _into_1p(weapon)
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
@@ -497,36 +254,8 @@ def enter(weapon):
     return line + (" | " + in_1p if in_1p else "")
 
 
-def _into_1p(weapon):
-    try:
-        from maya_tools import firstperson
-    except ImportError:
-        return ""
-    return firstperson.aim_into_chest(weapon)
-
-
-def _fill_between(weapon, aimed, keyed, order):
-    """Keys added on the frames between the keys where the baked rotation turns off the aim
-    (`aimed` {frame: euler} on every frame), until none does. How many."""
-    added = 0
-    for _ in range(FILL_PASSES):
-        baked = dict((f, [cmds.getAttr(weapon + "." + ch, time=f) for ch in ROTATE])
-                     for f in aimed if f not in keyed)
-        missed = frames_off(aimed, baked, TOLERANCE, order)
-        if not missed:
-            break
-        for f in missed:
-            for axis, ch in enumerate(ROTATE):
-                cmds.setKeyframe(weapon, attribute=ch, time=f, value=aimed[f][axis])
-            keyed.add(f)
-        added += len(missed)
-    return added
-
-
 def leave(weapon):
-    """Default on `weapon`: its rotation keyed back on the keys of the controllers and of its
-    translate, then on every frame between them the keys alone would miss (`_fill_between`), the
-    controllers and the constraint deleted. The status line."""
+    """Default on `weapon` (`aimcore.aim_off`). The status line."""
     weapon = _long(weapon)
     if not weapon:
         return NO_WEAPON
@@ -535,64 +264,16 @@ def leave(weapon):
     if group is None:
         return NOT_AIMED % label
     made = controllers(group)
-    if broken(made, _constraint(weapon)):
-        cmds.undoInfo(openChunk=True, chunkName="Connections: Default")
-        try:
-            _clear_broken(weapon, group)
-        finally:
-            cmds.undoInfo(closeChunk=True)
-        return CLEARED % label
-    from maya_poselib import helpers
-    span = _span()
-    weapon_uuid = _uuid(weapon)
     auto = cmds.autoKeyframe(query=True, state=True)
-    cmds.undoInfo(openChunk=True, chunkName="Connections: Default")
+    cmds.undoInfo(openChunk=True, chunkName=KIND.leave_chunk)
     try:
         cmds.autoKeyframe(state=False)
-        with maya_timewarp.unwarped():
-            nodes = [n for n in (made.get("target"), made.get("up"), weapon) if n]
-            sample, keys, tangents = fkik.own_keys(nodes, [], span)
-            attrs = helpers._attrs(weapon)
-
-            def read():
-                w = _long(weapon_uuid)
-                return _world(w) * om.MMatrix(cmds.getAttr(w + ".parentInverseMatrix[0]"))
-
-            every = list(range(span[0], span[1] + 1)) if keys else []
-            fkik._suspend(True)
-            try:
-                locals_ = _walk(sorted(set(sample) | set(every)), read)
-            finally:
-                fkik._suspend(False)
-            frames = list(sample)
-            #  one Euler path through every frame in time order: the keys and the frames between
-            #  them on the same turn (no 360 between neighbours)
-            previous = [cmds.getAttr(weapon + "." + ch) for ch in ROTATE]
-            aimed = {}
-            for f in sorted(locals_):
-                rotate, _t = helpers.driver_channels(locals_[f], attrs, previous)
-                aimed[f] = list(rotate)
-                previous = list(rotate)
-            values = [aimed[f] for f in frames]
-            con = _constraint(weapon)
-            if con:
-                cmds.delete(con)
-            _drop_lines(group)
-            cmds.delete(group)
-            weapon = _long(weapon_uuid)
-            for axis, ch in enumerate(ROTATE):
-                plug = weapon + "." + ch
-                if keys:
-                    fkik._write(plug, frames, [v[axis] for v in values], span, False, tangents)
-                else:
-                    cmds.setAttr(plug, values[0][axis])
-            added = 0
-            if keys:
-                added = _fill_between(weapon, dict((f, aimed[f]) for f in every), set(frames),
-                                      int(attrs.get("rotateOrder", 0)))
+        if broken(made, _constraint(weapon)):
+            aimcore.clear_broken(weapon, KIND, group, _drop_lines)
+            return CLEARED % label
+        keys, added = aimcore.aim_off(weapon, KIND, group, made, _drop_lines)
     finally:
         cmds.autoKeyframe(state=auto)
         cmds.undoInfo(closeChunk=True)
     line = left_message(label, keys)
     return line + (" + %d between them where the aim turned faster" % added if added else "")
-
