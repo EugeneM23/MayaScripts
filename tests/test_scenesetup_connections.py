@@ -302,7 +302,7 @@ class Panel(unittest.TestCase):
         #  weapon tab's rows, Apply all and Aim Mode / Default
         self.assertEqual([c[2]["label"] for c in self._buttons()],
                          ["BakeAcross", "Release", "Apply", "Apply", "Apply", "Apply all",
-                          "Aim Mode", "Default"])
+                          "Aim Mode", "Default", "Apply", "Aim Mode", "Default"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand R", "Hand L", "Weapon"):
@@ -316,7 +316,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
         #  + the legs' two labels and the spine (2026-10-10), the three
         #  captions (2026-10-16)
-        self.assertEqual(len(labels), 15)          # + the caption «Aim» (2026-10-21)
+        self.assertEqual(len(labels), 17)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -328,7 +328,7 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 10)     # the chooser's, FK/IK's too, legs' and the spine's too, the tabs
+        self.assertEqual(len(segment_rows), 11)     # the chooser's, FK/IK's too, legs' and the spine's too, the tabs, the camera's parents
         for side in ("R", "L"):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
@@ -338,7 +338,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.marks[cx.STATUS].role, "status")
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
-        self.assertEqual(roles.count(("tool", "check")), 3)
+        self.assertEqual(roles.count(("tool", "check")), 4)     # + the camera tab's Apply (2026-10-28)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
@@ -568,7 +568,9 @@ class Panel(unittest.TestCase):
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "secondary")]
         self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "target"),
+                                         ("primary", "target"),
                                          ("secondary", "link"), ("secondary", "rotate"),
+                                         ("secondary", "rotate"),
                                          ("secondary", "unlink")])
 
     def test_the_status_tells_the_hub(self):

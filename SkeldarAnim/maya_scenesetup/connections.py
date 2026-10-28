@@ -110,6 +110,8 @@ import maya_rigs
 from maya_overrig import overrig
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
+from maya_scenesetup import camera
+from maya_scenesetup import cameraaim
 from maya_scenesetup import catalog
 from maya_scenesetup import fkik
 from maya_scenesetup import fkikspine
@@ -129,12 +131,20 @@ ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
 CAPTION = {"limbs": "skeldarConnectionsCapLimbs",
            "weapon": "skeldarConnectionsCapWeapon",
            "aim": "skeldarConnectionsCapAim",
-           "any": "skeldarConnectionsCapAny"}
-# [Body | Weapon] (2026-10-21, «дополнительную вкладку в connection для оружия»): one column a
-# tab, one managed at a time, the pick remembered
-TABS = (("body", "Body"), ("weapon", "Weapon"))
+           "any": "skeldarConnectionsCapAny",
+           "camparent": "skeldarConnectionsCapCamParent",
+           "camaim": "skeldarConnectionsCapCamAim"}
+# [Body | Weapon | Camera] (2026-10-28, «Во вкладке конекшен нужно добавить раздел для камер»):
+# one column a tab, one managed at a time, the pick remembered
+TABS = (("body", "Body"), ("weapon", "Weapon"), ("camera", "Camera"))
 TAB_COLLECTION = "skeldarConnectionsTabs"
-TAB_COLUMN = {"body": "skeldarConnectionsBodyTab", "weapon": "skeldarConnectionsWeaponTab"}
+TAB_COLUMN = {"body": "skeldarConnectionsBodyTab", "weapon": "skeldarConnectionsWeaponTab",
+              "camera": "skeldarConnectionsCameraTab"}
+CAMERA_MENU = "skeldarConnectionsCameraParent"
+CAMERA_POSITION = "skeldarConnectionsCameraPosition"
+CAMERA_AIM_BUTTON = "skeldarConnectionsCameraAimMode"
+CAMERA_DEFAULT_BUTTON = "skeldarConnectionsCameraDefault"
+NO_CAMERA_TEXT = "no camera - Characters > Camera Setup first"
 TAB_OPTIONVAR = "skeldarConnectionsTab"
 AIM_BUTTON = "skeldarConnectionsAimMode"
 DEFAULT_BUTTON = "skeldarConnectionsAimDefault"
@@ -1343,6 +1353,10 @@ def refresh(*_args):
     text = header_text(rig, weapon, scheme, others, mixed)
     if weapon and weaponaim.is_aimed(weapon):
         text += " - Aim Mode"
+    if current_tab() == "camera":
+        choice, position, aimed = _camera_state()
+        _set_camera(choice, position)
+        text = camera_text(choice, position, aimed)
     cmds.text(HEADER, edit=True, label=text)
     return text
 
@@ -1525,6 +1539,88 @@ def aim_mode(rig=None, weapon=None, on=True):
     return weaponaim.enter(weapon) if on else weaponaim.leave(weapon)
 
 
+def camera_segment(choice):
+    return "skeldarConnectionsCamera_" + choice
+
+
+def camera_text(choice, position, aimed):
+    """The Camera tab's state line. Pure."""
+    if choice is None:
+        return NO_CAMERA_TEXT
+    return "Camera: %s%s%s" % (choice or "?", " (position)" if position else "",
+                               " - Aim Mode" if aimed else "")
+
+
+def _camera_bone():
+    from maya_tools import firstperson
+    return firstperson._selected_bone()
+
+
+def _camera_control():
+    """(the active character's camera control, refusal)."""
+    bone, refusal = _camera_bone()
+    if refusal:
+        return None, refusal
+    control = camera.control_for(bone)
+    return (control, "") if control else (None, camera.NO_CONTROL % camera.leaf(bone))
+
+
+def camera_parent(choice, position_only=False):
+    """The camera's control under `choice` (2026-10-28), position only if asked. The line."""
+    bone, refusal = _camera_bone()
+    if refusal:
+        return refusal
+    return camera.set_parent(bone, choice, position_only)
+
+
+def camera_aim(on=True):
+    """Aim Mode (`on`) or Default on the active character's camera. The line."""
+    control, refusal = _camera_control()
+    if refusal:
+        return refusal
+    return cameraaim.enter(control) if on else cameraaim.leave(control)
+
+
+def _camera_state():
+    """(choice or None, position only, aimed) of the active character's camera."""
+    try:
+        control, refusal = _camera_control()
+    except Exception:                                        # noqa: BLE001 - no scene to ask
+        return None, False, False
+    if refusal:
+        return None, False, False
+    return (camera.parent_choice(control) or "", camera.is_position_only(control),
+            cameraaim.is_aimed(control))
+
+
+def _set_camera(choice, position):
+    if choice and cmds.iconTextRadioButton(camera_segment(choice), exists=True):
+        cmds.iconTextRadioButton(camera_segment(choice), edit=True, select=True)
+    if cmds.checkBox(CAMERA_POSITION, exists=True):
+        cmds.checkBox(CAMERA_POSITION, edit=True, value=bool(position))
+
+
+def _chosen_camera_parent():
+    picked = cmds.iconTextRadioCollection(CAMERA_MENU, query=True, select=True) or ""
+    for choice in camera.PARENTS:
+        if picked.endswith(camera_segment(choice)):
+            return choice
+    return camera.PARENTS[0]
+
+
+def _press_camera_parent(*_args):
+    position = bool(cmds.checkBox(CAMERA_POSITION, query=True, value=True))
+    return _run(lambda: camera_parent(_chosen_camera_parent(), position))
+
+
+def _press_camera_aim_mode(*_args):
+    return _run(lambda: camera_aim(True))
+
+
+def _press_camera_default(*_args):
+    return _run(lambda: camera_aim(False))
+
+
 def current_tab():
     value = cmds.optionVar(query=TAB_OPTIONVAR) if cmds.optionVar(exists=TAB_OPTIONVAR) else ""
     return value if value in TAB_COLUMN else "body"
@@ -1551,6 +1647,10 @@ def show_tab(tab):
         segment = tab_segment(tab)
         if cmds.iconTextRadioButton(segment, exists=True):
             cmds.iconTextRadioButton(segment, edit=True, select=True)
+        try:
+            refresh()
+        except Exception:                                    # noqa: BLE001 - the subtitle only
+            pass
     finally:
         _TAB_BUSY[0] = False
 
@@ -1781,6 +1881,46 @@ def build_panel():
         annotation="The aim baked back onto the weapon's rotation on the controllers' "
                    "keys, the controllers removed",
         command=_press_aim(False)), "secondary", "rotate")
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.columnLayout(TAB_COLUMN["camera"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6), manage=tab == "camera")
+    _caption("camparent", "Camera parent")
+    segments = cmds.rowLayout(numberOfColumns=len(camera.PARENTS),
+                              columnAttach=[(i + 1, "both", 1) for i in range(len(camera.PARENTS))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(CAMERA_MENU)
+    for index, choice in enumerate(camera.PARENTS):
+        hubstyle.mark(cmds.iconTextRadioButton(
+            camera_segment(choice), style="textOnly", label=choice,
+            height=hubstyle.height("segment", 22), select=index == 0,
+            annotation="the camera control's parent: %s" % choice), "segment")
+    cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "right", 0)])
+    hubstyle.mark(cmds.checkBox(
+        CAMERA_POSITION, label="Position only", value=False,
+        annotation="Follow the parent's position only (a point constraint); the camera turns "
+                   "with Main"), "chip")
+    hubstyle.mark(cmds.button(
+        label=hubstyle.tool_label("Apply"), width=hubstyle.tool_width(66),
+        height=hubstyle.height("small", 24),
+        annotation="the camera under the chosen parent, its motion kept",
+        command=_press_camera_parent), "tool", "check")
+    cmds.setParent("..")
+    _caption("camaim", "Camera aim")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.button(
+        CAMERA_AIM_BUTTON, label="Aim Mode", height=hubstyle.height("button", 32),
+        annotation="The camera's turn aims at two controllers (a target ahead, an up above), "
+                   "keyed on the camera's own keys - it looks where it looked on every key",
+        command=_press_camera_aim_mode), "primary", "target")
+    hubstyle.mark(cmds.button(
+        CAMERA_DEFAULT_BUTTON, label="Default", height=hubstyle.height("button", 32),
+        width=hubstyle.pick(90, 96),
+        annotation="The aim baked back onto the camera's rotation, the controllers removed",
+        command=_press_camera_default), "secondary", "rotate")
     cmds.setParent("..")
     cmds.setParent("..")
     #  three lines (2026-09-30): an Apply plus the FK/IK switch it made first

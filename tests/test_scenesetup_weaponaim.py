@@ -97,9 +97,9 @@ class Tabs(unittest.TestCase):
     def _column_calls(self, name):
         return [c for c in self.fake.calls if c[0] == "columnLayout" and c[1] == (name,)]
 
-    def test_two_tab_segments_body_first(self):
+    def test_three_tab_segments_body_first(self):
         self.assertEqual([label for _n, label in self.fake.segments[cx.TAB_COLLECTION]],
-                         ["Body", "Weapon"])
+                         ["Body", "Weapon", "Camera"])
         self.assertEqual(self.marks[cx.tab_segment("body")].role, "segment")
 
     def test_the_weapon_tab_holds_the_parent_rows_and_the_aim(self):

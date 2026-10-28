@@ -1283,6 +1283,12 @@ _OURS = (
     ("connections.default", "Connections", "Weapon Default",
      "The aim baked back onto the weapon's rotation, the controllers removed",
      partial(_connections, "_press_aim_default")),
+    ("connections.camera_aim", "Connections", "Camera Aim Mode",
+     "The camera's turn aims at two controllers, keyed on its own keys",
+     partial(_connections, "_press_camera_aim_mode")),
+    ("connections.camera_default", "Connections", "Camera Default",
+     "The camera's aim baked back onto its rotation, the controllers removed",
+     partial(_connections, "_press_camera_default")),
     # Connect Arms / Disconnect Arms / Add Aim / Camera Setup left Scene
     # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
     # camera setup happens inside the retarget's Bake now.
