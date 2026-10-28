@@ -78,10 +78,12 @@ def vectors(lo, hi):
     d_up = math.sqrt(sum(v * v for v in point))
     return aim_v, tuple(v / d_up for v in point), d_top, d_up
 
+
 def square(half):
     """A closed square of half side `half` on X and Z, degree 1."""
     return [(-half, 0, -half), (half, 0, -half), (half, 0, half), (-half, 0, half),
             (-half, 0, -half)]
+
 
 def entered_message(label, keys):
     if not keys:
@@ -90,11 +92,13 @@ def entered_message(label, keys):
     return ("%s in Aim Mode on %d key%s (%g..%g) - animate %s_aimTarget / _aimUp"
             % (label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1], label))
 
+
 def left_message(label, keys):
     if not keys:
         return "%s back to Default - no keys: its rotation set at the current frame" % label
     return "%s back to Default on %d key%s (%g..%g)" % (
         label, len(keys), "" if len(keys) == 1 else "s", keys[0], keys[-1])
+
 
 def _drop_lines(group):
     """A group made by 45012f1..2026-10-21 holds two lines (gone since: «векторы ... не нужны»):
@@ -107,6 +111,7 @@ def _drop_lines(group):
                                              type="decomposeMatrix") or []:
                 if cmds.objExists(node):
                     cmds.delete(node)
+
 
 def home_of(weapon, chest=True):
     """Where the weapon's aim group lives (2026-10-21): it repeats the weapon's parent (the
@@ -137,6 +142,7 @@ def home_of(weapon, chest=True):
         pass
     return None
 
+
 def _park(group, weapon):
     try:
         from maya_scenesetup import chargroup
@@ -146,6 +152,7 @@ def _park(group, weapon):
         return _put(group, home_of(weapon))
     except Exception:                                        # noqa: BLE001 - legacy: stays
         return group
+
 
 def rehome(weapon):
     """The weapon's aim group moved where `home_of` says, its controllers' world motion kept
@@ -164,6 +171,7 @@ def rehome(weapon):
                            lambda: _put(_long(uuid), home))
     return "the aim follows %s" % ("the world" if home == WORLD else _leaf(home))
 
+
 def _into_1p(weapon):
     try:
         from maya_tools import firstperson
@@ -171,33 +179,42 @@ def _into_1p(weapon):
         return ""
     return firstperson.aim_into_chest(weapon)
 
+
 def groups():
     """Every aim group in the scene (long paths)."""
     return aimcore.groups(KIND)
+
 
 def group_of(weapon):
     """The aim group of `weapon`, or None."""
     return aimcore.group_of(weapon, KIND)
 
+
 def is_aimed(weapon):
     return aimcore.is_aimed(weapon, KIND)
+
 
 def controllers(group):
     """{"target": path, "up": path} under an aim group."""
     return aimcore.controllers(group, KIND)
 
+
 def is_controller(node):
     return aimcore.is_controller(node, KIND)
 
+
 def weapon_of_group(group):
     return aimcore.owner_of_group(group, KIND)
+
 
 def stored_vectors(group):
     """(aim vector, up vector, aim distance, up distance) kept on the group."""
     return aimcore.stored_vectors(group, KIND)
 
+
 def _constraint(weapon):
     return aimcore.constraint(weapon, KIND)
+
 
 def refusal(weapon):
     """'' or why `weapon` cannot go into Aim Mode."""
@@ -206,6 +223,7 @@ def refusal(weapon):
     if is_aimed(weapon):
         return ALREADY % _leaf(weapon)
     return aimcore.rotate_refusal(weapon)
+
 
 def enter(weapon):
     """Aim Mode on `weapon` (refusals first; nothing changed on one). The status line."""
@@ -230,6 +248,7 @@ def enter(weapon):
         cmds.undoInfo(closeChunk=True)
     line = entered_message(label, keys)
     return line + (" | " + in_1p if in_1p else "")
+
 
 def leave(weapon):
     """Default on `weapon` (`aimcore.aim_off`). The status line."""
