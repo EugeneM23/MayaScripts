@@ -115,6 +115,7 @@ from maya_scenesetup import cameraaim
 from maya_scenesetup import catalog
 from maya_scenesetup import fkik
 from maya_scenesetup import fkikspine
+from maya_scenesetup import ikworld
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponaim
 from maya_scenesetup import weaponspace
@@ -195,6 +196,8 @@ IK_CONTROL = "IKArm_{0}"
 FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
 FKIK_BOX_LEG = "skeldarConnectionsFKIKLeg_{0}_{1}"
 FKIK_BOX_SPINE = "skeldarConnectionsFKIKSpine_{0}"
+#  World (2026-10-28): IK presses put the IK control on a world control (`ikworld`)
+WORLD_BOX = "skeldarConnectionsFKIKWorld"
 #  The skin's Arm L column, logical px (2026-10-08): about half the row at the
 #  animator's 360 px dock. Maya's rowLayout has ONE adjustable column, so Arm
 #  R's [FK | IK] took the row and Arm L's stood at its texts' width (live:
@@ -876,7 +879,8 @@ def apply(wanted, rig=None, weapon=None):
                                                    IK_CONTROL.format(side),
                                                    maya_rigs.label(rig))
             arm = _not_ik(rig, side)
-            text = fkik.refusal(arm, fkik.IK, _whole(arm)) if arm else ""
+            text = world_refusal(rig, side) or (
+                fkik.refusal(arm, fkik.IK, _whole(arm)) if arm else "")
             if text:
                 return text
     if any(step in ("lift", "hang") for step, _ in steps):
@@ -1091,9 +1095,9 @@ def _highlight():
         return None
 
 
-def switch_arm(side, mode, rig=None, highlight=None):
+def switch_arm(side, mode, rig=None, highlight=None, world=None):
     """The arm on `side` to FK or IK (see `switch_limb`)."""
-    return switch_limb(side, mode, rig=rig, highlight=highlight, kind=fkik.ARM)
+    return switch_limb(side, mode, rig=rig, highlight=highlight, kind=fkik.ARM, world=world)
 
 
 def switch_spine(mode, rig=None, highlight=None):
@@ -1120,12 +1124,17 @@ def switch_spine(mode, rig=None, highlight=None):
         cmds.undoInfo(closeChunk=True)
 
 
-def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM):
+def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM, world=None):
     """The arm (or, kind=LEG, the leg) on `side` to FK or IK over the highlighted
     range, else the whole take, keeping what it shows (`fkik.switch`). FK on a
     hand that rides a weapon releases it first (over the whole take - the link is
     the take's; arms only, a weapon is never on a leg). `highlight` overrides the
-    slider (a verify has none). One undo chunk; refusals before anything moves."""
+    slider (a verify has none). One undo chunk; refusals before anything moves.
+
+    World (2026-10-28, `world` - None reads the card's box, `ikworld.is_on`): an IK
+    press puts the IK control on a world control (Tools' Double knot World) keyed on
+    the switch's keys; an IK press without it brings a limb in world back into Main's
+    space; FK takes the world control off after the switch (`ikworld`)."""
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
@@ -1136,28 +1145,75 @@ def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM):
     if arm is None:
         return text
     label = fkik.LABEL[kind].format(side)
-    span = fkik.span_for(_highlight() if highlight is None else highlight or None,
-                         fkik.whole_take(arm))
+    raw = _highlight() if highlight is None else highlight or None
+    top = ikworld.limb_knot(arm)
+    whole = fkik.whole_take(arm)
+    if top:
+        #  the world control's keys are the limb's too: the take reaches them
+        times = ikworld.key_times(top)
+        if times:
+            whole = (min(whole[0], min(times)), max(whole[1], max(times)))
+    span = fkik.span_for(raw, whole)
     rides = following(rig, side) if kind == fkik.ARM else None
     if rides and mode == fkik.IK:
         if fkik.mode_of(fkik.blend_values(arm)) == fkik.IK:
             return fkik.ALREADY % (label, "IK (it follows %s)" % weapon_label(rides))
         return "%s follows %s - set it Free first" % (ROW_LABEL[side],
                                                       weapon_label(rides))
-    text = fkik.refusal(arm, mode, span) or (release_refusal(_control(rig, side)) if rides else "")
+    shown = fkik.mode_of(fkik.blend_values(arm))
+    to_world = mode == fkik.IK and (ikworld.is_on() if world is None else bool(world))
+    if top and mode == fkik.IK:
+        if shown != fkik.IK:
+            return ikworld.LEFT_OVER % (label, arm.ik.split("|")[-1])
+        if to_world:
+            return ikworld.ALREADY % (label, top.split("|")[-1])
+        cmds.undoInfo(openChunk=True, chunkName="Connections: %s out of world" % label)
+        try:
+            return ikworld.leave(arm, top)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+    if top and shown == fkik.FK:
+        #  FK already: the world control drives an IK nobody sees - it only comes off
+        cmds.undoInfo(openChunk=True, chunkName="Connections: %s world control off" % label)
+        try:
+            return "; ".join((fkik.ALREADY % (label, fkik.FK), ikworld.drop(top)))
+        finally:
+            cmds.undoInfo(closeChunk=True)
+    switching = not (to_world and shown == fkik.IK)
+    text = fkik.refusal(arm, mode, span) if switching else ""
+    text = text or (release_refusal(_control(rig, side)) if rides else "")
+    text = text or (ikworld.refusal(arm) if to_world else "")
     if text:
         return text
+    plan = fkik.key_plan(arm, span) if to_world else None
     notes = []
-    cmds.undoInfo(openChunk=True, chunkName="Connections: %s to %s" % (label, mode))
+    cmds.undoInfo(openChunk=True, chunkName="Connections: %s to %s%s" % (
+        label, mode, " (world)" if to_world else ""))
     try:
         if rides:
             sweep_orphans()
             _release(rig, side, _span(rides, [_control(rig, s) for s in SIDES]))
             notes.append("%s released from %s" % (ROW_LABEL[side], weapon_label(rides)))
-        notes.append(fkik.switch(arm, mode, span))
+        if switching and top:
+            notes.append(fkik.switch(arm, mode, span, extra=ikworld.nodes_of(top)))
+        elif switching:
+            notes.append(fkik.switch(arm, mode, span))
+        if to_world:
+            _frames, keys, tangents = plan
+            frames = keys or [cmds.currentTime(query=True)]
+            notes.append(ikworld.enter(arm, frames, tangents, raw))
+        if top:
+            notes.append(ikworld.drop(top))
         return "; ".join(notes)
     finally:
         cmds.undoInfo(closeChunk=True)
+
+
+def world_refusal(rig, side):
+    """Why the hand on `side` cannot follow a weapon for being IK in world, or ''."""
+    if ikworld.knot_of(_control(rig, side)):
+        return ikworld.IN_WORLD % fkik.LABEL[fkik.ARM].format(side)
+    return ""
 
 
 # ------------------------------------------------------------------ panel
@@ -1342,16 +1398,19 @@ def refresh(*_args):
     scheme = read_scheme(rig, bones, weapon) if weapon else {"L": None, "R": None}
     _set_chooser(weapons, weapon, [_side_of(rig, bones, w) for w in weapons])
     _set_menus(menus_from_scheme(scheme))
-    modes = _arm_modes(rig)
+    worlds = []
+    modes = _limb_modes(rig, fkik.ARM, worlds)
     _set_fkik(modes)
-    leg_modes = _limb_modes(rig, fkik.LEG)
+    leg_modes = _limb_modes(rig, fkik.LEG, worlds)
+    _set_world()
     _set_fkik(leg_modes, fkik.LEG)
     spine_mode, spine_mixed = _spine_state(rig)
     _set_spine(spine_mode)
     others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
                        for w in weapons if not _same(w, weapon))
     mixed = ", ".join(part for part in (arms_text(modes), arms_text(leg_modes, fkik.LEG),
-                                        "Spine mixed FK/IK (keyed)" if spine_mixed else "")
+                                        "Spine mixed FK/IK (keyed)" if spine_mixed else "",
+                                        ikworld.world_text(worlds))
                       if part)
     text = header_text(rig, weapon, scheme, others, mixed)
     if weapon and weaponaim.is_aimed(weapon):
@@ -1391,8 +1450,9 @@ def _set_spine(mode):
         _FKIK_QUIET["on"] = False
 
 
-def _limb_modes(rig, kind):
-    """{side: FK / IK / None (mixed)} for each limb of `kind` the rig has."""
+def _limb_modes(rig, kind, worlds=None):
+    """{side: FK / IK / None (mixed)} for each limb of `kind` the rig has; the
+    labels of those in world appended to `worlds` (2026-10-28)."""
     modes = {}
     for side in SIDES:
         if not rig:
@@ -1400,10 +1460,23 @@ def _limb_modes(rig, kind):
         arm = (fkik.limb(rig, side) if kind == fkik.ARM else fkik.limb(rig, side, kind))[0]
         if arm:
             modes[side] = fkik.mode_of(fkik.blend_values(arm))
+            if worlds is not None and ikworld.limb_knot(arm):
+                worlds.append(fkik.LABEL[kind].format(side))
     return modes
 
 
 _FKIK_QUIET = {"on": False}
+
+
+def _set_world():
+    """The World chip shows what is remembered (quiet, as the boxes)."""
+    if not cmds.checkBox(WORLD_BOX, exists=True):
+        return
+    _FKIK_QUIET["on"] = True
+    try:
+        cmds.checkBox(WORLD_BOX, edit=True, value=ikworld.is_on(cmds))
+    finally:
+        _FKIK_QUIET["on"] = False
 
 
 def _set_fkik(modes, kind=fkik.ARM):
@@ -1737,6 +1810,28 @@ def _spine_row():
 
 
 
+def _press_world(*_args):
+    """The World chip remembered: every IK press of an arm or a leg reads it."""
+    if _FKIK_QUIET["on"]:
+        return None
+    on = bool(cmds.checkBox(WORLD_BOX, query=True, value=True))
+    ikworld.set_on(on, cmds)
+    return on
+
+
+def _world_row():
+    """World (2026-10-28, «галочку WORLD»): an IK press puts the IK control on a world control,
+    Tools' Double knot World, keyed on the switch's keys. One chip for the arms and the legs."""
+    cmds.rowLayout(numberOfColumns=1, columnAttach=[(1, "left", 0)])
+    hubstyle.mark(cmds.checkBox(
+        WORLD_BOX, label="World", value=ikworld.is_on(cmds),
+        annotation="IK presses put the hand or foot on a world control (Tools > World x2: Move "
+                   "carries its place, Rotate its turn), keyed on the IK's keys - it stays in "
+                   "the scene while Main moves. IK without World takes it back; FK takes it off",
+        changeCommand=_press_world), "chip")
+    cmds.setParent("..")
+
+
 def _any_object_rows():
     """BakeAcross and Release - any object, not the weapon - under their caption."""
     _caption("any", "Any object")
@@ -1802,6 +1897,7 @@ def build_panel():
     #  the legs (2026-10-10): the same row under the arms, one per leg
     _fkik_row(fkik.LEG)
     _spine_row()
+    _world_row()
     _any_object_rows()
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["weapon"], adjustableColumn=True,

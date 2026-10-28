@@ -15082,6 +15082,44 @@ before this, unchanged), `verify_camera_control` 29/29, `verify_1p_setup` 30/30,
 `verify_camera_weapon_bones` 24/24; 11822 unit tests, the known `test_chat_deploy.Keys` failing.
 Not seen in a GUI Maya.
 
+## Connections: IK into a world control, the World chip (2026-10-28)
+
+The animator: «во вкладке connection там где мы перепекаем руки в IK сделаем возможность поставить
+галочку WORLD ... не просто переключиться в ик а переподвязаться еще на новый контрол который будет
+привязан как knot world инструмент во вкладке tools». Asked, all three the recommendation: Tools'
+**Double knot World** («World ×2»), keyed **only on the IK switch's keys**, **arms and legs**. Spec
+`docs/superpowers/specs/2026-10-28-connections-ik-world-design.md`.
+- **The chip** `skeldarConnectionsFKIKWorld` «World» under the Spine row in the Body tab, remembered
+  in `skeldarConnectionsIKWorld` (off by default); the FK presses and the spine ignore it. The
+  subtitle names the limbs in world («Arm_R, Leg_L IK in world»).
+- **`maya_scenesetup/ikworld.py`**: a limb is in world when a `double_world` knot drives its IK
+  control (`knot_of`, `limb_knot`; one made in Tools counts). `enter` →
+  **`knots.create_keyed`**: the knot's nodes made and constrained as every knot's, SAMPLED on the
+  frames after a real time change, temporaries off, keyed with the switch's tangents (a whole
+  take's still channel a plain value, eulers filtered), the time on the first frame before the
+  object's follow constraint (its `-mo` offset is captured there: between keys a sparse knot does
+  not stand on the object). `leave`: the IK control's locals read on the knot's keys
+  (`fkik.own_keys` of both locators and `attach`), the knot removed, the keys written with
+  `fkik._write`. `drop`: Tools' Remove, the selection kept.
+- **`connections.switch_limb(..., world=)`**: IK + World on FK = switch, then `enter` on
+  `fkik.key_plan`'s keys (read before the switch); on IK = `enter` only; on IK in world = refused;
+  IK without World on a limb in world = `leave`; FK on it = `fkik.switch(..., extra=knot nodes)`
+  (their keys counted, `key_plan(extra=)`), then `drop`; FK on FK with a knot left = `drop`; IK on
+  a limb showing FK with a knot left = refused («press FK to take it off first»). The knot's keys
+  widen the whole take. Weapon tab: a hand in world cannot follow (`world_refusal`).
+- Not changed: an arm's pole follows Main (`followArm 0`) - the elbow plane rides the body; a
+  leg's pole follows the IK leg. A foot at full extension (the rest pose) cannot stay when the hip
+  goes away from it (`stretchy` 0) - measured 0.30 cm for a 3 cm move, 0.0000 with the knee bent.
+- Proof: `docs/superpowers/plans/verify_ik_world.py` **43/43 mayapy standalone** (two Manny_Rigs:
+  the world arm at the keys where the plain IK has it 0.000000 cm / 0.00000 deg; keyed on exactly
+  0/12/24, the Move with no rotation; Main 3 cm on, the hand 0.0001 cm, the shoulder 3.000; the
+  Move +2 cm X → the hand 2.0000; one Ctrl+Z / redo; back from world 0.0000; FK from world
+  0.0000; the leg with no switch, the lifted foot 0.0000; a range 8..16 → knot 7..17, attach
+  0/1/1/0, keys 8/12/16). `verify_knots.py` 90/90, `verify_fkik_keys.py` 18/18;
+  `tests/test_scenesetup_ikworld.py`; 11877 unit tests, the known `test_chat_deploy.Keys` failing.
+  Not seen in a GUI Maya. Not built: the Pose Library onto a limb in world (`rigsolve.knot_driver`
+  takes a plain knot only), a world pole.
+
 ## AT bar keys name their layer (2026-10-27)
 
 «по одному працює, але виділені ні» - Paste Relationship on the highlighted keys, IKArm_R following the

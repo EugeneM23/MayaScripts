@@ -842,6 +842,10 @@ class SwitchArm(unittest.TestCase):
         self.saved_fkik = dict((name, getattr(cx.fkik, name)) for name in
                                ("limb", "whole_take", "refusal", "switch",
                                 "blend_values"))
+        #  the World box (2026-10-28) off, no world control: the switch as it always was
+        self.saved_world = (cx.ikworld.limb_knot, cx.ikworld.is_on)
+        cx.ikworld.limb_knot = lambda arm: None
+        cx.ikworld.is_on = lambda: False
 
         class Cmds(object):
             existing = set()
@@ -874,6 +878,7 @@ class SwitchArm(unittest.TestCase):
             setattr(cx, name, value)
         for name, value in self.saved_fkik.items():
             setattr(cx.fkik, name, value)
+        cx.ikworld.limb_knot, cx.ikworld.is_on = self.saved_world
 
     def test_a_free_arm_is_switched_over_the_whole_take(self):
         text = cx.switch_arm("R", "FK", highlight=False)

@@ -982,11 +982,13 @@ def _keys_of(curve):
     return list(zip(times, ins, outs))
 
 
-def key_plan(arm, span):
+def key_plan(arm, span, extra=()):
     """(frames to sample, frames keyed, {frame: (in, out) tangent types}) of
-    a keys-only switch: the keys of the arm it shows (`own_keys`)."""
+    a keys-only switch: the keys of the arm it shows (`own_keys`) - and of
+    `extra` nodes beside its controls (2026-10-28: the world control an IK
+    control rides, `ikworld`)."""
     _nodes, plugs, own = sources(arm, mode_of(blend_values(arm)))
-    return own_keys(own, plugs, span)
+    return own_keys(list(own) + list(extra), plugs, span)
 
 
 def own_keys(own, plugs, span):
@@ -1310,17 +1312,17 @@ def _fit_toes(arm, frames, samples, span):
 
 
 @maya_timewarp.wrapped
-def switch(arm, mode, span, every_frame=False):
+def switch(arm, mode, span, every_frame=False, extra=()):
     """Bring `arm` to `mode` over `span` keeping what it shows - on the
-    frames something moving it is keyed on (`key_plan`), or on every frame
-    of the span (`every_frame`). The caller has checked `refusal` and holds
-    the undo chunk. Returns the status."""
+    frames something moving it is keyed on (`key_plan`, `extra` nodes' keys
+    counted), or on every frame of the span (`every_frame`). The caller has
+    checked `refusal` and holds the undo chunk. Returns the status."""
     start, end, ranged = span
     now = cmds.currentTime(query=True)
     if every_frame:
         frames, keys, tangents = list(range(start, end + 1)), None, {}
     else:
-        frames, keys, tangents = key_plan(arm, span)
+        frames, keys, tangents = key_plan(arm, span, extra)
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
     _suspend(True)

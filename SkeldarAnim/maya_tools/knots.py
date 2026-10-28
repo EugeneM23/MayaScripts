@@ -212,6 +212,35 @@ def _knots_driving(obj):
     return out
 
 
+def driving(obj):
+    """The knots that drive `obj`: their tops' long paths."""
+    return _knots_driving(obj)
+
+
+def kind_of(top):
+    """A knot's kind ("knot", "double_world", ...), or None."""
+    return _get(top, plan.KIND_MARKER)
+
+
+def nodes_of(top):
+    """A knot's own nodes: its top and a double knot's inner."""
+    uuid = _uuid(top)
+    inner = [c for c in cmds.listRelatives(top, children=True, type="transform",
+                                           fullPath=True) or []
+             if _get(c, plan.INNER_MARKER) == uuid]
+    return [top] + inner
+
+
+def span_of(top):
+    """(start, end, ranged) a knot was made over, or None."""
+    return plan.decode_span(_get(top, plan.SPAN_MARKER))
+
+
+def knot_refusal(kind, obj):
+    """Why `obj` cannot take a knot of `kind` now, or ''."""
+    return _plan_object(_long(obj), kind)[1]
+
+
 def is_snapshot(top):
     """True for a snapshot (2026-10-13): a knot of ours that drives nothing."""
     return _get(top, plan.KIND_MARKER) == "snapshot"
@@ -506,14 +535,60 @@ def _order(obj, choice):
     return plan.rotate_order_index(choice, cmds.getAttr(obj + ".rotateOrder"))
 
 
-def _build(kind, obj, info, highlight, choice, home=None):
+def _sample_on(bakes, frames):
+    """What the knot's nodes hold on `frames` while their temporary constraints stand, read
+    after a real time change (trap 69): {(node, channel): [values]}."""
+    out = dict(((node, ch), []) for node, channels in bakes for ch in channels)
+    for frame in frames:
+        cmds.currentTime(frame, update=True)
+        for node, channels in bakes:
+            for ch in channels:
+                out[(node, ch)].append(cmds.getAttr(node + "." + ch))
+    return out
+
+
+def _key_samples(samples, frames, span, tangents=None):
+    """Each channel keyed on `frames` with its samples and the tangent types `tangents`
+    {frame: (in, out)} name (None: Maya's default); a whole-take channel still on every frame a
+    plain value; the rotations made continuous (trap 108)."""
+    keyed = {}
+    for (node, ch), values in samples.items():
+        if not span[2] and plan.is_constant(values):
+            cmds.setAttr(node + "." + ch, values[0])
+            continue
+        for frame, value in zip(frames, values):
+            flags = {}
+            in_type, out_type = (tangents or {}).get(frame, (None, None))
+            if in_type:
+                flags["inTangentType"] = in_type
+            if out_type:
+                flags["outTangentType"] = out_type
+            try:
+                cmds.setKeyframe(node, attribute=ch, time=frame, value=value, **flags)
+            except (RuntimeError, TypeError):                # a type this key cannot take
+                cmds.setKeyframe(node, attribute=ch, time=frame, value=value)
+        keyed.setdefault(node, []).append(ch)
+    for node, channels in keyed.items():
+        _filter_euler(node, channels)
+
+
+def _build(kind, obj, info, highlight, choice, home=None, frames=None, tangents=None):
+    """The knot of `kind` on `obj`: baked on every frame of its span, or - `frames` - keyed on
+    those frames only (2026-10-28, Connections' World: «ключи, а не запекание»)."""
     free, skipped, drivers = info
     span = _span(obj, highlight, [home] if home else ())
     top, driver, bakes, temps, selected = _make(kind, obj, home or _group_for(obj), _size(obj),
                                                 _order(obj, choice))
-    for node, channels in bakes:
-        _bake_node(node, channels, span)
+    samples = _sample_on(bakes, frames) if frames else None
+    if samples is None:
+        for node, channels in bakes:
+            _bake_node(node, channels, span)
     cmds.delete([t for t in temps if cmds.objExists(t)])
+    if samples is not None:
+        _key_samples(samples, frames, span, tangents)
+        #  the follow below keeps its offset from where the knot stands NOW: on a key it
+        #  stands exactly on the object; between keys a sparse knot does not
+        cmds.currentTime(frames[0], update=True)
     if kind == "orient":
         for ch in plan.TRANSLATE:
             cmds.setAttr(top + "." + ch, lock=True)
@@ -552,6 +627,24 @@ def create(kind, selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
     pairs = [(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made]
     return (plan.created_message(plan.kind(kind).label, pairs, made[0][3])
             + plan.passed_over_words(passed))
+
+
+def create_keyed(kind, obj, frames, tangents=None, highlight=SLIDER, order=plan.ORDER_DEFAULT):
+    """A knot of `kind` on one object, keyed on `frames` only rather than baked on every frame
+    (2026-10-28, Connections' World: the IK control onto a world control on the IK's keys). The
+    span, the attach ramp and everything after are a knot's. (top, line) or (None, refusal)."""
+    obj = _long(obj)
+    info, refusal = _plan_object(obj, kind)
+    if refusal:
+        return None, refusal
+    frames = sorted(float(f) for f in frames) or [cmds.currentTime(query=True)]
+    highlight = _highlight(highlight)
+    with _press("skeldarKnot"):
+        top, selected, span = _build(kind, obj, info, highlight, order, frames=frames,
+                                     tangents=tangents)
+        cmds.select(selected, replace=True)
+    return top, plan.created_message(plan.kind(kind).label,
+                                     [(plan.leaf(obj), top.split("|")[-1])], span)
 
 
 def _build_snapshot(obj, highlight, choice):
