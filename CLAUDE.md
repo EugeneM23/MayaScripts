@@ -15013,6 +15013,52 @@ group `<weapon>_aim` left empty with its marker. `is_aimed` read the group alone
 decides: `is_aimed` is a whole aim only, `enter` deletes a broken one's leftovers first, `leave` on a
 broken one clears it and says so (`CLEARED`), the rotation as it is. Verified on the backup copy.
 
+## Connections: a Camera tab - parents, Position only, Aim Mode (2026-10-28)
+
+The animator: «Во вкладке конекшен нужно добавить раздел для камер. В разделе для камеры нужно
+реализовать такой же aim как для оружия, и возможность переподвязывания камеры к разным
+контроллерам. Подвязывание должно быть с опцией которая может привязать только позицию как поинт
+констрейн». Asked: a **fixed list** of parents - Main / Root / Chest / World as before plus **Head**
+(`FKHead_M`); in Position only the camera's rotation lives **relative to Main**. Spec
+`docs/superpowers/specs/2026-10-28-connections-camera-tab-design.md`, plan beside it.
+- The card: `[Body | Weapon | Camera]`; Camera has «Parent» (Main | Root | Chest | Head | World, a
+  **Position only** box, Apply) and «Aim» (Aim Mode / Default). No Camera Setup: every press refuses,
+  nothing changed.
+- `maya_scenesetup/aimcore.py`: the weapon's Aim Mode engine lifted out of `weaponaim` (controllers,
+  walk, local, the series, `fill_between`, `broken`, `turn_between`) - the weapon and the camera share it.
+- `maya_scenesetup/cameraaim.py`: Aim Mode / Default on `Camera_ctrl` (the camera under it stays
+  locked); the view is the camera's -Z and the up its +Y through `AXIS_OFFSET`, target 300 cm ahead,
+  up 50 cm above; the group `Camera_ctrl_aim` repeats the control's parent.
+- `camera.set_parent(bone, choice, position_only=False)`: full - the control under the node, its
+  world track rebaked; Position only - `<ns>:Camera_follow` under Main at identity, `pointConstraint`
+  (no offset) to the node, the control in it (Main / World ignore the option, said in the line).
+  Leaving it by ANY move (`move_control`, `go_home`, teardown) drops the group. A move in Aim Mode:
+  Default, the move, Aim Mode again, in one undo chunk.
+- `knots._release_children` → `camera.release_followers`: the chest baked off sends a camera
+  following its position home under Main, motion kept.
+- Pose Library: under `FKHead_M` the camera's carrier is `head`; in `Camera_follow` it is carried by
+  `follow_parent` - Main's turn with the root, the place with the followed node's bone
+  (head / root / spine_03); an aimed camera is entry mode `aimed` like a weapon; `scene._kind` of the
+  aim controllers and the follow group is CAMERA.
+- Two bugs the scene proof found: `skelsolve.joint_channels` took Maya's `closestSolution`, which
+  near y = 90 (a camera control at rest reads (0, 90, 0)) trades x for z and returns ANOTHER rotation -
+  Default keyed a camera on Head 1.6 deg off on one frame; now `nearest_euler` (the euler or its
+  alternate, each at its closest cut). And a card applied onto a camera in Position only solved it
+  against the follow group where it stood before the body was keyed (4.25 cm off); now `follow_parent`.
+  `fkik`, `fkikspine` and `apply._euler` still call `closestSolution` (not touched here).
+Proof: `docs/superpowers/plans/verify_camera_tab.py [out.txt] [rig]` **33/33** on Manny_Rig (1P Setup,
+the control keyed 0/10/20 moved and turned): Aim Mode on the keys 2.8e-14 deg, the controllers keyed on
+exactly 0/10/20, Default every frame to 3e-6 deg; Main → Head → Head (position) → Root (position) →
+Chest (position) → World → Main every frame 0..20 6e-14 cm / 3e-6 deg; Position only turns with Main
+(2.4e-6 deg); 1P's direct `move_control` out of a follow group drops it; aimed through Main → Head →
+Head (position) → Main still aimed, the group beside the control, every key 3e-6 deg; the chest baked
+off with the camera following its position: back under Main, 7e-15 cm; a whole card applied with the
+camera on Head 1.9e-6 cm, in Position only 3.8e-7, aimed under Main 2.8e-14, aimed in Position only
+4.7e-7; one Ctrl+Z of each press. Re-run: `verify_weapon_aim_mode` 23/24 (the gate red on main
+before this, unchanged), `verify_camera_control` 29/29, `verify_1p_setup` 30/30,
+`verify_camera_weapon_bones` 24/24; 11822 unit tests, the known `test_chat_deploy.Keys` failing.
+Not seen in a GUI Maya.
+
 ## AT bar keys name their layer (2026-10-27)
 
 «по одному працює, але виділені ні» - Paste Relationship on the highlighted keys, IKArm_R following the
