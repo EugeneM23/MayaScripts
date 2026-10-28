@@ -140,6 +140,9 @@ TABS = (("body", "Body"), ("weapon", "Weapon"), ("camera", "Camera"))
 TAB_COLLECTION = "skeldarConnectionsTabs"
 TAB_COLUMN = {"body": "skeldarConnectionsBodyTab", "weapon": "skeldarConnectionsWeaponTab",
               "camera": "skeldarConnectionsCameraTab"}
+TAB_TIPS = {"body": "FK / IK of the arms, legs and spine; any object across",
+            "weapon": "The weapon's parent and its Aim Mode",
+            "camera": "The camera's parent and its Aim Mode"}
 CAMERA_MENU = "skeldarConnectionsCameraParent"
 CAMERA_POSITION = "skeldarConnectionsCameraPosition"
 CAMERA_AIM_BUTTON = "skeldarConnectionsCameraAimMode"
@@ -1789,8 +1792,7 @@ def build_panel():
         hubstyle.mark(cmds.iconTextRadioButton(
             tab_segment(each), style="textOnly", label=label,
             height=hubstyle.height("segment", 24), select=each == tab,
-            annotation=("FK / IK of the arms, legs and spine; any object across"
-                        if each == "body" else "The weapon's parent and its Aim Mode"),
+            annotation=TAB_TIPS[each],
             onCommand=_tab_changed(each)), "segment")
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["body"], adjustableColumn=True,
