@@ -389,14 +389,16 @@ def phase_manny():
     cmds.select(clear=True)
     layer, message = cs.apply("handheld", {"sway": 2.0, "jitter": 0.2, "drift": 2.0, "seed": 11}, frames=(0, 60))
     print("   ", message)
-    gate("nothing selected: our SceneSetup camera is the one shaken",
-         len(ours) == 1 and cs.record(layer)["targets"] == [cmds.ls(ours[0], uuid=True)[0]], ours[0] if ours else "")
+    lens = plugcam.camera_for(bone)
+    gate("nothing selected: our SceneSetup camera's control is the one shaken (the camera is locked in it)",
+         len(ours) == 1 and ours[0] == plugcam.control_of(lens)
+         and cs.record(layer)["targets"] == [cmds.ls(ours[0], uuid=True)[0]], ours[0] if ours else "")
     offset = plugcam.rotation_only(plugcam.AXIS_OFFSET)
     worst, moved = 0.0, 0.0
     for f in (5, 20, 35, 50):
         cmds.currentTime(f + 0.5)
         cmds.currentTime(f)
-        want = plugcam.bone_matrix_for(plugcam.world_matrix(ours[0]), offset)
+        want = plugcam.bone_matrix_for(plugcam.world_matrix(lens), offset)
         have = plugcam.world_matrix(bone)
         worst = max(worst, max(abs(x - y) for x, y in zip(want, have)))
         cmds.animLayer(layer, edit=True, mute=True)
@@ -407,9 +409,104 @@ def phase_manny():
         moved = max(moved, max(abs(x - y) for x, y in zip(still[:12], have[:12])))
     gate("camera_root follows the shaken camera, so the shake reaches the export",
          worst < 1e-6 and moved > 0.005, "follow %.2e, the shake moves the bone's axes %.4f" % (worst, moved))
+    # The shake turns the CAMERA about its own axes, though the control's are the bone's
+    cs.delete(layer)
+    given = cs.preset("bobbing", "Walk", {"ease": 0.0, "seed": 2, "lean": 3.0, "turn": 4.0})
+    layer, message = cs.apply("bobbing", given, frames=(0, 60))
+    print("   ", message)
+    s = cs.settings("bobbing", given)
+    frames = np.arange(0, 61)
+    rot, _ = cs.bobbing(frames, 0, 60, 30.0, s)
+    worst = 0.0
+    for f in (7, 22, 41):
+        cmds.currentTime(f + 0.5)
+        cmds.currentTime(f)
+        moved = np.array(plugcam.world_matrix(lens), float).reshape(4, 4)[:3, :3]
+        cmds.animLayer(layer, edit=True, mute=True)
+        cmds.currentTime(f + 0.5)
+        cmds.currentTime(f)
+        still = np.array(plugcam.world_matrix(lens), float).reshape(4, 4)[:3, :3]
+        cmds.animLayer(layer, edit=True, mute=False)
+        turn = moved @ np.linalg.inv(still)
+        worst = max(worst, float(np.abs(turn - cs.rotation_from_vector(np.radians(rot[f]))).max()))
+    gate("bobbing through the control turns the camera about the camera's own axes", worst < 1e-6,
+         "%.2e" % worst)
+
+
+def phase_bobbing():
+    """Bobbing (2026-10-28) on a camera looking 40 deg down under a turned parent: its own keys untouched, the
+    camera showing the model's turn in its own axes, the moves straight up and down in the parent and along
+    its heading, a second Apply replacing it, the other modes left alone."""
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    cmds.playbackOptions(minTime=0, maxTime=90, animationStartTime=0, animationEndTime=90)
+    cmds.undoInfo(state=True, infinity=True)
+    rig = cmds.group(empty=True, name="bobRig")
+    cmds.setAttr(rig + ".rotateY", 35.0)
+    camera = cmds.rename(cmds.camera()[0], "bobCam")
+    camera = cmds.ls(cmds.parent(camera, rig)[0], long=True)[0]
+    cmds.setKeyframe(camera, attribute="rotateX", time=0, value=-40.0)
+    cmds.setKeyframe(camera, attribute="rotateY", time=0, value=10.0)
+    cmds.setKeyframe(camera, attribute="rotateY", time=90, value=60.0)
+    cmds.setKeyframe(camera, attribute="translateY", time=0, value=160.0)
+    own = base_curves(camera)
+    before = {attr: curve_values(curve) for attr, curve in own.items()}
+    base = {f: shown(camera, f) for f in range(0, 91)}
+    handheld, _ = cs.apply("handheld", {"sway": 1.0, "seed": 3}, selection=[camera], frames=(0, 90))
+    hand = {f: shown(camera, f) for f in range(0, 91)}
+
+    given = cs.preset("bobbing", "Run", {"ease": 0.0, "seed": 4, "contact": 3.0})
+    layer, message = cs.apply("bobbing", given, selection=[camera], frames=(0, 90))
+    print("   ", message)
+    found = cs.record(layer)
+    first_uuid = cmds.ls(layer, uuid=True)[0]
+    gate("bobbing is a layer of its own beside the handheld one", found and found["mode"] == "bobbing"
+         and layer.startswith("CamShake_Bobbing_0_90") and len(cs.shakes()) == 2, layer)
+    gate("the camera's own keys untouched",
+         {attr: curve_values(curve) for attr, curve in own.items()} == before)
+
+    s = cs.settings("bobbing", given)
+    frames = np.arange(0, 91)
+    rot, off = cs.bobbing(frames, 0, 90, 30.0, s)
+    order, axis, orient = cs._static(camera)
+    worst_r, worst_t, vertical = 0.0, 0.0, 0.0
+    for i, f in enumerate(frames):
+        r, t = shown(camera, int(f))
+        worst_r = max(worst_r, matrix_gap(camera, r, expected(camera, hand[int(f)][0], rot[i])))
+        moved = t - hand[int(f)][1]
+        dt = cs.along_heading(off[i], hand[int(f)][0], order, axis, orient)
+        worst_t = max(worst_t, float(np.abs(moved - dt).max()))
+        vertical = max(vertical, abs(float(moved[1]) - float(off[i][1])))
+    gate("the camera shows the bobbing's turn in its own axes on every frame", worst_r < 1e-9, "%.2e" % worst_r)
+    gate("the moves are along the heading, up straight up in the parent", worst_t < 1e-6 and vertical < 1e-6,
+         "%.2e / %.2e cm" % (worst_t, vertical))
+    gate("it bobs as much as asked", abs(float(np.ptp(off[:, 1])) - s["bob"]) < 0.35 * s["bob"]
+         and np.abs(rot).max() > 1.0, "bob %.2f of %.2f cm" % (float(np.ptp(off[:, 1])), s["bob"]))
+
+    again, message = cs.apply("bobbing", cs.preset("bobbing", "Sneak", {"seed": 4}), selection=[camera],
+                              frames=(0, 90))
+    print("   ", message)
+    gate("a second Apply replaces the bobbing, the handheld stays",
+         first_uuid != cmds.ls(again, uuid=True)[0] and cmds.objExists(handheld) and len(cs.shakes()) == 2
+         and cs.record(again)["settings"]["gait"] == "Walk", again)
+    cmds.undo()
+    back = [each for each in cs.shakes() if cs.record(each)["mode"] == "bobbing"]
+    gate("one undo brings the first bobbing back", len(back) == 1 and cs.record(back[0])["settings"]["gait"] == "Run")
+    cmds.delete(back[0])
+    cmds.delete(handheld)
+    worst = max(float(np.abs(shown(camera, f)[0] - base[f][0]).max()) for f in (0, 30, 60, 90))
+    gate("with both layers gone the camera is its own", worst < 1e-9, "%.2e" % worst)
 
 
 def main():
+    if "bobbing" in sys.argv[1:]:
+        try:
+            phase_bobbing()
+        except Exception:
+            traceback.print_exc()
+            gate("the run finished", False)
+        print("%d of %d gates passed" % (sum(RESULTS), len(RESULTS)))
+        return
     try:
         camera, layer, base = phase_handheld()
         phase_retune(camera, layer, base)
@@ -419,6 +516,7 @@ def main():
         phase_ranges_and_speed()
         phase_refusals()
         phase_manny()
+        phase_bobbing()
     except Exception:
         traceback.print_exc()
         gate("the run finished", False)

@@ -11138,8 +11138,35 @@ back. A new layer whose name is still taken gets `_v2` (Maya would bump the last
 Before this, Apply reused a layer only with the same mode, frames AND cameras, else stacked a new one.
 `verify_camshake.py` **33/33** (gates 15, 17-19, 21, 25 new); 75 unit tests.
 
-Not built: an operator walking (step bob), a pivot behind the lens, translation in the rattle, moving a shake's
-range after Apply, several impacts on one camera (a second Apply replaces the first).
+Not built: a pivot behind the lens, translation in the rattle, moving a shake's range after Apply, several
+impacts on one camera (a second Apply replaces the first).
+
+**Bobbing, the third mode: a walk's or a run's steps** (2026-10-28, «добавим еще бобинг вкладку ... имитацию
+шагов походки и бега»; asked: procedural, «присет формулу», sizes from the gait guide; presets walk, run,
+sneak, heavy / tired + knobs; approach A of three). Spec `docs/superpowers/specs/2026-10-28-camera-bobbing-design.md`.
+- `[Handheld | Impact | Bobbing]`; a layer `CamShake_Bobbing_<a>_<b>`, one a camera, replaced by Apply, the
+  highlight else the playback range - every other mode rule.
+- Knobs: Gait `[Walk | Run]` (`GAIT_MENU`), First foot (`FOOT_MENU`), Speed m/s (`pace`: on release
+  `pace_changed` fills Gait, Tempo, Bob, Sway (`side`), Nod, Turn, Softness by `from_speed`, keeping Roll
+  (`lean`), Footfall, Variation), Tempo steps/min, Bob cm, Sway cm, Nod deg, Turn deg, Roll deg, Footfall deg,
+  Softness %, Variation %, First contact fr, Ease fr.
+- `from_speed` reads the gait guide's tables (walk Winiarski / Orendurff / Peters, run Fukuchi / Heiderscheit /
+  Čoh / Pontzer; walk below 2.1 m/s); run sway and nod are estimates. Presets Slow walk, Walk, Fast walk, Jog,
+  Run, Sprint, Sneak, Heavy, Tired (`_styled`: the formula, scaled, a style on top).
+- Shapes (`step_curve`, 1 peak to peak about 0): walk an inverted pendulum's arc, low 0.1 of a step after the
+  contact, its cusp blurred over 0.5 x Softness of a step; run a spring in the stance (0.3 + 0.6 Softness of a
+  step) and a ballistic flight, C1. Sway and roll once a stride toward the stance foot, turn toward the
+  striking foot, footfall Impact's `waves` (0.2 s, Sharp) at every contact, variation a smooth noise.
+- **The moves go along the heading** (`along_heading`, `deltas(heading=True)`): up the parent's Y, side the
+  camera's X flattened - a camera looking down bobs straight up and down.
+- **Found on the way and fixed for every mode**: since 2026-10-21 the Camera Setup camera is locked inside
+  `Camera_ctrl`, so Apply with nothing selected (and with the camera selected) refused «rotate is locked».
+  `carrier` shakes the control, and `_static` puts the camera's turn in the control (`_lens_turn`, the
+  AXIS_OFFSET) on the left of its rotate axis, so the shake still turns the CAMERA about its own axes.
+Proof: `tests/test_camshake_bobbing.py`; `verify_camshake.py` **42/42 mayapy standalone** (`bobbing` runs
+that phase alone): on a camera looking 40° down under a turned parent the turn in its own axes 2.2e-16, the
+moves along the heading and straight up 1.4e-14 cm, a second Apply replacing it, undo; through Manny's
+Camera_ctrl the camera turned about its own axes 4.8e-16, camera_root following. Not seen in a GUI Maya.
 
 236. **A DG context read keeps a stale value per time.** `getAttr(plug, time=t)` after a key at `t` was edited
      answered the OLD value (measured in mayapy: 0.0 where the curve now said 20, then 30 after a second edit

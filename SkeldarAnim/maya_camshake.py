@@ -4,8 +4,9 @@ Select a camera (nothing selected: our SceneSetup_camera when there is exactly o
 the time slider, set the controls and press Apply:
 - Handheld: an operator holding the camera - a slow sway, the hands' tremor, a little drift.
 - Impact: a jolt from a chosen side whose waves die by the end of the range, a fine rattle on top.
+- Bobbing (2026-10-28): a walk's or a run's steps - the gait's shape, sizes from the gait guide's formula.
 Every press is an additive layer (its weight is a strength dial, Mute turns it off) and it REPLACES the
-shake of the same mode those cameras had: a camera keeps one handheld layer and one impact layer. After Apply
+shake of the same mode those cameras had: a camera keeps one layer of each mode. After Apply
 a released slider re-keys that shake. docs/superpowers/specs/2026-10-13-camera-shake-design.md.
 
 Built as a standalone script (docs/superpowers/plans/camshake/, 2026-10-13) and moved into the plugin the
@@ -29,7 +30,7 @@ except ImportError:          # the model and the algebra are tested without Maya
 # ---------------------------------------------------------------------------------------------------------
 
 VERSION = 1
-MODES = ("handheld", "impact")
+MODES = ("handheld", "impact", "bobbing")
 DIRECTIONS = ("Random", "Below", "Above", "Left", "Right", "Front")
 
 # (name, label, default, low, high)
@@ -101,12 +102,18 @@ def settings(mode, given=None):
         out["direction"] = direction if direction in DIRECTIONS else "Random"
         decay = given.get("decay", DECAYS[0])
         out["decay"] = decay if decay in DECAYS else DECAYS[0]
+    if mode == "bobbing":
+        gait = given.get("gait", "Walk")
+        out["gait"] = gait if gait in ("Walk", "Run") else "Walk"
+        foot = given.get("foot", "Left")
+        out["foot"] = foot if foot in ("Left", "Right") else "Left"
     return out
 
 
 def preset(mode, name, current=None):
     """`current` with the preset's values on top: the seed, Length and the axes are kept, and Ease and an
-    impact's direction too unless the preset names them (Calm names Ease 0)."""
+    impact's direction too unless the preset names them (Calm names Ease 0); a bobbing preset keeps the
+    first foot, the first contact and Ease."""
     values = dict(current or {})
     for label, table in PRESETS[mode]:
         if label == name:
@@ -357,8 +364,184 @@ def impact(frames, a, b, fps, s, index=0):
     return rot * axis_mask(s), off
 
 
+#  Bobbing (2026-10-28): a walk's or a run's steps in the camera, a procedural cycle whose shape is the gait's
+#  physics and whose sizes come from the gait guide's measurements (docs/superpowers/plans/gaitguide/research;
+#  docs/superpowers/specs/2026-10-28-camera-bobbing-design.md).
+
+GAITS = ("Walk", "Run")
+FEET = ("Left", "Right")
+WALK_RUN = 2.1           # m/s: the walk-run transition (Hansen 2017, 2.14)
+#  (speed m/s, value): np.interp holds the ends
+WALK_TEMPO = ((0.5, 72.0), (1.04, 101.0), (1.32, 116.0), (1.62, 128.0), (2.1, 147.0))   # Winiarski 2019
+WALK_BOB = ((0.5, 2.28), (0.7, 2.74), (1.6, 4.83), (2.1, 5.99))                          # Orendurff 2004
+WALK_SIDE = ((0.5, 7.7), (0.7, 6.99), (1.6, 3.85), (2.1, 2.1))                           # Orendurff 2004
+WALK_SOFT = ((1.04, 58.0), (1.62, 47.0))     # double stance 29 / 23 % of a step (Winiarski) over 0.5
+WALK_NOD = 3.58 / 5.43   # deg of head pitch a cm of C7 bob (Peters, NASA, 1.8 m/s)
+WALK_TURN = 2.85         # deg of head yaw (Peters)
+RUN_TEMPO = ((2.1, 141.0), (2.5, 162.0), (2.9, 172.6), (3.5, 171.4), (4.5, 183.5), (12.0, 262.0))
+RUN_BOB = ((2.5, 8.9), (2.9, 8.7), (3.5, 8.8), (4.5, 8.0), (12.0, 4.9))   # Fukuchi, Heiderscheit, Coh
+RUN_SOFT = ((2.5, 78.3), (3.5, 62.7), (4.5, 58.7), (12.14, 12.3))         # stance 2 x duty, as 0.3 + 0.6 s
+RUN_SIDE = ((2.5, 3.0), (10.0, 1.5))         # an estimate: the guide has no running number
+RUN_NOD = 0.35           # deg a cm of bob - an estimate
+RUN_TURN = 6.1           # deg of head yaw (Pontzer 2009)
+PENDULUM = math.radians(30.0)   # the walk's half sweep: a cos arc, fast into the down, slow over the up
+WALK_LOW = 0.1           # the walk's low, a share of a step after the contact (~5 % of the stride)
+WALK_SIDE_PEAK = 0.5     # the walk's sway over the stance foot
+SAMPLES = 512            # a step's shape is tabled this finely
+FOOT_WAVE_S = 0.2        # the footfall's wave, crest to crest
+FOOT_SPAN_S = 0.5        # and how long it rings (never past the next step)
+FOOT_CM_PER_DEG = 0.5    # the footfall drops the camera half as many cm as it pitches degrees
+
+
+def _at(table, speed):
+    xs, ys = zip(*table)
+    return float(np.interp(speed, xs, ys))
+
+
+def from_speed(speed):
+    """The gait's knobs at a speed (m/s), from the guide's measurements: the gait, Tempo, Bob, Sway (`side`),
+    Nod, Turn, Softness. Footfall, Roll and Variation are style and are not here."""
+    speed = float(speed)
+    if speed < WALK_RUN:
+        bob = _at(WALK_BOB, speed)
+        out = {"gait": "Walk", "tempo": _at(WALK_TEMPO, speed), "bob": bob,
+               "side": max(2.0, _at(WALK_SIDE, speed)), "nod": WALK_NOD * bob, "turn": WALK_TURN,
+               "softness": _at(WALK_SOFT, speed)}
+    else:
+        bob = _at(RUN_BOB, speed)
+        out = {"gait": "Run", "tempo": _at(RUN_TEMPO, speed), "bob": bob, "side": _at(RUN_SIDE, speed),
+               "nod": RUN_NOD * bob, "turn": RUN_TURN, "softness": _at(RUN_SOFT, speed)}
+    out = {key: (round(value, 2) if isinstance(value, float) else value) for key, value in out.items()}
+    out["pace"] = round(speed, 2)
+    return out
+
+
+def _styled(speed, style=None, **scale):
+    """A preset: the formula at a speed, some of it scaled, the style's own values on top."""
+    values = from_speed(speed)
+    for key, factor in scale.items():
+        values[key] = round(values[key] * factor, 2)
+    values.update(style or {})
+    return values
+
+
+_WALK = from_speed(1.3)
+CONTROLS["bobbing"] = (
+    ("pace", "Speed, m/s", _WALK["pace"], 0.5, 10.0),
+    ("tempo", "Tempo, steps/min", _WALK["tempo"], 50.0, 300.0),
+    ("bob", "Bob, cm", _WALK["bob"], 0.0, 20.0),
+    ("side", "Sway, cm", _WALK["side"], 0.0, 15.0),
+    ("nod", "Nod, deg", _WALK["nod"], 0.0, 10.0),
+    ("turn", "Turn, deg", _WALK["turn"], 0.0, 15.0),
+    ("lean", "Roll, deg", 1.0, 0.0, 10.0),
+    ("footfall", "Footfall, deg", 0.3, 0.0, 5.0),
+    ("softness", "Softness, %", _WALK["softness"], 0.0, 100.0),
+    ("variation", "Variation, %", 10.0, 0.0, 50.0),
+    ("contact", "First contact, fr", 0.0, 0.0, 60.0),
+    ("ease", "Ease, fr", 6.0, 0.0, 60.0),
+)
+PRESETS["bobbing"] = (
+    ("Slow walk", _styled(1.0, {"footfall": 0.2, "lean": 1.0, "variation": 10.0})),
+    ("Walk", _styled(1.3, {"footfall": 0.3, "lean": 1.0, "variation": 10.0})),
+    ("Fast walk", _styled(1.6, {"footfall": 0.4, "lean": 0.8, "variation": 10.0})),
+    ("Jog", _styled(2.5, {"footfall": 0.6, "lean": 1.0, "variation": 10.0})),
+    ("Run", _styled(3.5, {"footfall": 0.8, "lean": 1.2, "variation": 10.0})),
+    ("Sprint", _styled(7.0, {"footfall": 1.0, "lean": 1.5, "variation": 10.0})),
+    ("Sneak", _styled(0.8, {"footfall": 0.0, "lean": 0.5, "variation": 10.0, "softness": 90.0},
+                      bob=0.4, nod=0.3, side=0.6, tempo=0.85)),
+    ("Heavy", _styled(1.1, {"footfall": 1.5, "lean": 1.5, "variation": 12.0, "softness": 30.0},
+                      tempo=0.9, bob=1.2, side=1.5)),
+    ("Tired", _styled(1.0, {"footfall": 0.6, "lean": 1.8, "variation": 30.0},
+                      tempo=0.9, bob=1.3, side=1.6, nod=1.8)),
+)
+DEFAULT_PRESET["bobbing"] = "Walk"
+
+
+def _normalised(y):
+    """1 peak to peak about a zero mean."""
+    y = np.asarray(y, float) - float(np.mean(y))
+    span = float(y.max() - y.min())
+    return y / span if span > 1e-12 else np.zeros_like(y)
+
+
+def _blurred(y, sigma):
+    """A periodic Gaussian blur, sigma in samples."""
+    if sigma < 0.5:
+        return y
+    k = np.fft.rfftfreq(len(y))
+    return np.fft.irfft(np.fft.rfft(y) * np.exp(-2.0 * (math.pi * k * sigma) ** 2), len(y))
+
+
+def stance_share(softness):
+    """A run's stance as a share of a step, from Softness (0..1)."""
+    return 0.3 + 0.6 * float(softness)
+
+
+def step_curve(gait, softness):
+    """One step's up-down from a contact (u = 0) to the next, tabled on SAMPLES points, 1 peak to peak about
+    a zero mean. Walk: an inverted pendulum's arc, low WALK_LOW after the contact (a cusp rounded over the
+    double support, 0.5 x softness of a step), high at passing. Run: a spring down in the stance (low at
+    mid-stance), a ballistic flight up (high mid-flight), leaving and landing at the stance's speed."""
+    u = np.arange(SAMPLES) / float(SAMPLES)
+    softness = min(1.0, max(0.0, float(softness)))
+    if gait == "Run":
+        c = stance_share(softness)
+        f = 1.0 - c
+        v0 = math.pi / c
+        g = 2.0 * v0 / f
+        tau = u - c
+        y = np.where(u < c, -np.sin(math.pi * u / c), v0 * tau - 0.5 * g * tau * tau)
+        return _normalised(y)
+    swung = (u - WALK_LOW) % 1.0
+    y = np.cos(PENDULUM * (2.0 * swung - 1.0))
+    return _normalised(_blurred(y, 0.5 * softness * SAMPLES / 4.0))
+
+
+def step_shape(gait, softness, u):
+    """The step curve at u (shares of a step, any real: periodic)."""
+    table = step_curve(gait, softness)
+    x = (np.asarray(u, float) % 1.0) * SAMPLES
+    return np.interp(x, np.arange(SAMPLES + 1), np.append(table, table[0]))
+
+
+def bobbing(frames, a, b, fps, s, index=0):
+    """A walk's or a run's steps: (rotation (n, 3) deg about the camera's X, Y, Z - nod, turn, roll; offset
+    (n, 3) cm - side, up, forward, along the camera's heading and its parent's up) on each frame of a..b.
+    The first contact is `contact` frames after a, on the first foot; a stride is two steps."""
+    f = np.asarray(frames, float)
+    step = fps * 60.0 / s["tempo"]                 # frames a step
+    q = (f - a - s["contact"]) / step              # steps since the first contact
+    softness = s["softness"] / 100.0
+    run = s["gait"] == "Run"
+    up = step_shape(s["gait"], softness, q)
+    first = -1.0 if s["foot"] == "Left" else 1.0   # the camera's -X is the left
+    peak = 0.5 * stance_share(softness) if run else WALK_SIDE_PEAK
+    lateral = first * np.cos(math.pi * (q - peak))  # -1 over the left foot, +1 over the right
+    seed, k = s["seed"], _streams(index)
+    sec = (f - a) / float(fps)
+    vary = 1.0 + s["variation"] / 100.0 * noise(sec, seed, k + 31, capped(0.5 * s["tempo"] / 60.0, fps))
+    vary = np.maximum(vary, 0.0)
+    rot = np.zeros((len(f), 3))
+    off = np.zeros((len(f), 3))
+    off[:, 0] = 0.5 * s["side"] * vary * lateral
+    off[:, 1] = s["bob"] * vary * up
+    rot[:, 0] = -s["nod"] * vary * up              # the head pitched down as the body rises
+    rot[:, 1] = -0.5 * s["turn"] * first * np.cos(math.pi * q)   # toward the striking foot at each contact
+    rot[:, 2] = -0.5 * s["lean"] * vary * lateral  # the top toward the stance foot
+    if s["footfall"] > 0.0 and len(f):
+        contacts = np.arange(math.floor(q.min()) - 2, math.floor(q.max()) + 1)
+        tau = (q[:, None] - contacts[None, :]) * step
+        span = min(FOOT_SPAN_S * fps, step)
+        jolt = waves(tau, FOOT_WAVE_S * fps, span, "Sharp").sum(axis=1) * vary
+        rot[:, 0] -= s["footfall"] * jolt
+        off[:, 1] -= FOOT_CM_PER_DEG * s["footfall"] * jolt
+    envelope = eased(f, a, b, s["ease"])[:, None]
+    return rot * envelope * axis_mask(s), off * envelope
+
+
 def shake(mode, frames, a, b, fps, s, index=0):
-    return (handheld if mode == "handheld" else impact)(frames, a, b, fps, s, index)
+    work = {"handheld": handheld, "impact": impact, "bobbing": bobbing}[mode]
+    return work(frames, a, b, fps, s, index)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -452,9 +635,27 @@ def along_axes(offset, base_deg, order, rotate_axis_deg=(0.0, 0.0, 0.0), joint_o
     return np.asarray(offset, float) @ frame
 
 
-def deltas(rot, off, base, order, rotate_axis=(0.0, 0.0, 0.0), joint_orient=(0.0, 0.0, 0.0)):
+def along_heading(offset, base_deg, order, rotate_axis_deg=(0.0, 0.0, 0.0),
+                  joint_orient_deg=(0.0, 0.0, 0.0)):
+    """An offset (side, up, back) along the node's HEADING in its parent's space: side its own X flattened,
+    up the parent's Y, back their cross - so a camera looking down still bobs straight up and down. A node
+    whose X stands near upright (rolled 90 deg) keeps its own axes."""
+    frame = (euler_matrix(np.radians(np.asarray(rotate_axis_deg, float)), "xyz")
+             @ euler_matrix(np.radians(np.asarray(base_deg, float)), order)
+             @ euler_matrix(np.radians(np.asarray(joint_orient_deg, float)), "xyz"))
+    side = np.array([frame[0, 0], 0.0, frame[0, 2]])
+    length = float(np.linalg.norm(side))
+    if length < 0.2:
+        return np.asarray(offset, float) @ frame
+    side /= length
+    up = np.array([0.0, 1.0, 0.0])
+    return np.asarray(offset, float) @ np.array([side, up, np.cross(side, up)])
+
+
+def deltas(rot, off, base, order, rotate_axis=(0.0, 0.0, 0.0), joint_orient=(0.0, 0.0, 0.0), heading=False):
     """What an additive layer adds to the node's rotate (deg) and translate on each frame, so that it shows
-    the shake on top of `base` (deg)."""
+    the shake on top of `base` (deg). `heading`: the offset along the heading and the parent's up."""
+    move = along_heading if heading else along_axes
     rot = np.asarray(rot, float)
     off = np.asarray(off, float)
     base = np.asarray(base, float)
@@ -464,7 +665,7 @@ def deltas(rot, off, base, order, rotate_axis=(0.0, 0.0, 0.0), joint_orient=(0.0
         if np.any(rot[i]):
             dr[i] = shaken(base[i], order, rot[i], rotate_axis) - base[i]
         if np.any(off[i]):
-            dt[i] = along_axes(off[i], base[i], order, rotate_axis, joint_orient)
+            dt[i] = move(off[i], base[i], order, rotate_axis, joint_orient)
     return dr, dt
 
 
@@ -504,6 +705,7 @@ def parse_record(text):
 
 LAYER_MARKER = "skeldarCamShake"        # on our layers: the shake's record (JSON)
 OUR_CAMERA = "mayaSceneSetupCamera"     # the plugin's Camera Setup marks its camera with this
+OUR_CONTROL = "mayaSceneSetupCameraControl"   # and the control it stands in (since 2026-10-21)
 UNDO = "skeldarCamShake"
 STATE = "_skeldar_camshake"             # on sys: a re-dropped script still knows the picked shake
 ROTATE = ("rotateX", "rotateY", "rotateZ")
@@ -567,7 +769,7 @@ def frames_for(mode, s, given=None):
         found = highlight()
         if found:
             (a, b), where = found, "the highlight"
-        elif mode == "handheld":
+        elif mode in ("handheld", "bobbing"):
             a = int(math.floor(cmds.playbackOptions(query=True, minTime=True) + 1e-6))
             b = int(math.ceil(cmds.playbackOptions(query=True, maxTime=True) - 1e-6))
             where = "the playback range"
@@ -580,14 +782,25 @@ def frames_for(mode, s, given=None):
     return a, b, where
 
 
+def carrier(node):
+    """What a shake keys for a node: the Camera Setup camera's control when it stands under one (since
+    2026-10-21 the camera itself is locked in it), else the node."""
+    parents = cmds.listRelatives(node, parent=True, fullPath=True) or []
+    if (parents and cmds.attributeQuery(OUR_CAMERA, node=node, exists=True)
+            and cmds.attributeQuery(OUR_CONTROL, node=parents[0], exists=True)):
+        return parents[0]
+    return node
+
+
 def our_cameras():
-    """Every camera the plugin's Camera Setup made, found by its marker."""
+    """Every camera the plugin's Camera Setup made, found by its marker - its control when it has one."""
     found = []
     for shape in cmds.ls(type="camera", long=True) or []:
         parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
-        if parents and parents[0] not in found and cmds.attributeQuery(OUR_CAMERA, node=parents[0],
-                                                                       exists=True):
-            found.append(parents[0])
+        if parents and cmds.attributeQuery(OUR_CAMERA, node=parents[0], exists=True):
+            node = carrier(parents[0])
+            if node not in found:
+                found.append(node)
     return found
 
 
@@ -602,8 +815,10 @@ def targets(selection=None):
     for node in names:
         if cmds.objectType(node, isAType="shape"):
             node = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
-        if node and cmds.objectType(node, isAType="transform") and node not in found:
-            found.append(node)
+        if node and cmds.objectType(node, isAType="transform"):
+            node = carrier(node)
+            if node not in found:
+                found.append(node)
     if found:
         return found
     ours = our_cameras()
@@ -724,7 +939,22 @@ def _static(node):
     axis = np.array(cmds.getAttr(node + ".rotateAxis")[0], float) / unit
     orient = (np.array(cmds.getAttr(node + ".jointOrient")[0], float) / unit
               if cmds.nodeType(node) == "joint" else np.zeros(3))
+    lens = _lens_turn(node)
+    if lens is not None:       # a Camera Setup control: shaken in its camera's axes, the turn between on the left
+        m = lens @ euler_matrix(np.radians(axis), "xyz")
+        axis = np.degrees(np.array(matrix_eulers(m, "xyz")[0]))
     return order, axis, orient
+
+
+def _lens_turn(node):
+    """For a Camera Setup control: its camera's local rotation (row vectors), else None."""
+    if not cmds.attributeQuery(OUR_CONTROL, node=node, exists=True):
+        return None
+    for child in cmds.listRelatives(node, children=True, type="transform", fullPath=True) or []:
+        if cmds.attributeQuery(OUR_CAMERA, node=child, exists=True):
+            m = np.array(cmds.xform(child, query=True, matrix=True, objectSpace=True), float).reshape(4, 4)[:3, :3]
+            return m / np.linalg.norm(m, axis=1)[:, None]
+    return None
 
 
 def shakes():
@@ -754,7 +984,8 @@ def _channels(node, mode, s, layer):
     """(the channels a shake keys on a node, the locked ones skipped): rotate, and translate when it moves
     the camera or the layer holds it already. Refused, by name, when one is driven."""
     attrs = list(ROTATE)
-    moves = (s["drift"] if mode == "handheld" else s["push"]) > 0.0
+    moves = {"handheld": lambda: s["drift"], "impact": lambda: s["push"],
+             "bobbing": lambda: s["bob"] + s["side"] + s["footfall"]}[mode]() > 0.0
     if moves or (layer and any(_find_curve(layer, "%s.%s" % (node, a)) for a in TRANSLATE)):
         attrs += list(TRANSLATE)
     keep, locked = [], []
@@ -777,7 +1008,7 @@ def _values(node, index, mode, s, a, b, layer, attrs):
     rot, off = shake(mode, frames, a, b, frame_rate(), s, index)
     base = base_rotations(node, layer, frames)
     order, axis, orient = _static(node)
-    dr, dt = deltas(rot, off * cm_to_ui(), base, order, axis, orient)
+    dr, dt = deltas(rot, off * cm_to_ui(), base, order, axis, orient, heading=mode == "bobbing")
     unit = deg_to_ui()
     table = {}
     for i, attr in enumerate(ROTATE):
@@ -918,6 +1149,9 @@ def describe(mode, s, a, b, nodes, layer, where="", locked=()):
     if mode == "handheld":
         what = "Handheld: sway %.2f deg, jitter %.2f deg at %g Hz, drift %.1f cm" % (
             s["sway"], s["jitter"], s["jitter_hz"], s["drift"])
+    elif mode == "bobbing":
+        what = "Bobbing: %s at %g steps/min, bob %.1f cm, sway %.1f cm, nod %.1f deg, %s foot first" % (
+            s["gait"].lower(), round(s["tempo"], 1), s["bob"], s["side"], s["nod"], s["foot"].lower())
     else:
         what = "Impact from %s: %.1f deg, waves of %g fr, %s decay, push %.1f cm, rattle %.2f deg at %g Hz" % (
             SIDES[s["direction"]], s["strength"], s["wave"], s["decay"].lower(), s["push"], s["rattle"],
@@ -1031,6 +1265,8 @@ MODE_TABS = "skeldarCamShakeModes"
 PRESET_MENU = "skeldarCamShakePreset"
 DIRECTION_MENU = "skeldarCamShakeDirection"
 DECAY_MENU = "skeldarCamShakeDecay"
+GAIT_MENU = "skeldarCamShakeGait"
+FOOT_MENU = "skeldarCamShakeFoot"
 SEED_FIELD = "skeldarCamShakeSeed"
 SEED_BTN = "skeldarCamShakeNewSeed"
 APPLY_BTN = "skeldarCamShakeApply"
@@ -1060,8 +1296,22 @@ TIPS = {
     "axes": "Tilt: up-down, Pan: left-right, Roll: the horizon. Off removes that turn whole",
     "seed": "Another shake of the same kind",
     "apply": "A new shake on the selected camera over the highlighted frames, on a layer of its own",
+    "pace": "Fills the gait, Tempo, Bob, Sway, Nod, Turn and Softness from the gait guide's measurements at this speed - then tune them",
+    "tempo": "Steps a minute: walking 100-130, running 160-185, a sprint up to ~260",
+    "bob": "Up and down, cm from the lowest to the highest - twice a stride",
+    "side": "Side to side toward the foot on the ground, cm - once a stride",
+    "nod": "The head pitched down as the body rises, degrees",
+    "turn": "The head's turn toward the striking foot, degrees - once a stride",
+    "lean": "The horizon tilted toward the foot on the ground, degrees",
+    "footfall": "A short jolt down at every contact, degrees (and half as many cm)",
+    "softness": "Walk: the low rounded over the double support. Run: a longer stance, a shorter flight",
+    "variation": "Each step a little different in size, % (the seed picks how)",
+    "contact": "Frames after the range's start of the first contact",
+    "gait": "Walk: low just after each contact, high when passing. Run: low mid-stance, high in the flight",
+    "foot": "The foot of the first contact: sway, roll and turn go toward it first",
 }
-STEPS = {"jitter_hz": 0.5, "rattle_hz": 0.5, "ease": 1.0, "length": 1.0, "wave": 0.5}
+STEPS = {"jitter_hz": 0.5, "rattle_hz": 0.5, "ease": 1.0, "length": 1.0, "wave": 0.5, "tempo": 1.0,
+         "softness": 1.0, "variation": 1.0, "contact": 1.0, "pace": 0.1}
 NOTHING = "Select a camera - Apply shakes it over the highlighted frames"
 #  The refresh jobs of each card standing: '' the hub's, a popup copy's tag its own (the 2026-10-09 rule:
 #  closing a popup kills only its own jobs).
@@ -1124,6 +1374,9 @@ def _read(mode):
     if mode == "impact":
         given["direction"] = cmds.optionMenu(DIRECTION_MENU, query=True, value=True)
         given["decay"] = cmds.optionMenu(DECAY_MENU, query=True, value=True)
+    if mode == "bobbing":
+        given["gait"] = cmds.optionMenu(GAIT_MENU, query=True, value=True)
+        given["foot"] = cmds.optionMenu(FOOT_MENU, query=True, value=True)
     return settings(mode, given)
 
 
@@ -1154,6 +1407,9 @@ def _show_settings(mode, s):
         if mode == "impact":
             cmds.optionMenu(DIRECTION_MENU, edit=True, value=s["direction"])
             cmds.optionMenu(DECAY_MENU, edit=True, value=s["decay"])
+        if mode == "bobbing":
+            cmds.optionMenu(GAIT_MENU, edit=True, value=s["gait"])
+            cmds.optionMenu(FOOT_MENU, edit=True, value=s["foot"])
     if cmds.intField(SEED_FIELD, exists=True):
         _quietly(work)
 
@@ -1270,6 +1526,16 @@ def slider_changed(mode):
     return go
 
 
+def pace_changed(*_):
+    """Speed let go: the gait's knobs filled from the guide's formula at that speed, the style kept."""
+    if _QUIET[0]:
+        return
+    s = _read("bobbing")
+    s.update(from_speed(s["pace"]))
+    _show_settings("bobbing", settings("bobbing", s))
+    _changed("bobbing")
+
+
 def preset_changed(*_):
     if _QUIET[0]:
         return
@@ -1374,7 +1640,7 @@ def _sliders(mode, s):
                             fieldMinValue=low, fieldMaxValue=high, step=STEPS.get(name, 0.05), precision=2,
                             value=s[name], columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
                             adjustableColumn=3, height=hubstyle.height("small", 22), annotation=TIPS[name],
-                            changeCommand=slider_changed(mode))
+                            changeCommand=pace_changed if name == "pace" else slider_changed(mode))
 
 
 def build_panel():
@@ -1396,7 +1662,8 @@ def build_panel():
         hubstyle.mark(cmds.iconTextRadioButton(
             _mode_tab(mode), style="textOnly", label=mode.capitalize(), height=hubstyle.height("segment", 24),
             select=mode == shown, collection=MODE_TABS,
-            annotation="Handheld: an operator holding the camera. Impact: a hit that dies by the range's end",
+            annotation="Handheld: an operator holding the camera. Impact: a hit that dies by the range's end. "
+                       "Bobbing: a walk's or a run's steps",
             onCommand=mode_changed(mode)), "segment")
     cmds.setParent("..")
     _menu_row(PRESET_MENU, "Preset", preset_changed, TIPS["preset"])
@@ -1424,6 +1691,13 @@ def build_panel():
             _menu_row(DECAY_MENU, "Decay", slider_changed("impact"), TIPS["decay"])
             for decay in DECAYS:
                 cmds.menuItem(label=decay, parent=DECAY_MENU)
+        if mode == "bobbing":
+            _menu_row(GAIT_MENU, "Gait", slider_changed("bobbing"), TIPS["gait"])
+            for gait in GAITS:
+                cmds.menuItem(label=gait, parent=GAIT_MENU)
+            _menu_row(FOOT_MENU, "First foot", slider_changed("bobbing"), TIPS["foot"])
+            for foot in FEET:
+                cmds.menuItem(label=foot, parent=FOOT_MENU)
         _sliders(mode, s)
         cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
