@@ -239,5 +239,20 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(writer.notes, ["camera_root keyed through SceneSetup_camera"])
 
 
+class CameraCarriers(unittest.TestCase):
+
+    def test_head_and_follow_carriers(self):
+        from maya_poselib import helpers
+        self.assertEqual(helpers.HEAD_BONE, "head")
+        self.assertEqual(helpers._carrier_for_parent("|r|Main|FKHead_M", head=True,
+                                                      follow=False), "head")
+
+    def test_an_entry_is_not_a_camera_unless_said(self):
+        from maya_poselib import helpers
+        self.assertFalse(helpers.Entry("weapon_r", "|w", "driver", "|s", None, None).camera)
+        self.assertIsNone(helpers._carrier_for_parent("|r|Main|Camera_follow", head=False,
+                                                       follow=True))
+
+
 if __name__ == "__main__":
     unittest.main()

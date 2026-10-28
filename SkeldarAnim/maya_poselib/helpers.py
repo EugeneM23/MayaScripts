@@ -57,8 +57,8 @@ CAMERA_SET = "camera set up on %s"
 CAMERA_FAILED = "camera not set up on %s: %s"
 
 # leaf, path, mode ("joint" | "driver"), driver path, K (W_bone · W_driver⁻¹), carrier leaf
-Entry = namedtuple("Entry", "leaf path mode driver K carrier aim")
-Entry.__new__.__defaults__ = (None,)
+Entry = namedtuple("Entry", "leaf path mode driver K carrier aim camera")
+Entry.__new__.__defaults__ = (None, False)
 # a weapon in Connections' Aim Mode (2026-10-21): its rotation aims at two world controllers, so
 # its translate and theirs are keyed - (target path, up path, aim vector, up vector, distances)
 Aim = namedtuple("Aim", "target up aim_v up_v d_aim d_up")
@@ -195,6 +195,7 @@ def _camera_of(path):
 #  it rides `spine_03` rigidly - the camera control, a weapon out of the hands, an Aim Mode group
 CHEST_MARKER = "skeldar1PChest"
 CHEST_BONE = "spine_03"
+HEAD_BONE = "head"
 
 
 def under_chest(node):
@@ -208,6 +209,17 @@ def under_chest(node):
     except (AttributeError, RuntimeError, ValueError):      # no DAG to ask: not in a chest
         return False
     return False
+
+
+def _carrier_for_parent(parent, head, follow):
+    """The game bone carrying a camera control's parent rigidly, from what the parent is (pure
+    half of `_camera_carrier`): FKHead_M carries `head`; a Camera_follow group none (it turns with
+    Main but rides another node's position - read in the world)."""
+    if follow:
+        return None
+    if head:
+        return HEAD_BONE
+    return None
 
 
 def _camera_carrier(driver):
@@ -224,25 +236,31 @@ def _camera_carrier(driver):
     if parents and (camera.is_main(parents[0]) or cmds.attributeQuery(
             rootcontrol.MARKER, node=parents[0], exists=True)):
         return "root"
+    if parents and cmds.attributeQuery(camera.FOLLOW_MARKER, node=parents[0], exists=True):
+        return _carrier_for_parent(parents[0], head=False, follow=True)
+    if parents and parents[0].split("|")[-1].split(":")[-1] == camera.HEAD:
+        return _carrier_for_parent(parents[0], head=True, follow=False)
     if under_chest(driver):
         return CHEST_BONE
     return None
 
 
-def _aim_of(weapon):
-    """An `Aim` when `weapon` stands in Connections' Aim Mode, else None."""
+def _aim_of(driver):
+    """An `Aim` when `driver` (a weapon or the camera's control) stands in Aim Mode, else None."""
     try:
-        from maya_scenesetup import weaponaim
+        from maya_scenesetup import cameraaim, weaponaim
     except ImportError:
         return None
-    group = weaponaim.group_of(weapon)
-    if group is None:
-        return None
-    made = weaponaim.controllers(group)
-    if "target" not in made or "up" not in made:
-        return None
-    aim_v, up_v, d_aim, d_up = weaponaim.stored_vectors(group)
-    return Aim(made["target"], made["up"], aim_v, up_v, d_aim, d_up)
+    for module in (weaponaim, cameraaim):
+        group = module.group_of(driver)
+        if group is None:
+            continue
+        made = module.controllers(group)
+        if "target" not in made or "up" not in made:
+            return None
+        aim_v, up_v, d_aim, d_up = module.stored_vectors(group)
+        return Aim(made["target"], made["up"], aim_v, up_v, d_aim, d_up)
+    return None
 
 
 def _point(matrix, direction, distance):
@@ -293,7 +311,7 @@ class Writer(object):
                 self.notes.append(FOLLOWED % (leaf, _leaf(weapon)))
                 self.skipped[leaf] = "the hands ride %s" % _leaf(weapon)
                 return None
-            aimed = _aim_of(weapon) if weapon else None
+            aimed = _aim_of(driver)
             if aimed:
                 why = (self._unwritable(driver, TRANSLATE) or
                        self._unwritable(aimed.target, TRANSLATE) or
@@ -313,7 +331,7 @@ class Writer(object):
             self.notes.append(THROUGH % (leaf, _leaf(driver) + (" (Aim Mode: its controllers)"
                                                                 if aimed else "")))
             return Entry(leaf, path, "aimed" if aimed else "driver", driver, K, carrier_leaf,
-                         aimed)
+                         aimed, camera=not weapon)
         why = self._unwritable(path)
         if why:
             self.skipped[leaf] = why
@@ -386,7 +404,12 @@ class Writer(object):
                                                   (aim.up, aim.up_v, aim.d_up)):
                     point = om.MPoint(*_point(target, direction, distance))
                     ctrl_parent = _parent_world(ctrl)
-                    if CHEST_BONE in self.bones and CHEST_BONE in wanted and under_chest(ctrl):
+                    if entry.camera and entry.carrier is not None and entry.carrier in wanted:
+                        # a camera's controllers repeat the control's parent: carried with it
+                        ctrl_parent = carried_parent(ctrl_parent,
+                                                     _world(self.bones[entry.carrier]["path"]),
+                                                     wanted[entry.carrier])
+                    elif CHEST_BONE in self.bones and CHEST_BONE in wanted and under_chest(ctrl):
                         # in 1P its group rides the chest: carried as the chest will stand
                         ctrl_parent = carried_parent(ctrl_parent,
                                                      _world(self.bones[CHEST_BONE]["path"]),
