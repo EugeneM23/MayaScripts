@@ -1179,12 +1179,22 @@ def param_values(walk, params):
                             params["strength"])
 
 
+def output_fps():
+    """Frames a second the keyed cycle lands at: the scene's own time unit (what Arm overlap's milliseconds
+    are counted in), 30 where there is no Maya to ask."""
+    try:
+        return wcards.fps_of(_cmds().currentUnit(q=True, time=True))
+    except Exception:
+        return 30.0
+
+
 def params_knobs(walk, params):
     """(maya_walk.model's knobs, the parameters' values) for the parameters `params` on `walk`: gait.engine_knobs,
     the pose's share and In place beside them."""
     params = normal_params(params)
     own, vals = param_values(walk, params)
-    knobs = gait.engine_knobs(walk, own, vals, pins=params["pins"], physics=params["physics"])
+    knobs = gait.engine_knobs(walk, own, vals, pins=params["pins"], physics=params["physics"],
+                              fps_out=output_fps())
     knobs["pose"] = params["pose"]
     if params["in_place"]:
         knobs["in_place"] = 1.0

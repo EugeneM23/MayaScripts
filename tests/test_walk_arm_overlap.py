@@ -5,7 +5,9 @@ import unittest
 
 import numpy as np
 
-from tests.test_walkmodel import positions, rot_y, walk, wm
+from tests.test_walkmodel import load, positions, rot_y, walk, wm
+
+gait = load("gait")
 
 
 def cycle(n=8, travel=(0.0, 0.0, 80.0)):
@@ -254,3 +256,59 @@ class OverlapPassTests(unittest.TestCase):
         finally:
             wm.Walk._arm_overlap = real
         self.assertGreater(len(calls), 1, "the pass runs inside Balance's rounds and on the final frames")
+
+
+class ParameterTests(unittest.TestCase):
+    """Arm overlap as the animator's parameter: milliseconds in, frames of the new cycle out."""
+
+    def setUp(self):
+        self.w = walk()
+        self.own = gait.own(self.w)
+
+    def test_it_is_a_sided_main_parameter_in_ms(self):
+        p = gait.P["arm_overlap"]
+        self.assertEqual((p.group, p.label, p.unit, p.kind, p.sided), (gait.MAIN, "Arm overlap", "ms",
+                                                                       "added", True))
+        self.assertIn("arm_overlap", gait.keys())
+        self.assertIn("arm_overlap_l", gait.keys())
+        names = [q.name for q in gait.PARAMS if q.group == gait.MAIN]
+        self.assertEqual(names[names.index("arm_lag") + 1], "arm_overlap")
+
+    def test_nothing_was_deleted(self):
+        for name in ("arm_lag", "elbow_lag", "hand_lag", "elbow", "arms_forward", "shoulders"):
+            self.assertIn(name, gait.P, name)
+
+    def test_its_own_is_zero_and_its_range_is_fixed(self):
+        self.assertEqual(gait.own_value(self.own, "arm_overlap"), 0.0)
+        self.assertEqual(gait.own_value(self.own, "arm_overlap_l"), 0.0)
+        self.assertEqual(gait.ranges(self.own, self.w.leg_length, self.w)["arm_overlap"], (-100.0, 300.0))
+
+    def test_an_offset_change_is_the_value_asked(self):
+        vals = gait.values(self.own, {"arm_overlap": ("offset", 150.0)})
+        self.assertAlmostEqual(vals["arm_overlap"], 150.0)
+        self.assertAlmostEqual(vals["arm_overlap_l"], 150.0)
+        self.assertAlmostEqual(vals["arm_overlap_r"], 150.0)
+        self.assertEqual(gait.stored_change(gait.P["arm_overlap"], 0.0, 150.0), ("offset", 150.0))
+
+    def test_ms_become_frames_at_the_output_rate(self):
+        vals = gait.values(self.own, {"arm_overlap": ("offset", 150.0)})
+        at30 = gait.engine_knobs(self.w, self.own, vals, fps_out=30.0)
+        at24 = gait.engine_knobs(self.w, self.own, vals, fps_out=24.0)
+        self.assertAlmostEqual(at30["arm_overlap_l"], 4.5, places=6)
+        self.assertAlmostEqual(at30["arm_overlap_r"], 4.5, places=6)
+        self.assertAlmostEqual(at24["arm_overlap_l"], 3.6, places=6)
+
+    def test_with_no_rate_given_the_walks_own_is_used(self):
+        vals = gait.values(self.own, {"arm_overlap": ("offset", 100.0)})
+        e = gait.engine_knobs(self.w, self.own, vals)
+        self.assertAlmostEqual(e["arm_overlap_l"], 100.0 * self.w.fps / 1000.0, places=6)
+
+    def test_one_side_alone(self):
+        vals = gait.values(self.own, {"arm_overlap_l": ("offset", 90.0)})
+        e = gait.engine_knobs(self.w, self.own, vals, fps_out=30.0)
+        self.assertAlmostEqual(e["arm_overlap_l"], 2.7, places=6)
+        self.assertAlmostEqual(e["arm_overlap_r"], 0.0, places=6)
+
+    def test_zero_asks_the_engine_for_nothing(self):
+        e = gait.engine_knobs(self.w, self.own, gait.values(self.own, {}), fps_out=30.0)
+        self.assertAlmostEqual(e.get("arm_overlap_l", 0.0), 0.0)

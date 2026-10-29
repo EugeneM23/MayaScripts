@@ -127,6 +127,9 @@ PARAMS = (
           tip="The upper arms' swing forward and back (peak to peak); unset, it follows the speed"),
     Param("arm_lag", MAIN, "Arm lag", "fr", "offset", sided=True, rule=_about(8.0, 8.0),
           tip="Frames the arm's forward swing comes after the other foot's heel strike (overlap as a time shift)"),
+    Param("arm_overlap", MAIN, "Arm overlap", "ms", "added", sided=True, rule=_fixed(-100.0, 300.0),
+          tip="The whole arm late by this many milliseconds - its own swing and everything it takes from the "
+              "body (the chest's turn, the shoulder's bob); a hand holding a weapon takes the weapon with it"),
     Param("detail", MAIN, "Detail", "", "added", rule=_fixed(0.0, 1.0), default=1.0,
           tip="1 keeps the clip's own handwriting (what the stride's harmonics leave), 0 the clean model"),
     # the timing
@@ -695,12 +698,13 @@ def _ratio(asked, base, quiet):
     return asked / base if abs(base) >= quiet else None
 
 
-def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None):
+def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None, fps_out=None):
     """maya_walk.model's knobs for the parameters `asked` ({key: value}, a missing key the walk's own) of the walk
     whose own parameters are `own_values`. `pins`: the parameters the animator set (a pinned Sway or Surge holds
     its value, the balance's term on its axis off; a pinned twist holds its degrees at any step). `physics`: Foot
     placement, the balance, the knees' soft limit and Whip's springs as asked - off, the walk's own helpers
-    (identity: the own values give the clip back)."""
+    (identity: the own values give the clip back). `fps_out`: frames a second the new cycle's keys land at (the
+    scene's rate), which Arm overlap's milliseconds are turned into frames with; None takes the walk's own."""
     pins = set(pins or ())
     get = lambda key: float(asked[key]) if key in asked else own_value(own_values, key)
     own_of = lambda key: own_value(own_values, key)
@@ -767,6 +771,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
     e["leg_match"] = get("leg_match")
     # per side: the timing, the legs, the arms
     scale = lift_scale or _lift_scale
+    fps = float(fps_out or getattr(walk, "fps", 30.0) or 30.0)
     for s in SIDES:
         sfx = "_" + s
         sv = lambda name: _side_value(asked, name, s) if (name + sfx) in asked or name in asked else own_of(name + sfx)
@@ -791,6 +796,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         else:
             e["arm_swing_add" + sfx] = sv("arm_swing") - so("arm_swing")
         e["arm_lag" + sfx] = sv("arm_lag") - so("arm_lag")
+        e["arm_overlap" + sfx] = sv("arm_overlap") * fps / 1000.0      # ms -> frames of the new cycle (own 0)
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))
