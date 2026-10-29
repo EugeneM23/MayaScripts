@@ -2424,6 +2424,22 @@ class RealScene(unittest.TestCase):
         path, _text = self.scene._save_animation("Clip", "", None, None, {"start": 3, "end": 9})
         self.assertEqual(store.read_curves(path), {"version": 1, "nodes": []})
 
+    def test_update_removes_a_stale_curves_file_and_writes_a_new_one(self):
+        from maya_poselib import curvedata
+        layers = [curvedata.layer_record(curvedata.BASE, base=True)]
+        path = store.write(self.root, "", "Layered",
+                           dict(anim_data("Layered"), curves=curvedata.summary(layers, 0)),
+                           frames=FRAMES, curves={"version": 1, "nodes": []})
+        stale = path + "/" + store.CURVES_FILE
+        self.assertTrue(os.path.isfile(stale))
+        self.fakes.curves = None
+        ok, _text = self.scene.update(path)
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(stale))
+        self.fakes.curves = {"version": 1, "nodes": []}
+        self.scene.update(path)
+        self.assertEqual(store.read_curves(path), {"version": 1, "nodes": []})
+
     def test_an_animation_blend_finishes_under_a_progress_window(self):
         options = {"mode": "replace"}
         self.assertEqual(self.scene.blend_start(self.walk, False, options), "")
@@ -2634,6 +2650,16 @@ class CurvesOptions(AnimCase):
         self.win.layer_checks["BaseAnimation"].click()
         self.assertIsNone(self.win.options(self.walk)["layers"])
         self.assertEqual(self.win.options()["layers"], ["AnimLayer1"])
+
+    def test_mirror_is_dropped_only_for_a_press_that_pastes_curves(self):
+        self.win.pick(self.layered)
+        self.win.mirror.setChecked(True)
+        self.win.paste_as_buttons["curves"].click()
+        self.assertFalse(self.win.mirror.isEnabled())
+        self.assertTrue(self.win.mirror.isChecked())
+        self.assertFalse(self.win._mirrored(self.layered))
+        self.assertFalse(self.win._mirrored())
+        self.assertTrue(self.win._mirrored(self.walk))
 
     def test_back_to_retarget_gives_everything_back(self):
         self.win.pick(self.layered)

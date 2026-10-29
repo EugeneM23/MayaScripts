@@ -247,6 +247,14 @@ def _whole(value):
     return int(math.floor(float(value) + 0.5))
 
 
+def _read_or_none(path):
+    """The card's header, or None when it cannot be read (a press then takes the checkbox)."""
+    try:
+        return store.read(path)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def _name_of(path):
     """A card's name: its folder's, without the card's own suffix (`.pose` or `.anim`)."""
     base = os.path.basename(path.replace("\\", "/").rstrip("/"))
@@ -790,6 +798,10 @@ class Scene(object):
         if "preview" in old:
             header["preview"] = old["preview"]
         store.replace(path, header, frames=frames, curves=clip.curves)
+        if clip.curves is None:
+            stale = os.path.join(path, store.CURVES_FILE)
+            if os.path.isfile(stale):
+                os.remove(stale)
         return True, "%s updated from the selection over frames %d-%d - %s" % (
             name, start, end, note)
 
@@ -2368,9 +2380,17 @@ def _classes():
                 widget.setEnabled(on)
                 widget.setToolTip(widget.property("skTip") if on else CURVES_OFF)
 
-        def _mirrored(self):
-            """Mirror as a press takes it: off while it is greyed (Original curves)."""
-            return self.mirror.isChecked() and self.mirror.isEnabled()
+        def _mirrored(self, path=None):
+            """Mirror as the press of the card at `path` (None: the picked one) takes it: the
+            checkbox, off only for a press that pastes original curves - Mirror is greyed by
+            the picked card, but another card's press (a drag, a right-click row) still mirrors."""
+            path = path or self.picked
+            if self.mirror.isChecked() and path and store.is_anim(path):
+                data = self.picked_data if path == self.picked else _read_or_none(path)
+                if isinstance(data, dict) and curvedata.has_curves(data) \
+                        and self.options(path)["paste_as"] == "curves":
+                    return False
+            return self.mirror.isChecked()
 
         def _reset_range(self, card):
             """The Range boxes on `card`'s own frames, both held inside them - when ANOTHER
@@ -2547,7 +2567,7 @@ def _classes():
                 if self._blend["path"] == path and self.blend.value() > 0 and mirror is None:
                     return self.blend_key()
                 self._blend_drop()
-            mirror = self._mirrored() if mirror is None else bool(mirror)
+            mirror = self._mirrored(path) if mirror is None else bool(mirror)
             extra = self._extra(path)
             return self._act(lambda: self.scene.apply(path, mirror, **extra))
 
@@ -2646,7 +2666,7 @@ def _classes():
                 return self._run(lambda: self.say(chat_window.send_card(path)))
             if kind in ("character", "floor"):
                 self._blend_drop()               # the whole card goes onto who it is dropped on
-            mirror = self._mirrored()
+            mirror = self._mirrored(path)
             extra = self._extra(path)            # an animation's options, read at the release
             extra.pop("only", None)              # a drop names its character, not the selection
             if kind == "folder":
@@ -2710,7 +2730,7 @@ def _classes():
                     return True
                 self.blend_reset(RESET_CARD)
             try:
-                refusal = self.scene.blend_start(path, self._mirrored(),
+                refusal = self.scene.blend_start(path, self._mirrored(path),
                                                  **self._extra(path))
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
