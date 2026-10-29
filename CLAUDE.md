@@ -11417,7 +11417,8 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   moving 9.66 / 21.49 / 30.87 cm, the shoulder **bit-exact**, the grip held to 9e-14, the bones to 5.6e-06 cm
   (the rebuild takes each bone's mean length, the frames their own), the loop closed, 0 ms matrix for matrix, a
   lead as far the other way, Whip neither alone, and In place keeping all of it; `tests/test_walk_arm_overlap.py`
-  (26). `verify_walk.py` 5 failed, `verify_walk_gait.py` 1, `verify_walk_own.py` gates 10 and 19 and
+  (26), 13280 in the suite, the one failure the known `test_chat_deploy.Keys`. `verify_walk.py` 5 failed,
+  `verify_walk_gait.py` 1, `verify_walk_own.py` gates 10 and 19 and
   `verify_walk_many.py` dying on `No object matches name: asd` - every one of them **identical on a clean
   worktree of the commit before this work**.
 - **The limits**: the bones keep their lengths, so an overlap that asks the hand past the arm's reach is
