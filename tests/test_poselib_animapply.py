@@ -1532,7 +1532,7 @@ class Drops(Base):
         pressed = []
 
         def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None,
-                       progress=None):
+                       progress=None, curves=None):
             pressed.append((root, mirror, alpha, options, progress))
             return True, "pasted"
         aa.apply_onto = apply_onto
@@ -1701,6 +1701,72 @@ class AnimBlend(Base):
         data = self.started()[0][1]
         self.assertEqual(data["kind"], "objects")
         self.assertEqual(data["objects"][0]["attrs"], {"translateX": 5.0, "visibility": 1.0})
+
+
+class CurvesDispatch(unittest.TestCase):
+    """`apply` under Paste as «Original curves»: the card's own model takes its curves, any other
+    target the bones (`_press_refs`), the line says so; Mirror and Blend refused."""
+
+    def setUp(self):
+        from maya_poselib import curveapply, curvedata
+        self.ca = curveapply
+        self.header = {"name": "Walk", "kind": "character", "bones": {"pelvis": {}},
+                       "character": {"model": "Manny", "kind": "rig"},
+                       "curves": curvedata.summary([curvedata.layer_record(
+                           curvedata.BASE, base=True)], 1)}
+        self.log = []
+        manny = type("Ref", (), {"model": "Manny", "kind": "rig", "label": "Manny_Rig1"})()
+        creep = type("Ref", (), {"model": "Creep", "kind": "rig", "label": "Creep_Rig1"})()
+        self.refs = [manny, creep]
+        for owner, name, value in (
+                (aa, "_targets", lambda selection, prefer=None: (self.refs, "")),
+                (aa, "_press_refs", self.press_refs),
+                (aa, "_card_matched", lambda *a, **k: ([], [])),
+                (aa.ap, "_loose", lambda selection: []),
+                (aa.ap, "target_label", lambda ref: ref.label),
+                (curveapply, "character_channels",
+                 lambda header, curves, ref, only=None, in_place=False: (OrderedDict(), [])),
+                (curveapply, "paste", self.paste)):
+            self.addCleanup(setattr, owner, name, getattr(owner, name))
+            setattr(owner, name, value)
+
+    def press_refs(self, header, frames, refs, *args, **kwargs):
+        # _press_refs(header, frames, refs, mirror, alpha, options, ...): options is args[2] -
+        # an Options from `_press_curves`, the caller's raw mapping on today's road
+        self.log.append(("refs", [ref.label for ref in refs],
+                         aa._options(args[2]).paste_as))
+        return True, "retargeted line"
+
+    def paste(self, header, groups, options=None, progress=None):
+        self.log.append(("curves", [group[0] for group in groups]))
+        return True, "curves line"
+
+    def test_the_cards_model_takes_the_curves_the_rest_the_bones(self):
+        ok, line = aa.apply(self.header, {}, selection=["x"],
+                            options={"paste_as": "curves"}, curves={"nodes": []})
+        self.assertTrue(ok)
+        self.assertEqual(self.log, [("curves", ["Manny_Rig1"]),
+                                    ("refs", ["Creep_Rig1"], "retarget")])
+        self.assertIn("curves line", line)
+        self.assertIn(self.ca.RETARGETED % "Creep_Rig1", line)
+
+    def test_mirror_and_blend_are_refused(self):
+        self.assertEqual(aa.apply(self.header, {}, selection=["x"], mirror=True,
+                                  options={"paste_as": "curves"}, curves={"nodes": []}),
+                         (False, self.ca.MIRRORED))
+        self.assertEqual(aa.apply(self.header, {}, selection=["x"], alpha=0.5,
+                                  options={"paste_as": "curves"}, curves={"nodes": []}),
+                         (False, self.ca.BLENDED))
+
+    def test_unreadable_curves_retarget_everyone_and_say_so(self):
+        ok, line = aa.apply(self.header, {}, selection=["x"],
+                            options={"paste_as": "curves"}, curves=None)
+        self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
+        self.assertIn(self.ca.UNREAD, line)
+
+    def test_retarget_is_todays_press(self):
+        aa.apply(self.header, {}, selection=["x"], options={"paste_as": "retarget"})
+        self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
 
 
 if __name__ == "__main__":
