@@ -27,6 +27,10 @@ SIZE_VAR = "skeldarChatCallSize"
 SIZE = (640, 440)          # logical px
 LEAST = (420, 300)
 TILE = (240, 170)          # folded
+STAGE_POS_VAR = "skeldarChatStagePos"
+STAGE_SIZE_VAR = "skeldarChatStageSize"
+STAGE_SIZE = (900, 560)    # logical px
+STAGE_NAME = "skeldarChatStageWindow"
 ROOT_NAME = "skeldarChatCallWindow"
 _ATTR = "_skeldar_chat_call"
 _VARS = W._VARS            # optionVars where there is no Maya (tests)
@@ -129,18 +133,38 @@ def destroy():
         delattr(sys, _ATTR)
 
 
-def screen_choices(request):
-    """[(kind, row, label)] of what a desktop media request offers: screens, then windows."""
+def screen_choices(request, kinds=("screen", "window")):
+    """[(kind, row, label)] of what a desktop media request offers: screens, then windows.
+
+    A screen is named in our own words: Chromium calls it "Entire screen", one English row above
+    eight window titles, and the whole point of the button is that it shares the whole screen."""
     out = []
     for kind, model in (("screen", _model(request, "screensModel")),
                         ("window", _model(request, "windowsModel"))):
-        if model is None:
+        if model is None or kind not in kinds:
             continue
-        for row in range(model.rowCount()):
+        rows = model.rowCount()
+        for row in range(rows):
             label = model.data(model.index(row, 0))
-            out.append((kind, row, str(label) if label else
-                        (u"Экран %d" if kind == "screen" else u"Окно %d") % (row + 1)))
+            if kind == "screen":
+                label = u"Весь экран" if rows == 1 else u"Весь экран %d" % (row + 1)
+            out.append((kind, row, str(label) if label else u"Окно %d" % (row + 1)))
     return out
+
+
+def capture_text(capture):
+    """What the call window says about what is being shared, from the track's own settings."""
+    if not capture:
+        return u""
+    try:
+        w, h = int(capture.get("w") or 0), int(capture.get("h") or 0)
+    except (TypeError, ValueError):
+        w = h = 0
+    size = u" %d×%d" % (w, h) if w and h else u""
+    if capture.get("surface") == "monitor":
+        return u"Экран" + size
+    label = (capture.get("label") or u"").strip()
+    return (u"Окно: " + label) if label else (u"Окно" + size)
 
 
 def _model(request, name):
@@ -176,6 +200,133 @@ REFUSALS = {
     "too_many": u"Слишком часто — попробуйте через минуту",
     "bad_request": u"Звонок не начался",
 }
+
+
+class _StageWindow(object):
+    """The shared screen's own window: our look-B frame around the page Qt hands us for the
+    Document Picture-in-Picture window the call page asked for. The <video> itself is MOVED there
+    by the page, so nothing is captured or encoded a second time."""
+
+    def __init__(self, win, request):
+        q = W._q()
+        QtCore, w, Qt = q.QtCore, q.QtWidgets, q.QtCore.Qt
+        from PySide6 import QtWebEngineCore, QtWebEngineWidgets
+        self.win = win
+        self.closed = False
+        s, px = win.scale, win.px
+        root = w.QWidget(W._main_window(), Qt.Tool | Qt.FramelessWindowHint)
+        root.setObjectName(STAGE_NAME)
+        root.setAttribute(Qt.WA_TranslucentBackground, True)
+        root.setMinimumSize(px(320), px(220))
+        outer = w.QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        frame = hubqt._named(hubwindow.frame_class()(s), "skeldarChatStageFrame")
+        outer.addWidget(frame)
+        column = w.QVBoxLayout(frame)
+        column.setContentsMargins(px(5), 0, px(5), px(5))
+        column.setSpacing(0)
+
+        import maya_hubpop
+        title = maya_hubpop._title_class()(self._grab, self._drag, self._drop, lambda: None, frame)
+        title.setObjectName("skeldarChatStageTitle")
+        title.setFixedHeight(px(hubwindow.TITLE_H))
+        row = w.QHBoxLayout(title)
+        row.setContentsMargins(px(5), 0, 0, 0)
+        row.setSpacing(px(6))
+        colour = hubstyle.group("scene").colour
+        row.addWidget(hubwindow.title_icon("screen-share", colour, s, "skeldarChatStageIcon"))
+        row.addWidget(hubwindow.title_label(u"Экран", s, "skeldarChatStageName"), 1)
+        close = hubqt._named(hubwindow.pill_class()("x", s), "skeldarChatStageClose")
+        close.setToolTip(u"Вернуть экран в окно звонка")
+        close.clicked.connect(lambda *_a: self.close())
+        row.addWidget(close)
+        column.addWidget(title)
+
+        body = w.QWidget()
+        body.setObjectName("skeldarChatStageBody")
+        frame.content = body
+        column.addWidget(body, 1)
+        lay = w.QVBoxLayout(body)
+        lay.setContentsMargins(px(4), px(4), px(4), px(4))
+        self.view = QtWebEngineWidgets.QWebEngineView(body)
+        # the call page's own profile: the stage document stays the opener's, scriptable by it
+        page = QtWebEngineCore.QWebEnginePage(win.page.profile(), self.view)
+        self.view.setPage(page)
+        self.page = page
+        lay.addWidget(self.view, 1)
+        grip = w.QSizeGrip(body)
+        grip.setObjectName("skeldarChatStageGrip")
+        grip.setFixedSize(px(14), px(14))
+        self.grip = grip
+        self._grip_watch = _resize_watch(self._place_grip, body)
+        body.installEventFilter(self._grip_watch)
+        root.setStyleSheet(hubstyle.stylesheet(s)
+                           + "\n#skeldarChatStageFrame { border: none; background: transparent; }")
+        hubwindow.dress(frame, s)
+        self.root = root
+        self.body = body
+        request.openIn(page)
+        self._place()
+        root.show()
+        root.raise_()
+        self._place_grip()
+
+    # ---------------------------------------------------------- place
+    def _place(self):
+        q = W._q()
+        px = self.win.px
+        size = W._pair(get_var(STAGE_SIZE_VAR)) or STAGE_SIZE
+        self.root.resize(px(size[0]), px(size[1]))
+        point = W._pair(get_var(STAGE_POS_VAR))
+        if point:
+            self.root.move(int(point[0]), int(point[1]))
+        else:
+            screen = q.QtWidgets.QApplication.primaryScreen()
+            if screen is not None:
+                area = screen.availableGeometry()
+                self.root.move(area.center().x() - self.root.width() // 2,
+                               area.center().y() - self.root.height() // 2)
+
+    def _remember(self):
+        try:
+            set_var(STAGE_POS_VAR, "%d,%d" % (self.root.x(), self.root.y()))
+            set_var(STAGE_SIZE_VAR, "%d,%d" % (round(self.root.width() / self.win.scale),
+                                               round(self.root.height() / self.win.scale)))
+        except Exception:                                     # noqa: BLE001
+            pass
+
+    def _grab(self, point):
+        # the title row hands a global (x, y), never a QPoint (maya_hubpop._global)
+        pos = self.root.pos()
+        self._grab_at = (point[0] - pos.x(), point[1] - pos.y())
+
+    def _drag(self, point):
+        grab = getattr(self, "_grab_at", (0, 0))
+        self.root.move(point[0] - grab[0], point[1] - grab[1])
+
+    def _drop(self):
+        self._remember()
+
+    def _place_grip(self):
+        try:
+            self.grip.move(self.body.width() - self.grip.width(),
+                           self.body.height() - self.grip.height())
+            self.grip.raise_()
+        except RuntimeError:
+            pass
+
+    def close(self, tell=True):
+        if self.closed:
+            return
+        self.closed = True
+        self._remember()
+        try:
+            self.root.hide()
+            self.root.deleteLater()
+        except RuntimeError:
+            pass
+        if tell:
+            self.win.stage_closed()
 
 
 def refusal_text(code, text=None):
@@ -251,6 +402,13 @@ class CallWindow(object):
         self._here = False
         self._unfolded = None
         self._last_note = ""
+        self._want = "screen"         # what the next share takes: the whole screen unless asked
+        self._again = False           # a re-take after a stall: the same source, no menu
+        self._source = None           # (kind, row) last captured
+        self._capture = None          # what the page says it holds
+        self._stalled = False
+        self._retakes = 0
+        self.stage = None             # the shared screen's own window
         self.scale = W._scale()
         self._build()
         session.listen(self._heard)
@@ -313,6 +471,10 @@ class CallWindow(object):
         make = self.view_factory or callpage.make_view
         self.view, self.page = make(self.bridge, body)
         self.page.screen_requested.connect(self._screen_requested)
+        try:
+            self.page.stage_requested.connect(self._stage_requested)
+        except AttributeError:                                # a page of a test's own
+            pass
         lay.addWidget(self.view, 1)
         self.note_label = W._label("", "status", "skeldarChatCallNote", wrap=True)
         self.note_label.setVisible(False)
@@ -326,6 +488,10 @@ class CallWindow(object):
             b = W._button("", "danger" if name == "hang_up" else None, icon,
                           "skeldarChatCall_" + name, s, tip)
             b.clicked.connect(lambda *_a, n=name: self.press(n))
+            if name == "screen":
+                b.setContextMenuPolicy(Qt.CustomContextMenu)
+                b.customContextMenuRequested.connect(self._screen_menu)
+                b.setToolTip(u"Показать экран (правой кнопкой — окно)")
             self.buttons[name] = b
             self.icons[name] = icon
             buttons.addWidget(b)
@@ -494,6 +660,7 @@ class CallWindow(object):
         args = _calls.start_args(view, me, self._names(), servers, self.kind == "video",
                                  get_var(MIC_VAR) or "", get_var(CAM_VAR) or "")
         args["relay_only"] = RELAY_ONLY
+        args["colours"] = self._colours()         # a stroke is drawn in its author's own colour
         self.bridge.send("start", args)
         self.started = True
         for name, cargs in _calls.peer_commands(view["members"], self.members, me):
@@ -531,6 +698,16 @@ class CallWindow(object):
         from . import look
         return dict((u["id"], look.display_name(u))
                     for u in chat.get("members") or [] if u.get("id"))
+
+    def _colours(self):
+        """The avatars' palette, so a stroke over the screen is drawn in its author's colour."""
+        from . import look
+        chat = self.session.state.chats.get(self.chat) or {}
+        ids = [u["id"] for u in chat.get("members") or [] if u.get("id")]
+        me = self._me()
+        if me and me not in ids:
+            ids.append(me)
+        return dict((uid, look.user_colour(uid)) for uid in ids)
 
     def _paint_name(self):
         chat = self.session.state.chats.get(self.chat) or {}
@@ -570,7 +747,78 @@ class CallWindow(object):
         if error and not state.get("peers") and u"Микрофон" in error:
             self.fail(error)
             return
+        self._capture_state(state)
         self._paint_buttons()
+
+    def _capture_state(self, state):
+        """What is being shared, whether it is still moving, and whether the screen wants its own
+        window. All three are the page's own reading of the capture it holds."""
+        capture = state.get("capture") or None
+        if capture != self._capture:
+            self._capture = capture
+            # A capture of its own may stall in its turn: the flag is tied to the capture, not to
+            # the page's stalled/not edge, which a quick recovery can carry away before it is read.
+            self._stalled = False
+            if capture:
+                if not capture.get("again"):
+                    self._retakes = 0
+                text = capture_text(capture)
+                self.say(text)
+                print("[call] " + text)
+        if not capture:
+            self._retakes = 0
+        if state.get("stalled") and not self._stalled:
+            self._stalled = True
+            self._retake()
+        if state.get("wants_stage") and self.stage is None and not self.folded:
+            self._open_stage()
+        elif self.stage is not None and not state.get("stage") and not state.get("wants_stage"):
+            self._close_stage(tell=False)
+
+    # -------------------------------------------------- the screen's own window
+    def _gesture(self):
+        """A click into the page: documentPictureInPicture.requestWindow wants a user activation,
+        and our buttons are Qt's, outside the page (measured 2026-10-29: with the click it opens,
+        without it «Document PiP requires user activation»)."""
+        q = W._q()
+        QtCore = q.QtCore
+        from PySide6 import QtGui
+        target = self.view.focusProxy() or self.view
+        point = QtCore.QPointF(max(2.0, target.width() / 2.0), max(2.0, target.height() / 2.0))
+        glob = QtCore.QPointF(target.mapToGlobal(point.toPoint()))
+        app = q.QtWidgets.QApplication.instance()
+        for kind, held in ((QtCore.QEvent.MouseButtonPress, QtCore.Qt.LeftButton),
+                           (QtCore.QEvent.MouseButtonRelease, QtCore.Qt.NoButton)):
+            app.sendEvent(target, QtGui.QMouseEvent(kind, point, glob, QtCore.Qt.LeftButton,
+                                                    held, QtCore.Qt.NoModifier))
+
+    def _open_stage(self):
+        if self.stage is not None or self.closed:
+            return
+        self._gesture()
+        self.bridge.send("stage", {"on": True})
+
+    def _stage_requested(self, request):
+        """Qt hands the Picture-in-Picture window over: it is built in a frame of ours."""
+        try:
+            self.stage = _StageWindow(self, request)
+        except Exception:                                     # noqa: BLE001
+            traceback.print_exc()
+            self.stage = None
+
+    def _close_stage(self, tell=True):
+        stage, self.stage = self.stage, None
+        if stage is not None:
+            stage.close(tell=False)
+        if tell and not self.closed:
+            self.bridge.send("stage", {"on": False})
+
+    def stage_closed(self):
+        """The stage window went (its ✕, or Maya): the page puts the tile back in the grid."""
+        if self.stage is not None:
+            self.stage = None
+            if not self.closed:
+                self.bridge.send("stage", {"on": False})
 
     def _paint_buttons(self):
         st = self.state
@@ -676,15 +924,34 @@ class CallWindow(object):
             self.root.show()
 
     # -------------------------------------------------- screens
+    def choose_source(self, request):
+        """What to capture. One press of the button shares the WHOLE screen: a lone screen is
+        taken with no menu at all, several screens ask which. A window is shared only when it was
+        asked for by name (the button's right-button menu), so one can no longer be picked by
+        accident out of a list that mixed it with the screen. A re-take after a stall answers with
+        the same source, silently."""
+        want, self._want = self._want, "screen"
+        again, self._again = self._again, False
+        if again and self._source is not None:
+            return self._source
+        if want == "window":
+            windows = screen_choices(request, ("window",))
+            return _pick_screen(self, windows) if windows else None
+        screens = screen_choices(request, ("screen",))
+        if len(screens) == 1:
+            return (screens[0][0], screens[0][1])
+        if screens:
+            return _pick_screen(self, screens)
+        return _pick_screen(self, screen_choices(request)) or None
+
     def _screen_requested(self, request):
-        """Our own picker of the screens and windows Qt offers."""
         try:
-            choices = screen_choices(request)
-            picked = _pick_screen(self, choices) if choices else None
+            picked = self.choose_source(request)
             if picked is None:
                 request.cancel()
                 return
             kind, row = picked
+            self._source = picked
             model = _model(request, "screensModel" if kind == "screen" else "windowsModel")
             index = model.index(row, 0)
             (request.selectScreen if kind == "screen" else request.selectWindow)(index)
@@ -694,6 +961,33 @@ class CallWindow(object):
                 request.cancel()
             except Exception:                                 # noqa: BLE001
                 pass
+
+    def _screen_menu(self, point):
+        """The screen button's right button: share a window instead of the whole screen."""
+        q = W._q()
+        menu = q.QtWidgets.QMenu(self.root)
+        menu.setStyleSheet(hubstyle.stylesheet(self.scale))
+        hubqt.tag_row(menu.addAction(u"Весь экран"), "screen")
+        hubqt.tag_row(menu.addAction(u"Показать окно…"), "window")
+        b = self.buttons["screen"]
+        chosen = hubqt.row_value(menu.exec(b.mapToGlobal(point)))
+        if chosen not in ("screen", "window"):
+            return
+        self._want = chosen
+        if self.state.get("screen"):
+            self.bridge.send("screen", {"on": False})
+        self.bridge.send("screen", {"on": True})
+
+    def _retake(self):
+        """The capture stopped handing out frames while its track was live: take it again with the
+        same source (no menu). Twice at most - then it is said and left alone."""
+        if self._retakes >= 2:
+            self.say(u"Картинка замерла — поделитесь экраном заново")
+            return
+        self._retakes += 1
+        self.say(u"Картинка замерла — беру экран заново")
+        self._again = True
+        self.bridge.send("screen", {"on": True, "again": True})
 
     # -------------------------------------------------- the rest
     def _tick(self):
@@ -746,6 +1040,7 @@ class CallWindow(object):
             self.session.unlisten(self._heard)
         except Exception:                                     # noqa: BLE001
             pass
+        self._close_stage(tell=False)
         self._mark_here(False)
         self._remember_place()
         if getattr(sys, _ATTR, None) is self:

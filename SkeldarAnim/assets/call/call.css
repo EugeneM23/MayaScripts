@@ -21,6 +21,25 @@ html, body { margin: 0; height: 100%; background: var(--panel); color: var(--tex
 .tile .lost { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
   background: rgba(0,0,0,.55); color: #fff; }
 .tile.lost .lost { display: flex; }
+/* Drawing over a shared screen: the canvas lies over the tile and takes the mouse only while the
+   pen is on, so a drag over the stream does not draw by accident. Both travel into the stage
+   window with their tile. */
+/* width/height, not inset: a canvas is a replaced element, and `inset: 0` with an auto width
+   leaves it at its intrinsic 300x150 instead of filling the tile (measured). */
+.tile canvas.ink { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  display: none; pointer-events: none; }
+.tile.screen canvas.ink { display: block; }
+.tile.screen.drawing canvas.ink { pointer-events: auto; cursor: crosshair; }
+.tile .pen { display: none; position: absolute; right: 8px; top: 8px; width: 28px; height: 28px;
+  padding: 0; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.55);
+  color: #fff; font-size: 15px; line-height: 1; cursor: pointer; }
+.tile.screen .pen { display: block; }
+.tile .pen:hover { border-color: var(--accent); }
+.tile.drawing .pen { background: var(--accent); color: var(--on_accent); border-color: var(--accent); }
+/* The stage window: the tile fills it, nothing else. */
+body.stage { margin: 0; height: 100%; background: #000; overflow: hidden; }
+body.stage .tile { position: absolute; inset: 0; border-radius: 0; box-shadow: none; }
+body.stage .tile .name { font-size: 13px; }
 #note { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 3px 10px;
   border-radius: 10px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; display: none; }
 #note.on { display: block; }

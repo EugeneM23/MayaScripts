@@ -129,12 +129,16 @@ def page_class():
 
         class CallPage(QtWebEngineCore.QWebEnginePage):
             screen_requested = QtCore.Signal(object)
+            stage_requested = QtCore.Signal(object)
 
             def __init__(self, profile, parent=None):
                 super(CallPage, self).__init__(profile, parent)
                 self.loaded = False
                 self.permissionRequested.connect(self._permission)
                 self.desktopMediaRequested.connect(self.screen_requested.emit)
+                # The shared screen's own window: the page asks for a Document Picture-in-Picture
+                # window and Qt offers it here, so it is built in a frame of ours (callview).
+                self.newWindowRequested.connect(self.stage_requested.emit)
                 self.loadFinished.connect(self._loaded)
 
             def _loaded(self, *_args):

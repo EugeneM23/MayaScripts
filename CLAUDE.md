@@ -15607,3 +15607,74 @@ or key changed. **Not seen through Unreal's import.**
      FBXResetExport** and new scenes: a split left set cuts every later FBX export of the session, and
      a file exported after it carries `Take 001` plus the split. Set them for one export, put the
      animator's back.
+
+## The screen share: the whole screen in one press, its own window, drawing over it (2026-10-29)
+
+The animator: «во время стрима экрана не показываются приложения которые я открываю даже если у меня
+включена опция стриминга полного экрана», «возможно ли что бы участники разговора могли рисовать по
+экрану того кто стримит?», and «при стриме экрана камеры участников превращаются в узкую полоску
+снизу … камеры будем показывать в отдельном окне а стрим экрана в своем (как в дискорде)». Asked: the
+apps were missing **for them too, in their own tile**, with the first row «Entire screen» picked; the
+stream window opens **by itself**; strokes **fade after a couple of seconds**. Spec
+`docs/superpowers/specs/2026-10-29-chat-screen-share-stage-drawing-design.md`.
+
+**The capture was measured before anything was changed, and it is not the bug.** With «Entire screen»
+picked, our page captures the whole monitor, live: a window opened AFTER the share is in the frame
+(222 793 px of its colour), the other side's `<video>` shows it, it still arrives in 0.4 s with the
+sender throttled to 200 kbit (6 fps), and the same holds **inside a GUI Maya** (Unreal's viewport and
+all, `surface: "monitor"`, 2304×1440 at 28 fps, `qualityLimitationReason: "none"`). Five
+configurations, no reproduction; the symptom is not explained. What is addressed is the class it
+belongs to — the pick, and a capture that dies on its feet — and the next occurrence says what it is.
+
+- **One press shares the whole screen** (`CallWindow.choose_source`): a lone screen is taken with no
+  menu at all, several ask which («Весь экран 1/2…», our words, never Chromium's English row). A
+  window is shared only from the screen button's **right-button menu** («Показать окно…»). The old
+  menu mixed one English screen row with eight window titles under two headings.
+- **The window says what it holds**: «Экран 2560×1600» / «Окно: Atone - Unreal Editor»
+  (`capture_text`, from the track's own `displaySurface` and settings), on the line and in the Script
+  Editor.
+- **A stalled capture heals itself**: the page watches its own frames (`requestVideoFrameCallback`),
+  and no frame for `STALL_MS` 5 s while the track is live is reported; the window takes the capture
+  again **with the same source and no menu** and says so, twice at most. The flag is tied to the
+  CAPTURE, never to the page's stalled/not edge: a stall that heals inside `report()`'s own 30 ms is
+  never seen, and an edge mirrored in Python sticks.
+
+**The screen gets its own window** (`_StageWindow`, `maya_chat/callview.py`): Qt 6.8.3 is Chromium 122
+and **`documentPictureInPicture.requestWindow` works inside Maya** — it wants a user activation, and a
+synthetic `QMouseEvent` into the view's focus proxy gives it (`_gesture`). Qt offers that window
+through `newWindowRequested`, so it is built in a look-B frame of ours (title, ✕, drag, resize,
+remembered in `skeldarChatStagePos` / `skeldarChatStageSize`). The live `<video>` is **moved** into it
+with its tile, so nothing is captured or encoded a second time; the call window's grid goes back to a
+plain camera grid and **the 96 px strip is gone**. Closing it puts the tile back, the share ending
+closes it, a new share opens it again. `window.open` + `adoptNode` was tried first: the window opened
+and the video did not arrive.
+
+**Drawing over the shared screen**: everyone may, the sharer included. The pen is **in the page**, in
+the screen tile's corner, so it travels into the stage window with the tile; a stroke is carried in
+the frame's own coordinates (0..1), drawn in its author's colour (`look.user_colour`, handed over with
+the names), batched every 60 ms through the call's existing live relay (`send(uid, {draw: …})` →
+`call_signal`), and fades: `HOLD_MS` 1200 then `FADE_MS` 1800. Nothing to clear, no history kept.
+
+Proof: `docs/superpowers/plans/verify_call_stage.py` — **0 of 27 gates, live in a GUI Maya**, a real
+call window and a real page with a second page wired to it: one press shares the monitor with no menu,
+the line names it, the stage window opens framed with the picture still moving in it, the grid has no
+strip, a stroke is drawn over the shared screen and **reaches the other participant and is drawn over
+their copy**, it fades by itself, a stalled capture is taken again and the share stays alive, closing
+the stage puts the screen back. 12273 unit tests (the known `test_chat_deploy.Keys` failing).
+**A real mouse drag is the animator's**: synthetic mouse events are not a drag (the repo's trap 138),
+so the gate proves a stroke and its points, not that one drag makes exactly one stroke.
+
+306. **A `<canvas>` is a REPLACED element: `position: absolute; inset: 0` does not stretch it.** With
+     an auto width the used size is its intrinsic 300×150, and the rest of the box is left over - so
+     the drawing layer was a 300×150 patch in the corner of every tile and nothing landed on the
+     picture. `width: 100%; height: 100%`, as the `<video>` beside it already had. Every gate about
+     the stroke's data passed; only reading the canvas's own box showed it.
+307. **A Document Picture-in-Picture window that Qt re-hosts is no longer reachable through the handle
+     `requestWindow` answered.** `S.stage.document` stopped finding the tile that had just been moved
+     there (the stage page itself held it), so the page cleared every stroke as "no screen tile".
+     An ELEMENT reference survives the move across documents - hold the tile, never look it up through
+     the window.
+308. **`maya_hubpop`'s title row hands its callbacks a global `(x, y)` tuple, not a QPoint.** A stage
+     window whose `_drag` assumed a QPoint raised «'tuple' object has no attribute 'x'» out of
+     `mouseMoveEvent` on every drag - the window could not be moved, and the exception came out of
+     Qt's event loop in the middle of a verify run.

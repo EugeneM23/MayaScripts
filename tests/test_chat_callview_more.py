@@ -220,10 +220,12 @@ class ScreenMenu(Base):
     def test_a_capture_that_keeps_stalling_is_only_said(self):
         w = self.live()
         held = {"surface": "monitor", "w": 2560, "h": 1600, "again": True}
-        for _ in range(4):
-            w._page_state({"screen": True, "capture": held, "stalled": False})
-            w._page_state({"screen": True, "capture": held, "stalled": True})
-        self.assertEqual(len(self.sent("screen")), 2, "twice at most")
+        for n in range(4):
+            fresh = dict(held, label="take-%d" % n)       # each re-take hands back a capture
+            w._page_state({"screen": True, "capture": fresh, "stalled": False})
+            w._page_state({"screen": True, "capture": fresh, "stalled": True})
+            w._page_state({"screen": True, "capture": fresh, "stalled": True})
+        self.assertEqual(len(self.sent("screen")), 2, "twice at most, once per capture")
         self.assertIn(u"заново", w.last_message)
 
     def test_a_request_that_breaks_is_cancelled(self):
@@ -253,6 +255,49 @@ class ScreenMenu(Base):
         w = self.live()
         w._page_state({"capture": {"surface": "monitor", "w": 2560, "h": 1600}})
         self.assertEqual(w.last_message, u"Экран 2560×1600")
+
+
+class Stage(Base):
+    def _stage(self):
+        """A stage window without its web view: the frame's own doings are what is tested."""
+        stage = V._StageWindow.__new__(V._StageWindow)
+        stage.win = types.SimpleNamespace(scale=1.0, px=lambda n: n, stage=None,
+                                          stage_closed=lambda: None)
+        stage.root = QtWidgets.QWidget()
+        self.addCleanup(stage.root.deleteLater)
+        stage.root.resize(600, 400)
+        stage.root.move(100, 100)
+        stage.closed = False
+        return stage
+
+    def test_the_title_drags_it_by_a_global_point_not_a_qpoint(self):
+        # maya_hubpop's title row hands (x, y); a QPoint was assumed and every drag raised
+        stage = self._stage()
+        stage._grab((150, 130))
+        stage._drag((180, 160))
+        self.assertEqual((stage.root.x(), stage.root.y()), (130, 130))
+
+    def test_its_place_and_size_are_remembered(self):
+        stage = self._stage()
+        stage._drop()
+        self.assertEqual(V.get_var(V.STAGE_POS_VAR), "100,100")
+        self.assertEqual(V.get_var(V.STAGE_SIZE_VAR), "600,400")
+
+    def test_the_stage_opens_when_the_page_asks_and_the_click_comes_first(self):
+        w = self.live()
+        order = []
+        self.swap(V.CallWindow, "_gesture", lambda self: order.append("click"))
+        self.swap(V.CallWindow, "_stage_requested", lambda self, req: order.append("window"))
+        w._page_state({"screen": True, "wants_stage": True})
+        self.assertEqual(order, ["click"])
+        self.assertEqual(self.sent("stage")[-1], {"on": True})
+
+    def test_a_folded_window_opens_no_stage(self):
+        w = self.live()
+        w.folded = True
+        self.swap(V.CallWindow, "_gesture", lambda self: None)
+        w._page_state({"screen": True, "wants_stage": True})
+        self.assertEqual(self.sent("stage"), [])
 
 
 class Devices(Base):
