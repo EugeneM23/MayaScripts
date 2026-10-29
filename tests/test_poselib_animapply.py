@@ -1764,6 +1764,15 @@ class CurvesDispatch(unittest.TestCase):
         self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
         self.assertIn(self.ca.UNREAD, line)
 
+    def test_esc_in_the_curves_half_stops_the_retarget_half(self):
+        self.paste = lambda header, groups, options=None, progress=None: (
+            False, aa.CANCELLED)
+        self.ca.paste = self.paste
+        self.assertEqual(aa.apply(self.header, {}, selection=["x"],
+                                  options={"paste_as": "curves"}, curves={"nodes": []}),
+                         (False, aa.CANCELLED))
+        self.assertEqual(self.log, [])
+
     def test_retarget_is_todays_press(self):
         aa.apply(self.header, {}, selection=["x"], options={"paste_as": "retarget"})
         self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])

@@ -1338,6 +1338,9 @@ def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options
         ok, line = curveapply.paste(header, groups, options, progress)
         oks.append(ok)
         lines.append(line)
+        if not ok and (line == CANCELLED or line.startswith(CANCELLED_KEPT.split("%")[0])
+                       or getattr(progress, "cancelled", False)):
+            return False, line
     if other:
         rest = dict(header, objects=[]) if matched else header
         ok, line = _press_refs(rest, frames, other, False, 1.0,

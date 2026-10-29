@@ -71,6 +71,47 @@ class Refusals(unittest.TestCase):
         self.assertIn("AnimLayer1 is locked", line)
 
 
+class FakeCmds(object):
+    def __init__(self, locked=False):
+        self.locked, self.edits = locked, []
+
+    def animLayer(self, *args, **kwargs):
+        if kwargs.get("root"):
+            return "BaseAnimation"
+        return self.locked if kwargs.get("lock") else None
+
+    def keyframe(self, curve, **kwargs):
+        self.edits.append(kwargs["time"])
+
+    def getAttr(self, plug, time=None):
+        return 0.0
+
+
+class FixRound(unittest.TestCase):
+
+    seam = Refusals.seam
+
+    def test_a_locked_base_refuses_before_anything_is_written(self):
+        self.seam((ca.aa, "_plan"), lambda header, options: animdata.paste_plan(
+            0, 10, [], options, 0))
+        self.seam((ca.keys, "existing_layers"), lambda: [])
+        self.seam((ca, "cmds"), FakeCmds(locked=True))
+        ok, line = ca.paste(HEADER, [], animdata.Options(layers=(curvedata.BASE,)))
+        self.assertFalse(ok)
+        self.assertIn("BaseAnimation is locked", line)
+
+    def test_connect_moves_only_the_pasted_keys(self):
+        fake = FakeCmds()
+        self.seam((ca, "cmds"), fake)
+        self.seam((ca.keys, "curve_for"), lambda plug, layer: "curve")
+        self.seam((ca.keys, "_weight"), lambda layer: 1.0)
+        plan = animdata.paste_plan(0, 10, [0, 10], animdata.Options(), 20)
+        planned = OrderedDict([((0, "c.rx"), {"AnimLayer1": ([[20.0, 2.0], [30.0, 3.0]],
+                                                              False, [], None, None)})])
+        ca._connect(planned, {"c.rx": 5.0}, plan, "AnimLayer1", ADD)
+        self.assertEqual(fake.edits, [(20.0, 20.0), (30.0, 30.0)])
+
+
 class LayersText(unittest.TestCase):
 
     def test_made_layers_are_said(self):

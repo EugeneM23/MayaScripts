@@ -171,7 +171,7 @@ def _connect(planned, before, plan, layer, record):
     move. The notes said."""
     notes = []
     weight = 1.0 if (layer is None or record.get("base")) else keys._weight(layer)
-    for (_index, plug), _per in planned.items():
+    for (_index, plug), per in planned.items():
         if record.get("rotation") == "quaternion" and plug.rsplit(".", 1)[-1] in aa.ROTATE:
             notes.append(CONNECT_QUAT % record["name"])
             continue
@@ -180,8 +180,9 @@ def _connect(planned, before, plan, layer, record):
             return [CONNECT_WEIGHT % record["name"]]
         curve = keys.curve_for(plug, layer)
         if curve is not None and abs(offset) > 1e-12:
-            cmds.keyframe(curve, edit=True, relative=True, valueChange=offset,
-                          time=(plan.a, plan.b))
+            for stored in per.get(record["name"], ((),))[0]:
+                cmds.keyframe(curve, edit=True, relative=True, valueChange=offset,
+                              time=(stored[0], stored[0]))
     return notes
 
 
@@ -206,6 +207,10 @@ def paste(header, groups, options=None, progress=None):
         if kind == "refused":
             return False, keys.LOCKED % target
         where[name] = (kind, target)
+    if any(kind == "base" for kind, _target in where.values()):
+        root = cmds.animLayer(query=True, root=True)
+        if root and cmds.animLayer(root, query=True, lock=True):
+            return False, keys.LOCKED % scene.leaf(root)
     planned = _planned(groups, names, plan)
     if not planned:
         return False, NOTHING
