@@ -20,6 +20,8 @@ class FakeLink(object):
     def __init__(self):
         self.log = []
         self.opts = {}
+        self.members = []               # the layers the selection belongs to
+        self.member_calls = []
         self.anim = [
             {"name": "A2", "label": "A2", "mode": "add", "weight": 0.65, "weight_keyed": False, "mute": False,
              "solo": False, "lock": False, "active": True, "base": False},
@@ -41,6 +43,10 @@ class FakeLink(object):
 
     def keys_by_layer(self, names):
         return {n: [0.0, 10.0] for n in names}
+
+    def members_of(self, names):
+        self.member_calls.append(list(names))
+        return [n for n in names if n in self.members]
 
     def pick(self, name):
         for r in self.anim:
@@ -351,6 +357,89 @@ class Presses(Panel):
         rect = dict(self.lay.foot)["merge"]
         self.click(self.col, *self.centre(rect))
         self.assertIn(("merge_down", "A2"), self.link.log)
+
+
+class Members(Presses):
+    """The layers the selection belongs to read green (2026-10-29: «Когда мы выделяем
+    объект или группу объектов давай будем подсвечивать зелененьким имена анимационных
+    слоев которым он пренадлежит»)."""
+
+    def setUp(self):
+        super(Members, self).setUp()
+        del self.link.member_calls[:]
+
+    def image(self):
+        img = QT.QtGui.QImage(self.col.size(), QT.QtGui.QImage.Format_ARGB32)
+        img.fill(0)
+        self.col.render(img)
+        return img
+
+    def green_name(self, img, i):
+        """Is row `i`'s name green ink? `ok` is (143, 209, 154); the card, the plain
+        text, the accent and the strike-through all read green no higher than red."""
+        x, y, w, h = L.row_parts(self.lay.row_at(i, 0), "anim", 1.0, base=self.lay.bases[i])["name"]
+        for px in range(int(x), int(x + w)):
+            for py in range(int(y), int(y + h)):
+                c = img.pixelColor(px, py)
+                if c.green() > c.red() + 10 and c.green() > c.blue() + 10:
+                    return True
+        return False
+
+    def test_a_layer_the_selection_belongs_to_reads_green(self):
+        self.link.members = ["A1"]              # muted: dimmed, and still green
+        self.panel.refresh(keys=True)
+        img = self.image()
+        self.assertTrue(self.green_name(img, 1))
+        self.assertFalse(self.green_name(img, 0))
+        self.assertFalse(self.green_name(img, 2))
+
+    def test_the_active_layer_reads_green_too_when_it_holds_the_selection(self):
+        self.link.members = ["A2", "Base"]
+        self.panel.refresh(keys=True)
+        img = self.image()
+        self.assertTrue(self.green_name(img, 0))        # A2 is the active row
+        self.assertTrue(self.green_name(img, 2))
+        self.assertFalse(self.green_name(img, 1))
+
+    def test_nothing_selected_no_green_name(self):
+        self.panel.refresh(keys=True)
+        self.assertEqual(self.panel.members, frozenset())
+        img = self.image()
+        self.assertFalse(any(self.green_name(img, i) for i in range(3)))
+
+    def test_they_are_read_with_the_keys_never_on_a_plain_tick(self):
+        self.panel.refresh()
+        self.assertEqual(self.link.member_calls, [])
+        self.panel.refresh(keys=True)
+        self.assertEqual(self.link.member_calls, [["A2", "A1", "Base"]])
+
+    def test_new_rows_read_them(self):
+        self.link.anim.insert(0, dict(self.link.anim[0], name="A3", label="A3"))
+        self.panel.refresh()
+        self.assertEqual(self.link.member_calls, [["A3", "A2", "A1", "Base"]])
+
+    def test_the_display_tab_drops_them_and_the_animation_tab_reads_again(self):
+        self.link.members = ["A1"]
+        self.panel.refresh(keys=True)
+        self.assertEqual(self.panel.members, frozenset(["A1"]))
+        self.click(self.col, *self.centre(self.lay.segments["disp"]))
+        self.assertEqual(self.panel.members, frozenset())
+        self.panel.refresh(keys=True)
+        self.assertEqual(self.panel.members, frozenset())
+        self.click(self.col, *self.centre(self.lay.segments["anim"]))
+        self.assertEqual(self.panel.members, frozenset(["A1"]))
+
+    def test_an_open_panel_reads_them_at_once(self):
+        self.panel.close()
+        self.link.members = ["A1"]
+        del self.link.member_calls[:]
+        self.panel.open((1300, 815))
+        self.assertEqual(self.panel.members, frozenset(["A1"]))
+
+    def test_a_closed_panel_reads_nothing(self):
+        self.panel.close()
+        self.panel.refresh(keys=True)
+        self.assertEqual(self.link.member_calls, [])
 
 
 class LaneStrip(FakeStrip):

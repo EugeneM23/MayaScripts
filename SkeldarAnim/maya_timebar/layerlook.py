@@ -50,6 +50,16 @@ def weight_state(row, now, tol=1e-3):
     return "keyed"
 
 
+def name_tone(member, lit):
+    """The colour token of a row's name: a layer the selection belongs to reads green
+    (2026-10-29: «подсвечивать зелененьким имена анимационных слоев которым он
+    принадлежит»; the active row keeps its bold and its frame), else the lit row's
+    accent, else the plain text."""
+    if member:
+        return "ok"
+    return "accent_text" if lit else "text"
+
+
 def wkey_cell(rect, ui):
     """The key cell (x, y, w, h) centred in its column."""
     x, y, w, h = rect

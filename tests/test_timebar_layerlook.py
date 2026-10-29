@@ -153,6 +153,17 @@ class Rules(unittest.TestCase):
         self.assertFalse(L.dimmed(rows[0], rows))
         self.assertFalse(L.dimmed(rows[2], rows))      # BaseAnimation is never left out by a solo
 
+    def test_a_layer_the_selection_belongs_to_reads_green(self):
+        """2026-10-29: «подсвечивать зелененьким имена анимационных слоев которым он
+        принадлежит» - green wins over the active row's accent (its bold and its frame
+        still mark it)."""
+        self.assertEqual(L.name_tone(True, False), "ok")
+        self.assertEqual(L.name_tone(True, True), "ok")
+
+    def test_any_other_name_is_the_accent_lit_and_plain_text_cold(self):
+        self.assertEqual(L.name_tone(False, True), "accent_text")
+        self.assertEqual(L.name_tone(False, False), "text")
+
     def test_display_type_steps(self):
         self.assertEqual([L.step_type(t) for t in (0, 1, 2)], [1, 2, 0])
 

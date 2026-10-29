@@ -165,4 +165,31 @@ print("keys_by_layer on 9 layers + base: median %.2f ms, max %.2f ms (the old ba
 gate(k9[root] == old == [0.0, 3.0, 7.0, 10.0, 20.0, 33.0],
      "the base layer's keys as the per-plug read had them, no driven key: %s / %s" % (k9[root], old))
 gate(all(k9[n] == [40.0 + i] for i, n in enumerate(names9)), "each layer's own key: %s" % [k9[n] for n in names9])
+
+# which layers the selection belongs to (2026-10-29: «подсвечивать зелененьким имена
+# анимационных слоев которым он пренадлежит»)
+cmds.select(cube)
+gate(S.members_of(all9) == all9, "the selection belongs to every layer holding it, the base too: %s"
+     % [n.split(":")[-1] for n in S.members_of(all9)])
+cmds.select(cube)
+empty = cmds.animLayer("L_empty", addSelectedObjects=True)
+gate(S.members_of([empty]) == [empty], "a layer it was added to with no keys there is still its own")
+cmds.select(driver)
+gate(S.members_of(all9 + [empty]) == [], "an object in no layer, with no curve of its own, belongs to none: %s"
+     % S.members_of(all9 + [empty]))
+plain = cmds.polyCube(name="plain")[0]
+cmds.setKeyframe(plain, attribute="translateY", time=0, value=0)
+cmds.select(plain)
+gate(S.members_of(all9 + [empty]) == [root], "a plainly keyed object belongs to BaseAnimation alone: %s"
+     % S.members_of(all9 + [empty]))
+cmds.select(clear=True)
+gate(S.members_of(all9) == [], "nothing selected belongs nowhere")
+cmds.select(cube)
+runs = []
+for _ in range(20):
+    t0 = time.perf_counter()
+    S.members_of(all9 + [empty])
+    runs.append((time.perf_counter() - t0) * 1000.0)
+runs.sort()
+print("members_of on 11 layers: median %.2f ms, max %.2f ms" % (runs[len(runs) // 2], runs[-1]))
 print("%d of %d gates failed" % (len(FAIL), N[0]))

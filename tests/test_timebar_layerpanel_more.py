@@ -53,6 +53,7 @@ class FakeLink(object):
                      anim_row("Base", label="BaseAnimation", mode="base", base=True)]
         self.disp = [disp_row("lay1"), disp_row("lay2", visible=False, type=1)]
         self.keymap = {}
+        self.members = []               # the layers the selection belongs to
 
     def _w(self, *entry):
         self.log.append(entry)
@@ -99,6 +100,9 @@ class FakeLink(object):
             if r["name"] == name:
                 r["label"] = text
         return self._w("rename", name, text)
+
+    def members_of(self, names):
+        return [n for n in names if n in self.members]
 
     def option(self, name, default):
         return self.opts.get(name, default)

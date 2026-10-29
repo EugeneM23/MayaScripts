@@ -102,6 +102,7 @@ class Panel(object):
         self.lane_stamped = None       # what S put down during the drag
         self.lane_aimed = None         # (layer, key) under the mouse
         self.keys = {}
+        self.members = frozenset()      # the layers the selection belongs to: green names
         self._keys_stale = False        # a key edit: the lanes read on the next refresh
         self._wstates = ()              # the weight key cells the column last drew
         self.phase = "closed"
@@ -302,6 +303,7 @@ class Panel(object):
             self.phase = "open"
         if self._lanes_wanted():
             self._show_lanes(burst=self.motion)
+        self._read_members()            # the refresh above ran before `phase`: read it now
         self.column.invalidate()
         self.placer.start()
         self.kick()
@@ -392,6 +394,8 @@ class Panel(object):
                 self.picked_disp = None
             self._clamp_scroll()
             self.column.invalidate()
+        if self.is_open() and self.tab == "anim" and (keys or changed):
+            self._read_members()
         if self._lanes_shown() and (keys or changed or self._keys_stale):
             if self.lanes_moving() or self._timeline_dragging():
                 #  a key drag on the lanes: drawn from the keys read before it, moved by its
@@ -400,6 +404,23 @@ class Panel(object):
                 self._keys_stale = True
             else:
                 self._read_keys()
+
+    def _read_members(self):
+        """Which layers the selection belongs to: their names read green. With the keys
+        (a selection change, a layer change, an undo, a scene opened) and when the rows
+        change - never on the strip's plain tick, four times a second: it is a read per
+        layer (2026-10-29). The Animation tab only, which is where they show."""
+        names = [r["name"] for r in self.rows["anim"]] if self.tab == "anim" else []
+        found = self._call("members_of", names) if names else []
+        known = set(names)
+        members = frozenset(n for n in (found or ()) if n in known)
+        if members != self.members:
+            self.members = members
+            self.column.invalidate()
+
+    def member(self, name):
+        """Does the selection belong to the layer `name`?"""
+        return name in self.members
 
     def _read_keys(self):
         self._keys_stale = False
@@ -960,6 +981,7 @@ class Panel(object):
         self.tab = tab
         self.scroll = 0.0
         self._set_option(TAB_VAR, tab)
+        self._read_members()            # read on the Animation tab, dropped on Display
         lay = self.column.layout_()
         if self.motion:
             seg = lay.segments[tab]
@@ -1657,7 +1679,8 @@ def _classes():
                 p.setClipPath(clip)
             key = (self.width(), self.height(), ui, pn.tab, round(pn.scroll, 2),
                    L.signature(pn.current_rows()), tuple(pn.selected_names()), pn.picked_disp, pn.status, pn.lanes_on,
-                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded, pn.weight_states())
+                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded, pn.weight_states(),
+                   tuple(sorted(pn.members)))
             if key != self._cache_key or self._cache is None:
                 pn._wstates = pn.weight_states()
                 self.rebuilds += 1
@@ -1974,7 +1997,8 @@ def _classes():
             metrics = QtGui.QFontMetricsF(f)
             text = metrics.elidedText(row.get("label", row.get("name", "")), Qt.ElideRight, nr.width())
             p.setFont(f)
-            p.setPen(colour(tk["accent_text"]) if lit else colour(tk["text"]))
+            member = tab == "anim" and pn.member(row.get("name"))
+            p.setPen(colour(tk[L.name_tone(member, lit)]))
             p.drawText(nr, Qt.AlignVCenter | Qt.AlignLeft, text)
             if dim:
                 y = nr.center().y() + 0.5 * ui

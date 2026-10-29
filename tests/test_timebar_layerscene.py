@@ -140,6 +140,50 @@ class Reads(unittest.TestCase):
     def test_keys_of_the_selection_in_each_layer(self):
         self.assertEqual(S.keys_by_layer(["A", "B"]), {"A": [0.0, 10.0], "B": [5.0]})
 
+    def test_the_layers_the_selection_belongs_to(self):
+        """2026-10-29: «подсвечивать зелененьким имена анимационных слоев которым он
+        принадлежит» - Maya's own membership, the layer's `attribute` list."""
+        self.assertEqual(S.members_of(["B", "A", "BaseAnimation"]), ["B", "A"])
+
+    def test_another_object_belongs_to_none_of_them(self):
+        self.cmds.selection = ["sphere"]
+        self.assertEqual(S.members_of(["B", "A", "BaseAnimation"]), [])
+
+    def test_nothing_selected_belongs_nowhere(self):
+        self.cmds.selection = []
+        self.assertEqual(S.members_of(["B", "A", "BaseAnimation"]), [])
+
+    def test_base_animation_holds_a_selection_with_a_plain_curve(self):
+        """A channel no layer holds: one listConnections answers, no findCurveForPlug."""
+        c = self.cmds
+        c.kinds = {"base_ty": "animCurveTL"}
+        c.edges = (("base_ty", "cube.translateY"),)
+        self.assertEqual(S.members_of(["BaseAnimation"]), ["BaseAnimation"])
+        self.assertFalse([e for e in c.calls if e[0] == "animLayer" and "findCurveForPlug" in e[2]])
+
+    def test_base_animation_holds_it_through_a_layer_s_blend(self):
+        c = self.cmds
+        c.kinds = {"base_tx": "animCurveTL", "A_tx": "animCurveTL",
+                   "blendA": "animBlendNodeAdditiveDL"}
+        c.edges = (("blendA", "cube.translateX"), ("base_tx", "blendA.inputA"), ("A_tx", "blendA.inputB"))
+        self.assertEqual(S.members_of(["BaseAnimation"]), ["BaseAnimation"])
+
+    def test_a_driven_key_is_no_base_curve(self):
+        c = self.cmds
+        c.kinds = {"driven": "animCurveUL"}
+        c.edges = (("driven", "cube.translateZ"),)
+        self.assertEqual(S.members_of(["BaseAnimation"]), [])
+
+    def test_one_odd_layer_does_not_cost_the_others(self):
+        real = self.cmds.animLayer
+
+        def animLayer(name=None, q=False, e=False, **kw):
+            if name == "A" and kw.get("attribute"):
+                raise RuntimeError("no")
+            return real(name, q=q, e=e, **kw)
+        self.cmds.animLayer = animLayer
+        self.assertEqual(S.members_of(["B", "A"]), ["B"])
+
     def test_the_base_layer_s_keys_in_a_few_calls(self):
         """2026-10-18 final review: the base layer's curves gathered with listConnections
         over the selection (an unlayered channel's own curve; a layered channel's base

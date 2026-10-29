@@ -47,6 +47,8 @@ class PanelLink(object):
                                  "weight": [1.0, 0.65, 0.3, 1.0][i % 4], "weight_keyed": i == 2,
                                  "mute": i == 3, "solo": i == 5, "lock": i == 6,
                                  "active": i == 1, "base": False})
+        #  the layers the selection belongs to: their names read green (2026-10-29)
+        self.members = ["L1", "L3", "Base"]
         self.disp = [{"name": "d%d" % i, "label": "display_%d" % (i + 1),
                       "colour": ["#7fa9e6", "#e6a97f", "#8fd48f", "#d98fd9"][i], "visible": i != 2,
                       "playback": True, "type": i % 3} for i in range(4)]
@@ -63,6 +65,9 @@ class PanelLink(object):
 
     def keys_by_layer(self, names):
         return {n: [float(f) for f in range(0, 95, 5 + (i % 4))] for i, n in enumerate(names)}
+
+    def members_of(self, names):
+        return [n for n in names if n in self.members]
 
     def option(self, name, default):
         return self.opts.get(name, default)

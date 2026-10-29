@@ -237,6 +237,52 @@ def curves_of(names, weights=True):
     return sorted(out)
 
 
+def _in_base(root, nodes):
+    """Has the selection curves on the base layer? The plain curves first - one
+    listConnections answers most selections, and only a channel a layer's blend drives
+    needs findCurveForPlug (this runs on every selection change while the panel is
+    open, so it stops at the first find)."""
+    nodes = sorted(nodes)
+    plain = cmds.listConnections(nodes, source=True, destination=False, type="animCurve") or []
+    if plain and cmds.ls(sorted(set(plain)), type=TIME_CURVES):
+        return True
+    pairs = cmds.listConnections(nodes, source=True, destination=False, type="animBlendNodeBase",
+                                 connections=True, plugs=True) or []
+    for plug in sorted(set(pairs[0::2])):
+        try:
+            found = cmds.animLayer(root, q=True, findCurveForPlug=plug) or []
+        except Exception:                                    # noqa: BLE001 - trap 211
+            continue
+        if found and cmds.ls(sorted(set(found)), type=TIME_CURVES):
+            return True
+    return False
+
+
+def members_of(names):
+    """The layers of `names` the selection belongs to (2026-10-29: «подсвечивать
+    зелененьким имена анимационных слоев которым он принадлежит»): Maya's own
+    membership - a layer whose `attribute` list holds a plug of a selected node, which
+    is what Add / Remove selection write, keys there or not. BaseAnimation holds the
+    selection when it has base curves, which is what its lane shows. Nothing
+    selected: none."""
+    nodes = _selected_nodes()
+    if not nodes:
+        return []
+    root, _layers = _anim_names()
+    out = []
+    for name in names:
+        try:
+            if name == root:
+                if _in_base(_maya_root(root), nodes):
+                    out.append(name)
+            elif any(p.split(".")[0] in nodes
+                     for p in (cmds.animLayer(name, q=True, attribute=True) or [])):
+                out.append(name)
+        except Exception:                                    # noqa: BLE001 - one odd layer, not the rest
+            pass
+    return out
+
+
 def active_layer():
     """(root, the layer keys go to) - Maya's: the preferred selected layer, else the last
     selected one, else the base (`anim_layers`' rule, without reading every row).
