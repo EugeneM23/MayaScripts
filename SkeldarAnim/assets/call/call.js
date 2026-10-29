@@ -554,6 +554,7 @@ const COMMANDS = {
   },
   async screen(a) {
     if (S.ended) return;
+    if (!a.again) setDrawing(false);                  // a fresh share starts with the pen off
     stopScreen();                                     // a new share replaces the old capture
     if (a.on) {
       try {
