@@ -88,6 +88,25 @@ sync are untouched.
   page and the other way round.
 - **Not seen in a GUI Maya**: the animator's own check, as the card itself was.
 
+## What the build changed
+
+- **The chips are dimmed, not absent.** A `rowLayout`'s column count is fixed when it is made, so a
+  chip row cannot grow or shrink per weapon. Every type keeps its chip; the ones the weapon has no
+  attacks for are disabled and cleared, and a type that leaves the filter this way takes its own filter
+  value with it. The animator sees that the type exists in the vocabulary and that this weapon has none.
+- **The page's weapon list comes from `serve.py`**, which answers `GET /graphs.json` with the same
+  listing `model.weapons` computes (a page served by a plain `http.server` gets a 404 and shows the
+  Longsword alone). A page cannot list a folder by itself, and probing for file names would be guessing.
+- **The page's buttons wear a class of their own** (`.weaponswitch`): its own page switch toggles `on`
+  for every `.pageswitch button` by `data-page`, which cleared the lit weapon. Found in the browser.
+- **The page's card names go through the weapon's prefix too** (`strip`, the listing's `prefix` field);
+  before that the dagger's cards read «Dg Atk NLt».
+- **The dagger has a Dodge chip after all**: its chooser reuses the sword's `Back_Dodge_Thrust`. The
+  chips being data rather than a table is what made that right without a line of code about it.
+- **`work/weapon.txt` and `work/graph_out.txt`** carry the weapon and the output file into the editor,
+  the way the render step already reads `work/render_only.txt`; an environment variable would not reach
+  an editor that is already up.
+
 ## Not built
 
 - The dagger's previews, webm, 1P pies and 3D — a second editor run, when the graph is right.
