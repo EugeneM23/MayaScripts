@@ -79,6 +79,8 @@ before they were written (a locator keyed tx 0/10/20 = 0/10/20, an additive laye
   those first and every key's types after. An in-tangent of "step"/"stepnext" is refused with a
   warning and the key's in-tangent reset to auto: never passed.
 
+`write_raw` keys a stored LAYER curve with its own values (original curves, 2026-10-28) - measured in `docs/superpowers/plans/probe_poselib_raw_layer_keys.py` (mayapy, Maya 2027): SUMMARY 27/27 - `setKeyframe <curve> -time t -value v` writes `v` raw, in UI units, on a base, an additive, an override and a quaternion-accumulating layer curve and replaces a key standing at `t`; `rotationAccumulationMode` is 'By Component:By Layer', `scaleAccumulationMode` 'Additive:Multiply' (a new layer: Multiply); `animLayer -q -attribute` spells a plug `node.longAttr` with the shortest unique node name (measured on a root-level locator).
+
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Keys - the active layer"),
 docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The paste modes").
 """
@@ -86,6 +88,8 @@ docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The paste m
 from collections import OrderedDict, namedtuple
 
 import maya.cmds as cmds
+
+from maya_poselib import curvedata
 
 Layer = namedtuple("Layer", "name base additive locked quaternion muted weight",
                    defaults=(False, 1.0))
@@ -114,6 +118,7 @@ NOT_KEYED = "%d not keyed (%s): %s"
 KEYS_REFUSED = "%d of %d keys on %s not keyed (%s)"
 TANGENTS_LOST = "%s keyed, its tangents not set (%s)"
 NO_CURVE = "no curve found for its keys"
+RAW_NO_CURVE = "%s: no curve on %s for its keys"
 
 # plugs named per reason in a note: a whole rig skipped must not print three hundred names
 NAMED = 4
@@ -822,6 +827,154 @@ def put_curve_state(state, layer):
             continue
         restored += 1
     return restored
+
+
+# ------------------------------------------------------------------ original curves (2026-10-28)
+
+def layer_stack():
+    """[name] of the scene's animation layers bottom to top, the root first (`_walk`'s depth-first
+    order: the stack position) - a scene tab's root left out (`_tab_root`: it holds no curves of its
+    own); [] in a scene without layers."""
+    root = cmds.animLayer(query=True, root=True)
+    if not root:
+        return []
+    return [name for name in _walk(root) if not _tab_root(name, root)]
+
+
+def layer_record(name, base=False):
+    """`curvedata.layer_record` of the scene's layer `name` - its mode, weight, OWN mute (a
+    parent's is no setting of this layer) and accumulation enums (`curvedata.ROTATION` /
+    `SCALE`); `base` - the root, the card's `curvedata.BASE` whatever it is called."""
+    if base:
+        return curvedata.layer_record(curvedata.BASE, base=True)
+    try:
+        rotation = int(cmds.getAttr(name + ".rotationAccumulationMode"))
+        scale = int(cmds.getAttr(name + ".scaleAccumulationMode"))
+    except (RuntimeError, ValueError, TypeError):
+        rotation, scale = 0, 1
+    return curvedata.layer_record(
+        name, override=bool(cmds.animLayer(name, query=True, override=True)),
+        weight=_weight(name), mute=bool(cmds.animLayer(name, query=True, mute=True)),
+        rotation=curvedata.ROTATION.get(rotation, "component"),
+        scale=curvedata.SCALE.get(scale, "multiply"))
+
+
+def layer_plugs(name):
+    """{plug} the layer `name` holds (`animLayer -q -attribute`: one query a layer, where asking
+    every plug of a rig on every layer cost a query each), spelled as the pose library spells a
+    plug - the node's long path, the attribute's long name (task 1 printed Maya's own spelling:
+    the shortest unique node name). Empty when it holds none or cannot be read."""
+    try:
+        listed = cmds.animLayer(name, query=True, attribute=True) or []
+    except (RuntimeError, TypeError, ValueError):
+        return set()
+    out = set()
+    for plug in listed:
+        node, _dot, attr = plug.rpartition(".")
+        try:
+            found = cmds.ls(node, long=True) or []
+            if found:
+                out.add(found[0] + "." + cmds.attributeQuery(attr, node=found[0], longName=True))
+        except (RuntimeError, TypeError, ValueError):
+            continue
+    return out
+
+
+def existing_layers():
+    """[{name, override, rotation, locked}] of the scene's layers above the base, bottom to top -
+    what `curvedata.layer_target` pairs a card's layers with."""
+    out = []
+    for name in layer_stack()[1:]:
+        out.append({"name": name,
+                    "override": bool(cmds.animLayer(name, query=True, override=True)),
+                    "rotation": "quaternion" if _quaternion(name) else "component",
+                    "locked": bool(cmds.animLayer(name, query=True, lock=True))})
+    return out
+
+
+def _raw_key(curve, time, value):
+    """One RAW key on the curve node `curve` - the curve's own value, in UI units (measured, task
+    1: `setKeyframe <curve> -time t -value v` writes `v` on a base, additive, override and
+    quaternion layer curve alike, and replaces the value of a key standing at `t`)."""
+    return cmds.setKeyframe(curve, time=time, value=value)
+
+
+def write_raw(plug, layer, keys_list, weighted=False, pre=None, post=None):
+    """A stored LAYER CURVE onto `plug`'s curve on `layer` (a layer's name - the base when it is
+    the scene's root, as `curve_for` takes it - or None: no layers, the plug's own curve):
+    `Written` as `write_keys`' (keys made, notes, `.plugs` [plug] when any landed).
+
+    The values are the curve's OWN - an additive layer's offset, an override layer's value - so
+    they are written on the curve NODE (`_raw_key`), never through the plug with `value=`, which
+    takes a final value (`_key`). That is what lets every tangent travel: the weighting first,
+    each fixed tangent's angles and weights, then the types (`_tangent_edits(..., tangents=True)`
+    - the order measured for `write_keys`), then `pre` / `post` infinity (`setInfinity`'s
+    spelling, `_INFINITY_VALUE`). A plug not yet in a non-base layer is added first; a curve that
+    does not exist yet is made by ONE key through the plug (`_key`, the layer's own road), whose
+    value the raw keys then overwrite. A plug `writable` refuses takes nothing and is named."""
+    ok, reason = writable(plug)
+    if not ok:
+        return Written(0, [_note(reason, [plug])])
+    if not keys_list:
+        return Written(0, [])
+    name, base = _layer_parts(layer)
+    if name is not None and not base:
+        try:
+            cmds.animLayer(name, edit=True, attribute=plug)
+        except RuntimeError as error:
+            return Written(0, [_note(_why(error), [plug])])
+    curve = curve_for(plug, layer)
+    if curve is None:
+        try:
+            _key(plug, keys_list[0][1], keys_list[0][0], name)
+        except RuntimeError as error:
+            return Written(0, [_note(_why(error), [plug])])
+        curve = curve_for(plug, layer)
+    if curve is None:
+        return Written(0, [RAW_NO_CURVE % (plug, name or "the plug")])
+    count, landed, refused = 0, [], {}
+    for key in keys_list:
+        try:
+            made = _raw_key(curve, key[0], key[1]) or 0
+        except RuntimeError as error:
+            refused.setdefault(_why(error), []).append(key[0])
+            continue
+        if made:
+            count += int(made)
+            landed.append(key)
+        else:
+            refused.setdefault("no key made", []).append(key[0])
+    notes = [KEYS_REFUSED % (len(times), len(keys_list), plug, why)
+             for why, times in refused.items()]
+    if not landed:
+        return Written(count, notes)
+    try:
+        _put_tangents(curve, _tangent_edits(landed, weighted, True))
+        for attr, value in (("preInfinity", pre), ("postInfinity", post)):
+            wanted = _INFINITY_VALUE.get(value)
+            if wanted is not None and int(cmds.getAttr(curve + "." + attr)) != wanted:
+                cmds.setAttr(curve + "." + attr, wanted)
+    except RuntimeError as error:
+        notes.append(TANGENTS_LOST % (plug, _why(error)))
+    return Written(count, notes, [plug])
+
+
+def make_layer(record):
+    """A new animation layer for the card's layer `record` (`curvedata.layer_record`), on top of
+    the stack; its name - the card's, or the one Maya made free («Fix1»). Made as the Tools'
+    layer bake makes its own (`cmds.animLayer(name)`): with scene tabs on, the tabs' layer hook
+    moves it under the current tab's root one idle later (`maya_scenetabs.hooks.on_layer`). Its
+    accumulation modes are set before any plug joins it (a scale key made under the wrong mode
+    holds the wrong identity - the layer bake's note), then its weight and mute."""
+    made = cmds.animLayer(record["name"], override=bool(record.get("override")))
+    rotation = dict((v, k) for k, v in curvedata.ROTATION.items())
+    scale = dict((v, k) for k, v in curvedata.SCALE.items())
+    cmds.setAttr(made + ".rotationAccumulationMode",
+                 rotation.get(record.get("rotation"), 0))
+    cmds.setAttr(made + ".scaleAccumulationMode", scale.get(record.get("scale"), 1))
+    cmds.animLayer(made, edit=True, weight=float(record.get("weight", 1.0)))
+    cmds.animLayer(made, edit=True, mute=bool(record.get("mute")))
+    return made
 
 
 # ------------------------------------------------------------------ the animator's tweaks
