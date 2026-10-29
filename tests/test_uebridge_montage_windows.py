@@ -177,6 +177,23 @@ class BookmarksFor(unittest.TestCase):
         plan = self.plan._replace(windows=())
         self.assertEqual(montage.bookmarks_for(plan, 30.0), [])
 
+    def test_float_noise_does_not_buy_a_frame(self):
+        """0.2 + 0.1 is 0.30000000000000004 in floats, and x30 is a hair past
+        frame 9: the window ends ON frame 9, not 10. The verify's first run
+        read 6..10 for exactly this."""
+        plan = self.plan._replace(
+            windows=[montage.Window("MeleeScanWindow", 0.2, 0.2 + 0.1)])
+        self.assertEqual(montage.bookmarks_for(plan, 30.0),
+                         [("MeleeScanWindow", 6.0, 9.0)])
+
+    def test_a_hair_past_a_frame_still_takes_the_next_one(self):
+        """The slack is float noise, not a sub-frame offset: 0.9967 s is
+        29.9 frames and the window reaches frame 30."""
+        plan = self.plan._replace(
+            windows=[montage.Window("MeleeScanWindow", 0.6, 0.9966667)])
+        self.assertEqual(montage.bookmarks_for(plan, 30.0),
+                         [("MeleeScanWindow", 18.0, 30.0)])
+
     def test_no_fps_reads_as_thirty(self):
         plan = self.plan._replace(
             windows=[montage.Window("MeleeScanWindow", 0.6, 0.9966667)])

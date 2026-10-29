@@ -102,9 +102,21 @@ SEGMENTS = [
      "anim_play_rate": 1.2, "looping_count": 1,
      "additive": "<AdditiveAnimationType.AAT_NONE: 0>"}]
 
+#  Atone's own shape: the scan windows are STATES on the montage's own clock
+#  (no clip carries a notify), beside point notifies of other classes. One of
+#  these is named `GameplayEvent Window` - two of the project's 90 are.
+SCAN = "AnimNotifyState_MeleeScanWindow"
+NOTIFIES = [
+    {"name": "MeleeScanWindow", "class": SCAN, "state": True,
+     "trigger": 0.2, "duration": 0.1},
+    {"name": "Footstep", "class": "AnimNotify_Footstep", "state": False,
+     "trigger": 0.4, "duration": 0.0},
+    {"name": "GameplayEvent Window", "class": SCAN, "state": True,
+     "trigger": 0.6, "duration": 0.3}]
+
 PAYLOAD = {"montages": {MONTAGE: {
     "name": "AM_Fixture", "length": 1.0889, "skeleton": "SK_Fixture",
-    "sections": [],
+    "sections": [], "notifies": NOTIFIES,
     "slots": [{"slot": "1P", "segments": SEGMENTS},
               {"slot": "DefaultSlot", "segments": SEGMENTS[:1]}]}}}
 
@@ -508,6 +520,66 @@ def phase_import():
     close("every frame against the imported clips", worst, 0.0, 1e-4,
           where + " ")
 
+    #  the montage's scan windows as time-slider bookmarks
+    marks = sorted((cmds.getAttr(node + ".timeRangeStart"),
+                    cmds.getAttr(node + ".timeRangeStop"),
+                    cmds.getAttr(node + ".name"))
+                   for node in montage.our_bookmarks(cmds))
+    gate("one bookmark a scan window, the point notify left out",
+         len(marks) == 2, "{0} bookmarks: {1}".format(len(marks), marks))
+    gate("the first window's frames snapped outward",
+         marks and marks[0][:2] == (6.0, 9.0), "{0}".format(marks[:1]))
+    gate("the second window keeps the notify's own name",
+         len(marks) > 1 and marks[1][2] == "GameplayEvent Window",
+         "{0}".format(marks[1:]))
+    gate("the second window's frames",
+         len(marks) > 1 and marks[1][:2] == (18.0, 27.0),
+         "{0}".format(marks[1:]))
+    gate("each one carries the montage and the slot",
+         all(cmds.getAttr(node + "." + montage.MARK_ATTR) ==
+             "AM_Fixture · 1P" for node in montage.our_bookmarks(cmds)),
+         "{0}".format([cmds.getAttr(n + "." + montage.MARK_ATTR)
+                       for n in montage.our_bookmarks(cmds)]))
+    gate("the colour is ours",
+         all(tuple(round(c, 3) for c in cmds.getAttr(node + ".color")[0])
+             == tuple(round(c, 3) for c in montage.SCAN_COLOUR)
+             for node in montage.our_bookmarks(cmds)))
+    gate("the press counted them", info["montage"]["windows"] == 2,
+         "{0}".format(info["montage"].get("windows")))
+    gate("the status line names them",
+         "2 scan windows" in (info.get("warning") or ""),
+         info.get("warning") or "")
+
+    #  a bookmark of the animator's own must outlive a re-import, and ours
+    #  must be replaced rather than piled up
+    mine = cmds.createNode("timeSliderBookmark", skipSelect=True,
+                           name="animatorsOwn")
+    cmds.setAttr(mine + ".timeRangeStart", 2.0)
+    cmds.setAttr(mine + ".timeRangeStop", 4.0)
+    was = set(cmds.ls(type="timeSliderBookmark"))
+    montage.import_clip(ref, "AM_Fixture_again", set_timeline=False)
+    now = set(cmds.ls(type="timeSliderBookmark"))
+    gate("a re-import replaces ours", len(montage.our_bookmarks(cmds)) == 2,
+         "{0}".format(sorted(montage.our_bookmarks(cmds))))
+    gate("the animator's own bookmark survives it", cmds.objExists(mine))
+    gate("nothing piled up", len(now) == 3,
+         "{0} bookmarks: {1}".format(len(now), sorted(now)))
+
+    #  the writing is unrecorded: a montage import is FBX imports, which an
+    #  undo chunk does not take back (measured), so a Ctrl+Z must not strip
+    #  the bookmarks off a take that stays
+    fresh = sorted(now - was)
+    cmds.undo()
+    gate("a Ctrl+Z after the press leaves the bookmarks",
+         all(cmds.objExists(node) for node in fresh),
+         "{0}".format([node for node in fresh if not cmds.objExists(node)]))
+    gate("and leaves the take", bool(cmds.objExists("AM_Fixture_again:root")))
+
+    #  a slot too short for a window gets none: the DefaultSlot ends at 0.2 s
+    short = montage.plan_for(PAYLOAD, MONTAGE, "DefaultSlot")
+    gate("a slot that ends before the first window holds none",
+         not short.windows, "{0}".format(list(short.windows)))
+
     #  a plan whose clip is gone refuses and leaves the scene alone
     before = set(cmds.ls(long=True))
     gone = montage.write_plan(folder, plan, {CLIP_A: paths[CLIP_A],
@@ -532,7 +604,11 @@ LIVE = (("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
         ("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
          "AM_LongSword_Block_Stun", "1P"),
         ("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
-         "AM_SwordShield_1p_blockreact_mid", "1P"))
+         "AM_SwordShield_1p_blockreact_mid", "1P"),
+        #  four MeleeScanWindow states (measured 0.600+0.397, 1.000+0.115,
+        #  1.114+0.187, 1.301+0.107) - the bookmarks' live case
+        ("/Game/Prototype/Animation/PlayerCharacter/Weapons/Longsword/"
+         "Montages/AM_Longsword_Attack_Left_Forward_Hold", "1P"))
 
 LIVE_BONES = ("pelvis", "spine_03", "hand_r", "foot_l", "head")
 
@@ -652,6 +728,33 @@ def phase_live():
                  len(info["montage"]["clips"])))
         fps = animimport.scene_fps()
         rows = montage.samples(plan, fps)
+
+        #  the scan windows as bookmarks, against the ENGINE's own numbers:
+        #  the frames are worked out here from the raw reply, not asked of the
+        #  code under test
+        engine = []
+        for row in (plans["montages"][package].get("notifies") or []):
+            if str(row.get("class") or "") != montage.SCAN_CLASS:
+                continue
+            start = float(row.get("trigger") or 0.0)
+            stop = min(start + float(row.get("duration") or 0.0), plan.end)
+            if start >= plan.end:
+                continue
+            low = math.floor(start * fps + 1e-6)
+            high = max(math.ceil(stop * fps - 1e-6), low + 1)
+            engine.append((float(low), float(high)))
+        got = sorted((cmds.getAttr(node + ".timeRangeStart"),
+                      cmds.getAttr(node + ".timeRangeStop"))
+                     for node in montage.our_bookmarks(cmds))
+        gate("{0} · {1}: the bookmarks are the engine's own scan "
+             "windows".format(name, slot), got == sorted(engine),
+             "{0} against {1}".format(got, sorted(engine)))
+        gate("{0} · {1}: each bookmark is named for its notify".format(
+            name, slot),
+             all(cmds.getAttr(node + ".name")
+                 for node in montage.our_bookmarks(cmds)),
+             "{0}".format([cmds.getAttr(n + ".name")
+                           for n in montage.our_bookmarks(cmds)]))
 
         #  what to ask the engine: a handful of bones, every fourth frame
         bones = [b for b in LIVE_BONES

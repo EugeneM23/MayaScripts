@@ -110,9 +110,13 @@ the timeline set:
   `priority` the plugin's next one;
 - identity is the attribute **`skeldarMontageNotify`** holding «montage · slot», never the node's
   name (Maya uniquifies a repeated name, and the animator may rename one);
-- the nodes land in the active scene tab's namespace, as everything the plugin creates does, and
-  the delete pass asks for that namespace only — another tab's bookmarks are left alone;
-- it runs inside the press's own undo chunk, so **one Ctrl+Z takes the take and its bookmarks**;
+- the nodes land in the active scene tab's namespace, as everything the plugin creates does;
+- it runs **unrecorded** (`undoInfo -stateWithoutFlush`, the way Add Character's own work does).
+  **Measured 2026-10-29: an `FBXImport` inside an open undo chunk is NOT undone, while a node made
+  after it in the same chunk is.** A montage import is FBX imports, so the take cannot be undone;
+  recording the bookmarks would make the first Ctrl+Z after an import strip them off a take that
+  stays — and bring the previous import's bookmarks back, which reads like a bug. Unrecorded, a
+  Ctrl+Z after an import changes neither the take nor its bookmarks;
 - it never fails the import: a refusal from the plugin or the node is caught and named in the line.
 
 `info["montage"]["windows"]` carries the count, and `note_of` says «2 scan windows» beside «cuts at
@@ -144,8 +148,8 @@ show `MeleeScanWindow`.
   one-frame floor, `Plan.windows`'s default, the payload round trip, the status line.
 - **`verify_montage_import.py`** gains gates in its standalone phases: after an import the
   bookmarks stand at the measured frames, a re-import replaces them, a bookmark the animator made
-  by hand survives, one Ctrl+Z takes the take and the bookmarks together, and a montage with no
-  scan window makes none.
+  by hand survives, a Ctrl+Z after a press leaves both the take and its bookmarks, and a slot too
+  short for a window gets none.
 - **The live phase** against the open editor: `AM_Longsword_Attack_Left_Forward_Hold` (4 windows,
   measured 0.600+0.397, 1.000+0.115, 1.114+0.187, 1.301+0.107) — the bookmarks against the engine's
   own trigger times and durations.

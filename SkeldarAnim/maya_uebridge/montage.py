@@ -42,6 +42,12 @@ TINY = 1e-6
 #  carries them all), so another kind is a constant away from the timeline.
 SCAN_CLASS = "AnimNotifyState_MeleeScanWindow"
 
+#  How near a frame counts as ON it when a window is snapped, in frames. It is
+#  there for float noise alone (a hundred thousandth of a frame), never for a
+#  real sub-frame offset - only 294 of Atone's 979 notifies sit on a whole
+#  frame at all.
+SNAP_EPS = 1e-6
+
 #  Every channel of the slot's clips is composed, not only translate / rotate /
 #  scale: a UE root carries the game's own curves as custom attributes
 #  (`Pose_0..9`, `MoveData_*` - trap 40). These are the ones nothing animates
@@ -274,8 +280,11 @@ def bookmarks_for(plan, fps):
     rate = float(fps or 30.0) or 30.0
     out = []
     for window in plan.windows or ():
-        start = math.floor(window.t0 * rate)
-        stop = math.ceil(window.t1 * rate)
+        #  SNAP_EPS is float noise, not a sub-frame offset: 0.2 + 0.1 is
+        #  0.30000000000000004, and without it that window ended a whole
+        #  frame late (the verify's first run read 6..10 for 6..9).
+        start = math.floor(window.t0 * rate + SNAP_EPS)
+        stop = math.ceil(window.t1 * rate - SNAP_EPS)
         out.append((window.name, float(start), float(max(stop, start + 1))))
     return out
 
@@ -839,13 +848,24 @@ def our_bookmarks(cmds):
 def write_bookmarks(plan, fps):
     """The slot's scan windows as time-slider bookmarks; what was made.
 
-    Ours are replaced and the animator's own left alone. It runs inside the
-    press's own undo chunk, so one Ctrl+Z takes the take and its bookmarks
-    together - and it never fails the import: a refusal is named instead, so a
-    Maya without the plugin still gets its animation.
+    Ours are replaced and the animator's own left alone.
+
+    It runs UNRECORDED, the way Add Character's own work does. An import
+    cannot be undone - measured 2026-10-29: an `FBXImport` inside an open undo
+    chunk is NOT undone while a node made after it in the same chunk is - so
+    recording these would make the first Ctrl+Z after an import strip the
+    bookmarks off a take that stays, and bring the previous import's back.
+    Unrecorded, a Ctrl+Z after an import changes neither the take nor its
+    bookmarks.
+
+    It never fails the import either: a refusal is named instead, so a Maya
+    without the plugin still gets its animation.
     """
     cmds = _maya()
     made, error = [], ""
+    recording = bool(cmds.undoInfo(query=True, state=True))
+    if recording:
+        cmds.undoInfo(stateWithoutFlush=False)
     try:
         if not cmds.pluginInfo("timeSliderBookmark", query=True, loaded=True):
             cmds.loadPlugin("timeSliderBookmark", quiet=True)
@@ -867,6 +887,9 @@ def write_bookmarks(plan, fps):
             made.append(node)
     except Exception as whine:                               # noqa: BLE001
         error = str(whine)
+    finally:
+        if recording:
+            cmds.undoInfo(stateWithoutFlush=True)
     return {"made": made, "error": error}
 
 

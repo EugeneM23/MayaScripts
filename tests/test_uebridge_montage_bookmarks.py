@@ -20,6 +20,8 @@ class FakeCmds(object):
         self.attrs = {}
         self.deleted = []
         self.plugin_loaded = False
+        self.recording = True
+        self.undo_calls = []
         for name, mark in existing:
             self.nodes[name] = "timeSliderBookmark"
             if mark is not None:
@@ -63,6 +65,14 @@ class FakeCmds(object):
 
     def attributeQuery(self, attr, **kw):
         return (kw.get("node", "") + "." + attr) in self.attrs
+
+    def undoInfo(self, **kw):
+        if kw.get('q') or kw.get('query'):
+            return self.recording
+        if 'stateWithoutFlush' in kw:
+            self.recording = bool(kw['stateWithoutFlush'])
+            self.undo_calls.append(self.recording)
+        return None
 
     def delete(self, *nodes):
         names = nodes[0] if nodes and isinstance(nodes[0], list) else list(nodes)
@@ -179,6 +189,34 @@ class NeverFailsTheImport(unittest.TestCase):
             montage._maya = old
         self.assertEqual(done["made"], [])
         self.assertIn("not here", done["error"])
+
+
+class Unrecorded(Fake):
+    """Measured 2026-10-29: an FBX import inside an open undo chunk is NOT
+    undone while a node made after it in the same chunk IS - so recording the
+    bookmarks would make the first Ctrl+Z after an import strip them off a
+    take that stays."""
+
+    def test_the_writing_is_not_recorded(self):
+        montage.write_bookmarks(PLAN, 30.0)
+        self.assertEqual(self.cmds.undo_calls, [False, True])
+
+    def test_the_recording_is_on_again_afterwards(self):
+        montage.write_bookmarks(PLAN, 30.0)
+        self.assertTrue(self.cmds.recording)
+
+    def test_a_maya_with_undo_off_is_left_off(self):
+        self.cmds.recording = False
+        montage.write_bookmarks(PLAN, 30.0)
+        self.assertEqual(self.cmds.undo_calls, [])
+        self.assertFalse(self.cmds.recording)
+
+    def test_the_recording_is_on_again_after_a_refusal(self):
+        def angry(kind, **kw):
+            raise RuntimeError("no bookmark for you")
+        self.cmds.createNode = angry
+        montage.write_bookmarks(PLAN, 30.0)
+        self.assertTrue(self.cmds.recording)
 
 
 if __name__ == "__main__":
