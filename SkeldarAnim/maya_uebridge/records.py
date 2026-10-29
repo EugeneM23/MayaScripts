@@ -100,7 +100,13 @@ def import_label(names, kind, target, model_label="", auto=False):
     clip = names[0] if count == 1 else "{0} animations".format(count)
     room = IMPORT_LABEL_MAX - len("Import  → ") - len(where)
     if len(clip) > room:
-        clip = clip[:max(room - 1, 4)] + "…"
+        #  the MIDDLE goes, as in a list row (`_middle`): a UE name carries
+        #  meaning at both ends, and a montage's slot is its tail - cutting
+        #  from the right left «Import AM_LongSword_Block_St… → selected rig»,
+        #  which does not say which slot comes in
+        keep = max(room - 1, 4)
+        head = (keep + 1) // 2
+        clip = clip[:head] + "…" + clip[len(clip) - (keep - head):]
     return "Import {0} → {1}".format(clip, where)
 
 

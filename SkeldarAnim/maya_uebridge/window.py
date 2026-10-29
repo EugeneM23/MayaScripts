@@ -51,6 +51,7 @@ import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_uebridge import animimport
 from maya_uebridge import foldertree
+from maya_uebridge import montage
 from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
@@ -106,6 +107,26 @@ LIST_MODES = (("list", "List", "Every animation in one list"),
               ("folders", "Folders",
                "The animations in their folders: a double click opens or "
                "closes a folder"))
+#  2026-10-29 («добавить опцию отображения монтажей и дальнейшей импорт
+#  анимаций из монтажа»): the Unreal source lists either its AnimSequences or
+#  its AnimMontages, and a montage row is imported one SLOT at a time - the
+#  slot's whole track as the engine plays it, every segment's slice at its own
+#  play rate. Unity and a folder have no montages, so the switch is the
+#  Unreal source's alone.
+_ASSET_KIND = "ueAnimBridgeAssetKind"
+ASSET_KINDS = (("anims", "Animations", "Every AnimSequence in the project"),
+               ("montages", "Montages",
+                "Every AnimMontage: pick one and a slot, and its whole track "
+                "comes in as one take - the segments' slices at their own "
+                "play rates, exactly as the game plays them"))
+ASSET_WORDS = {"anims": "animations", "montages": "montages"}
+_KIND_ROW = "ueAnimBridgeKindRow"
+_KIND_LABEL = "ueAnimBridgeKindLabel"
+_SLOT_ROW = "ueAnimBridgeSlotRow"
+_SLOT_LABEL = "ueAnimBridgeSlotLabel"
+_SLOT = "ueAnimBridgeSlot"
+SLOT_VAR = "ueAnimBridgeMontageSlot"       # the slot picked last, remembered
+NO_SLOT = "(pick a montage)"
 #  The block's look in the classic hub (the skin styles it by its role).
 INSET_CLASSIC_BG = (0.215, 0.22, 0.235)
 
@@ -119,7 +140,8 @@ CACHE_NAME = "maya_uebridge_cache.json"
 
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
           "content_dir": "", "source": None, "menu": [], "location": "",
-          "unreal_labels": [], "list_mode": None, "tree_rows": []}
+          "unreal_labels": [], "list_mode": None, "tree_rows": [],
+          "asset_kind": None, "montage_plans": {}}
 
 
 # ---------------------------------------------------------------- cache
@@ -134,20 +156,26 @@ def cache_payload(record_list, project="", choice="", content_dir=""):
                         "skeleton": rec.skeleton,
                         "frames": rec.frames,
                         "length": rec.length,
-                        "fps": rec.fps} for rec in record_list]}
+                        "fps": rec.fps,
+                        "kind": rec.kind} for rec in record_list]}
 
 
 def records_from_cache(payload):
     return records.parse_payload(payload)
 
 
-def cache_path():
-    return os.path.join(cmds.internalVar(userPrefDir=True), CACHE_NAME)
+def cache_path(kind=None):
+    """Each asset kind keeps its own cached list, so switching Animations <->
+    Montages shows the last one at once and costs no round trip."""
+    kind = kind or asset_kind()
+    name = CACHE_NAME if kind == "anims" else (
+        CACHE_NAME.replace(".json", "_{0}.json".format(kind)))
+    return os.path.join(cmds.internalVar(userPrefDir=True), name)
 
 
-def save_cache(record_list, project, choice="", content_dir=""):
+def save_cache(record_list, project, choice="", content_dir="", kind=None):
     try:
-        with open(cache_path(), "w") as handle:
+        with open(cache_path(kind), "w") as handle:
             json.dump(cache_payload(record_list, project, choice, content_dir),
                       handle)
     except (OSError, IOError):
@@ -175,11 +203,11 @@ def temp_folder():
 
 # ---------------------------------------------------------------- ui state
 
-def search_hint(count):
+def search_hint(count, word="animations"):
     """The search field's placeholder: how many animations the source holds
     (2026-10-08: the editor line is a tooltip in the compact skin, so the
     count the line used to carry moved here). Pure."""
-    return ("search {0} animations".format(count) if count
+    return ("search {0} {1}".format(count, word) if count
             else "search name or folder")
 
 
@@ -251,13 +279,13 @@ def editors_line(labels, chosen):
     return "{0} editors open, reading {1}".format(len(labels), chosen)
 
 
-def count_line(total, shown, query):
+def count_line(total, shown, query, word="animations"):
     """What the status says about the list. Pure, so the arithmetic is tested."""
     if not (query or "").strip():
-        return "{0} animations".format(total)
+        return "{0} {1}".format(total, word)
     if shown == 0:
-        return "nothing matches '{0}' ({1} animations)".format(query, total)
-    return "{0} of {1} animations match '{2}'".format(shown, total, query)
+        return "nothing matches '{0}' ({1} {2})".format(query, total, word)
+    return "{0} of {1} {2} match '{3}'".format(shown, total, word, query)
 
 
 def _project_label(project_path):
@@ -305,7 +333,8 @@ def _repopulate(quiet=False):
     #  has no editor line to carry the count)
     try:
         cmds.textField(_SEARCH, edit=True,
-                       placeholderText=search_hint(len(_STATE["records"])))
+                       placeholderText=search_hint(len(_STATE["records"]),
+                                                   asset_word()))
     except (RuntimeError, TypeError, ValueError):
         pass
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
@@ -319,17 +348,28 @@ def _repopulate(quiet=False):
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
     paint_import()
     if not quiet:
-        _status(count_line(len(_STATE["records"]), len(shown), query))
+        _status(count_line(len(_STATE["records"]), len(shown), query,
+                           asset_word()))
     return shown
 
 
 def _selected_records():
     """Every picked row's record, in list order (2026-10-01: the list takes a
-    multiple selection)."""
+    multiple selection).
+
+    A montage row comes back SLOTTED (2026-10-29): its name is «AM_X_1P» and
+    its `clip` the slot the card shows. Doing it here is what gives every
+    road the slot for nothing - the Import button's words, the namespace, the
+    clip label under the character, the drag's caption, the square's names.
+    """
     indices = cmds.textScrollList(_LIST, query=True, selectIndexedItem=True) or []
     shown = _STATE["filtered"]
-    return [shown[i - 1] for i in sorted(indices)
-            if 0 < i <= len(shown) and shown[i - 1] is not None]
+    picked = [shown[i - 1] for i in sorted(indices)
+              if 0 < i <= len(shown) and shown[i - 1] is not None]
+    if asset_kind() != "montages":
+        return picked
+    slot = _slot_choice() or montage_slot()
+    return [records.with_slot(record, slot) for record in picked]
 
 
 def picked_folders():
@@ -350,7 +390,19 @@ def _searching():
 
 def _on_select():
     """A row click picks it - a folder too, nothing opens; the words that
-    follow the pick are repainted."""
+    follow the pick are repainted.
+
+    A montage row fills the slot dropdown from the montage itself: its slots
+    are only in the asset, so this is one round trip to the editor, cached
+    per montage for the session, and only when exactly one row is picked.
+    """
+    if asset_kind() == "montages":
+        picked = [r for r in _selected_records() if records.is_montage(r)]
+        if len(picked) == 1:
+            try:
+                _fill_slots(picked[0])
+            except uelink.UeBridgeError as error:
+                _status(str(error))
     paint_import()
 
 
@@ -403,7 +455,8 @@ def refresh():
 
 
 def _refresh_unreal():
-    """Ask the chosen editor for every AnimSequence and cache the answer."""
+    """Ask the chosen editor for every AnimSequence - or every AnimMontage,
+    in the Montages kind - and cache the answer."""
     # Discovery is answered without connecting to anything, so the menu can be
     # filled before we decide who to talk to.
     nodes = uelink.discover_nodes()
@@ -421,8 +474,11 @@ def _refresh_unreal():
             cmds.optionMenu(_PROJECT, edit=True, value=chosen)
         _STATE["choice"] = chosen
 
+    kind = asset_kind()
     out = os.path.join(temp_folder(), "list.json")
-    payload = uelink.run_script(uescripts.list_script(out), out, project=chosen)
+    source = (uescripts.montage_list_script(out) if kind == "montages"
+              else uescripts.list_script(out))
+    payload = uelink.run_script(source, out, project=chosen)
 
     if payload.get("scanning"):
         _status("the asset registry is still scanning - try again in a moment")
@@ -432,6 +488,10 @@ def _refresh_unreal():
     _STATE["records"] = found
     _STATE["project"] = payload.get("project", "")
     _STATE["content_dir"] = payload.get("content_dir", "")
+    #  a fresh list is a fresh truth about every montage's slots too
+    _STATE["montage_plans"] = {}
+    #  the kind is not passed: `save_cache` writes the kind's own file by
+    #  asking `asset_kind()`, which is this refresh's kind
     save_cache(found, _STATE["project"], chosen, _STATE["content_dir"])
 
     _header(editor_line(True))
@@ -494,6 +554,132 @@ def set_list_mode(mode):
 
 def list_mode_button(mode):
     return "{0}_{1}".format(_LIST_MODE, mode)
+
+
+# ------------------------------------------------- animations or montages
+
+def asset_kind():
+    """"anims" or "montages": the switch over the search row. Montages are
+    the Unreal source's alone - Unity and a folder hold none."""
+    if current_source() != "unreal":
+        return "anims"
+    kind = _STATE.get("asset_kind")
+    if kind is None:
+        try:
+            kind = _var(_ASSET_KIND, "anims")
+        except Exception:                                    # noqa: BLE001
+            kind = "anims"
+    return kind if kind in dict((k, w) for k, w, _n in ASSET_KINDS) else "anims"
+
+
+def asset_word():
+    """«animations» / «montages» for the list's own sentences. Pure enough."""
+    return ASSET_WORDS.get(asset_kind(), "animations")
+
+
+def asset_kind_button(kind):
+    return "{0}_{1}".format(_ASSET_KIND, kind)
+
+
+def set_asset_kind(kind):
+    """Switch the list between the project's animations and its montages.
+
+    Each kind keeps its own cached list, so this shows the last one at once;
+    an empty one asks for a Refresh rather than reaching for the editor
+    itself - a switch must not cost a round trip nobody asked for.
+    """
+    kind = kind if kind in ASSET_WORDS else "anims"
+    _STATE["asset_kind"] = kind
+    cmds.optionVar(stringValue=(_ASSET_KIND, kind))
+    cached, project, choice, content_dir = load_cache()
+    _STATE["records"] = cached
+    if project:
+        _STATE["project"] = project
+    if content_dir:
+        _STATE["content_dir"] = content_dir
+    _show_slot_row()
+    _repopulate(quiet=not cached)
+    if not cached:
+        _status("no {0} read yet - press Refresh".format(ASSET_WORDS[kind]))
+
+
+def montage_slot():
+    """The slot picked last, "" before one ever was."""
+    try:
+        return _var(SLOT_VAR, "")
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def set_montage_slot(slot):
+    """Remember the slot and repaint what names it."""
+    if slot and slot != NO_SLOT:
+        cmds.optionVar(stringValue=(SLOT_VAR, slot))
+    paint_import()
+
+
+def _slot_choice():
+    """The slot the dropdown shows, "" when it shows nothing yet."""
+    if not cmds.optionMenu(_SLOT, exists=True):
+        return montage_slot()
+    if not cmds.optionMenu(_SLOT, query=True, numberOfItems=True):
+        return montage_slot()
+    value = cmds.optionMenu(_SLOT, query=True, value=True) or ""
+    return "" if value == NO_SLOT else value
+
+
+def _show_slot_row():
+    """The kind row is the Unreal source's, the slot row the Montages kind's."""
+    for control, shown in ((_KIND_ROW, current_source() == "unreal"),
+                           (_SLOT_ROW, current_source() == "unreal"
+                            and asset_kind() == "montages")):
+        if cmds.layout(control, exists=True):
+            cmds.layout(control, edit=True, manage=shown)
+
+
+def _montage_plan(packages):
+    """The plan of every montage in `packages`, cached per package.
+
+    A montage's slots can only be read by LOADING it - the asset registry
+    carries no slot and no length tag for one (measured) - so this is one
+    round trip, and only for a montage whose row was picked or imported.
+    """
+    packages = [p for p in packages if p]
+    plans = _STATE.setdefault("montage_plans", {})
+    asking = [p for p in packages if p not in plans]
+    if asking:
+        out = os.path.join(temp_folder(), "montage_plan.json")
+        payload = uelink.run_script(
+            uescripts.montage_plan_script(out, asking), out,
+            project=project_choice())
+        answered = payload.get("montages") or {}
+        for package in asking:
+            #  a montage the editor could not answer for is remembered as a
+            #  miss too: a click on its row must not ask again every time
+            plans[package] = answered.get(package) or {}
+    return {"montages": dict((p, plans[p]) for p in packages if p in plans)}
+
+
+def _fill_slots(record):
+    """The slot dropdown filled from the picked montage, the remembered slot
+    kept when it has one. Silent when there is nothing to fill."""
+    if not cmds.optionMenu(_SLOT, exists=True):
+        return ""
+    for item in cmds.optionMenu(_SLOT, query=True, itemListLong=True) or []:
+        cmds.deleteUI(item)
+    if record is None or not records.is_montage(record):
+        cmds.menuItem(label=NO_SLOT, parent=_SLOT)
+        return ""
+    payload = _montage_plan([record.package])
+    slots = montage.slots_of(payload, record.package)
+    if not slots:
+        cmds.menuItem(label=NO_SLOT, parent=_SLOT)
+        return ""
+    for slot in slots:
+        cmds.menuItem(label=slot, parent=_SLOT)
+    chosen = montage.pick_slot(slots, montage_slot())
+    cmds.optionMenu(_SLOT, edit=True, value=chosen)
+    return chosen
 
 
 def _tree_root():
@@ -644,6 +830,8 @@ def _source_changed(source):
     cmds.optionVar(stringValue=(SOURCE_VAR, source))
     if cmds.button(_UASSET, exists=True):
         cmds.button(_UASSET, edit=True, enable=source == "unreal")
+    #  montages are the Unreal source's alone
+    _show_slot_row()
     if source == "unreal":
         cached, project, choice, content_dir = load_cache()
         _STATE.update(records=cached, project=project, choice=choice,
@@ -866,7 +1054,52 @@ def _export_from_editor(record, mesh=False):
         if refusal:
             raise uelink.UeBridgeError(refusal)
         return ref, record.fps
+    if records.is_montage(record):
+        return _export_montage(record, mesh)
     return _export_unreal(record, mesh)
+
+
+def _export_montage(record, mesh=False):
+    """One montage slot out of the editor: (montage reference, fps).
+
+    The plan first - the slot's segments - so every refusal (a slot the
+    montage lacks, an empty track, an additive clip) happens before anything
+    is exported; then the slot's distinct clips in ONE round trip; then the
+    plan written beside them for the import step. The composite itself is
+    assembled in Maya: the editor can export an AnimSequence only.
+    """
+    payload = _montage_plan([record.package])
+    #  the slot the card shows, else the remembered one, else the montage's
+    #  first: a press right after a Refresh (nothing picked yet in the
+    #  dropdown) takes the montage's own first slot rather than refusing,
+    #  and the status line names which slot came in
+    slot = montage.pick_slot(montage.slots_of(payload, record.package),
+                             records.montage_slot(record) or montage_slot())
+    refusal = montage.refusal(payload, record.package, slot)
+    if refusal:
+        raise uelink.UeBridgeError(refusal)
+    plan = montage.plan_for(payload, record.package, slot)
+
+    out = os.path.join(temp_folder(), "montage_export.json")
+    folder = os.path.join(temp_folder(), "montage_clips")
+    answer = uelink.run_script(
+        uescripts.montage_export_script(out, plan.clips, folder,
+                                        preview_mesh=mesh), out,
+        project=project_choice())
+    clips = dict((package, row.get("path") or "")
+                 for package, row in (answer.get("clips") or {}).items())
+    failed = answer.get("failed") or {}
+    if failed:
+        raise uelink.UeBridgeError(
+            "{0} · {1}: the editor could not export {2}".format(
+                plan.montage, slot,
+                ", ".join("{0} ({1})".format(p.rsplit("/", 1)[-1], why)
+                          for p, why in sorted(failed.items()))))
+    fps = None
+    for row in (answer.get("clips") or {}).values():
+        fps = fps or row.get("fps")
+    path = montage.write_plan(folder, plan, clips, fps, mesh)
+    return montage.ref_of(path), fps
 
 
 def _export_with_mesh(record):
@@ -1572,9 +1805,46 @@ def build_rows():
         "tool", "refresh")
     cmds.setParent("..")
 
+    #  2026-10-29: what the list shows - the project's animations or its
+    #  montages - and, for a montage, which slot comes in. The kind row is
+    #  the Unreal source's and the slot row the Montages kind's
+    #  (`_show_slot_row`); a dropdown for the slot, not segments, because
+    #  «UpperBodyAdditive» beside «DefaultSlot» does not fit the animator's
+    #  360 px dock (trap 117).
+    cmds.rowLayout(_KIND_ROW, numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.text(_KIND_LABEL, label="Show", align="left",
+                            width=62), "label")
+    kinds = cmds.rowLayout(numberOfColumns=len(ASSET_KINDS),
+                           columnAttach=[(i + 1, "both", 1)
+                                         for i in range(len(ASSET_KINDS))])
+    hubstyle.mark(kinds, "segments", layout=True)
+    cmds.iconTextRadioCollection(_ASSET_KIND)
+    for kind, words, note in ASSET_KINDS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            asset_kind_button(kind), style="textOnly", label=words,
+            height=hubstyle.height("segment", 22),
+            select=kind == asset_kind(), annotation=note,
+            onCommand=lambda *_a, k=kind: _run(lambda: set_asset_kind(k))),
+            "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+    cmds.rowLayout(_SLOT_ROW, numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)])
+    hubstyle.mark(cmds.text(_SLOT_LABEL, label="Slot", align="left",
+                            width=62), "label")
+    cmds.optionMenu(_SLOT, annotation="Which slot of the picked montage comes "
+                                      "in: its whole track as one take, every "
+                                      "segment's slice at its own play rate",
+                    changeCommand=lambda *_: _run(
+                        lambda: set_montage_slot(_slot_choice())))
+    cmds.menuItem(label=NO_SLOT, parent=_SLOT)
+    cmds.setParent("..")
+
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 3)])
-    cmds.textField(_SEARCH, placeholderText=search_hint(0),
+    cmds.textField(_SEARCH, placeholderText=search_hint(0, asset_word()),
                    height=hubstyle.height("field", 24),
                    textChangedCommand=lambda *_: _run(_repopulate))
     switch = cmds.rowLayout(numberOfColumns=len(LIST_MODES),
