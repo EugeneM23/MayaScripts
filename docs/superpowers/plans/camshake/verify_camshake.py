@@ -498,15 +498,140 @@ def phase_bobbing():
     gate("with both layers gone the camera is its own", worst < 1e-9, "%.2e" % worst)
 
 
+def _slope_jumps(curve, times, h=1e-3):
+    """How much a curve's slope changes across each time (left against right, units a frame)."""
+    ev = lambda t: cmds.keyframe(curve, query=True, eval=True, time=(t, t))[0]
+    return [abs((ev(t + h) - ev(t)) / h - (ev(t) - ev(t - h)) / h) for t in times]
+
+
+def phase_loop():
+    """Loop (2026-10-29) for Handheld and Bobbing on a camera under a turned parent whose own turn loops
+    (keyed 0 / 30 / 60, cycling): keys on exactly the range, every curve cycling, the camera showing the model
+    in its own axes, the frames past the range repeating the cycle (half frames too), the seam no rougher than
+    any other key, a re-tune out of the loop and back."""
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    cmds.playbackOptions(minTime=0, maxTime=60, animationStartTime=-60, animationEndTime=180)
+    cmds.undoInfo(state=True, infinity=True)
+    rig = cmds.group(empty=True, name="loopRig")
+    cmds.setAttr(rig + ".rotateY", -20.0)
+    camera = cmds.rename(cmds.camera()[0], "loopCam")
+    camera = cmds.ls(cmds.parent(camera, rig)[0], long=True)[0]
+    cmds.setAttr(camera + ".rotateOrder", 2)
+    cmds.setAttr(camera + ".rotateAxis", 4.0, -6.0, 2.0)
+    cmds.setAttr(camera + ".rotateX", -15.0)
+    cmds.setAttr(camera + ".translateY", 150.0)
+    for frame, value in ((0, 10.0), (30, 40.0), (60, 10.0)):
+        cmds.setKeyframe(camera, attribute="rotateY", time=frame, value=value)
+    own = cmds.listConnections(camera + ".rotateY", source=True, type="animCurve")[0]
+    cmds.setAttr(own + ".preInfinity", 3)
+    cmds.setAttr(own + ".postInfinity", 3)
+    base = {f: shown(camera, f) for f in range(0, 61)}
+
+    given = {"sway": 2.0, "speed": 1.5, "jitter": 0.4, "jitter_hz": 8.2, "drift": 3.0, "ease": 9.0, "seed": 6,
+             "loop": True}
+    layer, message = cs.apply("handheld", given, selection=[camera], frames=(0, 60))
+    print("   ", message)
+    curves = [our_curve(layer, camera, attr) for attr in cs.ROTATE + cs.TRANSLATE]
+    times = set(tuple(cmds.keyframe(curve, query=True, timeChange=True)) for curve in curves)
+    gate("a looped handheld keys exactly frames 0..60", times == {tuple(float(f) for f in range(0, 61))},
+         "%s" % sorted(len(t) for t in times))
+    gate("every curve cycles past the range", all(cmds.getAttr(c + ".preInfinity") == 3
+                                                  and cmds.getAttr(c + ".postInfinity") == 3 for c in curves))
+    gate("the line says the loop", "looped: frame 60 shows frame 0" in message, message[-90:])
+
+    s = cs.settings("handheld", given)
+    frames = np.arange(0, 61)
+    rot, off = cs.handheld(frames, 0, 60, 30.0, s)
+    order, axis, orient = cs._static(camera)
+    worst_r, worst_t = 0.0, 0.0
+    for i, f in enumerate(frames):
+        r, t = shown(camera, int(f))
+        worst_r = max(worst_r, matrix_gap(camera, r, expected(camera, base[int(f)][0], rot[i])))
+        dt = cs.along_axes(off[i], base[int(f)][0], order, axis, orient)
+        worst_t = max(worst_t, float(np.abs(t - (base[int(f)][1] + dt)).max()))
+    gate("the camera shows the looped shake in its own axes on every frame", worst_r < 1e-9 and worst_t < 1e-6,
+         "rotation %.2e, translation %.2e cm" % (worst_r, worst_t))
+    gate("frame 60 shows frame 0, and it is not still there", worst_r < 1e-9
+         and float(np.abs(rot[0]).max()) > 0.05 and np.allclose(rot[0], rot[-1], atol=1e-9),
+         "%.3f deg at frame 0" % float(np.abs(rot[0]).max()))
+
+    repeat = 0.0
+    for t in np.arange(0.0, 60.0, 0.5):
+        here = np.concatenate(shown_at(camera, t))
+        for other in (t + 60.0, t + 120.0, t - 60.0):
+            repeat = max(repeat, float(np.abs(np.concatenate(shown_at(camera, other)) - here).max()))
+    gate("past the range the camera plays the cycle again, half frames too", repeat < 1e-9, "%.2e" % repeat)
+
+    seam = max(max(_slope_jumps(curve, (0.0, 60.0))) for curve in curves)
+    inside = max(max(_slope_jumps(curve, [float(f) for f in range(5, 56, 5)])) for curve in curves)
+    gate("the seam is no rougher than any key inside", seam <= 1.5 * inside + 1e-6,
+         "slope jump %.2e at the seam, %.2e inside" % (seam, inside))
+
+    text = cs.retune(layer, dict(given, sway=3.0))
+    gate("a released slider keeps it looped", "looped" in text and
+         all(cmds.getAttr(c + ".postInfinity") == 3 for c in curves) and
+         cmds.keyframe(curves[1], query=True, keyframeCount=True) == 61)
+    cs.retune(layer, dict(given, loop=False))
+    zeros = max(abs(cmds.keyframe(c, query=True, eval=True, time=(t, t))[0])
+                for c in curves for t in (-1.0, 61.0, 80.0, -30.0))
+    gate("out of the loop: zero outside, no cycling", zeros < 1e-12
+         and all(cmds.getAttr(c + ".postInfinity") == 0 for c in curves), "%.2e" % zeros)
+    cs.retune(layer, given)
+    gate("and back: the zeros cut, cycling again",
+         all(cmds.keyframe(c, query=True, keyframeCount=True) == 61 and cmds.getAttr(c + ".preInfinity") == 3
+             for c in curves))
+
+    walk = dict(cs.preset("bobbing", "Walk"), tempo=116.0, footfall=0.6, variation=20.0, contact=3.0, seed=2,
+                loop=True)
+    bob, message = cs.apply("bobbing", walk, selection=[camera], frames=(0, 60))
+    print("   ", message)
+    gate("a looped bobbing fits whole strides and says so",
+         "2 strides in the loop at 120 steps/min (Tempo 116)" in message, message[-110:])
+    gate("its curves cycle, its ends fixed", all(
+        cmds.getAttr(c + ".postInfinity") == 3
+        and cmds.keyTangent(c, query=True, time=(60, 60), outTangentType=True) == ["fixed"]
+        for c in (our_curve(bob, camera, attr) for attr in cs.ROTATE + cs.TRANSLATE) if c))
+    repeat = 0.0
+    for t in np.arange(0.0, 60.0, 0.5):
+        here = np.concatenate(shown_at(camera, t))
+        repeat = max(repeat, float(np.abs(np.concatenate(shown_at(camera, t + 60.0)) - here).max()))
+    gate("with both loops on, the camera repeats every 60 frames, half frames too", repeat < 1e-9,
+         "%.2e" % repeat)
+    cs.delete(layer)
+    cs.delete(bob)
+    worst = max(float(np.abs(np.concatenate(shown(camera, f)) - np.concatenate(base[f])).max())
+                for f in (0, 7, 20, 45, 60))
+    gate("with the layers gone the camera is its own, its unkeyed channels too", worst < 1e-9, "%.2e" % worst)
+
+    short, message = cs.apply("handheld", given, selection=[camera], frames=(0, 45))
+    print("   ", message)
+    gate("a loop over frames the camera's own turn does not repeat names the seam's jump",
+         "loopCam's own animation differs at frames 0 and 45: the loop's seam jumps" in message, message[-140:])
+    cmds.currentTime(23)
+    cs.delete(short)
+    worst = max(float(np.abs(np.concatenate(shown(camera, f)) - np.concatenate(base[f])).max())
+                for f in (0, 23, 45))
+    gate("deleted at another frame, the camera is its own again", worst < 1e-9, "%.2e" % worst)
+
+
+def shown_at(node, t):
+    """What the node shows at a time, after a real time change - half frames too."""
+    cmds.currentTime(t + 0.37)
+    cmds.currentTime(t)
+    return (np.array(cmds.getAttr(node + ".rotate")[0], float), np.array(cmds.getAttr(node + ".translate")[0], float))
+
+
 def main():
-    if "bobbing" in sys.argv[1:]:
-        try:
-            phase_bobbing()
-        except Exception:
-            traceback.print_exc()
-            gate("the run finished", False)
-        print("%d of %d gates passed" % (sum(RESULTS), len(RESULTS)))
-        return
+    for only, phase in (("bobbing", phase_bobbing), ("loop", phase_loop)):
+        if only in sys.argv[1:]:
+            try:
+                phase()
+            except Exception:
+                traceback.print_exc()
+                gate("the run finished", False)
+            print("%d of %d gates passed" % (sum(RESULTS), len(RESULTS)))
+            return
     try:
         camera, layer, base = phase_handheld()
         phase_retune(camera, layer, base)
@@ -517,6 +642,7 @@ def main():
         phase_refusals()
         phase_manny()
         phase_bobbing()
+        phase_loop()
     except Exception:
         traceback.print_exc()
         gate("the run finished", False)

@@ -31,6 +31,7 @@ except ImportError:          # the model and the algebra are tested without Maya
 
 VERSION = 1
 MODES = ("handheld", "impact", "bobbing")
+LOOP_MODES = ("handheld", "bobbing")   # Loop (2026-10-29): the range one cycle, the layer cycling past it
 DIRECTIONS = ("Random", "Below", "Above", "Left", "Right", "Front")
 
 # (name, label, default, low, high)
@@ -107,6 +108,8 @@ def settings(mode, given=None):
         out["gait"] = gait if gait in ("Walk", "Run") else "Walk"
         foot = given.get("foot", "Left")
         out["foot"] = foot if foot in ("Left", "Right") else "Left"
+    if mode in LOOP_MODES:
+        out["loop"] = bool(given.get("loop", False))
     return out
 
 
@@ -158,14 +161,29 @@ def _knots(seed, stream, first, last):
 
 
 KNOTS_PER_CYCLE = 5.57  # measured: a spline through white knots crosses zero 0.359 times a knot
+LOOP_KNOTS = 3          # a looped noise's fewest knots a cycle: one slower than the cycle swings once in it
 
 
-def noise(seconds, seed, stream, hz):
+def loop_knots(period, hz):
+    """How many knots a noise at `hz` holds in a cycle of `period` seconds: whole, so the spline closes."""
+    return max(LOOP_KNOTS, int(round(float(period) * float(hz) * KNOTS_PER_CYCLE)))
+
+
+def noise(seconds, seed, stream, hz, period=None):
     """A smooth random signal of unit RMS swinging about `hz` times a second (2 hz zero crossings, as a
-    sine): Gaussian knots through a cubic B-spline (C2, no overshoot). Still when hz is 0."""
+    sine): Gaussian knots through a cubic B-spline (C2, no overshoot). Still when hz is 0. With a `period`
+    (seconds) it repeats every period: a whole number of knots in it (`loop_knots`, the rate a little off),
+    their indices wrapped - the spline closes C2 across the seam."""
     s = np.atleast_1d(np.asarray(seconds, float))
     if hz <= 0.0 or s.size == 0:
         return np.zeros_like(s)
+    if period:
+        count = loop_knots(period, hz)
+        u = s / float(period) * count
+        i = np.floor(u).astype(int)
+        knots = _knots(seed, stream, 0, count - 1)
+        index = (i[:, None] - 1 + np.arange(4)[None, :]) % count
+        return np.sum(_basis(u - i) * knots[index], axis=1) / math.sqrt(MEAN_VARIANCE)
     u = s * float(hz) * KNOTS_PER_CYCLE
     i = np.floor(u).astype(int)
     first = int(i.min()) - 1
@@ -174,8 +192,9 @@ def noise(seconds, seed, stream, hz):
     return np.sum(_basis(u - i) * knots[index], axis=1) / math.sqrt(MEAN_VARIANCE)
 
 
-def fractal(seconds, seed, stream, hz, octaves, gain=0.5, fps=None):
-    """Octaves of `noise` at hz x 2^k with amplitude gain^k, back to unit RMS; capped by the frame rate."""
+def fractal(seconds, seed, stream, hz, octaves, gain=0.5, fps=None, period=None):
+    """Octaves of `noise` at hz x 2^k with amplitude gain^k, back to unit RMS; capped by the frame rate.
+    Every octave repeats every `period` seconds when one is given."""
     s = np.atleast_1d(np.asarray(seconds, float))
     total = np.zeros_like(s)
     norm = 0.0
@@ -184,27 +203,41 @@ def fractal(seconds, seed, stream, hz, octaves, gain=0.5, fps=None):
         if fps:
             rate = capped(rate, fps)
         amplitude = gain ** k
-        total += amplitude * noise(s, seed, stream * 16 + k, rate)
+        total += amplitude * noise(s, seed, stream * 16 + k, rate, period)
         norm += amplitude * amplitude
     return total / math.sqrt(norm) if norm else total
+
+
+def whole_cycles(hz, period, fps=None):
+    """The rate nearest `hz` that swings a whole number of times (at least once) in `period` seconds - kept
+    under the frame rate's cap when `fps` is given."""
+    period = float(period)
+    cycles = max(1, int(round(float(hz) * period)))
+    if fps:
+        while cycles > 1 and cycles / period > NYQUIST_SHARE * float(fps) + 1e-9:
+            cycles -= 1
+    return cycles / period
 
 
 TREMOR_SWELL = 0.45      # how far a tremor's amplitude swells and fades about 1 (RMS)
 TREMOR_WANDER = 0.6      # radians its phase wanders (RMS)
 
 
-def tremor(seconds, seed, stream, hz):
+def tremor(seconds, seed, stream, hz, period=None):
     """A narrow-band shake of unit RMS: a sine at `hz` whose amplitude swells and fades and whose phase
     wanders, both slowly - a hand's tremor is a rhythm, not a hiss. Measured, a broad-band noise sampled once
     a frame cannot swing more than a quarter of the frame rate (white noise: 7.5 Hz at 30 fps); a sine shows
-    its own rate up to the frame rate's limit."""
+    its own rate up to the frame rate's limit. With a `period` (seconds) it repeats every period: the sine
+    swings a whole number of times in it (`whole_cycles`), the swell and the wander repeat too."""
     s = np.atleast_1d(np.asarray(seconds, float))
     if hz <= 0.0 or s.size == 0:
         return np.zeros_like(s)
+    if period:
+        hz = whole_cycles(hz, period)
     slow = max(hz / 7.0, 0.1)
     base = 100000 + 4 * int(stream)
-    swell = 1.0 + TREMOR_SWELL * noise(s, seed, base + 1, slow)
-    wander = TREMOR_WANDER * noise(s, seed, base + 2, 0.5 * slow)
+    swell = 1.0 + TREMOR_SWELL * noise(s, seed, base + 1, slow, period)
+    wander = TREMOR_WANDER * noise(s, seed, base + 2, 0.5 * slow, period)
     start = np.random.default_rng([int(seed), base + 3]).uniform(0.0, 2.0 * math.pi)
     return swell * np.sin(2.0 * math.pi * hz * s + wander + start) / math.sqrt(
         (1.0 + TREMOR_SWELL ** 2) / 2.0)
@@ -236,26 +269,43 @@ SWAY_AXES = (0.75, 1.0, 1.0)     # tilt, pan, roll (roll x Roll): an operator ai
 DRIFT_AXES = (0.7, 1.0, 0.4)     # side, bob, push
 
 
+def loop_period(a, b, fps, s):
+    """Seconds of one cycle when the shake loops (frames a..b, the last showing the first), else None."""
+    return (b - a) / float(fps) if s.get("loop") and b > a else None
+
+
+def ease_of(f, a, b, s):
+    """The ends' fade, (n, 1): none in a loop - it has no ends."""
+    if s.get("loop"):
+        return np.ones((len(f), 1))
+    return eased(f, a, b, s["ease"])[:, None]
+
+
 def handheld(frames, a, b, fps, s, index=0):
     """An operator holding the camera: (rotation (n, 3) deg about the camera's X, Y, Z - tilt, pan, roll;
-    offset (n, 3) cm along them - side, bob, push) on each frame of a..b."""
+    offset (n, 3) cm along them - side, bob, push) on each frame of a..b. Looped, every noise repeats over
+    a..b (frame b shows frame a) and nothing fades in or out."""
     f = np.asarray(frames, float)
     sec = (f - a) / float(fps)
+    period = loop_period(a, b, fps, s)
     seed, k = s["seed"], _streams(index)
     speed = s["speed"]
     sway_hz = capped(SWAY_HZ * speed, fps)
     jitter_hz = capped(s["jitter_hz"], fps)       # its own rate: Speed is the body's, not the hands'
+    if period:
+        jitter_hz = whole_cycles(jitter_hz, period, fps)
     drift_hz = capped(DRIFT_HZ * speed, fps)
     roll = (1.0, 1.0, s["roll"])
     rot = np.zeros((len(f), 3))
     off = np.zeros((len(f), 3))
     for axis in range(3):
-        sway = SWAY_AXES[axis] * 0.5 * s["sway"] * fractal(sec, seed, k + axis + 1, sway_hz, 3, fps=fps)
-        jitter = 0.5 * s["jitter"] * tremor(sec, seed, k + axis + 4, jitter_hz)
+        sway = SWAY_AXES[axis] * 0.5 * s["sway"] * fractal(sec, seed, k + axis + 1, sway_hz, 3, fps=fps,
+                                                             period=period)
+        jitter = 0.5 * s["jitter"] * tremor(sec, seed, k + axis + 4, jitter_hz, period)
         rot[:, axis] = roll[axis] * (sway + jitter)
         off[:, axis] = DRIFT_AXES[axis] * 0.5 * s["drift"] * fractal(sec, seed, k + axis + 7, drift_hz, 2,
-                                                                       fps=fps)
-    envelope = eased(f, a, b, s["ease"])[:, None]
+                                                                       fps=fps, period=period)
+    envelope = ease_of(f, a, b, s)
     return rot * envelope * axis_mask(s), off * envelope
 
 
@@ -504,12 +554,29 @@ def step_shape(gait, softness, u):
     return np.interp(x, np.arange(SAMPLES + 1), np.append(table, table[0]))
 
 
+def loop_tempo(tempo, frames, fps):
+    """(the tempo nearest `tempo` that fits a whole number of strides - two steps, at least one - in a
+    cycle of `frames` frames, how many strides)."""
+    stride = 2.0 * float(fps) * 60.0 / float(tempo)
+    strides = max(1, int(round(float(frames) / stride)))
+    return 120.0 * strides * float(fps) / float(frames), strides
+
+
+def tempo_of(a, b, fps, s):
+    """The steps a minute a bobbing walks at: its Tempo, or in a loop the nearest that closes the cycle."""
+    return loop_tempo(s["tempo"], b - a, fps)[0] if loop_period(a, b, fps, s) else s["tempo"]
+
+
 def bobbing(frames, a, b, fps, s, index=0):
     """A walk's or a run's steps: (rotation (n, 3) deg about the camera's X, Y, Z - nod, turn, roll; offset
     (n, 3) cm - side, up, forward, along the camera's heading and its parent's up) on each frame of a..b.
-    The first contact is `contact` frames after a, on the first foot; a stride is two steps."""
+    The first contact is `contact` frames after a, on the first foot; a stride is two steps. Looped, the
+    tempo is the nearest that fits whole strides in a..b (`loop_tempo`), the variation repeats over it and
+    nothing fades in or out: frame b shows frame a."""
     f = np.asarray(frames, float)
-    step = fps * 60.0 / s["tempo"]                 # frames a step
+    period = loop_period(a, b, fps, s)
+    tempo = tempo_of(a, b, fps, s)
+    step = fps * 60.0 / tempo                      # frames a step
     q = (f - a - s["contact"]) / step              # steps since the first contact
     softness = s["softness"] / 100.0
     run = s["gait"] == "Run"
@@ -519,7 +586,7 @@ def bobbing(frames, a, b, fps, s, index=0):
     lateral = first * np.cos(math.pi * (q - peak))  # -1 over the left foot, +1 over the right
     seed, k = s["seed"], _streams(index)
     sec = (f - a) / float(fps)
-    vary = 1.0 + s["variation"] / 100.0 * noise(sec, seed, k + 31, capped(0.5 * s["tempo"] / 60.0, fps))
+    vary = 1.0 + s["variation"] / 100.0 * noise(sec, seed, k + 31, capped(0.5 * tempo / 60.0, fps), period)
     vary = np.maximum(vary, 0.0)
     rot = np.zeros((len(f), 3))
     off = np.zeros((len(f), 3))
@@ -535,7 +602,7 @@ def bobbing(frames, a, b, fps, s, index=0):
         jolt = waves(tau, FOOT_WAVE_S * fps, span, "Sharp").sum(axis=1) * vary
         rot[:, 0] -= s["footfall"] * jolt
         off[:, 1] -= FOOT_CM_PER_DEG * s["footfall"] * jolt
-    envelope = eased(f, a, b, s["ease"])[:, None]
+    envelope = ease_of(f, a, b, s)
     return rot * envelope * axis_mask(s), off * envelope
 
 
@@ -1027,13 +1094,39 @@ def _layer_curve(layer, node, attr, first):
     return curve
 
 
-def _key(curve, frames, values):
+CONSTANT, CYCLE = 0, 3        # an animCurve's pre / post infinity
+
+
+def seam_slope(values):
+    """A loop's slope at its seam, units a frame: the chord across it (its last frame is its first)."""
+    v = np.asarray(values, float)
+    return float(v[1] - v[-2]) / 2.0 if len(v) >= 3 else 0.0
+
+
+def _key(curve, frames, values, loop=False):
     """Keys on every frame (spline), 0 a frame outside each end (flat), and nothing between: the first
-    key's in-tangent and the last's out-tangent are straight lines from and to 0."""
+    key's in-tangent and the last's out-tangent are straight lines from and to 0. Looped: the frames are one
+    cycle (the last shows the first), nothing outside, the curve cycling past them, and both end keys fixed
+    on the chord across the seam - a spline's end key takes the slope of one side only (measured in 2027:
+    0.77 against 1.29 on either side of a seam, the chord 1.03); a fixed angle's tangent is the slope in
+    the curve's units a frame, at film, ntsc and 60 fps alike."""
     a, b = int(frames[0]), int(frames[-1])
+    if loop:
+        for frame in (a - 1, b + 1):                 # an earlier press's zeros
+            cmds.cutKey(curve, time=(frame, frame), clear=True)
     for frame, value in zip(frames, values):
         cmds.setKeyframe(curve, time=int(frame), value=float(value), inTangentType="spline",
                          outTangentType="spline")
+    infinity = CYCLE if loop else CONSTANT
+    cmds.setAttr(curve + ".preInfinity", infinity)
+    cmds.setAttr(curve + ".postInfinity", infinity)
+    if loop:
+        angle = math.degrees(math.atan(seam_slope(values)))
+        for frame in (a, b):
+            cmds.keyTangent(curve, time=(frame, frame), lock=False)
+            cmds.keyTangent(curve, time=(frame, frame), inTangentType="fixed", outTangentType="fixed",
+                            inAngle=angle, outAngle=angle)
+        return
     for frame in (a - 1, b + 1):
         cmds.setKeyframe(curve, time=frame, value=0.0, inTangentType="flat", outTangentType="flat")
     for frame, side in ((a, "inTangentType"), (b, "outTangentType")):
@@ -1052,8 +1145,35 @@ def _new_layer(mode, a, b):
     return layer
 
 
+SEAM_TOLERANCE = 1e-4           # deg / cm: a looped layer's last frame closer to its first than this closes
+
+
+def seam_gap(values, attrs, unit_deg=1.0, unit_cm=1.0):
+    """(deg, cm): how far a looped layer's last frame is from its first - not 0 only when the node's own
+    animation does not repeat over the range (the shake does: what the layer adds depends on the turn under
+    it)."""
+    deg = max([abs(float(values[a][-1] - values[a][0])) / unit_deg for a in attrs if a in ROTATE] or [0.0])
+    cm = max([abs(float(values[a][-1] - values[a][0])) / unit_cm for a in attrs if a in TRANSLATE] or [0.0])
+    return deg, cm
+
+
+def seam_text(seams, a, b):
+    """The line's word on nodes whose own animation does not loop over a..b."""
+    if not seams:
+        return ""
+    deg = max(d for d, _ in seams.values())
+    cm = max(c for _, c in seams.values())
+    jump = ", ".join(text for value, text in ((deg, "%.2f deg" % deg), (cm, "%.2f cm" % cm))
+                     if value >= SEAM_TOLERANCE)
+    return " | %s's own animation differs at frames %d and %d: the loop's seam jumps %s - loop it over the " \
+           "range too" % (", ".join(leaf(node) for node in seams), a, b, jump)
+
+
 def _write(layer, mode, s, a, b, nodes, plans, lock):
-    """Every node's keys on the layer; unlocked while writing, then locked (`lock`) or as it was."""
+    """Every node's keys on the layer; unlocked while writing, then locked (`lock`) or as it was. A loop
+    answers {node: (deg, cm)} of the nodes whose seam does not close (`seam_gap`), else {}."""
+    seams = {}
+    loop = bool(s.get("loop"))
     was = cmds.animLayer(layer, query=True, lock=True)
     if was:
         cmds.animLayer(layer, edit=True, lock=False)
@@ -1065,9 +1185,14 @@ def _write(layer, mode, s, a, b, nodes, plans, lock):
                 cmds.animLayer(layer, edit=True, attribute=missing)
             frames, values = _values(node, index, mode, s, a, b, layer, attrs)
             for attr in attrs:
-                _key(_layer_curve(layer, node, attr, a), frames, values[attr])
+                _key(_layer_curve(layer, node, attr, a), frames, values[attr], loop=loop)
+            if loop:
+                gap = seam_gap(values, attrs, deg_to_ui(), cm_to_ui())
+                if max(gap) >= SEAM_TOLERANCE:
+                    seams[node] = gap
     finally:
         cmds.animLayer(layer, edit=True, lock=bool(was if lock is None else lock))
+    return seams
 
 
 def _chunk(work):
@@ -1112,6 +1237,30 @@ def apply_targets(mode, selection=None):
     return targets(selection)
 
 
+def _layer_plugs(layer):
+    try:
+        return list(cmds.animLayer(layer, query=True, attribute=True) or [])
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
+def _delete_layer(layer):
+    """The layer gone, and the unkeyed channels it held standing where they stand without it: deleted, a
+    layer leaves the value its blend last evaluated in what fed it - a static channel's base, or the base
+    of the layer above - so the shake at the current frame stays behind for good (measured in 2027: -15
+    left at -13.03, and -19.41 in the layer above). Muted and evaluated first, it leaves the stack without
+    it. Giving a camera's channels back (`removeAttribute`) leaves none (measured)."""
+    plugs = _layer_plugs(layer)
+    if plugs:
+        cmds.animLayer(layer, edit=True, mute=True)
+        for plug in plugs:
+            try:
+                cmds.getAttr(plug)
+            except Exception:                                # noqa: BLE001 - a plug gone
+                pass
+    cmds.delete(layer)
+
+
 def _take_off(old, uuids):
     """The replaced shakes go: a layer holding only these cameras is deleted, one holding others too
     loses these cameras' channels and keeps shaking the rest. Answers the names, for the line."""
@@ -1121,7 +1270,7 @@ def _take_off(old, uuids):
         if not rest:
             if picked() == layer:
                 pick(None)
-            cmds.delete(layer)
+            _delete_layer(layer)
             names.append(layer)
             continue
         plugs = []
@@ -1144,7 +1293,20 @@ def _take_off(old, uuids):
     return names
 
 
-def describe(mode, s, a, b, nodes, layer, where="", locked=()):
+def loop_text(mode, s, a, b, fps):
+    """What a loop says on the line: the cycle, and a bobbing's tempo and strides fitted to it."""
+    if not s.get("loop"):
+        return ""
+    text = " | looped: frame %d shows frame %d, the layer cycles past them" % (b, a)
+    if mode == "bobbing" and fps:
+        tempo, strides = loop_tempo(s["tempo"], b - a, fps)
+        text += " | %d stride%s in the loop" % (strides, "" if strides == 1 else "s")
+        if abs(tempo - s["tempo"]) > 0.05:
+            text += " at %g steps/min (Tempo %g)" % (round(tempo, 1), round(s["tempo"], 1))
+    return text
+
+
+def describe(mode, s, a, b, nodes, layer, where="", locked=(), fps=None):
     names = ", ".join(leaf(node) for node in nodes)
     if mode == "handheld":
         what = "Handheld: sway %.2f deg, jitter %.2f deg at %g Hz, drift %.1f cm" % (
@@ -1161,6 +1323,7 @@ def describe(mode, s, a, b, nodes, layer, where="", locked=()):
         what += " (no %s)" % ", ".join(off)
     text = "%s on %s, frames %d-%d%s | layer %s, its weight is the strength" % (
         what, names, a, b, " (%s)" % where if where else "", layer)
+    text += loop_text(mode, s, a, b, fps)
     skipped = sorted({attr for attrs in locked for attr in attrs})
     if skipped:
         text += " | locked, not shaken: " + ", ".join(skipped)
@@ -1177,18 +1340,19 @@ def apply(mode, given=None, selection=None, frames=None):
     uuids = [_uuid(node) for node in nodes]
     old = replaced(mode, uuids)
     plans = [_channels(node, mode, s, None) for node in nodes]
-    gone = []
+    gone, seams = [], {}
 
     def work():
         gone.extend(_take_off(old, uuids))
         target = _new_layer(mode, a, b)
-        _write(target, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=True)
+        seams.update(_write(target, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=True))
         cmds.setAttr(target + "." + LAYER_MARKER, record_text(mode, s, a, b, uuids), type="string")
         return target
 
     made = _chunk(work)
     pick(made)
-    text = describe(mode, s, a, b, nodes, made, where, [plan[1] for plan in plans])
+    text = describe(mode, s, a, b, nodes, made, where, [plan[1] for plan in plans], frame_rate())
+    text += seam_text(seams, a, b)
     if gone:
         text += " | replaced " + ", ".join(gone)
     return made, text
@@ -1207,14 +1371,16 @@ def retune(layer, given):
     if None in nodes:
         raise Refused("a camera of %s is gone - delete the shake" % layer)
     plans = [_channels(node, mode, s, layer) for node in nodes]
+    seams = {}
 
     def work():
-        _write(layer, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=None)
+        seams.update(_write(layer, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=None))
         cmds.setAttr(layer + "." + LAYER_MARKER, record_text(mode, s, a, b, found["targets"]),
                      type="string")
 
     _chunk(work)
-    return describe(mode, s, a, b, nodes, layer, "", [plan[1] for plan in plans])
+    return describe(mode, s, a, b, nodes, layer, "", [plan[1] for plan in plans], frame_rate()) + \
+        seam_text(seams, a, b)
 
 
 def delete(layer):
@@ -1223,7 +1389,7 @@ def delete(layer):
     name = layer
     if picked() == layer:
         pick(None)
-    _chunk(lambda: cmds.delete(layer))
+    _chunk(lambda: _delete_layer(layer))
     return "deleted %s" % name
 
 
@@ -1309,6 +1475,9 @@ TIPS = {
     "contact": "Frames after the range's start of the first contact",
     "gait": "Walk: low just after each contact, high when passing. Run: low mid-stance, high in the flight",
     "foot": "The foot of the first contact: sway, roll and turn go toward it first",
+    "loop": "The range is one cycle: its last frame shows what its first does, and the layer cycles past it. "
+            "The noise fits it whole; a bobbing's tempo is the nearest that fits whole strides. No Ease. "
+            "Loop the camera's own animation too, or the seam shows its jump",
 }
 STEPS = {"jitter_hz": 0.5, "rattle_hz": 0.5, "ease": 1.0, "length": 1.0, "wave": 0.5, "tempo": 1.0,
          "softness": 1.0, "variation": 1.0, "contact": 1.0, "pace": 0.1}
@@ -1333,6 +1502,10 @@ def _slider(mode, name):
 
 def _axis_chip(key):
     return "skeldarCamShakeAxis_" + key
+
+
+def _loop_chip(mode):
+    return "skeldarCamShakeLoop_" + mode
 
 
 def remembered(mode):
@@ -1377,6 +1550,8 @@ def _read(mode):
     if mode == "bobbing":
         given["gait"] = cmds.optionMenu(GAIT_MENU, query=True, value=True)
         given["foot"] = cmds.optionMenu(FOOT_MENU, query=True, value=True)
+    if mode in LOOP_MODES:
+        given["loop"] = bool(cmds.checkBox(_loop_chip(mode), query=True, value=True))
     return settings(mode, given)
 
 
@@ -1410,8 +1585,16 @@ def _show_settings(mode, s):
         if mode == "bobbing":
             cmds.optionMenu(GAIT_MENU, edit=True, value=s["gait"])
             cmds.optionMenu(FOOT_MENU, edit=True, value=s["foot"])
+        if mode in LOOP_MODES:
+            cmds.checkBox(_loop_chip(mode), edit=True, value=bool(s["loop"]))
+            _show_loop(mode, s["loop"])
     if cmds.intField(SEED_FIELD, exists=True):
         _quietly(work)
+
+
+def _show_loop(mode, loop):
+    """A loop has no ends to fade: its Ease is dimmed."""
+    cmds.floatSliderGrp(_slider(mode, "ease"), edit=True, enable=not loop)
 
 
 def _fill_menu(menu, labels, selected):
@@ -1471,15 +1654,18 @@ def selection_line():
     layer = picked()
     if layer:
         found = record(layer)
-        return "Editing %s: %s, frames %d-%d" % (layer, _node_names(found), found["frames"][0],
-                                                 found["frames"][1])
+        return "Editing %s: %s, frames %d-%d%s" % (layer, _node_names(found), found["frames"][0],
+                                                   found["frames"][1],
+                                                   ", looped" if found["settings"].get("loop") else "")
     mode = current_mode()
     try:
         nodes = apply_targets(mode)
-        a, b, where = frames_for(mode, _read(mode))
+        s = _read(mode)
+        a, b, where = frames_for(mode, s)
     except Refused as refusal:
         return NOTHING if "select a camera" in str(refusal) else str(refusal)
-    text = "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b, where)
+    text = "New %s%s shake on %s, frames %d-%d (%s)" % ("looped " if s.get("loop") else "", mode,
+                                                         ", ".join(leaf(n) for n in nodes), a, b, where)
     old = replaced(mode, [_uuid(node) for node in nodes])
     if old:
         text += " - replaces " + ", ".join(layer for layer, _ in old)
@@ -1698,7 +1884,17 @@ def build_panel():
             _menu_row(FOOT_MENU, "First foot", slider_changed("bobbing"), TIPS["foot"])
             for foot in FEET:
                 cmds.menuItem(label=foot, parent=FOOT_MENU)
+        if mode in LOOP_MODES:
+            if hubstyle.skinning():
+                hubstyle.mark(cmds.flowLayout(wrap=True, columnSpacing=3), "flow", layout=True)
+            else:
+                cmds.rowLayout(numberOfColumns=1)
+            hubstyle.mark(cmds.checkBox(_loop_chip(mode), label="Loop", value=bool(s["loop"]),
+                                        annotation=TIPS["loop"], changeCommand=loop_changed(mode)), "chip")
+            cmds.setParent("..")
         _sliders(mode, s)
+        if mode in LOOP_MODES:
+            _show_loop(mode, s["loop"])
         cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
                    columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
@@ -1727,6 +1923,16 @@ def build_panel():
 def _chip_changed():
     if not _QUIET[0]:
         _changed(current_mode())
+
+
+def loop_changed(mode):
+    """The Loop chip: Ease dimmed while it is on, the picked shake re-keyed (else the next Apply set up)."""
+    def go(*_):
+        if _QUIET[0]:
+            return
+        _show_loop(mode, bool(cmds.checkBox(_loop_chip(mode), query=True, value=True)))
+        _changed(mode)
+    return go
 
 
 def _card_key():

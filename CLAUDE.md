@@ -11168,6 +11168,60 @@ that phase alone): on a camera looking 40° down under a turned parent the turn 
 moves along the heading and straight up 1.4e-14 cm, a second Apply replacing it, undo; through Manny's
 Camera_ctrl the camera turned about its own axes 4.8e-16, camera_root following. Not seen in a GUI Maya.
 
+**Loop, for Handheld and Bobbing** (2026-10-29, «опцию зацикливания анимации для бобинга и для хенди
+камеры»; decided without asking, spec `docs/superpowers/specs/2026-10-29-camera-shake-loop-design.md`):
+- **The range is one cycle**: frame b shows frame a - our UE clips' and Unreal's loop, Maya's cycle
+  infinity. The layer's curves cycle past it. There is no Ease in a loop (the slider is dimmed), and
+  Impact has no Loop.
+- **The model** (settings key `loop`, `LOOP_MODES`):
+  - `noise` / `fractal` / `tremor` take a `period`: whole knots in it (`loop_knots`, at least
+    `LOOP_KNOTS` 3) with their indices wrapped, and the tremor's sine at whole cycles (`whole_cycles`,
+    under the frame rate's cap);
+  - a bobbing's tempo is the nearest that fits whole strides (`loop_tempo`, `tempo_of`);
+  - Loop off is the old model value for value.
+- **The keys**: every frame a..b and nothing outside; an earlier press's zeros at a - 1 / b + 1 cut;
+  infinity cycle (constant again when Loop goes off); both end keys **fixed on the chord across the seam**
+  (`seam_slope`) - trap 304.
+- **The line**: «| looped: frame 60 shows frame 0, the layer cycles past them», a bobbing's «| 2 strides in
+  the loop at 120 steps/min (Tempo 116)». A camera whose own animation does not repeat over the range
+  gets «loopCam's own animation differs at frames 0 and 45: the loop's seam jumps 0.55 cm - loop it over
+  the range too» (`seam_gap`, `seam_text`): the layer adds the shake on top of the camera's own turn, so
+  its ends differ there. The layer keeps the honest values.
+- **The card**: a Loop chip (`skeldarCamShakeLoop_<mode>`, a checkBox) at the top of the Handheld and
+  Bobbing columns, remembered per mode and kept by presets. It re-keys the picked shake, else sets up the
+  next Apply. The subtitle says «looped».
+- **Found on the way, fixed for every mode**: Delete, and an Apply replacing a shake, left the shake at
+  the current frame in the camera's unkeyed channels for good - trap 305. `_delete_layer` mutes the layer
+  and evaluates its plugs before deleting it.
+Proof:
+- `tests/test_camshake_loop.py` (41); 214 Camera Shake unit tests OK.
+- `verify_camshake.py loop` **16/16 mayapy standalone**, on a camera under a turned parent whose own turn
+  cycles every 60 frames:
+  - keys exactly 0..60, cycling;
+  - the camera's turn in its own axes to 1e-16;
+  - past the range the cycle again, half frames too, 4e-16;
+  - the seam's slope jump 9e-4 against 2e-3 at any key inside (0.54 with spline ends);
+  - Loop off and back;
+  - a walk at 120 for 116;
+  - the layers gone and the camera its own (2.43 before the mute);
+  - the seam named for a 45-frame loop.
+- The whole verify **58/58**. Picture `docs/superpowers/plans/camshake/camshake_loop.png`.
+- Not seen in a GUI Maya.
+
+304. **Maya's spline end keys take the slope of one side only, even on a cycling curve.** A layer curve
+     keyed on every frame of a periodic signal with pre / post infinity cycle had slopes 0.77 and 1.29 on
+     the two sides of its seam (the chord 1.03): a kink every cycle. A first probe on a sine said Maya
+     used the cycle; a sine's one-sided and two-sided slopes agree at a zero crossing, so that probe could
+     not fail. Fix the end keys on the chord across the seam: a fixed angle's tangent is the slope in the
+     curve's units a frame (film, ntsc, 60 fps measured).
+305. **A deleted animation layer leaves what its blend last evaluated in whatever fed it.** An unkeyed
+     channel keeps base + the layer's share at the current frame (rotateX -15 stood at -13.03). A layer
+     ABOVE it gets that value as its base input (-19.41 for -15). A keyed base reconnects its curve and is
+     safe. Mute the layer and evaluate its plugs (`getAttr`) before deleting it: the stack is left without
+     it in both orders. `animLayer -removeAttribute` leaves nothing behind (measured). Other modules that
+     delete layers (Time Bar layer panel, Dynamics, Ragdoll, Overlap, Delete character) have not been
+     checked for this.
+
 236. **A DG context read keeps a stale value per time.** `getAttr(plug, time=t)` after a key at `t` was edited
      answered the OLD value (measured in mayapy: 0.0 where the curve now said 20, then 30 after a second edit
      to 40) - a different time (`t + 0.0001`) read fresh, and `dgdirty` on the PLUG did not help; `dgdirty` on
@@ -15174,6 +15228,22 @@ the first push (one «World» chip under the rows, the knot's locators): «вм�
   `verify_fkik_keys.py` 18/18; `tests/test_scenesetup_ikworld.py`; 11904 unit tests, the known
   `test_chat_deploy.Keys` failing. Not seen in a GUI Maya. Not built: the Pose Library onto a limb
   in world (`rigsolve.knot_driver` takes a plain knot only), a world pole.
+
+**…and the old control hides while the world control stands** (2026-10-29: «При переключении в
+world в вкладке connection старый контроллер должен прятаться» - the two sit in one place). It is
+the KNOT's doing, not the W's (`knots.hide_source` / `show_hidden`, `knotplan.HIDDEN_MARKER` on
+the top): `ikworld.enter` asks for it once the controls are made, and every road that deletes a
+knot ends in `knots._delete_knot`, which shows it again - the W back, FK from world, **and Tools'
+own Bake and Remove** (a hide written in `ikworld` alone would leave the control hidden after a
+Tools press). The IK control's **SHAPES**, never its transform: `CustomOrientReverseIKArm_R` and
+under it the ikHandle and the align nodes hang beneath an AS IK control, and hiding the transform
+would take them along (trap 15) - hiding the shapes takes the drawing away and leaves the control
+in the outliner. Only what we hid comes back: the shapes are recorded by UUID, one the animator had
+already hidden is not touched, and a locked or driven visibility is passed over. Proof:
+`verify_ik_world.py` **54/54** (the drawing hidden with the transform's own visibility untouched,
+the plain IK arm beside it drawn as the control, drawn again after the W back, after FK from world
+and after Tools' Bake); `tests/test_scenesetup_ikworld.py` Hidden / EnterHides on a fake cmds;
+12037 unit tests, the known `test_chat_deploy.Keys` failing. Not seen in a GUI Maya.
 
 ## AT bar keys name their layer (2026-10-27)
 
