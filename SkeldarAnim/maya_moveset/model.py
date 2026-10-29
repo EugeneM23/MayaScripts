@@ -30,8 +30,6 @@ TYPES = (("hold", "Hold"), ("light", "Light"), ("sprint", "Sprint"),
          ("jump", "Jump"), ("dodge", "Dodge"))
 COLOURS = {"hold": "#d0605e", "light": "#22b5a0", "sprint": "#e6c229",
            "jump": "#a35cf0", "dodge": "#f08a24", "chain": "#4e79ff"}
-STATUSES = (("backlog", "Backlog", "#8a8f98"), ("progress", "In progress", "#e6c229"),
-            ("done", "Done", "#3fbf6a"))
 VIEWS = ("3p", "1p")
 SITUATIONS = {"onfoot": "On foot", "sprint_short": "Sprint (just started)",
               "sprint_long": "Sprint (run-up)", "air": "In air", "dodge": "After dodge",
@@ -92,10 +90,6 @@ def label(node_id, custom=(), prefix=LONGSWORD_PREFIX):
 
 def skey(node_id, view):
     return "{0}|{1}".format(node_id, view)
-
-
-def initials(name):
-    return "".join(w[0] for w in name.split() if w)[:2].upper()
 
 
 # ---- files -------------------------------------------------------------------
@@ -217,25 +211,6 @@ def write_state(folder, **values):
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         json.dump(raw, out, ensure_ascii=False, indent=1)
     os.replace(temp, path)
-
-
-def set_status(state, node_id, view, status):
-    """A copy of `state["status"]` with one card's status ("" = not planned)."""
-    table = dict(state["status"])
-    if status:
-        table[skey(node_id, view)] = status
-    else:
-        table.pop(skey(node_id, view), None)
-    return table
-
-
-def set_assignee(state, node_id, view, person):
-    table = dict(state["assignee"])
-    if person:
-        table[skey(node_id, view)] = person
-    else:
-        table.pop(skey(node_id, view), None)
-    return table
 
 
 # ---- trees -------------------------------------------------------------------
@@ -360,23 +335,16 @@ def _place(tree, top):
     tree.height = _leaves(top) * ROW - 18
 
 
-def kept(tree, state, types=(), who=None):
-    """The keys of the cards a type / assignee filter keeps: a match, the path
-    up to the root, and everything under it. None when nothing filters."""
+def kept(tree, state, types=()):
+    """The keys of the cards a type filter keeps: a match, the path up to the
+    root, and everything under it. None when nothing filters."""
     types = set(types)
-    if not types and who is None:
+    if not types:
         return None
     keep = set()
 
     def matches(node):
-        if types and node.kind not in types:
-            return False
-        if who is not None:
-            names = [state["assignee"].get(skey(node.id, v)) for v in VIEWS]
-            if who == "":
-                return not all(names)
-            return who in names
-        return True
+        return not types or node.kind in types
 
     def under(node):
         keep.add(node.key)
