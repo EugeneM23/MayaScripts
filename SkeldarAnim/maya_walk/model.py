@@ -113,7 +113,7 @@ KNOBS = (
     # world motion (the linear travel out) read that much earlier and the arm rebuilt to it by IK from the
     # current shoulder, so what the arm takes from the body (the chest's turn, the shoulder's bob and sway) is
     # late with its own swing. Per side; under a grip the held thing goes late and both hands keep their hold
-    ("arm_overlap", 0.0, -20.0, 60.0),
+    ("arm_overlap", 0.0, -120.0, 120.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves

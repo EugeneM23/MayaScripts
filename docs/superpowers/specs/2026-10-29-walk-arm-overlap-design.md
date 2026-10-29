@@ -55,11 +55,20 @@ Two readings follow from this and are settled by it:
 
 ## The knob
 
-**`Arm overlap`, ms, sided**, in the Main group right after `Arm lag`. An added lag: 0 is the clip as it
-stands, so it is an offset parameter and never a measured feature of the walk.
+**`Arm overlap`, ms, sided**, in the **Arms** group between `Shoulders` and `Elbow lag` - with the other arm
+knobs, where an animator looks for it. (It shipped in Main first, on my own argument that it is a headline
+feature; the animator then turned Elbow lag / Hand lag / Arm out in the Arms tab and reported the feature
+dead while the slider sat at 0 in Main. Their hands were the measurement that settled it.) An added lag: 0
+is the clip as it stands, so it is an offset parameter and never a measured feature of the walk.
 
-- range **-100 .. 300 ms** (negative: the hand leads the body, which is occasionally wanted on a hit), as
-  `rule=_fixed(-100.0, 300.0)`: the walk has no own value to measure it from;
+- the slider reaches **half the walk's own cycle either way** (`overlap_cap`: `1000 * P / fps / 2`, never
+  under `OVERLAP_FLOOR` 250 ms so a very short cycle keeps a usable slider, never over `OVERLAP_MAX` 2000),
+  applied in `ranges` where the walk is known; `rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX)` is the outer bound
+  without one. Past half a cycle a lag of a periodic signal comes back on itself, so half is the honest
+  limit: on the animator's own 31-frame cycle at 30 fps the slider runs **-517 .. +517 ms**, on a 90-frame
+  one -1500 .. +1500. Negative is the hand leading the body, which is occasionally wanted on a hit. The
+  engine's own knob is **-120 .. 120 frames**, wide enough that the cap never clamps at 24, 30 or 60 fps
+  (a test pins that);
 - `gait.own` and `gait.of_result` answer **0** for it, so the slider reads back exactly what was asked and
   the Diagnosis never has anything to say about it;
 - ms -> frames of the new cycle with the **output** frame rate - the rate the keys land at.

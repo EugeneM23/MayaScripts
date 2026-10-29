@@ -70,7 +70,7 @@ class KnobTests(unittest.TestCase):
 
     def test_the_engine_carries_a_sided_arm_overlap_knob(self):
         self.assertEqual(wm.DEFAULTS["arm_overlap"], 0.0)
-        self.assertEqual(wm.RANGES["arm_overlap"], (-20.0, 60.0))
+        self.assertEqual(wm.RANGES["arm_overlap"], (-120.0, 120.0))
         self.assertIn("arm_overlap", wm.SIDED)
         self.assertEqual(wm.SIDE_KNOBS["arm_overlap_l"], "arm_overlap")
         self.assertIn("arm_overlap", wm.ENGINE_ONLY)
@@ -265,23 +265,49 @@ class ParameterTests(unittest.TestCase):
         self.w = walk()
         self.own = gait.own(self.w)
 
-    def test_it_is_a_sided_main_parameter_in_ms(self):
+    def test_it_is_a_sided_arms_parameter_in_ms(self):
+        """It lives with the other arm knobs, where an animator looks for it (2026-10-29: the animator turned
+        Elbow lag / Hand lag / Arm out in the Arms tab and reported the feature dead, while the slider sat at
+        0 in Main)."""
         p = gait.P["arm_overlap"]
-        self.assertEqual((p.group, p.label, p.unit, p.kind, p.sided), (gait.MAIN, "Arm overlap", "ms",
+        self.assertEqual((p.group, p.label, p.unit, p.kind, p.sided), (gait.ARMS, "Arm overlap", "ms",
                                                                        "added", True))
         self.assertIn("arm_overlap", gait.keys())
         self.assertIn("arm_overlap_l", gait.keys())
-        names = [q.name for q in gait.PARAMS if q.group == gait.MAIN]
-        self.assertEqual(names[names.index("arm_lag") + 1], "arm_overlap")
+        names = [q.name for q in gait.PARAMS if q.group == gait.ARMS]
+        self.assertEqual(names[names.index("arm_overlap") + 1], "elbow_lag")
+        self.assertEqual(names[names.index("arm_overlap") - 1], "shoulders")
+        self.assertNotIn("arm_overlap", [q.name for q in gait.PARAMS if q.group == gait.MAIN])
 
     def test_nothing_was_deleted(self):
         for name in ("arm_lag", "elbow_lag", "hand_lag", "elbow", "arms_forward", "shoulders"):
             self.assertIn(name, gait.P, name)
 
-    def test_its_own_is_zero_and_its_range_is_fixed(self):
+    def test_its_own_is_zero_and_the_slider_reaches_half_the_cycle(self):
         self.assertEqual(gait.own_value(self.own, "arm_overlap"), 0.0)
         self.assertEqual(gait.own_value(self.own, "arm_overlap_l"), 0.0)
-        self.assertEqual(gait.ranges(self.own, self.w.leg_length, self.w)["arm_overlap"], (-100.0, 300.0))
+        #  the synthetic walker: 24 frames at 24 fps, so half the cycle is 500 ms
+        half = 1000.0 * self.w.P / self.w.fps / 2.0
+        self.assertAlmostEqual(gait.overlap_cap(self.w), half, places=6)
+        got = gait.ranges(self.own, self.w.leg_length, self.w)
+        for key in ("arm_overlap", "arm_overlap_l", "arm_overlap_r"):
+            self.assertEqual(got[key], (-half, half), key)
+        #  without the walk the slider is the outer bound, and the engine's knob never clamps the cap
+        self.assertEqual(gait.ranges(self.own, self.w.leg_length)["arm_overlap"],
+                         (-gait.OVERLAP_MAX, gait.OVERLAP_MAX))
+        for fps in (24.0, 30.0, 60.0):
+            frames = gait.OVERLAP_MAX * fps / 1000.0
+            self.assertLessEqual(frames, wm.RANGES["arm_overlap"][1], fps)
+
+    def test_a_short_cycle_keeps_a_usable_slider(self):
+        class Short(object):
+            P, fps = 6, 30.0
+        self.assertAlmostEqual(gait.overlap_cap(Short()), gait.OVERLAP_FLOOR, places=6)
+
+    def test_a_long_cycle_is_capped_at_the_outer_bound(self):
+        class Long(object):
+            P, fps = 600, 30.0
+        self.assertAlmostEqual(gait.overlap_cap(Long()), gait.OVERLAP_MAX, places=6)
 
     def test_an_offset_change_is_the_value_asked(self):
         vals = gait.values(self.own, {"arm_overlap": ("offset", 150.0)})

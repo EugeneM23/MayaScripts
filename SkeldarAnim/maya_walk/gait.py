@@ -28,6 +28,11 @@ PUSH_PER_STEP = 40.0                      # deg of Push-off per +100 % of the st
 HEEL_PER_STEP = 25.0                      # deg of Heel strike per +100 % of the step
 ARM_PER_SPEED = 1.0                       # the arm swing x (speed ratio) ^ this
 ARM_LINK = (0.5, 2.0)                     # at most this far either way
+# Arm overlap's slider (ms): half the source cycle either way - past half a cycle a lag of a periodic signal
+# comes back on itself (measured 2026-10-29: the hand 25.8 cm late at a quarter of the cycle, 22.9 with a
+# spring on top). Never narrower than the floor, so a very short cycle keeps a usable slider
+OVERLAP_MAX = 2000.0
+OVERLAP_FLOOR = 250.0
 # the Weight macro at +1 (the guide's sections 3, 5, 10); negative: the reverse, halved
 WEIGHT = {"bounce": ("ratio", 1.6), "low_point": ("offset", 8.0), "knee_bend": ("offset", 4.0),
           "foot_flat": ("offset", 1.5), "arm_lag": ("offset", 1.5), "torso_lag": ("offset", 1.0),
@@ -127,9 +132,6 @@ PARAMS = (
           tip="The upper arms' swing forward and back (peak to peak); unset, it follows the speed"),
     Param("arm_lag", MAIN, "Arm lag", "fr", "offset", sided=True, rule=_about(8.0, 8.0),
           tip="Frames the arm's forward swing comes after the other foot's heel strike (overlap as a time shift)"),
-    Param("arm_overlap", MAIN, "Arm overlap", "ms", "added", sided=True, rule=_fixed(-100.0, 300.0),
-          tip="The whole arm late by this many milliseconds - its own swing and everything it takes from the "
-              "body (the chest's turn, the shoulder's bob); a hand holding a weapon takes the weapon with it"),
     Param("detail", MAIN, "Detail", "", "added", rule=_fixed(0.0, 1.0), default=1.0,
           tip="1 keeps the clip's own handwriting (what the stride's harmonics leave), 0 the clean model"),
     # the timing
@@ -208,6 +210,11 @@ PARAMS = (
           tip="The upper arms held out to their sides"),
     Param("shoulders", ARMS, "Shoulders", "deg", "added", sided=True, rule=_fixed(-20.0, 25.0),
           tip="The shoulders raised (+) or dropped"),
+    Param("arm_overlap", ARMS, "Arm overlap", "ms", "added", sided=True,
+          rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
+          tip="The whole arm late by this many milliseconds - its own swing and everything it takes from the "
+              "body (the chest's turn, the shoulder's bob); a hand holding a weapon takes the weapon with it. "
+              "The slider reaches half the cycle either way - past that a lag comes back on itself"),
     Param("elbow_lag", ARMS, "Elbow lag", "fr", "offset", sided=True, rule=_about(6.0, 8.0),
           tip="Frames the elbow's bend comes after the arm's forward swing"),
     Param("hand_lag", ARMS, "Hand lag", "fr", "added", sided=True, rule=_fixed(-5.0, 8.0),
@@ -1125,12 +1132,20 @@ def reach(walk, key):
     return None, (FLAT_REACH * min(b - a for a, b in contact) if contact else None)
 
 
+def overlap_cap(walk):
+    """How far Arm overlap's slider reaches either way (ms): half the walk's own cycle - past half a cycle a
+    lag of a periodic signal comes back on itself - never under OVERLAP_FLOOR nor over OVERLAP_MAX."""
+    fps = float(getattr(walk, "fps", 30.0) or 30.0)
+    half = 1000.0 * float(getattr(walk, "P", 0) or 0) / fps / 2.0
+    return float(min(OVERLAP_MAX, max(OVERLAP_FLOOR, half)))
+
+
 def ranges(own_values, leg, walk=None):
     """{key: (low, high)}: each parameter's range from the walk's own value and its leg - a two-sided one's own
     keys from each side's own value, its own key from their mean; with the `walk`, no further than its body
     reaches (Foot lift no lower than its swing takes, the Elbow no straighter than its hinge brings it, the arm's
     and the elbow's swing no wider than their gain turns them, Foot flat within half the foot's shortest
-    contact)."""
+    contact) and Arm overlap half the cycle either way."""
     out = {}
     for p in PARAMS:
         if p.kind == "toggle":
@@ -1150,6 +1165,9 @@ def ranges(own_values, leg, walk=None):
                 lo = max(lo, a) if a is not None else lo
                 hi = min(hi, b) if b is not None else hi
                 out[key] = (min(lo, hi), hi)
+        cap = overlap_cap(walk)       # Arm overlap: half the cycle either way
+        for key in ["arm_overlap_" + s for s in SIDES] + ["arm_overlap"]:
+            out[key] = (-cap, cap)
     top = step_top(own_values, leg)
     if top is not None:
         lo, hi = out["step"]
