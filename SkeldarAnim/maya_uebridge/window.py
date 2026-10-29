@@ -2057,12 +2057,24 @@ def _import_busy():
             else "importing...")
 
 
+def drag_records():
+    """What a drag carries: the rows as the list shows them, a montage row
+    SLOTTED (2026-10-29) - the ghost's caption, the clip's namespace and the
+    label under the character then name the slot, as a press does. The
+    folder rows' `None` keeps its place: the drag reads rows by index."""
+    rows = list(_STATE["filtered"])
+    if asset_kind() != "montages":
+        return rows
+    slot = _slot_choice() or montage_slot()
+    return [records.with_slot(row, slot) if row is not None else None
+            for row in rows]
+
+
 def _attach_drag():
     """The list's rows drag into a viewport (`listdrag`, 2026-10-01) where Qt
     stands; without it the list is the list it always was."""
     try:
         from maya_uebridge import listdrag   # lazy: Qt stays out of cmds
-        listdrag.attach(_LIST, lambda: list(_STATE["filtered"]),
-                        on_right=_right_pressed)
+        listdrag.attach(_LIST, drag_records, on_right=_right_pressed)
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())

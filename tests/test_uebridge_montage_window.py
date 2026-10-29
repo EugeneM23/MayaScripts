@@ -221,6 +221,18 @@ class Picked(MontageBase):
         self.assertEqual([r.name for r in picked],
                          ["AM_LongSword_Block_Stun"])
 
+    def test_a_drag_carries_the_slotted_row(self):
+        """The ghost's caption and the clip's name must name the slot too."""
+        carried = window.drag_records()
+        self.assertEqual([r.name for r in carried if r is not None],
+                         ["AM_Grab_Reach_1P", "AM_LongSword_Block_Stun_1P"])
+
+    def test_a_drag_in_the_animations_kind_carries_the_rows_as_they_are(self):
+        window._STATE["asset_kind"] = "anims"
+        carried = window.drag_records()
+        self.assertEqual([r.name for r in carried if r is not None],
+                         ["AM_Grab_Reach", "AM_LongSword_Block_Stun"])
+
     def test_the_import_button_names_the_slot(self):
         """A long name is cut in the MIDDLE, so the slot - its tail - shows."""
         self.card.button(window._IMPORT, label="")
