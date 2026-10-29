@@ -16,6 +16,8 @@ from maya_moveset import model as m
 HUB_SECTION = "moveset"
 SUB = "skeldarMovesetSub"
 FOLDER_BTN = "skeldarMovesetFolderBtn"
+WEAPONS_COLL = "skeldarMovesetWeapons"
+WEAPON_SEG = "skeldarMovesetWeapon_{0}"
 ROOT_MENU = "skeldarMovesetRoot"
 MODE_MENU = "skeldarMovesetMode"
 WHO_MENU = "skeldarMovesetWho"
@@ -50,6 +52,22 @@ def build_panel():
                               annotation="The moveset folder (graph.json, media, state.json)",
                               command=lambda *_a: pick_folder()), "tool", "folder")
     cmds.setParent("..")
+
+    #  one segment a weapon the folder holds, the chosen one lit; a folder of
+    #  one weapon gets no segments at all
+    found = m.weapons(folder())
+    if len(found) > 1:
+        shown = m.chosen_weapon(m.read_state(folder()), found)
+        cmds.rowLayout(numberOfColumns=len(found))
+        cmds.iconTextRadioCollection(WEAPONS_COLL)
+        for weapon in found:
+            hubstyle.mark(cmds.iconTextRadioButton(
+                WEAPON_SEG.format(weapon.key), style="textOnly", label=weapon.label,
+                height=hubstyle.height("segment", 24), select=weapon.key == shown.key,
+                collection=WEAPONS_COLL,
+                annotation="The weapon whose combo trees are shown - the page shows the same one",
+                onCommand=_press_weapon(weapon.key)), "segment")
+        cmds.setParent("..")
 
     cmds.optionMenu(ROOT_MENU, label="Opening",
                     changeCommand=lambda *_a: _filter(root=True))
@@ -107,8 +125,14 @@ def attach():
     from PySide6 import QtCore
     from maya_moveset import view as treeview
     key = hubcopy.resolve(PLACE)
+    #  every name a callback of ours keeps is resolved here: the state poll runs
+    #  on a timer, outside the copy's scope, where a bare name is the hub's
     card = {"status": hubcopy.resolve(STATUS), "root_menu": hubcopy.resolve(ROOT_MENU),
             "who_menu": hubcopy.resolve(WHO_MENU), "sub": hubcopy.resolve(SUB),
+            "chips": dict((chip, hubcopy.resolve(CHIP.format(chip))) for chip, _l in m.TYPES),
+            "segs": dict((w.key, hubcopy.resolve(WEAPON_SEG.format(w.key)))
+                         for w in m.weapons(folder())),
+            "weapon": None,
             "roots": [], "people": [], "mtime": 0.0, "host": host}
     actions = {"open": lambda i, v, c=card: _say(c, open_slot(c["view"].graph, i, v)),
                "status": lambda i, v, s, c=card: _set(c, i, v, status=s),
@@ -130,25 +154,73 @@ def attach():
 
 def _load(card, frame=False):
     view, where = card["view"], folder()
-    path = os.path.join(where, m.GRAPH)
-    if not os.path.isfile(path):
+    state = m.read_state(where)
+    weapon = m.chosen_weapon(state, m.weapons(where))
+    if weapon is None:
+        card["weapon"] = None
         view.set_data({"nodes": {}, "edges": [], "entries": []}, m.read_state(""), where)
         _sub(card, "No moveset here")
         _say(card, "No {0} in {1} - press the folder button and pick the moveset "
                    "folder".format(m.GRAPH, where))
         return
+    path = os.path.join(where, weapon.graph)
     try:
-        graph = m.load_graph(where)
+        graph = m.load_graph(where, weapon.graph)
     except (OSError, ValueError) as error:
         _say(card, "Cannot read {0}: {1}".format(path, error))
         return
-    state = m.read_state(where)
     card["mtime"] = m.state_mtime(where)
-    view.set_data(graph, state, where)
+    card["weapon"] = weapon
+    view.set_data(graph, state, where, weapon)
+    held = _chips(card, graph)
+    kept = [key for key in view.types if key in held]
+    if set(kept) != set(view.types):
+        #  a type this weapon has none of cannot stay in the filter, or the
+        #  card would open on «No tree matches the filter»
+        view.set_filter(types=kept)
     _fill_menus(card)
-    _sub(card, _summary(graph, state))
+    _lit(card, weapon)
+    _sub(card, _summary(graph, state, weapon))
     if frame:
         view.frame()
+
+
+def _chips(card, graph):
+    """The type chips this weapon has attacks for; the rest dimmed and cleared.
+    Returns the types held, in TYPES order."""
+    held = [key for key, _label in m.types_in(graph)]
+    for key, _label in m.TYPES:
+        name = card["chips"].get(key, CHIP.format(key))
+        if not cmds.checkBox(name, exists=True):
+            continue
+        there = key in held
+        if not there and cmds.checkBox(name, query=True, value=True):
+            cmds.checkBox(name, edit=True, value=False)
+        cmds.checkBox(name, edit=True, enable=there)
+    return held
+
+
+def _lit(card, weapon):
+    """The weapon's segment, lit - a switch may have come from the page."""
+    name = card["segs"].get(weapon.key)
+    if name and cmds.iconTextRadioButton(name, exists=True):
+        cmds.iconTextRadioButton(name, edit=True, select=True)
+
+
+def _press_weapon(key):
+    return lambda *_a: pick_weapon(key)
+
+
+def pick_weapon(key):
+    """The weapon the card shows. Written where the page reads it too, so the
+    two never show different weapons; the page takes it on its next look."""
+    m.write_state(folder(), **{m.STATE_WEAPON: key})
+    card = _card()
+    if not card:
+        return
+    _load(card, frame=True)
+    weapon = card.get("weapon")
+    _say(card, "{0} - the page shows it on its next look".format(weapon.label if weapon else key))
 
 
 def reload(frame=False):
@@ -165,17 +237,27 @@ def _poll(card):
         return
     if mtime and mtime != card["mtime"]:
         card["mtime"] = mtime
-        state = m.read_state(card["view"].folder)
+        where = card["view"].folder
+        state = m.read_state(where)
+        here, wanted = card.get("weapon"), m.chosen_weapon(state, m.weapons(where))
+        if here is not None and wanted is not None and wanted.key != here.key:
+            #  the page switched the weapon: the whole card follows it
+            _load(card, frame=True)
+            return
         card["view"].set_state(state)
         if state["people"] != card["people"]:
             _fill_menus(card)
-        _sub(card, _summary(card["view"].graph, state))
+        _sub(card, _summary(card["view"].graph, state, here))
 
 
-def _summary(graph, state):
-    done = sum(1 for v in state["status"].values() if v == "done")
-    cards = len(graph.get("nodes", {})) * len(m.VIEWS)
-    return "Longsword - {0} attacks, {1} of {2} done".format(len(graph.get("nodes", {})), done, cards)
+def _summary(graph, state, weapon=None):
+    """«Dagger - 22 attacks, 0 of 44 done» - counted for the weapon shown: the
+    two weapons share one state file, and their node ids cannot collide."""
+    nodes = graph.get("nodes", {})
+    done = sum(1 for key, value in state["status"].items()
+               if value == "done" and key.split("|")[0] in nodes)
+    return "{0} - {1} attacks, {2} of {3} done".format(
+        weapon.label if weapon else m.LONGSWORD[1], len(nodes), done, len(nodes) * len(m.VIEWS))
 
 
 def _fill_menus(card):
@@ -232,9 +314,18 @@ def _filter(root=False, mode=False, who=False, types=False):
 def pick_folder():
     picked = cmds.fileDialog2(fileMode=3, dialogStyle=2, startingDirectory=folder(),
                               caption="The moveset folder (holding graph.json)")
-    if picked:
-        cmds.optionVar(stringValue=(m.FOLDER_VAR, picked[0]))
-        reload(frame=True)
+    if not picked:
+        return
+    cmds.optionVar(stringValue=(m.FOLDER_VAR, picked[0]))
+    card = _card()
+    before = sorted(card["segs"]) if card else []
+    reload(frame=True)
+    after = sorted(w.key for w in m.weapons(picked[0]))
+    if card and after != before:
+        #  the segments were built for the folder the card opened on: a cmds
+        #  control keeps its name for the session, so the row cannot grow
+        _say(card, "{0} - close and open the Moveset section for its weapons "
+                   "({1})".format(picked[0], ", ".join(after) or "none"))
 
 
 # ---- presses ------------------------------------------------------------------
