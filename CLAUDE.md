@@ -16177,7 +16177,8 @@ after Check update.
 The animator: «Давай сделаем протатип этой таблицы в мая только без трело части» - the combo-tree page of
 their personal moveset tool (`Documents/AtoneExperiments/LongswordMoveset`, never in this repo) as a hub
 card. Asked: it lives here; it opens animations, shows the previews and shares the data with the page. The
-data stays in the animator's folder: the plugin ships only code.
+data stays in the animator's folder: the plugin ships only code. Spec:
+`docs/superpowers/specs/2026-10-29-moveset-combo-trees-design.md`.
 - **`SkeldarAnim/maya_moveset/`** (a payload row): `model.py` (stdlib, a test pins it) reads the folder's
   `graph.json` and lays the trees out as the page does (breadth-first, one expansion an attack a tree, loops
   and conversions as leaf links, Combos only / All transitions, the page's `custom` and `hidden` cards);
