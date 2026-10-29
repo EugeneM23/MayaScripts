@@ -3567,6 +3567,10 @@ def set_state(name, state):
     widget.setProperty("skState", state or "")
     if widget.property("skRole") in ("toolrow", "subhead"):
         _paint_state(widget)
+    else:
+        #  2026-10-29, the Connections card's picks: a segment's or a chip's
+        #  "want" is the stylesheet's, and the property alone redraws nothing
+        repolish(widget)
     return True
 
 

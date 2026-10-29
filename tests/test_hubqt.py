@@ -1353,6 +1353,19 @@ class ToolRows(SeamsMixin, unittest.TestCase):
         self.assertEqual(button.property("skState"), "")
         self.assertEqual(button.property("skIconColour"), style.TOKENS["tool_icon"])
 
+    def test_a_segment_s_state_is_repolished(self):
+        """2026-10-29, the Connections card's picks: a `want` segment or chip is
+        the stylesheet's, and the property alone redraws nothing."""
+        button = self.control(QtWidgets.QPushButton, "segFK", self.card.body)
+        button.setProperty("skRole", "segment")
+        polished = []
+        real = hubqt.repolish
+        hubqt.repolish = lambda widget: polished.append(widget)
+        self.addCleanup(setattr, hubqt, "repolish", real)
+        self.assertTrue(hubqt.set_state("segFK", "want"))
+        self.assertEqual(button.property("skState"), "want")
+        self.assertEqual(polished, [button])
+
     def test_a_state_set_before_the_skin_is_painted_by_it(self):
         """The card's builder lights a waiting row while it builds - before the marks are
         applied: the skin paints whatever state the control already carries."""

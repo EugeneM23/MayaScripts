@@ -445,3 +445,33 @@ class CardRules(unittest.TestCase):
 
     def test_the_label_role(self):
         self.assertIn("label", style.ROLES)
+
+
+class WantState(unittest.TestCase):
+    """A pick that is not applied yet (2026-10-29, the Connections card): the
+    thumb stays what the scene IS, the pick is outlined in the accent."""
+
+    def _rule(self, selector):
+        sheet = style.stylesheet(1.0)
+        found = re.search(re.escape(selector) + r" \{([^}]*)\}", sheet)
+        self.assertIsNotNone(found, selector)
+        return found.group(1)
+
+    def test_a_picked_segment_waiting_for_apply_is_accent(self):
+        rule = self._rule('QPushButton[skRole="segment"][skState="want"]')
+        self.assertIn(style.TOKENS["accent_tint"], rule)
+        self.assertIn(style.TOKENS["accent"], rule)
+        self.assertIn(style.TOKENS["accent_text"], rule)
+
+    def test_a_picked_chip_waiting_for_apply_is_accent(self):
+        rule = self._rule('QCheckBox[skRole="chip"][skState="want"]')
+        self.assertIn(style.TOKENS["accent_tint"], rule)
+        self.assertIn(style.TOKENS["accent"], rule)
+
+    def test_the_want_rules_come_after_the_checked_ones(self):
+        #  equal specificity: the later rule wins, and a pick is not the state
+        sheet = style.stylesheet(1.0)
+        self.assertLess(sheet.index('QPushButton[skRole="segment"]:checked'),
+                        sheet.index('QPushButton[skRole="segment"][skState="want"]'))
+        self.assertLess(sheet.index('QCheckBox[skRole="chip"]:checked'),
+                        sheet.index('QCheckBox[skRole="chip"][skState="want"]'))

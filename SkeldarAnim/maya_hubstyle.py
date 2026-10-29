@@ -422,6 +422,11 @@ QPushButton[skRole="segment"] {{ background: transparent; border: none;
 QPushButton[skRole="segment"]:hover {{ color: {text}; }}
 QPushButton[skRole="segment"]:checked {{ background: {thumb}; color: {text};
     font-weight: bold; }}
+/*  picked, not applied (2026-10-29, the Connections card): the thumb stays
+    what the scene IS, the pick is outlined in the accent. After the :checked
+    rule - equal specificity, so the later one wins  */
+QPushButton[skRole="segment"][skState="want"] {{ background: {accent_tint};
+    border: {b1}px solid {accent}; color: {accent_text}; font-weight: bold; }}
 
 QComboBox {{ background: {field}; border: none; border-radius: {r6}px;
     padding: {p1}px {p6}px; color: {text}; }}
@@ -446,6 +451,8 @@ QCheckBox[skRole="chip"] {{ background: {field}; border-radius: {r10}px;
     padding: {p2}px {p8}px; color: {muted}; }}
 QCheckBox[skRole="chip"]:hover {{ color: {text}; }}
 QCheckBox[skRole="chip"]:checked {{ background: {accent_tint}; color: {accent_text}; }}
+QCheckBox[skRole="chip"][skState="want"] {{ background: {accent_tint};
+    border: {b1}px solid {accent}; color: {accent_text}; }}
 QCheckBox[skRole="chip"]::indicator {{ width: 0px; height: 0px; border: none;
     background: transparent; margin: 0px; }}
 QRadioButton {{ color: {text2}; }}
