@@ -210,6 +210,9 @@ class FakeMenuCmds(FakeUiCmds):
         self.owner = {}             # button -> collection
         self.on = {}                # button -> onCommand
         self.boxes = {}             # FK/IK check box -> value, commands
+        self.checks = {}            # chip (cmds.checkBox) -> value, command
+        self.commands = {}          # button name -> its command
+        self.buttons = {}           # button name -> its kwargs, last edit last
         self._current = None
 
     def iconTextRadioCollection(self, name=None, **kwargs):
@@ -256,11 +259,61 @@ class FakeMenuCmds(FakeUiCmds):
         self.children.append(name)
         return name
 
+    def checkBox(self, name=None, **kwargs):
+        """A chip (2026-10-29, the limb rows' W): a value and a changeCommand."""
+        self.calls.append(("checkBox", (name,) if name else (), kwargs))
+        if kwargs.get("exists"):
+            return name in self.checks
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.checks[name]["value"]
+        if kwargs.get("edit") or kwargs.get("e"):
+            if "value" in kwargs:
+                self.checks[name]["value"] = kwargs["value"]
+            return name
+        self.checks[name] = {"value": kwargs.get("value", False),
+                             "changeCommand": kwargs.get("changeCommand"),
+                             "label": kwargs.get("label")}
+        self.children.append(name)
+        return name
+
+    def button(self, name=None, **kwargs):
+        """A button: its command, and the label its press reads back."""
+        self.calls.append(("button", (name,) if name else (), kwargs))
+        if kwargs.get("exists"):
+            return name in self.commands
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.buttons.get(name, {}).get("label")
+        if kwargs.get("edit") or kwargs.get("e"):
+            self.buttons.setdefault(name, {}).update(
+                (k, v) for k, v in kwargs.items() if k not in ("edit", "e"))
+            return name
+        label = name if name else "button%d" % len(self.children)
+        self.commands[label] = kwargs.get("command")
+        self.buttons[label] = dict(kwargs)
+        self.children.append(label)
+        return label
+
     def press_box(self, name):
         """The animator clicks a box: it toggles, then its command runs."""
         box = self.boxes[name]
         box["value"] = not box["value"]
         return (box["on"] if box["value"] else box["off"])()
+
+    def press_check(self, name, value):
+        """The animator clicks a chip: its value, then its changeCommand."""
+        box = self.checks[name]
+        box["value"] = value
+        command = box["changeCommand"]
+        return command(value) if command else None
+
+    def press_button(self, name):
+        """The animator presses a button by its control name."""
+        command = self.commands.get(name)
+        return command(False) if command else None
+
+    def label_of(self, name):
+        """A button's label as it stands - its last edit, else its creation."""
+        return self.buttons.get(name, {}).get("label")
 
     def pick(self, row, choice):
         """The animator presses a segment: selected, then its onCommand."""
@@ -272,21 +325,33 @@ class FakeMenuCmds(FakeUiCmds):
         return cx.menus()[row]
 
 
+class PanelRig(object):
+    """The rig every press reads since 2026-10-29 (a pick belongs to one)."""
+    namespace = "Manny_Rig"
+
+
 class Panel(unittest.TestCase):
 
     def setUp(self):
         self.real = (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
-                     cx.read_scheme)
+                     cx.read_scheme, cx._limb_modes, cx._spine_state)
         self.fake = FakeMenuCmds()
         cx.cmds = self.fake
         cx.refresh = lambda *a: ""
+        #  the presses and the painters read the rig and what it shows
+        #  (2026-10-29): without Maya those readers are stubs here
+        cx.maya_rigs.current_rig = lambda selection=None: (PanelRig(), "")
+        cx._limb_modes = lambda rig, kind, worlds=None: {"R": "IK", "L": "IK"}
+        cx._spine_state = lambda rig: ("FK", False)
+        cx.pending.clear()
+        self.addCleanup(cx.pending.clear)
         cx.hubstyle.take_marks()
         cx.build_panel()
         self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
 
     def tearDown(self):
         (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
-         cx.read_scheme) = self.real
+         cx.read_scheme, cx._limb_modes, cx._spine_state) = self.real
 
     def _buttons(self):
         return [c for c in self.fake.calls if c[0] == "button"
@@ -298,10 +363,13 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels_of("R"), ["Free", "Weapon"])
         self.assertEqual(labels_of("L"), ["Free", "Weapon"])
         self.assertEqual(labels_of("W"), ["World", "Hand R", "Hand L"])
-        #  2026-10-21: [Body | Weapon] - the body tab (BakeAcross, Release) first, then the
-        #  weapon tab's rows, Apply all and Aim Mode / Default
+        #  2026-10-21: [Body | Weapon] - the body tab first, then the weapon
+        #  tab's rows, Apply all and Aim Mode / Default.
+        #  2026-10-29: a check a limb row ahead of BakeAcross / Release
         self.assertEqual([c[2]["label"] for c in self._buttons()],
-                         ["BakeAcross", "Release", "Apply", "Apply", "Apply", "Apply all",
+                         ["Apply", "Apply", "Apply", "Apply",
+                          "BakeAcross", "Release",
+                          "Apply", "Apply", "Apply", "Apply all",
                           "Aim Mode", "Default", "Apply", "Aim Mode", "Default"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
@@ -338,7 +406,9 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.marks[cx.STATUS].role, "status")
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
-        self.assertEqual(roles.count(("tool", "check")), 4)     # + the camera tab's Apply (2026-10-28)
+        #  the three parent rows + the camera tab's Apply (2026-10-28)
+        #  + a check a limb row (2026-10-29)
+        self.assertEqual(roles.count(("tool", "check")), 8)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
@@ -353,9 +423,10 @@ class Panel(unittest.TestCase):
         saved = (cx.bake_across, cx.release_across)
         cx.bake_across = lambda selection=None: asked.append("bake") or "done"
         cx.release_across = lambda selection=None: asked.append("release") or "done"
+        by_label = dict((c[2]["label"], c[2]) for c in self._buttons())
         try:
-            self._buttons()[0][2]["command"]()
-            self._buttons()[1][2]["command"]()
+            by_label["BakeAcross"]["command"]()
+            by_label["Release"]["command"]()
         finally:
             cx.bake_across, cx.release_across = saved
         self.assertEqual(asked, ["bake", "release"])
@@ -386,7 +457,7 @@ class Panel(unittest.TestCase):
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
             cx._set_menus({"L": "Weapon"})
-            self._buttons()[3][2]["command"]()          # Hand_L's Apply
+            self.fake.press_button(cx.ROW_APPLY.format("L"))
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, H)])
@@ -397,7 +468,7 @@ class Panel(unittest.TestCase):
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
             cx._set_menus({"R": "Weapon", "L": "Weapon", "W": "World"})
-            self._buttons()[5][2]["command"]()          # Apply all
+            self.fake.press_button(cx.APPLY_ALL["weapon"])
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, F)])
@@ -419,11 +490,14 @@ class Panel(unittest.TestCase):
         self.assertEqual(keys.index("connections"), keys.index("weapons") + 1)
 
     def _stub_switch(self):
+        """What the row's check reaches (2026-10-29: `switch_limb`, with the
+        limb's W; `switch_arm` is its arm-only wrapper)."""
         asked = []
-        saved = cx.switch_arm
-        cx.switch_arm = lambda side, mode, rig=None, highlight=None: \
-            asked.append((side, mode)) or "switched"
-        self.addCleanup(setattr, cx, "switch_arm", saved)
+        saved = cx.switch_limb
+        cx.switch_limb = lambda side, mode, rig=None, highlight=None, \
+            kind=cx.fkik.ARM, world=False: \
+            asked.append((side, mode, world)) or "switched"
+        self.addCleanup(setattr, cx, "switch_limb", saved)
         return asked
 
     def test_fkik_rows_have_two_boxes_each(self):
@@ -431,14 +505,15 @@ class Panel(unittest.TestCase):
             self.assertEqual([self.fake.boxes[cx.fkik_box(side, m)]["label"]
                               for m in ("FK", "IK")], ["FK", "IK"])
 
-    def test_either_press_of_a_box_switches_that_arm(self):
-        """Lighting a box or un-lighting the lit one: both switch - a range
-        inside a take already in that mode must still be pressable."""
+    def test_a_box_records_and_the_row_s_check_switches(self):
+        """2026-10-29: a press of a box is a PICK - the row's check bakes it.
+        Either press of a box records, lighting it or un-lighting the lit one:
+        a range inside a take already in that mode must still be pickable."""
         asked = self._stub_switch()
-        self.fake.press_box(cx.fkik_box("R", "IK"))        # off -> on
-        self.fake.press_box(cx.fkik_box("R", "IK"))        # on -> off
         self.fake.press_box(cx.fkik_box("L", "FK"))
-        self.assertEqual(asked, [("R", "IK"), ("R", "IK"), ("L", "FK")])
+        self.assertEqual(asked, [])
+        self.fake.press_button(cx.LIMB_APPLY.format(cx.fkik.ARM, "L"))
+        self.assertEqual(asked, [("L", "FK", False)])
 
     def test_the_refresh_lights_the_mode_and_presses_nothing(self):
         """Even if Maya ran a box's command on an edit (trap 116)."""
@@ -452,7 +527,7 @@ class Panel(unittest.TestCase):
                 (box["on"] if box["value"] else box["off"])()
             return out
         self.fake.iconTextCheckBox = edit_fires
-        cx._set_fkik({"R": "IK", "L": None})
+        cx._set_fkik({"R": "IK", "L": None}, chosen={})
         value = lambda side, mode: self.fake.boxes[cx.fkik_box(side, mode)]["value"]
         self.assertEqual((value("R", "FK"), value("R", "IK")), (False, True))
         self.assertEqual((value("L", "FK"), value("L", "IK")), (False, False))
@@ -484,31 +559,34 @@ class Panel(unittest.TestCase):
             out.append(call)
         return out
 
-    def test_both_arms_share_one_row(self):
-        #  the arms' row, then the legs' row under it (2026-10-10)
+    def test_each_limb_has_a_row_of_its_own(self):
+        """2026-10-29 («более удобного разсположения»): one limb a row - label,
+        [FK | IK], the W chip, the row's check - so the segments are the width
+        of the card and not the ~28 px two limbs in one row left them."""
         rows = self._made("rowLayout", numberOfColumns=4)
-        self.assertEqual(len(rows), 2)
-        index, call = rows[0]
-        self.assertEqual(call[2]["adjustableColumn"], 2)
-        inside = self._inside(index)
-        self.assertEqual([c[2]["label"] for c in inside if c[0] == "text"],
-                         ["Arm R", "Arm L"])
-        boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
-        self.assertEqual(boxes, [cx.fkik_box(side, mode)
-                                 for side in ("R", "L")
-                                 for mode in ("FK", "IK", cx.W_MODE)])
+        self.assertEqual(len(rows), 4)             # two arms, two legs
+        wanted = [("Arm R", cx.fkik.ARM, "R"), ("Arm L", cx.fkik.ARM, "L"),
+                  ("Leg R", cx.fkik.LEG, "R"), ("Leg L", cx.fkik.LEG, "L")]
+        for (index, call), (label, kind, side) in zip(rows, wanted):
+            self.assertEqual(call[2]["adjustableColumn"], 2)
+            inside = self._inside(index)
+            self.assertEqual([c[2]["label"] for c in inside
+                              if c[0] == "text"], [label])
+            self.assertEqual([c[1][0] for c in inside
+                              if c[0] == "iconTextCheckBox"],
+                             [cx.fkik_box(side, mode, kind)
+                              for mode in ("FK", "IK")])
+            self.assertEqual([c[1][0] for c in inside if c[0] == "checkBox"],
+                             [cx.W_BOX.format(kind, side)])
+            self.assertEqual([c[1][0] for c in inside if c[0] == "button"],
+                             [cx.LIMB_APPLY.format(kind, side)])
 
-    def test_both_legs_share_a_row_of_their_own(self):
-        index, _call = self._made("rowLayout", numberOfColumns=4)[1]
-        inside = self._inside(index)
-        self.assertEqual([c[2]["label"] for c in inside if c[0] == "text"],
-                         ["Leg R", "Leg L"])
-        boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
-        self.assertEqual(boxes, [cx.fkik_box(side, mode, cx.fkik.LEG)
-                                 for side in ("R", "L")
-                                 for mode in ("FK", "IK", cx.W_MODE)])
-        self.assertTrue(all(name.startswith("skeldarConnectionsFKIKLeg_")
-                            for name in boxes))
+    def test_w_is_a_chip_and_no_longer_a_segment(self):
+        for kind in (cx.fkik.ARM, cx.fkik.LEG):
+            for side in ("R", "L"):
+                self.assertIn(cx.W_BOX.format(kind, side), self.fake.checks)
+                self.assertNotIn(cx.fkik_box(side, cx.W_MODE, kind),
+                                 self.fake.boxes)
 
     def test_the_chooser_row_is_named_and_starts_hidden(self):
         rows = self._made("rowLayout", numberOfColumns=2, adjustableColumn=2)
@@ -763,9 +841,16 @@ class PanelCompact(unittest.TestCase):
                        if c[0] == kind and "height" in c[2]]
             self.assertTrue(heights)
             self.assertEqual(set(heights), {22}, kind)
-        buttons = [c[2] for c in fake.calls if c[0] == "button"]
-        bake, release, apply_rows, apply_all = (
-            buttons[0], buttons[1], buttons[2:5], buttons[5])
+        made = [c for c in fake.calls if c[0] == "button"
+                and not (c[2].get("edit") or c[2].get("e"))]
+        by_name = dict((c[1][0], c[2]) for c in made if c[1])
+        by_label = dict((c[2]["label"], c[2]) for c in made if not c[1])
+        bake, release = by_label["BakeAcross"], by_label["Release"]
+        apply_all = by_name[cx.APPLY_ALL["weapon"]]
+        apply_rows = [by_name[cx.ROW_APPLY.format(row)] for row, _ in cx._ROWS]
+        apply_rows += [by_name[cx.LIMB_APPLY.format(kind, side)]
+                       for kind in (cx.fkik.ARM, cx.fkik.LEG)
+                       for side in ("R", "L")]
         for button in apply_rows:                  # icon only, small
             self.assertEqual((button["label"], button["width"],
                               button["height"]), ("", 30, 22))
@@ -782,19 +867,20 @@ class PanelCompact(unittest.TestCase):
                    and c[1] == (cx.CHOOSER_ROW,)][0]
         self.assertEqual(chooser["columnWidth2"], (48, 110))
 
-    def test_the_arms_share_their_row_about_equally_in_the_skin(self):
-        """Live (2026-10-08, verify_hub_compact W8): Maya's rowLayout has
-        one adjustable column, so Arm R's [FK | IK] took the row (299 px)
-        and Arm L's stood at its texts' 49 px - the mockup shows two equal
-        halves. Arm L's column is given half the row at the animator's dock
-        (360 logical); the classic hub, its segments in their own track,
-        keeps its row as it was."""
-        for skin, wanted in ((True, [(4, cx.ARM_L_WIDTH)]), (False, None)):
+    def test_a_limb_s_row_gives_its_segments_the_card(self):
+        """2026-10-08's shared row read 86 and 128 px for the two tracks (Maya's
+        rowLayout has one adjustable column), and with W among the segments each
+        was ~28 px. One limb a row since 2026-10-29: the label, the segments
+        (adjustable), the W chip and the check, the segments taking the rest."""
+        for skin, label, chip in ((True, 48, 28), (False, 64, 34)):
             fake, _marks = self._build(skin)
-            row = [c[2] for c in fake.calls if c[0] == "rowLayout"
-                   and c[2].get("numberOfColumns") == 4][0]
-            self.assertEqual(row.get("columnWidth"), wanted, skin)
-        self.assertEqual(cx.ARM_L_WIDTH, 128)
+            rows = [c[2] for c in fake.calls if c[0] == "rowLayout"
+                    and c[2].get("numberOfColumns") == 4]
+            self.assertEqual(len(rows), 4, skin)
+            for row in rows:
+                self.assertEqual(row["adjustableColumn"], 2, skin)
+                self.assertEqual(row["columnWidth4"],
+                                 (label, 110, chip, 30 if skin else 66), skin)
 
     def test_the_classic_hub_keeps_its_numbers(self):
         fake, _marks = self._build(False)

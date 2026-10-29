@@ -262,14 +262,26 @@ class SwitchWorld(unittest.TestCase):
         self.assertEqual(cx.world_refusal(self.rig, "R"), "")
 
 
+class PanelRig(object):
+    namespace = "Manny_Rig"
+
+
 class PanelW(unittest.TestCase):
-    """The W box beside each limb's IK."""
+    """The W chip beside each limb's segments (a third segment until
+    2026-10-29: a space is not a mode, and three segments in a shared row
+    were ~28 px wide)."""
 
     def setUp(self):
-        self.real = (cx.cmds, cx.refresh, cx.toggle_world)
+        self.real = (cx.cmds, cx.refresh, cx.toggle_world,
+                     cx.maya_rigs.current_rig, cx._limb_modes, cx._spine_state)
         self.fake = FakeMenuCmds()
         cx.cmds = self.fake
         cx.refresh = lambda *a: ""
+        cx.maya_rigs.current_rig = lambda selection=None: (PanelRig(), "")
+        cx._limb_modes = lambda rig, kind, worlds=None: {"R": "IK", "L": "IK"}
+        cx._spine_state = lambda rig: ("FK", False)
+        cx.pending.clear()
+        self.addCleanup(cx.pending.clear)
         self.asked = []
         cx.toggle_world = lambda side, rig=None, highlight=None, kind=cx.fkik.ARM: \
             self.asked.append((side, kind)) or "toggled"
@@ -278,30 +290,35 @@ class PanelW(unittest.TestCase):
         self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
 
     def tearDown(self):
-        cx.cmds, cx.refresh, cx.toggle_world = self.real
+        (cx.cmds, cx.refresh, cx.toggle_world, cx.maya_rigs.current_rig,
+         cx._limb_modes, cx._spine_state) = self.real
 
-    def test_every_limb_has_a_w_segment_after_its_ik(self):
-        names = [c[1][0] for c in self.fake.calls if c[0] == "iconTextCheckBox" and c[1]
-                 and not (c[2].get("edit") or c[2].get("exists") or c[2].get("query"))]
+    def test_every_limb_has_a_w_chip_after_its_segments(self):
+        chips = [c[1][0] for c in self.fake.calls if c[0] == "checkBox" and c[1]
+                 and not (c[2].get("edit") or c[2].get("exists")
+                          or c[2].get("query"))]
         for kind in (cx.fkik.ARM, cx.fkik.LEG):
             for side in ("R", "L"):
-                ik, w = cx.fkik_box(side, "IK", kind), cx.fkik_box(side, cx.W_MODE, kind)
-                self.assertEqual(names.index(w), names.index(ik) + 1)
-                self.assertEqual(self.fake.boxes[w]["label"], "W")
-                self.assertEqual(self.marks[w].role, "segment")
+                chip = cx.W_BOX.format(kind, side)
+                self.assertIn(chip, chips)
+                self.assertEqual(self.fake.checks[chip]["label"], "W")
+                self.assertEqual(self.marks[chip].role, "chip")
 
-    def test_either_press_of_w_toggles_that_limb(self):
-        self.fake.press_box(cx.fkik_box("R", cx.W_MODE))
-        self.fake.press_box(cx.fkik_box("R", cx.W_MODE))
-        self.fake.press_box(cx.fkik_box("L", cx.W_MODE, cx.fkik.LEG))
-        self.assertEqual(self.asked, [("R", cx.fkik.ARM), ("R", cx.fkik.ARM),
-                                      ("L", cx.fkik.LEG)])
+    def test_the_chip_records_and_the_row_s_check_toggles_that_limb(self):
+        self.fake.press_check(cx.W_BOX.format(cx.fkik.ARM, "R"), True)
+        self.assertEqual(self.asked, [])
+        self.fake.press_button(cx.LIMB_APPLY.format(cx.fkik.ARM, "R"))
+        self.fake.press_check(cx.W_BOX.format(cx.fkik.LEG, "L"), True)
+        self.fake.press_button(cx.LIMB_APPLY.format(cx.fkik.LEG, "L"))
+        self.assertEqual(self.asked, [("R", cx.fkik.ARM), ("L", cx.fkik.LEG)])
 
     def test_the_refresh_lights_w_for_a_limb_in_world_only(self):
-        cx._set_fkik({"R": "IK", "L": "IK"}, worlds=["R"])
-        value = lambda side, mode: self.fake.boxes[cx.fkik_box(side, mode)]["value"]
-        self.assertEqual((value("R", "IK"), value("R", "W")), (True, True))
-        self.assertEqual((value("L", "IK"), value("L", "W")), (True, False))
+        cx._set_fkik({"R": "IK", "L": "IK"}, worlds=["R"], chosen={})
+        self.assertTrue(self.fake.boxes[cx.fkik_box("R", "IK")]["value"])
+        self.assertTrue(
+            self.fake.checks[cx.W_BOX.format(cx.fkik.ARM, "R")]["value"])
+        self.assertFalse(
+            self.fake.checks[cx.W_BOX.format(cx.fkik.ARM, "L")]["value"])
         self.assertEqual(self.asked, [])
 
     def test_no_world_chip_any_more(self):

@@ -116,6 +116,7 @@ from maya_scenesetup import catalog
 from maya_scenesetup import fkik
 from maya_scenesetup import fkikspine
 from maya_scenesetup import ikworld
+from maya_scenesetup import pending
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponaim
 from maya_scenesetup import weaponspace
@@ -196,9 +197,23 @@ IK_CONTROL = "IKArm_{0}"
 FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
 FKIK_BOX_LEG = "skeldarConnectionsFKIKLeg_{0}_{1}"
 FKIK_BOX_SPINE = "skeldarConnectionsFKIKSpine_{0}"
-#  W (2026-10-28): a third box beside each limb's IK - lit while its IK control rides a world
-#  control (`ikworld`), a press toggles it; named as the mode boxes with the mode "W"
+#  W (2026-10-28): lit while the limb's IK control rides a world control
+#  (`ikworld`), a press toggles it. A third box among the modes until
+#  2026-10-29, a chip of its own since (`W_BOX`): a space is not a mode, and
+#  three segments in a shared row were ~28 px wide.
 W_MODE = "W"
+#  Pick, then press (2026-10-29, the animator: «нужно сделать консистентно что
+#  бы перепекание происходило по нажатию кнопки а не по разному в каждом
+#  разделе»): one limb a row, its W a chip, a check a row, one Apply all a tab.
+#  Nothing bakes on a pick - `pending` holds it until a button is pressed.
+W_BOX = "skeldarConnectionsWorld_{0}_{1}"
+LIMB_APPLY = "skeldarConnectionsLimbApply_{0}_{1}"
+SPINE_APPLY = "skeldarConnectionsSpineApply"
+ROW_APPLY = "skeldarConnectionsRowApply_{0}"
+APPLY_ALL = {"body": "skeldarConnectionsApplyBody",
+             "weapon": "skeldarConnectionsApplyWeapon",
+             "camera": "skeldarConnectionsApplyCamera"}
+APPLY_LABEL = "Apply all"
 #  The skin's Arm L column, logical px (2026-10-08): about half the row at the
 #  animator's 360 px dock. Maya's rowLayout has ONE adjustable column, so Arm
 #  R's [FK | IK] took the row and Arm L's stood at its texts' width (live:
@@ -212,6 +227,7 @@ FOLLOWS = "follows"
 
 NO_WEAPON = "no weapon in the scene - Weapons > Add first"
 NOTHING_TO_DO = "nothing to change"
+NOTHING_PICKED = "nothing picked - press a segment first"
 RETARGETING = ("a retarget is standing on this rig (MoCapConstraints) - "
                "finish it first")
 
@@ -1260,6 +1276,100 @@ def _run(action):
         _refresh_cards()
 
 
+#  ------------------------------------------------- pick, then press
+
+def rig_key(rig):
+    """The key a rig's picks are kept under: its namespace ('' for a rig in the
+    root namespace), None with no rig."""
+    return None if rig is None else getattr(rig, "namespace", "")
+
+
+def picks(rig=None):
+    """What is picked on `rig` and not applied (2026-10-29). Reading drops
+    every other rig's picks: a pick belongs to the character it was made on."""
+    if rig is None:
+        rig, _refusal = maya_rigs.current_rig()
+    key = rig_key(rig)
+    if key is None:
+        return {}
+    pending.only(key)
+    return pending.for_rig(key)
+
+
+def remember(rig, chosen):
+    """Keep `chosen` as this rig's picks, and paint the card for them."""
+    key = rig_key(rig)
+    if key is None:
+        return {}
+    out = pending.set_for(key, chosen)
+    _paint_counts(out)
+    return out
+
+
+def _states(rig, keys):
+    """What the scene shows for `keys`, by pick key - the one reader a press
+    settles against. Only the families the keys belong to are read: a limb's
+    press must not read the spine, the weapon or the camera."""
+    out = {}
+    limbs = {}
+    for key in keys:
+        if key.startswith(pending.LIMB) or key.startswith(pending.WORLD):
+            _prefix, kind, side = key.split(":")
+            if kind not in limbs:
+                worlds = []
+                limbs[kind] = (_limb_modes(rig, kind, worlds), worlds)
+            modes, worlds = limbs[kind]
+            out[key] = (side in worlds if key.startswith(pending.WORLD)
+                        else modes.get(side))
+        elif key == pending.SPINE:
+            out[key] = _spine_state(rig)[0]
+    return out
+
+
+def _settled(rig, chosen, *keys):
+    """`chosen` after a press: the picks in `keys` (or all of them) re-read
+    against the scene - one that came true drops, one a refusal left standing
+    stays. Nothing here reads a refusal's text."""
+    out = dict(chosen)
+    asked = keys or tuple(out)
+    states = _states(rig, asked)
+    for key in asked:
+        if key in out and key in states:
+            out = pending.record(out, key, out[key], states[key])
+    return out
+
+
+def _light(name, state):
+    """The skin's state of control `name` (maya_hubqt.set_state): a picked
+    segment or chip "want", a row's check "wait". Nothing without Maya's UI -
+    the one place this module reaches Qt."""
+    try:
+        import maya_hubqt
+        if maya_hubqt.available():
+            maya_hubqt.set_state(name, state)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _paint_counts(chosen):
+    """Each tab's Apply all reads what it would bake: «Apply all · 2»."""
+    for tab, name in APPLY_ALL.items():
+        if not cmds.control(name, exists=True):
+            continue
+        number = pending.count(pending.of_tab(chosen, tab))
+        cmds.button(name, edit=True,
+                    label=APPLY_LABEL if not number
+                    else "%s · %d" % (APPLY_LABEL, number))
+
+
+def _picked_text(chosen):
+    """What the status says while picks stand."""
+    if not chosen:
+        return ""
+    return "Picked: %s. Press the row's check, or Apply all." % pending.text(
+        chosen)
+
+
 def _refresh_cards():
     """Every standing card re-read - the hub's and each popup copy's
     (2026-10-13): a press in one changes what the others show, and a press
@@ -1487,18 +1597,34 @@ def _limb_modes(rig, kind, worlds=None):
 _FKIK_QUIET = {"on": False}
 
 
-def _set_fkik(modes, kind=fkik.ARM, worlds=()):
+def _set_fkik(modes, kind=fkik.ARM, worlds=(), chosen=None):
     """Light each limb's mode, neither when mixed or missing; its W while it is in
-    world (`worlds` its sides). Quiet: a box's own command must not fire from here
-    (trap 116 - an edit ran a radio's onCommand in one hub build)."""
+    world (`worlds` its sides). Then the pending overlay (2026-10-29): the picked
+    box and chip carry the skin's `want`, the row's check "wait". Quiet: a box's
+    own command must not fire from here (trap 116 - an edit ran a radio's
+    onCommand in one hub build)."""
+    chosen = picks() if chosen is None else chosen
     _FKIK_QUIET["on"] = True
     try:
         for side in SIDES:
-            for mode in fkik.MODES + (W_MODE,):
+            wanted_mode = chosen.get(pending.limb_key(kind, side))
+            for mode in fkik.MODES:
                 name = fkik_box(side, mode, kind)
                 if cmds.iconTextCheckBox(name, exists=True):
-                    lit = side in worlds if mode == W_MODE else modes.get(side) == mode
-                    cmds.iconTextCheckBox(name, edit=True, value=lit)
+                    cmds.iconTextCheckBox(name, edit=True,
+                                          value=modes.get(side) == mode)
+                    _light(name, "want" if wanted_mode == mode else "")
+            box = W_BOX.format(kind, side)
+            if cmds.checkBox(box, exists=True):
+                wanted = chosen.get(pending.world_key(kind, side))
+                cmds.checkBox(box, edit=True,
+                              value=side in worlds if wanted is None else wanted)
+                _light(box, "" if wanted is None else "want")
+            check = LIMB_APPLY.format(kind, side)
+            if cmds.control(check, exists=True):
+                _light(check, "wait" if (
+                    pending.limb_key(kind, side) in chosen
+                    or pending.world_key(kind, side) in chosen) else "")
     finally:
         _FKIK_QUIET["on"] = False
 
@@ -1587,17 +1713,76 @@ def _press_release_across(*_args):
     return _run(lambda: release_across())
 
 
-def _press_fkik(side, mode, kind=fkik.ARM):
-    """Either press of a box - lighting it or not - switches the limb; the
-    refresh after it lights what IS."""
+def _press_limb(side, mode, kind=fkik.ARM):
+    """A mode pressed: a PICK, nothing baked (2026-10-29). FK drops a pending W
+    - a limb in FK has no world control (`switch_limb` takes it off)."""
     def go(*_args):
         if _FKIK_QUIET["on"]:
             return None
-        if mode == W_MODE:
-            return _run(lambda: toggle_world(side, kind=kind))
-        if kind == fkik.ARM:
-            return _run(lambda: switch_arm(side, mode))
-        return _run(lambda: switch_limb(side, mode, kind=kind))
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        worlds = []
+        shown = _limb_modes(rig, kind, worlds).get(side)
+        chosen = pending.record(picks(rig), pending.limb_key(kind, side),
+                                mode, shown)
+        if mode == fkik.FK:
+            chosen = pending.without(chosen, pending.world_key(kind, side))
+        chosen = remember(rig, chosen)
+        _set_fkik(_limb_modes(rig, kind), kind, worlds, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
+    return go
+
+
+def _press_world(side, kind=fkik.ARM):
+    """The W chip: a pick. W means "the IK on a world control", so it asks for
+    IK too where the limb is not IK yet."""
+    def go(*_args):
+        if _FKIK_QUIET["on"]:
+            return None
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        worlds = []
+        modes = _limb_modes(rig, kind, worlds)
+        wanted = bool(cmds.checkBox(W_BOX.format(kind, side), query=True,
+                                    value=True))
+        chosen = pending.record(picks(rig), pending.world_key(kind, side),
+                                wanted, side in worlds)
+        if wanted:
+            chosen = pending.record(chosen, pending.limb_key(kind, side),
+                                    fkik.IK, modes.get(side))
+        chosen = remember(rig, chosen)
+        _set_fkik(modes, kind, worlds, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
+    return go
+
+
+def apply_limb(rig, kind, side, chosen):
+    """Bake what is picked on one limb: its mode and its W are one press."""
+    mode = chosen.get(pending.limb_key(kind, side))
+    world = chosen.get(pending.world_key(kind, side))
+    if mode is None and world is None:
+        return NOTHING_PICKED
+    if mode is None:
+        return toggle_world(side, rig=rig, kind=kind)
+    return switch_limb(side, mode, rig=rig, kind=kind, world=bool(world))
+
+
+def _press_limb_apply(side, kind=fkik.ARM):
+    """The row's check: bake that limb's pick, then settle it."""
+    def go(*_args):
+        def act():
+            rig, refusal = maya_rigs.current_rig()
+            if rig is None:
+                return refusal
+            chosen = picks(rig)
+            text = apply_limb(rig, kind, side, chosen)
+            remember(rig, _settled(rig, chosen,
+                                   pending.limb_key(kind, side),
+                                   pending.world_key(kind, side)))
+            return text
+        return _run(act)
     return go
 
 
@@ -1770,41 +1955,52 @@ def _press_disconnect(*_args):
 
 
 def _fkik_row(kind):
-    """One row of FK | IK check boxes per side of `kind` (arms or legs): Arm R
-    [FK|IK|W]  Arm L [FK|IK|W] - W beside IK since 2026-10-28 (the limb on a world
-    control, `toggle_world`). The skin's segments leave their tracks for a row of
-    ours, so the right-hand track is as wide as its column is given
-    (ARM_L_WIDTH); the classic hub's track holds its buttons and sizes itself."""
-    cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 3),
-                                 (3, "left", 6), (4, "both", 3)],
-                   **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
+    """One row a limb (2026-10-29, the animator: «более удобного
+    разсположения»): `Arm R [FK | IK] (W) check`. Two limbs shared a row until
+    then and Maya's one adjustable column gave their tracks 86 and 128 px, so
+    with W among the segments each was ~28 px wide; one row a limb gives the
+    segments the width of the card. The check bakes what the row picked."""
     for side in SIDES[::-1]:
-        _row_label(fkik.LABEL[kind].format(side).replace("_", " "))
-        segments = cmds.rowLayout(numberOfColumns=3,
-                                  columnAttach=[(1, "both", 1), (2, "both", 1),
-                                                (3, "both", 1)])
-        hubstyle.mark(segments, "segments", layout=True)
+        label = fkik.LABEL[kind].format(side)
         noun = "leg" if kind == fkik.LEG else "arm"
         end = "foot" if kind == fkik.LEG else "hand"
-        for mode in fkik.MODES + (W_MODE,):
-            if mode == W_MODE:
-                tip = ("{0} in world: the IK {1} on a world control (Tools > World x2: a "
-                       "Move box, Rotate rings), keyed on its IK keys - it stays in the scene "
-                       "while Main moves. Press again: back into Main's space".format(
-                           fkik.LABEL[kind].format(side), end))
-            else:
-                tip = ("{0} to {1} - over the highlighted range, else the whole take; "
-                       "the {2} keeps what it shows".format(
-                           fkik.LABEL[kind].format(side), mode, noun))
+        cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
+                       columnWidth4=(hubstyle.pick(48, 64), 110,
+                                     hubstyle.pick(28, 34),
+                                     hubstyle.tool_width(66)),
+                       columnAttach=[(1, "left", 0), (2, "both", 3),
+                                     (3, "both", 2), (4, "right", 0)])
+        _row_label(label.replace("_", " "))
+        segments = cmds.rowLayout(numberOfColumns=len(fkik.MODES),
+                                  columnAttach=[(i + 1, "both", 1)
+                                                for i in range(len(fkik.MODES))])
+        hubstyle.mark(segments, "segments", layout=True)
+        for mode in fkik.MODES:
             hubstyle.mark(cmds.iconTextCheckBox(
                 fkik_box(side, mode, kind), style="textOnly", label=mode,
-                height=hubstyle.height("segment", 22),
-                value=False, annotation=tip,
-                onCommand=_press_fkik(side, mode, kind),
-                offCommand=_press_fkik(side, mode, kind)), "segment")
+                height=hubstyle.height("segment", 22), value=False,
+                annotation="{0} to {1} - picked, not baked: press the row's "
+                           "check, or Apply all. Over the highlighted range, "
+                           "else the whole take; the {2} keeps what it "
+                           "shows".format(label, mode, noun),
+                onCommand=_press_limb(side, mode, kind),
+                offCommand=_press_limb(side, mode, kind)), "segment")
         cmds.setParent("..")
-    cmds.setParent("..")
+        hubstyle.mark(cmds.checkBox(
+            W_BOX.format(kind, side), label=W_MODE, value=False,
+            annotation="{0} in world: the IK {1} on a world control (Tools > "
+                       "World x2: a Move box, Rotate rings), keyed on its IK "
+                       "keys - it stays in the scene while Main moves. Picked, "
+                       "not baked: press the row's check.".format(label, end),
+            changeCommand=_press_world(side, kind)), "chip")
+        hubstyle.mark(cmds.button(
+            LIMB_APPLY.format(kind, side),
+            label=hubstyle.tool_label("Apply"),
+            width=hubstyle.tool_width(66),
+            height=hubstyle.height("small", 24),
+            annotation="bake what is picked on %s" % label.replace("_", " "),
+            command=_press_limb_apply(side, kind)), "tool", "check")
+        cmds.setParent("..")
 
 
 def _spine_row():
@@ -1946,6 +2142,7 @@ def build_panel():
                 onCommand=_menu_changed(row)), "segment")
         cmds.setParent("..")
         hubstyle.mark(cmds.button(
+            ROW_APPLY.format(row),
             label=hubstyle.tool_label("Apply"),
             width=hubstyle.tool_width(66),
             height=hubstyle.height("small", 24),
@@ -1956,7 +2153,8 @@ def build_panel():
     #  and Release - any object, not the weapon - under a caption of their
     #  own (2026-10-16, the card rules; on one row since 2026-10-08)
     hubstyle.mark(cmds.button(
-        label="Apply all", height=hubstyle.height("button", 32),
+        APPLY_ALL["weapon"], label=APPLY_LABEL,
+        height=hubstyle.height("button", 32),
         backgroundColor=(0.45, 0.70, 0.50),
         annotation="bring the scene to all three parents",
         command=_press_apply_all), "primary", "check")
