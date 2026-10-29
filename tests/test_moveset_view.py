@@ -213,10 +213,6 @@ class WeaponRules(unittest.TestCase):
         self.assertEqual(plain.label("AM_Longsword_Attack_Stand_Hold"), "Stand Hold")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Build(unittest.TestCase):
     def test_the_card_builds_its_controls(self):
         from tests.uifakes import FakeUiCmds
@@ -233,3 +229,7 @@ class Build(unittest.TestCase):
             self.assertIn(name, names)
         for key, _label in m.TYPES:
             self.assertIn(panel.CHIP.format(key), names)
+
+
+if __name__ == "__main__":
+    unittest.main()
