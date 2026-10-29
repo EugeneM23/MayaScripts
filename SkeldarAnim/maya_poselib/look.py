@@ -488,6 +488,18 @@ def _clip_line(card, data):
     return (" %s " % DOT).join(parts)
 
 
+def _curves_line(data):
+    """«original curves · BaseAnimation, AnimLayer1» of a card that keeps its source's
+    curves (spec 2026-10-28), "" otherwise."""
+    block = data.get("curves") if isinstance(data, dict) else None
+    layers = block.get("layers") if isinstance(block, dict) else None
+    if not isinstance(layers, list) or not layers:
+        return ""
+    names = [layer.get("name") for layer in layers
+             if isinstance(layer, dict) and isinstance(layer.get("name"), str)]
+    return "original curves %s %s" % (DOT, ", ".join(names)) if names else ""
+
+
 def details(card, data):
     """The lines of the details panel for `card` (a `store.Card`) and `data` (its `pose.json` /
     `anim.json`, or None before it is read - the card's listing stands in). Lines that would be
@@ -503,6 +515,7 @@ def details(card, data):
 
         Manny [rig]
         48 frames (0-47) · 30 fps · 12 keys
+        original curves · BaseAnimation, AnimLayer1   (a card that keeps its source's curves)
         3 bones · Hand L, Arm L
         Eugene · 2026-10-03 12:00
         shot_010.ma
@@ -513,6 +526,7 @@ def details(card, data):
         return []
     anim = _is_anim(card, data)
     clip = _clip_line(card, data) if anim else ""
+    curves = _curves_line(data) if anim else ""
     if (data.get("kind") or getattr(card, "kind", "")) == "objects":
         label = "Objects"
         objects = data.get("objects")
@@ -536,7 +550,7 @@ def details(card, data):
         where.append("frame " + _num(frame))
     if scene:
         where.append(str(scene).replace("\\", "/").rsplit("/", 1)[-1])
-    return [line for line in (label, clip, second, (" %s " % DOT).join(who),
+    return [line for line in (label, clip, curves, second, (" %s " % DOT).join(who),
                               (" %s " % DOT).join(where)) if line]
 
 

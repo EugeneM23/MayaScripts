@@ -960,5 +960,20 @@ class ListRows(unittest.TestCase):
         self.assertEqual(look.crumbs("Hands/Left"), "Library › Hands › Left")
 
 
+class CurvesDetails(unittest.TestCase):
+
+    def test_a_card_with_curves_names_its_layers(self):
+        data = {"format": "skeldar.anim", "kind": "character", "start": 0.0, "end": 9.0,
+                "frames": 10, "curves": {"layers": [{"name": "BaseAnimation", "base": True},
+                                                    {"name": "AnimLayer1"}], "nodes": 4}}
+        lines = look.details(None, data)
+        self.assertIn("original curves %s BaseAnimation, AnimLayer1" % look.DOT, lines)
+
+    def test_a_card_without_says_nothing_of_curves(self):
+        data = {"format": "skeldar.anim", "kind": "character", "start": 0.0, "end": 9.0,
+                "frames": 10}
+        self.assertFalse(any("original curves" in line for line in look.details(None, data)))
+
+
 if __name__ == "__main__":
     unittest.main()

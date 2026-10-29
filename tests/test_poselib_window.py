@@ -1671,7 +1671,8 @@ class SaveAnimation(AnimCase):
 class AnimOptions(AnimCase):
 
     WHOLE = {"mode": "replace", "at_current": True, "start": 10.0, "end": 57.0,
-             "connect": False, "keys": "every", "in_place": False}
+             "connect": False, "keys": "every", "in_place": False,
+             "paste_as": "retarget", "layers": None}
 
     def set_every_option(self, win=None):
         win = win or self.win
@@ -1731,7 +1732,8 @@ class AnimOptions(AnimCase):
         self.assertEqual(self.scene.calls("apply"),
                          [("apply", self.walk, False,
                            {"mode": "insert", "at_current": False, "start": 12.0, "end": 30.0,
-                            "connect": True, "keys": "source", "in_place": True})])
+                            "connect": True, "keys": "source", "in_place": True,
+                            "paste_as": "retarget", "layers": None})])
 
     def test_a_pose_card_hides_the_block_and_passes_no_options(self):
         self.win.pick(self.walk)
@@ -1751,7 +1753,8 @@ class AnimOptions(AnimCase):
         # the range is the card's own again: it is not remembered
         self.assertEqual(win.options(), {"mode": "insert", "at_current": False, "start": 10.0,
                                          "end": 57.0, "connect": True, "keys": "source",
-                                         "in_place": True})
+                                         "in_place": True, "paste_as": "retarget",
+                                         "layers": None})
 
     def test_an_option_turned_off_stays_off_and_one_never_written_is_its_default(self):
         self.scene.options[pw.AT_CURRENT_VAR] = 0
@@ -2165,6 +2168,7 @@ class FakeModules(object):
         self.previewed = None         # what preview answers; None: a sheet is painted
         self.preview_error = None     # an exception preview raises instead of answering
         self.colour = "#c08020"
+        self.curves = None            # the curves build_clip answers; None: a card without
 
     # --- animcapture
 
@@ -2180,6 +2184,11 @@ class FakeModules(object):
         return header, {"bones": ["root"], "world": [[0, 0, 0, 1, 0, 0, float(n)]
                                                       for n in range(end - start + 1)]}, \
             "Manny_Rig: %d frames" % (end - start + 1)
+
+    def build_clip(self, selection=None, regions=None, start=None, end=None, progress=None):
+        header, frames, note = self.build_animation(selection, regions, start, end, progress)
+        import types
+        return types.SimpleNamespace(header=header, frames=frames, curves=self.curves, note=note)
 
     def preview(self, sheet_path, start, end, progress=None):
         self.log.append(("preview", start, end, progress is not None))
@@ -2218,6 +2227,7 @@ class FakeModules(object):
         capture = types.SimpleNamespace(thumbnail=self.thumbnail, build_pose=self.build_pose)
         animcapture = types.SimpleNamespace(default_range=self.default_range,
                                             build_animation=self.build_animation,
+                                            build_clip=self.build_clip,
                                             preview=self.preview,
                                             CANCELLED="cancelled - nothing saved")
         timewalk = types.SimpleNamespace(Progress=FakeProgress)
@@ -2394,6 +2404,26 @@ class RealScene(unittest.TestCase):
         self.scene.apply(self.walk, False)
         self.assertIsNone(self.logged("animapply.apply")[0][2])
 
+    def test_a_curves_paste_reads_the_cards_curves_and_hands_them_on(self):
+        from maya_poselib import curvedata
+        layers = [curvedata.layer_record(curvedata.BASE, base=True)]
+        curves = {"version": 1, "nodes": []}
+        path = store.write(self.root, "", "Layered",
+                           dict(anim_data("Layered"), curves=curvedata.summary(layers, 0)),
+                           frames=FRAMES, curves=curves)
+        self.scene.apply(path, False, options={"paste_as": "curves"})
+        entry = self.logged("animapply.apply")[-1]
+        self.assertEqual(entry[4].get("curves"), curves)
+
+    def test_a_retarget_paste_hands_no_curves(self):
+        self.scene.apply(self.walk, False, options={"paste_as": "retarget"})
+        self.assertNotIn("curves", self.logged("animapply.apply")[-1][4])
+
+    def test_save_writes_the_clips_curves(self):
+        self.fakes.curves = {"version": 1, "nodes": []}
+        path, _text = self.scene._save_animation("Clip", "", None, None, {"start": 3, "end": 9})
+        self.assertEqual(store.read_curves(path), {"version": 1, "nodes": []})
+
     def test_an_animation_blend_finishes_under_a_progress_window(self):
         options = {"mode": "replace"}
         self.assertEqual(self.scene.blend_start(self.walk, False, options), "")
@@ -2541,6 +2571,59 @@ class RealScene(unittest.TestCase):
         self.assertEqual(len(store.read_frames(walk)["world"]), 48)        # the update's
         self.assertColour(walk + "/" + store.PREVIEW_FILE, self.fakes.colour)  # the replace's
         self.assertEqual(store.read(fist)["name"], "Fist. ")
+
+
+class CurvesOptions(AnimCase):
+    """A card holding original curves (spec 2026-10-28): its Paste as row, its layer checklist,
+    the options greyed under «Original curves»."""
+
+    def setUp(self):
+        AnimCase.setUp(self)
+        from maya_poselib import curvedata
+        layers = [curvedata.layer_record(curvedata.BASE, base=True),
+                  curvedata.layer_record("AnimLayer1")]
+        data = dict(anim_data("Layered"), curves=curvedata.summary(layers, 2))
+        self.layered = store.write(self.root, "", "Layered", data, frames=FRAMES,
+                                   curves={"version": 1, "nodes": []})
+        self.win.refresh()
+
+    def test_the_row_shows_only_for_a_card_with_curves(self):
+        self.win.pick(self.walk)
+        self.assertFalse(self.win.paste_as_row.isVisible())
+        self.win.pick(self.layered)
+        self.assertTrue(self.win.paste_as_row.isVisible())
+        self.assertFalse(self.win.layer_box.isVisible())          # Retarget by default
+        self.assertEqual(list(self.win.layer_checks), ["BaseAnimation", "AnimLayer1"])
+
+    def test_original_curves_lists_the_layers_and_greys_what_changes_values(self):
+        self.win.pick(self.layered)
+        self.win.paste_as_buttons["curves"].click()
+        self.assertTrue(self.win.layer_box.isVisible())
+        self.assertFalse(self.win.keys_buttons["every"].isEnabled())
+        self.assertFalse(self.win.mirror.isEnabled())
+        self.assertFalse(self.win.blend.isEnabled())
+        self.assertFalse(self.win.connect_box.isEnabled())         # two layers picked
+        self.assertEqual((self.win.options()["paste_as"], self.win.options()["layers"]),
+                         ("curves", None))
+        self.win.layer_checks["BaseAnimation"].click()
+        self.assertEqual(self.win.options()["layers"], ["AnimLayer1"])
+        self.assertTrue(self.win.connect_box.isEnabled())          # one layer: Connect works
+        self.assertEqual(self.scene.options.get(pw.PASTE_AS_VAR), "curves")
+
+    def test_the_last_layer_stays_on(self):
+        self.win.pick(self.layered)
+        self.win.paste_as_buttons["curves"].click()
+        self.win.layer_checks["BaseAnimation"].click()
+        self.win.layer_checks["AnimLayer1"].click()
+        self.assertTrue(self.win.layer_checks["AnimLayer1"].isChecked())
+
+    def test_back_to_retarget_gives_everything_back(self):
+        self.win.pick(self.layered)
+        self.win.paste_as_buttons["curves"].click()
+        self.win.paste_as_buttons["retarget"].click()
+        self.assertTrue(self.win.keys_buttons["every"].isEnabled())
+        self.assertTrue(self.win.mirror.isEnabled())
+        self.assertTrue(self.win.connect_box.isEnabled())
 
 
 class BlendHolds(WindowCase):

@@ -95,9 +95,11 @@ import math
 import os
 import tempfile
 import traceback
+from collections import OrderedDict
 
 from maya_poselib import animdata
 from maya_poselib import cardgrid
+from maya_poselib import curvedata
 from maya_poselib import look
 from maya_poselib import store
 
@@ -137,6 +139,14 @@ AT_CURRENT_VAR = "skeldarPoseLibraryAtCurrent"
 CONNECT_VAR = "skeldarPoseLibraryConnect"
 KEYS_VAR = "skeldarPoseLibraryKeys"
 IN_PLACE_VAR = "skeldarPoseLibraryInPlace"
+PASTE_AS_VAR = "skeldarPoseLibraryPasteAs"     # Paste as: "retarget" | "curves" (2026-10-28)
+PASTE_AS_LABELS = {"character": (("retarget", "Retarget"), ("curves", "Original curves")),
+                   "objects": (("retarget", "Active layer"), ("curves", "Original curves"))}
+CURVES_OFF = "Off for original curves - they are pasted as they were keyed"
+PASTE_AS_VAR = "skeldarPoseLibraryPasteAs"     # Paste as: "retarget" | "curves" (2026-10-28)
+PASTE_AS_LABELS = {"character": (("retarget", "Retarget"), ("curves", "Original curves")),
+                   "objects": (("retarget", "Active layer"), ("curves", "Original curves"))}
+CURVES_OFF = "Off for original curves - they are pasted as they were keyed"
 ONLY_VAR = "skeldarPoseLibrarySelectedOnly"     # Selected only: just the selected nodes keyed
 KEY_LABELS = (("every", "Every frame"), ("source", "Source keys"))
 FRAME_LIMIT = 1000000                # a Start / End spin box's reach, either way
@@ -358,12 +368,17 @@ def _as_options(options):
     return animdata.options_from(options)
 
 
-def press_steps(header, options, current):
+def press_steps(header, options, current, curves=None):
     """How many steps the progress window of an animation press takes - what the press steps:
     a character card one per pasted frame (`animdata.paste_plan` of `options` at the frame
     `current`), an objects card at most one per channel it holds; at least one (a press the plan
     refuses steps none, and says why). Pure."""
     header = header or {}
+    if _as_options(options).paste_as == "curves" and curvedata.has_curves(header):
+        if curves is not None:
+            return max(1, sum(len(node.get("attrs") or {}) for node in curves.get("nodes") or ()))
+        return max(1, sum(len((record or {}).get("attrs") or {})
+                          for record in header.get("objects") or ()))
     if header.get("kind") == "objects":
         channels = sum(len((record or {}).get("attrs") or {})
                        for record in header.get("objects") or ())
@@ -384,7 +399,8 @@ def remembered_options(read):
     Pure."""
     return animdata.options_from({"mode": read(PASTE_VAR), "at_current": read(AT_CURRENT_VAR),
                                   "connect": read(CONNECT_VAR), "keys": read(KEYS_VAR),
-                                  "in_place": read(IN_PLACE_VAR)})
+                                  "in_place": read(IN_PLACE_VAR),
+                                  "paste_as": read(PASTE_AS_VAR)})
 
 
 def folder_text(rel):
@@ -717,8 +733,9 @@ class Scene(object):
         try:
             with timewalk.Progress("Saving %s" % name, max(0, end - start + 1) + cells) \
                     as progress:
-                header, frames, note = animcapture.build_animation(
-                    regions=regions, start=start, end=end, progress=progress)
+                clip = animcapture.build_clip(regions=regions, start=start, end=end,
+                                              progress=progress)
+                header, frames, note = clip.header, clip.frames, clip.note
                 if header is None:
                     return None, note
                 #  the frames are walked: a preview that RAISES (a playblast Maya refused) is
@@ -736,7 +753,8 @@ class Scene(object):
                 else None
             try:
                 path = store.write(self.library(), folder, name, header, thumbnail=thumbnail,
-                                   frames=frames, preview=sheet if made else None)
+                                   frames=frames, preview=sheet if made else None,
+                                   curves=clip.curves)
             except (ValueError, OSError) as exc:
                 return None, str(exc)
         finally:
@@ -769,13 +787,13 @@ class Scene(object):
         old = store.read(path)
         start, end = _whole(old.get("start") or 0.0), _whole(old.get("end") or 0.0)
         with timewalk.Progress("Updating %s" % name, max(1, end - start + 1)) as progress:
-            header, frames, note = animcapture.build_animation(start=start, end=end,
-                                                               progress=progress)
+            clip = animcapture.build_clip(start=start, end=end, progress=progress)
+        header, frames, note = clip.header, clip.frames, clip.note
         if header is None:
             return False, note
         if "preview" in old:
             header["preview"] = old["preview"]
-        store.replace(path, header, frames=frames)
+        store.replace(path, header, frames=frames, curves=clip.curves)
         return True, "%s updated from the selection over frames %d-%d - %s" % (
             name, start, end, note)
 
@@ -836,14 +854,28 @@ class Scene(object):
         except ValueError:
             return None
 
-    def _paste(self, press, path, options):
+    def _curves(self, path, options):
+        """The card's `curves.json.gz` when the press pastes Original curves of a CHARACTER card
+        (an objects card keeps its curves in the header), else None - a file that cannot be read
+        hands None too, and the press retargets and says so."""
+        if _as_options(options).paste_as != "curves" or not store.is_anim(path):
+            return None
+        try:
+            header = store.read(path)
+            if header.get("kind") == "objects" or not curvedata.has_curves(header):
+                return None
+            return store.read_curves(path)
+        except ValueError:
+            return None
+
+    def _paste(self, press, path, options, curves=None):
         """`press(header, frames, progress)` - an `animapply` press of the animation card at
         `path` - run in ONE progress window, a step a pasted frame (`press_steps`); its
         (ok, text)."""
         from maya_poselib import timewalk
         header = store.read(path)
         frames = self._frames(path, header)
-        steps = press_steps(header, options, _current_time())
+        steps = press_steps(header, options, _current_time(), curves)
         with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
             return press(header, frames, progress)
 
@@ -878,14 +910,14 @@ class Scene(object):
             return None, note
         return cut, ""
 
-    def _paste_read(self, press, path, options):
+    def _paste_read(self, press, path, options, curves=None):
         """`_paste` of the card `_read` hands (a refusal said, nothing pressed)."""
         from maya_poselib import timewalk
         header, refusal = self._read(path)
         if refusal:
             return False, refusal
         frames = self._frames(path, header)
-        steps = press_steps(header, options, _current_time())
+        steps = press_steps(header, options, _current_time(), curves)
         with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
             return press(header, frames, progress)
 
@@ -895,9 +927,11 @@ class Scene(object):
         the card first (`_read`)."""
         if store.is_anim(path):
             from maya_poselib import animapply
+            curves = self._curves(path, options)
+            extra = {"curves": curves} if curves is not None else {}
             return self._paste_read(lambda header, frames, progress: animapply.apply(
                 header, frames, mirror=mirror, options=options, progress=progress,
-                **_only(only)), path, options)
+                **dict(_only(only), **extra)), path, options, curves=curves)
         from maya_poselib import apply
         data, refusal = self._read(path)
         if refusal:
@@ -908,9 +942,11 @@ class Scene(object):
         """The card at `path` onto the character of `root` (a drop on it in a viewport)."""
         if store.is_anim(path):
             from maya_poselib import animapply
+            curves = self._curves(path, options)
+            extra = {"curves": curves} if curves is not None else {}
             return self._paste_read(lambda header, frames, progress: animapply.apply_onto(
-                header, frames, root, mirror=mirror, options=options, progress=progress),
-                path, options)
+                header, frames, root, mirror=mirror, options=options, progress=progress,
+                **extra), path, options, curves=curves)
         from maya_poselib import apply
         data, refusal = self._read(path)
         if refusal:
@@ -922,9 +958,11 @@ class Scene(object):
         always the whole card (a character added for it has no other pose to keep)."""
         if store.is_anim(path):
             from maya_poselib import animapply
+            curves = self._curves(path, options)
+            extra = {"curves": curves} if curves is not None else {}
             return self._paste(lambda header, frames, progress: animapply.drop_floor(
-                header, frames, point, mirror=mirror, options=options, progress=progress),
-                path, options)
+                header, frames, point, mirror=mirror, options=options, progress=progress,
+                **extra), path, options, curves=curves)
         from maya_poselib import apply
         return apply.drop_floor(store.read(path), point, mirror=mirror)
 
@@ -1820,6 +1858,27 @@ def _classes():
             row.addWidget(self._label("Keys", "context"))
             row.addWidget(track, 1)
             column.addLayout(row)
+            track, self.paste_as_buttons = self._segments(
+                "skeldarPosePasteAs_", PASTE_AS_LABELS["character"],
+                lambda value: self._paste_as_changed(value))
+            self.paste_as_buttons["retarget"].setToolTip(
+                "The card's bones solved onto any character, keyed on the active layer")
+            self.paste_as_buttons["curves"].setToolTip(
+                "The card's own keys and layers - onto a rig of the card's own model")
+            self.paste_as_row = QtWidgets.QWidget()
+            row = QtWidgets.QHBoxLayout(self.paste_as_row)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(s(6))
+            row.addWidget(self._label("Paste as", "context"))
+            row.addWidget(track, 1)
+            column.addWidget(self.paste_as_row)
+            self.layer_box = QtWidgets.QWidget()
+            self.layer_box.setObjectName("skeldarPoseCurveLayers")
+            self.layer_flow = QtWidgets.QVBoxLayout(self.layer_box)
+            self.layer_flow.setContentsMargins(s(8), 0, 0, 0)
+            self.layer_flow.setSpacing(s(2))
+            self.layer_checks = OrderedDict()
+            column.addWidget(self.layer_box)
             return frame
 
         def _build_save(self):
@@ -2132,6 +2191,7 @@ def _classes():
                 self.thumb.setText("no thumbnail")
             anim = card.type == "anim"
             self.anim_options.setVisible(anim)
+            self._fill_layers(curvedata.layer_names(self.picked_data) if anim else [])
             self._reset_range(card)
             self.apply_button.setToolTip(APPLY_TIPS[anim])
             self.show_targets()
@@ -2148,6 +2208,7 @@ def _classes():
             self.thumb.setPixmap(QtGui.QPixmap())
             self.thumb.setText("")
             self.anim_options.setVisible(False)
+            self._fill_layers([])
             self._reset_range(None)
             self.show_targets()
             self._sync_play()
@@ -2171,6 +2232,7 @@ def _classes():
                 opts = animdata.Options()
             self.paste_buttons[opts.mode].setChecked(True)
             self.keys_buttons[opts.keys].setChecked(True)
+            self.paste_as_buttons[opts.paste_as].setChecked(True)
             self.at_current.setChecked(opts.at_current)
             self.connect_box.setChecked(opts.connect)
             self.in_place.setChecked(opts.in_place)
@@ -2198,6 +2260,7 @@ def _classes():
             the PICKED card (`path` None or the picked card's); any other card is pasted whole
             (None, None) - a right-button row over a card not picked."""
             start = end = None
+            picked = [name for name, check in self.layer_checks.items() if check.isChecked()]
             target = path or self.picked
             if target and target == self.picked and self._range_for is not None \
                     and self._range_for[0] == target:
@@ -2207,7 +2270,9 @@ def _classes():
                     "at_current": self.at_current.isChecked(), "start": start, "end": end,
                     "connect": self.connect_box.isChecked(),
                     "keys": self._lit(self.keys_buttons, "every"),
-                    "in_place": self.in_place.isChecked()}
+                    "in_place": self.in_place.isChecked(),
+                    "paste_as": self._lit(self.paste_as_buttons, "retarget"),
+                    "layers": None if len(picked) == len(self.layer_checks) else picked}
 
         def _extra(self, path):
             """What a press of the card at `path` hands the scene beyond a pose's arguments:
@@ -2239,6 +2304,68 @@ def _classes():
             under the old option - put back."""
             self._remember(var, value)
             self.blend_reset(RESET_OPTION)
+
+        def _paste_as_changed(self, value):
+            """Paste as clicked: remembered, the blend put back, the options greyed for it."""
+            self._option_changed(PASTE_AS_VAR, value)
+            self._sync_curves()
+
+        def _fill_layers(self, names):
+            """The checklist of the picked card's layers, every one on (a pick is per card, never
+            remembered)."""
+            for check in self.layer_checks.values():
+                self.layer_flow.removeWidget(check)
+                check.deleteLater()
+            self.layer_checks = OrderedDict()
+            for name in names:
+                check = QtWidgets.QCheckBox(name)
+                check.setObjectName("skeldarPoseCurveLayer_" + name)
+                check.setChecked(True)
+                check.toggled.connect(lambda _on, name=name: self._layer_toggled(name))
+                self.layer_flow.addWidget(check)
+                self.layer_checks[name] = check
+
+        def _layer_toggled(self, name):
+            """A layer unticked: one always stays on (a paste of no layer is no paste)."""
+            if not any(check.isChecked() for check in self.layer_checks.values()):
+                self.layer_checks[name].setChecked(True)
+                return
+            self.blend_reset(RESET_OPTION)
+            self._sync_curves()
+
+        def _curves_on(self):
+            data = self.picked_data if isinstance(self.picked_data, dict) else {}
+            return curvedata.has_curves(data) and \
+                self._lit(self.paste_as_buttons, "retarget") == "curves"
+
+        def _sync_curves(self):
+            """The Paste as row for a card with curves (its labels the card kind's), the layer
+            checklist under «Original curves», and what changes values greyed there with a tooltip
+            that says why: Keys, Mirror, Blend - and Connect unless ONE layer is picked. Nothing
+            before the options block is built (`show_targets` can run first)."""
+            if not hasattr(self, "paste_as_buttons"):
+                return
+            data = self.picked_data if isinstance(self.picked_data, dict) else {}
+            kind = "objects" if data.get("kind") == "objects" else "character"
+            for value, label in PASTE_AS_LABELS[kind]:
+                self.paste_as_buttons[value].setText(label)
+            self.paste_as_row.setVisible(curvedata.has_curves(data))
+            curves = self._curves_on()
+            self.layer_box.setVisible(curves)
+            picked = [name for name, check in self.layer_checks.items() if check.isChecked()]
+            card = self._card(self.picked) if self.picked else None
+            for widget, on in ([(button, not curves) for button in self.keys_buttons.values()]
+                               + [(self.mirror, not curves),
+                                  (self.blend, card is not None and not curves),
+                                  (self.connect_box, not curves or len(picked) == 1)]):
+                if widget.property("skTip") is None:
+                    widget.setProperty("skTip", widget.toolTip())
+                widget.setEnabled(on)
+                widget.setToolTip(widget.property("skTip") if on else CURVES_OFF)
+
+        def _mirrored(self):
+            """Mirror as a press takes it: off while it is greyed (Original curves)."""
+            return self.mirror.isChecked() and self.mirror.isEnabled()
 
         def _reset_range(self, card):
             """The Range boxes on `card`'s own frames, both held inside them - when ANOTHER
@@ -2377,6 +2504,7 @@ def _classes():
             self.apply_button.setEnabled(card is not None and bool(ok))
             self.select_button.setEnabled(card is not None)
             self.blend.setEnabled(card is not None)
+            self._sync_curves()
 
         def follow(self):
             """The selection read again (the final review: once per selection change, never per
@@ -2414,7 +2542,7 @@ def _classes():
                 if self._blend["path"] == path and self.blend.value() > 0 and mirror is None:
                     return self.blend_key()
                 self._blend_drop()
-            mirror = self.mirror.isChecked() if mirror is None else bool(mirror)
+            mirror = self._mirrored() if mirror is None else bool(mirror)
             extra = self._extra(path)
             return self._act(lambda: self.scene.apply(path, mirror, **extra))
 
@@ -2513,7 +2641,7 @@ def _classes():
                 return self._run(lambda: self.say(chat_window.send_card(path)))
             if kind in ("character", "floor"):
                 self._blend_drop()               # the whole card goes onto who it is dropped on
-            mirror = self.mirror.isChecked()
+            mirror = self._mirrored()
             extra = self._extra(path)            # an animation's options, read at the release
             extra.pop("only", None)              # a drop names its character, not the selection
             if kind == "folder":
@@ -2577,7 +2705,7 @@ def _classes():
                     return True
                 self.blend_reset(RESET_CARD)
             try:
-                refusal = self.scene.blend_start(path, self.mirror.isChecked(),
+                refusal = self.scene.blend_start(path, self._mirrored(),
                                                  **self._extra(path))
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
