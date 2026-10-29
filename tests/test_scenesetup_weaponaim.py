@@ -97,9 +97,9 @@ class Tabs(unittest.TestCase):
     def _column_calls(self, name):
         return [c for c in self.fake.calls if c[0] == "columnLayout" and c[1] == (name,)]
 
-    def test_three_tab_segments_body_first(self):
+    def test_four_tab_segments_body_first(self):
         self.assertEqual([label for _n, label in self.fake.segments[cx.TAB_COLLECTION]],
-                         ["Body", "Weapon", "Camera"])
+                         ["Body", "Weapon", "Camera", "Object"])
         self.assertEqual(self.marks[cx.tab_segment("body")].role, "segment")
 
     def test_the_weapon_tab_holds_the_parent_rows_and_the_aim(self):
@@ -109,7 +109,8 @@ class Tabs(unittest.TestCase):
         weapon = order.index(cx.TAB_COLUMN["weapon"])
         body = order.index(cx.TAB_COLUMN["body"])
         self.assertLess(body, order.index(cx.CAPTION["limbs"]))
-        self.assertLess(order.index("BakeAcross"), weapon)
+        #  2026-10-29: BakeAcross and Release moved into the Object tab, last
+        self.assertLess(weapon, order.index("BakeAcross"))
         for item in (cx.MENU["R"], cx.MENU["W"], cx.APPLY_ALL["weapon"],
                      cx.CAPTION["aim"], cx.AIM_MENU, cx.AIM_APPLY):
             self.assertLess(weapon, order.index(item), item)

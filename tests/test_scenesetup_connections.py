@@ -386,9 +386,10 @@ class Panel(unittest.TestCase):
         #  2026-10-29: a check a limb row ahead of BakeAcross / Release
         self.assertEqual([c[2]["label"] for c in self._buttons()],
                          ["Apply", "Apply", "Apply", "Apply", "Apply",
-                          "Apply all", "BakeAcross", "Release",
+                          "Apply all",
                           "Apply", "Apply", "Apply", "Apply all", "Apply",
-                          "Apply", "Apply", "Apply all"])
+                          "Apply", "Apply", "Apply all",
+                          "BakeAcross", "Release"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand R", "Hand L", "Weapon"):
@@ -590,7 +591,10 @@ class Panel(unittest.TestCase):
         """2026-10-29 («более удобного разсположения»): one limb a row - label,
         [FK | IK], the W chip, the row's check - so the segments are the width
         of the card and not the ~28 px two limbs in one row left them."""
-        rows = self._made("rowLayout", numberOfColumns=4)
+        #  the tabs' row has four columns too since 2026-10-29: the limb rows
+        #  are the ones that size them
+        rows = [(i, c) for i, c in self._made("rowLayout", numberOfColumns=4)
+                if "columnWidth4" in c[2]]
         #  two arms, two legs, then the spine's row of the same shape
         self.assertEqual(len(rows), 5)
         wanted = [("Arm R", cx.fkik.ARM, "R"), ("Arm L", cx.fkik.ARM, "L"),
@@ -925,7 +929,8 @@ class PanelCompact(unittest.TestCase):
         for skin, label, chip in ((True, 48, 28), (False, 64, 34)):
             fake, _marks = self._build(skin)
             rows = [c[2] for c in fake.calls if c[0] == "rowLayout"
-                    and c[2].get("numberOfColumns") == 4]
+                    and c[2].get("numberOfColumns") == 4
+                    and "columnWidth4" in c[2]]
             #  four limbs and the spine, all of one shape
             self.assertEqual(len(rows), 5, skin)
             for row in rows:

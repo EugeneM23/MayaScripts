@@ -138,13 +138,18 @@ CAPTION = {"limbs": "skeldarConnectionsCapLimbs",
            "camaim": "skeldarConnectionsCapCamAim"}
 # [Body | Weapon | Camera] (2026-10-28, «Во вкладке конекшен нужно добавить раздел для камер»):
 # one column a tab, one managed at a time, the pick remembered
-TABS = (("body", "Body"), ("weapon", "Weapon"), ("camera", "Camera"))
+#  a fourth tab since 2026-10-29: BakeAcross and Release act on any selected
+#  objects, not on the body, so they have a place of their own
+TABS = (("body", "Body"), ("weapon", "Weapon"), ("camera", "Camera"),
+        ("object", "Object"))
 TAB_COLLECTION = "skeldarConnectionsTabs"
 TAB_COLUMN = {"body": "skeldarConnectionsBodyTab", "weapon": "skeldarConnectionsWeaponTab",
-              "camera": "skeldarConnectionsCameraTab"}
-TAB_TIPS = {"body": "FK / IK of the arms, legs and spine; any object across",
+              "camera": "skeldarConnectionsCameraTab",
+              "object": "skeldarConnectionsObjectTab"}
+TAB_TIPS = {"body": "FK / IK of the arms, legs and spine",
             "weapon": "The weapon's parent and its Aim Mode",
-            "camera": "The camera's parent and its Aim Mode"}
+            "camera": "The camera's parent and its Aim Mode",
+            "object": "Any selected objects across a parent - BakeAcross, Release"}
 CAMERA_MENU = "skeldarConnectionsCameraParent"
 CAMERA_POSITION = "skeldarConnectionsCameraPosition"
 #  the camera's parent and its aim are picks too (2026-10-29): its Apply is the
@@ -2470,7 +2475,6 @@ def build_panel():
         height=hubstyle.height("button", 32),
         annotation="bake every pick in this tab - one undo",
         command=_press_apply_body), "primary", "check")
-    _any_object_rows()
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["weapon"], adjustableColumn=True,
                       rowSpacing=hubstyle.row_spacing(6), manage=tab == "weapon")
@@ -2630,6 +2634,12 @@ def build_panel():
         height=hubstyle.height("button", 32),
         annotation="bake every pick in this tab - one undo",
         command=_press_apply_camera), "primary", "check")
+    cmds.setParent("..")
+    #  the Object tab (2026-10-29): BakeAcross and Release take no pick, so it
+    #  has no Apply all - the two buttons ARE its presses
+    cmds.columnLayout(TAB_COLUMN["object"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6), manage=tab == "object")
+    _any_object_rows()
     cmds.setParent("..")
     #  three lines (2026-09-30): an Apply plus the FK/IK switch it made first
     #  is longer than two - a wordWrap text keeps the height it is given

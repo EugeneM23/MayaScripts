@@ -416,3 +416,51 @@ class CameraPicks(unittest.TestCase):
         cx._press_camera_aim_mode()
         cx._press_camera_default()
         self.assertEqual(self.done, [("aim", True), ("aim", False)])
+
+
+class ObjectTab(unittest.TestCase):
+    """BakeAcross and Release act on any selected objects, not on the body:
+    their own tab since 2026-10-29."""
+
+    def setUp(self):
+        self.real = (cx.cmds, cx.refresh)
+        self.fake = FakeMenuCmds()
+        cx.cmds, cx.refresh = self.fake, (lambda *a: "")
+        cx.hubstyle.take_marks()
+        cx.build_panel()
+        self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
+
+    def tearDown(self):
+        (cx.cmds, cx.refresh) = self.real
+
+    def test_four_tabs(self):
+        self.assertEqual([t[0] for t in cx.TABS],
+                         ["body", "weapon", "camera", "object"])
+        self.assertIn("object", cx.TAB_COLUMN)
+        self.assertEqual([label for _n, label in
+                          self.fake.segments[cx.TAB_COLLECTION]],
+                         ["Body", "Weapon", "Camera", "Object"])
+
+    def test_bake_across_and_release_stand_in_the_object_tab(self):
+        columns = [i for i, c in enumerate(self.fake.calls)
+                   if c[0] == "columnLayout" and c[1]
+                   and c[1][0] == cx.TAB_COLUMN["object"]]
+        self.assertEqual(len(columns), 1)
+        after = self.fake.calls[columns[0]:]
+        self.assertEqual([c[2].get("label") for c in after
+                          if c[0] == "button"], ["BakeAcross", "Release"])
+        body = [i for i, c in enumerate(self.fake.calls)
+                if c[0] == "columnLayout" and c[1]
+                and c[1][0] == cx.TAB_COLUMN["body"]][0]
+        inside_body = self.fake.calls[body:columns[0]]
+        self.assertNotIn("BakeAcross", [c[2].get("label") for c in inside_body
+                                        if c[0] == "button"])
+
+    def test_the_object_tab_has_no_apply_all(self):
+        self.assertNotIn("object", cx.APPLY_ALL)
+        self.assertEqual(pending.of_tab({"limb:Arm:R": "FK"}, "object"), {})
+
+    def test_show_tab_knows_it(self):
+        cx.show_tab("object")
+        self.assertEqual(cx.current_tab(), "object")
+        cx.show_tab("body")
