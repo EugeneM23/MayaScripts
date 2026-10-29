@@ -15247,6 +15247,67 @@ the plain IK arm beside it drawn as the control, drawn again after the W back, a
 and after Tools' Bake); `tests/test_scenesetup_ikworld.py` Hidden / EnterHides on a fake cmds;
 12037 unit tests, the known `test_chat_deploy.Keys` failing. Not seen in a GUI Maya.
 
+## Connections: pick, then press - four tabs, an Apply on every row (2026-10-29)
+
+The animator: «предложи несколько вариантов более удобного разсположения инструментов в вкладке
+connections и нужно сделать консистентно что бы перепекание происходило по нажатию кнопки а не по
+разному в каждом разделе». Three live mockups (https://claude.ai/artifact/M5ZtJhXiuWCDVRFUdHuFC3);
+they chose **B, an Apply on every row too**, and answered three more: the weapon's and the camera's
+**aim becomes a pick** the same Apply bakes; **W becomes a chip** after the segments; **BakeAcross /
+Release get their own tab**. Spec
+`docs/superpowers/specs/2026-10-29-connections-pick-then-apply-design.md`. **This replaces what the
+Connections sections above say about a press acting at once** - a mode segment, the W chip, a parent
+row's Apply, the two Aim Mode / Default buttons.
+- **Nothing bakes on a pick.** A segment, a chip or a menu pressed RECORDS what is wanted; the row's
+  own **check** bakes that row, and each tab's **Apply all · N** bakes everything picked in that tab
+  in ONE undo chunk. The hotkey rows are unchanged - a hotkey IS the button, so `connections.aim`,
+  `.default`, `.camera_aim` and `.camera_default` still act at once.
+- **Four tabs** `Body | Weapon | Camera | Object`: Body one row a limb (`Arm R [FK | IK] W ✓`) and
+  the spine; Weapon the three parent rows and the aim row; Camera the parent row with Position only
+  and the aim row; Object BakeAcross and Release. One limb a row because the four limbs' segments
+  stood 28 px wide at the animator's 360 px dock.
+- **The thumb is the scene, the pick is an outline**: the hub's new state `want`
+  (`maya_hubstyle`, `accent_tint` under a 2 px accent edge, on a `segment` and on a `chip`) - a
+  picked segment never pretends to be the state, so a refusal needs no undoing of the picture, and
+  the row's check lights `wait` while its row carries a pick. `maya_hubqt.set_state` repolishes a
+  role it does not paint itself, or the property alone redraws nothing.
+- **`SkeldarAnim/maya_scenesetup/pending.py`** (pure, stdlib only; a subprocess test pins it) is the
+  picks: keys `limb:<kind>:<side>`, `world:<kind>:<side>`, `spine`, `parent:<row>`, `aim`, `camera`,
+  `camera:position`, `camaim`; `record(picks, key, value, state)` **drops a pick equal to what the
+  scene shows**, so picking a limb's own mode records nothing; `units` counts a limb's mode and its W
+  as one and the camera's parent and its Position only as one (`Apply all · 2`); `of_tab` is what a
+  tab's Apply all takes; `phrase` / `text` name the picks on the status line.
+- **One set per character** (`rig_key` = the rig's namespace): reading another rig's picks drops the
+  first's, so selecting a second character leaves its own picks behind.
+- **A press settles against the SCENE, never against a refusal's text** (`_settled`): after a press
+  the picks it named are read again - one that came true drops, one a refusal left standing stays,
+  with the scene untouched.
+- **A refresh cannot eat a pick**: `refresh` reads `picks(rig)` ONCE and hands it to every painter,
+  which writes the scene's state into the controls and lays the picks on top of it.
+- Proof: `docs/superpowers/plans/verify_connections_apply.py` **0 of 34 gates failed, mayapy
+  standalone** (the card is not built - `cmds.window` answers False in batch - so every painter and
+  status write is the no-op it is with no panel; what is gated is the picks, the bake and the settle):
+  two picks on the Body tab leaving both blends where they stood, a pick at what the limb already
+  shows recording nothing, Apply all baking both limbs with ONE Ctrl+Z putting both back and the
+  picks gone, Apply all with nothing picked saying so; a limb's own check putting the right arm in
+  world and leaving the leg it did not name alone, one Ctrl+Z; a REFUSAL (a blend driven by a node)
+  leaving its pick standing with the scene unmoved and the refusal naming itself; the weapon's aim
+  row picked, aimed by its check, the pick dropped, one Ctrl+Z, and the tab's Apply all taking an aim
+  pick alone without reading the three parent collections; the camera's Root + Position only picked
+  and moved by its check (0.00e+00 cm), its aim row, and the tab's Apply all taking a parent pick and
+  an aim pick in ONE chunk; two rigs, the picks one set. Re-run headless: `verify_ik_world.py`
+  **54/54**, `verify_fkik_keys.py` **18/18**, `verify_camera_tab.py` **40/40**,
+  `verify_weapon_aim_mode.py` 23/24 (its one red gate - Default keyed on every frame, not on the
+  controllers' keys - was red before this work: the 2026-10-26 fill-by-need keys). Unit tests
+  `tests/test_scenesetup_pending.py` (18) and `tests/test_scenesetup_connections_pending.py` (68);
+  12225 run, the known `test_chat_deploy.Keys` failing (`test_uebridge_window` was red beside this
+  work from another session's unfinished edit, not from it).
+- **Not built**: variant C's one-column sections (the tabs stayed); a pick is not greyed out at pick
+  time; the weapon's three parent rows have no standalone gate - their apply goes through OverRig's
+  `apply_Parent_in` / `_out`, which read the time slider and die in mayapy, so `verify_connections.py`
+  in a GUI Maya is their proof. **Not seen in a GUI Maya**: the card's four tabs, a real pick's
+  outline, `Apply all · N` - the animator's to try after Check update.
+
 ## AT bar keys name their layer (2026-10-27)
 
 «по одному працює, але виділені ні» - Paste Relationship on the highlighted keys, IKArm_R following the
