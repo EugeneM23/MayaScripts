@@ -3572,6 +3572,39 @@ class Walk(object):
             out[j] = m
         return out, used
 
+    def _arm_to_hand(self, kin, n, chains, hands):
+        """Each arm rebuilt to a wanted hand: `hands` {side: (n+1, 4, 4)} -> {joint: (n+1, 4, 4)} for the upper
+        arm, the forearm and the hand (a side not in `hands` is left out). From the CURRENT shoulder - the
+        arm's pivot is the body's - the elbow bending the way the frames bend it, the bones keeping their
+        lengths (a hand past the arm's reach is clamped along its own line by two_bone). The one IK the
+        springs' grip (_grip_motion) and the overlap (_arm_overlap) both reach their hands with."""
+        out = {}
+        for side, chain in chains.items():
+            want = hands.get(side)
+            if want is None:
+                continue
+            up_j, low_j, hand_j = chain
+            l1, l2 = (float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
+            mu, ml, mh = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
+            for f in range(n + 1):
+                hand = want[f]
+                sh, el, wr = kin[up_j, f, 3, :3], kin[low_j, f, 3, :3], kin[hand_j, f, 3, :3]
+                e = _unit(wr - sh)
+                bend = (el - sh) - np.dot(el - sh, e) * e
+                bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
+                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
+                e2 = _unit(reached - sh)
+                bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
+                normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
+                mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal,
+                                                                          _unit(knee - sh), normal2)
+                ml[f, :3, :3] = orthonormal(kin[low_j, f, :3, :3]) @ align(_unit(wr - el), normal,
+                                                                           _unit(reached - knee), normal2)
+                mu[f, 3, :3], ml[f, 3, :3] = sh, knee
+                mh[f, :3, :3], mh[f, 3, :3] = hand[:3, :3], reached
+            out[up_j], out[low_j], out[hand_j] = mu, ml, mh
+        return out
+
     def _grip_motion(self, kin, n, chains, w0, zeta, S):
         """Two hands holding one thing: the right hand carries it - its world turn and place trail their
         target through the same spring (the travel taken out); the left keeps its hold on the right; both arms
@@ -3612,28 +3645,12 @@ class Walk(object):
             g = f % n
             held[f, :3, :3] = rec_r[g] @ _exp3(-miss_r * g / float(n))
             held[f, 3, :3] = rec_x[g] - miss_x * g / float(n) + travel * f
-        out = {}
+        hands = {}
         for side, chain in chains.items():
-            up_j, low_j, hand_j = chain
-            l1, l2 = (float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
-            mu, ml, mh = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
-            for f in range(n + 1):
-                hand = kin[hand_j, f] @ np.linalg.inv(kin[hold, f]) @ held[f]
-                sh, el, wr = kin[up_j, f, 3, :3], kin[low_j, f, 3, :3], kin[hand_j, f, 3, :3]
-                e = _unit(wr - sh)
-                bend = (el - sh) - np.dot(el - sh, e) * e
-                bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
-                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
-                e2 = _unit(reached - sh)
-                bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
-                normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
-                mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal, _unit(knee - sh), normal2)
-                ml[f, :3, :3] = orthonormal(kin[low_j, f, :3, :3]) @ align(_unit(wr - el), normal,
-                                                                          _unit(reached - knee), normal2)
-                mu[f, 3, :3], ml[f, 3, :3] = sh, knee
-                mh[f, :3, :3], mh[f, 3, :3] = hand[:3, :3], reached
-            out[up_j], out[low_j], out[hand_j] = mu, ml, mh
-        return out, used
+            hand_j = chain[-1]
+            hands[side] = np.array([kin[hand_j, f] @ np.linalg.inv(kin[hold, f]) @ held[f]
+                                    for f in range(n + 1)])
+        return self._arm_to_hand(kin, n, chains, hands), used
 
     def _reattach(self, worlds, kin, new, only=None, held=()):
         """`new` ({joint: (n+1, 4, 4)}) into `worlds`; every joint hanging off a changed one (its DAG children,

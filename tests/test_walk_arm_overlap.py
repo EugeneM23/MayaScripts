@@ -75,3 +75,65 @@ class KnobTests(unittest.TestCase):
         k = wm.knobs(arm_overlap_l=3.0)
         self.assertEqual(wm.sided(k)["l"]["arm_overlap"], 3.0)
         self.assertEqual(wm.sided(k)["r"]["arm_overlap"], 0.0)
+
+
+class ArmToHandTests(unittest.TestCase):
+    """The shared two-bone IK rebuild: an arm taken to a wanted hand from the current shoulder."""
+
+    def setUp(self):
+        self.w = walk()
+        self.r = self.w.evaluate({"balance": 0.0})
+        self.kin = np.array(self.r.worlds)
+        self.n = self.r.frames
+        self.chains = self.w._arm_chains()
+
+    def test_the_arms_own_hands_give_the_arms_back(self):
+        hands = dict((side, np.array(self.kin[chain[-1]])) for side, chain in self.chains.items())
+        got = self.w._arm_to_hand(self.kin, self.n, self.chains, hands)
+        self.assertEqual(len(got), 3 * len(self.chains))
+        for j, m in got.items():
+            self.assertTrue(np.allclose(m[:, 3, :3], self.kin[j][:, 3, :3], atol=1e-6), self.w.names[j])
+            self.assertTrue(np.allclose(m[:, :3, :3], self.kin[j][:, :3, :3], atol=1e-6), self.w.names[j])
+
+    def test_a_moved_hand_is_reached_and_the_bones_keep_their_lengths(self):
+        """A hand moved 2 cm toward its shoulder - the synthetic walker's arm hangs 98.6 .. 100.0 % extended,
+        so a hand moved outward is past its reach and clamped (that is the test below)."""
+        side = sorted(self.chains)[0]
+        up_j, low_j, hand_j = self.chains[side]
+        want = np.array(self.kin[hand_j])
+        toward = self.kin[up_j][:, 3, :3] - self.kin[hand_j][:, 3, :3]
+        want[:, 3, :3] += 2.0 * toward / np.linalg.norm(toward, axis=1)[:, None]
+        got = self.w._arm_to_hand(self.kin, self.n, self.chains, {side: want})
+        self.assertNotIn(self.chains["r" if side == "l" else "l"][0], got)
+        self.assertTrue(np.allclose(got[hand_j][:, 3, :3], want[:, 3, :3], atol=1e-6))
+        for a, b in ((up_j, low_j), (low_j, hand_j)):
+            was = np.linalg.norm(self.kin[b][:, 3, :3] - self.kin[a][:, 3, :3], axis=1)
+            now = np.linalg.norm(got[b][:, 3, :3] - got[a][:, 3, :3], axis=1)
+            self.assertLess(float(np.abs(now - was).max()), 1e-6, (a, b))
+
+    def test_a_hand_past_the_arms_reach_is_clamped_on_its_line(self):
+        side = sorted(self.chains)[0]
+        up_j, _, hand_j = self.chains[side]
+        want = np.array(self.kin[hand_j])
+        want[:, 3, 0] += 500.0
+        got = self.w._arm_to_hand(self.kin, self.n, self.chains, {side: want})
+        low_j = self.chains[side][1]
+        l1 = float(np.linalg.norm(self.w.lt[low_j].mean(axis=0)))
+        l2 = float(np.linalg.norm(self.w.lt[hand_j].mean(axis=0)))
+        reach = np.linalg.norm(got[hand_j][:, 3, :3] - got[up_j][:, 3, :3], axis=1)
+        self.assertLess(float(np.abs(reach - (l1 + l2)).max()), 1e-6, "clamped at the arm's own length")
+        for f in range(self.n):
+            to_want = want[f, 3, :3] - got[up_j][f, 3, :3]
+            to_got = got[hand_j][f, 3, :3] - got[up_j][f, 3, :3]
+            cos = float(np.dot(to_want, to_got) / (np.linalg.norm(to_want) * np.linalg.norm(to_got)))
+            self.assertGreater(cos, 1.0 - 1e-9, f)      # clamped along the line to the wanted hand
+
+    def test_the_springs_grip_still_reaches_its_hands(self):
+        """_grip_motion keeps working through the shared rebuild: an arm drag with a grip runs and the bones
+        keep their lengths (the grip itself is proven on the real cycle by verify_walk_arm_overlap.py)."""
+        r = self.w.evaluate({"arm_drag": 2.0, "balance": 0.0})
+        for side, chain in self.chains.items():
+            for a, b in zip(chain, chain[1:]):
+                d = np.linalg.norm(positions(r, self.w.names[b], self.w)
+                                   - positions(r, self.w.names[a], self.w), axis=1)
+                self.assertLess(float(np.ptp(d)), 1e-9, (side, a, b))
