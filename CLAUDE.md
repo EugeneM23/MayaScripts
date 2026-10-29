@@ -15498,11 +15498,39 @@ row's Apply, the two Aim Mode / Default buttons.
   `tests/test_scenesetup_pending.py` (18) and `tests/test_scenesetup_connections_pending.py` (68);
   12273 run, the known `test_chat_deploy.Keys` failing (two errors beside it, in
   `test_chat_callview_more`, are a peer's uncommitted edit, not this work).
+- **…and the W chip takes a press on its whole pill** (2026-10-29, the animator:
+  «Сейчас очень сложно включить выделение на World галочку она нажимает 1 раз из 10»). Measured
+  first, live at their 510 px viewport and offscreen: nothing covered the chip - of the W chip's
+  34 x 27 physical px only the letter's own 16 x 17 at its right took a press
+  (`SE_CheckBoxClickRect (18, 5, 16, 17)`). A chip is a `cmds.checkBox` whose PILL is its state, so
+  the sheet gives its indicator no size, and Qt's click rect for a check box is that indicator
+  united with the LABEL: all the padding was dead. A long label («Selected only») nearly fills its
+  pill, which is why every other chip of the hub hid this. `maya_hubqt`'s `chip` role now installs
+  `_chip_class`: a left press anywhere in the pill is answered with
+  `QMetaObject.invokeMethod(obj, "click")` and EATEN, so a press on the label still toggles once.
+  It reaches every chip the hub builds - Camera Shake's axes and Loop, Viewport Studio's checks,
+  Center of Mass's trail and floor, Dynamics' Loop, Ragdoll's Drop weapon, the camera row's
+  Position only. Proof: `tests/test_hubqt.ChipClick` (9, two of them red on the build before) and,
+  live in a disposable Maya, every point of all four limb rows' pills toggling W - **238 of 238
+  against 96 of 238 before**.
 - **Not built**: variant C's one-column sections (the tabs stayed); a pick is not greyed out at pick
   time; the weapon's three parent rows have no standalone gate - their apply goes through OverRig's
   `apply_Parent_in` / `_out`, which read the time slider and die in mayapy, so `verify_connections.py`
-  in a GUI Maya is their proof. **Not seen in a GUI Maya**: the card's four tabs, a real pick's
-  outline, `Apply all · N` - the animator's to try after Check update.
+  in a GUI Maya is their proof. **Not seen in a GUI Maya**: a real pick's outline and
+  `Apply all · N` under a real mouse - the animator's to try after Check update (the Body tab's
+  four rows were built and measured in a disposable Maya for the W chip, below).
+
+309. **A chip's click rect is its label, and `find`'s wrapper lies about its class.** Two measured
+     facts in one bug. A `cmds.checkBox` marked `chip` wears its pill as its state, so the sheet
+     gives its indicator no size at all - and Qt's `SE_CheckBoxClickRect` is that indicator united
+     with the label, so the pill's padding takes no press whatever: of the W chip's 34 px only 16
+     worked, and the animator pressed it ten times for one. The first fix then reached nothing,
+     because `maya_hubqt.find` hands back a plain `QWidget` wrapper (PySide knows no
+     `QmayaCheckBox` - trap 96), so `isinstance(widget, QCheckBox)` is False for every live chip
+     while it is True for a check box a test makes itself - and the unit tests could not see it.
+     Ask the META-OBJECT (`QmayaCheckBox <- QCheckBox <- QAbstractButton <- QWidget`) and click
+     through it: measured, `QMetaObject.invokeMethod(obj, "click")` toggles the box AND runs its
+     changeCommand, where `cmds.checkBox -e -value` runs neither.
 
 ## AT bar keys name their layer (2026-10-27)
 

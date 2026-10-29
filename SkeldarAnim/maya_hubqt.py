@@ -702,6 +702,88 @@ def _middle_class():
     return _CLASSES["middle"]
 
 
+def _chip_class():
+    """An event filter giving a chip's whole pill the press (2026-10-29).
+
+    The animator, of the Connections card's one-letter W chip: it took a
+    click about one press in ten. A chip is a `cmds.checkBox` whose PILL is
+    its state - the sheet gives its indicator no size at all
+    (`QCheckBox[skRole="chip"]::indicator`) - and Qt's click rect for a check
+    box is that indicator united with the LABEL. Measured live at the
+    animator's dock and offscreen: of the W chip's 34 x 27 physical px only
+    the letter's own 16 x 17 at the right took a press
+    (`SE_CheckBoxClickRect (18, 5, 16, 17)`), and all the pill's padding was
+    dead. A long label ("Selected only") nearly fills its pill, which is why
+    every other chip hid this.
+
+    The press is answered here and EATEN, so a press on the label toggles
+    once as well; the release then reaches a button that was never down and
+    does nothing.
+    """
+    if "chip" not in _CLASSES:
+        q = qt()
+
+        class ChipClick(q.QtCore.QObject):
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() not in (q.QtCore.QEvent.MouseButtonPress,
+                                        q.QtCore.QEvent.MouseButtonDblClick):
+                    return False
+                try:
+                    if event.button() != q.QtCore.Qt.LeftButton                             or not obj.isEnabled():
+                        return False
+                    at = (event.position().toPoint()
+                          if hasattr(event, "position") else event.pos())
+                    if not obj.rect().contains(at):
+                        return False
+                    #  through the META-OBJECT, never obj.click(): `find`
+                    #  hands back a plain QWidget wrapper (PySide knows no
+                    #  QmayaCheckBox - trap 96), and QAbstractButton::click
+                    #  is a slot. Measured live: it toggles the box AND runs
+                    #  its changeCommand, where `cmds.checkBox -e -value`
+                    #  runs neither.
+                    q.QtCore.QMetaObject.invokeMethod(obj, "click")
+                except Exception:                            # noqa: BLE001
+                    return False
+                return True
+
+        _CLASSES["chip"] = ChipClick
+    return _CLASSES["chip"]
+
+
+def _is_check_box(widget):
+    """Whether `widget` is a check box, asked of its META-OBJECT.
+
+    `find` wraps a Maya control as a plain QWidget - PySide knows no
+    QmayaCheckBox (trap 96) - so `isinstance(widget, QCheckBox)` is False for
+    every live chip while it is True for a check box a test makes itself: the
+    first build of the chip filter guarded on it and reached nothing in the
+    animator's hub. Measured live, the chain is `QmayaCheckBox <- QCheckBox
+    <- QAbstractButton <- QWidget <- QObject`.
+    """
+    meta = widget.metaObject()
+    while meta is not None:
+        if meta.className() == "QCheckBox":
+            return True
+        meta = meta.superClass()
+    return False
+
+
+def _chip_click(widget):
+    """The filter above on a chip's check box, once (a mark applied again to
+    a standing control must not toggle it twice; a card rebuilt makes fresh
+    widgets). A chip role on anything else is left alone: a plain button's
+    press already covers its whole rect, and eating it would fire its
+    command on the press rather than on the release."""
+    if not _is_check_box(widget):
+        return False
+    if widget.property("skChipClick"):
+        return False
+    widget.installEventFilter(_chip_class()(widget))
+    widget.setProperty("skChipClick", True)
+    return True
+
+
 def _rail_drag_class():
     """A rail icon dragged off the rail onto the Time Bar's skill page (2026-10-19): its section
     becomes a skill there. A press that travels past Qt's start distance is a drag (the click is
@@ -3902,6 +3984,10 @@ def _apply_mark(mark, card, scale, size):
         apply_list_rows(mark.target, cover.rows, scale)
         return True
     widget.setProperty("skRole", mark.role)
+    if mark.role == "chip":
+        #  its whole pill takes the press, not just its label: see
+        #  _chip_class. No return - a chip may carry an icon too.
+        _chip_click(widget)
     if mark.role == "heading":
         #  a section's caption (2026-10-16, the card rules): capitals with a
         #  little room between the letters - a stylesheet can do neither

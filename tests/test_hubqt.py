@@ -3022,3 +3022,115 @@ class RailCardHeight(unittest.TestCase):
         self.assertGreater(need, 600)
         self.assertEqual(hubqt.rail_least(self.skin, self.host, 2.0),
                          -(-need // 2))
+
+
+class ChipClick(SeamsMixin, unittest.TestCase):
+    """A chip's whole pill takes a press (2026-10-29).
+
+    The animator, of the Connections card's one-letter W chip: it took a
+    click about one press in ten. Measured, live and offscreen: a chip is a
+    check box whose PILL is its state - the sheet gives its indicator no
+    size - and Qt's SE_CheckBoxClickRect is the indicator united with the
+    label, so of the W chip's 34 x 27 physical px only 16 x 17 at its right
+    (the letter itself) took a press. The pill's padding was dead.
+    """
+
+    SCALE = 1.5
+
+    def setUp(self):
+        SeamsMixin.setUp(self)
+        self.card = self.skin.add_card("connections", "Connections", "link",
+                                       "#f0a26b", "#4a3322")
+        self.host.setStyleSheet(style.stylesheet(self.SCALE))
+
+    def box(self, name, role, label="W", width=34, height=27):
+        widget = self.control(QtWidgets.QCheckBox, name, self.card.body)
+        widget.setText(label)
+        widget.setGeometry(0, 0, width, height)
+        if role:
+            hubqt.apply_marks([style.Mark(name, role, None, False, None)],
+                              self.card, self.SCALE)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        self.app.processEvents()
+        return widget
+
+    def press(self, widget, x, y):
+        point = QtCore.QPointF(x, y)
+        glob = QtCore.QPointF(widget.mapToGlobal(QtCore.QPoint(x, y)))
+        for kind, buttons in ((QtCore.QEvent.MouseButtonPress,
+                               QtCore.Qt.LeftButton),
+                              (QtCore.QEvent.MouseButtonRelease,
+                               QtCore.Qt.NoButton)):
+            QtWidgets.QApplication.sendEvent(widget, QtGui.QMouseEvent(
+                kind, point, glob, QtCore.Qt.LeftButton, buttons,
+                QtCore.Qt.NoModifier))
+
+    def test_a_press_on_the_pill_left_of_its_label_toggles_it(self):
+        chip = self.box("chipW", "chip")
+        self.press(chip, 4, 13)
+        self.assertTrue(chip.isChecked())
+
+    def test_every_point_of_the_pill_toggles_it(self):
+        chip = self.box("chipW", "chip")
+        dead = []
+        for x in range(1, chip.width() - 1, 2):
+            for y in range(1, chip.height() - 1, 2):
+                self.press(chip, x, y)
+                if not chip.isChecked():
+                    dead.append((x, y))
+                chip.setChecked(False)
+        self.assertEqual(dead, [])
+
+    def test_a_press_on_the_label_toggles_it_once(self):
+        """No double toggle where Qt's own click rect also fires."""
+        chip = self.box("chipW", "chip")
+        self.press(chip, 24, 13)
+        self.assertTrue(chip.isChecked())
+        self.press(chip, 24, 13)
+        self.assertFalse(chip.isChecked())
+
+    def test_a_press_outside_the_pill_leaves_it(self):
+        chip = self.box("chipW", "chip")
+        self.press(chip, chip.width() + 6, 13)
+        self.assertFalse(chip.isChecked())
+
+    def test_a_disabled_chip_takes_no_press(self):
+        chip = self.box("chipW", "chip")
+        chip.setEnabled(False)
+        self.press(chip, 4, 13)
+        self.assertFalse(chip.isChecked())
+
+    def test_an_unmarked_check_box_keeps_qt_s_own_hit_area(self):
+        """Only a chip: a plain check box is left exactly as Maya made it,
+        so a press past its label still does nothing."""
+        plain = self.box("plainBox", None, label="W", width=120)
+        self.press(plain, 110, 13)
+        self.assertFalse(plain.isChecked())
+
+    def test_a_check_box_is_recognised_by_its_meta_object(self):
+        """`find` wraps a Maya control as a plain QWidget (PySide knows no
+        QmayaCheckBox - trap 96), so an isinstance guard recognised every
+        check box a test makes and no live chip at all: the chip filter's
+        own first build reached nothing in the animator's hub."""
+        self.assertTrue(hubqt._is_check_box(QtWidgets.QCheckBox(self.host)))
+        self.assertFalse(hubqt._is_check_box(QtWidgets.QPushButton(self.host)))
+        self.assertFalse(hubqt._is_check_box(QtWidgets.QWidget(self.host)))
+
+    def test_a_chip_role_on_a_button_is_left_alone(self):
+        """A button's press already covers its whole rect, and eating it
+        would fire its command on the press rather than on the release."""
+        button = self.control(QtWidgets.QPushButton, "chipBtn", self.card.body)
+        button.setCheckable(True)
+        hubqt.apply_marks([style.Mark("chipBtn", "chip", None, False, None)],
+                          self.card, self.SCALE)
+        self.assertEqual(button.property("skRole"), "chip")
+        self.assertFalse(button.property("skChipClick"))
+
+    def test_the_filter_goes_on_once(self):
+        chip = self.box("chipW", "chip")
+        self.assertTrue(chip.property("skChipClick"))
+        hubqt.apply_marks([style.Mark("chipW", "chip", None, False, None)],
+                          self.card, self.SCALE)
+        self.press(chip, 4, 13)
+        self.assertTrue(chip.isChecked())
