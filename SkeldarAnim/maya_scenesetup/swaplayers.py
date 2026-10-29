@@ -44,6 +44,10 @@ EMPTY = "%s is at weight 0 - made, left empty"
 SPLIT_AGAIN = "1P Setup run again on %s"
 FOLDED_1P = "%s folded into the 1P split"
 NOT_KEPT = "%s not kept (%s)"
+#  a cut that fails leaves the character playing the cut below it - not the whole take - so the
+#  press goes back to the Bake road rather than leaving half an animation on it
+BAKED_INSTEAD = "the animation was baked instead"
+NOT_BAKED = "and the bake was refused too (%s) - the take on it is not the whole one"
 
 Plan = namedtuple("Plan", "records cuts folds first_person")
 #  one cut of the old stack, read off the new character: `index` into `Plan.records`, None for

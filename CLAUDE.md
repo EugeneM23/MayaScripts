@@ -13675,7 +13675,9 @@ the keys and layers» is the stack AND each layer's own key times** («Слои 
 - **Named, never guessed**: a layer whose rotation accumulation is **quaternion** has no cut made at
   it, so its motion folds into the kept layer above (else the one below) and the question names it;
   weight 0 is made empty; a layer the old character shares with somebody else is muted for the bakes
-  only and restored in a `finally`; a cut that fails is named and the character keeps the cut below.
+  only and restored in a `finally`; **a cut whose retarget is refused sends the press back to the
+  Bake road** (the mutes put back, the scene's own take retargeted onto the character that already
+  stands) rather than leaving it playing the cut below - half an animation - and the line says so.
 - **A layer carries only what its own offset reaches** (`trim_layers`, `TRIM` 1e-3 - the retarget's
   own repeatability is 0.0006 deg): a 20 deg chest offset came out as 19 channels of the 392 the cut
   reads (the chest's rotate and the IK arms and poles the retarget moves with it).
@@ -13688,9 +13690,9 @@ driving any of them (`_keyed_nodes`): 1P Setup puts the chest's turn on its knot
 (`Chest_1P_ctrl`), not on a control, so a stack read without them would miss the frames only the
 chest moves on.
 
-Proof: `docs/superpowers/plans/verify_swap_keep_layers.py` — **0 of 55 gates, mayapy standalone**,
-nine phases (`keep,bake,cancel,weight,quaternion,none,first_person,other_model,skeleton`), a UE
-clip retargeted onto a Manny rig:
+Proof: `docs/superpowers/plans/verify_swap_keep_layers.py` — **0 of 60 gates, mayapy standalone**,
+ten phases (`keep,bake,cancel,weight,quaternion,none,first_person,other_model,skeleton,refused`),
+a UE clip retargeted onto a Manny rig:
 - Keep, Manny for Manny with a «Fix» layer keyed on 3 frames (one stepped): asked once naming the
   layer; one layer of that name, mode, weight and mute; its keys on **exactly** those 3 frames,
   stepped still stepped; with the layer on AND with it muted, every game bone at the keys where the
@@ -13711,7 +13713,10 @@ clip retargeted onto a Manny rig:
 - onto a SKELETON (the cuts go through `skeletonimport._transfer`, not a rig retarget): the layer
   lands on the joints under its own name with its keys on exactly those 3 frames, and the joints
   are where the rig's bones were, on and muted - **0.0000 cm**, the transfer having no AS fit
-  offset of its own.
+  offset of its own;
+- a cut refused (injected - nothing in a healthy scene refuses one, and half an animation is the
+  outcome worth proving against): one more retarget follows it, the line names the layer and says
+  it baked instead, no layer is left, and the character plays the WHOLE take.
 
 13214 unit tests (the known `test_chat_deploy.Keys` failing: this machine's own saved keys).
 **Not seen in a GUI Maya** - the dialog itself and a real drag are the animator's, after Check

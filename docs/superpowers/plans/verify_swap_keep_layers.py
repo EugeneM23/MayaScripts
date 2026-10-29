@@ -4,7 +4,7 @@ standalone - it adds and deletes characters, so never the animator's scene.
     mayapy verify_swap_keep_layers.py [clip.FBX] [out.txt] [phases]
 
 `phases` is a comma-separated subset of keep,bake,cancel,weight,quaternion,none,first_person,
-other_model,skeleton (default: all of them).
+other_model,skeleton,refused (default: all of them).
 
 keep         a Manny rig playing a UE clip with a correction layer «Fix» on FKSpine3_M (keyed on
              3 frames, one of them stepped), swapped for a Manny rig with Keep: the new rig
@@ -57,7 +57,7 @@ CLIP = (ARGS.pop(0) if ARGS and ARGS[0].lower().endswith((".fbx", ".ma", ".mb"))
         else "C:/!!!Work/Animations/Export/LongSword_Attack_Right_Heavy_3P.FBX")
 OUT = ARGS.pop(0) if ARGS and ARGS[0].lower().endswith(".txt") else None
 ALL = ("keep", "bake", "cancel", "weight", "quaternion", "none", "first_person", "other_model",
-       "skeleton")
+       "skeleton", "refused")
 PHASES = [p.strip() for p in ARGS.pop(0).split(",")] if ARGS else list(ALL)
 
 import maya_retargetmode as rm
@@ -613,11 +613,52 @@ def phase_skeleton():
          % (d2, a2, where2))
 
 
+# ---------------------------------------------------------------- a refused cut
+def phase_refused():
+    """A cut whose retarget is refused must send the press back to the Bake road: the character
+    plays the WHOLE take, never the cut below it. The refusal is injected - nothing in a healthy
+    scene refuses a cut, and half an animation is the one outcome worth proving against."""
+    cmds.file(new=True, force=True)
+    rig, s0, s1 = retargeted_rig()
+    at = [float(s0), float(round((s0 + s1) / 2.0)), float(s1)]
+    make_layer("Fix", control(rig, "FKSpine3_M") + ".rotateY", at, 20.0)
+    frames = frames_of(s0, s1)
+    shown = sample(bones(rig.skeleton_root), frames)      # the scene as it stands, Fix on
+    real, calls = swap._again, []
+
+    def failing(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return "", "the connect was refused (injected)"
+        return real(*args, **kwargs)
+
+    ANSWER[0] = swaplayers.KEEP
+    swap._again = failing
+    try:
+        text = swap_for(rig)
+    finally:
+        swap._again = real
+    gate("R1", len(calls) == 2, "the refused cut was followed by one more retarget: %d" % len(calls))
+    gate("R2", swaplayers.NOT_KEPT % ("Fix", "the connect was refused (injected)") in text
+         and swaplayers.BAKED_INSTEAD in text,
+         "the line names the layer it could not keep and says it baked instead")
+    new = newest_rig(rig.namespace)
+    gate("R3", new is not None, "the new rig stands")
+    if new is None:
+        return
+    gate("R4", not [n for n in pkeys.layer_stack()[1:] if leaf(n).startswith("Fix")],
+         "no layer was left on it: %s" % pkeys.layer_stack()[1:])
+    d, a, where = compare(shown, sample(bones(new.skeleton_root), frames))
+    gate("R5", d < 0.35 and a < 0.6,
+         "it plays the WHOLE take, the layer's offset included: %.4f cm, %.4f deg %s"
+         % (d, a, where))
+
+
 # ---------------------------------------------------------------- run
 RUN = {"keep": phase_keep, "bake": phase_bake, "cancel": phase_cancel, "weight": phase_weight,
        "quaternion": phase_quaternion, "none": phase_none,
        "first_person": phase_first_person, "other_model": phase_other_model,
-       "skeleton": phase_skeleton}
+       "skeleton": phase_skeleton, "refused": phase_refused}
 
 for phase in PHASES:
     if phase not in RUN:

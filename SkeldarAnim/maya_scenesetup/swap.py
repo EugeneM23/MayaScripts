@@ -621,14 +621,16 @@ def _reading_of(arrival, index, times, tangents, every, wanted):
                                tangents)]
 
 
-def _arrive(entry, char, plan, answer, start, end, name, notes):
+def _arrive(entry, char, plan, answer, start, end, name, notes, mutes):
     """(Arrival, [swaplayers.Reading]): the new character standing with the old take on it.
 
     Bake (and a character with no layer to keep) is ONE bake of the scene as it shows.
     Keep on a rig in 1P is one bake of the 3P take, every layer unmuted. Otherwise the old
     stack's CUTS, one bake and retarget each, the new character's channels read after each at
     that layer's own key times; the last cut is the whole stack, so the helper bones, the camera
-    and the clip label its bake leaves are the whole take's."""
+    and the clip label its bake leaves are the whole take's. A cut whose retarget is refused
+    sends the press back to the Bake road (`mutes`, the scene's own mute state), rather than
+    leaving the character playing the cut below it - half an animation."""
     from maya_scenesetup import swaplayers
     names = [r["name"] for r in plan.records]
     if answer != "keep":
@@ -648,8 +650,15 @@ def _arrive(entry, char, plan, answer, start, end, name, notes):
             namespace, source, info = bake_copy(char.root, start, end)
             _line, failure = _again(arrival, entry, namespace, info, source, name)
             if failure:
+                #  the character now plays the cut BELOW this one - not the whole take - so the
+                #  press goes back to the Bake road rather than leaving half an animation on it.
                 notes.append(swaplayers.NOT_KEPT % (names[index], _first_line(failure)))
-                continue
+                swaplayers.restore_mutes(mutes)
+                namespace, source, info = bake_copy(char.root, start, end)
+                _line, again = _again(arrival, entry, namespace, info, source, name)
+                notes.append(swaplayers.BAKED_INSTEAD if not again
+                             else swaplayers.NOT_BAKED % _first_line(again))
+                return arrival, []
         readings.extend(_reading_of(arrival, index, times, tangents, every, wanted))
     return arrival, swaplayers.trim_layers(
         swaplayers.align_turns(swaplayers.fill_gaps(readings)))
@@ -718,7 +727,7 @@ def swap(entry, root):
     notes = swaplayers.nothing_kept(plan.records) if answer == "bake" else []
     mutes = swaplayers.mutes_of([r["name"] for r in plan.records])
     try:
-        arrival, readings = _arrive(entry, char, plan, answer, start, end, name, notes)
+        arrival, readings = _arrive(entry, char, plan, answer, start, end, name, notes, mutes)
     except maya_retargetmode.Cancelled:
         rigimport.restore_time(timing)
         return CANCELLED
