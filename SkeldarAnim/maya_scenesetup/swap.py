@@ -13,6 +13,7 @@ whole. Spec: docs/superpowers/specs/2026-10-17-character-swap-design.md.
 from __future__ import absolute_import
 
 import math
+from collections import namedtuple
 
 import maya.cmds as cmds
 import maya_timewarp
@@ -29,6 +30,12 @@ TRANSFORM_ATTRS = ("translateX", "translateY", "translateZ",
 CONSTRAINT_TYPES = ("parentConstraint", "pointConstraint", "orientConstraint",
                     "scaleConstraint", "aimConstraint")
 CANCELLED = "cancelled - nothing changed"
+
+#  the new character standing with the old take on it: its root, its `maya_rigs.Rig` (None for a
+#  skeleton), the retarget's line, a failure, the retarget MODULE (`maya_rig_retarget` /
+#  `maya_pmretarget`, None for a skeleton) and the answer already given about the proportions -
+#  what a further cut of the old stack hands back so nothing is asked twice (`_again`).
+Arrival = namedtuple("Arrival", "root rig line failure mod mode")
 
 
 # ------------------------------------------------------------------ pure
@@ -307,39 +314,73 @@ def _drop_namespace(namespace):
 
 # ------------------------------------------------------------------ scene: the new character
 
-def _onto_rig(entry, namespace, info, source, name):
-    """(new root, rig, line, failure)."""
+def _onto_rig(entry, namespace, info, source, name, bones=None):
+    """The `Arrival` of a rig ADDED from `entry` with the clip retargeted onto it. `bones`
+    reuses a proportions answer already given, so a stack kept layer by layer asks once."""
     import maya_retargetmode
     from maya_uebridge import rigimport
     plan = dict(rig=None, mod=None, add=True, entry=entry)
     rig, mod, notes, failure = rigimport.ready_rig(plan)
     if failure:
-        return None, rig, "", "  |  ".join(notes + [failure])
-    try:
-        decision = rigimport.decide_bones(rig, mod, source)
-    except maya_retargetmode.Cancelled:
-        rigimport.discard_added(rig)
-        raise
+        return Arrival(None, rig, "", "  |  ".join(notes + [failure]), mod, bones)
+    mode, reason = bones, ""
+    if mode is None:
+        try:
+            decision = rigimport.decide_bones(rig, mod, source)
+        except maya_retargetmode.Cancelled:
+            rigimport.discard_added(rig)
+            raise
+        mode, reason = decision.mode, decision.reason
     line, failure = rigimport.retarget_imported(rig, mod, namespace, info, source, name,
-                                                bones=decision.mode)
-    line = decision.reason or (line or "").split("  |  ")[0]
+                                                bones=mode)
+    line = reason or (line or "").split("  |  ")[0]
     fresh = maya_rigs.find(rig.namespace) or rig
     if failure:
-        return fresh.skeleton_root, fresh, "", failure
-    return fresh.skeleton_root, fresh, line, ""
+        return Arrival(fresh.skeleton_root, fresh, "", failure, mod, mode)
+    return Arrival(fresh.skeleton_root, fresh, line, "", mod, mode)
 
 
 def _onto_skeleton(entry, namespace, info, source, name):
-    """(new root, None, line, failure)."""
+    """The `Arrival` of a skeleton added from `entry`; `mode` is the transfer's own decision,
+    which a further cut hands back to `skeletonimport._transfer` so nothing is asked twice."""
     from maya_uebridge import skeletonimport
+    taken = []
+
+    def decide(*args):
+        decision = skeletonimport.choose_for(*args)
+        taken.append(decision)
+        return decision
+
     before = set(cmds.ls(type="joint", long=True) or [])
     line, failure, _top = skeletonimport.onto_skeleton(
-        entry, namespace, info, source, name, decide=skeletonimport.choose_for)
+        entry, namespace, info, source, name, decide=decide)
     fresh = [j for j in cmds.ls(type="joint", long=True) or []
              if j not in before and not j.split("|")[-1].startswith(namespace + ":")]
     root = min(fresh, key=lambda p: (p.count("|"), p)) if fresh else None
     parts = (line or "").split("  |  ")
-    return root, None, parts[-1] if len(parts) > 1 else parts[0], failure
+    return Arrival(root, None, parts[-1] if len(parts) > 1 else parts[0], failure, None,
+                   taken[0] if taken else None)
+
+
+def _again(arrival, entry, namespace, info, source, name):
+    """A further cut of the old stack retargeted onto the character that already stands: its
+    previous take cleared and the clip connected and baked again with the SAME proportions
+    answer. (line, failure)."""
+    from maya_uebridge import rigimport, skeletonimport
+    if arrival.rig is not None:
+        rig, mod, notes, failure = rigimport.ready_rig(
+            dict(rig=arrival.rig, mod=arrival.mod, add=False, entry=entry))
+        if failure:
+            _drop_namespace(namespace)
+            return "", "  |  ".join(notes + [failure])
+        return rigimport.retarget_imported(rig, mod, namespace, info, source, name,
+                                           bones=arrival.mode)
+    result = skeletonimport._transfer(source, arrival.root, info.get("start"),
+                                      info.get("end"), arrival.mode)
+    _drop_namespace(namespace)
+    if not result.get("moved"):
+        return "", "no bone of {0} matches {1}".format(name, leaf(arrival.root))
+    return "", ""
 
 
 # ------------------------------------------------------------------ scene: carrying
@@ -511,11 +552,110 @@ def rebind_all(found, old_char, new_root, new_rig, weapons, start, end):
 
 # ------------------------------------------------------------------ the press
 
+def _one(entry, char, start, end, name):
+    """One bake of the old character as the scene stands, retargeted onto the new one - the
+    2026-10-17 road, and what the Bake button answers."""
+    namespace, source, info = bake_copy(char.root, start, end)
+    try:
+        return (_onto_rig if catalog.is_rig(entry) else _onto_skeleton)(
+            entry, namespace, info, source, name)
+    finally:
+        _drop_namespace(namespace)
+
+
+def _cut_times(char, plan, names, start, end):
+    """[(index, [names on], [times], {time: (in, out)})] - every cut's key times and tangent
+    types, read off the OLD character before the first bake (a mute changes no curve), so every
+    cut can be read at the union of them and a layer trimmed against the cut below it."""
+    from maya_scenesetup import swaplayers
+    old = game_joints(char.root) + _controls(char.rig)
+    out = []
+    for index, on in (plan.cuts or [(None, [n for n in names])]):
+        layer = swaplayers.EVERY if plan.first_person else (
+            None if index is None else names[index])
+        times, tangents = swaplayers.times_and_tangents(
+            swaplayers.source_curves(layer, old), start, end)
+        out.append((index, on, times, tangents))
+    return out
+
+
+def _reading_of(arrival, index, times, tangents, every, wanted):
+    """[swaplayers.Reading] of the cut standing on the new character now, read at `every` time
+    any cut keys. `wanted` is the running union of the plugs the cuts have keyed - EVERY cut is
+    read for all of them, whole transform families at that, or a channel one cut keyed and
+    another left static would have its layer offset measured against the wrong value (and a
+    rotate triple read in part mixes two eulers of one rotation)."""
+    from maya_scenesetup import swaplayers
+    new = _controls(arrival.rig) if arrival.rig is not None else game_joints(arrival.root)
+    for plug in swaplayers.triples(swaplayers.animated_plugs(new)):
+        if plug not in wanted:
+            wanted.append(plug)
+    return [swaplayers.Reading(index, swaplayers.capture(list(wanted), every), times,
+                               tangents)]
+
+
+def _arrive(entry, char, plan, answer, start, end, name, notes):
+    """(Arrival, [swaplayers.Reading]): the new character standing with the old take on it.
+
+    Bake (and a character with no layer to keep) is ONE bake of the scene as it shows.
+    Keep on a rig in 1P is one bake of the 3P take, every layer unmuted. Otherwise the old
+    stack's CUTS, one bake and retarget each, the new character's channels read after each at
+    that layer's own key times; the last cut is the whole stack, so the helper bones, the camera
+    and the clip label its bake leaves are the whole take's."""
+    from maya_scenesetup import swaplayers
+    names = [r["name"] for r in plan.records]
+    if answer != "keep":
+        return _one(entry, char, start, end, name), []
+    cuts = _cut_times(char, plan, names, start, end)
+    every = sorted(set(t for _i, _on, times, _tan in cuts for t in times))
+    arrival, readings, wanted = None, [], []
+    for position, (index, on, times, tangents) in enumerate(cuts):
+        #  a rig in 1P keeps one pose on its base and the take on its two layers, so its one
+        #  cut is every layer unmuted and the keys are the base's and the layers' together.
+        swaplayers.set_mutes(names, names if plan.first_person else on)
+        if position == 0:
+            arrival = _one(entry, char, start, end, name)
+            if arrival.failure or not arrival.root:
+                return arrival, []
+        else:
+            namespace, source, info = bake_copy(char.root, start, end)
+            _line, failure = _again(arrival, entry, namespace, info, source, name)
+            if failure:
+                notes.append(swaplayers.NOT_KEPT % (names[index], _first_line(failure)))
+                continue
+        readings.extend(_reading_of(arrival, index, times, tangents, every, wanted))
+    return arrival, swaplayers.trim_layers(
+        swaplayers.align_turns(swaplayers.fill_gaps(readings)))
+
+
+def _layers_onto(entry, arrival, plan, readings):
+    """The captured stack written onto the new character, or 1P Setup run again on it. What the
+    status line says about the layers.
+
+    Only the CURVES of the channels we write are cut - never `ready_rig`'s reset, which would
+    also undo what the last cut's bake set up beside them: the IK limbs carried onto the FK's
+    shape (`maya_ikmatch`, whose own nodes are no keyable channel), the neck knobs the connect
+    set, the helper bones' tracks, the camera and the clip's label."""
+    from maya_scenesetup import swaplayers
+    if not readings:
+        return ""
+    plugs = sorted(set(plug for reading in readings for plug in reading.values))
+    if plugs:
+        cmds.cutKey([p for p in plugs if cmds.objExists(p)], clear=True)
+    made, notes = swaplayers.write_stack(readings, plan.records)
+    if plan.first_person and arrival.rig is not None:
+        text, failure = swaplayers.split_again(arrival.rig)
+        notes.append(text or failure)
+        notes.extend(swaplayers.FOLDED_1P % name
+                     for name in swaplayers.extra_1p(plan.records))
+    return swaplayers.line_of(made, notes)
+
+
 @maya_timewarp.wrapped
 def swap(entry, root):
     """The character standing at `root` swapped for a new `entry`. Returns the status line."""
     import maya_retargetmode
-    from maya_scenesetup import deletion
+    from maya_scenesetup import deletion, swaplayers
     from maya_uebridge import rigimport
 
     if entry is None:
@@ -537,25 +677,32 @@ def swap(entry, root):
     timing = rigimport.time_state()
     frame = cmds.currentTime(query=True)
 
-    namespace, source, info = bake_copy(char.root, start, end)
+    # The layers question, before anything is changed: Keep carries the old stack onto the new
+    # character, Bake is the road above (2026-10-29).
+    plan = swaplayers.plan_of(
+        swaplayers.records_of(swaplayers.layers_of(game_joints(char.root) +
+                                                   _controls(char.rig))),
+        swaplayers.in_1p(char.rig), catalog.is_rig(entry))
     try:
-        if catalog.is_rig(entry):
-            new_root, new_rig, line, failure = _onto_rig(entry, namespace, info, source, name)
-        else:
-            new_root, new_rig, line, failure = _onto_skeleton(entry, namespace, info, source, name)
+        answer = swaplayers.choose(plan, char.label, entry.label)
+    except swaplayers.Cancelled:
+        return CANCELLED
+
+    notes = swaplayers.nothing_kept(plan.records) if answer == "bake" else []
+    mutes = swaplayers.mutes_of([r["name"] for r in plan.records])
+    try:
+        arrival, readings = _arrive(entry, char, plan, answer, start, end, name, notes)
     except maya_retargetmode.Cancelled:
-        _drop_namespace(namespace)
         rigimport.restore_time(timing)
         return CANCELLED
-    except Exception:
-        _drop_namespace(namespace)
-        raise
-    _drop_namespace(namespace)
-    if failure or not new_root:
-        return "{0}: {1} - {2} kept".format(entry.label, failure or "it did not arrive",
-                                            char.label)
+    finally:
+        swaplayers.restore_mutes(mutes)
+    if arrival.failure or not arrival.root:
+        return "{0}: {1} - {2} kept".format(
+            entry.label, arrival.failure or "it did not arrive", char.label)
+    new_root, new_rig, line = arrival.root, arrival.rig, arrival.line
 
-    notes = []
+    notes.append(_layers_onto(entry, arrival, plan, readings))
     texts, weapons = carry(carried, new_root, start, end)
     if carried["follows"]:
         notes.append("Connections links not carried (" + ", ".join(carried["follows"]) + ")")
@@ -585,23 +732,15 @@ def attach_part(entry, char):
     name = clip_name(char)
     timing = rigimport.time_state()
     frame = cmds.currentTime(query=True)
-    namespace, source, info = bake_copy(char.root, start, end)
     try:
-        if catalog.is_rig(entry):
-            new_root, new_rig, line, failure = _onto_rig(entry, namespace, info, source, name)
-        else:
-            new_root, new_rig, line, failure = _onto_skeleton(entry, namespace, info, source, name)
+        arrival = _one(entry, char, start, end, name)
     except maya_retargetmode.Cancelled:
-        _drop_namespace(namespace)
         rigimport.restore_time(timing)
         return CANCELLED
-    except Exception:
-        _drop_namespace(namespace)
-        raise
-    _drop_namespace(namespace)
-    if failure or not new_root:
-        return "{0}: {1} - {2} untouched".format(entry.label, failure or "it did not arrive",
-                                                 char.label)
+    new_root, new_rig, line = arrival.root, arrival.rig, arrival.line
+    if arrival.failure or not new_root:
+        return "{0}: {1} - {2} untouched".format(
+            entry.label, arrival.failure or "it did not arrive", char.label)
     cmds.currentTime(frame)
     try:
         cmds.select(new_rig.main if new_rig is not None else new_root, replace=True)

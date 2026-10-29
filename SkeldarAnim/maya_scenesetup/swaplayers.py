@@ -36,6 +36,8 @@ _ANSWERS = {KEEP: "keep", BAKE: "bake", CANCEL: "cancel"}
 
 TOLERANCE = 1e-4                    # two key times this close are one key
 TITLE = "Swap: keep the animation layers?"
+#  `source_curves`' layer for "the base's curves and every layer's together"
+EVERY = "*every*"
 
 KEPT = "layers kept: %s"
 EMPTY = "%s is at weight 0 - made, left empty"
@@ -112,6 +114,105 @@ def times_of(times, start, end, tolerance=TOLERANCE):
     return out or [float(start)]
 
 
+#  a transform channel's whole family: a rotate triple read in part and written in part mixes
+#  two eulers of the same rotation (measured 2026-10-29: a finger control 540 deg out, because
+#  the retarget's `delete -staticChannels` keyed rotateZ in one cut and rotateX in another)
+FAMILIES = (("translateX", "translateY", "translateZ"),
+            ("rotateX", "rotateY", "rotateZ"),
+            ("scaleX", "scaleY", "scaleZ"))
+ROTATES = FAMILIES[1]
+TURN = 360.0
+
+
+def triples(plugs):
+    """`plugs` with each transform channel's whole family beside it, in order. Pure."""
+    out, seen = [], set()
+    for plug in plugs:
+        node, _dot, attr = plug.rpartition(".")
+        family = [f for f in FAMILIES if attr in f]
+        for name in (family[0] if family else (attr,)):
+            whole = node + "." + name
+            if whole not in seen:
+                seen.add(whole)
+                out.append(whole)
+    return out
+
+
+def fill_gaps(readings):
+    """Every reading given a value for every plug ANY reading holds: a channel a cut left
+    static (the retarget's `delete -staticChannels`) carries no key there, and a layer's offset
+    is measured against the base's value for that very channel - so a plug the base does not
+    hold would be measured against whatever the last cut left. The stand-in is the first
+    reading's own value for it, which for a channel no cut animates is that value. Pure."""
+    every = []
+    for reading in readings:
+        for plug in reading.values:
+            if plug not in every:
+                every.append(plug)
+    for reading in readings:
+        for plug in every:
+            if plug in reading.values:
+                continue
+            donor = next((r.values[plug] for r in readings if plug in r.values), None)
+            if not donor:
+                continue
+            value = donor[sorted(donor)[0]]
+            reading.values[plug] = dict((t, value) for t in reading.times)
+    return readings
+
+
+def align_turns(readings, rotates=ROTATES):
+    """Every cut's rotate values snapped onto the turn the FIRST cut's are on: each retarget
+    lands on its own turn count (its euler filter makes each curve continuous from its own
+    first key), so a later cut's euler can sit a whole turn away - the same rotation written
+    with 721 deg where the first cut wrote 1.4. A whole turn added to one channel leaves the
+    rotation alone, and the layer's offset comes out small. Pure."""
+    if not readings:
+        return readings
+    first = readings[0].values
+    for reading in readings[1:]:
+        for plug, per in reading.values.items():
+            if plug.rpartition(".")[2] not in rotates or plug not in first:
+                continue
+            mine, theirs = per, first[plug]
+            if not mine or not theirs:
+                continue
+            turns = round((theirs[sorted(theirs)[0]] - mine[sorted(mine)[0]]) / TURN)
+            if turns:
+                for t in list(mine):
+                    mine[t] += turns * TURN
+    return readings
+
+
+#  a channel whose cut differs from the one below it by less than this is the retarget's own
+#  repeatability (measured 2026-10-29: 0.0006 deg over a whole take), not the layer's offset
+TRIM = 1e-3
+
+
+def trim_layers(readings, tolerance=TRIM):
+    """Each layer's reading kept to the channels whose values differ from the cut BELOW it at
+    its own key times: a layer then carries the offset its own layer carried (and whatever the
+    retarget spreads from it - a spine offset moves the IK hands too), not every channel of the
+    take. Every reading must cover the other's times (`_arrive` captures them all). Pure."""
+    out = []
+    for position, reading in enumerate(readings):
+        if reading.index is None or position == 0:
+            out.append(reading)
+            continue
+        below = readings[position - 1].values
+        kept = {}
+        for plug, per in reading.values.items():
+            under = below.get(plug) or {}
+            for frame in reading.times:
+                if frame not in per:
+                    continue
+                if frame not in under or abs(per[frame] - under[frame]) > tolerance:
+                    kept[plug] = per
+                    break
+        out.append(Reading(reading.index, kept, reading.times, reading.tangents))
+    return out
+
+
 def tangent_flags(in_type, out_type):
     """The `keyTangent` flags for one key's types: Maya refuses `step` / `stepnext` as an IN
     type (`keys._NO_IN_TYPES`), so that one is left to Maya. Pure."""
@@ -163,6 +264,26 @@ def question(old_label, new_label, records, first_person, cuts, folded):
         lines.append("{0}: one take on the base layer, a key on every frame - what the scene"
                      " shows now.".format(BAKE))
     return "\n".join(lines)
+
+
+def nothing_kept(records):
+    """The notes for a stack no road can keep - its layers named with the reason, so a press
+    that quietly baked them says why (a quaternion layer: its contribution is no per-channel
+    sum). [] when something could be kept. Pure."""
+    keep = keepable(records)
+    if not records or any(keep.values()):
+        return []
+    return [NOT_KEPT % (r["name"], "it accumulates rotation as quaternions")
+            for r in records if not keep[r["name"]]]
+
+
+def extra_1p(records):
+    """The layer names of a rig in 1P that are NOT the 1P Setup's own
+    (`curvedata.FIRST_PERSON`) - a layer of the animator's, whose motion the 1P road folds into
+    the split and which the line names. Pure."""
+    from maya_poselib import curvedata
+    return [r["name"] for r in records
+            if not r["name"].startswith(curvedata.FIRST_PERSON)]
 
 
 def plan_of(records, first_person, new_is_rig):
@@ -315,6 +436,33 @@ def curves_on(name, plugs, keys_module=None):
         except RuntimeError:
             continue
         if curve and curve not in out:
+            out.append(curve)
+    return out
+
+
+def source_curves(layer, nodes):
+    """The curve nodes the old character's layer `layer` holds - `None` the base's: every curve
+    feeding `nodes` whose output is not a layer's own input (`inputB*` of a blend node), which
+    is one `listConnections` a curve rather than one `curve_for` a channel. `EVERY` is the base's
+    and every layer's together, which is what the 1P road's one cut is keyed at - a rig in 1P
+    keeps one pose on its base and the take itself on the two layers."""
+    from maya_poselib import keys
+    if layer == EVERY:
+        return list(cmds.keyframe(nodes, query=True, name=True) or [])
+    if layer is not None:
+        wanted = set()
+        for node in nodes:
+            found = cmds.ls(node, long=True) or []
+            wanted.add(found[0] if found else node)
+        plugs = [p for p in keys.layer_plugs(layer) if p.rsplit(".", 1)[0] in wanted]
+        return curves_on(layer, plugs)
+    out = []
+    for curve in cmds.keyframe(nodes, query=True, name=True) or []:
+        where = cmds.listConnections(curve + ".output", source=False, destination=True,
+                                     plugs=True) or []
+        if any(plug.rsplit(".", 1)[-1].startswith("inputB") for plug in where):
+            continue
+        if curve not in out:
             out.append(curve)
     return out
 

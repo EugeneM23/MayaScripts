@@ -112,6 +112,81 @@ class Tangents(unittest.TestCase):
         self.assertEqual(stored, [[0.0, 1.0, "step", "step"], [12.0, 2.0, "auto", "auto"]])
 
 
+class Readings(unittest.TestCase):
+    """The rules the first live run taught (2026-10-29): a cut keys only what moves, so one cut
+    can key `rotateZ` where another keys `rotateX`, and each retarget lands on its own turn."""
+
+    def _reading(self, index, values, times):
+        return swaplayers.Reading(index, values, times, {})
+
+    def test_a_transform_channel_brings_its_whole_family(self):
+        self.assertEqual(swaplayers.triples(["|c.rotateZ"]),
+                         ["|c.rotateX", "|c.rotateY", "|c.rotateZ"])
+        self.assertEqual(swaplayers.triples(["|c.translateY", "|c.visibility"]),
+                         ["|c.translateX", "|c.translateY", "|c.translateZ", "|c.visibility"])
+
+    def test_a_family_is_listed_once_however_often_it_is_asked(self):
+        self.assertEqual(swaplayers.triples(["|c.rotateX", "|c.rotateZ"]),
+                         ["|c.rotateX", "|c.rotateY", "|c.rotateZ"])
+
+    def test_a_plug_missing_from_a_cut_takes_the_first_readings_value(self):
+        readings = swaplayers.fill_gaps([
+            self._reading(None, {"a": {0.0: 1.0}}, [0.0]),
+            self._reading(0, {"a": {0.0: 2.0}, "b": {0.0: 5.0}}, [0.0])])
+        self.assertEqual(readings[0].values["b"], {0.0: 5.0})
+
+    def test_filling_covers_every_time_of_the_reading(self):
+        readings = swaplayers.fill_gaps([
+            self._reading(None, {"a": {0.0: 1.0, 9.0: 1.0}}, [0.0, 9.0]),
+            self._reading(0, {"a": {0.0: 2.0}, "b": {0.0: 5.0}}, [0.0])])
+        self.assertEqual(readings[0].values["b"], {0.0: 5.0, 9.0: 5.0})
+
+    def test_a_later_cuts_rotation_is_snapped_onto_the_first_cuts_turn(self):
+        readings = swaplayers.align_turns([
+            self._reading(None, {"|c.rotateX": {0.0: 1.4, 9.0: 2.0}}, [0.0, 9.0]),
+            self._reading(0, {"|c.rotateX": {0.0: 721.4, 9.0: 722.0}}, [0.0, 9.0])])
+        snapped = readings[1].values["|c.rotateX"]
+        self.assertAlmostEqual(snapped[0.0], 1.4, places=9)
+        self.assertAlmostEqual(snapped[9.0], 2.0, places=9)
+
+    def test_only_rotations_are_snapped(self):
+        readings = swaplayers.align_turns([
+            self._reading(None, {"|c.translateX": {0.0: 1.0}}, [0.0]),
+            self._reading(0, {"|c.translateX": {0.0: 361.0}}, [0.0])])
+        self.assertEqual(readings[1].values["|c.translateX"], {0.0: 361.0})
+
+    def test_a_layer_keeps_only_the_channels_it_changes(self):
+        readings = swaplayers.trim_layers([
+            self._reading(None, {"a": {0.0: 1.0}, "b": {0.0: 1.0}}, [0.0]),
+            self._reading(0, {"a": {0.0: 9.0}, "b": {0.0: 1.0}}, [0.0])])
+        self.assertEqual(sorted(readings[1].values), ["a"])
+
+    def test_the_retargets_own_noise_is_no_offset(self):
+        readings = swaplayers.trim_layers([
+            self._reading(None, {"a": {0.0: 1.0}}, [0.0]),
+            self._reading(0, {"a": {0.0: 1.0 + 1e-5}}, [0.0])])
+        self.assertEqual(sorted(readings[1].values), [])
+
+    def test_the_base_is_never_trimmed(self):
+        readings = swaplayers.trim_layers([self._reading(None, {"a": {0.0: 1.0}}, [0.0])])
+        self.assertEqual(sorted(readings[0].values), ["a"])
+
+    def test_a_stack_nothing_can_be_kept_from_says_why(self):
+        notes = swaplayers.nothing_kept([_record("Spin", rotation="quaternion")])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Spin", notes[0])
+        self.assertIn("quaternions", notes[0])
+
+    def test_a_stack_with_a_keepable_layer_says_nothing(self):
+        self.assertEqual(swaplayers.nothing_kept([_record("Fix"),
+                                                  _record("Spin", rotation="quaternion")]), [])
+        self.assertEqual(swaplayers.nothing_kept([]), [])
+
+    def test_the_1p_road_names_a_layer_of_the_animators_own(self):
+        records = [_record("_3P_Lower_Body"), _record("_3P_Upper_Body"), _record("Fix")]
+        self.assertEqual(swaplayers.extra_1p(records), ["Fix"])
+
+
 class Question(unittest.TestCase):
 
     def test_it_names_the_layers_and_both_buttons(self):

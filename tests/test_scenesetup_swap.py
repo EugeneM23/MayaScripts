@@ -97,5 +97,18 @@ class Parts(unittest.TestCase):
         self.assertNotIn("deletion", inspect.getsource(swap.attach_part))
 
 
+class Arrivals(unittest.TestCase):
+    """The new character standing, with what a further cut of the old stack needs (2026-10-29)."""
+
+    def test_an_arrival_carries_the_module_and_the_proportions_answer(self):
+        arrival = swap.Arrival("|root", None, "line", "", "mod", "stretch")
+        self.assertEqual(arrival.root, "|root")
+        self.assertIsNone(arrival.rig)
+        self.assertEqual(arrival.line, "line")
+        self.assertEqual(arrival.failure, "")
+        self.assertEqual(arrival.mod, "mod")
+        self.assertEqual(arrival.mode, "stretch")
+
+
 if __name__ == "__main__":
     unittest.main()
