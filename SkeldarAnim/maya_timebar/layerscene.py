@@ -283,6 +283,39 @@ def members_of(names):
     return out
 
 
+def _selected_paths():
+    """The selection as long paths, with a transform's shapes and a shape's transform
+    beside it: a display layer holds whichever of the two was added to it."""
+    out = set()
+    for name in (cmds.ls(selection=True, long=True) or []):
+        node = name.split(".")[0]
+        for path in (cmds.ls(node, long=True) or []):
+            out.add(path)
+            out.update(cmds.listRelatives(path, shapes=True, fullPath=True) or [])
+            if cmds.ls(path, shapes=True):
+                out.update(cmds.listRelatives(path, parent=True, fullPath=True) or [])
+    return out
+
+
+def display_members_of(names):
+    """The display layers of `names` the selection belongs to (2026-10-29), green names
+    on the Display tab: Maya's own members (`editDisplayLayerMembers`, what Add / Remove
+    selection write), a transform and its shape counting as one object. Nothing
+    selected: none."""
+    picked = _selected_paths()
+    if not picked:
+        return []
+    out = []
+    for name in names:
+        try:
+            members = cmds.editDisplayLayerMembers(name, q=True, fullNames=True) or []
+            if any(m in picked for m in (cmds.ls(members, long=True) or [])):
+                out.append(name)
+        except Exception:                                    # noqa: BLE001 - one odd layer, not the rest
+            pass
+    return out
+
+
 def active_layer():
     """(root, the layer keys go to) - Maya's: the preferred selected layer, else the last
     selected one, else the base (`anim_layers`' rule, without reading every row).

@@ -21,6 +21,8 @@ class FakeCmds(object):
         self.root = "BaseAnimation"
         self.tree = {"BaseAnimation": ["A", "B"]}
         self.colour = [1.0, 0.0, 0.0]
+        self.kids = {"cube": ["cubeShape"]}         # a transform's shapes
+        self.layer_members = {"lay1": ["cube"]}     # a display layer's own
 
     def animLayer(self, name=None, q=False, e=False, **kw):
         self.calls.append(("animLayer", name, kw))
@@ -74,7 +76,28 @@ class FakeCmds(object):
             return ["defaultLayer", "lay1"]
         if kw.get("selection"):
             return list(self.selection)
+        if a and (kw.get("long") or kw.get("shapes")):      # ls(node, long=True) / (path, shapes=True)
+            names = list(a[0]) if isinstance(a[0], (list, tuple)) else [a[0]]
+            if kw.get("shapes"):
+                return [n for n in names if n in self._shapes()]
+            return names
         return []
+
+    def _shapes(self):
+        return set(s for kids in self.kids.values() for s in kids)
+
+    def listRelatives(self, path, shapes=False, parent=False, fullPath=False):
+        if shapes:
+            return list(self.kids.get(path, []))
+        if parent:
+            return [t for t, kids in self.kids.items() if path in kids]
+        return []
+
+    def editDisplayLayerMembers(self, name, *a, **kw):
+        if kw.get("q"):
+            return list(self.layer_members.get(name, []))
+        self.calls.append(("editDisplayLayerMembers", name, a))
+        return None
 
     def colorIndex(self, index, q=False):
         return self.colour
@@ -183,6 +206,26 @@ class Reads(unittest.TestCase):
             return real(name, q=q, e=e, **kw)
         self.cmds.animLayer = animLayer
         self.assertEqual(S.members_of(["B", "A"]), ["B"])
+
+    def test_the_display_layers_the_selection_belongs_to(self):
+        """2026-10-29: Maya's own members, what Add / Remove selection write."""
+        self.assertEqual(S.display_members_of(["lay1"]), ["lay1"])
+
+    def test_a_selected_shape_belongs_where_its_transform_is(self):
+        self.cmds.selection = ["cubeShape"]
+        self.assertEqual(S.display_members_of(["lay1"]), ["lay1"])
+
+    def test_a_selected_transform_belongs_where_its_shape_is(self):
+        self.cmds.layer_members = {"lay1": ["cubeShape"]}
+        self.assertEqual(S.display_members_of(["lay1"]), ["lay1"])
+
+    def test_another_object_belongs_to_no_display_layer(self):
+        self.cmds.selection = ["sphere"]
+        self.assertEqual(S.display_members_of(["lay1"]), [])
+
+    def test_nothing_selected_belongs_to_no_display_layer(self):
+        self.cmds.selection = []
+        self.assertEqual(S.display_members_of(["lay1"]), [])
 
     def test_the_base_layer_s_keys_in_a_few_calls(self):
         """2026-10-18 final review: the base layer's curves gathered with listConnections

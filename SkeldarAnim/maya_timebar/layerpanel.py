@@ -394,7 +394,7 @@ class Panel(object):
                 self.picked_disp = None
             self._clamp_scroll()
             self.column.invalidate()
-        if self.is_open() and self.tab == "anim" and (keys or changed):
+        if self.is_open() and (keys or changed):
             self._read_members()
         if self._lanes_shown() and (keys or changed or self._keys_stale):
             if self.lanes_moving() or self._timeline_dragging():
@@ -409,9 +409,11 @@ class Panel(object):
         """Which layers the selection belongs to: their names read green. With the keys
         (a selection change, a layer change, an undo, a scene opened) and when the rows
         change - never on the strip's plain tick, four times a second: it is a read per
-        layer (2026-10-29). The Animation tab only, which is where they show."""
-        names = [r["name"] for r in self.rows["anim"]] if self.tab == "anim" else []
-        found = self._call("members_of", names) if names else []
+        layer (2026-10-29). The shown tab's rows only - animation layers by their
+        channels, display layers by their members."""
+        names = [r["name"] for r in self.rows.get(self.tab, ())]
+        call = "members_of" if self.tab == "anim" else "display_members_of"
+        found = self._call(call, names) if names else []
         known = set(names)
         members = frozenset(n for n in (found or ()) if n in known)
         if members != self.members:
@@ -981,7 +983,7 @@ class Panel(object):
         self.tab = tab
         self.scroll = 0.0
         self._set_option(TAB_VAR, tab)
-        self._read_members()            # read on the Animation tab, dropped on Display
+        self._read_members()            # the tab shown now holds its own members
         lay = self.column.layout_()
         if self.motion:
             seg = lay.segments[tab]
@@ -1997,7 +1999,7 @@ def _classes():
             metrics = QtGui.QFontMetricsF(f)
             text = metrics.elidedText(row.get("label", row.get("name", "")), Qt.ElideRight, nr.width())
             p.setFont(f)
-            member = tab == "anim" and pn.member(row.get("name"))
+            member = pn.member(row.get("name"))         # the shown tab's own
             p.setPen(colour(tk[L.name_tone(member, lit)]))
             p.drawText(nr, Qt.AlignVCenter | Qt.AlignLeft, text)
             if dim:

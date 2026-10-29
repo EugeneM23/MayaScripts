@@ -104,6 +104,9 @@ class FakeLink(object):
     def members_of(self, names):
         return [n for n in names if n in self.members]
 
+    def display_members_of(self, names):
+        return [n for n in names if n in self.members]
+
     def option(self, name, default):
         return self.opts.get(name, default)
 

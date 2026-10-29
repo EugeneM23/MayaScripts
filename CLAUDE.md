@@ -12933,25 +12933,27 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
      written the other way round.
 
 **…and a layer the selection belongs to reads green** (2026-10-29, «Когда мы выделяем объект или группу
-объектов давай будем подсвечивать зелененьким имена анимационных слоев которым он пренадлежит»): in the
-column's Animation tab such a layer's NAME is drawn in the hub's `ok` #8fd19a (`layerlook.name_tone(member,
+объектов давай будем подсвечивать зелененьким имена анимационных слоев которым он пренадлежит», then «Да, и
+Display»): in the column such a layer's NAME is drawn in the hub's `ok` #8fd19a (`layerlook.name_tone(member,
 lit)`: green wins over the active row's accent, whose bold and accent frame still mark it; a muted row keeps
 its dim and its strike-through).
-- **What «belongs» is** (`layerscene.members_of(names)`): Maya's own membership - a layer whose `attribute`
-  list holds a plug of a selected node, which is what Add / Remove selection write, keys there or not;
-  **BaseAnimation** holds the selection when it has base curves, which is what its lane shows (`_in_base`:
-  the plain curves in one listConnections answer most selections, and only a channel a layer's blend drives
-  needs findCurveForPlug; it stops at the first find). Nothing selected: nothing green. One odd layer that
-  raises does not cost the others.
+- **What «belongs» is**, Maya's own membership, what Add / Remove selection write:
+  - an **animation** layer (`layerscene.members_of`) whose `attribute` list holds a plug of a selected node,
+    keys there or not; **BaseAnimation** when the selection has base curves, which is what its lane shows
+    (`_in_base`: the plain curves in one listConnections answer most selections, and only a channel a layer's
+    blend drives needs findCurveForPlug; it stops at the first find);
+  - a **display** layer (`display_members_of`) holding a selected node, a transform and its shape counting as
+    one object (`_selected_paths`: a display layer holds whichever of the two was added).
+  Nothing selected: nothing green. One odd layer that raises does not cost the others.
 - **Read with the keys** (`Panel._read_members`, `self.members`, in the column's cache key): a selection
   change, a layer change, an undo, a scene opened, new rows, and the open press - never on the strip's plain
-  tick, four times a second. The Animation tab only (the Display tab drops them, a switch back reads again),
-  and only while the panel is open. Measured: **0.42 ms on 11 layers**.
-- Proof: `verify_timebar_layers.py` **0 of 30 gates** (the gates above measured on a real scene: in every
-  layer holding it with the base too, a layer it was added to with no keys there, an object in no layer, a
-  plainly keyed object the base alone, nothing selected); unit tests in `test_timebar_layer{look,scene,panel}`
-  (the green read off the rendered column, which a painter blind to membership fails). Not seen in a GUI Maya.
-  Not built: the Display tab's own membership.
+  tick, four times a second. The SHOWN tab's rows only (a switch reads the other tab's), and only while the
+  panel is open. Measured: **0.58 ms on 11 animation layers**.
+- Proof: `verify_timebar_layers.py` **0 of 34 gates** (the rules above measured on a real scene: in every
+  animation layer holding it with the base too, a layer it was added to with no keys there, an object in no
+  layer, a plainly keyed object the base alone, a display layer by its member and by that member's shape,
+  nothing selected); unit tests in `test_timebar_layer{look,scene,panel}` (the green read off the rendered
+  column, which a painter blind to membership fails). Not seen in a GUI Maya.
 
 **Steel keys: a key set glows hot and cools into steel** (2026-10-20, «опцию в настройках которая
 позволит заменить оранжевые ключи на серебряные ... похоже на остывание стали при ковке»).

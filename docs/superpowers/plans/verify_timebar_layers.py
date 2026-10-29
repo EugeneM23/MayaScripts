@@ -113,6 +113,20 @@ gate((d["visible"], d["playback"], d["type"]) == (False, False, 2), "V, P, type 
 cmds.select(clear=True); S.display_select(name)
 gate(cmds.ls(selection=True) == [cube], "the layer's objects selected")
 
+# which display layers the selection belongs to (2026-10-29: green names there too)
+cmds.select(cube)
+gate(S.display_members_of([name]) == [name], "the selection belongs to its display layer")
+shape = (cmds.listRelatives(cube, shapes=True, fullPath=True) or [None])[0]
+cmds.select(shape)
+gate(S.display_members_of([name]) == [name], "its shape selected belongs there too")
+other = cmds.polySphere(name="outside")[0]
+cmds.select(other)
+gate(S.display_members_of([name]) == [], "an object outside it belongs to none: %s"
+     % S.display_members_of([name]))
+cmds.select(clear=True)
+gate(S.display_members_of([name]) == [], "nothing selected belongs to no display layer")
+cmds.delete(other)
+
 # keys_by_layer on 9 layers (2026-10-18 final review): its cost, and the base layer's
 # keys read with listConnections equal to the old per-plug findCurveForPlug read
 import time

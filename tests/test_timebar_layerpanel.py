@@ -20,7 +20,8 @@ class FakeLink(object):
     def __init__(self):
         self.log = []
         self.opts = {}
-        self.members = []               # the layers the selection belongs to
+        self.members = []               # the animation layers the selection belongs to
+        self.display_members = []       # its display layers
         self.member_calls = []
         self.anim = [
             {"name": "A2", "label": "A2", "mode": "add", "weight": 0.65, "weight_keyed": False, "mute": False,
@@ -47,6 +48,10 @@ class FakeLink(object):
     def members_of(self, names):
         self.member_calls.append(list(names))
         return [n for n in names if n in self.members]
+
+    def display_members_of(self, names):
+        self.member_calls.append(list(names))
+        return [n for n in names if n in self.display_members]
 
     def pick(self, name):
         for r in self.anim:
@@ -374,10 +379,12 @@ class Members(Presses):
         self.col.render(img)
         return img
 
-    def green_name(self, img, i):
+    def green_name(self, img, i, tab="anim", lay=None):
         """Is row `i`'s name green ink? `ok` is (143, 209, 154); the card, the plain
         text, the accent and the strike-through all read green no higher than red."""
-        x, y, w, h = L.row_parts(self.lay.row_at(i, 0), "anim", 1.0, base=self.lay.bases[i])["name"]
+        lay = lay or self.lay
+        base = lay.bases[i] if tab == "anim" else False
+        x, y, w, h = L.row_parts(lay.row_at(i, 0), tab, 1.0, base=base)["name"]
         for px in range(int(x), int(x + w)):
             for py in range(int(y), int(y + h)):
                 c = img.pixelColor(px, py)
@@ -418,16 +425,26 @@ class Members(Presses):
         self.panel.refresh()
         self.assertEqual(self.link.member_calls, [["A3", "A2", "A1", "Base"]])
 
-    def test_the_display_tab_drops_them_and_the_animation_tab_reads_again(self):
+    def test_each_tab_reads_its_own(self):
         self.link.members = ["A1"]
         self.panel.refresh(keys=True)
         self.assertEqual(self.panel.members, frozenset(["A1"]))
         self.click(self.col, *self.centre(self.lay.segments["disp"]))
-        self.assertEqual(self.panel.members, frozenset())
-        self.panel.refresh(keys=True)
-        self.assertEqual(self.panel.members, frozenset())
+        self.assertEqual(self.panel.members, frozenset())        # lay1 holds nothing
         self.click(self.col, *self.centre(self.lay.segments["anim"]))
         self.assertEqual(self.panel.members, frozenset(["A1"]))
+
+    def test_a_display_layer_the_selection_belongs_to_reads_green(self):
+        self.link.display_members = ["lay1"]
+        self.click(self.col, *self.centre(self.lay.segments["disp"]))
+        self.assertEqual(self.panel.members, frozenset(["lay1"]))
+        lay = self.col.layout_()
+        self.assertTrue(self.green_name(self.image(), 0, "disp", lay))
+
+    def test_a_display_layer_holding_nothing_of_it_is_plain(self):
+        self.click(self.col, *self.centre(self.lay.segments["disp"]))
+        lay = self.col.layout_()
+        self.assertFalse(self.green_name(self.image(), 0, "disp", lay))
 
     def test_an_open_panel_reads_them_at_once(self):
         self.panel.close()
