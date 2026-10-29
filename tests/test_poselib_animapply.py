@@ -1805,6 +1805,28 @@ class CurvesDispatch(unittest.TestCase):
         aa.apply(self.header, {}, selection=["x"], options={"paste_as": "retarget"})
         self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
 
+    def test_a_rig_in_1p_is_retargeted_and_said(self):
+        # 2026-10-29: raw curves onto a rig in 1P stood the upper body 110-120 deg off
+        self.addCleanup(setattr, aa.helpers, "first_person", aa.helpers.first_person)
+        aa.helpers.first_person = lambda ref: ref.label == "Manny_Rig1"
+        ok, line = aa.apply(self.header, {}, selection=["x"],
+                            options={"paste_as": "curves"}, curves={"nodes": []})
+        self.assertTrue(ok)
+        self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
+        self.assertIn(self.ca.IN_1P % "Manny_Rig1", line)
+        self.assertIn(self.ca.RETARGETED % "Creep_Rig1", line)
+
+    def test_a_card_saved_off_a_rig_in_1p_retargets_mirror_and_all(self):
+        from maya_poselib import curvedata
+        header = dict(self.header, curves=curvedata.summary(
+            [curvedata.layer_record(curvedata.BASE, base=True)], 1, first_person=True))
+        ok, line = aa.apply(header, {}, selection=["x"], mirror=True,
+                            options={"paste_as": "curves"}, curves={"nodes": []})
+        self.assertTrue(ok)
+        self.assertEqual([entry[1] for entry in self.log], [["Manny_Rig1", "Creep_Rig1"]])
+        self.assertTrue(line.endswith(self.ca.FROM_1P))
+        self.assertEqual(aa._from_first_person(header, {"paste_as": "retarget"}, "x"), "x")
+
 
 if __name__ == "__main__":
     unittest.main()

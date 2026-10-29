@@ -292,5 +292,38 @@ class CameraCarriers(unittest.TestCase):
                                                        follow=True))
 
 
+class FirstPerson(unittest.TestCase):
+    """A rig in 1P is the one a 1P chest knot names (`helpers.CHEST_MARKER`, its namespace)."""
+
+    class Cmds(object):
+        def __init__(self, marked):
+            self.marked = marked
+
+        def ls(self, pattern, recursive=False, objectsOnly=False):
+            return list(self.marked)
+
+        def getAttr(self, plug):
+            return self.marked[plug.split(".")[0]]
+
+    def ref(self, namespace, kind="rig"):
+        rig = type("Rig", (), {"namespace": namespace})()
+        return type("Ref", (), {"kind": kind, "rig": rig})()
+
+    def use(self, marked):
+        self.addCleanup(setattr, helpers, "cmds", helpers.cmds)
+        helpers.cmds = self.Cmds(marked)
+
+    def test_the_knot_names_the_rig(self):
+        self.use({"|Chest_1P_ctrl": "Manny_Rig1"})
+        self.assertTrue(helpers.first_person(self.ref("Manny_Rig1")))
+        self.assertFalse(helpers.first_person(self.ref("Manny_Rig")))
+
+    def test_a_skeleton_or_no_knot_is_not(self):
+        self.use({})
+        self.assertFalse(helpers.first_person(self.ref("Manny_Rig1")))
+        self.use({"|Chest_1P_ctrl": "Manny_Rig1"})
+        self.assertFalse(helpers.first_person(self.ref("Manny_Rig1", kind="skeleton")))
+
+
 if __name__ == "__main__":
     unittest.main()
