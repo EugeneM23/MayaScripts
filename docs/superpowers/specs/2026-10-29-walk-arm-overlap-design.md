@@ -123,26 +123,41 @@ Whip at 0 leaves the pure time shift.
 
 ## Proof
 
-`docs/superpowers/plans/walkparam/verify_walk_arm_overlap.py`, mayapy standalone, on a COPY of the
-animator's walks folder and their own walker's settings (their cycle, the sword pose at share 1, In place,
-tempo pinned) and, as the no-grip case, the same cycle with `DG_Idle` and with no pose:
+`docs/superpowers/plans/walkparam/verify_walk_arm_overlap.py` - **0 of 45 gates failed**, mayapy standalone,
+on a COPY of the animator's walks folder and their own walker's settings (their cycle, the sword pose at
+share 1, In place, tempo pinned) and, as the no-grip cases, the same cycle with `DG_Idle` and with no pose.
+Measured at a lag of 4 frames:
 
-- **the hand's path is the lag-0 path read `lag` frames earlier** in the body's space, to the IK's reach
-  clamp - the gate that says it is a time shift and not a reshaping;
-- **the shoulder has not moved** (the arm's pivot is the body's);
-- **the grip is held**: the left hand's transform in the right's is what it was at lag 0, every frame;
-- **the bone lengths are kept**, every frame, both arms;
-- **the cycle is still a loop**: frame n equals frame 0 moved by the travel;
-- **a control at 0 ms**: every joint of the whole body unchanged to 0.0 against the build before this work;
-- **the ms conversion**: the same ms asks for a different frame count at 24 and at 30 fps, measured on the
-  hand's lag;
-- **a lead** (-67 ms) puts the hand ahead by the same distance it falls behind at +67;
-- **Whip on top**: the lag alone, the springs alone and both, each read off the hand - both together are
-  later than either;
-- **Balance sees it**: the carry differs between 0 and 200 ms (the late arms move the centre of mass).
+- **the late hand is where it stood 4 frames earlier**: the direction from the shoulder **1.3e-05 deg** at
+  worst over three poses, and its distance is the wanted one or the arm's own length where it clamps, to
+  **4e-06 cm** - the gates that say it is a time shift and not a reshaping;
+- it really moved: **9.66 cm** under the grip, 21.49 under the dagger, 30.87 with no pose;
+- **the shoulder has not moved**: 0.00e+00 cm, bit-exact, in all three;
+- **the grip is held**: the left hand's transform in the right's unchanged to **9e-14**, every frame;
+- **the bone lengths are kept** to **5.6e-06 cm** (the rebuild takes each bone's mean length over the cycle,
+  the frames their own per frame);
+- **the cycle is still a loop**: 2e-14 of rotation, 5e-13 cm of place;
+- **0 ms changes nothing, matrix for matrix**;
+- **the ms conversion**: 150 ms is **4.500** frames at 30 fps and **3.600** at 24, the scene's unit read
+  through `scene.output_fps` (ntsc 30, film 24), and the card's own 150 ms reach the engine as 4.500;
+- **a lead** (-4 frames) puts the hand **8.72 cm** ahead where +4 puts it 8.72 behind;
+- **Whip takes the late arm as its target**: the two together are neither the springs alone (7.13 cm away)
+  nor the lag alone (4.17 away);
+- **In place**, the animator's own setting: the hand moves 8.98 cm, the shoulder bit-exact, the grip held,
+  the loop closed on the spot, the bones kept;
+- **Balance sees it**: the carry differs by **0.0795 cm** between 0 and 200 ms.
 
-And a playblast in a disposable GUI Maya (a scratch `MAYA_APP_DIR`, killed after) of the walker at 0 and at
-150 ms, to look at.
+The geometry gates run with Balance and In place off, because both move the body the expectation is computed
+against - with In place on, a strict "where it stood 4 frames earlier" reconstructed from an in-place result
+is 1.3 deg / 2.23 cm out, against 0.0000 with it off, and that residual is In place's own re-centring, not
+the pass's.
+
+Unit tests: `tests/test_walk_arm_overlap.py` (26). The walk's neighbours - `verify_walk.py` (5 failed),
+`verify_walk_gait.py` (1), `verify_walk_own.py` (gates 10 and 19) and `verify_walk_many.py` (dying on
+`No object matches name: asd`) - fail **identically on a clean worktree of the commit before this work**.
+
+Not done: a playblast. The animator has their own Maya open and will look at the slider there after Check
+update.
 
 ## Not built
 

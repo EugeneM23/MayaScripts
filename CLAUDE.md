@@ -11382,6 +11382,51 @@ settle it (trap 316). Camera Setup on `camera_root` and a Tools knot on any bone
   `test_chat_deploy.Keys`. `verify_walk_own.py` fails its gates 10 and 19 and `verify_walk_many.py` gates 5, 6 and
   8-11 **identically on clean HEAD** — stale against the 2026-10-26 parameters, not this work.
 
+**…and the arms' overlap: a time shift, not a phase** (2026-10-29, the animator: «Давай поработаем над
+захлестами рук в walk builder. Сейчас мало пользы от наших ручек при настройке рук … давай сделаем анимационных
+захлест рук … что бы наши руки отставали на указанное количество милисекунд. если бы я делал это в ручную в
+анимации я бы привязал руки айкеями а потом сдвинул бы их рут на то количество кадров которое мне нужно»;
+asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладно давай не удалять ручки просто
+сделаем захлесты», so **nothing was deleted**). Spec
+`docs/superpowers/specs/2026-10-29-walk-arm-overlap-design.md`, plan beside it.
+- **Measured first, on a copy of the animator's walks folder with their own walker's settings read over port
+  7004** (their captured cycle, `LongSword_Idle_3P` at share 1, In place, tempo pinned): today's `Arm lag`
+  moves the hand **0.00 cm** there. A two-handed grip at full share takes the arm's own swing to zero by
+  design (`gain *= 1.0 - alpha` where the pose has a grip), so there is no series left to shift - while the
+  body still carries that hand **15.12 cm a cycle**, and the carry is never lagged (over 4 frames `spine_03`
+  moves 6.86 cm / 3.99 deg, `clavicle_r` 7.29 / 9.03, `upperarm_r` 8.09 / 8.86). With no pose the same knob
+  moves the hand 16.37 cm at 2 frames, at the sword's 0.5 share 6.82, under `DG_Idle` 9.89: it was the grip,
+  not the knob. The manual trick on the same cycle: the hand **4.96 cm late at 2 frames**, 9.18 at 4, 11.90 at
+  6, wanting 94..109 % of the arm's 37.5 cm - which is why the arm needs IK and why the lag must reach what the
+  arm inherits.
+- **`Arm overlap`, ms, sided, in MAIN right after `Arm lag`** (`gait`: kind `added`, so its own is 0 and the
+  Diagnosis has nothing to say about it; `rule=_fixed(-100, 300)`; a lead is allowed). Milliseconds become
+  frames of the new cycle at the **output** rate - `engine_knobs(..., fps_out=)`, which `scene.params_knobs`
+  fills from the scene's own time unit (`scene.output_fps`), the walk's own fps outside Maya: 150 ms is 4.5
+  frames at 30 and 3.6 at 24. The panel needed nothing (it builds MAIN from `gait.PARAMS`).
+- **`Walk._arm_overlap`** (engine knob `arm_overlap`, frames, `OVERLAP_QUIET` 1e-6), a pass over the built
+  cycle run from `evaluate` **before** `_arm_dynamics` - so Whip takes the late arm as its target - and from
+  the same place inside Balance's `armed()` (its `swinging` counts an overlap now, so the carry balances the
+  late arms). `shifted_cycle(mats, lag)` (pure) reads a cycle `lag` frames earlier with the linear travel out
+  and back, a fractional lag slerped; under a **grip** the held thing goes late (both sides' mean lag) and
+  both hands keep their hold; then the arm is rebuilt from the CURRENT shoulder by the two-bone IK **factored
+  out of `_grip_motion` into `_arm_to_hand`**, which both now share.
+- Proof: `verify_walk_arm_overlap.py` **0 of 45 gates, mayapy standalone** on their own cycle under the sword
+  (a grip), `DG_Idle` (none) and no pose: the late hand on the line to where it stood 4 frames earlier to
+  **1.3e-05 deg** and at that distance or the arm's own length where it clamps (**4e-06 cm**), the hand really
+  moving 9.66 / 21.49 / 30.87 cm, the shoulder **bit-exact**, the grip held to 9e-14, the bones to 5.6e-06 cm
+  (the rebuild takes each bone's mean length, the frames their own), the loop closed, 0 ms matrix for matrix, a
+  lead as far the other way, Whip neither alone, and In place keeping all of it; `tests/test_walk_arm_overlap.py`
+  (26). `verify_walk.py` 5 failed, `verify_walk_gait.py` 1, `verify_walk_own.py` gates 10 and 19 and
+  `verify_walk_many.py` dying on `No object matches name: asd` - every one of them **identical on a clean
+  worktree of the commit before this work**.
+- **The limits**: the bones keep their lengths, so an overlap that asks the hand past the arm's reach is
+  clamped along its own line (nothing clamps at 200 ms on their cycle); a hand holding a weapon takes the
+  weapon with it; the pass takes the linear travel out and leaves the rest in world, as `_grip_motion` does, so
+  a cycle whose root yawed within itself would lag that yaw in world (ours travel along a line). `Arm lag`,
+  `Elbow lag`, `Hand lag`, `Elbow`, `Arms forward` and `Shoulders` are untouched, and the Pick line is
+  unchanged. **Not seen in a GUI Maya**: after Check update.
+
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
      new take for ever: every knob of the card refused, and the refusal's own advice («Pick it to take them») would
@@ -11390,6 +11435,16 @@ settle it (trap 316). Camera Setup on `camera_root` and a Tools knot on any bone
      drives now: a digest must only cover what the tool itself writes, or any other tool touching the character
      disarms it. And the way in was to reproduce the stored hash, not to reason about it — one candidate of 8000
      matched, which named the bone exactly.
+317. **A plain sided knob is overridden by the per-side zeros beside it.** `engine_knobs` writes every sided
+     knob's `_l` and `_r`, and `model.sided` gives a side's own value precedence over the plain one - so a
+     verify that set `arm_overlap=4` on top of the card's knobs got a pass reporting 0 frames and a hand that
+     never moved, while the unit tests (which build their knobs from scratch) were green. Set both sides, or
+     build the knobs yourself. And two gates of that same run were wrong rather than the code: **Balance and In
+     place both move the body an expectation is computed against** (Balance carries it 0.0795 cm with the arms
+     late - which is the feature - and `_in_place` subtracts a per-frame shift AFTER the pass that is not
+     exactly the travel a frame, 1.3 deg / 2.23 cm against 0.0000 with it off), and **«later» is not «further
+     from the original» once the lag is a quarter of a periodic cycle** (the lag alone moved the hand 25.8 cm,
+     the lag plus the springs 22.9).
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
