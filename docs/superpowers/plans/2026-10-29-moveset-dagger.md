@@ -43,7 +43,8 @@ unittest; their own local tool (`extract_graph.py`, `serve.py`, `design-b-v3.htm
     when the folder holds no graph.
   - `weapon_of(folder, key) -> Weapon | None`
   - `chosen_weapon(state, available) -> Weapon` — the state's key when it is available, else the first.
-  - `set_weapon(state, key) -> str` — the value to write under the `weapon` key.
+  - the chosen weapon is written by today's `write_state(folder, weapon=key)` and read by
+    `read_state`'s new `weapon` key — no setter of its own.
   - `label(node_id, custom=(), prefix=LONGSWORD_PREFIX)`
   - `node_type(graph, node_id) -> str` — the node's own `type`, else `attack_type(node_id)`.
   - `types_in(graph) -> [(key, label)]` — the rows of `TYPES` the graph actually holds.

@@ -153,5 +153,114 @@ class Files(unittest.TestCase):
         self.assertEqual(m.thumbnail(self.folder, "Y"), "")
 
 
+def dagger_graph():
+    """The dagger's graph as its extraction writes it: its weapon declared, each node's type."""
+    node = lambda name, kind: {"path": "/Game/D/{0}.{0}".format(name), "slot": "DefaultSlot",
+                               "slot1p": "1P", "type": kind}
+    return {
+        "entries": [{"situation": "onfoot", "target": "AM_Dg_Atk_NLt", "directions": ["none"]},
+                    {"situation": "sprint_long", "target": "AM_Dg_Atk_Spr", "directions": ["none"]}],
+        "edges": [{"from": "AM_Dg_Atk_NLt", "to": "AM_Dg_Atk_NLt_NLt", "kind": "chain", "directions": []},
+                  {"from": "AM_Dg_Atk_NLt_NLt", "to": "AM_Dg_Atk_NLt_NLt_NHd", "kind": "chain",
+                   "directions": []},
+                  {"from": "AM_Dg_Atk_NLt", "to": "AM_Dg_Atk_JA_Passive", "kind": "jump", "directions": []}],
+        "nodes": {"AM_Dg_Atk_NLt": node("AM_Dg_Atk_NLt", "light"),
+                  "AM_Dg_Atk_NLt_NLt": node("AM_Dg_Atk_NLt_NLt", "light"),
+                  "AM_Dg_Atk_NLt_NLt_NHd": node("AM_Dg_Atk_NLt_NLt_NHd", "hold"),
+                  "AM_Dg_Atk_JA_Passive": node("AM_Dg_Atk_JA_Passive", "jump"),
+                  "AM_Dg_Atk_Spr": node("AM_Dg_Atk_Spr", "sprint")},
+        "meta": {"weapon": {"key": "dagger", "label": "Dagger", "prefix": "AM_Dg_Atk_",
+                            "media": "dagger"}},
+    }
+
+
+class Weapons(unittest.TestCase):
+    """The folder's graphs are the weapons, and each graph carries its own rules."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+
+    def _write(self, name, data):
+        with open(os.path.join(self.folder, name), "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+
+    def test_an_empty_folder_lists_no_weapon(self):
+        self.assertEqual(m.weapons(self.folder), [])
+
+    def test_a_folder_of_two_graphs_lists_the_plain_one_first(self):
+        self._write(m.GRAPH, graph())
+        self._write("graph.dagger.json", dagger_graph())
+        self.assertEqual([(w.key, w.label) for w in m.weapons(self.folder)],
+                         [("longsword", "Longsword"), ("dagger", "Dagger")])
+
+    def test_a_graph_with_no_meta_is_the_longsword_by_todays_rules(self):
+        self._write(m.GRAPH, graph())
+        sword = m.weapons(self.folder)[0]
+        self.assertEqual((sword.label, sword.graph, sword.media), ("Longsword", m.GRAPH, ""))
+        self.assertEqual(m.label("AM_Longsword_Attack_Stand_Hold", (), sword.prefix), "Stand Hold")
+
+    def test_a_graph_file_names_a_weapon_that_declares_nothing(self):
+        self._write("graph.dagger.json", {"nodes": {}, "edges": [], "entries": []})
+        only = m.weapons(self.folder)[0]
+        self.assertEqual((only.key, only.label, only.media), ("dagger", "Dagger", "dagger"))
+
+    def test_a_broken_graph_is_passed_over(self):
+        self._write(m.GRAPH, graph())
+        with open(os.path.join(self.folder, "graph.bow.json"), "w") as handle:
+            handle.write("{broken")
+        self.assertEqual([w.key for w in m.weapons(self.folder)], ["longsword"])
+
+    def test_the_daggers_own_prefix_and_media(self):
+        self._write(m.GRAPH, graph())
+        self._write("graph.dagger.json", dagger_graph())
+        dagger = m.weapon_of(self.folder, "dagger")
+        self.assertEqual(m.label("AM_Dg_Atk_NLt_NLt_NHd", (), dagger.prefix), "NLt NLt NHd")
+        os.makedirs(os.path.join(self.folder, "media", "dagger"))
+        open(os.path.join(self.folder, "media", "dagger", "AM_Dg_Atk_Spr.jpg"), "w").close()
+        self.assertTrue(m.thumbnail(self.folder, "AM_Dg_Atk_Spr", "3p", dagger.media)
+                        .endswith(os.path.join("dagger", "AM_Dg_Atk_Spr.jpg")))
+        self.assertEqual(m.thumbnail(self.folder, "AM_Dg_Atk_Spr", "3p"), "")
+
+    def test_the_chosen_weapon_is_the_states_one_else_the_first(self):
+        self._write(m.GRAPH, graph())
+        self._write("graph.dagger.json", dagger_graph())
+        both = m.weapons(self.folder)
+        self.assertEqual(m.chosen_weapon(state(), both).key, "longsword")
+        self.assertEqual(m.chosen_weapon(state(weapon="dagger"), both).key, "dagger")
+        self.assertEqual(m.chosen_weapon(state(weapon="bow"), both).key, "longsword")
+        self.assertIsNone(m.chosen_weapon(state(weapon="dagger"), []))
+
+    def test_the_weapon_is_shared_state(self):
+        m.write_state(self.folder, weapon="dagger")
+        self.assertEqual(m.read_state(self.folder)["weapon"], "dagger")
+        m.write_state(self.folder, status={"A|3p": "done"})
+        self.assertEqual(m.read_state(self.folder)["weapon"], "dagger")
+
+    def test_a_nodes_own_type_wins_over_the_name_rule(self):
+        self.assertEqual(m.node_type(dagger_graph(), "AM_Dg_Atk_NLt_NLt_NHd"), "hold")
+        self.assertEqual(m.node_type(dagger_graph(), "AM_Dg_Atk_Spr"), "sprint")
+        self.assertEqual(m.node_type(graph(), "AM_Longsword_Attack_Right_Light"), "light")
+        self.assertEqual(m.node_type(graph(), "custom-1"), "")
+
+    def test_the_chips_are_the_types_the_graph_holds(self):
+        self.assertEqual(m.types_in(dagger_graph()),
+                         [("hold", "Hold"), ("light", "Light"), ("sprint", "Sprint"), ("jump", "Jump")])
+        #  the sword's graph declares no type: the chips come from its names
+        self.assertEqual(m.types_in(graph()), [("hold", "Hold")])
+
+    def test_a_weapons_graph_is_loaded_by_its_own_file(self):
+        self._write("graph.dagger.json", dagger_graph())
+        dagger = m.weapons(self.folder)[0]
+        self.assertEqual(sorted(m.load_graph(self.folder, dagger.graph)["nodes"]),
+                         sorted(dagger_graph()["nodes"]))
+
+    def test_the_trees_of_a_dagger_graph(self):
+        trees = m.trees(dagger_graph(), state(), "combos")
+        self.assertEqual([t.root for t in trees], ["AM_Dg_Atk_NLt", "AM_Dg_Atk_Spr"])
+        ids = [n.id for n in trees[0].nodes]
+        self.assertEqual(ids, ["AM_Dg_Atk_NLt", "AM_Dg_Atk_NLt_NLt", "AM_Dg_Atk_NLt_NLt_NHd"])
+
+
 if __name__ == "__main__":
     unittest.main()

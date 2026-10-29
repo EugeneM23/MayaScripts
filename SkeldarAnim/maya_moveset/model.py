@@ -9,6 +9,7 @@ written by the page through `serve.py` and by this card directly. The folder is
 the animator's own (`Documents/AtoneExperiments/LongswordMoveset`); nothing of
 it ships with the plugin.
 """
+import collections
 import json
 import os
 import re
@@ -18,6 +19,11 @@ FOLDER_VAR = "skeldarMovesetFolder"
 GRAPH = "graph.json"
 STATE = "state.json"
 PREFIX = "longswordMoveset."
+#  the chosen weapon is shared state: the card and the page read the same key
+STATE_WEAPON = "weapon"
+#  `graph.json` is the Longsword's, written before a graph declared its weapon
+LONGSWORD = ("longsword", "Longsword")
+LONGSWORD_PREFIX = "AM_Longsword_Attack_"
 
 KIND_ORDER = ("release", "chain", "jump", "dodge", "sprint")
 TYPES = (("hold", "Hold"), ("light", "Light"), ("sprint", "Sprint"),
@@ -42,7 +48,9 @@ def default_folder():
 
 
 def attack_type(node_id):
-    """The card's colour, read off the montage's name (the page's rule)."""
+    """The card's colour, read off the montage's name (the page's rule). The
+    Longsword's names say the type in words; another weapon's graph declares it
+    per node instead - see `node_type`."""
     for kind, word in (("sprint", "Sprint"), ("jump", "Jump"), ("dodge", "Dodge"),
                        ("light", "Light"), ("hold", "Hold")):
         if word in node_id:
@@ -50,17 +58,36 @@ def attack_type(node_id):
     return ""
 
 
+def node_type(graph, node_id):
+    """The attack's type: what its graph says, else its name (the sword's rule,
+    and every card of the animator's own, which no graph holds)."""
+    node = graph.get("nodes", {}).get(node_id) or {}
+    return node.get("type") or attack_type(node_id)
+
+
+def types_in(graph):
+    """The rows of TYPES the graph actually holds - the dagger has no Dodge, so
+    the card shows no Dodge chip."""
+    held = set(node_type(graph, node_id) for node_id in graph.get("nodes", {}))
+    return [(key, text) for key, text in TYPES if key in held]
+
+
 def is_custom(node_id):
     return node_id.startswith("custom-")
 
 
-def label(node_id, custom=()):
+def label(node_id, custom=(), prefix=LONGSWORD_PREFIX):
+    """The card's name: the weapon's own prefix off the montage's id, as the
+    project names it («NLt NLt NHd»), so it can still be searched for."""
     if is_custom(node_id):
         for card in custom:
             if card.get("id") == node_id:
                 return card.get("name") or "New attack"
         return "New attack"
-    return re.sub(r"^AM_Longsword_Attack_|^AM_", "", node_id).replace("_", " ")
+    for head in (prefix, "AM_"):
+        if head and node_id.startswith(head):
+            return node_id[len(head):].replace("_", " ")
+    return node_id.replace("_", " ")
 
 
 def skey(node_id, view):
@@ -73,9 +100,73 @@ def initials(name):
 
 # ---- files -------------------------------------------------------------------
 
-def load_graph(folder):
-    with open(os.path.join(folder, GRAPH), encoding="utf-8") as handle:
+def load_graph(folder, graph=GRAPH):
+    with open(os.path.join(folder, graph), encoding="utf-8") as handle:
         return json.load(handle)
+
+
+# ---- the folder's weapons ----------------------------------------------------
+
+#  key: «dagger»; label: what the card's segment says; graph: the file; media:
+#  the subfolder of `media` holding its previews ("" = `media` itself); prefix:
+#  what `label` strips off a node id.
+Weapon = collections.namedtuple("Weapon", ["key", "label", "graph", "media", "prefix"])
+
+
+def _file_key(name):
+    """«graph.dagger.json» -> «dagger»; the plain «graph.json» is the Longsword's,
+    written before a graph declared its weapon."""
+    middle = name[len("graph."):-len(".json")]
+    return middle or LONGSWORD[0]
+
+
+def _weapon_in(folder, name):
+    """The weapon a graph file declares, filled in where it declares nothing.
+    None for a file that cannot be read - a half-written graph is not a weapon."""
+    try:
+        with open(os.path.join(folder, name), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    meta = (data.get("meta") or {}).get("weapon") if isinstance(data, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    plain = name == GRAPH
+    key = meta.get("key") or (LONGSWORD[0] if plain else _file_key(name))
+    return Weapon(key,
+                  meta.get("label") or (LONGSWORD[1] if plain else key.capitalize()),
+                  name,
+                  meta.get("media", "" if plain else key),
+                  meta.get("prefix") or (LONGSWORD_PREFIX if plain else ""))
+
+
+def weapons(folder):
+    """The weapons the folder holds, `graph.json` first and the rest by file
+    name. The data says which weapons there are; no table here names one."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    files = sorted(n for n in names
+                   if n.startswith("graph.") and n.endswith(".json") and n != GRAPH)
+    if GRAPH in names:
+        files.insert(0, GRAPH)
+    found = [_weapon_in(folder, name) for name in files]
+    return [w for w in found if w is not None]
+
+
+def weapon_of(folder, key):
+    for weapon in weapons(folder):
+        if weapon.key == key:
+            return weapon
+    return None
+
+
+def chosen_weapon(state, available):
+    """The weapon the shared state names, else the first one there is."""
+    for weapon in available:
+        if weapon.key == state.get(STATE_WEAPON):
+            return weapon
+    return available[0] if available else None
 
 
 def _raw(folder):
@@ -104,7 +195,8 @@ def read_state(folder):
             "people": _parsed(raw, "people", []),
             "icons": _parsed(raw, "icons", {}),
             "custom": _parsed(raw, "custom", []),
-            "hidden": _parsed(raw, "hidden", [])}
+            "hidden": _parsed(raw, "hidden", []),
+            STATE_WEAPON: _parsed(raw, STATE_WEAPON, "")}
 
 
 def state_mtime(folder):
@@ -314,11 +406,14 @@ def slot_of(graph, node_id, view):
     return node.get("slot1p" if view == "1p" else "slot") or None
 
 
-def thumbnail(folder, node_id, view="3p"):
-    media = os.path.join(folder, "media")
+def thumbnail(folder, node_id, view="3p", media=""):
+    """The preview, from the weapon's own subfolder of `media` ("" = `media`
+    itself, the Longsword's). "" when the file is not there - a weapon whose
+    previews have not been rendered yet draws cards without them."""
+    where = os.path.join(folder, "media", media) if media else os.path.join(folder, "media")
     if view == "1p":
-        path = os.path.join(media, "1p", node_id + ".jpg")
+        path = os.path.join(where, "1p", node_id + ".jpg")
         if os.path.isfile(path):
             return path
-    path = os.path.join(media, node_id + ".jpg")
+    path = os.path.join(where, node_id + ".jpg")
     return path if os.path.isfile(path) else ""
