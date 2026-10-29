@@ -7921,7 +7921,7 @@ them.
   It travels in the plan file, so an older file reads as no windows.
 - **`bookmarks_for(plan, fps)` snaps OUTWARD** - `floor` the start, `ceil` the end, at least one frame: a
   window is never shown shorter than it is, and the range stays whole, so setting the playback range from a
-  bookmark cannot leave a FRACTIONAL range (trap 50's own trap). `SNAP_EPS` 1e-6 frames is float noise
+  bookmark cannot leave a FRACTIONAL range (trap 50). `SNAP_EPS` 1e-6 frames is float noise
   alone - 0.2 + 0.1 is 0.30000000000000004, and without it that window ended a whole frame late (the
   verify's first run read 6..10 for 6..9).
 - **In the scene** (`write_bookmarks`): one `timeSliderBookmark` a window, the notify's own name as its
@@ -7944,7 +7944,9 @@ them.
   editor - `AM_Longsword_Attack_Left_Forward_Hold`'s four windows at **18..30, 30..34, 33..40, 39..43**,
   the frames worked out in the verify from the engine's raw reply, not asked of the code under test, and
   the card's own press (export plus the funnel) carrying all four;
-  `test_uebridge_montage_{windows,bookmarks}.py`.
+  `test_uebridge_montage_{windows,bookmarks}.py`. **Not seen in a GUI Maya**: the red bars in the band
+  itself (the band shows a bookmark's name only where the bar is wider than the text, so a 3-frame window
+  reads as a bar until it is zoomed into) - the animator's to look at after Check update.
 
 306. **A source read after its own curves were deleted answers one dead DG value.** The composer imports
      the first span's clip INTO the target namespace (so the composite's skeleton is exactly a plain clip
