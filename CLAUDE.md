@@ -11436,7 +11436,18 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   weapon with it; the pass takes the linear travel out and leaves the rest in world, as `_grip_motion` does, so
   a cycle whose root yawed within itself would lag that yaw in world (ours travel along a line). `Arm lag`,
   `Elbow lag`, `Hand lag`, `Elbow`, `Arms forward` and `Shoulders` are untouched, and the Pick line is
-  unchanged. **Not seen in a GUI Maya**: after Check update.
+  unchanged. Installed and seen in the animator's own Maya (1963c57 over port 7004, their scene untouched);
+  they were turning it at 48.9 ms when we stopped.
+- **OPEN, asked for and not built: the cascade** («Сделай каскад» - the elbow and the hand later than the arm;
+  the animator chose to pick it up the next day). In this IK framing the goal fixes the hand's place and the
+  bend ANGLE, so two roads were put to them, with their cost measured: **A** - lag only what the IK leaves
+  free, two knobs `Elbow overlap` (the bend plane late by L+e) and `Hand overlap` (the hand's own orientation
+  late by L+h), which costs nothing (at zero it is today's behaviour, the bones and the "the hand is where it
+  stood" property both kept) and reads as a late elbow orbit and a late wrist break; **B** - the real
+  per-joint chain lag (the forearm and the hand take their world orientations at their own times and the whole
+  arm's shape unfolds late), which costs `Arm overlap`'s exactness: the hand lands along the direction to its
+  late place but at the late arm's own reach, some 3 cm out at 4 frames (the IK wants 94..109 % of the arm).
+  A was the recommendation. Nothing of either is written.
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
