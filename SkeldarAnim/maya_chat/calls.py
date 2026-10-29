@@ -43,13 +43,17 @@ def can_join(view, me):
         and len(view["members"]) < MAX
 
 
-def start_args(view, me, names, ice_servers, video, mic="", cam=""):
+def start_args(view, me, names, ice_servers, video, mic="", cam="",
+               mic_label="", cam_label=""):
     """The page's `start` command when I come into `view` (my own join already in it): I offer to
-    everybody already there."""
+    everybody already there.
+
+    A remembered device goes as its id AND its label: the id belongs to the Maya session it was
+    read in (Chromium salts it per origin), the label is what the page can still resolve."""
     others = [u for u in view["members"] if u != me]
     return {"me": me, "names": dict(names or {}), "ice_servers": list(ice_servers or []),
             "video": bool(video), "peers": others, "offer_to": list(others), "mic": mic or "",
-            "cam": cam or ""}
+            "cam": cam or "", "mic_label": mic_label or "", "cam_label": cam_label or ""}
 
 
 def peer_commands(before, after, me):

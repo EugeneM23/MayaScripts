@@ -22,6 +22,11 @@ from . import window as W
 
 MIC_VAR = "skeldarChatCallMic"
 CAM_VAR = "skeldarChatCallCam"
+#  Chromium salts a deviceId per origin and our profile is off the record, so the id a device
+#  had belongs to the Maya session it was read in. The LABEL is what survives: the page resolves
+#  a stale id by it (2026-10-29).
+MIC_LABEL_VAR = "skeldarChatCallMicLabel"
+CAM_LABEL_VAR = "skeldarChatCallCamLabel"
 POS_VAR = "skeldarChatCallPos"
 SIZE_VAR = "skeldarChatCallSize"
 SIZE = (640, 440)          # logical px
@@ -406,6 +411,8 @@ class CallWindow(object):
         self._again = False           # a re-take after a stall: the same source, no menu
         self._source = None           # (kind, row) last captured
         self._capture = None          # what the page says it holds
+        self._nomic = ""              # why the page holds no microphone, if it holds none
+        self._page_error = ""
         self._stalled = False
         self._retakes = 0
         self.stage = None             # the shared screen's own window
@@ -658,7 +665,8 @@ class CallWindow(object):
         view = dict(view, members=[u for u in view["members"] if u in self.members or u == me])
         servers, turn = self.session.turn_servers()
         args = _calls.start_args(view, me, self._names(), servers, self.kind == "video",
-                                 get_var(MIC_VAR) or "", get_var(CAM_VAR) or "")
+                                 get_var(MIC_VAR) or "", get_var(CAM_VAR) or "",
+                                 get_var(MIC_LABEL_VAR) or "", get_var(CAM_LABEL_VAR) or "")
         args["relay_only"] = RELAY_ONLY
         args["colours"] = self._colours()         # a stroke is drawn in its author's own colour
         self.bridge.send("start", args)
@@ -743,12 +751,24 @@ class CallWindow(object):
         if note and note != self._last_note:
             self._last_note = note
             self.say(note)
-        error = state.get("error")
-        if error and not state.get("peers") and u"Микрофон" in error:
-            self.fail(error)
-            return
+        self._mic_state(state)
         self._capture_state(state)
         self._paint_buttons()
+
+    def _mic_state(self, state):
+        """A page with no microphone stays in the call: it hears everybody and its own line says
+        so. Until 2026-10-29 a media failure read here called `fail()`, which LEAVES the call -
+        the animator met it as «мая говорит что микрофон не найден и отклоняет звонки». Nothing but the call ending ends a call."""
+        from . import callpage
+        nomic = state.get("nomic") or ""
+        if nomic != self._nomic:
+            self._nomic = nomic
+            callpage.log("[call] " + ("no microphone: " + nomic if nomic else "microphone: ok"))
+        error = state.get("error") or ""
+        if error != self._page_error:
+            self._page_error = error
+            if error:
+                callpage.log("[call] " + error)
 
     def _capture_state(self, state):
         """What is being shared, whether it is still moving, and whether the screen wants its own
@@ -867,26 +887,33 @@ class CallWindow(object):
         elif self.cid:
             _leave_when_known(self.session, self.cid, self._me())
 
-    def choose_device(self, kind, device_id):
+    def choose_device(self, kind, device_id, label=""):
         set_var(MIC_VAR if kind == "mic" else CAM_VAR, device_id or "")
-        self.bridge.send("devices", {"mic": get_var(MIC_VAR) or "", "cam": get_var(CAM_VAR) or ""})
+        set_var(MIC_LABEL_VAR if kind == "mic" else CAM_LABEL_VAR, label or "")
+        self.bridge.send("devices", {"mic": get_var(MIC_VAR) or "", "cam": get_var(CAM_VAR) or "",
+                                     "mic_label": get_var(MIC_LABEL_VAR) or "",
+                                     "cam_label": get_var(CAM_LABEL_VAR) or ""})
 
     def _devices_menu(self):
         q = W._q()
         menu = q.QtWidgets.QMenu(self.root)
         menu.setStyleSheet(hubstyle.stylesheet(self.scale))
         devices = self.state.get("devices") or {}
-        for kind, title, items, var in (("mic", u"Микрофон", devices.get("mics") or [], MIC_VAR),
-                                        ("cam", u"Камера", devices.get("cams") or [], CAM_VAR)):
+        rows = (("mic", u"Микрофон", devices.get("mics") or [], MIC_VAR, MIC_LABEL_VAR),
+                ("cam", u"Камера", devices.get("cams") or [], CAM_VAR, CAM_LABEL_VAR))
+        for kind, title, items, var, label_var in rows:
             menu.addSection(title)
-            chosen = get_var(var) or ""
+            chosen, named = get_var(var) or "", get_var(label_var) or ""
             if not items:
                 menu.addAction(u"нет устройств").setEnabled(False)
             for d in items:
-                a = menu.addAction(d.get("label") or d.get("id"))
+                #  the remembered id is this session's; a stale one is still ticked by its label
+                text = d.get("label") or d.get("id")
+                a = menu.addAction(text)
                 a.setCheckable(True)
-                a.setChecked(d.get("id") == chosen)
-                a.triggered.connect(lambda *_a, k=kind, i=d.get("id"): self.choose_device(k, i))
+                a.setChecked(d.get("id") == chosen or (bool(named) and text == named))
+                a.triggered.connect(
+                    lambda *_a, k=kind, i=d.get("id"), n=text: self.choose_device(k, i, n))
         b = self.buttons["settings"]
         menu.exec(b.mapToGlobal(b.rect().topLeft()))
 

@@ -2,7 +2,8 @@
 // by Python through the QWebChannel object `bridge`. The joiner offers; the others answer.
 "use strict";
 const S = { me: null, names: {}, colours: {}, ice: [], peers: new Map(), local: null, camTrack: null, screenTrack: null,
-            mic: true, cam: false, screen: false, devices: { mic: "", cam: "" }, list: { mics: [], cams: [] },
+            mic: true, cam: false, screen: false, nomic: "",
+            devices: { mic: "", cam: "", mic_label: "", cam_label: "" }, list: { mics: [], cams: [] },
             error: "", note: "", bridge: null, audio: null, levels: new Map(), timer: null, statsTimer: null,
             left: new Set(), ended: false,
             capture: null, stalled: false, lastFrame: 0,          // what is captured, and whether it still moves
@@ -27,7 +28,7 @@ function snapshot() {
     peers[p.uid] = { state: p.pc.connectionState, speaking: !!p.speaking, mic: p.mic, cam: p.cam,
                      screen: p.screen, lost: !!(p.failedAt && Date.now() - p.failedAt > LOST_MS), bytes: p.bytes };
   }
-  return { me: S.me, mic: S.mic, cam: S.cam, screen: S.screen, error: S.error, note: S.note,
+  return { me: S.me, mic: S.mic, cam: S.cam, screen: S.screen, nomic: S.nomic, error: S.error, note: S.note,
            devices: S.list, peers, speaking: !!S.speakingMe,
            capture: S.capture, stalled: S.stalled, drawing: S.drawing,
            stage: !!S.stage, wants_stage: wantsStage() };
@@ -318,8 +319,35 @@ function paintInk() {
 const CAM = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
 const SCREEN = { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 30 } };
 const BITRATE = { cam: 2500000, screen: 6000000 };
-function camConstraints() {
-  return S.devices.cam ? Object.assign({ deviceId: { exact: S.devices.cam } }, CAM) : CAM;
+// A remembered device is a wish, never a demand. Chromium salts its deviceIds per origin and our
+// profile is off the record, so an id from an earlier Maya session names nothing in this one
+// (measured 2026-10-29: the same microphone, two ids in two runs). Asked as `exact` such an id
+// raises OverconstrainedError, which used to kill the whole call; asked as an IDEAL it is honoured
+// where the device is there and falls back to the default by itself where it is not. The label is
+// what survives a session, so it is what a stale id is resolved by.
+async function known() {
+  try { return await navigator.mediaDevices.enumerateDevices(); }
+  catch (e) { return []; }
+}
+function pickDevice(all, kind, id, label) {
+  const them = all.filter((d) => d.kind === kind && d.deviceId);
+  if (id && them.some((d) => d.deviceId === id)) return id;
+  if (label) {
+    const named = them.find((d) => d.label && d.label === label);
+    if (named) return named.deviceId;
+  }
+  return "";
+}
+async function wantedDevices() {
+  const all = await known();
+  return { mic: pickDevice(all, "audioinput", S.devices.mic, S.devices.mic_label),
+           cam: pickDevice(all, "videoinput", S.devices.cam, S.devices.cam_label) };
+}
+function audioAsked(id) { return id ? { deviceId: id } : true; }
+function camAsked(id) { return id ? Object.assign({ deviceId: id }, CAM) : CAM; }
+function micNote() {
+  note(S.nomic ? "Микрофон не найден (" + S.nomic
+       + ") - вы слышите остальных, но вас не слышно" : "");
 }
 async function tune(sender) {
   if (!sender || !sender.track || !sender.getParameters) return;
@@ -332,11 +360,60 @@ async function tune(sender) {
     await sender.setParameters(prm);
   } catch (e) { /* a browser that will not take it sends as it would */ }
 }
+// Never raises: a page that cannot open a microphone still joins, still hears everybody, and says
+// so (S.nomic). Both devices are asked for in one go while that works, and taken apart when it
+// does not - either loss used to cost the other.
 async function userMedia(video) {
-  const audio = S.devices.mic ? { deviceId: { exact: S.devices.mic } } : true;
-  if (!video) return navigator.mediaDevices.getUserMedia({ audio });
-  try { return await navigator.mediaDevices.getUserMedia({ audio, video: camConstraints() }); }
-  catch (e) { note("Камера недоступна: " + e.name); return navigator.mediaDevices.getUserMedia({ audio }); }
+  const audio = audioAsked(S.devices.mic);
+  const cam = video ? camAsked(S.devices.cam) : null;
+  let stream = null;
+  if (cam) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio, video: cam }); }
+    catch (e) { /* one of the two: each is asked on its own below */ }
+  }
+  if (stream) return stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio }); }
+  catch (e) { S.nomic = e.name || String(e); }
+  if (cam) {
+    try {
+      const v = await navigator.mediaDevices.getUserMedia({ video: cam });
+      if (stream) for (const t of v.getVideoTracks()) stream.addTrack(t);
+      else stream = v;
+    } catch (e) { note("Камера недоступна: " + e.name); }
+  }
+  return stream || new MediaStream();
+}
+// The microphone we hold against the one the remembered id and label now name: take the other
+// when they differ. That is the stale id resolved by its label at the start, a device unplugged
+// mid-call (its track ends) and one plugged back in.
+async function settleMic(force) {
+  if (S.ended || !S.local) return false;
+  const have = S.local.getAudioTracks()[0] || null;
+  const live = !!have && have.readyState === "live";
+  const wanted = (await wantedDevices()).mic;
+  const got = live && have.getSettings ? (have.getSettings().deviceId || "") : "";
+  if (live && !force && (!wanted || wanted === got)) return false;
+  return takeMic(wanted);
+}
+async function takeMic(id) {
+  let track = null;
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: audioAsked(id) });
+    track = s.getAudioTracks()[0] || null;
+  } catch (e) { S.nomic = e.name || String(e); S.mic = false; micNote(); return false; }
+  if (!track) return false;
+  if (S.ended || !S.local) { track.stop(); return false; }
+  track.enabled = S.mic;
+  for (const old of S.local.getAudioTracks()) { S.local.removeTrack(old); old.onended = null; old.stop(); }
+  S.local.addTrack(track);
+  for (const p of S.peers.values()) { const snd = audioSender(p); if (snd) await snd.replaceTrack(track); }
+  track.onended = () => {
+    if (S.local && S.local.getAudioTracks().includes(track)) settleMic(false).catch(() => {});
+  };
+  watchLevel(S.me, S.local);
+  S.nomic = ""; micNote();
+  report();
+  return true;
 }
 async function listDevices() {
   try {
@@ -518,24 +595,30 @@ async function stats() {
 // ------------------------------------------------------------------ commands
 const COMMANDS = {
   async start(a) {
-    S.me = a.me; S.names = a.names || {}; S.colours = a.colours || {}; S.ice = a.ice_servers || []; S.relay = !!a.relay_only; S.devices = { mic: a.mic || "", cam: a.cam || "" };
-    try { S.local = await userMedia(!!a.video); }
-    catch (e) { S.error = "Микрофон недоступен: " + e.name; report(); return; }
+    S.me = a.me; S.names = a.names || {}; S.colours = a.colours || {}; S.ice = a.ice_servers || []; S.relay = !!a.relay_only;
+    S.devices = { mic: a.mic || "", cam: a.cam || "", mic_label: a.mic_label || "", cam_label: a.cam_label || "" };
+    S.nomic = "";
+    S.local = await userMedia(!!a.video);
+    if (S.nomic) { S.mic = false; micNote(); }
     S.camTrack = S.local.getVideoTracks()[0] || null;
     S.cam = !!S.camTrack;
     showStream(S.me, new MediaStream(S.local.getVideoTracks()), true);
-    setTile(S.me, { nocam: !S.cam });
+    setTile(S.me, { nocam: !S.cam, micoff: !S.mic });
     watchLevel(S.me, S.local);
+    // the list carries real ids only once a capture has been granted, so the remembered label is
+    // resolved here - before the first offer carries the track
+    await listDevices();
+    await settleMic(false);
     for (const uid of a.peers || []) addPeer(uid, (a.offer_to || []).includes(uid));
     S.timer = setInterval(tickLevels, 80);
     S.statsTimer = setInterval(stats, 2000);
-    await listDevices();
   },
   add_peer(a) { S.left.delete(a.uid); addPeer(a.uid, !!a.offer); },
   remove_peer(a) { removePeer(a.uid); },
   signal(a) { return onSignal(a.from, a.data || {}); },
-  mute(a) {
-    S.mic = !a.on;
+  async mute(a) {
+    if (!a.on && S.nomic) await settleMic(true);       // unmuting with no microphone looks for one
+    S.mic = !a.on && !S.nomic;
     for (const t of (S.local ? S.local.getAudioTracks() : [])) t.enabled = S.mic;
     setTile(S.me, { micoff: !S.mic }); others({ mic: S.mic }); report();
   },
@@ -543,7 +626,7 @@ const COMMANDS = {
     if (S.ended) return;
     if (a.on && !S.camTrack) {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: camConstraints() });
+        const s = await navigator.mediaDevices.getUserMedia({ video: camAsked((await wantedDevices()).cam) });
         S.camTrack = s.getVideoTracks()[0];
       } catch (e) { note("Камера недоступна: " + e.name); return; }
     } else if (!a.on) {
@@ -587,17 +670,11 @@ const COMMANDS = {
     if (S.ended) return;
     // Merge: a change of one device keeps the other. The camera is taken anew only while it is on;
     // otherwise the next camera-on takes the chosen one.
-    if (a.mic !== undefined) S.devices.mic = a.mic || "";
-    if (a.cam !== undefined) S.devices.cam = a.cam || "";
+    if (a.mic !== undefined) { S.devices.mic = a.mic || ""; S.devices.mic_label = a.mic_label || ""; }
+    if (a.cam !== undefined) { S.devices.cam = a.cam || ""; S.devices.cam_label = a.cam_label || ""; }
     if (a.mic !== undefined && S.local) {
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: S.devices.mic ? { deviceId: { exact: S.devices.mic } } : true });
-        const t = s.getAudioTracks()[0]; t.enabled = S.mic;
-        for (const old of S.local.getAudioTracks()) { S.local.removeTrack(old); old.stop(); }
-        S.local.addTrack(t);
-        for (const p of S.peers.values()) { const snd = audioSender(p); if (snd) await snd.replaceTrack(t); }
-        watchLevel(S.me, S.local);
-      } catch (e) { note("Микрофон не переключился: " + e.name); }
+      const wanted = (await wantedDevices()).mic;
+      if (!(await takeMic(wanted))) note("Микрофон не переключился: " + (S.nomic || "error"));
     }
     if (a.cam !== undefined && S.cam) {
       stopCamera();
@@ -668,6 +745,19 @@ function checkStall() {
 // it must find the local media there); set-up messages run one after another in the order they came.
 // The others do not queue behind each other: a screen share waiting on the screen picker must not
 // hold the set-up of a newcomer.
+// Headphones switched, a webcam unplugged: the list is read again (the menu), the microphone is
+// settled on what the remembered id and label now name, and a camera whose device went is taken
+// anew. Before `start` there is no local media and settleMic answers at once.
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => {
+    listDevices();
+    settleMic(false).catch(() => {});
+    if (S.cam && (!S.camTrack || S.camTrack.readyState !== "live")) {
+      stopCamera();
+      COMMANDS.camera({ on: true }).catch(() => {});
+    }
+  });
+}
 let started = Promise.resolve();
 let signals = Promise.resolve();
 new QWebChannel(qt.webChannelTransport, (channel) => {

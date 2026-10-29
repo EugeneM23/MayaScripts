@@ -317,7 +317,39 @@ def _state():
     state.setdefault("players", {})
     state.setdefault("last", float("-inf"))
     state.setdefault("variant", {})
+    state.setdefault("devices", None)
     return state
+
+
+def forget_players():
+    """Drop the made players; the next play makes them again."""
+    _state()["players"] = {}
+
+
+def _watch_devices():
+    """Drop them when the audio outputs change (headphones switched, a monitor unplugged).
+
+    A QSoundEffect builds its sink on the default device of the moment and Qt does not move a
+    built one, so a pool made before the switch would play into the device that went. The ring
+    is made fresh for each ring (`loop`), so it was never part of this; the chime, the drag and
+    the delete are pools, made once a session. Measured in this Qt: QMediaDevices carries
+    `audioOutputsChanged`. Whether a built sink really goes silent cannot be shown without the
+    hardware - this is the cheap guard, not a proven cure."""
+    state = _state()
+    if state.get("devices") is not None:
+        return
+    try:
+        try:
+            from PySide6 import QtCore, QtMultimedia
+        except ImportError:
+            from PySide2 import QtCore, QtMultimedia
+        if QtCore.QCoreApplication.instance() is None:
+            return                                   # no application yet: asked again later
+        watch = QtMultimedia.QMediaDevices()
+        watch.audioOutputsChanged.connect(forget_players)
+        state["devices"] = watch
+    except Exception:                                        # noqa: BLE001
+        state["devices"] = False
 
 
 def reset():
@@ -332,6 +364,7 @@ def _player(name, count=POOL):
     """The player of sound file `name`, made once per file (an update that
     replaces the file gets a new one), or None without the file or a
     backend."""
+    _watch_devices()
     path = sound_path(name)
     try:
         info = os.stat(path)

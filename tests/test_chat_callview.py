@@ -178,14 +178,18 @@ class Starting(Base):
             self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "odd", "text": "why"})
         self.assertEqual(w.last_message, "why")
 
-    def test_a_mic_error_in_a_call_leaves_it(self):
+    def test_a_mic_error_in_a_call_keeps_it(self):
+        """A microphone never leaves a call: a page that holds none still hears everybody.
+
+        The animator met the old rule as «мая говорит что микрофон не найден и отклоняет звонки» (2026-10-29)."""
         V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
         with mock.patch.object(hubmotion, "enabled", return_value=False):
+            self.store["bridge"].state(u'{"nomic": "NotFoundError", "peers": {}}')
             self.store["bridge"].state(u'{"error": "Микрофон недоступен", "peers": {}}')
-        self.assertIn(("leave", "c1"), self.ses.calls)
-        self.assertIsNone(V.current())
+        self.assertNotIn(("leave", "c1"), self.ses.calls)
+        self.assertIsNotNone(V.current())
 
     def test_hanging_up_before_the_ack_leaves_when_the_view_comes(self):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
@@ -292,9 +296,12 @@ class Buttons(Base):
 
     def test_a_device_choice_is_remembered_and_sent(self):
         w = self.live()
-        w.choose_device("mic", "m1")
+        w.choose_device("mic", "m1", "Desk mic")
         self.assertEqual(V.get_var(V.MIC_VAR), "m1")
-        self.assertEqual(self.sent("devices")[-1], {"mic": "m1", "cam": ""})
+        self.assertEqual(V.get_var(V.MIC_LABEL_VAR), "Desk mic",
+                         "the label is what survives into the next Maya session")
+        self.assertEqual(self.sent("devices")[-1],
+                         {"mic": "m1", "cam": "", "mic_label": "Desk mic", "cam_label": ""})
 
     def test_one_call_at_a_time(self):
         self.live()

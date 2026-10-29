@@ -331,7 +331,27 @@ class Devices(Base):
         self.assertTrue(seen["Desk mic"])
         self.assertFalse(seen["m2"], "a device without a label shows its id")
         self.assertEqual(V.get_var(V.CAM_VAR), "c1")
-        self.assertEqual(self.sent("devices")[-1], {"mic": "m1", "cam": "c1"})
+        self.assertEqual(V.get_var(V.CAM_LABEL_VAR), "Cam")
+        self.assertEqual(self.sent("devices")[-1],
+                         {"mic": "m1", "cam": "c1", "mic_label": "", "cam_label": "Cam"})
+
+    def test_a_stale_id_is_still_ticked_by_its_label(self):
+        """The remembered id belongs to the Maya session it was read in; the label does not."""
+        w = self.live()
+        self.store["bridge"].state(
+            '{"mic": true, "devices": {"mics": [{"id": "fresh", "label": "Desk mic"}],'
+            ' "cams": []}}')
+        V.set_var(V.MIC_VAR, "an id from a Maya that closed")
+        V.set_var(V.MIC_LABEL_VAR, "Desk mic")
+        seen = {}
+
+        def pick(menu):
+            seen.update((a.text(), a.isChecked()) for a in menu.actions()
+                        if not a.isSeparator())
+            return None
+        with answered_menus(pick):
+            w.press("settings")
+        self.assertTrue(seen["Desk mic"])
 
     def test_no_devices_is_a_disabled_row(self):
         w = self.live()
@@ -459,12 +479,12 @@ class Events(Base):
         self.assertTrue(w.closed)
         self.assertEqual(self.sent("end"), [{}])
 
-    def test_a_mic_error_with_nobody_in_ends_the_call(self):
+    def test_no_microphone_with_nobody_in_keeps_the_call(self):
         w = self.live()
         with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.store["bridge"].state(u'{"error": "Микрофон недоступен", "peers": {}}')
-        self.assertTrue(w.closed)
-        self.assertIn(("leave", "c1"), self.ses.calls)
+            self.store["bridge"].state(u'{"nomic": "OverconstrainedError", "peers": {}}')
+        self.assertFalse(w.closed)
+        self.assertNotIn(("leave", "c1"), self.ses.calls)
 
 
 class Burst(Base):
