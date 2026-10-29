@@ -5,7 +5,8 @@ Two kinds of CARD, side by side in the same library and catalogs:
   - an ANIMATION (2026-10-03), a folder `<Name>.anim/` (Studio Library's suffix) holding
     `anim.json` (the HEADER - small, read by every listing), `frames.json.gz` (the per-frame
     data, gzip of compact JSON - read only by Apply, Blend and Update, `read_frames`),
-    `thumbnail.jpg` (the still) and `preview.jpg` (the sprite sheet a card plays on hover).
+    `thumbnail.jpg` (the still), `preview.jpg` (the sprite sheet a card plays on hover) and
+    `curves.json.gz` (its original curves, layer by layer - read only by a paste, `read_curves`).
 A CATALOG is a plain folder, nested as deep as the animator likes. Files, not a database: a
 colleague receives the library with the build and the animator commits it from the repo. The
 library root is the optionVar `skeldarPoseLibraryRoot` when it names a folder, else
@@ -53,6 +54,7 @@ ANIM_FILE = "anim.json"               # an animation card's header
 FRAMES_FILE = "frames.json.gz"        # an animation card's per-frame data
 THUMB_FILE = "thumbnail.jpg"
 PREVIEW_FILE = "preview.jpg"          # an animation card's sprite sheet
+CURVES_FILE = "curves.json.gz"        # an animation card's original curves (2026-10-28)
 FORMAT = "skeldar.pose"
 ANIM_FORMAT = "skeldar.anim"
 VERSION = 1
@@ -308,6 +310,36 @@ def read_frames(path):
     return data
 
 
+#  `read_curves`' cache: ONE entry, as `_FRAMES`'.
+_CURVES = {}
+
+
+def read_curves(path):
+    """The original curves of the animation card at `path` - its `curves.json.gz` decoded:
+    {"version", "nodes": [...]} (spec 2026-10-28). Cached - one entry, keyed by the file's path,
+    time and size; read it, never change it. ValueError when the file is missing, is not gzip
+    JSON or holds no `nodes` list (the press checks the rest against the header:
+    `curvedata.check` - this module imports no sibling)."""
+    target = _fwd(path) + "/" + CURVES_FILE
+    try:
+        stat = os.stat(target)
+    except OSError as exc:
+        raise ValueError("%s: cannot be read (%s)" % (target, exc))
+    key = (os.path.normcase(os.path.abspath(target)), stat.st_mtime_ns, stat.st_size)
+    if key in _CURVES:
+        return _CURVES[key]
+    try:
+        with gzip.open(target, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, EOFError, zlib.error, ValueError) as exc:
+        raise ValueError("%s: not a card's curves (%s)" % (target, exc))
+    if not (isinstance(data, dict) and isinstance(data.get("nodes"), list)):
+        raise ValueError("%s: not a card's curves" % target)
+    _CURVES.clear()
+    _CURVES[key] = data
+    return data
+
+
 def _finite(value):
     """`value` as a float, ValueError when it is no FINITE number: JSON's NaN and Infinity read as
     floats, and `float()` lets both pass (the final review: a card with `"start": NaN` listed,
@@ -432,14 +464,16 @@ def _copy_atomic(source, target):
         raise
 
 
-def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, preview=None):
+def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, preview=None,
+          curves=None):
     """Write a card into `folder` of the library and answer its path: `<name>.anim` when
     `data["format"]` is `ANIM_FORMAT` (an animation's header), else `<name>.pose`. `data` is
     copied (the caller's dict is not touched) and gets the card's own `name` (the safe one, so
     the file and the card always agree) and, if missing, `format` / `version`. `thumbnail` and
     `preview` are paths of images to copy in, `frames` an animation's per-frame data (written
-    as `frames.json.gz`); a pose card given either of the last two is refused before anything
-    is written.
+    as `frames.json.gz`), `curves` an animation's original curves (written as
+    `curves.json.gz`, 2026-10-28); a pose card given any of the last three is refused before
+    anything is written.
 
     A NEW card's name is taken when a card of EITHER type wears it: refused. An existing card
     of the same type is refused unless `replace` - then what is given is swapped in and every
@@ -456,8 +490,8 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
     if _hidden(name):
         raise ValueError("a name cannot start with %s" % TRASH_PREFIX)
     anim = data.get("format") == ANIM_FORMAT
-    if not anim and (frames is not None or preview):
-        raise ValueError("a pose card takes no frames and no preview")
+    if not anim and (frames is not None or preview or curves is not None):
+        raise ValueError("a pose card takes no frames, no preview and no curves")
     here = _abs(root, folder)
     suffix, other = (ANIM_SUFFIX, CARD_SUFFIX) if anim else (CARD_SUFFIX, ANIM_SUFFIX)
     card = here + "/" + name + suffix
@@ -469,11 +503,11 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
     data.setdefault("version", VERSION)
     data["name"] = name
     os.makedirs(card, exist_ok=True)
-    _swap_in(card, data, frames, thumbnail, preview, existed)
+    _swap_in(card, data, frames, thumbnail, preview, existed, curves)
     return card
 
 
-def _swap_in(card, data, frames, thumbnail, preview, existed):
+def _swap_in(card, data, frames, thumbnail, preview, existed, curves=None):
     """`write`'s staging and swaps into the card folder `card`: every file given staged as
     `<file>.part` (the frames, the still, the preview, the main file LAST), then each swapped in
     with `os.replace`. A failure while staging removes the parts (and, `existed` False, the new
@@ -488,6 +522,8 @@ def _swap_in(card, data, frames, thumbnail, preview, existed):
     try:
         if frames is not None:
             stage(FRAMES_FILE, lambda part: _dump_frames(part, frames))
+        if curves is not None:
+            stage(CURVES_FILE, lambda part: _dump_frames(part, curves))
         if thumbnail:
             stage(THUMB_FILE, lambda part: shutil.copy2(thumbnail, part))
         if preview:
@@ -506,7 +542,7 @@ def _swap_in(card, data, frames, thumbnail, preview, existed):
         raise
 
 
-def replace(path, data, frames=None, thumbnail=None, preview=None):
+def replace(path, data, frames=None, thumbnail=None, preview=None, curves=None):
     """Write `data` back into the EXISTING card folder at `path` (either type) - Update from
     selection and Replace thumbnail address the card they act on by its path, never by a name
     made again: a card renamed in Explorer to a name `safe_name` changes («Walk. ») came back
@@ -521,13 +557,13 @@ def replace(path, data, frames=None, thumbnail=None, preview=None):
     anim = is_anim(card)
     if (data or {}).get("format", FORMAT) != _format_of(card):
         raise ValueError("%s: not a %s card's data" % (card, "animation" if anim else "pose"))
-    if not anim and (frames is not None or preview):
-        raise ValueError("a pose card takes no frames and no preview")
+    if not anim and (frames is not None or preview or curves is not None):
+        raise ValueError("a pose card takes no frames, no preview and no curves")
     data = dict(data)
     data.setdefault("version", VERSION)
     data["format"] = _format_of(card)
     data["name"] = _stem(os.path.basename(card))
-    _swap_in(card, data, frames, thumbnail, preview, True)
+    _swap_in(card, data, frames, thumbnail, preview, True, curves)
     return card
 
 

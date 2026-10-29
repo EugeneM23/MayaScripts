@@ -803,3 +803,47 @@ class Purity(unittest.TestCase):
                 "print(bad); sys.exit(1 if bad else 0)") % PLUGIN
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class Curves(unittest.TestCase):
+
+    CURVES = {"version": 1, "nodes": [{"name": "FKWrist_R", "attrs": {
+        "rotateZ": {"BaseAnimation": {"keys": [[0.0, 1.0]], "weighted": False, "breakdown": []}}}}]}
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="skeldar_store_curves_")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def header(self):
+        return {"format": store.ANIM_FORMAT, "kind": "character", "start": 0.0, "end": 1.0,
+                "frames": 2, "curves": {"layers": [{"name": "BaseAnimation", "base": True}],
+                                        "nodes": 1}}
+
+    def test_a_card_written_with_curves_reads_them_back(self):
+        card = store.write(self.root, "", "Walk", self.header(), frames={"bones": [], "world": []},
+                           curves=self.CURVES)
+        self.assertTrue(os.path.isfile(os.path.join(card, store.CURVES_FILE)))
+        self.assertEqual(store.read_curves(card), self.CURVES)
+
+    def test_a_pose_takes_no_curves(self):
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Fist", {"format": store.FORMAT}, curves=self.CURVES)
+
+    def test_a_replace_without_curves_keeps_them(self):
+        card = store.write(self.root, "", "Walk", self.header(), curves=self.CURVES)
+        store.replace(card, self.header())
+        self.assertEqual(store.read_curves(card), self.CURVES)
+
+    def test_a_card_without_the_file_or_a_broken_one_raises(self):
+        card = store.write(self.root, "", "Walk", self.header())
+        with self.assertRaises(ValueError):
+            store.read_curves(card)
+        with open(os.path.join(card, store.CURVES_FILE), "wb") as handle:
+            handle.write(b"not gzip")
+        with self.assertRaises(ValueError):
+            store.read_curves(card)
+
+    def test_a_file_of_another_shape_raises(self):
+        card = store.write(self.root, "", "Walk", self.header(), curves={"nodes": "x"})
+        with self.assertRaises(ValueError):
+            store.read_curves(card)
