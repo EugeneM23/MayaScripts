@@ -4,7 +4,7 @@ standalone - it adds and deletes characters, so never the animator's scene.
     mayapy verify_swap_keep_layers.py [clip.FBX] [out.txt] [phases]
 
 `phases` is a comma-separated subset of keep,bake,cancel,weight,quaternion,none,first_person,
-other_model (default: all of them).
+other_model,skeleton (default: all of them).
 
 keep         a Manny rig playing a UE clip with a correction layer «Fix» on FKSpine3_M (keyed on
              3 frames, one of them stepped), swapped for a Manny rig with Keep: the new rig
@@ -24,8 +24,14 @@ first_person a rig through Tools > 1P Setup, swapped with Keep: the new rig in 1
              marked with its namespace, the chest control, the camera under it, the display
              layers, Main.view 1), its bones under both layers where the old rig's 3P take put
              them and, with the upper layer muted, where the old rig's 1P look was.
-other_model  a Manny rig with a layer swapped for a CREEP rig with Keep: the layer carried, the
-             bones pointing as the old rig's at the keys with the layer on and muted.
+other_model  a Manny rig with a layer swapped for a CREEP rig three times - Keep, Bake, and Bake
+             with the layer muted. Another body keeps its own proportions, so its bones cannot
+             stand where Manny's stood: what Keep must not change is the RETARGET's answer, so
+             Keep with the layer on must equal Bake and Keep with it muted the muted Bake, with
+             a control that the layer does change the take.
+skeleton     a Manny rig with a layer swapped for a Manny UE5 SKELETON with Keep: the cuts go
+             through the bridge's own transfer, the layer lands on the joints under its own name
+             with its 3 keys, and the joints are where the rig's bones were, on and muted.
 """
 import math
 import os
