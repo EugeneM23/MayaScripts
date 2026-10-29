@@ -195,5 +195,29 @@ curves onto another rig model, a layer's keyed WEIGHT (its value at the save is 
   mode, with only AnimLayer1 checked, under Replace / Insert / Merge, At current time and Range — every
   curve key for key (time, value, tangents, weights, breakdowns, infinity) and every layer's mode,
   weight and mute; the same card onto a skeleton retargeted with the note; an objects card of a
-  layered locator pasted per layer; one Ctrl+Z takes each paste back, layers made included; the save's
-  time on the whole rig measured against the 2 s budget.
+  layered locator pasted per layer; one Ctrl+Z takes each paste back, layers made included; the curves
+  read on the whole rig (every control keyed, three layers, every curve cut by the range) measured against
+  the 2 s budget - the bone walk's per-frame cost is the animation cards' own, unchanged here.
+
+## Measured
+
+The plan's probe (`docs/superpowers/plans/probe_poselib_raw_layer_keys.py`, 27/27, mayapy standalone):
+- **The raw road**: keying the curve node, `setKeyframe <curve> -time t -value v`, writes `v` as the
+  layer curve's own value on an additive, an override and a quaternion layer and on the base under a
+  layer, in UI units (degrees for rotate); a key standing at `t` is replaced; fixed tangent angles and
+  weights set after the keys hold. No `MFnAnimCurve` fallback was needed. Rotation values come back with
+  float noise (`-29.999999999999996`), so readers compare with a tolerance.
+- **The plug spelling**: `animLayer -q -attribute` answers `node.longAttr` (`probe.translateX`),
+  measured on a root-level node with a unique short name only.
+- **The enums**: `rotationAccumulationMode` is `By Component:By Layer` (0 / 1), `scaleAccumulationMode`
+  is `Additive:Multiply` (0 / 1), and a new layer's scale mode is 1 (Multiply).
+
+The end-to-end verify (`verify_poselib_curves.py`, 45/45) and the older ones:
+- the 0..30 whole-rig save: 1.46 s (under the 2 s budget);
+- the curves read on a whole keyed rig (every control keyed, 188 nodes, three layers, 101 frames, every
+  curve cut by the range): 0.50 s - inside the budget, so the
+  `MFnAnimCurve` read was not built;
+- the whole 101-frame save: 4.57 s, of which ~2.1 s is the existing per-frame bone walk (~40 ms a
+  frame), which the 2 s budget does not cover; a faster walk is a separate follow-up;
+- `verify_poselib_anim.py` 113/113; unit suite 12005 tests, one unrelated failure (`test_chat_deploy`);
+  `verify_poselib_objects.py` 2/6 on main b4a91cd as well (`SceneSetup_camera` locked translateX).
