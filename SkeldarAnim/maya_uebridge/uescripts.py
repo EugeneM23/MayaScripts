@@ -388,3 +388,315 @@ def reimport_script(out_path, package, fbx_path):
               "fbx_path": json.dumps(fbx_path),
               "marker": json.dumps(MARKER)}
     return (_REIMPORT_HEAD % values) + (_REPLY_TAIL % values)
+
+
+# ------------------------------------------------------------- montages
+#
+#  2026-10-29: an AnimMontage is slots, and a slot is a track of SEGMENTS -
+#  each one a slice of an AnimSequence (anim_start_time..anim_end_time) laid
+#  at start_pos on the montage's clock and played at anim_play_rate. Measured
+#  in Atone: 195 montages, 498 segments, 121 of them at a rate other than 1.
+#
+#  The listing and the plan are two scripts on purpose. The registry carries
+#  no slot and no length for a montage, so the slots can only be read by
+#  LOADING it - and loading a montage pulls its clips. The list is the
+#  registry alone (instant, 195 rows); the plan loads the one montage whose
+#  row was picked.
+
+_MONTAGE_LIST_HEAD = '''\
+import json
+import os
+import traceback
+
+import unreal
+
+_OUT = %(out_path)s
+_PACKAGE_PATH = %(package_path)s
+
+result = {"ok": False, "error": "", "scanning": False, "project": "",
+          "content_dir": "", "assets": []}
+
+
+def short_name(value):
+    text = str(value or "").replace("'", "").replace(chr(34), "")
+    for separator in (".", "/"):
+        if separator in text:
+            text = text.rsplit(separator, 1)[-1]
+    return text
+
+
+def first_tag(data, names):
+    for name in names:
+        try:
+            value = data.get_tag_value(name)
+        except Exception:
+            value = None
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+try:
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    result["project"] = str(unreal.Paths.get_project_file_path())
+    result["content_dir"] = str(unreal.Paths.convert_relative_path_to_full(
+        unreal.Paths.project_content_dir()))
+
+    if registry.is_loading_assets():
+        result["scanning"] = True
+    else:
+        try:
+            asset_filter = unreal.ARFilter(
+                class_paths=[unreal.TopLevelAssetPath("/Script/Engine",
+                                                      "AnimMontage")],
+                package_paths=[_PACKAGE_PATH],
+                recursive_paths=True,
+                recursive_classes=True)
+        except Exception:
+            asset_filter = unreal.ARFilter(
+                class_names=["AnimMontage"],
+                package_paths=[_PACKAGE_PATH],
+                recursive_paths=True,
+                recursive_classes=True)
+
+        for data in registry.get_assets(asset_filter):
+            result["assets"].append({
+                "name": str(data.asset_name),
+                "package": str(data.package_name),
+                "skeleton": short_name(first_tag(data, ["Skeleton"])),
+                "kind": %(montage_kind)s})
+
+        result["ok"] = True
+'''
+
+
+_MONTAGE_PLAN_HEAD = '''\
+import json
+import os
+import traceback
+
+import unreal
+
+_OUT = %(out_path)s
+_PACKAGES = %(packages)s
+
+result = {"ok": False, "error": "", "montages": {}, "missing": []}
+
+
+def attempt(call, default=None):
+    """Engine APIs move between versions; a miss must not abort the read."""
+    try:
+        return call()
+    except Exception:
+        return default
+
+
+def number(call):
+    value = attempt(call)
+    return None if value is None else float(value)
+
+
+def package_of(path_name):
+    """`get_path_name` answers the OBJECT path /Game/A/Name.Name; every other
+    road in the bridge speaks package paths, and the exporter names its file
+    after the tail - so a clip travels as /Game/A/Name."""
+    text = str(path_name or "")
+    head, _, tail = text.rpartition(".")
+    if head and tail and head.rsplit("/", 1)[-1] == tail:
+        return head
+    return text
+
+
+try:
+    for package in _PACKAGES:
+        montage = unreal.load_asset(package)
+        if montage is None:
+            result["missing"].append(str(package))
+            continue
+        skeleton = attempt(lambda: montage.get_editor_property("skeleton"))
+        row = {"name": str(package).rsplit("/", 1)[-1],
+               "length": number(lambda: montage.get_play_length()),
+               "skeleton": str(attempt(lambda: skeleton.get_name(), "") or ""),
+               "slots": [],
+               "sections": []}
+
+        for track in attempt(
+                lambda: montage.get_editor_property("slot_anim_tracks"), []) or []:
+            slot = {"slot": str(attempt(
+                lambda: track.get_editor_property("slot_name"), "") or ""),
+                "segments": []}
+            anim_track = attempt(lambda: track.get_editor_property("anim_track"))
+            segments = attempt(
+                lambda: anim_track.get_editor_property("anim_segments"), []) or []
+            for segment in segments:
+                clip = attempt(lambda: segment.get_editor_property("anim_reference"))
+                loops = attempt(
+                    lambda: int(segment.get_editor_property("looping_count")))
+                slot["segments"].append({
+                    "clip": package_of(attempt(lambda: clip.get_path_name(), "")),
+                    "clip_name": str(attempt(lambda: clip.get_name(), "") or ""),
+                    "start_pos": number(
+                        lambda: segment.get_editor_property("start_pos")),
+                    "anim_start_time": number(
+                        lambda: segment.get_editor_property("anim_start_time")),
+                    "anim_end_time": number(
+                        lambda: segment.get_editor_property("anim_end_time")),
+                    "anim_play_rate": number(
+                        lambda: segment.get_editor_property("anim_play_rate")),
+                    "looping_count": 1 if loops is None else loops,
+                    # the one additive clip in Atone sits in a slot of its own;
+                    # an additive track is a delta, not a pose, and is refused
+                    "additive": str(attempt(
+                        lambda: clip.get_editor_property("additive_anim_type"),
+                        "") or ""),
+                    "clip_length": number(lambda: clip.get_play_length()),
+                    "clip_frames": attempt(lambda: int(clip.get_editor_property(
+                        "number_of_sampled_keys")))})
+            row["slots"].append(slot)
+
+        for section in attempt(
+                lambda: montage.get_editor_property("composite_sections"), []) or []:
+            row["sections"].append({
+                "name": str(attempt(
+                    lambda: section.get_editor_property("section_name"), "") or ""),
+                "start": number(
+                    lambda: section.get_editor_property("start_time")),
+                "next": str(attempt(
+                    lambda: section.get_editor_property("next_section_name"),
+                    "") or "")})
+
+        result["montages"][str(package)] = row
+
+    result["ok"] = True
+'''
+
+
+_MONTAGE_EXPORT_HEAD = '''\
+import json
+import os
+import traceback
+
+import unreal
+
+_OUT = %(out_path)s
+_PACKAGES = %(packages)s
+_FOLDER = %(folder)s
+
+result = {"ok": False, "error": "", "clips": {}, "failed": {}, "notes": []}
+
+
+def attempt(call, default=None):
+    try:
+        return call()
+    except Exception:
+        return default
+
+
+try:
+    if _FOLDER and not os.path.isdir(_FOLDER):
+        os.makedirs(_FOLDER)
+
+    options = unreal.FbxExportOption()
+    for name, value in (("ascii", False),
+                        ("export_preview_mesh", %(preview_mesh)s),
+                        ("export_morph_targets", False),
+                        ("map_skeletal_motion_to_root", False),
+                        ("level_of_detail", False),
+                        ("collision", False),
+                        ("vertex_color", False)):
+        if attempt(lambda: options.set_editor_property(name, value) or True) is None:
+            result["notes"].append("no FbxExportOption." + name)
+
+    for package in _PACKAGES:
+        # One clip the editor cannot export must not cost the other six: the
+        # reply names it and the caller refuses by name.
+        anim = unreal.load_asset(package)
+        if anim is None:
+            result["failed"][str(package)] = "could not load the asset"
+            continue
+        fbx = os.path.join(_FOLDER, str(package).rsplit("/", 1)[-1] + ".fbx")
+        if os.path.isfile(fbx):
+            attempt(lambda: os.remove(fbx))
+
+        task = unreal.AssetExportTask()
+        task.set_editor_property("object", anim)
+        task.set_editor_property("filename", fbx)
+        # automated/prompt are load-bearing: without them UE raises a modal
+        # dialog that nobody can click and the editor hangs for good.
+        task.set_editor_property("automated", True)
+        task.set_editor_property("prompt", False)
+        task.set_editor_property("replace_identical", True)
+        task.set_editor_property("exporter", unreal.AnimSequenceExporterFBX())
+        task.set_editor_property("options", options)
+        ran = unreal.Exporter.run_asset_export_task(task)
+
+        # A True return is not proof of a file on disk; check the disk.
+        if not (os.path.isfile(fbx) and os.path.getsize(fbx) > 0):
+            result["failed"][str(package)] = (
+                "export returned " + str(ran) + " but no file appeared")
+            continue
+
+        rate = attempt(lambda: anim.get_editor_property("target_frame_rate"))
+        fps = None
+        if rate is not None:
+            fps = attempt(
+                lambda: float(rate.numerator) / float(rate.denominator))
+        frames = attempt(
+            lambda: int(anim.get_editor_property("number_of_sampled_keys")))
+        result["clips"][str(package)] = {
+            "path": fbx,
+            "fps": fps,
+            "frames": frames,
+            "length": attempt(lambda: float(anim.get_play_length()))}
+
+    result["ok"] = True
+'''
+
+
+def montage_list_script(out_path, package_path="/Game"):
+    """Source that writes every AnimMontage under `package_path` to `out_path`.
+
+    Registry only - it loads nothing. The registry carries no slot and no
+    length tag for a montage (measured), so a row says only its name, its
+    folder and its skeleton; the slots come from `montage_plan_script` when a
+    row is picked.
+    """
+    values = {"out_path": json.dumps(out_path),
+              "package_path": json.dumps(package_path),
+              "montage_kind": json.dumps("montage"),
+              "marker": json.dumps(MARKER)}
+    return (_MONTAGE_LIST_HEAD % values) + (_REPLY_TAIL % values)
+
+
+def montage_plan_script(out_path, packages):
+    """Source that writes the plan of every montage in `packages`.
+
+    Per montage: its slots in the montage's own order, and per slot its
+    segments - the clip, the slice (`anim_start_time`..`anim_end_time`), where
+    it lies on the montage's clock (`start_pos`), its play rate, its loop count
+    and whether the clip is additive. Sections travel too: no montage in Atone
+    has any, and the day one does must not be a silent wrong answer.
+
+    A LIST, so a picked row (one) and a square of montages (several) are one
+    round trip.
+    """
+    values = {"out_path": json.dumps(out_path),
+              "packages": json.dumps(list(packages or [])),
+              "marker": json.dumps(MARKER)}
+    return (_MONTAGE_PLAN_HEAD % values) + (_REPLY_TAIL % values)
+
+
+def montage_export_script(out_path, packages, folder, preview_mesh=False):
+    """Source that exports every AnimSequence of `packages` into `folder`.
+
+    One round trip for the whole slot: three of Atone's slot tracks hold seven
+    distinct clips, and a script per clip would be seven discoveries and seven
+    connections. The reply maps each package to its FBX, and a clip the editor
+    could not export is named in `failed` rather than failing the lot.
+    """
+    values = {"out_path": json.dumps(out_path),
+              "packages": json.dumps(list(packages or [])),
+              "folder": json.dumps(folder),
+              "preview_mesh": "True" if preview_mesh else "False",
+              "marker": json.dumps(MARKER)}
+    return (_MONTAGE_EXPORT_HEAD % values) + (_REPLY_TAIL % values)
