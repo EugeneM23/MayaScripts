@@ -80,7 +80,7 @@ class Card(QtWidgets.QGraphicsItem):
         painter.setBrush(colour(m.COLOURS.get(node.kind, T["faint"])))
         painter.drawRoundedRect(bar, 2, 2)
 
-        name = m.label(node.id, view.state["custom"])
+        name = view.label(node.id)
         if node.link == "repeat":
             name = "↻ " + name
         elif node.link == "conv":
@@ -207,6 +207,9 @@ class TreeView(QtWidgets.QGraphicsView):
         self.setStyleSheet("QGraphicsView#skeldarMovesetView{border:1px solid %s;border-radius:6px;}"
                            % T["track_edge"])
         self.graph, self.folder = {"nodes": {}, "edges": [], "entries": []}, ""
+        #  the weapon whose graph is shown (`model.Weapon`); None keeps the
+        #  Longsword's rules, which is what a graph declaring nothing is
+        self.weapon = None
         self.state = m.read_state("")
         self.mode, self.root, self.types, self.who = "combos", "", set(), None
         self.picked, self.picked_id = None, ""
@@ -216,10 +219,22 @@ class TreeView(QtWidgets.QGraphicsView):
         self.setTransform(QtGui.QTransform.fromScale(self.zoom, self.zoom))
 
     # ---- data ---------------------------------------------------------------
-    def set_data(self, graph, state, folder):
-        self.graph, self.state, self.folder = graph, state, folder
+    def set_data(self, graph, state, folder, weapon=None):
+        self.graph, self.state, self.folder, self.weapon = graph, state, folder, weapon
         self._pixmaps.clear()
         self.rebuild()
+
+    # ---- the weapon's own rules ---------------------------------------------
+    def label(self, node_id):
+        """The card's name, the weapon's own prefix off it."""
+        prefix = self.weapon.prefix if self.weapon else m.LONGSWORD_PREFIX
+        return m.label(node_id, self.state["custom"], prefix)
+
+    def thumb_path(self, node_id, view="3p"):
+        """The preview in the weapon's own media subfolder, "" when there is none."""
+        if not self.folder:
+            return ""
+        return m.thumbnail(self.folder, node_id, view, self.weapon.media if self.weapon else "")
 
     def set_state(self, state):
         self.state = state
@@ -240,7 +255,7 @@ class TreeView(QtWidgets.QGraphicsView):
     def pixmap(self, node_id):
         if node_id in self._pixmaps:
             return self._pixmaps[node_id]
-        path = m.thumbnail(self.folder, node_id) if self.folder else ""
+        path = self.thumb_path(node_id)
         pix = QtGui.QPixmap(path) if path else QtGui.QPixmap()
         if not pix.isNull():
             pix = pix.scaledToWidth(THUMB_W * 2, QtCore.Qt.SmoothTransformation)
@@ -248,7 +263,14 @@ class TreeView(QtWidgets.QGraphicsView):
         return self._pixmaps[node_id]
 
     def trees(self):
-        return m.trees(self.graph, self.state, self.mode)
+        trees = m.trees(self.graph, self.state, self.mode)
+        for tree in trees:
+            for node in tree.nodes:
+                #  what the graph says the attack is, else its name (the sword's
+                #  rule). Set here, so the cards, the wires and the type chips
+                #  all read one answer.
+                node.kind = m.node_type(self.graph, node.id)
+        return trees
 
     def rebuild(self):
         scene = self.scene()
@@ -287,7 +309,7 @@ class TreeView(QtWidgets.QGraphicsView):
         return shown
 
     def _title(self, tree, top):
-        text = self.scene().addSimpleText(m.label(tree.root, self.state["custom"]))
+        text = self.scene().addSimpleText(self.label(tree.root))
         font = QtGui.QFont(text.font())
         font.setPixelSize(16)
         font.setBold(True)

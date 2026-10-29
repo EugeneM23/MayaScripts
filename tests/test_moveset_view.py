@@ -17,7 +17,7 @@ except ImportError:                                            # pragma: no cove
 
 from maya_moveset import model as m
 
-from tests.test_moveset_model import graph
+from tests.test_moveset_model import dagger_graph, graph
 
 
 def folder_with_graph():
@@ -161,6 +161,56 @@ class Presses(unittest.TestCase):
                          ("montage", "1P", "/Game/M/AM_Longsword_Attack_Stand_Hold"))
         self.assertEqual(seen["name"], "AM_Longsword_Attack_Stand_Hold_1P")
         self.assertEqual(seen["target"], "new_rig")
+
+
+
+@unittest.skipIf(QtWidgets is None, "no Qt")
+class WeaponRules(unittest.TestCase):
+    """A graph that declares its weapon is drawn by its own rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        from maya_moveset import view
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        with open(os.path.join(self.folder, "graph.dagger.json"), "w", encoding="utf-8") as handle:
+            json.dump(dagger_graph(), handle)
+        os.makedirs(os.path.join(self.folder, "media", "dagger"))
+        open(os.path.join(self.folder, "media", "dagger", "AM_Dg_Atk_NLt.jpg"), "w").close()
+        self.dagger = m.weapons(self.folder)[0]
+        self.view = view.TreeView()
+        self.view.resize(600, 400)
+        self.view.set_data(m.load_graph(self.folder, self.dagger.graph),
+                           m.read_state(self.folder), self.folder, self.dagger)
+
+    def test_the_labels_are_the_projects_names(self):
+        self.assertEqual(self.view.label("AM_Dg_Atk_NLt_NLt_NHd"), "NLt NLt NHd")
+
+    def test_the_colour_is_the_graphs_declared_type(self):
+        kinds = dict((c.node.id, c.node.kind) for c in self.view.cards)
+        self.assertEqual(kinds["AM_Dg_Atk_NLt_NLt_NHd"], "hold")
+        self.assertEqual(kinds["AM_Dg_Atk_NLt"], "light")
+
+    def test_a_type_chip_filters_on_the_declared_type(self):
+        #  every transition, so the jump branch is drawn beside the chain
+        self.view.set_filter(mode="all", types=["hold"])
+        dim = dict((c.node.id, c.opacity()) for c in self.view.cards)
+        self.assertEqual(dim["AM_Dg_Atk_NLt_NLt_NHd"], 1.0)      # the hold itself
+        self.assertLess(dim["AM_Dg_Atk_JA_Passive"], 0.5)        # a jump, off the hold's path
+
+    def test_the_preview_comes_from_the_weapons_media_subfolder(self):
+        self.assertTrue(self.view.thumb_path("AM_Dg_Atk_NLt")
+                        .endswith(os.path.join("dagger", "AM_Dg_Atk_NLt.jpg")))
+        self.assertEqual(self.view.thumb_path("AM_Dg_Atk_Spr"), "")
+
+    def test_a_graph_with_no_weapon_keeps_the_swords_rules(self):
+        from maya_moveset import view
+        plain = view.TreeView()
+        plain.set_data(graph(), m.read_state(""), "")
+        self.assertEqual(plain.label("AM_Longsword_Attack_Stand_Hold"), "Stand Hold")
 
 
 if __name__ == "__main__":
