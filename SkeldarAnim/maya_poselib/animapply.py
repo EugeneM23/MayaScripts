@@ -1427,11 +1427,20 @@ def drop_floor(header, frames, point, mirror=False, options=None, progress=None,
     if refusal:
         return False, refusal
     options = _options(options)
+    floor = _pastes_curves(header, options)
+    if floor:
+        from maya_poselib import curveapply
+        if mirror:
+            return False, curveapply.MIRRORED
+        options = options._replace(in_place=True)
     refusal = _checked_plan(header, frames, options)[1]
     if refusal:
         return False, refusal
-    return ap.drop_floor(header, point, mirror, onto=lambda root: apply_onto(
+    ok, text = ap.drop_floor(header, point, mirror, onto=lambda root: apply_onto(
         header, frames, root, mirror, 1.0, options, progress, curves=curves))
+    if floor and ok:
+        text += " | " + curveapply.FLOOR_IN_PLACE
+    return ok, text
 
 
 def select_objects(header, selection=None, options=None):

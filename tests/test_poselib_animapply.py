@@ -1773,6 +1773,34 @@ class CurvesDispatch(unittest.TestCase):
                          (False, aa.CANCELLED))
         self.assertEqual(self.log, [])
 
+    def floor_seams(self, drop):
+        for owner, name, value in (
+                (aa, "_card_refusal", lambda header: ""),
+                (aa, "_checked_plan", lambda header, frames, options: (None, "")),
+                (aa.ap, "drop_floor", drop)):
+            self.addCleanup(setattr, owner, name, getattr(owner, name))
+            setattr(owner, name, value)
+
+    def test_a_floor_drop_refuses_mirror_before_a_character_is_added(self):
+        self.floor_seams(lambda *a, **k: self.fail("a character was added"))
+        self.assertEqual(aa.drop_floor(self.header, {}, (0, 0, 0), True,
+                                       {"paste_as": "curves"}),
+                         (False, self.ca.MIRRORED))
+
+    def test_a_floor_drop_pastes_original_curves_in_place(self):
+        seen = []
+
+        def drop(header, point, mirror=False, onto=None):
+            return True, "added | " + onto("|root")[1]
+        self.floor_seams(drop)
+        self.addCleanup(setattr, aa, "apply_onto", aa.apply_onto)
+        aa.apply_onto = lambda header, frames, root, mirror=False, alpha=1.0, options=None, \
+            progress=None, curves=None: seen.append(options) or (True, "pasted")
+        ok, text = aa.drop_floor(self.header, {}, (0, 0, 0), False, {"paste_as": "curves"})
+        self.assertTrue(ok)
+        self.assertTrue(seen[0].in_place)
+        self.assertTrue(text.endswith(self.ca.FLOOR_IN_PLACE))
+
     def test_retarget_is_todays_press(self):
         aa.apply(self.header, {}, selection=["x"], options={"paste_as": "retarget"})
         self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
