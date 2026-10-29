@@ -74,6 +74,10 @@ status a view, so 25 attacks are 50 cards of work) with the folder button; **Ope
 - **A card** carries its type's colour, the preview from `media/<id>.jpg` (`media/1p/<id>.jpg` for the
   1P dot), the 3P and 1P status dots with the assignee's emoji or initials, and the foot's direction
   glyphs; a wire is coloured by the attack's type.
+- **One hotkey row**, `window.moveset`, the opener — so the section can also be a radial slot and a
+  skill-bar cell. No row for the presses: each of them acts on the attack picked IN the tree, and with
+  the card closed there is nothing for them to act on (the Rig Picker's rule, not Dynamics', whose
+  presses act on the selection with the card's remembered settings).
 
 ## What a refusal says
 

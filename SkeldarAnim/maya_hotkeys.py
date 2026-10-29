@@ -1164,6 +1164,11 @@ _OURS = (
      "The selected rig's take mixed with physics zone by zone over the highlight (or from the "
      "current frame), as the Ragdoll card's zones stand",
      partial(_ragdoll, "press_blend")),
+    #  2026-10-29: one row only. The card's own presses (Open 3P / 1P, Fit) act on the attack
+    #  picked IN the tree, so with the card closed there is nothing for them to act on.
+    ("window.moveset", "Windows", "Moveset",
+     "Open the Moveset section: the Longsword combo trees, shared with the moveset page",
+     partial(_show, "maya_moveset", "show_window")),
     ("window.timebar", "Windows", "Time Bar",
      "Switch between the Time Bar and Maya's own time slider",
      _timebar),

@@ -16189,6 +16189,8 @@ data stays in the animator's folder: the plugin ships only code. Spec:
   double click opens (the 1P dot: 1P), the right button is Open / status / assignee for both views.
   `panel.py` is the card: Opening, Branches, Assignee, the type chips, the view over the `cmds`
   placeholder (a `Keeper`), Open 3P / Open 1P / Fit, the folder button (`skeldarMovesetFolder`).
+  Hotkey row `window.moveset` - one only: every press of the card acts on the attack picked IN the
+  tree, so with the card closed there is nothing for a press to act on.
 - **Open** builds a montage `AnimRecord` from the graph (`path` → package, `slot` / `slot1p`) and goes the
   UE Bridge's montage road (`window._export_from_editor` + `rigimport.import_and_retarget`): onto the selected
   rig, else the only one, a new rig when there is none. Needs the editor open, as the bridge does.
