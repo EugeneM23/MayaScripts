@@ -466,7 +466,12 @@ def compose(plan, sources, target, fps):
     could not be.
     """
     cmds = _maya()
-    rows = samples(plan, fps)
+    #  the montage's clock is SECONDS (Unreal's) and a curve is keyed in
+    #  FRAMES (Maya's UI unit, and the clip's own import landed its keys on
+    #  whole frames at the scene's rate), so the source time is read in
+    #  frames here and the plan half stays in the montage's own language
+    rows = [(frame, clip, time * fps)
+            for frame, clip, time in samples(plan, fps)]
     joints = dict((namespace, _joint_map(cmds, namespace))
                   for namespace in set(sources.values()))
     animated = dict((clip, _animated_channels(cmds, joints[namespace]))
@@ -478,16 +483,13 @@ def compose(plan, sources, target, fps):
     for _frame, clip, time in rows:
         times_by_clip.setdefault(clip, []).append(time)
 
-    # Every curve the first clip's import left on the target's joints goes:
-    # what the montage plays is this plan and nothing else.
-    stale = []
-    for node in target_joints.values():
-        stale.extend(cmds.listConnections(node, source=True, destination=False,
-                                          type="animCurve") or [])
-    if stale:
-        cmds.delete(list(set(stale)))
-
-    written = []
+    #  TWO passes, and the order is load-bearing: the first span's clip IS the
+    #  target namespace (its own import is the composite's skeleton), so every
+    #  source is read BEFORE the target's curves are deleted. Reading after
+    #  made every frame of that clip's spans answer one dead DG value - the
+    #  composite stood still through half the take (trap 58's family, found by
+    #  the verify's per-frame comparison).
+    gathered = []
     held = []
     skipped = []
     for leaf, attr in wanted:
@@ -516,6 +518,7 @@ def compose(plan, sources, target, fps):
         values = []
         previous = None
         missed = False
+        standing = cmds.getAttr(plug)
         for frame, clip, time in rows:
             column = columns.get(clip)
             if column is None:
@@ -526,17 +529,28 @@ def compose(plan, sources, target, fps):
             else:
                 value = column
             if value is None:
-                value = cmds.getAttr(plug)
+                value = standing
             frames.append(frame)
             values.append(value)
             previous = value
         if missed:
             held.append("{0}.{1}".format(leaf, attr))
-        if _is_angle(cmds, plug):
-            values = continuous(values)
-            _write_curve(plug, frames, values, True)
-        else:
-            _write_curve(plug, frames, values, False)
+        angle = _is_angle(cmds, plug)
+        gathered.append((plug, frames,
+                         continuous(values) if angle else values, angle))
+
+    #  now the target's own curves go: what the montage plays is this plan and
+    #  nothing else.
+    stale = []
+    for node in target_joints.values():
+        stale.extend(cmds.listConnections(node, source=True, destination=False,
+                                          type="animCurve") or [])
+    if stale:
+        cmds.delete(list(set(stale)))
+
+    written = []
+    for plug, frames, values, angle in gathered:
+        _write_curve(plug, frames, values, angle)
         written.append(plug)
 
     return {"written": written, "held": sorted(held),
