@@ -35,6 +35,13 @@ REF_PREFIX = "montage:"
 #  numbers; a real segment is tens of milliseconds at least).
 TINY = 1e-6
 
+#  The notify the animator wants on the timeline, by CLASS. Measured in Atone
+#  2026-10-29: 90 of them in 66 of 132 montages, every one of this class, while
+#  two are NAMED `GameplayEvent Window` - so the class is the identity and a
+#  name match would lose those two. Every notify reaches us (the plan reply
+#  carries them all), so another kind is a constant away from the timeline.
+SCAN_CLASS = "AnimNotifyState_MeleeScanWindow"
+
 #  Every channel of the slot's clips is composed, not only translate / rotate /
 #  scale: a UE root carries the game's own curves as custom attributes
 #  (`Pose_0..9`, `MoveData_*` - trap 40). These are the ones nothing animates
@@ -44,7 +51,15 @@ SKIP_ATTRS = ("visibility",)
 clip_name = records.clip_name          # one spelling for montage + slot
 
 Span = collections.namedtuple("Span", "clip t0 t1 src rate")
-Plan = collections.namedtuple("Plan", "montage slot spans end clips")
+
+#  A notify state's span on the montage's own clock, in seconds.
+Window = collections.namedtuple("Window", "name t0 t1")
+
+#  `windows` is last and defaults to empty, the way `AnimRecord` gained `kind`:
+#  every older construction keeps working, and a plan file written by an older
+#  build reads as a take with no windows rather than raising.
+Plan = collections.namedtuple("Plan", "montage slot spans end clips windows",
+                              defaults=((),))
 
 
 # ------------------------------------------------------------ the reference
@@ -89,6 +104,44 @@ def montage_name(payload, package):
     """The montage's asset name, falling back to its package's tail. Pure."""
     name = _montage(payload, package).get("name") or ""
     return str(name or (package or "").rsplit("/", 1)[-1])
+
+
+def is_scan(row):
+    """Is this notify row a melee scan window? Pure, by CLASS.
+
+    Measured 2026-10-29: of the 115 clips the sample's slots run, 0 carry a
+    notify - every one lives on the MONTAGE, so a notify's time is already the
+    montage's own clock and needs no mapping through the spans.
+    """
+    return str((row or {}).get("class") or "") == SCAN_CLASS
+
+
+def windows_of(payload, package):
+    """The montage's scan windows, in montage seconds, sorted. Pure."""
+    rows = (_montage(payload, package) or {}).get("notifies") or []
+    out = []
+    for row in rows:
+        if not is_scan(row):
+            continue
+        t0 = float(row.get("trigger") or 0.0)
+        out.append(Window(name=str(row.get("name") or "MeleeScanWindow"),
+                          t0=t0, t1=t0 + float(row.get("duration") or 0.0)))
+    return sorted(out, key=lambda window: (window.t0, window.t1))
+
+
+def clipped(windows, end):
+    """The windows a slot of length `end` holds. Pure.
+
+    One crossing the end is cut back to it, one past it is dropped: 44 of
+    Atone's slots are shorter than their montage, and 3 of 1928 slot/notify
+    pairs sit past the slot's end.
+    """
+    out = []
+    for window in windows or []:
+        if window.t0 >= end - TINY:
+            continue
+        out.append(window if window.t1 <= end else window._replace(t1=end))
+    return out
 
 
 def pick_slot(slots, remembered):
@@ -145,7 +198,8 @@ def plan_for(payload, package, slot):
             clips.append(clip)
     end = spans[-1].t1 if spans else 0.0
     return Plan(montage=montage_name(payload, package), slot=slot,
-                spans=spans, end=end, clips=clips)
+                spans=spans, end=end, clips=clips,
+                windows=clipped(windows_of(payload, package), end))
 
 
 def source_at(span, t):
@@ -207,6 +261,25 @@ def cuts(plan, fps):
     return [round(span.t0 * fps, 1) for span in plan.spans[1:]]
 
 
+def bookmarks_for(plan, fps):
+    """`[(name, start frame, stop frame)]` for the slot's scan windows. Pure.
+
+    The frames snap OUTWARD - floor the start, ceil the end, at least one
+    frame wide - for two reasons. A window is then never shown shorter than it
+    is; and the range stays whole, so setting the playback range from a
+    bookmark cannot leave a FRACTIONAL range, which is what makes Unreal
+    refuse a clip («animation length ... is not frame-border aligned», trap
+    50). The cost: up to half a frame wider at each end.
+    """
+    rate = float(fps or 30.0) or 30.0
+    out = []
+    for window in plan.windows or ():
+        start = math.floor(window.t0 * rate)
+        stop = math.ceil(window.t1 * rate)
+        out.append((window.name, float(start), float(max(stop, start + 1))))
+    return out
+
+
 def refusal(payload, package, slot):
     """Why this slot cannot be imported, "" when it can. Pure.
 
@@ -254,6 +327,9 @@ def note_of(info):
                                            for cut in row["cuts"]))
     if len(row.get("clips") or []) > 1:
         bits.append("{0} clips".format(len(row["clips"])))
+    if row.get("windows"):
+        bits.append("{0} scan window{1}".format(
+            row["windows"], "" if row["windows"] == 1 else "s"))
     if row.get("held"):
         bits.append("held: " + ", ".join(row["held"][:3]))
     if not bits:
@@ -272,6 +348,9 @@ def plan_line(plan, fps, frames=None):
             ("{0:g}".format(cut) for cut in edits))
     if len(plan.clips) > 1:
         text += " from {0} clips".format(len(plan.clips))
+    if plan.windows:
+        text += ", {0} scan window{1}".format(
+            len(plan.windows), "" if len(plan.windows) == 1 else "s")
     return text
 
 
@@ -285,6 +364,9 @@ def plan_payload(plan, clips, fps, mesh=False):
             "spans": [{"clip": span.clip, "t0": span.t0, "t1": span.t1,
                        "src": span.src, "rate": span.rate}
                       for span in plan.spans],
+            "windows": [{"name": window.name, "t0": window.t0,
+                         "t1": window.t1}
+                        for window in plan.windows or ()],
             "clips": dict(clips or {})}
 
 
@@ -299,12 +381,16 @@ def plan_of_payload(payload):
     for span in spans:
         if span.clip not in clips:
             clips.append(span.clip)
+    windows = [Window(name=str(row.get("name") or "MeleeScanWindow"),
+                      t0=float(row.get("t0") or 0.0),
+                      t1=float(row.get("t1") or 0.0))
+               for row in (payload or {}).get("windows") or []]
     return Plan(montage=(payload or {}).get("montage") or "",
                 slot=(payload or {}).get("slot") or "",
                 spans=spans,
                 end=float((payload or {}).get("end") or
                           (spans[-1].t1 if spans else 0.0)),
-                clips=clips)
+                clips=clips, windows=windows)
 
 
 def write_plan(folder, plan, clips, fps, mesh=False):
