@@ -446,34 +446,49 @@ def has_keys(root):
 
 
 def keys_print(root):
-    """A digest of the keys on the BASE layer of every joint under `root` (base_input: an animation layer the
-    animator keys corrections on does not count). apply() keeps it on the marker, so new animation put on a walked
-    skeleton - a clip imported onto it - is told from the walk's own keys (keys_changed)."""
+    """{bone leaf: a digest of its keys on the BASE layer} for every joint under `root` (base_input: an animation
+    layer the animator keys corrections on does not count). apply() keeps it on the marker, so new animation put on
+    a walked skeleton - a clip imported onto it - is told from the walk's own keys (keys_changed).
+
+    A bone any of whose channels something else DRIVES is left out: the walk writes nothing there, so its keys are
+    nobody's to compare (2026-10-29 - it used to be one hash over the whole skeleton, and Add Weapon taking
+    weapon_r's curves then read as a new take for ever). A bone with no keys at all is left out too."""
     import hashlib
     cmds = _cmds()
     joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])
-    digest = hashlib.sha1()
-    for joint in sorted(joints):
+    rows, driven = {}, set()
+    for joint in joints:
+        leaf = _short(joint).split(":")[-1]
+        parts = []
         for ch in CHANNELS:
             try:
                 curve = base_input(joint + "." + ch)[1]
             except Refusal:                                  # driven by something else: not keys
-                continue
+                driven.add(leaf)
+                break
             if not curve:
                 continue
             times = cmds.keyframe(curve, query=True, timeChange=True) or []
             values = cmds.keyframe(curve, query=True, valueChange=True) or []
-            digest.update(repr((_short(joint).split(":")[-1], ch, [round(t, 3) for t in times],
-                                [round(v, 4) for v in values])).encode("utf-8"))
-    return digest.hexdigest()[:16]
+            parts.append(repr((leaf, ch, [round(t, 3) for t in times], [round(v, 4) for v in values])))
+        if parts:
+            rows.setdefault(leaf, []).extend(parts)          # two joints of one leaf: one row, order-free
+    return dict((leaf, hashlib.sha1("".join(sorted(parts)).encode("utf-8")).hexdigest()[:8])
+                for leaf, parts in rows.items() if leaf not in driven)
 
 
 def keys_changed(root):
-    """Whether a walked skeleton's keys are no longer the ones the walk wrote (new animation put on it). A marker
-    from before the digest was kept answers False: it cannot tell."""
+    """Whether a walked skeleton's keys are no longer the ones the walk wrote (new animation put on it), read bone
+    by bone: a bone the marker knew, still carrying keys of its own, must hold the same ones. Left out of the
+    question - the walk keys them again on the next press anyway: a bone whose curves something else has taken
+    since (Add Weapon on weapon_r, Camera Setup on camera_root, a Tools knot) and a bone with no keys at all. A
+    marker from before the per-bone digest (one hash of the whole skeleton) answers False: it cannot tell."""
     memo = memo_of(root)
     known = memo.get("keys")
-    return bool(memo.get("walk")) and bool(known) and known != keys_print(root)
+    if not memo.get("walk") or not isinstance(known, dict) or not known:
+        return False
+    now = keys_print(root)
+    return any(leaf in now and now[leaf] != digest for leaf, digest in known.items())
 
 
 def drop_source(root):

@@ -876,7 +876,7 @@ class Keys(Base):
 
     def test_the_print_follows_the_base_keys(self):
         first = scene.keys_print("|root")
-        self.assertEqual(len(first), 16)
+        self.assertEqual(sorted(first), ["pelvis", "root"])     # a row a keyed bone, thigh_l carries none
         self.assertEqual(scene.keys_print("|root"), first)
         self.fake.curves["root_translateZ"][1][1] = 51.0
         self.assertNotEqual(scene.keys_print("|root"), first)

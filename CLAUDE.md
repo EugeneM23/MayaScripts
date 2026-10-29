@@ -11350,6 +11350,47 @@ file (here and in the mean pose rig section), and the rigs standing in the sourc
   (the old Fix posture wrote into the walk's file and kept the original) and `5f70....walkkeys.json` (old key edits,
   not read any more). Left as they are.
 
+**…and a weapon in the hand no longer stops every knob** (2026-10-29, the animator, in a Maya on port 7004:
+«walk builder потерял связь с скелетом»). Read only: the card still held the skeleton — the list showed
+`▶ Manny_Skeleton`, the subtitle «Working on Manny_Skeleton» — while every knob answered «0 walkers keyed | not
+keyed: Manny_Skeleton: new keys on it since the walk - Pick it to take them» (`rekey_all`'s guard on
+`scene.keys_changed`). Every keyed channel of the 93 bones was the walk's OWN output, re-evaluated from the
+walker's memo and compared: worst **5.7e-14**, not one key time off. What had changed was the DIGEST, which was one
+hash over every joint and channel of the subtree: the memo's `1cf5c88bd4bd43d9` was reproduced — uniquely among
+8000 candidates — by the scene's keys **plus `weapon_r`'s six curves** (its rotateY a whole turn away: the euler
+seed of that apply), and Maya's undo queue's oldest surviving step was `Inventory: into a hand` (the import flushed
+it). So the walk keyed `weapon_r`, the Long Sword went into the hand, `bonedrive.link` cut that bone's curves and
+constrained it to the sword, and the digest changed with no new animation — for good, since no press could ever
+settle it (trap 316). Camera Setup on `camera_root` and a Tools knot on any bone do the same.
+- **`keys_print` is `{bone leaf: a digest of its keys}`** now, and **a bone any of whose channels something else
+  DRIVES is left out** (the walk writes nothing there, so its keys are nobody's to compare), as is a bone with no
+  keys at all. Two joints of one leaf fold into one row, order-free, so the whole-subtree sort that used to decide
+  the hash is gone.
+- **`keys_changed` reads it bone by bone**: a bone the marker knew, still carrying keys of its own, must hold the
+  same ones. A bone whose curves a driver took since, one whose keys were deleted, and one the walk never keyed are
+  not the question — the next press keys them again. A clip imported onto the walker re-keys the bones the walk
+  wrote, so it is still caught.
+- The memo stays **version 4**: the shape tells the two apart (`isinstance(known, dict)`), so a marker written by
+  an older build answers «cannot tell» (False) until the next press, and a colleague on an older build still reads
+  the walker. The animator's own scene was left untouched — a press of a knob there settles it.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_keys_changed.py` — **0 of 23 gates, mayapy standalone** on a
+  real Manny skeleton walking `asd`: Add Weapon, Camera Setup and a knot on `hand_r` each leave `keys_changed`
+  False and a knob keying, **with the old digest monkeypatched back in as the control failing on all three**; a key
+  moved on the pelvis and a clip over the whole skeleton are still new animation and the knob still refuses by
+  name; Remove Weapon, an undo, and a marker from before the per-bone digest. `tests/test_walk_keys_changed.py`
+  (14, eight of them red on the build before); 885 walk tests and 13232 in the suite, the one failure the known
+  `test_chat_deploy.Keys`. `verify_walk_own.py` fails its gates 10 and 19 and `verify_walk_many.py` gates 5, 6 and
+  8-11 **identically on clean HEAD** — stale against the 2026-10-26 parameters, not this work.
+
+316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
+     it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
+     new take for ever: every knob of the card refused, and the refusal's own advice («Pick it to take them») would
+     have thrown the kept cycle away and captured the already-processed keys as the new source. The animator read
+     it as the tool losing the skeleton. Hash a guard like this per BONE and leave out whatever something else
+     drives now: a digest must only cover what the tool itself writes, or any other tool touching the character
+     disarms it. And the way in was to reproduce the stored hash, not to reason about it — one candidate of 8000
+     matched, which named the bone exactly.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).
