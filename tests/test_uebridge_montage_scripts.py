@@ -131,5 +131,35 @@ class MontageExport(unittest.TestCase):
                                                       ["/Game/A"], "/tmp"))
 
 
+class MontagePlanNotifies(unittest.TestCase):
+    """The plan reply carries each montage's notifies.
+
+    Measured in Atone 2026-10-29: `montage.notifies` is PROTECTED and raises,
+    the library answers the same structs, and the struct exposes no time to
+    Python - two library calls do.
+    """
+
+    def test_the_plan_script_reads_the_notify_events(self):
+        source = uescripts.montage_plan_script("C:/out.json", ["/Game/A/AM_X"])
+        self.assertIn("get_animation_notify_events", source)
+
+    def test_it_reads_the_trigger_time_and_the_duration(self):
+        source = uescripts.montage_plan_script("C:/out.json", ["/Game/A/AM_X"])
+        self.assertIn("get_anim_notify_event_trigger_time", source)
+        self.assertIn("get_anim_notify_event_duration", source)
+
+    def test_the_row_carries_a_notifies_list(self):
+        source = uescripts.montage_plan_script("C:/out.json", ["/Game/A/AM_X"])
+        self.assertIn('"notifies"', source)
+
+    def test_it_never_reads_the_protected_property(self):
+        source = uescripts.montage_plan_script("C:/out.json", ["/Game/A/AM_X"])
+        self.assertNotIn('get_editor_property("notifies")', source)
+
+    def test_the_script_still_compiles(self):
+        source = uescripts.montage_plan_script("C:/out.json", ["/Game/A/AM_X"])
+        compile(source, "<montage plan>", "exec")
+
+
 if __name__ == "__main__":
     unittest.main()

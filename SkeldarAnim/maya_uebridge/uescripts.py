@@ -507,6 +507,34 @@ def package_of(path_name):
     return text
 
 
+def notify_rows(asset):
+    """Every notify of an AnimSequenceBase, with its time in seconds.
+
+    Measured 2026-10-29: the asset's own `Notifies` property is PROTECTED on
+    this build and raises when asked for, while the library answers the same
+    structs through `get_animation_notify_events`; and the
+    struct itself exposes no time to Python at all - these two library calls
+    do (they answered for all 979 notifies of 132 montages). Which of them
+    reaches the timeline is Maya's business, so every one travels.
+    """
+    out = []
+    lib = unreal.AnimationLibrary
+    for event in attempt(lambda: lib.get_animation_notify_events(asset), []) or []:
+        state = attempt(lambda: event.get_editor_property("notify_state_class"))
+        out.append({
+            "name": str(attempt(
+                lambda: event.get_editor_property("notify_name"), "") or ""),
+            "class": str(attempt(lambda: state.get_class().get_name(), "")
+                         or attempt(lambda: event.get_editor_property(
+                             "notify").get_class().get_name(), "") or ""),
+            "state": state is not None,
+            "trigger": number(
+                lambda: lib.get_anim_notify_event_trigger_time(event)),
+            "duration": number(
+                lambda: lib.get_anim_notify_event_duration(event))})
+    return out
+
+
 try:
     for package in _PACKAGES:
         montage = unreal.load_asset(package)
@@ -517,6 +545,7 @@ try:
         row = {"name": str(package).rsplit("/", 1)[-1],
                "length": number(lambda: montage.get_play_length()),
                "skeleton": str(attempt(lambda: skeleton.get_name(), "") or ""),
+               "notifies": notify_rows(montage),
                "slots": [],
                "sections": []}
 
