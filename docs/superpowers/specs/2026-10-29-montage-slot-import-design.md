@@ -193,3 +193,42 @@ changes:
     times (`unreal.AnimationLibrary.get_bone_pose_for_time`, if this build exposes it; else the
     editor's own sampling of the clip), so the comparison does not go through our own arithmetic
     twice.
+
+## Addendum — read as the engine reads (the same day, after the first live run)
+
+The first build read every source channel off the imported clip's own curve at the mapped time. The
+live phase then measured the composite against the engine's own evaluation
+(`unreal.AnimationLibrary.get_bone_pose_for_time`, which this build does expose) and found the
+difference growing with the retime: **3.233°** on `AM_LongSword_Block_Stun`'s DefaultSlot (rates
+0.52 / 0.475 / 1.1), 0.350° on `AM_SwordShield_1p_blockreact_mid`'s 1P (1.5 / 0.8 / 1.2), 0.000° on a
+slot at rate 1.
+
+That difference is not the mapping — it is the interpolation. A play rate other than 1 maps a target
+frame BETWEEN the clip's own keys, and Unreal lerps its compressed keys (slerping the rotations) while
+an imported FBX curve carries the file's own cubic tangents and each euler channel lerps on its own.
+So the composer now reads the sources the way the engine does:
+
+- a **rotate triple is read together and SLERPED** between the two neighbouring whole frames (which are
+  the engine's own neighbours: a UE clip is keyed every frame), the euler chosen against the previous
+  sample — the rotation itself or its alternate solution, whole turns aligned; never Maya's
+  `closestSolution`, which trades x for z near gimbal lock;
+- every **other** channel (translate, scale, a UE root's own curves) is read off a **linearised** source
+  curve, which is the engine's lerp.
+
+The curves this touches are the source clips' own imports — a scratch namespace, or the first clip's,
+whose curves are rewritten right after — so nothing of the animator's is changed.
+
+Measured again, worst over 5 bones: **0.134° / 0.0005° / 0.0000045°** on the three slots above. The
+statement in «What comes in» stands with that correction: on every whole frame the pose is the
+montage's, and between frames the take now interpolates as the engine does rather than as the FBX's
+tangents did.
+
+Two smaller things the live runs added:
+
+- **the status line names the cuts** in both roads (`montage.note_of` in `rigimport.result_line` and
+  `skeletonimport.result_line`): «AM_LongSword_Block_Stun_1P retargeted onto Manny_Rig, frames 0-58 |
+  the montage's cuts at 19, 38, 3 clips». The press's line never carried `info["warning"]`, so without
+  this the cuts the spec promised were nowhere to be seen;
+- **a slot the montage lacks is not a refusal from the card**: the remembered slot can be another
+  montage's, so the press takes the montage's first slot (as the dropdown does on a pick) and the line
+  names which slot came in. `montage.refusal` keeps the sentence for a slot asked for through the API.

@@ -7807,6 +7807,114 @@ two panes, not one folder at a time); a folder only opens and closes. Spec
   `test_uebridge_listdrag.FolderRows`. Not seen in a GUI Maya (the arrows in Maya's list font, a real double
   click's order of select / double-click commands).
 
+## Animation Setup: montages, a slot's track as one take (2026-10-29)
+
+The animator: «добавить опцию отображения монтажей и дальнейшей импорт анимаций из монтажа ... анимации в
+монтаже могут быть с разным тайм скейлом и порезаные на разные кусочки ... импортировать анимации из
+определенного слоя в монтаже в точности в том состоянии как они внутри монтажа». Asked, and answered: **one
+take per slot** (not a clip per segment), a **`[Animations | Montages]` filter** with the slot a row of its
+own, **import only** (no road back into the montage). Spec
+`docs/superpowers/specs/2026-10-29-montage-slot-import-design.md`, plan beside it.
+
+**Atone, measured read-only before anything was built**: 195 AnimMontages, every one on
+`SK_Mannequin_proto`; slots `DefaultSlot` 184, `1P` 84, `FullBody` 60, `UpperBody` 10,
+`UpperBodyAdditive` 1 (the usual montage is 3P in DefaultSlot or FullBody and 1P in `1P`); **498
+segments, 121 at a play rate other than 1** (0.42 to 3.5), 70 slot tracks with more than one segment.
+A segment is a SLICE of one AnimSequence (`anim_start_time`..`anim_end_time`) laid at `start_pos` on the
+montage's clock at `anim_play_rate`. **No montage has sections** (`composite_sections` empty in all 195),
+so the «кусочки» are the segments; **no gaps and no head gap** (every track starts at 0 and its segments
+abut); every `looping_count` 1; every reference a plain AnimSequence; ONE additive clip in the project.
+**The slot's track is often shorter than the montage** (`AM_Grab_AttackerCancel`'s DefaultSlot ends at
+1.733 s against the montage's 2.167 - the rest is blend-out), so the take's length is the SLOT's.
+Distinct clips in one track: 1 in 327, up to **7 in 3**.
+
+Two engine limits shape the whole thing: **`AnimSequenceExporterFBX.supported_class` is `AnimSequence`**
+(a montage cannot be exported at all) and **`AnimSequence.get_controller()` does not exist on this build**
+(5.8.4, so it cannot be baked into a temporary asset either). The composite is assembled in Maya from the
+slot's own clips; nothing is written into the animator's project.
+
+**The card** (the Unreal source's alone - Unity and a folder have no montages): a row
+**`Show [Animations | Montages]`** (`ueAnimBridgeAssetKind`) and under it **`Slot [▾]`**
+(`ueAnimBridgeMontageSlot`), both managed by `_show_slot_row`. Montages lists the project's 195 from the
+asset registry alone (**2.5 s live**, instant from the cache - the registry carries no slot and no length
+tag for a montage, and loading all 195 would pull their clips); each kind keeps its own cache file, so
+switching back costs no round trip. Picking a row reads that montage's plan (**1.5 s**, one round trip,
+cached per montage) and fills the dropdown in the montage's own order, keeping the remembered slot when it
+has one, else its first - and so does the press, so a drag with nothing picked takes the montage's first
+slot rather than refusing. A dropdown, not segments: «UpperBodyAdditive» beside «DefaultSlot» does not fit
+the 360 px dock (trap 117).
+
+**What comes in**: the slot's whole track as one take. At frame `f` the pose is the montage's pose at
+`f / fps` - the span covering it read at `anim_start_time + (t − start_pos) · rate`; keys on **whole
+frames**, dense; a segment boundary falls on a fractional frame and gets no key of its own (the pose is
+exact on every whole frame and the corner is smoothed across one), so the status line names the cuts:
+«AM_LongSword_Block_Stun_1P retargeted onto Manny_Rig, frames 0-58 | the montage's cuts at 19, 38, 3
+clips». Every channel the slot's clips animate is composed, a UE root's own curves included (trap 40); a
+channel one clip does not animate reads its static value, a joint a clip lacks holds and is named.
+
+**Read as the engine reads** (the fidelity, measured against `unreal.AnimationLibrary.
+get_bone_pose_for_time` over 5 bones): a rotate triple is read TOGETHER and **slerped** between the two
+neighbouring whole frames, the euler chosen against the previous sample (the rotation or its alternate,
+whole turns aligned - never Maya's `closestSolution`, trap: it trades x for z near gimbal lock); every
+other channel is read off a **linearised** source curve, as Unreal lerps its compressed keys. The worst
+difference from the engine, before and after:
+
+| slot | rates | FBX tangents | linear | + slerp |
+|---|---|---|---|---|
+| AM_LongSword_Block_Stun · DefaultSlot | 0.52 / 0.475 / 1.1 | 3.233° | 1.418° | **0.134°** |
+| AM_SwordShield_1p_blockreact_mid · 1P | 1.5 / 0.8 / 1.2 | 0.350° | 0.041° | **0.0005°** |
+| AM_LongSword_Block_Stun · 1P | three clips at 1 | 0.000° | 0.000° | **0.0000045°** |
+
+**Where it lives**: `uescripts.montage_list_script` / `montage_plan_script` / `montage_export_script` (the
+last exports every clip of a slot in ONE round trip - three of Atone's tracks hold seven);
+`maya_uebridge/montage.py` (the plan half stdlib and pinned: spans, samples, cuts, refusals, the plan
+file; the scene half the composer); `records.AnimRecord` gained a trailing `kind`, and
+`records.with_slot` names a picked montage «AM_X_1P» inside `_selected_records`, which is what gives every
+road the slot for nothing - the Import words, the namespace, the clip label, the drag's caption, the
+square's names. The montage road is known in exactly two places: `window._export_from_editor` (the plan,
+every refusal before anything is exported, the clips, the plan file) and `rigimport.import_source` (a
+`montage:` reference), so the button, the double click, the drag, the square and Auto take it unchanged.
+
+**Refused before anything is exported or imported**: a slot the montage lacks (unless the remembered one
+simply is not this montage's - then its first), an empty track, **an additive clip** (the one in Atone), a
+segment at play rate 0, a clip the editor could not export, a plan file that is gone.
+
+**Proof**: `docs/superpowers/plans/verify_montage_import.py` - **0 of 54 gates**, three phases.
+`compose` (in Maya, no FBX, no editor): every channel on every frame exactly the closed form
+(**0.0000000**), the pelvis's three-axis turn the slerp of the source's keys (0.0000024°) with a positive
+control that a euler lerp would be another rotation, a wrap composed as a turn, a held channel, a still
+channel, a key a frame and no other, the cuts, the refusals. `import` (fixture FBXs through the real
+`import_clip`): the frames, the timeline, the scratch namespaces gone, and every frame against the
+imported clips read with `getAttr` - 117 readings, **0.0000000**. `live` (the editor open): the three
+montages above imported and compared with the engine, plus the card's own road end to end. Unit tests:
+`test_uebridge_montage_{records,scripts,plan,compose,funnel,window}.py`. **Seen in a disposable GUI Maya
+with the editor open**: the card's content 449 px against the dock's 510, Montages 195 rows in 2.5 s, a
+row's pick filling the slots in 1.5 s, and the press 14 s - a Manny rig added, the slot retargeted onto it
+as the clip's twin (frames 0-58), the clip label written, the source skeleton gone
+(`docs/superpowers/plans/montage_card.png`).
+
+**Not built**: a road back into the montage (the animator's choice - the composed take exports as any
+clip); sections (no montage in the project has one; the plan reads them for the day one does); additive
+slots; the montage's blend-in / blend-out (how the game mixes the slot into the body, not part of the
+slot's animation); the engine's own evaluation of a montage through a component.
+
+306. **A source read after its own curves were deleted answers one dead DG value.** The composer imports
+     the first span's clip INTO the target namespace (so the composite's skeleton is exactly a plain clip
+     import) and then rewrites its curves - and reading the sources after that delete made every frame of
+     THAT clip's spans answer whatever the DG last evaluated: the composite stood still through 18 of 33
+     frames while every unit test was green (trap 58's family). Gather every sample first, delete and
+     write after. The verify's per-frame comparison against a closed form is what showed it.
+307. **Unreal lerps its compressed keys and a euler curve read between frames does not.** At a play rate
+     other than 1 a target frame maps BETWEEN the source clip's own keys, and what is read there is an
+     interpolation: the FBX's cubic tangents sit up to 3.2 deg off the engine on a fast wrist, linear
+     tangents 1.4, and slerping the rotate triple between the two neighbouring whole frames 0.13.
+     Anything that resamples a UE clip at sub-frame times wants the slerp.
+308. **A montage's slots are only in the asset.** The asset registry carries `Skeleton` and nothing else
+     for an AnimMontage - no slot, no length, no segment (measured) - so a listing is instant and a slot
+     costs a load. And the plan's own fields are easy to get wrong: the property is **`looping_count`**
+     (`loop_count` answers None), and `get_path_name` answers the OBJECT path `/Game/A/Name.Name`, which
+     the exporter then names its file after twice over.
+
 ## A section popup bursts out of a point and folds back into one (2026-10-17)
 
 The animator: «Давай сделаем так что бы наши поапы появлялись с приятной анимацией сделай мекеты». Five
@@ -15300,8 +15408,8 @@ row's Apply, the two Aim Mode / Default buttons.
   `verify_weapon_aim_mode.py` 23/24 (its one red gate - Default keyed on every frame, not on the
   controllers' keys - was red before this work: the 2026-10-26 fill-by-need keys). Unit tests
   `tests/test_scenesetup_pending.py` (18) and `tests/test_scenesetup_connections_pending.py` (68);
-  12225 run, the known `test_chat_deploy.Keys` failing (`test_uebridge_window` was red beside this
-  work from another session's unfinished edit, not from it).
+  12273 run, the known `test_chat_deploy.Keys` failing (two errors beside it, in
+  `test_chat_callview_more`, are a peer's uncommitted edit, not this work).
 - **Not built**: variant C's one-column sections (the tabs stayed); a pick is not greyed out at pick
   time; the weapon's three parent rows have no standalone gate - their apply goes through OverRig's
   `apply_Parent_in` / `_out`, which read the time slider and die in mayapy, so `verify_connections.py`
