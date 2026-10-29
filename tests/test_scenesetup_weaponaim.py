@@ -110,14 +110,20 @@ class Tabs(unittest.TestCase):
         body = order.index(cx.TAB_COLUMN["body"])
         self.assertLess(body, order.index(cx.CAPTION["limbs"]))
         self.assertLess(order.index("BakeAcross"), weapon)
-        for item in (cx.MENU["R"], cx.MENU["W"], "Apply all", cx.CAPTION["aim"], cx.AIM_BUTTON,
-                     cx.DEFAULT_BUTTON):
+        for item in (cx.MENU["R"], cx.MENU["W"], cx.APPLY_ALL["weapon"],
+                     cx.CAPTION["aim"], cx.AIM_MENU, cx.AIM_APPLY):
             self.assertLess(weapon, order.index(item), item)
 
-    def test_aim_mode_is_the_aim_sections_primary(self):
-        self.assertEqual((self.marks[cx.AIM_BUTTON].role, self.marks[cx.AIM_BUTTON].icon),
-                         ("primary", "target"))
-        self.assertEqual(self.marks[cx.DEFAULT_BUTTON].role, "secondary")
+    def test_the_aim_is_a_row_with_its_own_check(self):
+        """2026-10-29: [Default | Aim Mode] picked, the check bakes it - the two
+        buttons are gone, so the tab has one orange (its Apply all)."""
+        self.assertEqual(self.marks[cx.AIM_SEGMENT.format(cx.AIM_ON)].role,
+                         "segment")
+        self.assertEqual(self.marks[cx.AIM_SEGMENT.format(cx.DEFAULT_AIM)].role,
+                         "segment")
+        self.assertEqual((self.marks[cx.AIM_APPLY].role,
+                          self.marks[cx.AIM_APPLY].icon), ("tool", "check"))
+        self.assertFalse(hasattr(cx, "AIM_BUTTON"))
 
     def test_the_presses_go_through_aim_mode(self):
         asked = []

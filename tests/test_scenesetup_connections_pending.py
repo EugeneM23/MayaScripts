@@ -223,3 +223,104 @@ class SpineAndBody(LimbPicks):
         self.fake.press_check(cx.W_BOX.format(cx.fkik.ARM, "R"), True)
         self.assertEqual(self.fake.label_of(cx.APPLY_ALL["body"]),
                          "Apply all · 1")
+
+
+class WeaponPicks(unittest.TestCase):
+    """The parents and the aim: a pick leaves the scene's state lit."""
+
+    def setUp(self):
+        pending.clear()
+        self.addCleanup(pending.clear)
+        self.done = []
+        self.real = (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
+                     cx.read_scheme, cx.apply, cx.aim_mode, cx._limb_modes,
+                     cx.weapon_of, cx.weaponaim.is_aimed)
+        self.fake = FakeMenuCmds()
+        cx.cmds = self.fake
+        cx.refresh = lambda *a: ""
+        cx.maya_rigs.current_rig = lambda selection=None: (Rig(), "")
+        cx._limb_modes = lambda rig, kind, worlds=None: {}
+        #  the scene: the weapon in the right hand, the left hand free, no aim
+        self.scheme = {"L": None, "R": cx.HOLDS}
+        self.aimed = False
+        cx.read_scheme = lambda *a, **k: dict(self.scheme)
+        cx.weapon_of = lambda *a, **k: "LongSwordMesh"
+        cx.weaponaim.is_aimed = lambda weapon: self.aimed
+
+        def apply_scheme(wanted, rig=None, weapon=None):
+            self.done.append(("apply", wanted))
+            self.scheme = dict(wanted)
+            return "applied"
+
+        def aim(rig=None, weapon=None, on=True):
+            self.done.append(("aim", on))
+            self.aimed = on
+            return "aimed"
+
+        cx.apply = apply_scheme
+        cx.aim_mode = aim
+        cx.hubstyle.take_marks()
+        cx.build_panel()
+        self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
+
+    def tearDown(self):
+        (cx.cmds, cx.refresh, cx.maya_rigs.current_rig, cx.read_scheme,
+         cx.apply, cx.aim_mode, cx._limb_modes, cx.weapon_of,
+         cx.weaponaim.is_aimed) = self.real
+
+    def test_a_parent_pick_bakes_nothing_and_leaves_the_state_lit(self):
+        self.fake.pick("L", cx.WEAPON)
+        self.assertEqual(self.done, [])
+        self.assertEqual(cx.picks(Rig()), {pending.parent_key("L"): "Weapon"})
+        #  the collection still shows the scene: the left hand is Free
+        self.assertEqual(cx.menus()["L"], "Free")
+        self.assertEqual(cx.wanted_menus(Rig())["L"], "Weapon")
+
+    def test_the_row_s_apply_bakes_that_row_only(self):
+        self.fake.pick("L", cx.WEAPON)
+        self.fake.press_button(cx.ROW_APPLY.format("L"))
+        self.assertEqual(self.done, [("apply", {"L": cx.FOLLOWS, "R": cx.HOLDS})])
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_the_aim_is_a_row_and_a_pick(self):
+        self.fake.pick_aim(cx.AIM_ON)
+        self.assertEqual(self.done, [])
+        self.assertEqual(cx.picks(Rig()), {pending.AIM: True})
+        self.fake.press_button(cx.AIM_APPLY)
+        self.assertEqual(self.done, [("aim", True)])
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_the_aim_it_already_is_records_nothing(self):
+        self.aimed = True
+        self.fake.pick_aim(cx.AIM_ON)
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_apply_all_takes_the_parents_then_the_aim_in_one_chunk(self):
+        self.fake.pick("L", cx.WEAPON)
+        self.fake.pick_aim(cx.AIM_ON)
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["weapon"]),
+                         "Apply all · 2")
+        self.fake.press_button(cx.APPLY_ALL["weapon"])
+        self.assertEqual([d[0] for d in self.done], ["apply", "aim"])
+        self.assertEqual(cx.picks(Rig()), {})
+        chunks = [c[2].get("chunkName") for c in self.fake.calls
+                  if c[0] == "undoInfo" and c[2].get("openChunk")]
+        self.assertEqual(chunks.count("Connections: Apply all"), 1)
+
+    def test_apply_all_with_nothing_picked_bakes_nothing(self):
+        self.fake.press_button(cx.APPLY_ALL["weapon"])
+        self.assertEqual(self.done, [])
+
+    def test_the_aim_is_segments_and_a_check_not_two_buttons(self):
+        self.assertFalse(hasattr(cx, "AIM_BUTTON"))
+        self.assertFalse(hasattr(cx, "DEFAULT_BUTTON"))
+        self.assertEqual([label for _n, label in self.fake.segments[cx.AIM_MENU]],
+                         ["Default", "Aim Mode"])
+        self.assertEqual(self.marks[cx.AIM_SEGMENT.format(cx.AIM_ON)].role,
+                         "segment")
+        self.assertEqual(self.marks[cx.AIM_APPLY].role, "tool")
+
+    def test_the_hotkey_rows_still_act_at_once(self):
+        cx._press_aim_mode()
+        cx._press_aim_default()
+        self.assertEqual(self.done, [("aim", True), ("aim", False)])

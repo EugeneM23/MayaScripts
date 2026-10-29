@@ -151,8 +151,22 @@ CAMERA_AIM_BUTTON = "skeldarConnectionsCameraAimMode"
 CAMERA_DEFAULT_BUTTON = "skeldarConnectionsCameraDefault"
 NO_CAMERA_TEXT = "no camera - Characters > Camera Setup first"
 TAB_OPTIONVAR = "skeldarConnectionsTab"
-AIM_BUTTON = "skeldarConnectionsAimMode"
-DEFAULT_BUTTON = "skeldarConnectionsAimDefault"
+#  The weapon's aim is a row like every other since 2026-10-29 - [Default |
+#  Aim Mode] picked, the row's check baking it - in place of the two buttons
+#  (`AIM_BUTTON` / `DEFAULT_BUTTON`, gone); the hotkey rows still act at once.
+DEFAULT_AIM, AIM_ON = "Default", "Aim_Mode"
+AIM_MENU = "skeldarConnectionsAim"
+AIM_SEGMENT = "skeldarConnectionsAim_{0}"
+AIM_APPLY = "skeldarConnectionsAimApply"
+AIM_LABEL = {AIM_ON: "Aim Mode", DEFAULT_AIM: "Default"}
+#  the two annotations the Aim Mode / Default buttons carried, word for word
+AIM_TIPS = {
+    AIM_ON: "The weapon's rotation aims at two world controllers (a target past "
+            "the tip, an up beside it), keyed on the weapon's own keys - it stands "
+            "where it stood on every key. Animate the controllers.",
+    DEFAULT_AIM: "The aim baked back onto the weapon's rotation on the controllers' "
+                 "keys, the controllers removed",
+}
 
 
 def _caption(key, text):
@@ -1323,6 +1337,13 @@ def _states(rig, keys):
                         else modes.get(side))
         elif key == pending.SPINE:
             out[key] = _spine_state(rig)[0]
+        elif key.startswith(pending.PARENT):
+            if "parents" not in limbs:
+                limbs["parents"] = menus_from_scheme(read_scheme(rig))
+            out[key] = limbs["parents"].get(key.split(":")[1])
+        elif key == pending.AIM:
+            weapon = weapon_of(rig)
+            out[key] = bool(weapon) and weaponaim.is_aimed(weapon)
     return out
 
 
@@ -1503,10 +1524,12 @@ def _made_leaf(name):
 _MENU_QUIET = {"on": False}
 
 
-def _set_menus(values):
-    """Select each row's segment. Quiet: a segment's onCommand must not fire
-    from here (trap 116) - it would write «press Apply for» over the status on
-    every refresh, and call this again from inside itself."""
+def _set_menus(values, chosen=None):
+    """Select each row's segment - what the SCENE shows - then the pending
+    overlay (2026-10-29): `want` on the row's pick, `wait` on its check. Quiet:
+    a segment's onCommand must not fire from here (trap 116) - it would record
+    a pick of its own and call this again from inside itself."""
+    chosen = picks() if chosen is None else chosen
     _MENU_QUIET["on"] = True
     try:
         for row, value in values.items():
@@ -1515,6 +1538,51 @@ def _set_menus(values):
                 cmds.iconTextRadioButton(name, edit=True, select=True)
     finally:
         _MENU_QUIET["on"] = False
+    for row, choices in _ROWS:
+        wanted = chosen.get(pending.parent_key(row))
+        for choice in choices:
+            name = segment_name(row, choice)
+            if cmds.iconTextRadioButton(name, exists=True):
+                _light(name, "want" if wanted == choice else "")
+        check = ROW_APPLY.format(row)
+        if cmds.control(check, exists=True):
+            _light(check, "wait" if wanted is not None else "")
+
+
+def wanted_menus(rig):
+    """The three rows as a press would set them: the scene's, with the picks on
+    top (2026-10-29 - the collections keep showing the scene)."""
+    out = menus()
+    chosen = picks(rig)
+    for row, _choices in _ROWS:
+        value = chosen.get(pending.parent_key(row))
+        if value is not None:
+            out[row] = value
+    return out
+
+
+def aim_segment(choice):
+    return AIM_SEGMENT.format(choice)
+
+
+def _set_aim(aimed, chosen=None):
+    """Light the aim's state (Aim Mode or Default), then its pick."""
+    chosen = picks() if chosen is None else chosen
+    wanted = chosen.get(pending.AIM)
+    _MENU_QUIET["on"] = True
+    try:
+        name = aim_segment(AIM_ON if aimed else DEFAULT_AIM)
+        if cmds.iconTextRadioButton(name, exists=True):
+            cmds.iconTextRadioButton(name, edit=True, select=True)
+    finally:
+        _MENU_QUIET["on"] = False
+    for choice in (DEFAULT_AIM, AIM_ON):
+        name = aim_segment(choice)
+        if cmds.iconTextRadioButton(name, exists=True):
+            _light(name, "want" if wanted is not None
+                   and wanted == (choice == AIM_ON) else "")
+    if cmds.control(AIM_APPLY, exists=True):
+        _light(AIM_APPLY, "wait" if wanted is not None else "")
 
 
 def refresh(*_args):
@@ -1542,7 +1610,9 @@ def refresh(*_args):
                                         "Spine mixed FK/IK (keyed)" if spine_mixed else "")
                       if part)
     text = header_text(rig, weapon, scheme, others, mixed)
-    if weapon and weaponaim.is_aimed(weapon):
+    aimed = bool(weapon) and weaponaim.is_aimed(weapon)
+    _set_aim(aimed)
+    if aimed:
         text += " - Aim Mode"
     if current_tab() == "camera":
         choice, position, aimed = _camera_state()
@@ -1685,31 +1755,77 @@ def show_window():
 
 
 def _menu_changed(row):
-    """A pick fixes a cycle in the other menus and asks for Apply."""
+    """A parent picked: a PICK, not a bake (2026-10-29). A cycle - the weapon
+    in Hand_R while Hand_R follows it - is still fixed here (`resolve_menus`),
+    and the fix is a pick too."""
     def go(*_args):
         if _MENU_QUIET["on"]:
             return None
-        fixed, note = resolve_menus(menus(), row)
-        _set_menus(fixed)
-        text = "press Apply for: " + describe(scheme_from_menus(fixed))
-        _status((note + "; " + text) if note else text)
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        #  the scene's state comes from the SCENE: the collection already holds
+        #  the segment just pressed, which is the pick
+        shown = menus_from_scheme(read_scheme(rig))
+        given = menus()
+        fixed, note = resolve_menus(given, row)
+        chosen = pending.record(picks(rig), pending.parent_key(row),
+                                fixed[row], shown[row])
+        #  only the row pressed, and whatever the cycle fix CHANGED beside it:
+        #  the other rows' collections are not the animator's answer
+        for each in fixed:
+            if each != row and fixed[each] != given[each]:
+                chosen = pending.record(chosen, pending.parent_key(each),
+                                        fixed[each], shown[each])
+        chosen = remember(rig, chosen)
+        _set_menus(shown, chosen)       # the state back in the collections
+        text = _picked_text(chosen) or NOTHING_PICKED
+        return _status((note + "; " + text) if note else text)
     return go
 
 
 def _press_row(row):
+    """A parent row's check: bake that link only, then settle its pick."""
     def go(*_args):
         def act():
             rig, refusal = maya_rigs.current_rig()
             if rig is None:
                 return refusal
-            wanted = wanted_for_row(read_scheme(rig), row, menus()[row])
-            return apply(wanted, rig=rig)
+            chosen = picks(rig)
+            wanted = wanted_for_row(read_scheme(rig), row, wanted_menus(rig)[row])
+            text = apply(wanted, rig=rig)
+            remember(rig, _settled(rig, chosen, pending.parent_key(row)))
+            return text
         return _run(act)
     return go
 
 
+def apply_weapon(rig, chosen):
+    """The three parents, then the aim - the caller's one undo chunk."""
+    notes = []
+    if any(key.startswith(pending.PARENT) for key in chosen):
+        notes.append(apply(scheme_from_menus(wanted_menus(rig)), rig=rig))
+    if pending.AIM in chosen:
+        notes.append(aim_mode(rig=rig, on=chosen[pending.AIM]))
+    return "; ".join(n for n in notes if n) or NOTHING_PICKED
+
+
 def _press_apply_all(*_args):
-    return _run(lambda: apply(scheme_from_menus(menus())))
+    """The Weapon tab's Apply all: its picks, one undo chunk."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = pending.of_tab(picks(rig), "weapon")
+        if not chosen:
+            return NOTHING_PICKED
+        cmds.undoInfo(openChunk=True, chunkName="Connections: Apply all")
+        try:
+            return apply_weapon(rig, chosen)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+            remember(rig, _settled(rig, picks(rig)))
+    return _run(act)
 
 
 def _press_bake_across(*_args):
@@ -1993,18 +2109,47 @@ def _tab_changed(tab):
     return go
 
 
-def _press_aim(on):
+def _press_aim_pick(choice):
+    """The aim row's segment: a PICK (2026-10-29)."""
     def go(*_args):
-        return _run(lambda: aim_mode(on=on))
+        if _MENU_QUIET["on"]:
+            return None
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        weapon = weapon_of(rig)
+        aimed = bool(weapon) and weaponaim.is_aimed(weapon)
+        chosen = remember(rig, pending.record(picks(rig), pending.AIM,
+                                              choice == AIM_ON, aimed))
+        _set_aim(aimed, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
     return go
 
 
+def _press_aim_apply(*_args):
+    """The aim row's check: enter or leave Aim Mode as picked."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = picks(rig)
+        wanted = chosen.get(pending.AIM)
+        if wanted is None:
+            return NOTHING_PICKED
+        text = aim_mode(rig=rig, on=wanted)
+        remember(rig, _settled(rig, chosen, pending.AIM))
+        return text
+    return _run(act)
+
+
+#  the hotkey rows (`connections.aim` / `.default`): a hotkey IS the button,
+#  so these act at once, as they always have
 def _press_aim_mode(*_args):
-    return _press_aim(True)()
+    return _run(lambda: aim_mode(on=True))
 
 
 def _press_aim_default(*_args):
-    return _press_aim(False)()
+    return _run(lambda: aim_mode(on=False))
 
 
 def _press_connect(*_args):
@@ -2242,20 +2387,30 @@ def build_panel():
         annotation="bring the scene to all three parents",
         command=_press_apply_all), "primary", "check")
     _caption("aim", "Aim")
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 3)])
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnWidth3=(hubstyle.pick(48, 64), 110,
+                                 hubstyle.tool_width(66)),
+                   columnAlign3=("left", "left", "center"),
+                   columnAttach=[(1, "left", 0), (2, "both", 4),
+                                 (3, "right", 0)])
+    _row_label("Aim")
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(AIM_MENU)
+    for choice in (DEFAULT_AIM, AIM_ON):
+        hubstyle.mark(cmds.iconTextRadioButton(
+            aim_segment(choice), style="textOnly", label=AIM_LABEL[choice],
+            height=hubstyle.height("segment", 22),
+            select=choice == DEFAULT_AIM, annotation=AIM_TIPS[choice],
+            onCommand=_press_aim_pick(choice)), "segment")
+    cmds.setParent("..")
     hubstyle.mark(cmds.button(
-        AIM_BUTTON, label="Aim Mode", height=hubstyle.height("button", 32),
-        annotation="The weapon's rotation aims at two world controllers (a target past "
-                   "the tip, an up beside it), keyed on the weapon's own keys - it stands "
-                   "where it stood on every key. Animate the controllers.",
-        command=_press_aim(True)), "primary", "target")
-    hubstyle.mark(cmds.button(
-        DEFAULT_BUTTON, label="Default", height=hubstyle.height("button", 32),
-        width=hubstyle.pick(90, 96),
-        annotation="The aim baked back onto the weapon's rotation on the controllers' "
-                   "keys, the controllers removed",
-        command=_press_aim(False)), "secondary", "rotate")
+        AIM_APPLY, label=hubstyle.tool_label("Apply"),
+        width=hubstyle.tool_width(66),
+        height=hubstyle.height("small", 24),
+        annotation="enter or leave Aim Mode as picked",
+        command=_press_aim_apply), "tool", "check")
     cmds.setParent("..")
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["camera"], adjustableColumn=True,

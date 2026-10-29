@@ -321,6 +321,23 @@ class FakeMenuCmds(FakeUiCmds):
         self.selected[cx.MENU[row]] = name
         self.on[name]()
 
+    def pick_aim(self, choice):
+        """The aim row's segment pressed (2026-10-29)."""
+        name = cx.AIM_SEGMENT.format(choice)
+        self.selected[cx.AIM_MENU] = name
+        self.on[name]()
+
+    def pick_camera(self, choice):
+        """The camera tab's parent segment pressed."""
+        name = cx.camera_segment(choice)
+        self.selected[cx.CAMERA_MENU] = name
+        self.on[name]()
+
+    def pick_camera_aim(self, choice):
+        name = cx.CAMERA_AIM_SEGMENT.format(choice)
+        self.selected[cx.CAMERA_AIM_MENU] = name
+        self.on[name]()
+
     def value(self, row):
         return cx.menus()[row]
 
@@ -343,6 +360,7 @@ class Panel(unittest.TestCase):
         cx.maya_rigs.current_rig = lambda selection=None: (PanelRig(), "")
         cx._limb_modes = lambda rig, kind, worlds=None: {"R": "IK", "L": "IK"}
         cx._spine_state = lambda rig: ("FK", False)
+        cx.read_scheme = lambda *a, **k: {"L": None, "R": None}
         cx.pending.clear()
         self.addCleanup(cx.pending.clear)
         cx.hubstyle.take_marks()
@@ -369,8 +387,8 @@ class Panel(unittest.TestCase):
         self.assertEqual([c[2]["label"] for c in self._buttons()],
                          ["Apply", "Apply", "Apply", "Apply", "Apply",
                           "Apply all", "BakeAcross", "Release",
-                          "Apply", "Apply", "Apply", "Apply all",
-                          "Aim Mode", "Default", "Apply", "Aim Mode", "Default"])
+                          "Apply", "Apply", "Apply", "Apply all", "Apply",
+                          "Apply", "Aim Mode", "Default"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand R", "Hand L", "Weapon"):
@@ -384,7 +402,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
         #  + the legs' two labels and the spine (2026-10-10), the three
         #  captions (2026-10-16)
-        self.assertEqual(len(labels), 17)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21)
+        self.assertEqual(len(labels), 18)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -396,7 +414,9 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 11)     # the chooser's, FK/IK's too, legs' and the spine's too, the tabs, the camera's parents
+        #  the chooser, the three parents, the tabs, the camera, four limbs,
+        #  the spine and the weapon aim (2026-10-29)
+        self.assertEqual(len(segment_rows), 12)
         for side in ("R", "L"):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
@@ -407,8 +427,8 @@ class Panel(unittest.TestCase):
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
         #  the three parent rows + the camera tab's Apply (2026-10-28)
-        #  + a check a limb row and the spine's (2026-10-29)
-        self.assertEqual(roles.count(("tool", "check")), 9)
+        #  + a check a limb row, the spine's and the aim's (2026-10-29)
+        self.assertEqual(roles.count(("tool", "check")), 10)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
@@ -438,12 +458,17 @@ class Panel(unittest.TestCase):
     def test_a_pick_that_makes_a_cycle_fixes_the_other_row_and_asks_for_apply(self):
         cx._set_menus({"R": "Weapon"})
         self.fake.pick("W", "Hand_R")                   # the Weapon row picked
-        self.assertEqual(self.fake.value("R"), "Free")
         status = [c for c in self.fake.calls
                   if c[0] == "text" and c[1] == (cx.STATUS,) and c[2].get("edit")]
         self.assertIn("Hand_R set to Free", status[-1][2]["label"])
-        self.assertIn("press Apply for: weapon in the right hand; left hand free",
+        #  2026-10-29: the pick waits for a button, and the status names it
+        self.assertIn("the weapon to Hand R", status[-1][2]["label"])
+        self.assertIn("Press the row's check, or Apply all",
                       status[-1][2]["label"])
+        #  the fix is a pick of its own, and the collections keep the scene
+        self.assertEqual(cx.picks(PanelRig()),
+                         {cx.pending.parent_key("W"): "Hand_R"})
+        self.assertEqual(self.fake.value("R"), "Free")
         self.assertFalse([c for c in self.fake.calls
                           if c[0] in ("parentConstraint", "bakeResults")])
 
@@ -467,7 +492,9 @@ class Panel(unittest.TestCase):
         saved_apply = cx.apply
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
-            cx._set_menus({"R": "Weapon", "L": "Weapon", "W": "World"})
+            #  2026-10-29: the rows are PICKED, then the tab's one button bakes
+            self.fake.pick("R", cx.WEAPON)
+            self.fake.pick("L", cx.WEAPON)
             self.fake.press_button(cx.APPLY_ALL["weapon"])
         finally:
             cx.apply = saved_apply
@@ -646,11 +673,10 @@ class Panel(unittest.TestCase):
         #  Apply all since 2026-10-29), the aims, then the two secondaries
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "secondary")]
+        #  2026-10-29: the weapon's aim is a row, so its Aim Mode button is gone
         self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "check"),
                                          ("primary", "target"),
-                                         ("primary", "target"),
                                          ("secondary", "link"), ("secondary", "rotate"),
-                                         ("secondary", "rotate"),
                                          ("secondary", "unlink")])
 
     def test_the_status_tells_the_hub(self):
@@ -700,11 +726,20 @@ class PopupCopy(unittest.TestCase):
     selection."""
 
     def setUp(self):
-        self.real = (cx.cmds, cx.refresh, dict(cx.JOB))
+        self.real = (cx.cmds, cx.refresh, dict(cx.JOB),
+                     cx.maya_rigs.current_rig, cx.read_scheme,
+                     cx._limb_modes, cx._spine_state)
         self.fake = FakeMenuCmds()
         cx.cmds = _ScopedCmds(self.fake)
         self.refreshed = []
         cx.refresh = lambda *a: self.refreshed.append(hubcopy.current()) or ""
+        #  a pick reads the rig and what it shows (2026-10-29)
+        cx.maya_rigs.current_rig = lambda selection=None: (PanelRig(), "")
+        cx.read_scheme = lambda *a, **k: {"L": None, "R": None}
+        cx._limb_modes = lambda rig, kind, worlds=None: {"R": "IK", "L": "IK"}
+        cx._spine_state = lambda rig: ("FK", False)
+        cx.pending.clear()
+        self.addCleanup(cx.pending.clear)
         cx.JOB.clear()
         cx.build_panel()                                    # the hub's card
         self.scope = hubcopy.new_scope(section=cx.HUB_SECTION)
@@ -717,6 +752,8 @@ class PopupCopy(unittest.TestCase):
         cx.cmds, cx.refresh = self.real[0], self.real[1]
         cx.JOB.clear()
         cx.JOB.update(self.real[2])
+        (cx.maya_rigs.current_rig, cx.read_scheme, cx._limb_modes,
+         cx._spine_state) = self.real[3:]
 
     def _pick(self, row, choice, scope=None):
         """The animator presses a segment of the card `scope` (None: the hub's)."""
@@ -736,13 +773,21 @@ class PopupCopy(unittest.TestCase):
         self.assertNotEqual(made, cx.segment_name("R", "Weapon"))
         self.assertIn(made, self.fake.owner)
 
-    def test_a_copys_rows_read_what_was_picked_in_it(self):
+    def test_a_copys_picks_are_read_back_in_it(self):
+        """2026-10-29: a pick lives in `pending`, one set per RIG, and the
+        collections keep showing the scene - so a pick made in the copy is read
+        back by `wanted_menus` there AND in the hub's card (the two must not
+        disagree about one rig), while the lit segments stay the scene's."""
         self._pick("R", "Weapon", self.scope)
         self._pick("W", "Hand_L", self.scope)
-        self.assertEqual(self._menus(self.scope),
+        rig = PanelRig()
+        with hubcopy.entered(self.scope):
+            self.assertEqual(cx.wanted_menus(rig),
+                             {"R": "Weapon", "L": "Free", "W": "Hand_L"})
+        self.assertEqual(cx.wanted_menus(rig),
                          {"R": "Weapon", "L": "Free", "W": "Hand_L"})
-        #  the hub's rows are its own
-        self.assertEqual(self._menus(), {"R": "Free", "L": "Free", "W": "World"})
+        self.assertEqual(self._menus(self.scope),
+                         {"R": "Free", "L": "Free", "W": "World"})
 
     def test_a_copys_row_apply_asks_for_the_picked_parent(self):
         import maya_rigs
@@ -760,12 +805,13 @@ class PopupCopy(unittest.TestCase):
             cx.maya_rigs.current_rig, cx.read_scheme, cx.apply = saved
         self.assertEqual(asked, [scheme(F, H)])
 
-    def test_a_pick_does_not_snap_back_in_the_copy(self):
+    def test_a_pick_in_the_copy_is_kept_and_said(self):
         self._pick("R", "Weapon", self.scope)
-        self.assertEqual(self._menus(self.scope)["R"], "Weapon")
+        self.assertEqual(cx.picks(PanelRig()),
+                         {cx.pending.parent_key("R"): "Weapon"})
         status = [c for c in self.fake.calls if c[0] == "text"
                   and c[1] == (self.scope.resolve(cx.STATUS),) and c[2].get("edit")]
-        self.assertIn("right hand follows", status[-1][2]["label"])
+        self.assertIn("the right hand to Weapon", status[-1][2]["label"])
 
     def test_each_card_follows_the_selection(self):
         jobs = [c for c in self.fake.calls if c[0] == "scriptJob"
@@ -864,7 +910,8 @@ class PanelCompact(unittest.TestCase):
         fake, _marks = self._build(True)
         widths = [c[2]["columnWidth3"] for c in fake.calls
                   if c[0] == "rowLayout" and "columnWidth3" in c[2]]
-        self.assertEqual(widths, [(48, 110, 30)] * 3)
+        #  the three parent rows and the aim row (2026-10-29)
+        self.assertEqual(widths, [(48, 110, 30)] * 4)
         chooser = [c[2] for c in fake.calls if c[0] == "rowLayout"
                    and c[1] == (cx.CHOOSER_ROW,)][0]
         self.assertEqual(chooser["columnWidth2"], (48, 110))
@@ -899,7 +946,7 @@ class PanelCompact(unittest.TestCase):
         self.assertEqual(by["Release"]["width"], 90)
         widths = [c[2]["columnWidth3"] for c in fake.calls
                   if c[0] == "rowLayout" and "columnWidth3" in c[2]]
-        self.assertEqual(widths, [(64, 110, 66)] * 3)
+        self.assertEqual(widths, [(64, 110, 66)] * 4)
 
     def test_both_builds_keep_every_control_and_the_roles(self):
         for skin in (True, False):
