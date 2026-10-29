@@ -7940,9 +7940,10 @@ them.
   several montage slots leaves the LAST one's windows** - one timeline, and ours are replaced.
 - Proof: `verify_montage_import.py` **0 of 45 standalone** (the frames, the names, the marker, the colour,
   the count and the line, a re-import replacing ours while the animator's own survives, a Ctrl+Z leaving
-  both the take and its bookmarks, a slot too short getting none) and **0 of 38 live** against the open
+  both the take and its bookmarks, a slot too short getting none) and **0 of 39 live** against the open
   editor - `AM_Longsword_Attack_Left_Forward_Hold`'s four windows at **18..30, 30..34, 33..40, 39..43**,
-  the frames worked out in the verify from the engine's raw reply, not asked of the code under test;
+  the frames worked out in the verify from the engine's raw reply, not asked of the code under test, and
+  the card's own press (export plus the funnel) carrying all four;
   `test_uebridge_montage_{windows,bookmarks}.py`.
 
 306. **A source read after its own curves were deleted answers one dead DG value.** The composer imports

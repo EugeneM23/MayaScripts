@@ -833,8 +833,10 @@ def phase_live():
               "from that".format(floor, apart))
 
     #  and the card's own road, with the real editor: the press's export plus
-    #  the import funnel, which is what every button, drag and square takes
-    package, slot = LIVE[1]
+    #  the import funnel, which is what every button, drag and square takes -
+    #  on the montage WITH scan windows, so the press's own plan file carries
+    #  them
+    package, slot = LIVE[3]
     cmds.file(new=True, force=True)
     window._STATE["choice"] = "Atone"
     window._STATE["montage_plans"] = {}
@@ -849,6 +851,12 @@ def phase_live():
     gate("the card's own road brings the slot in",
          bool(source) and info.get("montage", {}).get("slot") == slot,
          "{0}: {1}".format(namespace, info.get("warning", "")))
+    gate("the card's own road carries the scan windows",
+         info.get("montage", {}).get("windows") == 4
+         and len(montage.our_bookmarks(cmds)) == 4,
+         "{0} in the plan, {1} in the scene".format(
+             info.get("montage", {}).get("windows"),
+             len(montage.our_bookmarks(cmds))))
 
 
 PHASES = {"compose": phase_compose, "import": phase_import,
