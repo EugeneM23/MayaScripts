@@ -72,11 +72,41 @@ function tile(uid) {
   layout();
   return t;
 }
-function showStream(uid, stream, muted) {
-  const v = tile(uid).querySelector("video");
-  if (v.srcObject !== stream) v.srcObject = stream;
-  v.muted = !!muted;
-  v.play().catch(() => {});
+// The picture and the voice are played by elements of their OWN. A <video> whose MediaStream
+// carries a live video track that has never delivered a frame stands at readyState 0 and renders
+// nothing at all - not the picture and not the audio track beside it (measured 2026-10-29: in a
+// voice call b's tile for a gave 0.000 s of playback in four seconds while a's voice was arriving;
+// the moment a frame came - a camera, a shared screen - it played, which is the animator's «слышно
+// когда шарим рабочий стол»). So a remote voice goes to an <audio> of its own, and that element
+// lives outside the tiles: a tile travels into the stage window, and what is heard must not depend
+// on where the picture lives.
+function sink(uid) {
+  let el = document.getElementById("s-" + uid);
+  if (!el) {
+    el = document.createElement("audio");
+    el.id = "s-" + uid;
+    el.autoplay = true;
+    document.getElementById("sinks").appendChild(el);
+  }
+  return el;
+}
+function dropSink(uid) {
+  const el = document.getElementById("s-" + uid);
+  if (el) { el.srcObject = null; el.remove(); }
+}
+function wear(el, tracks, muted) {
+  // the element is left alone while it already holds these very tracks: setting srcObject again
+  // rebuilds the player, and the picture blinks
+  if (!el) return;
+  const have = el.srcObject ? el.srcObject.getTracks() : [];
+  const same = have.length === tracks.length && tracks.every((t) => have.indexOf(t) >= 0);
+  if (!same) el.srcObject = tracks.length ? new MediaStream(tracks) : null;
+  el.muted = !!muted;
+  if (tracks.length) el.play().catch(() => {});
+}
+function showStream(uid, stream, mine) {
+  wear(tile(uid).querySelector("video"), stream.getVideoTracks(), true);
+  if (!mine) wear(sink(uid), stream.getAudioTracks(), false);
 }
 function setTile(uid, flags) {
   const t = tile(uid);
@@ -114,6 +144,7 @@ function dropTile(uid) {
   if (S.stageTile && S.stageTile.id === "t-" + uid) { closeStage(); }
   const t = document.getElementById("t-" + uid);
   if (t) t.remove();
+  dropSink(uid);
   layout();
 }
 
@@ -649,7 +680,14 @@ const COMMANDS = {
         t.onended = () => { if (S.screenTrack === t) COMMANDS.screen({ on: false }); };
         S.screen = true;
         const st = t.getSettings ? t.getSettings() : {};
+        // The settings are the CONSTRAINED size; the capability's max is the monitor's own, and
+        // that is the only thing that says WHICH monitor this is - Chromium names none of them
+        // (callview.capture_screen).
+        let cap = {};
+        try { cap = t.getCapabilities ? t.getCapabilities() : {}; } catch (e) { cap = {}; }
+        const native = (c) => (c && typeof c.max === "number" ? c.max : 0);
         S.capture = { surface: st.displaySurface || "", w: st.width || 0, h: st.height || 0,
+                      nw: native(cap.width), nh: native(cap.height),
                       label: t.label || "", again: !!a.again };
         S.stalled = false;
         S.stageGone = false;

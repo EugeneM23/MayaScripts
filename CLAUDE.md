@@ -15975,3 +15975,85 @@ follows it), and a microphone chosen per call.
      `pump(25, lambda: bytes_in > (bytes_in + 500))` reads the live value on both sides, so «audio
      still flows» failed while the bytes went from 2105 to 32254. Read the baseline before the
      pump, and look at the number the failure prints before believing it.
+
+## A call that is HEARD, and which screen the share took (2026-10-29)
+
+The animator: «Сейчас когда созваниваемся то не слышно собеседников. Но становиться слышно когда
+шарим рабочий стол. Когда я свой рабочий стол шарю то у меня не видно маи а у коллеги все норм.
+Еще нельзя сейчас рисовать по окну стрима». Spec
+`docs/superpowers/specs/2026-10-29-call-heard-and-which-screen-design.md`.
+
+**Nobody was heard, because the voice hung on the picture** (trap 313). A remote participant's
+audio was played by the tile's `<video>`, whose stream also carried that peer's video track - and a
+`<video>` holding a live video track that never delivers a frame stands at `readyState 0` and
+renders NOTHING, the audio beside it included. A voice call is that case, and so is every camera
+turned off; the first frame (a camera, **a shared screen**) starts the element and the voice comes
+with it. Measured with the element's own playback as the instrument: **0.000 s of playback in four
+seconds** in a voice call, 4.026 with the remote camera on, 0.000 again when it went off, 4.010 for
+the same track in an `<audio>` of its own.
+- **A remote voice now has an `<audio>` sink of its own, outside the tiles** (`#sinks`): `sink(uid)`
+  / `dropSink(uid)` per peer, `wear(el, tracks, muted)` (an element already holding those very
+  tracks is left alone - a fresh `srcObject` rebuilds the player and the picture blinks), and
+  `showStream(uid, stream, mine)` hands the video tracks to the `<video>` (muted now, always) and
+  the audio tracks to the sink. Outside the tiles on purpose: a screen tile travels into the stage
+  window, and what is heard must not depend on where the picture lives (gated live). The local tile
+  gets no sink - nobody hears themselves. The speaking light keeps its own analyser.
+- **Why no gate caught it**: every call verify measured BYTES (`audio_in`), always there, and every
+  one of them ran with a camera (the fake device gives frames) and with
+  `--autoplay-policy=no-user-gesture-required`. Our page needs no such flag (measured: with
+  `PlaybackRequiresUserGesture=False` the AudioContext runs, `play()` is allowed, hidden elements
+  play) - and a voice call was never tested.
+
+**The share took the monitor the animator was not on** (trap 314). On their machine Chromium offers
+ONE screen row, "Entire screen", and it is the external monitor (LG ULTRAFINE 3840×2160); the
+primary laptop panel (NE180QDM-NM2 2560×1600), where their Maya stands, is not offered at all. Our
+morning rule ("one screen row → take it with no menu") therefore shared, with no question, a screen
+with nothing of theirs on it - and said only «Экран 2560×1440», which is our own downscale, not the
+monitor's size. Also measured: `getCapabilities().width.max/height.max` IS the captured monitor's
+native size; the window list carries their Maya; and a WINDOW capture keeps its picture under
+another window (covered: 46 colour buckets, the covering window's colour 0 % of the frame - WGC, not
+BitBlt).
+- The page reports the native size (`nw`, `nh`); `capture_screen` finds the monitor by matching it
+  against Qt's screens (two of one size is no answer); `capture_text` names it («Экран LG ULTRAFINE
+  3840×2160»); `_wrong_screen` adds «— Maya на другом экране; правой кнопкой по кнопке экрана →
+  «Окно Maya»» when that monitor is not the screen the call window stands on.
+- The screen button's right-button menu leads with **«Окно Maya»**, which takes Maya's own main
+  window by the title WINDOWS shows for it (`window_title` through Win32: Qt's `windowTitle()`
+  carries the `[*]` placeholder where Windows draws the modified mark, a different string). Two
+  Mayas and no title to go by is no answer. The menu's window rows are elided to 46 characters (a
+  Maya row was its title AND the scene's full path).
+- **Left to the animator**: whether one press should share Maya's window when the only screen
+  offered is not theirs. Today it shares that screen and says so.
+
+**Drawing over the stream window: not reproduced**, three ways - offscreen with a real
+`_StageWindow` (the pen hit-testable, a real press turns it on, a drag draws 1387 ink pixels), live
+in a GUI Maya with a real capture (2931 ink pixels), and both directions between two peers (a
+viewer's stroke drawn over the sharer's copy, 1371 pixels each). The machinery works; the pen is an
+unlabelled 28×28 ✎ in the corner and a stroke fades in about three seconds (their own ask), so what
+they did is asked, not guessed.
+
+Proof: `verify_call_audio.py` **0 of 18 headless** (7 fail on the build before, the first reading
+0.000 s); `verify_call_screen_live.py` **0 of 16 live in a GUI Maya** with a real capture (the
+monitor named, the warning, «Окно Maya» live, the other's voice 4.020 s in 4 s, and still 4.020 while
+its tile is in the stage window); `verify_call_stage.py` **0 of 27 live** again; `verify_call_page.py`
+0 of 18, `verify_call_devices.py` 0 of 25; `tests/test_chat_callview_screens.py` 26 tests; 702 chat
+unit tests (the known `test_chat_deploy.Keys` failing). **Not seen in the animator's own Maya**:
+after Check update.
+
+313. **A `<video>` renders nothing - its audio included - while its MediaStream holds a video track
+     that has never carried a frame.** `paused` is false, `play()` resolved, bytes arrive, and
+     `readyState` is 0 with `currentTime` 0 for ever: a voice call, or any camera turned off. Neither
+     `display: none` nor a track ADDED later does it (both measured innocent on a local stream); it
+     takes a REMOTE track with no frames. Play a voice in an element of its own, and measure being
+     heard by the element's own playback - bytes on the wire prove nothing.
+314. **"The whole screen" is one monitor, and Chromium may offer the wrong one.** Its screen list
+     holds only the monitors it can capture (here one of two, the non-primary - a hybrid-graphics
+     laptop whose panel DXGI will not duplicate), names none of them, and the row order is not the
+     monitor order. `getSettings()` gives the CONSTRAINED size, so it cannot tell them apart either;
+     `getCapabilities().width.max` is the monitor's own. Say which monitor a capture is, and give a
+     way to the window the animator is working in.
+315. **Kill the pid you launched, never "every maya.exe but the one I read earlier".** A disposable
+     Maya was cleaned up with `Get-Process maya | Where-Object { $_.Id -ne <the animator's pid> }`,
+     and that pid was 50 minutes stale: their Maya had crashed meanwhile (6 dumps on disk that day)
+     and its relaunch had a new pid, so the sweep could take it. `launch.ps1` must keep the pid
+     `Start-Process -PassThru` gives and stop that one alone.

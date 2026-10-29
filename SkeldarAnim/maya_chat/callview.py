@@ -138,6 +138,13 @@ def destroy():
         delattr(sys, _ATTR)
 
 
+def short_title(label, cap=46):
+    """A window's title for a menu row: Chromium hands the whole thing, and a Maya window's is
+    its title AND the scene's full path. The name is at the front, so the tail goes."""
+    text = u" ".join(str(label or u"").split())
+    return text if len(text) <= cap else text[:cap - 1] + u"…"
+
+
 def screen_choices(request, kinds=("screen", "window")):
     """[(kind, row, label)] of what a desktop media request offers: screens, then windows.
 
@@ -153,11 +160,93 @@ def screen_choices(request, kinds=("screen", "window")):
             label = model.data(model.index(row, 0))
             if kind == "screen":
                 label = u"Весь экран" if rows == 1 else u"Весь экран %d" % (row + 1)
+            else:
+                label = short_title(label)
             out.append((kind, row, str(label) if label else u"Окно %d" % (row + 1)))
     return out
 
 
-def capture_text(capture):
+def maya_row(choices, title=None):
+    """The row of `choices` that is Maya's OWN main window: the exact title Windows shows for it
+    (which is what Chromium lists it under), else the one Maya window that is not a crash report.
+
+    Two Mayas open and no title to go by is no answer: sharing the other one's window would be
+    worse than sharing nothing."""
+    windows = [(kind, row, label) for kind, row, label in choices if kind == "window"]
+    want = short_title(title) if title else u""
+    if want:
+        for kind, row, label in windows:
+            if label == want:
+                return (kind, row)
+    named = [(kind, row) for kind, row, label in windows
+             if u"autodesk maya" in label.lower() and u"error report" not in label.lower()]
+    return named[0] if len(named) == 1 else None
+
+
+def window_title(widget):
+    """The title WINDOWS shows for a widget's window - what Chromium lists it under.
+
+    Qt's own windowTitle() carries the `[*]` placeholder where Windows draws the modified mark,
+    so it is not the same string (measured: 'untitled[*] - Autodesk MAYA 2027.2: untitled'
+    against the list's 'untitled* - Autodesk MAYA 2027.2: untitled')."""
+    if widget is None:
+        return u""
+    try:
+        import ctypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = int(widget.winId())
+        length = int(user32.GetWindowTextLengthW(hwnd))
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            if user32.GetWindowTextW(hwnd, buf, length + 1):
+                return buf.value
+    except Exception:                                         # noqa: BLE001
+        pass
+    try:
+        return str(widget.windowTitle() or u"").replace(u"[*]", u"*")
+    except Exception:                                         # noqa: BLE001
+        return u""
+
+
+def screens():
+    """Every screen Qt knows, or [] where there is no Qt to ask."""
+    try:
+        return list(W._q().QtWidgets.QApplication.screens())
+    except Exception:                                         # noqa: BLE001
+        return []
+
+
+def screen_size(screen):
+    """A screen's size in its own pixels: its geometry is in logical units."""
+    geometry = screen.geometry()
+    try:
+        ratio = float(screen.devicePixelRatio() or 1.0)
+    except Exception:                                         # noqa: BLE001
+        ratio = 1.0
+    return int(round(geometry.width() * ratio)), int(round(geometry.height() * ratio))
+
+
+def capture_screen(capture, where=None):
+    """Which monitor a screen capture really is, by its NATIVE size - or None.
+
+    Chromium hands one row per capturable monitor and names none of them, and on this machine it
+    offers only the external one while the animator works on the laptop panel (measured
+    2026-10-29): «весь экран» showed them a screen they were not using, and nothing said so. The
+    capture's own size is the one thing that tells the monitors apart; two of the same size is no
+    answer rather than a guess."""
+    if not capture or capture.get("surface") != "monitor":
+        return None
+    try:
+        want = (int(capture.get("nw") or 0), int(capture.get("nh") or 0))
+    except (TypeError, ValueError):
+        return None
+    if not (want[0] and want[1]):
+        return None
+    same = [sc for sc in (screens() if where is None else where) if screen_size(sc) == want]
+    return same[0] if len(same) == 1 else None
+
+
+def capture_text(capture, where=None):
     """What the call window says about what is being shared, from the track's own settings."""
     if not capture:
         return u""
@@ -167,9 +256,13 @@ def capture_text(capture):
         w = h = 0
     size = u" %d×%d" % (w, h) if w and h else u""
     if capture.get("surface") == "monitor":
+        screen = capture_screen(capture, where)
+        if screen is not None:
+            own = screen_size(screen)
+            return u"Экран %s %d×%d" % (screen.name(), own[0], own[1])
         return u"Экран" + size
     label = (capture.get("label") or u"").strip()
-    return (u"Окно: " + label) if label else (u"Окно" + size)
+    return (u"Окно: " + short_title(label, 60)) if label else (u"Окно" + size)
 
 
 def _model(request, name):
@@ -498,7 +591,7 @@ class CallWindow(object):
             if name == "screen":
                 b.setContextMenuPolicy(Qt.CustomContextMenu)
                 b.customContextMenuRequested.connect(self._screen_menu)
-                b.setToolTip(u"Показать экран (правой кнопкой — окно)")
+                b.setToolTip(u"Показать экран (правой кнопкой — окно Maya или другое)")
             self.buttons[name] = b
             self.icons[name] = icon
             buttons.addWidget(b)
@@ -782,7 +875,7 @@ class CallWindow(object):
             if capture:
                 if not capture.get("again"):
                     self._retakes = 0
-                text = capture_text(capture)
+                text = capture_text(capture) + self._wrong_screen(capture)
                 self.say(text)
                 from . import callpage
                 callpage.log("[call] " + text)      # never a raise out of the state handler
@@ -795,6 +888,30 @@ class CallWindow(object):
             self._open_stage()
         elif self.stage is not None and not state.get("stage") and not state.get("wants_stage"):
             self._close_stage(tell=False)
+
+    def here_screen(self):
+        """The screen this window stands on - where the animator is working."""
+        try:
+            return self.root.screen()
+        except Exception:                                     # noqa: BLE001
+            return None
+
+    def _wrong_screen(self, capture):
+        """A word when the screen being shared is not the one this window stands on.
+
+        Chromium offers only the monitors it can capture, which on the animator's machine is not
+        the one they work on: the share then shows a screen with nothing of theirs in it, and
+        before this it said «Экран 2560×1440» and left them to guess (2026-10-29)."""
+        shared = capture_screen(capture)
+        here = self.here_screen()
+        if shared is None or here is None:
+            return u""
+        try:
+            if shared.name() == here.name():
+                return u""
+        except Exception:                                     # noqa: BLE001
+            return u""
+        return u" — Maya на другом экране; правой кнопкой по кнопке экрана → «Окно Maya»"
 
     # -------------------------------------------------- the screen's own window
     def _gesture(self):
@@ -962,6 +1079,12 @@ class CallWindow(object):
         again, self._again = self._again, False
         if again and self._source is not None:
             return self._source
+        if want == "maya":
+            #  the window the animator is working in, by its own title: one press, no list
+            row = maya_row(screen_choices(request, ("window",)), window_title(W._main_window()))
+            if row is None:
+                self.say(u"Окно Maya не нашлось в списке — выберите окно правой кнопкой")
+            return row
         if want == "window":
             windows = screen_choices(request, ("window",))
             return _pick_screen(self, windows) if windows else None
@@ -995,11 +1118,12 @@ class CallWindow(object):
         q = W._q()
         menu = q.QtWidgets.QMenu(self.root)
         menu.setStyleSheet(hubstyle.stylesheet(self.scale))
+        hubqt.tag_row(menu.addAction(u"Окно Maya"), "maya")
         hubqt.tag_row(menu.addAction(u"Весь экран"), "screen")
         hubqt.tag_row(menu.addAction(u"Показать окно…"), "window")
         b = self.buttons["screen"]
         chosen = hubqt.row_value(menu.exec(b.mapToGlobal(point)))
-        if chosen not in ("screen", "window"):
+        if chosen not in ("screen", "window", "maya"):
             return
         self._want = chosen
         if self.state.get("screen"):
