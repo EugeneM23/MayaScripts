@@ -764,7 +764,8 @@ class CallWindow(object):
                     self._retakes = 0
                 text = capture_text(capture)
                 self.say(text)
-                print("[call] " + text)
+                from . import callpage
+                callpage.log("[call] " + text)      # never a raise out of the state handler
         if not capture:
             self._retakes = 0
         if state.get("stalled") and not self._stalled:

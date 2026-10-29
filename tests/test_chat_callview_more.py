@@ -257,6 +257,20 @@ class ScreenMenu(Base):
         self.assertEqual(w.last_message, u"Экран 2560×1600")
 
 
+class Logging(Base):
+    def test_a_russian_line_does_not_raise_on_a_cp1252_stdout(self):
+        # mayapy's stdout here is cp1252 and our lines are Russian: a plain print raised inside
+        # the page's state handler and took every headless run with it (2026-10-29)
+        import io
+        from maya_chat import callpage
+        w = self.live()
+        narrow = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+        with mock.patch.object(sys, "stdout", narrow):
+            callpage.log(u"[call] Экран 2560×1600")
+            w._page_state({"capture": {"surface": "monitor", "w": 2560, "h": 1600}})
+        self.assertEqual(w.last_message, u"Экран 2560×1600", "the line still reaches the window")
+
+
 class Stage(Base):
     def _stage(self):
         """A stage window without its web view: the frame's own doings are what is tested."""

@@ -7,6 +7,7 @@ Qt's own `qwebchannel.js` (read from Qt WebChannel's resources) and loaded at `O
 Spec: docs/superpowers/specs/2026-10-22-chat-calls-design.md
 """
 import json
+import sys
 import os
 
 import maya_hubqt as hubqt
@@ -98,13 +99,31 @@ def bridge_class():
 
             @QtCore.Slot(str)
             def log(self, text):
-                print("[call page] " + text)
+                log("[call page] " + text)
 
             def send(self, name, args=None):
                 self.command.emit(name, json.dumps(args or {}))
 
         _CLASSES["bridge"] = Bridge
     return _CLASSES["bridge"]
+
+
+def log(text):
+    """A line for the Script Editor that never raises.
+
+    Our lines are Russian and mayapy's stdout is cp1252 here, so a plain `print` dies with a
+    UnicodeEncodeError - measured 2026-10-29 from inside the page's own state handler, which took
+    the whole headless run with it while a GUI Maya's Script Editor showed the line happily."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            print(text.encode(encoding, "replace").decode(encoding, "replace"))
+        except Exception:                                     # noqa: BLE001
+            pass
+    except Exception:                                         # noqa: BLE001
+        pass
 
 
 def _object(text):
@@ -158,7 +177,7 @@ def page_class():
             def javaScriptConsoleMessage(self, level, message, line, source):   # noqa: N802
                 # The level is a plain enum.Enum in Maya 2027's PySide6: no ordering, compare values.
                 if _level(level) >= _level(_LEVELS().WarningMessageLevel):
-                    print("[call page] %s (%s:%s)" % (message, source, line))
+                    log("[call page] %s (%s:%s)" % (message, source, line))
 
         def _LEVELS():                                  # noqa: N802
             return QtWebEngineCore.QWebEnginePage.JavaScriptConsoleMessageLevel
