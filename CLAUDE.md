@@ -13718,7 +13718,9 @@ a UE clip retargeted onto a Manny rig:
   outcome worth proving against): one more retarget follows it, the line names the layer and says
   it baked instead, no layer is left, and the character plays the WHOLE take.
 
-13214 unit tests (the known `test_chat_deploy.Keys` failing: this machine's own saved keys).
+`tests/test_scenesetup_swaplayers.py` is 62 unit tests of its own (every pure rule, and the
+reading and writing halves on a fake `cmds`); 13217 in the suite, the one failure the known
+`test_chat_deploy.Keys` (this machine's own saved keys).
 **Not seen in a GUI Maya** - the dialog itself and a real drag are the animator's, after Check
 update. Not built: the same for a PART row (`attach_part` keeps the character and is asked
 nothing); a setting to stop being asked (the animator asked for a question); a layer kept by its
