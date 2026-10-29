@@ -488,16 +488,25 @@ def _clip_line(card, data):
     return (" %s " % DOT).join(parts)
 
 
+SAVED_IN_1P = "saved in 1P: pasted by the bones"
+
+
 def _curves_line(data):
     """«original curves · BaseAnimation, AnimLayer1» of a card that keeps its source's
-    curves (spec 2026-10-28), "" otherwise."""
+    curves (spec 2026-10-28), "" otherwise; a card saved off a rig in 1P says it is pasted by the
+    bones (its curves never are, 2026-10-29)."""
     block = data.get("curves") if isinstance(data, dict) else None
     layers = block.get("layers") if isinstance(block, dict) else None
     if not isinstance(layers, list) or not layers:
         return ""
     names = [layer.get("name") for layer in layers
              if isinstance(layer, dict) and isinstance(layer.get("name"), str)]
-    return "original curves %s %s" % (DOT, ", ".join(names)) if names else ""
+    if not names:
+        return ""
+    line = "original curves %s %s" % (DOT, ", ".join(names))
+    if block.get("first_person"):
+        line += " %s %s" % (DOT, SAVED_IN_1P)
+    return line
 
 
 def details(card, data):

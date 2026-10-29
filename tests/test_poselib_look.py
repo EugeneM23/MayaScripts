@@ -974,6 +974,14 @@ class CurvesDetails(unittest.TestCase):
                 "frames": 10}
         self.assertFalse(any("original curves" in line for line in look.details(None, data)))
 
+    def test_a_card_saved_in_1p_says_it_is_pasted_by_the_bones(self):
+        data = {"format": "skeldar.anim", "kind": "character", "start": 0.0, "end": 9.0,
+                "frames": 10, "curves": {"layers": [{"name": "BaseAnimation", "base": True},
+                                                    {"name": "_3P_Lower_Body"}], "nodes": 4,
+                                         "first_person": True}}
+        self.assertIn("original curves %s BaseAnimation, _3P_Lower_Body %s %s"
+                      % (look.DOT, look.DOT, look.SAVED_IN_1P), look.details(None, data))
+
 
 if __name__ == "__main__":
     unittest.main()
