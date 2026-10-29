@@ -29,7 +29,7 @@ knowledge of Unreal beyond calling it, exactly as Open does.
 
 ---
 
-### Task 1: the planning leaves the card
+### Task 1: the planning leaves the card — DONE (6ed60b4f)
 
 **Files:**
 - Modify: `SkeldarAnim/maya_moveset/view.py` (the dots in `Card.paint` / `_paint_dot` / `dot_rect` /
@@ -59,7 +59,7 @@ knowledge of Unreal beyond calling it, exactly as Open does.
 
 ---
 
-### Task 2: the export's plan (pure)
+### Task 2: the export's plan (pure) — DONE
 
 **Files:**
 - Create: `SkeldarAnim/maya_moveset/export.py`
@@ -148,7 +148,13 @@ def plan(graph, node_id, view, fps):
 
 ---
 
-### Task 4: the frame offset, measured against the editor
+### Task 4: the frame offset — NOT NEEDED (measured 2026-10-29)
+
+`export.plan` over both graphs: every writable track is ONE sequence starting at frame 0 (25 + 25 rows),
+so no export shifts anything. A piece that would start later is refused by name. The editor run waits for
+a slot that plays two different sequences; the steps below stay for that day.
+
+### Task 4 (deferred): the frame offset, measured against the editor
 
 - [ ] **Step 1: ask** — the run needs the animator's editor open with Remote Execution, and it writes to
       a sandbox copy of an AnimSequence, never to one of theirs.

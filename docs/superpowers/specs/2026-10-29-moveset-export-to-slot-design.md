@@ -8,12 +8,18 @@ own segments**, the exact inverse of the montage import. Spec of the card:
 
 ## What a slot holds, measured
 
-A slot's track is not one animation. Over the two graphs (a node and a view is one row):
+A slot's track is not one animation — and **several segments are usually one sequence cut into
+pieces**, which is how the designers split a section at its hit windows. At rate 1 the pieces play the
+sequence straight through and are one writable animation; at another rate they are a hand-made time
+warp. Measured over both graphs with the plan's own code (a node and a view is one row):
 
-| | one whole sequence | several segments | plays a slice | rate ≠ 1 | no track |
-|---|---|---|---|---|---|
-| Dagger (44) | 25 | 11 (up to 4) | 6 | 0 | 2 |
-| Longsword (50) | 19 | 21 (up to 5) | 9 | 1 | 0 |
+| | writable | time-warped | plays a slice | no track |
+|---|---|---|---|---|
+| Longsword (50) | 25 (6 of them several segments) | 19 | 6 | 0 |
+| Dagger (44) | 25 | 15 | 2 | 2 |
+
+**No track in either graph plays two different sequences**, and every writable track starts its slot at
+frame 0 — so the export always writes ONE sequence, from frame 0.
 
 A segment carries `anim` (the AnimSequence's object path), `start_pos` (where it begins on the montage's
 clock), `anim_start` / `anim_end` (the part of the sequence it plays), `rate` and `anim_length`.
@@ -60,13 +66,14 @@ One press, for the picked attack and that view:
 Perforce is not touched, as on the bridge's own «Export to uasset» road; the read-only flag is cleared
 and left off, because the file is modified and hiding that would be worse.
 
-### The one thing to measure first
+### A piece that does not start the slot is refused, not guessed
 
-A segment in the middle of a slot owns scene frames that do not start at 0 (say 44–87). Whether Unreal's
-replace-import normalises an FBX take that starts at frame 44, or writes a sequence 88 frames long with
-the first 44 empty, decides whether the export shifts the keys to 0 before writing. **The build measures
-it against the editor on a sandbox copy of a sequence before the feature is called done**; a single-segment
-slot (the common case) starts at 0 and is unaffected either way.
+A second sequence in one slot would own scene frames that do not start at 0 (say 44–87), and whether
+Unreal's replace-import normalises an FBX take that starts at frame 44 — or writes a sequence 88 frames
+long with the first 44 empty — is **unmeasured**. Measured instead: **0 of the 50 writable rows need it**
+(every writable track is one sequence starting at frame 0). So such a piece is refused by name
+(«AS_X starts 1.41 s into the slot - writing a sequence that does not start the slot is not built»)
+rather than written wrongly. The editor measurement waits for the day a slot plays two sequences.
 
 ## Proof
 
