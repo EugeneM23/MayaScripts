@@ -9128,8 +9128,22 @@ section above; a paste that is not «Original curves» is exactly what it was.**
   `Original curves` a per-card **layer checklist** (every layer ticked, one must stay on): the ticks
   hold through a press, a refresh and a re-pick of the picked card; another card is pasted whole
   (`options(path)` answers `layers` only for the picked card). Keys, Mirror and Blend are greyed with a
-  tooltip, and animapply refuses them too: the curves carry their own keys, and a mirror or a blend
-  changes values, which is what this paste exists not to do.
+  tooltip: the curves carry their own keys, and a mirror or a blend changes values, which is what this
+  paste exists not to do. `animapply` refuses Mirror (`curveapply.MIRRORED`) and Blend
+  (`curveapply.BLENDED`) too; Keys it ignores (the curves carry their own keys). Mirror is greyed by
+  the PICKED card only: `_mirrored(path)` drops the checkbox just for a press that itself pastes
+  curves, so a drag or a right-click row on another card still mirrors.
+- **A floor drop under Original curves** refuses Mirror BEFORE the character is added (an Add flushes
+  undo) and pastes In place forced on: the raw Main keys would put the dropped rig back where the
+  take was saved, ignoring the drop point, so Main stays at the drop point and the line says so
+  (`curveapply.FLOOR_IN_PLACE`).
+- **Save never fails over the curves**: the curves read (`_character_curves`, and an objects channel's
+  layered read in `object_curves`) is wrapped; on an error the card is saved WITHOUT curves (no
+  `curves.json.gz`, no header block unless another source gives one), the traceback is printed and
+  the Save line gains `original curves not kept: <first line>`. A header block that came from
+  layered loose objects alone gets an empty valid `curves.json.gz` (`{"version": 1, "nodes": []}`),
+  so a curves paste pastes the objects and never calls the card unreadable; Update removes a stale
+  `curves.json.gz` when the new clip has none.
 - **Which target takes the curves**: the same model and kind as the card's character (controls /
   joints paired by leaf name, a missing one skipped and named). Any other target in the press is
   retargeted and the line says so. A mixed press is **two undo steps** (the curves' chunk, then the
@@ -9155,7 +9169,8 @@ section above; a paste that is not «Original curves» is exactly what it was.**
   (a new layer is Multiply).
 - **Connect** only when the paste writes ONE layer, and then it moves only the pasted keys by
   `(shown before − shown now)` over the layer's weight (weight 0 and a quaternion layer's rotate
-  channels: no Connect, said). Two or more layers ticked: greyed.
+  channels: no Connect, said; a MUTED target layer too - it cannot change what the channel shows, so
+  the offset would be meaningless: `curveapply.CONNECT_MUTED`). Two or more layers ticked: greyed.
 - **Known limits**: a channel keyed only in a layer records no base static, so the offset lands on
   the target's own base value; same-leaf layers in two scene tabs collide (the card keeps one name);
   a nested stack is pasted flat; a layer's keyed weight is not kept (its value at the save is); a
@@ -9163,20 +9178,22 @@ section above; a paste that is not «Original curves» is exactly what it was.**
   line; curves and layers for POSE cards, mirroring and other rig models are not built.
 - **Cost**: the curves read is one duplicate per curve per layer. On a whole keyed rig (every control
   keyed, 3 layers, 101 frames, every curve cut by the range) it took 0.50 s, inside the spec's 2 s;
-  `_copied_fast` (MFnAnimCurve) was not needed. A whole 101-frame SAVE is 4.57 s, ~2.1 s of it the
-  animation cards' own per-frame bone walk (~40 ms a frame), unchanged here and not covered by that
+  `_copied_fast` (MFnAnimCurve) was not needed. A whole 101-frame SAVE is 4.57 s, ~4 s of it the
+  animation cards' own pre-existing per-frame bone walk (~40 ms a frame; 2.11 s was measured over the
+  51-frame 5..55 save) and 0.50 s the curves read; the walk is unchanged here and not covered by that
   budget (a follow-up if it should be).
 
 Proof: probe `probe_poselib_raw_layer_keys.py` **27/27** mayapy standalone;
 `verify_poselib_curves.py` **45/45** (Manny_Rig saved whole body and as one arm, pasted onto Manny_Rig1
 with no layers, with an other-mode layer, with one layer ticked, Replace / Insert / Merge, At current
-time and Range, every curve key for key; a Creep retargeted with the note; layers made and undone by
-one Ctrl+Z; an objects card per layer; the 0..30 whole save 1.46 s); `verify_poselib_anim.py`
+time and Range, the take's keyed control curves compared key for key on every layer; a Creep retargeted with the note; layers made and undone by
+one Ctrl+Z; an objects card per layer, gated as made and keyed - not key for key; the 0..30 whole save 1.46 s); `verify_poselib_anim.py`
 **113/113**; **12005 unit tests**, one failure that is not ours (`test_chat_deploy`, a real token in
 this machine's environment). `verify_poselib_objects.py` is **2/6 on main b4a91cd already**
 (`SceneSetup_camera` is locked on translateX), not caused by this work. Not exercised: a GUI Maya
 (the window only offscreen Qt); scene tabs on (the made layer's adoption one idle later is the Tools'
-road, not run here).
+road, not run here: the tabs hook re-parents a made layer one idle later, outside the paste's undo
+chunk, so with tabs on one Ctrl+Z may not take a made layer back).
 
 ## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10) - the Tail Builder card
 

@@ -193,9 +193,9 @@ curves onto another rig model, a layer's keyed WEIGHT (its value at the save is 
   and an override layer (weighted tangents, a breakdown, a fixed tangent, cycle post-infinity) saved
   whole body and as one arm; pasted onto Manny_Rig1 with no layers, with an AnimLayer1 of the other
   mode, with only AnimLayer1 checked, under Replace / Insert / Merge, At current time and Range — every
-  curve key for key (time, value, tangents, weights, breakdowns, infinity) and every layer's mode,
-  weight and mute; the same card onto a skeleton retargeted with the note; an objects card of a
-  layered locator pasted per layer; one Ctrl+Z takes each paste back, layers made included; the curves
+  curve key for key (time, value, tangents, weights, breakdowns, infinity) on every layer, and every
+  layer's mode, weight and mute; the same card onto a skeleton retargeted with the note; an objects card
+  of a layered locator pasted per layer (gated as made and keyed, not key for key); one Ctrl+Z takes each paste back, layers made included; the curves
   read on the whole rig (every control keyed, three layers, every curve cut by the range) measured against
   the 2 s budget - the bone walk's per-frame cost is the animation cards' own, unchanged here.
 
@@ -217,7 +217,8 @@ The end-to-end verify (`verify_poselib_curves.py`, 45/45) and the older ones:
 - the curves read on a whole keyed rig (every control keyed, 188 nodes, three layers, 101 frames, every
   curve cut by the range): 0.50 s - inside the budget, so the
   `MFnAnimCurve` read was not built;
-- the whole 101-frame save: 4.57 s, of which ~2.1 s is the existing per-frame bone walk (~40 ms a
-  frame), which the 2 s budget does not cover; a faster walk is a separate follow-up;
+- the whole 101-frame save: 4.57 s, of which ~4 s is the pre-existing per-frame bone walk (~40 ms a
+  frame; 2.11 s was measured over the 51-frame 5..55 save) and 0.50 s the curves read; the 2 s budget
+  does not cover the walk; a faster walk is a separate follow-up;
 - `verify_poselib_anim.py` 113/113; unit suite 12005 tests, one unrelated failure (`test_chat_deploy`);
   `verify_poselib_objects.py` 2/6 on main b4a91cd as well (`SceneSetup_camera` locked translateX).
