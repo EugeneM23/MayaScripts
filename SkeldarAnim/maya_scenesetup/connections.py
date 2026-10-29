@@ -1603,24 +1603,28 @@ def _set_aim(aimed, chosen=None):
 
 
 def refresh(*_args):
-    """Re-read the scene into the header and the menus: after a press what
-    IS is what the dropdowns show."""
+    """Re-read the scene into the header and the rows: after a press what IS is
+    what the segments show - and then the picks that have not been applied are
+    laid on top (2026-10-29), read ONCE here and handed to every painter. The
+    read also drops another rig's picks, so selecting a second character leaves
+    its own picks behind."""
     if not cmds.control(HEADER, exists=True):
         return ""
     rig, _refusal = maya_rigs.current_rig()
+    chosen = picks(rig)
     bones = bones_of(rig) if rig else None
     weapons = weapons_of(rig, bones) if rig else []
     weapon = chosen_weapon(rig, bones, weapons) if rig else None
     scheme = read_scheme(rig, bones, weapon) if weapon else {"L": None, "R": None}
     _set_chooser(weapons, weapon, [_side_of(rig, bones, w) for w in weapons])
-    _set_menus(menus_from_scheme(scheme))
+    _set_menus(menus_from_scheme(scheme), chosen)
     worlds = {fkik.ARM: [], fkik.LEG: []}
     modes = _limb_modes(rig, fkik.ARM, worlds[fkik.ARM])
-    _set_fkik(modes, worlds=worlds[fkik.ARM])
+    _set_fkik(modes, worlds=worlds[fkik.ARM], chosen=chosen)
     leg_modes = _limb_modes(rig, fkik.LEG, worlds[fkik.LEG])
-    _set_fkik(leg_modes, fkik.LEG, worlds[fkik.LEG])
+    _set_fkik(leg_modes, fkik.LEG, worlds[fkik.LEG], chosen)
     spine_mode, spine_mixed = _spine_state(rig)
-    _set_spine(spine_mode)
+    _set_spine(spine_mode, chosen)
     others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
                        for w in weapons if not _same(w, weapon))
     mixed = ", ".join(part for part in (arms_text(modes), arms_text(leg_modes, fkik.LEG),
@@ -1628,13 +1632,14 @@ def refresh(*_args):
                       if part)
     text = header_text(rig, weapon, scheme, others, mixed)
     aimed = bool(weapon) and weaponaim.is_aimed(weapon)
-    _set_aim(aimed)
+    _set_aim(aimed, chosen)
     if aimed:
         text += " - Aim Mode"
     if current_tab() == "camera":
         choice, position, aimed = _camera_state()
-        _set_camera(choice, position, aimed)
+        _set_camera(choice, position, aimed, chosen)
         text = camera_text(choice, position, aimed)
+    _paint_counts(chosen)
     cmds.text(HEADER, edit=True, label=text)
     return text
 

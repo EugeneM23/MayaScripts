@@ -418,6 +418,59 @@ class CameraPicks(unittest.TestCase):
         self.assertEqual(self.done, [("aim", True), ("aim", False)])
 
 
+class RefreshKeepsThePicks(LimbPicks):
+    """A refresh fires on every selection change, undo and press: it must
+    re-read the scene AND lay the picks back on top."""
+
+    def setUp(self):
+        LimbPicks.setUp(self)
+        #  not `refresh`: LimbPicks.tearDown puts the real one back, and an
+        #  addCleanup here would run AFTER it and leave the stub behind
+        saved = (cx.bones_of, cx.weapons_of, cx.chosen_weapon, cx._spine_state)
+        self.addCleanup(setattr, cx, "bones_of", saved[0])
+        self.addCleanup(setattr, cx, "weapons_of", saved[1])
+        self.addCleanup(setattr, cx, "chosen_weapon", saved[2])
+        self.addCleanup(setattr, cx, "_spine_state", saved[3])
+        cx.bones_of = lambda rig: {}
+        cx.weapons_of = lambda rig, bones=None: []
+        cx.chosen_weapon = lambda rig, bones=None, weapons=None: None
+        cx._spine_state = lambda rig: ("FK", False)
+        cx.refresh = self.real[1]              # the real one, from here on
+
+    def test_a_refresh_repaints_the_state_and_keeps_the_pick(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        cx.refresh()
+        self.assertEqual(cx.picks(Rig()),
+                         {pending.limb_key(cx.fkik.ARM, "R"): "FK"})
+        #  the thumb is the scene's (IK), the pick is the overlay
+        self.assertTrue(self.fake.boxes[cx.fkik_box("R", "IK")]["value"])
+        self.assertFalse(self.fake.boxes[cx.fkik_box("R", "FK")]["value"])
+
+    def test_a_refresh_keeps_the_count_on_the_button(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        self.fake.press_box(cx.fkik_box("L", "FK"))
+        cx.refresh()
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["body"]),
+                         "Apply all · 2")
+
+    def test_the_status_names_every_pick(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        self.fake.press_box(cx.fkik_box("L", "FK"))
+        text = [c[2]["label"] for c in self.fake.calls
+                if c[0] == "text" and c[1] == (cx.STATUS,)][-1]
+        self.assertIn("Arm R to FK", text)
+        self.assertIn("Arm L to FK", text)
+        self.assertIn("Press the row's check", text)
+
+    def test_reading_another_rig_drops_the_picks(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        other = Rig()
+        other.namespace = "Creep_Rig"
+        cx.maya_rigs.current_rig = lambda selection=None: (other, "")
+        cx.refresh()
+        self.assertEqual(pending.PICKS, {})
+
+
 class ObjectTab(unittest.TestCase):
     """BakeAcross and Release act on any selected objects, not on the body:
     their own tab since 2026-10-29."""
