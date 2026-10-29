@@ -99,7 +99,7 @@ class TheTable(unittest.TestCase):
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Chat", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
-                          "Dynamics", "Walk Builder", "Camera Shake", "Ragdoll", "Studio", "Colour", "Radial Menu", "Hotkeys",
+                          "Dynamics", "Walk Builder", "Camera Shake", "Ragdoll", "Moveset", "Studio", "Colour", "Radial Menu", "Hotkeys",
                           "Update"])
 
     def test_the_pose_library_card(self):
@@ -165,7 +165,7 @@ class TheTable(unittest.TestCase):
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("tools", "animation"),
             ("tailbuilder", "animation"), ("dynamics", "animation"), ("walk", "animation"),
-            ("camshake", "animation"), ("ragdoll", "animation"),
+            ("camshake", "animation"), ("ragdoll", "animation"), ("moveset", "animation"),
             ("studio", "look"),
             ("colour", "look"), ("radial", "settings"), ("hotkeys", "settings"),
             ("update", "settings")])
@@ -186,7 +186,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "chat", "retarget", "graphoverlay", "com", "poses",
-                          "tools", "tailbuilder", "dynamics", "walk", "camshake", "ragdoll", "studio", "colour",
+                          "tools", "tailbuilder", "dynamics", "walk", "camshake", "ragdoll", "moveset", "studio", "colour",
                           "radial", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -207,6 +207,7 @@ class TheTable(unittest.TestCase):
             "walk": ("maya_walk.panel", "build_panel"),
             "camshake": ("maya_camshake", "build_panel"),
             "ragdoll": ("maya_ragdoll.panel", "build_panel"),
+            "moveset": ("maya_moveset.panel", "build_panel"),
             "radial": ("maya_radial", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
@@ -765,7 +766,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "chat"), ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
-            ("card", "dynamics"), ("card", "walk"), ("card", "camshake"), ("card", "ragdoll"), ("card", "studio"),
+            ("card", "dynamics"), ("card", "walk"), ("card", "camshake"), ("card", "ragdoll"), ("card", "moveset"), ("card", "studio"),
             ("card", "colour"), ("card", "radial"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])

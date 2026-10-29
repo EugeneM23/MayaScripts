@@ -16171,3 +16171,29 @@ after Check update.
      and that pid was 50 minutes stale: their Maya had crashed meanwhile (6 dumps on disk that day)
      and its relaunch had a new pid, so the sweep could take it. `launch.ps1` must keep the pid
      `Start-Process -PassThru` gives and stop that one alone.
+
+## Moveset: the Longsword combo trees in the hub (2026-10-29)
+
+The animator: «Давай сделаем протатип этой таблицы в мая только без трело части» - the combo-tree page of
+their personal moveset tool (`Documents/AtoneExperiments/LongswordMoveset`, never in this repo) as a hub
+card. Asked: it lives here; it opens animations, shows the previews and shares the data with the page. The
+data stays in the animator's folder: the plugin ships only code.
+- **`SkeldarAnim/maya_moveset/`** (a payload row): `model.py` (stdlib, a test pins it) reads the folder's
+  `graph.json` and lays the trees out as the page does (breadth-first, one expansion an attack a tree, loops
+  and conversions as leaf links, Combos only / All transitions, the page's `custom` and `hidden` cards);
+  `state.json` beside it holds the page's localStorage keys (`longswordMoveset.*`) as raw strings, read and
+  written here (`read_state`, `write_state` keeps the page's other keys, atomic). `view.py` (Qt) draws the
+  cards (type-coloured top, preview from `media/<id>.jpg`, the 3P / 1P status dots with the assignee's emoji
+  or initials) and orthogonal wires coloured by the attack's type; wheel zoom, drag pans, a click picks, a
+  double click opens (the 1P dot: 1P), the right button is Open / status / assignee for both views.
+  `panel.py` is the card: Opening, Branches, Assignee, the type chips, the view over the `cmds`
+  placeholder (a `Keeper`), Open 3P / Open 1P / Fit, the folder button (`skeldarMovesetFolder`).
+- **Open** builds a montage `AnimRecord` from the graph (`path` → package, `slot` / `slot1p`) and goes the
+  UE Bridge's montage road (`window._export_from_editor` + `rigimport.import_and_retarget`): onto the selected
+  rig, else the only one, a new rig when there is none. Needs the editor open, as the bridge does.
+- **Sharing with the page**: the page's folder now has `serve.py` (http.server plus `PUT /state.json`); the
+  page reads `state.json` before it draws, pushes its changed keys (merged into the file), and reloads when
+  another writer changed the file. The card polls the file's time every 1.5 s.
+- Proof: `tests/test_moveset_model.py`, `tests/test_moveset_view.py` (offscreen view, the card's presses on
+  fakes, the montage record handed to the bridge); `docs/superpowers/plans/render_moveset_tree.py` →
+  `moveset_tree.png`. **Not seen in a GUI Maya**, and Open not run against the editor.

@@ -175,6 +175,10 @@ SECTIONS = (
     Section("ragdoll", "Ragdoll", "maya_ragdoll.panel",
             "build_panel", "skeldarHubFrameRagdoll",
             "animation", "skull"),
+    #  2026-10-29: the Longsword combo trees - statuses shared with the moveset page, a slot opened.
+    Section("moveset", "Moveset", "maya_moveset.panel",
+            "build_panel", "skeldarHubFrameMoveset",
+            "animation", "sitemap"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),
