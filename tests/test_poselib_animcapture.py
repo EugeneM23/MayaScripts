@@ -414,6 +414,7 @@ class FakeProgress(object):
 
 BONES = ["root", "pelvis", "spine_01"]
 TOP = "|Manny_Skeleton_Character|root"
+REAL_CHARACTER_CURVES = ac._character_curves
 PATHS = {"root": TOP, "pelvis": TOP + "|pelvis", "spine_01": TOP + "|pelvis|spine_01"}
 SKELETON = scene.CharacterRef("skeleton", TOP, None, "Manny UE5 [skeleton]", "Manny", "Manny",
                               "")
@@ -1691,6 +1692,74 @@ class Summarize(unittest.TestCase):
         header = {"objects": [{"attrs": {"tx": self.KEYED}, "shape": {}}]}
         ac._summarize(header, [], None)
         self.assertNotIn("curves", header)
+
+
+class CurvesAreOptional(Rebound):
+    """The original curves are an extra: a failed read never fails the Save (final review)."""
+
+    KEYED = Summarize.KEYED
+
+    def setUp(self):
+        super(CurvesAreOptional, self).setUp()
+        self.rebind(ac.traceback, "print_exc", lambda: None)
+
+    def test_a_curves_read_that_raises_saves_the_card_without_them(self):
+        self.character()
+
+        def broken(*args):
+            raise RuntimeError("no such layer\nsecond line")
+        self.rebind(ac, "_character_curves", broken)
+        clip = ac.build_clip([PATHS["pelvis"]], start=0, end=2)
+        self.assertEqual(clip.header["frames"], 3)
+        self.assertIsNotNone(clip.frames)
+        self.assertIsNone(clip.curves)
+        self.assertNotIn("curves", clip.header)
+        self.assertIn(ac.CURVES_LOST % "no such layer", clip.note)
+        self.assertNotIn("second line", clip.note)
+
+    def test_the_node_curves_seam_raising_is_the_same(self):
+        self.character()
+        self.rebind(ac.curvecapture, "character_nodes", lambda ref, bones, members: [])
+
+        def broken(*args):
+            raise ValueError("bad curve")
+        self.rebind(ac.curvecapture, "node_curves", broken)
+        self.rebind(ac, "_character_curves", REAL_CHARACTER_CURVES)
+        clip = ac.build_clip([PATHS["pelvis"]], start=0, end=2)
+        self.assertIsNone(clip.curves)
+        self.assertIn("original curves not kept: bad curve", clip.note)
+
+    def test_a_layered_read_that_raises_leaves_the_layers_out(self):
+        self.character()
+        ac.scene.resolved = [(PATHS["pelvis"], SKELETON), ("|loc", None)]
+        layers = [(None, curvedata.layer_record(curvedata.BASE, base=True)),
+                  ("A", curvedata.layer_record("A"))]
+        self.rebind(ac.curvecapture, "stack", lambda: layers)
+        self.rebind(ac, "_channel", lambda plug, start, end: ac.SAMPLE)
+        self.rebind(ac, "_sampled", lambda plugs, start, end: dict(
+            (plug, dict(self.KEYED)) for plug in plugs))
+        self.rebind(ac.objs, "channel_names", lambda node, cmds: ["translateX"])
+        self.rebind(ac.objs, "shape_of", lambda node, cmds: None)
+        self.rebind(ac.keys, "input_of", lambda plug: "layer")
+
+        def broken(*args):
+            raise RuntimeError("layer gone")
+        self.rebind(ac.curvecapture, "channel_curves", broken)
+        clip = ac.build_clip([PATHS["pelvis"], "|loc"], start=0, end=2)
+        attrs = clip.header["objects"][0]["attrs"]
+        self.assertNotIn("layers", attrs["translateX"])
+        self.assertNotIn("curves", clip.header)
+        self.assertIn("original curves not kept: layer gone", clip.note)
+
+    def test_an_objects_only_block_gives_an_empty_valid_curves_file(self):
+        self.character()
+        ac.scene.resolved = [(PATHS["pelvis"], SKELETON), ("|loc", None)]
+        record = {"attrs": {"tx": dict(self.KEYED, layers={curvedata.BASE: self.KEYED})},
+                  "shape": {}}
+        self.rebind(ac, "object_curves", lambda *args, **kwargs: [record])
+        clip = ac.build_clip([PATHS["pelvis"], "|loc"], start=0, end=2)
+        self.assertIn("curves", clip.header)
+        self.assertEqual(clip.curves, {"version": 1, "nodes": []})
 
 
 if __name__ == "__main__":

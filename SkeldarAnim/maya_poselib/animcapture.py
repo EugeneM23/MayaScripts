@@ -91,6 +91,7 @@ import os
 import re
 import shutil
 import tempfile
+import traceback
 from collections import OrderedDict, namedtuple
 
 import maya.api.OpenMayaAnim as oma
@@ -114,6 +115,7 @@ FRAME_PADDING = 4
 SAMPLED = "spline"                 # the tangents of a channel sampled on every frame
 
 MANY = "pick one character for an animation"
+CURVES_LOST = "original curves not kept: %s"
 NOTHING = scene.NOTHING
 CANCELLED = "cancelled - nothing saved"
 EMPTY = "the range %d-%d holds no frame"
@@ -455,7 +457,15 @@ def _channel(plug, start, end):
     return SAMPLE
 
 
-def object_curves(nodes, start, end, own=(), layers=None):
+def _lost(error):
+    """The Save line's note for original curves that could not be read: the error's first line.
+    The traceback is printed - the card is saved without them (the bones' frames are the card)."""
+    traceback.print_exc()
+    lines = str(error).strip().splitlines()
+    return CURVES_LOST % (lines[0] if lines else type(error).__name__)
+
+
+def object_curves(nodes, start, end, own=(), layers=None, problems=None):
     """[{name, path, attrs: {attr: CURVE}}] of the transforms `nodes` name (a shape or a
     component names its transform; each once, in selection order): per object its leaf name
     without the namespace, its long path, and the CURVE of each keyable scalar unlocked
@@ -466,7 +476,8 @@ def object_curves(nodes, start, end, own=(), layers=None):
     (the apply pairs objects by order too). The duplicates are made, read and deleted, and the
     walk walked, with the undo queue off (`_unrecorded`). `layers` (`curvecapture.stack()`) given,
     a channel in animation layers also keeps its curve on each layer, `"layers"` beside its sampled
-    keys (spec 2026-10-28)."""
+    keys (spec 2026-10-28); a layered read that fails leaves the layers out and adds a note
+    to `problems` (a list, or None)."""
     start, end = _whole(start), _whole(end)
     objects, seen, fed, own = [], set(), [], set(own or ())
 
@@ -500,7 +511,13 @@ def object_curves(nodes, start, end, own=(), layers=None):
         if layers is not None and len(layers) > 1:          # a scene without layers has none
             fed_layered = [plug for _attrs, _attr, plug in fed if keys.input_of(plug) == "layer"]
             if fed_layered:
-                layered = curvecapture.channel_curves(fed_layered, start, end, _copied, layers)[0]
+                try:
+                    layered = curvecapture.channel_curves(fed_layered, start, end, _copied,
+                                                          layers)[0]
+                except Exception as error:
+                    layered = {}
+                    if problems is not None:
+                        problems.append(_lost(error))
     for attrs, attr, plug in fed:
         if plug in found:
             attrs[attr] = found[plug]
@@ -554,6 +571,7 @@ def _summarize(header, layers, curves):
     pers += [per for _record, found in layered for per in found]
     count = len((curves or {}).get("nodes", [])) + len(layered)
     header["curves"] = curvedata.summary(curvecapture.used_records(layers, pers), count)
+    return header["curves"]
 
 
 def build_clip(selection=None, regions=None, start=None, end=None, progress=None):
@@ -582,22 +600,31 @@ def build_clip(selection=None, regions=None, start=None, end=None, progress=None
                                                    progress)
         if header is None:
             return Clip(None, None, None, note)
-        curves, said = _character_curves(refs[0], header, start, end, layers)
+        problems = []
+        try:
+            curves, said = _character_curves(refs[0], header, start, end, layers)
+        except Exception as error:
+            curves, said = None, ""
+            problems.append(_lost(error))
         if loose:
             own = [path for path, owner in loose_owned if scene.owned(refs[0], owner)]
-            header["objects"] = object_curves(loose, start, end, own, layers)
+            header["objects"] = object_curves(loose, start, end, own, layers, problems)
             note += " | + %s" % scene.describe([], loose)
-        _summarize(header, layers, curves)
-        if said:
-            note += " | " + said
+        if _summarize(header, layers, curves) and curves is None:
+            curves = {"version": curvedata.VERSION, "nodes": []}
+        for text in [said] + problems:
+            if text:
+                note += " | " + text
         return Clip(header, frames, curves, note)
     if loose:
         header = _common("objects")
         header.update(_span(start, end))
-        header["objects"] = object_curves(loose, start, end, layers=layers)
+        problems = []
+        header["objects"] = object_curves(loose, start, end, layers=layers, problems=problems)
         _summarize(header, layers, None)
         return Clip(header, None, None,
-                    "%s: %s" % (scene.describe([], loose), _frames_text(start, end)))
+                    " | ".join(["%s: %s" % (scene.describe([], loose), _frames_text(start, end))]
+                               + problems))
     return Clip(None, None, None, NOTHING)
 
 
