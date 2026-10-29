@@ -236,6 +236,11 @@ def stored_keys(per_time, times, tangents):
     return out
 
 
+def times_word(count):
+    """«once» / «twice» / «4 times» - the dialog says how often the retarget runs. Pure."""
+    return {1: "once", 2: "twice"}.get(count, "%d times" % count)
+
+
 def question(old_label, new_label, records, first_person, cuts, folded):
     """The dialog's text. Pure."""
     names = ", ".join(r["name"] for r in records)
@@ -252,8 +257,8 @@ def question(old_label, new_label, records, first_person, cuts, folded):
             old_label, len(records), "" if len(records) == 1 else "s", names))
         lines.append("")
         lines.append("{0}: {1} gets the same stack, each layer retargeted in turn, and keys"
-                     " only where {2} had them. The retarget runs {3} times.".format(
-                         KEEP, new_label, old_label, len(cuts)))
+                     " only where {2} had them. The retarget runs {3}.".format(
+                         KEEP, new_label, old_label, times_word(len(cuts))))
     for name, into in folded:
         lines.append("    {0} cannot be kept on its own - its motion lands on {1}.".format(
             name, into))

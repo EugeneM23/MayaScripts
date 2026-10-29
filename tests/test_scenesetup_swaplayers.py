@@ -207,9 +207,14 @@ class Question(unittest.TestCase):
         self.assertIn("Manny_Rig", text)
         self.assertIn("Creep [rig]", text)
         self.assertIn("Fix", text)
-        self.assertIn("runs 2 times", text)
+        self.assertIn("runs twice", text)
         self.assertIn(swaplayers.KEEP, text)
         self.assertIn(swaplayers.BAKE, text)
+
+    def test_how_often_the_retarget_runs_reads_as_words(self):
+        self.assertEqual(swaplayers.times_word(1), "once")
+        self.assertEqual(swaplayers.times_word(2), "twice")
+        self.assertEqual(swaplayers.times_word(4), "4 times")
 
     def test_a_rig_in_1p_says_1p_setup_runs_again(self):
         text = swaplayers.question("Manny_Rig", "Creep [rig]",
