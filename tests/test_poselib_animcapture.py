@@ -37,6 +37,7 @@ from collections import OrderedDict
 from maya_poselib import animcapture as ac
 from maya_poselib import animdata
 from maya_poselib import capture
+from maya_poselib import curvedata
 from maya_poselib import keys
 from maya_poselib import look
 from maya_poselib import scene
@@ -448,8 +449,13 @@ class Rebound(unittest.TestCase):
                   "_highlight", "_panel", "_qt")]
         saved += [(capture, "cmds", capture.cmds), (keys, "cmds", keys.cmds),
                   (capture, "_port", capture._port)]
+        # a Save also reads the original curves (2026-10-28): no layers, no character curves here
+        saved += [(ac.curvecapture, "stack", ac.curvecapture.stack),
+                  (ac, "_character_curves", ac._character_curves)]
         self.addCleanup(lambda: [setattr(module, name, value) for module, name, value in saved])
         ac.cmds = capture.cmds = keys.cmds = self.cmds
+        ac.curvecapture.stack = lambda: [(None, curvedata.layer_record(curvedata.BASE, base=True))]
+        ac._character_curves = lambda *args: (None, "")
         self.timewalk = FakeTimewalk(self.cmds)
         ac.timewalk = self.timewalk
         ac._highlight = lambda: None
@@ -1664,6 +1670,27 @@ class OneCopy(unittest.TestCase):
                          ["filename", "frame", "framePadding"])
         self.assertEqual([type(word.value).__name__ for word in blast.keywords
                           if word.arg is None], ["Name"])          # ** the options
+
+
+class Summarize(unittest.TestCase):
+
+    KEYED = {"keys": [[0.0, 1.0]], "weighted": False, "breakdown": []}
+
+    def test_a_card_with_curves_gets_the_block_of_the_layers_used(self):
+        from maya_poselib import curvedata
+        layers = [(None, curvedata.layer_record(curvedata.BASE, base=True)),
+                  ("A", curvedata.layer_record("A")), ("B", curvedata.layer_record("B"))]
+        header = {"objects": [{"attrs": {"tx": dict(self.KEYED, layers={"B": self.KEYED})},
+                               "shape": {}}]}
+        curves = {"version": 1, "nodes": [{"name": "c", "attrs": {"rx": {curvedata.BASE: self.KEYED}}}]}
+        ac._summarize(header, layers, curves)
+        self.assertEqual([r["name"] for r in header["curves"]["layers"]], [curvedata.BASE, "B"])
+        self.assertEqual(header["curves"]["nodes"], 2)
+
+    def test_no_curves_and_no_layered_object_leave_the_header_alone(self):
+        header = {"objects": [{"attrs": {"tx": self.KEYED}, "shape": {}}]}
+        ac._summarize(header, [], None)
+        self.assertNotIn("curves", header)
 
 
 if __name__ == "__main__":
