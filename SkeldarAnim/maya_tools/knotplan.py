@@ -29,6 +29,7 @@ INNER_MARKER = "skeldarKnotInner"               # a double knot's inner node: it
 REGISTRY_MARKER = "skeldarKnotRegistry"         # the objectSet holding every across knot
 GROUP_MARKER = "skeldarKnotGroup"               # the group knots live in
 SNAPSHOT_OF_MARKER = "skeldarSnapshotOf"        # a snapshot: its object's UUID (it rides nothing)
+HIDDEN_MARKER = "skeldarKnotHidden"             # ... the UUIDs of the shapes the knot hid
 ATTACH = "attach"                               # 0..1 on the top node: the object's own <-> the knot
 
 GROUP_IN_CHARACTER = "Knots"

@@ -162,6 +162,7 @@ def enter(limb, frames, tangents, highlight):
     if top is None:
         return "World: " + line
     top = make_controls(top, limb.ik)
+    knots.hide_source(top)      # the IK control's drawing: the world control stands in its place
     #  a whole take's still channel is a plain value, as the switch writes it: no keys at all
     keyed = bool(cmds.keyframe(nodes_of(top), query=True, keyframeCount=True))
     return entered_message(limb.ik, top, sorted(frames) if keyed else [])

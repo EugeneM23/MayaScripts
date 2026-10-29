@@ -196,6 +196,43 @@ def source_of(top):
     return _by_uuid(_get(top, plan.SOURCE_MARKER))
 
 
+def hide_source(top):
+    """The drawing of the object a knot drives hidden while the knot stands: the knot's own
+    control is what the animator grabs, and the two sit in one place (2026-10-29, Connections'
+    World: «старый контроллер должен прятаться»). Its SHAPES, never its transform - an IK
+    control carries the ikHandle and AS's align nodes under it (trap 15). What we hid is
+    recorded on the top, so `show_hidden` gives back exactly that and nothing else; a locked or
+    driven visibility is passed over. The shapes hidden."""
+    obj = source_of(top)
+    hidden = []
+    for shape in (cmds.listRelatives(obj, shapes=True, fullPath=True) or []) if obj else []:
+        plug = shape + ".visibility"
+        if not cmds.getAttr(plug):
+            continue
+        try:
+            cmds.setAttr(plug, False)
+        except RuntimeError:                    # locked, or driven by the rig
+            continue
+        hidden.append(_uuid(shape))
+    if hidden:
+        _set_string(top, plan.HIDDEN_MARKER, " ".join(hidden))
+    return hidden
+
+
+def show_hidden(top):
+    """What `hide_source` hid for this knot, shown again (every road that deletes a knot ends
+    here: Tools' Bake and Remove, `ikworld.drop`). A shape gone with its object is passed
+    over."""
+    for uuid in (_get(top, plan.HIDDEN_MARKER) or "").split():
+        shape = _by_uuid(uuid)
+        if not shape:
+            continue
+        try:
+            cmds.setAttr(shape + ".visibility", True)
+        except RuntimeError:
+            continue
+
+
 def constraints_of(obj):
     """Our constraints on `obj` (a knot drives it through each)."""
     return [con for con in cmds.listRelatives(obj, children=True, type="constraint",
@@ -1287,6 +1324,7 @@ def _delete_knot(top):
     _release_arms(top)
     _release_children(top)
     _drop_crosshair(top)
+    show_hidden(top)
     cmds.delete(top)
 
 

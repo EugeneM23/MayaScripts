@@ -114,6 +114,12 @@ def node(rig, leaf):
     return cmds.ls(maya_rigs.node(rig, leaf), long=True)[0]
 
 
+def drawn(control):
+    """Which of a control's own shapes are drawn (2026-10-29: in world its drawing hides)."""
+    return [sh for sh in cmds.listRelatives(control, shapes=True, fullPath=True) or []
+            if cmds.getAttr(sh + ".visibility")]
+
+
 def key(n, attr, t, v):
     cmds.setKeyframe(n, attribute=attr, time=t, value=v)
 
@@ -183,6 +189,11 @@ def case_a():
     knot_ok(top, KEYS, "A")
     gate("in world on IKArm_R_worldMove_ctrl, 3 keys (0..24)" in text,
          "the line says it: " + text)
+    ik_ctrl = node(rig, "IKArm_R")
+    gate(not drawn(ik_ctrl) and cmds.getAttr(ik_ctrl + ".visibility"),
+         "the IK control's drawing is hidden, its transform left alone (the ikHandle under it)")
+    gate(bool(drawn(node(plain_rig, "IKArm_R"))),
+         "the plain IK arm's control is drawn as ever")
     world = track(arm.deform, KEYS)
     cm, deg = diff(plain, world)
     gate(cm <= 1e-4 and deg <= 1e-3,
@@ -221,6 +232,7 @@ def case_a():
          "IK without World: the world control gone")
     gate(times([ik], ["translateX", "rotateX"]) == KEYS,
          "IKArm_R keyed on the world control's keys %s" % times([ik], ["translateX", "rotateX"]))
+    gate(len(drawn(ik)) == 1, "the IK control is drawn again (W back)")
     cm, deg = diff(world, track(arm.deform, KEYS))
     gate(cm <= KEPT_CM and deg <= KEPT_DEG and "back from world on 3 keys" in back,
          "back in Main's space, the arm kept: %.5f cm, %.4f deg" % (cm, deg))
@@ -240,6 +252,13 @@ def case_a():
     cm, deg = diff(world, track(arm.deform, KEYS))
     gate(cm <= KEPT_CM and deg <= KEPT_DEG, "FK keeps what the world control showed: "
                                             "%.5f cm, %.4f deg" % (cm, deg))
+    gate(len(drawn(ik_ctrl)) == 1, "FK from world: the IK control is drawn again")
+    #  Tools' own Bake is a road of its own to the knot's death (2026-10-29)
+    cx.switch_arm("R", "IK", rig=rig, highlight=False, world=True)
+    gate(not drawn(ik_ctrl), "in world again: hidden again")
+    print("    Tools Bake:", knots.bake([ikworld.limb_knot(arm)]))
+    gate(len(drawn(ik_ctrl)) == 1 and not ikworld.limb_knot(arm),
+         "Tools' Bake on the world control shows the IK control again")
 
 
 def case_b():

@@ -107,3 +107,27 @@ by its marker, never by shape or name.
 
 Not built: the Pose Library onto a limb in world (`rigsolve.knot_driver` takes a plain knot
 only, so the IK control reads «not posed»); a world pole.
+
+## Addendum, 2026-10-29: the old control hides
+
+The animator, after using it: «При переключении в world в вкладке connection старый контроллер
+должен прятаться». The world control stands exactly where the IK control's drawing is, so the two
+overlap and the old one is in the way of the new.
+
+**What hides: the IK control's SHAPES, not its transform.** An AdvancedSkeleton IK control carries
+`CustomOrientReverseIK<Limb>_*` under it, and under that the `ikHandle` and the IKFKAligned nodes
+(measured in `Manny_Rig.ma`); hiding the transform would take them along (trap 15). Hiding its
+shapes takes the drawing away and makes it unpickable in the viewport, while the outliner still
+holds it.
+
+**It is the knot's doing, not the World button's** (`knots.hide_source` / `show_hidden`,
+`knotplan.HIDDEN_MARKER`): `ikworld.enter` asks for the hide once the controls are made, and every
+road that deletes a knot ends in `knots._delete_knot`, which shows it again - the W back
+(`ikworld.leave` → `drop`), FK from world, **and Tools' own Bake and Remove**. A hide written in
+`ikworld` alone would leave the control hidden after a Tools press.
+
+**Only what we hid comes back.** The shapes hidden are recorded on the top by UUID: a shape the
+animator had already hidden is not touched and is still hidden afterwards, and a locked or driven
+visibility is passed over in silence (as `connections._set_visible` does for a proxy's rider).
+
+The line does not say it - the eye sees it, and the status is three lines already.

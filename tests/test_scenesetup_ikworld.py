@@ -13,8 +13,10 @@ import unittest
 import maya_rigs
 from maya_scenesetup import connections as cx
 from maya_scenesetup import ikworld
+from maya_tools import knotplan
 from maya_tools import knots
 
+from tests.hidefakes import FakeHideCmds
 from tests.test_scenesetup_connections import FakeMenuCmds
 
 
@@ -351,6 +353,108 @@ class KeyedOnFrames(unittest.TestCase):
         knots._key_samples({("|k", "translateY"): [4.0, 4.0]}, [10.0, 15.0],
                            (9.0, 16.0, True), {})
         self.assertEqual([c[0] for c in self.calls], ["key", "key"])
+
+
+class Hidden(unittest.TestCase):
+    """The control the knot drives hides while the knot stands (2026-10-29: «При переключении
+    в world в вкладке connection старый контроллер должен прятаться»). Its drawing goes, as a
+    rider's does under Connections' proxy; what hangs under it is left alone (trap 15)."""
+
+    SHAPE = "|G|IKArm_R|IKArm_RShape"
+
+    def setUp(self):
+        self.real = knots.cmds
+        self.fake = FakeHideCmds()
+        knots.cmds = self.fake
+        self.fake.add("|G|IKArm_R", "ik-uuid", shapes=[self.SHAPE])
+        self.fake.add(self.SHAPE, "shape-uuid", attrs={"visibility": True})
+        self.top = self.fake.add("|K|IKArm_R_worldMove_ctrl", "top-uuid",
+                                 attrs={knotplan.SOURCE_MARKER: "ik-uuid"})
+
+    def tearDown(self):
+        knots.cmds = self.real
+
+    def test_the_knot_hides_the_drawing_of_the_control_it_drives(self):
+        knots.hide_source(self.top)
+        self.assertFalse(self.fake.visible(self.SHAPE))
+
+    def test_it_is_shown_again_when_the_knot_goes(self):
+        knots.hide_source(self.top)
+        knots.show_hidden(self.top)
+        self.assertTrue(self.fake.visible(self.SHAPE))
+
+    def test_a_shape_the_knot_did_not_hide_is_left_as_it_was(self):
+        self.fake.nodes[self.SHAPE]["attrs"]["visibility"] = False
+        knots.hide_source(self.top)
+        knots.show_hidden(self.top)
+        self.assertFalse(self.fake.visible(self.SHAPE))
+
+    def test_a_locked_visibility_is_passed_over(self):
+        self.fake.lock(self.SHAPE, "visibility")
+        knots.hide_source(self.top)
+        self.assertTrue(self.fake.visible(self.SHAPE))
+        knots.show_hidden(self.top)
+        self.assertTrue(self.fake.visible(self.SHAPE))
+
+    def test_what_hangs_under_the_control_is_not_touched(self):
+        #  an ikHandle and AS's align nodes live under an IK control: hiding the TRANSFORM
+        #  would take them along
+        knots.hide_source(self.top)
+        self.assertNotIn("visibility", self.fake.nodes["|G|IKArm_R"]["attrs"])
+
+    def test_every_road_that_deletes_a_knot_shows_it_again(self):
+        #  Tools' Bake and Remove and `ikworld.drop` all end in `_delete_knot`
+        shown = []
+        names = ("show_hidden", "_release_arms", "_release_children", "_drop_crosshair")
+        real = dict((name, getattr(knots, name)) for name in names)
+        knots.show_hidden = lambda top: shown.append(top)
+        for name in names[1:]:
+            setattr(knots, name, lambda top: None)
+        try:
+            knots._delete_knot(self.top)
+        finally:
+            for name, value in real.items():
+                setattr(knots, name, value)
+        self.assertEqual(shown, [self.top])
+        self.assertEqual(self.fake.deleted, [self.top])
+
+
+class EnterHides(unittest.TestCase):
+    """`enter` hides the IK control once its world control stands."""
+
+    def setUp(self):
+        self.hidden = []
+        self.real = dict((name, getattr(ikworld, name)) for name in
+                         ("cmds", "make_controls", "nodes_of"))
+        self.real_knots = (knots.create_keyed, knots.hide_source)
+        knots.create_keyed = lambda kind, obj, frames, tangents, highlight=None: (
+            "|K|IKArm_R_worldMove_ctrl", "made")
+        knots.hide_source = lambda top: self.hidden.append(top)
+        ikworld.make_controls = lambda top, ik: top
+        ikworld.nodes_of = lambda top: [top]
+
+        class Cmds(object):
+            def keyframe(self, nodes, **kwargs):
+                return 3
+        ikworld.cmds = Cmds()
+
+        class Arm(object):
+            side, ik, kind = "R", "|G|IKArm_R", "Arm"
+        self.arm = Arm()
+
+    def tearDown(self):
+        for name, value in self.real.items():
+            setattr(ikworld, name, value)
+        knots.create_keyed, knots.hide_source = self.real_knots
+
+    def test_the_ik_control_hides_with_the_world_control(self):
+        ikworld.enter(self.arm, [0.0, 12.0], {}, None)
+        self.assertEqual(self.hidden, ["|K|IKArm_R_worldMove_ctrl"])
+
+    def test_a_refused_knot_hides_nothing(self):
+        knots.create_keyed = lambda *a, **k: (None, "IKArm_R.rotateX is locked")
+        ikworld.enter(self.arm, [0.0], {}, None)
+        self.assertEqual(self.hidden, [])
 
 
 if __name__ == "__main__":
