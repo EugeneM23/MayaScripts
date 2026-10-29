@@ -299,3 +299,321 @@ def read_plan(path):
     """The plan file's payload."""
     with open(path, "r") as handle:
         return json.load(handle)
+
+
+# ------------------------------------------------------------ the composite
+
+def continuous(values):
+    """The series with whole turns added where a step exceeds 180. Pure.
+
+    Two spans can read their clips' euler curves a turn apart, and a wrap
+    inside one clip's curve crosses +-180 as well. At the density this module
+    writes - a key a frame - a step over 180 degrees is a wrap and not motion
+    (180 degrees in a 30th of a second is 5400 deg/s), which is the assumption
+    every bake in this plugin already makes (trap 108). The first value never
+    moves: the take must start where the montage starts.
+    """
+    out = []
+    shift = 0.0
+    previous = None
+    for value in values:
+        if previous is not None:
+            step = (value + shift) - previous
+            while step > 180.0:
+                shift -= 360.0
+                step -= 360.0
+            while step < -180.0:
+                shift += 360.0
+                step += 360.0
+        out.append(value + shift)
+        previous = out[-1]
+    return out
+
+
+def channel_plan(animated):
+    """Every (joint leaf, attribute) the slot's clips animate. Pure.
+
+    `animated` is {clip: {leaf: [attr, ...]}}. The UNION, because a slot can
+    run several clips and a channel only the second one animates is still part
+    of the composite - the first clip's static value fills the frames before
+    it. Sorted, so a rebuild writes the same curves in the same order.
+    """
+    found = set()
+    for clips in (animated or {}).values():
+        for leaf, attrs in (clips or {}).items():
+            for attr in attrs or []:
+                if attr not in SKIP_ATTRS:
+                    found.add((leaf, attr))
+    return sorted(found)
+
+
+# --------------------------------------------------------------- the scene
+
+def _maya():
+    """`maya.cmds`, imported here: the plan half above must stay stdlib."""
+    from maya import cmds
+    return cmds
+
+
+def _leaf(path):
+    return path.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+
+
+def _joint_map(cmds, namespace):
+    """{leaf: long path} of the joints a clip's import left in `namespace`."""
+    nodes = cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,
+                               recurse=True, dagPath=True) or []
+    out = {}
+    for node in nodes:
+        if cmds.objExists(node) and cmds.objectType(node) == "joint":
+            out.setdefault(_leaf(node), node)
+    return out
+
+
+def _curve_of(cmds, plug):
+    """The animCurve driving `plug`, or "" - through a unitConversion too
+    (Maya splices one wherever a unitless double meets an angle, trap 42)."""
+    curves = cmds.keyframe(plug, query=True, name=True) or []
+    if curves:
+        return curves[0]
+    found = cmds.listConnections(plug, source=True, destination=False,
+                                 type="animCurve") or []
+    return found[0] if found else ""
+
+
+def _animated_channels(cmds, joints):
+    """{leaf: [attr, ...]} - what a clip's own import actually keyed."""
+    out = {}
+    for leaf, node in joints.items():
+        pairs = cmds.listConnections(node, connections=True, plugs=True,
+                                     source=True, destination=False,
+                                     type="animCurve") or []
+        attrs = []
+        for plug in pairs[0::2]:
+            attr = plug.split(".", 1)[-1]
+            if attr not in attrs:
+                attrs.append(attr)
+        if attrs:
+            out[leaf] = attrs
+    return out
+
+
+def _evs(cmds, curve, times):
+    """{time: value} of a curve at many times, UI units - ONE query
+    (`keyframe -eval` takes every time at once, `layerbake._evs`'s idiom)."""
+    times = sorted(set(times))
+    if not times:
+        return {}
+    values = cmds.keyframe(curve, query=True, eval=True,
+                           time=[(t, t) for t in times]) or []
+    if len(values) != len(times):
+        raise RuntimeError("{0} answered {1} values for {2} times".format(
+            curve, len(values), len(times)))
+    return dict(zip(times, values))
+
+
+def _is_angle(cmds, plug):
+    """True for a plug the API keeps in radians (trap 224's other half)."""
+    try:
+        return cmds.getAttr(plug, type=True) == "doubleAngle"
+    except (RuntimeError, ValueError):
+        return False
+
+
+def _write_curve(plug, frames, values, angle):
+    """One fresh animCurve over `frames` - `MFnAnimCurve.addKeys`, which is
+    ~16x faster than a setKeyframe a key (trap 224). Times in UI units,
+    values in RADIANS for an angle plug. Auto tangents: a dense resample is
+    what a Maya bake leaves, and the animator edits it as one."""
+    import math as _math
+
+    from maya.api import OpenMaya as om
+    from maya.api import OpenMayaAnim as oma
+
+    selection = om.MSelectionList()
+    selection.add(plug)
+    curve = oma.MFnAnimCurve()
+    curve.create(selection.getPlug(0))
+    unit = om.MTime.uiUnit()
+    times = om.MTimeArray()
+    numbers = om.MDoubleArray()
+    for frame, value in zip(frames, values):
+        times.append(om.MTime(float(frame), unit))
+        numbers.append(_math.radians(value) if angle else value)
+    curve.addKeys(times, numbers, oma.MFnAnimCurve.kTangentAuto,
+                  oma.MFnAnimCurve.kTangentAuto)
+    return curve.name()
+
+
+def _drop_namespace(cmds, namespace):
+    """A scratch namespace and everything in it, locks and all (trap 164)."""
+    if not cmds.namespace(exists=namespace):
+        return
+    for node in cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,
+                                   recurse=True, dagPath=True) or []:
+        if cmds.objExists(node) and cmds.lockNode(node, query=True,
+                                                  lock=True)[0]:
+            cmds.lockNode(node, lock=False)
+    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+
+
+def compose(plan, sources, target, fps):
+    """Write the slot's composite onto the target namespace's skeleton.
+
+    `sources` is {clip package: namespace}, `target` the namespace whose
+    skeleton is keyed (the first clip's own import, so the skeleton is exactly
+    what a plain import of that clip gives). Returns what was written and what
+    could not be.
+    """
+    cmds = _maya()
+    rows = samples(plan, fps)
+    joints = dict((namespace, _joint_map(cmds, namespace))
+                  for namespace in set(sources.values()))
+    animated = dict((clip, _animated_channels(cmds, joints[namespace]))
+                    for clip, namespace in sources.items())
+    wanted = channel_plan(animated)
+    target_joints = joints[target]
+
+    times_by_clip = {}
+    for _frame, clip, time in rows:
+        times_by_clip.setdefault(clip, []).append(time)
+
+    # Every curve the first clip's import left on the target's joints goes:
+    # what the montage plays is this plan and nothing else.
+    stale = []
+    for node in target_joints.values():
+        stale.extend(cmds.listConnections(node, source=True, destination=False,
+                                          type="animCurve") or [])
+    if stale:
+        cmds.delete(list(set(stale)))
+
+    written = []
+    held = []
+    skipped = []
+    for leaf, attr in wanted:
+        node = target_joints.get(leaf)
+        if not node or not cmds.objExists("{0}.{1}".format(node, attr)):
+            skipped.append("{0}.{1}".format(leaf, attr))
+            continue
+        plug = "{0}.{1}".format(node, attr)
+        columns = {}
+        for clip, namespace in sources.items():
+            source_node = joints[namespace].get(leaf)
+            source_plug = ("{0}.{1}".format(source_node, attr)
+                           if source_node else "")
+            if not source_plug or not cmds.objExists(source_plug):
+                columns[clip] = None     # the clip has no such channel
+                continue
+            curve = _curve_of(cmds, source_plug)
+            if curve:
+                columns[clip] = _evs(cmds, curve, times_by_clip.get(clip) or [])
+            else:
+                #  the clip holds this channel still: its own value, which is
+                #  the pose it shows for every frame of its spans
+                columns[clip] = cmds.getAttr(source_plug)
+
+        frames = []
+        values = []
+        previous = None
+        missed = False
+        for frame, clip, time in rows:
+            column = columns.get(clip)
+            if column is None:
+                value = previous           # the clip has nothing to say here
+                missed = True
+            elif isinstance(column, dict):
+                value = column.get(time, previous)
+            else:
+                value = column
+            if value is None:
+                value = cmds.getAttr(plug)
+            frames.append(frame)
+            values.append(value)
+            previous = value
+        if missed:
+            held.append("{0}.{1}".format(leaf, attr))
+        if _is_angle(cmds, plug):
+            values = continuous(values)
+            _write_curve(plug, frames, values, True)
+        else:
+            _write_curve(plug, frames, values, False)
+        written.append(plug)
+
+    return {"written": written, "held": sorted(held),
+            "skipped": sorted(skipped), "frames": rows[-1][0] if rows else 0}
+
+
+def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
+    """The montage slot `ref` names into `namespace` as one keyed skeleton.
+
+    The shape `formats.import_clip` has - the info dict
+    `animimport.import_clip` returns - so `rigimport.import_source` gains one
+    branch and everything downstream (the retarget onto a rig or a skeleton,
+    Auto, the drag, the square, the clip label, Export FBX) is untouched.
+    """
+    cmds = _maya()
+    from maya_uebridge import animimport
+
+    path = plan_file_of(ref)
+    if not os.path.isfile(path):
+        raise RuntimeError("the montage plan is gone ({0}) - press Import "
+                           "again".format(path))
+    payload = read_plan(path)
+    plan = plan_of_payload(payload)
+    clips = payload.get("clips") or {}
+    if not plan.spans:
+        raise RuntimeError("{0}: the slot holds no animation".format(
+            payload.get("name") or "this montage"))
+    missing = [clip for clip in plan.clips
+               if not os.path.isfile(clips.get(clip) or "")]
+    if missing:
+        raise RuntimeError(
+            "{0}: the editor did not export {1}".format(
+                payload.get("name") or "this montage",
+                ", ".join(c.rsplit("/", 1)[-1] for c in missing)))
+
+    #  the FIRST span's clip into the target namespace: the composite's
+    #  skeleton is then exactly what a plain import of that clip gives -
+    #  hierarchy, orients, rotate orders, and its mesh when Auto asked
+    info = animimport.import_clip(clips[plan.clips[0]], namespace,
+                                  set_timeline=False, clip_fps=clip_fps,
+                                  merge=False)
+    sources = {plan.clips[0]: namespace}
+    scratch = []
+    for index, clip in enumerate(plan.clips[1:], 1):
+        other = "{0}_src{1}".format(namespace, index)
+        animimport.import_clip(clips[clip], other, set_timeline=False,
+                               clip_fps=clip_fps, merge=False)
+        sources[clip] = other
+        scratch.append(other)
+
+    fps = animimport.scene_fps() or 30.0
+    try:
+        done = compose(plan, sources, namespace, fps)
+    finally:
+        for other in scratch:
+            _drop_namespace(cmds, other)
+
+    frames = done["frames"]
+    if set_timeline:
+        cmds.playbackOptions(minTime=0, maxTime=frames,
+                             animationStartTime=0, animationEndTime=frames)
+
+    warnings = [info.get("warning") or "",
+                plan_line(plan, fps, frames=frames + 1)]
+    if done["held"]:
+        warnings.append("held where a clip had nothing: "
+                        + ", ".join(done["held"][:4]))
+    if done["skipped"]:
+        warnings.append("not on this skeleton: "
+                        + ", ".join(done["skipped"][:4]))
+    info.update({"start": 0, "end": frames,
+                 "curves": len(done["written"]),
+                 "warning": "  |  ".join([w for w in warnings if w]),
+                 "montage": {"name": plan.montage, "slot": plan.slot,
+                             "frames": frames + 1,
+                             "cuts": cuts(plan, fps),
+                             "clips": list(plan.clips),
+                             "held": done["held"],
+                             "skipped": done["skipped"]}})
+    return info

@@ -60,6 +60,7 @@ import maya.cmds as cmds
 from maya_scenetabs import scope
 
 from maya_uebridge import animimport
+from maya_uebridge import montage
 from maya_uebridge import records
 
 NO_RIG_FILE = "no rig file - {0} is missing from assets/"
@@ -359,10 +360,17 @@ def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
     FBX path goes to `animimport.import_clip` as it always did (the Unreal
     road), a take of an FBX, a Unity clip or another format (BVH, glTF,
     Collada, USD, a Maya scene, a Unity .anim) to `formats.import_clip`,
-    which leaves the scene in the same shape."""
+    which leaves the scene in the same shape. A montage slot (2026-10-29,
+    `montage:<plan file>`) to `montage.import_clip`, which composes the
+    slot's own clips into one take and leaves that same shape - so this is
+    the only place any road knows the montage road exists."""
     namespace = records.namespace_for(name, animimport.existing_namespaces())
     from maya_uebridge import sources
-    if sources.is_plain_fbx(fbx_path):
+    if montage.is_ref(fbx_path):
+        info = montage.import_clip(fbx_path, namespace,
+                                   set_timeline=set_timeline,
+                                   clip_fps=clip_fps)
+    elif sources.is_plain_fbx(fbx_path):
         #  an animator's own FBX (a Folder row) is read from a COPY: the
         #  plugin writes embedded media beside the file it reads; an Unreal
         #  export already lives in the bridge's temp folder and is read as is
