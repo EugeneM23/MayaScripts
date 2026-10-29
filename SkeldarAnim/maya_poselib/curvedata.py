@@ -25,6 +25,12 @@ WHOLE = "whole"                        # `scene._WHOLE`: a control that names th
 ROTATION = {0: "component", 1: "quaternion"}
 SCALE = {0: "additive", 1: "multiply"}
 
+SCALES = ("scaleX", "scaleY", "scaleZ")
+#  Tools > 1P Setup's layers (`maya_tools.firstperson.LOWER` / `UPPER`, spelled here; a second
+#  rig's get Maya's digit)
+FIRST_PERSON = ("_3P_Lower_Body", "_3P_Upper_Body")
+EPS = 1e-6
+
 BROKEN = "%s: not a card's curves"
 
 
@@ -83,10 +89,13 @@ def check(data, names, where="curves"):
     return data
 
 
-def summary(records, count):
-    """The header's `curves` block: the layer `records` bottom to top (the base first) and how
-    many nodes keep curves."""
-    return {"layers": [dict(record) for record in records], "nodes": int(count)}
+def summary(records, count, first_person=False):
+    """The header's `curves` block: the layer `records` bottom to top (the base first), how many
+    nodes keep curves and, saved off a rig in 1P, `first_person` (`saved_in_first_person`)."""
+    block = {"layers": [dict(record) for record in records], "nodes": int(count)}
+    if first_person:
+        block["first_person"] = True
+    return block
 
 
 def records(header):
@@ -181,6 +190,91 @@ def per_layer(curve):
     if isinstance(curve, dict) and isinstance(curve.get("layers"), dict):
         return dict(curve["layers"])
     return {BASE: curve}
+
+
+def saved_in_first_person(header):
+    """Was the card saved off a rig in 1P (Tools > 1P Setup)? Its `curves` block says so (since
+    2026-10-29), or - a card saved before - its layers are the 1P Setup's. Its curves are that
+    rig's split (the take on `FIRST_PERSON`'s layers, the chest on a knot no card keeps): pasted
+    raw onto a 3P rig they twisted the upper body 180 deg, so a paste retargets it."""
+    block = (header or {}).get("curves")
+    if isinstance(block, dict) and block.get("first_person"):
+        return True
+    return any(name.startswith(FIRST_PERSON) for name in layer_names(header))
+
+
+def takes_curves(header):
+    """Can a paste of «Original curves» take the card's curves - it holds them, and was not saved
+    off a rig in 1P (`saved_in_first_person`: such a card retargets, and the window does not offer
+    it the choice)?"""
+    return has_curves(header) and not saved_in_first_person(header)
+
+
+def identity(attr, scale="multiply"):
+    """The value an additive layer adds nothing with on `attr`: 1 for a scale channel of a layer
+    accumulating scale by multiply, else 0."""
+    return 1.0 if attr in SCALES and scale == "multiply" else 0.0
+
+
+#  tangent types whose angle Maya computes from the NEIGHBOURING keys - a target key beside the
+#  pasted range changes them; the rest keep their shape whatever stands beside them
+_STABLE = ("linear", "flat", "step", "stepnext", "fixed")
+
+
+def _held_shape(key):
+    """A card key beside a key of the target's: its neighbour-computed tangents turned fixed at
+    the angles the source showed (a stored key carries them, `[..., in angle, in weight, out
+    angle, out weight]`) - an auto key next to a target key bent the range's first segment 2 deg
+    (measured 2026-10-29). A key saved without angles keeps its types."""
+    if len(key) < 8:
+        return
+    for index in (2, 3):
+        if key[index] not in _STABLE:
+            key[index] = "fixed"
+
+
+def pinned(stored, a, b, before=True, after=True):
+    """`stored` keys (target time, `[t, v, in type, out type, ...]`) held at the paste range's
+    ends where the target keeps a key outside them (`before` / `after`), which would otherwise
+    bend the range: the end key's tangents held as the source showed them (`_held_shape`); a
+    curve that starts after `a` a key there holding its first value (out tangent "step": exact up
+    to the first key), one that ends before `b` a key there holding its last value, the last
+    key's out tangent "step". A curve's tangent past its ends shaped nothing in the source
+    (constant infinity), so the range shows what the card did. Copies; pure."""
+    out = [list(key) for key in stored]
+    if not out:
+        return out
+    if before:
+        _held_shape(out[0])
+        if out[0][0] > a + EPS:
+            out.insert(0, [float(a), out[0][1], "flat", "step"])
+    if after:
+        _held_shape(out[-1])
+        if out[-1][0] < b - EPS:
+            last = out[-1]
+            last.extend([None] * (4 - len(last)))
+            last[3] = "step"
+            out.append([float(b), last[1], "flat", "flat"])
+    return out
+
+
+def bounded(stored, a, b, value, before=True, after=True):
+    """`stored` - a layer curve the paste MAKES - adding `value` (`identity`: nothing) outside
+    the paste range where the target animates the channel there: held at both ends (`pinned`),
+    then a stepped key a frame before `a` when `before`, one a frame after `b` (the end key
+    stepped) when `after`. Without them the card's last offset held over the rest of the take
+    (2026-10-29: frame 90 of a take pasted at 40-75 moved 32 deg). Copies; pure."""
+    out = pinned(stored, a, b, before, after)
+    if not out:
+        return out
+    if before:
+        out.insert(0, [float(a) - 1.0, value, "flat", "step"])
+    if after:
+        last = out[-1]
+        last.extend([None] * (4 - len(last)))
+        last[3] = "step"
+        out.append([float(b) + 1.0, value, "flat", "flat"])
+    return out
 
 
 def connect_ok(names):

@@ -325,6 +325,72 @@ class Writable(Restoring):
         self.assertEqual(keys.writable("gone.tx"), (False, "missing"))
 
 
+class BlendCmds(object):
+    """`cmds` over a layered plug: {destination plug: source plug}, node types, the layer each
+    blend node's message goes to, plain values."""
+
+    def __init__(self, links, types, owners, values, root="BaseAnimation"):
+        self.links, self.types, self.owners = links, types, owners
+        self.values, self.root = values, root
+
+    def listConnections(self, plug, source=False, destination=False, plugs=False,
+                        skipConversionNodes=False, type=None):
+        if plug.endswith(".message"):
+            owner = self.owners.get(plug.split(".")[0])
+            return [owner] if owner else []
+        found = self.links.get(plug)
+        return [found] if found else []
+
+    def nodeType(self, node):
+        return self.types[node]
+
+    def getAttr(self, plug):
+        return self.values[plug]
+
+    def animLayer(self, query=False, root=False):
+        return self.root
+
+
+class LayerStatic(Restoring):
+    """2026-10-29: Add Selected Objects leaves a layer holding unkeyed channels at a static value
+    - an override layer's hides the base. `layer_static` reads it, and the base's under the
+    layers."""
+
+    def scene(self):
+        # c.rx <- Over (static inputBX 33) <- Add (keyed inputBX) <- base static inputAX 5
+        return BlendCmds(
+            links={"c.rx": "c_rotate_Over.outputX",
+                   "c_rotate_Over.inputAX": "c_rotate_Add.outputX",
+                   "c_rotate_Add.inputBX": "c_rotateX_Add.output"},
+            types={"c_rotate_Over": "animBlendNodeAdditiveRotation",
+                   "c_rotate_Add": "animBlendNodeAdditiveRotation",
+                   "c_rotateX_Add": "animCurveTA"},
+            owners={"c_rotate_Over": "Over", "c_rotate_Add": "Add"},
+            values={"c_rotate_Over.inputBX": 33.0, "c_rotate_Add.inputAX": 5.0})
+
+    def test_a_layer_without_a_curve_answers_its_input(self):
+        keys.cmds = self.scene()
+        self.assertEqual(keys.layer_static("c.rx", "Over"), 33.0)
+
+    def test_a_layer_with_a_curve_answers_none(self):
+        keys.cmds = self.scene()
+        self.assertIsNone(keys.layer_static("c.rx", "Add"))
+
+    def test_the_base_answers_the_lowest_input(self):
+        keys.cmds = self.scene()
+        self.assertEqual(keys.layer_static("c.rx", "BaseAnimation"), 5.0)
+
+    def test_a_layer_not_holding_the_plug_answers_none(self):
+        keys.cmds = self.scene()
+        self.assertIsNone(keys.layer_static("c.rx", "Elsewhere"))
+
+    def test_a_free_plug_is_its_value_without_layers_and_a_keyed_one_none(self):
+        keys.cmds = BlendCmds({"c.ry": "c_rotateY.output"}, {"c_rotateY": "animCurveTA"}, {},
+                              {"c.rx": 7.0}, root=None)
+        self.assertEqual(keys.layer_static("c.rx", None), 7.0)
+        self.assertIsNone(keys.layer_static("c.ry", None))
+
+
 class InputOf(Restoring):
     """What feeds a plug - a Blend cancelled after the time moved sets back the FREE channels
     only and evaluates the rest at the frame shown."""

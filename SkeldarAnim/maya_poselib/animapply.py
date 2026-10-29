@@ -1292,7 +1292,17 @@ def _card_matched(header, loose, refs, only=False):
 def _pastes_curves(header, options):
     """Does this press paste the card's ORIGINAL curves: Paste as «Original curves» on a card that
     holds them (spec 2026-10-28)? An older card ignores the option."""
-    return _options(options).paste_as == "curves" and curvedata.has_curves(header)
+    return _options(options).paste_as == "curves" and curvedata.takes_curves(header)
+
+
+def _from_first_person(header, options, line):
+    """`line` - said that Original curves were asked of a card saved off a rig in 1P, which a
+    paste retargets (`curvedata.saved_in_first_person`)."""
+    from maya_poselib import curveapply
+    if _options(options).paste_as == "curves" and curvedata.has_curves(header) \
+            and curvedata.saved_in_first_person(header):
+        return line + " | " + curveapply.FROM_1P
+    return line
 
 
 def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options=None,
@@ -1300,8 +1310,10 @@ def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options
     """The press under Paste as «Original curves»: the targets of the card's own model take its
     curves layer by layer, its objects with them (`curveapply.paste`, one chunk); every other
     target - and every one when the curves cannot be read - is pasted by the bones
-    (`_press_refs`, its own chunk: a mixed press is two undo steps) and the line says so. Mirror
-    and Blend change values: refused."""
+    (`_press_refs`, its own chunk: a mixed press is two undo steps) and the line says so. So is
+    a rig in 1P (2026-10-29: its take is split over the 1P layers and the chest knot, raw curves
+    landed 110-120 deg off; the bones' road knows 1P) - a card saved off one never gets here
+    (`_pastes_curves`). Mirror and Blend change values: refused."""
     from maya_poselib import curveapply
     options = _options(options)
     if mirror:
@@ -1319,6 +1331,11 @@ def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options
         same = []
     else:
         same = [ref for ref in refs if curveapply.matches(header, ref)]
+        first = [ref for ref in same if helpers.first_person(ref)]
+        if first:
+            notes.append(curveapply.IN_1P % ", ".join(ap.target_label(r) for r in first))
+            same = [ref for ref in same if ref not in first]
+    foreign = [ref for ref in refs if not curveapply.matches(header, ref)]
     other = [ref for ref in refs if ref not in same]
     groups = []
     for ref in same:
@@ -1348,8 +1365,8 @@ def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options
                                () if matched else loose)
         oks.append(ok)
         lines.append(line)
-        if curves is not None:
-            notes.append(curveapply.RETARGETED % ", ".join(ap.target_label(r) for r in other))
+        if curves is not None and foreign:
+            notes.append(curveapply.RETARGETED % ", ".join(ap.target_label(r) for r in foreign))
     return any(oks), " | ".join(lines + notes)
 
 
@@ -1390,9 +1407,12 @@ def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
         return _press_curves(header, frames, refs, curves, mirror, alpha, options, progress,
                              ap.selected_nodes(selection) if only else None, loose)
     if only:
-        return _press_refs(header, frames, refs, mirror, alpha, options, progress,
-                           only=ap.selected_nodes(selection), loose=loose)
-    return _press_refs(header, frames, refs, mirror, alpha, options, progress, loose=loose)
+        ok, line = _press_refs(header, frames, refs, mirror, alpha, options, progress,
+                               only=ap.selected_nodes(selection), loose=loose)
+    else:
+        ok, line = _press_refs(header, frames, refs, mirror, alpha, options, progress,
+                               loose=loose)
+    return ok, _from_first_person(header, options, line)
 
 
 def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, progress=None,
@@ -1410,7 +1430,8 @@ def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, prog
         return False, ap.NOT_FOUND % (root or "nothing")
     if _pastes_curves(header, options):
         return _press_curves(header, frames, [ref], curves, mirror, alpha, options, progress)
-    return _press_refs(header, frames, [ref], mirror, alpha, options, progress)
+    ok, line = _press_refs(header, frames, [ref], mirror, alpha, options, progress)
+    return ok, _from_first_person(header, options, line)
 
 
 def drop_floor(header, frames, point, mirror=False, options=None, progress=None,

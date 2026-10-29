@@ -9329,8 +9329,7 @@ section above; a paste that is not «Original curves» is exactly what it was.**
   `(shown before − shown now)` over the layer's weight (weight 0 and a quaternion layer's rotate
   channels: no Connect, said; a MUTED target layer too - it cannot change what the channel shows, so
   the offset would be meaningless: `curveapply.CONNECT_MUTED`). Two or more layers ticked: greyed.
-- **Known limits**: a channel keyed only in a layer records no base static, so the offset lands on
-  the target's own base value; same-leaf layers in two scene tabs collide (the card keeps one name);
+- **Known limits**: same-leaf layers in two scene tabs collide (the card keeps one name);
   a nested stack is pasted flat; a layer's keyed weight is not kept (its value at the save is); a
   channel a constraint, expression or driven key feeds holds no curve and is named in the save's
   line; curves and layers for POSE cards, mirroring and other rig models are not built.
@@ -9347,11 +9346,76 @@ with no layers, with an other-mode layer, with one layer ticked, Replace / Inser
 time and Range, the take's keyed control curves compared key for key on every layer; a Creep retargeted with the note; layers made and undone by
 one Ctrl+Z; an objects card per layer, gated as made and keyed - not key for key; the 0..30 whole save 1.46 s); `verify_poselib_anim.py`
 **113/113**; **12005 unit tests**, one failure that is not ours (`test_chat_deploy`, a real token in
-this machine's environment). `verify_poselib_objects.py` is **2/6 on main b4a91cd already**
-(`SceneSetup_camera` is locked on translateX), not caused by this work. Not exercised: a GUI Maya
+this machine's environment). `verify_poselib_objects.py` was 2/6 on main b4a91cd (a stale verify:
+the camera travels as camera bones keyed on Camera_ctrl since 2026-10-20) - fixed 2026-10-29, 25/25. Not exercised: a GUI Maya
 (the window only offscreen Qt); scene tabs on (the made layer's adoption one idle later is the Tools'
 road, not run here: the tabs hook re-parents a made layer one idle later, outside the paste's undo
 chunk, so with tabs on one Ctrl+Z may not take a made layer back).
+
+**…and what such a paste lands, measured on the bones (2026-10-29).** The animator: «1 - ...удалить
+персонажа потом создать нового ... не видно слоев ... 2 - Анимация со слоями не переносится корректно
+на 1P риг если она была записана на 3P. 3 - ... если добавить объекты на слой анимационный то потом при
+мердже контроллеры рига может выкручивать куда-то». Every claim below is judged on what the target's
+skeleton SHOWS against the card's frames, relative to the root, within 0.01 deg / 0.01 cm on every
+frame (`verify_poselib_curves_layers.py`). Six causes, each measured before the fix:
+- **Characters > Delete in a scene tab** took the tab's `AnimLayerRoot` with its last character's
+  layers (it has a parent - the session's root - so `emptied_roots`' keep never saw it;
+  `doomed_layers(..., keep)` now does), and Maya's `namespace -removeNamespace` leaves the ROOT
+  namespace current: the next Add Character landed outside the tab, where `maya_rigs.rigs()` and the
+  library do not see it («the selection holds no character»). `_remove_namespace` puts the current
+  namespace back (the active tab's when it was inside the removed one).
+- **A rig in 1P takes no raw curves** (`helpers.first_person`: a chest knot marked with its
+  namespace): its take is split over `_3P_Lower_Body` / `_3P_Upper_Body` (Upper muted) and the chest
+  rides a knot, so raw curves stood the upper body 110-120 deg off. It is retargeted with the line
+  `curveapply.IN_1P` - the bones' road knows 1P (0.0005 deg). **A card saved off a rig in 1P takes no
+  curves anywhere** (180 deg on a 3P rig): its header block says `first_person` (`_summarize`;
+  an older card is known by its `_3P_` layers, `curvedata.saved_in_first_person`), `takes_curves` is
+  False, the window hides Paste as for it, Mirror / Blend / a floor drop behave as Retarget, and a
+  press asked for curves says `FROM_1P`.
+- **A layer holding a channel without a curve** (Add Selected Objects) holds it at a STATIC value -
+  0 on an additive layer, the value at the add on an override one, which hides the base under it.
+  The card kept nothing for it: an override layer's frozen arm twisted 73 deg. `keys.layer_static`
+  reads the blend node's own input (`inputB`, `inputBX`.. - measured: each rotate channel its own
+  leaf connection) and the base's lowest `inputA`; `curvecapture.channel_curves` keeps it per layer as
+  `{"static": v}`, the base's under keyed layers too (the old limit «a channel keyed only in a layer
+  records no base static» is gone).
+- **The target's own layers kept adding to the card's channels** (70 deg on the elbow with the
+  animator's keys on a namesake layer). `curveapply._others`: a namesake the paste writes, on the
+  card channels its card layer did not hold; and, when the base is pasted, every other unmuted
+  layer holding a card channel. Replace / Replace all / Insert clear them over the range (the mode's
+  ops, then identity keys at a and b - `curvedata.identity`: 1 for scale under Multiply; a static
+  off identity kept outside by stepped keys a frame either side), said `CLEARED`. **Merge keeps
+  them** and says `MERGE_KEPT` (Merge cuts nothing); an override layer cannot add nothing by a key:
+  `OVERRIDES`. With the base unticked the animator's other layers are never touched.
+- **The range bent toward the target's keys outside it**: a card curve shorter than the range, or an
+  auto tangent beside a target key (2 deg at the first segment), or a layer curve the paste MADE
+  holding its last offset over the rest of the take (frame 90 of a take pasted at 40-75 moved 32
+  deg). `curvedata.pinned` holds the ends (a stepped hold key, neighbour-computed end tangents
+  turned `fixed` at the stored angles - only where the target keeps a key outside); a made curve
+  on an additive layer where the channel moves outside the range is `bounded` (identity a frame
+  either side). Connect moves only the keys inside the range.
+- **The current frame kept its old pose** after the paste until the time moved (an Insert: the hand
+  77 deg off): `curveapply._refresh` dirties every curve and blend node feeding the pasted and
+  cleared channels.
+
+Proof: `verify_poselib_curves_layers.py` **51/51** (delete, scene tabs, 1P both ways, statics on
+override and additive layers, the target's layers under every mode, pins into a 100-frame take,
+undo, a prop and the arm in a layer pasted with Merge); `verify_poselib_curves.py` 45/45,
+`verify_poselib_objects.py` 25/25, `verify_poselib_anim.py` 113/113, `verify_delete_layers.py`
+14/14, `verify_delete_character.py` 137/137, `verify_scene_tabs.py all` 284/284,
+`verify_poselib_apply.py` 117/117, `verify_poselib_selected_only.py` 13/13. Not exercised: a GUI Maya
+(the animator's live pass).
+
+**The library's unit coverage** (the same day, «покроем весь функционал нашей библиотеки поз
+тестированием»): `tests/test_poselib_<module>_cover.py`, 623 tests over 14 modules, measured with
+stdlib `trace` around the unit suite (there is no `coverage` in mayapy): functions never run 140 -> 18.
+store, look, posemath, timewalk, objects, helpers, scene, capture, skelsolve, animdata, lower, upper
+run every line; apply 99 %; the curves modules' own seams in their test files. Left to the mayapy
+verifies: rigsolve's IK solver (`verify_poselib_solve.py`), the curves press itself
+(`verify_poselib_curves*.py`), and the window's Qt classes. The poselib suite is 2166 tests, ~29 s.
+The repository's 13025 run with 6 failures that origin/main has without this work
+(`test_scenetabs_leak`, `test_timebar_lanes_sync` - tests landed ahead of their code - and
+`test_chat_deploy`, a real token in this machine's environment).
 
 ## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10) - the Tail Builder card
 

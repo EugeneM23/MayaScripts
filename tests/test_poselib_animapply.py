@@ -1703,6 +1703,51 @@ class AnimBlend(Base):
         self.assertEqual(data["objects"][0]["attrs"], {"translateX": 5.0, "visibility": 1.0})
 
 
+class ObjectsPairs(unittest.TestCase):
+    """An objects card's objects paired with the selection, or found by name: a character's parts
+    left out and said, the selected left idle named."""
+
+    def seams(self, picked, characters=(), found=None):
+        found = found or {}
+        for name, value in (
+                ("_selected", lambda selection: list(picked)),
+                ("_not_characters", lambda paths: ([p for p in paths if p not in characters],
+                                                   "Manny_Rig1 " if any(
+                                                       p in characters for p in paths) else "")),
+                ("_find_object", lambda record: found.get(record["name"])),
+                ("pair_objects", lambda objects, selected, found_: (
+                    [(o, p) for o, p in zip(objects, selected or [found_.get(i) for i in
+                                                                   range(len(objects))]) if p],
+                    "order" if selected else "name"))):
+            self.addCleanup(setattr, aa.ap, name, getattr(aa.ap, name))
+            setattr(aa.ap, name, value)
+
+    def test_no_objects_on_the_card(self):
+        self.assertEqual(aa._objects_pairs({"objects": []}, None), ([], [], aa.ap.NO_OBJECTS))
+
+    def test_only_a_characters_parts_selected_is_refused(self):
+        self.seams(["|rig|hand"], characters=["|rig|hand"])
+        matched, notes, refusal = aa._objects_pairs({"objects": [{"name": "prop"}]}, None)
+        self.assertEqual(refusal, "Manny_Rig1 " + aa.ap.ONTO_OBJECTS)
+
+    def test_found_by_name_with_nothing_selected(self):
+        self.seams([], found={"prop": "|prop"})
+        matched, notes, refusal = aa._objects_pairs({"objects": [{"name": "prop"}]}, None)
+        self.assertEqual((matched, notes, refusal), ([({"name": "prop"}, "|prop")], [], ""))
+
+    def test_none_found_says_so(self):
+        self.seams([])
+        self.assertEqual(aa._objects_pairs({"objects": [{"name": "prop"}]}, None)[2],
+                         aa.ap.OBJECTS_MISSING % (1, ""))
+
+    def test_by_selection_order_a_part_left_out_and_an_idle_one_named(self):
+        self.seams(["|rig|hand", "|a", "|b"], characters=["|rig|hand"])
+        matched, notes, refusal = aa._objects_pairs({"objects": [{"name": "prop"}]}, None)
+        self.assertEqual((matched, refusal), ([({"name": "prop"}, "|a")], ""))
+        self.assertEqual(notes[:2], ["Manny_Rig1 " + aa.ap.LEFT_OUT, aa.ap.BY_ORDER])
+        self.assertIn("b", notes[2])
+
+
 class CurvesDispatch(unittest.TestCase):
     """`apply` under Paste as «Original curves»: the card's own model takes its curves, any other
     target the bones (`_press_refs`), the line says so; Mirror and Blend refused."""
@@ -1804,6 +1849,28 @@ class CurvesDispatch(unittest.TestCase):
     def test_retarget_is_todays_press(self):
         aa.apply(self.header, {}, selection=["x"], options={"paste_as": "retarget"})
         self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
+
+    def test_a_rig_in_1p_is_retargeted_and_said(self):
+        # 2026-10-29: raw curves onto a rig in 1P stood the upper body 110-120 deg off
+        self.addCleanup(setattr, aa.helpers, "first_person", aa.helpers.first_person)
+        aa.helpers.first_person = lambda ref: ref.label == "Manny_Rig1"
+        ok, line = aa.apply(self.header, {}, selection=["x"],
+                            options={"paste_as": "curves"}, curves={"nodes": []})
+        self.assertTrue(ok)
+        self.assertEqual(self.log, [("refs", ["Manny_Rig1", "Creep_Rig1"], "retarget")])
+        self.assertIn(self.ca.IN_1P % "Manny_Rig1", line)
+        self.assertIn(self.ca.RETARGETED % "Creep_Rig1", line)
+
+    def test_a_card_saved_off_a_rig_in_1p_retargets_mirror_and_all(self):
+        from maya_poselib import curvedata
+        header = dict(self.header, curves=curvedata.summary(
+            [curvedata.layer_record(curvedata.BASE, base=True)], 1, first_person=True))
+        ok, line = aa.apply(header, {}, selection=["x"], mirror=True,
+                            options={"paste_as": "curves"}, curves={"nodes": []})
+        self.assertTrue(ok)
+        self.assertEqual([entry[1] for entry in self.log], [["Manny_Rig1", "Creep_Rig1"]])
+        self.assertTrue(line.endswith(self.ca.FROM_1P))
+        self.assertEqual(aa._from_first_person(header, {"paste_as": "retarget"}, "x"), "x")
 
 
 if __name__ == "__main__":

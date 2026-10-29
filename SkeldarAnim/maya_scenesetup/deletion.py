@@ -118,16 +118,18 @@ def doomed_components(core, frontier, provenance, neighbours, is_dag, is_hub):
     return doomed
 
 
-def doomed_layers(layers, going):
+def doomed_layers(layers, going, keep=()):
     """The animation layers to delete with the character. Pure.
 
     `layers`: {name: (parent or None, set of the nodes it holds - its members' nodes and its blend
     nodes, [child layer names])}; `going`: the nodes the delete takes. A layer goes when it held
     something that goes, or a child layer of it goes, and it holds nothing that stays and every
-    child of it goes too. A layer that never held the character (an empty one of the animator's) and
-    a root layer (no parent) stay. 2026-10-16: «удалять и слои в которых находился персонаж (только
-    если там нет объектов которые не относятся к удаляемому)».
+    child of it goes too. A layer that never held the character (an empty one of the animator's), a
+    root layer (no parent) and a `keep` one stay - Scene Tabs' tab root has a parent (the session's
+    root), and went with its tab's last character until 2026-10-29. 2026-10-16: «удалять и слои в
+    которых находился персонаж (только если там нет объектов которые не относятся к удаляемому)».
     """
+    keep = set(keep or ())
     verdict = {}
 
     def goes(name):
@@ -136,7 +138,7 @@ def doomed_layers(layers, going):
         verdict[name] = False                                 # a cycle never deletes
         parent, nodes, children = layers[name]
         kids = [goes(child) for child in children if child in layers]
-        verdict[name] = bool(parent) and nodes <= going and all(kids) and (
+        verdict[name] = bool(parent) and name not in keep and nodes <= going and all(kids) and (
             bool(nodes & going) or any(kids))
         return verdict[name]
 
@@ -807,9 +809,10 @@ def _anim_layers(going):
                             uuid=True) or [])
         parent = cmds.animLayer(name, query=True, parent=True) or None
         layers[name] = (parent, held, list(cmds.animLayer(name, query=True, children=True) or []))
-    doomed = doomed_layers(layers, going)
     kept = _layer_roots_kept()
-    doomed += emptied_roots(layers, doomed, keep=[n for n in layers if kept(n)])
+    keep = [n for n in layers if kept(n)]
+    doomed = doomed_layers(layers, going, keep)
+    doomed += emptied_roots(layers, doomed, keep=keep)
     return [uuid_of[name] for name in doomed if uuid_of.get(name)]
 
 
@@ -1023,8 +1026,21 @@ def _remove_namespace(namespace, notes):
     if not cmds.namespace(exists=":" + namespace):
         return
     current = (cmds.namespaceInfo(currentNamespace=True, absoluteName=True) or ":").lstrip(":")
-    if current == namespace or current.startswith(namespace + ":"):
+    inside = current == namespace or current.startswith(namespace + ":")
+    if inside:
         scope.enter_active(cmds)
+    try:
+        _remove_namespaces(namespace, notes)
+    finally:
+        # Maya leaves the root current after a remove (measured 2026-10-29): a tab's next Add
+        # Character landed outside the tab, where no tool of the tab finds it
+        if not inside and current and cmds.namespace(exists=":" + current):
+            cmds.namespace(setNamespace=":" + current)
+        else:
+            scope.enter_active(cmds)
+
+
+def _remove_namespaces(namespace, notes):
     nested = cmds.namespaceInfo(":" + namespace, listOnlyNamespaces=True, recurse=True) or []
     for child in sorted(nested, key=lambda ns: -ns.count(":")) + [":" + namespace]:
         name = child if child.startswith(":") else ":" + child

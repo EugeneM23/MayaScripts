@@ -553,6 +553,55 @@ def curve_for(plug, layer):
     return _own_curve(plug)
 
 
+def _source_plug(plug):
+    """The plug feeding `plug` (conversions looked through), or None."""
+    try:
+        found = cmds.listConnections(plug, source=True, destination=False, plugs=True,
+                                     skipConversionNodes=True) or []
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return found[0] if found else None
+
+
+def _number_at(plug):
+    try:
+        value = cmds.getAttr(plug)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    if isinstance(value, (bool, int, float)):
+        return float(value)
+    return None
+
+
+def layer_static(plug, layer):
+    """The value `layer` gives `plug` with NO curve of its own there, or None - it has a curve
+    there, does not hold the plug, or something else feeds it. A layer: its blend node's own input
+    (`inputB`, `inputBX`.. on a rotation blend - measured, each channel its own leaf) that nothing
+    feeds - what Add Selected Objects leaves on an unkeyed channel: 0 on an additive layer, the
+    channel's value at the add on an override one, which hides the base under it (2026-10-29: a
+    card that dropped it twisted an arm 73 deg). The base (`layer` its name, or None without
+    layers): the lowest `inputA` under the layers' blend nodes, the plug itself when nothing
+    feeds it."""
+    name, base = _layer_parts(layer)
+    target = plug
+    for _ in range(64):
+        source = _source_plug(target)
+        if source is None:
+            return _number_at(target) if (base or name is None) else None
+        node, attr = source.split(".", 1)
+        if not cmds.nodeType(node).startswith("animBlendNode"):
+            return None
+        suffix = attr[len("output"):] if attr.startswith("output") else ""
+        if name is not None and not base:
+            owners = cmds.listConnections(node + ".message", source=False, destination=True,
+                                          type="animLayer") or []
+            if name in owners:
+                own = "%s.inputB%s" % (node, suffix)
+                return _number_at(own) if _source_plug(own) is None else None
+        target = "%s.inputA%s" % (node, suffix)
+    return None
+
+
 def _curves(plugs, layer):
     """[curve]: each plug's `curve_for` curve, each curve ONCE - two spellings of one plug must
     not be cut twice, nor moved twice (a key shifted twice lands twice as late); plugs with no

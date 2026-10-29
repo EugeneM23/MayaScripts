@@ -222,3 +222,36 @@ The end-to-end verify (`verify_poselib_curves.py`, 45/45) and the older ones:
   does not cover the walk; a faster walk is a separate follow-up;
 - `verify_poselib_anim.py` 113/113; unit suite 12005 tests, one unrelated failure (`test_chat_deploy`);
   `verify_poselib_objects.py` 2/6 on main b4a91cd as well (`SceneSetup_camera` locked translateX).
+
+## Amended 2026-10-29: what a paste lands
+
+The animator reported three bugs the day after: the layers missing after the card's character was
+deleted and a new one added, a layered 3P card wrong on a rig in 1P, and the rig's controls twisting
+«when objects are added to an animation layer ... on Merge». Measured on the BONES (each bone of the
+target, relative to the root, against the card's frames), six causes; the rules they amend:
+
+- **Which target takes the curves** (amends «Which target takes the curves»): a rig in 1P (Tools > 1P
+  Setup: a chest knot marked with its namespace) is retargeted, said - its take is split over the 1P
+  layers and the chest knot, raw curves stood the upper body 110-120 deg off. A card saved off a rig in
+  1P (its `curves` block's `first_person`, or an older card's `_3P_Lower_Body` / `_3P_Upper_Body`
+  layers) takes no curves anywhere (180 deg on a 3P rig): Paste as is not offered for it and a press
+  asked for curves retargets and says so.
+- **Which channels** (amends «Which channels»): a layer that holds a channel WITHOUT a curve - what Add
+  Selected Objects leaves - keeps its static value on the card (`{"static": v}` for that layer: 0 on
+  an additive layer, the value at the add on an override one, which hides the base); the base keeps
+  its static under keyed layers too. An override layer's frozen channels twisted an arm 73 deg.
+- **The keys** (amends «The keys»): over the paste range the card's channels show what the card
+  showed. A namesake layer the paste writes is cleared on the card channels its card layer did not
+  hold; with the base pasted, every other unmuted layer of the target holding a card channel is
+  cleared over the range too (Replace / Replace all / Insert: the mode's ops, then identity keys at
+  both ends; said). **Merge clears nothing** and says which layers still add; an override layer cannot
+  be cleared by a key and is named. With the base unticked no other layer of the target is touched.
+- The range is held against the target's keys outside it: a curve shorter than the range gets a
+  stepped hold key at the end, an end key beside a target key keeps the tangent angles it showed, and a
+  layer curve the paste makes is bounded to the range (identity a frame either side) where the channel
+  moves outside it - its last offset held over the rest of the take.
+- **Characters > Delete in a scene tab** keeps the tab's layer root and the tab's current namespace (a
+  delete left the root namespace current and the next Add Character landed outside the tab).
+- The current frame is re-evaluated after the paste (it kept the old pose until the time moved).
+
+Proof: `docs/superpowers/plans/verify_poselib_curves_layers.py` 51/51.
