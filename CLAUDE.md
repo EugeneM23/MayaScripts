@@ -9402,8 +9402,20 @@ Proof: `verify_poselib_curves_layers.py` **51/51** (delete, scene tabs, 1P both 
 override and additive layers, the target's layers under every mode, pins into a 100-frame take,
 undo, a prop and the arm in a layer pasted with Merge); `verify_poselib_curves.py` 45/45,
 `verify_poselib_objects.py` 25/25, `verify_poselib_anim.py` 113/113, `verify_delete_layers.py`
-14/14, `verify_delete_character.py` 137/137, `verify_scene_tabs.py all` 284/284. Not exercised: a GUI
-Maya.
+14/14, `verify_delete_character.py` 137/137, `verify_scene_tabs.py all` 284/284,
+`verify_poselib_apply.py` 117/117, `verify_poselib_selected_only.py` 13/13. Not exercised: a GUI Maya
+(the animator's live pass).
+
+**The library's unit coverage** (the same day, «покроем весь функционал нашей библиотеки поз
+тестированием»): `tests/test_poselib_<module>_cover.py`, 623 tests over 14 modules, measured with
+stdlib `trace` around the unit suite (there is no `coverage` in mayapy): functions never run 140 -> 18.
+store, look, posemath, timewalk, objects, helpers, scene, capture, skelsolve, animdata, lower, upper
+run every line; apply 99 %; the curves modules' own seams in their test files. Left to the mayapy
+verifies: rigsolve's IK solver (`verify_poselib_solve.py`), the curves press itself
+(`verify_poselib_curves*.py`), and the window's Qt classes. The poselib suite is 2166 tests, ~29 s.
+The repository's 13025 run with 6 failures that origin/main has without this work
+(`test_scenetabs_leak`, `test_timebar_lanes_sync` - tests landed ahead of their code - and
+`test_chat_deploy`, a real token in this machine's environment).
 
 ## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10) - the Tail Builder card
 
