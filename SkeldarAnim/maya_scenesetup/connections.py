@@ -147,8 +147,12 @@ TAB_TIPS = {"body": "FK / IK of the arms, legs and spine; any object across",
             "camera": "The camera's parent and its Aim Mode"}
 CAMERA_MENU = "skeldarConnectionsCameraParent"
 CAMERA_POSITION = "skeldarConnectionsCameraPosition"
-CAMERA_AIM_BUTTON = "skeldarConnectionsCameraAimMode"
-CAMERA_DEFAULT_BUTTON = "skeldarConnectionsCameraDefault"
+#  the camera's parent and its aim are picks too (2026-10-29): its Apply is the
+#  row's check, its aim a row like the weapon's
+CAMERA_APPLY = "skeldarConnectionsCameraApply"
+CAMERA_AIM_MENU = "skeldarConnectionsCameraAim"
+CAMERA_AIM_SEGMENT = "skeldarConnectionsCameraAim_{0}"
+CAMERA_AIM_APPLY = "skeldarConnectionsCameraAimApply"
 NO_CAMERA_TEXT = "no camera - Characters > Camera Setup first"
 TAB_OPTIONVAR = "skeldarConnectionsTab"
 #  The weapon's aim is a row like every other since 2026-10-29 - [Default |
@@ -1344,6 +1348,14 @@ def _states(rig, keys):
         elif key == pending.AIM:
             weapon = weapon_of(rig)
             out[key] = bool(weapon) and weaponaim.is_aimed(weapon)
+        elif key in (pending.CAMERA, pending.CAMERA_POSITION,
+                     pending.CAMERA_AIM):
+            if "camera" not in limbs:
+                limbs["camera"] = _camera_state()
+            choice, position, aimed = limbs["camera"]
+            out[key] = {pending.CAMERA: choice,
+                        pending.CAMERA_POSITION: position,
+                        pending.CAMERA_AIM: aimed}[key]
     return out
 
 
@@ -1616,7 +1628,7 @@ def refresh(*_args):
         text += " - Aim Mode"
     if current_tab() == "camera":
         choice, position, aimed = _camera_state()
-        _set_camera(choice, position)
+        _set_camera(choice, position, aimed)
         text = camera_text(choice, position, aimed)
     cmds.text(HEADER, edit=True, label=text)
     return text
@@ -2041,26 +2053,166 @@ def _camera_state():
             cameraaim.is_aimed(control))
 
 
-def _set_camera(choice, position):
-    if choice and cmds.iconTextRadioButton(camera_segment(choice), exists=True):
-        cmds.iconTextRadioButton(camera_segment(choice), edit=True, select=True)
+def camera_aim_segment(choice):
+    return CAMERA_AIM_SEGMENT.format(choice)
+
+
+def _set_camera(choice, position, aimed=False, chosen=None):
+    """The camera rows: the scene's state, then its picks (2026-10-29)."""
+    chosen = picks() if chosen is None else chosen
+    _MENU_QUIET["on"] = True
+    try:
+        if choice and cmds.iconTextRadioButton(camera_segment(choice),
+                                               exists=True):
+            cmds.iconTextRadioButton(camera_segment(choice), edit=True,
+                                     select=True)
+        name = camera_aim_segment(AIM_ON if aimed else DEFAULT_AIM)
+        if cmds.iconTextRadioButton(name, exists=True):
+            cmds.iconTextRadioButton(name, edit=True, select=True)
+    finally:
+        _MENU_QUIET["on"] = False
+    wanted = chosen.get(pending.CAMERA)
+    for each in camera.PARENTS:
+        if cmds.iconTextRadioButton(camera_segment(each), exists=True):
+            _light(camera_segment(each), "want" if wanted == each else "")
     if cmds.checkBox(CAMERA_POSITION, exists=True):
-        cmds.checkBox(CAMERA_POSITION, edit=True, value=bool(position))
+        picked = chosen.get(pending.CAMERA_POSITION)
+        cmds.checkBox(CAMERA_POSITION, edit=True,
+                      value=bool(position) if picked is None else picked)
+        _light(CAMERA_POSITION, "" if picked is None else "want")
+    if cmds.control(CAMERA_APPLY, exists=True):
+        _light(CAMERA_APPLY, "wait" if (
+            pending.CAMERA in chosen or pending.CAMERA_POSITION in chosen)
+            else "")
+    picked_aim = chosen.get(pending.CAMERA_AIM)
+    for each in (DEFAULT_AIM, AIM_ON):
+        name = camera_aim_segment(each)
+        if cmds.iconTextRadioButton(name, exists=True):
+            _light(name, "want" if picked_aim is not None
+                   and picked_aim == (each == AIM_ON) else "")
+    if cmds.control(CAMERA_AIM_APPLY, exists=True):
+        _light(CAMERA_AIM_APPLY, "wait" if picked_aim is not None else "")
 
 
-def _chosen_camera_parent():
-    picked = cmds.iconTextRadioCollection(CAMERA_MENU, query=True, select=True) or ""
-    for choice in camera.PARENTS:
-        if picked.endswith(camera_segment(choice)):
-            return choice
-    return camera.PARENTS[0]
+def wanted_camera(rig):
+    """(parent, position only) as a press would set them: the scene's, with the
+    picks on top."""
+    choice, position, _aimed = _camera_state()
+    chosen = picks(rig)
+    return (chosen.get(pending.CAMERA, choice),
+            bool(chosen.get(pending.CAMERA_POSITION, position)))
+
+
+def _press_camera_pick(choice):
+    """A camera parent picked: a PICK."""
+    def go(*_args):
+        if _MENU_QUIET["on"]:
+            return None
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        shown, position, aimed = _camera_state()
+        chosen = remember(rig, pending.record(picks(rig), pending.CAMERA,
+                                              choice, shown))
+        _set_camera(shown, position, aimed, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
+    return go
+
+
+def _press_camera_position(*_args):
+    """The Position only chip: a pick of the camera's one change."""
+    if _MENU_QUIET["on"]:
+        return None
+    rig, refusal = maya_rigs.current_rig()
+    if rig is None:
+        return _status(refusal)
+    shown, position, aimed = _camera_state()
+    wanted = bool(cmds.checkBox(CAMERA_POSITION, query=True, value=True))
+    chosen = remember(rig, pending.record(picks(rig), pending.CAMERA_POSITION,
+                                          wanted, bool(position)))
+    _set_camera(shown, position, aimed, chosen)
+    return _status(_picked_text(chosen) or NOTHING_PICKED)
 
 
 def _press_camera_parent(*_args):
-    position = bool(cmds.checkBox(CAMERA_POSITION, query=True, value=True))
-    return _run(lambda: camera_parent(_chosen_camera_parent(), position))
+    """The camera row's check: move the control as picked, then settle."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = picks(rig)
+        if not (pending.CAMERA in chosen or pending.CAMERA_POSITION in chosen):
+            return NOTHING_PICKED
+        choice, position = wanted_camera(rig)
+        text = camera_parent(choice, position)
+        remember(rig, _settled(rig, chosen, pending.CAMERA,
+                               pending.CAMERA_POSITION))
+        return text
+    return _run(act)
 
 
+def _press_camera_aim_pick(choice):
+    """The camera aim row's segment: a pick."""
+    def go(*_args):
+        if _MENU_QUIET["on"]:
+            return None
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        shown, position, aimed = _camera_state()
+        chosen = remember(rig, pending.record(picks(rig), pending.CAMERA_AIM,
+                                              choice == AIM_ON, aimed))
+        _set_camera(shown, position, aimed, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
+    return go
+
+
+def _press_camera_aim_apply(*_args):
+    """The camera aim row's check."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = picks(rig)
+        wanted = chosen.get(pending.CAMERA_AIM)
+        if wanted is None:
+            return NOTHING_PICKED
+        text = camera_aim(on=wanted)
+        remember(rig, _settled(rig, chosen, pending.CAMERA_AIM))
+        return text
+    return _run(act)
+
+
+def apply_camera(rig, chosen):
+    """The camera's parent, then its aim - the caller's one undo chunk."""
+    notes = []
+    if pending.CAMERA in chosen or pending.CAMERA_POSITION in chosen:
+        choice, position = wanted_camera(rig)
+        notes.append(camera_parent(choice, position))
+    if pending.CAMERA_AIM in chosen:
+        notes.append(camera_aim(on=chosen[pending.CAMERA_AIM]))
+    return "; ".join(n for n in notes if n) or NOTHING_PICKED
+
+
+def _press_apply_camera(*_args):
+    """The Camera tab's Apply all: its picks, one undo chunk."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = pending.of_tab(picks(rig), "camera")
+        if not chosen:
+            return NOTHING_PICKED
+        cmds.undoInfo(openChunk=True, chunkName="Connections: Apply all")
+        try:
+            return apply_camera(rig, chosen)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+            remember(rig, _settled(rig, picks(rig)))
+    return _run(act)
+
+
+#  the hotkey rows (`connections.camera_aim` / `.camera_default`): at once
 def _press_camera_aim_mode(*_args):
     return _run(lambda: camera_aim(True))
 
@@ -2424,34 +2576,60 @@ def build_panel():
         hubstyle.mark(cmds.iconTextRadioButton(
             camera_segment(choice), style="textOnly", label=choice,
             height=hubstyle.height("segment", 22), select=index == 0,
-            annotation="the camera control's parent: %s" % choice), "segment")
+            annotation="the camera control's parent: %s - picked, not baked: "
+                       "press this section's check, or Apply all" % choice,
+            onCommand=_press_camera_pick(choice)), "segment")
     cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "right", 0)])
     hubstyle.mark(cmds.checkBox(
         CAMERA_POSITION, label="Position only", value=False,
         annotation="Follow the parent's position only (a point constraint); the camera turns "
-                   "with Main"), "chip")
+                   "with Main. Picked, not baked.",
+        changeCommand=_press_camera_position), "chip")
     hubstyle.mark(cmds.button(
+        CAMERA_APPLY,
         label=hubstyle.tool_label("Apply"), width=hubstyle.tool_width(66),
         height=hubstyle.height("small", 24),
-        annotation="the camera under the chosen parent, its motion kept",
+        annotation="the camera under the picked parent, its motion kept",
         command=_press_camera_parent), "tool", "check")
     cmds.setParent("..")
     _caption("camaim", "Camera aim")
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 3)])
-    hubstyle.mark(cmds.button(
-        CAMERA_AIM_BUTTON, label="Aim Mode", height=hubstyle.height("button", 32),
-        annotation="The camera's turn aims at two controllers (a target ahead, an up above), "
-                   "keyed on the camera's own keys - it looks where it looked on every key",
-        command=_press_camera_aim_mode), "primary", "target")
-    hubstyle.mark(cmds.button(
-        CAMERA_DEFAULT_BUTTON, label="Default", height=hubstyle.height("button", 32),
-        width=hubstyle.pick(90, 96),
-        annotation="The aim baked back onto the camera's rotation, the controllers removed",
-        command=_press_camera_default), "secondary", "rotate")
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnWidth3=(hubstyle.pick(48, 64), 110,
+                                 hubstyle.tool_width(66)),
+                   columnAlign3=("left", "left", "center"),
+                   columnAttach=[(1, "left", 0), (2, "both", 4),
+                                 (3, "right", 0)])
+    _row_label("Aim")
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(CAMERA_AIM_MENU)
+    for choice in (DEFAULT_AIM, AIM_ON):
+        tip = ("The camera's turn aims at two controllers (a target ahead, an "
+               "up above), keyed on the camera's own keys - it looks where it "
+               "looked on every key" if choice == AIM_ON else
+               "The aim baked back onto the camera's rotation, the "
+               "controllers removed")
+        hubstyle.mark(cmds.iconTextRadioButton(
+            camera_aim_segment(choice), style="textOnly",
+            label=AIM_LABEL[choice], height=hubstyle.height("segment", 22),
+            select=choice == DEFAULT_AIM, annotation=tip,
+            onCommand=_press_camera_aim_pick(choice)), "segment")
     cmds.setParent("..")
+    hubstyle.mark(cmds.button(
+        CAMERA_AIM_APPLY, label=hubstyle.tool_label("Apply"),
+        width=hubstyle.tool_width(66),
+        height=hubstyle.height("small", 24),
+        annotation="enter or leave the camera's Aim Mode as picked",
+        command=_press_camera_aim_apply), "tool", "check")
+    cmds.setParent("..")
+    hubstyle.mark(cmds.button(
+        APPLY_ALL["camera"], label=APPLY_LABEL,
+        height=hubstyle.height("button", 32),
+        annotation="bake every pick in this tab - one undo",
+        command=_press_apply_camera), "primary", "check")
     cmds.setParent("..")
     #  three lines (2026-09-30): an Apply plus the FK/IK switch it made first
     #  is longer than two - a wordWrap text keeps the height it is given

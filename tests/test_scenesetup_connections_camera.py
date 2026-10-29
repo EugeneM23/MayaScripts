@@ -40,13 +40,20 @@ class Card(unittest.TestCase):
                  if c[0] in ("columnLayout", "checkBox", "button", "iconTextRadioCollection")
                  and not c[2].get("edit")]
         column = order.index(cx.TAB_COLUMN["camera"])
-        for item in (cx.CAMERA_MENU, cx.CAMERA_POSITION, cx.CAMERA_AIM_BUTTON,
-                     cx.CAMERA_DEFAULT_BUTTON):
+        for item in (cx.CAMERA_MENU, cx.CAMERA_POSITION, cx.CAMERA_APPLY,
+                     cx.CAMERA_AIM_MENU, cx.CAMERA_AIM_APPLY,
+                     cx.APPLY_ALL["camera"]):
             self.assertLess(column, order.index(item), item)
 
-    def test_aim_mode_is_the_camera_tab_s_primary(self):
-        self.assertEqual(self.marks[cx.CAMERA_AIM_BUTTON].role, "primary")
-        self.assertEqual(self.marks[cx.CAMERA_DEFAULT_BUTTON].role, "secondary")
+    def test_the_aim_is_a_row_and_apply_all_is_the_tab_s_primary(self):
+        """2026-10-29: the camera's parent and its aim are picked, and the tab's
+        one orange Apply all bakes them - its two buttons are gone."""
+        self.assertEqual(self.marks[cx.CAMERA_AIM_SEGMENT.format(cx.AIM_ON)].role,
+                         "segment")
+        self.assertEqual(self.marks[cx.CAMERA_AIM_APPLY].role, "tool")
+        self.assertEqual(self.marks[cx.CAMERA_APPLY].role, "tool")
+        self.assertEqual(self.marks[cx.APPLY_ALL["camera"]].role, "primary")
+        self.assertFalse(hasattr(cx, "CAMERA_AIM_BUTTON"))
 
 
 class Presses(unittest.TestCase):

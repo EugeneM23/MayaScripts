@@ -388,7 +388,7 @@ class Panel(unittest.TestCase):
                          ["Apply", "Apply", "Apply", "Apply", "Apply",
                           "Apply all", "BakeAcross", "Release",
                           "Apply", "Apply", "Apply", "Apply all", "Apply",
-                          "Apply", "Aim Mode", "Default"])
+                          "Apply", "Apply", "Apply all"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand R", "Hand L", "Weapon"):
@@ -402,7 +402,7 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
         #  + the legs' two labels and the spine (2026-10-10), the three
         #  captions (2026-10-16)
-        self.assertEqual(len(labels), 18)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21)
+        self.assertEqual(len(labels), 19)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21); + the two aim rows' labels (2026-10-29)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -416,7 +416,7 @@ class Panel(unittest.TestCase):
                         if m.role == "segments"]
         #  the chooser, the three parents, the tabs, the camera, four limbs,
         #  the spine and the weapon aim (2026-10-29)
-        self.assertEqual(len(segment_rows), 12)
+        self.assertEqual(len(segment_rows), 13)
         for side in ("R", "L"):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
@@ -427,8 +427,8 @@ class Panel(unittest.TestCase):
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
         #  the three parent rows + the camera tab's Apply (2026-10-28)
-        #  + a check a limb row, the spine's and the aim's (2026-10-29)
-        self.assertEqual(roles.count(("tool", "check")), 10)
+        #  + a check a limb row, the spine's and the two aims' (2026-10-29)
+        self.assertEqual(roles.count(("tool", "check")), 11)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
@@ -673,10 +673,11 @@ class Panel(unittest.TestCase):
         #  Apply all since 2026-10-29), the aims, then the two secondaries
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "secondary")]
-        #  2026-10-29: the weapon's aim is a row, so its Aim Mode button is gone
+        #  2026-10-29: both aims are rows, so their Aim Mode / Default buttons
+        #  are gone - one primary a tab (its Apply all) and the two secondaries
         self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "check"),
-                                         ("primary", "target"),
-                                         ("secondary", "link"), ("secondary", "rotate"),
+                                         ("primary", "check"),
+                                         ("secondary", "link"),
                                          ("secondary", "unlink")])
 
     def test_the_status_tells_the_hub(self):
@@ -910,8 +911,8 @@ class PanelCompact(unittest.TestCase):
         fake, _marks = self._build(True)
         widths = [c[2]["columnWidth3"] for c in fake.calls
                   if c[0] == "rowLayout" and "columnWidth3" in c[2]]
-        #  the three parent rows and the aim row (2026-10-29)
-        self.assertEqual(widths, [(48, 110, 30)] * 4)
+        #  the three parent rows, the weapon aim and the camera aim (2026-10-29)
+        self.assertEqual(widths, [(48, 110, 30)] * 5)
         chooser = [c[2] for c in fake.calls if c[0] == "rowLayout"
                    and c[1] == (cx.CHOOSER_ROW,)][0]
         self.assertEqual(chooser["columnWidth2"], (48, 110))
@@ -946,7 +947,7 @@ class PanelCompact(unittest.TestCase):
         self.assertEqual(by["Release"]["width"], 90)
         widths = [c[2]["columnWidth3"] for c in fake.calls
                   if c[0] == "rowLayout" and "columnWidth3" in c[2]]
-        self.assertEqual(widths, [(64, 110, 66)] * 4)
+        self.assertEqual(widths, [(64, 110, 66)] * 5)
 
     def test_both_builds_keep_every_control_and_the_roles(self):
         for skin in (True, False):

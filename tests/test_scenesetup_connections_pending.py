@@ -324,3 +324,95 @@ class WeaponPicks(unittest.TestCase):
         cx._press_aim_mode()
         cx._press_aim_default()
         self.assertEqual(self.done, [("aim", True), ("aim", False)])
+
+
+class CameraPicks(unittest.TestCase):
+    """The camera's parent, its Position only and its aim: picks too."""
+
+    def setUp(self):
+        pending.clear()
+        self.addCleanup(pending.clear)
+        self.done = []
+        self.real = (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
+                     cx.read_scheme, cx.camera_parent, cx.camera_aim,
+                     cx._camera_state, cx._limb_modes)
+        self.fake = FakeMenuCmds()
+        cx.cmds = self.fake
+        cx.refresh = lambda *a: ""
+        cx.maya_rigs.current_rig = lambda selection=None: (Rig(), "")
+        cx._limb_modes = lambda rig, kind, worlds=None: {}
+        cx.read_scheme = lambda *a, **k: {"L": None, "R": None}
+        #  the scene: the camera under Main, whole, not aimed
+        self.state = ["Main", False, False]
+        cx._camera_state = lambda: tuple(self.state)
+
+        def parent(choice, position_only=False):
+            self.done.append(("parent", choice, position_only))
+            self.state[0], self.state[1] = choice, position_only
+            return "moved"
+
+        def aim(on=True):
+            self.done.append(("aim", on))
+            self.state[2] = on
+            return "aimed"
+
+        cx.camera_parent = parent
+        cx.camera_aim = aim
+        cx.hubstyle.take_marks()
+        cx.build_panel()
+        self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
+
+    def tearDown(self):
+        (cx.cmds, cx.refresh, cx.maya_rigs.current_rig, cx.read_scheme,
+         cx.camera_parent, cx.camera_aim, cx._camera_state,
+         cx._limb_modes) = self.real
+
+    def test_a_parent_pick_bakes_nothing(self):
+        self.fake.pick_camera("Chest")
+        self.assertEqual(self.done, [])
+        self.assertEqual(cx.picks(Rig()), {pending.CAMERA: "Chest"})
+        self.assertEqual(cx.wanted_camera(Rig()), ("Chest", False))
+
+    def test_the_parent_it_already_is_records_nothing(self):
+        self.fake.pick_camera("Main")
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_position_only_is_a_pick_of_the_same_change(self):
+        self.fake.pick_camera("Chest")
+        self.fake.press_check(cx.CAMERA_POSITION, True)
+        self.assertEqual(self.done, [])
+        self.assertEqual(pending.count(cx.picks(Rig())), 1)
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["camera"]),
+                         "Apply all · 1")
+        self.fake.press_button(cx.CAMERA_APPLY)
+        self.assertEqual(self.done, [("parent", "Chest", True)])
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_the_camera_aim_is_a_row(self):
+        self.fake.pick_camera_aim(cx.AIM_ON)
+        self.assertEqual(self.done, [])
+        self.assertEqual(cx.picks(Rig()), {pending.CAMERA_AIM: True})
+        self.fake.press_button(cx.CAMERA_AIM_APPLY)
+        self.assertEqual(self.done, [("aim", True)])
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_apply_all_takes_the_parent_before_the_aim(self):
+        self.fake.pick_camera("Head")
+        self.fake.pick_camera_aim(cx.AIM_ON)
+        self.fake.press_button(cx.APPLY_ALL["camera"])
+        self.assertEqual([d[0] for d in self.done], ["parent", "aim"])
+        self.assertEqual(cx.picks(Rig()), {})
+        chunks = [c[2].get("chunkName") for c in self.fake.calls
+                  if c[0] == "undoInfo" and c[2].get("openChunk")]
+        self.assertEqual(chunks.count("Connections: Apply all"), 1)
+
+    def test_apply_all_with_nothing_picked_bakes_nothing(self):
+        self.fake.press_button(cx.APPLY_ALL["camera"])
+        self.assertEqual(self.done, [])
+
+    def test_the_camera_buttons_are_gone_and_the_hotkeys_act(self):
+        self.assertFalse(hasattr(cx, "CAMERA_AIM_BUTTON"))
+        self.assertFalse(hasattr(cx, "CAMERA_DEFAULT_BUTTON"))
+        cx._press_camera_aim_mode()
+        cx._press_camera_default()
+        self.assertEqual(self.done, [("aim", True), ("aim", False)])
