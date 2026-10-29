@@ -47,8 +47,9 @@ NOT_KEPT = "%s not kept (%s)"
 
 Plan = namedtuple("Plan", "records cuts folds first_person")
 #  one cut of the old stack, read off the new character: `index` into `Plan.records`, None for
-#  the base; `values` {plug: {time: value}}; `times` the frames keyed; `tangents` {time: (in,
-#  out)} and `stored` {plug: [[time, value, in, out]]} - what a raw write takes.
+#  the base; `values` {plug: {time: value}} (read at the union of every cut's times, so a layer
+#  can be trimmed against the cut below it); `times` the frames IT keys; `tangents` {time:
+#  (in, out)} the types the source keys had there.
 Reading = namedtuple("Reading", "index values times tangents")
 
 
@@ -277,6 +278,36 @@ def nothing_kept(records):
             for r in records if not keep[r["name"]]]
 
 
+def rename_layers(made, records):
+    """The layers we made given their records' own names, once the old character (and its
+    layers) is gone: Maya's `animLayer` answers `Fix1` while the old rig's `Fix` still stands,
+    and the animator's layer should keep the name it had. The names we end up with, in order; a
+    name still taken is left as it is."""
+    out = []
+    for name in made:
+        wanted = wanted_name(name, records)
+        if wanted is None or not cmds.objExists(name) or cmds.objExists(wanted):
+            out.append(name)
+            continue
+        try:
+            out.append(cmds.rename(name, wanted))
+        except RuntimeError:
+            out.append(name)
+    return out
+
+
+def wanted_name(made, records):
+    """The record `made` was made for - its own name, or that name with the digits Maya added
+    when it was taken (`Fix` -> `Fix1`); None for a name no record asked for. Pure."""
+    for record in records:
+        name = record["name"]
+        if made == name:
+            return None                      # it already has it
+        if made.startswith(name) and made[len(name):].isdigit():
+            return name
+    return None
+
+
 def extra_1p(records):
     """The layer names of a rig in 1P that are NOT the 1P Setup's own
     (`curvedata.FIRST_PERSON`) - a layer of the animator's, whose motion the 1P road folds into
@@ -446,10 +477,10 @@ def source_curves(layer, nodes):
     is one `listConnections` a curve rather than one `curve_for` a channel. `EVERY` is the base's
     and every layer's together, which is what the 1P road's one cut is keyed at - a rig in 1P
     keeps one pose on its base and the take itself on the two layers."""
-    from maya_poselib import keys
     if layer == EVERY:
         return list(cmds.keyframe(nodes, query=True, name=True) or [])
     if layer is not None:
+        from maya_poselib import keys
         wanted = set()
         for node in nodes:
             found = cmds.ls(node, long=True) or []

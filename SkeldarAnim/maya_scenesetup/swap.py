@@ -629,8 +629,9 @@ def _arrive(entry, char, plan, answer, start, end, name, notes):
 
 
 def _layers_onto(entry, arrival, plan, readings):
-    """The captured stack written onto the new character, or 1P Setup run again on it. What the
-    status line says about the layers.
+    """The captured stack written onto the new character, or 1P Setup run again on it.
+    (the layers made, the notes) - the names are said once the old character is gone and they
+    can take its own layers' names (`swaplayers.rename_layers`).
 
     Only the CURVES of the channels we write are cut - never `ready_rig`'s reset, which would
     also undo what the last cut's bake set up beside them: the IK limbs carried onto the FK's
@@ -638,7 +639,7 @@ def _layers_onto(entry, arrival, plan, readings):
     set, the helper bones' tracks, the camera and the clip's label."""
     from maya_scenesetup import swaplayers
     if not readings:
-        return ""
+        return [], []
     plugs = sorted(set(plug for reading in readings for plug in reading.values))
     if plugs:
         cmds.cutKey([p for p in plugs if cmds.objExists(p)], clear=True)
@@ -648,7 +649,7 @@ def _layers_onto(entry, arrival, plan, readings):
         notes.append(text or failure)
         notes.extend(swaplayers.FOLDED_1P % name
                      for name in swaplayers.extra_1p(plan.records))
-    return swaplayers.line_of(made, notes)
+    return made, notes
 
 
 @maya_timewarp.wrapped
@@ -702,7 +703,7 @@ def swap(entry, root):
             entry.label, arrival.failure or "it did not arrive", char.label)
     new_root, new_rig, line = arrival.root, arrival.rig, arrival.line
 
-    notes.append(_layers_onto(entry, arrival, plan, readings))
+    made, said = _layers_onto(entry, arrival, plan, readings)
     texts, weapons = carry(carried, new_root, start, end)
     if carried["follows"]:
         notes.append("Connections links not carried (" + ", ".join(carried["follows"]) + ")")
@@ -710,6 +711,8 @@ def swap(entry, root):
 
     fresh = old_character(char.root) or char
     deleted = deletion.execute(deletion.plan([fresh]))
+    #  the old character's own layers went with it, so ours can take their names back
+    notes.append(swaplayers.line_of(swaplayers.rename_layers(made, plan.records), said))
     cmds.currentTime(frame)
     try:
         cmds.select(new_rig.main if new_rig is not None else new_root, replace=True)

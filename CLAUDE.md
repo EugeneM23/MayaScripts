@@ -13633,6 +13633,104 @@ on FKWrist_R swapped for a skeleton: the knot's turn in the take 0.0000 cm, the 
 Creep rig asked once, limbs pointing as before to 0.58 deg; Cancel leaving the Creep and 0 nodes);
 `tests/test_scenesetup_swap.py`; 7247 unit tests. **Not seen in a GUI Maya** (a real drag).
 
+## …and it keeps the character's animation layers, or bakes them (2026-10-29)
+
+The animator: «Сейчас наша библеотека умеет переносить аниации по слоям. Нужно реализовать аткой же
+функционал при подмене ригов. Если на риге есть слои и мы мняем один риг на другой каким-то из
+способов то нужно сделать атк что бы система спросила у нас хотим ли мы сохранить ключи с лои или
+запечь всю анимацию. В случе с переносом рига на 1p версию перенос должен сработать корректно».
+Asked: **1P is the OLD rig** («Старый риг в 1P» - the new one must come out in 1P too) and **«keep
+the keys and layers» is the stack AND each layer's own key times** («Слои + свои ключи»); then
+«делай все до конца», so the rest was decided alone. Spec
+`docs/superpowers/specs/2026-10-29-swap-keep-layers-design.md`, plan beside it. **This replaces
+«one road for every pair» above when the old character carries layers.**
+
+- **The question** (`maya_scenesetup/swaplayers.py`, the new module; `swap.py` gains the ask and the
+  road) stands before anything is changed, once, when the old character's channels are fed by any
+  non-base layer (`layers_of`): **Keep the layers** / **Bake the animation** (today's road: one dense
+  take, the scene as it shows) / **Cancel**. `maya_retargetmode`'s pattern - an asker seam
+  (`set_asker`) for the verifies, batch mode answers Bake. A character with no layer, or a stack no
+  road can keep, is never asked and the line says why.
+- **Keep, the general road**: the old stack CUT at every layer that can be kept (`cut_plan`; cut 0
+  is the base alone, the TOP cut always the whole stack, so the last retarget's helper bones, camera
+  and clip label are the whole take's), each cut baked (`bake_copy`) and retargeted onto the new
+  character (`ready_rig` + `retarget_imported`, or `skeletonimport._transfer` onto a skeleton) with
+  the proportions answer asked on cut 0 and reused (`Arrival.mode`); the new character's channels
+  read after each cut (`capture`); then the readings written bottom to top - the base's as the
+  curves they are (`keys.write_raw`, one call a channel, every tangent) and each layer MADE
+  (`keys.make_layer`, unmuted, its record's mode, weight and accumulation, its mute after its keys)
+  and keyed with `keys.write`, which hands Maya a FINAL value and lets **Maya** work out what an
+  additive, override, weighted or scale layer must hold (trap 205). Each layer is keyed at the key
+  times THAT layer of the old character held (`source_curves` / `times_of`) with its tangent types
+  (`fkik.tangents_at`'s rule), so stepped blocking stays stepped and a take blocked on 5 keys stays
+  5 keys. **Between keys the new rig interpolates on its own** - the FK/IK switch's own cost.
+- **Keep, a rig in 1P** (`firstperson.chest_of`): its layers are 1P Setup's own split, so every
+  layer is unmuted, the **3P** take retargeted once (its keys the base's and both layers' together,
+  `swaplayers.EVERY`) and **Tools > 1P Setup run again on the new rig** (`split_again`) - the two
+  layers, the chest control, the camera in it, the IK arms, the display layers, the crosshair and
+  `Main.view` come back from the tool that makes them; a third layer of the animator's is folded
+  into the split and named. The new character must be a RIG for this road; a skeleton takes the
+  cuts. **Bake** on a rig in 1P stays today's road (the scene as it looks: the chest stabilized, no
+  1P setup) and the question says so.
+- **Named, never guessed**: a layer whose rotation accumulation is **quaternion** has no cut made at
+  it, so its motion folds into the kept layer above (else the one below) and the question names it;
+  weight 0 is made empty; a layer the old character shares with somebody else is muted for the bakes
+  only and restored in a `finally`; a cut that fails is named and the character keeps the cut below.
+- **A layer carries only what its own offset reaches** (`trim_layers`, `TRIM` 1e-3 - the retarget's
+  own repeatability is 0.0006 deg): a 20 deg chest offset came out as 19 channels of the 392 the cut
+  reads (the chest's rotate and the IK arms and poles the retarget moves with it).
+- **And it keeps its NAME**: the layers are made while the old character still stands, so Maya hands
+  back `Fix1`; once the old one is deleted (and its layers with it) ours take their names back
+  (`rename_layers` / `wanted_name`, only where the name is free and only for a layer we made).
+
+Proof: `docs/superpowers/plans/verify_swap_keep_layers.py` — **0 of 49 gates, mayapy standalone**,
+eight phases (`keep,bake,cancel,weight,quaternion,none,first_person,other_model`), a UE clip
+retargeted onto a Manny rig:
+- Keep, Manny for Manny with a «Fix» layer keyed on 3 frames (one stepped): asked once naming the
+  layer; one layer of that name, mode, weight and mute; its keys on **exactly** those 3 frames,
+  stepped still stepped; with the layer on AND with it muted, every game bone at the keys where the
+  old rig's was - **0.0654 cm / 0.0006 deg**, which is Manny's own left-calf fit offset;
+- for the Creep (another body keeps its own proportions, so its bones cannot stand where Manny's
+  stood) the honest gate is **Keep against Bake**: the same scene swapped three times - Keep, Bake,
+  and Bake with the layer muted - agrees to **0.0001 cm / 0.0005 deg**, with a control that the
+  layer does change the take (53 cm between the two bakes);
+- Bake: no layer on the new rig, a key on every frame (61 of 61), the bones where the old rig showed
+  them; Cancel: 0 nodes made, the old rig and its layer standing, its take untouched;
+- a weight-0.5 layer and an override layer each kept with their mode and weight, both showing what
+  they showed; a quaternion layer over a plain one folded into it and named, and alone never asked
+  with the line saying why it was baked; no layer at all never asked;
+- 1P: a rig through 1P Setup swapped with Keep - the new rig carries **both 1P layers marked with
+  its namespace**, the chest control, `Main.view` 1, the two display layers, the camera control
+  riding the chest, and its bones are where the old rig's 3P take put them with both layers on and
+  where its 1P look was with the upper layer muted (0.0654 cm / 0.0006 deg both).
+
+13246 unit tests (the known `test_chat_deploy.Keys` failing: this machine's own saved keys).
+**Not seen in a GUI Maya** - the dialog itself and a real drag are the animator's, after Check
+update. Not built: the same for a PART row (`attach_part` keeps the character and is asked
+nothing); a setting to stop being asked (the animator asked for a question); a layer kept by its
+own curves key for key (raw values across two bodies put the hands elsewhere, and the same model and
+kind is a no-op swap - that road is the Pose Library's).
+
+313. **Two bakes of one rig key different channel sets, and each lands on its own turn count.**
+     A retarget ends in `delete -staticChannels`, so one cut can key `rotateZ` where another keys
+     `rotateX` - and an euler read in part and written in part mixes two solutions of ONE rotation:
+     measured 2026-10-29, a finger control came out **540 deg** out (360 of turn plus a real 180)
+     while every unit test was green. Read a transform channel's whole family (`triples`) in every
+     pass, fill what a pass left static from another's (`fill_gaps`), and snap a later pass's rotate
+     values onto the first's turn (`align_turns`: each bake's euler filter makes its own curve
+     continuous from its own first key, so 721 deg stands for 1.4). The diagnosis was a per-channel
+     diff of the two rigs at one frame - every difference a multiple of 360 but one, which named it.
+314. **The pipeline's own «clear the take» undoes more than the curves.** `rigimport.ready_rig`'s
+     reset (`reset_build_pose`) also takes back what the last bake set up beside them: the IK limbs
+     carried onto the FK's shape (`maya_ikmatch.restore` - its `IKX*.translate` is no keyable
+     channel, so no capture of ours sees it), the neck knobs the connect set, the helper bones'
+     tracks, the camera and the clip's label. A road that re-keys a rig from its own reading must
+     cut only the CURVES of the channels it writes (`cmds.cutKey(plugs, clear=True)`): with the
+     reset, Keep came out 3.74 deg off at the Creep's neck and 1.67 cm at a finger, in both the
+     layer-on and the layer-muted state - the tell that it was no layer's doing. A probe first
+     proved a second retarget onto the same rig is bit-for-bit repeatable (0.0000), which ruled the
+     retarget out.
+
 ## The performance pass: what the interface costs, measured (2026-10-17)
 
 The animator: «Давай проверим весь наш новый интерфейс на быстродействие хочу быть уверенным что у нас

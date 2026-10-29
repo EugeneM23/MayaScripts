@@ -182,6 +182,18 @@ class Readings(unittest.TestCase):
                                                   _record("Spin", rotation="quaternion")]), [])
         self.assertEqual(swaplayers.nothing_kept([]), [])
 
+    def test_a_made_layer_is_matched_with_the_record_it_was_made_for(self):
+        records = [_record("Fix"), _record("Spin")]
+        self.assertEqual(swaplayers.wanted_name("Fix1", records), "Fix")
+        self.assertEqual(swaplayers.wanted_name("Spin12", records), "Spin")
+
+    def test_a_layer_that_already_has_its_name_is_left_alone(self):
+        self.assertIsNone(swaplayers.wanted_name("Fix", [_record("Fix")]))
+
+    def test_a_name_no_record_asked_for_is_left_alone(self):
+        self.assertIsNone(swaplayers.wanted_name("Other1", [_record("Fix")]))
+        self.assertIsNone(swaplayers.wanted_name("FixUp", [_record("Fix")]))
+
     def test_the_1p_road_names_a_layer_of_the_animators_own(self):
         records = [_record("_3P_Lower_Body"), _record("_3P_Upper_Body"), _record("Fix")]
         self.assertEqual(swaplayers.extra_1p(records), ["Fix"])

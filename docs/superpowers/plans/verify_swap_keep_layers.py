@@ -253,7 +253,8 @@ def phase_keep(tag="A", tol_cm=0.35, tol_deg=0.6):
     if new is None:
         return
     made = [n for n in pkeys.layer_stack()[1:] if leaf(n).startswith("Fix")]
-    gate(tag + "3", len(made) == 1, "one layer named Fix on the new rig: %s" % made)
+    gate(tag + "3", made == ["Fix"],
+         "one layer, named Fix as the old rig's was: %s" % made)
     gate(tag + "4", swaplayers.KEPT.split(":")[0] in text and "Fix" in text,
          "the line says the layer was kept")
     if not made:
@@ -359,7 +360,8 @@ def phase_weight():
     if new is None:
         return
     names = dict((leaf(n)[:4], n) for n in pkeys.layer_stack()[1:])
-    gate("W2", "Half" in names and "Over" in names, "both layers made: %s" % sorted(names))
+    gate("W2", names.get("Half") == "Half" and names.get("Over") == "Over",
+         "both layers made, under their own names: %s" % sorted(names.values()))
     if "Half" in names:
         record = pkeys.layer_record(names["Half"])
         gate("W3", abs(record["weight"] - 0.5) < 1e-6,
@@ -527,8 +529,8 @@ def phase_other_model():
          % (kept.namespace if kept else None))
     if kept is None:
         return
-    gate("M2", fix_layer() is not None and swaplayers.KEPT.split(":")[0] in text,
-         "a layer named Fix on the Creep: %s" % fix_layer())
+    gate("M2", fix_layer() == "Fix" and swaplayers.KEPT.split(":")[0] in text,
+         "a layer named Fix, as the old rig's was, on the Creep: %s" % fix_layer())
     on_keep = sample(bones(kept.skeleton_root), frames)
     off_keep = muted([fix_layer()], lambda: sample(bones(kept.skeleton_root), frames))
 
