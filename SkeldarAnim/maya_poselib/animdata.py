@@ -12,7 +12,9 @@ bones) on every frame of the range. This module holds what needs no scene:
     its place, never its scale - and the file is a third the size of sixteen numbers a bone;
   - a frame of the arrays read back as a POSE card's bones (`bones_at`), so the pose's transfer
     and solve take a frame exactly as they take a pose;
-  - the apply OPTIONS (`Options`, `options_from` - what the window remembers, validated);
+  - the apply OPTIONS (`Options`, `options_from` - what the window remembers, validated): the
+    paste mode, the paste-as ("retarget" or "curves" - the card's own curves, layer by layer) and
+    the layers a "curves" paste writes;
   - the PASTE PLAN (`paste_plan`): which source frame lands on which target frame, and what the
     paste mode cuts or moves on the layer curves before the keys go in (Studio Library's / Maya's
     `pasteKey` modes);
@@ -32,15 +34,20 @@ MODES = ("replace", "replace_all", "insert", "merge")
 KEY_MODES = ("every", "source")
 MODE_LABELS = {"replace": "Replace", "replace_all": "Replace all", "insert": "Insert",
                "merge": "Merge"}
+PASTE_AS = ("retarget", "curves")
 
 EMPTY_RANGE = "the range holds no frame of the clip"
 
 #  How a card is pasted: `mode` one of MODES; `at_current` - the first pasted frame lands on the
 #  current frame (off: on its own source frame); `start` / `end` - a part of the clip in source
 #  frames (None: the clip's own end); `connect` - Connect's offsets; `keys` one of KEY_MODES (a
-#  key on every frame, or only where the source had keys); `in_place` - root / Main untouched
-Options = namedtuple("Options", "mode at_current start end connect keys in_place")
-Options.__new__.__defaults__ = ("replace", True, None, None, False, "every", False)
+#  key on every frame, or only where the source had keys); `in_place` - root / Main untouched;
+#  `paste_as` - "retarget" (the bones solved onto any character, today's paste) or "curves" (the
+#  card's own curves, layer by layer, onto its own rig model - spec 2026-10-28); `layers` - the
+#  card layers a "curves" paste writes, None for all
+Options = namedtuple("Options", "mode at_current start end connect keys in_place paste_as layers")
+Options.__new__.__defaults__ = ("replace", True, None, None, False, "every", False, "retarget",
+                                None)
 
 #  What a paste does: `frames` [(source frame, index into the frames arrays, target time)] in
 #  time order; `a` / `b` the target times of the first and last pasted frame; `offset` target
@@ -192,6 +199,12 @@ def options_from(mapping):
     base = Options()
     mode = mapping.get("mode", base.mode)
     keys = mapping.get("keys", base.keys)
+    paste_as = mapping.get("paste_as", base.paste_as)
+    layers = mapping.get("layers")
+    if isinstance(layers, (list, tuple)):
+        layers = tuple(name for name in layers if isinstance(name, str))
+    else:
+        layers = None
     return Options(
         mode=mode if mode in MODES else "replace",
         at_current=_flag(mapping.get("at_current"), base.at_current),
@@ -199,7 +212,9 @@ def options_from(mapping):
         end=_number(mapping.get("end")),
         connect=_flag(mapping.get("connect"), base.connect),
         keys=keys if keys in KEY_MODES else "every",
-        in_place=_flag(mapping.get("in_place"), base.in_place))
+        in_place=_flag(mapping.get("in_place"), base.in_place),
+        paste_as=paste_as if paste_as in PASTE_AS else "retarget",
+        layers=layers)
 
 
 def paste_plan(start, end, key_times, options, current):

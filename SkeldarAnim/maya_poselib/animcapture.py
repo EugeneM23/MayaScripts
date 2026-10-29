@@ -29,6 +29,10 @@ at each end of the range (`setKeyframe -insert`), never off the scene's curve; a
 a constraint or anything else feeds is sampled on every frame, all of them in one time walk
 (`_sampled`: a real time change, never `getAttr(time=)`); a free one is a static value.
 
+The ORIGINAL curves (2026-10-28, `build_clip`): `curvecapture` reads a character's controls' or
+joints' curves layer by layer into `curves.json.gz`, an objects channel in layers keeps its layers
+beside its sampled keys, and the header's `curves` block names the layers.
+
 Frames are WHOLE frames: a range's ends are rounded half up ONCE (`_whole`, `animdata`'s rule:
 Python's round() goes to even) and every count, walk and preview frame comes from those two ints.
 The header carries them as the floats the card's shape names (`"start": 0.0`).
@@ -87,13 +91,16 @@ import os
 import re
 import shutil
 import tempfile
-from collections import OrderedDict
+import traceback
+from collections import OrderedDict, namedtuple
 
 import maya.api.OpenMayaAnim as oma
 import maya.cmds as cmds
 
 from maya_poselib import animdata
 from maya_poselib import capture
+from maya_poselib import curvecapture
+from maya_poselib import curvedata
 from maya_poselib import keys
 from maya_poselib import objects as objs
 from maya_poselib import look
@@ -108,11 +115,16 @@ FRAME_PADDING = 4
 SAMPLED = "spline"                 # the tangents of a channel sampled on every frame
 
 MANY = "pick one character for an animation"
+CURVES_LOST = "original curves not kept: %s"
 NOTHING = scene.NOTHING
 CANCELLED = "cancelled - nothing saved"
 EMPTY = "the range %d-%d holds no frame"
 NO_BONE = "no bone of %s in the animation of %s"
 NO_VIEWPORT = "no viewport for a preview"
+
+#  What a Save reads (2026-10-28): the header, the frames (a character card), the original curves
+#  (`curves.json.gz`'s content, or None) and the line
+Clip = namedtuple("Clip", "header frames curves note")
 
 _TANGENTS = ("inTangentType", "outTangentType", "inAngle", "inWeight", "outAngle", "outWeight")
 
@@ -445,7 +457,15 @@ def _channel(plug, start, end):
     return SAMPLE
 
 
-def object_curves(nodes, start, end, own=()):
+def _lost(error):
+    """The Save line's note for original curves that could not be read: the error's first line.
+    The traceback is printed - the card is saved without them (the bones' frames are the card)."""
+    traceback.print_exc()
+    lines = str(error).strip().splitlines()
+    return CURVES_LOST % (lines[0] if lines else type(error).__name__)
+
+
+def object_curves(nodes, start, end, own=(), layers=None, problems=None):
     """[{name, path, attrs: {attr: CURVE}}] of the transforms `nodes` name (a shape or a
     component names its transform; each once, in selection order): per object its leaf name
     without the namespace, its long path, and the CURVE of each keyable scalar unlocked
@@ -454,7 +474,10 @@ def object_curves(nodes, start, end, own=()):
     every object's fed channels in ONE time walk (`_sampled`), none when no channel is fed. A
     channel that cannot be read is left out; an object with no channel keeps an empty record
     (the apply pairs objects by order too). The duplicates are made, read and deleted, and the
-    walk walked, with the undo queue off (`_unrecorded`)."""
+    walk walked, with the undo queue off (`_unrecorded`). `layers` (`curvecapture.stack()`) given,
+    a channel in animation layers also keeps its curve on each layer, `"layers"` beside its sampled
+    keys (spec 2026-10-28); a layered read that fails leaves the layers out and adds a note
+    to `problems` (a list, or None)."""
     start, end = _whole(start), _whole(end)
     objects, seen, fed, own = [], set(), [], set(own or ())
 
@@ -484,9 +507,22 @@ def object_curves(nodes, start, end, own=()):
             objects.append({"name": scene.leaf(path), "path": path, "attrs": attrs,
                             "shape": shape_attrs, "own": path in own})
         found = _sampled([plug for _attrs, _attr, plug in fed], start, end)
+        layered = {}
+        if layers is not None and len(layers) > 1:          # a scene without layers has none
+            fed_layered = [plug for _attrs, _attr, plug in fed if keys.input_of(plug) == "layer"]
+            if fed_layered:
+                try:
+                    layered = curvecapture.channel_curves(fed_layered, start, end, _copied,
+                                                          layers)[0]
+                except Exception as error:
+                    layered = {}
+                    if problems is not None:
+                        problems.append(_lost(error))
     for attrs, attr, plug in fed:
         if plug in found:
             attrs[attr] = found[plug]
+            if layered.get(plug):
+                attrs[attr] = dict(found[plug], layers=dict(layered[plug]))
         else:
             del attrs[attr]
     for record in objects:
@@ -497,11 +533,52 @@ def object_curves(nodes, start, end, own=()):
 
 # ------------------------------------------------------------------ the card
 
-def build_animation(selection=None, regions=None, start=None, end=None, progress=None):
-    """(header, frames, note) of the selection over [start, end] - each end `default_range`'s
+def _character_curves(ref, header, start, end, layers):
+    """(the card's `curves.json.gz` content or None, the note) of the character `ref`: its
+    controls' or joints' curves (`curvecapture.node_curves` over `character_nodes`), None when
+    none holds a key - statics alone say nothing the frames do not."""
+    bones = scene.skeleton(ref, [])[0]
+    nodes = curvecapture.character_nodes(ref, bones, header.get("members") or ())
+    with _unrecorded():
+        found, driven = curvecapture.node_curves(nodes, start, end, _copied, layers)
+    note = curvecapture.driven_note(driven)
+    pers = [per for node in found for per in node["attrs"].values()]
+    if not curvedata.has_keys(pers):
+        return None, note
+    return {"version": curvedata.VERSION, "nodes": found}, note
+
+
+def _layered(record):
+    """[{card layer: CURVE}] of an objects record's channels that sat in layers."""
+    out = []
+    for attrs in (record.get("attrs") or {}, record.get("shape") or {}):
+        for curve in attrs.values():
+            if isinstance(curve, dict) and isinstance(curve.get("layers"), dict):
+                out.append(curve["layers"])
+    return out
+
+
+def _summarize(header, layers, curves):
+    """The header's `curves` block (`curvedata.summary`) when the card keeps original curves -
+    its controls' (`curves`) or an objects channel's layers: the layers used, base first, and how
+    many nodes keep curves. Nothing written otherwise: an older card's paste stays as it was."""
+    objects = header.get("objects") or []
+    layered = [(record, _layered(record)) for record in objects]
+    layered = [(record, pers) for record, pers in layered if pers]
+    if curves is None and not layered:
+        return
+    pers = [per for node in (curves or {}).get("nodes", []) for per in node["attrs"].values()]
+    pers += [per for _record, found in layered for per in found]
+    count = len((curves or {}).get("nodes", [])) + len(layered)
+    header["curves"] = curvedata.summary(curvecapture.used_records(layers, pers), count)
+    return header["curves"]
+
+
+def build_clip(selection=None, regions=None, start=None, end=None, progress=None):
+    """`Clip(header, frames, curves, note)` of the selection over [start, end] - each end `default_range`'s
     when None, both made whole once (`_whole`): a CHARACTER card when the selection touches
     exactly one character (`character_animation`), else an OBJECTS card of its transforms
-    (frames None: an objects card keeps its curves in the header), else (None, None, why) - an
+    (frames None: an objects card keeps its curves in the header), else `Clip(None, None, None, why)` - an
     empty range, two characters, nothing selected, no member left, a cancel (`CANCELLED`).
     `progress` (a `timewalk.Progress`, or None) is stepped once per frame of a character's walk
     - `end - start + 1` steps; an objects card steps nothing (it walks the time only for the
@@ -512,25 +589,51 @@ def build_animation(selection=None, regions=None, start=None, end=None, progress
         end = last if end is None else end
     start, end = _whole(start), _whole(end)
     if end < start:
-        return None, None, EMPTY % (start, end)
+        return Clip(None, None, None, EMPTY % (start, end))
     refs, nodes, loose_owned = scene.split(selection)
     loose = [path for path, _owner in loose_owned]
     if len(refs) > 1:
-        return None, None, MANY
+        return Clip(None, None, None, MANY)
+    layers = curvecapture.stack()
     if refs:
         header, frames, note = character_animation(refs[0], nodes, regions, start, end,
                                                    progress)
-        if header is not None and loose:
+        if header is None:
+            return Clip(None, None, None, note)
+        problems = []
+        try:
+            curves, said = _character_curves(refs[0], header, start, end, layers)
+        except Exception as error:
+            curves, said = None, ""
+            problems.append(_lost(error))
+        if loose:
             own = [path for path, owner in loose_owned if scene.owned(refs[0], owner)]
-            header["objects"] = object_curves(loose, start, end, own)
+            header["objects"] = object_curves(loose, start, end, own, layers, problems)
             note += " | + %s" % scene.describe([], loose)
-        return header, frames, note
+        if _summarize(header, layers, curves) and curves is None:
+            curves = {"version": curvedata.VERSION, "nodes": []}
+        for text in [said] + problems:
+            if text:
+                note += " | " + text
+        return Clip(header, frames, curves, note)
     if loose:
         header = _common("objects")
         header.update(_span(start, end))
-        header["objects"] = object_curves(loose, start, end)
-        return header, None, "%s: %s" % (scene.describe([], loose), _frames_text(start, end))
-    return None, None, NOTHING
+        problems = []
+        header["objects"] = object_curves(loose, start, end, layers=layers, problems=problems)
+        _summarize(header, layers, None)
+        return Clip(header, None, None,
+                    " | ".join(["%s: %s" % (scene.describe([], loose), _frames_text(start, end))]
+                               + problems))
+    return Clip(None, None, None, NOTHING)
+
+
+def build_animation(selection=None, regions=None, start=None, end=None, progress=None):
+    """(header, frames, note) - `build_clip`'s card without its curves file: the callers that
+    write no `curves.json.gz` (a verify, an older script). The header still carries its `curves`
+    block when the card has them."""
+    clip = build_clip(selection, regions, start, end, progress)
+    return clip.header, clip.frames, clip.note
 
 
 # ------------------------------------------------------------------ the preview

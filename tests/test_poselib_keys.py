@@ -20,7 +20,7 @@ in the path, which `connectionInfo` names instead of the real driver.
 import unittest
 from collections import OrderedDict
 
-from maya_poselib import keys
+from maya_poselib import curvedata, keys
 
 
 def layer(name, order, base=False, selected=False, locked=False, override=False,
@@ -1749,6 +1749,171 @@ class CurveState(Restoring):
         fake.infinity["a_translateX"] = (0, 0)
         self.assertEqual(keys.put_curve_state(state, None), 1)
         self.assertEqual(fake.infinity["a_translateX"], (0, 3))
+
+
+class StackCmds(LayerSceneCmds):
+    """`LayerSceneCmds` plus each layer's plugs (`animLayer -q -attribute`), their long names and
+    the scale accumulation."""
+
+    def __init__(self, tree, plugs=None, scale=None, **kw):
+        LayerSceneCmds.__init__(self, tree, **kw)
+        self.plugs = dict(plugs or {})
+        self.scale = dict(scale or {})
+
+    def animLayer(self, name=None, **kw):
+        if kw.get("query") and kw.get("attribute"):
+            return list(self.plugs.get(name, [])) or None
+        return LayerSceneCmds.animLayer(self, name, **kw)
+
+    def getAttr(self, plug, **kw):
+        node, attr = plug.split(".")
+        if attr == "scaleAccumulationMode":
+            return self.scale.get(node, 1)
+        return LayerSceneCmds.getAttr(self, plug, **kw)
+
+    def ls(self, node, long=False):
+        return ["|grp|" + node.split("|")[-1]]
+
+    def attributeQuery(self, attr, node=None, longName=False):
+        return {"tx": "translateX", "rx": "rotateX"}.get(attr, attr)
+
+
+class LayerStack(Restoring):
+
+    TREE = {"BaseAnimation": ["A", "B"]}
+
+    def test_no_layers_is_an_empty_stack(self):
+        keys.cmds = StackCmds({}, root=None)
+        self.assertEqual(keys.layer_stack(), [])
+
+    def test_bottom_to_top_the_root_first(self):
+        keys.cmds = StackCmds(self.TREE)
+        self.assertEqual(keys.layer_stack(), ["BaseAnimation", "A", "B"])
+
+    def test_a_layers_record(self):
+        keys.cmds = StackCmds(self.TREE, override=["B"], quaternion=["A"], muted=["B"],
+                              weights={"A": 0.25}, scale={"A": 0})
+        self.assertEqual(keys.layer_record("A"), curvedata.layer_record(
+            "A", weight=0.25, rotation="quaternion", scale="additive"))
+        self.assertEqual(keys.layer_record("B"), curvedata.layer_record(
+            "B", override=True, mute=True))
+        self.assertEqual(keys.layer_record("BaseAnimation", base=True)["name"], curvedata.BASE)
+
+    def test_a_layers_plugs_in_long_spellings(self):
+        keys.cmds = StackCmds(self.TREE, plugs={"A": ["ctrl.tx", "ctrl.rx"]})
+        self.assertEqual(keys.layer_plugs("A"), {"|grp|ctrl.translateX", "|grp|ctrl.rotateX"})
+        self.assertEqual(keys.layer_plugs("B"), set())
+
+    def test_existing_layers_leave_the_base_out(self):
+        keys.cmds = StackCmds(self.TREE, override=["B"], locked=["A"])
+        self.assertEqual(keys.existing_layers(), [
+            {"name": "A", "override": False, "rotation": "component", "locked": True},
+            {"name": "B", "override": True, "rotation": "component", "locked": False}])
+
+
+class RawCmds(CurveCmds):
+    """`CurveCmds` plus the curve-node keys `write_raw` writes: `setKeyframe` on a CURVE (a name
+    in `types`) records a raw key; on a plug it makes that plug's curve on the layer (`made`
+    {(layer, plug): curve}) as Maya's first key does."""
+
+    def __init__(self, made=None, **kw):
+        CurveCmds.__init__(self, **kw)
+        self.made = dict(made or {})
+
+    def setKeyframe(self, target, **kw):
+        if target in self.types:
+            self.log.append(("raw", target, kw.get("time"), kw.get("value")))
+            return 1
+        self.log.append(("key", target, kw.get("time"), kw.get("value"), kw.get("animLayer")))
+        made = self.made.pop((kw.get("animLayer"), target), None)
+        if made:
+            self.found[(kw.get("animLayer"), target)] = [made]
+        return 1
+
+
+class WriteRaw(Restoring):
+
+    KEYS = [[0.0, 1.5, "auto", "auto", 0.0, 1.0, 0.0, 1.0],
+            [5.0, -2.0, "fixed", "fixed", 20.0, 2.0, -10.0, 3.0]]
+
+    def test_an_existing_layer_curve_takes_the_raw_values_and_every_tangent(self):
+        fake = RawCmds(found={("AddL", "a.tx"): ["cx"]}, plain={"a.tx": ["blend"]},
+                       types={"cx": "animCurveTL", "blend": "animBlendNodeAdditiveDL"})
+        keys.cmds = fake
+        written = keys.write_raw("a.tx", "AddL", self.KEYS, weighted=True, pre="constant",
+                                 post="cycle")
+        self.assertEqual((written.count, written.notes, written.plugs), (2, [], ["a.tx"]))
+        self.assertEqual(fake.calls("add"), [("add", "AddL", "a.tx")])
+        self.assertEqual(fake.calls("raw"), [("raw", "cx", 0.0, 1.5), ("raw", "cx", 5.0, -2.0)])
+        tangents = fake.calls("tangent")
+        self.assertEqual(tangents[0][2], {"edit": True, "weightedTangents": True})
+        fixed = tangents[1][2]
+        self.assertEqual((fixed["inAngle"], fixed["outAngle"], fixed["inWeight"],
+                          fixed["outWeight"]), (20.0, -10.0, 2.0, 3.0))
+        self.assertEqual(fake.calls("set"), [("set", "cx.postInfinity", 3)])
+
+    def test_a_missing_layer_curve_is_made_by_one_key_through_the_plug_then_overwritten(self):
+        fake = RawCmds(made={("AddL", "a.tx"): "cx"}, plain={"a.tx": ["blend"]},
+                       types={"cx": "animCurveTL", "blend": "animBlendNodeAdditiveDL"})
+        keys.cmds = fake
+        written = keys.write_raw("a.tx", "AddL", self.KEYS)
+        self.assertEqual(written.count, 2)
+        self.assertEqual(fake.calls("key"), [("key", "a.tx", 0.0, 1.5, "AddL")])
+        self.assertEqual([entry[2:] for entry in fake.calls("raw")], [(0.0, 1.5), (5.0, -2.0)])
+
+    def test_no_curve_after_the_creating_key_is_said(self):
+        fake = RawCmds(plain={"a.tx": ["blend"]}, types={"blend": "animBlendNodeAdditiveDL"})
+        keys.cmds = fake
+        written = keys.write_raw("a.tx", "AddL", self.KEYS)
+        self.assertEqual((written.count, written.plugs), (0, []))
+        self.assertEqual(written.notes, [keys.RAW_NO_CURVE % ("a.tx", "AddL")])
+
+    def test_without_layers_the_plugs_own_curve_takes_them(self):
+        fake = RawCmds(plain={"a.tx": ["cx"]}, types={"cx": "animCurveTL"})
+        keys.cmds = fake
+        written = keys.write_raw("a.tx", None, self.KEYS)
+        self.assertEqual(written.count, 2)
+        self.assertEqual(fake.calls("add"), [])
+        self.assertEqual(len(fake.calls("raw")), 2)
+
+    def test_a_locked_plug_takes_nothing(self):
+        fake = RawCmds(plain={"a.tx": ["cx"]}, types={"cx": "animCurveTL"}, locked=["a.tx"])
+        keys.cmds = fake
+        written = keys.write_raw("a.tx", None, self.KEYS)
+        self.assertEqual((written.count, fake.calls("raw")), (0, []))
+        self.assertIn("locked", written.notes[0])
+
+
+class MakeCmds(object):
+    """`animLayer` creation and edits, `setAttr`, logged."""
+
+    def __init__(self):
+        self.log = []
+
+    def animLayer(self, name=None, **kw):
+        if kw.get("edit"):
+            self.log.append(("edit", name, kw))
+            return None
+        self.log.append(("make", name, kw))
+        return name + "1"                             # Maya made the name free
+
+    def setAttr(self, plug, value):
+        self.log.append(("set", plug, value))
+
+
+class MakeLayer(Restoring):
+
+    def test_a_layer_made_with_the_cards_settings_under_its_free_name(self):
+        fake = MakeCmds()
+        keys.cmds = fake
+        record = curvedata.layer_record("Fix", override=True, weight=0.5, mute=True,
+                                        rotation="quaternion", scale="additive")
+        self.assertEqual(keys.make_layer(record), "Fix1")
+        self.assertEqual(fake.log[0], ("make", "Fix", {"override": True}))
+        self.assertIn(("set", "Fix1.rotationAccumulationMode", 1), fake.log)
+        self.assertIn(("set", "Fix1.scaleAccumulationMode", 0), fake.log)
+        self.assertIn(("edit", "Fix1", {"edit": True, "weight": 0.5}), fake.log)
+        self.assertIn(("edit", "Fix1", {"edit": True, "mute": True}), fake.log)
 
 
 if __name__ == "__main__":

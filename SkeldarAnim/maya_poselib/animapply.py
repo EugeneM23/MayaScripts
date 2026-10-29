@@ -140,6 +140,10 @@ emptied curve's cycle infinity given back; an objects card's sub-range 3..14 of 
 at 30 - keys at 30 / 37 / 41, the curve equal to the source's to 0.000000000, the temporary node
 gone and the selection kept.
 
+Paste as «Original curves» (2026-10-28) is `curveapply`'s press: `apply`, `apply_onto`, `drop_floor` and
+an objects card's press hand it over (`_press_curves`), the targets of another model going
+through the bones as before.
+
 Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("Apply - the
 options", "The paste modes", "Root motion", "Per frame", "The press, in order", "Objects",
 "Blend", "Drops", "Select objects").
@@ -154,6 +158,7 @@ import maya.cmds as cmds
 
 from maya_poselib import animdata
 from maya_poselib import apply as ap
+from maya_poselib import curvedata
 from maya_poselib import helpers
 from maya_poselib import keys
 from maya_poselib import look
@@ -1200,6 +1205,20 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
     path)] in place of the pairing - a character card's objects onto the selection alone;
     `lead` notes go first on the line."""
     options = _options(options)
+    if _pastes_curves(header, options):
+        from maya_poselib import curveapply
+        if ap._clamp(alpha) < 1.0:
+            return False, curveapply.BLENDED
+        if matched is None:
+            matched, notes, refusal = _objects_pairs(header, selection)
+            if refusal:
+                return False, refusal
+        else:
+            notes = []
+        channels, more, paths = curveapply.objects_channels(matched)
+        return curveapply.paste(header, [(ap._counted(len(paths), "objects"), "objects",
+                                          channels, list(lead) + list(notes) + list(more))],
+                                options, progress)
     layer, refusal = keys.active_layer()
     if refusal:
         return False, refusal
@@ -1270,17 +1289,83 @@ def _card_matched(header, loose, refs, only=False):
     return matched, notes
 
 
+def _pastes_curves(header, options):
+    """Does this press paste the card's ORIGINAL curves: Paste as «Original curves» on a card that
+    holds them (spec 2026-10-28)? An older card ignores the option."""
+    return _options(options).paste_as == "curves" and curvedata.has_curves(header)
+
+
+def _press_curves(header, frames, refs, curves, mirror=False, alpha=1.0, options=None,
+                  progress=None, only=None, loose=()):
+    """The press under Paste as «Original curves»: the targets of the card's own model take its
+    curves layer by layer, its objects with them (`curveapply.paste`, one chunk); every other
+    target - and every one when the curves cannot be read - is pasted by the bones
+    (`_press_refs`, its own chunk: a mixed press is two undo steps) and the line says so. Mirror
+    and Blend change values: refused."""
+    from maya_poselib import curveapply
+    options = _options(options)
+    if mirror:
+        return False, curveapply.MIRRORED
+    if ap._clamp(alpha) < 1.0:
+        return False, curveapply.BLENDED
+    notes = []
+    if curves is not None:
+        try:
+            curvedata.check(curves, curvedata.layer_names(header))
+        except ValueError:
+            curves = None
+    if curves is None:
+        notes.append(curveapply.UNREAD)
+        same = []
+    else:
+        same = [ref for ref in refs if curveapply.matches(header, ref)]
+    other = [ref for ref in refs if ref not in same]
+    groups = []
+    for ref in same:
+        channels, said = curveapply.character_channels(header, curves, ref, only,
+                                                       options.in_place)
+        groups.append((ap.target_label(ref), "controls" if ref.kind == "rig" else "bones",
+                       channels, said))
+    matched = []
+    if same:
+        matched, onotes = _card_matched(header, loose, same, only is not None)
+        if matched:
+            channels, more, paths = curveapply.objects_channels(matched)
+            groups.append((ap._counted(len(paths), "objects"), "objects", channels,
+                           list(onotes) + list(more)))
+    oks, lines = [], []
+    if groups:
+        ok, line = curveapply.paste(header, groups, options, progress)
+        oks.append(ok)
+        lines.append(line)
+        if not ok and (line == CANCELLED or line.startswith(CANCELLED_KEPT.split("%")[0])
+                       or getattr(progress, "cancelled", False)):
+            return False, line
+    if other:
+        rest = dict(header, objects=[]) if matched else header
+        ok, line = _press_refs(rest, frames, other, False, 1.0,
+                               options._replace(paste_as="retarget"), progress, only,
+                               () if matched else loose)
+        oks.append(ok)
+        lines.append(line)
+        if curves is not None:
+            notes.append(curveapply.RETARGETED % ", ".join(ap.target_label(r) for r in other))
+    return any(oks), " | ".join(lines + notes)
+
+
 # ------------------------------------------------------------------ the presses
 
 def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
-          progress=None, only=False):
+          progress=None, only=False, curves=None):
     """(ok, text): the animation card - `header` its `anim.json`, `frames` its decoded
     `frames.json.gz` (the window reads it: `store.read_frames`) - onto every character the
     selection touches (`selection` a list of nodes, Maya's when None; nothing selected: the only
     character), pasted with `options` (`animdata.Options`, a mapping of its fields, or None for
     the defaults), mirrored when asked, `alpha` < 1 mixing each frame with the take as it stood;
     an objects card onto the selection's objects (`apply.pair_objects`). One undo chunk;
-    `progress` (a `timewalk.Progress`) steps a frame at a time and Esc undoes the press."""
+    `progress` (a `timewalk.Progress`) steps a frame at a time and Esc undoes the press.
+    `curves` - the card's `curves.json.gz` (`store.read_curves`) for Paste as «Original curves»;
+    None for any other paste, or when it cannot be read."""
     if header and header.get("kind") == "objects":
         return _press_objects(header, selection, alpha, options, progress)
     refusal = _card_refusal(header)
@@ -1301,13 +1386,17 @@ def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
     refs, refusal = _targets(selection)
     if refusal:
         return False, refusal
+    if _pastes_curves(header, options):
+        return _press_curves(header, frames, refs, curves, mirror, alpha, options, progress,
+                             ap.selected_nodes(selection) if only else None, loose)
     if only:
         return _press_refs(header, frames, refs, mirror, alpha, options, progress,
                            only=ap.selected_nodes(selection), loose=loose)
     return _press_refs(header, frames, refs, mirror, alpha, options, progress, loose=loose)
 
 
-def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, progress=None):
+def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, progress=None,
+               curves=None):
     """(ok, text): the animation onto the character whose skeleton's root (or any node of it) is
     `root` - a card dropped on a character in a viewport. An objects card goes onto objects
     only. One undo chunk."""
@@ -1319,10 +1408,13 @@ def apply_onto(header, frames, root, mirror=False, alpha=1.0, options=None, prog
     ref = _character_of(root) if root else None
     if ref is None:
         return False, ap.NOT_FOUND % (root or "nothing")
+    if _pastes_curves(header, options):
+        return _press_curves(header, frames, [ref], curves, mirror, alpha, options, progress)
     return _press_refs(header, frames, [ref], mirror, alpha, options, progress)
 
 
-def drop_floor(header, frames, point, mirror=False, options=None, progress=None):
+def drop_floor(header, frames, point, mirror=False, options=None, progress=None,
+               curves=None):
     """(ok, text): the card's source character added at the floor `point` and the animation
     pasted onto it - the pose's road (`apply.drop_floor`: Add Character or the native rebuild,
     the layer refused before anything is added, the selection put back) with this press made
@@ -1335,11 +1427,20 @@ def drop_floor(header, frames, point, mirror=False, options=None, progress=None)
     if refusal:
         return False, refusal
     options = _options(options)
+    floor = _pastes_curves(header, options)
+    if floor:
+        from maya_poselib import curveapply
+        if mirror:
+            return False, curveapply.MIRRORED
+        options = options._replace(in_place=True)
     refusal = _checked_plan(header, frames, options)[1]
     if refusal:
         return False, refusal
-    return ap.drop_floor(header, point, mirror, onto=lambda root: apply_onto(
-        header, frames, root, mirror, 1.0, options, progress))
+    ok, text = ap.drop_floor(header, point, mirror, onto=lambda root: apply_onto(
+        header, frames, root, mirror, 1.0, options, progress, curves=curves))
+    if floor and ok:
+        text += " | " + curveapply.FLOOR_IN_PLACE
+    return ok, text
 
 
 def select_objects(header, selection=None, options=None):
@@ -1409,6 +1510,9 @@ class Blend(object):
         if not header:
             return ap.NO_CARD
         options = _options(options)
+        if _pastes_curves(header, options):
+            from maya_poselib import curveapply
+            return curveapply.BLENDED
         objects = header.get("kind") == "objects"
         if objects:
             try:
