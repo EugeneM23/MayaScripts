@@ -200,7 +200,8 @@ class Plan(unittest.TestCase):
         self.assertEqual((o.mode, o.keys, o.connect, o.start), ("replace", "source", True, 3.0))
 
     def test_options_defaults(self):
-        self.assertEqual(ad.Options(), ("replace", True, None, None, False, "every", False))
+        self.assertEqual(ad.Options(), ("replace", True, None, None, False, "every", False,
+                                        "retarget", None))
         self.assertEqual(ad.paste_plan(0, 3, [], None, 5), ad.paste_plan(0, 3, [], ad.Options(), 5))
         self.assertEqual(ad.options_from(None), ad.Options())
         self.assertEqual(ad.options_from({"bogus": 1}), ad.Options())
@@ -246,6 +247,28 @@ class Connect(unittest.TestCase):
         self.assertEqual(list(out), ["b.tx", "a.tx"])
         self.assertIsNot(out, values)
         self.assertEqual(values, {"b.tx": 1.0, "a.tx": 2.0})
+
+
+class PasteAs(unittest.TestCase):
+
+    def test_the_defaults_keep_todays_paste(self):
+        options = ad.Options()
+        self.assertEqual((options.paste_as, options.layers), ("retarget", None))
+
+    def test_options_from_reads_and_validates_both(self):
+        options = ad.options_from({"paste_as": "curves",
+                                   "layers": ["BaseAnimation", "AnimLayer1"]})
+        self.assertEqual((options.paste_as, options.layers),
+                         ("curves", ("BaseAnimation", "AnimLayer1")))
+        self.assertEqual(ad.options_from({"paste_as": "bake"}).paste_as, "retarget")
+        self.assertIsNone(ad.options_from({"layers": "AnimLayer1"}).layers)
+        self.assertIsNone(ad.options_from({"layers": None}).layers)
+        self.assertEqual(ad.options_from({"layers": ["A", 3, "B"]}).layers, ("A", "B"))
+
+    def test_the_plan_ignores_them(self):
+        a = ad.paste_plan(0, 10, [], ad.Options(), 0)
+        b = ad.paste_plan(0, 10, [], ad.Options(paste_as="curves", layers=("A",)), 0)
+        self.assertEqual(a, b)
 
 
 class Purity(unittest.TestCase):
