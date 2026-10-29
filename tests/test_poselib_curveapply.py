@@ -73,9 +73,11 @@ class Refusals(unittest.TestCase):
 
 class FakeCmds(object):
     def __init__(self, locked=False):
-        self.locked, self.edits = locked, []
+        self.locked, self.edits, self.muted = locked, [], False
 
     def animLayer(self, *args, **kwargs):
+        if kwargs.get("mute"):
+            return self.muted
         if kwargs.get("root"):
             return "BaseAnimation"
         return self.locked if kwargs.get("lock") else None
@@ -110,6 +112,23 @@ class FixRound(unittest.TestCase):
                                                               False, [], None, None)})])
         ca._connect(planned, {"c.rx": 5.0}, plan, "AnimLayer1", ADD)
         self.assertEqual(fake.edits, [(20.0, 20.0), (30.0, 30.0)])
+
+
+class MutedConnect(unittest.TestCase):
+
+    seam = Refusals.seam
+
+    def test_connect_skips_a_muted_target_layer(self):
+        fake = FakeCmds()
+        fake.muted = True
+        self.seam((ca, "cmds"), fake)
+        self.seam((ca.keys, "curve_for"), lambda plug, layer: "curve")
+        self.seam((ca.keys, "_weight"), lambda layer: 1.0)
+        plan = animdata.paste_plan(0, 10, [0, 10], animdata.Options(), 20)
+        planned = OrderedDict([((0, "c.rx"), {"AnimLayer1": ([[20.0, 2.0]], False, [], None, None)})])
+        notes = ca._connect(planned, {"c.rx": 5.0}, plan, "AnimLayer1", ADD)
+        self.assertEqual(fake.edits, [])
+        self.assertEqual(notes, [ca.CONNECT_MUTED % "AnimLayer1"])
 
 
 class LayersText(unittest.TestCase):

@@ -47,6 +47,8 @@ MADE = "%s (made)"
 CONNECT_ONE = "Connect skipped - it needs one layer, %d picked"
 CONNECT_WEIGHT = "Connect skipped on %s - its weight is 0"
 CONNECT_QUAT = "Connect skipped on the rotations of %s - it accumulates as quaternions"
+CONNECT_MUTED = "Connect skipped on %s - it is muted"
+FLOOR_IN_PLACE = "Main kept at the drop point - original curves carry no travel from a floor drop"
 
 
 def matches(header, ref):
@@ -170,6 +172,9 @@ def _connect(planned, before, plan, layer, record):
     is in it. A quaternion layer's rotations are no sum of eulers: skipped; weight 0: nothing to
     move. The notes said."""
     notes = []
+    if layer is not None and not record.get("base") \
+            and cmds.animLayer(layer, query=True, mute=True):
+        return [CONNECT_MUTED % record["name"]]
     weight = 1.0 if (layer is None or record.get("base")) else keys._weight(layer)
     for (_index, plug), per in planned.items():
         if record.get("rotation") == "quaternion" and plug.rsplit(".", 1)[-1] in aa.ROTATE:
