@@ -1,5 +1,6 @@
-"""The composer's pure helpers: the channel set and euler continuity."""
+"""The composer: the channel set, euler continuity and the euler choice."""
 
+import math
 import unittest
 
 from maya_uebridge import montage
@@ -58,6 +59,70 @@ class ChannelPlan(unittest.TestCase):
         self.assertEqual(montage.channel_plan(animated),
                          [("a", "translateY"), ("b", "rotateX"),
                           ("b", "rotateZ")])
+
+
+class TurnNear(unittest.TestCase):
+    def test_a_value_is_shifted_by_whole_turns_toward_the_previous(self):
+        turn = 2.0 * math.pi
+        self.assertAlmostEqual(montage._turn_near(0.1, 0.1 + turn), 0.1, 9)
+        self.assertAlmostEqual(montage._turn_near(0.1, 0.1 - turn), 0.1, 9)
+
+    def test_a_value_already_near_is_left_alone(self):
+        self.assertAlmostEqual(montage._turn_near(1.0, 1.5), 1.5, 9)
+
+    def test_half_a_turn_is_the_boundary(self):
+        self.assertAlmostEqual(montage._turn_near(0.0, math.pi - 0.01),
+                               math.pi - 0.01, 9)
+        self.assertAlmostEqual(montage._turn_near(0.0, math.pi + 0.01),
+                               math.pi + 0.01 - 2.0 * math.pi, 9)
+
+
+try:
+    from maya.api import OpenMaya as _om
+    HAVE_API = True
+except ImportError:                                          # pragma: no cover
+    HAVE_API = False
+
+
+@unittest.skipUnless(HAVE_API, "needs maya.api")
+class ClosestEuler(unittest.TestCase):
+    """A quaternion names one rotation and two eulers: the series is chosen
+    against what came before, or channels flip frame to frame."""
+
+    def euler(self, x, y, z):
+        return _om.MEulerRotation(math.radians(x), math.radians(y),
+                                  math.radians(z))
+
+    def test_the_first_sample_takes_the_rotation_as_it_is(self):
+        values = montage._closest_euler(None, self.euler(10.0, 20.0, 30.0))
+        self.assertAlmostEqual(math.degrees(values[0]), 10.0, 6)
+        self.assertAlmostEqual(math.degrees(values[1]), 20.0, 6)
+        self.assertAlmostEqual(math.degrees(values[2]), 30.0, 6)
+
+    def test_a_whole_turn_is_taken_off_to_stay_near(self):
+        previous = [math.radians(v) for v in (10.0, 20.0, 30.0)]
+        values = montage._closest_euler(previous,
+                                        self.euler(370.0, 20.0, 30.0))
+        self.assertAlmostEqual(math.degrees(values[0]), 10.0, 6)
+
+    def test_the_alternate_solution_wins_when_it_is_nearer(self):
+        """The alternate names the same rotation; near it, it must be taken."""
+        rotation = self.euler(170.0, 150.0, -160.0)
+        alternate = rotation.alternateSolution()
+        previous = [alternate.x, alternate.y, alternate.z]
+        values = montage._closest_euler(previous, rotation)
+        for got, want in zip(values, previous):
+            self.assertAlmostEqual(got, want, 6)
+
+    def test_the_answer_is_always_the_same_rotation(self):
+        rotation = self.euler(40.0, -70.0, 120.0)
+        previous = [math.radians(v) for v in (0.0, 0.0, 0.0)]
+        values = montage._closest_euler(previous, rotation)
+        again = _om.MEulerRotation(values[0], values[1], values[2])
+        quat, back = rotation.asQuaternion(), again.asQuaternion()
+        dot = (quat.x * back.x + quat.y * back.y + quat.z * back.z
+               + quat.w * back.w)
+        self.assertAlmostEqual(abs(dot), 1.0, 9)
 
 
 class PlanFile(unittest.TestCase):

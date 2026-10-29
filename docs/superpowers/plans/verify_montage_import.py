@@ -35,6 +35,7 @@ maya.standalone.initialize(name="python")
 
 import maya.cmds as cmds                                        # noqa: E402
 import maya.mel as mel                                          # noqa: E402
+from maya.api import OpenMaya as om                             # noqa: E402
 
 from maya_uebridge import animimport, montage, records           # noqa: E402
 
@@ -51,10 +52,16 @@ B_KEYS = 16
 
 
 def clip_a(channel, frame):
+    #  the pelvis turns about all THREE axes, so a euler read between two
+    #  frames is NOT the engine's slerp of them - the slerp path is what the
+    #  composer takes for a rotate triple, and the gates below prove it with
+    #  a positive control
     return {"root.translateX": 1.0 * frame,
             "root.Pose_3": 0.1 * frame,
             "root.Pose_7": 2.0 * frame,
+            "pelvis.rotateX": 6.0 * frame,
             "pelvis.rotateY": 7.0 * frame,
+            "pelvis.rotateZ": -5.0 * frame,
             "spine_01.rotateZ": -3.0 * frame}[channel]
 
 
@@ -63,13 +70,16 @@ def clip_b(channel, frame):
     #  280 degree step, which is a wrap and must be composed as one.
     return {"root.translateX": 100.0 - 2.0 * frame,
             "root.Pose_3": 9.0,                  # still: no curve at all
+            "pelvis.rotateX": 4.0 * frame,
             "pelvis.rotateY": 350.0 - 2.0 * frame,
+            "pelvis.rotateZ": 3.0 * frame,
             "spine_01.rotateZ": 4.0 * frame}[channel]
 
 
+TRIPLE = ("pelvis.rotateX", "pelvis.rotateY", "pelvis.rotateZ")
 A_CHANNELS = ("root.translateX", "root.Pose_3", "root.Pose_7",
-              "pelvis.rotateY", "spine_01.rotateZ")
-B_CURVES = ("root.translateX", "pelvis.rotateY", "spine_01.rotateZ")
+              "spine_01.rotateZ") + TRIPLE
+B_CURVES = ("root.translateX", "spine_01.rotateZ") + TRIPLE
 B_STATIC = ("root.Pose_3",)        # the attribute exists, nothing animates it
 #  root.Pose_7 is absent from B: the composite must HOLD the last value and
 #  say so.
@@ -201,6 +211,52 @@ def last_frame():
     return int(math.floor(end * FPS + 1e-6))
 
 
+def source_frame(frame):
+    """(clip, source frame) the montage shows at target `frame`, by this
+    script's own arithmetic."""
+    seconds = frame / FPS
+    chosen = None
+    for span in spans_here():
+        if span[1] <= seconds + 1e-9:
+            chosen = span
+    clip, t0, t1, src, rate = chosen
+    inside = min(max(seconds, t0), t1)
+    return clip, (src + (inside - t0) * rate) * FPS
+
+
+def _quat(degrees_xyz):
+    from maya.api import OpenMaya as om
+    return om.MEulerRotation(*[math.radians(v) for v in degrees_xyz],
+                             om.MEulerRotation.kXYZ).asQuaternion()
+
+
+def expected_rotation(frame, slerp=True):
+    """The pelvis's rotation at target `frame`, as the engine would read it:
+    the two neighbouring source frames SLERPED. `slerp` False gives the euler
+    lerp instead - the positive control, which must differ."""
+    from maya.api import OpenMaya as om
+
+    clip, source = source_frame(frame)
+    forms = clip_a if clip == CLIP_A else clip_b
+    keys = (A_KEYS if clip == CLIP_A else B_KEYS) - 1
+    source = min(max(source, 0.0), keys)
+    low, high = math.floor(source), math.ceil(source)
+    share = 0.0 if high == low else (source - low) / float(high - low)
+    sides = [[forms(channel, side) for channel in TRIPLE]
+             for side in (low, high)]
+    if not slerp:
+        return _quat([a + (b - a) * share for a, b in zip(*sides)])
+    if share <= 0.0:
+        return _quat(sides[0])
+    return om.MQuaternion.slerp(_quat(sides[0]), _quat(sides[1]), share)
+
+
+def _angle(first, second):
+    dot = (first.x * second.x + first.y * second.y + first.z * second.z
+           + first.w * second.w)
+    return 2.0 * math.degrees(math.acos(min(1.0, abs(dot))))
+
+
 # ------------------------------------------------------------ phase compose
 
 def phase_compose():
@@ -218,9 +274,29 @@ def phase_compose():
     gate("the last frame is floor(end x fps)", done["frames"] == frames,
          "{0} against {1}".format(done["frames"], frames))
 
-    #  every channel, every frame, against the closed form
+    #  the pelvis turns about three axes: what the composite must show is the
+    #  SLERP of the two neighbouring source frames, as the engine reads its
+    #  own keys - not a euler lerp of them
+    from maya.api import OpenMaya as om
+    worst_rot = 0.0
+    control = 0.0
+    at_rot = -1
+    for frame in range(frames + 1):
+        got = _quat([cmds.getAttr("AM_Fixture_1P:{0}".format(channel),
+                                  time=frame) for channel in TRIPLE])
+        error = _angle(got, expected_rotation(frame))
+        if error > worst_rot:
+            worst_rot, at_rot = error, frame
+        control = max(control, _angle(expected_rotation(frame),
+                                      expected_rotation(frame, slerp=False)))
+    close("the pelvis is the slerp of the source's keys", worst_rot, 0.0,
+          0.001, "at frame {0} ".format(at_rot))
+    gate("a euler lerp would have been another rotation", control > 0.05,
+         "the two readings differ by up to {0:.3f} deg".format(control))
+
+    #  every other channel, every frame, against the closed form
     worst = {}
-    for channel in A_CHANNELS:
+    for channel in [c for c in A_CHANNELS if c not in TRIPLE]:
         leaf, attr = channel.split(".")
         plug = "AM_Fixture_1P:{0}.{1}".format(leaf, attr)
         bad = 0.0
@@ -383,26 +459,40 @@ def phase_import():
     for clip, namespace in ((CLIP_A, "chkA"), (CLIP_B, "chkB")):
         animimport.import_clip(paths[clip], namespace, set_timeline=False,
                                merge=False)
+    #  the pelvis triple: the composite slerps the clip's two neighbouring
+    #  frames, so the control slerps the IMPORTED clip's own, read here
+    worst_rot = 0.0
+    at_rot = -1
+    for frame in range(frames + 1):
+        clip, source = source_frame(frame)
+        space = "chkA" if clip == CLIP_A else "chkB"
+        low, high = math.floor(source), math.ceil(source)
+        share = 0.0 if high == low else (source - low) / float(high - low)
+        sides = [_quat([cmds.getAttr("{0}:{1}".format(space, channel),
+                                     time=side) for channel in TRIPLE])
+                 for side in (low, high)]
+        want = sides[0] if share <= 0.0 else om.MQuaternion.slerp(
+            sides[0], sides[1], share)
+        got = _quat([cmds.getAttr("AM_Fixture_1P:{0}".format(channel),
+                                  time=frame) for channel in TRIPLE])
+        if _angle(got, want) > worst_rot:
+            worst_rot, at_rot = _angle(got, want), frame
+    close("the pelvis against the imported clips' own slerp", worst_rot, 0.0,
+          1e-4, "at frame {0} ".format(at_rot))
+
     worst = 0.0
     where = ""
     compared = 0
-    for channel in A_CHANNELS:
+    for channel in [c for c in A_CHANNELS if c not in TRIPLE]:
         leaf, attr = channel.split(".")
         plug = "AM_Fixture_1P:{0}.{1}".format(leaf, attr)
         for frame in range(frames + 1):
-            seconds = frame / FPS
-            chosen = None
-            for span in spans_here():
-                if span[1] <= seconds + 1e-9:
-                    chosen = span
-            clip, t0, t1, src, rate = chosen
-            inside = min(max(seconds, t0), t1)
-            source_frame = (src + (inside - t0) * rate) * FPS
+            clip, mapped = source_frame(frame)
             check = "chkA" if clip == CLIP_A else "chkB"
             source_plug = "{0}:{1}.{2}".format(check, leaf, attr)
             if not cmds.objExists(source_plug):
                 continue
-            want = cmds.getAttr(source_plug, time=source_frame)
+            want = cmds.getAttr(source_plug, time=mapped)
             got = cmds.getAttr(plug, time=frame)
             compared += 1
             error = abs(got - want)
@@ -433,16 +523,239 @@ def phase_import():
          set(cmds.ls(long=True)) == before)
 
 
-PHASES = {"compose": phase_compose, "import": phase_import}
+# --------------------------------------------------------------- phase live
+
+#  Atone's own montages: one slot of three slices of ONE clip at three rates,
+#  one slot of three DIFFERENT clips, and the montage the animator pointed at.
+LIVE = (("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
+         "AM_LongSword_Block_Stun", "DefaultSlot"),
+        ("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
+         "AM_LongSword_Block_Stun", "1P"),
+        ("/Game/Prototype/Animation/PlayerCharacter/Block/Montages/"
+         "AM_SwordShield_1p_blockreact_mid", "1P"))
+
+LIVE_BONES = ("pelvis", "spine_03", "hand_r", "foot_l", "head")
+
+#  The editor's own reading of a clip's bone at a time:
+#  `AnimationLibrary.get_bone_pose_for_time` (measured 2026-10-29 - it answers
+#  the bone's LOCAL transform). Comparing a local transform across the two
+#  programs would be an axis-convention minefield, so what travels is the
+#  ANGLE from the clip's own first sampled pose: a rigid change of basis
+#  leaves the angle between two rotations alone.
+_POSE_SCRIPT = '''\
+import json
+import os
+import traceback
+
+import unreal
+
+_OUT = %(out)s
+_ASKS = %(asks)s
+
+result = {"ok": False, "error": "", "poses": []}
+
+try:
+    cache = {}
+    for clip, bone, time in _ASKS:
+        anim = cache.get(clip)
+        if anim is None:
+            anim = unreal.load_asset(clip)
+            cache[clip] = anim
+        transform = unreal.AnimationLibrary.get_bone_pose_for_time(
+            anim, bone, float(time), False)
+        rotation = transform.rotation
+        result["poses"].append([float(rotation.x), float(rotation.y),
+                                float(rotation.z), float(rotation.w)])
+    result["ok"] = True
+except Exception:
+    result["error"] = traceback.format_exc()
+finally:
+    try:
+        with open(_OUT, "w") as handle:
+            json.dump(result, handle)
+    except Exception:
+        unreal.log_error("pose probe: cannot write the reply")
+    print(%(marker)s)
+'''
+
+
+def _angle_between(first, second):
+    """Degrees between two unit quaternions (x, y, z, w). Convention-free."""
+    dot = sum(a * b for a, b in zip(first, second))
+    return 2.0 * math.degrees(math.acos(min(1.0, abs(dot))))
+
+
+def _maya_quat(node, frame):
+    """The node's local rotation at `frame` as (x, y, z, w)."""
+    from maya.api import OpenMaya as om
+    order = cmds.getAttr(node + ".rotateOrder")
+    values = [math.radians(cmds.getAttr("{0}.rotate{1}".format(node, axis),
+                                        time=frame))
+              for axis in "XYZ"]
+    euler = om.MEulerRotation(values[0], values[1], values[2], order)
+    quat = euler.asQuaternion()
+    return (quat.x, quat.y, quat.z, quat.w)
+
+
+def phase_live():
+    import json
+
+    from maya_uebridge import uelink, uescripts, window
+
+    print("\n--- live: Atone's own montages against the engine's own reading")
+    folder = os.path.join(window.temp_folder(), "montage_verify")
+    out = os.path.join(window.temp_folder(), "verify.json")
+
+    packages = sorted(set(package for package, _slot in LIVE))
+    plans = uelink.run_script(uescripts.montage_plan_script(out, packages),
+                              out, project="Atone")
+    gate("the editor answered for every montage",
+         len(plans.get("montages") or {}) == len(packages),
+         "{0} of {1}".format(len(plans.get("montages") or {}), len(packages)))
+
+    for package, slot in LIVE:
+        name = montage.montage_name(plans, package)
+        print("\n  {0} · {1}".format(name, slot))
+        refusal = montage.refusal(plans, package, slot)
+        gate("{0} · {1} is importable".format(name, slot), refusal == "",
+             refusal)
+        if refusal:
+            continue
+        plan = montage.plan_for(plans, package, slot)
+
+        clips = uelink.run_script(
+            uescripts.montage_export_script(out, plan.clips, folder), out,
+            project="Atone")
+        paths = dict((p, row.get("path") or "")
+                     for p, row in (clips.get("clips") or {}).items())
+        gate("the editor exported every clip of the slot",
+             not clips.get("failed") and len(paths) == len(plan.clips),
+             "{0} clips{1}".format(len(paths),
+                                   ", failed " + str(clips.get("failed"))
+                                   if clips.get("failed") else ""))
+        if len(paths) != len(plan.clips):
+            continue
+
+        cmds.file(new=True, force=True)
+        reference = montage.ref_of(
+            montage.write_plan(folder, plan, paths, 30.0))
+        info = montage.import_clip(reference,
+                                   records.namespace_for(
+                                       montage.clip_name(plan.montage, slot),
+                                       ()))
+        namespace = info["namespace"]
+        frames = info["montage"]["frames"]
+        gate("{0} · {1} came in as one take".format(name, slot),
+             frames > 1 and cmds.objExists(namespace + ":root"),
+             "{0} frames, cuts {1}, {2} clip(s)".format(
+                 frames, info["montage"]["cuts"],
+                 len(info["montage"]["clips"])))
+        fps = animimport.scene_fps()
+        rows = montage.samples(plan, fps)
+
+        #  what to ask the engine: a handful of bones, every fourth frame
+        bones = [b for b in LIVE_BONES
+                 if cmds.objExists("{0}:{1}".format(namespace, b))]
+        gate("the clip's bones are in the scene",
+             len(bones) == len(LIVE_BONES), ", ".join(bones))
+        asks = []
+        wanted = [row for row in rows if row[0] % 4 == 0]
+        for bone in bones:
+            for _frame, clip, time in [rows[0]] + wanted:
+                asks.append([clip, bone, time])
+        answer = uelink.run_script(
+            _POSE_SCRIPT % {"out": json.dumps(out.replace("\\", "/")),
+                            "asks": json.dumps(asks),
+                            "marker": json.dumps(uescripts.MARKER)},
+            out, project="Atone")
+        poses = answer.get("poses") or []
+        gate("the engine answered every pose asked",
+             len(poses) == len(asks),
+             "{0} of {1}".format(len(poses), len(asks)))
+        if len(poses) != len(asks):
+            continue
+
+        #  the slot's clips imported plainly beside the composite: read at the
+        #  SAME mapped times they are the interpolation floor - the composite
+        #  can be no closer to the engine than Maya's own reading of the clip
+        checks = {}
+        for index, clip in enumerate(plan.clips):
+            space = "chk{0}".format(index)
+            animimport.import_clip(paths[clip], space, set_timeline=False,
+                                   merge=False)
+            checks[clip] = space
+
+        #  the angle each bone has turned from the take's first pose, in each
+        #  program; a rigid change of basis leaves it alone
+        worst = 0.0
+        where = ""
+        floor = 0.0
+        apart = 0.0
+        index = 0
+        compared = 0
+        for bone in bones:
+            node = "{0}:{1}".format(namespace, bone)
+            engine_first = poses[index]
+            maya_first = _maya_quat(node, rows[0][0])
+            clip_first = _maya_quat("{0}:{1}".format(checks[rows[0][1]], bone),
+                                    rows[0][2] * fps)
+            index += 1
+            for frame, clip, time in wanted:
+                engine = poses[index]
+                index += 1
+                theirs = _angle_between(engine_first, engine)
+                ours = _angle_between(maya_first, _maya_quat(node, frame))
+                mine = _angle_between(
+                    clip_first,
+                    _maya_quat("{0}:{1}".format(checks[clip], bone),
+                               time * fps))
+                compared += 1
+                #  what matters: the composite against the ENGINE's own
+                #  evaluation of the same clip at the same time
+                if abs(theirs - ours) > worst:
+                    worst = abs(theirs - ours)
+                    where = ("{0} at frame {1} ({2:.4f} against the engine's "
+                             "{3:.4f} deg)".format(bone, frame, ours, theirs))
+                #  and two numbers that say where any difference comes from:
+                #  a plainly imported clip read at the same times, and how
+                #  far our reading of it sits from that
+                floor = max(floor, abs(mine - theirs))
+                apart = max(apart, abs(mine - ours))
+        gate("the comparison really ran", compared >= 4 * len(bones),
+             "{0} readings".format(compared))
+        close("{0} · {1} against the engine".format(name, slot), worst, 0.0,
+              0.25, where + " ")
+        print("     the same clip imported plainly and read at the same times "
+              "sits {0:.3f} deg from the engine; our reading of it {1:.3f} deg "
+              "from that".format(floor, apart))
+
+    #  and the card's own road, with the real editor: the press's export plus
+    #  the import funnel, which is what every button, drag and square takes
+    package, slot = LIVE[1]
+    cmds.file(new=True, force=True)
+    window._STATE["choice"] = "Atone"
+    window._STATE["montage_plans"] = {}
+    record = records.AnimRecord(package.rsplit("/", 1)[-1], package,
+                                "SK_Mannequin_proto", None, None, None,
+                                kind="montage")
+    reference, fps = window._export_from_editor(records.with_slot(record, slot))
+    from maya_uebridge import rigimport
+    namespace, info, source = rigimport.import_source(
+        reference, montage.clip_name(record.name, slot), clip_fps=fps,
+        set_timeline=True)
+    gate("the card's own road brings the slot in",
+         bool(source) and info.get("montage", {}).get("slot") == slot,
+         "{0}: {1}".format(namespace, info.get("warning", "")))
+
+
+PHASES = {"compose": phase_compose, "import": phase_import,
+          "live": phase_live}
 
 
 def main():
     asked = [a for a in sys.argv[1:] if not a.startswith("-")]
     if not asked:
         asked = ["compose", "import"]
-    if "live" in asked:
-        from verify_montage_live import phase_live      # noqa: E402
-        PHASES["live"] = phase_live
     for name in asked:
         PHASES[name]()
     print("\n{0} of {1} gates failed".format(len(FAILED),

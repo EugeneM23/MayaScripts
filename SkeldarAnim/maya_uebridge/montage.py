@@ -398,6 +398,30 @@ def _animated_channels(cmds, joints):
     return out
 
 
+def _as_engine(cmds, curve, done):
+    """The source curve's tangents set LINEAR once, as the engine reads it.
+
+    A play rate other than 1 maps a target frame BETWEEN the clip's own keys,
+    so what is read there is an interpolation - and Unreal's is a lerp between
+    its compressed keys while an imported FBX curve carries the file's own
+    (cubic) tangents. Measured against the engine's own
+    `get_bone_pose_for_time` on Atone's AM_LongSword_Block_Stun, whose slot
+    runs at 0.52 / 0.475 / 1.1: the cubic reading sits up to 3.2 deg off the
+    engine, the linear one much closer.
+
+    The curves this touches are the source clips' own imports - a scratch
+    namespace, or the first clip's, whose curves are rewritten right after -
+    so nothing of the animator's is changed.
+    """
+    if curve in done:
+        return
+    done.add(curve)
+    try:
+        cmds.keyTangent(curve, edit=True, itt="linear", ott="linear")
+    except (RuntimeError, ValueError):
+        pass        # a locked or weighted curve stays as it is
+
+
 def _evs(cmds, curve, times):
     """{time: value} of a curve at many times, UI units - ONE query
     (`keyframe -eval` takes every time at once, `layerbake._evs`'s idiom)."""
@@ -443,6 +467,106 @@ def _write_curve(plug, frames, values, angle):
     curve.addKeys(times, numbers, oma.MFnAnimCurve.kTangentAuto,
                   oma.MFnAnimCurve.kTangentAuto)
     return curve.name()
+
+
+ROTATES = ("rotateX", "rotateY", "rotateZ")
+
+
+def _turn_near(previous, value):
+    """`value` shifted by whole turns to land nearest `previous`. Radians."""
+    import math as _math
+
+    turn = 2.0 * _math.pi
+    while value - previous > _math.pi:
+        value -= turn
+    while value - previous < -_math.pi:
+        value += turn
+    return value
+
+
+def _closest_euler(previous, euler):
+    """The euler nearest the previous sample: the rotation itself and its
+    alternate solution, each shifted by whole turns, the nearer one taken.
+
+    A quaternion names one rotation and two eulers, so a conversion frame by
+    frame flips channels unless the series is chosen against what came before
+    (`maya_scenesetup.skelsolve.nearest_euler`'s rule, and never Maya's own
+    `closestSolution`, which trades x for z near gimbal lock).
+    """
+    best = None
+    for candidate in (euler, euler.alternateSolution()):
+        values = [candidate.x, candidate.y, candidate.z]
+        if previous is None:
+            return values
+        values = [_turn_near(p, v) for p, v in zip(previous, values)]
+        cost = sum(abs(v - p) for v, p in zip(values, previous))
+        if best is None or cost < best[0]:
+            best = (cost, values)
+    return best[1]
+
+
+def _rotate_series(cmds, joints, sources, rows, leaf, order):
+    """The joint's three rotate channels over the take, slerped as the engine
+    interpolates - degrees, continuous, one list a channel.
+
+    Unreal lerps its compressed keys as QUATERNIONS; a euler curve read at a
+    sub-frame time lerps each channel on its own, and a play rate other than 1
+    reads nothing but sub-frame times. Measured against the engine's own
+    `get_bone_pose_for_time` on Atone's AM_LongSword_Block_Stun (a slot at
+    0.52 / 0.475 / 1.1): a euler read sits up to 1.84 deg off the engine, the
+    slerp of the same two keys 0.20.
+
+    `None` when a source has no rotation to read at all, so the caller can
+    fall back to the plain per-channel road.
+    """
+    import math as _math
+
+    from maya.api import OpenMaya as om
+
+    #  the whole frames around every time each clip is read at: an imported UE
+    #  clip is keyed a frame, which is exactly what the engine interpolates
+    columns = {}
+    for clip, namespace in sources.items():
+        node = joints[namespace].get(leaf)
+        if not node:
+            return None
+        plugs = ["{0}.{1}".format(node, attr) for attr in ROTATES]
+        if not all(cmds.objExists(plug) for plug in plugs):
+            return None
+        wanted = set()
+        for frame, row_clip, time in rows:
+            if row_clip == clip:
+                wanted.add(_math.floor(time))
+                wanted.add(_math.ceil(time))
+        values = []
+        for plug in plugs:
+            curve = _curve_of(cmds, plug)
+            if curve:
+                values.append(_evs(cmds, curve, sorted(wanted)))
+            else:
+                values.append(dict((t, cmds.getAttr(plug)) for t in wanted))
+        columns[clip] = values
+
+    out = ([], [], [])
+    previous = None
+    for _frame, clip, time in rows:
+        low, high = _math.floor(time), _math.ceil(time)
+        share = 0.0 if high == low else (time - low) / float(high - low)
+        triples = []
+        for frame in (low, high):
+            triples.append(om.MEulerRotation(
+                *[_math.radians(columns[clip][axis].get(frame, 0.0))
+                  for axis in range(3)], order))
+        quat = (triples[0].asQuaternion() if share <= 0.0 else
+                om.MQuaternion.slerp(triples[0].asQuaternion(),
+                                     triples[1].asQuaternion(), share))
+        euler = quat.asEulerRotation()
+        euler.reorderIt(order)
+        values = _closest_euler(previous, euler)
+        previous = values
+        for axis in range(3):
+            out[axis].append(_math.degrees(values[axis]))
+    return out
 
 
 def _drop_namespace(cmds, namespace):
@@ -492,7 +616,30 @@ def compose(plan, sources, target, fps):
     gathered = []
     held = []
     skipped = []
+    flattened = set()
+
+    #  a joint's three rotate channels are read TOGETHER and slerped, as the
+    #  engine interpolates its keys; everything else (translate, scale, a UE
+    #  root's own curves) is a plain value the engine lerps channel by channel
+    done = set()
+    for leaf in sorted(set(l for l, a in wanted if a in ROTATES)):
+        node = target_joints.get(leaf)
+        if not node or not all(cmds.objExists("{0}.{1}".format(node, attr))
+                               for attr in ROTATES):
+            continue
+        order = cmds.getAttr(node + ".rotateOrder")
+        series = _rotate_series(cmds, joints, sources, rows, leaf, order)
+        if series is None:
+            continue
+        frames = [frame for frame, _clip, _time in rows]
+        for axis, attr in enumerate(ROTATES):
+            gathered.append(("{0}.{1}".format(node, attr), frames,
+                             series[axis], True))
+            done.add((leaf, attr))
+
     for leaf, attr in wanted:
+        if (leaf, attr) in done:
+            continue
         node = target_joints.get(leaf)
         if not node or not cmds.objExists("{0}.{1}".format(node, attr)):
             skipped.append("{0}.{1}".format(leaf, attr))
@@ -508,6 +655,7 @@ def compose(plan, sources, target, fps):
                 continue
             curve = _curve_of(cmds, source_plug)
             if curve:
+                _as_engine(cmds, curve, flattened)
                 columns[clip] = _evs(cmds, curve, times_by_clip.get(clip) or [])
             else:
                 #  the clip holds this channel still: its own value, which is

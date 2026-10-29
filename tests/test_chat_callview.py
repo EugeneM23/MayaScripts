@@ -369,11 +369,11 @@ class Screens(Base):
     def test_a_choice_selects_it_and_none_cancels(self):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         req = FakeRequest()
-        with mock.patch.object(V, "_pick_screen", return_value=("window", 0)):
+        with mock.patch.object(V.CallWindow, "choose_source", return_value=("window", 0)):
             w.page.screen_requested.emit(req)
         self.assertEqual(req.done, [("window", 0)])
         req = FakeRequest()
-        with mock.patch.object(V, "_pick_screen", return_value=None):
+        with mock.patch.object(V.CallWindow, "choose_source", return_value=None):
             w.page.screen_requested.emit(req)
         self.assertEqual(req.done, [("cancel",)])
 

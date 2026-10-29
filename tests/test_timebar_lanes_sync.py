@@ -124,6 +124,25 @@ class Synced(Strip):
         self.assertTrue(self.accent_at(self.panel.lanes, mid(30), y_active), "the active lane follows")
         self.assertFalse(getattr(self.panel.lanes, "_failed", False))
 
+    # -- one highlight: the timeline's takes the lanes' away (2026-10-20) -----------
+    def test_a_shift_drag_on_the_timeline_clears_the_lanes_block(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.drag(self.tl, self.x(40), self.x(22), mods=QT.QtCore.Qt.ShiftModifier)
+        self.assertEqual(self.link.s["highlight"], (22, 40))
+        self.assertIsNone(self.panel.lane_sel, "S keys the timeline's range, not the lanes'")
+
+    def test_highlighting_every_key_on_the_timeline_clears_the_lanes_block(self):
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.assertTrue(self.tl.highlight_all())
+        self.assertIsNone(self.panel.lane_sel)
+
+    def test_a_click_on_the_timeline_keeps_the_lanes_block(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
+        self.mouse(self.tl, E.MouseButtonPress, self.x(50), Qt.LeftButton, Qt.LeftButton)
+        self.mouse(self.tl, E.MouseButtonRelease, self.x(50), Qt.LeftButton, Qt.NoButton)
+        self.assertIsNotNone(self.panel.lane_sel)
+
     # -- one playhead --------------------------------------------------------------
     def test_a_lanes_scrub_moves_the_timeline_s_playhead_at_once(self):
         row = self.panel.column.layout_().row_at(0, 0)

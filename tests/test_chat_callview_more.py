@@ -168,17 +168,68 @@ class ScreenMenu(Base):
         with answered_menus(lambda menu: None):
             self.assertIsNone(V._pick_screen(w, V.screen_choices(FakeRequest())))
 
-    def test_a_request_for_a_screen_by_the_menu(self):
+    def test_one_screen_is_taken_with_no_menu_at_all(self):
+        # «даже если у меня включена опция стриминга полного экрана»: one press, the whole screen,
+        # and no list in which a window could be picked by accident.
         w = self.live()
+        req = FakeRequest()
+        opened = []
+        with answered_menus(lambda menu: opened.append(menu) or None):
+            w.page.screen_requested.emit(req)
+        self.assertEqual(req.done, [("screen", 0)])
+        self.assertEqual(opened, [], "a lone screen asks nothing")
+
+    def test_several_screens_ask_which_and_offer_no_window(self):
+        from PySide6 import QtGui
+        w = self.live()
+        req = FakeRequest()
+        req.screens.appendRow(QtGui.QStandardItem(""))
+        rows_seen = []
+
+        def pick(menu):
+            rows_seen.extend(a.text() for a in menu.actions() if not a.isSeparator())
+            return rows(menu)[1]
+        with answered_menus(pick):
+            w.page.screen_requested.emit(req)
+        self.assertEqual(req.done, [("screen", 1)])
+        self.assertEqual(rows_seen, [u"Весь экран 1", u"Весь экран 2"])
+
+    def test_a_window_is_shared_only_when_it_was_asked_for(self):
+        w = self.live()
+        w._want = "window"
         req = FakeRequest()
         with answered_menus(triggering(lambda acts: acts[0])):
             w.page.screen_requested.emit(req)
-        self.assertEqual(req.done, [("screen", 0)])
+        self.assertEqual(req.done, [("window", 0)])
+        self.assertEqual(w._want, "screen", "the next press means the whole screen again")
+
+    def test_a_retake_after_a_stall_answers_with_the_same_source_and_no_menu(self):
+        w = self.live()
+        w._want = "window"
+        with answered_menus(triggering(lambda acts: acts[0])):
+            w.page.screen_requested.emit(FakeRequest())
+        w._page_state({"screen": True, "stalled": True})
+        self.assertEqual(self.sent("screen")[-1], {"on": True, "again": True})
+        req = FakeRequest()
+        opened = []
+        with answered_menus(lambda menu: opened.append(menu) or None):
+            w.page.screen_requested.emit(req)
+        self.assertEqual(req.done, [("window", 0)], "the same source as before")
+        self.assertEqual(opened, [])
+
+    def test_a_capture_that_keeps_stalling_is_only_said(self):
+        w = self.live()
+        held = {"surface": "monitor", "w": 2560, "h": 1600, "again": True}
+        for _ in range(4):
+            w._page_state({"screen": True, "capture": held, "stalled": False})
+            w._page_state({"screen": True, "capture": held, "stalled": True})
+        self.assertEqual(len(self.sent("screen")), 2, "twice at most")
+        self.assertIn(u"заново", w.last_message)
 
     def test_a_request_that_breaks_is_cancelled(self):
         w = self.live()
         req = FakeRequest()
-        self.swap(V, "_pick_screen", lambda win, choices: 1 / 0)
+        self.swap(V, "screen_choices", lambda request, kinds=None: 1 / 0)
         with mock.patch("traceback.print_exc"):
             w.page.screen_requested.emit(req)
         self.assertEqual(req.done, [("cancel",)])
@@ -187,11 +238,21 @@ class ScreenMenu(Base):
         req = FakeRequest()
         from PySide6 import QtGui
         req.screens.appendRow(QtGui.QStandardItem(""))
-        self.assertIn(("screen", 1, u"Экран 2"), V.screen_choices(req))
+        self.assertIn(("screen", 1, u"Весь экран 2"), V.screen_choices(req))
 
         class Bare(object):
             pass
         self.assertEqual(V.screen_choices(Bare()), [])
+
+    def test_what_is_captured_is_said_and_a_window_share_names_it(self):
+        self.assertEqual(V.capture_text({"surface": "monitor", "w": 2560, "h": 1600}),
+                         u"Экран 2560×1600")
+        self.assertEqual(V.capture_text({"surface": "window", "label": "Atone - Unreal Editor"}),
+                         u"Окно: Atone - Unreal Editor")
+        self.assertEqual(V.capture_text(None), u"")
+        w = self.live()
+        w._page_state({"capture": {"surface": "monitor", "w": 2560, "h": 1600}})
+        self.assertEqual(w.last_message, u"Экран 2560×1600")
 
 
 class Devices(Base):
