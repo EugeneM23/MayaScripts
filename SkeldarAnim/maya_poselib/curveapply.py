@@ -14,11 +14,17 @@ The animator: «...сохранения по слоям и сохранения 
 3. each picked layer's curve clipped to the paste's source range and moved to its time
    (`animapply._object_keys` - At current time and Range as an objects card's);
 4. ONE undo chunk (`animapply._chunk`): the layers made, the paste mode's cut / shift on THAT
-   layer's curves only (`animapply._ops`), the RAW keys with every tangent, weighting, infinity
-   (`keys.write_raw`) and breakdown (`animapply._breakdowns`); Connect on the one layer pasted
-   (`_connect`); `progress` stepped once per channel, Esc undoes the chunk.
-Nothing is measured: the curves are the source's, key for key. Mirror and Blend change values
-and are refused by the caller (`MIRRORED`, `BLENDED`).
+   layer's curves (`animapply._ops`); every other layer of the target still adding to the card's
+   channels over the range made to add nothing there (`_others`, `_clear_others` - a namesake's
+   channels its card layer did not hold, and with the base pasted every other layer's; Merge and
+   override layers left, said); the RAW keys with every tangent, weighting, infinity
+   (`keys.write_raw`) and breakdown (`animapply._breakdowns`), held at the range's ends against a
+   target key outside them (`_pinned`); Connect on the one layer pasted (`_connect`);
+   `progress` stepped once per channel, Esc undoes the chunk.
+Nothing is measured: the curves are the source's, key for key - so over the range the card's
+channels show what the card showed (2026-10-29, measured on the bones). Mirror and Blend change
+values and are refused by the caller (`MIRRORED`, `BLENDED`); a rig in 1P is retargeted
+(`IN_1P`), a card saved off one never comes here (`FROM_1P`).
 
 Spec: docs/superpowers/specs/2026-10-28-pose-library-curves-and-layers-design.md («Paste»)
 """
@@ -49,6 +55,11 @@ CONNECT_WEIGHT = "Connect skipped on %s - its weight is 0"
 CONNECT_QUAT = "Connect skipped on the rotations of %s - it accumulates as quaternions"
 CONNECT_MUTED = "Connect skipped on %s - it is muted"
 FLOOR_IN_PLACE = "Main kept at the drop point - original curves carry no travel from a floor drop"
+IN_1P = "retargeted - %s in 1P (Tools > 1P Setup): its take lives on the 1P layers"
+FROM_1P = "retargeted - the card was saved off a rig in 1P: its curves are that rig's 1P split"
+CLEARED = "%s cleared over %g-%g on %d of the card's channels"
+OVERRIDES = "%s overrides %d of the card's channels - an override layer is no key to clear"
+MERGE_KEPT = "%s still adds to %d of the card's channels - Merge keeps it, Replace clears it"
 
 
 def matches(header, ref):
@@ -156,13 +167,155 @@ def _layers(where, records, made):
 
 
 def _layers_text(names, layer_of, made):
-    """The line's «BaseAnimation + AnimLayer2 (made)»."""
+    """The line's «BaseAnimation + AnimLayer2 (made)» - the base by the card's name for it, never
+    a scene tabs session's root's."""
     parts = []
     for name in names:
         layer = layer_of.get(name)
-        shown = scene.leaf(layer) if layer else curvedata.BASE
+        shown = scene.leaf(layer) if layer and name != curvedata.BASE else curvedata.BASE
         parts.append(MADE % shown if layer in made else shown)
     return " + ".join(parts)
+
+
+def _outside(times, plan):
+    """(a key before the range, a key after it) among `times`."""
+    return (any(t < plan.a - curvedata.EPS for t in times),
+            any(t > plan.b + curvedata.EPS for t in times))
+
+
+def _times(plug, layer):
+    curve = keys.curve_for(plug, layer)
+    return (cmds.keyframe(curve, query=True, timeChange=True) or []) if curve else []
+
+
+def _scale_mode(layer):
+    try:
+        return curvedata.SCALE.get(int(cmds.getAttr(layer + ".scaleAccumulationMode")),
+                                   "multiply")
+    except (RuntimeError, ValueError, TypeError):
+        return "multiply"
+
+
+def _pinned(plug, layer, stored, plan, pre, post, root):
+    """(keys, pre, post) of a card curve as it goes onto `plug` on `layer`, after the paste
+    mode's ops: held at the range's ends where the target's curve there keeps a key outside
+    them (`curvedata.pinned` - a target key beside the range bent it), a curve whose infinity is
+    no constant left as it is; a curve the paste MAKES on an additive layer bounded to the range
+    where the channel moves outside it on any layer (`curvedata.bounded`, constant infinity) -
+    the card's last offset held over the rest of the take."""
+    times = _times(plug, layer)
+    if not times and layer is not None and layer != root \
+            and not cmds.animLayer(layer, query=True, override=True):
+        before = after = False
+        for other in keys.layer_stack():
+            if other != layer:
+                was = _outside(_times(plug, other), plan)
+                before, after = before or was[0], after or was[1]
+        if before or after:
+            value = curvedata.identity(plug.rsplit(".", 1)[-1], _scale_mode(layer))
+            return (curvedata.bounded(stored, plan.a, plan.b, value, before, after),
+                    "constant", "constant")
+        return stored, pre, post
+    before, after = _outside(times, plan)
+    return (curvedata.pinned(stored, plan.a, plan.b,
+                             before and (pre or "constant") == "constant",
+                             after and (post or "constant") == "constant"), pre, post)
+
+
+def _refresh(plugs):
+    """Every node feeding `plugs` dirtied - each layer's blend node, the curve behind each and the
+    base's: a curve cut, moved or keyed under a layer kept the current frame's OLD value until
+    the time moved (measured 2026-10-29: after an Insert the hand stood 77 deg off at the current
+    frame)."""
+    nodes = []
+    for plug in plugs:
+        target = plug
+        for _ in range(64):
+            source = keys._source_plug(target)
+            if source is None:
+                break
+            node, attr = source.split(".", 1)
+            if node not in nodes:
+                nodes.append(node)
+            if not cmds.nodeType(node).startswith("animBlendNode"):
+                break
+            suffix = attr[len("output"):] if attr.startswith("output") else ""
+            own = keys._source_plug("%s.inputB%s" % (node, suffix))
+            if own and own.split(".", 1)[0] not in nodes:
+                nodes.append(own.split(".", 1)[0])
+            target = "%s.inputA%s" % (node, suffix)
+    if nodes:
+        cmds.dgdirty(nodes)
+
+
+def _others(groups, names, records, layer_of, made):
+    """OrderedDict {target layer: [plugs]} - the card's channels a layer of the target still adds
+    to over the paste range with no card curve of its own there: a namesake the paste writes, on
+    the channels its card layer does not hold; and, when the base is pasted (the card's take
+    replaces the target's), every other layer holding one. A made layer holds the card's alone; a
+    muted layer adds nothing. 2026-10-29: the animator's own keys on a namesake layer twisted
+    the pasted elbow 70 deg («контроллеры рига может выкручивать»)."""
+    per_plug = OrderedDict()
+    for _label, _noun, channels, _notes in groups:
+        per_plug.update(channels)
+    written = dict((layer_of[name], name) for name in names
+                   if layer_of.get(name) is not None and not records[name].get("base"))
+    whole = any(records[name].get("base") for name in names)
+    root = cmds.animLayer(query=True, root=True)
+    muted, out = {}, OrderedDict()
+    for layer in keys.layer_stack()[1:]:
+        if layer in made or keys._muted(layer, root, muted):
+            continue
+        name = written.get(layer)
+        if name is None and not whole:
+            continue
+        held = keys.layer_plugs(layer)
+        found = [plug for plug, per in per_plug.items() if plug in held
+                 and (name is None or not isinstance(per.get(name), dict))]
+        if found:
+            out[layer] = found
+    return out
+
+
+def _clear(plug, layer, plan, scale):
+    """`plug` on `layer` adding nothing over [a, b] (`curvedata.identity`): its curve - cut by
+    the paste mode first - keyed flat at both ends; a static the layer holds without a curve
+    kept outside the range by a stepped key a frame either side. False when there was nothing
+    to clear."""
+    value = curvedata.identity(plug.rsplit(".", 1)[-1], scale)
+    a, b = float(plan.a), float(plan.b)
+    if keys.curve_for(plug, layer) is None:
+        static = keys.layer_static(plug, layer)
+        if static is None or abs(static - value) < curvedata.EPS:
+            return False
+        stored = [[a - 1.0, static, "flat", "step"], [a, value, "flat", "flat"],
+                  [b, value, "flat", "step"], [b + 1.0, static, "flat", "flat"]]
+    else:
+        stored = [[a, value, "flat", "flat"]] + ([[b, value, "flat", "flat"]] if b > a else [])
+    return bool(keys.write_raw(plug, layer, stored).plugs)
+
+
+def _clear_others(others, plan, mode):
+    """Inside the press's chunk: each of `_others`' layers cleared on its plugs - the paste
+    mode's ops on their curves there, then `_clear`; an override layer (its value is the
+    channel's, no key makes it add nothing) and every layer under Merge (it cuts nothing) left
+    as they are. (the notes, the keys each op reached)."""
+    notes, reached = [], [0] * len(plan.ops)
+    for layer, plugs in others.items():
+        leaf = scene.leaf(layer)
+        if cmds.animLayer(layer, query=True, override=True):
+            notes.append(OVERRIDES % (leaf, len(plugs)))
+            continue
+        if mode == "merge":
+            notes.append(MERGE_KEPT % (leaf, len(plugs)))
+            continue
+        scale = _scale_mode(layer)
+        keyed = set(plug for plug in plugs if keys.curve_for(plug, layer) is not None)
+        reached = [n + m for n, m in zip(reached, aa._ops(plan.ops, plugs, layer))]
+        cleared = [plug for plug in plugs if _clear(plug, layer, plan, scale) or plug in keyed]
+        if cleared:
+            notes.append(CLEARED % (leaf, plan.a, plan.b, len(cleared)))
+    return notes, reached
 
 
 def _connect(planned, before, plan, layer, record):
@@ -186,8 +339,9 @@ def _connect(planned, before, plan, layer, record):
         curve = keys.curve_for(plug, layer)
         if curve is not None and abs(offset) > 1e-12:
             for stored in per.get(record["name"], ((),))[0]:
-                cmds.keyframe(curve, edit=True, relative=True, valueChange=offset,
-                              time=(stored[0], stored[0]))
+                if plan.a - curvedata.EPS <= stored[0] <= plan.b + curvedata.EPS:   # not a bound
+                    cmds.keyframe(curve, edit=True, relative=True, valueChange=offset,
+                                  time=(stored[0], stored[0]))
     return notes
 
 
@@ -242,9 +396,17 @@ def paste(header, groups, options=None, progress=None):
                 if plugs:
                     reached = [n + m for n, m in zip(reached, aa._ops(plan.ops, plugs,
                                                                       layer_of[name]))]
+            others = _others(groups, names, records, layer_of, made)
+            cleared, more = _clear_others(others, plan, options.mode)
+            reached = [n + m for n, m in zip(reached, more)]
+            for text in cleared:
+                said.setdefault(text, text)
+            root = cmds.animLayer(query=True, root=True)
             for (index, plug), per in planned.items():
                 for name, (stored, weighted, breaks, pre, post) in per.items():
                     layer = layer_of[name]
+                    stored, pre, post = _pinned(plug, layer, stored, plan, pre, post, root)
+                    per[name] = (stored, weighted, breaks, pre, post)     # Connect moves them
                     written = keys.write_raw(plug, layer, stored, weighted, pre, post)
                     for text in written.notes:
                         said.setdefault(text, text)
@@ -261,6 +423,9 @@ def paste(header, groups, options=None, progress=None):
                 for text in _connect(planned, before, plan, layer_of[names[0]],
                                      records[names[0]]):
                     said.setdefault(text, text)
+            if not cancelled:
+                _refresh([plug for (_index, plug) in planned]
+                         + [plug for plugs in others.values() for plug in plugs])
     except BaseException:
         aa._undo_failed(recording and steps.recorded)
         raise

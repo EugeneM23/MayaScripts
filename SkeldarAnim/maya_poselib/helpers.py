@@ -223,6 +223,20 @@ def under_chest(node):
     return False
 
 
+def first_person(ref):
+    """Is `ref` a rig in 1P - a 1P chest knot marked with its namespace (Tools > 1P Setup)? Its
+    take lives on the 1P layers and its chest on the knot, so the card's original curves cannot
+    land on it raw (2026-10-29: the upper body 110-120 deg off)."""
+    rig = getattr(ref, "rig", None)
+    if getattr(ref, "kind", None) != "rig" or rig is None:
+        return False
+    try:
+        nodes = cmds.ls("*." + CHEST_MARKER, recursive=True, objectsOnly=True) or []
+        return any(cmds.getAttr(node + "." + CHEST_MARKER) == rig.namespace for node in nodes)
+    except (AttributeError, RuntimeError, ValueError, TypeError):
+        return False
+
+
 def _carrier_for_parent(parent, head, follow):
     """The game bone carrying a camera control's parent rigidly, from what the parent is (pure
     half of `_camera_carrier`): FKHead_M carries `head`; a Camera_follow group none (it turns with

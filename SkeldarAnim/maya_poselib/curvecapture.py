@@ -12,8 +12,10 @@ The animator: «...сохранения по слоям и сохранения 
   `keys.curve_for` answers - a layer above the base asked only for the plugs it holds
   (`keys.layer_plugs`, one query a layer), so another character's layers never enter the card -
   read by the caller's `copy` (`animcapture._copied`: a duplicate cut to the range with a
-  shape-keeping key at each end) plus its infinity; a channel nothing feeds a `{"static": v}` on
-  the base; a channel a constraint, an expression or a driven key feeds holds no curve of its own
+  shape-keeping key at each end) plus its infinity; a layer holding the channel WITHOUT a curve
+  (Add Selected Objects) its static value there (`keys.layer_static`, 2026-10-29: an override
+  layer's hides the base), the base's too under keyed layers; a channel nothing feeds a
+  `{"static": v}` on the base; a channel a constraint, an expression or a driven key feeds holds no curve of its own
   and is named (`driven_note`) - the bones' frames still carry what it did.
 
 The caller holds the undo queue off (the duplicates are made and deleted).
@@ -83,9 +85,10 @@ def _number(value):
 
 def channel_curves(plugs, start, end, copy, layers):
     """(OrderedDict {plug: {card layer: CURVE}}, [driven plugs]) of `plugs` over [start, end] on
-    `layers` (`stack()`'s answer, read once by the caller). A plug no layer holds a curve for
-    and nothing feeds is `{"static": v}` on the base; a missing plug, or one that answers no
-    number, is left out."""
+    `layers` (`stack()`'s answer, read once by the caller). A layer holding a plug without a
+    curve keeps its static value (`keys.layer_static`: the base's under the layers too); a plug
+    nothing feeds is `{"static": v}` on the base; a missing plug, or one that answers no number,
+    is left out."""
     holds = dict((name, keys.layer_plugs(name)) for name, _record in layers[1:])
     out, driven = OrderedDict(), []
     for plug in plugs:
@@ -101,6 +104,9 @@ def channel_curves(plugs, start, end, copy, layers):
                 continue
             curve = keys.curve_for(plug, name)
             if curve is None:
+                value = keys.layer_static(plug, name)
+                if value is not None:
+                    per[record["name"]] = {"static": value}
                 continue
             found = dict(copy(curve, start, end))
             found.update(_infinity(curve))

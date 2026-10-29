@@ -316,6 +316,16 @@ class AnimLayers(unittest.TestCase):
         self.assertNotIn("Parent", doomed)
         self.assertNotIn("Child", doomed)
 
+    def test_a_kept_layer_stays_though_every_child_of_it_goes(self):
+        # 2026-10-29: a scene tab's `AnimLayerRoot` hangs on the session's root, so it is no root
+        # to `emptied_roots` - deleting the tab's last character took it with its layers
+        layers = {"skeldarTabsLayerRoot": (None, set(), ["tab_a:AnimLayerRoot"]),
+                  "tab_a:AnimLayerRoot": ("skeldarTabsLayerRoot", set(), ["tab_a:Fix"]),
+                  "tab_a:Fix": ("tab_a:AnimLayerRoot", {"ctrl"}, [])}
+        self.assertIn("tab_a:AnimLayerRoot", deletion.doomed_layers(layers, self.GOING))
+        doomed = deletion.doomed_layers(layers, self.GOING, keep=["tab_a:AnimLayerRoot"])
+        self.assertEqual(doomed, ["tab_a:Fix"])
+
     def test_an_emptied_root_goes_but_not_one_kept_or_still_holding(self):
         layers = {"Base": (None, set(), ["A"]), "A": ("Base", {"ctrl"}, [])}
         self.assertEqual(deletion.emptied_roots(layers, ["A"]), ["Base"])
@@ -327,6 +337,60 @@ class AnimLayers(unittest.TestCase):
         self.assertIn("animation layers", text)
         self.assertIn("OnlyRig, Parent", text)
         self.assertNotIn("animation layer", deletion.confirm_text([("x (rig)", [])]))
+
+
+class NamespaceCmds(object):
+    """`cmds` over a set of namespaces: a remove leaves the root current, as Maya's does."""
+
+    def __init__(self, namespaces, current):
+        self.namespaces = set(namespaces)
+        self.current = current
+
+    def namespace(self, exists=None, removeNamespace=None, setNamespace=None,
+                  mergeNamespaceWithRoot=False):
+        if exists is not None:
+            return exists.lstrip(":") in self.namespaces
+        if removeNamespace is not None:
+            self.namespaces.discard(removeNamespace.lstrip(":"))
+            self.current = ":"
+        if setNamespace is not None:
+            self.current = setNamespace
+        return None
+
+    def namespaceInfo(self, name=None, currentNamespace=False, absoluteName=False,
+                      listOnlyNamespaces=False, recurse=False, listOnlyDependencyNodes=False):
+        if currentNamespace:
+            return self.current
+        if listOnlyNamespaces:
+            prefix = name.lstrip(":") + ":"
+            return [n for n in self.namespaces if n.startswith(prefix)]
+        return []
+
+    def objExists(self, _name):
+        return False
+
+
+class RemoveNamespace(unittest.TestCase):
+    """2026-10-29: Maya's remove left the root current, so in a scene tab the next Add Character
+    landed outside the tab."""
+
+    def setUp(self):
+        self.saved = deletion.cmds
+
+    def tearDown(self):
+        deletion.cmds = self.saved
+
+    def test_the_current_namespace_stands_after_the_remove(self):
+        fake = deletion.cmds = NamespaceCmds(["tab_a", "tab_a:Manny_Rig"], ":tab_a")
+        deletion._remove_namespace("tab_a:Manny_Rig", [])
+        self.assertNotIn("tab_a:Manny_Rig", fake.namespaces)
+        self.assertEqual(fake.current, ":tab_a")
+
+    def test_inside_the_removed_namespace_the_active_one_takes_over(self):
+        fake = deletion.cmds = NamespaceCmds(["Manny_Rig", "Manny_Rig:clip"], ":Manny_Rig:clip")
+        deletion._remove_namespace("Manny_Rig", [])
+        self.assertEqual(fake.namespaces, set())
+        self.assertEqual(fake.current, ":")
 
 
 class Texts(unittest.TestCase):

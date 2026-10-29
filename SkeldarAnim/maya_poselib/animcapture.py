@@ -101,6 +101,7 @@ from maya_poselib import animdata
 from maya_poselib import capture
 from maya_poselib import curvecapture
 from maya_poselib import curvedata
+from maya_poselib import helpers
 from maya_poselib import keys
 from maya_poselib import objects as objs
 from maya_poselib import look
@@ -558,10 +559,11 @@ def _layered(record):
     return out
 
 
-def _summarize(header, layers, curves):
+def _summarize(header, layers, curves, first_person=False):
     """The header's `curves` block (`curvedata.summary`) when the card keeps original curves -
     its controls' (`curves`) or an objects channel's layers: the layers used, base first, and how
-    many nodes keep curves. Nothing written otherwise: an older card's paste stays as it was."""
+    many nodes keep curves - saved off a rig in 1P (`helpers.first_person`), said. Nothing written
+    otherwise: an older card's paste stays as it was."""
     objects = header.get("objects") or []
     layered = [(record, _layered(record)) for record in objects]
     layered = [(record, pers) for record, pers in layered if pers]
@@ -570,7 +572,8 @@ def _summarize(header, layers, curves):
     pers = [per for node in (curves or {}).get("nodes", []) for per in node["attrs"].values()]
     pers += [per for _record, found in layered for per in found]
     count = len((curves or {}).get("nodes", [])) + len(layered)
-    header["curves"] = curvedata.summary(curvecapture.used_records(layers, pers), count)
+    header["curves"] = curvedata.summary(curvecapture.used_records(layers, pers), count,
+                                         first_person)
     return header["curves"]
 
 
@@ -610,7 +613,7 @@ def build_clip(selection=None, regions=None, start=None, end=None, progress=None
             own = [path for path, owner in loose_owned if scene.owned(refs[0], owner)]
             header["objects"] = object_curves(loose, start, end, own, layers, problems)
             note += " | + %s" % scene.describe([], loose)
-        if _summarize(header, layers, curves) and curves is None:
+        if _summarize(header, layers, curves, helpers.first_person(refs[0])) and curves is None:
             curves = {"version": curvedata.VERSION, "nodes": []}
         for text in [said] + problems:
             if text:

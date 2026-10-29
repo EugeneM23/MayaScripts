@@ -15,11 +15,12 @@ class FakeKeys(object):
     _INFINITY = {0: "constant", 1: "linear", 3: "cycle", 4: "cycleRelative", 5: "oscillate"}
     NAMED = 4
 
-    def __init__(self, stack=(), holds=None, curves=None, feeds=None):
+    def __init__(self, stack=(), holds=None, curves=None, feeds=None, statics=None):
         self.stack = list(stack)
         self.holds = dict(holds or {})
         self.curves = dict(curves or {})
         self.feeds = dict(feeds or {})
+        self.statics = dict(statics or {})
         self.asked = []
 
     def layer_stack(self):
@@ -37,6 +38,9 @@ class FakeKeys(object):
 
     def feed_of(self, plug):
         return self.feeds.get(plug, ("curve", None))
+
+    def layer_static(self, plug, layer):
+        return self.statics.get((layer, plug))
 
 
 class FakeCmds(object):
@@ -97,6 +101,26 @@ class ChannelCurves(Case):
                          ("constant", "cycle"))
         self.assertEqual(list(found["a.tx"]), [curvedata.BASE])
         self.assertNotIn(("AnimLayer1", "a.tx"), keys.asked)     # the layer does not hold it
+
+    def test_a_layer_holding_a_channel_without_a_curve_keeps_its_static(self):
+        # 2026-10-29: Add Selected Objects on an override layer froze the unkeyed channels there;
+        # the card dropped them and the paste showed the base under them
+        keys = FakeKeys(stack=["BaseAnimation", "Over"], holds={"Over": ["a.rx", "a.ry"]},
+                        curves={("BaseAnimation", "a.rx"): "c0", ("Over", "a.rx"): "c1"},
+                        statics={("Over", "a.ry"): 33.0, ("BaseAnimation", "a.ry"): 5.0},
+                        feeds={"a.rx": ("layer", "blend"), "a.ry": ("layer", "blend")})
+        self.use(keys, FakeCmds())
+        found, _driven = cc.channel_curves(["a.rx", "a.ry"], 0, 10, copy, cc.stack())
+        self.assertEqual(found["a.ry"], {curvedata.BASE: {"static": 5.0}, "Over": {"static": 33.0}})
+        self.assertEqual(found["a.rx"]["Over"]["from"], "c1")
+
+    def test_a_layer_answering_no_static_adds_nothing(self):
+        keys = FakeKeys(stack=["BaseAnimation", "Add"], holds={"Add": ["a.rx"]},
+                        curves={("BaseAnimation", "a.rx"): "c0"},
+                        feeds={"a.rx": ("layer", "blend")})
+        self.use(keys, FakeCmds())
+        found, _driven = cc.channel_curves(["a.rx"], 0, 10, copy, cc.stack())
+        self.assertEqual(list(found["a.rx"]), [curvedata.BASE])
 
     def test_a_free_channel_is_a_static_on_the_base(self):
         self.use(FakeKeys(feeds={"a.ry": ("free", None)}), FakeCmds(values={"a.ry": 7.0}))

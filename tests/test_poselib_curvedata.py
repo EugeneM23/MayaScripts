@@ -163,5 +163,86 @@ class ConnectOffset(unittest.TestCase):
         self.assertIsNone(cd.connect_offset(10.0, 4.0, 0.0))
 
 
+class FirstPerson(unittest.TestCase):
+    """2026-10-29: a card saved off a rig in 1P pasted its raw curves onto a 3P rig 180 deg off."""
+
+    def test_the_block_says_it(self):
+        header = {"curves": cd.summary([BASE], 3, first_person=True)}
+        self.assertTrue(cd.saved_in_first_person(header))
+        self.assertNotIn("first_person", cd.summary([BASE], 3))
+
+    def test_a_card_saved_before_is_known_by_its_layers(self):
+        layers = [BASE, cd.layer_record("_3P_Lower_Body1"), cd.layer_record("Fix")]
+        self.assertTrue(cd.saved_in_first_person({"curves": cd.summary(layers, 1)}))
+        self.assertFalse(cd.saved_in_first_person({"curves": cd.summary([BASE, ADD], 1)}))
+        self.assertFalse(cd.saved_in_first_person({}))
+
+
+class Identity(unittest.TestCase):
+
+    def test_scale_by_multiply_is_one_everything_else_zero(self):
+        self.assertEqual(cd.identity("scaleY"), 1.0)
+        self.assertEqual(cd.identity("scaleY", "additive"), 0.0)
+        self.assertEqual(cd.identity("rotateX"), 0.0)
+        self.assertEqual(cd.identity("translateZ", "additive"), 0.0)
+
+
+class Pinned(unittest.TestCase):
+    """The range's ends held, so a target key outside them bends nothing inside."""
+
+    KEYS = [[5.0, 1.0, "auto", "auto"], [8.0, 3.0, "spline", "linear"]]
+
+    def test_a_curve_inside_the_range_is_held_at_both_ends(self):
+        out = cd.pinned(self.KEYS, 0.0, 10.0)
+        self.assertEqual(out[0], [0.0, 1.0, "flat", "step"])
+        self.assertEqual(out[2], [8.0, 3.0, "spline", "step"])
+        self.assertEqual(out[3], [10.0, 3.0, "flat", "flat"])
+        self.assertEqual(self.KEYS[1][3], "linear")
+
+    def test_nothing_outside_to_hold_against_adds_nothing(self):
+        self.assertEqual(cd.pinned(self.KEYS, 0.0, 10.0, before=False, after=False), self.KEYS)
+
+    def test_a_curve_reaching_the_ends_is_kept(self):
+        keys = [[0.0, 1.0], [10.0, 2.0]]
+        self.assertEqual(cd.pinned(keys, 0.0, 10.0), keys)
+
+    def test_a_short_key_gets_its_types_filled(self):
+        self.assertEqual(cd.pinned([[0.0, 4.0]], 0.0, 6.0),
+                         [[0.0, 4.0, None, "step"], [6.0, 4.0, "flat", "flat"]])
+
+    def test_no_keys_none(self):
+        self.assertEqual(cd.pinned([], 0.0, 6.0), [])
+
+    def test_an_end_key_beside_a_target_key_keeps_the_angles_it_showed(self):
+        keys = [[0.0, 1.0, "auto", "auto", 10.0, 1.0, 10.0, 1.0],
+                [5.0, 2.0, "spline", "linear", 4.0, 1.0, 4.0, 1.0],
+                [10.0, 3.0, "clamped", "plateau", -3.0, 1.0, -3.0, 1.0]]
+        out = cd.pinned(keys, 0.0, 10.0)
+        self.assertEqual([k[2:4] for k in out], [["fixed", "fixed"], ["spline", "linear"],
+                                                 ["fixed", "fixed"]])
+        self.assertEqual(out[0][4:], [10.0, 1.0, 10.0, 1.0])
+        out = cd.pinned(keys, 0.0, 10.0, before=False, after=False)
+        self.assertEqual(out, keys)
+
+    def test_a_stable_type_is_kept(self):
+        keys = [[0.0, 1.0, "linear", "flat", 0.0, 1.0, 0.0, 1.0]]
+        self.assertEqual(cd.pinned(keys, 0.0, 0.0), keys)
+
+
+class Bounded(unittest.TestCase):
+    """A layer curve the paste makes adds nothing outside the range the target animates."""
+
+    def test_identity_a_frame_either_side_stepped_in(self):
+        out = cd.bounded([[5.0, 2.0], [8.0, 4.0]], 0.0, 10.0, 0.0)
+        self.assertEqual(out, [[-1.0, 0.0, "flat", "step"], [0.0, 2.0, "flat", "step"],
+                               [5.0, 2.0], [8.0, 4.0, None, "step"], [10.0, 4.0, "flat", "step"],
+                               [11.0, 0.0, "flat", "flat"]])
+
+    def test_only_the_sides_the_target_animates(self):
+        out = cd.bounded([[0.0, 2.0], [10.0, 4.0]], 0.0, 10.0, 1.0, before=False)
+        self.assertEqual(out, [[0.0, 2.0], [10.0, 4.0, None, "step"], [11.0, 1.0, "flat", "flat"]])
+        self.assertEqual(cd.bounded([], 0.0, 10.0, 0.0), [])
+
+
 if __name__ == "__main__":
     unittest.main()

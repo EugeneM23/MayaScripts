@@ -378,7 +378,7 @@ def press_steps(header, options, current, curves=None):
     `current`), an objects card at most one per channel it holds; at least one (a press the plan
     refuses steps none, and says why). Pure."""
     header = header or {}
-    if _as_options(options).paste_as == "curves" and curvedata.has_curves(header):
+    if _as_options(options).paste_as == "curves" and curvedata.takes_curves(header):
         if curves is not None:
             return max(1, sum(len(node.get("attrs") or {}) for node in curves.get("nodes") or ()))
         return max(1, sum(len((record or {}).get("attrs") or {})
@@ -870,7 +870,7 @@ class Scene(object):
             return None
         try:
             header = store.read(path)
-            if header.get("kind") == "objects" or not curvedata.has_curves(header):
+            if header.get("kind") == "objects" or not curvedata.takes_curves(header):
                 return None
             return store.read_curves(path)
         except ValueError:
@@ -2352,7 +2352,7 @@ def _classes():
 
         def _curves_on(self):
             data = self.picked_data if isinstance(self.picked_data, dict) else {}
-            return curvedata.has_curves(data) and \
+            return curvedata.takes_curves(data) and \
                 self._lit(self.paste_as_buttons, "retarget") == "curves"
 
         def _sync_curves(self):
@@ -2366,7 +2366,7 @@ def _classes():
             kind = "objects" if data.get("kind") == "objects" else "character"
             for value, label in PASTE_AS_LABELS[kind]:
                 self.paste_as_buttons[value].setText(label)
-            self.paste_as_row.setVisible(curvedata.has_curves(data))
+            self.paste_as_row.setVisible(curvedata.takes_curves(data))
             curves = self._curves_on()
             self.layer_box.setVisible(curves)
             picked = [name for name, check in self.layer_checks.items() if check.isChecked()]
@@ -2387,7 +2387,7 @@ def _classes():
             path = path or self.picked
             if self.mirror.isChecked() and path and store.is_anim(path):
                 data = self.picked_data if path == self.picked else _read_or_none(path)
-                if isinstance(data, dict) and curvedata.has_curves(data) \
+                if isinstance(data, dict) and curvedata.takes_curves(data) \
                         and self.options(path)["paste_as"] == "curves":
                     return False
             return self.mirror.isChecked()
