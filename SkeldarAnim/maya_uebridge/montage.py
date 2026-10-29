@@ -237,6 +237,30 @@ def refusal(payload, package, slot):
     return ""
 
 
+def note_of(info):
+    """What a press's status adds about a composite, "" for an ordinary clip.
+    Pure.
+
+    The head of every press's line already says the clip's name and its
+    frames, so this is what only a montage has: where its edits fall, how
+    many clips its slot runs, and anything held.
+    """
+    row = (info or {}).get("montage") or {}
+    if not row:
+        return ""
+    bits = []
+    if row.get("cuts"):
+        bits.append("cuts at " + ", ".join("{0:g}".format(cut)
+                                           for cut in row["cuts"]))
+    if len(row.get("clips") or []) > 1:
+        bits.append("{0} clips".format(len(row["clips"])))
+    if row.get("held"):
+        bits.append("held: " + ", ".join(row["held"][:3]))
+    if not bits:
+        return ""
+    return "the montage's " + ", ".join(bits)
+
+
 def plan_line(plan, fps, frames=None):
     """What the status says about the composite: «AM_X · 1P: 43 frames, cuts
     at 5.4, 27.8». Pure."""

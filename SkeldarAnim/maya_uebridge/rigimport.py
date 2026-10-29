@@ -117,7 +117,8 @@ def result_line(name, info, connect_text, bake_text, deleted_namespace,
     head = "{0} retargeted onto {1}{2}".format(name, rig_label, span)
     tail = ("source skeleton {0} deleted".format(deleted_namespace)
             if deleted_namespace else "source skeleton kept")
-    parts = [head, _first_line(connect_text), _first_line(bake_text), tail]
+    parts = [head, montage.note_of(info), _first_line(connect_text),
+             _first_line(bake_text), tail]
     return "  |  ".join(part for part in parts if part)
 
 

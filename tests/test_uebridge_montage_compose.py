@@ -125,6 +125,74 @@ class ClosestEuler(unittest.TestCase):
         self.assertAlmostEqual(abs(dot), 1.0, 9)
 
 
+class Note(unittest.TestCase):
+    """What a press's status adds about a composite - the head of every line
+    already says the clip's name and its frames."""
+
+    def test_an_ordinary_clip_adds_nothing(self):
+        self.assertEqual(montage.note_of({"start": 0, "end": 45}), "")
+        self.assertEqual(montage.note_of({}), "")
+        self.assertEqual(montage.note_of(None), "")
+
+    def test_the_cuts_and_the_clips_are_named(self):
+        note = montage.note_of({"montage": {
+            "name": "AM_X", "slot": "1P", "frames": 59,
+            "cuts": [19.0, 38.0], "clips": ["a", "b", "c"], "held": []}})
+        self.assertIn("cuts at 19, 38", note)
+        self.assertIn("3 clips", note)
+
+    def test_one_clip_and_one_span_say_nothing_of_either(self):
+        note = montage.note_of({"montage": {
+            "name": "AM_X", "slot": "1P", "frames": 20, "cuts": [],
+            "clips": ["a"], "held": []}})
+        self.assertEqual(note, "")
+
+    def test_a_held_channel_is_named(self):
+        note = montage.note_of({"montage": {
+            "name": "AM_X", "slot": "1P", "cuts": [], "clips": ["a"],
+            "held": ["root.Pose_7"]}})
+        self.assertIn("root.Pose_7", note)
+
+
+class ResultLines(unittest.TestCase):
+    """Both roads' status lines carry the note (the rig's and the
+    skeleton's), so the animator sees where the montage's edits fall."""
+
+    def test_the_rig_road_names_the_cuts(self):
+        import sys
+        import types
+        if "maya.cmds" not in sys.modules:
+            try:
+                import maya.cmds  # noqa: F401
+            except ImportError:
+                maya = types.ModuleType("maya")
+                maya.cmds = types.ModuleType("maya.cmds")
+                maya.mel = types.ModuleType("maya.mel")
+                sys.modules.setdefault("maya", maya)
+                sys.modules["maya.cmds"] = maya.cmds
+                sys.modules["maya.mel"] = maya.mel
+        from maya_uebridge import rigimport
+        line = rigimport.result_line(
+            "AM_X_1P", {"start": 0, "end": 58,
+                        "montage": {"name": "AM_X", "slot": "1P",
+                                    "cuts": [19.0, 38.0],
+                                    "clips": ["a", "b", "c"], "held": []}},
+            "connected", "baked", "AM_X_1P", "Manny_Rig")
+        self.assertIn("frames 0-58", line)
+        self.assertIn("cuts at 19, 38", line)
+
+    def test_the_skeleton_road_names_the_cuts(self):
+        from maya_uebridge import skeletonimport
+        line = skeletonimport.result_line(
+            "AM_X_1P", "Manny UE5 [skeleton]", "root",
+            {"moved": 91, "twin": True, "mode": "stretch"},
+            {"start": 0, "end": 58,
+             "montage": {"name": "AM_X", "slot": "1P", "cuts": [19.0],
+                         "clips": ["a", "b"], "held": []}})
+        self.assertIn("cuts at 19", line)
+        self.assertIn("2 clips", line)
+
+
 class PlanFile(unittest.TestCase):
     def test_a_plan_round_trips_through_its_payload(self):
         payload = {"montages": {"/Game/AM_X": {"name": "AM_X", "slots": [

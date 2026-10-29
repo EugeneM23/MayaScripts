@@ -31,6 +31,7 @@ import maya_timewarp
 
 from maya_scenetabs import scope
 
+from maya_uebridge import montage
 from maya_uebridge import rigimport
 
 TWIN_TOLERANCE = 0.01     # the median bone within 1 % of the clip's makes a twin ...
@@ -243,6 +244,9 @@ def result_line(name, label, top, result, info):
     who = " ".join(part for part in (label, top) if part)
     parts = ["{0} onto {1}: {2} bones {3}{4}".format(
         name, who, result.get("moved", 0), how, span)]
+    note = montage.note_of(info)
+    if note:
+        parts.append(note)
     if result.get("missing"):
         parts.append("not in the clip: " + _names(result["missing"]))
     if result.get("skipped"):
