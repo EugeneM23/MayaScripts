@@ -1567,16 +1567,23 @@ def _spine_state(rig):
     return mode, mode is None
 
 
-def _set_spine(mode):
-    """Light the spine's mode, neither when mixed or missing (quiet, as the limbs)."""
+def _set_spine(mode, chosen=None):
+    """Light the spine's mode, neither when mixed or missing (quiet, as the
+    limbs), then its pick (2026-10-29: `want` on the picked box, `wait` on the
+    row's check)."""
+    chosen = picks() if chosen is None else chosen
+    wanted = chosen.get(pending.SPINE)
     _FKIK_QUIET["on"] = True
     try:
         for m in fkik.MODES:
             name = FKIK_BOX_SPINE.format(m)
             if cmds.iconTextCheckBox(name, exists=True):
                 cmds.iconTextCheckBox(name, edit=True, value=mode == m)
+                _light(name, "want" if wanted == m else "")
     finally:
         _FKIK_QUIET["on"] = False
+    if cmds.control(SPINE_APPLY, exists=True):
+        _light(SPINE_APPLY, "wait" if wanted is not None else "")
 
 
 def _limb_modes(rig, kind, worlds=None):
@@ -1787,12 +1794,66 @@ def _press_limb_apply(side, kind=fkik.ARM):
 
 
 def _press_spine(mode):
-    """Either press of the spine's boxes switches it (quiet while lighting)."""
+    """Either press of the spine's boxes is a PICK (quiet while lighting)."""
     def go(*_args):
         if _FKIK_QUIET["on"]:
             return None
-        return _run(lambda: switch_spine(mode))
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        shown = _spine_state(rig)[0]
+        chosen = remember(rig, pending.record(picks(rig), pending.SPINE,
+                                              mode, shown))
+        _set_spine(shown, chosen)
+        return _status(_picked_text(chosen) or NOTHING_PICKED)
     return go
+
+
+def _press_spine_apply(*_args):
+    """The spine's check: bake its pick, then settle it."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = picks(rig)
+        mode = chosen.get(pending.SPINE)
+        if mode is None:
+            return NOTHING_PICKED
+        text = switch_spine(mode, rig=rig)
+        remember(rig, _settled(rig, chosen, pending.SPINE))
+        return text
+    return _run(act)
+
+
+def apply_body(rig, chosen):
+    """Every limb picked, then the spine - the caller's one undo chunk."""
+    notes = []
+    for kind in (fkik.ARM, fkik.LEG):
+        for side in SIDES[::-1]:
+            if (pending.limb_key(kind, side) in chosen
+                    or pending.world_key(kind, side) in chosen):
+                notes.append(apply_limb(rig, kind, side, chosen))
+    if pending.SPINE in chosen:
+        notes.append(switch_spine(chosen[pending.SPINE], rig=rig))
+    return "; ".join(n for n in notes if n) or NOTHING_PICKED
+
+
+def _press_apply_body(*_args):
+    """The Body tab's Apply all: every pick in it, one undo chunk."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = pending.of_tab(picks(rig), "body")
+        if not chosen:
+            return NOTHING_PICKED
+        cmds.undoInfo(openChunk=True, chunkName="Connections: Apply all")
+        try:
+            return apply_body(rig, chosen)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+            remember(rig, _settled(rig, picks(rig)))
+    return _run(act)
 
 
 def aim_mode(rig=None, weapon=None, on=True):
@@ -2004,10 +2065,15 @@ def _fkik_row(kind):
 
 
 def _spine_row():
-    """The spine's FK | IK, one pair under the legs (2026-10-10): Spine [FK|IK]. Two
-    columns - the spine is one, so it has no second side to share a row with."""
-    cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "left", 0), (2, "both", 3)],
-                   **hubstyle.pick({"columnWidth": [(2, ARM_L_WIDTH)]}, {}))
+    """The spine's FK | IK under the legs (2026-10-10): Spine [FK|IK], and its
+    own check since 2026-10-29 - the limb rows' four columns with nothing where
+    their W chip stands (the spine has none)."""
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
+                   columnWidth4=(hubstyle.pick(48, 64), 110,
+                                 hubstyle.pick(28, 34),
+                                 hubstyle.tool_width(66)),
+                   columnAttach=[(1, "left", 0), (2, "both", 3),
+                                 (3, "both", 2), (4, "right", 0)])
     _row_label("Spine")
     segments = cmds.rowLayout(numberOfColumns=2,
                               columnAttach=[(1, "both", 1), (2, "both", 1)])
@@ -2017,10 +2083,21 @@ def _spine_row():
             FKIK_BOX_SPINE.format(mode), style="textOnly", label=mode,
             height=hubstyle.height("segment", 22),
             value=False,
-            annotation="Spine to {0} - over the highlighted range, else the whole take; "
-                       "the spine keeps what it shows".format(mode),
-            onCommand=_press_spine(mode), offCommand=_press_spine(mode)), "segment")
+            annotation="Spine to {0} - picked, not baked: press the row's "
+                       "check, or Apply all. Over the highlighted range, else "
+                       "the whole take; the spine keeps what it shows".format(
+                           mode),
+            onCommand=_press_spine(mode), offCommand=_press_spine(mode)),
+            "segment")
     cmds.setParent("..")
+    #  nothing where the limbs' W chip stands, so the checks line up
+    cmds.separator(style="none", height=1)
+    hubstyle.mark(cmds.button(
+        SPINE_APPLY, label=hubstyle.tool_label("Apply"),
+        width=hubstyle.tool_width(66),
+        height=hubstyle.height("small", 24),
+        annotation="bake what is picked on the spine",
+        command=_press_spine_apply), "tool", "check")
     cmds.setParent("..")
 
 
@@ -2090,6 +2167,12 @@ def build_panel():
     #  the legs (2026-10-10): the same row under the arms, one per leg
     _fkik_row(fkik.LEG)
     _spine_row()
+    #  the tab's one orange, counting what it would bake (2026-10-29)
+    hubstyle.mark(cmds.button(
+        APPLY_ALL["body"], label=APPLY_LABEL,
+        height=hubstyle.height("button", 32),
+        annotation="bake every pick in this tab - one undo",
+        command=_press_apply_body), "primary", "check")
     _any_object_rows()
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["weapon"], adjustableColumn=True,

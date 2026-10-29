@@ -367,8 +367,8 @@ class Panel(unittest.TestCase):
         #  tab's rows, Apply all and Aim Mode / Default.
         #  2026-10-29: a check a limb row ahead of BakeAcross / Release
         self.assertEqual([c[2]["label"] for c in self._buttons()],
-                         ["Apply", "Apply", "Apply", "Apply",
-                          "BakeAcross", "Release",
+                         ["Apply", "Apply", "Apply", "Apply", "Apply",
+                          "Apply all", "BakeAcross", "Release",
                           "Apply", "Apply", "Apply", "Apply all",
                           "Aim Mode", "Default", "Apply", "Aim Mode", "Default"])
         labels = [c[2].get("label") for c in self.fake.calls
@@ -407,8 +407,8 @@ class Panel(unittest.TestCase):
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
         #  the three parent rows + the camera tab's Apply (2026-10-28)
-        #  + a check a limb row (2026-10-29)
-        self.assertEqual(roles.count(("tool", "check")), 8)
+        #  + a check a limb row and the spine's (2026-10-29)
+        self.assertEqual(roles.count(("tool", "check")), 9)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
@@ -564,7 +564,8 @@ class Panel(unittest.TestCase):
         [FK | IK], the W chip, the row's check - so the segments are the width
         of the card and not the ~28 px two limbs in one row left them."""
         rows = self._made("rowLayout", numberOfColumns=4)
-        self.assertEqual(len(rows), 4)             # two arms, two legs
+        #  two arms, two legs, then the spine's row of the same shape
+        self.assertEqual(len(rows), 5)
         wanted = [("Arm R", cx.fkik.ARM, "R"), ("Arm L", cx.fkik.ARM, "L"),
                   ("Leg R", cx.fkik.LEG, "R"), ("Leg L", cx.fkik.LEG, "L")]
         for (index, call), (label, kind, side) in zip(rows, wanted):
@@ -641,11 +642,12 @@ class Panel(unittest.TestCase):
                  for c in self.fake.calls if c[0] in ("text", "button")
                  and not c[2].get("edit")]
         self.assertLess(order.index(cx.CAPTION["any"]), order.index("BakeAcross"))
-        #  and their marks stay what they were: the section's one primary,
-        #  then the two secondaries
+        #  and their marks stay what they were: a primary a tab (the body's
+        #  Apply all since 2026-10-29), the aims, then the two secondaries
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "secondary")]
-        self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "target"),
+        self.assertEqual(sorted(roles), [("primary", "check"), ("primary", "check"),
+                                         ("primary", "target"),
                                          ("primary", "target"),
                                          ("secondary", "link"), ("secondary", "rotate"),
                                          ("secondary", "rotate"),
@@ -876,7 +878,8 @@ class PanelCompact(unittest.TestCase):
             fake, _marks = self._build(skin)
             rows = [c[2] for c in fake.calls if c[0] == "rowLayout"
                     and c[2].get("numberOfColumns") == 4]
-            self.assertEqual(len(rows), 4, skin)
+            #  four limbs and the spine, all of one shape
+            self.assertEqual(len(rows), 5, skin)
             for row in rows:
                 self.assertEqual(row["adjustableColumn"], 2, skin)
                 self.assertEqual(row["columnWidth4"],

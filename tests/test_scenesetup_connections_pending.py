@@ -164,3 +164,62 @@ class LimbPicks(unittest.TestCase):
     def test_a_check_with_nothing_picked_bakes_nothing(self):
         self.fake.press_button(cx.LIMB_APPLY.format(cx.fkik.ARM, "R"))
         self.assertEqual(self.baked, [])
+
+
+class SpineAndBody(LimbPicks):
+    """The spine's own check, and the tab's Apply all - one undo chunk."""
+
+    def setUp(self):
+        LimbPicks.setUp(self)
+        self.spine = "FK"
+        saved = (cx.switch_spine, cx._spine_state)
+        self.addCleanup(setattr, cx, "switch_spine", saved[0])
+        self.addCleanup(setattr, cx, "_spine_state", saved[1])
+        cx._spine_state = lambda rig: (self.spine, False)
+
+        def switch_spine(mode, rig=None, highlight=None):
+            self.baked.append(("spine", mode))
+            self.spine = mode
+            return "baked"
+
+        cx.switch_spine = switch_spine
+
+    def test_a_press_of_the_spine_records_only(self):
+        self.fake.press_box(cx.FKIK_BOX_SPINE.format("IK"))
+        self.assertEqual(self.baked, [])
+        self.assertEqual(cx.picks(Rig()), {pending.SPINE: "IK"})
+
+    def test_the_spine_s_check_bakes_it(self):
+        self.fake.press_box(cx.FKIK_BOX_SPINE.format("IK"))
+        self.fake.press_button(cx.SPINE_APPLY)
+        self.assertEqual(self.baked, [("spine", "IK")])
+        self.assertEqual(cx.picks(Rig()), {})
+
+    def test_apply_all_takes_the_limbs_and_the_spine_in_one_chunk(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        self.fake.press_box(cx.FKIK_BOX_SPINE.format("IK"))
+        self.fake.press_button(cx.APPLY_ALL["body"])
+        self.assertEqual(self.baked,
+                         [("switch", cx.fkik.ARM, "R", "FK", False),
+                          ("spine", "IK")])
+        self.assertEqual(cx.picks(Rig()), {})
+        chunks = [c[2].get("chunkName") for c in self.fake.calls
+                  if c[0] == "undoInfo" and c[2].get("openChunk")]
+        self.assertEqual(chunks.count("Connections: Apply all"), 1)
+
+    def test_the_count_is_on_the_button(self):
+        self.fake.press_box(cx.fkik_box("R", "FK"))
+        self.fake.press_box(cx.FKIK_BOX_SPINE.format("IK"))
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["body"]),
+                         "Apply all · 2")
+
+    def test_with_nothing_picked_the_button_reads_plain_and_bakes_nothing(self):
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["body"]), "Apply all")
+        self.fake.press_button(cx.APPLY_ALL["body"])
+        self.assertEqual(self.baked, [])
+
+    def test_a_limb_s_w_counts_with_its_mode(self):
+        self.modes[cx.fkik.ARM]["R"] = "FK"
+        self.fake.press_check(cx.W_BOX.format(cx.fkik.ARM, "R"), True)
+        self.assertEqual(self.fake.label_of(cx.APPLY_ALL["body"]),
+                         "Apply all · 1")
