@@ -8,12 +8,20 @@ MAYA_APP_DIR:
 Two Manny rigs (A, B), each with Camera Setup's SceneSetup camera on its camera_root (in its
 namespace and character group), a free camera `shotCam` and a locator `prop`. A pose and an
 animation are saved from A + A's camera + shotCam + prop; then shotCam moves into a namespace
-`shot:` (as another scene would have it) and the cards go onto B:
-  save      the card is a character card holding the three objects, A's camera `own`, the
-            shot camera's focal length in `shape`;
-  pose      B:Main + shot:shotCam selected: B's OWN camera takes A's camera's values (its
-            namespace), shot:shotCam the shot camera's (by name, namespace ignored) focal length
-            too, the prop its by exact path, A's camera untouched; one undo puts every one back;
+`shot:` (as another scene would have it) and the cards go onto B.
+
+The rig's own camera is no object of the card since 2026-10-20 («камеру и оружие как часть рига»,
+CLAUDE.md «This replaces ... "the Camera Setup camera is an object"»): it travels as the
+character's camera BONES, keyed on what holds its motion - its control `Camera_ctrl`
+(`camera.keyed_node`, 2026-10-21; the camera itself under it is driven). So `a_cam` / `b_cam` here
+are the cameras' CONTROLS (2026-10-29: the gates still read the camera as an `own` object and set
+the driven camera's translateX, which Maya refuses - 2/6).
+  save      the card is a character card holding the two free objects, the shot camera's focal
+            length in `shape`; the rig's camera is NOT an object, its bones are on the card;
+  pose      B:Main + shot:shotCam selected: B's OWN camera control takes A's camera control's
+            values (through the camera bones), shot:shotCam the shot camera's (by name, namespace
+            ignored) focal length too, the prop its by exact path, A's camera untouched; one undo
+            puts every one back;
   unsel     B:Main alone: the shot camera is not searched for by name (said), the prop posed;
   alone     shot:shotCam alone: the camera posed, B untouched, said;
   anim      the animation onto B:Main + shot:shotCam: their curves keyed, focal length too, in
@@ -98,9 +106,10 @@ def add_rig():
 
 
 def cam_of(rig):
+    """The rig's camera set up, and what holds its motion: its control (`camera.keyed_node`)."""
     bone = cmds.ls(rig.namespace + ":camera_root", long=True)[0]
     camera.setup(bone, 0, 10)
-    return cmds.ls(camera.camera_name_for(bone), long=True)[0]
+    return cmds.ls(camera.keyed_node(bone), long=True)[0]
 
 
 def get(plug):
@@ -145,14 +154,15 @@ try:
     # ---- save
     objs = dict((o["name"], o) for o in pose.get("objects") or [])
     gate("save.kind", pose["kind"] == "character", pose["kind"])
-    gate("save.objects", sorted(objs) == ["SceneSetup_camera", "prop", "shotCam"], sorted(objs))
-    gate("save.own", objs.get("SceneSetup_camera", {}).get("own") is True
-         and objs.get("shotCam", {}).get("own") is False)
+    gate("save.objects", sorted(objs) == ["prop", "shotCam"], sorted(objs))
+    gate("save.camera_bones", "camera_root" in (pose.get("bones") or {})
+         and objs.get("shotCam", {}).get("own") is False, sorted(pose.get("bones") or {})[:4])
     gate("save.shape", near(objs["shotCam"]["shape"].get("focalLength", -1), 50.0),
          objs["shotCam"]["shape"].get("focalLength"))
     aobjs = dict((o["name"], o) for o in header.get("objects") or [])
-    gate("save.anim", sorted(aobjs) == ["SceneSetup_camera", "prop", "shotCam"]
-         and "focalLength" in aobjs["shotCam"]["shape"], sorted(aobjs))
+    gate("save.anim", sorted(aobjs) == ["prop", "shotCam"]
+         and "focalLength" in aobjs["shotCam"]["shape"]
+         and "camera_root" in (header.get("bones") or {}), sorted(aobjs))
 
     # ---- another scene: shotCam in a namespace, everything at zero, B's camera somewhere else
     cmds.namespace(add="shot")
