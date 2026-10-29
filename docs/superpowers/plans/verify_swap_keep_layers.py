@@ -50,7 +50,8 @@ ARGS = [a for a in sys.argv[1:]]
 CLIP = (ARGS.pop(0) if ARGS and ARGS[0].lower().endswith((".fbx", ".ma", ".mb"))
         else "C:/!!!Work/Animations/Export/LongSword_Attack_Right_Heavy_3P.FBX")
 OUT = ARGS.pop(0) if ARGS and ARGS[0].lower().endswith(".txt") else None
-ALL = ("keep", "bake", "cancel", "weight", "quaternion", "none", "first_person", "other_model")
+ALL = ("keep", "bake", "cancel", "weight", "quaternion", "none", "first_person", "other_model",
+       "skeleton")
 PHASES = [p.strip() for p in ARGS.pop(0).split(",")] if ARGS else list(ALL)
 
 import maya_retargetmode as rm
@@ -561,10 +562,56 @@ def phase_other_model():
          % (d3, a3))
 
 
+# ---------------------------------------------------------------- onto a skeleton
+def phase_skeleton():
+    """A rig with a layer swapped for a SKELETON: the cuts go through the bridge's own transfer
+    (`skeletonimport._transfer`) instead of a rig retarget, and the layer lands on the joints."""
+    cmds.file(new=True, force=True)
+    rig, s0, s1 = retargeted_rig()
+    at = [float(s0), float(round((s0 + s1) / 2.0)), float(s1)]
+    make_layer("Fix", control(rig, "FKSpine3_M") + ".rotateY", at, 20.0)
+    frames = sorted(set(at))
+    old = bones(rig.skeleton_root)
+    on = sample(old, frames)
+    off = muted(["Fix"], lambda: sample(old, frames))
+    was = cmds.ls(rig.skeleton_root, long=True)[0]        # the old root goes with the swap
+    ANSWER[0] = swaplayers.KEEP
+    text = swap_for(rig, "Manny", "skeleton")
+    gate("S1", len(ASKED) == 1 and "Fix" in ASKED[0], "asked once, naming the layer")
+    from maya_scenesetup import deletion
+    roots = [c.root for c in deletion.characters()]
+    fresh = [r for r in roots if (cmds.ls(r, long=True) or [r])[0] != was]
+    gate("S2", len(fresh) == 1 and not maya_rigs.rigs(),
+         "a bare skeleton stands and the rig is gone: %s" % fresh)
+    if not fresh:
+        return
+    made = [n for n in pkeys.layer_stack()[1:] if leaf(n).startswith("Fix")]
+    gate("S3", made == ["Fix"] and swaplayers.KEPT.split(":")[0] in text,
+         "the layer landed on the skeleton under its own name: %s" % made)
+    if not made:
+        return
+    plugs = sorted(pkeys.layer_plugs(made[0]))
+    curves = [c for c in (pkeys.curve_for(p, made[0]) for p in plugs) if c]
+    times = sorted(set(round(t, 4) for c in curves
+                       for t in (cmds.keyframe(c, q=True, timeChange=True) or [])))
+    gate("S4", times == [round(t, 4) for t in at],
+         "its keys stand on exactly %s: %s" % (at, times))
+    joints = bones(fresh[0])
+    d, a, where = compare(on, sample(joints, frames))
+    gate("S5", d < 0.35 and a < 0.6,
+         "with the layer on, the joints are where the rig's bones were at the keys: "
+         "%.4f cm, %.4f deg %s" % (d, a, where))
+    d2, a2, where2 = compare(off, muted([made[0]], lambda: sample(joints, frames)))
+    gate("S6", d2 < 0.35 and a2 < 0.6,
+         "with it muted, they are where muting it on the rig put them: %.4f cm, %.4f deg %s"
+         % (d2, a2, where2))
+
+
 # ---------------------------------------------------------------- run
 RUN = {"keep": phase_keep, "bake": phase_bake, "cancel": phase_cancel, "weight": phase_weight,
        "quaternion": phase_quaternion, "none": phase_none,
-       "first_person": phase_first_person, "other_model": phase_other_model}
+       "first_person": phase_first_person, "other_model": phase_other_model,
+       "skeleton": phase_skeleton}
 
 for phase in PHASES:
     if phase not in RUN:

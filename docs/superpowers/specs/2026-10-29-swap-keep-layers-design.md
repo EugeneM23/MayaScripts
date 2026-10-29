@@ -1,5 +1,7 @@
 # A rig swapped for another keeps its layers, or bakes them (2026-10-29)
 
+**Read the addendum: the build changed five things.**
+
 The animator: «Сейчас наша библеотека умеет переносить аниации по слоям. Нужно реализовать
 аткой же функционал при подмене ригов. Если на риге есть слои и мы мняем один риг на другой
 каким-то из способов то нужно сделать атк что бы система спросила у нас хотим ли мы сохранить
@@ -135,6 +137,41 @@ never surprised by it.
     `Main.view` 1), its bones under both layers where the old rig's 3P take put them, and with
     Upper muted where the old rig's 1P look was;
   - no layers: never asked, today's road.
+
+## Addendum: what the build changed (2026-10-29)
+
+Five things the first runs measured, each now in the module and pinned:
+
+1. **The base is written as the CURVES it is**, one `keys.write_raw` a channel, not `keys.write`
+   per frame: a retargeted base is dense (61 keys x ~340 channels), and a key at a time costs a
+   `setKeyframe` each. A LAYER still goes through `keys.write` (Maya's own arithmetic, trap 205) -
+   its own key times are few by nature.
+2. **Every cut is read for the same plugs, whole transform families** (`triples`, `fill_gaps`):
+   a retarget ends in `delete -staticChannels`, so one cut keys `rotateZ` where another keys
+   `rotateX` - and an euler read in part mixes two solutions of one rotation. A finger control
+   came out **540 deg** out (360 of turn plus a real 180) while every unit test was green.
+3. **A later cut's rotate values are snapped onto the first cut's turn** (`align_turns`): each
+   retarget's euler filter makes its own curve continuous from its own first key, so the same
+   rotation can read 721 deg where the first cut wrote 1.4. A whole turn added to one channel
+   leaves the rotation alone and keeps the layer's offset small.
+4. **The take is NOT reset before the stack is written** - only the curves of the channels we
+   write are cut (`cmds.cutKey(plugs, clear=True)`). `ready_rig`'s reset also undoes what the
+   last cut's bake set up beside the curves: the IK limbs carried onto the FK's shape
+   (`maya_ikmatch`, whose `IKX*.translate` is no keyable channel), the neck knobs, the helper
+   bones, the camera and the label. With the reset the Creep came out 3.74 deg off at the neck
+   and 1.67 cm at a finger - in BOTH the layer-on and layer-muted states, which is what showed it
+   was no layer's doing. A probe first proved a second retarget onto the same rig is bit-for-bit
+   repeatable (0.0000), ruling the retarget out.
+5. **A layer carries only the channels its own offset reaches** (`trim_layers`, 1e-3 - the
+   retarget's own repeatability is 0.0006 deg): a 20 deg chest offset came out as 19 channels of
+   the 392 a cut reads, where every channel would have made the Anim Layer Editor unreadable.
+   And **a kept layer takes its own NAME back** (`rename_layers`): the layers are made while the
+   old character still stands, so Maya hands back `Fix1` until the old one is deleted.
+
+Beside those: **what carries the old character's keys includes the Tools KNOTS driving it**
+(`swap._keyed_nodes`) - 1P Setup puts the chest's turn on its knot, not on a control; the proof
+gained a **skeleton** phase (the cuts through `skeletonimport._transfer`); and a cut whose connect
+is refused drops its clip skeleton rather than leaving it standing.
 
 ## Not built
 

@@ -13683,9 +13683,14 @@ the keys and layers» is the stack AND each layer's own key times** («Слои 
   back `Fix1`; once the old one is deleted (and its layers with it) ours take their names back
   (`rename_layers` / `wanted_name`, only where the name is free and only for a layer we made).
 
-Proof: `docs/superpowers/plans/verify_swap_keep_layers.py` — **0 of 49 gates, mayapy standalone**,
-eight phases (`keep,bake,cancel,weight,quaternion,none,first_person,other_model`), a UE clip
-retargeted onto a Manny rig:
+**What carries the old character's keys** is its game skeleton, its controls AND the Tools knots
+driving any of them (`_keyed_nodes`): 1P Setup puts the chest's turn on its knot
+(`Chest_1P_ctrl`), not on a control, so a stack read without them would miss the frames only the
+chest moves on.
+
+Proof: `docs/superpowers/plans/verify_swap_keep_layers.py` — **0 of 55 gates, mayapy standalone**,
+nine phases (`keep,bake,cancel,weight,quaternion,none,first_person,other_model,skeleton`), a UE
+clip retargeted onto a Manny rig:
 - Keep, Manny for Manny with a «Fix» layer keyed on 3 frames (one stepped): asked once naming the
   layer; one layer of that name, mode, weight and mute; its keys on **exactly** those 3 frames,
   stepped still stepped; with the layer on AND with it muted, every game bone at the keys where the
@@ -13702,9 +13707,13 @@ retargeted onto a Manny rig:
 - 1P: a rig through 1P Setup swapped with Keep - the new rig carries **both 1P layers marked with
   its namespace**, the chest control, `Main.view` 1, the two display layers, the camera control
   riding the chest, and its bones are where the old rig's 3P take put them with both layers on and
-  where its 1P look was with the upper layer muted (0.0654 cm / 0.0006 deg both).
+  where its 1P look was with the upper layer muted (0.0654 cm / 0.0006 deg both);
+- onto a SKELETON (the cuts go through `skeletonimport._transfer`, not a rig retarget): the layer
+  lands on the joints under its own name with its keys on exactly those 3 frames, and the joints
+  are where the rig's bones were, on and muted - **0.0000 cm**, the transfer having no AS fit
+  offset of its own.
 
-13246 unit tests (the known `test_chat_deploy.Keys` failing: this machine's own saved keys).
+13214 unit tests (the known `test_chat_deploy.Keys` failing: this machine's own saved keys).
 **Not seen in a GUI Maya** - the dialog itself and a real drag are the animator's, after Check
 update. Not built: the same for a PART row (`attach_part` keeps the character and is asked
 nothing); a setting to stop being asked (the animator asked for a question); a layer kept by its

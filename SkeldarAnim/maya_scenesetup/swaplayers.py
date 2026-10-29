@@ -575,7 +575,8 @@ def write_layer(record, values, times, tangents, keys_module=None):
         notes.append(EMPTY % name)
     else:
         layer = keys_module.Layer(name, False, not record.get("override"), False,
-                                  record.get("rotation") == "quaternion")
+                                  record.get("rotation") == "quaternion", False,
+                                  float(record.get("weight", 1.0)))
         for frame in times:
             at = dict((plug, per[frame]) for plug, per in values.items() if frame in per)
             if not at:

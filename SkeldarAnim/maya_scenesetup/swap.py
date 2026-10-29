@@ -373,8 +373,13 @@ def _again(arrival, entry, namespace, info, source, name):
         if failure:
             _drop_namespace(namespace)
             return "", "  |  ".join(notes + [failure])
-        return rigimport.retarget_imported(rig, mod, namespace, info, source, name,
-                                           bones=arrival.mode)
+        line, failure = rigimport.retarget_imported(rig, mod, namespace, info, source, name,
+                                                    bones=arrival.mode)
+        if failure:
+            #  a connect refusal leaves the clip's skeleton as it arrived; this cut is a copy of
+            #  a take that is already in the scene, so it goes rather than standing about.
+            _drop_namespace(namespace)
+        return line, failure
     result = skeletonimport._transfer(source, arrival.root, info.get("start"),
                                       info.get("end"), arrival.mode)
     _drop_namespace(namespace)
@@ -563,12 +568,34 @@ def _one(entry, char, start, end, name):
         _drop_namespace(namespace)
 
 
+def _keyed_nodes(char):
+    """What carries the old character's own keys: its game skeleton, its controls and the Tools
+    KNOTS driving any of them - 1P Setup puts the chest's turn on its knot (`Chest_1P_ctrl`),
+    not on a control, so a stack read without them would miss the frames only the chest moves
+    on."""
+    nodes = game_joints(char.root) + _controls(char.rig)
+    mine = set(cmds.ls(nodes, long=True) or [])
+    try:
+        from maya_tools import knots as tools_knots
+    except ImportError:
+        return nodes
+    for top in tools_knots.knots():
+        source = tools_knots.source_of(top)
+        if not source or (cmds.ls(source, long=True) or [source])[0] not in mine:
+            continue
+        for node in [top] + (cmds.listRelatives(top, allDescendents=True, type="transform",
+                                                fullPath=True) or []):
+            if node not in nodes:
+                nodes.append(node)
+    return nodes
+
+
 def _cut_times(char, plan, names, start, end):
     """[(index, [names on], [times], {time: (in, out)})] - every cut's key times and tangent
     types, read off the OLD character before the first bake (a mute changes no curve), so every
     cut can be read at the union of them and a layer trimmed against the cut below it."""
     from maya_scenesetup import swaplayers
-    old = game_joints(char.root) + _controls(char.rig)
+    old = _keyed_nodes(char)
     out = []
     for index, on in (plan.cuts or [(None, [n for n in names])]):
         layer = swaplayers.EVERY if plan.first_person else (
@@ -681,8 +708,7 @@ def swap(entry, root):
     # The layers question, before anything is changed: Keep carries the old stack onto the new
     # character, Bake is the road above (2026-10-29).
     plan = swaplayers.plan_of(
-        swaplayers.records_of(swaplayers.layers_of(game_joints(char.root) +
-                                                   _controls(char.rig))),
+        swaplayers.records_of(swaplayers.layers_of(_keyed_nodes(char))),
         swaplayers.in_1p(char.rig), catalog.is_rig(entry))
     try:
         answer = swaplayers.choose(plan, char.label, entry.label)
