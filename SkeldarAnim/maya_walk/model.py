@@ -109,6 +109,11 @@ KNOBS = (
     ("arm_lag", 0.0, -10.0, 15.0),
     ("elbow_lag", 0.0, -10.0, 15.0),
     ("hand_lag", 0.0, -10.0, 15.0),
+    # The arms' overlap (2026-10-29): the whole arm late by this many frames of the new cycle - its hand's
+    # world motion (the linear travel out) read that much earlier and the arm rebuilt to it by IK from the
+    # current shoulder, so what the arm takes from the body (the chest's turn, the shoulder's bob and sway) is
+    # late with its own swing. Per side; under a grip the held thing goes late and both hands keep their hold
+    ("arm_overlap", 0.0, -20.0, 60.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -161,7 +166,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "spring_comp")
+         "arm_overlap", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -205,6 +210,7 @@ ARM_INERTIA = 1.0         # x the shoulder's (elbow's, wrist's) acceleration fel
 ARM_HARMONICS = 6         # the shoulder's path the arms feel: its first this many harmonics a stride (the body's motion)
 ACCEL_HZ = 8.0            # ...and none faster than this many a second: a sprint's stride is 15 frames, and 6 harmonics of
                           # it reached a 2.5-frame period - the frames' own noise (AGS_Sprint, 2026-10-14)
+OVERLAP_QUIET = 1e-6      # frames: an Arm overlap under this touches nothing
 # the trunk and the head on springs (docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md)
 BODY_INERTIA = 1.0        # x the pivot's acceleration felt by the trunk on its lever
 HEAD_INERTIA = 0.3        # ...and by the head on the neck: a head is held - at 1 a sprint's steps bobbed it 12 deg off
@@ -603,6 +609,30 @@ def meet(knee, foot, lead):
     if excess == 0.0:
         return knee, foot
     return knee - (1.0 - lead) * excess, foot + lead * excess
+
+
+def shifted_cycle(mats, lag):
+    """A cycle of world matrices (n+1, 4, 4) - its last frame its first moved by the cycle's travel - read
+    `lag` frames earlier. The linear travel is taken out for the shift and put back at each frame, so the
+    result is a cycle again and a travelling cycle does not leave the shifted thing behind; a fractional lag
+    falls between the two frames it lies between (the rotation slerped, the place lerped). lag 0: the input,
+    matrix for matrix."""
+    if not lag:
+        return np.array(mats)
+    mats = np.asarray(mats, float)
+    n = mats.shape[0] - 1
+    per = (mats[n, 3, :3] - mats[0, 3, :3]) / float(n)
+    rots = np.array([orthonormal(mats[f, :3, :3]) for f in range(n)])
+    place = np.array([mats[f, 3, :3] - per * f for f in range(n)])
+    out = np.tile(np.eye(4), (n + 1, 1, 1))
+    for f in range(n + 1):
+        g = (f - lag) % n
+        lo = int(math.floor(g)) % n
+        hi = (lo + 1) % n
+        a = g - math.floor(g)
+        out[f, :3, :3] = rots[lo] @ exp_rot(a * log_rot(rots[lo].T @ rots[hi]))
+        out[f, 3, :3] = (1.0 - a) * place[lo] + a * place[hi] + per * f
+    return out
 
 
 def _runs(mask):
