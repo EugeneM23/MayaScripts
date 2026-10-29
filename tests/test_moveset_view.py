@@ -17,7 +17,7 @@ except ImportError:                                            # pragma: no cove
 
 from maya_moveset import model as m
 
-from tests.test_moveset_model import graph
+from tests.test_moveset_model import dagger_graph, graph
 
 
 def folder_with_graph():
@@ -163,8 +163,54 @@ class Presses(unittest.TestCase):
         self.assertEqual(seen["target"], "new_rig")
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+@unittest.skipIf(QtWidgets is None, "no Qt")
+class WeaponRules(unittest.TestCase):
+    """A graph that declares its weapon is drawn by its own rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        from maya_moveset import view
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        with open(os.path.join(self.folder, "graph.dagger.json"), "w", encoding="utf-8") as handle:
+            json.dump(dagger_graph(), handle)
+        os.makedirs(os.path.join(self.folder, "media", "dagger"))
+        open(os.path.join(self.folder, "media", "dagger", "AM_Dg_Atk_NLt.jpg"), "w").close()
+        self.dagger = m.weapons(self.folder)[0]
+        self.view = view.TreeView()
+        self.view.resize(600, 400)
+        self.view.set_data(m.load_graph(self.folder, self.dagger.graph),
+                           m.read_state(self.folder), self.folder, self.dagger)
+
+    def test_the_labels_are_the_projects_names(self):
+        self.assertEqual(self.view.label("AM_Dg_Atk_NLt_NLt_NHd"), "NLt NLt NHd")
+
+    def test_the_colour_is_the_graphs_declared_type(self):
+        kinds = dict((c.node.id, c.node.kind) for c in self.view.cards)
+        self.assertEqual(kinds["AM_Dg_Atk_NLt_NLt_NHd"], "hold")
+        self.assertEqual(kinds["AM_Dg_Atk_NLt"], "light")
+
+    def test_a_type_chip_filters_on_the_declared_type(self):
+        #  every transition, so the jump branch is drawn beside the chain
+        self.view.set_filter(mode="all", types=["hold"])
+        dim = dict((c.node.id, c.opacity()) for c in self.view.cards)
+        self.assertEqual(dim["AM_Dg_Atk_NLt_NLt_NHd"], 1.0)      # the hold itself
+        self.assertLess(dim["AM_Dg_Atk_JA_Passive"], 0.5)        # a jump, off the hold's path
+
+    def test_the_preview_comes_from_the_weapons_media_subfolder(self):
+        self.assertTrue(self.view.thumb_path("AM_Dg_Atk_NLt")
+                        .endswith(os.path.join("dagger", "AM_Dg_Atk_NLt.jpg")))
+        self.assertEqual(self.view.thumb_path("AM_Dg_Atk_Spr"), "")
+
+    def test_a_graph_with_no_weapon_keeps_the_swords_rules(self):
+        from maya_moveset import view
+        plain = view.TreeView()
+        plain.set_data(graph(), m.read_state(""), "")
+        self.assertEqual(plain.label("AM_Longsword_Attack_Stand_Hold"), "Stand Hold")
 
 
 class Build(unittest.TestCase):
@@ -183,3 +229,135 @@ class Build(unittest.TestCase):
             self.assertIn(name, names)
         for key, _label in m.TYPES:
             self.assertIn(panel.CHIP.format(key), names)
+
+
+class Quiet(object):
+    """A `cmds` that answers nothing: a control exists, a query is False, an
+    edit is recorded. `_load` and `_poll` run on it."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        def call(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            if kwargs.get("query") or kwargs.get("q"):
+                return [] if kwargs.get("itemListLong") else False
+            if kwargs.get("exists"):
+                return True
+            return None
+        return call
+
+    def edits(self, command, flag):
+        return [(c[1][0] if c[1] else None, c[2][flag]) for c in self.calls
+                if c[0] == command and flag in c[2] and (c[2].get("edit") or c[2].get("e"))]
+
+
+class FakeView(object):
+    def __init__(self, folder):
+        self.folder = folder
+        self.graph, self.state, self.weapon = {}, m.read_state(""), None
+        self.mode, self.root, self.who, self.types = "combos", "", None, set()
+        self.framed = 0
+
+    def set_data(self, graph, state, folder, weapon=None):
+        self.graph, self.state, self.folder, self.weapon = graph, state, folder, weapon
+
+    def set_state(self, state):
+        self.state = state
+
+    def set_filter(self, root=None, types=None, who="keep", mode=None):
+        if types is not None:
+            self.types = set(types)
+
+    def frame(self):
+        self.framed += 1
+
+
+class WeaponCard(unittest.TestCase):
+    """The card on a folder of two weapons, on a `cmds` that answers nothing."""
+
+    def setUp(self):
+        from maya_moveset import panel
+        self.panel = panel
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        for name, data in ((m.GRAPH, graph()), ("graph.dagger.json", dagger_graph())):
+            with open(os.path.join(self.folder, name), "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+        self.cmds = Quiet()
+        for name, value in (("cmds", self.cmds), ("folder", lambda: self.folder)):
+            patcher = mock.patch.object(panel, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def card(self):
+        return {"view": FakeView(self.folder), "status": "st", "sub": "sub",
+                "root_menu": "root", "who_menu": "who", "weapon": None,
+                "chips": dict((key, "chip_" + key) for key, _l in m.TYPES),
+                "segs": {"longsword": "seg_longsword", "dagger": "seg_dagger"},
+                "roots": [], "people": [], "mtime": 0.0}
+
+    def test_load_takes_the_weapon_the_state_names(self):
+        card = self.card()
+        self.panel._load(card, frame=True)
+        self.assertEqual(card["weapon"].key, "longsword")        # the first, with no key written
+
+        m.write_state(self.folder, weapon="dagger")
+        self.panel._load(card)
+        self.assertEqual(card["weapon"].key, "dagger")
+        self.assertEqual(card["view"].weapon.graph, "graph.dagger.json")
+        self.assertIn("AM_Dg_Atk_NLt", card["view"].graph["nodes"])
+        self.assertEqual(self.cmds.edits("iconTextRadioButton", "select")[-1][0], "seg_dagger")
+
+    def test_a_type_the_weapon_has_none_of_is_dimmed_and_leaves_the_filter(self):
+        card = self.card()
+        card["view"].types = set(["dodge", "hold"])
+        m.write_state(self.folder, weapon="dagger")
+        self.panel._load(card)
+        enabled = dict(self.cmds.edits("checkBox", "enable"))
+        self.assertFalse(enabled["chip_dodge"])                  # the dagger has no dodge
+        self.assertTrue(enabled["chip_hold"])
+        self.assertEqual(card["view"].types, set(["hold"]))       # and it left the filter
+
+    def test_the_summary_counts_the_weapon_shown(self):
+        card = self.card()
+        m.write_state(self.folder, weapon="dagger",
+                      status={m.skey("AM_Dg_Atk_NLt", "3p"): "done",
+                              m.skey("AM_Longsword_Attack_Stand_Hold", "3p"): "done"})
+        self.panel._load(card)
+        said = dict((c[1][0], c[2].get("label")) for c in self.cmds.calls
+                    if c[0] == "text" and (c[2].get("edit") or c[2].get("e")))
+        self.assertEqual(said["sub"], "Dagger - 5 attacks, 1 of 10 done")
+
+    def test_the_poll_follows_a_weapon_switch_made_on_the_page(self):
+        card = self.card()
+        self.panel._load(card)
+        self.assertEqual(card["weapon"].key, "longsword")
+        m.write_state(self.folder, weapon="dagger")              # the page wrote it
+        self.panel._poll(card)
+        self.assertEqual(card["weapon"].key, "dagger")
+        self.assertEqual(card["view"].weapon.key, "dagger")
+
+    def test_picking_a_weapon_writes_the_shared_key_and_reloads(self):
+        card = self.card()
+        with mock.patch.object(self.panel, "_card", lambda: card):
+            self.panel.pick_weapon("dagger")
+        self.assertEqual(m.read_state(self.folder)[m.STATE_WEAPON], "dagger")
+        self.assertEqual(card["weapon"].key, "dagger")
+        self.assertEqual(card["view"].framed, 1)
+
+    def test_no_graph_at_all_says_so_and_draws_nothing(self):
+        for name in (m.GRAPH, "graph.dagger.json"):
+            os.remove(os.path.join(self.folder, name))
+        card = self.card()
+        self.panel._load(card)
+        self.assertIsNone(card["weapon"])
+        self.assertEqual(card["view"].graph["nodes"], {})
+        said = [c[2].get("label") for c in self.cmds.calls
+                if c[0] == "text" and (c[2].get("edit") or c[2].get("e"))]
+        self.assertTrue(any("No graph.json" in (text or "") for text in said), said)
+
+
+if __name__ == "__main__":
+    unittest.main()
