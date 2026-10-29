@@ -15830,6 +15830,62 @@ the stage puts the screen back. 12273 unit tests (the known `test_chat_deploy.Ke
 **A real mouse drag is the animator's**: synthetic mouse events are not a drag (the repo's trap 138),
 so the gate proves a stroke and its points, not that one drag makes exactly one stroke.
 
+## A call survives its microphone: chosen, lost, switched (2026-10-29)
+
+The animator: «У меня случился баг при переключении беспроводных наушников. мая говорит что
+микрофон не найден и отклоняет звонки и я ничего не слышал когда мне звонили». Spec
+`docs/superpowers/specs/2026-10-29-call-devices-design.md`. **This replaces «the devices menu /
+the remembered device» of the calls sections above and the window's `fail()` on a media error.**
+
+**Their own prefs held the root cause** (`userPrefs.mel`): `skeldarChatCallMic` = a 64-hex deviceId
+from an earlier Maya session. The page asked for it `exact`, and **Chromium salts a deviceId per
+origin - our call profile is off the record, so every Maya session gives the same microphone a new
+id** (measured twice in a row: `74fe12fd2e1f…`, then `c1da5ef941ce…`). An id that is not
+there, asked as `exact`, raises `OverconstrainedError`; `COMMANDS.start` set an error and
+**returned before a single peer was built**, and `callview._page_state` read that error and called
+`fail()`, which **leaves the call**. So after choosing a microphone once, every call in every later
+session was declined with «Микрофон не найден», in or out, and nothing was heard. The same
+id asked as an **ideal** is honoured where the device is there and falls back to the default by
+itself where it is not.
+
+- **A remembered device is a wish, never a demand** (`call.js`: `pickDevice` / `wantedDevices` /
+  `audioAsked` / `camAsked`): the id while the current `enumerateDevices` list still carries it,
+  else the device whose **label** matches the remembered one, else the default - and always as an
+  ideal. The window keeps the label beside the id (`skeldarChatCallMicLabel`, `…CamLabel`;
+  `calls.start_args(..., mic_label=, cam_label=)`), because the label is what survives a session;
+  the devices menu ticks a device by its label when the stored id is stale.
+- **A call without a microphone is still a call**: `userMedia` never raises, `S.nomic` carries the
+  reason, the page is muted and says «Микрофон не найден (…) - вы слышите остальных, но
+  вас не слышно», and the audio transceiver is added by kind either way, so every voice is
+  heard. Unmuting with no microphone **looks for one** (`settleMic(true)`), which is the animator
+  plugging the headphones back in.
+- **A microphone never leaves a call**: the `fail()` is gone (`_mic_state` says it and logs it, a
+  page error that is not about a device is logged too). Only the call ending ends a call.
+- **A device change is followed**: `navigator.mediaDevices.devicechange` and the track's own
+  `ended` re-read the list, resolve the wish again and `replaceTrack` the new microphone into every
+  peer (`settleMic` / `takeMic`); a camera whose device went is taken anew. The camera's own loss
+  no longer costs the microphone (they were one `getUserMedia`).
+- **The cached sound pools are dropped when the audio outputs change**
+  (`maya_hubsound._watch_devices`, `QMediaDevices.audioOutputsChanged`): a QSoundEffect builds its
+  sink on the default device of the moment and Qt does not move a built one. The ring is made fresh
+  for each ring, so it was never part of this - the chime, the drag and the delete are pools. The
+  one thing here that cannot be shown broken or cured without the hardware.
+
+Proof: `docs/superpowers/plans/verify_call_devices.py` - **0 of 25 gates in headless mayapy**
+(three call pages wired to each other, Chromium's fake devices): the root cause pinned
+(`exact` → OverconstrainedError), a page started with a dead remembered id connects and
+carries audio, the remembered label lands on the device it names, a `devicechange` and an `ended`
+track take the other microphone into the peer, a page whose audio is refused joins and **hears
+both** others and is heard as soon as its button takes a microphone, a refused camera costs no
+microphone. **The same verify on the build before: 16 of 25 failed**, every one of them with
+«Микрофон недоступен: OverconstrainedError» and no peers. Also green: `verify_call_page.py`
+18/18, `verify_chat_calls.py` 0 of 20 on staging, 12451 unit tests (the known
+`test_chat_deploy.Keys` failing), `tests/test_chat_call_devices.py`. **Not seen in a GUI Maya**: a
+real headphone switch is the animator's.
+
+Not built: an output picker (`setSinkId` is there - Chromium plays to the system default and
+follows it), and a microphone chosen per call.
+
 306. **A `<canvas>` is a REPLACED element: `position: absolute; inset: 0` does not stretch it.** With
      an auto width the used size is its intrinsic 300×150, and the rest of the box is left over - so
      the drawing layer was a 300×150 patch in the corner of every tile and nothing landed on the
@@ -15844,3 +15900,14 @@ so the gate proves a stroke and its points, not that one drag makes exactly one 
      window whose `_drag` assumed a QPoint raised «'tuple' object has no attribute 'x'» out of
      `mouseMoveEvent` on every drag - the window could not be moved, and the exception came out of
      Qt's event loop in the middle of a verify run.
+
+311. **Chromium salts a deviceId per origin, and an off-the-record profile is a new origin salt
+     every session.** The same microphone read `74fe12fd2e1f…` in one mayapy run and
+     `c1da5ef941ce…` in the next, so a device id remembered on disk names nothing in the next
+     Maya - and asked as `deviceId: {exact: id}` it raises `OverconstrainedError`, where the same id
+     as an ideal falls back to the default. Remember the LABEL, ask as an ideal, and never let a
+     device constraint be the thing that fails a feature.
+312. **A gate whose threshold is computed inside its own wait can never pass.**
+     `pump(25, lambda: bytes_in > (bytes_in + 500))` reads the live value on both sides, so «audio
+     still flows» failed while the bytes went from 2105 to 32254. Read the baseline before the
+     pump, and look at the number the failure prints before believing it.
