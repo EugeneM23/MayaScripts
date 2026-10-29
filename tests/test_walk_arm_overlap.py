@@ -137,3 +137,120 @@ class ArmToHandTests(unittest.TestCase):
                 d = np.linalg.norm(positions(r, self.w.names[b], self.w)
                                    - positions(r, self.w.names[a], self.w), axis=1)
                 self.assertLess(float(np.ptp(d)), 1e-9, (side, a, b))
+
+
+def body_frame(result, w, f):
+    """The root's world matrix at frame f - the body's own space."""
+    return result.worlds[w.index["root"], f]
+
+
+def in_body(result, w, leaf, f):
+    """A joint's place in the body's own space at frame f."""
+    m = body_frame(result, w, f)
+    return (result.worlds[w.index[leaf], f, 3, :3] - m[3, :3]) @ m[:3, :3].T
+
+
+class OverlapPassTests(unittest.TestCase):
+    """The pass itself on the synthetic walker (the grip is proven on the animator's cycle by the verify)."""
+
+    def test_no_overlap_leaves_every_joint_untouched(self):
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        same = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 0.0})
+        self.assertTrue(np.array_equal(plain.worlds, same.worlds))
+        self.assertEqual(same.info["arms"]["overlap"]["frames"], 0.0)
+
+    def test_the_hand_walks_the_lag_0_path_that_many_frames_earlier(self):
+        """The hand stands where the lag-0 hand stood two frames earlier (the travel out and back), clamped
+        onto the arm's own reach: the direction from the shoulder is exact and the distance is the wanted one
+        or the arm's length. The synthetic walker's arm hangs 98.6 .. 100.0 % extended, so a late hand asks
+        for up to 58 cm of its 54 and the clamp bites on half the frames - the direction is what carries the
+        promise, and it is exact."""
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        late = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 2.0})
+        n = plain.frames
+        self.assertEqual(late.info["arms"]["overlap"]["frames"], 2.0)
+        self.assertFalse(late.info["arms"]["overlap"]["grip"])
+        worst_dir, worst_reach, moved = 0.0, 0.0, 0.0
+        for side in "lr":
+            chain = w._arm_chains()[side]
+            reach = sum(float(np.linalg.norm(w.lt[j].mean(axis=0))) for j in chain[1:])
+            was_path = positions(plain, "hand_" + side, w)
+            per = (was_path[n] - was_path[0]) / float(n)
+            for f in range(n):
+                early = (f - 2) % n
+                want = was_path[early] - per * early + per * f
+                sh = positions(late, "upperarm_" + side, w)[f]
+                got = positions(late, "hand_" + side, w)[f]
+                uw, ug = want - sh, got - sh
+                rw, rg = float(np.linalg.norm(uw)), float(np.linalg.norm(ug))
+                cos = float(np.dot(uw, ug) / (rw * rg))
+                worst_dir = max(worst_dir, math.degrees(math.acos(min(1.0, max(-1.0, cos)))))
+                worst_reach = max(worst_reach, abs(rg - min(rw, reach)))
+                moved = max(moved, float(np.linalg.norm(got - was_path[f])))
+        self.assertLess(worst_dir, 1e-4, "the late hand is on the line to where it stood two frames earlier")
+        self.assertLess(worst_reach, 1e-6, "at the wanted distance, or at the arm's length where it clamps")
+        self.assertGreater(moved, 1.0, "and it did move")
+
+    def test_the_shoulder_does_not_move_and_the_bones_keep_their_lengths(self):
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        late = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 3.0})
+        for side in "lr":
+            self.assertTrue(np.allclose(positions(late, "upperarm_" + side, w),
+                                        positions(plain, "upperarm_" + side, w), atol=1e-9), side)
+            for a, b in (("upperarm_", "lowerarm_"), ("lowerarm_", "hand_")):
+                was = np.linalg.norm(positions(plain, b + side, w) - positions(plain, a + side, w), axis=1)
+                now = np.linalg.norm(positions(late, b + side, w) - positions(late, a + side, w), axis=1)
+                self.assertLess(float(np.abs(now - was).max()), 1e-6, (side, a, b))
+
+    def test_the_cycle_is_still_a_loop(self):
+        w = walk()
+        r = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 2.5})
+        moved = r.worlds[:, -1] - r.worlds[:, 0]
+        self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-9)
+        self.assertLess(float(np.abs(moved[:, 3, :3] - [0.0, 0.0, 120.0]).max()), 1e-6)
+
+    def test_one_side_alone(self):
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        late = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap_l": 3.0})
+        self.assertGreater(float(np.abs(positions(late, "hand_l", w) - positions(plain, "hand_l", w)).max()), 1.0)
+        self.assertTrue(np.allclose(positions(late, "hand_r", w), positions(plain, "hand_r", w), atol=1e-9))
+
+    def test_a_lead_puts_the_hand_as_far_the_other_way(self):
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        late = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 2.0})
+        lead = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": -2.0})
+        back = float(np.abs(positions(late, "hand_l", w) - positions(plain, "hand_l", w)).max())
+        ahead = float(np.abs(positions(lead, "hand_l", w) - positions(plain, "hand_l", w)).max())
+        self.assertAlmostEqual(back, ahead, delta=0.25 * back)
+
+    def test_whip_takes_the_late_arm_as_its_target(self):
+        w = walk()
+        plain = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        lag = w.evaluate({"arm_drag": 0.0, "balance": 0.0, "arm_overlap": 2.0})
+        whip = w.evaluate({"arm_drag": 2.0, "arm_bounce": 0.0, "balance": 0.0})
+        both = w.evaluate({"arm_drag": 2.0, "arm_bounce": 0.0, "balance": 0.0, "arm_overlap": 2.0})
+        off = lambda r: float(np.abs(positions(r, "hand_l", w) - positions(plain, "hand_l", w)).max())
+        self.assertGreater(off(both), off(lag))
+        self.assertGreater(off(both), off(whip))
+
+    def test_balance_sees_the_overlap_with_no_whip(self):
+        """Balance swings the arms before it carries the body - with an overlap set and Arm drag 0 the arms
+        still move, so the pass must run inside its rounds too (its `swinging`)."""
+        w = walk()
+        calls = []
+        real = wm.Walk._arm_overlap
+
+        def counted(self, worlds, n, ctx, only=None):
+            calls.append(1)
+            return real(self, worlds, n, ctx, only)
+        wm.Walk._arm_overlap = counted
+        try:
+            w.evaluate({"arm_drag": 0.0, "balance": 1.0, "arm_overlap": 3.0})
+        finally:
+            wm.Walk._arm_overlap = real
+        self.assertGreater(len(calls), 1, "the pass runs inside Balance's rounds and on the final frames")

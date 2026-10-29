@@ -2728,7 +2728,9 @@ class Walk(object):
         if ctx["balance"] > 0.0:
             only = self._com_joints()
             bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
-            swinging = (any(ks[s]["arm_drag"] > 0.0 for s in SIDES) and bool(self._arm_chains())) or self._bodies_on(k)
+            moved_arms = any(ks[s]["arm_drag"] > 0.0 or abs(ks[s]["arm_overlap"]) >= OVERLAP_QUIET
+                             for s in SIDES)
+            swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
 
             def armed(carry):
@@ -2740,6 +2742,7 @@ class Walk(object):
                 if carry is not None:
                     frames[rigid, :, 3, :3] += carry[None]
                 self._body_dynamics(frames, n, ctx, only)
+                self._arm_overlap(frames, n, ctx, only)
                 self._arm_dynamics(frames, n, ctx, only)
                 if carry is not None:
                     frames[rigid, :, 3, :3] -= carry[None]
@@ -2787,7 +2790,9 @@ class Walk(object):
             worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f], carry)
             short = max(short, frame_short)
         body = self._body_dynamics(worlds, n, ctx)
+        overlap = self._arm_overlap(worlds, n, ctx)
         arms = self._arm_dynamics(worlds, n, ctx)
+        arms["overlap"] = overlap
         if not self.balance_note:
             line = np.array([self.origin + ctx["travel2"] * phi for phi, _ in times[:-1]])
             dev = (self.com(worlds[:, :n]) - line) @ self.basis.T
@@ -3603,6 +3608,42 @@ class Walk(object):
                 mu[f, 3, :3], ml[f, 3, :3] = sh, knee
                 mh[f, :3, :3], mh[f, 3, :3] = hand[:3, :3], reached
             out[up_j], out[low_j], out[hand_j] = mu, ml, mh
+        return out
+
+    def _arm_overlap(self, worlds, n, ctx, only=None):
+        """The arms late by Arm overlap (frames of the new cycle; in place on `worlds`, (J, n+1, 4, 4)): each
+        hand's world motion - the linear travel taken out - read that many frames earlier, and the arm rebuilt
+        to it by IK from the current shoulder. So everything the arm takes from the body (the chest's turn, the
+        shoulder's bob and sway) is late together with its own swing: the animator's hand trick, the IK arms'
+        keys shifted. Under a pose's grip the held thing is what goes late (both sides' mean lag) and the two
+        hands keep their hold on it. Runs before _arm_dynamics, so Whip takes the late arm as its target.
+        Returns what it did (info["arms"]["overlap"])."""
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        chains = self._arm_chains()
+        lags = dict((side, float(ks[side]["arm_overlap"])) for side in chains)
+        pose = ctx["pose"]
+        grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
+        if grip:                      # hands holding one thing move as one: the two sides' mean
+            mean = sum(lags.values()) / float(len(lags))
+            lags = dict((side, mean) for side in lags)
+        out = {"frames": max([abs(v) for v in lags.values()] or [0.0]), "grip": grip}
+        if not chains or out["frames"] < OVERLAP_QUIET:
+            out["frames"] = 0.0
+            return out
+        kin = worlds.copy()
+        hands = {}
+        if grip:
+            hold = chains["r"][-1]
+            late = shifted_cycle(kin[hold], lags["r"])
+            for side, chain in chains.items():
+                hand_j = chain[-1]
+                hands[side] = np.array([kin[hand_j, f] @ np.linalg.inv(kin[hold, f]) @ late[f]
+                                        for f in range(n + 1)])
+        else:
+            for side, chain in chains.items():
+                if abs(lags[side]) >= OVERLAP_QUIET:
+                    hands[side] = shifted_cycle(kin[chain[-1]], lags[side])
+        self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands), only)
         return out
 
     def _grip_motion(self, kin, n, chains, w0, zeta, S):
