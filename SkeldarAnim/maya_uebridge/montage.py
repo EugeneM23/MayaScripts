@@ -841,9 +841,12 @@ def our_bookmarks(cmds):
     not ours to replace. With tabs off `active_only` is the identity.
     """
     from maya_scenetabs import scope
+    try:
+        nodes = cmds.ls(type="timeSliderBookmark") or []
+    except Exception:                                        # noqa: BLE001
+        return []                                   # the plugin is not loaded
     out = []
-    for node in scope.active_only(cmds.ls(type="timeSliderBookmark") or [],
-                                  cmds):
+    for node in scope.active_only(nodes, cmds):
         try:
             if cmds.attributeQuery(MARK_ATTR, node=node, exists=True):
                 out.append(node)

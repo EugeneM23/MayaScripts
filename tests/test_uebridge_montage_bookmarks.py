@@ -156,6 +156,13 @@ class Replacing(Fake):
         self.assertNotIn("animatorsOwn", self.cmds.deleted)
         self.assertIn("animatorsOwn", self.cmds.nodes)
 
+    def test_a_take_with_no_window_still_clears_ours(self):
+        """The previous take's windows are not this take's."""
+        montage.write_bookmarks(PLAN._replace(windows=()), 30.0)
+        self.assertIn("oldScan", self.cmds.deleted)
+        self.assertEqual(montage.our_bookmarks(self.cmds), [])
+        self.assertIn("animatorsOwn", self.cmds.nodes)
+
     def test_what_is_left_is_only_the_new_ones_and_theirs(self):
         made = montage.write_bookmarks(PLAN, 30.0)["made"]
         self.assertEqual(sorted(self.cmds.ls(type="timeSliderBookmark")),

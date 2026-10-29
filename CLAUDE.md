@@ -7898,6 +7898,53 @@ clip); sections (no montage in the project has one; the plan reads them for the 
 slots; the montage's blend-in / blend-out (how the game mixes the slot into the body, not part of the
 slot's animation); the engine's own evaluation of a montage through a component.
 
+**…and the hit windows come with it, as bookmarks** (2026-10-29, «давй сделаем так что бы у нас на
+таймлайн при экспортеиз монтажа переносились нотифаи в виже book mark»; asked which notifies: «только
+мили скан»). Spec `docs/superpowers/specs/2026-10-29-montage-notify-bookmarks-design.md`, plan beside it.
+**Measured first, read-only, over 132 montages**: 979 notifies, 7.4 a montage, up to 20 - and **every one
+on the MONTAGE, none in its clips** (0 of 115), so a notify's time is already the montage's own clock and
+needs no mapping through the spans. `montage.get_editor_property("notifies")` is **protected** on 5.8 and
+raises; `AnimationLibrary.get_animation_notify_events` answers the same structs, and the struct exposes no
+time to Python at all - **`get_anim_notify_event_trigger_time` / `..._duration` do** (all 979). 539 are
+states, 440 points; `notify_color` cannot be read and is unset anyway; only 294 of 979 sit on a whole 30
+fps frame; 357 pairs overlap in 98 montages (which is why one 11 px band would be a mess). **MeleeScanWindow
+alone: 90 in 66 of the 132**, 50 montages with one, 10 with two, 4 with three, 2 with four; all of class
+**`AnimNotifyState_MeleeScanWindow`** while two are NAMED `GameplayEvent Window` - **the class is the
+identity**; 0.033..1.000 s = 1..30 frames at 30 fps, median 3.5; only 3 overlapping pairs, so one band holds
+them.
+- **The data rides the roads the import already has**: `uescripts.montage_plan_script` (run when a row is
+  picked, cached per montage) brings EVERY notify as `{name, class, state, trigger, duration}`, and the pick
+  happens in pure Python (`montage.SCAN_CLASS`, `is_scan`) - another kind is one constant away, with no
+  editor round trip. `Plan` gained a trailing `windows` (default `()`, the way `AnimRecord` gained `kind`),
+  filled by `plan_for` through `clipped(windows_of(...), end)`: a window crossing the SLOT's end is cut back
+  to it and one past it dropped (44 slots are shorter than their montage, 3 of 1928 pairs sit past the end).
+  It travels in the plan file, so an older file reads as no windows.
+- **`bookmarks_for(plan, fps)` snaps OUTWARD** - `floor` the start, `ceil` the end, at least one frame: a
+  window is never shown shorter than it is, and the range stays whole, so setting the playback range from a
+  bookmark cannot leave a FRACTIONAL range (trap 50's own trap). `SNAP_EPS` 1e-6 frames is float noise
+  alone - 0.2 + 0.1 is 0.30000000000000004, and without it that window ended a whole frame late (the
+  verify's first run read 6..10 for 6..9).
+- **In the scene** (`write_bookmarks`): one `timeSliderBookmark` a window, the notify's own name as its
+  label, `SCAN_COLOUR` the hub's `danger` red, and **`skeldarMontageNotify` = «montage · slot» as its
+  identity** (never the node's name: Maya uniquifies `scanWindow` to `scanWindow1`, and the animator may
+  rename one). A re-import replaces ours and leaves the animator's own; with scene tabs on the delete
+  pass reads the ACTIVE tab only (`scope.active_only`) - another tab's are not ours. **It runs UNRECORDED**, as Add
+  Character's own work does: measured 2026-10-29, **an `FBXImport` inside an open undo chunk is NOT undone
+  while a node made after it in the same chunk IS**, so recording these would make the first Ctrl+Z after an
+  import strip the bookmarks off a take that stays and bring the previous import's back. It never fails the
+  import either - a Maya without the plugin gets its animation with the refusal said. The line gains «2 scan
+  windows» beside «cuts at 19, 38». Our own band draws them, **and so does Maya's own time slider**.
+- **Not built**: other notifies (the reply carries them all); no switch in the card (always carried, the
+  unwanted deleted by hand); plain clips untouched (0 of the 115 carry a notify); the notify TRACKS are not
+  used (Atone's are mostly `1`..`9`, and the per-event track index is only in `export_text`). **A batch of
+  several montage slots leaves the LAST one's windows** - one timeline, and ours are replaced.
+- Proof: `verify_montage_import.py` **0 of 45 standalone** (the frames, the names, the marker, the colour,
+  the count and the line, a re-import replacing ours while the animator's own survives, a Ctrl+Z leaving
+  both the take and its bookmarks, a slot too short getting none) and **0 of 38 live** against the open
+  editor - `AM_Longsword_Attack_Left_Forward_Hold`'s four windows at **18..30, 30..34, 33..40, 39..43**,
+  the frames worked out in the verify from the engine's raw reply, not asked of the code under test;
+  `test_uebridge_montage_{windows,bookmarks}.py`.
+
 306. **A source read after its own curves were deleted answers one dead DG value.** The composer imports
      the first span's clip INTO the target namespace (so the composite's skeleton is exactly a plain clip
      import) and then rewrites its curves - and reading the sources after that delete made every frame of

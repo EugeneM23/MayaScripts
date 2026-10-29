@@ -138,6 +138,9 @@ show `MeleeScanWindow`.
   «Notifies [All | Windows | None]» row is five lines if it is ever asked for.
 - **Plain clips are not touched.** 0 of the 115 clips in the sample carry a notify; a clip import
   behaves exactly as before.
+- **A batch of several montage slots leaves the last one's windows.** The scene has one timeline and
+  ours are replaced, so three slots laid out in a square show the last import's — three montages' hit
+  windows on one timeline would say less, not more.
 - No road back into the montage (the animator's own ruling on the import itself).
 - The notify TRACKS are not used. Their names in Atone are mostly `1`..`9`, with a few real ones
   (`Footstep`, `Foley`, `WarpKnock`, `CombatImpactPush`); the per-event track index is not in the
