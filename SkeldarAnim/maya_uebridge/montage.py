@@ -834,9 +834,16 @@ MARK_ATTR = "skeldarMontageNotify"
 
 
 def our_bookmarks(cmds):
-    """The time-slider bookmarks this plugin made - by the attribute."""
+    """The time-slider bookmarks this plugin made - by the attribute.
+
+    In the ACTIVE scene tab only: a bookmark node lands in the tab's
+    namespace, as everything the plugin creates does, and another tab's are
+    not ours to replace. With tabs off `active_only` is the identity.
+    """
+    from maya_scenetabs import scope
     out = []
-    for node in cmds.ls(type="timeSliderBookmark") or []:
+    for node in scope.active_only(cmds.ls(type="timeSliderBookmark") or [],
+                                  cmds):
         try:
             if cmds.attributeQuery(MARK_ATTR, node=node, exists=True):
                 out.append(node)

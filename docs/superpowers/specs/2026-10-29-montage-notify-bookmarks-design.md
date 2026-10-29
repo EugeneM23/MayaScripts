@@ -110,7 +110,9 @@ the timeline set:
   `priority` the plugin's next one;
 - identity is the attribute **`skeldarMontageNotify`** holding «montage · slot», never the node's
   name (Maya uniquifies a repeated name, and the animator may rename one);
-- the nodes land in the active scene tab's namespace, as everything the plugin creates does;
+- the nodes land in the active scene tab's namespace, as everything the plugin creates does, and the
+  delete pass reads that tab only (`scope.active_only`) — another tab's bookmarks are not ours to
+  replace;
 - it runs **unrecorded** (`undoInfo -stateWithoutFlush`, the way Add Character's own work does).
   **Measured 2026-10-29: an `FBXImport` inside an open undo chunk is NOT undone, while a node made
   after it in the same chunk is.** A montage import is FBX imports, so the take cannot be undone;

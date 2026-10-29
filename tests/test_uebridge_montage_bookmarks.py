@@ -7,6 +7,7 @@ and Maya's own slider draw; `addAttr` + `attributeQuery` mark ours, and Maya
 uniquifies a repeated node name (`scanWindow`, `scanWindow1`).
 """
 
+import json
 import unittest
 
 from maya_uebridge import montage
@@ -159,6 +160,37 @@ class Replacing(Fake):
         made = montage.write_bookmarks(PLAN, 30.0)["made"]
         self.assertEqual(sorted(self.cmds.ls(type="timeSliderBookmark")),
                          sorted(made + ["animatorsOwn"]))
+
+
+class InATab(unittest.TestCase):
+    """With scene tabs on, a bookmark node lands in the tab's namespace - and
+    another tab's bookmarks are not ours to replace."""
+
+    SESSION = json.dumps(
+        {"version": 1, "active": "tab_b",
+         "tabs": [{"ns": "tab_a", "path": "C:/a.ma"},
+                  {"ns": "tab_b", "path": "C:/b.ma"}]})
+
+    def setUp(self):
+        self.cmds = FakeCmds(existing=(
+            ("tab_a:oldScan", u"AM_A \u00b7 1P"),
+            ("tab_b:oldScan", u"AM_B \u00b7 1P")))
+        self.cmds.nodes["skeldarSceneTabs"] = "network"
+        self.cmds.attrs["skeldarSceneTabs.skeldarSceneTabs"] = self.SESSION
+        self.old = montage._maya
+        montage._maya = lambda: self.cmds
+
+    def tearDown(self):
+        montage._maya = self.old
+
+    def test_only_the_active_tab_s_are_ours(self):
+        self.assertEqual(montage.our_bookmarks(self.cmds), ["tab_b:oldScan"])
+
+    def test_a_re_import_leaves_the_other_tab_s_alone(self):
+        montage.write_bookmarks(PLAN, 30.0)
+        self.assertIn("tab_b:oldScan", self.cmds.deleted)
+        self.assertNotIn("tab_a:oldScan", self.cmds.deleted)
+        self.assertIn("tab_a:oldScan", self.cmds.nodes)
 
 
 class NeverFailsTheImport(unittest.TestCase):
