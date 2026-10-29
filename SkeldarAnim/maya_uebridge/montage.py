@@ -815,6 +815,61 @@ def compose(plan, sources, target, fps):
             "skipped": sorted(skipped), "frames": rows[-1][0] if rows else 0}
 
 
+#  The hub's `danger` red (#e39a93): a hit window. The Time Bar's band draws
+#  the node's own colour, and so does Maya's own time slider.
+SCAN_COLOUR = (0.890, 0.604, 0.576)
+
+#  Identity, never the node's name: Maya uniquifies a repeated name
+#  (`scanWindow`, `scanWindow1`) and the animator may rename one.
+MARK_ATTR = "skeldarMontageNotify"
+
+
+def our_bookmarks(cmds):
+    """The time-slider bookmarks this plugin made - by the attribute."""
+    out = []
+    for node in cmds.ls(type="timeSliderBookmark") or []:
+        try:
+            if cmds.attributeQuery(MARK_ATTR, node=node, exists=True):
+                out.append(node)
+        except Exception:                                    # noqa: BLE001
+            pass
+    return out
+
+
+def write_bookmarks(plan, fps):
+    """The slot's scan windows as time-slider bookmarks; what was made.
+
+    Ours are replaced and the animator's own left alone. It runs inside the
+    press's own undo chunk, so one Ctrl+Z takes the take and its bookmarks
+    together - and it never fails the import: a refusal is named instead, so a
+    Maya without the plugin still gets its animation.
+    """
+    cmds = _maya()
+    made, error = [], ""
+    try:
+        if not cmds.pluginInfo("timeSliderBookmark", query=True, loaded=True):
+            cmds.loadPlugin("timeSliderBookmark", quiet=True)
+        old = our_bookmarks(cmds)
+        if old:
+            cmds.delete(old)
+        label = u"{0} · {1}".format(plan.montage, plan.slot)
+        for index, row in enumerate(bookmarks_for(plan, fps)):
+            name, start, stop = row
+            node = cmds.createNode("timeSliderBookmark", skipSelect=True,
+                                   name="scanWindow")
+            cmds.setAttr(node + ".timeRangeStart", start)
+            cmds.setAttr(node + ".timeRangeStop", stop)
+            cmds.setAttr(node + ".name", name, type="string")
+            cmds.setAttr(node + ".color", *SCAN_COLOUR)
+            cmds.setAttr(node + ".priority", index + 1)
+            cmds.addAttr(node, longName=MARK_ATTR, dataType="string")
+            cmds.setAttr(node + "." + MARK_ATTR, label, type="string")
+            made.append(node)
+    except Exception as whine:                               # noqa: BLE001
+        error = str(whine)
+    return {"made": made, "error": error}
+
+
 def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
     """The montage slot `ref` names into `namespace` as one keyed skeleton.
 
@@ -871,8 +926,15 @@ def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
         cmds.playbackOptions(minTime=0, maxTime=frames,
                              animationStartTime=0, animationEndTime=frames)
 
+    #  the montage's scan windows onto the timeline as bookmarks; a refusal
+    #  here is said, never raised - the take is already in the scene
+    marks = write_bookmarks(plan, fps)
+
     warnings = [info.get("warning") or "",
                 plan_line(plan, fps, frames=frames + 1)]
+    if marks["error"]:
+        warnings.append("the scan windows could not be bookmarked ({0})".format(
+            marks["error"]))
     if done["held"]:
         warnings.append("held where a clip had nothing: "
                         + ", ".join(done["held"][:4]))
@@ -885,6 +947,7 @@ def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
                  "montage": {"name": plan.montage, "slot": plan.slot,
                              "frames": frames + 1,
                              "cuts": cuts(plan, fps),
+                             "windows": len(marks["made"]),
                              "clips": list(plan.clips),
                              "held": done["held"],
                              "skipped": done["skipped"]}})
