@@ -2617,6 +2617,24 @@ class CurvesOptions(AnimCase):
         self.win.layer_checks["AnimLayer1"].click()
         self.assertTrue(self.win.layer_checks["AnimLayer1"].isChecked())
 
+    def test_the_ticks_hold_through_a_repick_and_a_refresh_and_reset_with_another_card(self):
+        self.win.pick(self.layered)
+        self.win.paste_as_buttons["curves"].click()
+        self.win.layer_checks["BaseAnimation"].click()
+        self.win.pick(self.layered)
+        self.win.refresh()
+        self.assertEqual(self.win.options()["layers"], ["AnimLayer1"])
+        self.win.pick(self.walk)
+        self.win.pick(self.layered)
+        self.assertIsNone(self.win.options()["layers"])
+
+    def test_another_card_is_pasted_with_all_its_layers(self):
+        self.win.pick(self.layered)
+        self.win.paste_as_buttons["curves"].click()
+        self.win.layer_checks["BaseAnimation"].click()
+        self.assertIsNone(self.win.options(self.walk)["layers"])
+        self.assertEqual(self.win.options()["layers"], ["AnimLayer1"])
+
     def test_back_to_retarget_gives_everything_back(self):
         self.win.pick(self.layered)
         self.win.paste_as_buttons["curves"].click()

@@ -143,10 +143,6 @@ PASTE_AS_VAR = "skeldarPoseLibraryPasteAs"     # Paste as: "retarget" | "curves"
 PASTE_AS_LABELS = {"character": (("retarget", "Retarget"), ("curves", "Original curves")),
                    "objects": (("retarget", "Active layer"), ("curves", "Original curves"))}
 CURVES_OFF = "Off for original curves - they are pasted as they were keyed"
-PASTE_AS_VAR = "skeldarPoseLibraryPasteAs"     # Paste as: "retarget" | "curves" (2026-10-28)
-PASTE_AS_LABELS = {"character": (("retarget", "Retarget"), ("curves", "Original curves")),
-                   "objects": (("retarget", "Active layer"), ("curves", "Original curves"))}
-CURVES_OFF = "Off for original curves - they are pasted as they were keyed"
 ONLY_VAR = "skeldarPoseLibrarySelectedOnly"     # Selected only: just the selected nodes keyed
 KEY_LABELS = (("every", "Every frame"), ("source", "Source keys"))
 FRAME_LIMIT = 1000000                # a Start / End spin box's reach, either way
@@ -1275,6 +1271,7 @@ def _classes():
             self._targets = None            # the last `apply_targets` reading, None: unknown
             self._stale = False             # the selection changed while the window was hidden
             self._range_for = None          # (path, start, end) the Range boxes were set for
+            self._layers_for = None         # (path, layer names) the layer checklist was built for
             self._play_path = None          # the animation card the details picture plays ...
             self._play_t0 = 0               # ... and when it began (`_clock_ms`)
             self.follow_timer = QtCore.QTimer(self)
@@ -2256,12 +2253,15 @@ def _classes():
 
         def options(self, path=None):
             """The paste options the block shows, as an animation press takes them: {mode,
-            at_current, start, end, connect, keys, in_place}. The range is the Range boxes' for
-            the PICKED card (`path` None or the picked card's); any other card is pasted whole
-            (None, None) - a right-button row over a card not picked."""
+            at_current, start, end, connect, keys, in_place, paste_as, layers}. The range and the
+            layers are the Range boxes' and the checklist's for the PICKED card (`path` None or
+            the picked card's); any other card is pasted whole (None, None, layers None) - a
+            right-button row over a card not picked."""
             start = end = None
-            picked = [name for name, check in self.layer_checks.items() if check.isChecked()]
             target = path or self.picked
+            picked = [name for name, check in self.layer_checks.items() if check.isChecked()]
+            if target != self.picked or len(picked) == len(self.layer_checks):
+                picked = None
             if target and target == self.picked and self._range_for is not None \
                     and self._range_for[0] == target:
                 start = float(self.range_start.value())
@@ -2272,7 +2272,7 @@ def _classes():
                     "keys": self._lit(self.keys_buttons, "every"),
                     "in_place": self.in_place.isChecked(),
                     "paste_as": self._lit(self.paste_as_buttons, "retarget"),
-                    "layers": None if len(picked) == len(self.layer_checks) else picked}
+                    "layers": picked}
 
         def _extra(self, path):
             """What a press of the card at `path` hands the scene beyond a pose's arguments:
@@ -2312,7 +2312,12 @@ def _classes():
 
         def _fill_layers(self, names):
             """The checklist of the picked card's layers, every one on (a pick is per card, never
-            remembered)."""
+            remembered); kept as the animator left it while the same card is picked again (a
+            press to drag it, a refresh) with the same layers."""
+            key = (self.picked, tuple(names))
+            if key == self._layers_for:
+                return
+            self._layers_for = key
             for check in self.layer_checks.values():
                 self.layer_flow.removeWidget(check)
                 check.deleteLater()
