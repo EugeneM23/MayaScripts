@@ -20,10 +20,51 @@ import re
 #  its format (`sources.file_record`). The six old fields keep their places and
 #  the new ones default to an Unreal asset, so every record made before and
 #  every positional constructor still means what it meant.
+#  2026-10-29 (montages): `kind` says what the row IS - "" an animation,
+#  "montage" an AnimMontage, whose `clip` carries the chosen slot once the
+#  card has slotted it (`with_slot`). It is the LAST field with a default, so
+#  every positional constructor and every record made before still means what
+#  it meant.
 AnimRecord = collections.namedtuple(
     "AnimRecord", ["name", "package", "skeleton", "frames", "length", "fps",
-                   "source", "path", "clip", "fmt"],
-    defaults=("unreal", "", "", ""))
+                   "source", "path", "clip", "fmt", "kind"],
+    defaults=("unreal", "", "", "", ""))
+
+MONTAGE = "montage"
+
+
+def is_montage(record):
+    """True for a row that is an AnimMontage rather than an animation. Pure."""
+    return getattr(record, "kind", "") == MONTAGE
+
+
+def montage_slot(record):
+    """The slot a montage record has been given, "" before the card gives it
+    one. Pure."""
+    return getattr(record, "clip", "") if is_montage(record) else ""
+
+
+def with_slot(record, slot):
+    """The montage record named for one of its slots: «AM_X» -> «AM_X_1P»,
+    the slot kept in `clip`. Pure, and never stacks - a record already slotted
+    is re-slotted from the montage's own name, so every road (the Import
+    button's words, the namespace, the clip label, the drag, the square) names
+    the montage AND the slot with no plumbing of its own."""
+    if not slot or not is_montage(record):
+        return record
+    base = record.name
+    held = montage_slot(record)
+    if held and base.endswith("_" + held):
+        base = base[:-(len(held) + 1)]
+    return record._replace(name=clip_name(base, slot), clip=slot)
+
+
+def clip_name(montage, slot):
+    """«AM_LongSword_Block_Stun» + «1P» -> «AM_LongSword_Block_Stun_1P». Pure.
+
+    The one spelling: `montage.clip_name` is this function, so the namespace,
+    the label under the character and the status line cannot drift apart."""
+    return "{0}_{1}".format(montage, slot) if slot else montage
 
 _ILLEGAL = re.compile(r"[^A-Za-z0-9_]")
 
@@ -95,7 +136,8 @@ def parse_payload(payload):
             source=entry.get("source") or "unreal",
             path=entry.get("path") or "",
             clip=entry.get("clip") or "",
-            fmt=entry.get("fmt") or ""))
+            fmt=entry.get("fmt") or "",
+            kind=entry.get("kind") or ""))
     out.sort(key=lambda r: r.name.lower())
     return out
 
@@ -170,12 +212,17 @@ def format_row(record):
     """One line for the scroll list: name, folder, and length if we know it.
 
     A file's row (2026-10-02) shows its own folder and, after the length, its
-    format and what stops it importing, if anything («humanoid»)."""
+    format and what stops it importing, if anything («humanoid»). A montage's
+    (2026-10-29) says «montage» where a frame count would be - the registry
+    carries neither a length nor a slot for one - and names its slot once the
+    card has slotted it."""
     file_row = record.source != "unreal" and record.path
     folder = (record.path if file_row else record.package).rsplit("/", 1)[0]
     frames = "{0} fr".format(record.frames) if record.frames is not None else ""
     if file_row:
         frames = "  ".join(t for t in (frames, record.fmt, record.skeleton) if t)
+    elif is_montage(record):
+        frames = "  ".join(t for t in (MONTAGE, montage_slot(record)) if t)
     return "{0:<{1}} {2:<{3}} {4}".format(
         _middle(record.name, NAME_WIDTH), NAME_WIDTH,
         _tail(folder, FOLDER_WIDTH), FOLDER_WIDTH,
