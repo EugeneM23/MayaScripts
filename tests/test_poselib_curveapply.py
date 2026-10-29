@@ -275,6 +275,163 @@ class Pinned(Seams):
                                     "BaseAnimation")[0], self.KEYS)
 
 
+class Clear(unittest.TestCase):
+    """A layer cleared on a channel adds nothing over the range, and only there."""
+
+    seam = Refusals.seam
+    PLAN = animdata.paste_plan(0, 10, [], animdata.Options(), 20)
+
+    def keys_seams(self, curve=None, static=None):
+        written = []
+        self.seam((ca.keys, "curve_for"), lambda plug, layer: curve)
+        self.seam((ca.keys, "layer_static"), lambda plug, layer: static)
+        self.seam((ca.keys, "write_raw"), lambda plug, layer, stored: written.append(
+            (plug, layer, stored)) or type("W", (), {"plugs": [plug]})())
+        return written
+
+    def test_a_curve_is_keyed_flat_at_identity_at_both_ends(self):
+        written = self.keys_seams(curve="c_rotateX_Mine")
+        self.assertTrue(ca._clear("c.rotateX", "Mine", self.PLAN, "multiply"))
+        self.assertEqual(written, [("c.rotateX", "Mine", [[20.0, 0.0, "flat", "flat"],
+                                                          [30.0, 0.0, "flat", "flat"]])])
+
+    def test_a_scale_by_multiply_is_cleared_to_one(self):
+        written = self.keys_seams(curve="c_scaleX_Mine")
+        ca._clear("c.scaleX", "Mine", self.PLAN, "multiply")
+        self.assertEqual([key[1] for key in written[0][2]], [1.0, 1.0])
+
+    def test_a_static_off_identity_stands_outside_the_range(self):
+        written = self.keys_seams(static=12.0)
+        self.assertTrue(ca._clear("c.rotateX", "Mine", self.PLAN, "multiply"))
+        self.assertEqual([key[:2] for key in written[0][2]],
+                         [[19.0, 12.0], [20.0, 0.0], [30.0, 0.0], [31.0, 12.0]])
+
+    def test_a_static_at_identity_or_none_is_nothing_to_clear(self):
+        written = self.keys_seams(static=0.0)
+        self.assertFalse(ca._clear("c.rotateX", "Mine", self.PLAN, "multiply"))
+        written = self.keys_seams(static=None)
+        self.assertFalse(ca._clear("c.rotateX", "Mine", self.PLAN, "multiply"))
+        self.assertEqual(written, [])
+
+
+class Layers(unittest.TestCase):
+
+    seam = Refusals.seam
+
+    def test_made_bottom_to_top_and_the_base_the_root_after_them(self):
+        made_now = []
+        fake = FakeCmds()
+        self.seam((ca, "cmds"), fake)
+        self.seam((ca.keys, "make_layer"), lambda record: made_now.append(record["name"]) or
+                  record["name"] + "1")
+        where = OrderedDict([(curvedata.BASE, ("base", None)), ("Fix", ("make", None)),
+                             ("AnimLayer1", ("layer", "AnimLayer1"))])
+        records = {curvedata.BASE: BASE, "Fix": curvedata.layer_record("Fix"), "AnimLayer1": ADD}
+        made = []
+        out = ca._layers(where, records, made)
+        self.assertEqual(out, {curvedata.BASE: "BaseAnimation", "Fix": "Fix1",
+                               "AnimLayer1": "AnimLayer1"})
+        self.assertEqual((made_now, made), (["Fix"], ["Fix1"]))
+
+
+class Channels(unittest.TestCase):
+    """The card's nodes paired with the target's by leaf, kept to what the card holds for the
+    target's members, Selected only and In place applied."""
+
+    seam = Refusals.seam
+
+    class Cmds(object):
+        def __init__(self, attrs):
+            self.attrs = attrs
+
+        def sets(self, name, query=False):
+            return ["ns:FKWrist_R", "ns:Main", "ns:FKElbow_R"]
+
+        def ls(self, names, long=False, dag=False, type=None):
+            if dag:
+                return ["|root", "|root|pelvis"]
+            return ["|r|" + name for name in names]
+
+        def attributeQuery(self, attr, node=None, exists=False):
+            return attr in self.attrs
+
+    def setUp(self):
+        rig = type("Rig", (), {"control_set": "ns:ControlSet"})()
+        self.ref = type("Ref", (), {"kind": "rig", "rig": rig, "root": "|root"})()
+        self.seam((ca, "cmds"), self.Cmds({"rotateX"}))
+        self.seam((ca.scene, "skeleton"), lambda ref, skip: ({}, None))
+        self.seam((ca.curvecapture, "character_nodes"), lambda ref, bones, members: [
+            "|r|ns:FKWrist_R", "|r|ns:Main"])
+        self.seam((ca.aa, "_main_of"), lambda ref: "|r|ns:Main")
+        self.seam((ca.ap, "target_label"), lambda ref: "ns")
+        self.curves = {"nodes": [
+            {"name": "FKWrist_R", "attrs": {"rotateX": {curvedata.BASE: KEYED},
+                                            "twist": {curvedata.BASE: KEYED}}},
+            {"name": "Main", "attrs": {"rotateX": {curvedata.BASE: KEYED}}},
+            {"name": "FKElbow_R", "attrs": {"rotateX": {curvedata.BASE: KEYED}}},
+            {"name": "Gone_ctrl", "attrs": {"rotateX": {curvedata.BASE: KEYED}}}]}
+
+    def test_paired_kept_and_named(self):
+        channels, notes = ca.character_channels({"members": []}, self.curves, self.ref)
+        self.assertEqual(list(channels), ["|r|ns:FKWrist_R.rotateX", "|r|ns:Main.rotateX"])
+        self.assertEqual(len(notes), 2)
+        self.assertIn("Gone_ctrl", notes[0])
+        self.assertIn("FKWrist_R.twist", notes[1])
+
+    def test_in_place_leaves_main_and_selected_only_keeps_the_selected(self):
+        channels, _notes = ca.character_channels({}, self.curves, self.ref, in_place=True)
+        self.assertEqual(list(channels), ["|r|ns:FKWrist_R.rotateX"])
+        channels, _notes = ca.character_channels({}, self.curves, self.ref,
+                                                 only=["|r|ns:Main"])
+        self.assertEqual(list(channels), ["|r|ns:Main.rotateX"])
+
+    def test_a_skeleton_pairs_its_joints_and_keeps_its_root_in_place(self):
+        skeleton = type("Ref", (), {"kind": "skeleton", "rig": None, "root": "|root"})()
+        self.assertEqual(ca.target_nodes(skeleton), ["|root", "|root|pelvis"])
+        self.seam((ca.skelsolve, "root_leaf"), lambda ref, bones: "root")
+        self.assertEqual(ca._root_node(skeleton, {"root": {"path": "|root"}}), "|root")
+        self.assertEqual(ca._root_node(self.ref, {}), "|r|ns:Main")
+
+    def test_objects_take_their_layers(self):
+        layered = dict(KEYED, layers={curvedata.BASE: KEYED, "PropLayer": {"static": 0.0}})
+        self.seam((ca.aa, "_object_channels"), lambda matched: (
+            OrderedDict([("|prop.tx", KEYED), ("|prop.rx", layered)]), ["note"], ["|prop"]))
+        channels, notes, paths = ca.objects_channels([({}, "|prop")])
+        self.assertEqual(channels["|prop.tx"], {curvedata.BASE: KEYED})
+        self.assertEqual(sorted(channels["|prop.rx"]), [curvedata.BASE, "PropLayer"])
+        self.assertEqual((notes, paths), (["note"], ["|prop"]))
+
+
+class Refresh(unittest.TestCase):
+    """2026-10-29: after an Insert the current frame stood 77 deg off until the time moved."""
+
+    seam = Refusals.seam
+
+    def test_every_node_feeding_the_plug_is_dirtied(self):
+        links = {"c.rx": "c_rotate_Top.outputX", "c_rotate_Top.inputBX": "c_rx_Top.output",
+                 "c_rotate_Top.inputAX": "c_rotate_Add.outputX",
+                 "c_rotate_Add.inputAX": "c_rotateX.output"}
+        types = {"c_rotate_Top": "animBlendNodeAdditiveRotation",
+                 "c_rotate_Add": "animBlendNodeAdditiveRotation", "c_rotateX": "animCurveTA"}
+
+        class Cmds(object):
+            dirtied = []
+
+            def listConnections(self, plug, **kwargs):
+                return [links[plug]] if plug in links else []
+
+            def nodeType(self, node):
+                return types.get(node, "animCurveTA")
+
+            def dgdirty(self, nodes):
+                self.dirtied.extend(nodes)
+        fake = Cmds()
+        self.seam((ca, "cmds"), fake)
+        self.seam((ca.keys, "cmds"), fake)
+        ca._refresh(["c.rx", "c.free"])
+        self.assertEqual(fake.dirtied, ["c_rotate_Top", "c_rx_Top", "c_rotate_Add", "c_rotateX"])
+
+
 class ConnectBounds(unittest.TestCase):
 
     seam = Refusals.seam

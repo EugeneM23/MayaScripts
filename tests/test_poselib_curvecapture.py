@@ -135,6 +135,30 @@ class ChannelCurves(Case):
         self.assertEqual(cc.driven_note([]), "")
 
 
+class NodeCurves(Case):
+
+    def test_each_nodes_channels_by_leaf_in_the_nodes_order(self):
+        keys = FakeKeys(feeds={"|a|ns:b.ry": ("driven", "orient1")},
+                        curves={(None, "|a|ns:b.rx"): "c0", (None, "|c.tx"): "c1"})
+        self.use(keys, FakeCmds())
+        saved = cc.objs.channel_names
+        self.addCleanup(setattr, cc.objs, "channel_names", saved)
+        cc.objs.channel_names = lambda path, cmds: {"|a|ns:b": ["rx", "ry"], "|c": ["tx"],
+                                                    "|d": []}[path]
+        found, driven = cc.node_curves(["|c", "|a|ns:b", "|d"], 0, 10, copy, cc.stack())
+        self.assertEqual([node["name"] for node in found], ["c", "b"])
+        self.assertEqual(found[1]["attrs"]["rx"][curvedata.BASE]["from"], "c0")
+        self.assertEqual(driven, ["|a|ns:b.ry"])
+
+    def test_a_control_naming_the_whole_body_is_whole(self):
+        saved = cc.scene._control_bones
+        self.addCleanup(setattr, cc.scene, "_control_bones", saved)
+        cc.scene._control_bones = lambda leaf, bones: cc.scene._WHOLE if leaf == "Main" else [
+            "hand_l"]
+        self.assertEqual(cc._named("Main", {}), curvedata.WHOLE)
+        self.assertEqual(cc._named("FKWrist_L", {}), ["hand_l"])
+
+
 class UsedRecords(Case):
 
     def test_the_base_first_then_the_used_layers_in_stack_order(self):
