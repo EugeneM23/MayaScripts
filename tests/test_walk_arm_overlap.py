@@ -78,6 +78,18 @@ class KnobTests(unittest.TestCase):
         self.assertEqual(wm.sided(k)["l"]["arm_overlap"], 3.0)
         self.assertEqual(wm.sided(k)["r"]["arm_overlap"], 0.0)
 
+    def test_the_engine_carries_the_two_cascade_knobs(self):
+        """Elbow overlap and Hand overlap (2026-10-30): the same shape as the arm's, their own 0."""
+        for name in ("elbow_overlap", "hand_overlap"):
+            self.assertEqual(wm.DEFAULTS[name], 0.0, name)
+            self.assertEqual(wm.RANGES[name], (-120.0, 120.0), name)
+            self.assertIn(name, wm.SIDED, name)
+            self.assertEqual(wm.SIDE_KNOBS[name + "_l"], name)
+            self.assertIn(name, wm.ENGINE_ONLY, name)
+            k = wm.knobs(**{name + "_l": 3.0})
+            self.assertEqual(wm.sided(k)["l"][name], 3.0, name)
+            self.assertEqual(wm.sided(k)["r"][name], 0.0, name)
+
 
 class ArmToHandTests(unittest.TestCase):
     """The shared two-bone IK rebuild: an arm taken to a wanted hand from the current shoulder."""

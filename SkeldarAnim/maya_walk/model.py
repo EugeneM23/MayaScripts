@@ -114,6 +114,8 @@ KNOBS = (
     # current shoulder, so what the arm takes from the body (the chest's turn, the shoulder's bob and sway) is
     # late with its own swing. Per side; under a grip the held thing goes late and both hands keep their hold
     ("arm_overlap", 0.0, -120.0, 120.0),
+    ("elbow_overlap", 0.0, -120.0, 120.0),
+    ("hand_overlap", 0.0, -120.0, 120.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -166,7 +168,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
