@@ -113,7 +113,9 @@ KNOBS = (
     # world motion (the linear travel out) read that much earlier and the arm rebuilt to it by IK from the
     # current shoulder, so what the arm takes from the body (the chest's turn, the shoulder's bob and sway) is
     # late with its own swing. Per side; under a grip the held thing goes late and both hands keep their hold
-    ("arm_overlap", 0.0, -20.0, 60.0),
+    ("arm_overlap", 0.0, -120.0, 120.0),
+    ("elbow_overlap", 0.0, -120.0, 120.0),
+    ("hand_overlap", 0.0, -120.0, 120.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -166,7 +168,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -632,6 +634,22 @@ def shifted_cycle(mats, lag):
         a = g - math.floor(g)
         out[f, :3, :3] = rots[lo] @ exp_rot(a * log_rot(rots[lo].T @ rots[hi]))
         out[f, 3, :3] = (1.0 - a) * place[lo] + a * place[hi] + per * f
+    return out
+
+
+def late_bend(up, low, hand, lag):
+    """The bend plane's hint (n+1, 3) an arm chain gives `lag` frames earlier: the elbow's offset from the
+    shoulder-wrist line, unit, read from the three joints' cycles shifted that far (Elbow overlap). It is a
+    direction read from differences at ONE frame, so shifted_cycle's travel term - the same for all three
+    there - cancels and a travelling cycle does not enter it. lag 0: the frames' own plane, which is what
+    _arm_to_hand computes for itself."""
+    u, l, h = (shifted_cycle(m, lag) for m in (up, low, hand))
+    out = np.zeros((u.shape[0], 3))
+    for f in range(u.shape[0]):
+        sh, el, wr = u[f, 3, :3], l[f, 3, :3], h[f, 3, :3]
+        e = _unit(wr - sh)
+        b = (el - sh) - np.dot(el - sh, e) * e
+        out[f] = _unit(b) if np.linalg.norm(b) > 1e-4 else _any_perpendicular(e)
     return out
 
 
@@ -2728,7 +2746,10 @@ class Walk(object):
         if ctx["balance"] > 0.0:
             only = self._com_joints()
             bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
-            moved_arms = any(ks[s]["arm_drag"] > 0.0 or abs(ks[s]["arm_overlap"]) >= OVERLAP_QUIET
+            moved_arms = any(ks[s]["arm_drag"] > 0.0
+                             or abs(ks[s]["arm_overlap"]) >= OVERLAP_QUIET
+                             or abs(ks[s]["elbow_overlap"]) >= OVERLAP_QUIET
+                             or abs(ks[s]["hand_overlap"]) >= OVERLAP_QUIET
                              for s in SIDES)
             swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
@@ -3577,17 +3598,21 @@ class Walk(object):
             out[j] = m
         return out, used
 
-    def _arm_to_hand(self, kin, n, chains, hands):
+    def _arm_to_hand(self, kin, n, chains, hands, hints=None):
         """Each arm rebuilt to a wanted hand: `hands` {side: (n+1, 4, 4)} -> {joint: (n+1, 4, 4)} for the upper
         arm, the forearm and the hand (a side not in `hands` is left out). From the CURRENT shoulder - the
         arm's pivot is the body's - the elbow bending the way the frames bend it, the bones keeping their
         lengths (a hand past the arm's reach is clamped along its own line by two_bone). The one IK the
-        springs' grip (_grip_motion) and the overlap (_arm_overlap) both reach their hands with."""
+        springs' grip (_grip_motion) and the overlap (_arm_overlap) both reach their hands with.
+        `hints` {side: (n+1, 3)} replaces the plane the elbow is sent toward (Elbow overlap's late plane, from
+        late_bend); the SOURCE plane this aligns the frames' arm FROM is the frames' own either way - the one
+        trap of the cascade, since `bend` below serves as both when no hint is given."""
         out = {}
         for side, chain in chains.items():
             want = hands.get(side)
             if want is None:
                 continue
+            hint = (hints or {}).get(side)
             up_j, low_j, hand_j = chain
             l1, l2 = (float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
             mu, ml, mh = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
@@ -3597,7 +3622,8 @@ class Walk(object):
                 e = _unit(wr - sh)
                 bend = (el - sh) - np.dot(el - sh, e) * e
                 bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
-                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
+                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2,
+                                            bend if hint is None else hint[f], 1.0)
                 e2 = _unit(reached - sh)
                 bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
                 normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
@@ -3617,33 +3643,54 @@ class Walk(object):
         shoulder's bob and sway) is late together with its own swing: the animator's hand trick, the IK arms'
         keys shifted. Under a pose's grip the held thing is what goes late (both sides' mean lag) and the two
         hands keep their hold on it. Runs before _arm_dynamics, so Whip takes the late arm as its target.
+        The cascade (2026-10-30) lags what the IK leaves free, on top of that L: Hand overlap reads the hand's
+        own TURN at L + h while its place stays at L (under a grip it is the HELD thing's turn that lags its
+        travel, so the hold is kept to machine precision and the other hand swings round it), and Elbow
+        overlap reads the elbow's bend PLANE at L + e (per arm, and free under a grip - it moves no hand).
         Returns what it did (info["arms"]["overlap"])."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
         lags = dict((side, float(ks[side]["arm_overlap"])) for side in chains)
+        elbows = dict((side, float(ks[side]["elbow_overlap"])) for side in chains)
+        turns = dict((side, float(ks[side]["hand_overlap"])) for side in chains)
         pose = ctx["pose"]
         grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
         if grip:                      # hands holding one thing move as one: the two sides' mean
-            mean = sum(lags.values()) / float(len(lags))
-            lags = dict((side, mean) for side in lags)
-        out = {"frames": max([abs(v) for v in lags.values()] or [0.0]), "grip": grip}
-        if not chains or out["frames"] < OVERLAP_QUIET:
-            out["frames"] = 0.0
+            for table in (lags, turns):
+                mean = sum(table.values()) / float(len(table))
+                table.update(dict((side, mean) for side in table))
+        biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
+        out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip}
+        if not chains or max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET:
+            out["frames"] = out["elbow"] = out["hand"] = 0.0
             return out
         kin = worlds.copy()
+
+        def wanted(mats, lag, turn):
+            """A cycle read `lag` frames earlier, its rotation read `lag + turn` earlier (Hand overlap)."""
+            want = shifted_cycle(mats, lag)
+            if abs(turn) >= OVERLAP_QUIET:
+                want = np.array(want)
+                want[:, :3, :3] = shifted_cycle(mats, lag + turn)[:, :3, :3]
+            return want
         hands = {}
         if grip:
             hold = chains["r"][-1]
-            late = shifted_cycle(kin[hold], lags["r"])
+            late = wanted(kin[hold], lags["r"], turns["r"])
             for side, chain in chains.items():
                 hand_j = chain[-1]
                 hands[side] = np.array([kin[hand_j, f] @ np.linalg.inv(kin[hold, f]) @ late[f]
                                         for f in range(n + 1)])
         else:
             for side, chain in chains.items():
-                if abs(lags[side]) >= OVERLAP_QUIET:
-                    hands[side] = shifted_cycle(kin[chain[-1]], lags[side])
-        self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands), only)
+                if max(abs(lags[side]), abs(turns[side]), abs(elbows[side])) >= OVERLAP_QUIET:
+                    hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
+        hints = {}
+        for side, chain in chains.items():
+            if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
+                hints[side] = late_bend(kin[chain[0]], kin[chain[1]], kin[chain[2]],
+                                        lags[side] + elbows[side])
+        self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands, hints), only)
         return out
 
     def _grip_motion(self, kin, n, chains, w0, zeta, S):

@@ -236,6 +236,157 @@ bent = run(walk, knobs, pose, arm_drag=0.0, balance=1.0, arm_overlap=6.0)
 carry = abs(float(flat.info["balance"]["carry"]) - float(bent.info["balance"]["carry"]))
 gate(carry > 1e-4, "the carry differs with the arms late (%.4f cm)" % carry)
 
+#  the cascade (2026-10-30): the elbow's bend PLANE and the hand's own TURN later than the arm. Road A - it
+#  lags what the IK leaves free, so the hand's place, the shoulder and the bones are all still the arm's.
+for label, share, card in (("the sword at 1.0 (a grip)", 1.0, SWORD),
+                           ("the dagger at 1.0 (no grip)", 1.0, DAGGER),
+                           ("no pose", 0.0, None)):
+    print()
+    print("=" * 78)
+    print("the cascade - " + label)
+    print("=" * 78)
+    walk, knobs, pose = setup(share, card)
+    base = dict(arm_drag=0.0, balance=0.0, in_place=0.0)
+    plain = run(walk, knobs, pose, **base)
+    n, chains = plain.frames, walk._arm_chains()
+    grip = bool(plain.info["arms"]["overlap"]["grip"]) or (share > 0.0 and card == SWORD)
+    #  how bent the arms hang: a straight arm's bend plane is degenerate (two_bone's elbow sits on the line),
+    #  so a late ORBIT of it would measure as noise - printed, not gated, because it is the pose's doing
+    for side, chain in chains.items():
+        reach = sum(float(np.linalg.norm(walk.lt[j].mean(axis=0))) for j in chain[1:])
+        d = np.linalg.norm(path(walk, plain, "hand_" + side) - path(walk, plain, "upperarm_" + side), axis=1)
+        print("    arm_%s hangs %.3f .. %.3f of its length" % (side, d.min() / reach, d.max() / reach))
+
+    #  Elbow overlap: the plane is the frames' plane LAG frames earlier, and nothing else gave
+    elbow = run(walk, knobs, pose, elbow_overlap=LAG, **base)
+    said = elbow.info["arms"]["overlap"]
+    gate(said["elbow"] == LAG and said["frames"] == 0.0,
+         "%s: the pass reports elbow %g frames with the arm's own 0" % (label, said["elbow"]))
+    worst_plane, orbit = 0.0, 0.0
+    for side, chain in chains.items():
+        want = wm.late_bend(np.array(plain.worlds[chain[0]]), np.array(plain.worlds[chain[1]]),
+                            np.array(plain.worlds[chain[2]]), LAG)
+        for f in range(n):
+            sh, el, wr = (path(walk, elbow, leaf + side)[f] for leaf in ("upperarm_", "lowerarm_", "hand_"))
+            e = wm._unit(wr - sh)
+            have = wm._unit((el - sh) - np.dot(el - sh, e) * e)
+            aim = wm._unit(want[f] - np.dot(want[f], e) * e)
+            worst_plane = max(worst_plane, np.degrees(np.arccos(min(1.0, max(-1.0, float(np.dot(have, aim)))))))
+        orbit = max(orbit, float(np.abs(path(walk, elbow, "lowerarm_" + side)
+                                       - path(walk, plain, "lowerarm_" + side)).max()))
+    gate(worst_plane < 1e-3, "%s: the elbow's plane is the frames' plane %g frames earlier (%.2e deg)"
+         % (label, LAG, worst_plane))
+    gate(orbit > 0.5, "%s: and the elbow really orbited, worst %.2f cm" % (label, orbit))
+    still = max(float(np.abs(path(walk, elbow, "hand_" + s) - path(walk, plain, "hand_" + s)).max())
+                for s in chains)
+    gate(still < 1e-4, "%s: the hand did not move with it (%.2e cm)" % (label, still))
+    shoulder = max(float(np.abs(path(walk, elbow, "upperarm_" + s)
+                                - path(walk, plain, "upperarm_" + s)).max()) for s in chains)
+    gate(shoulder < 1e-9, "%s: the shoulder is still the body's (%.2e cm)" % (label, shoulder))
+    bones = max(float(np.abs(a - b).max()) for s in chains
+                for a, b in zip(lengths(walk, elbow, s), lengths(walk, plain, s)))
+    gate(bones < 1e-4, "%s: the bones keep their lengths (%.2e cm)" % (label, bones))
+    loop_r = float(np.abs(elbow.worlds[:, -1, :3, :3] - elbow.worlds[:, 0, :3, :3]).max())
+    travel = plain.worlds[:, -1, 3, :3] - plain.worlds[:, 0, 3, :3]
+    loop_x = float(np.abs((elbow.worlds[:, -1, 3, :3] - elbow.worlds[:, 0, 3, :3]) - travel).max())
+    gate(loop_r < 1e-7 and loop_x < 1e-6, "%s: still a loop (%.2e, %.2e)" % (label, loop_r, loop_x))
+    lead = run(walk, knobs, pose, elbow_overlap=-LAG, **base)
+    side = sorted(chains)[0]
+    was = path(walk, plain, "lowerarm_" + side)
+    back = path(walk, elbow, "lowerarm_" + side) - was
+    ahead = path(walk, lead, "lowerarm_" + side) - was
+    gate(float(np.abs(ahead).max()) > 0.5 and not np.allclose(back, ahead, atol=1e-3),
+         "%s: a lead orbits the other way (%.2f cm against %.2f)"
+         % (label, float(np.abs(ahead).max()), float(np.abs(back).max())))
+
+    #  Hand overlap: the hand's own turn LAG frames later, its place where the arm's own lag puts it. Under a
+    #  grip it is the HELD thing's turn (the right hand, both sides' mean), and the other hand rides it
+    hand = run(walk, knobs, pose, hand_overlap=LAG, **base)
+    gate(hand.info["arms"]["overlap"]["hand"] == LAG,
+         "%s: the pass reports hand %g frames" % (label, hand.info["arms"]["overlap"]["hand"]))
+    worst_turn, worst_place = 0.0, 0.0
+    for side in (("r",) if grip else tuple(sorted(chains))):
+        j = walk.index["hand_" + side]
+        late_turn = wm.shifted_cycle(np.array(plain.worlds[j]), LAG)
+        for f in range(n):
+            worst_turn = max(worst_turn, float(np.abs(hand.worlds[j, f, :3, :3]
+                                                      - late_turn[f, :3, :3]).max()))
+        worst_place = max(worst_place, float(np.abs(path(walk, hand, "hand_" + side)
+                                                    - path(walk, plain, "hand_" + side)).max()))
+    gate(worst_turn < 1e-6, "%s: the %s turn is its turn %g frames later (%.2e)"
+         % (label, "held thing's" if grip else "hands'", LAG, worst_turn))
+    gate(worst_place < 1e-4, "%s: and its place is where the arm's own lag left it (%.2e cm)"
+         % (label, worst_place))
+    turned = max(float(np.abs(hand.worlds[walk.index["hand_" + s], :, :3, :3]
+                              - plain.worlds[walk.index["hand_" + s], :, :3, :3]).max()) for s in chains)
+    gate(turned > 1e-3, "%s: and it really turned (%.3f)" % (label, turned))
+    if grip:
+        hold_l, hold_r = walk.index["hand_l"], walk.index["hand_r"]
+        held = max(float(np.abs(hand.worlds[hold_l, f] @ np.linalg.inv(hand.worlds[hold_r, f])
+                                - plain.worlds[hold_l, f] @ np.linalg.inv(plain.worlds[hold_r, f])).max())
+                   for f in range(n + 1))
+        gate(held < 1e-6, "%s: the hold is kept while the weapon turns late (%.2e)" % (label, held))
+        swung = float(np.abs(path(walk, hand, "hand_l") - path(walk, plain, "hand_l")).max())
+        gate(swung > 0.1, "%s: and the other hand swings round it (%.2f cm)" % (label, swung))
+
+    #  the cascade on top of the arm's own lag, and nothing at all
+    both = run(walk, knobs, pose, arm_overlap=LAG, hand_overlap=2.0, **base)
+    only = run(walk, knobs, pose, arm_overlap=LAG, **base)
+    worst_turn, worst_place = 0.0, 0.0
+    for side in (("r",) if grip else tuple(sorted(chains))):
+        j = walk.index["hand_" + side]
+        want = wm.shifted_cycle(np.array(plain.worlds[j]), LAG + 2.0)
+        for f in range(n):
+            worst_turn = max(worst_turn, float(np.abs(both.worlds[j, f, :3, :3] - want[f, :3, :3]).max()))
+        worst_place = max(worst_place, float(np.abs(path(walk, both, "hand_" + side)
+                                                    - path(walk, only, "hand_" + side)).max()))
+    gate(worst_turn < 1e-6, "%s: with Arm overlap %g the turn rides on top, at L + h (%.2e)"
+         % (label, LAG, worst_turn))
+    gate(worst_place < 1e-4, "%s: while the place is where L alone puts it (%.2e cm)" % (label, worst_place))
+    zero = run(walk, knobs, pose, elbow_overlap=0.0, hand_overlap=0.0, **base)
+    gate(np.array_equal(zero.worlds, plain.worlds),
+         "%s: 0 / 0 changes nothing, matrix for matrix" % label)
+
+    #  Whip takes the cascaded arm as its target
+    whip = run(walk, knobs, pose, arm_drag=2.0, arm_bounce=0.0, balance=0.0, in_place=0.0)
+    whipped = run(walk, knobs, pose, arm_drag=2.0, arm_bounce=0.0, balance=0.0, in_place=0.0,
+                  elbow_overlap=LAG, hand_overlap=LAG)
+    apart = lambda a, b: float(np.abs(path(walk, a, "lowerarm_" + sorted(chains)[0])
+                                      - path(walk, b, "lowerarm_" + sorted(chains)[0])).max())
+    gate(apart(whipped, whip) > 0.1 and apart(whipped, elbow) > 0.1,
+         "%s: Whip takes the cascaded arm as its target (%.2f cm from the springs alone, %.2f from the "
+         "cascade alone)" % (label, apart(whipped, whip), apart(whipped, elbow)))
+
+#  the cascade's milliseconds, and Balance seeing it with no arm lag at all
+print()
+print("=" * 78)
+print("the cascade's milliseconds, and Balance")
+print("=" * 78)
+walk, knobs, pose = setup(1.0, SWORD)
+own = gait.own(walk)
+for name in ("elbow_overlap", "hand_overlap"):
+    vals = gait.values(own, {name: ("offset", 150.0)})
+    at30 = gait.engine_knobs(walk, own, vals, fps_out=30.0)[name + "_l"]
+    at24 = gait.engine_knobs(walk, own, vals, fps_out=24.0)[name + "_l"]
+    gate(abs(at30 - 4.5) < 1e-6 and abs(at24 - 3.6) < 1e-6,
+         "%s: 150 ms is %.3f frames at 30 fps and %.3f at 24" % (name, at30, at24))
+    cap = gait.overlap_cap(walk)
+    rng = gait.ranges(own, walk.leg_length, walk)[name]
+    gate(abs(rng[0] + cap) < 1e-6 and abs(rng[1] - cap) < 1e-6,
+         "%s: the slider reaches half the cycle either way (%.1f ms)" % (name, cap))
+params = sw.normal_params(dict(BASE, pose=1.0,
+                               changes=dict(BASE["changes"], elbow_overlap=["offset", 150.0],
+                                            hand_overlap=["offset", 150.0]),
+                               pins=BASE["pins"] + ["elbow_overlap", "hand_overlap"]))
+carded = sw.params_knobs(walk, params)[0]
+gate(abs(carded["elbow_overlap_l"] - 4.5) < 1e-6 and abs(carded["hand_overlap_l"] - 4.5) < 1e-6,
+     "the card's 150 ms reach the engine as %.3f / %.3f frames"
+     % (carded["elbow_overlap_l"], carded["hand_overlap_l"]))
+flat = run(walk, knobs, pose, arm_drag=0.0, balance=1.0)
+bent = run(walk, knobs, pose, arm_drag=0.0, balance=1.0, elbow_overlap=6.0, hand_overlap=6.0)
+carry = abs(float(flat.info["balance"]["carry"]) - float(bent.info["balance"]["carry"]))
+gate(carry > 1e-4, "the carry differs with a cascade and no arm lag at all (%.4f cm)" % carry)
+
 shutil.rmtree(TEMP, ignore_errors=True)
 print()
 print("%d of %d gates failed%s" % (len(FAILED), COUNT[0], (": " + ", ".join(map(str, FAILED))) if FAILED else ""))

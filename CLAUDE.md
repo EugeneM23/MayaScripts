@@ -11399,8 +11399,18 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   not the knob. The manual trick on the same cycle: the hand **4.96 cm late at 2 frames**, 9.18 at 4, 11.90 at
   6, wanting 94..109 % of the arm's 37.5 cm - which is why the arm needs IK and why the lag must reach what the
   arm inherits.
-- **`Arm overlap`, ms, sided, in MAIN right after `Arm lag`** (`gait`: kind `added`, so its own is 0 and the
-  Diagnosis has nothing to say about it; `rule=_fixed(-100, 300)`; a lead is allowed). Milliseconds become
+- **`Arm overlap`, ms, sided, in the ARMS group** between `Shoulders` and `Elbow lag` (`gait`: kind `added`,
+  so its own is 0 and the Diagnosis has nothing to say about it; a lead is allowed). It shipped in MAIN first,
+  on my own argument that it is a headline feature; within the hour the animator was turning Elbow lag /
+  Hand lag / Arm out in the **Arms** tab and reported the feature dead while the slider sat at 0 in Main
+  («Не работает плагин не реагирует, у рук не могу настроить захлесты»; measured live over the port: the press
+  path keyed the walker, `arm_overlap: offset 150.0` on its marker, the keys 1.75 cm from the model at 150 ms
+  against 8.85 from the model at 0 - the tool was never broken, the slider was in the wrong group). **The
+  slider reaches half the walk's own cycle either way** (`overlap_cap`, applied in `ranges` where the walk is
+  known: `1000 P / fps / 2`, floored at `OVERLAP_FLOOR` 250 ms, capped at `OVERLAP_MAX` 2000; past half a
+  cycle a lag of a periodic signal comes back on itself) - on the animator's 31-frame cycle at 30 fps that is
+  -517 .. +517 ms. The engine's knob is -120 .. 120 frames, wide enough that the cap never clamps at 24, 30
+  or 60 fps. Milliseconds become
   frames of the new cycle at the **output** rate - `engine_knobs(..., fps_out=)`, which `scene.params_knobs`
   fills from the scene's own time unit (`scene.output_fps`), the walk's own fps outside Maya: 150 ms is 4.5
   frames at 30 and 3.6 at 24. The panel needed nothing (it builds MAIN from `gait.PARAMS`).
@@ -11417,7 +11427,7 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   moving 9.66 / 21.49 / 30.87 cm, the shoulder **bit-exact**, the grip held to 9e-14, the bones to 5.6e-06 cm
   (the rebuild takes each bone's mean length, the frames their own), the loop closed, 0 ms matrix for matrix, a
   lead as far the other way, Whip neither alone, and In place keeping all of it; `tests/test_walk_arm_overlap.py`
-  (26), 13280 in the suite, the one failure the known `test_chat_deploy.Keys`. `verify_walk.py` 5 failed,
+  (28), 13280 in the suite, the one failure the known `test_chat_deploy.Keys`. `verify_walk.py` 5 failed,
   `verify_walk_gait.py` 1, `verify_walk_own.py` gates 10 and 19 and
   `verify_walk_many.py` dying on `No object matches name: asd` - every one of them **identical on a clean
   worktree of the commit before this work**.
@@ -11426,7 +11436,18 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   weapon with it; the pass takes the linear travel out and leaves the rest in world, as `_grip_motion` does, so
   a cycle whose root yawed within itself would lag that yaw in world (ours travel along a line). `Arm lag`,
   `Elbow lag`, `Hand lag`, `Elbow`, `Arms forward` and `Shoulders` are untouched, and the Pick line is
-  unchanged. **Not seen in a GUI Maya**: after Check update.
+  unchanged. Installed and seen in the animator's own Maya (1963c57 over port 7004, their scene untouched);
+  they were turning it at 48.9 ms when we stopped.
+- **OPEN, asked for and not built: the cascade** («Сделай каскад» - the elbow and the hand later than the arm;
+  the animator chose to pick it up the next day). In this IK framing the goal fixes the hand's place and the
+  bend ANGLE, so two roads were put to them, with their cost measured: **A** - lag only what the IK leaves
+  free, two knobs `Elbow overlap` (the bend plane late by L+e) and `Hand overlap` (the hand's own orientation
+  late by L+h), which costs nothing (at zero it is today's behaviour, the bones and the "the hand is where it
+  stood" property both kept) and reads as a late elbow orbit and a late wrist break; **B** - the real
+  per-joint chain lag (the forearm and the hand take their world orientations at their own times and the whole
+  arm's shape unfolds late), which costs `Arm overlap`'s exactness: the hand lands along the direction to its
+  late place but at the late arm's own reach, some 3 cm out at 4 frames (the IK wants 94..109 % of the arm).
+  A was the recommendation. Nothing of either is written.
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
