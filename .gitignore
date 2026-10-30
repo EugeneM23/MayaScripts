@@ -12,3 +12,6 @@ sources/AdvancedSkeleton/
 
 # the parametric walk: the animator's saved walks (their data, public repo)
 docs/superpowers/plans/walkparam/walks/
+
+# a machine-local MCP server config (absolute paths of this machine)
+.mcp.json
