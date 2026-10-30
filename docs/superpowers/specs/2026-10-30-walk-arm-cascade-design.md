@@ -105,27 +105,46 @@ to that tolerance.
 
 ## The proof
 
-Unit tests in `tests/test_walk_arm_overlap.py` (the arm overlap's own file): the knob table, the ms
-conversion, the early-out, the hint/source split, the grip's mean.
+`docs/superpowers/plans/walkparam/verify_walk_arm_overlap.py` - **0 of 101 gates failed**, mayapy standalone
+on a COPY of the animator's own walks folder: the 2026-10-29 arm gates beside 57 new cascade ones, on their
+own cycle under the sword's grip, under `DG_Idle` (no grip) and with no pose, at **4 frames**, with Balance
+and In place off for the geometry (both move the body an expectation is computed against - the 2026-10-29
+lesson). The arms hang 0.36 .. 0.99 of their length across the three cases, so the bend plane is a real one
+in all of them (a straight arm's is degenerate: `two_bone`'s elbow sits on the line, and an orbit of it would
+measure as noise - the gate prints the extension, and the unit tests bend the synthetic walker's elbows 70 deg
+for the same reason).
 
-Gates in `docs/superpowers/plans/walkparam/verify_walk_arm_overlap.py` (its own phases, run standalone in
-mayapy on the animator's own walks folder), on their cycle under the sword's grip, under `DG_Idle` and with no
-pose, with Balance and In place off for the geometry (both move the body an expectation is computed against -
-the 2026-10-29 lesson):
+- **the elbow's late plane IS the frames' plane at L + e**: **1.21e-06 deg**, all three cases;
+- **the elbow really orbited**: **2.40 cm** under the grip, 5.46 under the dagger, 2.63 with no pose;
+- **the hand did not move with it**: **2.8e-14 cm** under the grip, 3.6e-15 otherwise;
+- **the held thing's turn is its turn at L + h** (**1.4e-15** under the grip, **0.00e+00** without it) while
+  **its place is where the arm's own lag left it** (1.4e-14 / 0.00e+00 cm), and it really turned (0.145 under
+  the grip, 0.588 .. 0.647 without);
+- **the hold is kept while the weapon turns late**: **8.97e-14**, and the other hand swings round it
+  (**1.17 cm**) - which is what holding one thing means;
+- **the turn rides on top of the arm's own lag**, at L + h: 1.4e-15 / 0.00e+00, the place where L alone puts
+  it (3.6e-15 cm);
+- **the bones keep their lengths** 5.63e-06 cm, the **shoulder is bit-exact** (< 1e-09), the **cycle is still
+  a loop**;
+- **0 / 0 is matrix for matrix**, all three cases;
+- **a lead orbits the other way**: 1.45 against 1.39 cm under the grip, 4.69 against 5.46, 2.74 against 2.42;
+- **Whip takes the cascaded arm as its target**: the two together are 1.70 cm from the springs alone and 2.98
+  from the cascade alone (grip), 4.91 / 2.08, 2.29 / 1.24;
+- **the milliseconds**: 150 ms is **4.500** frames at 30 fps and **3.600** at 24 for both knobs, the card's
+  own 150 ms reach the engine as 4.500 / 4.500, and each slider reaches **516.7 ms** either way - half the
+  animator's own cycle;
+- **Balance sees a cascade with no arm lag at all**: the carry differs by **0.0064 cm**.
 
-- **the elbow's late plane IS the frames' plane at L + e**: the angle between the rebuilt arm's bend plane and
-  the plane the frames give at that earlier time, to a few 1e-05 deg;
-- **the elbow really orbited**: the elbow's own place moved, by a number the gate prints;
-- **the hand's place is still at L** while its turn is at L + h: the place to the 2026-10-29 tolerance, the
-  turn equal to the frames' turn at L + h;
-- **the bones are kept**, the **shoulder is bit-exact**, the **loop is closed**, the **grip is held**;
-- **0 / 0 / 0 is matrix for matrix**, and a cascade with `Arm overlap` 0 keeps the hand's place;
-- **a lead** puts the elbow's orbit and the hand's turn the other way;
-- **Whip takes it**: the two together are neither alone.
+Unit tests: `tests/test_walk_arm_overlap.py`, 50 (was 29) - `LateBendTests` (the plane at a lag, the travel
+cancelling, every hint a unit vector), the hint/source split and "the frames' own hint changes nothing" in
+`ArmToHandTests`, `CascadePassTests` (11 on the synthetic walker: the orbit, the turn, the cascade on top of
+L, the cascade alone, one side, a lead, the loop, what the pass says, and Balance's `moved_arms` counting the
+new knobs), and the parameters in `ParameterTests`. The whole walk suite is **935 tests, OK** (its one
+expected failure is the pre-existing `restore_source` question).
 
 The walk's neighbours (`verify_walk.py`, `verify_walk_gait.py`, `verify_walk_own.py`, `verify_walk_many.py`)
-are compared against a clean worktree of the commit before this work, as the 2026-10-29 pass did: they fail
-identically there.
+were run on this tree AND on a clean worktree of `50dfa14d`, the commit before this work: they fail
+identically there, exactly as the 2026-10-29 pass recorded.
 
 ## Not built
 
