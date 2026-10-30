@@ -12615,6 +12615,26 @@ out (10765 → 7449); its next save (5.2 s, 0.6 s of it the walk over 7403 nodes
 no stored link. `verify_scene_tabs.py all` **0 of 240**, `verify_tabs_scope.py` 0 of 46; unit tests
 `tests/test_scenetabs_leak.py`. Not seen in a GUI Maya.
 
+**…and a tab's node left in the ROOT namespace blocks every other tab's save** (2026-10-20, built
+beside the leak work, shipped 2026-10-30): a key made while the root namespace was current, or a curve
+Maya renamed when it built a layer, lands in the root, and the next tab's lift refuses on its name
+(«the scene already holds a node named FKElbow_L_rotateX»).
+- `records.stray_owner(path, related, tabs)` (pure, over `tab_of_path`) answers the ONE tab a
+  root-namespace node belongs to - its own DAG path is in that tab, or every tab among the nodes it
+  feeds and that feed it is that one - and None for a node two tabs share or none owns;
+- `session.adopt_strays(tabs)` renames those into their tab for good (Maya's default, read-only,
+  startup and session nodes, a referenced or locked one and `records.is_furniture` left alone), and
+  `drop_session_copies(namespace)` deletes a session node a tab's FILE brought (a colleague's tabbed
+  scene through Shared: its name inside the tab makes the save refuse, and it says nothing about this
+  session);
+- both run in `saving._save_tab` before anything is lifted, and the line ends «1 node(s) left
+  outside the tabs moved home».
+Proof: `verify_scene_tabs.py strays` **0 of 8** and `all` **0 of 292** (mayapy standalone, re-run
+2026-10-30: tab B saves beside A's root curve and its own session copy, A's curve is in A and still
+drives it, the session copy gone with the session's own node kept, B's file holding no session node
+and no tab name, A saving too and its file playing the stray key); tests
+`tests/test_scenetabs_leak.py` (`StrayOwner`). **Not seen in a GUI Maya.**
+
 262. **`namespace -removeNamespace -deleteNamespaceContent` over a DETACHED animation layer tree (a root
      with no parent - a hidden tab's) corrupted Maya's heap**: the command returned, and the next `file`
      operation (or the interpreter's exit) died with 0xc0000374. `cmds.delete` of the same layers, one at
@@ -13401,7 +13421,12 @@ Spec `docs/superpowers/specs/2026-10-19-time-bar-layers-merge-lanes-design.md`.
   update)` moves the strip's playhead, its frame field and the lanes' playhead at once, then Maya;
   `Timeline._scrub` and the lanes' scrub and middle scrub (`Panel._scrub`) both go through it (a
   timeline scrub used to leave the lanes' playhead behind: `on_time` found the state already moved).
-  Tests `tests/test_timebar_lanes_sync.py` (11, pixels on both views). Not seen in a GUI Maya.
+  Tests `tests/test_timebar_lanes_sync.py` (14, pixels on both views). Not seen in a GUI Maya.
+- **A highlight on the timeline takes the lanes' own away** (2026-10-20, «если мы выделяем что-то
+  на тайм слайдере то выделение на выдвижной панели слоев не должно работать», shipped
+  2026-10-30): a shift-press starting a highlight and `set_highlight` (the double click's «Highlight
+  all keys») call `Strip.lanes_unhighlight` -> `Panel.lane_clear`, so S keys the timeline's block and
+  never the lanes'; a plain click on the timeline leaves the lanes' block standing.
 
 280. **A `QPainterPath` of hundreds of rounded rects fills ~30x slower than drawing them one by one** (Qt 6.8,
      measured 2026-10-19: 200 antialiased rounded rects - `fillPath` 9 ms, `drawRoundedRect` each 0.3 ms,
