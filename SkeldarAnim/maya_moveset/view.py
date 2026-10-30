@@ -3,7 +3,7 @@ the hub's colours. The view talks to Maya through nothing: the card (`panel`)
 hands it callbacks for what a press does.
 
 Mouse: a click picks a card, a double click opens its montage (the 1P dot: 1P),
-the right button is the status / assignee / open menu, the wheel zooms about the
+the right button opens the montage menu, the wheel zooms about the
 cursor, a drag on empty space pans.
 """
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -12,8 +12,7 @@ import maya_hubstyle as hubstyle
 from maya_moveset import model as m
 
 T = hubstyle.TOKENS
-NAME_H, THUMB_Y, THUMB_W, THUMB_H = 40, 44, 118, 70
-DOT_W, DOT_H = 40, 31
+NAME_H, THUMB_Y, THUMB_W, THUMB_H = 40, 44, 160, 70
 TREE_GAP, TITLE_H = 56, 30
 ZOOM_MIN, ZOOM_MAX = 0.2, 2.5
 GLYPH = {"none": "·", "fwd": "↑", "fwd_right": "↗", "right": "→",
@@ -49,22 +48,11 @@ class Card(QtWidgets.QGraphicsItem):
         if node.via:
             dirs = " ".join(GLYPH.get(d, d) for d in node.dirs)
             lines.append("from the card before: {0} {1}".format(node.via, dirs).strip())
-        lines.append("double click: open the 3P slot - on the 1P dot: the 1P slot")
+        lines.append("double click: open the 3P slot - the right button: 1P, and Export")
         return "\n".join(lines)
 
     def boundingRect(self):
         return QtCore.QRectF(-6, -6, m.CARD_W + 12, m.CARD_H + 12)
-
-    def dot_rect(self, view):
-        x = 8 + THUMB_W + 6
-        y = THUMB_Y + (0 if view == "3p" else DOT_H + 8)
-        return QtCore.QRectF(x, y, DOT_W, DOT_H)
-
-    def dot_at(self, pos):
-        for v in m.VIEWS:
-            if self.dot_rect(v).contains(pos):
-                return v
-        return None
 
     def paint(self, painter, option, widget=None):
         view, node = self.view, self.node
@@ -115,9 +103,6 @@ class Card(QtWidgets.QGraphicsItem):
             painter.setFont(font)
             painter.drawText(thumb, QtCore.Qt.AlignCenter, "no preview")
 
-        for v in m.VIEWS:
-            self._paint_dot(painter, v)
-
         font.setBold(False)
         font.setPixelSize(10)
         painter.setFont(font)
@@ -132,32 +117,6 @@ class Card(QtWidgets.QGraphicsItem):
             return " · ".join(self.tree.titles)
         dirs = " ".join(GLYPH.get(d, d) for d in node.dirs)
         return "{0} {1}".format(node.via, dirs).strip()
-
-    def _paint_dot(self, painter, v):
-        view, node = self.view, self.node
-        key = m.skey(node.id, v)
-        status = view.state["status"].get(key, "")
-        tone = next((c for s, _l, c in m.STATUSES if s == status), None)
-        rect = self.dot_rect(v)
-        painter.setPen(QtGui.QPen(colour(tone or T["line"]), 1.5))
-        painter.setBrush(colour(tone, 70) if tone else colour(T["field"]))
-        painter.drawRoundedRect(rect, 6, 6)
-        font = QtGui.QFont(painter.font())
-        font.setPixelSize(11)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(colour(T["text"] if tone else T["muted"]))
-        painter.drawText(rect.adjusted(0, 0, 0, -6 if view.state["assignee"].get(key) else 0),
-                         QtCore.Qt.AlignCenter, v.upper())
-        who = view.state["assignee"].get(key)
-        if who:
-            badge = view.state["icons"].get(who) or m.initials(who)
-            font.setPixelSize(9)
-            font.setBold(False)
-            painter.setFont(font)
-            painter.setPen(colour(T["text2"]))
-            painter.drawText(QtCore.QRectF(rect.left(), rect.bottom() - 13, rect.width(), 12),
-                             QtCore.Qt.AlignCenter, badge)
 
     # ---- mouse --------------------------------------------------------------
     def hoverEnterEvent(self, event):
@@ -179,19 +138,18 @@ class Card(QtWidgets.QGraphicsItem):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
-            self.view.open(self.node.id, self.dot_at(event.pos()) or "3p")
+            self.view.open(self.node.id, "3p")
             event.accept()
 
     def contextMenuEvent(self, event):
         self.view.pick(self.node)
-        self.view.menu(self.node, self.dot_at(event.pos()), event.screenPos())
+        self.view.menu(self.node, event.screenPos())
         event.accept()
 
 
 class TreeView(QtWidgets.QGraphicsView):
     """The trees. `actions` holds the card's callbacks:
-    open(node_id, view), status(node_id, view, status), assign(node_id, view, person),
-    picked(node_id)."""
+    open(node_id, view), picked(node_id)."""
 
     def __init__(self, parent=None, actions=None):
         super(TreeView, self).__init__(parent)
@@ -211,7 +169,7 @@ class TreeView(QtWidgets.QGraphicsView):
         #  Longsword's rules, which is what a graph declaring nothing is
         self.weapon = None
         self.state = m.read_state("")
-        self.mode, self.root, self.types, self.who = "combos", "", set(), None
+        self.mode, self.root, self.types = "combos", "", set()
         self.picked, self.picked_id = None, ""
         self._pixmaps = {}
         self.cards = []
@@ -241,13 +199,11 @@ class TreeView(QtWidgets.QGraphicsView):
         for card in self.cards:
             card.update()
 
-    def set_filter(self, root=None, types=None, who="keep", mode=None):
+    def set_filter(self, root=None, types=None, mode=None):
         if root is not None:
             self.root = root
         if types is not None:
             self.types = set(types)
-        if who != "keep":
-            self.who = who
         if mode is not None:
             self.mode = mode
         self.rebuild()
@@ -282,7 +238,7 @@ class TreeView(QtWidgets.QGraphicsView):
         for tree in self.trees():
             if self.root and tree.root != self.root:
                 continue
-            keep = m.kept(tree, self.state, self.types, self.who)
+            keep = m.kept(tree, self.state, self.types)
             if keep is not None and not keep:
                 continue
             shown += 1
@@ -360,41 +316,30 @@ class TreeView(QtWidgets.QGraphicsView):
         if fn:
             fn(node_id, view)
 
-    def menu_rows(self, node, dot):
+    def export(self, node_id, view):
+        fn = self.actions.get("export")
+        if fn:
+            fn(node_id, view)
+
+    def menu_rows(self, node):
         """The right button's rows for a card: (label, callable) or None."""
         rows = []
         for v in m.VIEWS:
             slot = m.slot_of(self.graph, node.id, v)
             rows.append(("Open {0} montage ({1})".format(v.upper(), slot or "no slot"),
                          (lambda v=v: self.open(node.id, v)) if slot else None))
-        views = [dot] if dot else list(m.VIEWS)
-        for v in views:
-            rows.append(None)
-            now = self.state["status"].get(m.skey(node.id, v), "")
-            for status, label, _c in (("", "Not planned", ""),) + m.STATUSES:
-                mark = "✓ " if status == now else "    "
-                rows.append(("{0}{1}: {2}".format(mark, v.upper(), label),
-                             lambda v=v, s=status: self._act("status", node.id, v, s)))
-        people = list(self.state["people"])
-        if people:
-            for v in views:
-                rows.append(None)
-                now = self.state["assignee"].get(m.skey(node.id, v), "")
-                for person in [""] + people:
-                    mark = "✓ " if person == now else "    "
-                    name = person and "{0} {1}".format(self.state["icons"].get(person, ""), person).strip()
-                    rows.append(("{0}{1} → {2}".format(mark, v.upper(), name or "nobody"),
-                                 lambda v=v, p=person: self._act("assign", node.id, v, p)))
+        rows.append(None)
+        for v in m.VIEWS:
+            #  a slot it does not play cannot be written into; whether the one
+            #  it plays CAN be is the plan's own answer, said on the press
+            slot = m.slot_of(self.graph, node.id, v)
+            rows.append(("Export the scene into {0} ({1})".format(v.upper(), slot or "no slot"),
+                         (lambda v=v: self.export(node.id, v)) if slot else None))
         return rows
 
-    def _act(self, what, node_id, view, value):
-        fn = self.actions.get(what)
-        if fn:
-            fn(node_id, view, value)
-
-    def menu(self, node, dot, point):
+    def menu(self, node, point):
         import maya_hubqt
-        maya_hubqt.run_menu(self, point, self.menu_rows(node, dot))
+        maya_hubqt.run_menu(self, point, self.menu_rows(node))
 
     # ---- view ---------------------------------------------------------------
     def resizeEvent(self, event):

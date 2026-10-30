@@ -39,7 +39,7 @@ class View(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.folder, True)
         self.calls = []
         actions = dict((k, (lambda *a, k=k: self.calls.append((k,) + a)))
-                       for k in ("open", "status", "assign", "picked"))
+                       for k in ("open", "export", "status", "assign", "picked"))
         self.view = view.TreeView(actions=actions)
         self.view.resize(600, 400)
         self.view.set_data(m.load_graph(self.folder), m.read_state(self.folder), self.folder)
@@ -58,28 +58,40 @@ class View(unittest.TestCase):
         self.assertLess(dim["AM_Longsword_Attack_Left_Hold"], 0.5)
         self.assertEqual(dim["AM_Longsword_Attack_Right_Light"], 1.0)
 
-    def test_menu_rows_open_status_and_assignee(self):
-        state = m.read_state(self.folder)
-        state["people"] = ["Anna"]
-        self.view.set_state(state)
+    def test_the_menu_opens_each_views_montage_and_nothing_else(self):
+        """The planning left the menu (2026-10-29): Open 3P and Open 1P, and a
+        view with no slot is a dimmed row."""
         stand = self.view.cards[0].node
-        rows = self.view.menu_rows(stand, None)
+        rows = self.view.menu_rows(stand)
         labels = [r[0] for r in rows if r]
-        self.assertIn("Open 3P montage (DefaultSlot)", labels)
-        self.assertIn("Open 1P montage (1P)", labels)
-        dict((r[0], r[1]) for r in rows if r)["    1P: Done"]()
-        dict((r[0], r[1]) for r in rows if r)["    3P → Anna"]()
-        self.assertIn(("status", stand.id, "1p", "done"), self.calls)
-        self.assertIn(("assign", stand.id, "3p", "Anna"), self.calls)
+        self.assertEqual(labels[:2], ["Open 3P montage (DefaultSlot)", "Open 1P montage (1P)"])
+        self.assertFalse([one for one in labels if "Done" in one or "→" in one])
+        dict((r[0], r[1]) for r in rows if r)["Open 1P montage (1P)"]()
+        self.assertIn(("open", stand.id, "1p"), self.calls)
         left = [c.node for c in self.view.cards if c.node.id == "AM_Longsword_Attack_Left_Hold"][0]
-        self.assertIsNone(self.view.menu_rows(left, "3p")[1][1])
+        self.assertIsNone(self.view.menu_rows(left)[1][1])
 
-    def test_a_dot_names_its_view_and_a_double_click_opens_it(self):
+    def test_the_menu_exports_the_scene_into_each_views_slot(self):
+        """Export 3P / Export 1P under a separator (2026-10-29); a view the
+        attack does not play is a dimmed row, and whether the one it plays can
+        be written is the plan's own answer, said on the press."""
+        stand = self.view.cards[0].node
+        rows = self.view.menu_rows(stand)
+        self.assertIsNone(rows[2])
+        labels = [r[0] for r in rows if r]
+        self.assertEqual(labels[2:], ["Export the scene into 3P (DefaultSlot)",
+                                      "Export the scene into 1P (1P)"])
+        dict((r[0], r[1]) for r in rows if r)["Export the scene into 1P (1P)"]()
+        self.assertIn(("export", stand.id, "1p"), self.calls)
+        left = [c.node for c in self.view.cards if c.node.id == "AM_Longsword_Attack_Left_Hold"][0]
+        self.assertIsNone(self.view.menu_rows(left)[4][1])
+
+    def test_a_double_click_opens_the_3p_slot(self):
         card = self.view.cards[0]
-        self.assertEqual(card.dot_at(card.dot_rect("1p").center()), "1p")
-        self.assertIsNone(card.dot_at(QtCore.QPointF(10, 10)))
-        self.view.open(card.node.id, "1p")
-        self.assertIn(("open", card.node.id, "1p"), self.calls)
+        event = types.SimpleNamespace(button=lambda: QtCore.Qt.LeftButton,
+                                      accept=lambda: None, pos=lambda: QtCore.QPointF(20, 50))
+        card.mouseDoubleClickEvent(event)
+        self.assertIn(("open", card.node.id, "3p"), self.calls)
 
     def test_pick_and_paint(self):
         self.view.pick(self.view.cards[0].node)
@@ -91,13 +103,6 @@ class View(unittest.TestCase):
         painter.end()
         self.view.frame()
         self.assertGreater(self.view.zoom, 0)
-
-    def test_a_status_shows_on_its_dot(self):
-        state = m.read_state(self.folder)
-        state["status"] = {"AM_Longsword_Attack_Stand_Hold|3p": "done"}
-        self.view.set_state(state)
-        self.assertIs(self.view.state, state)
-
 
 class Text(object):
     def __init__(self):
@@ -126,14 +131,16 @@ class Presses(unittest.TestCase):
                                      state=m.read_state(self.folder), set_state=lambda s: None)
         return {"view": view, "status": "st", "sub": "sub", "mtime": 0.0}
 
-    def test_a_status_and_an_assignee_land_in_state_json(self):
-        card = self.card()
-        self.panel._set(card, "AM_Longsword_Attack_Stand_Hold", "1p", status="progress")
-        self.panel._set(card, "AM_Longsword_Attack_Stand_Hold", "1p", person="Anna")
-        state = m.read_state(self.folder)
-        self.assertEqual(state["status"], {"AM_Longsword_Attack_Stand_Hold|1p": "progress"})
-        self.assertEqual(state["assignee"], {"AM_Longsword_Attack_Stand_Hold|1p": "Anna"})
-        self.assertIn("Anna", self.cmds.labels["st"])
+    def test_the_planning_is_gone_from_the_card(self):
+        for name in ("_set", "WHO_MENU", "_fill_people"):
+            self.assertFalse(hasattr(self.panel, name), name)
+
+    def test_the_status_dots_are_gone_from_the_cards(self):
+        """The page keeps the board; a card draws its preview where the dots
+        were (2026-10-29)."""
+        from maya_moveset import view as treeview
+        for name in ("dot_rect", "dot_at", "_paint_dot"):
+            self.assertFalse(hasattr(treeview.Card, name), name)
 
     def test_open_refuses_a_card_of_ones_own_and_a_missing_slot(self):
         g = m.load_graph(self.folder)
@@ -162,6 +169,28 @@ class Presses(unittest.TestCase):
         self.assertEqual(seen["name"], "AM_Longsword_Attack_Stand_Hold_1P")
         self.assertEqual(seen["target"], "new_rig")
 
+
+    def test_export_with_nothing_picked_says_so(self):
+        card = self.card()
+        card["view"].picked_id = ""
+        with mock.patch.object(self.panel, "_card", lambda: card):
+            self.panel.export_picked("3p")
+        self.assertEqual(self.cmds.labels["st"], "Pick an attack in the tree first")
+
+    def test_export_hands_the_picked_attack_and_its_name_to_the_export(self):
+        from maya_moveset import export
+        card = self.card()
+        card["view"].picked_id = "AM_Longsword_Attack_Stand_Hold"
+        card["view"].label = lambda node_id: "Stand Hold"
+        seen = {}
+        with mock.patch.object(self.panel, "_card", lambda: card),                 mock.patch.object(export, "export_slot",
+                                  lambda g, i, v, label: seen.update(
+                                      node=i, view=v, label=label, graph=g) or "written"):
+            self.panel.export_picked("1p")
+        self.assertEqual((seen["node"], seen["view"], seen["label"]),
+                         ("AM_Longsword_Attack_Stand_Hold", "1p", "Stand Hold"))
+        self.assertIn("AM_Longsword_Attack_Stand_Hold", seen["graph"]["nodes"])
+        self.assertEqual(self.cmds.labels["st"], "written")
 
 
 @unittest.skipIf(QtWidgets is None, "no Qt")
@@ -224,8 +253,9 @@ class Build(unittest.TestCase):
             panel.build_panel()
         made = [(c[0], c[1][0] if c[1] else None) for c in fake.calls]
         names = set(n for _k, n in made)
-        for name in (panel.SUB, panel.ROOT_MENU, panel.MODE_MENU, panel.WHO_MENU, panel.PLACE,
-                     panel.OPEN.format("3p"), panel.OPEN.format("1p"), panel.STATUS):
+        for name in (panel.SUB, panel.ROOT_MENU, panel.MODE_MENU, panel.PLACE,
+                     panel.OPEN.format("3p"), panel.OPEN.format("1p"),
+                     panel.EXPORT.format("3p"), panel.EXPORT.format("1p"), panel.STATUS):
             self.assertIn(name, names)
         for key, _label in m.TYPES:
             self.assertIn(panel.CHIP.format(key), names)
@@ -257,7 +287,7 @@ class FakeView(object):
     def __init__(self, folder):
         self.folder = folder
         self.graph, self.state, self.weapon = {}, m.read_state(""), None
-        self.mode, self.root, self.who, self.types = "combos", "", None, set()
+        self.mode, self.root, self.types = "combos", "", set()
         self.framed = 0
 
     def set_data(self, graph, state, folder, weapon=None):
@@ -266,7 +296,7 @@ class FakeView(object):
     def set_state(self, state):
         self.state = state
 
-    def set_filter(self, root=None, types=None, who="keep", mode=None):
+    def set_filter(self, root=None, types=None, mode=None):
         if types is not None:
             self.types = set(types)
 
@@ -293,10 +323,10 @@ class WeaponCard(unittest.TestCase):
 
     def card(self):
         return {"view": FakeView(self.folder), "status": "st", "sub": "sub",
-                "root_menu": "root", "who_menu": "who", "weapon": None,
+                "root_menu": "root", "weapon": None,
                 "chips": dict((key, "chip_" + key) for key, _l in m.TYPES),
                 "segs": {"longsword": "seg_longsword", "dagger": "seg_dagger"},
-                "roots": [], "people": [], "mtime": 0.0}
+                "roots": [], "mtime": 0.0}
 
     def test_load_takes_the_weapon_the_state_names(self):
         card = self.card()
@@ -322,13 +352,11 @@ class WeaponCard(unittest.TestCase):
 
     def test_the_summary_counts_the_weapon_shown(self):
         card = self.card()
-        m.write_state(self.folder, weapon="dagger",
-                      status={m.skey("AM_Dg_Atk_NLt", "3p"): "done",
-                              m.skey("AM_Longsword_Attack_Stand_Hold", "3p"): "done"})
+        m.write_state(self.folder, weapon="dagger")
         self.panel._load(card)
         said = dict((c[1][0], c[2].get("label")) for c in self.cmds.calls
                     if c[0] == "text" and (c[2].get("edit") or c[2].get("e")))
-        self.assertEqual(said["sub"], "Dagger - 5 attacks, 1 of 10 done")
+        self.assertEqual(said["sub"], "Dagger - 5 attacks")
 
     def test_the_poll_follows_a_weapon_switch_made_on_the_page(self):
         card = self.card()

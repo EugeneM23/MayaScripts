@@ -1,6 +1,6 @@
-"""The hub card Moveset: the Longsword combo trees, statuses and assignees shared
-with the moveset page, and an attack's montage slot opened through the UE
-Bridge's montage import.
+"""The hub card Moveset: a weapon's combo trees as the moveset page draws them,
+an attack's montage slot opened through the UE Bridge's montage import, and the
+scene written back into the slot's own animations.
 
 The trees are a Qt view (`view.TreeView`) laid over the `cmds` placeholder
 PLACE; everything else is `cmds`, so the hub's skin and a popup copy reach it.
@@ -20,18 +20,17 @@ WEAPONS_COLL = "skeldarMovesetWeapons"
 WEAPON_SEG = "skeldarMovesetWeapon_{0}"
 ROOT_MENU = "skeldarMovesetRoot"
 MODE_MENU = "skeldarMovesetMode"
-WHO_MENU = "skeldarMovesetWho"
 CHIP = "skeldarMovesetType_{0}"
 PLACE = "skeldarMovesetTree"
 OPEN = "skeldarMovesetOpen{0}"
+EXPORT = "skeldarMovesetExport{0}"
 FRAME_BTN = "skeldarMovesetFrame"
 STATUS = "skeldarMovesetStatus"
 TREE_HEIGHT = 470
 POLL_MS = 1500
 MODES = (("combos", "Combos only"), ("all", "All transitions"))
-ANYONE, UNASSIGNED = "Anyone", "Unassigned"
 
-_CARDS = {}          # resolved PLACE -> {"view", "roots", "status", "people", "mtime"}
+_CARDS = {}          # resolved PLACE -> {"view", "roots", "weapon", "status", "mtime"}
 
 
 def folder():
@@ -76,8 +75,6 @@ def build_panel():
     cmds.optionMenu(MODE_MENU, label="Branches", changeCommand=lambda *_a: _filter(mode=True))
     for _k, label in MODES:
         cmds.menuItem(label=label)
-    cmds.optionMenu(WHO_MENU, label="Assignee", changeCommand=lambda *_a: _filter(who=True))
-    cmds.menuItem(label=ANYONE)
     cmds.setParent("..")
 
     cmds.rowLayout(numberOfColumns=len(m.TYPES))
@@ -104,6 +101,17 @@ def build_panel():
                               annotation="Fit the trees' width; read the files again",
                               command=lambda *_a: reload(frame=True)), "secondary", "refresh")
     cmds.setParent("..")
+
+    row = cmds.rowLayout(numberOfColumns=2)
+    hubstyle.mark(row, "fill", layout=True)
+    for key in m.VIEWS:
+        hubstyle.mark(cmds.button(EXPORT.format(key), label="Export {0}".format(key.upper()),
+                                  height=hubstyle.height("button", 30),
+                                  annotation="The scene's take back into the animations the "
+                                             "picked attack's {0} slot plays - one confirm "
+                                             "names them".format(key.upper()),
+                                  command=_press_export(key)), "secondary", "upload")
+    cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", height=36, wordWrap=True), "status")
     cmds.setParent("..")
     attach()
@@ -128,15 +136,14 @@ def attach():
     #  every name a callback of ours keeps is resolved here: the state poll runs
     #  on a timer, outside the copy's scope, where a bare name is the hub's
     card = {"status": hubcopy.resolve(STATUS), "root_menu": hubcopy.resolve(ROOT_MENU),
-            "who_menu": hubcopy.resolve(WHO_MENU), "sub": hubcopy.resolve(SUB),
+            "sub": hubcopy.resolve(SUB),
             "chips": dict((chip, hubcopy.resolve(CHIP.format(chip))) for chip, _l in m.TYPES),
             "segs": dict((w.key, hubcopy.resolve(WEAPON_SEG.format(w.key)))
                          for w in m.weapons(folder())),
             "weapon": None,
-            "roots": [], "people": [], "mtime": 0.0, "host": host}
+            "roots": [], "mtime": 0.0, "host": host}
     actions = {"open": lambda i, v, c=card: _say(c, open_slot(c["view"].graph, i, v)),
-               "status": lambda i, v, s, c=card: _set(c, i, v, status=s),
-               "assign": lambda i, v, p, c=card: _set(c, i, v, person=p),
+               "export": lambda i, v, c=card: _say(c, export_slot(c["view"], i, v)),
                "picked": lambda i, c=card: _say(c, picked_line(c["view"], i))}
     view = treeview.TreeView(host, actions)
     card["view"] = view
@@ -245,19 +252,14 @@ def _poll(card):
             _load(card, frame=True)
             return
         card["view"].set_state(state)
-        if state["people"] != card["people"]:
-            _fill_menus(card)
         _sub(card, _summary(card["view"].graph, state, here))
 
 
 def _summary(graph, state, weapon=None):
-    """«Dagger - 22 attacks, 0 of 44 done» - counted for the weapon shown: the
-    two weapons share one state file, and their node ids cannot collide."""
-    nodes = graph.get("nodes", {})
-    done = sum(1 for key, value in state["status"].items()
-               if value == "done" and key.split("|")[0] in nodes)
-    return "{0} - {1} attacks, {2} of {3} done".format(
-        weapon.label if weapon else m.LONGSWORD[1], len(nodes), done, len(nodes) * len(m.VIEWS))
+    """«Dagger - 22 attacks». The planning is the page's: the card plans nothing
+    and writes no status of its own (2026-10-29)."""
+    return "{0} - {1} attacks".format(weapon.label if weapon else m.LONGSWORD[1],
+                                      len(graph.get("nodes", {})))
 
 
 def _fill_menus(card):
@@ -275,23 +277,9 @@ def _fill_menus(card):
         else:
             view.root = ""
     card["roots"] = roots
-    who = card["who_menu"]
-    people = list(view.state["people"])
-    card["people"] = people
-    if cmds.optionMenu(who, exists=True):
-        for item in cmds.optionMenu(who, query=True, itemListLong=True) or []:
-            cmds.deleteUI(item)
-        for label in [ANYONE, UNASSIGNED] + people:
-            cmds.menuItem(label=label, parent=who)
-        if view.who and view.who in people:
-            cmds.optionMenu(who, edit=True, select=people.index(view.who) + 3)
-        elif view.who == "":
-            cmds.optionMenu(who, edit=True, select=2)
-        else:
-            view.who = None
 
 
-def _filter(root=False, mode=False, who=False, types=False):
+def _filter(root=False, mode=False, types=False):
     card = _card()
     if not card:
         return
@@ -303,9 +291,6 @@ def _filter(root=False, mode=False, who=False, types=False):
         index = cmds.optionMenu(MODE_MENU, query=True, select=1) - 1
         view.set_filter(mode=MODES[index][0])
         _fill_menus(card)
-    if who:
-        index = cmds.optionMenu(WHO_MENU, query=True, select=1)
-        view.set_filter(who=None if index == 1 else "" if index == 2 else card["people"][index - 3])
     if types:
         view.set_filter(types=[k for k, _l in m.TYPES
                                if cmds.checkBox(CHIP.format(k), query=True, value=True)])
@@ -330,24 +315,6 @@ def pick_folder():
 
 # ---- presses ------------------------------------------------------------------
 
-def _set(card, node_id, view_key, status=None, person=None):
-    where = card["view"].folder
-    state = m.read_state(where)
-    if status is not None:
-        m.write_state(where, status=m.set_status(state, node_id, view_key, status))
-        word = next((l for s, l, _c in m.STATUSES if s == status), "Not planned")
-        line = "{0} {1}: {2}".format(m.label(node_id, state["custom"]), view_key.upper(), word)
-    else:
-        m.write_state(where, assignee=m.set_assignee(state, node_id, view_key, person))
-        line = "{0} {1} → {2}".format(m.label(node_id, state["custom"]), view_key.upper(),
-                                           person or "nobody")
-    card["mtime"] = m.state_mtime(where)
-    state = m.read_state(where)
-    card["view"].set_state(state)
-    _sub(card, _summary(card["view"].graph, state))
-    _say(card, line + " - the page shows it on its next look")
-
-
 def picked_line(view, node_id):
     node = view.graph.get("nodes", {}).get(node_id) or {}
     slots = ", ".join("{0} {1}".format(v.upper(), m.slot_of(view.graph, node_id, v) or "-")
@@ -355,6 +322,28 @@ def picked_line(view, node_id):
     length = node.get("montageLength") or node.get("duration")
     return "{0} - {1}{2}".format(m.label(node_id, view.state["custom"]), slots,
                                  ", {0:.2f} s".format(length) if length else "")
+
+
+def _press_export(key):
+    return lambda *_a: export_picked(key)
+
+
+def export_picked(view_key):
+    card = _card()
+    if not card:
+        return
+    view = card["view"]
+    if not view.picked_id:
+        _say(card, "Pick an attack in the tree first")
+        return
+    _say(card, export_slot(view, view.picked_id, view_key))
+
+
+def export_slot(view, node_id, view_key):
+    """The scene's take back into the animations the attack's `view_key` slot
+    plays. Returns the status line; every refusal is the export's own."""
+    from maya_moveset import export
+    return export.export_slot(view.graph, node_id, view_key, view.label(node_id))
 
 
 def open_picked(view_key):

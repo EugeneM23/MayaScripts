@@ -57,7 +57,11 @@ class Pure(unittest.TestCase):
         self.assertEqual(m.attack_type("AM_Longsword_Attack_Left_Light"), "light")
         self.assertEqual(m.label("AM_Longsword_Attack_Stand_Hold"), "Stand Hold")
         self.assertEqual(m.label("custom-1", [{"id": "custom-1", "name": "Kick"}]), "Kick")
-        self.assertEqual(m.initials("anna petrova"), "AP")
+
+    def test_the_planning_is_gone_from_the_model(self):
+        """The card plans nothing (2026-10-29): the page keeps its own board."""
+        for name in ("set_status", "set_assignee", "STATUSES", "initials"):
+            self.assertFalse(hasattr(m, name), name)
 
 
 class Trees(unittest.TestCase):
@@ -104,16 +108,6 @@ class Trees(unittest.TestCase):
         self.assertEqual(names, {"AM_Longsword_Attack_Stand_Hold", "AM_Longsword_Attack_Right_Light"})
         self.assertIsNone(m.kept(stand, state()))
 
-    def test_an_assignee_filter_and_unassigned(self):
-        stand = m.trees(graph(), state())[0]
-        s = state(assignee={"AM_Longsword_Attack_Left_Hold|1p": "Anna"})
-        keep = m.kept(stand, s, who="Anna")
-        self.assertIn(stand.nodes[1].key, keep)
-        self.assertNotIn(stand.nodes[2].key, keep)
-        free = m.kept(stand, s, who="")
-        self.assertIn(stand.nodes[0].key, free)
-
-
 class Files(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp()
@@ -124,16 +118,13 @@ class Files(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump({"longswordMoveset.page": "board",
                        "longswordMoveset.status": json.dumps({"A|3p": "done"})}, handle)
-        s = m.read_state(self.folder)
-        m.write_state(self.folder, status=m.set_status(s, "B", "1p", "progress"),
-                      assignee=m.set_assignee(s, "B", "1p", "Anna"))
+        m.write_state(self.folder, weapon="dagger")
         with open(path, encoding="utf-8") as handle:
             raw = json.load(handle)
         self.assertEqual(raw["longswordMoveset.page"], "board")
-        self.assertEqual(m.read_state(self.folder)["status"], {"A|3p": "done", "B|1p": "progress"})
-        self.assertEqual(m.read_state(self.folder)["assignee"], {"B|1p": "Anna"})
-        s = m.read_state(self.folder)
-        self.assertEqual(m.set_status(s, "A", "3p", ""), {"B|1p": "progress"})
+        read = m.read_state(self.folder)
+        self.assertEqual(read[m.STATE_WEAPON], "dagger")
+        self.assertEqual(read["status"], {"A|3p": "done"})      # the page's, left alone
 
     def test_a_missing_or_broken_file_reads_empty(self):
         self.assertEqual(m.read_state(self.folder)["status"], {})
