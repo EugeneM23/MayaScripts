@@ -194,6 +194,7 @@ class Retarget(object):
         self.helpers = self._helpers(played)
         self.root_bone = self.transfer.target_root
         self._solved_legs = set(leaf for leaves in self.legs.values() for leaf in leaves)
+        self.planes = None              # where each leg bends, read once a cycle (_knee_planes, in frames())
 
     # -- reading --
 
@@ -281,6 +282,7 @@ class Retarget(object):
         drop = model.smooth_cover(need, model.LOWER_BLUR * len(need) / getattr(self.walk, "strides", 1))   # a stride
         drop = np.append(drop, drop[0])
         relations = [self._relations(result.worlds[:, f]) for f in range(n + 1)]
+        self.planes = self._knee_planes(outs)       # where each leg bends, once a cycle (never per frame)
         frames, short = self._solve_all(outs, goals, drop, relations)
         pops = {"found": {}, "fixed": 0, "left": 0, "drop": 0.0}
         if knee_pops:
@@ -292,10 +294,58 @@ class Retarget(object):
     def _solve_all(self, outs, goals, drop, relations):
         frames, short = [], 0.0
         for f, (out, goal, d) in enumerate(zip(outs, goals, drop)):
-            final, frame_short = self._solve(out, goal, float(d), relations[f])
+            final, frame_short = self._solve(out, goal, float(d), relations[f], f)
             frames.append(final)
             short = max(short, frame_short)
         return frames, short
+
+    def _knee_planes(self, outs, least=None):
+        """{side: (n, 3) where the transferred leg bends at every frame, in its THIGH's own frame (where it is a
+        near-constant vector), or None}: read only from the frames whose knee stands at least `least`
+        (model.KNEE_PLANE_MIN) off its hip-ankle line; the rest take the periodic line between the frames either
+        side (model._fill_periodic). The model's own rule, applied to what this solve is given.
+
+        Read per instant instead, the frames the clean's smoothing straightened have no plane to read: the
+        model's RESULT knee is EXACTLY on its line there (a captured cycle's own knee never is - the animator's
+        read 1.95 cm at its least raw and 0.0000 cm cleaned), and the transfer rebuilds the leg with the target's
+        own rest lengths, so what is left of the offset is float cancellation - 0.0001 to 0.07 cm, pointing
+        anywhere. It flipped up to 170 deg from one frame to the next, and since `align` carries the leg's plane
+        onto its new one the thigh and the calf rolled with it: measured 2026-10-30 on the animator's own cycle,
+        their left thigh's turn accelerating 11.8 deg a frame against the clip's own 5.4 and its calf twisting
+        21.8 against 15.4 (the right leg's noise reached 51 deg and stayed under the clip's - the asymmetry they
+        saw). A leg that is never bent enough anywhere keeps the per-instant reading, as it always did."""
+        model = _model()
+        least = model.KNEE_PLANE_MIN if least is None else least
+        n = max(len(outs) - 1, 1)
+        out = {}
+        for side in SIDES:
+            th, ca, fo = self.legs[side]
+            dirs, known = np.zeros((n, 3)), np.zeros(n, bool)
+            for f in range(n):
+                hip, knee, ankle = (_np(outs[f][leaf])[3, :3] for leaf in (th, ca, fo))
+                e = _unit(ankle - hip)
+                b = (knee - hip) - np.dot(knee - hip, e) * e
+                if np.linalg.norm(b) >= least:
+                    dirs[f] = _unit(b) @ _rot(outs[f][th]).T
+                    known[f] = True
+            if not known.any():
+                out[side] = None
+                continue
+            for k in range(3):
+                dirs[:, k] = model._fill_periodic(dirs[:, k], known)
+            out[side] = dirs
+        return out
+
+    def _plane(self, side, f, out, e):
+        """Where the leg bends at frame `f`, perpendicular to `e` (its hip-ankle line): _knee_planes' own
+        direction carried back into the world by the transferred thigh's frame. None where there is none to
+        read (no cycle read yet, or a leg never bent enough to say)."""
+        dirs = None if f is None else (self.planes or {}).get(side)
+        if dirs is None:
+            return None
+        v = dirs[f % len(dirs)] @ _rot(out[self.legs[side][0]])
+        v = v - np.dot(v, e) * e
+        return _unit(v) if np.linalg.norm(v) > 1e-9 else None
 
     def bends(self, frames):
         """{side: (n,) knee bends, radians} of solved frames (the closing frame left out)."""
@@ -387,9 +437,10 @@ class Retarget(object):
             out[leaf] = rel
         return out
 
-    def _solve(self, out, goal, drop, relations):
+    def _solve(self, out, goal, drop, relations, f=None):
         """The frame's final worlds: the pelvis dropped, the legs solved, every other bone on its transferred
-        local over its (moved) parent, the helpers on their bones."""
+        local over its (moved) parent, the helpers on their bones. `f` is the frame, for the cycle's own knee
+        planes (_knee_planes)."""
         final, moved, short = {}, set(), 0.0
         for leaf in self.order:
             if leaf in final:
@@ -402,7 +453,7 @@ class Retarget(object):
                 moved.add(leaf)
             elif leaf in (legs[0] for legs in self.legs.values()):
                 side = [s for s in SIDES if self.legs[s][0] == leaf][0]
-                short = max(short, self._leg(side, out, final, goal[side]))
+                short = max(short, self._leg(side, out, final, goal[side], f))
                 moved.update(self.legs[side])
             elif parent in moved:
                 final[leaf] = (out[leaf] * out[parent].inverse()) * final[parent]
@@ -419,7 +470,7 @@ class Retarget(object):
                 moved.add(leaf)
         return final, short
 
-    def _leg(self, side, out, final, goal):
+    def _leg(self, side, out, final, goal, f=None):
         model = _model()
         th, ca, fo = self.legs[side]
         parent = self.target[th].get("parent")
@@ -430,14 +481,19 @@ class Retarget(object):
         ankle_tr = _np(out[fo])[3, :3] + shift
         l1, l2 = self.lengths[side]
         e = _unit(ankle_tr - hip)
-        bend = (knee_tr - hip) - np.dot(knee_tr - hip, e) * e
-        if np.linalg.norm(bend) < 1e-6:
-            fwd = _np(self.place)[2, :3]
-            bend = fwd - np.dot(fwd, e) * e
-        bend = _unit(bend)
+        bend = self._plane(side, f, out, e)         # the cycle's own, continuous (_knee_planes)
+        if bend is None:
+            bend = (knee_tr - hip) - np.dot(knee_tr - hip, e) * e
+            if np.linalg.norm(bend) < 1e-6:
+                fwd = _np(self.place)[2, :3]
+                bend = fwd - np.dot(fwd, e) * e
+            bend = _unit(bend)
         knee, reached, short = model.two_bone(hip, goal, l1, l2, bend, self.walk.reach[side])
         e2 = _unit(reached - hip)
-        bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+        # the plane it was bent toward, not the one its solved knee happens to stand in: a leg that comes out
+        # straight has none of its own either, and reading it there put the same noise back (model._leg, 1432379f)
+        b2 = bend - np.dot(bend, e2) * e2
+        bend2 = _unit(b2) if np.linalg.norm(b2) > 1e-9 else _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
         n_tr, n_new = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
         r_th = _rot(thigh) @ model.align(_unit(knee_tr - hip), n_tr, _unit(knee - hip), n_new)
         r_ca = _rot(out[ca]) @ model.align(_unit(ankle_tr - knee_tr), n_tr, _unit(reached - knee), n_new)

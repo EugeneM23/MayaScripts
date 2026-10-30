@@ -11674,6 +11674,43 @@ at 29 and -114.5 at 30** - the leg spinning about its own length for a frame or 
   the knee is on the line, so only the roll - the noise - moves. **Tests not run and none written** (the
   animator asked for the fix at once and will check it himself).
 
+**…and the same reading in the TARGET's own leg solve** (2026-10-30, after that fix: «Стало лучше но всеравно
+остались шелчки в ногах»; their next cycle `own:65f26797a1bcdcfb` under `LongSword_Idle_3P` at share 0, In place,
+Smooth 0.92, Seam 10.26, read over port 7006 and reproduced headless to the digit). The model was clean - its
+rolls at the clip's own level - and `target._leg` was not: the **LEFT leg alone** turned harder than the clip it
+came from (the thigh's turn accelerating 11.8 deg a frame against the clip's 5.4 and twisting 14.2 against 10.2,
+the calf 15.9 against 9.9 and 21.8 against 15.4), the right side at or under the clip's everywhere.
+- **Why**: the clean's smoothing straightens the leg wherever the smoothed hip cannot reach the ankle it keeps -
+  the RAW capture's knee stands at least 1.95 / 0.69 cm off its hip-ankle line, cleaned it reads **0.0000 cm on
+  10-11 frames a side** - the model's result knee is then EXACTLY on its line there, and the transfer rebuilds the
+  leg with the target's own rest lengths, so what is left of the offset is **float cancellation: 0.0001 to 0.07 cm
+  pointing anywhere**. `target._leg` read its bend plane from it per instant (its fallback firing only under
+  1e-6): the plane turned **160-170 deg a frame on the left and 40-51 on the right** - the asymmetry they saw.
+  The clean itself is innocent (`meanpose._leg_turns`' 1e-9 guard does catch an exactly parallel knee, so the
+  cleaned clip's own twists are the raw's: 10.2 / 15.4 against 10.4 / 15.8).
+- **The fix is the model's own, one layer down**: `Retarget._knee_planes(outs)` reads each leg's plane once a
+  cycle from the frames whose knee stands at least `model.KNEE_PLANE_MIN` off the line, keeps it in the thigh's
+  own frame and fills the rest (`_fill_periodic`); `_plane(side, f, out, e)` carries it back; `frames()` reads it
+  before the solve, and `_solve` / `_leg` take the frame. `bend2` comes from the hint, not from the solved knee.
+- **Attributed per frame**: the plane is the whole change and it touches EXACTLY the straight frames - the thigh
+  13.56 deg at f88, 11.18 at f30, 9.80 at f29 (left), 5.68 / 4.39 / 2.72 / 2.28 (right), the knee's place up to
+  **10.24 cm** - and 0.00 deg on every other frame; **`bend2` alone changes nothing** (0.00 everywhere: the solved
+  knee is always bent here - it is the guard the model's own fix made, for a result leg that comes out straight).
+- **After, on their own cycle**: the left thigh 11.8 -> **5.3** (the clip's 5.4) and 14.2 -> **9.9** (10.2), the
+  calf 15.9 -> **6.3** (9.9) and 21.8 -> **15.3** (15.4); the right only better (its calf 6.8 -> 5.8); the knee's
+  place change 9.55 -> **3.60 cm**; the pops, the drop and the shortfall identical; **the feet 0.0000000 cm**, and
+  of the 81 bones only the four leg bones (the thighs turning, their place 0.0000) and the eight twists riding
+  them move - every other one to **1.6e-13**.
+- Proof: `tests/test_walk_knee_plane.py` - **15 tests**, and with the old reading put back two fail by the
+  defect's own signature («the knee bent 180 deg away from the cycle's plane», «the knee moves 23.094 cm on a
+  hair»); they guard the model's own fix too, which had none. **13417 unit tests** with the one known
+  `test_chat_deploy.Keys` failure; `verify_walk.py` fails the same 5 gates **[4, 24, 27, 30, 57] as clean HEAD**,
+  `verify_walk_sprint.py` 12/12, `verify_walk_working.py` 24/24, `verify_walk_keys_changed.py` 0 of 23,
+  `verify_walk_arm_overlap.py` 0 of 101, `verify_walk_weapon_overlap.py` 0 of 30, `verify_walk_own.py` its
+  documented [10, 19]; `verify_walk_many/_meanpose/_keyposes/_clean.py` die where they already did (a walker
+  named `asd`, a `fix_posture` arity). The Gait Builder fork takes the fix: it calls this `Retarget`. **Not
+  re-keyed in their scene** - their next press takes it.
+
 319. **A share of a window is a rate that grows as the window shrinks.** `swing_weight` eases over 25 % of a
      flight: 3 frames of a 12-frame one, half a frame of a 2-frame one. So a window found by a flickering
      test (a foot's height against its own low, which a skimming foot crosses in and out of) does not merely
@@ -11683,6 +11720,20 @@ at 29 and -114.5 at 30** - the leg spinning about its own length for a frame or 
      mend it by making the window MONOTONE rather than by swapping one authority for another: a smooth clock
      (the contacts) knows which swing it is, and only the heights know when the foot is off the floor, so the
      window wants both - the clock for its identity, the heights for its two ends.
+320. **A fix at one layer leaves every copy of the reading broken, and the layer below can hold worse data than
+     the layer above.** The model's leg solve was mended yesterday; `target._leg` held the same six lines and read
+     them from the MODEL's result, where the condition is sharper - the model's knee is EXACTLY on its line, and
+     a transfer that rebuilds the leg with the target's own rest lengths leaves 0.0001 to 0.07 cm of cancellation
+     pointing anywhere, so a 1e-6 "degenerate" guard never fires and the plane flips 170 deg. Grep for the
+     PATTERN, not for the symptom: `meanpose._solve_leg` / `_leg_turns` (1e-9) and `pose._bend` hold it too,
+     measured innocent here only because what they are given really is exactly parallel.
+321. **A fixture more degenerate than the data proves nothing** (the twist-manual lesson again, 2026-10-30). A
+     synthetic clip straightened EXACTLY leaves the transferred knee at exactly 0.0, where the old code's 1e-6
+     fallback fires and the flip cannot happen - two end-to-end tests written that way passed on the broken code.
+     The real condition is a hair, not a zero. And its effect could not be reasoned out either: a hand-derived
+     "the flip costs twice the angle the knee makes with the line" predicted 0.1 deg where the per-frame
+     attribution measured 13.56. Attribute a fix frame by frame, one half of the change at a time, before
+     believing any of it.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
