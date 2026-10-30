@@ -219,7 +219,8 @@ PARAMS = (
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
           tip="The elbow's orbit about the shoulder-wrist line late by this many milliseconds, on top of Arm "
               "overlap - the hand stays where Arm overlap puts it and the bones keep their lengths, so this "
-              "is a late orbit of the elbow, not a late bend. Free under a two-handed grip"),
+              "is a late orbit of the elbow, not a late bend. It works under a two-handed grip too: it moves "
+              "no hand"),
     Param("hand_overlap", ARMS, "Hand overlap", "ms", "added", sided=True,
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
           tip="The hand's own turn late by this many milliseconds, on top of Arm overlap - its place stays "
