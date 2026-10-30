@@ -66,6 +66,50 @@ class ShiftedCycleTests(unittest.TestCase):
         self.assertTrue(np.allclose(rel(got, 0, per), rel(mats, 2, per), atol=1e-9))
 
 
+class LateBendTests(unittest.TestCase):
+    """The bend plane a chain gives `lag` frames earlier - the hint the cascade's elbow rides."""
+
+    def chain(self, n=8, travel=(0.0, 0.0, 80.0)):
+        """Three cycles: a shoulder in place, a wrist out along +X, and an elbow whose offset from that line
+        turns about X with the phase - so the bend plane is a different one at every frame."""
+        up, low, hand = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
+        per = np.array(travel, float) / float(n)
+        for f in range(n + 1):
+            a = math.radians(360.0 * (f % n) / float(n))
+            up[f, 3, :3] = per * f
+            hand[f, 3, :3] = np.array([20.0, 0.0, 0.0]) + per * f
+            low[f, 3, :3] = np.array([10.0, 4.0 * math.cos(a), 4.0 * math.sin(a)]) + per * f
+        return up, low, hand
+
+    def test_no_lag_is_the_frames_own_plane(self):
+        up, low, hand = self.chain()
+        got = wm.late_bend(up, low, hand, 0.0)
+        for f in range(got.shape[0]):
+            want = low[f, 3, :3] - up[f, 3, :3]
+            e = wm._unit(hand[f, 3, :3] - up[f, 3, :3])
+            want = wm._unit(want - np.dot(want, e) * e)
+            self.assertTrue(np.allclose(got[f], want, atol=1e-9), f)
+
+    def test_a_lag_is_the_plane_that_many_frames_earlier(self):
+        up, low, hand = self.chain()
+        got, now = wm.late_bend(up, low, hand, 2.0), wm.late_bend(up, low, hand, 0.0)
+        n = up.shape[0] - 1
+        for f in range(n):
+            self.assertTrue(np.allclose(got[f], now[(f - 2) % n], atol=1e-9), f)
+
+    def test_the_travel_does_not_enter_it(self):
+        """The hint is read from differences at ONE frame, so a travelling cycle gives the same planes as a
+        cycle standing still."""
+        moving = wm.late_bend(*self.chain(), lag=2.5)
+        still = self.chain(travel=(0.0, 0.0, 0.0))
+        self.assertTrue(np.allclose(moving, wm.late_bend(still[0], still[1], still[2], 2.5), atol=1e-9))
+
+    def test_every_hint_is_a_unit_vector(self):
+        got = wm.late_bend(*self.chain(), lag=1.5)
+        for f in range(got.shape[0]):
+            self.assertAlmostEqual(float(np.linalg.norm(got[f])), 1.0, places=9, msg=f)
+
+
 class KnobTests(unittest.TestCase):
 
     def test_the_engine_carries_a_sided_arm_overlap_knob(self):
@@ -141,6 +185,34 @@ class ArmToHandTests(unittest.TestCase):
             to_got = got[hand_j][f, 3, :3] - got[up_j][f, 3, :3]
             cos = float(np.dot(to_want, to_got) / (np.linalg.norm(to_want) * np.linalg.norm(to_got)))
             self.assertGreater(cos, 1.0 - 1e-9, f)      # clamped along the line to the wanted hand
+
+    def test_a_hint_bends_the_elbow_its_way_and_keeps_the_hand_and_the_bones(self):
+        """Elbow overlap's road: the bend plane is sent somewhere else and nothing else gives."""
+        side = sorted(self.chains)[0]
+        up_j, low_j, hand_j = self.chains[side]
+        hands = dict((s, np.array(self.kin[c[-1]])) for s, c in self.chains.items())
+        hint = wm.late_bend(self.kin[up_j], self.kin[low_j], self.kin[hand_j], 2.0)
+        got = self.w._arm_to_hand(self.kin, self.n, self.chains, hands, {side: hint})
+        self.assertTrue(np.allclose(got[hand_j][:, 3, :3], hands[side][:, 3, :3], atol=1e-6))
+        self.assertTrue(np.allclose(got[up_j][:, 3, :3], self.kin[up_j][:, 3, :3], atol=1e-9))
+        for a, b in ((up_j, low_j), (low_j, hand_j)):
+            was = np.linalg.norm(self.kin[b][:, 3, :3] - self.kin[a][:, 3, :3], axis=1)
+            now = np.linalg.norm(got[b][:, 3, :3] - got[a][:, 3, :3], axis=1)
+            self.assertLess(float(np.abs(now - was).max()), 1e-6, (a, b))
+        self.assertGreater(float(np.abs(got[low_j][:, 3, :3] - self.kin[low_j][:, 3, :3]).max()), 1e-3,
+                           "the elbow orbited")
+        other = self.chains["r" if side == "l" else "l"]
+        self.assertTrue(np.allclose(got[other[1]][:, 3, :3], self.kin[other[1]][:, 3, :3], atol=1e-6),
+                        "the other side took no hint")
+
+    def test_the_frames_own_hint_changes_nothing(self):
+        hands = dict((s, np.array(self.kin[c[-1]])) for s, c in self.chains.items())
+        plain = self.w._arm_to_hand(self.kin, self.n, self.chains, hands)
+        hints = dict((s, wm.late_bend(self.kin[c[0]], self.kin[c[1]], self.kin[c[2]], 0.0))
+                     for s, c in self.chains.items())
+        same = self.w._arm_to_hand(self.kin, self.n, self.chains, hands, hints)
+        for j in plain:
+            self.assertTrue(np.allclose(plain[j], same[j], atol=1e-9), self.w.names[j])
 
     def test_the_springs_grip_still_reaches_its_hands(self):
         """_grip_motion keeps working through the shared rebuild: an arm drag with a grip runs and the bones

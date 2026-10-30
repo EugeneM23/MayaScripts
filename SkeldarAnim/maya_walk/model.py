@@ -637,6 +637,22 @@ def shifted_cycle(mats, lag):
     return out
 
 
+def late_bend(up, low, hand, lag):
+    """The bend plane's hint (n+1, 3) an arm chain gives `lag` frames earlier: the elbow's offset from the
+    shoulder-wrist line, unit, read from the three joints' cycles shifted that far (Elbow overlap). It is a
+    direction read from differences at ONE frame, so shifted_cycle's travel term - the same for all three
+    there - cancels and a travelling cycle does not enter it. lag 0: the frames' own plane, which is what
+    _arm_to_hand computes for itself."""
+    u, l, h = (shifted_cycle(m, lag) for m in (up, low, hand))
+    out = np.zeros((u.shape[0], 3))
+    for f in range(u.shape[0]):
+        sh, el, wr = u[f, 3, :3], l[f, 3, :3], h[f, 3, :3]
+        e = _unit(wr - sh)
+        b = (el - sh) - np.dot(el - sh, e) * e
+        out[f] = _unit(b) if np.linalg.norm(b) > 1e-4 else _any_perpendicular(e)
+    return out
+
+
 def _runs(mask):
     """Every stretch of True in a cyclic mask, (start index, length) sorted by start; [] when it holds no
     True, [(0, n)] when it holds nothing else."""
@@ -3579,17 +3595,21 @@ class Walk(object):
             out[j] = m
         return out, used
 
-    def _arm_to_hand(self, kin, n, chains, hands):
+    def _arm_to_hand(self, kin, n, chains, hands, hints=None):
         """Each arm rebuilt to a wanted hand: `hands` {side: (n+1, 4, 4)} -> {joint: (n+1, 4, 4)} for the upper
         arm, the forearm and the hand (a side not in `hands` is left out). From the CURRENT shoulder - the
         arm's pivot is the body's - the elbow bending the way the frames bend it, the bones keeping their
         lengths (a hand past the arm's reach is clamped along its own line by two_bone). The one IK the
-        springs' grip (_grip_motion) and the overlap (_arm_overlap) both reach their hands with."""
+        springs' grip (_grip_motion) and the overlap (_arm_overlap) both reach their hands with.
+        `hints` {side: (n+1, 3)} replaces the plane the elbow is sent toward (Elbow overlap's late plane, from
+        late_bend); the SOURCE plane this aligns the frames' arm FROM is the frames' own either way - the one
+        trap of the cascade, since `bend` below serves as both when no hint is given."""
         out = {}
         for side, chain in chains.items():
             want = hands.get(side)
             if want is None:
                 continue
+            hint = (hints or {}).get(side)
             up_j, low_j, hand_j = chain
             l1, l2 = (float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
             mu, ml, mh = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
@@ -3599,7 +3619,8 @@ class Walk(object):
                 e = _unit(wr - sh)
                 bend = (el - sh) - np.dot(el - sh, e) * e
                 bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
-                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
+                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2,
+                                            bend if hint is None else hint[f], 1.0)
                 e2 = _unit(reached - sh)
                 bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
                 normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
