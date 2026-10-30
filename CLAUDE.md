@@ -11569,6 +11569,36 @@ with the sword, not the sword slipping in a fixed grip - and **milliseconds**, t
      and the way to tell the two apart is to spy on the pass's own inputs rather than reason about the result
      (the same run's recorded hands differed from the final worlds by 178 cm of travel and 0.0000 deg).
 
+## Walk Builder: presets of the settings (2026-10-30, a prototype)
+
+The animator: «Давай сделаем в Walk builder возможность сохранять присеты настроек. Не пиши тесты давай сделаем
+протатип функционала и зальем в мейн» - so this shipped as a prototype with no tests of its own (the existing
+walk tests were kept green; one of them counts the card's popup menus and now expects the preset row's).
+- **A preset is the card's settings and nothing of the scene**: the parameters (each a change from the cycle's
+  own - `gait.stored_change` - so a preset reads the same on any clip), the macros, the character and its
+  strength, the physics' two flags, the pose's share, In place, the clean's Seam and Smooth, the pose parts and
+  the pose card's path. Never the walk cycle, never a walker: a preset is a look, put on whatever cycle is
+  active.
+- **`SkeldarAnim/maya_walk/presets.py`** (stdlib): `<walks folder>/presets.json` - `{"version": 1, "presets":
+  {name: {"params": …, "parts": […], "pose_card": "…"}}}`, written through a `.part` file; `read` / `names` /
+  `get` / `save` / `remove` / `rename` / `clean_name` (whitespace collapsed, no path separator, ≤ 60
+  characters) / `record` / `fields` (whatever is in the file read back in its kind). The folder is handed in,
+  so it is outside the plugin an install replaces and a verify can point it at a temporary one.
+- **The card**: a row `Preset [▾] [Save...]` right above the Main head. The dropdown lists `(none)` and the
+  presets; picking one puts it on at once and keys the selected walkers (`apply_preset` → `_rekey`, the card
+  filled under `_QUIET` exactly as `_take` does). Save... asks for a name (the one shown by default; a name
+  already there is replaced). The right button on the word Preset: Rename..., Delete, Read the list again,
+  Show the walks folder. A pose card the library no longer holds is named and left out, the rest applied.
+- **The name is lit while it stands for the settings**: Reset and taking a walker's settings clear it (they
+  replace the settings wholesale); a knob moved after a preset leaves it lit, so Save... offers to replace it.
+  Remembered in `skeldarWalk_preset`, so the card comes back on its preset and a press works with the card
+  closed.
+- Proof: the store and the whole round trip driven on the walk tests' fake `cmds` in a scratch probe (save,
+  Reset, pick it back - the changes, the macros, the physics and the pose's share equal, the step slider at
+  72.0 with its pin mark - rename, delete, the refusals, a rebuild coming back on the preset); the unit suite
+  green. **Not seen in a GUI Maya**: the row, the dropdown and a real press are the animator's, after Check
+  update.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

@@ -37,6 +37,7 @@ import os
 import sys
 import traceback
 
+from . import presets as store
 from . import scene
 
 HUB_SECTION = "walk"
@@ -100,6 +101,13 @@ NO_WORKING = "no working walker - press Pick on a skeleton, or click one in the 
 #  The Diagnosis: a caption and rows of a finding with its Fix
 DIAG_CAPTION = "skeldarWalkDiagnosis"
 DIAG_ROWS = 4
+#  The presets (2026-10-30, «возможность сохранять присеты настроек»): a named set of the card's own settings -
+#  the parameters (each a change from the cycle's own, so a preset reads the same on any clip), the macros, the
+#  character and its strength, the physics, the pose's share, In place, the clean's knobs, the pose parts and the
+#  pose card - kept beside the walks (maya_walk.presets), never the cycle and never a walker
+PRESET_MENU = "skeldarWalkPreset"
+PRESET_SAVE_BTN = "skeldarWalkPresetSave"
+NO_PRESET = "(none)"
 
 
 def _names(group):
@@ -201,6 +209,12 @@ TIPS = {
                  "card in the library; right click: Clear",
     "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
              "holding one thing together hold it; Feet: the width and the toes' turn)",
+    "preset": "A named set of the card's settings: the parameters (each a change from the cycle's own, so a "
+              "preset reads the same on any clip), the macros, the character, the physics, the pose's share and "
+              "parts and its card - never the cycle itself. Pick one and it is put on at once and the selected "
+              "walkers are keyed again. Right button: Rename, Delete, Read the list again, Show the folder",
+    "preset_save": "Save the card's settings as a preset, under a name asked - a name already there is "
+                   "replaced; they live beside the walks (presets.json), so they outlive an update",
 }
 #  The selection job of each card standing: '' the hub's, a popup copy's tag its own.
 JOB = {}
@@ -1347,6 +1361,7 @@ def _take(root):
                 if cmds.checkBox(box, exists=True):
                     cmds.checkBox(box, edit=True, value=bool(params.get(flag, True)))
             _set_knobs(dict(params["clean"], pose=params["pose"], in_place=params["in_place"]))
+            _set_preset("")                           # the walker's own settings, not a preset's
             if scene.walk_exists(name):
                 show_report(scene.load_walk(name, values())[3])
             show_values()
@@ -1693,9 +1708,151 @@ def press_reset(*_):
         _remember("strength", 1.0)
         _remember("physics", 1.0)
         _remember("knee_pops", 1.0)
+        _set_preset("")                   # the settings are nobody's preset any more
         show_values()
         return _rekey("every parameter back to the clip's")
     return _press(run)
+
+
+# ---- the presets ----
+
+def preset_names():
+    """The presets' names (maya_walk.presets, the walks folder)."""
+    try:
+        return store.names(scene.folder())
+    except Exception:                                        # noqa: BLE001 - a folder that cannot be read
+        print(traceback.format_exc())
+        return []
+
+
+def chosen_preset():
+    """The preset the card shows as its own, "" when the settings are nobody's (Reset, a knob moved, a walker's
+    settings taken)."""
+    return _stored("preset", "") or ""
+
+
+def _set_preset(name):
+    """`name` the card's preset ("" none), remembered, its dropdown filled and lit where the card stands."""
+    cmds = _cmds()
+    _remember("preset", name or "")
+    if not cmds.optionMenu(PRESET_MENU, exists=True):
+        return
+    quiet, _QUIET[0] = _QUIET[0], True
+    try:
+        for item in cmds.optionMenu(PRESET_MENU, query=True, itemListLong=True) or []:
+            cmds.deleteUI(item, menuItem=True)
+        cmds.menuItem(label=NO_PRESET, parent=PRESET_MENU)
+        for each in preset_names():
+            cmds.menuItem(label=each, parent=PRESET_MENU)
+        cmds.optionMenu(PRESET_MENU, edit=True, value=name if name and name in preset_names() else NO_PRESET)
+    finally:
+        _QUIET[0] = quiet
+
+
+def apply_preset(name):
+    """A preset's settings into the card - the parameters, the macros, the character, the physics, the pose's
+    share and parts, its card - and the selected walkers keyed again with them. The line."""
+    def run():
+        chosen = store.clean_name(name)
+        stored = store.get(scene.folder(), chosen) if chosen else None
+        if stored is None:
+            raise scene.Refusal("there is no preset %s - press Save... to make one" % (chosen or "of that name"))
+        params, parts, card = store.fields(stored)
+        params = scene.normal_params(params)
+        quiet, _QUIET[0] = _QUIET[0], True
+        note = ""
+        try:
+            _remember_hand(params["changes"], set(params["pins"]))
+            _remember("macros", json.dumps(params["macros"]))
+            _remember("character", params["character"])
+            _remember("strength", params["strength"])
+            _remember("physics", 1.0 if params["physics"] else 0.0)
+            _remember("knee_pops", 1.0 if params["knee_pops"] else 0.0)
+            cmds = _cmds()
+            for box, flag in ((PHYSICS_BOX, "physics"), (KNEE_POPS_BOX, "knee_pops")):
+                if cmds.checkBox(box, exists=True):
+                    cmds.checkBox(box, edit=True, value=bool(params[flag]))
+            if parts:
+                _set_parts(tuple(p for p in parts if p in scene.ALL_PARTS))
+            if card:                      # the pose card only while the library still holds it
+                if os.path.isdir(scene.wcards.absolute(card, _library())):
+                    _set_card(card)
+                else:
+                    note = " | its pose card %s is gone from the library" % card
+            _set_knobs(dict(params["clean"], pose=params["pose"], in_place=params["in_place"]))
+            show_values()
+        finally:
+            _QUIET[0] = quiet
+        _set_preset(chosen)
+        return _rekey("preset %s%s" % (chosen, note))
+    return _press(run)
+
+
+def preset_changed(*_):
+    """The dropdown: the preset picked put on, (none) leaves the settings as they are."""
+    if _QUIET[0]:
+        return None
+    cmds = _cmds()
+    name = cmds.optionMenu(PRESET_MENU, query=True, value=True) if cmds.optionMenu(PRESET_MENU, exists=True) else ""
+    if not name or name == NO_PRESET:
+        _remember("preset", "")
+        return status("no preset - the settings in the card stand")
+    return apply_preset(name)
+
+
+def press_save_preset(*_):
+    """Save...: the card's settings under a name asked (a name already there is replaced)."""
+    def run():
+        name = _ask("Save the settings as a preset", chosen_preset() or "My walk")
+        if name is None:
+            return "nothing saved"
+        name = store.clean_name(name)
+        if not name:
+            raise scene.Refusal("a preset needs a name")
+        had = name in preset_names()
+        name = store.save(scene.folder(), name, scene.plain_params(card_params()), chosen_parts(),
+                          chosen_card() or "")
+        _set_preset(name)
+        return "preset %s %s - the parameters, the macros, the character, the physics, the pose and its parts" \
+            % (name, "replaced" if had else "saved")
+    return _press(run)
+
+
+def press_delete_preset(*_):
+    """Delete: the preset the dropdown shows."""
+    def run():
+        name = chosen_preset()
+        if not name:
+            raise scene.Refusal("pick a preset in the dropdown first")
+        gone = store.remove(scene.folder(), name)
+        _set_preset("")
+        return "preset %s deleted" % name if gone else "there is no preset %s" % name
+    return _press(run)
+
+
+def press_rename_preset(*_):
+    """Rename...: the preset the dropdown shows."""
+    def run():
+        name = chosen_preset()
+        if not name:
+            raise scene.Refusal("pick a preset in the dropdown first")
+        into = _ask("Rename the preset", name)
+        if into is None:
+            return "nothing renamed"
+        into = store.clean_name(into)
+        if not into:
+            raise scene.Refusal("a preset needs a name")
+        if store.rename(scene.folder(), name, into) is None:
+            raise scene.Refusal("there is no preset %s" % name)
+        _set_preset(into)
+        return "preset %s is called %s now" % (name, into)
+    return _press(run)
+
+
+def refresh_presets(*_):
+    """The dropdown filled from the file again (a preset saved by another Maya)."""
+    _set_preset(chosen_preset())
+    return status("%d preset(s) in %s" % (len(preset_names()), store.path(scene.folder())))
 
 
 def _ask(title, default):
@@ -1969,6 +2126,30 @@ def _walk_row():
     if well is None:
         cmds.text(WALK_WELL_TEXT, label="", align="left", annotation=TIPS["walk_well"])
         _show_walk_line()
+
+
+def _preset_row():
+    """The word Preset, the dropdown of the presets (the right button on the word: Rename, Delete, Read the list
+    again, Show the folder) and Save..."""
+    import maya_hubstyle as hubstyle
+    cmds = _cmds()
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
+    cmds.text(label="Preset", width=hubstyle.pick(52, 56), align="left", annotation=TIPS["preset"])
+    cmds.popupMenu(button=3)
+    cmds.menuItem(label="Rename...", command=lambda *_: press_rename_preset())
+    cmds.menuItem(label="Delete", command=lambda *_: press_delete_preset())
+    cmds.menuItem(divider=True)
+    cmds.menuItem(label="Read the list again", command=lambda *_: refresh_presets())
+    cmds.menuItem(label="Show the walks folder", command=show_folder)
+    cmds.setParent("..", menu=True)
+    cmds.optionMenu(PRESET_MENU, changeCommand=preset_changed, annotation=TIPS["preset"])
+    hubstyle.mark(cmds.button(PRESET_SAVE_BTN, label=hubstyle.tool_label("Save..."),
+                              width=hubstyle.tool_width(56), height=hubstyle.height("field", 24),
+                              annotation=TIPS["preset_save"], command=lambda *_: press_save_preset()),
+                  "tool", "device-floppy")
+    cmds.setParent("..")
+    _set_preset(chosen_preset())
 
 
 def _pose_well():
@@ -2265,6 +2446,7 @@ def build_panel():
                         "when it is moved" % (SIDE_MARK[mode].strip(), "left" if mode == "l" else "right")),
             onCommand=side_changed(mode)), "segment")
     cmds.setParent("..")
+    _preset_row()
     _section_head(MAIN_HEAD, "Main", "The whole walk at once: tempo, step, width, bounce, lean, the arms - and the "
                   "macros under them", "main")
     for name in MAIN_PARAMS:

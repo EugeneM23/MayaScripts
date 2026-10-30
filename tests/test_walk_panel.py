@@ -112,7 +112,7 @@ class FakeCmds(object):
     def popupMenu(self, **kw):
         return self._made("popupMenu", "popup", **kw)
 
-    def deleteUI(self, item):
+    def deleteUI(self, item, **kw):
         menu, label = item.split("|", 1)
         self.items[menu].remove(label)
         if self.values.get(menu) == label:
@@ -402,8 +402,8 @@ class CardTests(unittest.TestCase):
         self.assertIn(panel.WALK_WELL, [c[1] for c in self.made("columnLayout")])
         self.assertIn("Walk: asd", self.fake.values[panel.WALK_WELL_TEXT])        # no Qt here: its line
         self.assertIn(panel.POSE_WELL, [c[1] for c in self.made("columnLayout")])   # the well's placeholder
-        #  the walks folder; Pick's own; the list; and every parameter's right button
-        self.assertEqual(len(self.made("popupMenu")), 3 + len(gait.PARAMS))
+        #  the walks folder; the presets; Pick's own; the list; and every parameter's right button
+        self.assertEqual(len(self.made("popupMenu")), 4 + len(gait.PARAMS))
         self.assertEqual(marks[panel.MEAN_UPDATE_BTN], ("primary", "refresh"))
         self.assertIn("rigpose", [key for row in panel.GROUP_ROWS for key in row])
         chips = [c[1] for c in self.made("checkBox")]
