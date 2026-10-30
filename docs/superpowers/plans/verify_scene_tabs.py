@@ -1362,6 +1362,67 @@ def phase_pasted():
          all(cmds.objExists(n) for n in ("mat", "mat1", "only", "Bow:Arrow", "Bow1:Arrow", "cubeB")))
 
 
+def phase_strays():
+    """2026-10-20, found live (port 7003): 42 curves of one tab's rig keyed while the root
+    namespace was current (`FKElbow_L_rotateX` in the root, feeding `tab_A:...FKElbow_L`),
+    and every OTHER tab whose rig carries a curve of that name refused to save - «the scene
+    already holds a node named FKElbow_L_rotateX». And a colleague's tabbed scene sent
+    through Shared brought its own `skeldarSceneTabs` node into a tab, which refused on that
+    name. A save takes both home first."""
+    from maya_scenetabs import opening, saving
+    os.makedirs(RUN, exist_ok=True)
+    made = {}
+    for tag in ("A", "B"):
+        fresh()
+        cube = cmds.polyCube(name="ctrl")[0]
+        cmds.setKeyframe(cube + ".rotateX", time=0, value=0)
+        cmds.setKeyframe(cube + ".rotateX", time=10, value=30)
+        made[tag] = RUN + "/stray%s.ma" % tag
+        _save(made[tag])
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    opening.ASK = lambda message, buttons: "Don't Save"
+    opening.open_tab(made["B"])
+    a, b = "tab_strayA", "tab_strayB"
+    # a key in tab A made with the root namespace current: the root gets ctrl_rotateY
+    cmds.namespace(setNamespace=":")
+    cmds.setKeyframe(":%s:ctrl.rotateY" % a, time=5, value=12)
+    cmds.namespace(setNamespace=":" + b)
+    cmds.setKeyframe(":%s:ctrl.rotateY" % b, time=5, value=7)   # B's own curve, B:ctrl_rotateY
+    stray = cmds.listConnections(":%s:ctrl.rotateY" % a, source=True, destination=False)[0]
+    gate("strays: the setup put tab A's curve in the root", ":" not in stray, stray)
+    node = cmds.createNode("network", name=":%s:%s" % (b, records.SESSION_NODE))
+    cmds.addAttr(node, longName=records.SESSION_ATTR, dataType="string")
+    try:
+        message = saving.save_tab(b)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        message, error = "", str(exc)
+    gate("strays: tab B saves beside A's root curve and its own session copy",
+         message.startswith("Saved"), message or error)
+    moved = cmds.listConnections(":%s:ctrl.rotateY" % a, source=True, destination=False) or [""]
+    gate("strays: A's curve is in A now, still driving it",
+         moved[0].startswith(a + ":") and abs(cmds.getAttr(":%s:ctrl.rotateY" % a, time=5) - 12) < 1e-6, moved)
+    gate("strays: the session copy is gone, the session's own node stays",
+         not cmds.objExists(":%s:%s" % (b, records.SESSION_NODE)) and cmds.objExists(":" + records.SESSION_NODE))
+    gate("strays: the session layer root stays in the root",
+         not cmds.ls("*:" + records.LAYER_ROOT, recursive=True))
+    text = open(made["B"]).read()
+    gate("strays: B's file holds no session node and no tab name",
+         records.SESSION_NODE not in text and "tab_" not in text,
+         [l for l in text.splitlines() if "tab_" in l or records.SESSION_NODE in l][:3])
+    try:
+        message = saving.save_tab(a)
+        error = ""
+    except Exception as exc:                                    # noqa: BLE001
+        message, error = "", str(exc)
+    gate("strays: tab A saves too, with its moved curve", message.startswith("Saved"), message or error)
+    fresh()
+    cmds.file(made["A"], open=True, force=True)
+    gate("strays: A's file plays the stray key",
+         abs(cmds.getAttr("ctrl.rotateY", time=5) - 12) < 1e-6)
+
+
 def _leak_tree(namespace):
     """The tab's layers on the session root other than its own root, the root copies anywhere,
     the layers still carrying stored links."""
@@ -1956,7 +2017,7 @@ PHASES = {"session": phase_session, "layers_alone": phase_layers_alone, "convert
           "hook_failures": guarded(phase_hook_failures), "review": guarded(phase_review),
           "untitled": guarded(phase_untitled), "duplicates": phase_duplicates,
           "layer_editor": phase_layer_editor, "outliner_sets": phase_outliner_sets,
-          "nested": phase_nested, "pasted": phase_pasted, "cameras": phase_cameras,
+          "nested": phase_nested, "pasted": phase_pasted, "strays": phase_strays, "cameras": phase_cameras,
           "leak": phase_leak, "stash_open": phase_stash_open, "maya_open": guarded(phase_maya_open), "camera_keys": phase_camera_keys}
 
 

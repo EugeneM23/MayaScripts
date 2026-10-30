@@ -1596,7 +1596,7 @@ class Evaluated(unittest.TestCase):
         calls = []
 
         class Walk(object):
-            def evaluate(self, knobs, pose):
+            def evaluate(self, knobs, pose, weapons=None):
                 calls.append(dict(knobs))
                 return object()
         walk = Walk()

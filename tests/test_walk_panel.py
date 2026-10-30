@@ -1268,7 +1268,7 @@ class EvaluatedTests(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def evaluate(self, knobs=None, pose=None):
+            def evaluate(self, knobs=None, pose=None, weapons=None):
                 self.calls += 1
                 return ("result", self.calls)
         return Walk()

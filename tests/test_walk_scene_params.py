@@ -28,8 +28,9 @@ class FakeCmds(object):
 
 
 class Patched(unittest.TestCase):
-    NAMES = ("_cmds", "load_walk", "read_bones", "evaluated", "channel_values", "write_curves", "keys_print",
-             "_set_memo", "walk_fix", "walk_keys", "_Chunk", "_state", "walker_edits", "edits_of", "set_edits")
+    NAMES = ("_cmds", "load_walk", "read_bones", "evaluated", "weapons_in_hands", "channel_values",
+             "write_curves", "keys_print", "_set_memo", "walk_fix", "walk_keys", "_Chunk", "_state",
+             "walker_edits", "edits_of", "set_edits")
 
     def setUp(self):
         self.saved = dict((n, getattr(scene, n)) for n in self.NAMES)
@@ -173,10 +174,11 @@ class Apply(Patched):
         self.evaluated = []
         self.written = {}
         scene.read_bones = lambda root: ({}, "")
+        scene.weapons_in_hands = lambda root, commands=None: {}
         scene.wt.Retarget = FakeRetarget
         real = scene.evaluated
 
-        def evaluated(walk, knobs, pose, prepared=None, parts=()):
+        def evaluated(walk, knobs, pose, prepared=None, parts=(), weapons=None):
             self.evaluated.append(dict(knobs))
             return real(walk, knobs, pose, prepared, parts)
         scene.evaluated = evaluated

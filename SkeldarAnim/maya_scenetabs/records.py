@@ -355,6 +355,33 @@ def foreign_camera(path, namespace, tabs):
     return owner != namespace and owner in set(tabs or ())
 
 
+def tab_of_path(path, tabs):
+    """The tab a node path belongs to: its top DAG component's namespace, else
+    the node's own, when that is a tab; else None. Pure."""
+    tabs = set(tabs or ())
+    parts = [p for p in (path or "").split("|") if p]
+    for part in (parts[:1] + parts[-1:]):
+        head = part.lstrip(":").split(":")[0]
+        if ":" in part.lstrip(":") and head in tabs:
+            return head
+    return None
+
+
+def stray_owner(path, related, tabs):
+    """The one tab a ROOT-namespace node belongs to: every tab among its own path
+    and the paths of the nodes it feeds is the same one. A key made while the
+    root namespace was current, or a curve Maya renamed when it built a layer,
+    lands in the root and makes every other tab's save refuse on its name
+    («the scene already holds a node named FKElbow_L_rotateX», 2026-10-20).
+    None for a node no tab owns or several share. Pure."""
+    owners = set()
+    for name in [path] + list(related or ()):
+        tab = tab_of_path(name, tabs)
+        if tab:
+            owners.add(tab)
+    return owners.pop() if len(owners) == 1 else None
+
+
 # ------------------------------------------------------------------ the session
 
 def empty_state():

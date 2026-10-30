@@ -116,6 +116,12 @@ KNOBS = (
     ("arm_overlap", 0.0, -120.0, 120.0),
     ("elbow_overlap", 0.0, -120.0, 120.0),
     ("hand_overlap", 0.0, -120.0, 120.0),
+    # The weapon's overlap (2026-10-30): a weapon held in a hand swung about its GRIP so its blade aims at its
+    # own tip read this many frames earlier - the animator's own recipe (the hands IK'd to the weapon, Tools'
+    # Aim target on the tip, the tip's baked animation shifted) - with every hand holding it turned along, so
+    # a two-handed hold is kept. Per side; one weapon in two hands takes the sides' mean. It needs the weapon
+    # the SCENE holds (evaluate's `weapons`): with none it does nothing
+    ("weapon_overlap", 0.0, -120.0, 120.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -168,7 +174,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "elbow_overlap", "hand_overlap", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -634,6 +640,53 @@ def shifted_cycle(mats, lag):
         a = g - math.floor(g)
         out[f, :3, :3] = rots[lo] @ exp_rot(a * log_rot(rots[lo].T @ rots[hi]))
         out[f, 3, :3] = (1.0 - a) * place[lo] + a * place[hi] + per * f
+    return out
+
+
+def shifted_points(pts, lag):
+    """A cycle of world points (n+1, 3) - its last frame its first moved by the cycle's travel - read `lag`
+    frames earlier: shifted_cycle's place half, and it answers the same places. The linear travel is taken
+    out for the shift and put back at each frame, so the result is a cycle again and a travelling cycle does
+    not leave the shifted point behind; a fractional lag lerps between the two frames it lies between.
+    lag 0: the input, point for point. The weapon's tip path Weapon overlap aims at."""
+    if not lag:
+        return np.array(pts)
+    pts = np.asarray(pts, float)
+    n = pts.shape[0] - 1
+    per = (pts[n] - pts[0]) / float(n)
+    place = np.array([pts[f] - per * f for f in range(n)])
+    out = np.zeros((n + 1, 3))
+    for f in range(n + 1):
+        g = (f - lag) % n
+        lo = int(math.floor(g)) % n
+        hi = (lo + 1) % n
+        a = g - math.floor(g)
+        out[f] = (1.0 - a) * place[lo] + a * place[hi] + per * f
+    return out
+
+
+def aim_swing(a, b):
+    """The minimal row-vector rotation (3x3) taking the direction `a` onto `b` - a swing with no twist, so a
+    blade swung by it keeps the roll it had. The identity where the two already agree or either is too short
+    to read; about any perpendicular where they are opposite."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if float(np.linalg.norm(a)) < 1e-9 or float(np.linalg.norm(b)) < 1e-9:
+        return np.eye(3)
+    a, b = _unit(a), _unit(b)
+    axis = _cross3(a, b)
+    s, c = float(np.linalg.norm(axis)), float(np.dot(a, b))
+    if s < 1e-12:
+        return np.eye(3) if c > 0.0 else exp_rot(_any_perpendicular(a) * math.pi)
+    return exp_rot(axis / s * math.atan2(s, c))
+
+
+def swung_about(origin, rot):
+    """The world turn `rot` (3x3) about the point `origin`, as a 4x4: a point p maps to (p - o) . rot + o
+    (row vectors), so `origin` itself is held and everything else swings about it."""
+    o = np.asarray(origin, float)
+    out = np.eye(4)
+    out[:3, :3] = rot
+    out[3, :3] = o - o @ rot
     return out
 
 
@@ -2660,10 +2713,12 @@ class Walk(object):
             lo, hi = (mid, hi) if eaten(straight, mid) <= target else (lo, mid)
         return straight, 1.0 - (1.0 - lo) * k["height_step"]
 
-    def evaluate(self, given=None, pose=None, _drop_only=False):
+    def evaluate(self, given=None, pose=None, weapons=None, _drop_only=False):
         """The cycle rebuilt from knobs (the spec's model); own_knobs() give the source back. `pose` (from
         walkpose.prepare: {"spine": {joint: local 3x3}, "head": 3x3, "pelvis": 3x3, "height": cm over the
-        travel line, "knee_turn": {side: radians}}) replaces the mean pose the knob `pose`'s share."""
+        travel line, "knee_turn": {side: radians}}) replaces the mean pose the knob `pose`'s share.
+        `weapons` (from scene.weapons_in_hands: {side: {"grip": (3,), "tip": (3,)}} in the holding hand's own
+        frame) is what Weapon overlap swings: with none that knob does nothing."""
         k = asked = knobs(**(given or {}))
         if _drop_only:                      # the Height plan's own trials (_height_plan): the drop, nothing more
             height_straighten, height_scale = k["height_straighten"], 1.0
@@ -2678,7 +2733,8 @@ class Walk(object):
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
                "phi0": self.low_phase + (WEIGHT_WARP_AFTER - 0.25) / self.strides,
                "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"],
-               "balance": 0.0 if self.balance_note else k["balance"], "carry": None}
+               "balance": 0.0 if self.balance_note else k["balance"], "carry": None,
+               "weapons": dict(weapons or {})}
         # Leg match: the pose's stance read against its own hips and the gait (matched_pose)
         keep, froude = self.gait_keep(k, n)
         match = k["leg_match"] if ctx["pose"] is not None else 0.0
@@ -2750,6 +2806,8 @@ class Walk(object):
                              or abs(ks[s]["arm_overlap"]) >= OVERLAP_QUIET
                              or abs(ks[s]["elbow_overlap"]) >= OVERLAP_QUIET
                              or abs(ks[s]["hand_overlap"]) >= OVERLAP_QUIET
+                             or (abs(ks[s]["weapon_overlap"]) >= OVERLAP_QUIET
+                                 and s in (ctx.get("weapons") or {}))
                              for s in SIDES)
             swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
@@ -3647,22 +3705,32 @@ class Walk(object):
         own TURN at L + h while its place stays at L (under a grip it is the HELD thing's turn that lags its
         travel, so the hold is kept to machine precision and the other hand swings round it), and Elbow
         overlap reads the elbow's bend PLANE at L + e (per arm, and free under a grip - it moves no hand).
+        Weapon overlap (2026-10-30) then swings the weapon the scene holds (ctx["weapons"]) about its grip
+        onto its own tip read that much earlier, and turns every hand holding it along (_weapon_swing).
         Returns what it did (info["arms"]["overlap"])."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
         lags = dict((side, float(ks[side]["arm_overlap"])) for side in chains)
         elbows = dict((side, float(ks[side]["elbow_overlap"])) for side in chains)
         turns = dict((side, float(ks[side]["hand_overlap"])) for side in chains)
+        held = dict((side, w) for side, w in (ctx.get("weapons") or {}).items() if side in chains)
+        swings = dict((side, float(ks[side]["weapon_overlap"])) for side in held)
         pose = ctx["pose"]
         grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
         if grip:                      # hands holding one thing move as one: the two sides' mean
             for table in (lags, turns):
                 mean = sum(table.values()) / float(len(table))
                 table.update(dict((side, mean) for side in table))
+            if len(swings) == 1:      # one weapon in two hands: its lag is the two sides' mean too
+                side = list(swings)[0]
+                swings[side] = sum(float(ks[s]["weapon_overlap"]) for s in chains) / float(len(chains))
+        swings = dict((side, v) for side, v in swings.items() if abs(v) >= OVERLAP_QUIET)
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
-        out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip}
-        if not chains or max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET:
-            out["frames"] = out["elbow"] = out["hand"] = 0.0
+        out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
+               "weapon": biggest(swings), "weapon_sides": sorted(swings), "weapon_cm": 0.0}
+        if not chains or max(out["frames"], out["elbow"], out["hand"], out["weapon"]) < OVERLAP_QUIET:
+            out["frames"] = out["elbow"] = out["hand"] = out["weapon"] = 0.0
+            out["weapon_sides"] = []
             return out
         kin = worlds.copy()
 
@@ -3685,6 +3753,8 @@ class Walk(object):
             for side, chain in chains.items():
                 if max(abs(lags[side]), abs(turns[side]), abs(elbows[side])) >= OVERLAP_QUIET:
                     hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
+        if swings:
+            out["weapon_cm"] = self._weapon_swing(kin, n, chains, hands, swings, held, grip)
         hints = {}
         for side, chain in chains.items():
             if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
@@ -3692,6 +3762,34 @@ class Walk(object):
                                         lags[side] + elbows[side])
         self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands, hints), only)
         return out
+
+    def _weapon_swing(self, kin, n, chains, hands, swings, held, grip):
+        """Weapon overlap, in place on `hands`: each weapon held in a hand (`held` {side: {"grip", "tip"} in
+        that hand's own frame}) swung about its GRIP so its blade aims at its own tip read `swings[side]`
+        frames earlier. The tip path is read off the ASSEMBLY as the other knobs have left it, so a lag of 0
+        is a no-op whatever they did and the aim is always where the blade really points. Every hand holding
+        that weapon takes the same swing - its own, and the other one too under a two-handed grip where that
+        hand holds no weapon of its own - so a two-handed hold is kept to machine precision. Returns the
+        most a tip moved, cm (the status line's "its tip N cm behind")."""
+        moved = 0.0
+        for side, lag in sorted(swings.items()):
+            grip_p = np.asarray(held[side]["grip"], float)
+            tip_p = np.asarray(held[side]["tip"], float)
+            riders = [side] + [s for s in sorted(chains) if s != side and grip and s not in held]
+            for s in riders:
+                if s not in hands:                 # a hand with no lag of its own joins at the frames' own
+                    hands[s] = np.array(kin[chains[s][-1]])
+            mats = hands[side]
+            place = lambda p, m: p @ m[:3, :3] + m[3, :3]
+            o = np.array([place(grip_p, m) for m in mats])
+            t = np.array([place(tip_p, m) for m in mats])
+            want = shifted_points(t, lag)
+            for f in range(n + 1):
+                turn = swung_about(o[f], aim_swing(t[f] - o[f], want[f] - o[f]))
+                for s in riders:
+                    hands[s][f] = hands[s][f] @ turn
+                moved = max(moved, float(np.linalg.norm(place(tip_p, hands[side][f]) - t[f])))
+        return moved
 
     def _grip_motion(self, kin, n, chains, w0, zeta, S):
         """Two hands holding one thing: the right hand carries it - its world turn and place trail their
@@ -3853,6 +3951,9 @@ def describe(result):
         text += " | %s %.1f frames behind the body%s" % (
             "the held weapon trails" if a["grip"] else "the arms trail", a["drag"],
             ", bouncing" if a["bounce"] > 0.05 else "")
+    swung = (info.get("arms") or {}).get("overlap") or {}
+    if swung.get("weapon"):
+        text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
     return text + placement_line(info) + balance_line(info)
 
 

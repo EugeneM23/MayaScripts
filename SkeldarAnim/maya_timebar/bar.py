@@ -1456,6 +1456,7 @@ def classes():
                 start = self._frame(x, t)
                 self.drag = ("hl", start, t)
                 s["highlight"] = (start, start)
+                st.lanes_unhighlight()
                 self.update()
                 return
             part = look.highlight_hit(t, x, s.get("highlight"), st.ui)
@@ -1625,6 +1626,7 @@ def classes():
                 return False
             s["highlight"] = sel
             st.call("set_highlight", sel)
+            st.lanes_unhighlight()
             self.update()
             return True
 
@@ -2445,6 +2447,19 @@ def classes():
                     on_time()
                 except Exception:                            # noqa: BLE001
                     print(traceback.format_exc())
+
+        def lanes_unhighlight(self):
+            """A highlight made on the timeline takes the layer lanes' own away, or S
+            keyed the lanes' block instead of the timeline's (2026-10-20: «если мы
+            выделяем что-то на тайм слайдере то выделение на выдвижной панели слоев не
+            должно работать»)."""
+            panel = self.layer_panel
+            if panel is None or not getattr(panel, "lane_sel", None):
+                return
+            try:
+                panel.lane_clear()
+            except Exception:                                # noqa: BLE001
+                print(traceback.format_exc())
 
         def _lanes_moving(self):
             """A key drag on the layer panel's lanes stands: the strip reads no keys."""

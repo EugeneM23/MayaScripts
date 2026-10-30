@@ -232,7 +232,7 @@ def _save_tab(namespace, path, adopt, preserve_references):
     recording = cmds.undoInfo(q=True, stateWithoutFlush=True)
     selection = cmds.ls(selection=True, uuid=True) or []
     current = cmds.namespaceInfo(currentNamespace=True) or ":"
-    moved, links, folded, outside = None, [], [], []
+    moved, links, folded, outside, strays = None, [], [], [], []
     cmds.undoInfo(stateWithoutFlush=False)
     failures = []           # cleanup steps that raised; the export's own error wins
 
@@ -254,6 +254,11 @@ def _save_tab(namespace, path, adopt, preserve_references):
             #  a paste from another tab nested that tab's namespace here: folded for good, the
             #  file holds the pasted nodes as the tab's own (2026-10-16)
             folded = session.fold_pasted(namespace, [t["ns"] for t in state["tabs"]])
+            #  a tab's node left in the root namespace blocks every other tab's lift by its
+            #  name, and a session node another session's file brought blocks this one's
+            #  (2026-10-20): both go home before anything is lifted
+            strays = session.adopt_strays([t["ns"] for t in state["tabs"]])
+            session.drop_session_copies(namespace)
             _config(namespace, ranges)
             #  a layer of the tab Maya hung on the session root goes under the tab's (for good)
             layers.adopt_strays(namespace)
@@ -298,6 +303,8 @@ def _save_tab(namespace, path, adopt, preserve_references):
                                      records.range_text(ranges))
     if folded:
         message += " | nodes pasted from %s are this tab's own now" % ", ".join(folded)
+    if strays:
+        message += " | %d node(s) left outside the tabs moved home" % len(strays)
     return message
 
 

@@ -216,6 +216,54 @@ def fold_pasted(namespace, tabs=()):
     return folded
 
 
+def adopt_strays(tabs):
+    """Every root-namespace node that belongs to one tab (`records.stray_owner`: its
+    DAG path is in the tab, or every tab node it feeds is that tab's) renamed into
+    that tab, for good. Maya's default, read-only, startup and session nodes, a
+    referenced or locked node are left. Returns (old, new) pairs."""
+    tabs = list(tabs or ())
+    if not tabs:
+        return []
+    skip = _skipped()
+    moved = []
+    for path in cmds.ls(long=True) or []:
+        if ":" in path.split("|")[-1]:
+            continue
+        uid = (cmds.ls(path, uuid=True) or [None])[0]
+        if uid is None or uid in skip or cmds.referenceQuery(path, isNodeReferenced=True):
+            continue
+        if cmds.lockNode(path, q=True, lock=True)[0]:
+            continue
+        kind = cmds.nodeType(path)
+        if kind == "reference" or records.is_furniture(_leaf(path), kind):
+            continue
+        #  what it feeds and what feeds it: a node between two tabs is no one's
+        near = cmds.listConnections(path, source=True, destination=True) or []
+        related = [(cmds.ls(n, long=True) or [n])[0] for n in near]
+        owner = records.stray_owner(path, related, tabs)
+        if not owner:
+            continue
+        try:
+            new = cmds.rename(path, ":%s:%s" % (owner, _leaf(path)), ignoreShape=True)
+        except RuntimeError:
+            continue
+        moved.append((_leaf(path), new))
+    return moved
+
+
+def drop_session_copies(namespace):
+    """A session node a tab's FILE brought (a colleague's tabbed scene sent through
+    Shared, 2026-10-20) deleted: the session's own name inside the tab makes the
+    tab's save refuse, and it says nothing about this session. Returns the count."""
+    count = 0
+    for node in typed(namespace, "network"):
+        if cmds.attributeQuery(records.SESSION_ATTR, node=node, exists=True):
+            cmds.lockNode(node, lock=False)
+            cmds.delete(node)
+            count += 1
+    return count
+
+
 # ------------------------------------------------------------------ moving
 
 class Moved(object):

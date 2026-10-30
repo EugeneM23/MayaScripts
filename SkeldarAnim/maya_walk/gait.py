@@ -110,11 +110,11 @@ def _fixed(lo, hi):
     return lambda b, leg: (lo, hi)
 
 
-MAIN, TIMING, PELVIS, LEGS, TRUNK, HEAD, ARMS, PHYSICS = ("main", "timing", "pelvis", "legs", "trunk", "head",
-                                                         "arms", "physics")
-GROUPS = (MAIN, TIMING, PELVIS, LEGS, TRUNK, HEAD, ARMS, PHYSICS)
+MAIN, TIMING, PELVIS, LEGS, TRUNK, HEAD, ARMS, WEAPON, PHYSICS = (
+    "main", "timing", "pelvis", "legs", "trunk", "head", "arms", "weapon", "physics")
+GROUPS = (MAIN, TIMING, PELVIS, LEGS, TRUNK, HEAD, ARMS, WEAPON, PHYSICS)
 GROUP_LABELS = {MAIN: "Main", TIMING: "Timing", PELVIS: "Pelvis", LEGS: "Legs", TRUNK: "Trunk", HEAD: "Head",
-                ARMS: "Arms", PHYSICS: "Physics"}
+                ARMS: "Arms", WEAPON: "Weapon", PHYSICS: "Physics"}
 PARAMS = (
     Param("tempo", MAIN, "Tempo", "fr", "size", rule=_share(0.5, 2.0),
           tip="Frames a step: fewer is quicker (the steps a minute and the speed beside it)"),
@@ -230,6 +230,13 @@ PARAMS = (
           tip="Frames the elbow's bend comes after the arm's forward swing"),
     Param("hand_lag", ARMS, "Hand lag", "fr", "added", sided=True, rule=_fixed(-5.0, 8.0),
           tip="Frames the hand comes after the forearm"),
+    # the weapon
+    Param("weapon_overlap", WEAPON, "Weapon overlap", "ms", "added", sided=True,
+          rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
+          tip="The weapon in the hands swung about its grip so its blade points at its own tip this many "
+              "milliseconds ago - the sword's tip trails and the blade leads back to it, with the hands "
+              "holding it turning along (a two-handed hold is kept). It needs a weapon in a hand: the "
+              "Inventory's Equip puts one there. The slider reaches half the cycle either way"),
     # the physics
     Param("whip", PHYSICS, "Whip", "", "added", rule=_fixed(0.0, 1.0), default=0.3,
           tip="The arms, the trunk and the head overshoot as they catch up with the body (springs whose stride "
@@ -817,6 +824,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["arm_overlap" + sfx] = sv("arm_overlap") * fps / 1000.0      # ms -> frames of the new cycle (own 0)
         e["elbow_overlap" + sfx] = sv("elbow_overlap") * fps / 1000.0  # the cascade, on top of that L (own 0)
         e["hand_overlap" + sfx] = sv("hand_overlap") * fps / 1000.0
+        e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0   # the weapon's aim, ms -> frames
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))
@@ -1178,8 +1186,8 @@ def ranges(own_values, leg, walk=None):
                 lo = max(lo, a) if a is not None else lo
                 hi = min(hi, b) if b is not None else hi
                 out[key] = (min(lo, hi), hi)
-        cap = overlap_cap(walk)       # Arm overlap and its cascade: half the cycle either way
-        for name in ("arm_overlap", "elbow_overlap", "hand_overlap"):
+        cap = overlap_cap(walk)       # Arm overlap, its cascade and the weapon's: half the cycle either way
+        for name in ("arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap"):
             for key in [name + "_" + s for s in SIDES] + [name]:
                 out[key] = (-cap, cap)
     top = step_top(own_values, leg)
