@@ -215,6 +215,16 @@ PARAMS = (
           tip="The whole arm late by this many milliseconds - its own swing and everything it takes from the "
               "body (the chest's turn, the shoulder's bob); a hand holding a weapon takes the weapon with it. "
               "The slider reaches half the cycle either way - past that a lag comes back on itself"),
+    Param("elbow_overlap", ARMS, "Elbow overlap", "ms", "added", sided=True,
+          rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
+          tip="The elbow's orbit about the shoulder-wrist line late by this many milliseconds, on top of Arm "
+              "overlap - the hand stays where Arm overlap puts it and the bones keep their lengths, so this "
+              "is a late orbit of the elbow, not a late bend. Free under a two-handed grip"),
+    Param("hand_overlap", ARMS, "Hand overlap", "ms", "added", sided=True,
+          rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
+          tip="The hand's own turn late by this many milliseconds, on top of Arm overlap - its place stays "
+              "where Arm overlap puts it, so this is the wrist breaking late. Under a two-handed grip it is "
+              "the weapon's own turn that lags its travel, and the hold is kept"),
     Param("elbow_lag", ARMS, "Elbow lag", "fr", "offset", sided=True, rule=_about(6.0, 8.0),
           tip="Frames the elbow's bend comes after the arm's forward swing"),
     Param("hand_lag", ARMS, "Hand lag", "fr", "added", sided=True, rule=_fixed(-5.0, 8.0),
@@ -804,6 +814,8 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
             e["arm_swing_add" + sfx] = sv("arm_swing") - so("arm_swing")
         e["arm_lag" + sfx] = sv("arm_lag") - so("arm_lag")
         e["arm_overlap" + sfx] = sv("arm_overlap") * fps / 1000.0      # ms -> frames of the new cycle (own 0)
+        e["elbow_overlap" + sfx] = sv("elbow_overlap") * fps / 1000.0  # the cascade, on top of that L (own 0)
+        e["hand_overlap" + sfx] = sv("hand_overlap") * fps / 1000.0
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))
@@ -1165,9 +1177,10 @@ def ranges(own_values, leg, walk=None):
                 lo = max(lo, a) if a is not None else lo
                 hi = min(hi, b) if b is not None else hi
                 out[key] = (min(lo, hi), hi)
-        cap = overlap_cap(walk)       # Arm overlap: half the cycle either way
-        for key in ["arm_overlap_" + s for s in SIDES] + ["arm_overlap"]:
-            out[key] = (-cap, cap)
+        cap = overlap_cap(walk)       # Arm overlap and its cascade: half the cycle either way
+        for name in ("arm_overlap", "elbow_overlap", "hand_overlap"):
+            for key in [name + "_" + s for s in SIDES] + [name]:
+                out[key] = (-cap, cap)
     top = step_top(own_values, leg)
     if top is not None:
         lo, hi = out["step"]

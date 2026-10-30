@@ -503,13 +503,57 @@ class ParameterTests(unittest.TestCase):
         self.assertIn("arm_overlap", gait.keys())
         self.assertIn("arm_overlap_l", gait.keys())
         names = [q.name for q in gait.PARAMS if q.group == gait.ARMS]
-        self.assertEqual(names[names.index("arm_overlap") + 1], "elbow_lag")
+        self.assertEqual(names[names.index("arm_overlap") + 1], "elbow_overlap")
         self.assertEqual(names[names.index("arm_overlap") - 1], "shoulders")
         self.assertNotIn("arm_overlap", [q.name for q in gait.PARAMS if q.group == gait.MAIN])
 
     def test_nothing_was_deleted(self):
         for name in ("arm_lag", "elbow_lag", "hand_lag", "elbow", "arms_forward", "shoulders"):
             self.assertIn(name, gait.P, name)
+
+    def test_the_cascade_sits_with_the_arm_in_ms(self):
+        """Elbow overlap and Hand overlap right after Arm overlap: three in one family, and the old lag knobs
+        (frames) after them, told apart by their unit and their word."""
+        names = [q.name for q in gait.PARAMS if q.group == gait.ARMS]
+        self.assertEqual(names[names.index("arm_overlap") + 1], "elbow_overlap")
+        self.assertEqual(names[names.index("arm_overlap") + 2], "hand_overlap")
+        self.assertEqual(names[names.index("arm_overlap") + 3], "elbow_lag")
+        for name, label in (("elbow_overlap", "Elbow overlap"), ("hand_overlap", "Hand overlap")):
+            p = gait.P[name]
+            self.assertEqual((p.group, p.label, p.unit, p.kind, p.sided),
+                             (gait.ARMS, label, "ms", "added", True))
+            self.assertIn(name, gait.keys(), name)
+            self.assertIn(name + "_l", gait.keys(), name)
+
+    def test_the_cascades_own_is_zero_and_its_slider_reaches_half_the_cycle(self):
+        half = 1000.0 * self.w.P / self.w.fps / 2.0
+        got = gait.ranges(self.own, self.w.leg_length, self.w)
+        for name in ("elbow_overlap", "hand_overlap"):
+            for key in (name, name + "_l", name + "_r"):
+                self.assertEqual(gait.own_value(self.own, key), 0.0, key)
+                self.assertEqual(got[key], (-half, half), key)
+            self.assertEqual(gait.ranges(self.own, self.w.leg_length)[name],
+                             (-gait.OVERLAP_MAX, gait.OVERLAP_MAX), name)
+
+    def test_the_cascades_ms_become_frames_at_the_output_rate(self):
+        for name in ("elbow_overlap", "hand_overlap"):
+            vals = gait.values(self.own, {name: ("offset", 150.0)})
+            at30 = gait.engine_knobs(self.w, self.own, vals, fps_out=30.0)
+            at24 = gait.engine_knobs(self.w, self.own, vals, fps_out=24.0)
+            self.assertAlmostEqual(at30[name + "_l"], 4.5, places=6, msg=name)
+            self.assertAlmostEqual(at30[name + "_r"], 4.5, places=6, msg=name)
+            self.assertAlmostEqual(at24[name + "_l"], 3.6, places=6, msg=name)
+
+    def test_the_cascade_one_side_alone_and_zero_asking_nothing(self):
+        for name in ("elbow_overlap", "hand_overlap"):
+            e = gait.engine_knobs(self.w, self.own,
+                                  gait.values(self.own, {name + "_l": ("offset", 90.0)}), fps_out=30.0)
+            self.assertAlmostEqual(e[name + "_l"], 2.7, places=6, msg=name)
+            self.assertAlmostEqual(e[name + "_r"], 0.0, places=6, msg=name)
+        e = gait.engine_knobs(self.w, self.own, gait.values(self.own, {}), fps_out=30.0)
+        for name in ("elbow_overlap", "hand_overlap"):
+            for s in ("l", "r"):
+                self.assertAlmostEqual(e.get(name + "_" + s, 0.0), 0.0, places=9, msg=name)
 
     def test_its_own_is_zero_and_the_slider_reaches_half_the_cycle(self):
         self.assertEqual(gait.own_value(self.own, "arm_overlap"), 0.0)
