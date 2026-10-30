@@ -16253,6 +16253,29 @@ cut of the two sections above** for the arm and the body; the head is unchanged.
   `verify_part_drop.py` all.
 - The Arm R portrait still shows the shoulder arm (a GUI Maya renders it).
 
+## BaseAnimation selected whenever no layer is (2026-10-27, 2026-10-30)
+
+«перевір чому не працює авто кі»: autokey was on, the arm's FK controls on the MUTED additive
+`_3P_Upper_Body`, no animation layer selected. Maya keys (autokey and S alike) into its own "best" layer
+then - the muted one: the key landed there and the pose snapped back. Measured in mayapy, in a tab and in
+a plain file: nothing selected or a tab's holder selected - the muted layer; the root selected - the base.
+`maya_scenetabs/keylayer.py` (installed with the hooks): on `animLayerRefresh` (a deselect ends in it,
+measured live), a scene opened and a new scene, one idle later, no layer selected -> the root clicked
+through `animLayerEditorOnSelect` (the session's while tabs are on: the editor's BaseAnimation). Live on
+7003: deselected, back on BaseAnimation a moment later.
+
+**2026-10-30, the same words again («перевір чому не ставляться авто кі»), the holder case.** In a 1P
+tab the selected AND preferred layer was `<tab>:AnimLayerRoot` - a file's BaseAnimation keeps its
+selection when it comes into a tab, but there it is a plain layer with no channel, and the Layer
+Editor hides it, so nothing looked selected. `animLayer -q -bestAnimLayer` on `PoleArm_R` answered
+`_3P_Upper_Body` (muted by 1P Setup); a scripted move under autokey changed only that layer's
+`inputB`. The first fix saw a selection and did nothing. A tab's own root (`keylayer.holders`: an
+`AnimLayerRoot` on the root) now counts as nothing selected: every selected layer is let go first -
+`animLayerEditorOnSelect` only walks the layers our `buildAnimLayerArray` lists, and the holder is
+not one - then the root is clicked. Live in the animator's Maya: selected
+`[tab_…:AnimLayerRoot]` -> `[skeldarTabsLayerRoot]`, best layer the root alone, a move under autokey
+keyed `inputA` and held through a time change; a second `ensure` did nothing.
+
 ## 1P Setup: the game's crosshair in the camera (2026-10-28)
 
 «додай його в сетап 1П. Щоб одразу з побудовою системи 1п з'являвся приціл в камері». Atone draws its

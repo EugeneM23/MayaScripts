@@ -329,6 +329,11 @@ def install(force=False):
             savechanges.install()           # no «save changes?» before an open that goes into a tab
         except Exception:                                       # noqa: BLE001
             print(traceback.format_exc())
+        try:
+            from . import keylayer
+            keylayer.install()              # BaseAnimation selected when no layer is: keys never go to a muted one
+        except Exception:                                       # noqa: BLE001
+            print(traceback.format_exc())
     return True
 
 
