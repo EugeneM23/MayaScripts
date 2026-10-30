@@ -174,7 +174,7 @@ class Apply(Patched):
         self.evaluated = []
         self.written = {}
         scene.read_bones = lambda root: ({}, "")
-        scene.weapons_in_hands = lambda root, commands=None: {}
+        scene.weapons_in_hands = lambda root: {}
         scene.wt.Retarget = FakeRetarget
         real = scene.evaluated
 

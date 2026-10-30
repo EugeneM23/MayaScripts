@@ -265,7 +265,7 @@ def read_bones(root):
 WEAPON_HANDS = {"l": "hand_l", "r": "hand_r"}    # the hands Weapon overlap looks in
 
 
-def weapons_in_hands(root, commands=None):
+def weapons_in_hands(root):
     """{side: {"grip": (3,), "tip": (3,)}} - what Weapon overlap swings (model._weapon_swing): every weapon
     the SCENE holds in a hand of the walker under `root`, as two points in that hand's own frame - the
     weapon's own origin (the grip) and the farthest end of its longest axis (the tip), the plugin's blade
@@ -277,13 +277,13 @@ def weapons_in_hands(root, commands=None):
     floor, in Connections' World, hung in a 1P chest) is in no hand and is left out, and so is a hand this
     skeleton has not got. {} where the scene holds no weapon of ours, or the plugin's weapon modules are not
     importable."""
-    cmds = commands or _cmds()
+    cmds = _cmds()
     try:
         from maya_scenesetup import bonedrive, weaponspace, aim as weaponaim
         import maya_markers
     except ImportError:
         return {}
-    marked = maya_markers.find(bonedrive.MARKER, "transform", commands=cmds)
+    marked = maya_markers.find(bonedrive.MARKER, "transform")
     if not marked:
         return {}
     joints = cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []
