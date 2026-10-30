@@ -316,6 +316,11 @@ class TreeView(QtWidgets.QGraphicsView):
         if fn:
             fn(node_id, view)
 
+    def export(self, node_id, view):
+        fn = self.actions.get("export")
+        if fn:
+            fn(node_id, view)
+
     def menu_rows(self, node):
         """The right button's rows for a card: (label, callable) or None."""
         rows = []
@@ -323,6 +328,13 @@ class TreeView(QtWidgets.QGraphicsView):
             slot = m.slot_of(self.graph, node.id, v)
             rows.append(("Open {0} montage ({1})".format(v.upper(), slot or "no slot"),
                          (lambda v=v: self.open(node.id, v)) if slot else None))
+        rows.append(None)
+        for v in m.VIEWS:
+            #  a slot it does not play cannot be written into; whether the one
+            #  it plays CAN be is the plan's own answer, said on the press
+            slot = m.slot_of(self.graph, node.id, v)
+            rows.append(("Export the scene into {0} ({1})".format(v.upper(), slot or "no slot"),
+                         (lambda v=v: self.export(node.id, v)) if slot else None))
         return rows
 
     def menu(self, node, point):

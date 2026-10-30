@@ -23,6 +23,7 @@ MODE_MENU = "skeldarMovesetMode"
 CHIP = "skeldarMovesetType_{0}"
 PLACE = "skeldarMovesetTree"
 OPEN = "skeldarMovesetOpen{0}"
+EXPORT = "skeldarMovesetExport{0}"
 FRAME_BTN = "skeldarMovesetFrame"
 STATUS = "skeldarMovesetStatus"
 TREE_HEIGHT = 470
@@ -100,6 +101,17 @@ def build_panel():
                               annotation="Fit the trees' width; read the files again",
                               command=lambda *_a: reload(frame=True)), "secondary", "refresh")
     cmds.setParent("..")
+
+    row = cmds.rowLayout(numberOfColumns=2)
+    hubstyle.mark(row, "fill", layout=True)
+    for key in m.VIEWS:
+        hubstyle.mark(cmds.button(EXPORT.format(key), label="Export {0}".format(key.upper()),
+                                  height=hubstyle.height("button", 30),
+                                  annotation="The scene's take back into the animations the "
+                                             "picked attack's {0} slot plays - one confirm "
+                                             "names them".format(key.upper()),
+                                  command=_press_export(key)), "secondary", "upload")
+    cmds.setParent("..")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", height=36, wordWrap=True), "status")
     cmds.setParent("..")
     attach()
@@ -131,6 +143,7 @@ def attach():
             "weapon": None,
             "roots": [], "mtime": 0.0, "host": host}
     actions = {"open": lambda i, v, c=card: _say(c, open_slot(c["view"].graph, i, v)),
+               "export": lambda i, v, c=card: _say(c, export_slot(c["view"], i, v)),
                "picked": lambda i, c=card: _say(c, picked_line(c["view"], i))}
     view = treeview.TreeView(host, actions)
     card["view"] = view
@@ -309,6 +322,28 @@ def picked_line(view, node_id):
     length = node.get("montageLength") or node.get("duration")
     return "{0} - {1}{2}".format(m.label(node_id, view.state["custom"]), slots,
                                  ", {0:.2f} s".format(length) if length else "")
+
+
+def _press_export(key):
+    return lambda *_a: export_picked(key)
+
+
+def export_picked(view_key):
+    card = _card()
+    if not card:
+        return
+    view = card["view"]
+    if not view.picked_id:
+        _say(card, "Pick an attack in the tree first")
+        return
+    _say(card, export_slot(view, view.picked_id, view_key))
+
+
+def export_slot(view, node_id, view_key):
+    """The scene's take back into the animations the attack's `view_key` slot
+    plays. Returns the status line; every refusal is the export's own."""
+    from maya_moveset import export
+    return export.export_slot(view.graph, node_id, view_key, view.label(node_id))
 
 
 def open_picked(view_key):

@@ -120,7 +120,7 @@ def plan(graph, node_id, view, fps):
 
 ---
 
-### Task 3: the press and the two buttons
+### Task 3: the press and the two buttons — DONE
 
 **Files:**
 - Modify: `SkeldarAnim/maya_moveset/export.py` (the scene half), `SkeldarAnim/maya_moveset/panel.py`
@@ -136,13 +136,13 @@ def plan(graph, node_id, view, fps):
 - Produces: `export_slot(graph, node_id, view, label, asks=None) -> str` (the status line);
   `panel.export_picked(view)`; `panel.EXPORT = "skeldarMovesetExport{0}"`.
 
-- [ ] **Step 1: the press** — refusals first (the plan's, then `resolve_root`'s), then ONE confirm
+- [x] **Step 1: the press** — refusals first (the plan's, then `resolve_root`'s), then ONE confirm
       listing every sequence and what a replace-import throws away, then per piece: the FBX, the flag,
       the reimport. A failure stops and names what was already written.
-- [ ] **Step 2: the card** — `Export 3P` (secondary) and `Export 1P` in a row under Open 3P / Open 1P /
+- [x] **Step 2: the card** — `Export 3P` (secondary) and `Export 1P` in a row under Open 3P / Open 1P /
       Fit, and the same two rows in the right-button menu (`view.menu_rows`, `actions["export"]`).
-- [ ] **Step 3: the bridge's accessor** — `window.content_dir()`, and its own uasset press uses it.
-- [ ] **Step 4: Run** `mayapy -m unittest tests.test_moveset_model tests.test_moveset_view
+- [x] **Step 3: the bridge's accessor** — `window.content_dir()`, and its own uasset press uses it.
+- [x] **Step 4: Run** `mayapy -m unittest tests.test_moveset_model tests.test_moveset_view
       tests.test_uebridge_window` — green.
 - [ ] **Step 5: Commit** — `feat(moveset): Export 3P / Export 1P into the slot`
 

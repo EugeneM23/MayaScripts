@@ -251,6 +251,16 @@ def _run(action, busy=None):
         print(traceback.format_exc())
 
 
+def content_dir():
+    """The picked project's Content folder, "" until a Refresh has read it.
+
+    One accessor for every road that needs to turn a /Game package into a
+    file on disk - this window's own uasset press, and the Moveset card's
+    export into a montage slot.
+    """
+    return _STATE.get("content_dir") or ""
+
+
 def project_choice():
     """The project the user picked, falling back to the remembered one."""
     if not cmds.optionMenu(_PROJECT, exists=True):
@@ -1438,7 +1448,7 @@ def export_uasset_selected():
                        .format(len(chosen)))
     from maya_uebridge import uassetexport   # lazy: keeps the import graph flat
     return _status(uassetexport.export_to_uasset(
-        chosen[0] if chosen else None, _STATE.get("content_dir") or "",
+        chosen[0] if chosen else None, content_dir(),
         project_choice(), temp_folder()))
 
 
@@ -1456,7 +1466,7 @@ def folder_disk(row):
     """`row`'s folder on disk for this list's source and place."""
     return foldertree.disk_path(row, current_source(),
                                 _STATE.get("location") or "",
-                                _STATE.get("content_dir") or "")
+                                content_dir())
 
 
 def _isdir(path):
@@ -1666,7 +1676,7 @@ def _fill_list_menu(menu):
     row = _menu_row()
     for label, key, enabled in menu_rows(
             row, current_source(), _STATE.get("location") or "",
-            _STATE.get("content_dir") or ""):
+            content_dir()):
         if key is None:
             cmds.menuItem(parent=menu, label=label, enable=False)
             continue
