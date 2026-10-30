@@ -11650,6 +11650,30 @@ source's own knee ran smooth into its straightest.
   four of them. Its own 71 unit tests and `verify_gait.py`'s 33 gates are green with it.
 - **Not seen in a GUI Maya**: their own re-key after Check update.
 
+**…and where the leg bends, when the clip's leg is dead straight** (the same day, their next scene on port 7006,
+their cycle `own:52862ee7d10a9978` at the default parameters with no pose: «29 кадр перекрут в левой ноге 14
+кадр перекрут в правой ноге»). Measured on the keys in their scene: the right thigh rolls **-159.6 deg about
+its own axis in one frame** at 14 and the calf +163.2 back (and at 15 the other way), the left thigh **+92.1
+at 29 and -114.5 at 30** - the leg spinning about its own length for a frame or two.
+- **The cause**: the clip's leg goes EXACTLY straight there - its knee reads 0.00 deg and **0.0000 cm** off
+  its hip-ankle line on frames 13-15, 29-30 and six more places. `_leg_source` read the leg's bend plane per
+  instant from that offset (its fallback to the travel direction fired only under 1e-6 cm), so the direction
+  came out of the rounding and **flipped ~180 deg frame to frame** - and every leg rotation is built from it
+  (its normal is `align`'s source frame, and `two_bone` bends toward it), so the thigh and the calf took the
+  flip as a roll. The solved leg's plane was read the same way from its own knee, which comes out straight
+  there too, so it put the noise back a second time.
+- **The fix**: `_knee_planes` reads the plane once per cycle from the frames whose knee stands at least
+  `KNEE_PLANE_MIN` (0.25 cm) off the line, keeps it in the THIGH's own frame (where it is a near-constant
+  vector) and fills the straight frames with the periodic line between the frames either side
+  (`_fill_periodic`); `knee_plane(side, tau, e)` carries it back into the world. And `_leg` takes the new
+  leg's plane from the hint it bent toward, not from where its solved knee happens to stand.
+- **Measured**: the worst roll a frame over the whole cycle **3.7 deg** (thigh_l), against -159.6 / +163.2 /
+  +92.1 / -114.5 in their scene; no frame over 30 deg on either side. At `own_knobs()` every one of the 16
+  saved walks gives its source back with **every identity and knee number unchanged to the digit** - at a
+  bent frame the stored direction is the frame's own (Catmull-Rom is exact on a knot), and at a straight frame
+  the knee is on the line, so only the roll - the noise - moves. **Tests not run and none written** (the
+  animator asked for the fix at once and will check it himself).
+
 319. **A share of a window is a rate that grows as the window shrinks.** `swing_weight` eases over 25 % of a
      flight: 3 frames of a 12-frame one, half a frame of a 2-frame one. So a window found by a flickering
      test (a foot's height against its own low, which a skimming foot crosses in and out of) does not merely

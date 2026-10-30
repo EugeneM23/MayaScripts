@@ -160,6 +160,9 @@ ROLL_HEEL = 15.0          # degrees: a foot on its heel alone may roll this much
 ROLL_COST = 25.0          # cm^2: a radian of roll weighs as much as 5 cm of the leg falling short (_roll_cost)
 ROLL_GRID = 32            # the roll's cost searched on this grid, then refined
 ROLL_SOFT = 1.0           # cm: the shortfall's weight eases in over this much (_roll_cost)
+KNEE_PLANE_MIN = 0.25     # cm: a knee at least this far off its hip-ankle line says where its leg bends;
+                          # nearer than that the direction is noise (a clip's straight leg has none of its
+                          # own) and the frames that do say it are read instead (_knee_planes)
 ROLL_SENSE = 0.3          # the roll changes from the heel to the ball over this much of the foot's pivot weight
 SOLE_HEEL_UP = 65.0       # degrees: no roll stands a sole steeper than this off the ground, heel up
 SOLE_TOES_UP = 30.0       # degrees: nor toes up
@@ -1100,6 +1103,7 @@ class Walk(object):
             mean = mean_rot(rel)
             self.foot_rel[side] = (mean, log_rot(rel @ mean.T))
         self.balls = dict((idx["ball_" + side], side) for side in SIDES)
+        self._knee_planes()
         sep = (self.pos[idx["foot_l"]] - self.pos[idx["foot_r"]]) @ self.fwd
         sep = sep - sep.mean()
         self.split_shape = sep / max(float(np.abs(sep).max()), 1e-9)
@@ -1117,6 +1121,53 @@ class Walk(object):
         lumbar = [j for _, j in spine[:len(COUNTER_SHARES)]]
         total = sum(COUNTER_SHARES[:len(lumbar)])
         self.counter = dict((j, share / total) for j, share in zip(lumbar, COUNTER_SHARES))
+
+    def _knee_planes(self):
+        """Per side, where the source's leg bends at every source frame - the knee's offset from its
+        hip-ankle line, kept in the THIGH's own frame (where it is a near-constant vector) - read only from
+        the frames whose knee stands at least KNEE_PLANE_MIN off that line; the straight frames take the
+        periodic line between the frames either side (_fill_periodic).
+
+        Read per instant instead, a clip whose leg goes EXACTLY straight (a captured cycle's knee reads
+        0.00 deg and 0.0000 cm off the line for two or three frames) has no plane there at all: the
+        direction came out of the rounding, flipped ~180 deg from one frame to the next, and since every leg
+        rotation is built from it (its normal is `align`'s source frame, and the IK bends toward it) the
+        thigh and the calf spun about their own axis by up to 180 deg for a frame - the animator's walk
+        twisted its right leg at frame 14 and its left at 29 (2026-10-30). A leg that is never bent enough
+        anywhere keeps the travel direction, as the old fallback did.
+        (maya_walk.model's, word for word: tests/test_gait_model.ParityTests)"""
+        self.knee_dir = {}
+        for side in SIDES:
+            th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
+            dirs, known = np.zeros((self.P, 3)), np.zeros(self.P, bool)
+            for f in range(self.P):
+                t = float(f)
+                h, kn, a = self.wpos(th, t), self.wpos(ca, t), self.wpos(fo, t)
+                e = _unit(a - h)
+                b = (kn - h) - np.dot(kn - h, e) * e
+                if np.linalg.norm(b) >= KNEE_PLANE_MIN:
+                    dirs[f] = _unit(b) @ self.wrot(th, t).T
+                    known[f] = True
+            if not known.any():
+                self.knee_dir[side] = None
+                continue
+            for k in range(3):
+                dirs[:, k] = _fill_periodic(dirs[:, k], known)
+            self.knee_dir[side] = dirs
+
+    def knee_plane(self, side, tau, e):
+        """Where the source's leg bends at source time tau, perpendicular to `e` (its hip-ankle line):
+        _knee_planes' own direction, carried back into the world by the thigh's frame there."""
+        dirs = self.knee_dir.get(side)
+        out = None
+        if dirs is not None:
+            v = periodic_cr(dirs, tau % self.P) @ self.wrot(self.index["thigh_" + side], tau)
+            v = v - np.dot(v, e) * e
+            if np.linalg.norm(v) > 1e-9:
+                out = _unit(v)
+        if out is None:
+            out = _unit(self.fwd - np.dot(self.fwd, e) * e)
+        return out
 
     def _air(self, side):
         """The foot's flights: [(where it leaves the ground, how long it is off it)], source time to
@@ -3157,8 +3208,7 @@ class Walk(object):
         l1, l2 = float(np.linalg.norm(self.lt_at(ca, t))), float(np.linalg.norm(self.lt_at(fo, t)))
         h, kn, a = self.wpos(th, t), self.wpos(ca, t), self.wpos(fo, t)
         e = _unit(a - h)
-        bend = (kn - h) - np.dot(kn - h, e) * e
-        bend = _unit(bend) if np.linalg.norm(bend) > 1e-6 else _unit(self.fwd - np.dot(self.fwd, e) * e)
+        bend = self.knee_plane(side, t, e)          # the cycle's own, continuous (_knee_planes)
         knee_bend = turned_about(bend, -e, knee_turn) if knee_turn else bend      # turned about the leg
         hang = self.swing_at(side, t)
         return {"joints": (th, ca, fo), "t": t, "hip": self.lt_at(th, tau), "foot_rot": foot_rot, "ankle": ankle,
@@ -3193,7 +3243,13 @@ class Walk(object):
         knee, reached, short = two_bone(hip, ankle, src["lengths"][0], src["lengths"][1], src["bend"], reach,
                                         self._soft_from(side, src["t"], ctx, reach))
         e2 = _unit(reached - hip)
-        bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+        # the new leg's plane is the one it was bent toward, not the one its solved knee happens to stand in:
+        # a result leg that comes out straight has no plane of its own either (2026-10-30, _knee_planes)
+        bend2 = src["bend"] - np.dot(src["bend"], e2) * e2
+        if np.linalg.norm(bend2) > 1e-9:
+            bend2 = _unit(bend2)
+        else:
+            bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
         n_new = _unit(_cross3(e2, bend2))
         rots[th] = src["wrot"][0] @ align(src["dirs"][0], src["normal"], _unit(knee - hip), n_new)
         rots[ca] = src["wrot"][1] @ align(src["dirs"][1], src["normal"], _unit(reached - knee), n_new)
