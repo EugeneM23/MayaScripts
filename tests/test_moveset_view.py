@@ -39,7 +39,7 @@ class View(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.folder, True)
         self.calls = []
         actions = dict((k, (lambda *a, k=k: self.calls.append((k,) + a)))
-                       for k in ("open", "status", "assign", "picked"))
+                       for k in ("open", "export", "status", "assign", "picked"))
         self.view = view.TreeView(actions=actions)
         self.view.resize(600, 400)
         self.view.set_data(m.load_graph(self.folder), m.read_state(self.folder), self.folder)
@@ -70,6 +70,21 @@ class View(unittest.TestCase):
         self.assertIn(("open", stand.id, "1p"), self.calls)
         left = [c.node for c in self.view.cards if c.node.id == "AM_Longsword_Attack_Left_Hold"][0]
         self.assertIsNone(self.view.menu_rows(left)[1][1])
+
+    def test_the_menu_exports_the_scene_into_each_views_slot(self):
+        """Export 3P / Export 1P under a separator (2026-10-29); a view the
+        attack does not play is a dimmed row, and whether the one it plays can
+        be written is the plan's own answer, said on the press."""
+        stand = self.view.cards[0].node
+        rows = self.view.menu_rows(stand)
+        self.assertIsNone(rows[2])
+        labels = [r[0] for r in rows if r]
+        self.assertEqual(labels[2:], ["Export the scene into 3P (DefaultSlot)",
+                                      "Export the scene into 1P (1P)"])
+        dict((r[0], r[1]) for r in rows if r)["Export the scene into 1P (1P)"]()
+        self.assertIn(("export", stand.id, "1p"), self.calls)
+        left = [c.node for c in self.view.cards if c.node.id == "AM_Longsword_Attack_Left_Hold"][0]
+        self.assertIsNone(self.view.menu_rows(left)[4][1])
 
     def test_a_double_click_opens_the_3p_slot(self):
         card = self.view.cards[0]
@@ -120,6 +135,13 @@ class Presses(unittest.TestCase):
         for name in ("_set", "WHO_MENU", "_fill_people"):
             self.assertFalse(hasattr(self.panel, name), name)
 
+    def test_the_status_dots_are_gone_from_the_cards(self):
+        """The page keeps the board; a card draws its preview where the dots
+        were (2026-10-29)."""
+        from maya_moveset import view as treeview
+        for name in ("dot_rect", "dot_at", "_paint_dot"):
+            self.assertFalse(hasattr(treeview.Card, name), name)
+
     def test_open_refuses_a_card_of_ones_own_and_a_missing_slot(self):
         g = m.load_graph(self.folder)
         self.assertIn("no montage", self.panel.open_slot(g, "custom-1", "3p"))
@@ -147,6 +169,28 @@ class Presses(unittest.TestCase):
         self.assertEqual(seen["name"], "AM_Longsword_Attack_Stand_Hold_1P")
         self.assertEqual(seen["target"], "new_rig")
 
+
+    def test_export_with_nothing_picked_says_so(self):
+        card = self.card()
+        card["view"].picked_id = ""
+        with mock.patch.object(self.panel, "_card", lambda: card):
+            self.panel.export_picked("3p")
+        self.assertEqual(self.cmds.labels["st"], "Pick an attack in the tree first")
+
+    def test_export_hands_the_picked_attack_and_its_name_to_the_export(self):
+        from maya_moveset import export
+        card = self.card()
+        card["view"].picked_id = "AM_Longsword_Attack_Stand_Hold"
+        card["view"].label = lambda node_id: "Stand Hold"
+        seen = {}
+        with mock.patch.object(self.panel, "_card", lambda: card),                 mock.patch.object(export, "export_slot",
+                                  lambda g, i, v, label: seen.update(
+                                      node=i, view=v, label=label, graph=g) or "written"):
+            self.panel.export_picked("1p")
+        self.assertEqual((seen["node"], seen["view"], seen["label"]),
+                         ("AM_Longsword_Attack_Stand_Hold", "1p", "Stand Hold"))
+        self.assertIn("AM_Longsword_Attack_Stand_Hold", seen["graph"]["nodes"])
+        self.assertEqual(self.cmds.labels["st"], "written")
 
 
 @unittest.skipIf(QtWidgets is None, "no Qt")
@@ -210,7 +254,8 @@ class Build(unittest.TestCase):
         made = [(c[0], c[1][0] if c[1] else None) for c in fake.calls]
         names = set(n for _k, n in made)
         for name in (panel.SUB, panel.ROOT_MENU, panel.MODE_MENU, panel.PLACE,
-                     panel.OPEN.format("3p"), panel.OPEN.format("1p"), panel.STATUS):
+                     panel.OPEN.format("3p"), panel.OPEN.format("1p"),
+                     panel.EXPORT.format("3p"), panel.EXPORT.format("1p"), panel.STATUS):
             self.assertIn(name, names)
         for key, _label in m.TYPES:
             self.assertIn(panel.CHIP.format(key), names)

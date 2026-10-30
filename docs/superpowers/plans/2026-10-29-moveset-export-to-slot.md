@@ -170,25 +170,25 @@ a slot that plays two different sequences; the steps below stay for that day.
 
 ---
 
-### Task 5: the tests and the docs
+### Task 5: the tests and the docs — DONE
 
 **Files:**
 - Test: `tests/test_moveset_export.py` (new), `tests/test_moveset_view.py`
 - Modify: `CLAUDE.md`, the spec's measured lines
 
-- [ ] **Step 1: the plan's tests** — a one-segment slot's frames and package; a four-segment slot's four
+- [x] **Step 1: the plan's tests** — a one-segment slot's frames and package; a four-segment slot's four
       pieces, abutting on the boundary frame; the slice, the rate, the loop, the missing track and the
       missing node refusals, each naming its segment.
-- [ ] **Step 2: the press's tests** — on fakes: the confirm's text names every sequence; a cancel writes
+- [x] **Step 2: the press's tests** — on fakes: the confirm's text names every sequence; a cancel writes
       nothing; each piece exports its own range and reimports its own package; a failing reimport stops
       and names what was written.
-- [ ] **Step 3: the card's tests** — the two buttons and the two menu rows; the press with nothing picked
+- [x] **Step 3: the card's tests** — the two buttons and the two menu rows; the press with nothing picked
       says so.
-- [ ] **Step 4: the gone-tests** — no status dot, no assignee row, no `set_status` / `set_assignee`.
-- [ ] **Step 5: Run the whole suite** — only the six failures that predate the work.
-- [ ] **Step 6: the docs** — CLAUDE.md's Moveset section gains the export and loses the planning; the
+- [x] **Step 4: the gone-tests** — no status dot, no assignee row, no `set_status` / `set_assignee`.
+- [x] **Step 5: Run the whole suite** — only the six failures that predate the work.
+- [x] **Step 6: the docs** — CLAUDE.md's Moveset section gains the export and loses the planning; the
       spec gains what the build measured.
-- [ ] **Step 7: Commit** — `test(moveset): the export's tests, and the docs`
+- [x] **Step 7: Commit** — `test(moveset): the export's tests, and the docs`
 
 ## Self-review
 

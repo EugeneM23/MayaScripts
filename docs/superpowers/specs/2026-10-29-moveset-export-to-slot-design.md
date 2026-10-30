@@ -77,13 +77,35 @@ rather than written wrongly. The editor measurement waits for the day a slot pla
 
 ## Proof
 
-- Unit tests (at the end, as the animator asked): the plan's frames and packages for a one-segment and a
-  four-segment slot; every refusal with nothing written; the confirm's text naming every sequence; the
-  press writing each segment's own range; the card without a status dot, an assignee menu row or the done
-  count; `set_status` / `set_assignee` gone (a gone-test).
-- The measurement above, against the editor, on a duplicated sandbox sequence that is deleted after - the
-  animator's own assets are not written to by a verify run.
-- **Not seen in a GUI Maya**: the animator's own check, as the card itself was.
+- `tests/test_moveset_export.py`, 34 tests, the fixtures the animator's own graphs' shapes (the float32
+  noise included - `2.0333333015441895` is 61 frames at 30 fps, which is why `TOL` is a ten-thousandth
+  of a second): the plan's frames and packages for a one-segment track and for a sequence cut at its hit
+  windows (one piece, frames 0-41); the frames following the scene's own rate; every refusal with its own
+  wording and nothing written; the confirm naming every asset, its frames and the skeleton; a cancel
+  writing nothing; the piece exporting its own range and reimporting its own package; the flag cleared
+  after the export and said; a failed export stopping before the flag and the editor; an editor error; a
+  dead link; a silent no-op said out loud.
+- The card's own tests in `tests/test_moveset_view.py`: the two buttons, the two menu rows under a
+  separator with a dimmed row for a view with no slot, the press with nothing picked, and the picked
+  attack and its name handed to the export. Gone-tests for the dots, the card's `_set` / `WHO_MENU` and
+  the model's `set_status` / `set_assignee`.
+- The whole suite: 13340 tests, only the six failures that predate the work.
+- The editor measurement is **not needed** (above): every writable track is one sequence from frame 0, so
+  a press writes exactly one sequence and nothing is shifted. It waits for the day a slot plays two.
+- **Not seen in a GUI Maya**: the two buttons and a real press against the editor are the animator's
+  own check, as the card itself was.
+
+## What the build settled
+
+- **Every seam the scene, the editor and the disk come through is in `asks`** (`fps`, `bridge`, `root`,
+  `export`, `exists`, `read_only`, `clear`, `confirm`, `run_script`), so the press is tested with neither
+  Maya nor Unreal and the module's own import stays stdlib (its Maya halves are lazy, inside the press).
+- **One sequence a press, today.** `plan` groups consecutive segments of one sequence into one `Piece`,
+  and a second sequence in the slot is refused - so `pieces` is always one. The several-pieces shape (the
+  loop, the pluralised line, "already written" on a failure in the middle) is written and tested as the
+  pure thing it is, for the day a slot plays two sequences.
+- **`maya_uebridge.window.content_dir()`**: one accessor for every road that turns a /Game package into a
+  file on disk, the window's own uasset press included.
 
 ## Not built
 
