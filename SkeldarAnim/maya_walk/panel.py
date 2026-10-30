@@ -113,7 +113,8 @@ GROUPS = tuple((g, gait.GROUP_LABELS[g], _names(g)) for g in gait.GROUPS if g !=
     ("rigpose", "Rig pose", ()),           # buttons, not knobs: the walk's mean pose on a Manny rig
 )
 #  The tabs on two rows (nine in a 360 px dock would not read)
-GROUP_ROWS = (("timing", "pelvis", "legs", "trunk", "head"), ("arms", "physics", "clean", "rigpose"))
+GROUP_ROWS = (("timing", "pelvis", "legs", "trunk", "head"),
+              ("arms", "weapon", "physics", "clean", "rigpose"))
 OLD_GROUPS = {"step": "timing", "chest": "trunk", "weight": "physics"}      # a tab remembered from before
 PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
 LABELS = {

@@ -42,6 +42,40 @@ ROTATE_INERT_NOTE = "Rotate is now driven by the aim"
 # policy
 # ---------------------------------------------------------------------------
 
+def _axes(lo, hi):
+    """(the blade axis, the next longest axis, the signed further end of each) or None.
+
+    Ties break by axis order, so a symmetric model never depends on sort
+    stability -- and a blade IS symmetric across its width, so ties are the
+    normal case rather than a curiosity. The further end of an axis is the tip,
+    because the origin sits in the grip: the weapon seats the model on the bone.
+    """
+    extents = [hi[axis] - lo[axis] for axis in range(3)]
+    order = sorted(range(3), key=lambda axis: (-extents[axis], axis))
+    blade, side = order[0], order[1]
+    if extents[blade] <= 0.0:
+        return None
+    further = lambda axis: hi[axis] if abs(hi[axis]) >= abs(lo[axis]) else lo[axis]
+    return blade, side, further(blade), further(side)
+
+
+def tip_offset(lo, hi):
+    """The model's TIP in its own frame, as a triple, or None if there is nothing to measure.
+
+    The blade rule alone, with no margin of its own: `placement` puts its target
+    past this, and Walk Builder's Weapon overlap aims at exactly this point
+    (2026-10-30, the animator's "the aim's target at the sword's tip") -- one
+    rule for both.
+    """
+    axes = _axes(lo, hi)
+    if axes is None:
+        return None
+    blade, _, tip, _ = axes
+    out = [0.0, 0.0, 0.0]
+    out[blade] = tip
+    return tuple(out)
+
+
 def placement(lo, hi, margin=MARGIN):
     """Local offsets for the two locators, or None if there is nothing to aim.
 
@@ -49,25 +83,12 @@ def placement(lo, hi, margin=MARGIN):
     (top_offset, side_offset) as triples: `top` along the blade past the tip,
     `side` on the next longest axis at the same distance.
     """
-    extents = [hi[axis] - lo[axis] for axis in range(3)]
-    # Ties break by axis order, so a symmetric model never depends on sort
-    # stability -- and a blade IS symmetric across its width, so ties are the
-    # normal case rather than a curiosity.
-    order = sorted(range(3), key=lambda axis: (-extents[axis], axis))
-    blade, side = order[0], order[1]
-    if extents[blade] <= 0.0:
+    axes = _axes(lo, hi)
+    if axes is None:
         return None
-
-    def further(axis):
-        """The end of the box further from the origin, signed.
-
-        The origin sits in the grip, because the weapon seats the model on the
-        bone -- so the further end is the tip.
-        """
-        return hi[axis] if abs(hi[axis]) >= abs(lo[axis]) else lo[axis]
-
-    distance = further(blade) * (1.0 + margin)
-    side_sign = 1.0 if further(side) >= 0.0 else -1.0
+    blade, side, tip, side_end = axes
+    distance = tip * (1.0 + margin)
+    side_sign = 1.0 if side_end >= 0.0 else -1.0
 
     top_offset = [0.0, 0.0, 0.0]
     top_offset[blade] = distance

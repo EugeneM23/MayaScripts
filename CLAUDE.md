@@ -11479,6 +11479,67 @@ window. B is measured, declined and NOT half-built - nothing of it is in the cod
   `tests/test_walk_arm_overlap.py` (the walker's elbows bent 70 deg: a straight arm has no plane to orbit);
   the walk suite 935, OK. **Not seen in a GUI Maya**: after Check update.
 
+**…and the weapon's own: the blade aims at its tip, late** (2026-10-30, with a Long Sword in the walker's
+hands on port 7004: «новую вкладку для оружия и в этой вкладке один парамметр с захлестом оружия … я бы
+привязал наши руки при помощи ИК к оружию а на оружие сделал бы aim из нашего tools, верхней ноже за
+которой следит меч я бы поставил на кончик меча и запек анимацию, после чего я бы сдвигал анимацию кончика
+на какое-то количество кадров»; asked: **the hands go with the weapon** - their recipe, the wrists turning
+with the sword, not the sword slipping in a fixed grip - and **milliseconds**, the family's unit). Spec
+`docs/superpowers/specs/2026-10-30-walk-weapon-overlap-design.md`, plan beside it. One parameter,
+**`Weapon overlap`, ms, sided**, in a new gait group **Weapon** - so the card grows a `Weapon` tab beside
+`Arms` with that one slider, reaching half the cycle either way (`overlap_cap`, as the three arm overlaps).
+- **Measured first on 7004** (read only): the weapon is `LongSwordMesh` in `hand_r_weaponSpace`, which is
+  parent-constrained to `hand_r` with no offset - so **a weapon rides its hand rigidly**, its blade along its
+  own +Y with the tip at 115.9 cm, and `weapon_r` carries no keys and a `weapon_r_parentConstraint1` (Add
+  Weapon's `bonedrive.link` hung the bone on the mesh). Nothing of the weapon needs keying: what turns the
+  hand turns the weapon, and the bone follows the mesh.
+- **The pass** (`model._weapon_swing`, inside `_arm_overlap` after the other lags and before
+  `_arm_to_hand`, so one IK rebuild serves all four knobs and Whip takes the swung arm as its target): the
+  weapon is two points in its holding hand's own frame - its **grip** (its own origin) and its **tip** (the
+  farthest end of its longest axis, `aim.tip_offset`, the rule Tools' Aim puts its target past: one rule in
+  the repo); the assembly's own tip path is read `w` frames earlier (`shifted_points`, `shifted_cycle`'s
+  place half: the linear travel out and back, so a travelling cycle is a cycle again), the weapon is
+  **swung about its grip** by the minimal rotation taking the blade onto that late tip (`aim_swing`,
+  `swung_about` - a minimal swing adds no twist, so the roll stays the frames' own), and **every hand
+  holding it takes the same swing**: its own, and the other one too under a two-handed grip where that hand
+  holds no weapon of its own, so the hold is kept. `w = 0` is a no-op matrix for matrix, which is why the
+  target is read off the ASSEMBLY (with Hand overlap set, the frames' tip is not where the blade points).
+  `moved_arms` counts the knob, so the carry balances the swung arms.
+- **The reading**: `scene.weapons_in_hands(root)` - every marked weapon (`bonedrive.MARKER`) whose
+  `weaponspace.holding_hand` is a hand of the walker, as those two points (the weapon's own scale in them,
+  so the model needs no matrix of it); a weapon out in the world (the floor, Connections' World) is in no
+  hand and left out. It rides into the model beside the pose (`evaluate(knobs, pose, weapons=)`) and into
+  the evaluation cache's key (`weapons_key`). The line: «the weapon trails 4.5 fr (its tip 11.5 cm
+  behind)», or «no weapon in the hands: Weapon overlap does nothing». **Every read goes through the
+  module's own `_cmds()`, the marker lookup included** (`maya_markers.find(..., commands=)`): dropping that
+  pass-through as an unused parameter sent the lookup to the real `maya.cmds` inside the fake-cmds tests and
+  **segfaulted** mayapy (trap 296), 0xC0000005 half way through `test_walk_scene_more` - and the slice I
+  re-ran after the cleanup was the one file that patches the reading, so it looked clean.
+- **Measured, on the animator's own setup** (their cycle, their two-handed card, 150 ms = 4.5 frames at
+  ntsc): the blade points at its own tip that many frames earlier to **0.0100 deg**, the grip is held to
+  **0.0217 cm**, the blade keeps its length (0.0000), the sword mesh's own tip swings **8.70 cm**, the
+  two-handed hold is kept to **1.08e-12** with the other hand carried 2.02 cm, and `weapon_r` still stands
+  on the weapon's socket (2.4e-08). Under their own Whip and In place the tip trails 9.7 cm with the aim
+  within 0.76 deg - **In place takes the root's own per-frame shift out AFTER the arms pass**, so the aim is
+  exact in the travelling world it was computed in (trap 318), and the springs trail the swung target as
+  they trail everything else.
+- **What it costs**: the swing moves the holding hand about the weapon's grip, so an arm at full stretch
+  cannot quite follow (`_arm_to_hand` clamps it on its line: on a straight-armed walker a 4.5-frame lag
+  left the grip 1.2 cm behind, against 0.02 cm with a sword pose's bent arms).
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_overlap.py` - **0 of 30 gates, mayapy
+  standalone**, three phases (the reading against the scene's own matrices and the mesh's farthest vertex;
+  the whole press read back off the keys; the model on their cycle and card, with a lead the other way,
+  Whip on top and Balance seeing it); 38 unit tests in `tests/test_walk_weapon_overlap.py`, of which 13
+  fail with the pass neutered; `verify_walk_arm_overlap.py` **0 of 101** again (the pass it sits in), and
+  13365 unit tests with the one known `test_chat_deploy.Keys` failure. **Seen in the animator's own Maya**
+  (port 7004, the five changed files copied over their installed copy - exactly `origin/main` otherwise -
+  and the hub rebuilt): the card's `Weapon` tab beside `Arms` with `Weapon overlap, ms` reaching ±516.7 ms
+  on their 31-frame cycle, and the reading answering their own sword in `hand_r` (a 115.9 cm blade).
+  Nothing was keyed there: the dial is theirs.
+- **Not built**: the lever as a second knob (the aim at a share of the blade); the weapon lagging INSIDE the
+  grip (the question's other answer - nothing writes the weapon's own channels); a weapon out in the world,
+  and the weapon's twist about its blade.
+
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
      new take for ever: every knob of the card refused, and the refusal's own advice («Pick it to take them») would
@@ -11497,6 +11558,16 @@ window. B is measured, declined and NOT half-built - nothing of it is in the cod
      exactly the travel a frame, 1.3 deg / 2.23 cm against 0.0000 with it off), and **«later» is not «further
      from the original» once the lag is a quarter of a periodic cycle** (the lag alone moved the hand 25.8 cm,
      the lag plus the springs 22.9).
+318. **In place is a post-pass, so a gate on the final worlds does not measure what a pass computed.** Weapon
+     overlap aims the blade at its own tip a few frames earlier - exact inside the pass (0.000001 deg, the
+     grip 2.8e-14 cm) - and the same measurement on the result read **0.76 deg** off with In place on: the
+     model's own `_in_place` takes the ROOT's per-frame shift out after the arms pass, and that shift is not
+     the linear travel a frame `shifted_points` removes, so the lagged tip of the in-place path is a
+     centimetre and a half from the lagged tip of the travelling path a 116 cm blade was aimed in. Not a
+     defect: the trail belongs in the travelling world the animator's own recipe would bake it in. A gate on a
+     periodic path measures in the space the pass worked in - switch In place (and the springs) off for it -
+     and the way to tell the two apart is to spy on the pass's own inputs rather than reason about the result
+     (the same run's recorded hands differed from the final worlds by 178 cm of travel and 0.0000 deg).
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 

@@ -262,6 +262,67 @@ def read_bones(root):
     return bones, ""
 
 
+WEAPON_HANDS = {"l": "hand_l", "r": "hand_r"}    # the hands Weapon overlap looks in
+
+
+def weapons_in_hands(root):
+    """{side: {"grip": (3,), "tip": (3,)}} - what Weapon overlap swings (model._weapon_swing): every weapon
+    the SCENE holds in a hand of the walker under `root`, as two points in that hand's own frame - the
+    weapon's own origin (the grip) and the farthest end of its longest axis (the tip), the plugin's blade
+    rule, shared with Tools' Aim's target (aim.tip_offset). The weapon's own scale is in them, so the model
+    needs no matrix of it.
+
+    A weapon rides its hand rigidly (its weapon space is parent-constrained to the hand with no offset), so
+    the relation is read at the current frame and holds over the cycle; a weapon out in the world (on the
+    floor, in Connections' World, hung in a 1P chest) is in no hand and is left out, and so is a hand this
+    skeleton has not got. {} where the scene holds no weapon of ours, or the plugin's weapon modules are not
+    importable.
+
+    Every read goes through the module's own `_cmds()` - the marker lookup too (`commands=`, which a test's
+    fake answers): without that the lookup would reach the real `maya.cmds` under a fake and segfault an
+    uninitialized mayapy (trap 296). `weaponspace` and `aim` below are reached only once a weapon has been
+    found, which under a fake never happens."""
+    cmds = _cmds()
+    try:
+        from maya_scenesetup import bonedrive, weaponspace, aim as weaponaim
+        import maya_markers
+    except ImportError:
+        return {}
+    marked = maya_markers.find(bonedrive.MARKER, "transform", commands=cmds)
+    if not marked:
+        return {}
+    joints = cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []
+    hands = {}
+    for side, leaf in sorted(WEAPON_HANDS.items()):
+        for path in joints:
+            if path.rsplit("|", 1)[-1].split(":")[-1] == leaf:
+                hands[path] = side
+                break
+    out = {}
+    for weapon in marked:
+        hand = weaponspace.holding_hand(weapon)
+        side = hands.get(hand) if hand else None
+        if side is None or side in out:
+            continue
+        extents = weaponaim.local_extents(weapon)
+        tip_local = weaponaim.tip_offset(*extents) if extents else None
+        if tip_local is None:
+            continue
+        rel = (np.array(cmds.getAttr(weapon + ".worldMatrix[0]"), float).reshape(4, 4)
+               @ np.linalg.inv(np.array(cmds.getAttr(hand + ".worldMatrix[0]"), float).reshape(4, 4)))
+        grip = rel[3, :3]
+        out[side] = {"grip": tuple(float(v) for v in grip),
+                     "tip": tuple(float(v) for v in (np.asarray(tip_local, float) @ rel[:3, :3] + grip))}
+    return out
+
+
+def weapons_key(weapons):
+    """A weapon reading as the evaluation cache's key (evaluated): stable, and a hair's difference in a
+    reading does not cost an evaluation."""
+    return repr([(side, tuple(round(float(v), 4) for v in weapons[side]["grip"]),
+                  tuple(round(float(v), 4) for v in weapons[side]["tip"])) for side in sorted(weapons or {})])
+
+
 # ---- saving a walk ----
 
 def read_clip(root):
@@ -1242,21 +1303,23 @@ def model_knobs(given):
 EVALS_KEPT = 4            # a walk's evaluations kept on it, the last ones (two pose cards switched hit them)
 
 
-def evaluated(walk, knobs, pose, prepared=None, parts=()):
-    """walk.evaluate(knobs, pose) - kept on the walk object, so a re-key asking for knobs and a pose already
-    evaluated skips the model: two pose cards switched back and forth over several walkers (2026-10-16; the model
-    is 85 % of a re-key). The key: the model's knobs, and the pose as its prepared object (prepared_pose's, one
-    object while the card and the walk stand; held by the entry, so its id is never reused) with its parts. A walk
-    object is one reading of a walk file under its clean knobs and correction - a new object when any of them
-    changes - so its entries go with it. The last EVALS_KEPT are kept."""
-    key = (repr(sorted((knobs or {}).items())), None if pose is None else (id(prepared), tuple(parts)))
+def evaluated(walk, knobs, pose, prepared=None, parts=(), weapons=None):
+    """walk.evaluate(knobs, pose, weapons) - kept on the walk object, so a re-key asking for knobs, a pose and
+    weapons already evaluated skips the model: two pose cards switched back and forth over several walkers
+    (2026-10-16; the model is 85 % of a re-key). The key: the model's knobs, the weapons the scene holds
+    (weapons_key), and the pose as its prepared object (prepared_pose's, one object while the card and the walk
+    stand; held by the entry, so its id is never reused) with its parts. A walk object is one reading of a walk
+    file under its clean knobs and correction - a new object when any of them changes - so its entries go with
+    it. The last EVALS_KEPT are kept."""
+    key = (repr(sorted((knobs or {}).items())), None if pose is None else (id(prepared), tuple(parts)),
+           weapons_key(weapons))
     kept = walk.__dict__.setdefault("_skeldar_evals", [])
     for entry in kept:
         if entry[0] == key and entry[1] is (prepared if pose is not None else None):
             kept.remove(entry)
             kept.append(entry)
             return entry[2]
-    result = walk.evaluate(knobs, pose)
+    result = walk.evaluate(knobs, pose, weapons=weapons)
     kept.append((key, prepared if pose is not None else None, result))
     del kept[:-EVALS_KEPT]
     return result
@@ -1310,17 +1373,19 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
     amount = float(wm.knobs(**knobs).get("in_place", 0.0))
     rw = steps = None
     layer_note = ""
+    weapons = weapons_in_hands(root)       # what Weapon overlap swings (the hands' own weapons)
     if kp.is_empty(keys) and not with_steps:
-        result = evaluated(walk, knobs, pose, prepared, parts)
+        result = evaluated(walk, knobs, pose, prepared, parts, weapons)
         moving = result.worlds if amount <= 0.0 else None
     else:
-        base = evaluated(walk, dict(knobs, in_place=0.0), pose, prepared, parts)
+        base = evaluated(walk, dict(knobs, in_place=0.0), pose, prepared, parts, weapons)
         moving, rw, steps, layer_note = kp.on_result(walk, base.worlds, keys)
         worlds = kp.in_place(moving, walk, amount) if amount > 0.0 else moving
         result = wm.Result(worlds, base.frames, dict(base.info, knobs=dict(base.info["knobs"], in_place=amount),
                                                      in_place=amount))
     return Animation(root=root, walk_name=walk_name, given=given, params=params, walk=walk, statics=statics,
                      start=start, report=report, knobs=knobs, values_asked=values_asked, pose=pose,
+                     weapons=weapons,
                      pose_label=pose_label, pose_note=pose_note, packed=packed, parts=tuple(parts), edits=edits,
                      edits_note=edits_note, result=result, moving=moving, rw=rw, steps=steps,
                      layer_note=layer_note, pose_card=pose_card)
@@ -1384,6 +1449,12 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     if anim.pose is not None:
         text += " | pose %s x%.2f%s" % (anim.pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
+    swung = (result.info.get("arms") or {}).get("overlap") or {}
+    if swung.get("weapon"):
+        text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
+    elif any(abs(float((result.info.get("knobs") or {}).get("weapon_overlap" + s, 0.0) or 0.0))
+             >= wm.OVERLAP_QUIET for s in ("", "_l", "_r")):
+        text += " | no weapon in the hands: Weapon overlap does nothing"
     matched = result.info.get("leg_match") or {}
     if anim.pose is not None and matched.get("on"):
         text += " | legs matched x%.2f" % matched["keep"]
