@@ -11438,16 +11438,46 @@ asked whether to delete Elbow / Arms forward / Shoulders as useless: «Ладн�
   `Elbow lag`, `Hand lag`, `Elbow`, `Arms forward` and `Shoulders` are untouched, and the Pick line is
   unchanged. Installed and seen in the animator's own Maya (1963c57 over port 7004, their scene untouched);
   they were turning it at 48.9 ms when we stopped.
-- **OPEN, asked for and not built: the cascade** («Сделай каскад» - the elbow and the hand later than the arm;
-  the animator chose to pick it up the next day). In this IK framing the goal fixes the hand's place and the
-  bend ANGLE, so two roads were put to them, with their cost measured: **A** - lag only what the IK leaves
-  free, two knobs `Elbow overlap` (the bend plane late by L+e) and `Hand overlap` (the hand's own orientation
-  late by L+h), which costs nothing (at zero it is today's behaviour, the bones and the "the hand is where it
-  stood" property both kept) and reads as a late elbow orbit and a late wrist break; **B** - the real
-  per-joint chain lag (the forearm and the hand take their world orientations at their own times and the whole
-  arm's shape unfolds late), which costs `Arm overlap`'s exactness: the hand lands along the direction to its
-  late place but at the late arm's own reach, some 3 cm out at 4 frames (the IK wants 94..109 % of the arm).
-  A was the recommendation. Nothing of either is written.
+**…and its cascade: the elbow and the hand later than the arm** (2026-10-30, «Сделай каскад»; the animator
+chose the road the next day - **A**, lag only what the IK leaves free, over **B**, the real per-joint chain
+lag, which costs `Arm overlap`'s exactness: the hand would land along the direction to its late place but at
+the LATE arm's own reach, some 3 cm out at 4 frames, since the IK wants 94..109 % of the arm over the lag
+window. B is measured, declined and NOT half-built - nothing of it is in the code). Spec
+`docs/superpowers/specs/2026-10-30-walk-arm-cascade-design.md`, plan beside it.
+- **`Elbow overlap`** and **`Hand overlap`**, ms, sided, in the **Arms** group right after `Arm overlap`, so
+  the three read as one family; each slider reaches **half the walk's own cycle** either way (the same
+  `gait.overlap_cap`, per knob, not on the sum - a total past half a cycle wraps exactly as the arm's own does
+  at its end). The old `Elbow lag` / `Hand lag` (frames) are untouched and now stand after them: they shift a
+  joint's OWN series on the sampling clock, which a grip takes to zero - a different tool, told apart by the
+  unit and the word.
+- **One rule, in the same pass** (`_arm_overlap`, still before the springs): the hand's **place at L** and its
+  own **turn at L + h** (two `shifted_cycle` calls mixed), and the elbow sent toward the bend **plane the
+  frames give at L + e** (`model.late_bend`, a direction read from differences at ONE frame, so the cycle's
+  travel cancels). The upper arm's and the forearm's own rotations stay the frames' own, corrected onto the
+  rebuilt arm - the one trap: `_arm_to_hand`'s `bend` serves as the `two_bone` HINT *and* as the source plane
+  it aligns from, and the cascade needs them split (`hints=`, given to `two_bone` alone; `_grip_motion` passes
+  none and is unchanged).
+- **The grip needs no second rule**: `Hand overlap` applies to the HELD thing (both sides' mean, as the arm's
+  lag already is), so **the weapon's own turn lags its travel**, the hold is kept to machine precision and the
+  other hand swings round it; `Elbow overlap` is per arm and free there, it moves no hand - which is the
+  animator's own case (`LongSword_Idle_3P` at share 1) and the half of the cascade that reads at all under a
+  grip.
+- **0 / 0 changes nothing, matrix for matrix** (the early-out counts all three lags of both sides), and
+  Balance's `moved_arms` counts them too - the carry balances a late arm, cascade and all. `Arm overlap` 0 with
+  a cascade alone is a real setting: the arm is rebuilt to its OWN hand, the place the frames' to 2.8e-14 cm.
+- **What it costs, stated**: a late plane is a late ORBIT of the elbow, not a late bend ANGLE (the angle is the
+  IK's, fixed by the hand's place and the bones; its own timing is `Elbow lag`'s and `Elbow swing`'s).
+- Proof: `verify_walk_arm_overlap.py` **0 of 101 gates** (the 2026-10-29 arm gates beside 57 new ones), mayapy
+  standalone on the animator's own cycle under the sword's grip, under `DG_Idle` and with no pose, at 4
+  frames: the elbow's plane the frames' plane that many frames earlier to **1.21e-06 deg** while the hand does
+  not move (**2.8e-14 cm**) and the elbow really orbits (2.40 / 5.46 / 2.63 cm); the held thing's turn its
+  turn 4 frames later (**1.4e-15**) with its place where L left it, **the hold kept (8.97e-14)** and the other
+  hand swinging round it (1.17 cm); the turn riding on top of L at L + h; the bones 5.63e-06 cm, the shoulder
+  bit-exact, the loop closed; a lead orbiting the other way; Whip taking the cascaded arm as its target; 150
+  ms **4.500** frames at 30 fps and **3.600** at 24 for both knobs, each slider 516.7 ms (half that cycle); the
+  carry differing by 0.0064 cm with a cascade and no arm lag at all. 50 unit tests in
+  `tests/test_walk_arm_overlap.py` (the walker's elbows bent 70 deg: a straight arm has no plane to orbit);
+  the walk suite 935, OK. **Not seen in a GUI Maya**: after Check update.
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
