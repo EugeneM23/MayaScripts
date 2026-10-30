@@ -11599,6 +11599,67 @@ walk tests were kept green; one of them counts the card's popup menus and now ex
   green. **Not seen in a GUI Maya**: the row, the dropdown and a real press are the animator's, after Check
   update.
 
+## Walk Builder: a foot's flight is one a step, not what its heights say (2026-10-30)
+
+The animator, their Maya on port 7004: «у персонажа в походке которую мы делаем через walk builder ломаются
+колени в исходнике такого нету это работа плагина, почени». Their walker is a Manny UE5 skeleton on its own
+captured cycle (`own:31b5050c…`, 121 frames, 4 strides) under the pose card `LongSword_Idle_3P` at share 1,
+In place, the physics on. Measured on the keys in their scene and reproduced headless to the digit (the walk,
+the card and the memo's parameters, no scene): **the right knee ran 30.4 → 35.9 → 20.3 → 24.2 deg at frames
+12-15**, and so again at 72-75 and 102-105, the left at 87-90 - a 13-18 deg kink in one frame, where the
+source's own knee ran smooth into its straightest.
+- **The cause**: `Walk._air` read a foot's flights off its HEIGHTS alone - every stretch with neither heel nor
+  toe within `GROUND_TOL` (2.5 cm) of its own low, however short. Their right foot comes down low and flat and
+  dips in and out of that band mid-swing, so the cycle read **seven flights for its four right steps**, two of
+  them 2 frames long (the left's four were clean, which is why only the right kinked badly). `swing_weight` is
+  a share of the flight, so over a 2-frame flight it stepped **0 -> 1 -> 0 on consecutive frames**, and
+  everything it gates stepped with it: the foot's hang in its calf (the ball jumped 9 cm in a frame) and the
+  swinging foot's draw-in (`_reel_of`, 3.9 cm of ankle in one frame) - hence the knee. The model's own
+  docstring already said one flight a step; nothing counted them.
+- **The fix**: ONE flight a step - the swing that follows each contact (`_placement`'s `contact` and
+  `swing_len`, the clock `_just_off`, `roll_profiles` and `_roll_need` already read) **trimmed at both ends to
+  where the foot is clear of the ground**: from the first instant after the lift-off that it is not `down` to
+  the last before the next strike. So a dip mid-swing no longer cuts the flight, and nothing the flight gates
+  moves a foot that is still touching. `air_progress` no longer asks the heights itself (a dip would answer
+  None mid-flight); `self.air` is built after `_placement`. A foot Foot placement found no contact for still
+  reads the heights alone, as before.
+- **Measured** (their own walk, pose and parameters, headless, the keys in their scene reproduced to the
+  digit): the right foot's flights **7 -> 4**, each 11-12 frames; the knee's worst change of direction
+  **18.75 -> 10.18 deg a frame** on the right (the left's 11.25 unchanged), against the source's own 19.31 /
+  22.95 - so the result turns no harder than the clip it came from. Into that strike the right knee now reads
+  66.0, 55.0, 45.2, 38.5, 28.6, 22.7, 25.7 where it read 65.7, 53.2, 37.2, 23.5, **19.4, 32.6, 32.4, 23.2**;
+  the other two pops (frames 70-76, 100-106) are gone the same way. Every saved walk now reads one flight a
+  step (Creep_Drunk 4/2 -> 2/2, Sword_Drunked 4/3 -> 2/2, theirs 4/7 -> 4/4) and at `own_knobs()` all 15 give
+  their source back bit for bit as before - every identity and knee number in the sweep unchanged to the
+  digit. A probe of this must bypass `scene.evaluated`'s cache: `animate` hands back the Result kept on the
+  walk object and the model never runs (the first instrumented run recorded nothing).
+- **What it costs**: a foot that clears the ground only for an instant in a whole swing (one that drags) still
+  gets a short flight - a share of a window is a rate, and that is as short as the window the heights leave.
+  Nothing else moved: 973 walk unit tests pass untouched but the one that asserted the removed rule
+  (`test_the_flight_leaves_and_lands_clear_of_the_ground`, which now counts the flights and asks their ends,
+  not every instant between), and `verify_walk.py` fails the same 5 gates as clean HEAD (stale against the
+  2026-10-26 parameters) - measured both ways in one sitting.
+- **The road not taken**: the flights as the contacts' whole swings, untrimmed. It fixes the knee just as well
+  and is one line, and it costs a foot that is still touching: with Swing out 8 a foot on the ground slid
+  **1.5 cm** sideways (`verify_walk.py` gate 55), Balance moved a planted-looking toe 0.5 cm, the pelvis under
+  a pose sat 0.17-0.64 cm differently (gates 63, 73) and a raised Height's margin lost 0.26 cm of its 0.68.
+  The trim keeps all of it.
+- **The Gait Builder prototype's fork takes it too**
+  (`docs/superpowers/plans/gaitbuilder/gaitmodel.py`, word for word): `tests/test_gait_model.ParityTests`
+  holds the fork to the plugin's model frame for frame, so the fork is not optional - left alone it failed
+  four of them. Its own 71 unit tests and `verify_gait.py`'s 33 gates are green with it.
+- **Not seen in a GUI Maya**: their own re-key after Check update.
+
+319. **A share of a window is a rate that grows as the window shrinks.** `swing_weight` eases over 25 % of a
+     flight: 3 frames of a 12-frame one, half a frame of a 2-frame one. So a window found by a flickering
+     test (a foot's height against its own low, which a skimming foot crosses in and out of) does not merely
+     mis-name a frame or two - it turns every smooth gate over that window into a one-frame step, and the pop
+     lands in whatever the gate drives, far from where the reading went wrong (here the knee). Judge such a
+     window by the invariant the code's own docstring claims - one flight a step is one line to count - and
+     mend it by making the window MONOTONE rather than by swapping one authority for another: a smooth clock
+     (the contacts) knows which swing it is, and only the heights know when the foot is off the floor, so the
+     window wants both - the clock for its identity, the heights for its two ends.
+
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 
 The animator: «Нужно реализовать отдельный от нашего плагина скрипт (после тестов мы вставим его в наш плагин).

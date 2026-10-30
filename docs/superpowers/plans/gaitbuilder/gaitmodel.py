@@ -780,6 +780,7 @@ class Walk(object):
         self._legs_and_pelvis()
         self._chest()
         self._placement()
+        self.air = dict((side, self._air(side)) for side in SIDES)   # the contacts': after _placement
         self._own_pendulum()
         self._aspect_shapes()
 
@@ -1099,7 +1100,6 @@ class Walk(object):
             mean = mean_rot(rel)
             self.foot_rel[side] = (mean, log_rot(rel @ mean.T))
         self.balls = dict((idx["ball_" + side], side) for side in SIDES)
-        self.air = dict((side, self._air(side)) for side in SIDES)
         sep = (self.pos[idx["foot_l"]] - self.pos[idx["foot_r"]]) @ self.fwd
         sep = sep - sep.mean()
         self.split_shape = sep / max(float(np.abs(sep).max()), 1e-9)
@@ -1120,22 +1120,50 @@ class Walk(object):
 
     def _air(self, side):
         """The foot's flights: [(where it leaves the ground, how long it is off it)], source time to
-        1/AIR_STEPS of a frame - every stretch of at least a frame with neither its heel nor its toe near the
-        ground (not down); a cycle of several steps flies once a step."""
+        1/AIR_STEPS of a frame - ONE A STEP: the swing that follows each contact (_placement's `contact` and
+        `swing_len`, which is what every other reader of the swing already asks - _just_off, roll_profiles,
+        _roll_need), trimmed at both ends to where the foot is clear of the ground (neither heel nor toe
+        within GROUND_TOL of its own low). So nothing the flight gates moves a foot that is still touching,
+        and a foot that skims its print mid-swing no longer splits its own flight.
+
+        Taken from the heights alone - every stretch off the ground, however short - a foot that comes down
+        low and flat dips in and out of that band and the cycle reads SEVERAL flights a step: the animator's
+        own walk read seven for its four right steps, two of them 2 frames long (2026-10-30). swing_weight is
+        a share of the flight, so over a 2-frame flight it stepped 0 -> 1 -> 0 on consecutive frames, and
+        everything it gates - the foot's hang in its calf, the swinging foot's draw-in (_reel_of) - came on
+        and off whole in one frame: the ball jumped 9 cm and the knee kinked 13-18 deg a frame where the
+        source's own knee ran smooth. A foot that clears the ground only for an instant in a whole swing (one
+        that drags) still has a short flight: a share of a window is a rate, and that is as short as the
+        window the heights leave. Only where Foot placement found no contacts do the heights decide alone, as
+        they always did. (maya_walk.model's, word for word: tests/test_gait_model.ParityTests)"""
+        contacts = (self.contact or {}).get(side)
+        step = 1.0 / float(AIR_STEPS)
+        if contacts:
+            out = []
+            for i, (hs, to) in enumerate(contacts):
+                length = self.swing_len[side][i]
+                if not 0.0 < length < self.P:      # contacts that abut: a foot that never lifts, no flight
+                    continue
+                clear = [to + k * step for k in range(int(length * AIR_STEPS) + 1)
+                         if not self.down(side, (to + k * step) % self.P)]
+                if not clear or clear[-1] - clear[0] < 1.0:
+                    continue
+                out.append((clear[0] % self.P, clear[-1] - clear[0]))
+            return out
         count = self.P * AIR_STEPS
-        down = np.array([self.down(side, i / float(AIR_STEPS)) for i in range(count)])
+        down = np.array([self.down(side, i * step) for i in range(count)])
         out = []
         for on, run in _runs(~down):
             if run + 1 < AIR_STEPS:
                 continue
-            out.append((((on - 1) % count) / float(AIR_STEPS), (run + 1) / float(AIR_STEPS)))
+            out.append((((on - 1) % count) * step, (run + 1) * step))
         return out
 
     def air_progress(self, side, tau):
         """How far through its flight the foot is at source time tau (0 where it leaves the ground, 1 where it
-        lands); None while it is down."""
-        if self.down(side, tau):
-            return None
+        lands); None while it is down. The flights are `air`'s, one a step and already trimmed to where the
+        foot is clear: the heights are not asked again here, or a foot that skims its print mid-swing reads as
+        down for a frame and the swing flickers from one frame to the next (2026-10-30, _air)."""
         for start, length in self.air[side]:
             r = (tau - start) % self.P
             if r < length:

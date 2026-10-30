@@ -586,15 +586,23 @@ class StepTests(unittest.TestCase):
             want = 0.0 if s is None else -6.0 * math.sin(math.pi * s)
             self.assertAlmostEqual(positions(r, "foot_r", w)[f, 0] + 10.0, want, places=6)
 
-    def test_the_flight_never_touches_the_ground(self):
-        """A foot near the ground is never in its flight (its interpolated contact may flicker just after it
-        leaves: the flight is the longest stretch off the ground)."""
+    def test_the_flight_leaves_and_lands_clear_of_the_ground(self):
+        """One flight a step, from the first instant after its contact that the foot is clear of the ground to
+        the last before the next strike: so nothing the flight gates moves a foot that is still touching, and
+        no frame of a flight reads as down. Only the ENDS are asked, not every instant between: a foot that
+        skims its print mid-swing dips in and out of GROUND_TOL, and cutting the flight there is what read as
+        several flights a step and stepped swing_weight 0 -> 1 -> 0 frame to frame (2026-10-30, _air)."""
         w = walk()
         for side in "lr":
+            self.assertEqual(len(w.air[side]), len(w.contact[side]), side)
+            for start, length in w.air[side]:
+                self.assertFalse(w.down(side, start), (side, start))
+                self.assertFalse(w.down(side, start + length), (side, start + length))
+                self.assertGreater(length, 1.0, (side, start))
             flying = 0
             for i in range(24 * 8):
                 tau = i / 8.0
-                if w.down(side, tau):
+                if tau == int(tau) and w.down(side, tau):          # a whole frame: what gets keyed
                     self.assertIsNone(w.air_progress(side, tau), (side, tau))
                 flying += w.air_progress(side, tau) is not None
             self.assertGreater(flying, 24 * 8 * 0.15, side)
