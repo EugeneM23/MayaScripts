@@ -11526,7 +11526,12 @@ with the sword, not the sword slipping in a fixed grip - and **milliseconds**, t
   standalone**, three phases (the reading against the scene's own matrices and the mesh's farthest vertex;
   the whole press read back off the keys; the model on their cycle and card, with a lead the other way,
   Whip on top and Balance seeing it); 38 unit tests in `tests/test_walk_weapon_overlap.py`, of which 13
-  fail with the pass neutered. **Not seen in a GUI Maya**: after Check update.
+  fail with the pass neutered; `verify_walk_arm_overlap.py` **0 of 101** again (the pass it sits in), and
+  13365 unit tests with the one known `test_chat_deploy.Keys` failure. **Seen in the animator's own Maya**
+  (port 7004, the five changed files copied over their installed copy - exactly `origin/main` otherwise -
+  and the hub rebuilt): the card's `Weapon` tab beside `Arms` with `Weapon overlap, ms` reaching ±516.7 ms
+  on their 31-frame cycle, and the reading answering their own sword in `hand_r` (a 115.9 cm blade).
+  Nothing was keyed there: the dial is theirs.
 - **Not built**: the lever as a second knob (the aim at a share of the blade); the weapon lagging INSIDE the
   grip (the question's other answer - nothing writes the weapon's own channels); a weapon out in the world,
   and the weapon's twist about its blade.
