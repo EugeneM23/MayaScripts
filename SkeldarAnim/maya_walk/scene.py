@@ -276,14 +276,19 @@ def weapons_in_hands(root):
     the relation is read at the current frame and holds over the cycle; a weapon out in the world (on the
     floor, in Connections' World, hung in a 1P chest) is in no hand and is left out, and so is a hand this
     skeleton has not got. {} where the scene holds no weapon of ours, or the plugin's weapon modules are not
-    importable."""
+    importable.
+
+    Every read goes through the module's own `_cmds()` - the marker lookup too (`commands=`, which a test's
+    fake answers): without that the lookup would reach the real `maya.cmds` under a fake and segfault an
+    uninitialized mayapy (trap 296). `weaponspace` and `aim` below are reached only once a weapon has been
+    found, which under a fake never happens."""
     cmds = _cmds()
     try:
         from maya_scenesetup import bonedrive, weaponspace, aim as weaponaim
         import maya_markers
     except ImportError:
         return {}
-    marked = maya_markers.find(bonedrive.MARKER, "transform")
+    marked = maya_markers.find(bonedrive.MARKER, "transform", commands=cmds)
     if not marked:
         return {}
     joints = cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []

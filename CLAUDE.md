@@ -11510,7 +11510,11 @@ with the sword, not the sword slipping in a fixed grip - and **milliseconds**, t
   so the model needs no matrix of it); a weapon out in the world (the floor, Connections' World) is in no
   hand and left out. It rides into the model beside the pose (`evaluate(knobs, pose, weapons=)`) and into
   the evaluation cache's key (`weapons_key`). The line: «the weapon trails 4.5 fr (its tip 11.5 cm
-  behind)», or «no weapon in the hands: Weapon overlap does nothing».
+  behind)», or «no weapon in the hands: Weapon overlap does nothing». **Every read goes through the
+  module's own `_cmds()`, the marker lookup included** (`maya_markers.find(..., commands=)`): dropping that
+  pass-through as an unused parameter sent the lookup to the real `maya.cmds` inside the fake-cmds tests and
+  **segfaulted** mayapy (trap 296), 0xC0000005 half way through `test_walk_scene_more` - and the slice I
+  re-ran after the cleanup was the one file that patches the reading, so it looked clean.
 - **Measured, on the animator's own setup** (their cycle, their two-handed card, 150 ms = 4.5 frames at
   ntsc): the blade points at its own tip that many frames earlier to **0.0100 deg**, the grip is held to
   **0.0217 cm**, the blade keeps its length (0.0000), the sword mesh's own tip swings **8.70 cm**, the
