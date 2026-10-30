@@ -342,6 +342,150 @@ class OverlapPassTests(unittest.TestCase):
         self.assertGreater(len(calls), 1, "the pass runs inside Balance's rounds and on the final frames")
 
 
+class CascadePassTests(unittest.TestCase):
+    """Elbow overlap and Hand overlap on the synthetic walker (the grip is the verify's, on the animator's own
+    cycle). Every run bends the elbows (`elbow_add`): the walker's arm hangs 98.8 .. 100.0 % extended, and a
+    straight arm has no bend plane to speak of - two_bone's knee sits on the line, so an orbit of it would
+    measure as noise."""
+
+    BENT = 70.0       # deg: the elbows bent, so the arm is 72 .. 81 % extended and its plane means something
+
+    def setUp(self):
+        self.w = walk()
+        self.chains = self.w._arm_chains()
+        self.side = sorted(self.chains)[0]
+        self.up_j, self.low_j, self.hand_j = self.chains[self.side]
+        self.leaves = ("upperarm_" + self.side, "lowerarm_" + self.side, "hand_" + self.side)
+
+    def run_at(self, **knobs):
+        knobs.setdefault("elbow_add", self.BENT)
+        knobs.setdefault("arm_drag", 0.0)
+        knobs.setdefault("balance", 0.0)
+        return self.w.evaluate(knobs)
+
+    def plane(self, result, f):
+        """The arm's bend plane at frame f: the elbow's offset from the shoulder-wrist line, unit."""
+        sh, el, wr = (positions(result, leaf, self.w)[f] for leaf in self.leaves)
+        e = wm._unit(wr - sh)
+        return wm._unit((el - sh) - np.dot(el - sh, e) * e), e
+
+    def test_no_cascade_leaves_every_joint_untouched(self):
+        plain = self.run_at()
+        same = self.run_at(elbow_overlap=0.0, hand_overlap=0.0)
+        self.assertTrue(np.array_equal(plain.worlds, same.worlds))
+        said = same.info["arms"]["overlap"]
+        self.assertEqual((said["elbow"], said["hand"]), (0.0, 0.0))
+
+    def test_the_elbows_plane_is_the_frames_plane_that_many_frames_earlier(self):
+        lag = 2.0
+        plain = self.run_at()
+        kin = np.array(plain.worlds)
+        want = wm.late_bend(kin[self.up_j], kin[self.low_j], kin[self.hand_j], lag)
+        got = self.run_at(**{"elbow_overlap_" + self.side: lag})
+        worst = 0.0
+        for f in range(plain.frames):
+            have, e = self.plane(got, f)
+            aim = wm._unit(want[f] - np.dot(want[f], e) * e)
+            worst = max(worst, math.degrees(math.acos(min(1.0, max(-1.0, float(np.dot(have, aim)))))))
+        self.assertLess(worst, 1e-3, "the late plane is the frames' plane at that lag")
+
+    def test_the_elbow_orbits_and_the_hand_the_shoulder_and_the_bones_stay(self):
+        plain = self.run_at()
+        got = self.run_at(**{"elbow_overlap_" + self.side: 2.0})
+        moved = lambda leaf: float(np.abs(positions(got, leaf, self.w)
+                                          - positions(plain, leaf, self.w)).max())
+        self.assertGreater(moved(self.leaves[1]), 1e-2, "the elbow orbited")
+        self.assertLess(moved(self.leaves[2]), 1e-4, "the hand did not move")
+        self.assertLess(moved(self.leaves[0]), 1e-9, "the shoulder is the body's")
+        for a, b in zip(self.leaves, self.leaves[1:]):
+            was = np.linalg.norm(positions(plain, b, self.w) - positions(plain, a, self.w), axis=1)
+            now = np.linalg.norm(positions(got, b, self.w) - positions(got, a, self.w), axis=1)
+            self.assertLess(float(np.abs(now - was).max()), 1e-5, (a, b))
+
+    def test_the_hands_turn_is_its_turn_that_many_frames_later_and_its_place_is_not(self):
+        lag = 2.0
+        plain = self.run_at()
+        kin = np.array(plain.worlds)
+        late = wm.shifted_cycle(kin[self.hand_j], lag)
+        got = np.array(self.run_at(**{"hand_overlap_" + self.side: lag}).worlds)
+        for f in range(plain.frames):
+            self.assertTrue(np.allclose(got[self.hand_j, f, :3, :3], late[f, :3, :3], atol=1e-6), f)
+            self.assertTrue(np.allclose(got[self.hand_j, f, 3, :3], kin[self.hand_j, f, 3, :3], atol=1e-4), f)
+
+    def test_the_cascade_rides_on_top_of_the_arms_own_lag(self):
+        """Arm overlap L with Hand overlap h turns the hand as the frames turn it at L + h, while its place is
+        where L alone puts it."""
+        L, h = 2.0, 1.0
+        plain = self.run_at()
+        kin = np.array(plain.worlds)
+        want = wm.shifted_cycle(kin[self.hand_j], L + h)
+        only_l = np.array(self.run_at(**{"arm_overlap_" + self.side: L}).worlds)
+        got = np.array(self.run_at(**{"arm_overlap_" + self.side: L,
+                                      "hand_overlap_" + self.side: h}).worlds)
+        for f in range(plain.frames):
+            self.assertTrue(np.allclose(got[self.hand_j, f, :3, :3], want[f, :3, :3], atol=1e-6), f)
+            self.assertTrue(np.allclose(got[self.hand_j, f, 3, :3], only_l[self.hand_j, f, 3, :3],
+                                        atol=1e-4), f)
+
+    def test_the_cascade_alone_keeps_the_hands_place(self):
+        """Arm overlap 0 with a cascade is a real setting: the place is the frames' own to the rebuild's own
+        tolerance (it takes each bone's MEAN length, which is what keeps the lengths constant)."""
+        plain = self.run_at()
+        got = self.run_at(**{"elbow_overlap_" + self.side: 3.0, "hand_overlap_" + self.side: 3.0})
+        self.assertLess(float(np.abs(positions(got, self.leaves[2], self.w)
+                                     - positions(plain, self.leaves[2], self.w)).max()), 1e-4)
+
+    def test_one_side_alone(self):
+        other = "r" if self.side == "l" else "l"
+        plain = self.run_at()
+        got = self.run_at(**{"elbow_overlap_" + self.side: 2.0, "hand_overlap_" + self.side: 2.0})
+        for leaf in ("upperarm_", "lowerarm_", "hand_"):
+            self.assertTrue(np.allclose(positions(got, leaf + other, self.w),
+                                        positions(plain, leaf + other, self.w), atol=1e-9), leaf)
+        self.assertGreater(float(np.abs(positions(got, self.leaves[1], self.w)
+                                        - positions(plain, self.leaves[1], self.w)).max()), 1e-2)
+
+    def test_a_lead_puts_the_elbow_the_other_way(self):
+        plain = self.run_at()
+        late = self.run_at(**{"elbow_overlap_" + self.side: 2.0})
+        lead = self.run_at(**{"elbow_overlap_" + self.side: -2.0})
+        was = positions(plain, self.leaves[1], self.w)
+        a = positions(late, self.leaves[1], self.w) - was
+        b = positions(lead, self.leaves[1], self.w) - was
+        self.assertGreater(float(np.abs(a).max()), 1e-2)
+        self.assertGreater(float(np.abs(b).max()), 1e-2)
+        self.assertFalse(np.allclose(a, b, atol=1e-3))
+
+    def test_the_cycle_is_still_a_loop(self):
+        r = self.run_at(**{"elbow_overlap_" + self.side: 2.0, "hand_overlap_" + self.side: 1.5})
+        moved = np.array(r.worlds)[:, -1] - np.array(r.worlds)[:, 0]
+        self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-9)
+        self.assertLess(float(np.abs(moved[:, 3, :3] - [0.0, 0.0, 120.0]).max()), 1e-6)
+
+    def test_the_pass_says_what_it_did(self):
+        said = self.run_at(**{"elbow_overlap_" + self.side: 2.0,
+                              "hand_overlap_" + self.side: 1.5}).info["arms"]["overlap"]
+        self.assertAlmostEqual(said["elbow"], 2.0, places=6)
+        self.assertAlmostEqual(said["hand"], 1.5, places=6)
+        self.assertEqual(said["frames"], 0.0)
+
+    def test_balance_sees_a_cascade_with_no_arm_lag(self):
+        """Balance swings the arms before it carries the body: with a cascade alone the arms still move, so its
+        `moved_arms` must count the new knobs too."""
+        calls = []
+        real = wm.Walk._arm_overlap
+
+        def counted(self, worlds, n, ctx, only=None):
+            calls.append(1)
+            return real(self, worlds, n, ctx, only)
+        wm.Walk._arm_overlap = counted
+        try:
+            self.run_at(balance=1.0, **{"elbow_overlap_" + self.side: 3.0})
+        finally:
+            wm.Walk._arm_overlap = real
+        self.assertGreater(len(calls), 1, "the pass runs inside Balance's rounds and on the final frames")
+
+
 class ParameterTests(unittest.TestCase):
     """Arm overlap as the animator's parameter: milliseconds in, frames of the new cycle out."""
 
