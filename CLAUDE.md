@@ -16706,3 +16706,108 @@ the section above**; the page is untouched, and its statuses and people stay in 
   a warped segment (refused), creating a sequence beside the montage, Perforce (the checkouts road
   stays the UE Bridge card's), the montage's notifies. **Not seen in a GUI Maya**: the two buttons and
   a real press against the editor are the animator's, as the card itself was.
+
+## The Swordman: a 3ds Max Biped character on our 55 bones (2026-11-01)
+
+The animator, with their character open on port 7006: «В открытой сцене по порту 7006 персонаж и у
+него есть скелет. Его нужно адаптировать под наш пайплайн, давай перенесем на наш скелет (только
+сохраним пропорции) и сделаем риг и ретаргет. Все по нашим правилам. Также давай разберемся с
+оружием оно должно быть в вепон боне а не так как сейчас». Asked: the sword on `weapon_r` and the
+shield on `weapon_l`, both catalog rows; **«Всё кроме пальцев — 55 костей»** (his hand is a mitten
+and his skeleton has no fingers); the map taught his convention; shipped textured. Spec
+`docs/superpowers/specs/2026-11-01-swordman-design.md`, plan beside it. His scene was exported
+read-only to `sources/swordman/Swordman_Scene.mb` (530 KB; their Maya's name, modified flag, frame,
+unit, node count and selection all read unchanged afterwards).
+
+**Measured first, and two of the three decided the build:**
+- his `dagPose` is **stale** — his joints' own `.bindPose` and `bindPose1` disagree with the
+  skinCluster by centimetres (trap 176). The bind is `skinCluster.bindPreMatrix[i].inverse()`,
+  and that is what every step reads;
+- **his saved scene is POSED**: the pelvis stands 110 cm forward of its bind and the sword with it.
+  The first build read the props before the restore, so `weapon_r` — which is built FROM the
+  sword's own frame — landed 109 cm out in the air in front of a bound body, and Add Weapon
+  reproduced the pose. The props are read after the skeleton is put on its bind now, and a gate
+  measures where they STAND, not only how big they are (trap 310);
+- **his pelvis scales 2.54 and his props inherit it** (trap 86): the sword is 117.2 cm in his
+  scene and 46.1 in its own points. `carry_props` freezes the world size into the points, and
+  `make_swordman_weapons.py` exports each prop in the seat a catalog row stands it at.
+
+**Our 55 bones at his places, on UE's axes.** `make_swordman_source.py` (mayapy) creates our
+names — everything but the fingers, plus the twists, the balls, the ik helpers, the camera bones,
+`weapon_r`/`weapon_l` — at his bind, and **rewires** his one skinCluster onto them
+(`matrix[i]` reconnected, `BPM' = BPM · WM_old · WM_new⁻¹`) rather than re-binding: every vertex
+stays where it is to 5.13e-12 cm, whatever frame we choose for the joints. Three rules of his own:
+- **the frames are OURS, not his** (trap 311): a Max Biped runs `+X` down the bone on BOTH sides,
+  Manny's convention is mirrored (`upperarm_r` runs `−X`, `thigh_l` runs `−X`), and a retarget
+  copies a clip's world orientations — so bones built straight off his matrices came out rolled
+  180° on the right arm, the left leg, the pelvis and the whole spine, with the arm and leg
+  pointing exactly backwards (measured 179.9997°). `ue_oriented` gives each bone Manny's bind frame
+  (`assets/manny_skeleton_template.json`) swung the shortest way onto its OWN direction: his
+  places, UE's axes, worst roll taken out 180.00°. The rewire absorbs it for nothing;
+- **the midline on x = 0**: the six unskinned spine and neck joints come off his dagPose up to
+  0.1548 cm off centre, and AdvancedSkeleton reads a midline fit joint past 1 % of its scale as a
+  LEFT-side joint and refuses the build («"Spine4" is on the Left side», trap 299). They carry no
+  weight, so they go back on the midline; it costs the spine 1.20e-03 cm of segment length and
+  nothing else;
+- **`weapon_l` is the SHIELD's own frame**, not `weapon_r`'s mirror: he carries two different
+  objects and each hand's bone is the socket its own prop hangs on. A catalog weapon in his left
+  hand still gets the mirror grip, which `grips.for_hand` reads from the two sockets themselves.
+
+**His rig** is the Creep's procedure (`rebuild_swordman_rig.py`, LIVE in a disposable Maya — AS
+reads its own UI) with Manny's ik_hand rule and his props left to the catalog: every fit joint on
+its bone to 0.000001 cm, 48 constraints, the IK feet level to 0.00000°, 30 controls oriented at
+**0.00000°** (UE's axes cost nothing), bind-pose drift 0.000000000, 187 controls.
+**The FitSkeleton keeps its fingers although his skeleton has none**: AdvancedSkeleton will not
+build a hand that is a leaf — the Elbow's twist Parts blend toward `WristBM_<side>`, and a Wrist
+with no child never gets one («The source attribute 'WristBM_R.outputMatrix' cannot be found»,
+measured with the chains deleted and with the finger driving system dropped as well). So the rig
+carries five finger control chains per hand that drive no game bone; dropping the Elbow's
+`twistJoints` instead would leave his `lowerarm_twist_01/02` undriven, which is worse.
+
+**The two assets** are cut by `make_swordman_assets.py` (one mayapy process per step, trap 122):
+the **rig** with the textured material naming `Swordman/Swordman_Color.jpg` relatively (his PSD as
+a 256 px JPG) and Creep 2's 22 position follows, so an FK translation carries its bone; the
+**skeleton** with the rig taken off and the bones re-seated (drift 2.60e-12, the skin 2.45e-12),
+`|root` and `|Swordman_Body` at world level, the images given their relative paths back after the
+open (trap 284). Rows «Swordman [rig]» and «Swordman [skeleton]», both textured, model `Swordman`
+(a sixth portrait card, so the grid wraps five and one at the animator's dock), fire `steel` — a
+new palette, every one of the nine was taken.
+
+**His own convention in `maya_skeletonmap`** (three words, so old takes off his skeleton retarget):
+`collarbone` and `scapula` are clavicle words, `vector` / `node` / `platform` join `_IGNORE`
+(`UpVectorNode` tokenises as up/vector/node and carries nan positions; `Platform` is the foot
+platform), and a `palm` with no finger below it reads as a hand. Without them his arms mapped one
+joint off and left and right were swapped.
+
+Proof: `docs/superpowers/plans/verify_swordman.py <a UE clip>` — **all 13 gates, mayapy
+standalone**: both rows and the portrait; the rig's 55 game bones, rotation-marked, 22 follows,
+the skin at its bind (6.22e-12); **every one of 268 body vertices where HIS scene has it
+(2.37e-05 cm)**; his 22 segments at his own lengths (1.88e-13 skinned, 1.20e-03 on the six
+midline joints); a UE clip through the Retarget button — the bones on the clip's orientations to
+0.00083°, the limb bones pointing as the clip's to **0.1170°** (179.9997 before the axis fix) and
+**his lengths unchanged to 2.84e-04 cm**, the gate the whole job is for; a Manny beside him
+unmoved (0.000000000); **his sword and shield at zero grip exactly where his own hands hold them
+(1.6e-05 / 1.3e-05 cm)**, each driving its bone with the grip fields reading 0 0 0; the sword's own
+model 117.2 cm standing as wide as his; the export 55 joints and no mesh; the skeleton row; Delete
+character and one Ctrl+Z; and his own 25 joints through the map, 17 of 17 pairs right **with the
+map as it stood before as the control, which gets 15 wrong**. Unit tests
+`tests/test_skeletonmap_basehuman.py` (12, eight red before the three words). **Not seen in a GUI
+Maya**: his cards, a real Add Weapon press and the retarget on screen are the animator's, after
+Check update.
+
+310. **A character scene is saved in whatever pose it was left in, and a size gate cannot see a
+     place.** The Swordman's file holds him 110 cm forward of his bind; the build restored the
+     SKELETON from the skinCluster and read his props before that, so the sword's points and the
+     weapon bone built from its frame were a consistent copy of the POSE grafted onto a bound body
+     — Add Weapon put the sword 113 cm out in front of him. Every gate passed: the only prop gate
+     measured their world SIZE, which a rigid displacement does not change. Read a prop after the
+     bind is restored, and gate where it stands against the source's own hands.
+311. **"Our bone names" is not "our bone axes", and a retarget copies absolute orientations.** A
+     3ds Max Biped runs +X down the bone on both sides; Manny's convention is mirrored
+     (`upperarm_r` −X, `thigh_l` −X). Bones created at his matrices therefore stood rolled 180°
+     from UE's on the right arm, the left leg, the pelvis and the spine, and a UE clip retargeted
+     by the ue5 schema wrenched the body into UE's frames — the right arm and left leg pointing
+     exactly backwards while every orientation gate read 0.0006° (they measure the bones against
+     the CLIP, which is what the retarget made them match). Measure the bind frames against
+     Manny's, bone by bone, and give each bone Manny's frame swung onto its own direction; a skin
+     rewire re-expresses every bindPreMatrix, so the frames are free.
