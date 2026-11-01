@@ -38,6 +38,7 @@ FIRES = {"Manny": "ember", "Creep": "spectral", "Orc_D": "toxic",
          "Creep2": "blood",          # the second Creep (2026-10-27)
          "Creep2_ArmR": "frost", "Creep2_Head": "ash",     # its arm and head (2026-10-27)
          "Creep2_Body": "rust",      # its body without them (2026-10-27)
+         "Swordman": "steel",        # the Swordman (2026-11-01)
          #  the unknown rig or skeleton (the «?» card) burns as Manny's does
          #  («сделаем так же как и карточка менни»; a black fire was tried
          #  first and dropped the same evening)
@@ -86,6 +87,11 @@ PALETTES = {
              (0.24, (110, 46, 16), 0.55), (0.36, (170, 84, 34), 0.88),
              (0.52, (206, 124, 64), 1.0), (0.70, (230, 170, 116), 1.0),
              (0.86, (246, 210, 176), 1.0), (1.00, (254, 244, 232), 1.0)],
+    # the Swordman (2026-11-01): a cold forge-steel white
+    "steel": [(0.00, (0, 0, 0), 0.0), (0.14, (18, 26, 36), 0.04),
+              (0.24, (52, 74, 100), 0.55), (0.36, (96, 130, 168), 0.88),
+              (0.52, (146, 182, 214), 1.0), (0.70, (194, 220, 238), 1.0),
+              (0.86, (228, 240, 250), 1.0), (1.00, (250, 253, 255), 1.0)],
     "blood": [(0.00, (0, 0, 0), 0.0), (0.14, (50, 2, 10), 0.04),
               (0.24, (120, 6, 24), 0.55), (0.36, (190, 16, 44), 0.88),
               (0.52, (230, 44, 70), 1.0), (0.70, (250, 104, 120), 1.0),

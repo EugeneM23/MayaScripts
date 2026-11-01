@@ -780,7 +780,7 @@ class Models(unittest.TestCase):
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
                          ["Manny", "Creep", "Creep2", "Creep2_Body", "Creep2_ArmR", "Creep2_Head", "Orc_D", "Playerchar",
-                          "UE4_Mannequin", "Auto"])
+                          "Swordman", "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -803,9 +803,11 @@ class Models(unittest.TestCase):
     def test_the_rows_of_a_kind(self):
         self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
                          ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig", "Creep2_Rig",
-                          "Creep2_Body_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig"])
+                          "Creep2_Body_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig",
+                          "Swordman_Rig"])
         self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
-                         ["Manny", "Creep", "Playerchar", "Creep2", "Creep2_Body", "Creep2_ArmR", "Creep2_Head", "UE4_Mannequin"])
+                         ["Manny", "Creep", "Playerchar", "Creep2", "Creep2_Body",
+                          "Creep2_ArmR", "Creep2_Head", "Swordman", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
@@ -818,6 +820,7 @@ class Models(unittest.TestCase):
                 ("Playerchar", "rig"): "Playerchar_Rig", ("Playerchar", "skeleton"): "Playerchar",
                 ("Creep2", "rig"): "Creep2_Rig", ("Creep2", "skeleton"): "Creep2",
                 ("Creep2_Body", "rig"): "Creep2_Body_Rig", ("Creep2_Body", "skeleton"): "Creep2_Body",
+                ("Swordman", "rig"): "Swordman_Rig", ("Swordman", "skeleton"): "Swordman",
                 ("UE4_Mannequin", "skeleton"): "UE4_Mannequin"}
         for (model, kind), key in want.items():
             self.assertEqual(catalog.character_for(model, kind).key, key)

@@ -123,6 +123,16 @@ CHARACTERS = [
               model="Creep2_ArmR", part="spine_05"),
     Character("Creep2_Head_Rig", "Creep 2 Head [rig]", "Creep2_Head_Rig.ma", "rig",
               model="Creep2_Head", part="spine_05"),
+    # The Swordman (2026-11-01, the animator's own character on a 3ds Max Biped skeleton:
+    # «перенесем на наш скелет (только сохраним пропорции) и сделаем риг и ретаргет»).
+    # OUR 55 bone names -- everything but the fingers («всё кроме пальцев») -- on HIS bind,
+    # his body's skin REWIRED onto them (never re-bound), and his own AdvancedSkeleton rig
+    # by the Creep's procedure with Manny's ik_hand rule. His sword and shield left the rig
+    # and are catalog weapon rows. Built by docs/superpowers/plans/make_swordman_source.py
+    # -> rebuild_swordman_rig.py -> make_swordman_assets.py from sources/swordman/.
+    # Spec 2026-11-01-swordman-design.md.
+    Character("Swordman_Rig", "Swordman [rig]", "Swordman_Rig.ma", "rig",
+              textured=True, model="Swordman"),
     # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton", textured=True, model="Manny"),
@@ -148,6 +158,10 @@ CHARACTERS = [
               model="Creep2_ArmR", part="spine_05"),
     Character("Creep2_Head", "Creep 2 Head [skeleton]", "Creep2_Head_Skeleton.ma", "skeleton",
               model="Creep2_Head", part="spine_05"),
+    # The Swordman without his rig (2026-11-01), made from Swordman_Rig.ma the Creep
+    # skeleton's way: |root with his 55 bones, |Swordman_Body beside it.
+    Character("Swordman", "Swordman [skeleton]", "Swordman_Skeleton.ma", "skeleton",
+              textured=True, model="Swordman"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -175,6 +189,7 @@ MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Cre
           Model("Creep2_Body", "Creep 2 Body"),
           Model("Creep2_ArmR", "Creep 2 Arm R"), Model("Creep2_Head", "Creep 2 Head"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
+          Model("Swordman", "Swordman"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
 
 
