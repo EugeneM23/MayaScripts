@@ -290,6 +290,20 @@ def build_skeleton(bind, props, body, restored):
     world.update(spine)
     world.update(neck)
 
+    # His own midline is exactly x = 0 -- pelvis, ribcage and head all read
+    # -0.000 at the bind -- but the unskinned six come from the dagPose, which
+    # carries up to 0.10 cm of x on them. AdvancedSkeleton calls any midline
+    # fit joint past 1 % of its scale on +X a LEFT-side joint and refuses the
+    # build outright («"Spine4" is on the Left side»), trap 299. They carry no
+    # weight, so putting them back on the midline costs nothing and is what his
+    # skeleton says anyway.
+    off_midline = 0.0
+    for name in list(spine) + list(neck):
+        m = om.MMatrix(world[name])
+        off_midline = max(off_midline, abs(m[12]))
+        m[12] = 0.0
+        world[name] = m
+
     # the body's bones, parents first
     order = ["pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05",
              "neck_01", "neck_02", "head",
@@ -341,7 +355,7 @@ def build_skeleton(bind, props, body, restored):
     made["camera_bone"] = _make("camera_bone", made["camera_root"], position=(0, head_y, 0))
     made["center_of_mass"] = _make("center_of_mass", root, position=(0, 0, 0))
     made["interaction"] = _make("interaction", root, position=(0, 0, 0))
-    return made, spine_residual, neck_residual
+    return made, spine_residual, neck_residual, off_midline
 
 
 # ------------------------------------------------------------------ the rest
@@ -423,7 +437,7 @@ def tidy(made, carried):
 
 # -------------------------------------------------------------------- gates
 
-def check(bind, props, body, spine_residual, neck_residual):
+def check(bind, props, body, spine_residual, neck_residual, off_midline):
     """Every promise this script makes, measured. Raises on the first break."""
     bad = []
     root = cmds.ls("|root", long=True, type="joint")[0]
@@ -498,6 +512,14 @@ def check(bind, props, body, spine_residual, neck_residual):
     print("  the body stands at its bind, worst vertex %.2e cm" % worst_body)
     print("  his segment lengths kept to %.2e cm" % worst_len)
     print("  the spine's chain closed to %.4f cm, the neck's to %.4f" % (spine_residual, neck_residual))
+    print("  the unskinned six put back on the midline (they stood up to %.4f cm off it)"
+          % off_midline)
+    midline = max(abs(wmat(by_leaf[n])[12]) for n in
+                  ("pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05",
+                   "neck_01", "neck_02", "head"))
+    if midline > 1e-3:
+        raise RuntimeError("a midline joint stands %.4f cm off x = 0; "
+                           "AdvancedSkeleton would read it as a left-side joint" % midline)
     print("  the sword is %.1f cm across, the shield %.1f (x2.54 of their own points)"
           % (sizes["Swordman_Sword"], sizes["Swordman_Shield"]))
 
@@ -509,11 +531,11 @@ def main():
     os.chdir(work)                       # trap 119: nothing resolves against the repo
 
     bind, props, body, restored = read_source()
-    made, spine_residual, neck_residual = build_skeleton(bind, props, body, restored)
+    made, spine_residual, neck_residual, off_midline = build_skeleton(bind, props, body, restored)
     count = rewire(made, bind)
     carried = carry_props(made, props)
     tidy(made, carried)
-    check(bind, props, body, spine_residual, neck_residual)
+    check(bind, props, body, spine_residual, neck_residual, off_midline)
     print("  %d influences rewired onto our joints" % count)
 
     tmp = os.path.join(work, "Swordman_Source.mb")

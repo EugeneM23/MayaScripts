@@ -30,8 +30,18 @@ PLANS = "C:/!!!Work/MayaScripts/docs/superpowers/plans"
 MESHES = ("Swordman_Body",)
 PROPS = ("Swordman_Sword", "Swordman_Shield")
 IK_HELPERS = [("hand_r", "ik_hand_gun"), ("hand_r", "ik_hand_r"), ("hand_l", "ik_hand_l")]
-# the FitSkeleton chains a mitten has no use for; deleting a root takes its chain
-FINGER_ROOTS = ("IndexFinger0", "MiddleFinger0", "RingFinger0", "PinkyFinger0", "ThumbFinger1")
+# The FitSkeleton's finger chains. His skeleton has no finger BONES (the animator:
+# «всё кроме пальцев»), but AdvancedSkeleton will not build a hand that is a leaf:
+# the Elbow's twist Parts blend toward `WristBM_<side>`, and a Wrist with no child
+# never gets one -- «The source attribute 'WristBM_R.outputMatrix' cannot be found»,
+# measured 2026-11-01 with the chains deleted and with the finger driving system
+# dropped as well. Dropping the Elbow's twistJoints instead would leave his
+# lowerarm_twist_01/02 undriven, which is worse.
+#
+# So the FIT keeps its fingers and the SKELETON does not: `_target` finds no bone for
+# a finger fit joint, so `constrain()` drives nothing from them. What is left is five
+# chains of controls per hand that move AdvancedSkeleton's own joints and no game bone.
+FINGER_ROOTS = ()
 
 for plugin in ("matrixNodes", "quatNodes"):
     try:
@@ -79,8 +89,20 @@ def fit_fingerless(heel_y=0.0):
         if root in FINGER_ROOTS and cmds.objExists(path):
             cmds.delete(path)
             gone.append(leaf)
+    # and the finger driving system's own data with them: left on the
+    # FitSkeleton it makes the build wire a system whose joints are gone
+    # («The source attribute 'WristBM_R.outputMatrix' cannot be found»).
+    dropped = []
+    if not FINGER_ROOTS:
+        print("// the FitSkeleton keeps its fingers (see FINGER_ROOTS); the skeleton has none")
+        return placed, worst
+    for attr in ("drivingSystem_Fingers_R", "drivingSystem_Fingers_L"):
+        if cmds.attributeQuery(attr, node="FitSkeleton", exists=True):
+            cmds.deleteAttr("FitSkeleton", attribute=attr)
+            dropped.append(attr)
     mel.eval("asFitModeManualUpdate;")
     print("// finger chains deleted from the FitSkeleton: %s" % gone)
+    print("// finger driving system dropped: %s" % dropped)
     left = [k for k in g["fit_joints"]() if "Finger" in k]
     if left:
         raise RuntimeError("finger fit joints still there: %s" % sorted(left))
