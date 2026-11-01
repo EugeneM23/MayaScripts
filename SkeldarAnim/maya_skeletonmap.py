@@ -82,7 +82,11 @@ _IGNORE = frozenset((
     "ear", "hair", "helper", "corrective", "share", "skirt", "cloth", "cape",
     "attach", "socket", "dummy", "mch", "ctrl", "eyelid", "brow", "lip", "cheek",
     "nose", "chin", "spring", "dynamic", "sec", "bust", "glute", "ribs",
-    "pectoral", "interaction", "mass", "foottip", "toetip"))
+    "pectoral", "interaction", "mass", "foottip", "toetip",
+    # 3ds Max Biped's own helpers (2026-11-01, the Swordman): `UpVectorNode`
+    # tokenises as up/vector/node, `Platform` is the foot platform. Both read
+    # as limbs before this, and the UpVectorNodes carry nan positions.
+    "vector", "node", "platform"))
 _DROP = frozenset(("mixamorig", "def", "org", "cc", "base", "j", "bip", "jnt",
                    "bend", "stretch", "f", "c", "x", "m", "character",
                    "bn", "b", "bone", "joint"))
@@ -215,7 +219,7 @@ def parse(path, convention="generic"):
     if "head" in words_set:
         return Info("head", "", None, None)
     if "clavicle" in words_set or "collar" in words_set or "clav" in words_set \
-            or "scapula" in words_set:
+            or "collarbone" in words_set or "scapula" in words_set:
         return Info("clavicle", side, None, None)
     if "shoulder" in words_set:
         return Info("shoulder", side, None, None)
@@ -419,6 +423,34 @@ def _labels(paths, parents, convention):
         parent = parents.get(path)
         if parent is not None and info[parent].side:
             info[path] = here._replace(side=info[parent].side)
+
+    # 3ds Max's Biped names the HAND `Palm` and has no separate hand joint, so
+    # a palm with no finger under it, on a side that names no hand at all, IS
+    # the hand (2026-11-01, the Swordman: his forearm was read as the hand and
+    # every arm came out one joint short). A real metacarpal keeps its fingers,
+    # and a convention that already names a hand is left exactly as it was.
+    children = {}
+    for path in paths:
+        parent = parents.get(path)
+        if parent is not None:
+            children.setdefault(parent, []).append(path)
+
+    def _holds_a_finger(path):
+        stack = list(children.get(path, ()))
+        while stack:
+            node = stack.pop()
+            if info[node].kind == "finger":
+                return True
+            stack.extend(children.get(node, ()))
+        return False
+
+    for side in SIDES:
+        if any(i.kind == "hand" and i.side == side for i in info.values()):
+            continue
+        for path in paths:
+            here = info[path]
+            if here.kind == "palm" and here.side == side and not _holds_a_finger(path):
+                info[path] = here._replace(kind="hand", finger=None)
     return info
 
 
