@@ -8838,7 +8838,7 @@ null,
 "file": "Swordman_Skeleton.ma",
 "kind": "skeleton",
 "model": "Swordman",
-"sha1": "65d9228c45d576c5bf99f7a6c0d718828391d4fe"
+"sha1": "472cf35d9198b8173a362b68c10d314938ae57d2"
 },
 "Swordman_Rig": {
 "bones": {
@@ -9176,7 +9176,7 @@ null,
 "file": "Swordman_Rig.ma",
 "kind": "rig",
 "model": "Swordman",
-"sha1": "1f0a54c9573cfbdce6d21431591711757a2f4b36"
+"sha1": "fe783e91314abb1186e26a83793deb87269e0d35"
 },
 "UE4_Mannequin": {
 "bones": {

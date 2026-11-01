@@ -16795,6 +16795,42 @@ map as it stood before as the control, which gets 15 wrong**. Unit tests
 Maya**: his cards, a real Add Weapon press and the retarget on screen are the animator's, after
 Check update.
 
+**…and his torso across the whole spine** (2026-11-01, the animator with a screenshot of him
+folded almost double beside an upright mannequin: «похоже все было в порядке это просто плохой скин.
+Можешь поправить что бы спина была адекватной?»). They were right: the retarget is exact
+(gate 5 reads 0.00004°) and the fold is his file's own weighting. **Measured first**: his torso
+is skinned to `pelvis` and `spine_05` alone — 81 vertices on the chain, **1.2 joints each, spread
+0.0 cm**, a hard switch in the middle of a 60 cm span, with spine_01..04, neck_01 and neck_02
+carrying no weight at all — so under a clip it is a rigid slab hinged at one place. Manny's own
+torso, measured the same way: **15679 vertices, 2.5 joints each, spread 3.3 cm** at the hips and
+15-19 cm through the chest, which is what a blend of constant width in JOINT INDEX gives, the
+chain's joints standing close at the hips and far apart in the chest.
+`docs/superpowers/plans/make_swordman_spine_skin.py` (mayapy, both assets in place, the
+`asset_dress` road) adds the six missing chain joints as influences **at the bind** (`addInfluence`
+takes a bindPreMatrix from the joint's world inverse at that moment, so the asset is gated at its
+bind first) and lays what `pelvis` and `spine_05` hold on the chain under a hat `SOFT` 1.5 joints
+wide, by each vertex's place along the spine polyline. Every limb influence is left as his file
+has it; **the bind cannot move** (a skin at its own bind returns its rest points whatever its
+weights — gated, 5.4e-13 cm). Re-runnable: a skinCluster already done carries `skeldarSpineSkin`.
+The laid vertices now ride **2.6 joints each at a spread of 4.6 cm**, Manny's shape.
+
+**The measure that showed it, and the one that lied**: band the torso by height at the bind,
+follow each band's centroid under the clip, and read the angle between successive band-to-band
+vectors — a fold spikes one band. On `am_Orc_Loco_Walk_Fwd_NoRM`: Manny **15.1°**, the Swordman
+**147.8°** as shipped, **38.6°** laid, his torso's span kept (x0.95 → x0.96). The worst stretched
+edge went ×3.52 → ×2.20 — but that metric is no guide on its own: a rigid slab does not stretch,
+and the first spread read ×3.42 → ×4.15 and was right. On an attack clip the band measure breaks
+for everyone (Manny himself reads 106° at span x0.53, the body being nearly horizontal): the walk
+is the clean signal. Drawn offscreen with QPainter from the mesh's own triangles
+(`draw_back.py` in the scratchpad), the before is a plank jutting out behind a crease at the
+waist and the after a body that bends. Proof: `verify_swordman.py` **15 of 15** (its new gates 14
+and 15 measure Manny on the SAME clip and ask for his back within 3x Manny's, and for the laid
+vertices to ride at least 2 joints at a spread of at least 1.5 cm — his file's skin reads 148°,
+1.2 joints and 0.0 cm, so both can fail); gates 3, 4, 7, 8 and 11 unchanged, so the bind, his
+proportions, his two props and the skin are where they were. `character_skeletons.json` re-run
+(his two sha1 pins, nothing else). **A Swordman added before this has the two-bone torso: re-add
+him, and his clips want transferring again.**
+
 310. **A character scene is saved in whatever pose it was left in, and a size gate cannot see a
      place.** The Swordman's file holds him 110 cm forward of his bind; the build restored the
      SKELETON from the skinCluster and read his props before that, so the sword's points and the

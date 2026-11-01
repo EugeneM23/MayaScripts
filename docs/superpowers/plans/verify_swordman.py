@@ -460,5 +460,143 @@ gate(13, applied == 3 and not wrong and old_wrong,
         "" if not wrong else " -- WRONG: " + ", ".join("%s=%s" % (k, mine_map.get(k)) for k in wrong),
         applied, len(old_wrong), ", ".join("%s=%s" % (k, old_map.get(k)) for k in old_wrong[:6])))
 
+# ----------------------------- 14 + 15: his back, against his file's own two-bone torso
+# His file skinned the torso to `pelvis` and `spine_05` alone -- 1.2 joints a vertex over a
+# 60 cm span -- so under a clip it was a rigid slab hinged at one place and his back folded
+# (make_swordman_spine_skin.py). The measure: take the vertices the spine chain actually
+# holds, band them by their place ALONG the chain, follow each band's centroid under the
+# clip, and read the angle between successive band-to-band vectors; a fold spikes one band.
+# Banding by world HEIGHT instead reads the thighs in the lowest band and a running clip
+# then spikes it on a back that is perfectly smooth -- drawn and looked at, 2026-11-01.
+# The control is HIS OWN skin with the chain collapsed back onto the two bones his file
+# used, on the same clip, so the gate needs no second character and no fixed threshold.
+from maya_uebridge import skeletonimport                                    # noqa: E402
+
+CHAIN = ["pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05",
+         "neck_01", "neck_02", "head"]
+TWO = ("pelvis", "spine_05")
+BANDS = 6
+BETTER = 2.0             # how much flatter than his file's own torso the back must read
+LAID_JOINTS = 2.0        # joints a vertex, on the ones laid along the chain (Manny: 2.5)
+LAID_SPREAD = 1.5        # the weight's spread about its centre, cm (Manny: 3.3)
+
+
+def bend(pts, groups):
+    cs = [sum((om.MVector(pts[v]) for v in g), om.MVector()) / len(g) for g in groups]
+    out = []
+    for i in range(1, len(cs) - 1):
+        u, v = cs[i] - cs[i - 1], cs[i + 1] - cs[i]
+        if u.length() < 1e-6 or v.length() < 1e-6:
+            out.append(0.0)
+            continue
+        out.append(math.degrees(math.acos(max(-1.0, min(1.0, u.normal() * v.normal())))))
+    return out
+
+
+def chain_arc(B):
+    places = [om.MVector(cmds.xform(B[n], q=True, ws=True, t=True)) for n in CHAIN]
+    out = [0.0]
+    for i in range(1, len(places)):
+        out.append(out[-1] + (places[i] - places[i - 1]).length())
+    return dict(zip(CHAIN, out))
+
+
+def riders(B, mesh, sc):
+    """Every vertex the chain holds, with where it sits along it and on how many joints."""
+    infl = cmds.skinCluster(sc, q=True, influence=True)
+    leaf = [i.split("|")[-1].split(":")[-1] for i in infl]
+    names = [n for n in CHAIN if n in leaf]
+    pos_of = chain_arc(B)
+    index = dict((n, leaf.index(n)) for n in names)
+    out = []
+    for v in range(cmds.polyEvaluate(mesh, vertex=True)):
+        w = cmds.skinPercent(sc, "%s.vtx[%d]" % (mesh, v), q=True, value=True)
+        got = dict((n, w[index[n]]) for n in names)
+        s = sum(got.values())
+        if s < 0.6:
+            continue
+        mean = sum(got[n] * pos_of[n] for n in names) / s
+        var = sum(got[n] * (pos_of[n] - mean) ** 2 for n in names) / s
+        out.append((v, mean, var ** 0.5, sum(1 for n in names if got[n] > 0.01)))
+    return out, infl, index, pos_of
+
+
+def collapse(sc, mesh, rows, infl, index, pos_of):
+    """His file's own scheme: the chain's weight back on the nearer of the two bones."""
+    for v, _mean, _sd, _n in rows:
+        plug = "%s.vtx[%d]" % (mesh, v)
+        w = cmds.skinPercent(sc, plug, q=True, value=True)
+        share = sum(w[index[n]] for n in CHAIN if n in index)
+        if share < 1e-6:
+            continue
+        here = om.MVector(cmds.xform(plug, q=True, ws=True, t=True))
+        new = list(w)
+        for n in CHAIN:
+            if n in index:
+                new[index[n]] = 0.0
+        near = min(TWO, key=lambda n: abs(pos_of[n] - _mean))
+        new[index[near]] += share
+        cmds.skinPercent(sc, plug, transformValue=[(infl[k], new[k])
+                                                   for k in range(len(infl))])
+
+
+cmds.file(new=True, force=True)
+print("   ", character.add_character(catalog.character_by_key("Swordman")).splitlines()[0])
+root = [j for j in cmds.ls(type="joint", long=True)
+        if j.split("|")[-1].split(":")[-1] == "root"
+        and not cmds.listRelatives(j, parent=True, type="joint")][0]
+B = bones_of(root)
+body_mesh = max([cmds.listRelatives(s, parent=True, fullPath=True)[0]
+                 for s in cmds.ls(type="mesh", noIntermediate=True, long=True)],
+                key=lambda m: cmds.polyEvaluate(m, vertex=True))
+body_sc = cmds.ls(cmds.listHistory(body_mesh), type="skinCluster")[0]
+rows, infl, index, pos_of = riders(B, body_mesh, body_sc)
+torso = [r for r in rows if r[1] <= pos_of["spine_05"] + 1e-6]
+lo = min(r[1] for r in torso)
+hi = max(r[1] for r in torso)
+bands = []
+for i in range(BANDS):
+    a_ = lo + (hi - lo) * i / float(BANDS)
+    b_ = lo + (hi - lo) * (i + 1) / float(BANDS)
+    bands.append([r[0] for r in torso if a_ <= r[1] <= b_ + (1e-6 if i == BANDS - 1 else 0)])
+bands = [g for g in bands if len(g) >= 3]
+want = bend(points(body_mesh), bands)
+
+nodes = import_fbx(CLIP, "clip")
+src = min((j for j in nodes if cmds.nodeType(j) == "joint"
+           and not cmds.listRelatives(j, parent=True, type="joint")),
+          key=lambda j: j.count("|"))
+all_src = list(bones_of(src).values())
+first_f = int(cmds.findKeyframe(all_src, which="first"))
+last_f = int(cmds.findKeyframe(all_src, which="last"))
+skeletonimport.transfer(src, root, first_f, last_f)
+frames = list(range(first_f, last_f + 1, max(1, (last_f - first_f) // 8)))
+
+
+def worst_bend():
+    worst = 0.0
+    for t_ in frames:
+        cmds.currentTime(t_)
+        got = bend(points(body_mesh), bands)
+        worst = max(worst, max(abs(got[i] - want[i]) for i in range(len(want))))
+    return worst
+
+
+laid_bend = worst_bend()
+laid = [r for r in rows if r[3] >= 2]
+joints_each = sum(r[3] for r in laid) / float(len(laid)) if laid else 0.0
+spread_cm = sorted(r[2] for r in laid)[len(laid) // 2] if laid else 0.0
+collapse(body_sc, body_mesh, torso, infl, index, pos_of)
+two_bend = worst_bend()
+gate(14, laid_bend * BETTER < two_bend,
+     "his back under the clip (%d vertices the spine holds, %d bands along it): %.1f deg off "
+     "its bind -- and %.1f with the SAME skin collapsed back onto the two bones his file used "
+     "(the bar: at least %.0fx flatter than his file's own torso)"
+     % (len(torso), len(bands), laid_bend, two_bend, BETTER))
+gate(15, len(laid) >= 30 and joints_each >= LAID_JOINTS and spread_cm >= LAID_SPREAD,
+     "his torso rides the whole spine: %d vertices on more than one chain joint, %.1f joints "
+     "each, the weight's spread about its centre %.1f cm (Manny: 2.5 joints, 3.3 cm; his file: "
+     "1.2 joints, 0.0 cm)" % (len(laid), joints_each, spread_cm))
+
 print("FAILED gates: %s" % FAILS if FAILS else "ALL GATES PASSED")
 maya.standalone.uninitialize()
