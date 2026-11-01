@@ -152,6 +152,16 @@ def read_source():
     if missing:
         raise RuntimeError("his skin does not use: %s" % ", ".join(missing))
 
+    # HIS SCENE IS SAVED IN A POSE -- his pelvis stands 110 cm forward of its bind
+    # and his sword with it.  The props are read AFTER the skeleton is put back on
+    # its bind, or the weapon bones (which are built FROM the props' own frames) land
+    # out in the air where the pose left them.  The bind is the skinCluster's own
+    # (trap 176); the unskinned six, read below, still come off his dagPose.
+    for path in sorted(bind, key=lambda n: _depth(n)):
+        hits = cmds.ls("*" + path, long=True, type="joint")
+        if hits:
+            cmds.xform(hits[0], worldSpace=True, matrix=list(bind[path]))
+
     props = {}
     for name in (SWORD, SHIELD):
         hits = cmds.ls("*" + name, long=True, type="transform") or []
@@ -188,6 +198,12 @@ def read_source():
         hits = cmds.ls("*" + PREFIX + name, long=True, type="joint")
         restored[name] = wmat(hits[0])
     return bind, props, body, restored
+
+
+def _depth(leaf_name):
+    """How deep his joint of this leaf hangs: parents go on their bind first."""
+    hits = cmds.ls("*" + leaf_name, long=True, type="joint")
+    return hits[0].count("|") if hits else 0
 
 
 def _foot_weights(influences):
@@ -242,6 +258,79 @@ def _fit_chain(restored, steps, ends):
         out[ours] = placed
     residual = abs(have.length() - want.length())
     return out, residual
+
+
+def ue_frames():
+    """Manny's bind world matrices by leaf, from the shipped template."""
+    import json
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))), "SkeldarAnim", "assets",
+        "manny_skeleton_template.json")
+    with open(path, encoding="utf-8") as handle:
+        rows = json.load(handle)["joints"]
+    return dict((r["name"], om.MMatrix(r["world_matrix"])) for r in rows)
+
+
+# whose place gives each bone its direction. `head`, `hand_l` and `hand_r` are leaves
+# of our 55 and take their parent's turn instead.
+DIRECTION_CHILD = {
+    "pelvis": "spine_01", "spine_01": "spine_02", "spine_02": "spine_03",
+    "spine_03": "spine_04", "spine_04": "spine_05", "spine_05": "neck_01",
+    "neck_01": "neck_02", "neck_02": "head",
+    "clavicle_l": "upperarm_l", "upperarm_l": "lowerarm_l", "lowerarm_l": "hand_l",
+    "clavicle_r": "upperarm_r", "upperarm_r": "lowerarm_r", "lowerarm_r": "hand_r",
+    "thigh_l": "calf_l", "calf_l": "foot_l", "foot_l": "ball_l",
+    "thigh_r": "calf_r", "calf_r": "foot_r", "foot_r": "ball_r",
+}
+
+
+def ue_oriented(world, balls):
+    """His POSITIONS, UE's AXES: every bone turned onto Manny's own convention.
+
+    He comes off a 3ds Max Biped, whose bones run +X down the bone on BOTH sides;
+    Manny's convention is mirrored (`upperarm_r` runs -X, `thigh_l` runs -X), so our
+    bones built straight off his matrices stood rolled 180 deg from UE's on the right
+    arm, the left leg, the pelvis and the whole spine. A retarget copies a clip's
+    world orientations, so the body came out wrenched into UE's frames -- the right
+    arm and left leg pointing exactly backwards (measured 179.9997 deg).
+
+    Each bone keeps HIS place and takes Manny's bind frame swung the shortest way onto
+    its own direction, so `axis down the bone` is UE's on every bone. The skin does not
+    care: `rewire` re-expresses every bindPreMatrix against whatever frame we choose.
+    Returns the worst roll it had to take out, in degrees.
+    """
+    ue = ue_frames()
+    places = dict((k, om.MVector(m[12], m[13], m[14])) for k, m in world.items())
+    places.update(balls)
+    swings, worst = {}, 0.0
+    for name, child in DIRECTION_CHILD.items():
+        if name not in world or name not in ue or child not in ue or child not in places:
+            continue
+        have = om.MVector(ue[child][12] - ue[name][12], ue[child][13] - ue[name][13],
+                          ue[child][14] - ue[name][14])
+        want = places[child] - places[name]
+        if have.length() < 1e-6 or want.length() < 1e-6:
+            continue
+        swings[name] = om.MQuaternion(have.normal(), want.normal())
+    for name in ("head", "hand_l", "hand_r"):
+        parent = PARENTS.get(name)
+        if name in world and parent in swings:
+            swings[name] = swings[parent]
+    out = {}
+    for name, m in world.items():
+        if name not in swings or name not in ue:
+            out[name] = m
+            continue
+        was = om.MTransformationMatrix(rigid(m)).rotation(asQuaternion=True)
+        turn = om.MTransformationMatrix()
+        turn.setRotation(swings[name])
+        new = om.MMatrix(rigid(ue[name]) * turn.asMatrix())
+        now = om.MTransformationMatrix(new).rotation(asQuaternion=True)
+        q = was.inverse() * now
+        worst = max(worst, math.degrees(2 * math.acos(max(-1.0, min(1.0, abs(q.w))))))
+        new[12], new[13], new[14] = places[name].x, places[name].y, places[name].z
+        out[name] = new
+    return out, worst
 
 
 def _make(name, parent, matrix=None, position=None):
@@ -304,6 +393,19 @@ def build_skeleton(bind, props, body, restored):
         m[12] = 0.0
         world[name] = m
 
+    # the balls' places first: each foot points at its own ball, so the orientation
+    # pass below needs them before any joint is made
+    floor = min(p.y for p in mesh_points(body["shape"]))
+    pts_all = mesh_points(body["shape"])
+    balls = {}
+    for side in ("l", "r"):
+        toe = max((pts_all[v] for v in body["weights"][side]), key=lambda p: p.z)
+        balls["ball_" + side] = om.MVector(toe.x, floor, toe.z)
+
+    world, worst_roll = ue_oriented(world, balls)
+    print("  our bones turned onto UE's axis convention (worst roll taken out %.2f deg)"
+          % worst_roll)
+
     # the body's bones, parents first
     order = ["pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05",
              "neck_01", "neck_02", "head",
@@ -314,12 +416,9 @@ def build_skeleton(bind, props, body, restored):
         made[name] = _make(name, made[PARENTS[name]], matrix=world[name])
 
     # the balls: the forward-most point of each foot's own vertices, on the floor
-    floor = min(p.y for p in mesh_points(body["shape"]))
     for side in ("l", "r"):
-        pts = [mesh_points(body["shape"])[v] for v in body["weights"][side]]
-        toe = max(pts, key=lambda p: p.z)
         made["ball_" + side] = _make("ball_" + side, made["foot_" + side],
-                                     position=(toe.x, floor, toe.z))
+                                     position=list(balls["ball_" + side]))
 
     # the twists, oriented as the bone they ride
     for name, first, second, frac in TWISTS:
@@ -335,9 +434,12 @@ def build_skeleton(bind, props, body, restored):
     socket = euler_matrix(SOCKET_TURN)
     made["weapon_r"] = _make("weapon_r", made["hand_r"],
                              matrix=rigid(socket.inverse() * props[SWORD]["world"]))
-    mirror = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+    # and weapon_l BY the shield, not as weapon_r's mirror: he carries two different
+    # objects, and each hand's bone is the socket its own prop hangs on. A catalog
+    # weapon in his left hand still gets the mirror grip, which `grips.for_hand` reads
+    # from the two sockets themselves.
     made["weapon_l"] = _make("weapon_l", made["hand_l"],
-                             matrix=mirror * wmat(made["weapon_r"]) * mirror)
+                             matrix=rigid(socket.inverse() * props[SHIELD]["world"]))
 
     # the ik helpers, the camera and the two markers: Manny's own rules
     made["ik_foot_root"] = _make("ik_foot_root", root, position=(0, 0, 0))
@@ -454,16 +556,17 @@ def check(bind, props, body, spine_residual, neck_residual, off_midline):
             bad.append("%s has a rotate of %s; the orientation belongs in jointOrient" % (leaf(j), r))
     by_leaf = dict((leaf(j), j) for j in joints)
 
-    # His bind matrices carry the pelvis's 2.54; our skeleton is scale 1, so
-    # what must match is his bind made RIGID -- the same place, the same
-    # orientation, no scale.
+    # His bind matrices carry the pelvis's 2.54 and his Biped's own axes; our
+    # skeleton is scale 1 on UE's axes (`ue_oriented`), so what must match is his
+    # bind PLACE -- the proportions are the whole point, the frames are ours.
     worst_bind = 0.0
     for his, ours in PAIRS.items():
-        want, got = rigid(bind[PREFIX + his]), wmat(by_leaf[ours])
-        off = max(abs(got[i] - want[i]) for i in range(16))
+        want = om.MVector(bind[PREFIX + his][12], bind[PREFIX + his][13],
+                          bind[PREFIX + his][14])
+        off = (wpos(by_leaf[ours]) - want).length()
         worst_bind = max(worst_bind, off)
         if off > TOL:
-            bad.append("%s is %.6f off his bind" % (ours, off))
+            bad.append("%s stands %.6f cm off his bind" % (ours, off))
 
     # the body stands at its bind: the skin's own formula collapses to the rest
     # points through the geometry's bind matrix, because bindPreMatrix * W is I.
@@ -508,7 +611,7 @@ def check(bind, props, body, spine_residual, neck_residual, off_midline):
     if bad:
         raise RuntimeError("source check failed:\n  " + "\n  ".join(bad))
     print("source check: 55 joints, scale 1, rotate 0")
-    print("  his bind reproduced to %.2e (worst matrix element)" % worst_bind)
+    print("  his bind PLACES reproduced to %.2e (worst matrix element)" % worst_bind)
     print("  the body stands at its bind, worst vertex %.2e cm" % worst_body)
     print("  his segment lengths kept to %.2e cm" % worst_len)
     print("  the spine's chain closed to %.4f cm, the neck's to %.4f" % (spine_residual, neck_residual))
@@ -522,6 +625,40 @@ def check(bind, props, body, spine_residual, neck_residual, off_midline):
                            "AdvancedSkeleton would read it as a left-side joint" % midline)
     print("  the sword is %.1f cm across, the shield %.1f (x2.54 of their own points)"
           % (sizes["Swordman_Sword"], sizes["Swordman_Shield"]))
+
+    # where the props STAND, not only how big they are: his scene is saved in a pose,
+    # and reading them before the bind restore put them 113 cm out in front of him
+    # with the weapon bones (built from their frames) after them.
+    worst_prop = 0.0
+    for name, his in (("Swordman_Sword", SWORD), ("Swordman_Shield", SHIELD)):
+        node = cmds.ls(name, long=True, type="transform")[0]
+        shape = cmds.listRelatives(node, shapes=True, fullPath=True, noIntermediate=True)[0]
+        for a, b in zip(mesh_points(shape), props[his]["points"]):
+            worst_prop = max(worst_prop, (om.MVector(a) - om.MVector(b)).length())
+    if worst_prop > 1e-4:
+        bad.append("a prop stands %.4f cm from where his own hand holds it at the bind"
+                   % worst_prop)
+    print("  both props where HIS hands hold them at the bind, to %.2e cm" % worst_prop)
+
+    # and the axis convention: a bone rolled 180 from UE's reads a clip's own world
+    # orientation backwards, which is what a retarget copies
+    ue = ue_frames()
+    flipped = []
+    for ours, child in DIRECTION_CHILD.items():
+        if ours not in by_leaf or ours not in ue or child not in ue:
+            continue
+        kid = by_leaf.get(child)
+        if not kid:
+            continue
+        ours_dir = (wpos(kid) - wpos(by_leaf[ours])) * rigid(wmat(by_leaf[ours])).inverse()
+        ue_dir = om.MVector(ue[child][12] - ue[ours][12], ue[child][13] - ue[ours][13],
+                            ue[child][14] - ue[ours][14]) * rigid(ue[ours]).inverse()
+        if ours_dir.normal() * ue_dir.normal() < 0.999:
+            flipped.append(ours)
+    if flipped:
+        bad.append("not on UE's axis convention: %s" % ", ".join(sorted(flipped)))
+    print("  all %d mapped bones run down their bone on Manny's own axis"
+          % len(DIRECTION_CHILD))
 
 
 def main():
