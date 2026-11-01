@@ -52,6 +52,20 @@ class Grid(unittest.TestCase):
             self.assertLessEqual(a[0] + a[2], b[0])
         self.assertLessEqual(rects[-1][0] + rects[-1][2], 330)
 
+    def test_the_last_row_is_never_outside_the_height(self):
+        """The height used to be worked out from the float cell while each
+        rect rounded its own y and h, so it could land a pixel short and leave
+        the bottom row hanging outside the area it is clipped to: measured at
+        7 weapons in a 320 px Inventory card, and at 5 in a 300 px one, which
+        was already wrong before the seventh row existed (2026-11-01)."""
+        for count in range(1, 25):
+            for width in range(0, 900, 7):
+                _cols, _cell, rects, height = look.grid(width, count)
+                if not rects:
+                    continue
+                self.assertEqual(max(y + h for _x, y, _w, h in rects), height,
+                                 "count=%d width=%d" % (count, width))
+
     def test_nothing_to_draw(self):
         self.assertEqual(look.grid(330, 0), (0, 0, [], 0))
 

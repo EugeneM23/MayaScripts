@@ -341,6 +341,19 @@ WEAPONS = [
     # соответствовали направлению геометрии, но меч сохранил свою позу в руке»).
     Weapon("Creep_Sword", "Creep Sword", _asset_path("Creep_Sword.fbx"), "weapon_r", 1.0,
            (0.0, 45.0, 0.0)),
+    # 2026-11-01, the Swordman's own two out of his scene («оружие должно быть в вепон
+    # боне а не так как сейчас» -- he carried both as plain DAG children of the palm
+    # joints), by docs/superpowers/plans/make_swordman_weapons.py. Both are exported in
+    # the seat a default row stands a weapon in at zero grip (R(SOCKET_TURN) . W_bone),
+    # so neither needs a frame or a stored grip: Add Weapon puts each back in his fist
+    # exactly where he holds it, measured to 1.5e-05 cm. Their points carry the 2.54 his
+    # pelvis scaled them by, so the sword is the 117.2 cm blade he actually swings and
+    # not the 46 cm its own geometry reads (trap 86). Both wear his body's atlas: he,
+    # his sword and his shield share one 256 px map in the UV set his model came with.
+    Weapon("Swordman_Sword", "Swordman Sword", _asset_path("Swordman_Sword.fbx"),
+           "weapon_r", 1.0, texture=_asset_path("Swordman/Swordman_Color.jpg")),
+    Weapon("Swordman_Shield", "Swordman Shield", _asset_path("Swordman_Shield.fbx"),
+           "weapon_l", 1.0, texture=_asset_path("Swordman/Swordman_Color.jpg")),
 ]
 
 # 2026-09-30, «по умолчанию все виды оружия вставлялись в руку правильно без

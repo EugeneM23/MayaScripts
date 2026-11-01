@@ -50,7 +50,7 @@ SKIN = "skinCluster1"
 BODY = "|Cylinder003"
 SWORD, SHIELD = "Object014", "Object013"          # right hand, left hand
 
-GROUP = "Swordman"
+
 MESH_NAMES = {BODY: "Swordman_Body", SWORD: "Swordman_Sword", SHIELD: "Swordman_Shield"}
 
 # his bone -> ours.  These 17 are the skinned ones, and they are placed on his
@@ -397,29 +397,28 @@ def carry_props(made, props):
 
 
 def tidy(made, carried):
-    """Everything of Max's gone, ours grouped under |Swordman|."""
+    """Everything of Max's gone; `root` and the three meshes at world level.
+
+    The shape every source in this repo has (Creep 2's, the Orc's), so the AS
+    build and the asset cutters find them where they look.
+    """
     for junk in cmds.ls("*" + PREFIX + "*", long=True) or []:
         if cmds.objExists(junk):
             top = cmds.ls(junk.split("|")[1], long=True)
             cmds.delete(top[0] if top else junk)
-    group = cmds.ls(cmds.group(empty=True, name=GROUP), long=True)[0]
-    geometry = cmds.ls(cmds.group(empty=True, name="Geometry", parent=group), long=True)[0]
-    cmds.parent(made["root"], group)
-    body = cmds.ls("*" + BODY.strip("|"), long=True)[0]
-    cmds.parent(body, geometry)
-    for name, node in carried.items():
-        cmds.parent(node, geometry)
     for old, new in MESH_NAMES.items():
         hits = cmds.ls("*" + old.strip("|"), long=True, type="transform")
         if hits:
             cmds.rename(hits[0], new)
     for pose in cmds.ls(type="dagPose") or []:
         cmds.delete(pose)
-    joints = cmds.ls(cmds.ls(GROUP, dag=True, long=True), type="joint", long=True) or []
+    root = cmds.ls("|root", long=True, type="joint")[0]
+    joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                          fullPath=True) or [])
     cmds.dagPose(joints, save=True, bindPose=True, name="bindPose1")
     for node in cmds.ls(type="script") or []:
         cmds.delete(node)
-    return group
+    return root
 
 
 # -------------------------------------------------------------------- gates
@@ -427,7 +426,7 @@ def tidy(made, carried):
 def check(bind, props, body, spine_residual, neck_residual):
     """Every promise this script makes, measured. Raises on the first break."""
     bad = []
-    root = cmds.ls("*|root", long=True, type="joint")[0]
+    root = cmds.ls("|root", long=True, type="joint")[0]
     joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
                                           fullPath=True) or [])
     if len(joints) != 55:

@@ -73,7 +73,7 @@ class Table(unittest.TestCase):
     def test_the_dropdown_order_is_sword_then_spear(self):
         self.assertEqual(catalog.labels(),
                          ["Long Sword 02", "Spear 01", "Spear 03", "Dagger 01",
-                          "Creep Sword"])
+                          "Creep Sword", "Swordman Sword", "Swordman Shield"])
 
     def test_spear_03_ships_with_its_texture(self):
         """2026-09-28, «это должно выдаваться сразу с текстурой»: the first
@@ -87,14 +87,29 @@ class Table(unittest.TestCase):
         self.assertNotIn("\\", entry.texture)
         self.assertFalse(catalog.missing(entry))
 
-    def test_only_spear_03_is_textured(self):
-        for entry in catalog.WEAPONS:
-            if entry.key != "Spear_03":
-                self.assertEqual(entry.texture, "", entry.key)
+    def test_only_the_textured_rows_carry_an_image(self):
+        """Spear 03 (2026-09-28) and the Swordman's two (2026-11-01), which
+        wear his body's own atlas: he, his sword and his shield share one map."""
+        textured = set(e.key for e in catalog.WEAPONS if e.texture)
+        self.assertEqual(textured,
+                         {"Spear_03", "Swordman_Sword", "Swordman_Shield"})
         self.assertEqual(
             catalog.entry_for_path("C:/x/Axe.fbx", "weapon_r").texture, "")
         self.assertEqual(
             catalog.Weapon("X", "X", "C:/x.fbx", "weapon_r", 1.0).texture, "")
+
+    def test_the_swordmans_two_sit_one_per_hand_with_no_frame_and_no_scale(self):
+        """2026-11-01: each is exported in the seat a default row stands a
+        weapon in at zero grip, so neither needs a frame or a grip."""
+        for key, label, bone in (("Swordman_Sword", "Swordman Sword", "weapon_r"),
+                                 ("Swordman_Shield", "Swordman Shield", "weapon_l")):
+            entry = catalog.by_key(key)
+            self.assertEqual((entry.label, entry.bone, entry.scale, entry.frame),
+                             (label, bone, 1.0, (0.0, 0.0, 0.0)))
+            self.assertTrue(entry.texture.endswith("Swordman/Swordman_Color.jpg"),
+                            entry.texture)
+            self.assertNotIn("\\", entry.texture)
+            self.assertFalse(catalog.missing(entry))
 
     def test_a_missing_texture_is_named_like_a_missing_model(self):
         entry = catalog.by_key("Spear_03")._replace(

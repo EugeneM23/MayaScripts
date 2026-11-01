@@ -56,7 +56,11 @@ def grid(width, count, scale=1.0):
         rects.append((int(round(col * (cell + gap))),
                       int(round(row * (cell + gap))),
                       int(round(cell)), int(round(cell))))
-    height = int(round(rows * cell + (rows - 1) * gap))
+    # from the rects, not from the float cell: each rect rounds its own y and
+    # h, so a height worked out separately can land a pixel short and leave the
+    # last row hanging outside the area (measured 2026-11-01 at 7 weapons in a
+    # 320 px card, and at 5 in a 300 px one -- it was there before either).
+    height = max(y + h for _x, y, _w, h in rects)
     return cols, int(round(cell)), rects, height
 
 

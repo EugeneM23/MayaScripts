@@ -91,14 +91,57 @@ def colour_of(centre, box, polearm):
     return STEEL
 
 
+ICON_PX = 80              # an icon's pixels per cell (twice the old CELL, for 150 %)
+
+
+def _item_cells(length):
+    """The shape an icon is drawn at, from its model's length in cm: one wide,
+    2..5 tall (Dagger 2, Creep Sword 3, Long Sword 4, the spears 5).
+
+    This was `maya_invlook.item_cells` until the inventory's cell grid went
+    (2026-09-30, «убрать функционал сетчатого инвентаря»). The tiles are square
+    now and nothing reads the shape any more, but it is kept here so a re-run
+    reproduces the icons already shipped rather than redrawing all of them.
+    """
+    height = int(round(2 + (float(length) - 45.0) / 55.0))
+    return (1, max(2, min(5, height)))
+
+
+def _face_on(tris):
+    """The triangles turned so the model's two widest axes are the picture.
+
+    Every blade in the catalog is longest in Y, widest in X and thinnest in Z,
+    so for all of them this is the identity and their icons are unchanged. A
+    shield is not a blade -- its own longest axis is across the picture, and
+    drawn edge-on it comes out a dark blob (2026-11-01, the Swordman's). The
+    permutation keeps the handedness, so the shading does not flip.
+    """
+    axes = sorted(range(3),
+                  key=lambda a: max(p[a] for t in tris for p in t[:3])
+                  - min(p[a] for t in tris for p in t[:3]))
+    smallest, middle, longest = axes            # -> z, x, y
+    order = (middle, longest, smallest)
+    sign = 1.0
+    # an odd permutation mirrors the model; put the handedness back on z
+    parity = sum(1 for i in range(3) for j in range(i + 1, 3) if order[i] > order[j])
+    if parity % 2:
+        sign = -1.0
+    out = []
+    for a, b, c, uv in tris:
+        moved = [om.MPoint(p[order[0]], p[order[1]], sign * p[order[2]])
+                 for p in (a, b, c)]
+        out.append((moved[0], moved[1], moved[2], uv))
+    return out
+
+
 def render(entry):
-    tris = triangles(entry)
+    tris = _face_on(triangles(entry))
     xs = [p.x for t in tris for p in t[:3]]
     ys = [p.y for t in tris for p in t[:3]]
     box = (min(xs), min(ys), max(xs), max(ys))
     length, width = box[3] - box[1], box[2] - box[0]
-    cells = look.item_cells(length)
-    w_px, h_px = cells[0] * look.ICON_PX, cells[1] * look.ICON_PX
+    cells = _item_cells(length)
+    w_px, h_px = cells[0] * ICON_PX, cells[1] * ICON_PX
     k = min(w_px * (1 - 2 * PAD) / max(width, 1e-6), h_px * (1 - 2 * PAD) / max(length, 1e-6))
     cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
     polearm = length / max(width, 1e-6) > 10.0
