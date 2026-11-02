@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Slime — MLS-MPM</title>
+<style>
+  :root {
+    --bg: #17181a;
+    --panel: #212328;
+    --card: #2a2c31;
+    --line: #3a3d44;
+    --text: #e8e8ea;
+    --muted: #9a9ca3;
+    --accent: #e07a36;
+    --accent-soft: rgba(224, 122, 54, 0.16);
+    --ok: #8fd19a;
+    --danger: #e06c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  }
+  #gfx { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+  #panel {
+    position: fixed; top: 12px; right: 12px; width: 300px; max-height: calc(100% - 24px);
+    overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; backdrop-filter: blur(6px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+  }
+  #panel::-webkit-scrollbar { width: 8px; }
+  #panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+  h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+       color: var(--muted); margin: 0 0 10px; }
+  .head { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+          color: var(--muted); margin: 14px 0 6px; padding-bottom: 4px;
+          border-bottom: 1px solid var(--line); }
+  .head:first-of-type { margin-top: 6px; }
+
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 104px; color: var(--muted); font-size: 11.5px; }
+  .row input[type=range] { flex: 1; min-width: 0; height: 18px; accent-color: var(--accent); }
+  .row .val { flex: 0 0 56px; text-align: right; font-variant-numeric: tabular-nums;
+              font-size: 11.5px; color: var(--text); }
+  .hint { color: var(--muted); font-size: 10.5px; margin: 2px 0 6px 112px; }
+
+  .btns { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+  button {
+    flex: 1 1 auto; min-width: 58px; padding: 6px 8px; font: inherit; font-size: 11.5px;
+    color: var(--text); background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; cursor: pointer; transition: background 110ms, border-color 110ms;
+  }
+  button:hover { background: #33363c; }
+  button.on { background: var(--accent-soft); border-color: var(--accent); color: #ffd9bd; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #231104; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+
+  #stats { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line);
+           font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #stats b { color: var(--text); font-weight: 600; }
+  #stats .bad { color: var(--danger); }
+
+  #help {
+    position: fixed; left: 12px; bottom: 12px; padding: 8px 11px; background: rgba(33,35,40,0.82);
+    border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 11.5px;
+    max-width: 330px; line-height: 1.6;
+  }
+  #help b { color: var(--text); font-weight: 600; }
+
+  #fatal {
+    position: fixed; inset: 0; display: none; place-content: center; padding: 40px;
+    background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.6;
+    text-align: center; align-content: center;
+  }
+  #fatal code { background: var(--card); padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+  .swatch { flex: 1; display: flex; gap: 5px; }
+  .swatch div { flex: 1; height: 20px; border-radius: 4px; cursor: pointer;
+                border: 1px solid var(--line); }
+  .swatch div.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+</style>
+</head>
+<body>
+<canvas id="gfx"></canvas>
+
+<div id="panel">
+  <h1>Slime · MLS-MPM</h1>
+  <div id="controls"></div>
+  <div id="stats"></div>
+</div>
+
+<div id="help">
+  <b>ЛКМ</b> — трогать слизь &nbsp; <b>Alt+ЛКМ</b> — вращать камеру<br>
+  <b>Колесо</b> — зум &nbsp; <b>СКМ</b> — панорама &nbsp; <b>Shift+колесо</b> — глубина руки<br>
+  <b>Пробел</b> — пауза &nbsp; <b>S</b> — один кадр &nbsp; <b>R</b> — заново &nbsp; <b>D</b> — капля<br>
+  <b>P</b> (удерживать) — лить струю &nbsp; <b>1–5</b> — виды
+</div>
+
+<div id="fatal"></div>
+
+<script src="shaders.sim.js"></script>
+<script src="shaders.render.js"></script>
+<script src="sim.js"></script>
+<script src="render.js"></script>
+<script src="ui.js"></script>
+<script>
+UI.boot().catch((e) => {
+  console.error(e);
+  const f = document.getElementById('fatal');
+  f.style.display = 'grid';
+  f.innerHTML = '<div><p><b>' + String(e.message || e) + '</b></p>' +
+    '<p style="color:#9a9ca3;font-size:13px">Нужен Chrome или Edge с WebGPU. ' +
+    'Если страница открыта двойным щелчком, запустите <code>python serve.py</code> ' +
+    'в этой папке и откройте адрес, который он напечатает.</p></div>';
+  document.getElementById('panel').style.display = 'none';
+  document.getElementById('help').style.display = 'none';
+});
+</script>
+</body>
+</html>
