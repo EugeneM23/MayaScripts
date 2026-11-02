@@ -17196,7 +17196,9 @@ is written about legs (the turns in the parent's frame, the pelvis over the root
   when `find` refuses: **the mean correction needs no step detection**;
 - `increment(..., planted=True)` reads every foot as planted - a mean pose has no foot in the air, so a move
   along the ground is its print and a turn about up its toe-out (a lift is refused by name, as ever);
-- `summary(keys, only=KEYS)` lets a line name the four keys apart from it.
+`summary(keys, only=KEYS)` lets a line name the four keys apart from it. **An older build silently drops it**:
+its `loads` keeps only the four keys, so a colleague who goes back loses the correction (and overwrites it if
+they then press Update) - the file and the attribute are the same format otherwise.
 - **`meanrig`**: `press` reads the walker's animation with its steps and stands the rig in
   `mean_pose(result_of(anim))` - the mean pose of what the walker SHOWS, from `anim.moving` (every standing
   correction in it, before In place); `update` measures base and rig against that same reading and adds
@@ -17225,7 +17227,10 @@ untouched key for key and nothing written beside the library's walk. Also green:
 `verify_walk_straight_leg.py` and `verify_walk_own.py` failing exactly what they fail on the commit before
 ([25] and [10, 19]); `tests/test_walk_rig_pose_layer.py` (27) and the walk suite's 1065 tests.
 `verify_walk_keyposes.py` / `verify_walk_meanpose.py` still call the rigs with a walk's name: history since
-2026-10-27. **Not seen in a GUI Maya**: the animator's own press on port 7002.
+2026-10-27. **Live on port 7002**: their scene holds no walker, so the press itself is theirs - the four files
+that changed since their installed build (6d7874d) were copied over the installed copy and the hub rebuilt, and
+`keyposes.CYCLE`, `ENTRIES` and `increment(planted=)` are live there; their scene was not touched (its modified
+flag the same before and after).
 
 On the way, a trap of my own making: `increment`'s new `planted` parameter was shadowed by the loop's own
 `planted = max(heel, ball) > 0.5`, so the first standing foot made every later side read as planted - the
