@@ -198,11 +198,12 @@ STRAIGHT_SOFT = 1.0       # the share of the soft zone a full straightening take
 #  ends are where the other leg stands at its own limit and allows no lift)
 STRAIGHT_EDGE = 0.3
 STRAIGHT_LIFT_MAX = 15.0  # cm: the most the hips are lifted for it, whatever the ask
-LEG_STRETCH_MAX = 0.5     # the most Leg stretch may grow a leg (the knob's own range caps it at 0.25)
-STRAIGHT_RATE = 0.6       # cm a frame the lift may move, at a 30-frame stride: the walk's own bob moves
-                          # about that (asd 7.7 cm over 8 frames), and a knee near straight turns ~30 deg
-                          # a cm - measured over 0.25..1.5, this is where the walks reach their ask with
-                          # the knee no jerkier than the cycle's own (2026-11-02)
+#  How fast the lift may move: a share of what the cycle's OWN hips do a frame (its pelvis's p90 rise or fall,
+#  measured over the saved walks at 1.5..7 cm a frame), floored so a cycle with no bob of its own can still
+#  straighten a little. A knee near straight turns ~30 deg a cm, so this is what keeps the knee off a click -
+#  and reading it off the walk lets a bouncy cycle straighten as freely as it already moves (2026-11-02)
+STRAIGHT_SHARE = 0.4
+STRAIGHT_FLOOR = 0.25     # cm a frame at a 30-frame stride
 HEIGHT_KEEP = 0.2         # Height's step: a raise losing more than this share of itself to the legs' reach...
 HEIGHT_STEP_FLOOR = 0.6   # ...shortens the step (Height's own, not the animator's Step) to this at most
 HEIGHT_STEP_GAIN = 1.5    # cm: ...when the shortest step would keep at least this much more of the raise
@@ -1127,6 +1128,9 @@ class Walk(object):
             self.aspect_phase["bob"] = 2.0 * math.pi * BOB_LOW_AFTER - math.pi
         self.leg_parts = dict((s, (float(np.linalg.norm(self.lt[idx["calf_" + s]], axis=1).mean()),
                                    float(np.linalg.norm(self.lt[idx["foot_" + s]], axis=1).mean()))) for s in SIDES)
+        pel = self.pos[self.index["pelvis"]]
+        rise = np.abs(np.diff(pel @ self.up, prepend=float(pel[-1] @ self.up)))
+        self.bob_rate = float(np.percentile(rise, 90))      # cm a source frame: what its own hips do
         self.straight_reach = {}
         for s, (l1, l2) in self.leg_parts.items():
             c = math.cos(math.radians(STRAIGHT_KNEE))
@@ -3389,7 +3393,8 @@ class Walk(object):
                 full = lift_to(q, up, ctx["straight"][side] * length)
                 if full is not None and full > 0.0:
                     need[f] = max(need[f], share * full)
-        shape = smooth_under(need, room, STRAIGHT_RATE * 30.0 * self.strides / max(n, 1))
+        rate = max(STRAIGHT_SHARE * self.bob_rate, STRAIGHT_FLOOR * 30.0 * self.strides / float(self.P))
+        shape = smooth_under(need, room, rate * self.P / max(n, 1))
         peak = float(shape.max())
         if peak <= 1e-9:
             return None
