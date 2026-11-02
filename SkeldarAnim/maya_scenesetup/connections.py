@@ -230,6 +230,16 @@ W_MODE = "W"
 #  разделе»): one limb a row, its W a chip, a check a row, one Apply all a tab.
 #  Nothing bakes on a pick - `pending` holds it until a button is pressed.
 W_BOX = "skeldarConnectionsWorld_{0}_{1}"
+#  2H (2026-11-02, the animator: «"намертво" привяжет обе руки к оружию, то есть
+#  двуручный хват»; asked, «намертво» means the hand FOLLOWS the weapon and the proxy
+#  road stays - «Прокси, одной кнопкой»). One chip for the two hand rows' picks: no new
+#  state, no new bake path. A hand that HOLDS the weapon is left holding - it travels
+#  with it already - so the chip never moves the weapon.
+TWO_HANDS_CHIP = "skeldarConnectionsTwoHands"
+TWO_HANDS_TIP = ("Both hands bound to the weapon. A hand that holds it travels with it "
+                 "already, so the other goes onto it (its own track kept on a proxy "
+                 "inside the weapon). The weapon stays where it stands. Picked, not "
+                 "baked - press a row's check, or Apply all.")
 LIMB_APPLY = "skeldarConnectionsLimbApply_{0}_{1}"
 SPINE_APPLY = "skeldarConnectionsSpineApply"
 ROW_APPLY = "skeldarConnectionsRowApply_{0}"
@@ -329,6 +339,39 @@ def wanted_for_row(current, row, choice):
         elif wanted.get(row) in (FOLLOWS, HOLDS):
             wanted[row] = None
     return wanted
+
+
+def menus_after(shown, chosen):
+    """The three rows as the card SHOWS them: the scene's menus `shown` with the picks
+    laid on top. Pure."""
+    out = dict(shown)
+    for row in (row for row, _choices in _ROWS):
+        picked = chosen.get(pending.parent_key(row))
+        if picked is not None:
+            out[row] = picked
+    return out
+
+
+def two_hands_state(scheme):
+    """Whether both hands are bound to the weapon - a hand that HOLDS it counts: it
+    travels with the weapon by construction. The 2H chip's lit state. Pure."""
+    return all(scheme.get(side) in (HOLDS, FOLLOWS) for side in SIDES)
+
+
+def two_hands_picks(scheme, on):
+    """{side: choice} the 2H chip records over `scheme`, the two HAND rows only.
+
+    The chip never moves the weapon (the animator: «оружие остаётся там, где стоит»),
+    so a hand that holds it is left holding - it already travels with the weapon - and
+    unticked, only the hands that FOLLOW are freed. Pure."""
+    out = {}
+    for side in SIDES:
+        standing = scheme.get(side)
+        if on and standing is None:
+            out[side] = WEAPON
+        elif not on and standing == FOLLOWS:
+            out[side] = FREE
+    return out
 
 
 def describe(scheme):
@@ -1564,6 +1607,13 @@ def _set_menus(values, chosen=None):
         check = ROW_APPLY.format(row)
         if cmds.control(check, exists=True):
             _light(check, "wait" if wanted is not None else "")
+    #  the 2H chip (2026-11-02) shows what the card asks for - the scene's menus with
+    #  the picks on top - and draws `want` when the picks change it
+    if cmds.checkBox(TWO_HANDS_CHIP, exists=True):
+        wants = two_hands_state(scheme_from_menus(menus_after(values, chosen)))
+        cmds.checkBox(TWO_HANDS_CHIP, edit=True, value=wants)
+        _light(TWO_HANDS_CHIP,
+               "want" if wants != two_hands_state(scheme_from_menus(values)) else "")
 
 
 def wanted_menus(rig):
@@ -1804,6 +1854,29 @@ def _menu_changed(row):
         text = _picked_text(chosen) or NOTHING_PICKED
         return _status((note + "; " + text) if note else text)
     return go
+
+
+def _press_two_hands(value, *_args):
+    """The 2H chip: both hands bound to the weapon - the two HAND rows' picks and
+    nothing else (2026-11-02). A PICK.
+
+    The picks are computed over what the CARD shows (the SCENE with the picks already
+    on top - never the collections, which only mirror the scene once a refresh has
+    run): so unticking drops the pick ticking made, rather than asking for a release
+    the scene never needed."""
+    if _MENU_QUIET["on"]:
+        return None
+    rig, refusal = maya_rigs.current_rig()
+    if rig is None:
+        return _status(refusal)
+    shown = menus_from_scheme(read_scheme(rig))
+    chosen = picks(rig)
+    asked = two_hands_picks(scheme_from_menus(menus_after(shown, chosen)), bool(value))
+    for side, choice in asked.items():
+        chosen = pending.record(chosen, pending.parent_key(side), choice, shown[side])
+    chosen = remember(rig, chosen)
+    _set_menus(shown, chosen)
+    return _status(_picked_text(chosen) or NOTHING_PICKED)
 
 
 def _press_row(row):
@@ -2538,6 +2611,10 @@ def build_panel():
             annotation="apply this row's parent only",
             command=_press_row(row)), "tool", "check")
         cmds.setParent("..")
+    #  2H (2026-11-02): one chip for a two-handed grip, under the three rows it picks
+    hubstyle.mark(cmds.checkBox(
+        TWO_HANDS_CHIP, label="2H", value=False, annotation=TWO_HANDS_TIP,
+        changeCommand=_press_two_hands), "chip")
     #  Apply all the weapon section's one orange, alone on its row; BakeAcross
     #  and Release - any object, not the weapon - under a caption of their
     #  own (2026-10-16, the card rules; on one row since 2026-10-08)
