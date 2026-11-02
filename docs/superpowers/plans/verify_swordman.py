@@ -360,39 +360,83 @@ def world(node):
     return om.MMatrix(cmds.xform(node, query=True, worldSpace=True, matrix=True))
 
 
-for n, (key, (his_mesh, bone, hand)) in enumerate(sorted(PROPS.items()), start=7):
-    entry = catalog.by_key(key)
-    side = swordman_seats.HANDS[key][0]
-    #  the press the animator uses, not `attach` with an explicit zero grip: Weapons > Add
-    #  and the inventory both go through `equip.to_hand`, and for a LEFT hand that applies
-    #  the mirror grip `grips.for_hand` computes -- which is why his shield stood ~171 deg
-    #  away until his seat was folded into the points (2026-11-02).
-    #  the frame the asset's points are cut in: the socket turn on the bone AT REST,
-    #  read before the Add (the bone follows the weapon afterwards)
-    seat = om.MMatrix(bonedrive.framed(bonedrive.socket_frame(entry.frame),
+#  The press the animator uses, not `attach` with an explicit zero grip: Weapons > Add
+#  and the inventory both go through `equip.to_hand`, and for a LEFT hand that applies
+#  the mirror grip `grips.for_hand` computes -- which is why his shield stood ~171 deg
+#  away until his seat was folded into the points (2026-11-02).
+#
+#  Both ORDERS are pressed: the left hand's mirror grip is computed from the two drive
+#  bones' sockets, and a weapon held in the right hand drags `weapon_r`, so before the
+#  socket was recorded at link time (`bonedrive.record_socket`) adding the sword first
+#  moved the shield 161 deg (measured the same day).
+
+
+def seated(key, his_mesh, bone, hand):
+    """How far the prop in `hand` stands from where HE set it, by its vertices.
+
+    The asset's points are cut in the seat `R(frame) . W_bone`, so his own model
+    is expressed there and placed at his matrix in the hand: that is what the
+    press must reproduce. The seat is read with the bone AT REST -- it follows
+    the weapon once one is linked (trap 325).
+    """
+    seat = om.MMatrix(bonedrive.framed(bonedrive.socket_frame(catalog.by_key(key).frame),
                                        cmds.getAttr(H[bone] + ".worldMatrix[0]")))
-    hand_world = world(H[hand])
-    said = equip.to_hand(rig.skeleton_root, side, entry)
+    want = om.MMatrix(swordman_seats.IN_HAND[key]) * world(H[hand])
+    theirs = points(leaf_of("src", his_mesh))
+    his_seat = [om.MPoint(q) * seat.inverse() * want for q in theirs]
     node = bonedrive.driving_weapon(H[bone])
     node = cmds.ls(node, long=True)[0] if node else None
     mine = points(node) if node else []
-    theirs = points(leaf_of("src", his_mesh))
-    sizes[key] = (span(mine), span(theirs),
-                  span(points(node, om.MSpace.kObject)) if node else 0.0)
-    #  the same model placed where HE set it: his matrix is in the hand's frame
-    want = om.MMatrix(swordman_seats.IN_HAND[key]) * hand_world
-    his_seat = [om.MPoint(q) * seat.inverse() * want for q in theirs]
-    worst_p = max(mine[i].distanceTo(his_seat[i]) for i in range(len(mine))) \
-        if len(mine) == len(theirs) else -1.0
-    off_src = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))) \
-        if len(mine) == len(theirs) else -1.0
-    driven = bonedrive.driving_weapon(H[bone])
-    gate(n, node and 0 <= worst_p < 1e-3
-         and weaponspace.holding_hand(node) == H[hand]
-         and driven and cmds.ls(driven, long=True)[0] == node,
-         "%s through Weapons > Add: every one of %d vertices where HE set it on his own rig "
-         "(%.2e cm; %.1f cm from where his source file held it), in %s, driving %s | %s"
-         % (entry.label, len(mine), worst_p, off_src, hand, bone, said.splitlines()[0]))
+    if not node or len(mine) != len(theirs):
+        return None, -1.0, -1.0, theirs
+    return (node,
+            max(mine[i].distanceTo(his_seat[i]) for i in range(len(mine))),
+            max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))),
+            theirs)
+
+
+ORDERS = (("Swordman_Shield", "Swordman_Sword"), ("Swordman_Sword", "Swordman_Shield"))
+worst_of = {}
+said_of = {}
+for order in ORDERS:
+    for key in order:
+        equip.take_off(rig.skeleton_root, swordman_seats.HANDS[key][0])
+    seats = {}
+    for key in order:
+        his_mesh, bone, hand = PROPS[key]
+        seats[key] = om.MMatrix(bonedrive.framed(
+            bonedrive.socket_frame(catalog.by_key(key).frame),
+            cmds.getAttr(H[bone] + ".worldMatrix[0]")))
+        said_of[key] = equip.to_hand(rig.skeleton_root, swordman_seats.HANDS[key][0],
+                                     catalog.by_key(key))
+    for key in order:
+        his_mesh, bone, hand = PROPS[key]
+        want = om.MMatrix(swordman_seats.IN_HAND[key]) * world(H[hand])
+        theirs = points(leaf_of("src", his_mesh))
+        his_seat = [om.MPoint(q) * seats[key].inverse() * want for q in theirs]
+        node = bonedrive.driving_weapon(H[bone])
+        node = cmds.ls(node, long=True)[0] if node else None
+        mine = points(node) if node else []
+        ok = bool(node) and len(mine) == len(theirs)             and weaponspace.holding_hand(node) == H[hand]
+        off = max(mine[i].distanceTo(his_seat[i]) for i in range(len(mine)))             if ok else -1.0
+        src = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine)))             if ok else -1.0
+        was = worst_of.get(key)
+        if was is None or off > was[0] or not ok:
+            worst_of[key] = (off, src, len(mine), ok, " then ".join(
+                catalog.by_key(k).label for k in order))
+        if key not in sizes:
+            sizes[key] = (span(mine), span(theirs),
+                          span(points(node, om.MSpace.kObject)) if node else 0.0)
+
+for n, key in enumerate(sorted(PROPS), start=7):
+    off, src, count, ok, order = worst_of[key]
+    hand = PROPS[key][2]
+    gate(n, ok and 0 <= off < 1e-3,
+         "%s through Weapons > Add, in EITHER order: every one of %d vertices where HE "
+         "set it on his own rig (worst %.2e cm, %s; %.1f cm from where his source file "
+         "held it), in %s | %s"
+         % (catalog.by_key(key).label, count, off, order, src, hand,
+            said_of[key].splitlines()[0]))
 
 # his props hang under a chain whose pelvis scales 2.54, so their size is INHERITED, not in
 # their points: a rebind that drops the scale ships them 1/2.54 small and nothing of the

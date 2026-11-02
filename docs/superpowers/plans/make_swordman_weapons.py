@@ -41,6 +41,9 @@ sys.path.insert(0, os.path.join(REPO, "SkeldarAnim"))
 from maya_scenesetup import bonedrive                              # noqa: E402
 from maya_scenesetup import catalog, grips                         # noqa: E402
 
+RIG_ROW = "Swordman_Rig"
+DEFAULTS = {}
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import swordman_seats                                              # noqa: E402
 
@@ -84,22 +87,58 @@ def hand_of(bone):
     return cmds.listRelatives(bone, parent=True, fullPath=True)[0]
 
 
-def default_in_hand(key, bone, entry, root):
-    """Where Add Weapon stands `entry` in its hand today, as a matrix.
+def defaults_from_the_rig():
+    """{key: where Add Weapon stands that prop in its hand}, read off the RIG.
 
-    `grip . socket . bone` is the placement, so in the hand's own frame it is
-    `grip . socket . bone_local`. The grip is the policy's, read through
-    `grips.for_hand` so this can never drift from the press -- and the policy
-    must be the COMPUTED one: a grip remembered in whoever runs this script's
-    prefs would silently seat the asset for them alone.
+    `grip . frame . bone` is the placement, so in the hand's own frame it is
+    `grip . frame . bone_local`. Two things decide it and both belong to the
+    shipped rig, not to his source scene: the drive bone's own local, and -
+    for the left hand - the mirror grip `grips.for_hand` computes from the two
+    sockets. Read in a scratch scene holding nothing but the rig, with both
+    hands empty, which is the state a colleague's first Add meets.
+
+    Measured 2026-11-02, and it is why this is not read from the source scene
+    any more: there the sword's own frame built `weapon_r`, so its local is
+    not the rig's, and the fold came out one whole turn off - the live press
+    stood the sword 52 deg from his seat with the asset that was meant to
+    reproduce it.
+
+    The grip must be the COMPUTED one: a grip remembered in whoever runs this
+    script's prefs would silently seat the asset for them alone.
     """
-    side = swordman_seats.HANDS[key][0]
-    if grips.stored(key, side) is not None:
-        raise RuntimeError("%s: a grip for the %s hand is remembered in these prefs "
-                           "(%s) -- clear it before exporting"
-                           % (key, side, grips.optionvar_name(key, side)))
-    grip = om.MMatrix(bonedrive.matrix_of(*grips.for_hand(entry, side, root)))
-    return grip * seat_of(bone) * wm(hand_of(bone)).inverse()
+    entry = [c for c in catalog.CHARACTERS if c.key == RIG_ROW][0]
+    cmds.file(new=True, force=True)
+    cmds.file(catalog.character_file(entry), i=True, type="mayaAscii",
+              ignoreVersion=True, namespace="rig", mergeNamespacesOnClash=False,
+              preserveReferences=True, executeScriptNodes=False)
+    root = one("rig:root", type="joint")
+    out = {}
+    for key, (side, _hand, bone_leaf) in sorted(swordman_seats.HANDS.items()):
+        if grips.stored(key, side) is not None:
+            raise RuntimeError("%s: a grip for the %s hand is remembered in these prefs "
+                               "(%s) -- clear it before exporting"
+                               % (key, side, grips.optionvar_name(key, side)))
+        row = catalog.by_key(key)
+        bone = one("rig:" + bone_leaf, type="joint")
+        if cmds.listConnections(bone + ".translateX", s=True, d=False):
+            raise RuntimeError("%s is driven in the rig asset: its own local is not "
+                               "the socket" % bone_leaf)
+        grip = om.MMatrix(bonedrive.matrix_of(*grips.for_hand(row, side, root)))
+        out[key] = rigid(grip * seat_of(bone) * wm(hand_of(bone)).inverse())
+        print("  %-22s the press stands it at %s in %s"
+              % (key, [round(v, 4) for v in
+                       om.MTransformationMatrix(out[key]).translation(om.MSpace.kTransform)],
+                 _hand))
+    return out
+
+
+def rigid(matrix):
+    """`matrix` without its scale: the rig's own chain leaves 4e-6 of it."""
+    got = om.MTransformationMatrix(matrix)
+    out = om.MTransformationMatrix()
+    out.setRotation(got.rotation(asQuaternion=False))
+    out.setTranslation(got.translation(om.MSpace.kTransform), om.MSpace.kTransform)
+    return out.asMatrix()
 
 
 def seat_of(bone):
@@ -132,13 +171,11 @@ def export(mesh_name, bone_name, file_name, out_name):
 
     his = points_of(shape_of(mesh))
     seat = seat_of(bone)
-    root = cmds.ls("|root", type="joint", long=True)[0]
-    entry = catalog.by_key(mesh_name)
     #  his seat, folded in: the points are turned by the difference between where
     #  he put the prop in its hand and where Add Weapon stands it today, so the
     #  default placement reproduces his (`p . delta . D = p . X`).
     want = om.MMatrix(swordman_seats.IN_HAND[mesh_name])
-    today = default_in_hand(mesh_name, bone, entry, root)
+    today = DEFAULTS[mesh_name]
     delta = want * today.inverse()
     local = [om.MPoint(p) * seat.inverse() * delta for p in his]
     hand = wm(hand_of(bone))
@@ -232,9 +269,12 @@ def check(path, out_name, his_world, seat, file_name, source_world=()):
 
 
 def main():
+    global DEFAULTS
     os.chdir(tempfile.gettempdir())
-    print("exporting so that Add Weapon's own placement reproduces the seat he")
-    print("set on his rig (swordman_seats.IN_HAND):")
+    print("reading where Add Weapon stands each prop, off the shipped rig:")
+    DEFAULTS = defaults_from_the_rig()
+    print("exporting so that that placement reproduces the seat he set on his")
+    print("rig (swordman_seats.IN_HAND):")
     for mesh_name, bone, file_name, out_name in PROPS:
         got = export(mesh_name, bone, file_name, out_name)
         print("  wrote %s (%.1f KB)" % (got, os.path.getsize(got) / 1024.0))
