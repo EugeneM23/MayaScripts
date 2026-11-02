@@ -47,7 +47,6 @@ from maya_tools import knotplan as plan
 from maya_tools import knots
 from maya_tools import layerbake
 from maya_tools import overlap as overlapper
-from maya_tools import floor as floortool
 from maya_tools import overlapplan
 from maya_tools import reparent
 
@@ -60,14 +59,12 @@ SECTIONS = (
     ("knots", "Knots", "drive with a locator"),
     ("parent", "Parent", "motion kept"),
     ("overlap", "Overlap", "on a new layer"),
-    ("floor", "Floor", "feet on the floor"),
     ("firstperson", "1P", "3P take split by layers"),
 )
 HEAD = dict((key, "skeldarToolsHead_" + key) for key, _, _ in SECTIONS)
 BODY = dict((key, "skeldarToolsBody_" + key) for key, _, _ in SECTIONS)
 OPEN_VAR = "skeldarToolsOpen_%s"
-OPEN_DEFAULT = {"knots": True, "parent": False, "overlap": False, "floor": False,
-                "firstperson": False}
+OPEN_DEFAULT = {"knots": True, "parent": False, "overlap": False, "firstperson": False}
 ORDER_LABEL = "skeldarToolsOrderLabel"
 KNOT_BTN = "skeldarToolsKnot"
 OFFSET_BTN = "skeldarToolsKnotOffset"
@@ -119,7 +116,6 @@ CYCLE_CHIP = "skeldarToolsCycled"
 TOTAL_CHIP = "skeldarToolsTotalLag"
 EDGES_CHIP = "skeldarToolsKeepEdges"
 OVERLAP_BTN = "skeldarToolsOverlap"
-FLOOR_BTN = "skeldarToolsFloor"
 SOFT_VAR = "skeldarOverlapSoftness"
 LAG_VAR = "skeldarOverlapLag"
 EASE_VAR = "skeldarOverlapEasing"
@@ -207,10 +203,6 @@ TIPS = {
                "link trails its own motion, keyed on a new additive layer 'Overlap' (mute, "
                "weight or delete it; pressing again replaces it). A highlighted range overlaps "
                "only there",
-    "floor": "Floor - select any part of a character: its feet are put on the floor (world "
-             "Y = 0), contact by contact - the body is raised or lowered on a new additive "
-             "layer `Floor`, so the animation itself is untouched and a second press replaces "
-             "the first. A highlighted range on the time slider does that range only",
 }
 ORDER_TIPS = {
     "object": "New knots take their object's own rotate order",
@@ -232,7 +224,6 @@ HINTS = {
     SWAP_BTN: "child takes parent's place",
     ACROSS_BTN: "rides the last selected",
     OVERLAP_BTN: "trail onto a new layer",
-    FLOOR_BTN: "the body onto world Y = 0",
     FP_BTN: "layers, chest, 1P camera",
 }
 
@@ -513,11 +504,6 @@ def overlap():
     return _press(lambda: overlapper.run(settings=overlap_settings()))
 
 
-def floor():
-    """Floor (2026-11-02): the character's feet onto world Y = 0, contact by contact."""
-    return _press(floortool.run)
-
-
 def remove():
     return _press(knots.remove)
 
@@ -673,10 +659,6 @@ def _overlap_body():
     _row(OVERLAP_BTN, "Overlap", "wave-sine", TIPS["overlap"], overlap)
 
 
-def _floor_body():
-    _row(FLOOR_BTN, "Floor", "table", TIPS["floor"], floor)
-
-
 def _firstperson_body():
     _row(FP_BTN, "1P Setup", "camera", TIPS["fp_setup"], fp_setup)
     _caption(CAMPARENT_CAPTION, "Camera parent, motion kept")
@@ -688,7 +670,7 @@ def _firstperson_body():
 
 
 _BODIES = {"knots": _knots_body, "parent": _parent_body, "overlap": _overlap_body,
-           "floor": _floor_body, "firstperson": _firstperson_body}
+           "firstperson": _firstperson_body}
 
 
 def _footer():

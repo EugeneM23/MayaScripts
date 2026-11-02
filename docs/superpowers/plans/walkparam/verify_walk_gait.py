@@ -196,6 +196,16 @@ def phase_readback(walks):
                          "%s foot_flat %+.2f (%+.2f in reach) -> %+.2f (at least half, approximate)"
                          % (name, d, want, got))
                     continue
+                if p.name == "passing_knee":
+                    #  a room-bounded ask (2026-11-02): the legs can leave some of a straightening ask, and
+                    #  the model says exactly how much (info["passing"]["short"]) - so the contract is that it
+                    #  never overshoots and that what it did plus what it reports left IS the ask
+                    short = ((r.info.get("passing") or {}).get("short") or {})
+                    left = float(np.mean([short.get(s, 0.0) for s in gait.SIDES])) if short else 0.0
+                    gate(got <= 0.3 and (got - want) <= max(0.1 * abs(want), 0.3) + left + 0.5,
+                         "%s passing_knee %+.2f (%+.2f in reach) -> %+.2f, %.2f left and said"
+                         % (name, d, want, got, left))
+                    continue
                 gate(abs(got - want) <= max(0.1 * abs(want), 0.3),
                      "%s %s %+.2f (%+.2f in reach) -> %+.2f" % (name, p.name, d, want, got))
 

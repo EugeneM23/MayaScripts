@@ -245,7 +245,6 @@ class Card(_Base):
             panel.LAG_LABEL, panel.EASE_LABEL, panel.OVERLAP_FIELDS, panel.SOFT_FIELD,
             panel.LAG_FIELD, panel.EASE_FIELD, panel.HIER_CHIP, panel.CYCLE_CHIP,
             panel.TOTAL_CHIP, panel.EDGES_CHIP, panel.OVERLAP_BTN,
-            panel.HEAD["floor"], panel.BODY["floor"], panel.FLOOR_BTN,
             panel.HEAD["firstperson"], panel.BODY["firstperson"], panel.FP_BTN,
             panel.CAMPARENT_CAPTION] + [panel.CAMPARENT_BTN[c] for c in ("Main", "Root", "Chest",
                                                                  "World")] + [
@@ -257,8 +256,7 @@ class Card(_Base):
         marks = dict((m.name, m) for m in hubstyle.take_marks())
         rows = (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
                 panel.WORLD_BTN, panel.AIM_BTN, panel.SNAPSHOT_BTN, panel.INSIDE_BTN,
-                panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN, panel.OVERLAP_BTN, panel.FLOOR_BTN,
-                panel.FP_BTN)
+                panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN, panel.OVERLAP_BTN, panel.FP_BTN)
         self.assertEqual(sorted(n for n, m in marks.items() if m.role == "toolrow"),
                          sorted(rows))
         for name in rows:
@@ -302,7 +300,7 @@ class Card(_Base):
             self.assertEqual(marks[panel.HEAD[key]].role, "subhead")
             self.assertEqual(marks[panel.HEAD[key]].hint, hint)
             self.assertEqual(self.fake.labels[panel.HEAD[key]], label)
-        self.assertEqual([k for k, _, _ in panel.SECTIONS], ["knots", "parent", "overlap", "floor", "firstperson"])
+        self.assertEqual([k for k, _, _ in panel.SECTIONS], ["knots", "parent", "overlap", "firstperson"])
 
     def test_the_rotate_order_label_is_shown(self):
         """The skin hides a `note` (it becomes the card header's tooltip) - the compact card's
