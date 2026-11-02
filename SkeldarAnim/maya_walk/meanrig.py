@@ -27,6 +27,7 @@ import traceback
 
 import numpy as np
 
+from . import keyposes as kp
 from . import meanpose as mp
 from . import pose as wp
 from . import scene
@@ -393,8 +394,11 @@ def reset(root, clean=None, rekey=None):
     walker keyed again (`rekey(root)`, the card's; else as it was keyed last). Returns the status line."""
     memo = _walker(root)
     edits = scene.walker_edits(root, memo["walk"])[0]
-    had = not mp.is_empty(edits.get("fix") or mp.empty())
-    edits["fix"] = mp.empty()
+    keys = dict(edits.get("keys") or {})
+    entry = keys.get(kp.CYCLE)
+    had = not mp.is_empty(edits.get("fix") or mp.empty()) or (entry is not None and not kp.key_empty(entry))
+    edits["fix"] = mp.empty()                       # an old correction, read in the cycle's frames, goes too
+    edits["keys"] = dict((k, v) for k, v in keys.items() if k != kp.CYCLE)     # the four key poses stay
     scene.set_edits(root, edits)
     label = scene.walker_label(root)
     line = ("%s: the mean pose correction dropped" % label) if had else "%s has no correction" % label

@@ -409,8 +409,11 @@ def reset(root, rekey=None):
         raise Refusal(meanrig.NO_WALKER)
     memo = scene.memo_of(root)
     edits = scene.walker_edits(root, memo.get("walk"))[0]
-    had = not kp.is_empty(edits.get("keys"))
-    edits["keys"] = kp.empty()
+    keys = dict(edits.get("keys") or {})
+    had = any(key in keys and not kp.key_empty(keys[key]) for key in kp.KEYS)
+    # the four keys alone: the whole cycle's entry is the rig pose's own correction (2026-11-02), and its Reset
+    # is the one that drops it
+    edits["keys"] = dict((k, v) for k, v in keys.items() if k == kp.CYCLE)
     scene.set_edits(root, edits)
     label = scene.walker_label(root)
     line = ("%s: the key poses' edits dropped" % label) if had else "%s has no key pose edited" % label
