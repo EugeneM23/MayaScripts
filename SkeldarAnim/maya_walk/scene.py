@@ -1344,6 +1344,7 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
     pose and the physics - the walker shows at each key what its rig shows), In place last. `with_steps`: the
     result read as a walk even with no key edit (the key rigs stand in it)."""
     root = _long(root)
+    parts = wp.parts_read(parts)        # a list stored before the arms were split means both arms
     if params is not None:              # the clean's knobs: the parameters' own, else `given`'s - kept on them
         raw = dict((params or {}).get("clean") or {})
         params = normal_params(dict(params, clean=dict(wc.knobs(given), **raw)))
@@ -1414,6 +1415,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     carries "values" (the parameters asked), "measured" (the result's, gait.measure) and "diagnosis"."""
     started = time.time()
     root = _long(root)
+    parts = wp.parts_read(parts)        # the memo below is written with this build's names for them
     anim = animate(root, walk_name, given, pose_name, parts, pose_card, params)
     walk, statics, start, report = anim.walk, anim.statics, anim.start, anim.report
     given, params, result = anim.given, anim.params, anim.result
@@ -1449,6 +1451,9 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     if anim.pose is not None:
         text += " | pose %s x%.2f%s" % (anim.pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
+        arm = wp.arm_note(parts)              # never `note`: that one holds the skin's (read_bones)
+        if arm:
+            text += " | " + arm
     swung = (result.info.get("arms") or {}).get("overlap") or {}
     if swung.get("weapon"):
         text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])

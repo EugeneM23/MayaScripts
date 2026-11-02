@@ -26,6 +26,15 @@ def _heading(bend, walk):
     return math.atan2(float(np.dot(bend, walk.side)), float(np.dot(bend, walk.fwd)))
 
 
+def _side_of(name):
+    """"l" / "r" for a bone whose name names a side, else None (a bone of the middle, or a weapon socket named
+    for no hand)."""
+    for side in SIDES:
+        if name.endswith("_" + side):
+            return side
+    return None
+
+
 def _bend(hip, knee, ankle):
     e = (ankle - hip) / np.linalg.norm(ankle - hip)
     b = (knee - hip) - np.dot(knee - hip, e) * e
@@ -197,14 +206,18 @@ def prepare(walk, statics, pose_bones, model, target_module):
               - float(np.dot(walk.origin, walk.up)))
     scale = 1.0 if same else legs_ratio
     arms = {}
+    arm_side = {}
     for j, name in enumerate(walk.names):
         parent = walk.parents[j]
         if walk.kind[j] in ("arm", "finger") and name in out and parent >= 0:
             arms[j] = rot(name) @ rot(walk.names[parent]).T
+            arm_side[j] = _side_of(name)
     weapons = {}
+    weapon_side = {}
     for h, (body, rel) in walk.follows.items():
         name, body_name = walk.names[h], walk.names[body]
         if name.startswith("weapon_") and name in pairs and body_name in pairs:
+            weapon_side[h] = _side_of(name)
             held = _np(pose_bones[pairs[name]]["world"]) @ np.linalg.inv(_np(pose_bones[pairs[body_name]]["world"]))
             held[:3, :3] = model.orthonormal(held[:3, :3])
             held[3, :3] *= scale
@@ -224,19 +237,63 @@ def prepare(walk, statics, pose_bones, model, target_module):
     hands = [_np(out["hand_" + side])[3, :3] for side in SIDES if "hand_" + side in out]
     grip = len(hands) == 2 and float(np.linalg.norm(hands[0] - hands[1])) < model.GRIP_DIST
     return {"spine": spine, "head": rot("head"), "pelvis": rot("pelvis"), "height": height, "knee_turn": turn,
-            "arms": arms, "weapons": weapons, "grip": grip, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
+            "arms": arms, "arm_side": arm_side, "weapons": weapons, "weapon_side": weapon_side,
+            "grip": grip, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
             "scale": scale, "hips_yaw": hips_yaw(out, walk), "gait_lean": gait_lean(walk, walk_rest, model),
             "lean_room": lean_room(out, walk, walk_rest, model)}
 
 
 # what the model reads off every pose, whatever its parts: its size, its hips' turn, the walk's lean under it
 ALWAYS = ("scale", "hips_yaw", "gait_lean", "lean_room")
-# what each of the window's checkboxes takes from a pose
+# what each of the window's checkboxes takes from a pose. One chip an ARM since 2026-11-02 («исключить одну из
+# рук из адитивной позы и оставить анимации цикла»): the arms' own keys are split per side by `filtered`, which
+# reads the sides the prepared pose recorded.
 PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees", ("knee_turn",)),
-         ("arms", ("arms", "weapons", "grip")), ("feet", ("width", "toe")))
+         ("arm_l", ()), ("arm_r", ()), ("feet", ("width", "toe")))
+ALL_PARTS = tuple(part for part, keys in PARTS)
+ARM_PARTS = {"l": "arm_l", "r": "arm_r"}
+ARM_KEYS = ("arms", "weapons", "grip")
+LEGACY_PARTS = {"arms": ("arm_l", "arm_r")}      # what a list stored before the split means
+
+
+def parts_read(parts):
+    """A stored list of parts (a walker's memo, a preset, the card's own memory) as this build names them: the
+    one «arms» of a list stored before 2026-11-02 means both arms, and a name this build does not know is
+    dropped. In PARTS' own order."""
+    want = set()
+    for part in parts or ():
+        want.update(LEGACY_PARTS.get(part, (part,)))
+    return tuple(part for part in ALL_PARTS if part in want)
 
 
 def filtered(pose, parts):
-    """The prepared pose with only the parts named in `parts` (PARTS' names)."""
+    """The prepared pose with only the parts named in `parts` (PARTS' names). An arm whose chip is off is not in
+    the pose at all, so the model leaves that arm the cycle's own mean and swing (its upper arm hangs in the
+    world again): a weapon goes with the hand that holds it, and the two-handed grip needs both arms."""
+    parts = parts_read(parts)
     keep = set(key for part, keys in PARTS if part in parts for key in keys)
-    return dict((key, value) for key, value in pose.items() if key in keep or key in ALWAYS)
+    out = dict((key, value) for key, value in pose.items() if key in keep or key in ALWAYS)
+    sides = tuple(side for side in SIDES if ARM_PARTS[side] in parts)
+    if not sides:
+        return out
+    arm_side = pose.get("arm_side") or {}
+    weapon_side = pose.get("weapon_side") or {}
+    out["arms"] = dict((j, m) for j, m in (pose.get("arms") or {}).items() if arm_side.get(j) in sides)
+    # a weapon bone whose name names no side belongs to neither hand: it stays while either arm does
+    out["weapons"] = dict((h, m) for h, m in (pose.get("weapons") or {}).items()
+                          if weapon_side.get(h) is None or weapon_side.get(h) in sides)
+    # "grip" means two hands on one thing - the hold the model carries as one (_arm_dynamics, Weapon overlap) -
+    # so one arm out of the pose ends it; the stilling of the swing is per side, so the hand that holds the
+    # thing goes on holding it and only the freed arm swings
+    out["grip"] = bool(pose.get("grip")) and len(sides) == 2
+    out["grip_sides"] = tuple(sides) if pose.get("grip") else ()
+    return out
+
+
+def arm_note(parts):
+    """What a line says about an arm left out of the pose, or ""."""
+    out = [side for side in SIDES if ARM_PARTS[side] not in parts_read(parts)]
+    if len(out) != 1:
+        return ""
+    return "%s arm out of the pose: it plays the cycle, the two-handed grip is off" % (
+        "left" if out[0] == "l" else "right")

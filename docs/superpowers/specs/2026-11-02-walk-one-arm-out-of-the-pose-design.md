@@ -64,7 +64,18 @@ memo is written with the new names by the next press.
 
 A pose's two-handed grip and a one-armed exclusion cannot both hold: the excluded hand swings and the weapon
 rides the other one. That is the animator's own choice here, and the Pick line says it
-(«left arm out of the pose: the two-handed grip is off»).
+(«left arm out of the pose: it plays the cycle, the two-handed grip is off»).
+
+Two consequences measured on the animator's own sword pose, both named by the gates rather than hidden:
+
+- the **kept** arm keeps the pose's mean and its stilling, but the two-handed CARRY is off - the machinery that
+  sways the held thing as one and makes the other hand keep its hold (`_arm_dynamics`, the Weapon overlap) needs
+  two hands - so it moves **9.4 deg** differently than it does with both arms in the pose. Its hold on the
+  weapon is exact (0.0000 deg in the hand's own frame);
+- the **body** under them moves a little, and for a reason worth keeping: an arm that swings moves the centre of
+  mass, so Balance carries the hips differently (the legs 2.8 deg, the chest 1.0, the pelvis and the spine
+  0.00-0.02). The excluded arm's own motion in the WORLD is the cycle's to 1.03 deg against the 138 deg the pose
+  asked of it - the rest is that body.
 
 ## Proof
 
@@ -72,14 +83,21 @@ rides the other one. That is the animator's own choice here, and the Pick line s
 `asd` under the two-handed sword pose at share 1 (the pose that stills both arms today), every gate measuring
 the walker's own keys:
 
-- both chips on: what it does today, to the digit (a control against the build before);
-- `Arm L` off: the left arm's bones play the cycle - its local mean within a hair of the cycle's own mean and
-  its swing back to the cycle's amplitude - while the right arm still stands in the pose;
-- the left upper arm hangs in the world again (its world swing equals the no-pose walk's);
-- the right hand keeps the weapon (the weapon bone's relation to `hand_r` is the pose's);
-- `Arm R` off instead: the mirror;
-- neither on: both arms as the walk's own, to the digit against a run with no pose arms at all;
-- a walker whose memo says `arms` keeps both arms on the next re-key (the migration), measured on its keys.
+Five skeletons: every part, no `Arm L`, neither arm, no `Arm R`, and the legacy list. The gates, with the
+numbers the run printed:
+
+- the pose moves both arms at all (137.9 / 162.8 deg), so an exclusion is visible;
+- `Arm L` off: its left arm plays the cycle to **1.03 deg** (against 138.3 deg of pose), its upper arm hanging
+  and swinging in the world again (36.69 deg over the cycle, the cycle's own 35.89, the pose's 11.42);
+- the right arm still stands in the pose (155.8 deg from the walk's own; 9.4 deg from both-arms, the carry's
+  own difference, named);
+- the right hand keeps the weapon exactly as the pose holds it (0.0000 deg, 0.0000 cm in the hand's frame);
+- `Arm R` off is the mirror (0.463 deg to the cycle, 133.9 from the walk's own on the kept side);
+- the Pick line names the arm left out and says nothing when none or both are;
+- a stored `arms` means both arms on the next press (0.0000 deg from both-arms) and the memo comes out with this
+  build's names - the migration;
+- the body under them, named bone by bone (Balance's carry and the chest's fit);
+- the library's walk file untouched, nothing written beside it.
 
 Unit tests: `tests/test_walk_one_arm.py` - `filtered`'s own rules (the sides, the weapons, the grip, the
 migration) and the card's two chips.

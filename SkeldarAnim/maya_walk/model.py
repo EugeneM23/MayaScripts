@@ -3886,8 +3886,9 @@ class Walk(object):
                 if kind == "head":
                     centre = self.wmean[j] if pose is None or "head" not in pose else toward(self.wmean[j], pose["head"], a)
                     rots[j] = exp_rot(k["head"] * ex * self._sample("wlog", j, t, ctx, k["g_head"])) @ centre
-                elif j in self.world_arms and (pose is None or "arms" not in pose):
-                    # the upper arm hangs and swings in the world
+                elif j in self.world_arms and (pose is None or j not in pose.get("arms", {})):
+                    # the upper arm hangs and swings in the world - and so does the upper arm of an arm the pose
+                    # does not name: an arm left out of the pose plays the cycle whole (2026-11-02)
                     side_k = ks[self._side(j)]
                     rots[j] = exp_rot(side_k["arms"] * ex * self._sample("wlog", j, t, ctx, side_k["g_arm"])) @ self.wmean[j]
                 else:
@@ -3901,7 +3902,10 @@ class Walk(object):
                             # thing together HOLD it - its swing fades, the thing sways (_arm_dynamics)
                             if j in pose["arms"]:
                                 centre = toward(centre, pose["arms"][j], a)
-                            if pose.get("grip"):
+                            # the stilling is per side ("grip_sides", walkpose.filtered): an arm left out of the
+                            # pose swings as the cycle does, and the one that holds the thing still holds it
+                            # (2026-11-02). A pose from before carries the bare flag for both arms.
+                            if self._side(j) in pose.get("grip_sides", SIDES if pose.get("grip") else ()):
                                 gain *= 1.0 - a
                     if j in self.forearms:
                         gain *= ks[self._side(j)]["elbow"]
@@ -4049,8 +4053,10 @@ class Walk(object):
                                     k["torso_bounce"], BODY_INERTIA, k["spring_comp"])
             turn = log_rot(np.swapaxes(chest, -1, -2) @ dyn)
             new = self._spread_turn(worlds, kin, spine, [(i + 1.0) / len(spine) for i in range(len(spine))], turn)
-            # the upper arms the frames hang in the world (no pose's arms) keep hanging there on the moving chest
-            held = self.world_arms if (ctx["pose"] is None or "arms" not in ctx["pose"]) else ()
+            # the upper arms the frames hang in the world (the pose names them not) keep hanging there on the
+            # moving chest - an arm left out of the pose among them (2026-11-02)
+            named = {} if ctx["pose"] is None else (ctx["pose"].get("arms") or {})
+            held = tuple(j for j in self.world_arms if j not in named)
             self._reattach(worlds, kin, new, only, held)
             out["torso"] = math.degrees(float(np.linalg.norm(turn, axis=1).max()))
         if head is not None and (k["head_drag"] > 0.0 or k["torso_drag"] > 0.0):

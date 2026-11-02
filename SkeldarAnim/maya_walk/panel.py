@@ -124,7 +124,8 @@ GROUPS = tuple((g, gait.GROUP_LABELS[g], _names(g)) for g in gait.GROUPS if g !=
 GROUP_ROWS = (("timing", "pelvis", "legs", "trunk", "head"),
               ("arms", "weapon", "physics", "clean", "rigpose"))
 OLD_GROUPS = {"step": "timing", "chest": "trunk", "weight": "physics"}      # a tab remembered from before
-PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arms", "Arms"), ("feet", "Feet"))
+PART_LABELS = (("torso", "Torso"), ("pelvis", "Pelvis"), ("knees", "Knees"), ("arm_l", "Arm L"),
+               ("arm_r", "Arm R"), ("feet", "Feet"))
 LABELS = {
     "smooth": ("Smooth, fr", "Every joint through a soft periodic blur this many frames wide: quiets jitter that is "
                              "not a spike; 0 leaves the motion as it is"),
@@ -881,8 +882,8 @@ def chosen_parts():
     stored = _stored("parts")
     if stored is None:
         return scene.ALL_PARTS
-    try:
-        return tuple(p for p in json.loads(stored) if p in scene.ALL_PARTS)
+    try:                           # a list stored before the arms were split reads as both arms (parts_read)
+        return scene.wp.parts_read(json.loads(stored))
     except (TypeError, ValueError):
         return scene.ALL_PARTS
 
@@ -1278,6 +1279,7 @@ def _migrate_knobs():
 
 def _set_parts(parts):
     cmds = _cmds()
+    parts = scene.wp.parts_read(parts)     # an old stored list means both arms
     for part, _ in PART_LABELS:
         if cmds.checkBox(_part_control(part), exists=True):
             cmds.checkBox(_part_control(part), edit=True, value=part in parts)
@@ -1773,7 +1775,7 @@ def apply_preset(name):
                 if cmds.checkBox(box, exists=True):
                     cmds.checkBox(box, edit=True, value=bool(params[flag]))
             if parts:
-                _set_parts(tuple(p for p in parts if p in scene.ALL_PARTS))
+                _set_parts(scene.wp.parts_read(parts))
             if card:                      # the pose card only while the library still holds it
                 if os.path.isdir(scene.wcards.absolute(card, _library())):
                     _set_card(card)

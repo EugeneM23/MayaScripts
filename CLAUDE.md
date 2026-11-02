@@ -17235,3 +17235,50 @@ flag the same before and after).
 On the way, a trap of my own making: `increment`'s new `planted` parameter was shadowed by the loop's own
 `planted = max(heel, ball) > 0.5`, so the first standing foot made every later side read as planted - the
 keyrig suite caught it on the first run. A parameter and a per-iteration verdict do not share a name.
+
+## Walk Builder: one arm out of the additive pose, playing the cycle (2026-11-02)
+
+The animator: «еще нам нужен инструмент который позводит исключить одну из рук из адетивной позы и оставить
+анимации цикла». Asked, and answered: an excluded arm plays **the cycle entirely** - its own mean, its own
+swing, its upper arm hanging and swinging in the world again, exactly as if there were no pose for that arm.
+Spec `docs/superpowers/specs/2026-11-02-walk-one-arm-out-of-the-pose-design.md`. **This replaces the single
+`Arms` chip of the Walk Builder sections above.**
+- **Two chips in place of one**: `pose.PARTS` gains `arm_l` and `arm_r` (the card's `PART_LABELS` «Arm L» /
+  «Arm R»), six chips in the row. `pose.prepare` records each arm joint's and each weapon helper's side
+  (`arm_side`, `weapon_side`, off the bone's name), so `filtered` needs no walk.
+- **`pose.filtered`**: a side whose chip is on keeps its joints in `arms` and its own `weapons` entry (a
+  weapon bone naming no side is kept while either arm is); neither chip drops `arms` / `weapons` / `grip`
+  whole, which is what the old unticked `Arms` did.
+- **`grip` is per side now** (`grip_sides`): `grip` keeps its meaning («two hands on one thing») and the
+  model stills a side only while that side is in `grip_sides`, falling back to both for a pose from before
+  this (`pose.get("grip_sides", SIDES if pose.get("grip") else ())`) - so every verify that hands the model
+  an unfiltered pose is unchanged. One chip off: the kept hand is still stilled, the excluded one swings.
+- **`model.py`, the two places that asked «does this pose have arms»** now ask «does it have THIS arm»: the
+  frame walk's world-arm branch (`j not in pose["arms"]`) and `_body_dynamics`'s `held` set, so an excluded
+  upper arm hangs in the world on the moving chest. Nothing else changed: the excluded side's forearm, hand
+  and fingers fall through to `lmean[j]` with their own gains.
+- **An old memo keeps working**: `pose.parts_read` maps a stored `arms` onto both sides and drops names this
+  build does not know; `scene.animate`, `scene.apply` and the card's `chosen_parts` / `_set_parts` all read
+  through it, and the next press writes this build's names. Without it a walker keyed before the split would
+  have come out with BOTH arms silently out of the pose.
+- **The cost, stated and gated**: a two-handed grip and a one-armed exclusion cannot both hold - the
+  excluded hand swings and the weapon rides the other one, which is what the animator asked for. The kept
+  arm keeps the pose's mean and its stilling but moves **9.4 deg** differently, because the two-handed CARRY
+  (`_arm_dynamics`, Weapon overlap) needs two hands; and the body under them moves a little because an arm
+  that swings moves the centre of mass, so Balance carries the hips differently (the legs 2.8 deg, the chest
+  1.0, the pelvis and the spine 0.00-0.02). The Pick line says it: «left arm out of the pose: it plays the
+  cycle, the two-handed grip is off».
+- **Measured in the WORLD, never in the local**: the excluded arm's world rotations are the cycle's to
+  **1.03 deg** (against the 138 deg the pose asked of it), and its LOCAL differs by its parent's exactly -
+  the clavicle over it stands where the posed chest puts it, and the arm hangs from that chest (a unit test
+  measures the two and asks them equal).
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_one_arm.py` - **0 of 13 gates, mayapy standalone**:
+  five Manny UE5 skeletons walking `asd` under the two-handed sword pose at share 1 (the pose that stills
+  both arms today) with every part, no `Arm L`, neither arm, no `Arm R` and the legacy `arms` - the pose
+  moving both arms at all (137.9 / 162.8 deg), the excluded arm on the cycle (1.028 / 0.463 deg) with its
+  upper arm swinging **36.69 deg** over the cycle (the cycle's own 35.89, the pose's 11.42), the kept arm in
+  the pose (155.8 deg from the walk's own, 9.4 from both-arms), the right hand holding the weapon exactly
+  (0.0000 deg / 0.0000 cm in the hand's frame), the line, the memo's migration (0.0000 deg from both-arms,
+  `['torso','pelvis','knees','arm_l','arm_r','feet']` written back), the body named bone by bone and the
+  library's walk file untouched. `tests/test_walk_one_arm.py` (20). **Not seen in a GUI Maya**: the two
+  chips under a real press are the animator's, after Check update.
