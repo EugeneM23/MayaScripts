@@ -147,3 +147,190 @@ class Values(unittest.TestCase):
     def test_a_value_is_on_and_three_numbers(self):
         self.assertEqual(wo.pick_value(True, wo.Settings(0.5, 1.0, 40.0)),
                          (True, 0.5, 1.0, 40.0))
+
+
+class FakeCmds(object):
+    """Just enough of `cmds` for the parked base: attributes, connections, values."""
+
+    def __init__(self):
+        self.attrs = {}          # "node.attr" -> value
+        self.added = []          # (node, longName, kind)
+        self.connections = {}    # "node.attr" -> "curve.output"
+        self.cut = []
+        self.deleted = []
+
+    def objExists(self, path):
+        #  a node exists; a plug exists when it was added
+        return path in self.attrs or "." not in path
+
+    def attributeQuery(self, name, node=None, exists=False):
+        return (node + "." + name) in self.attrs
+
+    def addAttr(self, node, longName=None, dataType=None, attributeType=None,
+                keyable=None):
+        self.added.append((node, longName, dataType or attributeType))
+        self.attrs[node + "." + longName] = "" if dataType == "string" else 0.0
+
+    def deleteAttr(self, plug):
+        self.attrs.pop(plug, None)
+
+    def getAttr(self, plug, **kwargs):
+        if kwargs.get("lock"):
+            return False
+        return self.attrs.get(plug, 0.0)
+
+    def setAttr(self, plug, *values, **kwargs):
+        self.attrs[plug] = values[0]
+
+    def listConnections(self, plug, **kwargs):
+        found = self.connections.get(plug)
+        if not found:
+            return []
+        return [found if kwargs.get("plugs") else found.split(".")[0]]
+
+    def connectAttr(self, source, target, force=False):
+        self.connections[target] = source
+
+    def disconnectAttr(self, source, target):
+        self.connections.pop(target, None)
+
+    def cutKey(self, plug, **kwargs):
+        self.cut.append(plug)
+        self.connections.pop(plug, None)
+
+    def delete(self, *nodes):
+        self.deleted.extend(nodes)
+
+    def ls(self, *args, **kwargs):
+        return [args[0]] if args and args[0] else []
+
+
+class FakeScene(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeCmds()
+        self.weapon = "|Sword"
+        for channel in wo.CHANNELS:
+            self.fake.attrs[self.weapon + "." + channel] = 0.0
+        self.old, wo.cmds = wo.cmds, self.fake
+
+    def tearDown(self):
+        wo.cmds = self.old
+
+
+class ParkedBase(FakeScene):
+    def setUp(self):
+        FakeScene.setUp(self)
+        #  a curve on rotateY, a plain value on translateX
+        self.fake.connections[self.weapon + ".rotateY"] = "swingCurve.output"
+        self.fake.attrs[self.weapon + ".translateX"] = 7.5
+
+    def test_park_takes_the_curve_off_the_weapon(self):
+        wo.park(self.weapon)
+        self.assertNotIn(self.weapon + ".rotateY", self.fake.connections)
+        self.assertEqual(self.fake.connections[self.weapon + ".skeldarOverrideBaseRotateY"],
+                         "swingCurve.output")
+
+    def test_park_copies_a_plain_value(self):
+        wo.park(self.weapon)
+        self.assertEqual(self.fake.attrs[self.weapon + ".skeldarOverrideBaseTranslateX"], 7.5)
+
+    def test_a_rotate_is_parked_as_an_angle_and_a_translate_as_a_length(self):
+        #  trap 42: a plain double would have Maya splice a unitConversion in
+        wo.park(self.weapon)
+        kinds = dict((name, kind) for _n, name, kind in self.fake.added)
+        self.assertEqual(kinds["skeldarOverrideBaseRotateY"], "doubleAngle")
+        self.assertEqual(kinds["skeldarOverrideBaseTranslateX"], "doubleLinear")
+
+    def test_unpark_puts_the_curve_back_and_leaves_nothing(self):
+        wo.park(self.weapon)
+        wo.unpark(self.weapon)
+        self.assertEqual(self.fake.connections[self.weapon + ".rotateY"], "swingCurve.output")
+        self.assertEqual(self.fake.attrs[self.weapon + ".translateX"], 7.5)
+        self.assertNotIn(self.weapon + ".skeldarOverrideBaseRotateY", self.fake.attrs)
+
+    def test_unpark_cuts_the_overrides_own_curve_first(self):
+        #  trap 210: an emptied curve node goes with the cut
+        wo.park(self.weapon)
+        self.fake.connections[self.weapon + ".rotateY"] = "overrideCurve.output"
+        wo.unpark(self.weapon)
+        self.assertIn(self.weapon + ".rotateY", self.fake.cut)
+        self.assertEqual(self.fake.connections[self.weapon + ".rotateY"], "swingCurve.output")
+
+    def test_unpark_with_nothing_parked_says_so(self):
+        self.assertFalse(wo.unpark(self.weapon))
+
+    def test_park_again_takes_whatever_stands_on_the_weapon(self):
+        #  park's own rule: the base is what the weapon carries NOW, and what was
+        #  parked before is deleted with its curves
+        wo.park(self.weapon)
+        self.fake.connections[self.weapon + ".rotateY"] = "overrideCurve.output"
+        wo.park(self.weapon)
+        self.assertIn("swingCurve", self.fake.deleted)
+        self.assertEqual(self.fake.connections[self.weapon + ".skeldarOverrideBaseRotateY"],
+                         "overrideCurve.output")
+
+    def test_unpark_then_park_keeps_the_original_base(self):
+        #  the re-write's order (`enter`): the base reconnected, then parked again - so
+        #  a knob turned re-reads the weapon's ORIGINAL animation, never its own result
+        wo.park(self.weapon)
+        self.fake.connections[self.weapon + ".rotateY"] = "overrideCurve.output"
+        wo.unpark(self.weapon)
+        wo.park(self.weapon)
+        self.assertEqual(self.fake.connections[self.weapon + ".skeldarOverrideBaseRotateY"],
+                         "swingCurve.output")
+
+    def test_drop_deletes_the_parked_curves(self):
+        wo.park(self.weapon)
+        wo.drop(self.weapon)
+        self.assertIn("swingCurve", self.fake.deleted)
+        self.assertNotIn(self.weapon + ".skeldarOverrideBaseRotateY", self.fake.attrs)
+
+
+class State(FakeScene):
+    def test_no_marker_is_no_state(self):
+        self.assertIsNone(wo.state(self.weapon))
+        self.assertFalse(wo.is_overridden(self.weapon))
+
+    def test_the_marker_reads_back_its_numbers(self):
+        self.fake.attrs[self.weapon + "." + wo.MARKER] = "0.5 0.25 120"
+        self.assertEqual(wo.state(self.weapon), wo.Settings(0.5, 0.25, 120.0))
+        self.assertTrue(wo.is_overridden(self.weapon))
+
+    def test_a_broken_marker_is_no_state(self):
+        self.fake.attrs[self.weapon + "." + wo.MARKER] = "oops"
+        self.assertIsNone(wo.state(self.weapon))
+
+    def test_a_weapon_that_is_gone_is_no_state(self):
+        self.assertIsNone(wo.state("|Gone"))
+        self.assertIsNone(wo.state(None))
+
+
+class Words(unittest.TestCase):
+    def test_entered_names_the_keys_the_chest_and_the_numbers(self):
+        line = wo.entered_message("Sword", [0.0, 12.0, 24.0],
+                                  wo.Settings(1.0, 1.0, 80.0), "spine_03", None)
+        self.assertIn("3 keys", line)
+        self.assertIn("spine_03", line)
+        self.assertIn("80", line)
+
+    def test_entered_says_when_the_numbers_change_nothing(self):
+        line = wo.entered_message("Sword", [0.0], wo.IDENTITY, "spine_03", None)
+        self.assertIn("the identity", line)
+
+    def test_entered_does_not_cry_identity_for_a_lag(self):
+        line = wo.entered_message("Sword", [0.0], wo.Settings(1.0, 1.0, 80.0),
+                                  "spine_03", None)
+        self.assertNotIn("the identity", line)
+
+    def test_entered_warns_about_a_held_weapon(self):
+        line = wo.entered_message("Sword", [0.0], wo.Settings(1.0, 1.0, 80.0),
+                                  "spine_03", "R")
+        self.assertIn("slides in the grip", line)
+        self.assertIn("right", line)
+
+    def test_entered_says_when_it_has_no_keys_of_its_own(self):
+        line = wo.entered_message("Sword", [], wo.Settings(1.0, 1.0, 80.0), "spine_03", None)
+        self.assertIn("no keys of its own", line)
+
+    def test_left_names_the_weapon(self):
+        self.assertIn("Sword", wo.left_message("Sword"))

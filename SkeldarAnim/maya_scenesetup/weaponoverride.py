@@ -194,3 +194,290 @@ def entered_message(label, keys, settings, carrier, held):
 def left_message(label):
     """Pure."""
     return "%s back to Default - its own animation restored" % label
+
+
+# ------------------------------------------------------------------ the base
+
+def base_attr(channel):
+    """The weapon's attribute holding `channel`'s own curve. Pure."""
+    return BASE_PREFIX + channel[0].upper() + channel[1:]
+
+
+def state(weapon):
+    """The settings standing on `weapon`, or None."""
+    if not weapon or not cmds.objExists(weapon) or not cmds.attributeQuery(
+            MARKER, node=weapon, exists=True):
+        return None
+    return parse(cmds.getAttr(weapon + "." + MARKER))
+
+
+def is_overridden(weapon):
+    return state(weapon) is not None
+
+
+def park(weapon):
+    """The weapon's own curves off it and onto our attributes - the base a re-write
+    reads and Default puts back; a channel with no curve keeps its value. What was
+    parked before goes first, its curves deleted with it (a re-write parks the base it
+    has just reconnected, never the override's own result)."""
+    drop(weapon)
+    for channel in CHANNELS:
+        attr = base_attr(channel)
+        kind = "doubleLinear" if channel.startswith("translate") else "doubleAngle"
+        cmds.addAttr(weapon, longName=attr, attributeType=kind, keyable=False)
+        plug = weapon + "." + channel
+        curves = cmds.listConnections(plug, source=True, destination=False,
+                                      type="animCurve", plugs=True) or []
+        if curves:
+            cmds.connectAttr(curves[0], weapon + "." + attr)
+            cmds.disconnectAttr(curves[0], plug)
+        else:
+            cmds.setAttr(weapon + "." + attr, cmds.getAttr(plug))
+
+
+def unpark(weapon):
+    """The base back on the weapon, exactly: the override's own curve cut first (an
+    emptied curve node goes with it - trap 210), then the parked curve reconnected or
+    the plain value written. False when nothing was parked."""
+    if not cmds.attributeQuery(base_attr(CHANNELS[0]), node=weapon, exists=True):
+        return False
+    for channel in CHANNELS:
+        attr = weapon + "." + base_attr(channel)
+        if not cmds.objExists(attr):
+            continue
+        plug = weapon + "." + channel
+        cmds.cutKey(plug, clear=True)
+        curves = cmds.listConnections(attr, source=True, destination=False,
+                                      plugs=True) or []
+        if curves:
+            cmds.connectAttr(curves[0], plug, force=True)
+            cmds.disconnectAttr(curves[0], attr)
+        else:
+            try:
+                cmds.setAttr(plug, cmds.getAttr(attr))
+            except RuntimeError:
+                pass
+    drop(weapon)
+    return True
+
+
+def drop(weapon):
+    """Our attributes off `weapon`, the curves still parked on them deleted."""
+    for channel in CHANNELS:
+        attr = weapon + "." + base_attr(channel)
+        if cmds.objExists(attr):
+            for curve in cmds.listConnections(attr, source=True,
+                                              destination=False) or []:
+                if cmds.objExists(curve):
+                    cmds.delete(curve)
+            cmds.deleteAttr(attr)
+    if cmds.attributeQuery(MARKER, node=weapon, exists=True):
+        cmds.deleteAttr(weapon + "." + MARKER)
+
+
+# ----------------------------------------------------------------- the chest
+
+def chest_of(rig):
+    """The rig's chest bone (`spine_03`), long path, or None.
+
+    In 1P the chest control (`Chest_1P_ctrl`) drives that bone through Tools' knot, so
+    reading the bone reads the control's motion - one road for both modes, and it works
+    beside a bare skeleton too. With the upper animation layer muted (1P Setup's own
+    state) the bone IS the stabilized chest, which is what a weapon should inherit."""
+    from maya_scenesetup import skeleton
+    root = getattr(rig, "skeleton_root", None) if rig is not None else None
+    return skeleton.resolve_bone(root, CHEST) if root else None
+
+
+def refusal(weapon, chest):
+    """'' or why `weapon` cannot go into Override mode. Nothing here changes anything."""
+    from maya_scenesetup import weaponaim
+    if not weapon or not cmds.objExists(weapon):
+        return NO_WEAPON
+    label = aimcore.leaf(weapon)
+    if weaponaim.is_aimed(weapon):
+        return AIMED % label
+    if not chest:
+        return NO_CHEST % (label, CHEST)
+    #  the aim's own rule (`aimcore.rotate_refusal`) over both channel sets: this mode
+    #  writes the translate too
+    for channel in CHANNELS:
+        plug = weapon + "." + channel
+        if cmds.getAttr(plug, lock=True):
+            return "%s.%s is locked" % (label, channel)
+        if fkik._layered(plug):
+            return "%s.%s is on animation layers - bake its layers first" % (label, channel)
+        driver = fkik._foreign(plug)
+        if driver:
+            return "%s.%s is driven by %s" % (label, channel, driver)
+    return ""
+
+
+def _held(weapon):
+    """The side of the hand holding `weapon`, or None."""
+    try:
+        from maya_scenesetup import weaponspace
+        hand = weaponspace.holding_hand(weapon)
+    except Exception:                                        # noqa: BLE001 - no rig
+        return None
+    if not hand:
+        return None
+    leaf = aimcore.leaf(hand)
+    return "R" if leaf.endswith("_r") else ("L" if leaf.endswith("_l") else None)
+
+
+# ---------------------------------------------------------------- the engine
+
+def _fps():
+    from maya_poselib import look
+    return look.fps_of(cmds.currentUnit(query=True, time=True))
+
+
+def _curves(weapon, chest):
+    """Every time curve that can move the weapon or the chest. A rig's chest bone is
+    driven by constraints and holds no curve of its own, so the weapon's own keys alone
+    would key nothing at all on a weapon seated in a hand - `driving_curves` is what
+    reads the body's keys through the rig."""
+    return set(fkik.own_curves([weapon], [])) | set(fkik.driving_curves([chest]))
+
+
+def span_for(weapon, chest, curves=None):
+    """(start, end, False): the playback range and every key that moves the weapon or
+    the chest, whole frames."""
+    start = cmds.playbackOptions(query=True, min=True)
+    end = cmds.playbackOptions(query=True, max=True)
+    times = []
+    for curve in (_curves(weapon, chest) if curves is None else curves):
+        times.extend(cmds.keyframe(curve, query=True, timeChange=True) or [])
+    if times:
+        start, end = min(start, min(times)), max(end, max(times))
+    return (int(math.floor(start)), int(math.ceil(end)), False)
+
+
+def frames_for(window, curves):
+    """(frames to key, the keys, their tangents) - `fkik.own_keys`' own two halves over
+    a wider curve set, so the keys are the weapon's and those of whatever moves the
+    chest, with the tangents of the source keys. No key at all: one plain value at the
+    current frame."""
+    mine = [fkik._keys_of(c) for c in curves]
+    keys = fkik.key_frames([t for curve in mine for t, _i, _o in curve], window)
+    tangents = dict((f, fkik.tangents_at(mine, mine, f)) for f in keys)
+    return (keys or [cmds.currentTime(query=True)]), keys, tangents
+
+
+def _read(weapon, chest, frames):
+    """{frame: (the weapon's world, the chest's rigid world, the weapon's parent
+    inverse)} over `frames` - ONE walk, the time put back. Read with the base still
+    connected: this is the weapon's own track."""
+    out = {}
+    with maya_timewarp.unwarped():
+        fkik._suspend(True)
+        now = cmds.currentTime(query=True)
+        try:
+            for frame in frames:
+                fkik._goto(frame)
+                out[frame] = (aimcore.world(weapon), rigid(aimcore.world(chest)),
+                              om.MMatrix(cmds.getAttr(weapon + ".parentInverseMatrix[0]")))
+        finally:
+            fkik._goto(now)
+            fkik._suspend(False)
+    return out
+
+
+def wanted(read, settings, fps):
+    """{frame: the weapon's world under the mode} over every frame `read` holds.
+
+    The chest's time is clamped to the first frame, so that frame is bit-exact and the
+    lag eases in over the first `lag` frames: a body moving before the span is not read
+    there, and the weapon starts where it started."""
+    frames = sorted(read)
+    chests = dict((f, read[f][1]) for f in frames)
+    ref = chests[frames[0]]
+    lag = lag_frames(settings.lag, fps)
+    out = {}
+    for frame in frames:
+        late = sampled(chests, max(frames[0], frame - lag))
+        out[frame] = result(read[frame][0], chests[frame], ref,
+                            scaled(ref, late, settings.rotation, settings.position))
+    return out
+
+
+def channels_of(weapon, read, want, frames):
+    """{frame: (tx, ty, tz, rx, ry, rz)} for the wanted worlds: each frame's local
+    matrix turned into the weapon's own channels by the Pose Library's own writer
+    (`helpers.driver_channels` keeps the rotate order, the rotate axis, the pivots, the
+    shear and the scale), one Euler path through the frames in time order so no
+    neighbour is a turn apart."""
+    from maya_poselib import helpers
+    attrs = helpers._attrs(weapon)
+    previous = [cmds.getAttr(weapon + "." + ch) for ch in fkik.ROTATE]
+    out = {}
+    for frame in frames:
+        rotate, translate = helpers.driver_channels(
+            om.MMatrix(want[frame]) * read[frame][2], attrs, previous)
+        out[frame] = tuple(translate) + tuple(rotate)
+        previous = list(rotate)
+    return out
+
+
+def _fill(weapon, want, values, keyed, frames):
+    """Keys added on the frames between the keys where the weapon stands off `want`
+    (`aimcore.track_off`: 0.1 deg or 0.01 cm), until none does - Default's own loop.
+    The values are the first walk's, never read again with `getAttr(time=)`, which does
+    not pull a constraint chain (trap 69). How many."""
+    def missed(todo):
+        return aimcore.track_off(want, aimcore.walk(todo, lambda: aimcore.world(weapon)))
+
+    def key(frame):
+        for value, channel in zip(values[frame], CHANNELS):
+            cmds.setKeyframe(weapon, attribute=channel, time=frame, value=value)
+
+    with maya_timewarp.unwarped():
+        fkik._suspend(True)
+        try:
+            return aimcore.fill_passes([f for f in frames if f not in keyed], missed, key)
+        finally:
+            fkik._suspend(False)
+
+
+def enter(weapon, chest, settings):
+    """Override mode on `weapon` (the caller holds the undo chunk and autoKey): its own
+    track read, parked, and its channels keyed to what the chest carries. Pressed with
+    the mode standing, the base is reconnected FIRST, so a knob turned re-reads the
+    weapon's original animation and never its own result. The status line."""
+    weapon = aimcore.long_(weapon)
+    label = aimcore.leaf(weapon)
+    key = aimcore.uuid(weapon)
+    unpark(weapon)                       # a re-write: the base back before it is read
+    curves = _curves(weapon, chest)
+    window = span_for(weapon, chest, curves)
+    frames = list(range(window[0], window[1] + 1))
+    read = _read(weapon, chest, frames)
+    want = wanted(read, settings, _fps())
+    values = channels_of(weapon, read, want, frames)
+    sample, keys, tangents = frames_for(window, curves)
+    sample = [f for f in sample if f in values] or [frames[0]]
+    weapon = aimcore.long_(key)
+    park(weapon)
+    cmds.addAttr(weapon, longName=MARKER, dataType="string")
+    cmds.setAttr(weapon + "." + MARKER, unparse(settings), type="string")
+    for index, channel in enumerate(CHANNELS):
+        fkik._write(weapon + "." + channel, sample,
+                    [values[f][index] for f in sample], window, False, tangents)
+    added = _fill(weapon, want, values, set(sample), frames) if keys else 0
+    line = entered_message(label, keys, settings, aimcore.leaf(chest), _held(weapon))
+    return line + (" + %d frame(s) between the keys" % added if added else "")
+
+
+def leave(weapon):
+    """Default on `weapon` (the caller holds the chunk): its own animation back,
+    exactly. The status line."""
+    weapon = aimcore.long_(weapon)
+    if not weapon:
+        return NO_WEAPON
+    label = aimcore.leaf(weapon)
+    if state(weapon) is None:
+        return NOT_OVERRIDDEN % label
+    if not unpark(weapon):
+        drop(weapon)
+    return left_message(label)
