@@ -62,7 +62,7 @@ class HelperTests(unittest.TestCase):
         rng = np.random.default_rng(5)
         for _ in range(20):
             room = np.abs(rng.normal(size=31)) * 3.0
-            out = wm.smooth_under(room, 2.0)
+            out = wm.smooth_under(room, room, 0.5)
             self.assertEqual(len(out), 31)
             self.assertTrue(np.all(out <= room + 1e-9))
             self.assertTrue(np.all(out >= -1e-12))
@@ -70,32 +70,42 @@ class HelperTests(unittest.TestCase):
     def test_smooth_under_is_zero_where_the_room_is_zero(self):
         room = np.ones(30) * 4.0
         room[10] = 0.0
-        out = wm.smooth_under(room, 2.0)
+        out = wm.smooth_under(room, room, 1.0)
         self.assertEqual(out[10], 0.0)
-        self.assertLess(out[11], 2.0)          # its neighbours give way too
-        self.assertGreater(out[20], 2.0)       # far away it keeps the room
+        self.assertAlmostEqual(out[11], 1.0, places=9)    # its neighbours give way at the rate
+        self.assertAlmostEqual(out[12], 2.0, places=9)
+        self.assertEqual(out[20], 4.0)                    # far away it keeps the room whole
 
     def test_smooth_under_ramps_where_a_clamp_would_step(self):
         room = np.zeros(40) + 0.2
         room[12:28] = 5.0                      # a square room: a clamped curve steps 4.8 cm in one frame
-        out = wm.smooth_under(room, 3.0)
+        out = wm.smooth_under(room, room, 0.6)
         self.assertTrue(np.all(out <= room + 1e-9))
-        self.assertGreater(out[19], 3.0)       # the middle of the room is used
+        self.assertAlmostEqual(out[20], 5.0, places=9)    # the middle of the room is used whole
         step = float(np.abs(np.diff(out, prepend=out[-1])).max())
-        self.assertLess(step, 0.5 * (5.0 - 0.2))
-        ramp = int(np.sum((out > 0.3) & (out < 4.0)))
-        self.assertGreaterEqual(ramp, 6)       # it ramps over several frames, on both sides
+        self.assertLessEqual(step, 0.6 + 1e-9)            # and it moves at the rate, never faster
+        ramp = int(np.sum((out > 0.3) & (out < 4.9)))
+        self.assertGreaterEqual(ramp, 12)                 # it ramps over several frames, on both sides
+
+    def test_smooth_under_aims_at_its_need_not_its_room(self):
+        room = np.zeros(30) + 9.0
+        need = np.zeros(30)
+        need[14:17] = 2.0
+        out = wm.smooth_under(need, room, 1.0)
+        self.assertTrue(np.all(out <= need + 1e-9))
+        self.assertAlmostEqual(out[15], 2.0, places=9)
+        self.assertEqual(out[0], 0.0)
 
     def test_smooth_under_is_periodic(self):
         room = np.zeros(24) + 1.0
         room[0] = 0.0
-        out = wm.smooth_under(room, 2.0)
-        self.assertLess(out[23], 1.0)          # the frame before the gap gives way, the wrap counted
-        self.assertLess(out[1], 1.0)
+        out = wm.smooth_under(room, room, 0.4)
+        self.assertAlmostEqual(out[23], 0.4, places=9)    # the frame before the gap gives way, the wrap counted
+        self.assertAlmostEqual(out[1], 0.4, places=9)
 
     def test_smooth_under_of_nothing(self):
-        self.assertEqual(len(wm.smooth_under(np.zeros(0), 2.0)), 0)
-        self.assertTrue(np.all(wm.smooth_under(np.zeros(10), 2.0) == 0.0))
+        self.assertEqual(len(wm.smooth_under(np.zeros(0), np.zeros(0), 0.5)), 0)
+        self.assertTrue(np.all(wm.smooth_under(np.zeros(10), np.zeros(10), 0.5) == 0.0))
 
     def test_the_lift_that_reaches_a_target(self):
         up = np.array([0.0, 1.0, 0.0])
@@ -116,6 +126,146 @@ class HelperTests(unittest.TestCase):
         up = np.array([0.0, 1.0, 0.0])
         q = np.array([0.0, -10.0, 40.0])
         self.assertIsNone(wm.lift_to(q, up, 30.0))
+
+
+def knees(w, worlds, side):
+    """(n,) the knee's bend a frame, degrees (0 straight), read off the worlds."""
+    n = worlds.shape[1] - 1
+    h = worlds[w.index["thigh_" + side], :n, 3, :3]
+    k = worlds[w.index["calf_" + side], :n, 3, :3]
+    a = worlds[w.index["foot_" + side], :n, 3, :3]
+    u = (k - h) / np.linalg.norm(k - h, axis=1)[:, None]
+    v = (a - k) / np.linalg.norm(a - k, axis=1)[:, None]
+    return np.degrees(np.arccos(np.clip(np.sum(u * v, axis=1), -1.0, 1.0)))
+
+
+def passings(w, res):
+    """{side: [frames]} - the frames a planted foot's own passing falls on (the other ankle crossing it along
+    the travel), by the result's own planted mask."""
+    n = res.frames
+    planted = (res.info.get("placement") or {}).get("planted") or {}
+    along = dict((s, res.worlds[w.index["foot_" + s], :n, 3, :3] @ w.basis[0]) for s in ("l", "r"))
+    d = along["l"] - along["r"]
+    out = {"l": [], "r": []}
+    for f in range(n):
+        g = (f + 1) % n
+        if d[f] == 0.0 or (d[f] < 0.0) != (d[g] < 0.0):
+            for s in ("l", "r"):
+                if not planted or planted[s][f]:
+                    out[s].append(f)
+    return out
+
+
+def at_passing(w, res, side=None):
+    """The stance knee's bend at the passing frames (the mean over both sides unless one is named)."""
+    pf = passings(w, res)
+    out = []
+    for s in (("l", "r") if side is None else (side,)):
+        bend = knees(w, res.worlds, s)
+        out.extend(float(bend[f]) for f in pf[s])
+    return float(np.mean(out)) if out else 0.0
+
+
+def defaults(w):
+    own = gait.own(w)
+    return gait.engine_knobs(w, own, gait.values(own, {}))
+
+
+def foot_track(w, res, side):
+    n = res.frames
+    return res.worlds[w.index["foot_" + side], :n, 3, :3].copy()
+
+
+class LiftTests(unittest.TestCase):
+    """Passing knee: the hips lifted at the stance's middle, under a cap that gives way there only."""
+
+    def setUp(self):
+        self.w = walk()
+        self.k = defaults(self.w)
+        self.plain = self.w.evaluate(self.k)
+        self.own = at_passing(self.w, self.plain)
+
+    def test_the_synthetic_walker_passes_on_a_bent_knee(self):
+        self.assertGreater(self.own, 60.0)          # the fixture is a crouched walker: ~72 deg
+
+    def test_nothing_asked_changes_nothing(self):
+        off = self.w.evaluate(dict(self.k, passing_knee=0.0))
+        self.assertTrue(np.array_equal(off.worlds, self.plain.worlds))
+        self.assertNotIn("passing", off.info)
+
+    def test_an_ask_no_straighter_than_the_cycle_changes_nothing(self):
+        same = self.w.evaluate(dict(self.k, passing_knee=self.own + 10.0))
+        self.assertTrue(np.array_equal(same.worlds, self.plain.worlds))
+
+    def test_the_passing_knee_reaches_the_ask(self):
+        asked = self.own - 8.0
+        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        self.assertAlmostEqual(at_passing(self.w, res), asked, delta=1.0)
+
+    def test_it_straightens_the_middle_of_the_stance_and_not_its_ends(self):
+        asked = self.own - 8.0
+        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        for s in ("l", "r"):
+            before, after = knees(self.w, self.plain.worlds, s), knees(self.w, res.worlds, s)
+            for hs, to in self.w.contact[s]:
+                f = int(round(hs)) % res.frames
+                self.assertLess(abs(after[f] - before[f]), 2.5,
+                                "%s strike at %d moved %.2f deg" % (s, f, after[f] - before[f]))
+
+    def test_no_planted_foot_slides(self):
+        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        planted = (res.info.get("placement") or {}).get("planted") or {}
+        for s in ("l", "r"):
+            now, before = foot_track(self.w, res, s), foot_track(self.w, self.plain, s)
+            on = np.array(planted[s], bool) if planted else np.ones(len(now), bool)
+            moved = np.abs(now[on] - before[on]).max()
+            self.assertLess(float(moved), 1e-6, "%s foot moved %.6f cm while planted" % (s, moved))
+
+    def test_the_hips_rise_at_the_passing_and_the_loop_closes(self):
+        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        up = self.w.up
+        pelvis = res.worlds[self.w.index["pelvis"], :, 3, :3] @ up
+        was = self.plain.worlds[self.w.index["pelvis"], :, 3, :3] @ up
+        pf = passings(self.w, res)
+        for s in ("l", "r"):
+            for f in pf[s]:
+                self.assertGreater(pelvis[f] - was[f], 1.0, "frame %d rose %.2f cm" % (f, pelvis[f] - was[f]))
+        self.assertAlmostEqual(pelvis[res.frames], pelvis[0], places=9)
+
+    def test_the_lift_is_nothing_at_the_double_supports(self):
+        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        drop = np.array(res.info["drop"][:res.frames])
+        base = np.array(self.plain.info["drop"][:res.frames])
+        lift = base - drop
+        planted = (res.info.get("placement") or {}).get("planted") or {}
+        if planted:
+            both = [f for f in range(res.frames) if planted["l"][f] and planted["r"][f]]
+            self.assertTrue(both)
+            # the lift lives at the passing: at a double support the other leg stands at its own limit and
+            # leaves almost nothing (what little it leaves is the room's, and the slide test holds it there)
+            self.assertLess(float(np.abs(lift[both]).max()), 0.25 * float(lift.max()))
+
+    def test_it_says_what_it_did(self):
+        asked = self.own - 8.0
+        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        p = res.info["passing"]
+        self.assertAlmostEqual(p["asked"]["l"], asked, places=6)
+        self.assertAlmostEqual(p["got"]["l"], asked, delta=1.0)
+        self.assertGreater(p["lift"], 1.0)
+        self.assertLess(p["short"]["l"], 0.5)
+
+    def test_one_side_alone(self):
+        asked = self.own - 8.0
+        res = self.w.evaluate(dict(self.k, passing_knee_l=asked))
+        self.assertAlmostEqual(at_passing(self.w, res, "l"), asked, delta=1.5)
+        self.assertGreater(at_passing(self.w, res, "r"), asked + 5.0)
+
+    def test_an_ask_the_legs_cannot_reach_is_named(self):
+        res = self.w.evaluate(dict(self.k, passing_knee=1.0))
+        p = res.info["passing"]
+        self.assertGreater(p["short"]["l"], 0.5)       # the legs ran out of room
+        self.assertLess(p["lift"], wm.STRAIGHT_LIFT_MAX + 1e-9)
+        self.assertGreater(p["got"]["l"], 1.0)
 
 
 if __name__ == "__main__":

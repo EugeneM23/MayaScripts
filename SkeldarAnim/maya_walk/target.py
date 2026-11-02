@@ -31,6 +31,7 @@ POP_CURVE = np.radians(6.0)
 POP_WINDOW = 3
 POP_SIGMA = 1.5
 POP_ROUNDS = 3
+POP_ASKED = np.radians(2.0)   # ...and a minimum this much deeper than a Passing knee ask is still a click
 
 
 def _model():
@@ -58,17 +59,23 @@ def _angle(a, b):
     return float(np.arccos(max(-1.0, min(1.0, float(np.dot(a, b)) / (na * nb)))))
 
 
-def pops(bends):
+def pops(bends, straight=None):
     """{side: [frames]} - the clicks in each leg's knee bends (one value a frame, periodic): a local minimum under
-    POP_STRAIGHT whose curvature is over POP_CURVE."""
+    POP_STRAIGHT whose curvature is over POP_CURVE. `straight` ({side: radians}, Passing knee's ask) lowers that
+    depth for a side the animator asked to straighten - a knee landing on its ask is the ask, not a click, and
+    lowering the pelvis for it would undo the very thing the knob did (2026-11-02); a minimum POP_ASKED deeper
+    than the ask is still a click.""" 
     out = {}
     for side, m in bends.items():
         m = np.asarray(m, float)
         n = len(m)
+        depth = POP_STRAIGHT
+        if straight and side in straight:
+            depth = min(depth, max(straight[side] - POP_ASKED, 0.0))
         at = []
         for f in range(n):
             left, right = m[(f - 1) % n], m[(f + 1) % n]
-            if m[f] <= left and m[f] <= right and m[f] < POP_STRAIGHT and left + right - 2.0 * m[f] > POP_CURVE:
+            if m[f] <= left and m[f] <= right and m[f] < depth and left + right - 2.0 * m[f] > POP_CURVE:
                 at.append(f)
         out[side] = at
     return out
@@ -365,7 +372,10 @@ class Retarget(object):
         model = _model()
         n = len(outs) - 1
         stance = dict((side, _stance(result, side, n)) for side in SIDES)
-        found = pops(self.bends(frames))
+        # Passing knee's asks (radians): a knee landing on its ask is not a click
+        straight = dict((side, np.radians(float(deg)))
+                        for side, deg in (((result.info or {}).get("passing") or {}).get("asked") or {}).items())
+        found = pops(self.bends(frames), straight)
         first = dict((side, list(frames_)) for side, frames_ in found.items())
         goals = [dict(goal) for goal in goals]
         base = np.array(drop[:-1], float)
@@ -403,7 +413,7 @@ class Retarget(object):
                 base = np.maximum(base, cover)
             drop = np.append(base, base[0])
             frames, short = self._solve_all(outs, goals, drop, relations)
-            found = pops(self.bends(frames))
+            found = pops(self.bends(frames), straight)
         left = sum(len(v) for v in found.values())
         fixed = sum(len(v) for v in first.values()) - left
         added = float(np.max(base - original)) if n else 0.0

@@ -70,6 +70,11 @@ KNOBS = (
     ("shoulder_add", 0.0, -40.0, 40.0),       # deg: the shoulder (clavicle) raised
     ("toe_add", 0.0, -60.0, 60.0),            # deg: the foot turned out
     ("knee_bend", 0.0, 0.0, 90.0),            # deg: a planted knee bent at least this (0: off)
+    # deg: the knee of a planted leg at the middle of its contact - the passing phase - bent no more than this
+    # (0: off). The cap gives way there only and the hips rise as far as every leg allows, so the contacts keep
+    # the cycle's own geometry and the body vaults over a straight leg (2026-11-02). Knee bend, the opposite
+    # ask, wins where both are set
+    ("passing_knee", 0.0, 0.0, 90.0),
     # A leg straightened past where the source has it at that phase meets its limit (the walk's straightest)
     # with a corner, and a knee near straight is the root of its reach: the knee clicks (a grown lift-off, a
     # swing reaching for a long step, the pelvis's cover). Past max(the source's own, (1 - knee_soft) x the
@@ -172,7 +177,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
          "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
-         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "knee_soft", "g_arm", "g_elbow",
+         "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
          "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
@@ -194,6 +199,10 @@ STRAIGHT_SOFT = 1.0       # the share of the soft zone a full straightening take
 STRAIGHT_EDGE = 0.3
 STRAIGHT_LIFT_MAX = 15.0  # cm: the most the hips are lifted for it, whatever the ask
 LEG_STRETCH_MAX = 0.5     # the most Leg stretch may grow a leg (the knob's own range caps it at 0.25)
+STRAIGHT_RATE = 0.6       # cm a frame the lift may move, at a 30-frame stride: the walk's own bob moves
+                          # about that (asd 7.7 cm over 8 frames), and a knee near straight turns ~30 deg
+                          # a cm - measured over 0.25..1.5, this is where the walks reach their ask with
+                          # the knee no jerkier than the cycle's own (2026-11-02)
 HEIGHT_KEEP = 0.2         # Height's step: a raise losing more than this share of itself to the legs' reach...
 HEIGHT_STEP_FLOOR = 0.6   # ...shortens the step (Height's own, not the animator's Step) to this at most
 HEIGHT_STEP_GAIN = 1.5    # cm: ...when the shortest step would keep at least this much more of the raise
@@ -535,23 +544,17 @@ def passing_share(r, length, edge=STRAIGHT_EDGE):
     return u * u * (3.0 - 2.0 * u)
 
 
-def smooth_under(room, sigma):
-    """A smooth periodic curve lying under `room` (one value a frame, >= 0): the room narrowed to the least of
-    its neighbours within `sigma` frames, then blurred with a Gaussian of `sigma` truncated at that same reach -
-    so every value the blur means over is under the room at that frame, and the curve can never lean on a frame
-    that allows less. smooth_cover's mirror: a cover is the least smooth curve over its needs, this the most
-    under its room."""
-    room = np.asarray(room, float)
-    n = len(room)
-    if n == 0 or room.max() <= 1e-9:
-        return np.zeros(n)
-    reach = max(1, int(round(sigma)))
-    narrow = np.min([np.roll(room, s) for s in range(-reach, reach + 1)], axis=0)
-    offsets = np.arange(n)
-    distance = np.minimum(offsets, n - offsets)
-    kernel = np.where(distance <= reach, np.exp(-0.5 * (distance / max(sigma, 1e-6)) ** 2), 0.0)
-    blur = np.real(np.fft.ifft(np.fft.fft(narrow) * np.fft.fft(kernel / kernel.sum())))
-    return np.maximum(np.minimum(blur, room), 0.0)
+def smooth_under(need, room, rate):
+    """The largest periodic curve (one value a frame, >= 0) under both `need` and `room` that moves at most
+    `rate` a frame - the lower envelope rate_limited gives a roll, which is what keeps a lift from pulling a
+    knee faster than it can move. smooth_cover's mirror: a cover is the least smooth curve over its needs,
+    this the most under its room. A Gaussian cannot do this job: it narrows a plateau away wherever the room
+    varies within its reach, and here the room IS the ask - a leg sitting at its cap - so a blur left six
+    degrees of knee on the table (2026-11-02)."""
+    y = np.maximum(np.minimum(np.asarray(need, float), np.asarray(room, float)), 0.0)
+    if y.size == 0 or y.max() <= 1e-9:
+        return np.zeros(len(y))
+    return rate_limited(y, rate)
 
 
 def lift_to(q, up, target):
@@ -2519,7 +2522,7 @@ class Walk(object):
         f = int(round(tau * (len(asked[side]) - 1) / float(self.P)))
         return float(asked[side][f % len(asked[side])])
 
-    def _leg_reach(self, side, t, ctx):
+    def _leg_reach(self, side, t, ctx, straight=True):
         """The share of its length a leg (its foot at foot time t) straightens to at most: Knee bend on stance's
         while the foot is planted, else the walk's (and Ground time's) reach."""
         reach = ctx.get("stance_reach")
@@ -2531,7 +2534,24 @@ class Walk(object):
             # Height raised: a planted leg may straighten toward STRAIGHT_KNEE (a crouched pose's knees held the
             # pelvis down whatever Height asked, 2026-10-26); all of it at STRAIGHT_FULL cm
             out += (max(out, self.straight_reach[side]) - out) * share
+        passing = self.straight_share(side, t, ctx, straight)   # Passing knee: the cap gives way at the passing
+        if passing > 0.0:
+            # never a lower cap than the cycle's own: an ask no straighter than the cycle changes nothing (a
+            # knee bent MORE than its own is Knee bend's ask, and it wins where both are set)
+            out = max(out, out + passing * (ctx["straight"][side] - out))
         return out
+
+    def straight_share(self, side, t, ctx, on=True):
+        """How far the leg (its foot at foot time t) may straighten for Passing knee: nothing with none asked,
+        nothing while the foot is not planted, else `passing_share` of where t stands in its own contact. `on`
+        False answers 0 for a reader that must see the cycle's own cap - the foot's reach roll is the walk's
+        own, and a cap raised at the passing would take it away (the foot stood flat where it rolled, its
+        ankle 1.7 cm off: 2026-11-02)."""
+        if not on or not ctx.get("straight") or side not in ctx["straight"] or not self.planted(side, t, ctx):
+            return 0.0
+        i, r = self._contact_at(side, t)
+        hs, to = self.contact[side][i]
+        return passing_share(r, to - hs)
 
     def _straighten(self, ctx):
         """How far (0..1) a raised Height lets planted legs straighten past the walk's own: Height over
@@ -2549,7 +2569,7 @@ class Walk(object):
         d = float(np.linalg.norm(self.wpos(fo, t) - self.wpos(th, t) + self.up * lower))
         return d / (float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t))))
 
-    def _soft_from(self, side, t, ctx, reach):
+    def _soft_from(self, side, t, ctx, reach, straight=True):
         """Where a leg at foot time t starts easing into its limit `reach` (knee_soft): never below what the
         source has there, so the walk's own legs are untouched; `reach` itself when knee_soft is 0. Under a pose
         the source's leg is read from the hip the pose lowers (ctx["pose_lower"]): the goblin's crouched legs
@@ -2567,6 +2587,11 @@ class Walk(object):
         share = self._straighten(ctx)
         if share > 0.0 and self.planted(side, t, ctx):
             out += (reach - out) * share * STRAIGHT_SOFT    # a raised Height straightens it: the soft zone gives way
+        passing = self.straight_share(side, t, ctx, straight)
+        if passing > 0.0:
+            # Passing knee: the soft zone gives way to the asked ratio too, so the leg reaches exactly the ask
+            # with no compression (a planted foot compressed off its print would slide) and goes no straighter
+            out = max(out, min(reach, ctx["straight"][side] * passing + out * (1.0 - passing)))
         return out
 
     def swing_at(self, side, tau):
@@ -2930,6 +2955,15 @@ class Walk(object):
                 l1, l2 = self.leg_parts[s]
                 limit = math.sqrt(l1 * l1 + l2 * l2 + 2.0 * l1 * l2 * math.cos(math.radians(bent))) / (l1 + l2)
                 ctx["stance_reach"][s] = min(ctx["reach"][s], limit)
+        # Passing knee: the ratio a leg straightens to around the middle of its contact, where its cap gives
+        # way (_leg_reach, _soft_from) and the hips rise as far as every leg allows (_passing_lift). Only where
+        # the ask is straighter than the cycle's own reach - the knob's own value is what the cycle does, so an
+        # untouched card changes nothing - and never against Knee bend, which caps the same knee the other way
+        ctx["straight"] = {}
+        for s in SIDES:
+            want = ks[s]["passing_knee"]
+            if want > 0.0 and ks[s]["knee_bend"] <= 0.0:
+                ctx["straight"][s] = straight_ratio(want, *self.leg_parts[s])
         ctx["aspects"] = self.aspects_on(k)
         ctx["frame"], ctx["grown"] = P / float(n), None
         ctx["lags"] = self.lags(k, ks, ctx["frame"])
@@ -3045,6 +3079,8 @@ class Walk(object):
                 "chest": self.chest_targets(k, ctx["ex"]) if self.chest_shape is not None else None,
                 "arms": arms, "body": body, "leg_match": ctx["leg_match"],
                 "balance": balance, "in_place": k["in_place"]}
+        if ctx.get("passing"):
+            info["passing"] = ctx["passing"]
         return Result(worlds, n, info)
 
     def _in_place(self, worlds, times, ctx):
@@ -3203,9 +3239,13 @@ class Walk(object):
                 th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
                 hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
                 rot, ankle = self._foot(side, tau, ctx)[:2]
-                limit = self._soft_from(side, t, ctx, self._leg_reach(side, t, ctx)) * (
-                    np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
-                needs[side][f] = self._roll_need(side, t, rot, ankle, hip, limit, ctx)
+                length = float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t)))
+                limit = self._soft_from(side, t, ctx, self._leg_reach(side, t, ctx)) * length
+                # the foot's reach roll is the walk's own: it reads the cap WITHOUT Passing knee's, or a leg
+                # free to stretch at the passing would stand its foot flat where the cycle rolls it
+                plain = (limit if not ctx.get("straight") else
+                         self._soft_from(side, t, ctx, self._leg_reach(side, t, ctx, False), False) * length)
+                needs[side][f] = self._roll_need(side, t, rot, ankle, hip, plain, ctx)
                 legs[f][side] = (t, rot, ankle, hip, limit)
         # the heel's roll lets go gradually: never earlier than a frame needs it, and after its peak it eases
         # down over ROLL_RELEASE of a stride. Taken frame by frame it fell 20 deg in two frames as a Ground
@@ -3276,6 +3316,9 @@ class Walk(object):
         if weight > 0.0:
             need = np.maximum(need, weight * needs_for(LEG_MARGIN))
         drop = smooth_cover(need, LOWER_BLUR * len(need) / self.strides)     # LOWER_BLUR of a stride
+        lift = self._passing_lift(times, legs, ctx, drop)        # Passing knee: the hips rise at the passing
+        if lift is not None:
+            drop = drop - lift
         ctx["reel"] = None
         short = self._swing_excess(times, legs, ctx, drop, 0.0).max()
         if weight > 0.0 or short > 0.0:          # a swing past its reach (or near it, with the margin): drawn in
@@ -3287,6 +3330,106 @@ class Walk(object):
                 reel[side] = np.append(reel[side], reel[side][0])
             ctx["reel"] = reel
         return np.append(drop, drop[0])
+
+    def _crossings(self, times, legs):
+        """The frames (fractional, wrapped) the two ankles cross each other along the travel - the passing
+        phase: the swinging foot overtaking the standing one."""
+        n = len(times) - 1
+        fwd = self.basis[0]
+        d = np.array([float(np.dot(legs[f]["l"][2] - legs[f]["r"][2], fwd)) for f in range(n)])
+        out = []
+        for f in range(n):
+            g = (f + 1) % n
+            if d[f] == 0.0:
+                out.append(float(f))
+            elif (d[f] < 0.0) != (d[g] < 0.0):
+                out.append(f + abs(d[f]) / max(abs(d[f]) + abs(d[g]), 1e-12))
+        return out
+
+    def _passing_lift(self, times, legs, ctx, drop):
+        """How far the hips rise a frame for Passing knee (an (n,) curve, None with nothing asked): each frame
+        wants the lift that brings a planted leg's knee to the asked bend around the middle of its contact, and
+        allows the least of what every leg leaves - a planted one up to its own limit (raised inside its own
+        window by _soft_from), one in the air up to its own too, so no swinging foot is put out of reach. The
+        curve is the most smooth one under that room (smooth_under), so it tapers to nothing at the double
+        supports, where the other leg stands at its limit: the shape falls out of the geometry, not a table."""
+        if not ctx.get("straight"):
+            return None
+        n = len(times) - 1
+        up = self.up
+        need = np.zeros(n)
+        room = np.zeros(n) + STRAIGHT_LIFT_MAX
+        mids = dict((side, {}) for side in SIDES)       # {contact: (how near its passing, frame, qu, qq, length)}
+        crossings = self._crossings(times, legs)
+        for f, (phi, tau) in enumerate(times[:-1]):
+            for side in SIDES:
+                t, rot, ankle, hip, limit = legs[f][side]
+                ankle = self._roll_turn(side, t, rot, ankle, self._roll_of(side, tau, ctx),
+                                        self._asked_of(side, tau, ctx))[1]
+                q = ankle - hip + drop[f] * up          # the ankle against the hip as the drop leaves it
+                allow = lift_to(q, up, limit)           # the limit here is the leg's soft start, in cm
+                room[f] = min(room[f], max(0.0, allow if allow is not None else 0.0))
+                share = self.straight_share(side, t, ctx)
+                if share <= 0.0:
+                    continue
+                ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG[1:])
+                length = float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t)))
+                # the ask is about the passing instant - the frame the other ankle crosses this one, the
+                # contact's own middle where a flight leaves no crossing - so that is the frame the lift is
+                # solved on, one a contact: the window's shoulders lie near the double supports, where a leg
+                # can be straighter than at its passing (read off the contact's middle, asd's left leg landed
+                # its ask two frames late and came out 8 deg bent: 2026-11-02)
+                i, r = self._contact_at(side, t)
+                hs, to = self.contact[side][i]
+                near = min([abs(f - c) for c in crossings] or [1e9]) if crossings else abs(r - 0.5 * (to - hs))
+                row = (near, f, float(np.dot(q, up)), float(np.dot(q, q)), length)
+                if i not in mids[side] or near < mids[side][i][0]:
+                    mids[side][i] = row
+                # the whole lift reaches the ask; the window's share of it is the shape the lift takes
+                full = lift_to(q, up, ctx["straight"][side] * length)
+                if full is not None and full > 0.0:
+                    need[f] = max(need[f], share * full)
+        shape = smooth_under(need, room, STRAIGHT_RATE * 30.0 * self.strides / max(n, 1))
+        peak = float(shape.max())
+        if peak <= 1e-9:
+            return None
+        # The shape is smooth and under the room; a Gaussian cannot reach a peak, so the knee's own straightest
+        # is landed on the ask by SCALING the shape - the one factor that keeps it smooth - as far as the room
+        # allows. Bisected on the bend itself, which is a closed form in the lift (no evaluation).
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        live = shape > 1e-9
+        ceiling = float(np.min(room[live] / shape[live])) if live.any() else 1.0
+
+        def bends(scale):
+            """{side: its knee's bend at its passings, degrees (the contacts' mean)} at `scale` x the shape."""
+            out = {}
+            for side, rows in mids.items():
+                if not rows:
+                    continue
+                l1, l2 = self.leg_parts[side]
+                each = []
+                for near, f, qu, qq, length in rows.values():
+                    x = scale * shape[f]
+                    d = math.sqrt(max(qq - 2.0 * x * qu + x * x, 0.0))
+                    each.append(knee_bend_at(min(1.0, d / length), l1, l2))
+                out[side] = float(np.mean(each))
+            return out
+
+        asked = dict((s, ks[s]["passing_knee"]) for s in ctx["straight"])
+        worst = lambda got: max(got[s] - asked[s] for s in got) if got else 0.0
+        lo, hi = 0.0, max(1.0, ceiling)
+        if worst(bends(hi)) > 0.0:
+            scale = hi                       # even the whole room leaves it bent: take all of it
+        else:
+            for _ in range(20):              # the straightest side lands on its ask
+                mid = 0.5 * (lo + hi)
+                lo, hi = (mid, hi) if worst(bends(mid)) > 0.0 else (lo, mid)
+            scale = hi
+        lift = np.minimum(shape * scale, room)
+        got = bends(scale)
+        short = dict((s, max(0.0, got[s] - asked[s])) for s in got)      # the degrees the legs left on the table
+        ctx["passing"] = {"asked": asked, "got": got, "short": short, "lift": float(lift.max())}
+        return lift
 
     def roll_profiles(self, side, t, k, hold=0.0):
         """Push-off's and Heel strike's shares (0..1) at foot time t: (push, heel strike). Push-off comes in from
