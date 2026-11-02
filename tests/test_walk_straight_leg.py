@@ -187,11 +187,12 @@ def foot_track(w, res, side):
     return res.worlds[w.index["foot_" + side], :n, 3, :3].copy()
 
 
-#  The fixture is a 24-frame walker whose hips bob 1.55 cm a frame, so the lift's rate (STRAIGHT_SHARE of
-#  that) is what bounds it: it lands an ask up to 7 deg straighter than its own and reports the rest short.
-#  A real cycle's hips move 1.7-7 cm a frame and land every ask the legs allow exactly (asd's 8 deg to 1e-14,
-#  verify_walk_straight_leg.py) - a fixture more degenerate than the data (trap 321), so the ask here is 6.
-ASK_DEG = 6.0
+#  The fixture is a 24-frame crouched walker whose hips bob 1.55 cm a frame and whose two legs are planted
+#  together for two thirds of the cycle, so what bounds it is the OTHER planted leg: the hips may rise no
+#  further than that leg's own target asks, and its contact's ends ask nothing. It lands about 2 deg and
+#  reports the rest short. A real cycle's legs overlap far less and land every ask they allow exactly (asd's
+#  2 deg to 1e-14, verify_walk_straight_leg.py) - a fixture more degenerate than the data (trap 321).
+ASK_DEG = 2.0
 
 
 class LiftTests(unittest.TestCase):
@@ -247,7 +248,8 @@ class LiftTests(unittest.TestCase):
         pf = passings(self.w, res)
         for s in ("l", "r"):
             for f in pf[s]:
-                self.assertGreater(pelvis[f] - was[f], 1.0, "frame %d rose %.2f cm" % (f, pelvis[f] - was[f]))
+                #  ASK_DEG of this fixture is 2 deg of knee, about 1.5 cm of hip at the lift's peak
+                self.assertGreater(pelvis[f] - was[f], 0.5, "frame %d rose %.2f cm" % (f, pelvis[f] - was[f]))
         self.assertAlmostEqual(pelvis[res.frames], pelvis[0], places=9)
 
     def test_the_lift_is_nothing_at_the_double_supports(self):
@@ -287,7 +289,8 @@ class LiftTests(unittest.TestCase):
         asked = self.own - ASK_DEG
         res = self.w.evaluate(ask(self.k, asked, 'l'))
         self.assertAlmostEqual(at_passing(self.w, res, "l"), asked, delta=1.5)
-        self.assertGreater(at_passing(self.w, res, "r"), asked + 5.0)
+        #  the other knee stays where the cycle has it (the hips are shared, so not to the degree)
+        self.assertAlmostEqual(at_passing(self.w, res, "r"), at_passing(self.w, self.plain, "r"), delta=2.5)
 
     def test_an_ask_the_rate_cannot_serve_is_named_and_the_rate_is_why(self):
         """The fixture's hips barely bob, so an ask past ASK_DEG falls short of its own accord: it is reported,
@@ -518,7 +521,13 @@ class PaceTests(unittest.TestCase):
         self.assertLess(self.own, 6.0)                       # ~4.2 deg a frame: the cycle's own pace
 
     def test_an_ask_at_the_lock_turns_the_knee_no_faster_than_the_cycle_does(self):
-        res = self.w.evaluate(ask(self.k, 1.0))
+        """An ask the legs CAN serve, on legs standing near their reach: the knee runs down to it and back at
+        the cycle's own pace. Asked of an ask they cannot serve (1 deg, 46 short on this fixture), the forced
+        straightening moves at twice that - the legs' reach is what is left, and the pace cannot cure a
+        shortfall by bending the knee back without taking the depth with it (2026-11-02)."""
+        own = at_passing(self.w, self.plain)
+        res = self.w.evaluate(ask(self.k, own - 10.0))
+        self.assertAlmostEqual(at_passing(self.w, res), own - 10.0, delta=0.5)   # it is served
         for side in ("l", "r"):
             worst = max(planted_steps(self.w, res, side))
             self.assertLess(worst, 1.4 * self.own,
@@ -528,25 +537,24 @@ class PaceTests(unittest.TestCase):
         res = self.w.evaluate(ask(self.k, 1.0))
         self.assertLess(at_passing(self.w, res), at_passing(self.w, self.plain) - 2.0)
 
-    def test_the_pace_is_what_held_it_and_the_line_says_so(self):
-        """Two shortfalls with two cures, and the line says which: the legs' reach (shorten the Step) and the
-        knee's own pace. The fixture's hips are raised so its legs stand near their reach - a modest ask then
-        lands, and only the pace keeps it from landing whole."""
+    def test_what_holds_an_ask_now_is_the_legs_and_the_line_says_so(self):
+        """Since the straightening is shaped in the knee's own degrees (2026-11-02) the pace takes nothing back
+        out of the DEPTH - it is the lift's own rate, so what a shortfall means is the legs' reach, and the
+        line names the cure the animator has: a shorter Step. The pace used to eat the depth instead, which is
+        the old problem the animator reported («поченка колена вернула старую проблему»)."""
+        own = at_passing(self.w, self.plain)
+        served = self.w.evaluate(ask(self.k, own - 10.0))  # what these legs can reach: landed, and whole
+        p = served.info["passing"]
+        self.assertAlmostEqual(max(p["got"].values()), own - 10.0, delta=1.0)
+        self.assertLess(max(p["paced"].values()), 0.5, "the pace is taking a served depth back again")
+        self.assertNotIn("the pace held it", wm.describe(served))
+        #  and on legs already at their limit (the hips 24 cm up) nothing is served: that is reported, with
+        #  the cure the animator has. The pace does still hold the share the relaxed CAP straightened there -
+        #  that channel is not shaped in degrees, only the lift is (2026-11-02, left for the next round).
         k = dict(defaults(self.w), pelvis_height=24.0)
-        own = at_passing(self.w, self.w.evaluate(k))
-        res = self.w.evaluate(ask(k, own - 6.0))
-        p = res.info["passing"]
-        self.assertGreater(max(p["paced"].values()), 1.0)
-        self.assertAlmostEqual(max(p["paced"].values()), max(p["short"].values()), delta=0.5)
-        self.assertIn("the pace held it", wm.describe(res))
-        kept = wm.STRAIGHT_DEG_SHARE
-        try:
-            wm.STRAIGHT_DEG_SHARE = 100.0          # the pace out of the way: the ask lands
-            free = self.w.evaluate(ask(k, own - 6.0))
-        finally:
-            wm.STRAIGHT_DEG_SHARE = kept
-        self.assertLess(at_passing(self.w, free), at_passing(self.w, res))
-        self.assertNotIn("the pace held it", wm.describe(free))
+        far = self.w.evaluate(ask(k, at_passing(self.w, self.w.evaluate(k)) - 20.0))
+        self.assertGreater(max(far.info["passing"]["short"].values()), 1.0)
+        self.assertIn("a shorter Step gives the rest", wm.describe(far))
 
     def test_it_still_lands_an_ask_the_legs_allow(self):
         own = at_passing(self.w, self.plain)

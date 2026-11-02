@@ -198,11 +198,12 @@ STRAIGHT_SOFT = 1.0       # the share of the soft zone a full straightening take
 #  ends are where the other leg stands at its own limit and allows no lift)
 STRAIGHT_EDGE = 0.3
 STRAIGHT_LIFT_MAX = 15.0  # cm: the most the hips are lifted for it, whatever the ask
-#  How fast the lift may move: a share of what the cycle's OWN hips do a frame (its pelvis's p90 rise or fall,
-#  measured over the saved walks at 1.5..7 cm a frame), floored so a cycle with no bob of its own can still
-#  straighten a little. A knee near straight turns ~30 deg a cm, so this is what keeps the knee off a click -
-#  and reading it off the walk lets a bouncy cycle straighten as freely as it already moves (2026-11-02)
-STRAIGHT_SHARE = 0.4
+#  A CEILING on how fast the lift may move: a share of what the cycle's OWN hips do a frame (its pelvis's p90
+#  rise or fall, measured over the saved walks at 1.5..7 cm a frame), floored so a cycle with no bob of its own
+#  can still straighten a little. Only a ceiling: the pace that matters is in the knee's degrees below, and at
+#  0.4 of the hips' own speed THIS one was the pace - which made the knee enter its ask within a frame of the
+#  window's edge, since the first degrees of a straightening cost the most centimetres (2026-11-02)
+STRAIGHT_SHARE = 0.6
 STRAIGHT_FLOOR = 0.25     # cm a frame at a 30-frame stride
 #  ...and the same pacing in the KNEE's own degrees, which is what the animator watches: the ask may turn a
 #  planted knee no faster a frame than that cycle's own knee turns (its p90) by more than this much. A rate in
@@ -215,7 +216,7 @@ STRAIGHT_DEG_FLOOR = 1.5  # deg a frame at a 30-frame stride: a cycle whose knee
 KNEE_SWEEPS = 24         # sweeps of the knee pace: each only lowers the hips, so it settles
 KNEE_SETTLED = 1e-4       # cm: a sweep that moves the hips less than this is the last
 STRAIGHT_QUIET = 1e-4    # cm: a lift under this is none (an ask the cycle already meets)
-STRAIGHT_REFINE = 20     # halvings that land the lift's scale on the ask (_passing_lift)
+OUTSIDE = -1e9           # a frame left out of a knee's target track (its leg is in the air there)
 HEIGHT_KEEP = 0.2         # Height's step: a raise losing more than this share of itself to the legs' reach...
 HEIGHT_STEP_FLOOR = 0.6   # ...shortens the step (Height's own, not the animator's Step) to this at most
 HEIGHT_STEP_GAIN = 1.5    # cm: ...when the shortest step would keep at least this much more of the raise
@@ -579,6 +580,20 @@ def lift_to(q, up, target):
     if disc < 0.0:
         return None
     return qu + math.sqrt(disc)
+
+
+def cone_above(track, step):
+    """The smallest periodic curve over `track` that moves at most `step` a frame: max over g of
+    (track[g] - step x the frames from g). rate_limited's mirror - that one is the largest curve UNDER its
+    input, this the smallest OVER it, which is what a knee's target track wants (the straightest track no
+    faster than the knee's own pace)."""
+    track = np.asarray(track, float)
+    n = len(track)
+    if n == 0:
+        return track
+    offsets = np.arange(n)
+    distance = np.minimum(offsets, n - offsets) * float(step)
+    return np.max([np.roll(track, s) - distance[s] for s in range(n)], axis=0)
 
 
 def smooth_cover(need, sigma):
@@ -3370,19 +3385,22 @@ class Walk(object):
         if weight > 0.0:
             need = np.maximum(need, weight * needs_for(LEG_MARGIN))
         drop = smooth_cover(need, LOWER_BLUR * len(need) / self.strides)     # LOWER_BLUR of a stride
-        lift = self._passing_lift(times, legs, ctx, drop)        # Passing knee: the hips rise at the passing
-        if lift is not None:
-            drop = drop - lift
+        # Passing knee raises the hips through TWO channels - the cap it relaxes inside the window (this drop's
+        # own need falls there) and _passing_lift's lift - and what the animator watches is neither, it is the
+        # knee. So the drop the cycle would have WITHOUT the ask is worked out first: it is the track both the
+        # lift's own pace and _knee_paced read the knee's own degrees off, and reading them off two different
+        # tracks is what let the ask through at one allowance and took it back at a tighter one (2026-11-02).
+        own = None
         if ctx.get("straight"):
-            # Passing knee raises the hips through TWO channels - the cap it relaxes inside the window (this
-            # drop's own need falls there) and _passing_lift's lift - and what the animator watches is neither,
-            # it is the knee. So the whole rise over the cycle's OWN cap is paced in the knee's own degrees
-            # here, where both channels have landed (2026-11-02: the lift alone was a third of it).
             own = needs_for(0.0, plain_limits)
             share = min(1.0, float(own.max()) / MARGIN_FULL)
             if share > 0.0:
                 own = np.maximum(own, share * needs_for(LEG_MARGIN, plain_limits))
             own = smooth_cover(own, LOWER_BLUR * len(own) / self.strides)
+        lift = self._passing_lift(times, legs, ctx, drop, own)   # Passing knee: the hips rise at the passing
+        if lift is not None:
+            drop = drop - lift
+        if ctx.get("straight"):
             drop = self._knee_paced(drop, own, times, legs, ctx)
             self._passing_told(ctx, np.maximum(own - drop, 0.0), times, legs, drop)
         ctx["reel"] = None
@@ -3418,6 +3436,19 @@ class Walk(object):
                 out[side][f] = (float(np.dot(q, self.up)), float(np.dot(q, q)), length)
         return out
 
+    def _knee_allowance(self, bend, n):
+        """(a frame's turn, a frame's corner) a knee may move in degrees, from the track `bend` ({frame: deg})
+        it keeps without the ask: STRAIGHT_DEG_SHARE of its own p90, floored so a cycle whose knee barely moves
+        still straightens. The lift's own erosion and the pace that follows it must read the SAME number off
+        the SAME track, or they fight: eroded at one allowance and judged at a tighter one, the right leg's ask
+        was taken straight back out again (the animator's own walk, 2026-11-02)."""
+        floor = STRAIGHT_DEG_FLOOR * 30.0 * self.strides / float(max(n, 1))
+        turns = [abs(bend[(f + 1) % n] - bend[f]) for f in bend if (f + 1) % n in bend]
+        corners = [abs(bend[(f + 2) % n] - 2.0 * bend[(f + 1) % n] + bend[f]) for f in bend
+                   if (f + 1) % n in bend and (f + 2) % n in bend]
+        return (max(STRAIGHT_DEG_SHARE * (float(np.percentile(turns, 90)) if turns else 0.0), floor),
+                max(STRAIGHT_DEG_SHARE * (float(np.percentile(corners, 90)) if corners else 0.0), floor))
+
     def _knee_at(self, side, row, x):
         """The bend (deg) of the leg `row` describes (_knee_geometry) under a rise of `x` cm."""
         qu, qq, length = row
@@ -3441,15 +3472,14 @@ class Walk(object):
             return drop
         plain = self._knee_geometry(times, legs, ctx, own)
         allow, allow2 = {}, {}
+        paced = ctx.get("_passing_pace") or {}
         for side in SIDES:
+            if side in paced:                 # the allowance the lift was eroded at, read off the same track
+                allow[side], allow2[side] = paced[side]
+                continue
             rows = plain[side]
             bend = dict((f, self._knee_at(side, rows[f], 0.0)) for f in rows)
-            turns = [abs(bend[(f + 1) % n] - bend[f]) for f in rows if (f + 1) % n in rows]
-            bends = [abs(bend[(f + 2) % n] - 2.0 * bend[(f + 1) % n] + bend[f]) for f in rows
-                     if (f + 1) % n in rows and (f + 2) % n in rows]
-            floor = STRAIGHT_DEG_FLOOR * 30.0 * self.strides / float(n)
-            allow[side] = max(STRAIGHT_DEG_SHARE * (float(np.percentile(turns, 90)) if turns else 0.0), floor)
-            allow2[side] = max(STRAIGHT_DEG_SHARE * (float(np.percentile(bends, 90)) if bends else 0.0), floor)
+            allow[side], allow2[side] = self._knee_allowance(bend, n)
         down = np.zeros(n)
 
         def lower(side, rows, i, target):
@@ -3537,7 +3567,7 @@ class Walk(object):
                 out.append(f + abs(d[f]) / max(abs(d[f]) + abs(d[g]), 1e-12))
         return out
 
-    def _passing_lift(self, times, legs, ctx, drop):
+    def _passing_lift(self, times, legs, ctx, drop, plain=None):
         """How far the hips rise a frame for Passing knee (an (n,) curve, None with nothing asked): each frame
         wants the lift that brings a planted leg's knee to the asked bend around the middle of its contact, and
         allows the least of what every leg leaves - a planted one up to its own limit (raised inside its own
@@ -3551,6 +3581,10 @@ class Walk(object):
         need = np.zeros(n)
         room = np.zeros(n) + STRAIGHT_LIFT_MAX
         mids = dict((side, {}) for side in SIDES)       # {contact: (how near its passing, frame, qu, qq, length)}
+        asks = dict((side, {}) for side in SIDES)       # {frame: (q, length, its own bend, the ask, the window)}
+        own_bends = dict((side, {}) for side in SIDES)   # {frame: the bend it keeps without the ask}
+        stance_bends = dict((side, {}) for side in SIDES)  # the same, its planted frames only: the pace
+        planted_asked = dict((side, {}) for side in SIDES)  # {frame: True} an asked leg planted: it caps the hips
         crossings = self._crossings(times, legs, ctx)
         for f, (phi, tau) in enumerate(times[:-1]):
             for side in SIDES:
@@ -3561,14 +3595,36 @@ class Walk(object):
                 allow = lift_to(q, up, limit)           # the limit here is the leg's soft start, in cm
                 allow = max(0.0, allow if allow is not None else 0.0)
                 window = self.passing_window(side, t, ctx)
-                if window is not None:
-                    allow *= window                     # a planted leg pins the hips at its contact's ends
+                if window is None:
+                    # a foot in the AIR is drawn in toward its hip where it cannot reach (ctx["reel"]), which
+                    # is what that machinery is for - and the passing is exactly when the other foot is in the
+                    # air, so pinning the hips to its own reach is what clipped the entry of the window
+                    allow = STRAIGHT_LIFT_MAX
+                elif side in ctx["straight"]:
+                    # an ASKED leg caps the hips by what IT asks (its own target need, filled in below): the
+                    # taper beside it was a second one, linear in centimetres against the target's own in
+                    # degrees, and the two disagree in the middle of the ramp - which is where the entry was
+                    # clipped and the knee then jumped 11 deg in a frame (2026-11-02)
+                    planted_asked[side][f] = True
+                    allow = STRAIGHT_LIFT_MAX
+                else:
+                    allow *= window                     # a planted leg nobody asked pins the hips at its ends
                 room[f] = min(room[f], allow)
-                share = self.straight_share(side, t, ctx)
-                if share <= 0.0:
+                if side not in ctx["straight"]:
                     continue
                 ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG[1:])
                 length = float(np.linalg.norm(self.lt_at(ca, t))) + float(np.linalg.norm(self.lt_at(fo, t)))
+                l1, l2 = self.leg_parts[side]
+                # the bend this knee keeps WITHOUT the ask, on every frame (in the air too): the track the
+                # straightening is paced against, so the ask never asks the knee to move faster than it
+                # already moves of its own accord
+                bend = knee_bend_at(min(1.0, math.sqrt(max(float(np.dot(q, q)), 0.0)) / length), l1, l2)
+                own_bends[side][f] = bend
+                if self.planted(side, t, ctx):      # the pace is read off the STANCE: a swinging knee folds
+                    stance_bends[side][f] = bend    # and unfolds far faster than a standing one ever should
+                share = self.straight_share(side, t, ctx)
+                if share <= 0.0:
+                    continue
                 # the ask is about the passing instant - the frame the other ankle crosses this one, the
                 # contact's own middle where a flight leaves no crossing - so that is the frame the lift is
                 # solved on, one a contact: the window's shoulders lie near the double supports, where a leg
@@ -3580,25 +3636,91 @@ class Walk(object):
                 row = (near, f, float(np.dot(q, up)), float(np.dot(q, q)), length)
                 if i not in mids[side] or near < mids[side][i][0]:
                     mids[side][i] = row
-                # the whole lift reaches the ask; the window's share of it is the shape the lift takes
-                full = lift_to(q, up, ctx["straight"][side] * length)
+                # what this frame's window asks, in the KNEE's OWN DEGREES - paced in degrees below
+                asks[side][f] = (q, length, bend, knee_bend_at(min(1.0, ctx["straight"][side]), l1, l2), share)
+        # The straightening is shaped and paced in the KNEE's own degrees, never in centimetres. Near straight a
+        # knee is a square root of its reach (trap 266), so a lift ramped or rate-limited in cm reaches the ask
+        # within a frame of the window's edge and then sits flat across its middle: the knee dived 12 deg in one
+        # frame and snapped 15 back out - which is what the eye reads as uneven, and what the pace (_knee_paced)
+        # then had to take back out of the DEPTH, so no ask under about 6 deg ever landed on the animator's own
+        # walk (2026-11-02). Eroded in degrees at the pace the cycle's own knee keeps, the knee runs smoothly
+        # from the bend it has at the contact's ends down to the ask and back, and the depth is nobody's to take.
+        for side in SIDES:
+            rows = asks[side]
+            if not rows:
+                continue
+            l1, l2 = self.leg_parts[side]
+            # nothing to do for an ask no straighter than the knee's own bend AT ITS PASSING (that is Knee
+            # bend's ask, and it wins where both are set): without this a more-bent ask still straightened the
+            # frames whose own bend is deeper than it, and the knob stopped being a no-op (2026-11-02)
+            at_passing = [own_bends[side].get(row[1]) for row in mids[side].values()]
+            at_passing = [b for b in at_passing if b is not None]
+            ask_deg = knee_bend_at(min(1.0, ctx["straight"][side]), l1, l2)
+            if at_passing and ask_deg >= float(np.mean(at_passing)) - 0.25:
+                continue
+            own = np.array([own_bends[side].get(f, 0.0) for f in range(n)])
+            # the target track over this leg's STANCE - its own bend, the window's share of the way to the ask
+            # taken in degrees. The frames it is in the AIR are left out of the pace (OUTSIDE): a swinging knee
+            # is deeply bent, and a cone drawn from there could not descend to the ask within the contact at a
+            # stance's pace - it held a crouched walker's ask 2.2 deg short from four frames away (2026-11-02).
+            # The contact's own ends pin it instead, where the window is nothing and the target IS its own bend.
+            raw = np.full(n, OUTSIDE)
+            for f, bend in stance_bends[side].items():
+                raw[f] = bend
+            for f, (q, length, own_bend, ask_bend, share) in rows.items():
+                raw[f] = own_bend + share * (ask_bend - own_bend)      # the window's share, taken in degrees
+            # the pace: what this knee does a frame under the drop the cycle keeps WITHOUT the ask (`plain`),
+            # which is the very track _knee_paced judges the result against. Read off the drop the ask already
+            # raised instead, the cap's own straightening counted as the knee's own pace and a near-reach leg
+            # was allowed to move at twice its own (2026-11-02)
+            # Read ONCE an evaluate and kept: Balance carries the body in rounds and each round runs _lowering
+            # again, so a pace read per round drifted with the carry - the last round's 9.6 deg a frame stood
+            # where the first round's 6.9 was the cycle's own, and the knee then moved at the drift (2026-11-02)
+            pace = ctx.setdefault("_passing_pace", {})
+            if side in pace:
+                allow, allow2 = pace[side]
+            else:
+                pace_bends = stance_bends[side]
+                if plain is not None:
+                    rows_plain = self._knee_geometry(times, legs, ctx, plain)[side]
+                    if rows_plain:
+                        pace_bends = dict((f, self._knee_at(side, rows_plain[f], 0.0)) for f in rows_plain)
+                allow, allow2 = self._knee_allowance(pace_bends, n)
+            # a knee that runs down to the ask at `allow` a frame and back out again turns round at the
+            # passing: that reversal IS a corner of twice the pace, and the pace must not call its own
+            # shape a corner and lower the hips back out of it (the right leg of the animator's own walk,
+            # whose stance knee is so steady that its own corner allowance was 2 deg, 2026-11-02)
+                allow2 = max(allow2, 2.0 * allow)
+                pace[side] = (allow, allow2)          # the pace _knee_paced then keeps, for this evaluate
+            # the straightest TRACK no faster than that pace - the own track's own motion counted, since it is
+            # the TOTAL the eye reads - and never more bent than the knee is without the ask
+            want = np.minimum(cone_above(raw, allow), own)
+            mine = np.zeros(n)
+            for f, (q, length, own_bend, ask_bend, share) in rows.items():
+                if want[f] >= own_bend - 1e-9:
+                    continue
+                full = lift_to(q, up, straight_ratio(float(want[f]), l1, l2) * length)
                 if full is not None and full > 0.0:
-                    need[f] = max(need[f], share * full)
+                    mine[f] = full
+                    need[f] = max(need[f], full)
+            # and this leg, while it is planted, lets the hips rise no further than its OWN target asks: at its
+            # strike and its toe-off that is nothing, so a lift the other leg wants cannot straighten this one's
+            # contact ends (dw's two legs overlap for most of the cycle; its strike went 9 deg straighter)
+            for f in planted_asked[side]:
+                room[f] = min(room[f], mine[f])
+        # and a last ceiling on the hips' own speed - the degrees above are the pace that matters, so this is
+        # only a guard against something silly: a share of the cycle's own hip speed (0.4) was what made the
+        # entry a cliff in degrees, since the first degrees of a straightening cost the most centimetres
         rate = max(STRAIGHT_SHARE * self.bob_rate, STRAIGHT_FLOOR * 30.0 * self.strides / float(self.P))
         shape = smooth_under(need, room, rate * self.P / max(n, 1))
         peak = float(shape.max())
         if peak <= 1e-9:
             return None
-        # The shape is smooth and under the room; smooth_under tapers to nothing at the double supports and
-        # cannot reach a peak the rate forbids, so the knee's own straightest is landed on the ask by SCALING
-        # the shape - the one factor that keeps its shape - as far as the room allows. Bisected on the bend
-        # itself, a closed form in the lift (no evaluation). The cost: one frame AT its room limit pins the
-        # whole curve, so an ask the room cannot serve can land less lift than a smaller one would (measured
-        # on the synthetic walker, whose hips barely bob; on a real cycle every ask the legs allow is landed
-        # exactly - asd's 8 deg to 1e-14 - and what the legs leave is reported as `short`).
+        # Each frame's lift is already the one that brings its own knee to its own eroded target, so there is
+        # no scale to find: the shape IS the lift (it used to be scaled as a whole until the straightest side
+        # landed on its ask, which made one frame at its room limit pin the entire curve). What a tight room
+        # leaves is a dip at that frame, not a loss over the cycle, and what the legs leave is `short`.
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
-        live = shape > 1e-9
-        ceiling = float(np.min(room[live] / shape[live])) if live.any() else 1.0
 
         def bends(scale):
             """{side: its knee's bend at its passings, degrees (the contacts' mean)} at `scale` x the shape."""
@@ -3616,16 +3738,8 @@ class Walk(object):
             return out
 
         asked = dict((s, ks[s]["passing_knee"]) for s in ctx["straight"])
-        worst = lambda got: max(got[s] - asked[s] for s in got) if got else 0.0
-        lo, hi = 0.0, max(1.0, ceiling)
-        if worst(bends(hi)) > 0.0:
-            scale = hi                       # even the whole room leaves it bent: take all of it
-        else:
-            for _ in range(STRAIGHT_REFINE):  # the straightest side lands on its ask
-                mid = 0.5 * (lo + hi)
-                lo, hi = (mid, hi) if worst(bends(mid)) > 0.0 else (lo, mid)
-            scale = hi
-        lift = np.minimum(shape * scale, room)
+        scale = 1.0
+        lift = np.minimum(shape, room)
         if float(lift.max()) < STRAIGHT_QUIET:          # an ask the cycle already meets: nothing at all
             return None
         got = bends(scale)

@@ -17102,6 +17102,52 @@ cycle and 14 at another).
   animator's own Maya**: their take there is older than their card's settings anyway (32 frames against the
   36 those settings now give), so their next press is the one to look at.
 
+**…and the straightening itself is shaped in the knee's degrees, so the pace takes nothing back**
+(2026-11-02, the animator with two screenshots of the passing pose, current and wanted: «я не могу поднять
+таз еще выше и у персонажа остается изгиб в колене во время пассинг позы ... я хочу чтобы наша система могла
+делать ногу почти визуально прямой», and «не совсем равномерное движение у левой ноги (24-25 кадр колено)»;
+asked for a prototype with no tests - the tests came after, and they are the record of what changed).
+**Measured on their own cycle, on the build they had**: asked 2 deg they got **6.25 on the left and 4.41 on
+the right**, and the whole shortfall was `paced` - the pace above taking the depth straight back out, which
+is exactly what they had reported once already. The cause is one layer up from the pace: **the lift was
+BUILT in centimetres and judged in degrees** (trap 266 from the other side). A cm-linear ramp over the
+window reaches the ask within a frame of the window's edge and then sits flat across its middle, so the knee
+dived 12 deg in one frame and snapped 15 back out - the unevenness they saw - and `_knee_paced` then had no
+choice but to pay for it in depth. No ask under about 6 deg could land.
+- **The straightening is a TARGET TRACK in the knee's own degrees** now: the window's share is taken in
+  degrees (`own_bend + share * (ask_bend - own_bend)`, `_passing_lift`'s `raw`), and the track is the
+  straightest one that turns no faster a frame than the knee's own pace - **`cone_above`**, the mirror of
+  `rate_limited` (that one is the largest curve UNDER its input, this the smallest OVER it), capped by the
+  plain drop. Each frame's lift is then `lift_to` of its own target, so the **global scale bisection is
+  gone**: one frame at its room limit no longer pins the whole curve.
+- **One allowance, read ONCE an evaluate, off the drop the cycle keeps WITHOUT the ask**
+  (`_knee_allowance`, `ctx["_passing_pace"]`) - the very track `_knee_paced` judges the result against, so
+  the shape and its judge cannot disagree. Read per Balance round instead it drifted with the carry
+  (6.9 -> 9.6 deg a frame); read off the drop the ask had already raised, the cap's own straightening counted
+  as the knee's own pace and the ask ate itself.
+- **A leg's track leaves out the frames it is in the AIR** (the `OUTSIDE` sentinel): a swinging knee is
+  deeply bent, and a cone drawn from there cannot descend to the ask within the contact at a stance's pace -
+  a crouched fixture held 2.2 deg short until the stance alone fed it.
+- **The corner allowance is at least twice the pace**: a knee that runs down to the ask and back TURNS ROUND
+  at the passing, and the pace must not call its own shape a corner (the right leg sat 2.6 deg short on that).
+- **An asked leg caps the hips by what IT asks**, not by a second taper beside it, and **a leg in the air
+  does not pin them at all** (`ctx["reel"]` draws a swinging foot in - that is what that machinery is for);
+  `STRAIGHT_SHARE` 0.4 -> 0.6 and is only a ceiling now, the degrees cone being the real pace.
+- **On their cycle** (31 frames, their pose at share 1, Height +40, which is inert with the Physics chip
+  off - `_height_plan` returns early without `knee_soft`): the left knee at the passing **25-36 -> 2 deg**,
+  the right **17-20 -> 2**, the hips 1.5 cm higher there, the stance knee at **6 deg a frame against that
+  cycle's own 6**, and the ankle arcs unchanged. Keyed in their Maya and read back off the joints.
+- **The 24-25 fold is their clip's own**: the captured cycle reads +15 deg at 24 before anything of ours
+  touches it. Untouched, and said.
+- Proof: `verify_walk_straight_leg.py` **1 of 58** - TestStrefe's planted foot moves **0.2796 cm** against a
+  0.25 bound (the foot's own reach roll, 0.3 mm over; 0 of 58 on the commit before), left red rather than
+  widened. `tests/test_walk_straight_leg.py`: its `ASK_DEG` is what the fixture's two legs - planted
+  together for two thirds of its cycle - can actually serve, the lock guard runs on an ask the legs serve
+  (it lands exactly, the knee at 3.9-4.2 deg a frame against its own 4.2), and the pace test says what it
+  protects now: **the pace takes nothing out of a depth the legs can serve**. On legs already at their limit
+  the relaxed CAP's own share is still paced - that channel is not shaped in degrees, only the lift is - and
+  the test names it.
+
 **Not built**: `Leg stretch` (the spec's second lever). The retarget re-solves every leg with the TARGET's own
 bone lengths, so a stretch in the model never reaches the scene - it would want `target._leg` and the writer
 carrying per-frame lengths and keying the legs' translates, which is a feature of its own. The step is the
@@ -17114,3 +17160,11 @@ animator's to shorten where the line says the legs ran out.
      length to 0.007 cm. Every model gate was green. When a feature raises a geometric limit, grep for every
      copy of that limit on the way to the scene (`model._leg_reach` / `_soft_from`, `target._reach`,
      `target.fix_pops`, `meanpose._solve_leg`) - trap 320's family, one layer further down.
+327. **A quantity built in one unit and judged in another cannot be tuned.** The passing-knee lift was
+     shaped and rate-limited in CENTIMETRES of hip and judged - by the pace, and by the animator's eye - in
+     DEGREES of knee. Near straight the two are a square root apart (trap 266), so a cm-linear ramp spends
+     its whole run in the first frame of the window and sits flat across the middle: the knee dived 12 deg
+     in one frame and snapped 15 back, and the pace then paid for that spike out of the depth, so no small
+     ask ever landed. Every gate was green - they measured the depth and the jerk, each against its own
+     bound, and neither reads a ramp's SHAPE. Build a quantity in the unit its consumer judges it in; where
+     two channels feed one result, pace them off ONE reference, computed once, from the state the judge uses.
