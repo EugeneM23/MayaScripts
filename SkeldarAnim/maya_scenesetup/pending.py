@@ -17,6 +17,11 @@ Spec: docs/superpowers/specs/2026-10-29-connections-pick-then-apply-design.md
 
 SPINE = "spine"
 AIM = "aim"
+#  Override mode (2026-11-02): the chest carries the weapon. The value is
+#  (on, rotation, position, lag ms) - the numbers are part of the pick, so a
+#  knob turned while the mode stands is a change to apply, and one turned
+#  while it is off is not (`weaponoverride.state_value`).
+OVERRIDE = "override"
 CAMERA = "camera"
 CAMERA_POSITION = "camera:position"
 CAMERA_AIM = "camaim"
@@ -27,11 +32,12 @@ PARENT = "parent:"
 
 #  which picks belong to which tab of the card
 TAB = {"body": (LIMB, WORLD, SPINE),
-       "weapon": (PARENT, AIM),
+       "weapon": (PARENT, AIM, OVERRIDE),
        "camera": (CAMERA, CAMERA_POSITION, CAMERA_AIM)}
 
 #  the order the status names them in, and the order inside each kind
-_RANK = (LIMB, WORLD, SPINE, PARENT, AIM, CAMERA, CAMERA_POSITION, CAMERA_AIM)
+_RANK = (LIMB, WORLD, SPINE, PARENT, AIM, OVERRIDE, CAMERA, CAMERA_POSITION,
+         CAMERA_AIM)
 _KIND_RANK = ("Arm", "Leg")
 _SIDE_RANK = ("R", "L")
 _ROW_RANK = ("R", "L", "W")
@@ -153,6 +159,11 @@ def phrase(pick, value):
         return "the spine to %s" % value
     if pick == AIM:
         return "the weapon's aim %s" % ("on" if value else "off")
+    if pick == OVERRIDE:
+        on = value[0] if isinstance(value, (tuple, list)) else bool(value)
+        if not on:
+            return "the weapon's override off"
+        return "the weapon's override on: %g / %g / %g ms" % tuple(value[1:4])
     if pick == CAMERA:
         return "the camera to %s" % value
     if pick == CAMERA_POSITION:
