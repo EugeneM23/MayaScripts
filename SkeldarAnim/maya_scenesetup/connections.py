@@ -119,6 +119,7 @@ from maya_scenesetup import ikworld
 from maya_scenesetup import pending
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponaim
+from maya_scenesetup import weaponoverride
 from maya_scenesetup import weaponspace
 from maya_tools import knotplan
 from maya_tools import layered
@@ -131,6 +132,7 @@ MENU = {"R": "skeldarConnectionsParentR", "L": "skeldarConnectionsParentL",
 ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
 # The card's sections (2026-10-16, the card rules): a caption over each.
 CAPTION = {"limbs": "skeldarConnectionsCapLimbs",
+           "override": "skeldarConnectionsCapOverride",
            "weapon": "skeldarConnectionsCapWeapon",
            "aim": "skeldarConnectionsCapAim",
            "any": "skeldarConnectionsCapAny",
@@ -176,6 +178,36 @@ AIM_TIPS = {
     DEFAULT_AIM: "The aim baked back onto the weapon's rotation on the controllers' "
                  "keys, the controllers removed",
 }
+
+
+#  Override mode (2026-11-02, the animator: «оружие привязывается к груди … сила
+#  наследования вращения, сила наследования смещения по позиции и отставание в
+#  миллисекундах - так получается захлёст оружия»; asked how the result is written:
+#  «Ключи, настройки помним»). A pick like every other, the section's check bakes it.
+OVERRIDE_CHIP = "skeldarConnectionsOverride"
+OVERRIDE_NAMES = "skeldarConnectionsOverrideNames"
+OVERRIDE_FIELDS = "skeldarConnectionsOverrideFields"
+OVERRIDE_FIELD = {"rotation": "skeldarConnectionsOverrideRot",
+                  "position": "skeldarConnectionsOverridePos",
+                  "lag": "skeldarConnectionsOverrideLag"}
+OVERRIDE_VAR = {"rotation": "skeldarOverrideRotation",
+                "position": "skeldarOverridePosition",
+                "lag": "skeldarOverrideLag"}
+OVERRIDE_APPLY = "skeldarConnectionsOverrideApply"
+OVERRIDE_KEYS = ("rotation", "position", "lag")
+OVERRIDE_LABEL = {"rotation": "Rotation", "position": "Position", "lag": "Lag, ms"}
+OVERRIDE_TIPS = {
+    "chip": "The chest carries the weapon: its own pose relative to the chest kept, "
+            "the chest's own motion put back scaled and late. Picked, not baked - "
+            "press this section's check, or Apply all.",
+    "rotation": "How much of the chest's TURN the weapon inherits: 1 as a parent "
+                "would, 0 not at all.",
+    "position": "How much of the chest's TRAVEL the weapon inherits.",
+    "lag": "How late the weapon takes the chest's pose, in milliseconds - the "
+           "overlap. 1 / 1 / 0 changes nothing.",
+}
+OVERRIDE_AIMED = ("%s is in Override mode - it writes the rotation too: Override off "
+                  "first")
 
 
 def _caption(key, text):
@@ -976,8 +1008,16 @@ def apply(wanted, rig=None, weapon=None):
     # a parent change in Aim Mode (2026-10-21, asked: automatically): Default, the steps, Aim
     # Mode again - the weapon's own motion re-baked by the parent change is what the aim takes
     aimed = weaponaim.is_aimed(weapon) and any(step in ("lift", "hang") for step, _ in steps)
+    #  and the same for Override (2026-11-02): the mode's base IS the weapon's own
+    #  track, which a lift or a hang re-bakes, so Default first and the settings again
+    #  after - and the hands that go onto the weapon then take its un-swayed track
+    over = (weaponoverride.state(weapon)
+            if any(step in ("lift", "hang") for step, _ in steps) else None)
     cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
+        if over is not None:
+            weaponoverride.leave(weapon)
+            weapon = cmds.ls(uuid, long=True)[0]
         if aimed:
             weaponaim.leave(weapon)
             weapon = cmds.ls(uuid, long=True)[0]
@@ -1020,6 +1060,9 @@ def apply(wanted, rig=None, weapon=None):
         if aimed:
             again = weaponaim.enter(weapon)
             notes.append("Aim Mode kept" if " in Aim Mode" in again else again)
+        if over is not None:
+            again = weaponoverride.enter(weapon, weaponoverride.chest_of(rig), over)
+            notes.append("Override kept" if " on " in again else again)
         return applied_message(steps, read_scheme(rig, bones, weapon)) + \
             "".join(" | " + note for note in notes)
     finally:
@@ -1396,6 +1439,10 @@ def _states(rig, keys):
         elif key == pending.AIM:
             weapon = weapon_of(rig)
             out[key] = bool(weapon) and weaponaim.is_aimed(weapon)
+        elif key == pending.OVERRIDE:
+            weapon = weapon_of(rig)
+            out[key] = weaponoverride.state_value(
+                weaponoverride.state(weapon) if weapon else None, card_settings())
         elif key in (pending.CAMERA, pending.CAMERA_POSITION,
                      pending.CAMERA_AIM):
             if "camera" not in limbs:
@@ -1652,6 +1699,49 @@ def _set_aim(aimed, chosen=None):
         _light(AIM_APPLY, "wait" if wanted is not None else "")
 
 
+def _override_number(key, default):
+    """A remembered number: the card's field while it stands (and remembered), else the
+    optionVar, else `default` - the Tools card's rule, so a hotkey row and a press
+    work with the card closed."""
+    name, var = OVERRIDE_FIELD[key], OVERRIDE_VAR[key]
+    if cmds.floatField(name, exists=True):
+        value = float(cmds.floatField(name, query=True, value=True))
+        cmds.optionVar(floatValue=(var, value))
+        return value
+    if cmds.optionVar(exists=var):
+        return float(cmds.optionVar(query=var))
+    return default
+
+
+def card_settings():
+    """The three numbers the card (or the memory) holds."""
+    return weaponoverride.Settings(
+        *[_override_number(key, getattr(weaponoverride.DEFAULTS, key))
+          for key in OVERRIDE_KEYS])
+
+
+def _set_override(standing, chosen=None):
+    """Light the mode's state - the chip ticked and the fields filled from the settings
+    STANDING on the weapon - then its pick. The fields are left alone with the mode off:
+    they are the numbers the next press will use, and a refresh must never discard what
+    the animator has just typed (the swatch lesson, `maya_scenesetup.window`)."""
+    chosen = picks() if chosen is None else chosen
+    wanted = chosen.get(pending.OVERRIDE)
+    if cmds.checkBox(OVERRIDE_CHIP, exists=True):
+        cmds.checkBox(OVERRIDE_CHIP, edit=True,
+                      value=bool(wanted[0]) if wanted is not None
+                      else standing is not None)
+        _light(OVERRIDE_CHIP, "want" if wanted is not None else "")
+    if standing is not None:
+        for key, value in zip(OVERRIDE_KEYS, standing):
+            name = OVERRIDE_FIELD[key]
+            if cmds.floatField(name, exists=True):
+                cmds.floatField(name, edit=True, value=value)
+                cmds.optionVar(floatValue=(OVERRIDE_VAR[key], float(value)))
+    if cmds.control(OVERRIDE_APPLY, exists=True):
+        _light(OVERRIDE_APPLY, "wait" if wanted is not None else "")
+
+
 def refresh(*_args):
     """Re-read the scene into the header and the rows: after a press what IS is
     what the segments show - and then the picks that have not been applied are
@@ -1685,6 +1775,10 @@ def refresh(*_args):
     _set_aim(aimed, chosen)
     if aimed:
         text += " - Aim Mode"
+    standing = weaponoverride.state(weapon) if weapon else None
+    _set_override(standing, chosen)
+    if standing is not None:
+        text += " - Override %g / %g / %g ms" % tuple(standing)
     if current_tab() == "camera":
         choice, position, aimed = _camera_state()
         _set_camera(choice, position, aimed, chosen)
@@ -1896,12 +1990,19 @@ def _press_row(row):
 
 
 def apply_weapon(rig, chosen):
-    """The three parents, then the aim - the caller's one undo chunk."""
+    """The three parents, then the aim, then the override - the caller's one undo
+    chunk. The override LAST: a parent change re-bakes the weapon's own track, which
+    is the base the mode then reads (`apply` itself leaves and re-enters a standing
+    one for the same reason)."""
     notes = []
     if any(key.startswith(pending.PARENT) for key in chosen):
         notes.append(apply(scheme_from_menus(wanted_menus(rig)), rig=rig))
     if pending.AIM in chosen:
         notes.append(aim_mode(rig=rig, on=chosen[pending.AIM]))
+    if pending.OVERRIDE in chosen:
+        value = chosen[pending.OVERRIDE]
+        notes.append(override_mode(rig=rig, on=value[0],
+                                   settings=weaponoverride.Settings(*value[1:4])))
     return "; ".join(n for n in notes if n) or NOTHING_PICKED
 
 
@@ -2079,6 +2180,11 @@ def aim_mode(rig=None, weapon=None, on=True):
     weapon = weapon or chosen_weapon(rig, bones)
     if not weapon:
         return NO_WEAPON
+    #  both write the weapon's rotation (2026-11-02): each refuses while the other
+    #  stands. Default is still allowed - that is how a scene holding both (an older
+    #  build, a hand edit) is untangled.
+    if on and weaponoverride.is_overridden(weapon):
+        return OVERRIDE_AIMED % weapon.split("|")[-1]
     return weaponaim.enter(weapon) if on else weaponaim.leave(weapon)
 
 
@@ -2359,6 +2465,102 @@ def _press_aim_pick(choice):
         _set_aim(aimed, chosen)
         return _status(_picked_text(chosen) or NOTHING_PICKED)
     return go
+
+
+def override_wanted_on(standing, chosen):
+    """Whether the mode is wanted on, for a press that changes only a NUMBER: the
+    pick's own answer while one stands, else the scene's. Pure - a field must never
+    read the chip, whose painted value depends on a refresh having run."""
+    wanted = chosen.get(pending.OVERRIDE)
+    return bool(wanted[0]) if wanted is not None else standing is not None
+
+
+def _record_override(on):
+    """The Override pick for `on` with the card's numbers (2026-11-02). The numbers are
+    part of it, so a knob turned while the mode stands is a change to apply and one
+    turned while it is off is not (`weaponoverride.state_value`)."""
+    rig, refusal = maya_rigs.current_rig()
+    if rig is None:
+        return _status(refusal)
+    weapon = weapon_of(rig)
+    standing = weaponoverride.state(weapon) if weapon else None
+    card = card_settings()
+    wanted = on(standing, picks(rig)) if callable(on) else bool(on)
+    chosen = remember(rig, pending.record(
+        picks(rig), pending.OVERRIDE, weaponoverride.pick_value(wanted, card),
+        weaponoverride.state_value(standing, card)))
+    _set_override(standing, chosen)
+    return _status(_picked_text(chosen) or NOTHING_PICKED)
+
+
+def _press_override_pick(value=True, *_args):
+    """The Override chip: a PICK. Its new value IS the answer."""
+    if _MENU_QUIET["on"]:
+        return None
+    return _record_override(bool(value))
+
+
+def _press_override_number(*_args):
+    """One of the three numbers typed: a PICK that leaves the mode's own on / off
+    alone (`override_wanted_on`)."""
+    if _MENU_QUIET["on"]:
+        return None
+    return _record_override(override_wanted_on)
+
+
+def override_mode(rig=None, weapon=None, settings=None, on=True):
+    """Override mode on the rig's weapon, or Default - the section's check and the
+    hotkey rows' one road. Its own undo chunk; every refusal before anything changes."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    weapon = weapon or weapon_of(rig)
+    if not weapon:
+        return NO_WEAPON
+    if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
+        return RETARGETING
+    chest = weaponoverride.chest_of(rig)
+    if on:
+        text = weaponoverride.refusal(weapon, chest)
+        if text:
+            return text
+    auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.undoInfo(openChunk=True, chunkName="Connections: Override")
+    try:
+        cmds.autoKeyframe(state=False)
+        if not on:
+            return weaponoverride.leave(weapon)
+        return weaponoverride.enter(weapon, chest, settings or card_settings())
+    finally:
+        cmds.autoKeyframe(state=auto)
+        cmds.undoInfo(closeChunk=True)
+
+
+def _press_override_apply(*_args):
+    """The Override section's check: enter, re-write or leave as picked."""
+    def act():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        chosen = picks(rig)
+        wanted = chosen.get(pending.OVERRIDE)
+        if wanted is None:
+            return NOTHING_PICKED
+        text = override_mode(rig=rig, on=wanted[0],
+                             settings=weaponoverride.Settings(*wanted[1:4]))
+        remember(rig, _settled(rig, chosen, pending.OVERRIDE))
+        return text
+    return _run(act)
+
+
+#  the hotkey rows (`connections.override` / `.override_off`): a hotkey IS the button,
+#  so these act at once, as the aim's do
+def _press_override_on(*_args):
+    return _run(lambda: override_mode(on=True))
+
+
+def _press_override_off(*_args):
+    return _run(lambda: override_mode(on=False))
 
 
 def _press_aim_apply(*_args):
@@ -2649,6 +2851,43 @@ def build_panel():
         height=hubstyle.height("small", 24),
         annotation="enter or leave Aim Mode as picked",
         command=_press_aim_apply), "tool", "check")
+    cmds.setParent("..")
+    #  Override (2026-11-02): the chest carries the weapon, with a strength per half
+    #  and a lag in ms. The chip and its check on one row, the three numbers under
+    #  them - a row of names over a row of fields, the Tools card's `columns` shape
+    _caption("override", "Override")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "right", 0)])
+    hubstyle.mark(cmds.checkBox(
+        OVERRIDE_CHIP, label="Override", value=False,
+        annotation=OVERRIDE_TIPS["chip"],
+        changeCommand=_press_override_pick), "chip")
+    hubstyle.mark(cmds.button(
+        OVERRIDE_APPLY, label=hubstyle.tool_label("Apply"),
+        width=hubstyle.tool_width(66), height=hubstyle.height("small", 24),
+        annotation="enter, re-write or leave Override mode as picked",
+        command=_press_override_apply), "tool", "check")
+    cmds.setParent("..")
+    names = cmds.rowLayout(OVERRIDE_NAMES, numberOfColumns=3,
+                           columnAttach=[(1, "both", 0)]
+                           + [(i, "both", 4) for i in (2, 3)])
+    hubstyle.mark(names, "columns", layout=True)
+    for key in OVERRIDE_KEYS:
+        hubstyle.mark(cmds.text(label=OVERRIDE_LABEL[key], align="left",
+                                annotation=OVERRIDE_TIPS[key]), "caption")
+    cmds.setParent("..")
+    fields = cmds.rowLayout(OVERRIDE_FIELDS, numberOfColumns=3,
+                            columnAttach=[(1, "both", 0)]
+                            + [(i, "both", 4) for i in (2, 3)])
+    hubstyle.mark(fields, "columns", layout=True)
+    for key in OVERRIDE_KEYS:
+        cmds.floatField(OVERRIDE_FIELD[key],
+                        value=_override_number(
+                            key, getattr(weaponoverride.DEFAULTS, key)),
+                        precision=2, minValue=0.0,
+                        height=hubstyle.height("field", 20),
+                        annotation=OVERRIDE_TIPS[key],
+                        changeCommand=_press_override_number)
     cmds.setParent("..")
     cmds.setParent("..")
     cmds.columnLayout(TAB_COLUMN["camera"], adjustableColumn=True,

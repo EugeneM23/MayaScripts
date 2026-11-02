@@ -1288,6 +1288,13 @@ _OURS = (
     ("connections.default", "Connections", "Weapon Default",
      "The aim baked back onto the weapon's rotation, the controllers removed",
      partial(_connections, "_press_aim_default")),
+    ("connections.override", "Connections", "Weapon Override Mode",
+     "The chest carries the chosen weapon with the card's strengths and lag - "
+     "the weapon's own animation kept as the base",
+     partial(_connections, "_press_override_on")),
+    ("connections.override_off", "Connections", "Weapon Override Off",
+     "The weapon's own animation back, exactly as it was before Override",
+     partial(_connections, "_press_override_off")),
     ("connections.camera_aim", "Connections", "Camera Aim Mode",
      "The camera's turn aims at two controllers, keyed on its own keys",
      partial(_connections, "_press_camera_aim_mode")),

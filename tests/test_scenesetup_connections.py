@@ -384,10 +384,12 @@ class Panel(unittest.TestCase):
         #  2026-10-21: [Body | Weapon] - the body tab first, then the weapon
         #  tab's rows, Apply all and Aim Mode / Default.
         #  2026-10-29: a check a limb row ahead of BakeAcross / Release
+        #  2026-11-02: the Override section's check after the aim's
         self.assertEqual([c[2]["label"] for c in self._buttons()],
                          ["Apply", "Apply", "Apply", "Apply", "Apply",
                           "Apply all",
                           "Apply", "Apply", "Apply", "Apply all", "Apply",
+                          "Apply",
                           "Apply", "Apply", "Apply all",
                           "BakeAcross", "Release"])
         labels = [c[2].get("label") for c in self.fake.calls
@@ -403,7 +405,8 @@ class Panel(unittest.TestCase):
         self.assertEqual(labels[1:4], ["FK / IK", "Arm R", "Arm L"])
         #  + the legs' two labels and the spine (2026-10-10), the three
         #  captions (2026-10-16)
-        self.assertEqual(len(labels), 19)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21); + the two aim rows' labels (2026-10-29)
+        #  2026-11-02: + the caption «Override» and its three field names
+        self.assertEqual(len(labels), 23)          # + the camera tab's two captions (2026-10-28); + the caption «Aim» (2026-10-21); + the two aim rows' labels (2026-10-29)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -429,7 +432,8 @@ class Panel(unittest.TestCase):
                  if m.role in ("primary", "tool", "secondary")]
         #  the three parent rows + the camera tab's Apply (2026-10-28)
         #  + a check a limb row, the spine's and the two aims' (2026-10-29)
-        self.assertEqual(roles.count(("tool", "check")), 11)
+        #  + the Override section's (2026-11-02)
+        self.assertEqual(roles.count(("tool", "check")), 12)
         self.assertIn(("primary", "check"), roles)
         self.assertIn(("secondary", "link"), roles)
         self.assertIn(("secondary", "unlink"), roles)
