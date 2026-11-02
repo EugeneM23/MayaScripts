@@ -16170,6 +16170,91 @@ row's Apply, the two Aim Mode / Default buttons.
      through it: measured, `QMetaObject.invokeMethod(obj, "click")` toggles the box AND runs its
      changeCommand, where `cmds.checkBox -e -value` runs neither.
 
+## Connections: 2H Weapon, and the chest's Override (2026-11-02)
+
+The animator, two features for the Weapon tab: «1 - 2H Weapon. Это опция которая "намертво" привяжет обе
+руки к оружию, то есть двуручный хват» and «2 - Override mode. Галочка в той же вкладке. В этом режиме
+оружие привязывается к груди (spine_03 ... Chest_1P_ctrl) и даются три настройки: сила наследования
+вращения, сила наследования смещения по позиции и отставание в миллисекундах - так получается захлёст
+оружия». Asked three things before anything was built: «намертво» is **«Рука следует за оружием»** -
+«Прокси, одной кнопкой» (the proxy road, in one press); the result is **«Ключи, настройки помним»** (keys
+on the weapon with the three numbers remembered, the Aim Mode road); which weapon the mode acts on was left
+to me - **it acts on the weapon wherever it stands**, in a hand or out in the world. Spec
+`docs/superpowers/specs/2026-11-02-connections-2h-and-override-design.md`, plan beside it. Both are PICKS
+(2026-10-29): a press records, the row's check or `Apply all` bakes.
+
+- **2H is a shortcut for the two hand rows' picks**, with no bake of its own: a chip under the three parent
+  rows (`TWO_HANDS_CHIP`) writes `Hand R` and `Hand L` to `Weapon`, which is the proxy road the rows have
+  had since 2026-09-18 - the hand's world track baked onto a `handProxy_<side>` locator inside the geometry,
+  the IK control constrained to it with no offset, the control hidden - so the take is kept frame for frame
+  and a key on the proxy moves the hand against the weapon. **A hand that HOLDS the weapon is left
+  holding** (a hand holds XOR follows, and a two-handed grip IS one hand holding and the other following);
+  off, it frees only the hands that follow. The pure halves are `connections.two_hands_state` /
+  `two_hands_picks`, and the picks are read from `menus_after(shown, chosen)` - the SCENE plus the standing
+  picks, never the segment collections (trap 328).
+- **Override: the chest carries the weapon, late** (`maya_scenesetup/weaponoverride.py`). At frame `f`, with
+  `C` the chest's world and `W_own` the weapon's own track:
+  **`W(f) = W_own(f) · C(f)⁻¹ · C(ref) · G(f)`** - `ref` the span's first frame, `G` the chest's motion from
+  `ref` to `f − lag` with its turn slerped from the identity by **Rotation** and its travel scaled by
+  **Position**, both **about the chest's own pivot** (a bare `ref⁻¹ · late` carries the lever to the world
+  origin: the weapon swung metres). So the weapon keeps its pose relative to the chest and the chest's own
+  motion is put back scaled and late - and **`1 / 1 / 0` is the identity by construction** (the
+  full-strength branch IS `ref⁻¹ · late`), which is this repository's rule that the defaults are the source.
+  The chest's time is clamped to the first frame, so that frame is bit-exact and the lag eases in over its
+  own first frames. `DEFAULTS` 1 / 1 / 80 ms.
+- **The base is parked on the weapon** (`BASE_PREFIX`, `bonedrive.park`'s road: `doubleLinear` /
+  `doubleAngle` attributes, so Maya splices no `unitConversion` - trap 42), and the three numbers and the
+  marker ride the node too: no extra node, and a knob turned RE-WRITES from the original track - `enter`
+  unparks, reads, parks again, writes, fills. 80 ms then 160 ms equals one press at 160 to **0.00e+00**;
+  Default puts the curves back exactly.
+- **The frames are the weapon's own keys ∪ what DRIVES the chest** (`fkik.own_curves` ∪
+  `fkik.driving_curves([chest])`): a rig's chest bone is constraint-driven and carries no curve of its own,
+  so `own_keys` alone would key nothing. Then `aimcore`'s fill loop adds a frame between keys only where the
+  track stands off by more than 0.1° / 0.01 cm - the identity fills none, a lag fills 18 frames of the
+  proof's take. The keys go to the active animation layer (`maya_poselib.keys`) with the switch's tangents,
+  and every walk and bake through `maya_timewarp`.
+- **Refused by name, nothing changed**: no weapon, a rig with no `spine_03`, a weapon in **Aim Mode** (an
+  aimConstraint owns its rotate - the two modes exclude each other, each naming the other), a rotate channel
+  driven by anything but curves and layers, and Default on a weapon that is not overridden. The identity is
+  said rather than written. **A parent change leaves and re-enters** inside the press's own chunk, as Aim
+  Mode already does, and `apply()` runs Override LAST because a lift or a hang re-bakes the weapon's own
+  track - the lag holds in a new parent to **7.11e-14**.
+- **What it costs in a hand**, on the line: a weapon a hand HOLDS slides in the grip by the lag (the hand
+  keeps its own track and the weapon trails it) - «Weapon -> World with 2H keeps the hands on it». The note
+  is printed only where the numbers actually move the weapon, never at the identity.
+- **The card**: the 2H chip under the three parent rows, and an **Override** caption holding the chip and
+  its own check on one row over a row of names and a row of fields (the Tools card's `columns` shape).
+  `Apply all` stays the tab's one orange. Hotkey rows `connections.override` / `.override_off` act at once,
+  as every hotkey does.
+
+Proof: `docs/superpowers/plans/verify_weapon_override.py` - **0 of 42 gates failed, mayapy standalone**,
+eleven phases on a Manny_Rig at 30 fps over 0..20 whose `FKSpine3_M` turns 30.000° and travels 20.000 cm,
+a Long Sword in the right hand: the identity moves the weapon **2.84e-14**; `0 / 0 / 0` freezes it in the
+chest's reference frame (**9.49e-06 cm** where the body carries it 46.581 cm and turns 30.000°); `0 / 1 / 0`
+never turns it (9.49e-06°) and travels **20.0000 cm** against the body's 20.0000; `1 / 0 / 0` turns it
+**30.0000°** and takes 26.589 cm of lever instead of 46.581 (the pivot, not the origin); a lag trails the
+body by its own frames to **8.53e-14** against a control of 9.392; Default gives 6 of 6 channels back; a
+re-knob equals one press; the identity keys exactly the union with no fill; six refusals leave 6 of 6
+channels unchanged; the lag holds through a parent change; 2H binds both hands in one press with the take
+kept; and a Pose Library card lands a second rig's `weapon_r` at **2.42e-05 cm**. Unit tests
+`tests/test_pending_override.py`, `test_weapon_override.py`, `test_connections_two_hands.py`,
+`test_connections_override_row.py` (95 in all); the suite 13668 tests with the one known
+`test_chat_deploy.Keys` failure (this machine's own saved keys). Re-run green: `verify_connections_apply.py`
+0 of 34, `verify_camera_weapon_bones.py` 0 of 24, `verify_poselib_apply.py` 117/117, `verify_ik_world.py`
+54/54; `verify_weapon_aim_mode.py`'s single failure is identical on a worktree of the commit before this
+work. **Not seen in a GUI Maya**: the chip, the three fields and a real press are the animator's, after
+Check update. **Not built**: a lag per half (one number serves both), a strength past 1, the weapon's own
+twist about its blade, and a hand that follows the lagged weapon through its proxy (the hands keep their
+own track - the «Weapon -> World with 2H» note is the road).
+
+328. **A segment collection answers the scene, not the picks, and a chip that writes several rows cannot
+     read it.** The Weapon tab's parent rows are `iconTextRadioCollection`s painted from the scene plus the
+     standing picks, so between a pick and the next refresh the collection still shows what the scene does
+     - the 2H chip read `wanted_menus`, saw both hands Free, and picked both of them to follow a weapon one
+     of them was already holding. A press that records a pick for a row somebody else may have picked
+     computes from the scene AND the pick store (`menus_after`), never from the control, and the painting
+     goes through the same pure function so the card and the press cannot disagree.
+
 ## AT bar keys name their layer (2026-10-27)
 
 «по одному працює, але виділені ні» - Paste Relationship on the highlighted keys, IKArm_R following the
