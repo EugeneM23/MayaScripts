@@ -37,7 +37,10 @@ VERSION = 1
 SUFFIX = ".walkkeys.json"
 SIDES = ("l", "r")
 KEYS = ("contact", "down", "passing", "up")
-LABELS = {"contact": "Contact", "down": "Down", "passing": "Passing", "up": "Up"}
+CYCLE = "cycle"                     # the whole cycle's own entry - the mean pose rig's correction (2026-11-02):
+                                    # applied at every frame, never mirrored, needing no steps
+ENTRIES = KEYS + (CYCLE,)
+LABELS = {"contact": "Contact", "down": "Down", "passing": "Passing", "up": "Up", CYCLE: "Mean pose"}
 REF_SIDE = "l"                      # the rigs show the first step of this foot; the other foot's are mirrored
 MIN_STEP = 4                        # frames: a step shorter than this has no room for four key poses
 FLAT_CM = 0.2                       # cm: a pelvis moving less than this over a span has no Down or Up there
@@ -111,7 +114,7 @@ def loads(data, what="the key poses"):
         raise Refusal("%s are not key pose edits this tool reads" % what)
     out = {}
     for key, raw in (data.get("keys") or {}).items():
-        if key not in KEYS:
+        if key not in ENTRIES:
             continue
         entry = empty_key()
         entry["rot"] = dict((name, _m3(m)) for name, m in (raw.get("rot") or {}).items())
@@ -341,7 +344,7 @@ def ground(walk, side, f):
     return tuple(out)
 
 
-def increment(key, base, now, walk, frame, knees=None):
+def increment(key, base, now, walk, frame, knees=None, planted=None):
     """(the edit that turns the reading `base` into `now`, [(what moved, how much, unit)], [what was not taken]):
     read on the rig standing in the key `key` at the walk's frame `frame` (2026-10-27, «нужно убедиться что наша
     анимация реагирует на изменения всех контроллеров»):
@@ -354,7 +357,11 @@ def increment(key, base, now, walk, frame, knees=None):
       about up (its toe out) as the print's; a lift of a planted foot, and a tilt of a flat one, not taken (said);
     - a knee: its turn about the leg's line, only while the leg is bent KNEE_BENT in both readings and the turn
       is under KNEE_FLIP - else the IK solver straightened or flipped it (said) - and only on the sides `knees`
-      gives (keyrig.knees_taken: an IK leg whose pole stayed turns by itself); None every side."""
+      gives (keyrig.knees_taken: an IK leg whose pole stayed turns by itself); None every side.
+
+    `planted` True (the mean pose rig's reading, 2026-11-02): every foot is read as planted, whatever `frame`
+    says - a mean pose has no foot in the air, so a foot's move along the ground is its print and its turn about
+    up its toe-out."""
     entry = empty_key()
     moved, ignored = [], []
     label = LABELS.get(key, key)
@@ -391,9 +398,9 @@ def increment(key, base, now, walk, frame, knees=None):
         r = wm.orthonormal(base["foot"][side][1].T @ now["foot"][side][1])
         angle = float(np.linalg.norm(wm.log_rot(r)))
         shifted, turned = float(np.linalg.norm(t)) >= MIN_CM, angle >= MIN_TURN
-        heel, ball = ground(walk, side, frame)
-        planted = max(heel, ball) > 0.5
-        if planted and shifted:
+        heel, ball = (1.0, 1.0) if planted else ground(walk, side, frame)
+        standing = max(heel, ball) > 0.5
+        if standing and shifted:
             along = np.array([t[0], t[1], 0.0])
             if float(np.linalg.norm(along)) >= MIN_CM:
                 entry["print"][side]["t"] = along
@@ -513,9 +520,11 @@ def describe(moved, limit=4):
     return mp.describe(moved, limit)
 
 
-def summary(keys):
-    """«Contact, Down edited» - which keys hold an edit."""
-    edited = [LABELS[k] for k in KEYS if k in keys and not key_empty(keys[k])]
+def summary(keys, only=None):
+    """«Contact, Down edited» - which entries hold an edit. `only` (KEYS: the four key poses alone) scopes it, so
+    a line names the keys apart from the whole cycle's own entry, the mean pose rig's (2026-11-02)."""
+    want = ENTRIES if only is None else tuple(only)
+    edited = [LABELS[k] for k in want if k in (keys or {}) and not key_empty(keys[k])]
     return ("%s edited" % ", ".join(edited)) if edited else "no key pose edited"
 
 
@@ -581,6 +590,45 @@ def knots(keys, steps, walk):
     return out
 
 
+def cycle_values(entry, walk):
+    """The whole cycle's entry (CYCLE) as `knots`' values, or None for none: the same shape the key knots carry -
+    turns as log vectors in the bone's parent frame, the pelvis in travel coordinates, the knees, the feet - and
+    **never mirrored**. A mean-pose edit of the left arm holds the left arm through the whole cycle, where a key
+    pose's swaps sides on the other foot's step (`knots`' own rule, right for a phase-bound key and wrong for a
+    mean)."""
+    if entry is None or key_empty(entry):
+        return None
+    values = {"rot": {}, "pelvis": np.asarray(entry["pelvis"], float), "knee": {"l": 0.0, "r": 0.0},
+              "foot": dict((s, (np.zeros(3), np.zeros(3))) for s in SIDES)}
+    for name, Y in (entry.get("rot") or {}).items():
+        if name in walk.index:
+            values["rot"][name] = wm.log_rot(wm.orthonormal(np.asarray(Y, float)))
+    for side in SIDES:
+        values["knee"][side] = float(entry["knee"][side])
+        values["foot"][side] = (np.asarray(entry["foot"][side]["t"], float),
+                                wm.log_rot(wm.orthonormal(entry["foot"][side]["r"])))
+    return values
+
+
+def _zero_values():
+    """What a frame asks with no key edit on it."""
+    return {"rot": {}, "pelvis": np.zeros(3), "knee": dict((s, 0.0) for s in SIDES),
+            "foot": dict((s, (np.zeros(3), np.zeros(3))) for s in SIDES)}
+
+
+def _plus(values, cycle):
+    """`values` (a frame's, from the key knots) with the whole cycle's `cycle` added - log vectors and moves alike,
+    as `_mix` adds between two knots."""
+    out = {"rot": dict(values["rot"]), "pelvis": values["pelvis"] + cycle["pelvis"], "knee": {}, "foot": {}}
+    for name, v in cycle["rot"].items():
+        out["rot"][name] = out["rot"].get(name, np.zeros(3)) + v
+    for side in SIDES:
+        out["knee"][side] = values["knee"][side] + cycle["knee"][side]
+        out["foot"][side] = (values["foot"][side][0] + cycle["foot"][side][0],
+                             values["foot"][side][1] + cycle["foot"][side][1])
+    return out
+
+
 def _smooth(u):
     return u * u * (3.0 - 2.0 * u)
 
@@ -621,8 +669,12 @@ def _mix(a, b, wa, wb, names):
 
 def correct(clip, keys, steps, walk):
     """A new model.Clip: `clip` (the walk's own analysed clip, walk.clip) with the key poses' edits in every
-    frame (the module docstring). No edit gives the clip back as it is."""
-    if is_empty(keys) or not steps:
+    frame (the module docstring) and the whole cycle's entry (CYCLE) on top of them - that one on every frame
+    alike, so `steps` may be None: the mean pose's correction needs no step detection. No edit gives the clip
+    back as it is."""
+    cycle = cycle_values((keys or {}).get(CYCLE), walk)
+    edited = dict((k, e) for k, e in (keys or {}).items() if k in KEYS and not key_empty(e))
+    if cycle is None and (not edited or not steps):
         return clip
     names, parents = clip.names, clip.parents
     index = dict((n, j) for j, n in enumerate(names))
@@ -637,14 +689,18 @@ def correct(clip, keys, steps, walk):
             back = np.swapaxes(R[p], -1, -2)
             lr[j] = R[j] @ back
             lt[j] = np.einsum("fi,fij->fj", Pos[j] - Pos[p], back)
-    points = knots(keys, steps, walk)
+    points = knots(keys, steps, walk) if (edited and steps) else None
     upper = [n for n in mp.upper_bones(walk) if n in index]
     toes = ["ball_" + s for s in SIDES if "ball_" + s in index]
     pelvis, root = index["pelvis"], index["root"]
     frames = []
     for f in range(F):
-        a, b, wa, wb = blended(points, f, P)
-        frames.append(_mix(a, b, wa, wb, upper + toes))
+        if points is not None:
+            a, b, wa, wb = blended(points, f, P)
+            values = _mix(a, b, wa, wb, upper + toes)
+        else:
+            values = _zero_values()
+        frames.append(_plus(values, cycle) if cycle is not None else values)
     prints = stance_prints(keys)
     for name in upper:                                   # the upper body's turns, in the parent's frame
         j = index[name]
@@ -691,18 +747,29 @@ def correct(clip, keys, steps, walk):
 
 
 def stance_prints(keys):
-    """{side: {"t", "yaw"}} - where each foot stands for its stances: its own prints (any key's) and the other foot's
-    mirrored (the side axis flipped, the turn reversed) - the edits always mirror (the module docstring)."""
+    """{side: {"t", "yaw"}} - where each foot stands for its stances: its own prints (any KEY's) and the other
+    foot's mirrored (the side axis flipped, the turn reversed) - a key pose's edits always mirror (the module
+    docstring) - and the whole cycle's entry (CYCLE) on top of them, unmirrored: a mean pose's print is its own
+    foot's."""
     total = empty_print()
-    for entry in (keys or {}).values():
+    for key, entry in (keys or {}).items():
+        if key == CYCLE:
+            continue
         for side in SIDES:
             stance = (entry.get("print") or {}).get(side)
             if stance:
                 total[side]["t"] = total[side]["t"] + np.asarray(stance["t"], float)
                 total[side]["yaw"] += float(stance["yaw"])
     flip = np.array([1.0, -1.0, 1.0])
-    return dict((s, {"t": total[s]["t"] + total[OTHER[s]]["t"] * flip,
-                     "yaw": total[s]["yaw"] - total[OTHER[s]]["yaw"]}) for s in SIDES)
+    out = dict((s, {"t": total[s]["t"] + total[OTHER[s]]["t"] * flip,
+                    "yaw": total[s]["yaw"] - total[OTHER[s]]["yaw"]}) for s in SIDES)
+    cycle = (keys or {}).get(CYCLE)
+    for side in SIDES:
+        stance = ((cycle or {}).get("print") or {}).get(side)
+        if stance:
+            out[side]["t"] = out[side]["t"] + np.asarray(stance["t"], float)
+            out[side]["yaw"] += float(stance["yaw"])
+    return out
 
 
 def stance_weights(walk, side, F):
@@ -745,16 +812,21 @@ def on_result(walk, worlds, keys):
     """(the frames with the key poses' edits in them, the result read as a walk, its steps, a note): the edits put
     on the walker's evaluated animation (`worlds`, before In place) - after the parameters, the pose and the
     physics, so the walker shows at each key exactly what its rig shows (2026-10-27). Its key poses are found on
-    the result itself. A result that cannot be read gets no edit, said."""
+    the result itself. A result that cannot be read as a walk at all gets no edit, said; one whose key poses cannot
+    be found still takes the whole cycle's entry (CYCLE, the mean pose rig's) and comes back as a walk, for the rig
+    pose to stand in (2026-11-02)."""
     try:
         rw = result_walk(walk, worlds)
-        steps = find(rw)
     except (wm.Refusal, Refusal) as error:
         return np.asarray(worlds, float), None, None, "the key poses: %s" % error
+    try:
+        steps, note = find(rw), ""
+    except (wm.Refusal, Refusal) as error:
+        steps, note = None, "the key poses: %s" % error
     if is_empty(keys):
-        return np.asarray(worlds, float), rw, steps, ""
+        return np.asarray(worlds, float), rw, steps, note
     out = correct(rw.clip, keys, steps, rw)
-    return np.asarray(out.worlds, float), rw, steps, ""
+    return np.asarray(out.worlds, float), rw, steps, note
 
 
 def in_place(worlds, walk, amount):
