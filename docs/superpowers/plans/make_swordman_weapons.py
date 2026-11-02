@@ -14,6 +14,14 @@ need no stored grip and no frame of their own.
 
 The points carry his 2.54 (trap 86): the sword is a 117 cm blade, not the
 46 cm its own geometry reads.
+
+And since 2026-11-02 they carry his own SEAT: he placed both props on his rig by
+hand («я выставлю тебе так как это должно сидеть на персонаже»), `swordman_seats`
+holds where each must sit in its hand, and the difference between that and what
+Add Weapon gives today is folded into the points. Two things that difference is
+made of: the sword he simply turned (52 deg), and a LEFT-hand weapon gets the
+mirror grip `grips.for_hand` computes when nothing is dialled -- the shield was
+exported for zero grip, so Add stood it ~171 deg away and he saw it backwards.
 """
 import os
 import shutil
@@ -31,6 +39,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(REPO, "SkeldarAnim"))
 from maya_scenesetup import bonedrive                              # noqa: E402
+from maya_scenesetup import catalog, grips                         # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import swordman_seats                                              # noqa: E402
 
 SRC = os.path.join(REPO, "sources", "swordman", "Swordman_Source.mb")
 ASSETS = os.path.join(REPO, "SkeldarAnim", "assets")
@@ -63,6 +75,33 @@ def points_of(path, space=om.MSpace.kWorld):
     return [om.MPoint(p.x, p.y, p.z) for p in got]
 
 
+def wm(node):
+    return om.MMatrix(cmds.getAttr(node + ".worldMatrix[0]"))
+
+
+def hand_of(bone):
+    """The hand a drive bone hangs under: the reference for a seat."""
+    return cmds.listRelatives(bone, parent=True, fullPath=True)[0]
+
+
+def default_in_hand(key, bone, entry, root):
+    """Where Add Weapon stands `entry` in its hand today, as a matrix.
+
+    `grip . socket . bone` is the placement, so in the hand's own frame it is
+    `grip . socket . bone_local`. The grip is the policy's, read through
+    `grips.for_hand` so this can never drift from the press -- and the policy
+    must be the COMPUTED one: a grip remembered in whoever runs this script's
+    prefs would silently seat the asset for them alone.
+    """
+    side = swordman_seats.HANDS[key][0]
+    if grips.stored(key, side) is not None:
+        raise RuntimeError("%s: a grip for the %s hand is remembered in these prefs "
+                           "(%s) -- clear it before exporting"
+                           % (key, side, grips.optionvar_name(key, side)))
+    grip = om.MMatrix(bonedrive.matrix_of(*grips.for_hand(entry, side, root)))
+    return grip * seat_of(bone) * wm(hand_of(bone)).inverse()
+
+
 def seat_of(bone):
     """Where zero grip stands a weapon of the default frame on `bone`.
 
@@ -93,7 +132,23 @@ def export(mesh_name, bone_name, file_name, out_name):
 
     his = points_of(shape_of(mesh))
     seat = seat_of(bone)
-    local = [om.MPoint(p) * seat.inverse() for p in his]
+    root = cmds.ls("|root", type="joint", long=True)[0]
+    entry = catalog.by_key(mesh_name)
+    #  his seat, folded in: the points are turned by the difference between where
+    #  he put the prop in its hand and where Add Weapon stands it today, so the
+    #  default placement reproduces his (`p . delta . D = p . X`).
+    want = om.MMatrix(swordman_seats.IN_HAND[mesh_name])
+    today = default_in_hand(mesh_name, bone, entry, root)
+    delta = want * today.inverse()
+    local = [om.MPoint(p) * seat.inverse() * delta for p in his]
+    hand = wm(hand_of(bone))
+    placed = today * hand
+    wanted = [om.MPoint(p) * placed for p in local]
+    moved = om.MTransformationMatrix(delta)
+    angle = moved.rotation(asQuaternion=True).asAxisAngle()[1]
+    print("  %-22s his seat folded in: turned %.2f deg, moved %.2f cm"
+          % (file_name, om.MAngle(angle, om.MAngle.kRadians).asDegrees(),
+             om.MVector(moved.translation(om.MSpace.kTransform)).length()))
 
     # keep this one prop, nothing else
     # `parent -world` answers None for a node already at world level
@@ -137,13 +192,19 @@ def export(mesh_name, bone_name, file_name, out_name):
     if not os.path.exists(tmp):
         raise RuntimeError("the exporter wrote nothing to %s" % tmp)
 
-    check(tmp, out_name, his, seat, file_name)
+    check(tmp, out_name, wanted, placed, file_name, his)
     shutil.move(tmp, out)
     return out
 
 
-def check(path, out_name, his_world, seat, file_name):
-    """Read it back the way Add Weapon does and seat it at zero grip."""
+def check(path, out_name, his_world, seat, file_name, source_world=()):
+    """Read it back the way Add Weapon does and place it as the press would.
+
+    `seat` is the placement Add Weapon gives in this scene's pose and
+    `his_world` the points it must then show -- his own seat. `source_world`
+    is where the source file held the prop, so the print says how far his
+    seat moved it.
+    """
     cmds.file(new=True, force=True)
     mel.eval("FBXResetImport")
     mel.eval("FBXImportMode -v add")
@@ -158,18 +219,22 @@ def check(path, out_name, his_world, seat, file_name):
     worst = max((om.MVector(a - b).length() for a, b in zip(placed, his_world)),
                 default=0.0)
     if worst > TOL:
-        raise RuntimeError("%s lands %.6f cm off his own hold" % (file_name, worst))
+        raise RuntimeError("%s lands %.6f cm off the seat asked" % (file_name, worst))
     length, axis = longest_axis(back)
     uvs = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
     print("  %-22s %3d verts, %6.1f cm along its own %s, span %.1f, uv %s"
           % (file_name, len(back), length, axis, span(back), uvs))
-    print("  %-22s lands %.2e cm off his hold at zero grip" % ("", worst))
+    print("  %-22s lands %.2e cm off the seat asked under Add Weapon" % ("", worst))
+    if source_world:
+        off = max((om.MVector(a - b).length() for a, b in zip(placed, source_world)),
+                  default=0.0)
+        print("  %-22s %.1f cm from where the source file held it" % ("", off))
 
 
 def main():
     os.chdir(tempfile.gettempdir())
-    print("exporting in the seat `R(SOCKET_TURN) . W_bone`, which is where a")
-    print("default catalog row stands a weapon at zero grip:")
+    print("exporting so that Add Weapon's own placement reproduces the seat he")
+    print("set on his rig (swordman_seats.IN_HAND):")
     for mesh_name, bone, file_name, out_name in PROPS:
         got = export(mesh_name, bone, file_name, out_name)
         print("  wrote %s (%.1f KB)" % (got, os.path.getsize(got) / 1024.0))

@@ -16831,21 +16831,31 @@ proportions, his two props and the skin are where they were. `character_skeleton
 (his two sha1 pins, nothing else). **A Swordman added before this has the two-bone torso: re-add
 him, and his clips want transferring again.**
 
-**…no fingers, no camera bones — and both props already insert as they stand** (2026-11-02, with
+**…no fingers, no camera bones, and his own seat for the sword and the shield** (2026-11-02, with
 two Swordman rigs in his scene: «Щит должен вставлятся так как сейчас он выставлен на скелете
 Swordman_Rig_Character а меч Swordman_Rig1_Character. ТАк-же давай избавимся от кистей рук, они
-не нужны у персонажа нету пальцев. кости камеры также можно удалить»).
-- **Nothing about the two props needed changing, and measuring that took two passes** (trap 324).
-  His sword reads `bonedrive.measured_grip` 1e-14, his shield (162.132, −23.957, −37.355) /
-  (−5.161, 5.616, 8.063) — and that second number is not a dialled grip: `grips.stored` answers
-  **None for every Swordman key** (his prefs hold none) and `grips.for_hand` computes a left
-  hand's grip as the MIRROR of the right's zero through the rig's own two sockets, which on a
-  FRESH rig added from the asset comes out as exactly those six numbers. So Weapons > Add already
-  puts each prop where his scene has it; the two swords differ only because the two rigs' hands
-  are posed differently. Folding that grip into the shield's points was built and measured
-  (8.4e-6 cm off the hold asked, 71.6 cm from his file's own hold) and then **reverted**: with the
-  mirror still computed at Add, it would have turned the shield twice. Gates 7 and 8 now print
-  what Weapons > Add gives each hand beside the hold they measure.
+не нужны у персонажа нету пальцев. кости камеры также можно удалить», then «Меч и щит смотрят не в
+ту сторону. я выставлю тебе так как это должно сидеть на персонаже … Выставил смотри»).
+- **The seat is measured in the HAND, never against the weapon bone** (trap 325). The first pass
+  read `bonedrive.measured_grip` — the sword 1e-14, the shield (162.132, −23.957, −37.355) — called
+  the second a dialled grip and folded it into the shield's points; both readings were worthless.
+  `measured_grip` asks the node against `weapon_l` / `weapon_r`, and `bonedrive.link` constrains
+  THOSE BONES TO THE WEAPON, so the bone follows whatever is turned and the answer is zero by
+  construction; and the shield's number was not his at all but the MIRROR `grips.for_hand` computes
+  for a left hand when nothing is dialled (`grips.stored` answers None for every Swordman key).
+  That fold was reverted. A weapon space is constrained to its hand with no offset, so the prop's
+  matrix in the HAND's frame is the same in any pose: that is the seat, and
+  `docs/superpowers/plans/swordman_seats.py` holds the two he set (16 floats each, scale stripped).
+- **His seat is folded into the points** (`make_swordman_weapons.py`): the delta between it and
+  where Add Weapon stands the prop today — the default read through `grips.for_hand` on the source
+  skeleton itself, so it cannot drift from the press — turned the **sword 52.19° / 1.41 cm** and the
+  **shield 170.95° / 6.82 cm**. The shield's ~171° IS that mirror: the asset had been cut for zero
+  grip while Add gives a left-hand weapon the mirror, which is what he saw as backwards. Not the
+  row's `frame`, which is a rotation and carries neither his 1.41 nor his 6.82 cm. The cost, stated:
+  his two models no longer lie blade +Y (his seat is in their points), so `make_weapon_icons.py`'s
+  projection would draw them sideways — their inventory icons stay as they were drawn from the
+  models' own axes — and putting one of his props in the OTHER hand would mirror it about an axis
+  the model no longer follows.
 - **The fingers are gone** — 134 joints, 144 transforms (the curl / spread dials `Fingers_R` /
   `Fingers_L` among them), 38 control curves, 76 multiplyDivide, 68 unitConversion, 76
   constraints, 38 blendMatrix, 34 driven curves: AdvancedSkeleton builds fingers whatever the fit
@@ -16865,11 +16875,15 @@ Swordman_Rig_Character а меч Swordman_Rig1_Character. ТАк-же давай
   `make_swordman_spine_skin.py`'s text check then refuses the asset over six lines of pose it
   cannot explain; that check now knows a dagPose's own `.g` flag array may be written afresh when
   an influence joins.
-Proof: `verify_swordman.py` **17 of 17** on `am_Orc_Loco_Walk_Fwd_NoRM` (gate 16 the fingers; 17
-the camera bones and the refusal; gate 9's `span` is the point set's DIAMETER now, which is what
-a size means for a prop that may stand turned), 13493 unit tests with the one known
-`test_chat_deploy.Keys` failure. **A Swordman added before this has the fingers and the camera
-bones: re-add him.**
+Proof: `verify_swordman.py` **17 of 17** on `am_Orc_Loco_Walk_Fwd_NoRM` — gates 7 and 8 press
+`equip.to_hand`, the road Weapons > Add and the inventory both take, and measure the VERTICES
+(a fold moves the model inside the node, so a gate on the node's own matrix cannot see it and
+read as the whole delta failing): every one of 33 lands **1.3e-5 cm** from where he set it, 23.7
+cm (shield) and 79.1 cm (sword) from where his source file held it; gate 9's `span` is the point
+set's DIAMETER now, which is what a size means for a prop that stands turned; 16 the fingers, 17
+the camera bones and the refusal. 13493 unit tests with the one known `test_chat_deploy.Keys`
+failure. **A Swordman added before this has the fingers, the camera bones and the old seats:
+re-add him and add his props again.**
 
 324. **A grip stored on a weapon node is not a grip the animator dialled.** `apply_grip` writes
      whatever Add Weapon applied, and for a LEFT hand with nothing remembered that is the mirror
@@ -16878,6 +16892,14 @@ bones: re-add him.**
      Read as «he dialled this», it cost an asset rebuild and a revert. Ask `grips.stored` (None
      means nothing was dialled) and `grips.for_hand` on a FRESH rig before calling any placement
      the animator's; the two agreeing to 1e-13 is the proof that nothing is to change.
+325. **A weapon's grip measured against its drive bone is circular: the bone follows the weapon.**
+     `bonedrive.link` constrains `weapon_r` / `weapon_l` TO the marked node, so an animator who
+     turns a prop 52° takes the bone with it and `measured_grip` still reads 0.000000 — the fields
+     in the Weapons card say the same. Twice in one session that read as «he changed nothing». The
+     hand is the reference: a weapon space is parent-constrained to its hand with NO offset, so
+     `node_world · hand_world⁻¹` is the prop's seat, the same at every frame and in any pose, and
+     the difference between two of those matrices is the edit. Strip its scale first — the rig's
+     own chain leaves 4e-6 on a weapon node, and a seat must not resize the model.
 
 310. **A character scene is saved in whatever pose it was left in, and a size gate cannot see a
      place.** The Swordman's file holds him 110 cm forward of his bind; the build restored the

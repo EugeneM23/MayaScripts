@@ -191,7 +191,9 @@ def drop(nodes, ns):
 cmds.file(new=True, force=True)
 from maya_scenesetup import catalog, character, deletion, attach, bonedrive  # noqa: E402
 from maya_scenesetup import weaponspace, camera, skeleton, window  # noqa: E402
-from maya_scenesetup import grips  # noqa: E402
+from maya_scenesetup import grips, equip  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import swordman_seats  # noqa: E402
 import maya_charfire  # noqa: E402
 import maya_rigs  # noqa: E402
 import maya_asretarget as ar  # noqa: E402
@@ -345,28 +347,52 @@ rig = maya_rigs.rigs()[0]
 H = bones_of(rig.skeleton_root)
 his = import_his("src")
 sizes = {}
+def rigid(matrix):
+    """`matrix` without its scale: the rig's own chain leaves 4e-6 of it on a weapon."""
+    got = om.MTransformationMatrix(matrix)
+    out = om.MTransformationMatrix()
+    out.setRotation(got.rotation(asQuaternion=False))
+    out.setTranslation(got.translation(om.MSpace.kTransform), om.MSpace.kTransform)
+    return out.asMatrix()
+
+
+def world(node):
+    return om.MMatrix(cmds.xform(node, query=True, worldSpace=True, matrix=True))
+
+
 for n, (key, (his_mesh, bone, hand)) in enumerate(sorted(PROPS.items()), start=7):
     entry = catalog.by_key(key)
-    node, note = attach.attach(entry, H[hand], H[bone], (0, 0, 0), (0, 0, 0))
-    mine, theirs = points(node), points(leaf_of("src", his_mesh))
-    worst_p = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))) \
+    side = swordman_seats.HANDS[key][0]
+    #  the press the animator uses, not `attach` with an explicit zero grip: Weapons > Add
+    #  and the inventory both go through `equip.to_hand`, and for a LEFT hand that applies
+    #  the mirror grip `grips.for_hand` computes -- which is why his shield stood ~171 deg
+    #  away until his seat was folded into the points (2026-11-02).
+    #  the frame the asset's points are cut in: the socket turn on the bone AT REST,
+    #  read before the Add (the bone follows the weapon afterwards)
+    seat = om.MMatrix(bonedrive.framed(bonedrive.socket_frame(entry.frame),
+                                       cmds.getAttr(H[bone] + ".worldMatrix[0]")))
+    hand_world = world(H[hand])
+    said = equip.to_hand(rig.skeleton_root, side, entry)
+    node = bonedrive.driving_weapon(H[bone])
+    node = cmds.ls(node, long=True)[0] if node else None
+    mine = points(node) if node else []
+    theirs = points(leaf_of("src", his_mesh))
+    sizes[key] = (span(mine), span(theirs),
+                  span(points(node, om.MSpace.kObject)) if node else 0.0)
+    #  the same model placed where HE set it: his matrix is in the hand's frame
+    want = om.MMatrix(swordman_seats.IN_HAND[key]) * hand_world
+    his_seat = [om.MPoint(q) * seat.inverse() * want for q in theirs]
+    worst_p = max(mine[i].distanceTo(his_seat[i]) for i in range(len(mine))) \
         if len(mine) == len(theirs) else -1.0
-    #  what Weapons > Add itself gives that hand (2026-11-02): the right hand's zero, the
-    #  left hand's the MIRROR grip the tool computes when nothing is dialled -- which is
-    #  what his own shield carries in his scene, so zero grip IS his hold and nothing of
-    #  the grip is folded into the points.
-    asked = grips.for_hand(entry, hand.rsplit("_", 1)[-1].upper(), rig.skeleton_root)
-    fields = bonedrive.measured_grip(node, H[bone])
+    off_src = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))) \
+        if len(mine) == len(theirs) else -1.0
     driven = bonedrive.driving_weapon(H[bone])
-    sizes[key] = (span(mine), span(theirs), span(points(node, om.MSpace.kObject)))
-    gate(n, len(mine) == len(theirs) and 0 <= worst_p < 1e-3
+    gate(n, node and 0 <= worst_p < 1e-3
          and weaponspace.holding_hand(node) == H[hand]
-         and driven and cmds.ls(driven, long=True)[0] == cmds.ls(node, long=True)[0]
-         and max(abs(v) for v in list(fields[0]) + list(fields[1])) < 1e-3,
-         "%s at zero grip: every one of %d vertices where HIS hand holds it (%.2e cm), in %s, "
-         "driving %s, the fields reading 0 0 0 | Weapons > Add gives that hand %s%s"
-         % (entry.label, len(mine), worst_p, hand, bone,
-            [round(v, 3) for v in asked[0]], note and (" | " + note)))
+         and driven and cmds.ls(driven, long=True)[0] == node,
+         "%s through Weapons > Add: every one of %d vertices where HE set it on his own rig "
+         "(%.2e cm; %.1f cm from where his source file held it), in %s, driving %s | %s"
+         % (entry.label, len(mine), worst_p, off_src, hand, bone, said.splitlines()[0]))
 
 # his props hang under a chain whose pelvis scales 2.54, so their size is INHERITED, not in
 # their points: a rebind that drops the scale ships them 1/2.54 small and nothing of the
@@ -376,8 +402,8 @@ sword_ok = sizes["Swordman_Sword"][2] > 100 and \
 shield_ok = sizes["Swordman_Shield"][2] > 55 and \
     abs(sizes["Swordman_Shield"][0] - sizes["Swordman_Shield"][1]) < 1e-3
 gate(9, sword_ok and shield_ok,
-     "at WORLD size (trap 86): the sword's own model is %.1f cm and stands as wide as his "
-     "(%.1f against %.1f), the shield %.1f cm (%.1f against %.1f)"
+     "at WORLD size (trap 86), whatever the seat turned: the sword's own model is %.1f cm "
+     "and stands as wide as his (%.1f against %.1f), the shield %.1f cm (%.1f against %.1f)"
      % (sizes["Swordman_Sword"][2], sizes["Swordman_Sword"][0], sizes["Swordman_Sword"][1],
         sizes["Swordman_Shield"][2], sizes["Swordman_Shield"][0], sizes["Swordman_Shield"][1]))
 drop(his, "src")
