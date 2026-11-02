@@ -1468,7 +1468,10 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
             " / ".join("%.0f" % straight["got"][s] for s in wm.SIDES if s in straight["got"]),
             max(straight["asked"].values()), straight["lift"])
         left = max(list(straight["short"].values()) or [0.0])
-        if left > 1.0:                                  # the legs ran out of room: a shorter Step gives the rest
+        held = max(list((straight.get("paced") or {}).values()) or [0.0])
+        if left > 1.0 and held > 0.5 * left:            # the knee's own pace held it, not the legs' reach
+            text += ", %.0f deg left - the knee's own pace" % left
+        elif left > 1.0:                                # the legs ran out of room: a shorter Step gives the rest
             text += ", %.0f deg left - shorten the Step" % left
     pops = info.get("pops") or {}
     if pops.get("fixed"):

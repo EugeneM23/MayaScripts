@@ -207,3 +207,65 @@ room limit pins the whole curve: on a cycle whose hips barely bob, an ask the ro
 lift than a smaller one would. Measured on the synthetic walker (24 frames, hips 1.55 cm a frame): it lands
 an ask up to 7 deg straighter than its own exactly and falls short past that. On every real walk each ask the
 legs allow lands exactly (asd's 8 deg to 1e-14) and what they leave is reported as `short`.
+
+## Addendum, 2026-11-02 evening: the pace is in the KNEE's degrees, not the hip's centimetres
+
+The animator, on the Manny skeleton they walked with this feature: «правая нога сейчас почти идеально
+работает а у левой не равномерное движение во время выпремления ноги». Reproduced headless on their own
+walker (their cycle `own:1f0b1f09338f51c8`, their parameters, the `LongSword_Idle_3P` card, the build
+they had installed - 387907e, their own): over its stance the left knee turned **14.14 deg a frame** where
+that cycle's own knee turns 9.16, and its second difference 14.39 against 6.91; the right 10.65 / 10.26
+against 4.41 / 2.81. On `asd` at an 8 deg ask the same: 15.08 against its own 6.60. So both legs were paced
+wrong and the right only LOOKED right - during its stance the room collapses to nothing for five frames (the
+left leg's swing is at its reach there), so the right got almost no rise and kept its own motion.
+
+**Two findings.**
+
+1. **The rise comes through two channels, and only one was paced.** `_passing_lift`'s own lift was a third
+   of it (1.86 cm of 4.82 on the synthetic walker): the rest is the cap this feature relaxes inside the
+   window, which lowers `_lowering`'s own need there, so the hips rise through the DROP. Pacing the lift
+   alone left the measured jerk unchanged to five digits.
+2. **A rate in centimetres of hip cannot pace a knee.** Near straight a knee is a square root of its reach
+   (trap 266), so the one rate `smooth_under` is held to was 2 deg of knee at one frame of the animator's
+   cycle and 14 at another. What they watch is the knee.
+
+**The fix** (`model._knee_paced`, called from `_lowering` once both channels have landed): the drop is
+computed a second time with the caps as the cycle's OWN (`needs_for(..., plain_limits)`, the cap
+`_leg_reach(..., straight=False)` the foot's reach roll already reads), which gives the rise the ask added;
+then a sweep LOWERS the hips again, by no more than that rise, wherever a planted asked knee would
+- turn faster a frame than it turns under the cycle's own cap, by more than `STRAIGHT_DEG_SHARE` (1.25), or
+- dip sharper than the cycle's own corner there (the same share on the second difference) - a straightening
+  held at its allowance and then stopped is a corner, and a corner is what the eye reads as uneven.
+
+Lowering the hips can only bend a planted knee, so the sweep only ever lowers them: it settles (24 sweeps,
+`KNEE_SETTLED` 1e-4 cm), it cannot put a foot out of reach, and it can only take back what the ask added.
+The reference is the knee under the cycle's own cap, not the source clip's: Height, the step, the ground
+time and the pose change what a knee does itself by a factor of two on the synthetic walker.
+
+**What it costs, measured.** A couple of degrees of depth for half the jerk, on every saved cycle:
+
+| cycle, ask | before: step / 2nd / least bend | after | the cycle's own |
+|---|---|---|---|
+| the animator's own, 1 deg (L) | 14.14 / 14.39 / 1.04 | **9.26 / 5.98 / 9.38** | 9.16 / 6.91 / 23.48 |
+| the animator's own, 1 deg (R) | 10.65 / 10.26 / 1.04 | **4.92 / 2.32 / 12.74** | 4.41 / 2.81 / 22.41 |
+| asd, 8 deg (L) | 15.08 / 11.30 / 8.00 | **6.85 / 8.05 / 8.00** | 6.60 / 6.13 / 14.77 |
+| dw, 8 deg (L) | 6.95 / 6.99 / 16.71 | **2.97 / 3.75 / 16.71** | 4.18 / 2.81 / 26.45 |
+| TestStrefe, 8 deg (L) | 12.07 / 8.25 / 14.94 | **10.54 / 6.51 / 16.85** | 11.58 / 6.15 / 31.33 |
+
+**Two shortfalls with two cures, and the line says which.** `info["passing"]["paced"]` holds what the pace
+took, beside `short`: past half the shortfall the line reads «the pace held it N deg short: a knee turns no
+faster than the cycle's own» (the card's own: «N deg left - the knee's own pace»), else the old «a shorter
+Step gives the rest», which is the animator's own lever.
+
+**`got` is read off the finished worlds** (`_passing_seen`), at the frames the ask was solved on. Neither
+the lift's bisection nor the pace can say it: the pace comes after the bisection, and the body's own carry
+(Balance) moves the hip after the drop is done - 3 deg of knee on asd. The verify's own passing frame now
+rounds to the frame NEAREST the crossing rather than the one before it: the crossing is a fraction of a
+frame and the knee dives 4 deg through it, which is the 3 deg the two readings used to disagree by.
+
+**Proof.** `verify_walk_straight_leg.py` **0 of 58 gates**, every phase, with the smooth phase's own gate
+(«the knee is no jerkier than the cycle's own») now measuring 13.1 against 15.2 on asd, 10.8 / 9.8 on dw,
+11.8 / 12.9 on TestStrefe, 12.8 / 12.8 on TestDraaft; the target phase's scene knee 18.6 -> 9.2 deg.
+`tests/test_walk_straight_leg.py` gained `PaceTests` (the fixture's hips raised 8 cm so its planted legs
+stand near their reach - at the lock the knee turned 11.01 deg a frame against its own 4.16, and the test
+fails on the build before this), and the wording test on a fixture where the pace is the whole shortfall.

@@ -486,3 +486,69 @@ def _scene_bends(w, frames, side):
         u, v = u / np.linalg.norm(u), v / np.linalg.norm(v)
         out.append(math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(u, v)))))))
     return out
+
+
+#  The fixture at rest passes on a 45 deg knee - far from the lock, where a centimetre of hip is a degree of
+#  knee and nothing can go wrong. Its hips raised PACE_HEIGHT cm, its planted legs stand near their reach, and
+#  an ask at the lock is where the knee's own degrees and the hip's centimetres part company (the animator's
+#  own walk: its left knee turned 14 deg a frame where its own cycle turns 9; 2026-11-02)
+PACE_HEIGHT = 8.0
+
+
+def planted_steps(w, res, side):
+    """[|d bend| a frame] over the frames this foot is planted at both ends of the step, degrees."""
+    n = res.frames
+    bend = knees(w, res.worlds, side)
+    pl = (res.info.get("placement") or {}).get("planted") or {}
+    on = np.array(pl[side], bool) if pl else np.ones(n, bool)
+    return [abs(float(bend[(f + 1) % n] - bend[f])) for f in range(n)
+            if on[f] and on[(f + 1) % n]]
+
+
+class PaceTests(unittest.TestCase):
+    """The lift is paced in the KNEE's own degrees, not the hip's centimetres (trap 266)."""
+
+    def setUp(self):
+        self.w = walk()
+        self.k = dict(defaults(self.w), pelvis_height=PACE_HEIGHT)
+        self.plain = self.w.evaluate(self.k)
+        self.own = max(max(planted_steps(self.w, self.plain, s)) for s in ("l", "r"))
+
+    def test_the_fixture_s_own_planted_knee_turns_evenly(self):
+        self.assertLess(self.own, 6.0)                       # ~4.2 deg a frame: the cycle's own pace
+
+    def test_an_ask_at_the_lock_turns_the_knee_no_faster_than_the_cycle_does(self):
+        res = self.w.evaluate(ask(self.k, 1.0))
+        for side in ("l", "r"):
+            worst = max(planted_steps(self.w, res, side))
+            self.assertLess(worst, 1.4 * self.own,
+                            "%s: %.2f deg a frame against the cycle's own %.2f" % (side, worst, self.own))
+
+    def test_an_ask_at_the_lock_still_straightens_the_knee(self):
+        res = self.w.evaluate(ask(self.k, 1.0))
+        self.assertLess(at_passing(self.w, res), at_passing(self.w, self.plain) - 2.0)
+
+    def test_the_pace_is_what_held_it_and_the_line_says_so(self):
+        """Two shortfalls with two cures, and the line says which: the legs' reach (shorten the Step) and the
+        knee's own pace. The fixture's hips are raised so its legs stand near their reach - a modest ask then
+        lands, and only the pace keeps it from landing whole."""
+        k = dict(defaults(self.w), pelvis_height=24.0)
+        own = at_passing(self.w, self.w.evaluate(k))
+        res = self.w.evaluate(ask(k, own - 6.0))
+        p = res.info["passing"]
+        self.assertGreater(max(p["paced"].values()), 1.0)
+        self.assertAlmostEqual(max(p["paced"].values()), max(p["short"].values()), delta=0.5)
+        self.assertIn("the pace held it", wm.describe(res))
+        kept = wm.STRAIGHT_DEG_SHARE
+        try:
+            wm.STRAIGHT_DEG_SHARE = 100.0          # the pace out of the way: the ask lands
+            free = self.w.evaluate(ask(k, own - 6.0))
+        finally:
+            wm.STRAIGHT_DEG_SHARE = kept
+        self.assertLess(at_passing(self.w, free), at_passing(self.w, res))
+        self.assertNotIn("the pace held it", wm.describe(free))
+
+    def test_it_still_lands_an_ask_the_legs_allow(self):
+        own = at_passing(self.w, self.plain)
+        res = self.w.evaluate(ask(self.k, own - 3.0))
+        self.assertAlmostEqual(at_passing(self.w, res), own - 3.0, delta=1.0)

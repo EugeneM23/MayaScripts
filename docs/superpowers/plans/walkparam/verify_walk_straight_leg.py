@@ -112,7 +112,9 @@ def planted_of(res):
 
 
 def passings(walk, res):
-    """{side: [frames]} - the frames a planted foot's own passing falls on (the other ankle crossing it)."""
+    """{side: [frames]} - the frames a planted foot's own passing falls on (the other ankle crossing it): the
+    frame NEAREST the crossing, which can be either side of it. The crossing is a fraction of a frame, and
+    the knee dives 4 deg a frame through it, so the frame before it is not the passing (2026-11-02)."""
     n = res.frames
     planted = planted_of(res)
     along = dict((s, res.worlds[walk.index["foot_" + s], :n, 3, :3] @ walk.basis[0]) for s in ("l", "r"))
@@ -121,9 +123,10 @@ def passings(walk, res):
     for f in range(n):
         g = (f + 1) % n
         if d[f] == 0.0 or (d[f] < 0.0) != (d[g] < 0.0):
+            at = int(round(f + abs(d[f]) / max(abs(d[f]) + abs(d[g]), 1e-12))) % n
             for s in ("l", "r"):
-                if planted is None or planted[s][f]:
-                    out[s].append(f)
+                if (planted is None or planted[s][at]) and at not in out[s]:
+                    out[s].append(at)
     return out
 
 

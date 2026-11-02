@@ -17060,6 +17060,48 @@ parameter, both status lines, and `target`'s cap). **The Gait Builder fork is le
 `Passing knee` and `tests/test_gait_model.ParityTests` holds at every knob set it uses, the parameter
 defaulting to off.
 
+**…and the pace is in the KNEE's degrees, not the hip's centimetres** (the same evening, the animator on that
+very skeleton: «правая нога сейчас почти идеально работает а у левой не равномерное движение во время
+выпремления ноги»). Reproduced headless on their own walker, on the build they had installed: over its stance
+the left knee turned **14.14 deg a frame** where that cycle's own turns 9.16 (its second difference 14.39
+against 6.91), the right 10.65 / 10.26 against 4.41 / 2.81 - and the right only LOOKED right, the room
+collapsing to nothing for five frames of its stance (the left leg's swing is at its reach there), so it got
+almost no rise. On asd at an 8 deg ask the same: 15.08 against its own 6.60. Two findings, both measured:
+**the rise comes through two channels and only one was paced** (`_passing_lift`'s lift was 1.86 cm of 4.82 on
+the synthetic walker - the rest is the cap this feature relaxes, which lowers `_lowering`'s own need, so the
+hips rise through the DROP; pacing the lift alone changed the jerk by nothing to five digits), and **a rate
+in centimetres of hip cannot pace a knee** (trap 266: the one rate was 2 deg of knee at one frame of their
+cycle and 14 at another).
+- **`model._knee_paced`**, called from `_lowering` once both channels have landed: the drop is computed a
+  second time with the caps as the cycle's OWN (`needs_for(..., plain_limits)`, the cap
+  `_leg_reach(..., straight=False)` the foot's reach roll already read), which gives the rise the ask added;
+  then a sweep LOWERS the hips again - by no more than that rise - wherever a planted asked knee would turn
+  faster a frame than it does under the cycle's own cap, or dip sharper than its own corner there, by more
+  than `STRAIGHT_DEG_SHARE` (1.25). Lowering the hips can only bend a planted knee, so the sweep only ever
+  lowers them: it settles, it can put no foot out of reach, and it can only take back what the ask gave.
+  The reference is the knee under the cycle's own cap, never the source clip's - Height, the step, the
+  ground time and the pose change what a knee does itself by a factor of two.
+- **The cost, measured**: a couple of degrees of depth for half the jerk. Their own cycle's left knee
+  **14.14 / 14.39 / least 1.04 -> 9.26 / 5.98 / 9.38** against its own 9.16 / 6.91 / 23.48; its right
+  10.65 / 10.26 / 1.04 -> **4.92 / 2.32 / 12.74** (own 4.41 / 2.81); asd's left 15.08 / 11.30 -> **6.85 /
+  8.05** (own 6.60 / 6.13), landing 10.3 deg of an 8 deg ask; dw 6.95 / 6.99 -> **2.97 / 3.75**.
+- **Two shortfalls with two cures, and the line says which**: `info["passing"]["paced"]` beside `short` -
+  past half the shortfall the line reads «the pace held it N deg short: a knee turns no faster than the
+  cycle's own» (the card's «N deg left - the knee's own pace»), else the old «a shorter Step gives the
+  rest», which is the animator's own lever.
+- **`got` is read off the finished worlds** (`_passing_seen`) at the frames the ask was solved on: neither
+  the bisection nor the pace can say it, and Balance's carry moves the hip after the drop is done (3 deg of
+  knee on asd). The verify's own passing frame rounds to the frame NEAREST the crossing, not the one before
+  it - the crossing is a fraction of a frame and the knee dives 4 deg through it, which is the 3 deg the two
+  readings used to disagree by.
+- Proof: `verify_walk_straight_leg.py` **0 of 58 gates** (the smooth phase's own gate now 13.1 against the
+  cycle's 15.2 on asd, 10.8 / 9.8 dw, 11.8 / 12.9 TestStrefe, 12.8 / 12.8 TestDraaft; the target phase's
+  scene knee 18.6 -> 9.2 deg); `tests/test_walk_straight_leg.py` is 51 tests, `PaceTests` among them (the
+  fixture's hips raised 8 cm so its planted legs stand near their reach: at the lock its knee turned 11.01
+  deg a frame against its own 4.16, and the test fails on the build before this). **Not seen in the
+  animator's own Maya**: their take there is older than their card's settings anyway (32 frames against the
+  36 those settings now give), so their next press is the one to look at.
+
 **Not built**: `Leg stretch` (the spec's second lever). The retarget re-solves every leg with the TARGET's own
 bone lengths, so a stretch in the model never reaches the scene - it would want `target._leg` and the writer
 carrying per-frame lengths and keying the legs' translates, which is a feature of its own. The step is the
