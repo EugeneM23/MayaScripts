@@ -208,8 +208,9 @@ TIPS = {
                  "right button: Use in Walk Builder). The walk follows the card - its Update from selection is taken "
                  "on the next re-key; a copy kept on the walked skeleton walks on when the card is gone. Click: the "
                  "card in the library; right click: Clear",
-    "parts": "What of the pose replaces the walk's own (Arms: the mean the walk's swing runs about - hands "
-             "holding one thing together hold it; Feet: the width and the toes' turn)",
+    "parts": "What of the pose replaces the walk's own (Arm L / Arm R: the mean that arm's own swing runs "
+             "about - hands holding one thing together hold it; an arm left out plays the cycle entirely, "
+             "and the two-handed grip then needs the other hand alone; Feet: the width and the toes' turn)",
     "preset": "A named set of the card's settings: the parameters (each a change from the cycle's own, so a "
               "preset reads the same on any clip), the macros, the character, the physics, the pose's share and "
               "parts and its card - never the cycle itself. Pick one and it is put on at once and the selected "
