@@ -10062,6 +10062,53 @@ and world, an aim's target and up) with the object unmoved.
      evaluated (trap 58's family). A tool that takes a constraint off sets those channels itself to a
      pose it read, and says which.
 
+**Floor: the character's feet onto world Y = 0, frame by frame** (2026-11-02, «нам нужен инструмент
+который вывровняет стопы по полу.....раньше он у нас вроде был но потом мы его удалили» - Walk Builder's
+clean `floor` step, taken out 2026-10-14 with the other levers; asked, they chose: it PUTS the character on
+the floor (not a foot's own pitch), a row in Tools acting on the selected character, the floor always world
+Y = 0, frame by frame and contact by contact). Spec
+`docs/superpowers/specs/2026-11-02-tools-floor-design.md`. A fifth Tools subsection **Floor** with one row;
+hotkey row `tools.floor`; `maya_tools/floorplan.py` (stdlib, pinned) and `floor.py`.
+- **A foot's floor point is its ankle or its ball, whichever is lower, measured against its own BIND
+  height** (the bind stands on y = 0, so the ball's 0.75 cm on Manny is the sole and the ankle's 8.24 the
+  heel): `low(side, f) = min(y(point, f) - y(point, bind))`, the bind from `maya_retargetmode.rest_world`
+  (trap 176). One time walk over the span, Esc-able.
+- **No contact detection: `want(f) = -min(low(side, f))`, every frame but a flight.** Two rules were
+  measured and both fail (trap 326): the foot's own lowest over the span, and over a window of ten frames.
+  Only the frames where BOTH feet are a swing's height over their own nearby low are skipped
+  (`airborne`, `AIR_TOL` 8 cm / `DOWN_WINDOW` 8 frames), so a jump keeps its arc. `down_frames` stays the
+  LINE's own reading.
+- **Written as deltas on a new additive layer `Floor`** (marked `skeldarFloor`, `layerbake.write_deltas`)
+  on the carrier - the rig's `Main`, else the skeleton's top joint, never a Cascadeur wrapper. The
+  centimetre of world rise goes in the channels that really carry it, read per frame (`v . parent3 =
+  (0, 1, 0)`): Manny's Main takes `translateY`, the Creep's root under its -90 X `Armature` takes its own
+  `translateZ`. A standing Floor layer is rewritten in place and its own curve read back and added to
+  (`old + want / weight`: the press reads the feet as they SHOW - writing `want` alone left them 5 cm off,
+  measured; a MUTED one shows nothing, so there the curve takes the whole correction). Keys thinned to an error BOUND (`KEY_TOL` 0.02 cm, a Douglas-Peucker split, never a greedy
+  walk). One undo chunk.
+- **It says what it did, from a second walk**: the residual past `CHECK_TOL` 0.1 cm is named - «the feet
+  did not follow Main: still 7.4 cm off - a leg held in world (Connections > W, 1P, a knot) does not move
+  with the body». Refused by name: no character, no `foot_l`/`foot_r`, the carrier's translate locked or
+  driven, an uneven parent, a standing layer at weight 0, and «already on the floor (within 0.2 cm) -
+  nothing changed».
+- Proof: `tests/test_tools_floorplan.py` (28) and `docs/superpowers/plans/verify_floor.py` **0 of 35 gates,
+  mayapy standalone** on the shipped assets with a take keyed by hand, read back by a measurement of its own:
+  floated 15 cm and sunk 10 - every frame's lower foot on the floor to **0.000000 cm**, nothing under it, the
+  feet not sliding (0.00e+00), one Ctrl+Z exact; one contact 6 cm under while the others stand on it - the
+  sunk one on the floor and the other stance not carried with it (0.070 cm, the fixture's own dip); the Creep
+  in `translateZ`; the rig on `Main.translateY` alone; a second press «nothing changed», at weight 0.5
+  rewritten in place with the feet landing all the same, and muted the same again once unmuted. **Not seen in a GUI Maya** (the row and a real press
+  are the animator's, after Check update).
+
+326. **"Which frames is this foot planted?" has no answer in the foot's own height.** Floor's first rule was
+     Walk Builder's (within 2.5 cm of the foot's own lowest): a stance sunk 6 cm into the floor is the
+     deepest the foot ever goes, so every clean stance read as 6 cm of air and the body was carried 6 cm
+     down for the length of the take. A window of ten frames fixed that and broke inside ONE stance - the
+     body dips while the foot is planted, the foot goes down with it, and the clean half of that same stance
+     reads as air beside the sunk half. There is no local signal: a planted foot and a slow airborne one
+     differ only by where the floor is. With a KNOWN floor the question need not be asked at all - take the
+     lower foot on every frame and skip only what is plainly a flight (both feet a swing's height up).
+
 ## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
 
 The animator, with a walk cycle in Maya (bones only, `Desktop/Walk_01.fbx`): «проанализировать эту
