@@ -31,7 +31,6 @@ POP_CURVE = np.radians(6.0)
 POP_WINDOW = 3
 POP_SIGMA = 1.5
 POP_ROUNDS = 3
-POP_ASKED = np.radians(2.0)   # ...and a minimum this much deeper than a Passing knee ask is still a click
 
 
 def _model():
@@ -59,23 +58,17 @@ def _angle(a, b):
     return float(np.arccos(max(-1.0, min(1.0, float(np.dot(a, b)) / (na * nb)))))
 
 
-def pops(bends, straight=None):
+def pops(bends):
     """{side: [frames]} - the clicks in each leg's knee bends (one value a frame, periodic): a local minimum under
-    POP_STRAIGHT whose curvature is over POP_CURVE. `straight` ({side: radians}, Passing knee's ask) lowers that
-    depth for a side the animator asked to straighten - a knee landing on its ask is the ask, not a click, and
-    lowering the pelvis for it would undo the very thing the knob did (2026-11-02); a minimum POP_ASKED deeper
-    than the ask is still a click.""" 
+    POP_STRAIGHT whose curvature is over POP_CURVE."""
     out = {}
     for side, m in bends.items():
         m = np.asarray(m, float)
         n = len(m)
-        depth = POP_STRAIGHT
-        if straight and side in straight:
-            depth = min(depth, max(straight[side] - POP_ASKED, 0.0))
         at = []
         for f in range(n):
             left, right = m[(f - 1) % n], m[(f + 1) % n]
-            if m[f] <= left and m[f] <= right and m[f] < depth and left + right - 2.0 * m[f] > POP_CURVE:
+            if m[f] <= left and m[f] <= right and m[f] < POP_STRAIGHT and left + right - 2.0 * m[f] > POP_CURVE:
                 at.append(f)
         out[side] = at
     return out
@@ -202,7 +195,6 @@ class Retarget(object):
         self.root_bone = self.transfer.target_root
         self._solved_legs = set(leaf for leaves in self.legs.values() for leaf in leaves)
         self.planes = None              # where each leg bends, read once a cycle (_knee_planes, in frames())
-        self.straight = {}              # {side: reach ratio} Passing knee asked (read in frames())
 
     # -- reading --
 
@@ -277,9 +269,6 @@ class Retarget(object):
         "pops"}). `knee_pops`: the knee pop fix after the legs are solved (fix_pops)."""
         model = _model()
         n = result.frames
-        self.straight = dict((side, model.straight_ratio(float(deg), *self.lengths[side]))
-                             for side, deg in (((result.info.get("passing") or {}).get("asked") or {}).items())
-                             if side in self.lengths)
         first = self._bones(result.worlds[:, 0])
         outs, goals = [], []
         for f in range(n + 1):
@@ -376,10 +365,7 @@ class Retarget(object):
         model = _model()
         n = len(outs) - 1
         stance = dict((side, _stance(result, side, n)) for side in SIDES)
-        # Passing knee's asks (radians): a knee landing on its ask is not a click
-        straight = dict((side, np.radians(float(deg)))
-                        for side, deg in (((result.info or {}).get("passing") or {}).get("asked") or {}).items())
-        found = pops(self.bends(frames), straight)
+        found = pops(self.bends(frames))
         first = dict((side, list(frames_)) for side, frames_ in found.items())
         goals = [dict(goal) for goal in goals]
         base = np.array(drop[:-1], float)
@@ -417,22 +403,14 @@ class Retarget(object):
                 base = np.maximum(base, cover)
             drop = np.append(base, base[0])
             frames, short = self._solve_all(outs, goals, drop, relations)
-            found = pops(self.bends(frames), straight)
+            found = pops(self.bends(frames))
         left = sum(len(v) for v in found.values())
         fixed = sum(len(v) for v in first.values()) - left
         added = float(np.max(base - original)) if n else 0.0
         return frames, short, drop, {"found": first, "fixed": max(fixed, 0), "left": left, "drop": max(added, 0.0)}
 
-    def _reach_ratio(self, side):
-        """How straight this leg may come, as a share of its length: the clip's own straightest, or what Passing
-        knee asked where it asked more (the ask is a knee ANGLE, so the TARGET's own lengths give its own ratio).
-        Without the raise our own cap undoes the model's lift - _need lowers the hips back onto the clip's ratio
-        and the knee bends again (14 deg for an 8 deg ask, measured on asd over Manny, 2026-11-02)."""
-        asked = (self.straight or {}).get(side)
-        return self.walk.reach[side] if asked is None else max(self.walk.reach[side], asked)
-
     def _reach(self, side):
-        return self._reach_ratio(side) * sum(self.lengths[side])
+        return self.walk.reach[side] * sum(self.lengths[side])
 
     def _need(self, out, goal):
         """The least pelvis drop that lets both legs reach this frame's goals."""
@@ -510,7 +488,7 @@ class Retarget(object):
                 fwd = _np(self.place)[2, :3]
                 bend = fwd - np.dot(fwd, e) * e
             bend = _unit(bend)
-        knee, reached, short = model.two_bone(hip, goal, l1, l2, bend, self._reach_ratio(side))
+        knee, reached, short = model.two_bone(hip, goal, l1, l2, bend, self.walk.reach[side])
         e2 = _unit(reached - hip)
         # the plane it was bent toward, not the one its solved knee happens to stand in: a leg that comes out
         # straight has none of its own either, and reading it there put the same noise back (model._leg, 1432379f)

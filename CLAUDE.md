@@ -17012,152 +17012,38 @@ re-add him and add his props again.**
      Manny's, bone by bone, and give each bone Manny's frame swung onto its own direction; a skin
      rewire re-expresses every bindPreMatrix, so the frames are free.
 
-## Walk Builder: the stance leg straightened at the passing (2026-11-02)
+## Walk Builder: the passing knee - built, and REVERTED the same day (2026-11-02)
 
-The animator: «почти всегда персонажи после обработки нашими инструментами ходят на согнутых ногах. В фазе
-пассинга когда идет реальный человек его опорная нога выглядит прямой или почти прямой, у нас сейчас она
-всегда согнута в колене ... можешь использовать уменьшение длины шага, растяжение костей ... Попробуй
-добиться максимального результата». Asked, all three the recommendation: **only by the knob** (the card's
-contract: a parameter starts at the cycle's own measured value and the defaults change nothing); the
-**pelvis lift at the passing is the only automatic lever** (no step shortening and no stretching of its own
-accord); the advice **for walks only**. Spec
-`docs/superpowers/specs/2026-11-02-walk-straight-passing-leg-design.md`, plan beside it.
+The animator asked for the stance leg to look straight at the passing («почти всегда персонажи после
+обработки нашими инструментами ходят на согнутых ногах»). `Passing knee, deg`, a sided parameter in the
+Legs group starting at the cycle's own measured bend, was built, verified (0 of 58 gates standalone; seen
+in a disposable GUI Maya taking a Manny skeleton's two passings 19.8 / 20.7 -> 7.6 / 8.4 deg) and then
+**reverted at their call, hours later**: one leg's straightening read as uneven, and the pace that cured
+that jerk gave the bend back - «Floor сделан а поченка колена вернула старую проблему». The whole
+implementation, its 51 tests, `verify_walk_straight_leg.py` and its plan are at commit **`ebc4fab0`**; the
+spec `docs/superpowers/specs/2026-11-02-walk-straight-passing-leg-design.md` stays as history. A walker
+whose memo still holds a `passing_knee` change is unharmed: `gait.values` reads only the parameters the
+table has, so the key is ignored and the next press walks on the cycle's own knee.
 
-**Measured first, and it is not the plugin bending them**: at `own_knobs()` every saved cycle's passing knee
-comes out within 0.3 deg of its SOURCE's (asd 21.8, dw 32.9, TestStrefe 37.0, TestDraaft 32.5, the
-animator's own 30.9, HavyRun 72.1) - the clips are walked on bent knees and the model keeps them faithfully.
-`Pelvis height` cannot fix it: its raise is spread by the drop's own smooth cover over the whole cycle, so
-the contacts (where the legs are longest) eat it and the passing gets a fraction - asd's +10 reads +0.9 cm.
+What it measured, and what is worth not measuring again:
 
-**`Passing knee`, deg, sided** (the Legs group, before `Leg turn`): the stance knee's bend at the passing -
-the instant the other ankle crosses it along the travel, inside each of that foot's contacts, the contact's
-own middle where a flight leaves no crossing, the contacts' mean (`gait._passing_knee`). Its own value is
-what the cycle does, so the defaults are bit for bit the cycle the knob never touched; dialled DOWN it
-straightens, an ask no straighter than the cycle's own does nothing (that is `Knee bend`'s ask, which wins
-over it). The Diagnosis says «The standing knee is 33 deg bent at the passing (a walking person's looks
-straight: 5-15)» past `DIAG_PASSING` 18 deg, never for a run and never once asked.
+- **the plugin does not bend them**: at `own_knobs()` every saved cycle's passing knee comes out within
+  0.3 deg of its SOURCE's (asd 21.8, dw 32.9, TestStrefe 37.0, TestDraaft 32.5, the animator's own 30.9,
+  HavyRun 72.1) - the clips are walked on bent knees and the model keeps them faithfully;
+- **`Pelvis height` cannot straighten it**: its raise is spread by the drop's own smooth cover over the
+  whole cycle, so the contacts (where the legs are longest) eat it and the passing gets a fraction -
+  asd's +10 reads +0.9 cm;
+- the rise reaches the knee through TWO channels - the lift, and the relaxed cap, which lowers
+  `_lowering`'s own need - so pacing the lift alone changed the knee's jerk by nothing to five digits;
+- **a rate in centimetres of hip cannot pace a knee** (trap 266: near straight a knee turns ~30 deg a cm):
+  one rate was 2 deg of knee at one frame of the animator's cycle and 14 at another, and the pace that
+  worked was read in the knee's own degrees against the cycle's own cap;
+- and the trap that cost the most: **a cap the model raises is capped again by the retarget, which holds
+  its own copy of the rule.** `target._reach(side)` is the SOURCE clip's own straightest ratio times the
+  target's leg length, and `_need` lowers the pelvis to it - so the model landed an 8 deg ask exactly and
+  the scene read 14, with the hips 0.45 cm lower, on a target whose legs are the same length to 0.007 cm.
+  Every model gate was green. When a feature raises a geometric limit, grep for every copy of that limit
+  on the way to the scene (`model._leg_reach` / `_soft_from`, `target._reach`, `target.fix_pops`,
+  `meanpose._solve_leg`) - trap 320's family, one layer further down.
 
-**How it straightens: the hips rise at the passing and nothing else moves.** One number a frame
-(`_lowering`'s drop, which `_body` subtracts) carries it, so the legs, Balance, the bob and the body follow
-for free.
-- **The cap gives way at the passing only** (`passing_window` / `straight_share`, `_leg_reach` /
-  `_soft_from`): a planted leg may come straighter in proportion to how far into its own contact's middle it
-  stands, rising over the first `STRAIGHT_EDGE` (0.3) of the contact and falling over the last. The **foot's
-  reach roll reads the cap with the straightening off** - a raised cap took the roll away and the foot stood
-  flat where the cycle rolls it, its ankle 1.7 cm out.
-- **The need** is the lift each contact wants to land its ask (`lift_to`, closed form); the **room** is the
-  least every leg leaves - a planted one up to its own raised limit scaled by its own window, one in the air
-  up to its own, so no swinging foot is put out of reach. **A planted leg pins the hips at its contact's
-  ends**: without its own window's share a lift the other leg allowed straightened dw's strike by 8 deg.
-- **The curve is the most smooth one UNDER that room** (`smooth_under` = `rate_limited` of `min(need, room)`,
-  the cone erosion `smooth_cover` already had, from below), so it tapers to nothing at the double supports
-  where the other leg stands at its limit - the shape falls out of the geometry, not a table - and it moves
-  no faster than `STRAIGHT_SHARE` (0.4) of what the cycle's OWN hips do a frame (its pelvis's p90 rise,
-  1.5-7 cm a frame over the saved walks), floored for a cycle with no bob. A knee near straight turns ~30 deg
-  a cm (trap 266), which is what keeps it off a click.
-- **The ask is landed by SCALING that shape**, bisected on the bend itself (a closed form in the lift, no
-  evaluation), as far as the room allows; what the legs leave is `short`, reported by name. The cost, stated:
-  one frame AT its room limit pins the single scale, so on a cycle whose hips barely bob an ask the room
-  cannot serve can land less lift than a smaller one would (measured on the synthetic walker; on every real
-  walk each ask the legs allow lands exactly, asd's 8 deg to 1e-14).
-- The line: «the passing knee 8 / 8 deg (asked 8), hips +2.0 cm», plus «, 14 deg left - shorten the Step»
-  where the legs ran out - the step is the animator's to dial, by their own choice.
-
-**The retarget's own cap had to take the ask too** (trap 322): `target._reach_ratio`. Without it the model
-landed 8.00 exactly and the scene came out at **14** - the retarget caps every leg at the clip's own
-straightest ratio and lowers the hips 0.45 cm to it, undoing the lift one layer down. And `fix_pops` reads
-the asks (`POP_ASKED` 2 deg): a straightened passing knee is not a click to be smoothed back.
-
-Proof: `docs/superpowers/plans/walkparam/verify_walk_straight_leg.py` - **0 of 59 gates, mayapy standalone**,
-six phases over asd, dw, TestStrefe, TestDraaft, the goblin and two_handed_sword poses, HavyRun and
-AGS_Sprint:
-- the defaults and `own_knobs()` bit for bit the cycle the knob never touched, and an ask 10 deg more bent
-  likewise;
-- an 8 deg ask: asd 21.8 -> **8.0** (nothing left), dw 32.9 -> 19.8 (14 left, said), TestStrefe 37.0 -> 15.5,
-  TestDraaft 32.5 -> 25.9; every bone keeps its length (4.97e-14 cm), the loop closes, **no planted foot
-  slides** past the foot's own roll (0.17 cm at worst) and the knees at the contacts' own ends move 2.7 deg
-  at most;
-- the knee is no jerkier than the cycle's own (worst second difference 13.0 deg against 15.2) and the hips'
-  jolt stays within twice the rate the lift is held to;
-- under a pose the lift starts from the POSE's own height and keeps its crouch (the goblin's hips 68.8 ->
-  70.5 cm where the walk without the pose stands at 92.9), nothing slides;
-- a run is untouched at the defaults and the Diagnosis says nothing about it, and dialled it straightens
-  anyway (HavyRun 72.1 -> 60.6);
-- **the whole road onto a real Manny skeleton** (`scene.apply`): the game skeleton's own knee 21.0 -> **8.0**
-  for an 8 deg ask, the line saying so - with **the control**: the retarget's cap left at the clip's own
-  ratio bends it back to 12.6 deg and pulls the hips down 0.45 cm.
-
-`verify_walk_gait.py`'s readback phase takes the parameter too, its gate knowing a room-bounded ask - what it
-did plus what it says it left IS the ask: dw's -13.04 deg landed -10.08 with 3.03 reported left, HavyRun's
--33.94 landed -29.46, sadda's -21.31 landed -8.09. The neighbours: `verify_walk_keys_changed.py` 0 of 23, and
-`verify_walk.py` [4, 24, 27, 30, 57], `verify_walk_own.py` [10, 19], `verify_walk_many.py` (dying on a walker
-named `asd`) and `verify_walk_gait.py`'s other four (dw `foot_lift`, sadda `swing_out` x3) fail exactly what
-they fail on a clean worktree of the commit before, to the digit.
-
-**Seen in a GUI Maya** (a disposable one, scratch prefs, port 7021 - the animator's own 7006 was left
-alone): the card built, Pick put asd on a Manny skeleton, and the Legs group's slider read **`Passing knee,
-deg` 20.30 with the range 1.00..20.79** - the cycle's own. Dialled to 8 through the slider's own release
-handler the line said «the passing knee 8 / 8 deg (asked 8), hips +2.0 cm» and the scene's knee at its two
-passings went **19.8 / 20.7 -> 7.6 / 8.4 deg**. (A released parameter re-keys on Maya's NEXT idle -
-`panel._rekey` defers it - so anything driving the card from a script must let that idle happen before it
-reads the scene.)
-
-`tests/test_walk_straight_leg.py` is 46 tests (the five pure helpers, the lift on the synthetic walker, the
-parameter, both status lines, and `target`'s cap). **The Gait Builder fork is left alone**: its own knob table has no
-`Passing knee` and `tests/test_gait_model.ParityTests` holds at every knob set it uses, the parameter
-defaulting to off.
-
-**…and the pace is in the KNEE's degrees, not the hip's centimetres** (the same evening, the animator on that
-very skeleton: «правая нога сейчас почти идеально работает а у левой не равномерное движение во время
-выпремления ноги»). Reproduced headless on their own walker, on the build they had installed: over its stance
-the left knee turned **14.14 deg a frame** where that cycle's own turns 9.16 (its second difference 14.39
-against 6.91), the right 10.65 / 10.26 against 4.41 / 2.81 - and the right only LOOKED right, the room
-collapsing to nothing for five frames of its stance (the left leg's swing is at its reach there), so it got
-almost no rise. On asd at an 8 deg ask the same: 15.08 against its own 6.60. Two findings, both measured:
-**the rise comes through two channels and only one was paced** (`_passing_lift`'s lift was 1.86 cm of 4.82 on
-the synthetic walker - the rest is the cap this feature relaxes, which lowers `_lowering`'s own need, so the
-hips rise through the DROP; pacing the lift alone changed the jerk by nothing to five digits), and **a rate
-in centimetres of hip cannot pace a knee** (trap 266: the one rate was 2 deg of knee at one frame of their
-cycle and 14 at another).
-- **`model._knee_paced`**, called from `_lowering` once both channels have landed: the drop is computed a
-  second time with the caps as the cycle's OWN (`needs_for(..., plain_limits)`, the cap
-  `_leg_reach(..., straight=False)` the foot's reach roll already read), which gives the rise the ask added;
-  then a sweep LOWERS the hips again - by no more than that rise - wherever a planted asked knee would turn
-  faster a frame than it does under the cycle's own cap, or dip sharper than its own corner there, by more
-  than `STRAIGHT_DEG_SHARE` (1.25). Lowering the hips can only bend a planted knee, so the sweep only ever
-  lowers them: it settles, it can put no foot out of reach, and it can only take back what the ask gave.
-  The reference is the knee under the cycle's own cap, never the source clip's - Height, the step, the
-  ground time and the pose change what a knee does itself by a factor of two.
-- **The cost, measured**: a couple of degrees of depth for half the jerk. Their own cycle's left knee
-  **14.14 / 14.39 / least 1.04 -> 9.26 / 5.98 / 9.38** against its own 9.16 / 6.91 / 23.48; its right
-  10.65 / 10.26 / 1.04 -> **4.92 / 2.32 / 12.74** (own 4.41 / 2.81); asd's left 15.08 / 11.30 -> **6.85 /
-  8.05** (own 6.60 / 6.13), landing 10.3 deg of an 8 deg ask; dw 6.95 / 6.99 -> **2.97 / 3.75**.
-- **Two shortfalls with two cures, and the line says which**: `info["passing"]["paced"]` beside `short` -
-  past half the shortfall the line reads «the pace held it N deg short: a knee turns no faster than the
-  cycle's own» (the card's «N deg left - the knee's own pace»), else the old «a shorter Step gives the
-  rest», which is the animator's own lever.
-- **`got` is read off the finished worlds** (`_passing_seen`) at the frames the ask was solved on: neither
-  the bisection nor the pace can say it, and Balance's carry moves the hip after the drop is done (3 deg of
-  knee on asd). The verify's own passing frame rounds to the frame NEAREST the crossing, not the one before
-  it - the crossing is a fraction of a frame and the knee dives 4 deg through it, which is the 3 deg the two
-  readings used to disagree by.
-- Proof: `verify_walk_straight_leg.py` **0 of 58 gates** (the smooth phase's own gate now 13.1 against the
-  cycle's 15.2 on asd, 10.8 / 9.8 dw, 11.8 / 12.9 TestStrefe, 12.8 / 12.8 TestDraaft; the target phase's
-  scene knee 18.6 -> 9.2 deg); `tests/test_walk_straight_leg.py` is 51 tests, `PaceTests` among them (the
-  fixture's hips raised 8 cm so its planted legs stand near their reach: at the lock its knee turned 11.01
-  deg a frame against its own 4.16, and the test fails on the build before this). **Not seen in the
-  animator's own Maya**: their take there is older than their card's settings anyway (32 frames against the
-  36 those settings now give), so their next press is the one to look at.
-
-**Not built**: `Leg stretch` (the spec's second lever). The retarget re-solves every leg with the TARGET's own
-bone lengths, so a stretch in the model never reaches the scene - it would want `target._leg` and the writer
-carrying per-frame lengths and keying the legs' translates, which is a feature of its own. The step is the
-animator's to shorten where the line says the legs ran out.
-
-322. **A cap the model raises is capped again by the retarget, which has its own copy of the rule.**
-     `target._reach(side)` was `walk.reach[side] * sum(lengths)` - the SOURCE clip's own straightest ratio
-     times the target's leg length - and `_need` lowers the pelvis to it: the model's passing knee landed its
-     8 deg ask exactly and the scene read 14, with the hips 0.45 cm lower, on a target whose legs are the same
-     length to 0.007 cm. Every model gate was green. When a feature raises a geometric limit, grep for every
-     copy of that limit on the way to the scene (`model._leg_reach` / `_soft_from`, `target._reach`,
-     `target.fix_pops`, `meanpose._solve_leg`) - trap 320's family, one layer further down.
+**Floor stays** (the Tools card's own section above): it is another session's and shares no file with this.
