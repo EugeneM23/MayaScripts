@@ -284,7 +284,7 @@ class RigPoseTests(FakedTest):
         meanrig.press(self.root)
         anim = self.scene.walker_animation(self.root)
         ns = meanrig.find(self.root).namespace
-        want = mp.mean_pose(anim.rw)
+        want = mp.mean_pose(kp.result_walk(anim.walk, anim.moving))     # the frames with the correction in them
         plain = mp.mean_pose(anim.walk)
         wanted = wm.orthonormal(want["spine_02"][:3, :3]) @ wm.orthonormal(want["spine_01"][:3, :3]).T
         plained = wm.orthonormal(plain["spine_02"][:3, :3]) @ wm.orthonormal(plain["spine_01"][:3, :3]).T

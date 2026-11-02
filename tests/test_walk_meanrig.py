@@ -788,7 +788,7 @@ class CreateTests(FakedTest):
         self.assertTrue(line.startswith("added Manny_Rig in the mean pose of walkerA (no correction)"), line)
         self.assertIn("pose its controls, then Update", line)
         self.assertIn("| 1 not posed (driven by pairBlend1)", line)
-        self.assertEqual(self.scene.anim_calls, [("|walkerA", False)])
+        self.assertEqual(self.scene.anim_calls, [("|walkerA", True)])    # with its steps: it stands in the result
         self.assertTrue(all(unrecorded for plug, _, unrecorded in self.w.writes if plug.endswith(meanrig.MARKER)))
 
     def test_a_second_press_poses_the_walker_s_own_rig_again(self):
@@ -812,20 +812,21 @@ class CreateTests(FakedTest):
         self.assertEqual(self.w.added[1][1], (-50.0, 0.0, 0.0))
 
     def test_the_rig_stands_in_the_walker_s_corrected_mean_pose(self):
+        """An older correction (`fix`, read in the cycle's own frames) is in what the walker shows, so the rig
+        stands in it and the line names it apart (2026-11-02: the correction a press writes is the cycle entry)."""
         fix = mp.empty()
         fix["rot"]["spine_02"] = T.rot_x(12)
         fix["height"] = -2.0
         self.scene.edits["|walkerA"] = {"walk": "asd", "fix": fix, "keys": {}, "posture": False}
         line = meanrig.press("|walkerA")
-        self.assertIn("(1 bone turned, pelvis -2.0 cm)", line)
+        self.assertIn("(no correction | an older correction in the cycle: 1 bone turned, pelvis -2.0 cm)", line)
         rig = self.w.rigs[0]
         walk = self.scene._walk(fix)
-        _, moved = mp.combine(mp.empty(), mp.measure(mp.mean_pose(walk, fix), walk), reading(rig, walk))
+        _, moved = mp.combine(mp.empty(), mp.measure(mp.mean_pose(walk), walk), reading(rig, walk))
         self.assertEqual(moved, [])
         plain = T.walk()
         back, _ = mp.combine(mp.empty(), mp.measure(mp.mean_pose(plain), plain), reading(rig, walk))
         self.assertAlmostEqual(angle_deg(back["rot"]["spine_02"]), 12.0, delta=0.05)
-        self.assertAlmostEqual(back["height"], -2.0, delta=0.05)
 
     def test_no_walker_or_a_walker_of_no_walk_is_refused(self):
         with self.assertRaises(meanrig.Refusal) as caught:
@@ -882,13 +883,16 @@ class UpdateTests(FakedTest):
         self.assertEqual(self.rekeyed, [])
 
     def test_a_turned_control_goes_into_its_walker_s_correction_and_keys_it_again(self):
+        """The correction is the key poses' whole-cycle entry since 2026-11-02 (`edits["keys"]["cycle"]`), laid on
+        every frame of the evaluated animation; the old `fix` is never written again."""
         self.w.turn(self.rig.namespace, "spine_02", T.rot_x(10))
         line = meanrig.update(self.rekey)
         self.assertEqual(line, "mean pose of walkerA: spine_02 10.0 deg -> |walkerA keyed again")
         self.assertEqual(self.rekeyed, ["|walkerA"])
-        fix = self.scene.edits["|walkerA"]["fix"]
-        self.assertEqual(sorted(fix["rot"]), ["spine_02"])
-        self.assertAlmostEqual(angle_deg(fix["rot"]["spine_02"]), 10.0, places=5)
+        entry = self.scene.edits["|walkerA"]["keys"][kp.CYCLE]
+        self.assertEqual(sorted(entry["rot"]), ["spine_02"])
+        self.assertAlmostEqual(angle_deg(entry["rot"]["spine_02"]), 10.0, places=5)
+        self.assertTrue(mp.is_empty(self.scene.edits["|walkerA"]["fix"]))
         # the base became what the rig shows: a second Update finds nothing
         self.assertEqual(meanrig.update(self.rekey), meanrig.NOTHING_MOVED)
         self.assertEqual(self.rekeyed, ["|walkerA"])
@@ -899,9 +903,11 @@ class UpdateTests(FakedTest):
         self.w.lower(self.rig.namespace, -4.0)
         line = meanrig.update(self.rekey)
         self.assertIn("pelvis -4.0 cm", line)
-        fix = self.scene.edits["|walkerA"]["fix"]
-        self.assertAlmostEqual(angle_deg(fix["rot"]["spine_02"]), 10.0, places=5)
-        self.assertAlmostEqual(fix["height"], -4.0, places=4)
+        entry = self.scene.edits["|walkerA"]["keys"][kp.CYCLE]
+        self.assertAlmostEqual(angle_deg(entry["rot"]["spine_02"]), 10.0, places=5)
+        walk = self.scene.walker_animation("|walkerA").walk
+        up, basis = np.asarray(walk.up, float), np.asarray(walk.basis, float)
+        self.assertAlmostEqual(float(np.asarray(entry["pelvis"], float) @ basis @ up), -4.0, places=3)
 
     def test_main_moved_by_hand_is_nothing_moved(self):
         self.w.move_main(self.rig.namespace, wm.matrix(T.rot_y(-70), [0.0, 0.0, 300.0]))

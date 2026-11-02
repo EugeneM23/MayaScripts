@@ -296,15 +296,55 @@ def _walker(root):
 NO_WALKER = "no working walker - press Pick on a skeleton, or click one in the list"
 
 
+def correction_summary(keys):
+    """What the whole cycle's entry holds, for a line: «12 bones turned, pelvis -3.0 cm, feet, knees»."""
+    entry = (keys or {}).get(kp.CYCLE)
+    if entry is None or kp.key_empty(entry):
+        return "no correction"
+    parts = []
+    turned = len(entry.get("rot") or {})
+    if turned:
+        parts.append("%d bone%s turned" % (turned, "" if turned == 1 else "s"))
+    move = np.asarray(entry["pelvis"], float)
+    if float(np.abs(move).max()) >= mp.MIN_CM:
+        parts.append("pelvis %+.1f cm" % kp._signed(move))
+    prints = entry.get("print") or {}
+    if any(float(np.abs(prints[s]["t"]).max()) >= mp.MIN_CM or abs(prints[s]["yaw"]) >= mp.MIN_TURN
+           for s in kp.SIDES if s in prints):
+        parts.append("feet")
+    if any(abs(entry["knee"][s]) >= mp.MIN_TURN for s in kp.SIDES):
+        parts.append("knees")
+    return ", ".join(parts) or "no correction"
+
+
+def result_of(anim):
+    """The walker's evaluated animation read as a walk (keyposes.result_walk) - what the rig pose stands in and
+    is measured against, so both see what the walker SHOWS (2026-11-02). `anim.moving` is the result with every
+    standing correction in it and before In place; `anim.rw` is the SAME result read before the corrections went
+    in (the key rigs' reference frame), so it only stands in for a walker whose frames were not read."""
+    worlds = anim.moving
+    if worlds is None:
+        if anim.rw is not None:
+            return anim.rw
+        worlds = anim.result.worlds
+    try:
+        return kp.result_walk(anim.walk, worlds)
+    except Exception as error:                               # noqa: BLE001 - model.Refusal and its kin
+        raise Refusal("%s's own animation cannot be read as a walk: %s" % (anim.walk_name, error))
+
+
 def press(root, clean=None):
-    """Create rig pose: the walker `root`'s mean pose rig (added, or its own standing) stood in its mean pose with
-    its correction. Every walker has a rig of its own. Returns the status line."""
+    """Create rig pose: the walker `root`'s mean pose rig (added, or its own standing) stood in the mean pose of
+    what the walker SHOWS - the result of its parameters, its additive pose, the physics and every standing
+    correction (2026-11-02; it used to stand in the mean pose of the cycle itself, which an additive pose at full
+    share does not resemble at all). Every walker has a rig of its own. Returns the status line."""
     stop()
     memo = _walker(root)
-    anim = scene.walker_animation(root, with_steps=False)
+    anim = scene.walker_animation(root)
     walk, statics = anim.walk, anim.statics
     fix = anim.edits.get("fix") or mp.empty()
-    worlds = mp.mean_pose(walk, fix)
+    rw = result_of(anim)
+    worlds = mp.mean_pose(rw)
     rig = find(root)
     added = rig is None
     if added:
@@ -325,8 +365,11 @@ def press(root, clean=None):
             cliplabel.label_rig(rig, LABEL % scene.walker_label(root))
         except Exception:                                    # noqa: BLE001
             traceback.print_exc()
+    said = correction_summary(anim.edits.get("keys") or {})
+    if not mp.is_empty(fix):
+        said += " | an older correction in the cycle: " + mp.summary(fix)
     line = "%s %s in the mean pose of %s (%s)" % ("added" if added else "posed", rig.namespace,
-                                                  scene.walker_label(root), mp.summary(fix))
+                                                  scene.walker_label(root), said)
     notes = [n for n in plan.notes if n]
     return line + " - pose its controls, then Update" + (" | " + notes[0] if notes else "")
 
@@ -356,7 +399,8 @@ def update(rekey=None):
             lines.append("%s stood by an older build: stood again in the mean pose of %s, nothing read - pose it "
                          "again, then Update" % (rig.namespace, scene.walker_label(root)))
             continue
-        anim = scene.walker_animation(root, with_steps=False)
+        anim = scene.walker_animation(root)
+        rw = result_of(anim)
         now = _read(rig, anim.walk, anim.statics, memo)
         base = _unflat(memo.get("base") or {})
         if not base:
@@ -364,15 +408,22 @@ def update(rekey=None):
                 _set_memo(rig, dict(memo, base=_flat(now)))
             continue
         edits = dict(anim.edits)
-        new, moved = mp.combine(edits.get("fix") or mp.empty(), mp.measure(base, anim.walk),
-                                mp.measure(now, anim.walk))
+        # the whole cycle's entry of the key poses' own machinery: the change read against what the walker SHOWS
+        # and laid on every frame of it, under the key poses' edits (2026-11-02). Every foot is read as planted:
+        # a mean pose has no foot in the air.
+        inc, moved, ignored = kp.increment(kp.CYCLE, kp.measure(base, rw), kp.measure(now, rw), rw, 0,
+                                           planted=True)
         if not moved:
+            if ignored:
+                lines.append("mean pose of %s: nothing taken | %s" % (scene.walker_label(root), "; ".join(ignored)))
             continue
-        edits["fix"] = new
+        edits["keys"] = kp.add(edits.get("keys") or {}, kp.CYCLE, inc)
         scene.set_edits(root, edits)
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
-        line = "mean pose of %s: %s" % (scene.walker_label(root), mp.describe(moved))
+        line = "mean pose of %s: %s" % (scene.walker_label(root), kp.describe(moved))
+        if ignored:
+            line += " | not taken: " + "; ".join(ignored)
         lines.append(line + ((rekey or rekey_root)(root)))
     if not lines:
         return NOTHING_MOVED
