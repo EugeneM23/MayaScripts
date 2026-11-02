@@ -16831,6 +16831,54 @@ proportions, his two props and the skin are where they were. `character_skeleton
 (his two sha1 pins, nothing else). **A Swordman added before this has the two-bone torso: re-add
 him, and his clips want transferring again.**
 
+**…no fingers, no camera bones — and both props already insert as they stand** (2026-11-02, with
+two Swordman rigs in his scene: «Щит должен вставлятся так как сейчас он выставлен на скелете
+Swordman_Rig_Character а меч Swordman_Rig1_Character. ТАк-же давай избавимся от кистей рук, они
+не нужны у персонажа нету пальцев. кости камеры также можно удалить»).
+- **Nothing about the two props needed changing, and measuring that took two passes** (trap 324).
+  His sword reads `bonedrive.measured_grip` 1e-14, his shield (162.132, −23.957, −37.355) /
+  (−5.161, 5.616, 8.063) — and that second number is not a dialled grip: `grips.stored` answers
+  **None for every Swordman key** (his prefs hold none) and `grips.for_hand` computes a left
+  hand's grip as the MIRROR of the right's zero through the rig's own two sockets, which on a
+  FRESH rig added from the asset comes out as exactly those six numbers. So Weapons > Add already
+  puts each prop where his scene has it; the two swords differ only because the two rigs' hands
+  are posed differently. Folding that grip into the shield's points was built and measured
+  (8.4e-6 cm off the hold asked, 71.6 cm from his file's own hold) and then **reverted**: with the
+  mirror still computed at Add, it would have turned the shield twice. Gates 7 and 8 now print
+  what Weapons > Add gives each hand beside the hold they measure.
+- **The fingers are gone** — 134 joints, 144 transforms (the curl / spread dials `Fingers_R` /
+  `Fingers_L` among them), 38 control curves, 76 multiplyDivide, 68 unitConversion, 76
+  constraints, 38 blendMatrix, 34 driven curves: AdvancedSkeleton builds fingers whatever the fit
+  asks (a leaf Wrist breaks its twist Parts), and his hand is a mitten. Nothing outside them read
+  any of it (only `AllSet` / `DeformSet`, by membership; the forearm's Parts read FKXWrist /
+  IKXWrist), and the 8 twist Parts are still driven. The FitSkeleton's finger fit joints go too:
+  keeping them was tried and their own `fatFront` / `fatWidth` wiring made a resave rewrite 102
+  lines of flags. **So AdvancedSkeleton's own ReBuild is out for this asset** — a rebuild goes
+  through `rebuild_swordman_rig.py`, which fits and builds from scratch — and
+  `buildPose.udAttr`, the vendor's Go To BuildPose script, has the 88 statements naming the
+  deleted nodes dropped (192 kept).
+- **`camera_root` and `camera_bone` are out of both assets**: 53 joints now, and Camera Setup
+  refuses on him by name («root has no bone 'camera_root'»), as it does on the UE4 Mannequin.
+  Each is taken out of the bind pose with `dagPose -remove` BEFORE it is deleted (traps 79, 91:
+  one bad member drops the whole pose out of an FBX) — bindPose1 reads 53 members, all joints.
+  Saving the pose afresh instead was tried and is worse: it reshapes bindPose1, and
+  `make_swordman_spine_skin.py`'s text check then refuses the asset over six lines of pose it
+  cannot explain; that check now knows a dagPose's own `.g` flag array may be written afresh when
+  an influence joins.
+Proof: `verify_swordman.py` **17 of 17** on `am_Orc_Loco_Walk_Fwd_NoRM` (gate 16 the fingers; 17
+the camera bones and the refusal; gate 9's `span` is the point set's DIAMETER now, which is what
+a size means for a prop that may stand turned), 13493 unit tests with the one known
+`test_chat_deploy.Keys` failure. **A Swordman added before this has the fingers and the camera
+bones: re-add him.**
+
+324. **A grip stored on a weapon node is not a grip the animator dialled.** `apply_grip` writes
+     whatever Add Weapon applied, and for a LEFT hand with nothing remembered that is the mirror
+     the tool computes itself — so the node's `mayaWeaponGripRotate`, the Weapons fields and
+     `measured_grip` all read the same six numbers whether a hand dialled them or the tool did.
+     Read as «he dialled this», it cost an asset rebuild and a revert. Ask `grips.stored` (None
+     means nothing was dialled) and `grips.for_hand` on a FRESH rig before calling any placement
+     the animator's; the two agreeing to 1e-13 is the proof that nothing is to change.
+
 310. **A character scene is saved in whatever pose it was left in, and a size gate cannot see a
      place.** The Swordman's file holds him 110 cm forward of his bind; the build restored the
      SKELETON from the skinCluster and read his props before that, so the sword's points and the

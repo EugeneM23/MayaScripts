@@ -31,7 +31,25 @@ ASSETS = os.path.join(REPO, "SkeldarAnim", "assets").replace("\\", "/")
 RIG = ASSETS + "/Swordman_Rig.ma"
 SKELETON = ASSETS + "/Swordman_Skeleton.ma"
 MESH = "Swordman_Body"
-JOINTS = 55
+#  53 since 2026-11-02: his camera bones are gone («кости камеры также можно удалить»),
+#  so Camera Setup refuses on him by name, as it does on the UE4 Mannequin.
+JOINTS = 53
+#  AdvancedSkeleton builds fingers whatever the fit asks, because a Wrist that is a leaf
+#  breaks its twist Parts (the spec's Task 4). His hand is a mitten and his skeleton has no
+#  fingers, so the built rig carried 96 finger joints and 162 nodes driving them, with no
+#  control and nothing outside reading them (measured 2026-11-02). They go.
+FINGERS = ("IndexFinger", "MiddleFinger", "RingFinger", "PinkyFinger", "ThumbFinger")
+#  AdvancedSkeleton's curl / spread dials: their set-driven keys drove the finger joints
+#  and go with them, so the two controls are dead dials. They are controls, so they go by
+#  name rather than by the finger words (which would not match "Fingers_R").
+FINGER_DIALS = ("Fingers_R", "Fingers_L")
+#  the hidden FitSkeleton's finger fit joints go too. Keeping them was tried: their own
+#  `fatFront` / `fatWidth` attributes are wired into the apparatus, so with the rest deleted
+#  a resave rewrites 102 lines of flags and the spine-skin step's text check refuses the
+#  asset. What it costs: AdvancedSkeleton's own ReBuild button wants a Wrist with a child,
+#  so a rebuild goes through rebuild_swordman_rig.py, which fits and builds from scratch.
+FIT = "|Group|FitSkeleton|__nothing_is_kept__"
+CAMERA_BONES = ("camera_root", "camera_bone")
 KEY = "Swordman"
 MAPS = "Swordman/"
 COLOUR_MAP = "Swordman_Color.jpg"
@@ -225,6 +243,126 @@ def position_follows():
     return made, drift
 
 
+def finger_named(path_):
+    leaf_ = path_.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+    return any(f in leaf_ for f in FINGERS)
+
+
+def trim_fingers(deleted):
+    """AdvancedSkeleton's finger joints and the nodes driving them, out.
+
+    Everything whose leaf carries a finger word and does not live in the hidden
+    FitSkeleton: the deformation chains, their FKX twins and the blendMatrix /
+    multiplyDivide / constraint nodes that are theirs alone. Nothing outside them
+    reads any of it (measured: only AllSet and DeformSet, by membership), and the
+    forearm's twist Parts read FKXWrist / IKXWrist, never a finger.
+    """
+    doomed = [n for n in (cmds.ls(long=True) or [])
+              if finger_named(n) and not n.startswith(FIT + "|")]
+    doomed += [n for d in FINGER_DIALS for n in cmds.ls(d, long=True) or []]
+    kinds = {}
+    for node in doomed:
+        kinds[cmds.nodeType(node)] = kinds.get(cmds.nodeType(node), 0) + 1
+    #  the shallowest first: a joint takes its chain with it
+    for node in sorted(doomed, key=lambda p: p.count("|")):
+        if cmds.objExists(node):
+            drop([node], deleted)
+    left = [n for n in (cmds.ls(long=True) or [])
+            if finger_named(n) and not n.startswith(FIT + "|")]
+    left += [n for d in FINGER_DIALS for n in cmds.ls(d, long=True) or []]
+    assert not left, "finger nodes left: %s" % left[:8]
+    return kinds
+
+
+def clean_build_pose():
+    """AdvancedSkeleton's buildPose string, minus the statements naming nodes that are gone.
+
+    `buildPose.udAttr` is a MEL script of `xform ... <node>;` and `setAttr <node>.<attr> v;`
+    statements -- the vendor's Go To BuildPose runs it, and the deleted fingers would make it
+    error on every missing name. Returns (statements kept, statements dropped).
+    """
+    node = "buildPose"
+    attr = node + ".udAttr"
+    if not cmds.objExists(node) or not cmds.attributeQuery("udAttr", node=node, exists=True):
+        return 0, 0
+    kept, dropped = [], 0
+    for statement in (cmds.getAttr(attr) or "").split(";"):
+        bare = statement.strip()
+        if not bare:
+            continue
+        words = bare.split()
+        if words[0] == "xform":
+            named = words[-1]
+        elif words[0] == "setAttr":
+            named = words[1].split(".")[0]
+        else:
+            kept.append(bare)
+            continue
+        if cmds.objExists(named.split(".")[0]):
+            kept.append(bare)
+        else:
+            dropped += 1
+    cmds.setAttr(attr, ";".join(kept) + ";", type="string")
+    return len(kept), dropped
+
+
+def drop_camera_bones(deleted):
+    """`camera_root` and `camera_bone` out of the game skeleton, with their constraints.
+
+    Taken out of every bind pose that lists them FIRST (traps 79, 91): Maya's FBX
+    exporter drops a whole dagPose over one bad member, and the pose is the skins'.
+    Saving the pose afresh instead was tried and is worse -- it reshapes bindPose1,
+    and make_swordman_spine_skin.py's text check then refuses the asset over six
+    lines of pose it cannot explain.
+    """
+    gone = []
+    poses = cmds.ls(type="dagPose") or []
+    for leaf_ in CAMERA_BONES:
+        for node in cmds.ls("|root*" + leaf_, "*|" + leaf_, long=True, type="joint") or []:
+            if not node.startswith("|root|"):
+                continue
+            for pose in poses:
+                members = cmds.ls(cmds.dagPose(pose, q=True, members=True) or [], long=True)
+                if node in members:
+                    cmds.dagPose(node, remove=True, name=pose)
+            drop(cmds.listRelatives(node, allDescendents=True, type="constraint",
+                                    fullPath=True) or [], deleted)
+            drop([node], deleted)
+            gone.append(leaf_)
+    return gone
+
+
+def resave_bind_pose():
+    """The bind pose saved afresh over the joints that are left (traps 79, 91).
+
+    Deleting a joint a dagPose lists leaves a hole in it, and Maya's FBX exporter
+    drops the whole pose over one bad member. Call it with the skeleton at its bind.
+    """
+    joints = cmds.ls("|root", dag=True, type="joint", long=True) or []
+    skins = cmds.ls(type="skinCluster") or []
+    old = set()
+    for sc in skins:
+        old.update(p for p in cmds.listConnections(sc + ".bindPose", s=True, d=False) or []
+                   if cmds.objectType(p) == "dagPose")
+    name = sorted(old)[0] if old else "bindPose1"
+    new = cmds.dagPose(joints, save=True, bindPose=True, name="skeldarBindPose_new")
+    new = new[0] if isinstance(new, (list, tuple)) else new
+    strays = [m for m in cmds.ls(cmds.dagPose(new, q=True, members=True) or [], long=True)
+              if cmds.objectType(m) != "joint"]
+    if strays:
+        cmds.dagPose(strays, remove=True, name=new)
+    for sc in skins:
+        cmds.connectAttr(new + ".message", sc + ".bindPose", force=True)
+    for pose in old:
+        if cmds.objExists(pose) and not cmds.listConnections(pose + ".message", d=True, s=False):
+            cmds.delete(pose)
+    members = cmds.dagPose(new, q=True, members=True) or []
+    if cmds.objExists(name) and name != new:
+        cmds.delete(name)
+    new = cmds.rename(new, name)
+    return new, len(members)
+
+
 # ----------------------------------------------------------------------- rig
 
 def build_rig(built):
@@ -244,6 +382,31 @@ def build_rig(built):
     drop([c for c in cmds.ls(type="animCurve")
           if not cmds.listConnections(c, source=False, destination=True)], deleted)
     unused_shading(deleted)
+
+    #  his fingers and his camera bones out, and nothing else may move with them
+    root = cmds.ls("|root", type="joint", long=True)[0]
+    bones = dict((uid(j), wm(j)) for j in
+                 [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                              fullPath=True) or [])
+                 if j.rsplit("|", 1)[-1] not in CAMERA_BONES)
+    before_bind = bind_error()
+    kinds = trim_fingers(deleted)
+    gone = drop_camera_bones(deleted)
+    drift = max(max(abs(a - b) for a, b in zip(list(m), list(wm(path(u)))))
+                for u, m in bones.items())
+    held, dropped = clean_build_pose()
+    print("fingers out: %s" % sorted(kinds.items(), key=lambda kv: -kv[1]))
+    print("buildPose string: %d statements kept, %d naming gone nodes dropped"
+          % (held, dropped))
+    print("camera bones out: %s | the other bones moved %.2e | skin off its bind %.2e -> %.2e"
+          % (gone, drift, before_bind, bind_error()))
+    for pose in cmds.ls(type="dagPose") or []:
+        members = cmds.dagPose(pose, q=True, members=True) or []
+        print("bind pose %s: %d members, all joints: %s" %
+              (pose, len(members),
+               all(cmds.objectType(m) == "joint" for m in cmds.ls(members, long=True))))
+    assert drift < 1e-9, "the trim moved the skeleton: %.2e" % drift
+
     followed, moved = position_follows()
     print("position follows added (game bone <- its AS joint, offset kept): %d, "
           "the skeleton moved %.2e" % (followed, moved))
@@ -252,9 +415,13 @@ def build_rig(built):
     below = cmds.listRelatives(root[0], allDescendents=True, type="joint") if root else []
     assert root and len(below) == JOINTS - 1, \
         "the skeleton, %d joints (%d below root)" % (JOINTS, len(below or []))
-    for n in ("weapon_r", "weapon_l", "camera_root", "camera_bone", "ball_l", "ball_r"):
+    for n in ("weapon_r", "weapon_l", "ball_l", "ball_r"):
         assert n in below, n
+    for n in CAMERA_BONES:
+        assert n not in below, "%s is still in the skeleton" % n
     assert not [b for b in below if "index_" in b or "thumb_" in b], "a finger bone crept in"
+    assert not [n for n in (cmds.ls(long=True) or [])
+                if finger_named(n) and not n.startswith(FIT + "|")], "a finger node crept in"
     assert cmds.getAttr("|Group.skeldarRetarget") == "rotation", "the retarget mark"
     geo = cmds.listRelatives("|Group|Geometry", children=True) or []
     assert geo == [MESH], geo

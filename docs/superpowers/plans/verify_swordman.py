@@ -50,6 +50,13 @@ BODY = "Cylinder003"            # his one skinned mesh, 268 vertices
 PREFIX = "BaseFBXASC032Human"   # "Base Human" with the FBX space escape
 PROPS = {"Swordman_Sword": ("Object014", "weapon_r", "hand_r"),
          "Swordman_Shield": ("Object013", "weapon_l", "hand_l")}
+#  53 since 2026-11-02: his camera bones left the skeleton («кости камеры также можно
+#  удалить»), so Camera Setup refuses on him as it does on the UE4 Mannequin.
+JOINTS = 53
+#  AdvancedSkeleton's fingers and its curl / spread dials, all out of his rig (2026-11-02)
+FINGERS = ("IndexFinger", "MiddleFinger", "RingFinger", "PinkyFinger", "ThumbFinger")
+FINGER_DIALS = ("Fingers_R", "Fingers_L")
+CAMERA_BONES = ("camera_root", "camera_bone")
 # our 55 bones against his, measured 2026-11-01 (make_swordman_source.py's PAIRS + UNSKINNED)
 PAIRS = {"pelvis": "Pelvis", "spine_05": "Ribcage", "head": "Head",
          "clavicle_l": "LCollarbone", "upperarm_l": "LUpperarm",
@@ -95,10 +102,14 @@ def points(transform, space=om.MSpace.kWorld):
 
 
 def span(pts):
-    """The model's longest extent in world, in cm."""
-    lo = [min(p[i] for p in pts) for i in range(3)]
-    hi = [max(p[i] for p in pts) for i in range(3)]
-    return max(hi[i] - lo[i] for i in range(3))
+    """The model's own size, in cm: the distance between its two farthest points.
+
+    Not an axis-aligned extent: his shield carries his dialled grip in its points
+    (2026-11-02), so it stands turned against his file's copy and only a measure
+    blind to rotation compares the two.
+    """
+    return max((pts[i].distanceTo(pts[j])
+                for i in range(len(pts)) for j in range(i + 1, len(pts))), default=0.0)
 
 
 def bind_error(prefix):
@@ -179,7 +190,8 @@ def drop(nodes, ns):
 
 cmds.file(new=True, force=True)
 from maya_scenesetup import catalog, character, deletion, attach, bonedrive  # noqa: E402
-from maya_scenesetup import weaponspace  # noqa: E402
+from maya_scenesetup import weaponspace, camera, skeleton, window  # noqa: E402
+from maya_scenesetup import grips  # noqa: E402
 import maya_charfire  # noqa: E402
 import maya_rigs  # noqa: E402
 import maya_asretarget as ar  # noqa: E402
@@ -215,7 +227,7 @@ for sg in cmds.listConnections(cmds.ls(NS + "Swordman_BodyShape", long=True) or 
                                type="shadingEngine") or []:
     mats.update(cmds.listConnections(sg + ".surfaceShader") or [])
 textured = any(cmds.attributeQuery("skeldarTexture", node=m, exists=True) for m in mats)
-gate(2, rig and len(H) == 55 and set(PAIRS).issubset(H) and ar.rotation_mode(rig)
+gate(2, rig and len(H) == JOINTS and set(PAIRS).issubset(H) and ar.rotation_mode(rig)
      and follows == 22 and n_sk == 1 and err < 1e-3 and len(mesh) == 1
      and not ar.posed_controls(rig=rig) and textured,
      "%s: %d game bones (ours), rotation-only, %d position follows, skin at its bind "
@@ -339,6 +351,11 @@ for n, (key, (his_mesh, bone, hand)) in enumerate(sorted(PROPS.items()), start=7
     mine, theirs = points(node), points(leaf_of("src", his_mesh))
     worst_p = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))) \
         if len(mine) == len(theirs) else -1.0
+    #  what Weapons > Add itself gives that hand (2026-11-02): the right hand's zero, the
+    #  left hand's the MIRROR grip the tool computes when nothing is dialled -- which is
+    #  what his own shield carries in his scene, so zero grip IS his hold and nothing of
+    #  the grip is folded into the points.
+    asked = grips.for_hand(entry, hand.rsplit("_", 1)[-1].upper(), rig.skeleton_root)
     fields = bonedrive.measured_grip(node, H[bone])
     driven = bonedrive.driving_weapon(H[bone])
     sizes[key] = (span(mine), span(theirs), span(points(node, om.MSpace.kObject)))
@@ -347,8 +364,9 @@ for n, (key, (his_mesh, bone, hand)) in enumerate(sorted(PROPS.items()), start=7
          and driven and cmds.ls(driven, long=True)[0] == cmds.ls(node, long=True)[0]
          and max(abs(v) for v in list(fields[0]) + list(fields[1])) < 1e-3,
          "%s at zero grip: every one of %d vertices where HIS hand holds it (%.2e cm), in %s, "
-         "driving %s, the fields reading 0 0 0%s"
-         % (entry.label, len(mine), worst_p, hand, bone, note and (" | " + note)))
+         "driving %s, the fields reading 0 0 0 | Weapons > Add gives that hand %s%s"
+         % (entry.label, len(mine), worst_p, hand, bone,
+            [round(v, 3) for v in asked[0]], note and (" | " + note)))
 
 # his props hang under a chain whose pelvis scales 2.54, so their size is INHERITED, not in
 # their points: a rebind that drops the scale ships them 1/2.54 small and nothing of the
@@ -371,7 +389,7 @@ cmds.file(new=True, force=True)
 mel.eval("FBXResetImport; FBXImportMode -v add; FBXImportSetMayaFrameRate -v false;")
 mel.eval('FBXImport -f "%s";' % path)
 out = cmds.ls(type="joint")
-gate(10, len(out) == 55 and not cmds.ls(type="mesh") and not any(":" in j for j in out),
+gate(10, len(out) == JOINTS and not cmds.ls(type="mesh") and not any(":" in j for j in out),
      "the export: %d joints, %d meshes, plain names %s"
      % (len(out), len(cmds.ls(type="mesh")), not any(":" in j for j in out)))
 
@@ -387,7 +405,7 @@ mine = points(meshes[0]) if meshes else []
 theirs = points(leaf_of("src", BODY))
 worst_v = max(mine[i].distanceTo(theirs[i]) for i in range(len(mine))) \
     if len(mine) == len(theirs) else -1.0
-gate(11, len(joints) == 55 and n_sk == 1 and err < 1e-3 and len(meshes) == 1
+gate(11, len(joints) == JOINTS and n_sk == 1 and err < 1e-3 and len(meshes) == 1
      and 0 <= worst_v < 1e-3 and not cmds.ls(type="constraint"),
      "Swordman [skeleton]: %d joints, %d mesh, skin at its bind (%.2e), on his own (%.2e cm), "
      "no constraint" % (len(joints), len(meshes), err, worst_v))
@@ -400,7 +418,7 @@ cmds.undoInfo(state=True, infinity=True)
 print("   ", str(deletion.execute(deletion.plan(picked), len(unowned)))[:160])
 gone = not cmds.ls(type="joint") and not cmds.ls(type="mesh")
 cmds.undo()
-back = len(cmds.ls(type="joint")) == 55 and len(cmds.ls(type="mesh", noIntermediate=True)) == 1
+back = len(cmds.ls(type="joint")) == JOINTS and len(cmds.ls(type="mesh", noIntermediate=True)) == 1
 gate(12, gone and back, "Delete character: %s; one Ctrl+Z brings him back: %d joints, %d meshes"
      % ("nothing left" if gone else "LEFT OVER", len(cmds.ls(type="joint")),
         len(cmds.ls(type="mesh", noIntermediate=True))))
@@ -597,6 +615,47 @@ gate(15, len(laid) >= 30 and joints_each >= LAID_JOINTS and spread_cm >= LAID_SP
      "his torso rides the whole spine: %d vertices on more than one chain joint, %.1f joints "
      "each, the weight's spread about its centre %.1f cm (Manny: 2.5 joints, 3.3 cm; his file: "
      "1.2 joints, 0.0 cm)" % (len(laid), joints_each, spread_cm))
+
+# ------------------------------- 16 + 17: no fingers, no camera bones
+cmds.file(new=True, force=True)
+print("   ", character.add_character(rig_row).splitlines()[0])
+rig = maya_rigs.rigs()[0]
+NS = rig.namespace + ":"
+
+
+def finger_named(path_):
+    leaf_ = path_.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+    return any(f in leaf_ for f in FINGERS)
+
+
+fingers = [n for n in (cmds.ls(NS + "*", long=True) or []) if finger_named(n)]
+dials = [n for d in FINGER_DIALS for n in cmds.ls(NS + d, long=True) or []]
+#  the arm itself still works: its twist Parts are driven, and the hand is skinned
+H = bones_of(rig.skeleton_root)
+parts = [p for p in cmds.ls(NS + "ElbowPart*", NS + "ShoulderPart*", long=True) or []
+         if cmds.nodeType(p) == "joint"
+         and cmds.listConnections(p, source=True, destination=False)]
+hand_skinned = False
+for sc in cmds.ls(type="skinCluster") or []:
+    inf = [i.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+           for i in cmds.skinCluster(sc, q=True, influence=True) or []]
+    hand_skinned = hand_skinned or ("hand_r" in inf and "hand_l" in inf)
+gate(16, not fingers and not dials and len(parts) == 8 and hand_skinned,
+     "no finger left in his rig (%d finger-named nodes, %d curl/spread dials), its 8 twist "
+     "Parts still driven (%d), the mitten still skinned to hand_r and hand_l (%s)"
+     % (len(fingers), len(dials), len(parts), hand_skinned))
+
+cam_rig = [n for b in CAMERA_BONES for n in cmds.ls(NS + b, long=True) or []]
+#  what the Camera Setup button does when the bone is not there: `camera_setup` resolves
+#  the bone and puts `missing_bone_message` on the card's line (there is no card here).
+found = skeleton.resolve_bone(rig.skeleton_root, camera.BONE)
+refusal = "" if found else window.missing_bone_message(rig.skeleton_root, camera.BONE)
+cmds.file(new=True, force=True)
+print("   ", character.add_character(skel_row).splitlines()[0])
+cam_skel = [n for b in CAMERA_BONES for n in cmds.ls(b, long=True) or []]
+gate(17, not cam_rig and not cam_skel and not found and "camera_root" in refusal,
+     "his camera bones are gone (rig %d, skeleton %d) and Camera Setup refuses by name: %r"
+     % (len(cam_rig), len(cam_skel), refusal[:90]))
 
 print("FAILED gates: %s" % FAILS if FAILS else "ALL GATES PASSED")
 maya.standalone.uninitialize()

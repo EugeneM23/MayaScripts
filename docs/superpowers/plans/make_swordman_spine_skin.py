@@ -216,6 +216,11 @@ def explained(line, owner, skin_names, chain_leaves):
         # Maya puts lockInfluenceWeights on a joint when it becomes an influence
         return bool(re.match(r'^\taddAttr .*"(liw|lockInfluenceWeights)"', line)
                     or re.match(r'^\tsetAttr "\.liw"', line))
+    if kind == "dagPose" and re.match(r'^\tsetAttr (-s \d+ )?"\.g', line):
+        # a new influence joins the skins' bind pose, and Maya writes its per-member
+        # `global` flag array afresh -- a different array SIZE, not a different pose
+        # (2026-11-02: his camera bones left the pose, so it is written compactly now)
+        return True
     if line.startswith("connectAttr") and any(('"%s.' % n) in line for n in skin_names):
         return True
     if line.startswith("connectAttr") and "lockInfluenceWeights" in line:

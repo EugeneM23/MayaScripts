@@ -8552,18 +8552,6 @@ null,
 27.9725,
 -4.3364
 ],
-"camera_bone": [
-"camera_root",
-0.0,
-158.8522,
-0.0
-],
-"camera_root": [
-"root",
-0.0,
-158.8522,
-0.0
-],
 "center_of_mass": [
 "root",
 0.0,
@@ -8838,7 +8826,7 @@ null,
 "file": "Swordman_Skeleton.ma",
 "kind": "skeleton",
 "model": "Swordman",
-"sha1": "472cf35d9198b8173a362b68c10d314938ae57d2"
+"sha1": "61eb8ae5e43dce89ba1fe0ba3dc8505e3917a4fb"
 },
 "Swordman_Rig": {
 "bones": {
@@ -8889,18 +8877,6 @@ null,
 -13.6054,
 27.9725,
 -4.3364
-],
-"camera_bone": [
-"camera_root",
-0.0,
-158.8522,
-0.0
-],
-"camera_root": [
-"root",
-0.0,
-158.8522,
-0.0
 ],
 "center_of_mass": [
 "root",
@@ -9176,7 +9152,7 @@ null,
 "file": "Swordman_Rig.ma",
 "kind": "rig",
 "model": "Swordman",
-"sha1": "fe783e91314abb1186e26a83793deb87269e0d35"
+"sha1": "f242f5d4fd6bf60548b37093a4383a7f9f54d5ae"
 },
 "UE4_Mannequin": {
 "bones": {
