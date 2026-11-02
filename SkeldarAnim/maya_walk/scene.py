@@ -1462,6 +1462,14 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
             text += ", hips %.0f deg to the spine" % abs(matched["hips_deg"])
     if max(info["drop"]) > 0.05:
         text += " | pelvis down %.1f cm where the legs fall short" % max(info["drop"])
+    straight = result.info.get("passing") or {}
+    if straight.get("asked"):
+        text += " | the passing knee %s deg (asked %.0f), hips +%.1f cm" % (
+            " / ".join("%.0f" % straight["got"][s] for s in wm.SIDES if s in straight["got"]),
+            max(straight["asked"].values()), straight["lift"])
+        left = max(list(straight["short"].values()) or [0.0])
+        if left > 1.0:                                  # the legs ran out of room: a shorter Step gives the rest
+            text += ", %.0f deg left - shorten the Step" % left
     pops = info.get("pops") or {}
     if pops.get("fixed"):
         text += " | " + wt.pops_line(pops)

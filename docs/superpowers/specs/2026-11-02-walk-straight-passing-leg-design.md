@@ -168,3 +168,42 @@ gate measures exactly that).
     back.
 - **Live** in the animator's Maya on port 7006: Pick a walk, dial the knob, read the keys back and measure
   the game skeleton's knee at the passing.
+
+## Addendum, the build (2026-11-02)
+
+What the build changed against the design above.
+
+**`Leg stretch` was not built.** The design's second lever — the bones lengthened a little at the passing so
+a knee can come straight without the hips rising — cannot reach the scene from the model. The retarget
+re-solves every leg itself with the TARGET's own rest lengths (`target._leg` → `model.two_bone(hip, goal,
+l1, l2, ...)` with `self.lengths[side]`), and the writer keys rotations, so a per-frame length in the model's
+result is dropped on the way out. Carrying it would want `target._leg` reading a per-frame length, the writer
+keying the legs' translates, and a word about what Unreal does with a stretched export — a feature of its
+own. The knob is therefore not in `gait.PARAMS`, and the line says what the legs left so the animator can
+shorten the Step themselves, which is their own call («уменьшение длины шага ... всё что нужно»).
+
+**The lift's rate is the cycle's own.** The design left the smoothness to `smooth_under` alone; measured, that
+was not enough — the knee's own second difference grew past the cycle's on TestStrefe (20.7 deg against
+12.9). The curve now also moves no faster than `STRAIGHT_SHARE` (0.4) of what the cycle's OWN hips do a frame
+(its pelvis's p90 rise, 1.5–7 cm a frame over the saved walks), floored by `STRAIGHT_FLOOR` for a cycle with
+no bob of its own. After: 11.8 against 12.9.
+
+**A planted leg pins the hips at its contact's ends** (`passing_window`, the geometry alone, whatever is
+asked). Without it a lift the OTHER leg's window allowed straightened dw's own strike by 8 deg — the contacts
+are what the animator sees as the walk's weight.
+
+**The ask is aimed at the ankle crossing, not the contact's middle.** The window's shoulders lie near the
+double supports, where a leg can be straighter than at its passing; read off the middle, asd's left leg
+landed its ask two frames late and came out 8 deg bent.
+
+**The foot's reach roll reads the cap with the straightening off.** A raised cap took the roll away: the foot
+stood flat where the cycle rolls it, its ankle 1.7 cm out of place.
+
+**The retarget's own cap had to take the ask** (`target._reach_ratio`, trap 322). This was the whole
+difference between a model that landed 8.00 and a scene that read 14.
+
+**What the model cannot do, stated.** The ask is landed by scaling one smooth shape, so a single frame at its
+room limit pins the whole curve: on a cycle whose hips barely bob, an ask the room cannot serve can land less
+lift than a smaller one would. Measured on the synthetic walker (24 frames, hips 1.55 cm a frame): it lands
+an ask up to 7 deg straighter than its own exactly and falls short past that. On every real walk each ask the
+legs allow lands exactly (asd's 8 deg to 1e-14) and what they leave is reported as `short`.

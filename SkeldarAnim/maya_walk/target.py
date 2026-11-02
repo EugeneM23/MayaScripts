@@ -202,6 +202,7 @@ class Retarget(object):
         self.root_bone = self.transfer.target_root
         self._solved_legs = set(leaf for leaves in self.legs.values() for leaf in leaves)
         self.planes = None              # where each leg bends, read once a cycle (_knee_planes, in frames())
+        self.straight = {}              # {side: reach ratio} Passing knee asked (read in frames())
 
     # -- reading --
 
@@ -276,6 +277,9 @@ class Retarget(object):
         "pops"}). `knee_pops`: the knee pop fix after the legs are solved (fix_pops)."""
         model = _model()
         n = result.frames
+        self.straight = dict((side, model.straight_ratio(float(deg), *self.lengths[side]))
+                             for side, deg in (((result.info.get("passing") or {}).get("asked") or {}).items())
+                             if side in self.lengths)
         first = self._bones(result.worlds[:, 0])
         outs, goals = [], []
         for f in range(n + 1):
@@ -419,8 +423,16 @@ class Retarget(object):
         added = float(np.max(base - original)) if n else 0.0
         return frames, short, drop, {"found": first, "fixed": max(fixed, 0), "left": left, "drop": max(added, 0.0)}
 
+    def _reach_ratio(self, side):
+        """How straight this leg may come, as a share of its length: the clip's own straightest, or what Passing
+        knee asked where it asked more (the ask is a knee ANGLE, so the TARGET's own lengths give its own ratio).
+        Without the raise our own cap undoes the model's lift - _need lowers the hips back onto the clip's ratio
+        and the knee bends again (14 deg for an 8 deg ask, measured on asd over Manny, 2026-11-02)."""
+        asked = (self.straight or {}).get(side)
+        return self.walk.reach[side] if asked is None else max(self.walk.reach[side], asked)
+
     def _reach(self, side):
-        return self.walk.reach[side] * sum(self.lengths[side])
+        return self._reach_ratio(side) * sum(self.lengths[side])
 
     def _need(self, out, goal):
         """The least pelvis drop that lets both legs reach this frame's goals."""
@@ -498,7 +510,7 @@ class Retarget(object):
                 fwd = _np(self.place)[2, :3]
                 bend = fwd - np.dot(fwd, e) * e
             bend = _unit(bend)
-        knee, reached, short = model.two_bone(hip, goal, l1, l2, bend, self.walk.reach[side])
+        knee, reached, short = model.two_bone(hip, goal, l1, l2, bend, self._reach_ratio(side))
         e2 = _unit(reached - hip)
         # the plane it was bent toward, not the one its solved knee happens to stand in: a leg that comes out
         # straight has none of its own either, and reading it there put the same noise back (model._leg, 1432379f)

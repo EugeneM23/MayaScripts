@@ -7,6 +7,9 @@ import unittest
 import numpy as np
 
 from tests import test_walkmodel as T
+from tests.test_walktarget import statics_of, target_of
+
+wt = __import__("maya_walk.target", fromlist=["target"])   # mayapy: target.py needs OpenMaya
 
 wm, walk, clip, load, L1, L2 = T.wm, T.walk, T.clip, T.load, T.L1, T.L2
 
@@ -171,9 +174,24 @@ def defaults(w):
     return gait.engine_knobs(w, own, gait.values(own, {}))
 
 
+def ask(k, deg, side=None):
+    """The engine knobs `k` with Passing knee asked. Both sides by name: engine_knobs writes every sided knob's
+    own `_l` and `_r`, and a side's own value wins over the plain one (trap 317)."""
+    if side is not None:
+        return dict(k, **{"passing_knee_" + side: deg})
+    return dict(k, passing_knee_l=deg, passing_knee_r=deg)
+
+
 def foot_track(w, res, side):
     n = res.frames
     return res.worlds[w.index["foot_" + side], :n, 3, :3].copy()
+
+
+#  The fixture is a 24-frame walker whose hips bob 1.55 cm a frame, so the lift's rate (STRAIGHT_SHARE of
+#  that) is what bounds it: it lands an ask up to 7 deg straighter than its own and reports the rest short.
+#  A real cycle's hips move 1.7-7 cm a frame and land every ask the legs allow exactly (asd's 8 deg to 1e-14,
+#  verify_walk_straight_leg.py) - a fixture more degenerate than the data (trap 321), so the ask here is 6.
+ASK_DEG = 6.0
 
 
 class LiftTests(unittest.TestCase):
@@ -189,22 +207,22 @@ class LiftTests(unittest.TestCase):
         self.assertGreater(self.own, 60.0)          # the fixture is a crouched walker: ~72 deg
 
     def test_nothing_asked_changes_nothing(self):
-        off = self.w.evaluate(dict(self.k, passing_knee=0.0))
+        off = self.w.evaluate(ask(self.k, 0.0))
         self.assertTrue(np.array_equal(off.worlds, self.plain.worlds))
         self.assertNotIn("passing", off.info)
 
     def test_an_ask_no_straighter_than_the_cycle_changes_nothing(self):
-        same = self.w.evaluate(dict(self.k, passing_knee=self.own + 10.0))
+        same = self.w.evaluate(ask(self.k, self.own + 10.0))
         self.assertTrue(np.array_equal(same.worlds, self.plain.worlds))
 
     def test_the_passing_knee_reaches_the_ask(self):
-        asked = self.own - 8.0
-        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        asked = self.own - ASK_DEG
+        res = self.w.evaluate(ask(self.k, asked))
         self.assertAlmostEqual(at_passing(self.w, res), asked, delta=1.0)
 
     def test_it_straightens_the_middle_of_the_stance_and_not_its_ends(self):
-        asked = self.own - 8.0
-        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        asked = self.own - ASK_DEG
+        res = self.w.evaluate(ask(self.k, asked))
         for s in ("l", "r"):
             before, after = knees(self.w, self.plain.worlds, s), knees(self.w, res.worlds, s)
             for hs, to in self.w.contact[s]:
@@ -213,7 +231,7 @@ class LiftTests(unittest.TestCase):
                                 "%s strike at %d moved %.2f deg" % (s, f, after[f] - before[f]))
 
     def test_no_planted_foot_slides(self):
-        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        res = self.w.evaluate(ask(self.k, self.own - ASK_DEG))
         planted = (res.info.get("placement") or {}).get("planted") or {}
         for s in ("l", "r"):
             now, before = foot_track(self.w, res, s), foot_track(self.w, self.plain, s)
@@ -222,7 +240,7 @@ class LiftTests(unittest.TestCase):
             self.assertLess(float(moved), 1e-6, "%s foot moved %.6f cm while planted" % (s, moved))
 
     def test_the_hips_rise_at_the_passing_and_the_loop_closes(self):
-        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        res = self.w.evaluate(ask(self.k, self.own - ASK_DEG))
         up = self.w.up
         pelvis = res.worlds[self.w.index["pelvis"], :, 3, :3] @ up
         was = self.plain.worlds[self.w.index["pelvis"], :, 3, :3] @ up
@@ -233,7 +251,7 @@ class LiftTests(unittest.TestCase):
         self.assertAlmostEqual(pelvis[res.frames], pelvis[0], places=9)
 
     def test_the_lift_is_nothing_at_the_double_supports(self):
-        res = self.w.evaluate(dict(self.k, passing_knee=self.own - 8.0))
+        res = self.w.evaluate(ask(self.k, self.own - ASK_DEG))
         drop = np.array(res.info["drop"][:res.frames])
         base = np.array(self.plain.info["drop"][:res.frames])
         lift = base - drop
@@ -246,27 +264,225 @@ class LiftTests(unittest.TestCase):
             self.assertLess(float(np.abs(lift[both]).max()), 0.25 * float(lift.max()))
 
     def test_it_says_what_it_did(self):
-        asked = self.own - 8.0
-        res = self.w.evaluate(dict(self.k, passing_knee=asked))
+        asked = self.own - ASK_DEG
+        res = self.w.evaluate(ask(self.k, asked))
         p = res.info["passing"]
         self.assertAlmostEqual(p["asked"]["l"], asked, places=6)
         self.assertAlmostEqual(p["got"]["l"], asked, delta=1.0)
         self.assertGreater(p["lift"], 1.0)
         self.assertLess(p["short"]["l"], 0.5)
 
+    def test_the_model_s_own_line_says_it_too(self):
+        """model.describe - what a caller that does not build the card's compact line reads."""
+        asked = self.own - ASK_DEG
+        text = wm.describe(self.w.evaluate(ask(self.k, asked)))
+        self.assertIn("the passing knee", text)
+        self.assertIn("asked %.0f" % asked, text)
+        self.assertIn("higher there", text)
+        far = wm.describe(self.w.evaluate(ask(self.k, 1.0)))
+        self.assertIn("a shorter Step gives the rest", far)      # the legs ran out: the animator's own lever
+        self.assertNotIn("a shorter Step", text)
+
     def test_one_side_alone(self):
-        asked = self.own - 8.0
-        res = self.w.evaluate(dict(self.k, passing_knee_l=asked))
+        asked = self.own - ASK_DEG
+        res = self.w.evaluate(ask(self.k, asked, 'l'))
         self.assertAlmostEqual(at_passing(self.w, res, "l"), asked, delta=1.5)
         self.assertGreater(at_passing(self.w, res, "r"), asked + 5.0)
 
+    def test_an_ask_the_rate_cannot_serve_is_named_and_the_rate_is_why(self):
+        """The fixture's hips barely bob, so an ask past ASK_DEG falls short of its own accord: it is reported,
+        and lifting the rate lands it exactly - which is the control that pins the arithmetic under it."""
+        asked = self.own - 15.0
+        res = self.w.evaluate(ask(self.k, asked))
+        p = res.info["passing"]
+        self.assertGreater(p["short"]["l"], 1.0, "a bobless cycle landed a 15 deg ask: the rate does nothing")
+        self.assertAlmostEqual(p["got"]["l"], at_passing(self.w, res), delta=0.5)   # it says what it did
+        kept = wm.STRAIGHT_SHARE, wm.STRAIGHT_FLOOR
+        try:
+            wm.STRAIGHT_SHARE, wm.STRAIGHT_FLOOR = 100.0, 100.0
+            free = self.w.evaluate(ask(self.k, asked))
+        finally:
+            wm.STRAIGHT_SHARE, wm.STRAIGHT_FLOOR = kept
+        self.assertAlmostEqual(at_passing(self.w, free), asked, delta=0.1)
+        self.assertLess(free.info["passing"]["short"]["l"], 0.1)
+        self.assertGreater(free.info["passing"]["lift"], p["lift"])
+
     def test_an_ask_the_legs_cannot_reach_is_named(self):
-        res = self.w.evaluate(dict(self.k, passing_knee=1.0))
+        res = self.w.evaluate(ask(self.k, 1.0))
         p = res.info["passing"]
         self.assertGreater(p["short"]["l"], 0.5)       # the legs ran out of room
         self.assertLess(p["lift"], wm.STRAIGHT_LIFT_MAX + 1e-9)
         self.assertGreater(p["got"]["l"], 1.0)
 
 
+class ParamTests(unittest.TestCase):
+    """The parameter the card shows: its own value, its range, and what it hands the engine."""
+
+    def setUp(self):
+        self.w = walk()
+        self.own = gait.own(self.w)
+
+    def test_the_measure_reads_the_knee_at_the_passing(self):
+        for side in ("l", "r"):
+            self.assertIn("passing_knee_" + side, self.own)
+        res = self.w.evaluate(defaults(self.w))
+        got = gait.of_result(self.w, res)
+        measured = at_passing(self.w, res)
+        self.assertAlmostEqual(0.5 * (got["passing_knee_l"] + got["passing_knee_r"]), measured, delta=2.0)
+
+    def test_it_is_not_the_straightest_a_planted_knee_gets(self):
+        # the crouched fixture is straightest near its contacts, most bent at its passing
+        self.assertGreater(self.own["passing_knee_l"], self.own["knee_bend_l"] + 5.0)
+
+    def test_the_range_runs_from_one_degree_to_the_cycles_own(self):
+        p, _ = gait.param_of("passing_knee_l")
+        lo, hi = gait.ranges(self.own, self.w.leg_length, self.w)["passing_knee_l"]
+        self.assertAlmostEqual(lo, 1.0, places=6)
+        self.assertAlmostEqual(hi, self.own["passing_knee_l"], places=6)
+
+    def test_untouched_it_asks_the_engine_nothing(self):
+        e = gait.engine_knobs(self.w, self.own, gait.values(self.own, {}))
+        self.assertEqual(e["passing_knee_l"], 0.0)
+        self.assertEqual(e["passing_knee_r"], 0.0)
+
+    def test_dialled_down_it_passes_the_ask_through(self):
+        p, _ = gait.param_of("passing_knee_l")
+        want = self.own["passing_knee_l"] - 10.0
+        changes = {"passing_knee_l": gait.stored_change(p, self.own["passing_knee_l"], want)}
+        e = gait.engine_knobs(self.w, self.own, gait.values(self.own, changes))
+        self.assertAlmostEqual(e["passing_knee_l"], want, places=6)
+        self.assertEqual(e["passing_knee_r"], 0.0)
+
+    def test_dialled_up_it_asks_nothing(self):
+        p, _ = gait.param_of("passing_knee_l")
+        more = self.own["passing_knee_l"] + 10.0
+        changes = {"passing_knee_l": gait.stored_change(p, self.own["passing_knee_l"], more)}
+        e = gait.engine_knobs(self.w, self.own, gait.values(self.own, changes))
+        self.assertEqual(e["passing_knee_l"], 0.0)
+
+    def test_a_change_means_the_same_on_another_cycle(self):
+        p, _ = gait.param_of("passing_knee_l")
+        change = gait.stored_change(p, 22.0, 8.0)
+        self.assertAlmostEqual(gait.apply_change(p, 30.0, change), 16.0, places=6)   # an offset, not a ratio
+
+    def test_the_diagnosis_names_a_bent_passing_knee(self):
+        m = dict(self.own, passing_knee_l=24.0, passing_knee_r=23.0)
+        found = dict((f.key, f) for f in gait.diagnose(m, self.own, {}, run=False, leg=self.w.leg_length))
+        self.assertIn("bent_passing", found)
+        self.assertAlmostEqual(found["bent_passing"].fix["passing_knee"], 8.0, places=6)
+
+    def test_the_diagnosis_leaves_a_run_alone(self):
+        m = dict(self.own, passing_knee_l=60.0, passing_knee_r=60.0)
+        found = [f.key for f in gait.diagnose(m, self.own, {}, run=True, leg=self.w.leg_length)]
+        self.assertNotIn("bent_passing", found)
+
+    def test_the_diagnosis_is_silent_about_a_knee_the_animator_asked_for(self):
+        m = dict(self.own, passing_knee_l=5.0, passing_knee_r=5.0, knee_bend_l=4.0, knee_bend_r=4.0)
+        info = {"passing": {"asked": {"l": 5.0, "r": 5.0}}}
+        found = [f.key for f in gait.diagnose(m, self.own, info, run=False, leg=self.w.leg_length)]
+        self.assertNotIn("straight_knee", found)
+        self.assertNotIn("bent_passing", found)
+
+    def test_the_line_says_what_it_did(self):
+        res = self.w.evaluate(ask(defaults(self.w), self.own["passing_knee_l"] - 8.0))
+        text = wm.describe(res)
+        self.assertIn("the passing knee", text)
+        self.assertIn("the hips up to", text)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TargetTests(unittest.TestCase):
+    """The retarget's own reach cap takes the ask too, or it lowers the hips back onto the clip's own ratio and
+    the knee bends again - 14 deg for an 8 deg ask, measured on asd over a Manny skeleton (2026-11-02)."""
+
+    def rig(self, scale=1.0):
+        c = T.clip()
+        w = T.walk()
+        return w, c, wt.Retarget(w, statics_of(c), target_of(c, scale=scale))
+
+    def asked(self, w, deg):
+        return w.evaluate(ask(defaults(w), deg))
+
+    def straighter_than_the_clip(self, w, rt, by=5.0):
+        """An ask `by` degrees straighter than the clip's own straightest - the only kind that raises the cap
+        (its own straightest IS the cap). The fixture never comes within 45 deg of straight, so an ask read
+        off its passing knee is still more bent than its cap and raises nothing."""
+        l1, l2 = rt.lengths["l"]
+        return max(0.0, wm.knee_bend_at(w.reach["l"], l1, l2) - by)
+
+    def test_with_nothing_asked_the_cap_is_the_clip_s_own(self):
+        w, _, rt = self.rig()
+        rt.frames(w.evaluate(defaults(w)))
+        self.assertEqual(rt.straight, {})
+        for side in ("l", "r"):
+            self.assertAlmostEqual(rt._reach_ratio(side), w.reach[side], places=12)
+
+    def test_an_ask_raises_the_cap_to_what_that_knee_needs(self):
+        w, _, rt = self.rig()
+        deg = self.straighter_than_the_clip(w, rt)
+        rt.frames(self.asked(w, deg))
+        for side in ("l", "r"):
+            l1, l2 = rt.lengths[side]
+            want = wm.straight_ratio(deg, l1, l2)
+            self.assertAlmostEqual(rt.straight[side], want, places=12)
+            self.assertAlmostEqual(rt._reach_ratio(side), max(w.reach[side], want), places=12)
+            self.assertGreater(rt._reach_ratio(side), w.reach[side])
+
+    def test_an_ask_the_clip_is_already_straighter_than_raises_nothing(self):
+        w, _, rt = self.rig()
+        rt.frames(self.asked(w, at_passing(w, w.evaluate(defaults(w))) - ASK_DEG))
+        for side in ("l", "r"):
+            self.assertLess(rt.straight[side], w.reach[side])        # the clip's own cap is the straighter one
+            self.assertAlmostEqual(rt._reach_ratio(side), w.reach[side], places=12)
+
+    def test_the_cap_is_read_in_the_target_s_own_lengths(self):
+        """The ask is a knee ANGLE: a smaller body wants the same bend at its own hip-to-ankle distance."""
+        w, _, small = self.rig(scale=0.6)
+        deg = self.straighter_than_the_clip(w, small)
+        small.frames(self.asked(w, deg))
+        for side in ("l", "r"):
+            l1, l2 = small.lengths[side]
+            self.assertAlmostEqual(small.straight[side], wm.straight_ratio(deg, l1, l2), places=12)
+            self.assertGreater(sum(small.lengths[side]), 0.0)
+
+    def test_the_target_keeps_the_straightened_hips_where_the_model_put_them(self):
+        w, _, rt = self.rig()
+        res = self.asked(w, self.straighter_than_the_clip(w, rt))
+        frames, info = rt.frames(res)
+        self.assertLess(max(info["drop"]), 0.05, "the target lowered the hips it was handed")
+        got = min(min(knees(w, res.worlds, side)) for side in ("l", "r"))
+        scene = min(min(_scene_bends(w, frames, side)) for side in ("l", "r"))
+        self.assertLess(abs(scene - got), 0.5, "model %.2f, target %.2f" % (got, scene))
+
+    #  The control - the cap left at the clip's own ratio, which pulls the hips back down and bends the knee
+    #  again - lives in verify_walk_straight_leg.py's target phase: it needs a cycle whose rate lets the model
+    #  reach the raised cap, and the fixture's hips bob too little (measured on asd over a Manny skeleton: the
+    #  target's drop 0.455 cm and the knee 14 deg for an 8 deg ask, against 0.007 cm and 8.00 with the raise).
+
+
+def _outs_goals(rt, res):
+    """The retarget's own per-frame target worlds and foot goals, as frames() builds them."""
+    outs, goals = [], []
+    first = rt._bones(res.worlds[:, 0])
+    for f in range(res.frames):
+        src = rt._bones(res.worlds[:, f])
+        root_world = rt.transfer.travel(src, first) * rt.place
+        outs.append(rt.transfer.frame(source=src, target=rt.target, root_world=root_world))
+        source_root = rt.transfer._source_root_pose(src)
+        goals.append(dict((s, rt._mapped(res.worlds[rt.walk.index["foot_" + s], f, 3, :3], source_root,
+                                         root_world)) for s in ("l", "r")))
+    return outs, goals
+
+
+def _scene_bends(w, frames, side):
+    """The target's own knee bend a frame, degrees, off the frames the retarget wrote."""
+    out = []
+    for f in frames[:-1]:
+        p = [np.array(list(f[b + "_" + side])).reshape(4, 4)[3, :3] for b in ("thigh", "calf", "foot")]
+        u, v = p[1] - p[0], p[2] - p[1]
+        u, v = u / np.linalg.norm(u), v / np.linalg.norm(v)
+        out.append(math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(u, v)))))))
+    return out

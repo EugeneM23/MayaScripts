@@ -19,6 +19,7 @@ ARM_QUIET = 2.0                           # deg: an arm's own swing under this t
 FLAT_TOL = 3.0                            # deg: a sole this near the floor is flat (Foot flat)
 TOE_FLAT = 20.0                           # deg: Toe out is read on the planted frames the sole stands this flat (a
 #                                           foot standing on its toes reads its yaw off a short, turning toe line)
+DIAG_PASSING = 18.0                       # deg: past this the diagnosis says the passing knee is bent
 KNEE_SOFT = 0.04                          # a leg eases into its reach from this share below it (the engine's knee_soft)
 WHIP_DRAG = 1.5                           # frames: the arms' and the trunk's springs under Whip
 WHIP_HEAD = 2.0                           # frames: the head's
@@ -173,6 +174,11 @@ PARAMS = (
           tip="The swinging foot's path bowed out to its side (+) or in, mid-flight"),
     Param("knee_bend", LEGS, "Knee bend", "deg", "offset", sided=True, rule=lambda b, leg: (b, max(b + 1.0, 70.0)),
           tip="A planted knee is never straighter than this: the pelvis sinks where it would be"),
+    Param("passing_knee", LEGS, "Passing knee", "deg", "offset", sided=True,
+          rule=lambda b, leg: (1.0, max(b, 2.0)),
+          tip="How bent the standing knee is at the passing - the instant the other foot crosses it. Its own "
+              "value is what the cycle does; dial it down and the hips rise there (the bob grows) until that "
+              "knee lands on it, as far as the legs leave room. Knee bend, the opposite ask, wins over it"),
     Param("leg_match", LEGS, "Leg match", "", "added", rule=_fixed(0.0, 1.0), default=1.0,
           tip="Running, a side-on pose's hips face the run and its knees keep their splay x 1 / (1 + Fr)"),
     Param("leg_turn", LEGS, "Leg turn", "x", "added", sided=True, rule=_fixed(0.0, 2.0), default=1.0,
@@ -396,6 +402,32 @@ def _knee_bend(c, side):
     return np.degrees(np.arccos(np.clip(np.sum(u * v, axis=1), -1.0, 1.0)))
 
 
+def _passing_knee(c, side):
+    """The stance knee's bend (deg) at the passing phase - the instant the other ankle crosses this one along
+    the travel, inside each of this foot's contacts, the contact's own middle where a flight leaves no crossing;
+    the contacts' mean. The straightest a planted knee gets (knee_bend) is not this: a cycle can be straighter
+    at its toe-off, and a crouched one straighter at its contacts than at its passing (2026-11-02)."""
+    bend = _knee_bend(c, side)
+    other = "r" if side == "l" else "l"
+    mine, theirs = c.p("foot_" + side) @ c.basis[0], c.p("foot_" + other) @ c.basis[0]
+    d = mine - theirs
+    n = c.n
+    crossings = []
+    for f in range(n):
+        g = (f + 1) % n
+        if d[f] == 0.0:
+            crossings.append(float(f))
+        elif (d[f] < 0.0) != (d[g] < 0.0):
+            crossings.append(f + abs(d[f]) / max(abs(d[f]) + abs(d[g]), 1e-12))
+    out = []
+    for hs, to in (c.contacts[side] or []):
+        inside = [x for x in crossings if 0.0 <= (x - hs) % n <= (to - hs)]
+        out.append(c.at(bend, inside[0] if inside else hs + 0.5 * (to - hs)))
+    if not out:
+        return float(bend.min())
+    return float(np.mean(out))
+
+
 def _arm(c, side):
     """(forward angle, out angle, elbow bend) series of an arm (degrees)."""
     sign = 1.0 if side == "l" else -1.0
@@ -491,7 +523,8 @@ def measure(walk, worlds, contacts):
     # the feet
     across = {}
     sided = dict((name, {}) for name in ("ground_time", "push", "heel_strike", "foot_flat", "foot_lift", "toe_out",
-                                         "swing_out", "knee_bend", "arm_swing", "arm_lag", "arms_forward", "arm_out",
+                                         "swing_out", "knee_bend", "passing_knee", "arm_swing", "arm_lag",
+                                         "arms_forward", "arm_out",
                                          "elbow", "elbow_swing", "elbow_lag"))
     for s in SIDES:
         sign = 1.0 if s == "l" else -1.0
@@ -515,6 +548,7 @@ def measure(walk, worlds, contacts):
         sided["swing_out"][s] = _swing_bow(c, ank, down, sign)
         bend = _knee_bend(c, s)
         sided["knee_bend"][s] = float(bend[down].min()) if down.any() else float(bend.min())
+        sided["passing_knee"][s] = _passing_knee(c, s)
         if c.has("upperarm_" + s, "lowerarm_" + s, "hand_" + s):
             fwd, side_out, bend_a = _arm(c, s)
             sided["arm_swing"][s] = c.p2p(fwd)
@@ -813,6 +847,9 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["swing_out" + sfx] = sv("swing_out") - so("swing_out")
         knee = sv("knee_bend")
         e["knee_bend" + sfx] = _knee_cap(walk, s, knee) if knee > so("knee_bend") + 0.25 else 0.0
+        # Passing knee only ever straightens: an ask no straighter than the cycle's own is nothing to do
+        passing = sv("passing_knee")
+        e["passing_knee" + sfx] = passing if passing < so("passing_knee") - 0.25 else 0.0
         e["leg_turn" + sfx] = sv("leg_turn")
         e["knee_foot" + sfx] = sv("knee_foot")
         g = _ratio(sv("arm_swing"), so("arm_swing"), ARM_QUIET)
@@ -1271,9 +1308,16 @@ def diagnose(measured, own_values=None, info=None, run=None, leg=0.0, fps=30.0):
         out.append(Finding("physics", "Physics gave way: the pelvis lowered %.1f cm for the legs' reach - the "
                            "step, the ground time or the height asked more than the legs reach" % lowered, {}))
     knees = [m.get("knee_bend_l", 90.0), m.get("knee_bend_r", 90.0)]
-    if min(knees) < 5.0:
+    asked = ((info.get("passing") or {}).get("asked") or {})
+    if min(knees) < 5.0 and not asked:
         out.append(Finding("straight_knee", "A planted knee within %.1f deg of straight (a click waits there)"
                            % min(knees), {"knee_bend": 6.0}))
+    # a walk on bent knees at the passing: a real person's standing leg looks straight there (run is the
+    # engine's own flight test - a run's stance knee is bent by its physics, and a crouched pose's by the pose)
+    passing = [m.get("passing_knee_l", 0.0), m.get("passing_knee_r", 0.0)]
+    if not run and not asked and min(passing) > DIAG_PASSING:
+        out.append(Finding("bent_passing", "The standing knee is %.0f deg bent at the passing (a walking "
+                           "person's looks straight: 5-15)" % min(passing), {"passing_knee": 8.0}))
     if float(info.get("short", 0.0) or 0.0) > 0.5:
         out.append(Finding("foot_short", "A planted foot falls %.1f cm short of its print" % info["short"], {}))
     return out
