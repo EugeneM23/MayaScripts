@@ -332,5 +332,11 @@ class Words(unittest.TestCase):
         line = wo.entered_message("Sword", [], wo.Settings(1.0, 1.0, 80.0), "spine_03", None)
         self.assertIn("no keys of its own", line)
 
+    def test_the_identity_does_not_claim_the_grip_slides(self):
+        #  nothing slides at 1 / 1 / 0, so the note would be a lie about that press
+        line = wo.entered_message("Sword", [0.0], wo.IDENTITY, "spine_03", "R")
+        self.assertNotIn("slides in the grip", line)
+        self.assertIn("the identity", line)
+
     def test_left_names_the_weapon(self):
         self.assertIn("Sword", wo.left_message("Sword"))

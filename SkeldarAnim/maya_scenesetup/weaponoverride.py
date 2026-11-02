@@ -186,7 +186,9 @@ def entered_message(label, keys, settings, carrier, held):
              "no keys of its own: set at the current frame"]
     if is_identity(settings):
         notes.append(IDENTITY_NOTE)
-    if held:
+    elif held:
+        #  only where the numbers actually move the weapon: at the identity nothing
+        #  slides, and the note would be a lie about the press just made
         notes.append(HELD_NOTE % ("right" if held == "R" else "left"))
     return "%s (%s)" % (head, ", ".join(notes))
 
