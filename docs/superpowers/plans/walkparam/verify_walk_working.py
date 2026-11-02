@@ -267,12 +267,18 @@ if cmds.objExists(plug):
     cmds.setAttr(plug, cmds.getAttr(plug) + 10.0)
 line = meanrig.update()
 print(line)
-gate(not sw.mp.is_empty(sw.edits_of(B)["fix"]) and digest(WALK_FILE) == FILE_HASH,
-     "the mean pose's turn is B's correction; the walk's file unchanged")
+# since 2026-11-02 the mean pose's correction is the key poses' whole-cycle entry, laid on every frame of the
+# evaluated animation (its own proof: verify_walk_rig_pose_layer.py)
+cycle = (sw.edits_of(B)["keys"] or {}).get(kp.CYCLE) or kp.empty_key()
+gate(not kp.key_empty(cycle) and sw.mp.is_empty(sw.edits_of(B)["fix"]) and digest(WALK_FILE) == FILE_HASH,
+     "the mean pose's turn is B's whole-cycle entry, the old correction untouched; the walk's file unchanged")
 
-# ---- Reset key poses: B's key edits gone ----
+# ---- Reset key poses: B's key edits gone, its mean pose correction kept ----
 print(keyrig.reset(B))
-gate(kp.is_empty(sw.edits_of(B)["keys"]), "Reset key poses drops B's key edits")
+keys = sw.edits_of(B)["keys"] or {}
+gate(all(kp.key_empty(keys[k]) for k in kp.KEYS if k in keys)
+     and not kp.key_empty(keys.get(kp.CYCLE) or kp.empty_key()),
+     "Reset key poses drops B's key edits and keeps its mean pose correction")
 print(keyrig.delete(B))
 print(meanrig.delete(B))
 gate(not keyrig.rigs() and not meanrig.rigs(), "Delete takes the rigs out")

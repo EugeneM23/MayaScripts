@@ -17168,3 +17168,65 @@ animator's to shorten where the line says the legs ran out.
      ask ever landed. Every gate was green - they measured the depth and the jerk, each against its own
      bound, and neither reads a ramp's SHAPE. Build a quantity in the unit its consumer judges it in; where
      two channels feed one result, pace them off ONE reference, computed once, from the state the judge uses.
+
+## Walk Builder: the rig pose on the additive pose, acting as a top layer (2026-11-02)
+
+The animator, their Maya on port 7002: «Давай сделаем так что бы наша риг поза в walk builder строилась с
+учетом адитивной позы и влияла на всю анимайию как верхний слой». Asked: the pelvis's move stays **in the
+layer** (not in the Height / Forward parameters, which `keyrig.split_common` does for the four keys), and an
+old correction on walkers already processed is **left where it is read today**. Spec
+`docs/superpowers/specs/2026-11-02-walk-rig-pose-top-layer-design.md`, plan beside it. **This replaces what
+the 2026-10-15 mean pose rig section says about where the rig stands and where its correction goes.**
+
+**Two halves of one defect, read off the code.** The rig stood in `meanpose.mean_pose(walk, fix)` - the mean
+pose of the walk's own cleaned clip - so the additive pose, the parameters and the physics were not in what it
+showed; and its correction went in through `meanpose.correct` **before the analysis**, where a pose's own means
+then replace the walk's. The model says it itself for the legs («the correction's turns, giving way to a pose's
+own at its share», `own_k = (1.0 - ctx["alpha"])`), and the spine map takes the upper body: at **Pose share 1** -
+the animator's own case - the whole correction read as nothing. Measured: the same 20 deg put the old way moves
+the walker's bone **0.03 deg**.
+
+**The correction is the key poses' fifth entry, `keyposes.CYCLE` ("cycle")**, applied at every frame of the
+evaluated animation - the road `keyposes.on_result` has carried the four keys since 2026-10-27, so nothing new
+is written about legs (the turns in the parent's frame, the pelvis over the root, the feet's prints, the knees):
+- `cycle_values(entry, walk)` is the entry as `knots`' own values and is **never mirrored** - a mean-pose edit
+  of the left arm holds the left arm through the whole cycle, where a key's swaps sides on the other foot's step;
+  `_plus` adds it to every frame, `stance_prints` takes it unmirrored beside the keys' mirrored ones;
+- `correct(clip, keys, steps, walk)` takes `steps=None` and `on_result` hands the result back as a walk even
+  when `find` refuses: **the mean correction needs no step detection**;
+- `increment(..., planted=True)` reads every foot as planted - a mean pose has no foot in the air, so a move
+  along the ground is its print and a turn about up its toe-out (a lift is refused by name, as ever);
+- `summary(keys, only=KEYS)` lets a line name the four keys apart from it.
+- **`meanrig`**: `press` reads the walker's animation with its steps and stands the rig in
+  `mean_pose(result_of(anim))` - the mean pose of what the walker SHOWS, from `anim.moving` (every standing
+  correction in it, before In place); `update` measures base and rig against that same reading and adds
+  `increment(CYCLE, ..., frame=0, planted=True)` to `edits["keys"]`. The upper body lands exactly: a constant
+  right multiplication commutes with the Karcher mean on SO(3) (measured, 20.00 deg back).
+- **The two Resets stop sweeping each other**: Reset key poses drops the four keys alone, Reset rig pose the
+  cycle entry and the old `fix` - it is the «drop the correction» button.
+- **Left alone**: `meanpose.correct` in `load_walk` and `Walk.fix` in the model, with the model's own mixing
+  against a pose's share. Nothing in `model.py` changed; the press line names an older correction apart.
+- **The cost, stated**: the correction no longer goes through the model's smarts, so a pelvis raised on the
+  result can ask a leg past its reach - the layer's leg solve stands it straight at the ankle and the line says
+  so (the key poses' own cost since 2026-10-27). The Height parameter stays the road for a hips change that
+  should be paid for.
+
+Proof: `docs/superpowers/plans/walkparam/verify_walk_rig_pose_layer.py` - **0 of 22 gates, mayapy standalone**,
+two Manny UE5 skeletons walking `asd` under the two-handed sword pose **at share 1**, every gate measuring the
+walker's own keys: the rig stands in the mean pose of the result (worst upper local **0.0001 deg**) and that
+stands **76.9 deg** from the cycle's own mean pose; an arm turned 20 deg on the rig reaches the walker
+**20.00..20.00 deg over all 32 frames**, with the control that the same correction put the old way reads
+**0.03 deg**; the layer taken off and put back; the rig stood again reads nothing (the round trip closes); the
+pelvis +3 cm rises **+3.00 cm on every frame** with the planted foot still to **0.000 cm**; a foot turned is its
+print (14.3 deg out, no free move) and the walker's foot takes it; the head's 10 deg holds on every frame under
+a key pose's edit, which lands exactly at its contact (15.00 of 15 asked); both Resets; the other walker
+untouched key for key and nothing written beside the library's walk. Also green: `verify_walk_working.py`
+**24/24** (its gates 21 and 22 now ask for the cycle entry), `verify_walk_keys_changed.py` 0 of 23,
+`verify_walk_straight_leg.py` and `verify_walk_own.py` failing exactly what they fail on the commit before
+([25] and [10, 19]); `tests/test_walk_rig_pose_layer.py` (27) and the walk suite's 1065 tests.
+`verify_walk_keyposes.py` / `verify_walk_meanpose.py` still call the rigs with a walk's name: history since
+2026-10-27. **Not seen in a GUI Maya**: the animator's own press on port 7002.
+
+On the way, a trap of my own making: `increment`'s new `planted` parameter was shadowed by the loop's own
+`planted = max(heel, ball) > 0.5`, so the first standing foot made every later side read as planted - the
+keyrig suite caught it on the first run. A parameter and a per-iteration verdict do not share a name.
