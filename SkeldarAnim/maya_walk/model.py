@@ -187,6 +187,13 @@ PLANTED_SOFT = 0.012      # knee_soft for a planted leg: it eases into its limit
 STRAIGHT_KNEE = 12.0      # deg: a raised Height lets a planted knee straighten to this...
 STRAIGHT_FULL = 10.0      # ...all of it once Height asks this many cm
 STRAIGHT_SOFT = 1.0       # the share of the soft zone a full straightening takes away
+#  Passing knee (2026-11-02): a planted leg straightens to the asked bend around the middle of its own contact -
+#  the passing phase, where the other leg is in the air and the hips are free to rise over a straight leg. The
+#  window rises over the first STRAIGHT_EDGE of the contact and falls over the last (the double supports at its
+#  ends are where the other leg stands at its own limit and allows no lift)
+STRAIGHT_EDGE = 0.3
+STRAIGHT_LIFT_MAX = 15.0  # cm: the most the hips are lifted for it, whatever the ask
+LEG_STRETCH_MAX = 0.5     # the most Leg stretch may grow a leg (the knob's own range caps it at 0.25)
 HEIGHT_KEEP = 0.2         # Height's step: a raise losing more than this share of itself to the legs' reach...
 HEIGHT_STEP_FLOOR = 0.6   # ...shortens the step (Height's own, not the animator's Step) to this at most
 HEIGHT_STEP_GAIN = 1.5    # cm: ...when the shortest step would keep at least this much more of the raise
@@ -498,6 +505,64 @@ def warp(phi, beta, phi0, strides=1):
     """The bob's clock: slowest (slope 1 - beta) a quarter and three quarters of a stride after phi0 (a cycle
     of `strides` strides)."""
     return phi + beta / (4.0 * math.pi * strides) * math.sin(4.0 * math.pi * strides * (phi - phi0))
+
+
+def straight_ratio(bend, l1, l2):
+    """The hip-to-ankle distance over a leg's length (l1 + l2) at a knee bent `bend` degrees: 1 dead straight,
+    less as it bends (the law of cosines over the two bones)."""
+    c = math.cos(math.radians(bend))
+    return math.sqrt(max(l1 * l1 + l2 * l2 + 2.0 * l1 * l2 * c, 0.0)) / (l1 + l2)
+
+
+def knee_bend_at(ratio, l1, l2):
+    """The knee's bend in degrees (0 straight) at a hip-to-ankle distance of `ratio` x (l1 + l2). Near straight
+    the knee is a square root of its reach (trap 266): on an 85 cm leg a centimetre of hip is fifteen degrees
+    of knee, which is why the lift that straightens a passing leg is small and must move smoothly in time."""
+    d = ratio * (l1 + l2)
+    c = (d * d - l1 * l1 - l2 * l2) / (2.0 * l1 * l2)
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def passing_share(r, length, edge=STRAIGHT_EDGE):
+    """How far a planted leg may straighten `r` frames past its strike in a contact `length` frames long:
+    nothing at the strike and at the lift-off, all of it across the middle, smoothstep in and out over `edge`
+    of the contact."""
+    if length <= 0.0 or r <= 0.0 or r >= length:
+        return 0.0
+    u = min(r, length - r) / (edge * length) if edge > 0.0 else 1.0
+    if u >= 1.0:
+        return 1.0
+    return u * u * (3.0 - 2.0 * u)
+
+
+def smooth_under(room, sigma):
+    """A smooth periodic curve lying under `room` (one value a frame, >= 0): the room narrowed to the least of
+    its neighbours within `sigma` frames, then blurred with a Gaussian of `sigma` truncated at that same reach -
+    so every value the blur means over is under the room at that frame, and the curve can never lean on a frame
+    that allows less. smooth_cover's mirror: a cover is the least smooth curve over its needs, this the most
+    under its room."""
+    room = np.asarray(room, float)
+    n = len(room)
+    if n == 0 or room.max() <= 1e-9:
+        return np.zeros(n)
+    reach = max(1, int(round(sigma)))
+    narrow = np.min([np.roll(room, s) for s in range(-reach, reach + 1)], axis=0)
+    offsets = np.arange(n)
+    distance = np.minimum(offsets, n - offsets)
+    kernel = np.where(distance <= reach, np.exp(-0.5 * (distance / max(sigma, 1e-6)) ** 2), 0.0)
+    blur = np.real(np.fft.ifft(np.fft.fft(narrow) * np.fft.fft(kernel / kernel.sum())))
+    return np.maximum(np.minimum(blur, room), 0.0)
+
+
+def lift_to(q, up, target):
+    """How far the hip must rise (cm, + up) for its distance to the ankle to be `target`: the smaller root of
+    |q - x . up| = target, with `q` the ankle against the hip as it stands. None where no height reaches it
+    (the ankle lies further aside than the target)."""
+    qu, qq = float(np.dot(q, up)), float(np.dot(q, q))
+    disc = qu * qu - qq + target * target
+    if disc < 0.0:
+        return None
+    return qu + math.sqrt(disc)
 
 
 def smooth_cover(need, sigma):
