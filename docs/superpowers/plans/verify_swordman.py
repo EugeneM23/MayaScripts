@@ -727,5 +727,30 @@ gate(17, not cam_rig and not cam_skel and not found and "camera_root" in refusal
      "his camera bones are gone (rig %d, skeleton %d) and Camera Setup refuses by name: %r"
      % (len(cam_rig), len(cam_skel), refusal[:90]))
 
+# 18. A prop that arrives ANIMATED ignores where Add Weapon stands it: its curves
+# take the node over on the first evaluation, wherever the press put it. His source
+# scene keys both props, and every Swordman export before 2026-11-02 carried those
+# 9 curves - which is what he saw as "the sword and shield face the wrong way",
+# and what no gate could see, because a gate reads the scene before it evaluates.
+# Every other catalog weapon's file has none.
+animated = {}
+for key in sorted(PROPS):
+    row = catalog.by_key(key)
+    before = set(cmds.ls(long=True))
+    mel.eval("FBXResetImport")
+    mel.eval('FBXImport -f "%s"' % row.path.replace("\\", "/"))
+    fresh = [n for n in cmds.ls(long=True) if n not in before]
+    animated[key] = [n for n in fresh if cmds.nodeType(n).startswith("animCurve")]
+    for node in [n for n in fresh if cmds.objExists(n) and cmds.ls(n, assemblies=True)]:
+        cmds.delete(node)
+    for node in [n for n in fresh if cmds.objExists(n)
+                 and cmds.nodeType(n).startswith("animCurve")]:
+        cmds.delete(node)
+gate(18, not any(animated.values()),
+     "neither file carries animation (%s): a keyed prop would ignore the press and "
+     "snap to its own curves on the first evaluation"
+     % ", ".join("%s %d" % (catalog.by_key(k).label, len(v))
+                 for k, v in sorted(animated.items())))
+
 print("FAILED gates: %s" % FAILS if FAILS else "ALL GATES PASSED")
 maya.standalone.uninitialize()

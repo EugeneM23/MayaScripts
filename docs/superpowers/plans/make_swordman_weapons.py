@@ -195,10 +195,20 @@ def export(mesh_name, bone_name, file_name, out_name):
         if top != keep and leaf(top) not in ("persp", "top", "front", "side"):
             cmds.delete(top)
     keep = cmds.ls("*" + mesh_name, long=True, type="transform")[0]
+    #  his source scene keys these props (measured 2026-11-02: 9 curves on each),
+    #  and a weapon that arrives ANIMATED ignores where Add Weapon stands it -- the
+    #  curves take the node over on the first evaluation. Cut them before the
+    #  channels are zeroed, or the zeros are written into a curve instead.
+    cmds.cutKey(keep, clear=True)
     for attr, value in (("translate", (0, 0, 0)), ("rotate", (0, 0, 0)),
                         ("scale", (1, 1, 1)), ("shear", (0, 0, 0)),
                         ("rotateAxis", (0, 0, 0))):
         cmds.setAttr(keep + "." + attr, *value)
+    left = cmds.listConnections(keep, type="animCurve", source=True,
+                                destination=False) or []
+    if left:
+        raise RuntimeError("%s still carries %d animCurve(s): %s"
+                           % (file_name, len(left), left[:4]))
     shape = shape_of(keep)
     om.MFnMesh(om.MSelectionList().add(shape).getDagPath(0)).setPoints(
         om.MPointArray(local), om.MSpace.kObject)
@@ -222,6 +232,8 @@ def export(mesh_name, bone_name, file_name, out_name):
     cmds.loadPlugin("fbxmaya", quiet=True)
     mel.eval("FBXResetExport")
     mel.eval("FBXExportSmoothingGroups -v true")
+    #  and no animation in the file at all: belt and braces beside the cut above
+    mel.eval('FBXProperty "Export|IncludeGrp|Animation" -v false')
     mel.eval("FBXExportSkins -v false")
     mel.eval("FBXExportShapes -v false")
     mel.eval("FBXExportInputConnections -v false")

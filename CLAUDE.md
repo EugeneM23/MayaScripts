@@ -16846,10 +16846,19 @@ Swordman_Rig_Character а меч Swordman_Rig1_Character. ТАк-же давай
   That fold was reverted. A weapon space is constrained to its hand with no offset, so the prop's
   matrix in the HAND's frame is the same in any pose: that is the seat, and
   `docs/superpowers/plans/swordman_seats.py` holds the two he set (16 floats each, scale stripped).
+- **Both his props were EXPORTED ANIMATED, and that was the whole of what he saw** (trap 326,
+  found 2026-11-02 after the fold was already in): his source scene keys the sword and the shield,
+  the exporter wrote those keys, and every Swordman asset since the character shipped carried **9
+  animCurves** — so on the first evaluation after an Add the curves took the node over and the prop
+  stood wherever they said, whatever Add Weapon had just placed. Every other catalog weapon's file
+  carries none. `export()` cuts the prop's keys and refuses a node that still has one, the export
+  writes no animation at all (`FBXProperty "Export|IncludeGrp|Animation" -v false`), and the files
+  are 23.8 / 24.1 KB where they were 38 / 39.
 - **His seat is folded into the points** (`make_swordman_weapons.py`): the delta between it and
-  where Add Weapon stands the prop today — the default read through `grips.for_hand` on the source
-  skeleton itself, so it cannot drift from the press — turned the **sword 52.19° / 1.41 cm** and the
-  **shield 170.95° / 6.82 cm**. The shield's ~171° IS that mirror: the asset had been cut for zero
+  where Add Weapon stands the prop today — read off the SHIPPED RIG in a scratch scene with both
+  hands empty (`defaults_from_the_rig`), which is the state a colleague's first Add meets, never
+  from his source scene, where the sword's own frame built `weapon_r` and the skeleton stands posed
+  — turned the **sword 52.19° / 1.41 cm** and the **shield 170.95° / 6.82 cm**. The shield's ~171° IS that mirror: the asset had been cut for zero
   grip while Add gives a left-hand weapon the mirror, which is what he saw as backwards. Not the
   row's `frame`, which is a rotation and carries neither his 1.41 nor his 6.82 cm. The cost, stated:
   his two models no longer lie blade +Y (his seat is in their points), so `make_weapon_icons.py`'s
@@ -16875,14 +16884,17 @@ Swordman_Rig_Character а меч Swordman_Rig1_Character. ТАк-же давай
   `make_swordman_spine_skin.py`'s text check then refuses the asset over six lines of pose it
   cannot explain; that check now knows a dagPose's own `.g` flag array may be written afresh when
   an influence joins.
-Proof: `verify_swordman.py` **17 of 17** on `am_Orc_Loco_Walk_Fwd_NoRM` — gates 7 and 8 press
-`equip.to_hand`, the road Weapons > Add and the inventory both take, and measure the VERTICES
-(a fold moves the model inside the node, so a gate on the node's own matrix cannot see it and
-read as the whole delta failing): every one of 33 lands **1.3e-5 cm** from where he set it, 23.7
-cm (shield) and 79.1 cm (sword) from where his source file held it; gate 9's `span` is the point
-set's DIAMETER now, which is what a size means for a prop that stands turned; 16 the fingers, 17
-the camera bones and the refusal. 13493 unit tests with the one known `test_chat_deploy.Keys`
-failure. **A Swordman added before this has the fingers, the camera bones and the old seats:
+Proof: `verify_swordman.py` **18 of 18** on `AS_2HS_Walk_Loop_F` — gates 7 and 8 press
+`equip.to_hand`, the road Weapons > Add and the inventory both take, in BOTH orders (the left
+hand's mirror grip is computed from the two drive bones' sockets, so the order could have
+mattered; it does not), and measure the VERTICES (a fold moves the model inside the node, so a
+gate on the node's own matrix cannot see it and read as the whole delta failing): the worst of
+the two orders lands every one of 33 within **1.4e-5 cm** of where he set it, 23.7 cm (shield)
+and 79.1 cm (sword) from where his source file held it; gate 9's `span` is the point set's
+DIAMETER now, which is what a size means for a prop that stands turned; 16 the fingers, 17 the
+camera bones and the refusal; **18 reads both FILES and asks for no animation in them** — the
+guard for trap 326, and it fails on every asset this character shipped with (9 curves each).
+13493 unit tests with the one known `test_chat_deploy.Keys` failure. **A Swordman added before this has the fingers, the camera bones and the old seats:
 re-add him and add his props again.**
 
 324. **A grip stored on a weapon node is not a grip the animator dialled.** `apply_grip` writes
@@ -16900,6 +16912,18 @@ re-add him and add his props again.**
      `node_world · hand_world⁻¹` is the prop's seat, the same at every frame and in any pose, and
      the difference between two of those matrices is the edit. Strip its scale first — the rig's
      own chain leaves 4e-6 on a weapon node, and a seat must not resize the model.
+
+326. **An exported prop can carry its source scene's KEYS, and an animated weapon ignores where
+     the tool puts it.** Both Swordman props came out of his scene keyed, the FBX exporter wrote
+     the curves (animation is on by default), and from then on every Weapons > Add imported a node
+     whose 9 animCurves took it over on the first evaluation — the press placed it correctly and
+     the curves moved it back. The animator saw «меч и щит смотрят не в ту сторону»; nothing in
+     the plugin was wrong. **No gate could see it**: a verify measures right after the press,
+     before anything evaluates, so the written world still stood and the geometry read exact — and
+     a live scene (a viewport, or any `currentTime` of ours) evaluates at once. Cut a prop's keys
+     before exporting it, refuse a node that still has one, switch the exporter's animation off,
+     and GATE THE FILE (`FBXImport` it and count animCurves) rather than the placement alone.
+     Measured 2026-11-02: his two files 9 curves each, every other catalog weapon 0.
 
 310. **A character scene is saved in whatever pose it was left in, and a size gate cannot see a
      place.** The Swordman's file holds him 110 cm forward of his bind; the build restored the
