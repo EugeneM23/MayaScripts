@@ -277,3 +277,32 @@ else — and if it fails one of them the material model is wrong, not the tuning
 Plus mass conserved to a fraction of a percent over a thousand frames, zero NaN resets at the
 preset settings, and a frame time the panel reports honestly on the integrated GPU it is being
 measured on.
+
+## Addendum: what was measured (2026-11-03)
+
+The four behaviours above, judged on the integrated Xe at 13k particles on a 64 cell grid, the
+Kissel preset. The mounds are read off the position buffer (every particle buffer is `COPY_SRC`,
+which is the bake's own read path) rather than by eye.
+
+1. **The stream coils** — but only after the nozzle was moved. It poured from 0.82 of the domain
+   at 0.75 of it a second: the fluid arrives at the speed the CFL cap allows and splats into a
+   flat torn puddle. From 30 cm at 6 cm/s the same kissel lays itself down in stacked folds. The
+   height and the flow are sliders now; how far it falls is a thing about the shot.
+2. **The mound holds**, by number — 98th-percentile height above the floor, and the radius holding
+   90 % of the material: water **0.15 cm / 36 cm**, kissel **3.0 cm / 16 cm**, jelly
+   **5.7 cm / 5.9 cm**.
+3. **The strand snaps and the pool heals**: at hand radius 5, strength 0.75, the lift gave two
+   lumps (an occupancy flood fill) at 33 cm, and one lump back at its settled spread 5 s after
+   letting go. The hand is a sphere that drags, so the regime matters: wide and gentle carries the
+   whole pool up without tearing, narrow and hard shreds it into patches that stay torn — which is
+   what a yielded material does.
+4. **It clings, and it does not hang.** Thrown at a wall, 31 % of it is still against the wall 6 s
+   later at stickiness 0.6 against 0 % at 0.02; nothing stays above 12 cm either way. Hanging on a
+   vertical wall wants the yield to beat gravity in a thin film — a much higher yield than a 3 cm
+   mound holds.
+
+And the one thing that was wrong with the page rather than with the fluid: the loop ran one more
+time on every displayed frame (two `requestAnimationFrame` chains), so a minute in a single frame
+carried thousands of solver steps. It never showed in the pane it was built in, where rAF does not
+fire at all. The driver, the back pressure, the honest readout and the governor are written up in
+CLAUDE.md with the numbers; after them it is 45 fps, 23 ms a frame, 9.2 ms of it the solver.

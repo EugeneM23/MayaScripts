@@ -17486,3 +17486,96 @@ Spec `docs/superpowers/specs/2026-11-02-walk-one-arm-out-of-the-pose-design.md`.
   `['torso','pelvis','knees','arm_l','arm_r','feet']` written back), the body named bone by bone and the
   library's walk file untouched. `tests/test_walk_one_arm.py` (20). **Not seen in a GUI Maya**: the two
   chips under a real press are the animator's, after Check update.
+
+## Slime in the browser: an MLS-MPM prototype for kissel (2026-11-02/03)
+
+The animator: «сделай прототип симуляции в браузере а потом подумаем как запекать. Мне прежде
+всего нужна жидкость похожая на слизь, кисель», then «Делай как можно лучше я в этом ничего не
+понимаю все на твое усмотрение». Spec
+`docs/superpowers/specs/2026-11-02-slime-webgpu-prototype-design.md`, plan beside it; the page is
+`docs/superpowers/plans/slime/web/` (`python serve.py`, then the address it prints — a `file://`
+page cannot load its own scripts). **Baking is not built**: the animator deferred it («а потом
+подумаем»), and the position buffer is laid out for it (every particle buffer is `COPY_SRC`, so a
+frame of a point cache is one `copyBufferToBuffer` away — that read path is what measured the
+mounds below). Chrome or Edge only: the page says so where `navigator.gpu` is missing.
+
+**The third attempt at this material**, and the first two are in the same folder: `slime_fx.py`
+and `slime_spray.py` (2026-10-28) both failed on the MATERIAL, not the plumbing — nParticles has
+no dial that says «hold your shape a little, then flow thickly». That dial is what the prototype
+is built around: MLS-MPM with a von Mises yield and Herschel–Bulkley relaxation, so water, honey,
+kissel, slime, jelly and mud are four numbers apart, and **Yield is the kissel slider** — in
+centimetres of mound, because a pile stands until the shear at its base beats the yield, which at
+unit density is g·h, so the slider can say «holds 6 cm» and mean it.
+
+**The four behaviours the spec says separate kissel from everything else, measured 2026-11-03** on
+the integrated Xe (13k particles, a 64 cell grid, the Kissel preset), the mounds read off the
+position buffer rather than by eye:
+
+- **a poured stream coils.** It did not at first: the nozzle poured from 0.82 of the domain at
+  0.75 of it a second, so the fluid arrived at the speed the solver caps it at and splatted into a
+  flat torn puddle. From 30 cm at 6 cm/s the same kissel lays itself down in stacked folds. Both
+  are sliders now (Высота струи, Напор) — how far it falls is a thing about the shot, not about
+  the material, and the spec calls the pour the most diagnostic thing in the sandbox, so it has to
+  coil out of the box;
+- **a dropped blob holds a mound**: 98th-percentile height above the floor and the radius holding
+  90 % of it — **water 0.15 cm / 36 cm** (out to the walls), **kissel 3.0 cm / 16 cm**, **jelly
+  5.7 cm / 5.9 cm**. One solver, three materials, by the sliders alone;
+- **a pulled strand thins and snaps, and the pool heals**: the hand at radius 5 and strength 0.75
+  lifted a blob to 33 cm in **two lumps** (an occupancy flood fill), and 5 s after letting go it
+  was **one lump** back at the spread it settled at. The hand is a sphere that drags, so the
+  regime matters and is worth knowing: a wide gentle hand (radius 8, strength 0.5) carries the
+  whole pool up without tearing, a narrow hard one (radius 4, strength 0.9+) shreds it into
+  patches that do not heal — a yielded material keeps the shape it was torn into;
+- **it clings to a wall, partly.** Thrown at a wall, **31 % of it is still against the wall 6 s
+  later at stickiness 0.6 against 0 % at 0.02** — the slider does what it says. But nothing hangs:
+  0 % stays above 12 cm either way, it creeps down and pools at the foot. Hanging on a vertical
+  wall needs the yield to beat gravity in a thin film, which is a much higher yield than a 3 cm
+  mound; the Slime preset is the place to look for it.
+
+**The page was a frame a minute, and it was ours** (2026-11-03, the animator: «1 кадр в минуту
+просчитывается»). Not the GPU: **the loop ran one more time on every displayed frame**.
+`startDriver`'s own `requestAnimationFrame` chain called `loop()`, and `loop()` ended by queueing
+itself — two chains, so the calls went 1, 2, 3, 4 … a frame, each one a full solver step and a
+full render. A minute in, one displayed frame carried thousands of them. **It could not show
+where it was built**: in an embedded browser pane rAF does not fire at all and only the timer
+fallback ran, which is a single chain. Proved on a stubbed frame queue running the shipped
+pattern — `[1,2,3,4,5,6,…]` against `[1,1,1,…]` with one chain — and on the fixed page, which
+reads 1 on every frame. **A driver owns the re-queue; nothing else may.**
+
+Three things beside it, because the readout is what hid the growth for a day:
+
+- **the panel's fps was how often the loop was ENTERED.** WebGPU submits without blocking, so a
+  loop running at 60 Hz in front of a GPU doing 2 reports 60 fps while the picture falls minutes
+  behind — the queue grows without bound and it reads as «frozen», not as «slow». A frame is
+  measured where it ends now (`queue.onSubmittedWorkDone`) and **no new frame is queued while one
+  is still on the GPU**, so a slow machine runs the fluid in honest slow motion;
+- **the governor judges GPU time, not the wall clock.** The time between two finished frames also
+  holds everything that is not work: a page the compositor is not showing reads 43 ms a frame for
+  12 ms of GPU, and a background tab 700 ms for 8 ms — fed that, auto quality walked the picture
+  down to its ugliest for nothing. The renderer times itself now (a `timestamp-query` across its
+  first and last pass, the way the solver already did) and `document.hidden` is only the fallback
+  where the timestamps are missing — **it is false for a background tab in an embedded pane**,
+  which is how this was found;
+- **and the governor stops pulling when the picture is not the cost.** Its levers are all pixels
+  (resolution, then the surface filter, then the thickness pass, with a hard ceiling on the canvas
+  — a maximized window on a 4K screen was asking for eight megapixels through every screen-space
+  pass). Measured here, a 1239×833 frame is **2.9 ms of picture against 9.2 ms of solver**, so
+  turning the picture to its ugliest buys two milliseconds of fifty: past two steps down it holds
+  and says «не успевает решатель — убавьте частиц, подшаги или сетку» instead. It never touches
+  the grid or the particle count — those reallocate, and a sandbox that throws the simulation away
+  when it gets slow is worse than a slow one.
+
+After: **45 fps, 23 ms a frame, 9.2 ms of it the solver**, 13k particles on a 64 cell grid, mass
+conserved and zero NaN resets through every measurement above.
+
+329. **Two chains that each re-queue the loop breed, and a pane that does not run
+     requestAnimationFrame hides it.** The growth is one extra call a frame, so the page is fine
+     for ten seconds, poor after thirty and dead after a minute — which reads as a slow GPU and
+     not as a bug. And an fps counter that counts loop entries cannot see it: WebGPU never blocks,
+     so the loop keeps its 60 Hz while the queue runs away. Count the loop against a frame, and
+     measure a frame where the GPU finishes it.
+330. **The wall clock between two finished frames is not what a frame costs.** It holds the
+     compositor's throttle for a page nobody is looking at (700 ms for 8 ms of work in a
+     background pane tab), and anything that adapts to it adapts to being ignored. Use the GPU's
+     own timestamps, and split them: knowing it was 2.9 ms of picture against 9.2 of solver is the
+     difference between turning down the thing that costs and the thing that does not.
