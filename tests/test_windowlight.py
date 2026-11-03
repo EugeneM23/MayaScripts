@@ -184,6 +184,45 @@ class Watch(unittest.TestCase):
         self.light.stop()
         self.assertEqual(self.light.watched, [])
 
+    def test_the_watch_keeps_no_widget_of_a_window_it_rings(self):
+        """2026-11-03: a wrapper of a widget MAYA deleted answers
+        `shiboken.isValid` TRUE and crashes Maya on the first method call -
+        measured in a GUI Maya on `objectName`, `isVisible`, `mask` and
+        `mapToGlobal`, the four this watch makes. So it keeps the window's
+        POINTER and name and looks the widget up again every time."""
+        outliner, leaf = self.window("Outliner")
+        self.under = leaf
+        self.light.poll(force=True)
+        key = wl._ptr(self.light.q, outliner)
+        self.assertEqual(self.light.target[:2], (key, "ring"))
+        for held in self.light.target:
+            self.assertNotIsInstance(held, QtWidgets.QWidget)
+
+    def test_a_ringed_window_is_looked_up_again_on_every_follow(self):
+        outliner, leaf = self.window("Outliner")
+        self.under = leaf
+        self.light.poll(force=True)
+        asked = []
+        real = self.light._live
+        self.light._live = lambda *a: (asked.append(a) or real(*a))
+        self.light._follow()
+        self.light._follow()
+        self.assertEqual(len(asked), 2)
+
+    def test_a_window_that_is_gone_takes_its_ring_away_untouched(self):
+        """The widget is gone: nothing of it is touched, and the ring goes."""
+        outliner, leaf = self.window("Outliner")
+        self.under = leaf
+        self.light.poll(force=True)
+        self.settle()
+        key = wl._ptr(self.light.q, outliner)
+        self.assertEqual(self.light.overlays[key].level, 1.0)
+        self.light._live = lambda *a: None          # Maya deleted it
+        self.light._follow()
+        self.assertIsNone(self.light.target)
+        self.settle()
+        self.assertEqual(self.light.overlays, {})
+
     def test_a_framed_window_of_ours_lights_its_own_frame(self):
         root = QtWidgets.QWidget(None, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
         root.setObjectName("skeldarChatWindow")

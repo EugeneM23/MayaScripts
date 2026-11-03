@@ -365,7 +365,10 @@ class Light(object):
         self.maya_on = maya_enabled()
         self.main = _main_window(self.q)
         self.controls = {}          # name -> (is a workspaceControl, read at)
-        self.target = None          # (key, kind, widget)
+        #  (key, "ring", name): a POINTER and a name, never a widget - see
+        #  `_live`. ("frame", our own WindowFrame) may be held: it is
+        #  Python-made, so shiboken knows when it dies.
+        self.target = None
         self.overlays = {}          # key -> Overlay
         self.frames = {}            # key -> [frame, goal]   (frames we fade)
         self.last_pos = None
@@ -526,11 +529,47 @@ class Light(object):
                 if kind == "frame":
                     chosen = (_ptr(q, frame), "frame", frame)
                 else:
-                    chosen = (_ptr(q, target), "ring", target)
+                    chosen = (_ptr(q, target), "ring", nodes[index].get("name"))
         self._set_target(chosen, animate=self.hubmotion.enabled())
         self._follow()
 
     # -- the light
+
+    def _live(self, key, name):
+        """The ringed widget, looked up AFRESH - or None, it is gone.
+
+        A wrapper of a widget Maya deleted answers `shiboken.isValid` TRUE and
+        crashes Maya on the first method call: measured 2026-11-03 in a GUI
+        Maya on `objectName`, `isVisible`, `mask` and `mapToGlobal`, which are
+        the four this watch makes. `isValid` cannot tell, so no wrapper of a
+        foreign widget is ever kept (CLAUDE.md trap 135) - we keep its C++
+        pointer and ask a live source for it every time.
+
+        `pick` rings a workspaceControl or a top-level window and nothing else,
+        so Maya's own answer by name and Qt's top-level list cover it; the
+        sweep over every widget is the fallback that keeps this honest where
+        neither does (an inner control in the tests)."""
+        q = self.q
+        if name:
+            try:
+                import maya.OpenMayaUI as omui
+                ptr = omui.MQtUtil.findControl(name)
+                #  the POINTER decides, never the name: a name is not unique,
+                #  and a control Maya rebuilt under the same name is another
+                #  widget - the one we ringed is gone and the ring must go.
+                if ptr is not None and int(ptr) == key:
+                    return q.shiboken.wrapInstance(key, q.QtWidgets.QWidget)
+            except Exception:                                # noqa: BLE001
+                pass
+        for group in (q.QtWidgets.QApplication.topLevelWidgets(),
+                      q.QtWidgets.QApplication.allWidgets()):
+            for widget in group:
+                try:
+                    if _ptr(q, widget) == key:
+                        return widget
+                except RuntimeError:
+                    continue
+        return None
 
     def _set_target(self, chosen, animate):
         old = self.target
@@ -543,7 +582,9 @@ class Light(object):
         if chosen is not None:
             self._light(chosen, True, animate)
             if chosen[1] == "ring":
-                self._watch(chosen[2])
+                widget = self._live(chosen[0], chosen[2])
+                if widget is not None:
+                    self._watch(widget)
 
     def _watch(self, widget):
         """Listen to the ringed widget and every widget above it to its window, so
@@ -585,7 +626,8 @@ class Light(object):
         return None
 
     def _light(self, target, on, animate):
-        key, kind, widget = target
+        key, kind, held = target
+        widget = held if kind == "frame" else None
         if kind == "frame":
             popup = self._popup_of(widget)
             if popup is not None:
@@ -602,7 +644,7 @@ class Light(object):
         else:
             overlay = self.overlays.get(key)
             if overlay is None and on:
-                overlay = _overlay_class()(self.scale, self._radius(widget))
+                overlay = _overlay_class()(self.scale, self._radius(held))
                 self.overlays[key] = overlay
             if overlay is None:
                 return
@@ -610,18 +652,20 @@ class Light(object):
             if not animate:
                 overlay.level = overlay.goal
             if on:
-                self._place(overlay, widget)
-                overlay.show()
-                overlay.raise_()
+                #  the widget looked up afresh, never a wrapper we kept
+                widget = self._live(key, held)
+                if widget is None:
+                    overlay.goal = 0.0
+                else:
+                    self._place(overlay, widget)
+                    overlay.show()
+                    overlay.raise_()
             overlay.update()
         self._run_tick()
 
-    def _radius(self, widget):
-        try:
-            name = widget.objectName() or ""
-        except RuntimeError:
-            name = ""
-        return RADIUS_OURS if name.startswith(OURS) else RADIUS_MAYA
+    def _radius(self, name):
+        """Our own hosts have rounded corners, Maya's windows square ones."""
+        return RADIUS_OURS if (name or "").startswith(OURS) else RADIUS_MAYA
 
     def _place(self, overlay, widget):
         rect = self.rect_of(widget) if self.hubqt._valid(widget) else None
@@ -637,13 +681,18 @@ class Light(object):
         if target is None or target[1] != "ring":
             return
         overlay = self.overlays.get(target[0])
-        widget = target[2]
         if overlay is None:
             return
-        try:
-            visible = self.hubqt._valid(widget) and widget.isVisible()
-        except RuntimeError:
-            visible = False
+        #  Looked up afresh on every follow: this runs from the poll AND from
+        #  every Move / Resize / Show / Hide of the window, and a wrapper we
+        #  kept would be freed memory by now (see `_live`).
+        widget = self._live(target[0], target[2])
+        visible = False
+        if widget is not None:
+            try:
+                visible = widget.isVisible()
+            except RuntimeError:
+                visible = False
         if not visible:
             self._set_target(None, animate=self.hubmotion.enabled())
             return

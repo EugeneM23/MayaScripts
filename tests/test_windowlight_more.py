@@ -437,8 +437,12 @@ class Watch(LightCase):
         self.under = leaf
         self.light.poll(force=True)
         self.assertEqual(self.light.target[1], "ring")
-        self.assertIs(self.light.target[2], top)
-        self.assertEqual(self.light._radius(top), wl.RADIUS_MAYA)
+        #  the NAME, never the widget: a wrapper of a widget Maya deleted
+        #  answers isValid True and crashes on the first call (2026-11-03)
+        self.assertEqual(self.light.target[2], top.objectName())
+        self.assertIs(self.light._live(self.light.target[0],
+                                       self.light.target[2]), top)
+        self.assertEqual(self.light._radius(top.objectName()), wl.RADIUS_MAYA)
 
     def test_maya_s_windows_off_lights_only_ours(self):
         self.light.maya_on = False
@@ -450,8 +454,11 @@ class Watch(LightCase):
         self.cmds.controls.add("skeldarPoseLibrary")
         self.under = ours_leaf
         self.light.poll(force=True)
-        self.assertIs(self.light.target[2], ours)
-        self.assertEqual(self.light._radius(ours), wl.RADIUS_OURS)
+        self.assertEqual(self.light.target[2], ours.objectName())
+        self.assertIs(self.light._live(self.light.target[0],
+                                       self.light.target[2]), ours)
+        self.assertEqual(self.light._radius(ours.objectName()),
+                         wl.RADIUS_OURS)
 
     def test_a_menu_under_the_mouse_lights_nothing(self):
         popup = QtWidgets.QWidget(None, QtCore.Qt.Popup)
@@ -468,7 +475,7 @@ class Watch(LightCase):
         self.light.poll(force=True)
         self.under = None                          # would put it out
         self.light.poll()                          # the cursor did not move
-        self.assertIs(self.light.target[2], inner)
+        self.assertEqual(self.light.target[0], wl._ptr(self.light.q, inner))
 
     def test_a_drag_keeps_its_window_lit(self):
         _top, inner, leaf = self.window()
@@ -478,7 +485,7 @@ class Watch(LightCase):
         with mock.patch.object(QtWidgets.QApplication, "mouseButtons",
                                return_value=QtCore.Qt.LeftButton):
             self.light.poll(force=True)
-        self.assertIs(self.light.target[2], inner)
+        self.assertEqual(self.light.target[0], wl._ptr(self.light.q, inner))
 
     def test_a_hidden_window_puts_its_ring_out(self):
         top, inner, leaf = self.window()
@@ -570,7 +577,8 @@ class Watch(LightCase):
         import shiboken6
         shiboken6.delete(widget)
         self.assertIsNone(self.light.rect_of(widget))
-        self.assertEqual(self.light._radius(widget), wl.RADIUS_MAYA)
+        self.assertEqual(self.light._radius("hotkeyEditor"), wl.RADIUS_MAYA)
+        self.assertEqual(self.light._radius(None), wl.RADIUS_MAYA)
 
     def test_an_empty_window_has_no_rect(self):
         widget = QtWidgets.QWidget()
