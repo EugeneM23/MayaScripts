@@ -128,14 +128,14 @@ class KnobTests(unittest.TestCase):
         self.assertEqual(wm.sided(k)["l"]["weapon_overlap"], 3.0)
         self.assertEqual(wm.sided(k)["r"]["weapon_overlap"], 0.0)
 
-    def test_the_parameter_is_one_slider_of_its_own_tab(self):
+    def test_the_parameter_is_the_first_slider_of_its_own_tab(self):
         p = gait.P["weapon_overlap"]
         self.assertEqual((p.group, p.label, p.unit, p.kind, p.sided), (gait.WEAPON, "Weapon overlap", "ms",
                                                                        "added", True))
         self.assertEqual(p.default, 0.0)
         self.assertIn(gait.WEAPON, gait.GROUPS)
         self.assertEqual(gait.GROUP_LABELS[gait.WEAPON], "Weapon")
-        self.assertEqual([q.name for q in gait.PARAMS if q.group == gait.WEAPON], ["weapon_overlap"])
+        self.assertEqual([q.name for q in gait.PARAMS if q.group == gait.WEAPON][0], "weapon_overlap")
 
     def test_milliseconds_become_frames_of_the_new_cycle(self):
         w = walk()
@@ -170,7 +170,12 @@ class SwingTests(unittest.TestCase):
         hands = dict(hands or {})
         held = dict((s, weapons[s]) for s in weapons if s in self.chains)
         swings = dict((s, lag) for s in held)
-        moved = self.w._weapon_swing(self.kin, self.n, self.chains, hands, swings, held, grip)
+        #  since 2026-11-03 the pass takes the riders it must carry, which _arm_overlap works out from the
+        #  pose's grip and from 2H; `grip` here fills them the way a pose's grip does
+        riders = dict((side, [side] + [s for s in sorted(self.chains)
+                                       if s != side and grip and s not in held])
+                      for side in held)
+        moved = self.w._weapon_swing(self.kin, self.n, self.chains, hands, swings, held, riders)
         return hands, moved
 
     def test_the_blade_aims_at_its_own_tip_that_many_frames_earlier_and_holds_its_grip(self):
@@ -436,7 +441,10 @@ def load_aim():
 
 class CardTests(unittest.TestCase):
 
-    def test_the_card_grows_a_weapon_tab_with_the_one_slider(self):
+    def test_the_card_grows_a_weapon_tab_holding_it(self):
         panel = load("panel")
-        self.assertIn(("weapon", "Weapon", ("weapon_overlap",)), panel.GROUPS)
+        tab = [g for g in panel.GROUPS if g[0] == "weapon"]
+        self.assertEqual(len(tab), 1)
+        self.assertEqual(tab[0][1], "Weapon")
+        self.assertEqual(tab[0][2][0], "weapon_overlap")
         self.assertIn("weapon", [key for row in panel.GROUP_ROWS for key in row])
