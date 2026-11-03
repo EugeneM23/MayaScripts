@@ -11618,30 +11618,37 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
   `minTime` read 19.67 - the window is `sw.memo_of(root)["start"]` and `result.frames`, as the overlap verify
   already did. The arm's own reach is the third: unbent, the keys phase read 5.21 cm where the bent arm reads
   0.0057.
-- **…and the strengths take the ARM's share too** (2026-11-03, the same fault one layer out: «при нулевых
-  настройках оружие должно стоять статично но этого не происходит хотя с двуручным мечем так работает»;
-  asked what the knobs should scale, the animator chose **everything that comes from the body**). Measured
-  on their own cycle at `0 / 0 / 0`: `DG_Idle` with `Arm L` out (their case) **17.36 cm** off its straight
-  line and with both arms in and 2H on **17.47**, against `LongSword_Idle_3P` **0.000** — and the holding
-  hand moves **17.93 cm and turns 71.1°** in the chest's OWN frame, which `T = inv(C) · want` keeps by
-  construction. The two-handed card is static not because of 2H but because the CARD declares a grip, and a
-  grip at full share takes both arms' swing gain to zero (`gain *= 1 - alpha`); **2H stills nothing** — it
-  binds the free hand. So a second cycle is scaled by the same two strengths, the holding hand's own pose in
-  the chest's frame: `A = H · inv(C)`, `T = inv(H) · steady(A) · want` (`steady_chest` serves both — "scale
-  a cycle's own deviation about its mean, keep the linear drift"; `A`'s drift is nothing). `1 / 1 / 0` is
-  still the identity matrix for matrix, `1 / 1` + a lag is what it was to ~1e-12, a two-handed card is
-  unchanged (0.000 → 0.000), and `0 / 0` is static for ANY pose. **What is left at `0 / 0` is named, not
-  cured**: of the 17.36, **15.0 is the arm's swing** (this fix) and **2.4 is Whip** at `Arm drag` 1.5 (its
-  own lag 2.16, the pivot's acceleration 0.19, so scaling the acceleration buys nothing); `Arm drag` 0 gives
-  **0.000**. A grip reads 0.000 only because `_grip_motion` springs the held THING, whose target is then
-  constant; giving a weapon-carrying hand that road is not built — a binary road switch would jump the hand
-  ~2 cm for an infinitesimal lag and would change Whip for every take with a weapon in the hand. Proof:
-  `verify_walk_weapon_chest.py` **0 of 22** (gates 5 and 6 measured against the composed promise; a new
-  **gate 15** runs the animator's own scene — the card with `Arm L` out, no grip at all — and reads
-  **0.000 cm** off its line while the body carries it 8.10), `verify_walk_arm_overlap.py` 0 of 101,
-  `verify_walk_weapon_overlap.py` 0 of 30; `tests/test_walk_weapon_chest.py` 40, five of them red on the
-  build before. The two tooltips say «the body's own TURN / BOB AND SWAY … the chest's, and the holding
-  arm's share of it».
+- **…and the knobs are a PARENT CONSTRAINT's weight, behind a chip** (2026-11-03, two reports the same day).
+  First «при нулевых настройках оружие должно стоять статично но этого не происходит хотя с двуручным мечем
+  так работает»: at `0 / 0 / 0` the weapon still rode the swinging arm — **17.36 cm** off its straight line
+  on their cycle under `DG_Idle` (17.47 with both arms in and 2H on) against the two-handed card's
+  **0.000**, because the holding hand moves **17.93 cm and turns 71.1°** in the chest's OWN frame, which
+  `T = inv(C) · want` keeps by construction. **The sword is static not because of 2H but because the CARD
+  declares a grip**, which at full share takes both arms' swing gain to zero (`gain *= 1 - alpha`); **2H
+  stills nothing** — it binds the free hand. Then, on the fix that scaled the arm's share with the chest's:
+  «ручки влияют на силу анимации ножика из стандартного цикла … я хотел parent constrain к туловищу … если 0
+  то стоим на месте если 1 то двигаемся за туловищем, а не так как в изначальной анимации» — their
+  2026-11-02 words («сила наследования вращения») had said it already. **Neither end is the cycle's own
+  animation**, so the arm's share is FROZEN, not scaled: `A = steady(H · inv(C), 0, 0)` (its mean offset),
+  `T = inv(H) · A · want`, with `want = shifted(steady(C, rotation, position), lag)`. `1 / 1 / 0` rides the
+  torso rigidly, `0 / 0` stands still and travels with the walk, a lag is how old a chest it rides, and the
+  hands follow the weapon as ever. **The mode is its own chip** (`weapon_chest`, «Chest», off, sided):
+  with no end being the cycle's own animation it cannot be read off the sliders, and the old «not the
+  identity» test would have jumped the hand ~9 cm the moment a lag left 0. Off, the three sliders do nothing
+  and the line says so. A card from before it is migrated once in `scene.normal_params` (any slider stored
+  and no chip → the chip on) — the slider keys are NAMED there, never a prefix: `weapon_chest_lag` starts
+  with the chip's own `weapon_chest_l`. **What is left at `0 / 0` is named, not cured**: of the 17.36,
+  15.0 is the arm's swing and **2.4 is Whip** at `Arm drag` 1.5 (its own lag 2.16, the pivot's acceleration
+  0.19, so scaling the acceleration buys nothing); `Arm drag` 0 gives **0.000**. A grip reads 0.000 only
+  because `_grip_motion` springs the held THING, whose target is then constant; giving a weapon-carrying
+  hand that road is not built — a binary road switch would jump the hand ~2 cm for an infinitesimal lag and
+  would change Whip for every take with a weapon in the hand. Proof: `verify_walk_weapon_chest.py` **0 of
+  22** — gate 3 `1 / 1 / 0` holding the offset from the chest to **4.41e-13** while the cycle's own swings
+  25.29 cm, gate 15 the animator's own scene (the card with `Arm L` out, no grip at all) **0.000 cm** off
+  its line, and the keys phase's gate 7 **the arms swinging 25.8 cm against the chest while the keys stay
+  rigid on it to 0.0057**; `verify_walk_arm_overlap.py` 0 of 101, `verify_walk_weapon_overlap.py` 0 of 30;
+  `tests/test_walk_weapon_chest.py` 44. On their own case, off the keys: the cycle 26.98 cm off its line,
+  their card (0.09 / 1.00 / 208 ms) **9.68**, `0 / 0 / 0` 4.71 and **0.000** with Whip off.
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
@@ -17801,6 +17808,17 @@ animator's to press.
      performed the very removal the feature was being gated on. A promise of the form «X gets none
      of Y» is gated where Y is at its LARGEST, and the control that makes it a real constraint is Y
      itself measured in the same run (here: the hand moves 17.93 cm in the chest's own frame).
+335. **A mode whose knobs' defaults are not «off» needs a switch of its own, and the animator's word
+     for it is in their first message.** The chest knobs were read as «how much of the body reaches
+     the weapon», so 1 / 1 / 0 was the identity and the mode could turn itself on when a knob left
+     it. What they actually meant was a parent constraint whose weight the sliders are — 0 stands
+     still, 1 rides the torso, and NEITHER end is the clip's own animation, so there is no value of
+     the sliders that means «off» and the mode has to be a chip. Their own earlier words carried it
+     («сила наследования вращения» — the strength of INHERITING, not of the clip's own motion) and
+     were read as the softer thing twice. When a knob's two ends are both new behaviour, stop and ask
+     what «off» is before picking the default; and when a feature is described with the name of a
+     rigging construct (parent constraint, aim, IK), build that construct rather than a blend that
+     merely passes its two endpoints.
 
 ## Animation Setup: Refresh reads, and asks before it reads thousands (2026-11-03)
 

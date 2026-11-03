@@ -244,3 +244,60 @@ own comment says it ran «with the arms stilled by the card's own grip». A **ga
 card's `Arm L` out - no grip at all, the animator's own scene - and reads 0.000 cm off its line while the
 body carries it 8.10. Gates 5 and 6 are measured against the composed promise rather than the chest's own
 deviation alone.
+
+## Addendum 4: the knobs are a parent constraint's weight, and the mode is a chip
+
+Addendum 3 made the strengths scale what the body gives the weapon, whose 1-end is the cycle's own
+animation. The animator, with the card at `2H` on, `Chest rotation` 0.09, `Chest position` 1.00 and
+`Chest lag` 208 ms:
+
+> «Ручки на скриншоте влияют на силу анимации ножика из стандартного цикла. Мне кажется это не так как
+> работает с мечем сейчас. В этом режиме я хотел что бы мы использовали что-то типа parent constrain к
+> туловищу по позиции и вращению. А ползунками контролировали силу этого констрейна. Если 0 то стоим на
+> месте если 1 то двигаемся за туловищем, а не так как в изначальной анимации»
+
+Their 2026-11-02 words said it already - «сила наследования вращения, сила наследования смещения по
+позиции» - and «наследование» is the constraint, not a mix with the clip. **Neither end of the sliders is
+the cycle's own animation**: 0 stands still, 1 rides the torso.
+
+**Measured on their own cycle** under `DG_Idle` at `0 / 0 / 0`, before this:
+
+| | off its straight line | off the chest |
+|---|---|---|
+| the cycle itself | 19.12 | 20.30 |
+| addendum 3, their card (0.09 / 1.00 / 208 ms) | 25.80 | 27.16 |
+| a parent constraint, their card | 9.46 | 14.93 |
+| a parent constraint, 1 / 1 | 10.46 | 3.35 |
+
+And why the sword looked right all along: a two-handed CARD stills both arms (`gain *= 1 - alpha`), so the
+weapon is already rigid in the chest's frame and the sliders read as a constraint's weight. The animator
+asked for that everywhere.
+
+**The pass** keeps its shape and freezes the arm's share instead of scaling it:
+
+    A = steady(H(f) · inv(C(f)), 0, 0)              the hand's offset from the chest, held at its MEAN
+    want(f) = shifted(steady(C, rotation, position), lag)(f)
+    T(f) = inv(H(f)) · A(f) · want(f)
+
+So `1 / 1 / 0` rides the torso rigidly, `0 / 0` stands still in the air and travels with the walk, a lag is
+how old a chest it rides, and in between the weapon inherits that share of the chest's own cycle. The hands
+still follow the weapon (`_arm_to_hand`), so the grip holds and the arm's swing is a consequence.
+
+**The mode is a chip of its own** (`weapon_chest`, «Chest», off by default, sided like the rest). It has to
+be: with no end of the sliders being the cycle's own animation, the mode cannot be read off them, and the
+old test («not the identity») would have jumped the hand ~9 cm the moment a lag left 0. Off, the three
+sliders do nothing at all and the line says so; the engine's `moved_arms` (Balance) counts the chip in
+place of the strengths.
+
+**A card or walker from before the chip** is migrated once in `scene.normal_params`: any of the three
+sliders stored and no chip stored means the animator wanted the mode, so the chip is turned on and written
+back on the next press. The three sliders' keys are named there, never matched as a prefix -
+`weapon_chest_lag` starts with the chip's own sided key `weapon_chest_l`.
+
+**Proof.** `verify_walk_weapon_chest.py` 0 of 22: gate 1 the chip off with `0 / 0 / 150 ms` the walk matrix
+for matrix; gate 3 `1 / 1 / 0` holding the offset from the chest to **4.41e-13** while the cycle's own
+swings **25.29 cm**; gate 4 the lag; gates 5 and 6 the strengths against the constraint's own promise; gate
+13 and gate 15 `0 / 0` static under a grip card and with no grip at all; and the keys phase's gate 7, **the
+arms swinging 25.8 cm against the chest while the keys stay rigid on it to 0.0057**. On the animator's own
+case, read off the keys: the cycle 26.98 cm off its line, their card **9.68**, `1 / 1 / 0` 11.54 with the
+offset from the chest held to 4.42 (Whip's own), `0 / 0 / 0` **4.71** and **0.000** with Whip off.

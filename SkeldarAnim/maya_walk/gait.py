@@ -248,24 +248,28 @@ PARAMS = (
               "first frame and rides the weapon from then on, so a two-handed carry holds without a pose's "
               "own grip - that arm's own swing becomes a consequence. A hand holding its own weapon is left "
               "alone. It needs a weapon in a hand"),
+    Param("weapon_chest", WEAPON, "Chest", "", "toggle", sided=True, default=0.0,
+          tip="Parents the weapon to the chest: it stops playing its own animation, hangs at its mean "
+              "offset from the chest and inherits as much of the chest as the three sliders below ask - "
+              "they are the constraint's strength. The holding hand is re-solved onto the weapon, so the "
+              "grip holds and the arm follows. Off, the three do nothing. It needs a weapon in a hand"),
     Param("weapon_chest_rotation", WEAPON, "Chest rotation", "", "added", sided=True,
           rule=_fixed(0.0, 1.0), default=1.0,
-          tip="How much of the body's own TURN reaches the weapon - the chest's, and the holding arm's "
-              "share of it: 1 the body turns it as it does now (the default changes nothing), 0 and the "
-              "weapon keeps one heading while the body turns under it. The holding hand is re-solved onto "
-              "the weapon, so the grip holds. What is left at 0 is the arm's own weight (Arm drag)"),
+          tip="With Chest on, how much of the chest's TURN the weapon inherits: 1 it turns with the torso "
+              "as a parent constraint does, 0 it keeps one heading while the torso turns under it. The "
+              "holding hand is re-solved onto the weapon, so the grip holds"),
     Param("weapon_chest_position", WEAPON, "Chest position", "", "added", sided=True,
           rule=_fixed(0.0, 1.0), default=1.0,
-          tip="How much of the body's own BOB AND SWAY reaches the weapon - the chest's, and the swing the "
-              "holding arm carries it with: 1 the body carries it as it does now, 0 and it hangs in the air "
-              "while the body rises and swings under it. The walk's travel is kept at any strength - "
-              "without it the weapon is left behind within a cycle. What is left at 0 is Arm drag"),
+          tip="With Chest on, how much of the chest's BOB AND SWAY the weapon inherits: 1 the torso carries "
+              "it as a parent constraint does, 0 it hangs in the air while the torso rises and swings under "
+              "it. The walk's travel is kept at any strength - without it the weapon is left behind within "
+              "a cycle. At 0 / 0 what is left is the arm's own weight (Arm drag)"),
     Param("weapon_chest_lag", WEAPON, "Chest lag", "ms", "added", sided=True,
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
-          tip="The weapon takes the chest's pose from this many milliseconds ago - the body leads and the "
-              "weapon follows late, the holding hand re-solved onto it so the grip holds. What it follows "
-              "is the chest the two strengths above leave. It adds to Weapon overlap, which lags the "
-              "blade's own aim about the grip. The slider reaches half the cycle either way"),
+          tip="With Chest on, the weapon rides the chest's pose from this many milliseconds ago - the torso "
+              "leads and the weapon follows late. What it follows is the chest the two strengths above "
+              "leave. It adds to Weapon overlap, which lags the blade's own aim about the grip. The slider "
+              "reaches half the cycle either way"),
     # the physics
     Param("whip", PHYSICS, "Whip", "", "added", rule=_fixed(0.0, 1.0), default=0.3,
           tip="The arms, the trunk and the head overshoot as they catch up with the body (springs whose stride "
@@ -886,7 +890,8 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["hand_overlap" + sfx] = sv("hand_overlap") * fps / 1000.0
         e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0   # the weapon's aim, ms -> frames
         e["weapon_hold" + sfx] = 1.0 if sv("weapon_hold") >= 0.5 else 0.0          # 2H: the free hand bound
-        e["weapon_chest_rotation" + sfx] = sv("weapon_chest_rotation")             # the chest override
+        e["weapon_chest" + sfx] = 1.0 if sv("weapon_chest") >= 0.5 else 0.0        # parented to the chest
+        e["weapon_chest_rotation" + sfx] = sv("weapon_chest_rotation")             # ...its strengths
         e["weapon_chest_position" + sfx] = sv("weapon_chest_position")
         e["weapon_chest_lag" + sfx] = sv("weapon_chest_lag") * fps / 1000.0        # ms -> frames (own 0)
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")

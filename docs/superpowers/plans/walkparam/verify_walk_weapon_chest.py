@@ -147,11 +147,12 @@ def phase_model():
     n = quiet.frames
     grip_p = np.array(held["r"]["grip"])
 
-    #  1 - the defaults
-    same = run(with_pose=False, arm_drag=0.0, weapon_chest_rotation=1.0, weapon_chest_position=1.0,
-               weapon_chest_lag=0.0)
+    #  1 - the chip off: the three sliders do nothing. Neither end of them is the cycle's own animation,
+    #  so the mode is the chip's own and cannot be read off the strengths (2026-11-03)
+    same = run(with_pose=False, arm_drag=0.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0,
+               weapon_chest_lag=lag)
     gate(np.array_equal(same.worlds, quiet.worlds),
-         "1 / 1 / 0 is the walk itself, matrix for matrix")
+         "the Chest chip off: 0 / 0 / %.0f ms is the walk itself, matrix for matrix" % MS)
 
     #  2 - own_knobs
     own = walk.evaluate(dict(walk.own_knobs(), in_place=0.0, arm_drag=0.0), pose, weapons=held)
@@ -159,24 +160,32 @@ def phase_model():
     gate(np.array_equal(own.worlds, plain.worlds),
          "the cycle's own knobs with a weapon in the hand are the cycle with none")
 
-    #  3 - the promise
-    late = run(with_pose=False, arm_drag=0.0, weapon_chest_lag=lag)
-    C = np.asarray(quiet.worlds[chest], float)
-    shifted = wm.shifted_cycle(C, lag)
-    worst = 0.0
-    for f in range(n + 1):
-        was = np.asarray(quiet.worlds[hand_r, f], float) @ np.linalg.inv(C[f])
-        now = np.asarray(late.worlds[hand_r, f], float) @ np.linalg.inv(shifted[f])
-        worst = max(worst, float(np.abs(now - was).max()))
-    gate(worst < 1e-4, "the weapon sits on the chest of %.2f frames ago: %.2e" % (lag, worst))
+    #  3 - the promise: at 1 / 1 / 0 the weapon is PARENTED to the chest - its offset from the chest is
+    #  constant, which is not what the cycle does («двигаемся за туловищем, а не так как в изначальной
+    #  анимации»)
+    rigid = run(with_pose=False, arm_drag=0.0, weapon_chest=1.0)
+    C = np.asarray(rigid.worlds[chest], float)
+    rel = [np.asarray(rigid.worlds[hand_r, f], float) @ np.linalg.inv(C[f]) for f in range(n + 1)]
+    worst = max(float(np.abs(rel[f] - rel[0]).max()) for f in range(n + 1))
+    own_rel = [np.asarray(quiet.worlds[hand_r, f], float)
+               @ np.linalg.inv(np.asarray(quiet.worlds[chest, f], float)) for f in range(n + 1)]
+    swung_rel = max(float(np.linalg.norm(own_rel[f][3, :3] - own_rel[0][3, :3])) for f in range(n + 1))
+    gate(worst < 1e-4 < swung_rel,
+         "1 / 1 / 0 rides the torso rigidly: the offset from the chest holds to %.2e (the cycle's own "
+         "swings %.2f cm)" % (worst, swung_rel))
 
-    #  4 - and it really moves
-    before = np.array([place(grip_p, m) for m in np.asarray(quiet.worlds[hand_r], float)])
+    #  4 - and the lag: the weapon rides the chest of `lag` frames ago
+    late = run(with_pose=False, arm_drag=0.0, weapon_chest=1.0, weapon_chest_lag=lag)
+    shifted = wm.shifted_cycle(C, lag)
+    worst_lag = max(float(np.abs(np.asarray(late.worlds[hand_r, f], float) @ np.linalg.inv(shifted[f])
+                                 - rel[0]).max()) for f in range(n + 1))
+    before = np.array([place(grip_p, m) for m in np.asarray(rigid.worlds[hand_r], float)])
     after = np.array([place(grip_p, m) for m in np.asarray(late.worlds[hand_r], float)])
     moved = max(float(np.linalg.norm(after[f] - before[f])) for f in range(n + 1))
     said = late.info["arms"]["overlap"]
-    gate(moved > 0.5 and said["chest"] == ["r"],
-         "the grip really trails: %.2f cm, the info names the side %s" % (moved, said["chest"]))
+    gate(worst_lag < 1e-4 and moved > 0.5 and said["chest"] == ["r"],
+         "it rides the chest of %.2f frames ago: %.2e (the grip trails %.2f cm, the info names %s)"
+         % (lag, worst_lag, moved, said["chest"]))
 
     #  5 / 6 - the strengths, with NO LAG (the animator's own report, 2026-11-03 - they must act whether
     #  or not a lag is dialled). What they scale is everything the body gives the weapon: the chest's own
@@ -185,11 +194,13 @@ def phase_model():
     own_arm = np.array([Hq[f] @ np.linalg.inv(C[f]) for f in range(n + 1)])
 
     def promise(rotation, position, lag=0.0):
+        """The constraint's own: the hand's offset from the chest HELD at its mean, on the chest's cycle
+        scaled by the strengths and read `lag` frames back."""
         chest_c = wm.shifted_cycle(walk.steady_chest(C, rotation, position), lag)
-        arm_c = walk.steady_chest(own_arm, rotation, position)
+        arm_c = walk.steady_chest(own_arm, 0.0, 0.0)
         return np.array([arm_c[f] @ chest_c[f] for f in range(n + 1)])
 
-    flat = run(with_pose=False, arm_drag=0.0, weapon_chest_rotation=0.0)
+    flat = run(with_pose=False, arm_drag=0.0, weapon_chest=1.0, weapon_chest_rotation=0.0)
     want_r = promise(0.0, 1.0)
     worst_r = own_turn = left = 0.0
     for f in range(n + 1):
@@ -200,7 +211,7 @@ def phase_model():
          "Chest rotation 0 leaves the weapon on one heading: %.2e (it turns %.2f deg without it, %.2e with)"
          % (worst_r, own_turn, left))
 
-    still = run(with_pose=False, arm_drag=0.0, weapon_chest_position=0.0)
+    still = run(with_pose=False, arm_drag=0.0, weapon_chest=1.0, weapon_chest_position=0.0)
     want_p = promise(1.0, 0.0)
     worst_p = off = 0.0
     for f in range(n + 1):
@@ -232,7 +243,7 @@ def phase_model():
     gate(seam < 1e-4, "the loop closes: %.2e" % seam)
 
     #  10 - 2H
-    bound = run(with_pose=False, arm_drag=0.0, weapon_chest_lag=lag, weapon_hold=1.0)
+    bound = run(with_pose=False, arm_drag=0.0, weapon_chest=1.0, weapon_chest_lag=lag, weapon_hold=1.0)
     loose = run(with_pose=False, arm_drag=0.0)
     offs = [np.asarray(bound.worlds[hand_l, f], float)
             @ np.linalg.inv(np.asarray(bound.worlds[hand_r, f], float)) for f in range(n + 1)]
@@ -246,6 +257,7 @@ def phase_model():
 
     #  11 - Balance
     carried = walk.evaluate(dict(base, arm_drag=0.0, balance=1.0,
+                                 weapon_chest=1.0, weapon_chest_l=1.0, weapon_chest_r=1.0,
                                  weapon_chest_lag=lag, weapon_chest_lag_l=lag, weapon_chest_lag_r=lag),
                             pose, weapons=held)
     plain_carry = walk.evaluate(dict(base, arm_drag=0.0, balance=1.0), pose, weapons=held)
@@ -257,7 +269,7 @@ def phase_model():
     #  12 - under the animator's own two-handed card: the hold is kept through the pass
     if pose is not None:
         held_quiet = run(arm_drag=0.0)
-        held_late = run(arm_drag=0.0, weapon_chest_lag=lag)
+        held_late = run(arm_drag=0.0, weapon_chest=1.0, weapon_chest_lag=lag)
         worst_hold = 0.0
         for f in range(n + 1):
             a = (np.asarray(held_quiet.worlds[hand_l, f], float)
@@ -268,7 +280,7 @@ def phase_model():
         gate(worst_hold < 1e-3, "the card's two-handed hold is kept through the pass: %.2e" % worst_hold)
         #  13 - and what the animator asked for in words: with the arms stilled by the card's own grip,
         #  0 / 0 hangs the weapon in the air - it keeps nothing of the body but the walk's locomotion
-        hung = run(arm_drag=0.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        hung = run(arm_drag=0.0, weapon_chest=1.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0)
         hung_p = np.array([place(grip_p, m) for m in np.asarray(hung.worlds[hand_r], float)])
         held_p = np.array([place(grip_p, m) for m in np.asarray(held_quiet.worlds[hand_r], float)])
         per_hung = (hung_p[n] - hung_p[0]) / float(n)
@@ -293,7 +305,7 @@ def phase_model():
             return walk.evaluate(ks, without, weapons=held)
 
         bare = one_armed(arm_drag=0.0)
-        worked = one_armed(arm_drag=0.0, weapon_chest_lag=lag, weapon_hold=1.0)
+        worked = one_armed(arm_drag=0.0, weapon_chest=1.0, weapon_chest_lag=lag, weapon_hold=1.0)
         left_moved = max(float(np.linalg.norm(worked.worlds[hand_l, f, 3, :3]
                                               - bare.worlds[hand_l, f, 3, :3])) for f in range(n + 1))
         right_moved = max(float(np.linalg.norm(worked.worlds[hand_r, f, 3, :3]
@@ -306,7 +318,8 @@ def phase_model():
         #  here the card's own, with Arm L out - and 0 / 0 must hang the weapon in the air all the same.
         #  The first build scaled the chest's share alone, so the weapon rode the swinging arm (17 cm on
         #  their own cycle under DG_Idle) while the two-handed card read a clean 0.000
-        hung_one = one_armed(arm_drag=0.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        hung_one = one_armed(arm_drag=0.0, weapon_chest=1.0, weapon_chest_rotation=0.0,
+                             weapon_chest_position=0.0)
         one_p = np.array([place(grip_p, m) for m in np.asarray(hung_one.worlds[hand_r], float)])
         bare_p = np.array([place(grip_p, m) for m in np.asarray(bare.worlds[hand_r], float)])
         per_one = (one_p[n] - one_p[0]) / float(n)
@@ -344,8 +357,11 @@ def phase_keys(lag_frames):
         changes["elbow"] = ["offset", BENT]
         pins.add("elbow")
         if ms:
+            #  the chip is the mode (2026-11-03); a card from before it is migrated by normal_params,
+            #  which is its own gate - here it is set the way the card writes it
+            changes["weapon_chest"] = ["offset", 1.0]
             changes["weapon_chest_lag"] = ["offset", ms]
-            pins.add("weapon_chest_lag")
+            pins.update(("weapon_chest", "weapon_chest_lag"))
         params["changes"], params["pins"] = changes, sorted(pins)
         params["in_place"] = 0.0
         #  the physics helpers off: Balance's carry moves the BODY when the arms move late (0.08 cm,
@@ -373,15 +389,14 @@ def phase_keys(lag_frames):
     gate(float(np.abs(now_chest - was_chest).max()) < 1e-6,
          "the body itself is untouched: the chest %.2e" % float(np.abs(now_chest - was_chest).max()))
     shifted = wm.shifted_cycle(was_chest, lag_frames)
-    worst = 0.0
-    for f in range(frames + 1):
-        a = was_hand[f] @ np.linalg.inv(was_chest[f])
-        b = now_hand[f] @ np.linalg.inv(shifted[f])
-        worst = max(worst, float(np.abs(a - b).max()))
-    gate(worst < 0.05, "the keys put the weapon on the chest of %.2f frames ago: %.4f" % (lag_frames, worst))
+    #  the keys must show a PARENT constraint: the weapon's offset from the chest of `lag` frames ago is
+    #  the same on every frame - it no longer follows the arm's own swing
+    rel = [now_hand[f] @ np.linalg.inv(shifted[f]) for f in range(frames + 1)]
+    worst = max(float(np.abs(rel[f] - rel[0]).max()) for f in range(frames + 1))
+    gate(worst < 0.05, "the keys ride the chest of %.2f frames ago: %.4f" % (lag_frames, worst))
     moved = max(float(np.linalg.norm(now_hand[f][3, :3] - was_hand[f][3, :3])) for f in range(frames + 1))
     gate(moved > 0.5, "the hand really trails: %.2f cm" % moved)
-    gate("trails the chest" in said, "the line says it: %s" % said.strip().splitlines()[0][:160])
+    gate("rides the chest" in said, "the line says it: %s" % said.strip().splitlines()[0][:160])
     gate("no weapon in the hands" not in said_quiet, "0 ms says nothing of the weapon")
 
     #  and with the pose off, where the arms swing against the chest: the promise is a real constraint
@@ -392,11 +407,11 @@ def phase_keys(lag_frames):
     press(MS, share=0.0)
     l_hand = np.array([world(hand, bare_start + f) for f in range(bare_frames + 1)])
     bare_shift = wm.shifted_cycle(q_chest, lag_frames)
+    bare_rel = [l_hand[f] @ np.linalg.inv(bare_shift[f]) for f in range(bare_frames + 1)]
     worst_bare = swing = 0.0
     for f in range(bare_frames + 1):
         a = q_hand[f] @ np.linalg.inv(q_chest[f])
-        b = l_hand[f] @ np.linalg.inv(bare_shift[f])
-        worst_bare = max(worst_bare, float(np.abs(a - b).max()))
+        worst_bare = max(worst_bare, float(np.abs(bare_rel[f] - bare_rel[0]).max()))
         swing = max(swing, float(np.linalg.norm(a[3, :3] - (q_hand[0] @ np.linalg.inv(q_chest[0]))[3, :3])))
     gate(worst_bare < 0.5 and swing > 1.0,
          "with the arms swinging (%.1f cm against the chest) the keys keep the promise: %.4f"

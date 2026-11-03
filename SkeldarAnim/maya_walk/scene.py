@@ -1195,6 +1195,17 @@ def normal_params(params):
                 changes[key] = (str(kind), float(x))
         except (TypeError, ValueError):
             continue
+    #  a card or a walker from before the Chest chip (2026-11-03): the three sliders WERE the mode, so any
+    #  of them set means the animator wanted it on. A chip they have since touched is in `pins` even when
+    #  it is off (the card pins every knob it writes and drops a no-op change), so unticking it holds.
+    #  Named, never a prefix: "weapon_chest_lag" starts with the chip's own "weapon_chest_l".
+    chip = set(["weapon_chest"] + ["weapon_chest_" + s for s in gait.SIDES])
+    sliders = set(name + side for name in ("weapon_chest_rotation", "weapon_chest_position",
+                                           "weapon_chest_lag")
+                  for side in ("", "_l", "_r"))
+    touched = set(changes) | set(out.get("pins") or ())
+    if (sliders & set(changes)) and not (chip & touched):
+        changes["weapon_chest"] = ("offset", 1.0)
     out["changes"] = changes
     out["pins"] = sorted(k for k in (out.get("pins") or ()) if k in keys)
     out["macros"] = dict((k, float(v)) for k, v in (out.get("macros") or {}).items()
@@ -1458,21 +1469,25 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     if swung.get("weapon"):
         text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
     if swung.get("chest"):
-        text += " | the weapon trails the chest %.1f cm" % swung["chest_cm"]
+        text += " | the weapon rides the chest, moved %.1f cm" % swung["chest_cm"]
     if swung.get("hold"):
         text += " | 2H: both hands on the weapon"
     if swung.get("out_of_pose"):
         text += " | the %s arm is out of the pose: the Weapon knobs leave it alone" % " and ".join(
             {"l": "left", "r": "right"}[s] for s in swung["out_of_pose"])
+    knobs = result.info.get("knobs") or {}
+    quiet = {"weapon_chest_rotation": 1.0, "weapon_chest_position": 1.0}
+    dialled = lambda names: any(
+        abs(float(knobs.get(name + s, quiet.get(name, 0.0)) or 0.0) - quiet.get(name, 0.0))
+        >= wm.OVERLAP_QUIET for name in names for s in ("", "_l", "_r"))
     if (not swung.get("weapon") and not swung.get("chest") and not swung.get("hold")
             and not swung.get("out_of_pose")):
-        knobs = result.info.get("knobs") or {}
-        asked = ("weapon_overlap", "weapon_chest_lag", "weapon_hold",
-                 "weapon_chest_rotation", "weapon_chest_position")
-        quiet = {"weapon_chest_rotation": 1.0, "weapon_chest_position": 1.0}
-        if any(abs(float(knobs.get(name + s, quiet.get(name, 0.0)) or 0.0) - quiet.get(name, 0.0))
-               >= wm.OVERLAP_QUIET for name in asked for s in ("", "_l", "_r")):
+        #  the three Chest sliders are the chip's own, so they are not what makes a knob "asked" here
+        if dialled(("weapon_overlap", "weapon_chest", "weapon_hold")):
             text += " | no weapon in the hands: the Weapon knobs do nothing"
+        elif swung.get("held") and dialled(("weapon_chest_rotation", "weapon_chest_position",
+                                            "weapon_chest_lag")):
+            text += " | the Chest chip is off: its three sliders do nothing"
     matched = result.info.get("leg_match") or {}
     if anim.pose is not None and matched.get("on"):
         text += " | legs matched x%.2f" % matched["keep"]

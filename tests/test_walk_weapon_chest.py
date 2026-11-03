@@ -19,6 +19,7 @@ from tests.test_walk_weapon_overlap import GRIP, TIP, WEAPON, points
 
 gait = load("gait")
 wp = load("pose")
+sw = load("scene")
 
 
 class SteadyChest(unittest.TestCase):
@@ -69,15 +70,17 @@ class SteadyChest(unittest.TestCase):
 
 class EngineKnobs(unittest.TestCase):
 
-    def test_the_four_knobs_exist_with_their_defaults(self):
+    def test_the_five_knobs_exist_with_their_defaults(self):
         k = wm.knobs()
         self.assertEqual(k["weapon_hold"], 0.0)
+        self.assertEqual(k["weapon_chest"], 0.0)          # the mode is off until the chip is ticked
         self.assertEqual(k["weapon_chest_rotation"], 1.0)
         self.assertEqual(k["weapon_chest_position"], 1.0)
         self.assertEqual(k["weapon_chest_lag"], 0.0)
 
     def test_they_are_sided(self):
-        for name in ("weapon_hold", "weapon_chest_rotation", "weapon_chest_position", "weapon_chest_lag"):
+        for name in ("weapon_hold", "weapon_chest", "weapon_chest_rotation", "weapon_chest_position",
+                     "weapon_chest_lag"):
             self.assertIn(name, wm.SIDED, name)
             self.assertEqual(wm.sided(wm.knobs(**{name + "_l": 0.5}))["l"][name], 0.5)
             self.assertEqual(wm.sided(wm.knobs(**{name + "_l": 0.5}))["r"][name],
@@ -120,10 +123,14 @@ class Pass(unittest.TestCase):
         knobs = dict({"balance": 0.0, "arm_drag": 0.0, "elbow_add": self.BENT}, **more)
         return self.w.evaluate(knobs, weapons=weapons)
 
+    def on(self, **more):
+        """The Chest chip on - the weapon parented to the chest, the sliders its strength."""
+        return self.go(weapon_chest=1.0, **more)
+
     def over(self, result):
         return (result.info.get("arms") or {}).get("overlap") or {}
 
-    #  the identity
+    #  off
 
     def test_the_defaults_are_the_walk_with_no_weapon_at_all(self):
         plain = self.go(weapons=None)
@@ -131,29 +138,62 @@ class Pass(unittest.TestCase):
         self.assertEqual(self.over(self.base)["chest"], [])
         self.assertEqual(self.over(self.base)["chest_cm"], 0.0)
 
-    def test_full_strength_with_no_lag_is_the_identity_matrix_for_matrix(self):
-        got = self.go(weapon_chest_rotation=1.0, weapon_chest_position=1.0, weapon_chest_lag=0.0)
-        self.assertTrue(np.array_equal(got.worlds, self.base.worlds))
+    def test_the_chip_off_the_three_sliders_do_nothing(self):
+        """Neither end of the sliders is the cycle's own animation, so the mode is the chip's and the
+        sliders cannot turn it on (2026-11-03)."""
+        for more in ({"weapon_chest_rotation": 0.0}, {"weapon_chest_position": 0.0},
+                     {"weapon_chest_lag": self.LAG},
+                     {"weapon_chest_rotation": 0.0, "weapon_chest_position": 0.0,
+                      "weapon_chest_lag": self.LAG}):
+            got = self.go(**more)
+            self.assertTrue(np.array_equal(got.worlds, self.base.worlds), more)
+            self.assertEqual(self.over(got)["chest"], [], more)
 
-    def test_a_lag_with_no_weapon_in_the_hands_changes_nothing(self):
+    def test_the_chip_on_with_no_weapon_in_the_hands_changes_nothing(self):
         plain = self.go(weapons=None)
-        got = self.go(weapons=None, weapon_chest_lag=self.LAG)
+        got = self.go(weapons=None, weapon_chest=1.0, weapon_chest_lag=self.LAG)
         self.assertTrue(np.array_equal(got.worlds, plain.worlds))
         self.assertEqual(self.over(got)["chest"], [])
 
-    #  the promise
+    def test_the_info_names_the_hand_the_scene_gives_a_weapon(self):
+        self.assertEqual(self.over(self.base)["held"], ["r"])
+        self.assertEqual(self.over(self.go(weapons=None))["held"], [])
 
-    def test_the_weapon_sits_on_the_chest_of_lag_frames_ago(self):
-        got = self.go(weapon_chest_lag=self.LAG)
+    #  the promise: a parent constraint to the chest, the sliders its strength
+
+    def want(self, rotation, position, lag=0.0):
+        """What the chip promises the holding hand: its offset from the chest HELD at its mean, on the
+        chest's own cycle scaled by the strengths and read `lag` frames back."""
         C = np.asarray(self.base.worlds[self.chest], float)
-        late = wm.shifted_cycle(C, self.LAG)
+        H = np.asarray(self.base.worlds[self.hand_r], float)
+        chest = wm.shifted_cycle(self.w.steady_chest(C, rotation, position), lag)
+        arm = self.w.steady_chest(np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)]),
+                                  0.0, 0.0)
+        return np.array([arm[f] @ chest[f] for f in range(self.n + 1)])
+
+    def test_full_strength_rides_the_torso_rigidly(self):
+        """The animator's own words (2026-11-03): «если 1 то двигаемся за туловищем, а не так как в
+        изначальной анимации». At 1 / 1 / 0 the weapon's offset from the chest is constant - a parent
+        constraint - and that is NOT what the cycle itself does."""
+        got = self.on(weapon_chest_rotation=1.0, weapon_chest_position=1.0)
+        C = np.asarray(got.worlds[self.chest], float)
+        H = np.asarray(got.worlds[self.hand_r], float)
+        rel = np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)])
+        rigid = max(float(np.abs(rel[f] - rel[0]).max()) for f in range(self.n + 1))
+        moved = max(float(np.linalg.norm(got.worlds[self.hand_r, f, 3, :3]
+                                         - self.base.worlds[self.hand_r, f, 3, :3]))
+                    for f in range(self.n + 1))
+        self.assertLess(rigid, 1e-6)
+        self.assertGreater(moved, 0.5)       # the control: it is not the cycle's own animation
+
+    def test_the_weapon_rides_the_chest_of_lag_frames_ago(self):
+        got = self.on(weapon_chest_lag=self.LAG)
+        want = self.want(1.0, 1.0, self.LAG)
         for f in range(self.n + 1):
-            was = np.asarray(self.base.worlds[self.hand_r, f], float) @ np.linalg.inv(C[f])
-            now = np.asarray(got.worlds[self.hand_r, f], float) @ np.linalg.inv(late[f])
-            self.assertTrue(np.allclose(now, was, atol=1e-6), f)
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
 
     def test_the_grip_really_moves(self):
-        got = self.go(weapon_chest_lag=self.LAG)
+        got = self.on(weapon_chest_lag=self.LAG)
         before = points(GRIP, np.asarray(self.base.worlds[self.hand_r], float))
         after = points(GRIP, np.asarray(got.worlds[self.hand_r], float))
         moved = max(float(np.linalg.norm(after[f] - before[f])) for f in range(self.n + 1))
@@ -161,32 +201,10 @@ class Pass(unittest.TestCase):
         self.assertAlmostEqual(self.over(got)["chest_cm"], moved, delta=0.5 * moved + 1e-6)
         self.assertEqual(self.over(got)["chest"], ["r"])
 
-    def test_the_strengths_work_with_no_lag_at_all(self):
-        """The animator's own report (2026-11-03): at 0 / 0 the weapon must stop inheriting the body,
-        lag or no lag. The first build scaled only the lag's own motion, so this moved nothing."""
-        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
-        moved = max(float(np.linalg.norm(got.worlds[self.hand_r, f, 3, :3]
-                                         - self.base.worlds[self.hand_r, f, 3, :3]))
-                    for f in range(self.n + 1))
-        self.assertGreater(moved, 0.5)
-
-    def want(self, rotation, position, lag=0.0):
-        """What the knobs promise the holding hand: its own pose in the chest's frame and the chest's own
-        cycle, each scaled, the chest's then read `lag` frames back."""
-        C = np.asarray(self.base.worlds[self.chest], float)
-        H = np.asarray(self.base.worlds[self.hand_r], float)
-        chest = wm.shifted_cycle(self.w.steady_chest(C, rotation, position), lag)
-        arm = self.w.steady_chest(np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)]),
-                                  rotation, position)
-        return np.array([arm[f] @ chest[f] for f in range(self.n + 1)])
-
     def test_no_strength_hangs_the_weapon_in_the_air(self):
-        """The animator in their own words (2026-11-03): «при нулевых настройках оружие должно стоять
-        статично». At 0 / 0 the weapon keeps nothing of the body but the walk's own locomotion - not the
-        chest's bob, sway and turn, and not the arm's own swing, which carries the weapon just as surely.
-        The first build took the chest's share alone, so a one-handed pose (no grip to still the arms)
-        left the weapon riding a swinging arm."""
-        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        """«Если 0 то стоим на месте»: at 0 / 0 the weapon keeps nothing of the body but the walk's own
+        locomotion - not the chest's bob, sway and turn, and not the arm's own swing."""
+        got = self.on(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
         after = points(GRIP, np.asarray(got.worlds[self.hand_r], float))
         before = points(GRIP, np.asarray(self.base.worlds[self.hand_r], float))
         per = (after[self.n] - after[0]) / float(self.n)
@@ -196,57 +214,51 @@ class Pass(unittest.TestCase):
         self.assertLess(wander, 1e-4)
         self.assertGreater(carried, 0.5)     # the control: the body really does carry it about
 
-    def test_no_strength_leaves_the_arms_own_swing_off_the_weapon(self):
-        """What makes the difference: the hand's pose in the chest's frame (the arm's own doing) is held
-        at its mean, so a pose with no two-handed grip to still the arms is static all the same."""
-        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+    def test_the_arms_own_swing_is_off_the_weapon_at_every_strength(self):
+        """The weapon hangs at its MEAN offset from the chest whatever the sliders say - it is a parent,
+        not a mix with the cycle's own animation. The arm then follows the weapon."""
         C = np.asarray(self.base.worlds[self.chest], float)
         H = np.asarray(self.base.worlds[self.hand_r], float)
         own = np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)])
         moved = max(float(np.linalg.norm(own[f, 3, :3] - own[0, 3, :3])) for f in range(self.n + 1))
         self.assertGreater(moved, 0.5)       # the control: the hand really does move in the chest's frame
-        for f in range(self.n + 1):
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], self.want(0.0, 0.0)[f], atol=1e-6), f)
+        for rot, pos in ((0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.09, 1.0)):
+            got = self.on(weapon_chest_rotation=rot, weapon_chest_position=pos)
+            want = self.want(rot, pos)
+            for f in range(self.n + 1):
+                self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), (rot, pos, f))
 
     def test_position_zero_takes_the_bob_and_sway_off_the_weapon(self):
-        """With the turn at full strength the weapon keeps every heading it had and loses every
-        deviation from the line it travels along - the chest's own, and the arm's."""
-        got = self.go(weapon_chest_position=0.0)
+        """With the turn at full strength the weapon inherits every heading the chest has and loses every
+        deviation from the line it travels along."""
+        got = self.on(weapon_chest_position=0.0)
         want = self.want(1.0, 0.0)
         for f in range(self.n + 1):
             self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3],
-                                        self.base.worlds[self.hand_r, f, :3, :3], atol=1e-9), f)
         off = max(float(np.linalg.norm(want[f, 3, :3] - self.base.worlds[self.hand_r, f, 3, :3]))
                   for f in range(self.n + 1))
         self.assertGreater(off, 0.5)         # the control: it really does move the weapon
 
     def test_rotation_zero_leaves_the_weapon_on_one_heading(self):
-        """With the place at full strength the weapon travels where it travelled and stops turning."""
-        got = self.go(weapon_chest_rotation=0.0)
+        """With the place at full strength the weapon is carried where the chest carries it and stops
+        turning."""
+        got = self.on(weapon_chest_rotation=0.0)
         want = self.want(0.0, 1.0)
-        worst = 0.0
         for f in range(self.n + 1):
             self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
-            worst = max(worst, math.degrees(float(np.linalg.norm(
-                wm.log_rot(np.asarray(self.base.worlds[self.hand_r, 0, :3, :3], float).T
-                           @ self.base.worlds[self.hand_r, f, :3, :3])))))
+        worst = max(math.degrees(float(np.linalg.norm(wm.log_rot(
+            np.asarray(self.base.worlds[self.hand_r, 0, :3, :3], float).T
+            @ self.base.worlds[self.hand_r, f, :3, :3])))) for f in range(self.n + 1))
         turn = max(math.degrees(float(np.linalg.norm(wm.log_rot(
             np.asarray(got.worlds[self.hand_r, 0, :3, :3], float).T
             @ got.worlds[self.hand_r, f, :3, :3])))) for f in range(self.n + 1))
         self.assertGreater(worst, 1.0)       # the control: the weapon really does turn without it
         self.assertLess(turn, 1e-3)
 
-    def test_half_strength_is_half_of_each(self):
-        got = self.go(weapon_chest_rotation=0.5, weapon_chest_position=0.5)
-        want = self.want(0.5, 0.5)
-        for f in range(self.n + 1):
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
-
     #  what must not break
 
     def test_the_bones_keep_their_lengths(self):
-        got = self.go(weapon_chest_lag=self.LAG)
+        got = self.on(weapon_chest_lag=self.LAG)
         for side, chain in self.chains.items():
             for a, b in zip(chain, chain[1:]):
                 for f in range(self.n + 1):
@@ -255,7 +267,7 @@ class Pass(unittest.TestCase):
                     self.assertAlmostEqual(now, was, places=4, msg=(side, f))
 
     def test_the_loop_closes(self):
-        got = self.go(weapon_chest_lag=self.LAG)
+        got = self.on(weapon_chest_lag=self.LAG)
         travel = (self.base.worlds[self.hand_r, self.n, 3, :3] - self.base.worlds[self.hand_r, 0, 3, :3])
         self.assertTrue(np.allclose(got.worlds[self.hand_r, self.n, :3, :3],
                                     got.worlds[self.hand_r, 0, :3, :3], atol=1e-6))
@@ -263,7 +275,7 @@ class Pass(unittest.TestCase):
                                     - got.worlds[self.hand_r, 0, 3, :3], travel, atol=1e-6))
 
     def test_the_body_above_the_arms_is_untouched(self):
-        got = self.go(weapon_chest_lag=self.LAG)
+        got = self.on(weapon_chest_lag=self.LAG)
         for j in (self.chest, self.w.index["pelvis"], self.w.index["head"]):
             self.assertTrue(np.allclose(got.worlds[j], self.base.worlds[j], atol=1e-9), j)
 
@@ -343,7 +355,7 @@ class OutOfPose(unittest.TestCase):
 
     def test_a_pose_that_was_never_filtered_leaves_every_arm_in(self):
         self.assertNotIn("arm_sides", self.whole)
-        got = self.go(self.whole, weapon_chest_lag=3.0)
+        got = self.go(self.whole, weapon_chest=1.0, weapon_chest_lag=3.0)
         self.assertEqual(self.over(got)["chest"], ["r"])
         self.assertEqual(self.over(got)["out_of_pose"], [])
 
@@ -358,13 +370,13 @@ class OutOfPose(unittest.TestCase):
 
     def test_the_other_arm_out_of_the_pose_is_not_carried(self):
         out = self.pose(*[p for p in wp.ALL_PARTS if p != "arm_l"])
-        got = self.go(out, weapon_chest_lag=3.0)
+        got = self.go(out, weapon_chest=1.0, weapon_chest_lag=3.0)
         base = self.go(out)
         n = got.frames
         moved = max(float(np.linalg.norm(got.worlds[self.hand_l, f, 3, :3]
                                          - base.worlds[self.hand_l, f, 3, :3])) for f in range(n + 1))
         self.assertLess(moved, 1e-9)
-        carried = self.go(self.pose(), weapon_chest_lag=3.0)
+        carried = self.go(self.pose(), weapon_chest=1.0, weapon_chest_lag=3.0)
         with_both = self.go(self.pose())
         moved_both = max(float(np.linalg.norm(carried.worlds[self.hand_l, f, 3, :3]
                                               - with_both.worlds[self.hand_l, f, 3, :3]))
@@ -381,10 +393,10 @@ class OutOfPose(unittest.TestCase):
 
 class Parameters(unittest.TestCase):
 
-    def test_the_weapon_tab_holds_the_four_beside_the_overlap(self):
+    def test_the_weapon_tab_holds_the_five_beside_the_overlap(self):
         names = [p.name for p in gait.PARAMS if p.group == gait.WEAPON]
-        self.assertEqual(names, ["weapon_overlap", "weapon_hold", "weapon_chest_rotation",
-                                 "weapon_chest_position", "weapon_chest_lag"])
+        self.assertEqual(names, ["weapon_overlap", "weapon_hold", "weapon_chest",
+                                 "weapon_chest_rotation", "weapon_chest_position", "weapon_chest_lag"])
 
     def test_every_one_of_them_is_sided(self):
         for p in gait.PARAMS:
@@ -439,12 +451,54 @@ class Parameters(unittest.TestCase):
             self.assertEqual(gait.own_value(own, name), want, name)
 
 
+class ChipMigration(unittest.TestCase):
+    """A card or a walker from before the chip (2026-11-03): the three sliders WERE the mode, so any of
+    them set means the animator wanted it on. `normal_params` turns it on once, and the next press writes
+    the chip back."""
+
+    def params(self, changes, pins=()):
+        return sw.normal_params({"changes": changes, "pins": list(pins)})["changes"]
+
+    def test_a_stored_slider_turns_the_chip_on(self):
+        for name in ("weapon_chest_rotation", "weapon_chest_position", "weapon_chest_lag"):
+            for key in (name, name + "_l", name + "_r"):
+                got = self.params({key: ("offset", -0.5)})
+                self.assertEqual(got.get("weapon_chest"), ("offset", 1.0), key)
+
+    def test_the_chips_own_key_is_not_a_slider(self):
+        """"weapon_chest_lag" starts with the chip's own sided key "weapon_chest_l" - the migration must
+        name the keys, never match a prefix."""
+        for key in ("weapon_chest", "weapon_chest_l", "weapon_chest_r"):
+            got = self.params({key: ("offset", 0.0)})
+            self.assertEqual(got.get("weapon_chest"), ("offset", 0.0) if key == "weapon_chest" else None,
+                             key)
+
+    def test_a_chip_the_animator_set_is_left_alone(self):
+        got = self.params({"weapon_chest_lag": ("offset", 100.0), "weapon_chest_r": ("offset", 1.0)})
+        self.assertNotIn("weapon_chest", got)
+        self.assertEqual(got["weapon_chest_r"], ("offset", 1.0))
+
+    def test_nothing_stored_turns_nothing_on(self):
+        self.assertEqual(self.params({}), {})
+        self.assertNotIn("weapon_chest", self.params({"step": ("ratio", 1.2)}))
+
+    def test_a_chip_the_animator_unticked_stays_off(self):
+        """The card drops a change that is its parameter's default but pins the key either way, so an
+        unticked chip is in `pins` with nothing in `changes` - and must not be migrated back on."""
+        got = self.params({"weapon_chest_rotation": ("offset", -0.5)}, pins=["weapon_chest"])
+        self.assertNotIn("weapon_chest", got)
+        for key in ("weapon_chest_l", "weapon_chest_r"):
+            self.assertNotIn("weapon_chest", self.params({"weapon_chest_lag": ("offset", 100.0)},
+                                                         pins=[key]))
+
+
 class Balance(unittest.TestCase):
 
     def test_the_carry_sees_the_pass(self):
         w = walk()
         base = w.evaluate({"elbow_add": 70.0, "arm_drag": 0.0}, weapons=WEAPON)
-        got = w.evaluate({"elbow_add": 70.0, "arm_drag": 0.0, "weapon_chest_lag": 6.0}, weapons=WEAPON)
+        got = w.evaluate({"elbow_add": 70.0, "arm_drag": 0.0, "weapon_chest": 1.0,
+                          "weapon_chest_lag": 6.0}, weapons=WEAPON)
         a = np.asarray(base.worlds[w.index["pelvis"]], float)[:, 3, :3]
         b = np.asarray(got.worlds[w.index["pelvis"]], float)[:, 3, :3]
         self.assertGreater(float(np.abs(a - b).max()), 1e-9)
