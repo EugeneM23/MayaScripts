@@ -141,6 +141,7 @@ const UI = {
     this.buildPanel();
     this.applyQuality(this.state.quality);
     this.applyPreset(this.state.preset);
+    this.refreshRig();
     this.wireInput();
     // applyQuality already reallocated and dropped the first blob; dropping a
     // second one here would put two overlapping blobs in the same place, at
@@ -300,6 +301,18 @@ const UI = {
   // about the shot and not about the material.
   nozzle() {
     const g = this.gridN();
+    const onBone = RIG.nozzle();
+    if (onBone) {
+      // Out of the bone, along the bone, and carrying the bone's own speed: a
+      // hand that swings flings the slime instead of laying it down.
+      return {
+        pos: onBone.pos,
+        dir: onBone.dir,
+        radius: 2.1,
+        speed: this.state.nozzleSpeed,
+        vel: onBone.vel,
+      };
+    }
     return {
       pos: [g * 0.5, 2 + this.state.nozzleHeight, g * 0.5],
       dir: [0, -1, 0],
@@ -339,6 +352,11 @@ const UI = {
 
   pourTick() {
     const n = this.nozzle();
+    if (n.vel) {
+      const along = n.vel[0] * n.dir[0] + n.vel[1] * n.dir[1] + n.vel[2] * n.dir[2];
+      SIM.pour(n.pos, n.dir, n.radius, Math.max(1, n.speed + along), 1 / 60);
+      return;
+    }
     SIM.pour(n.pos, n.dir, n.radius, n.speed, 1 / 60);
   },
 
@@ -428,6 +446,40 @@ const UI = {
       () => this.state.handRadius, (v) => { this.state.handRadius = v; });
     slider('grab', 'Сила руки', 0, 1, 0.05,
       () => this.state.handStrength, (v) => { this.state.handStrength = v; }, (v) => v.toFixed(2));
+
+    head('Персонаж');
+    this.rigBtns = buttons([
+      ['Загрузить FBX', () => this.pickRig()],
+      ['Пауза/играть', (b) => { RIG.playing = !RIG.playing; b.classList.toggle('on', RIG.playing); }],
+      ['Убрать', () => { RIG.drop(); this.refreshRig(); this.note = ''; }],
+    ]);
+    this.rigBtns['Пауза/играть'].classList.toggle('on', RIG.playing);
+    host.appendChild(this._hint('FBX читает Maya через serve.py — это занимает полминуты'));
+
+    const brow = el('div', 'row');
+    brow.appendChild(el('label', '', 'Эмиттер на кости'));
+    this.boneSel = document.createElement('select');
+    this.boneSel.style.cssText = 'flex:1;min-width:0;background:var(--card);color:var(--text);' +
+      'border:1px solid var(--line);border-radius:6px;padding:4px;font:inherit;font-size:11.5px';
+    this.boneSel.onchange = () => { RIG.bone = parseInt(this.boneSel.value, 10); };
+    brow.appendChild(this.boneSel);
+    host.appendChild(brow);
+    host.appendChild(this._hint('струя льётся из кости и летит вместе с ней'));
+
+    slider('rigspeed', 'Скорость клипа', 0, 3, 0.05,
+      () => RIG.speed, (v) => { RIG.speed = v; }, (v) => v.toFixed(2) + '×');
+    slider('rigsize', 'Размер персонажа', 0.05, 2, 0.01,
+      () => RIG.scale, (v) => { RIG.scale = v; }, (v) => v.toFixed(2) + '×');
+    slider('rigfat', 'Толщина костей', 0.3, 3, 0.05,
+      () => RIG.fat, (v) => { RIG.fat = v; }, (v) => v.toFixed(2) + '×');
+    host.appendChild(this._hint('если в FBX нет скина, толщина — догадка по длине кости'));
+    this.rigCollide = buttons([
+      ['Столкновения', (b) => { RIG.collide = !RIG.collide; b.classList.toggle('on', RIG.collide); }],
+    ]);
+    this.rigCollide['Столкновения'].classList.toggle('on', RIG.collide);
+    this.rigLine = el('div', 'hint', 'ничего не загружено');
+    this.rigLine.style.marginLeft = '0';
+    host.appendChild(this.rigLine);
 
     head('Качество');
     this.qualityBtns = buttons(Object.keys(this.quality).map((name) =>
@@ -629,6 +681,59 @@ const UI = {
     this.refreshRows();
   },
 
+  // ---------------------------------------------------------------- the rig
+
+  pickRig() {
+    if (!this._fileInput) {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.fbx,.FBX,.ma,.mb';
+      inp.style.display = 'none';
+      inp.onchange = () => { if (inp.files && inp.files[0]) this.loadRig(inp.files[0]); inp.value = ''; };
+      document.body.appendChild(inp);
+      this._fileInput = inp;
+    }
+    this._fileInput.click();
+  },
+
+  async loadRig(file) {
+    this.note = 'читаю ' + file.name + ' через Maya…';
+    this.showStats();
+    try {
+      const data = await RIG.upload(file);
+      RIG.load(data);
+      this.note = '';
+      this.refreshRig();
+      this.refreshRows();
+      this.frameCamera();
+    } catch (e) {
+      this.note = String(e.message || e);
+    }
+    this.showStats();
+  },
+
+  refreshRig() {
+    if (!this.boneSel) return;
+    const names = RIG.boneNames();
+    this.boneSel.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '-1'; none.textContent = '— из сопла —';
+    this.boneSel.appendChild(none);
+    names.forEach((nm, i) => {
+      const o = document.createElement('option');
+      o.value = String(i); o.textContent = nm;
+      this.boneSel.appendChild(o);
+    });
+    this.boneSel.value = String(RIG.bone);
+    if (this.rigLine) {
+      this.rigLine.textContent = RIG.loaded()
+        ? RIG.name + ': ' + names.length + ' костей, ' +
+          (RIG.data.colliders || []).length + ' капсул, ' +
+          RIG.data.frames.length + ' кадров (' + RIG.seconds().toFixed(1) + ' с)'
+        : 'ничего не загружено';
+    }
+  },
+
   // ---------------------------------------------------------------- input
 
   wireInput() {
@@ -818,6 +923,8 @@ const UI = {
     const world = {
       obstacle: this.obstacleVec(),
       obstacleVel: this.ballVel,
+      caps: RIG.caps,
+      capCount: 0,
       mouse: this.hand.on && this.hand.pos
         ? [this.hand.pos[0], this.hand.pos[1], this.hand.pos[2], this.state.handRadius]
         : [0, 0, 0, 0],
@@ -845,14 +952,22 @@ const UI = {
     }
     let took = 0;
     if (this.state.stepOnce) {
+      RIG.advance(dt);
+      world.capCount = RIG.collide ? RIG.pack() : (RIG.pack() && 0);
       if (this.state.pouring || this.state.pourKey) this.pourTick();
       SIM.step(dt, world);
+      RIG.remember();
       took = 1;
       this.state.stepOnce = false;
     } else if (!this.state.paused) {
       while (this.clock >= dt && took < this.MAX_STEPS) {
+        // The character moves on the same clock as the fluid, so a swing lands
+        // in the same place every run however fast the machine is.
+        RIG.advance(dt);
+        world.capCount = RIG.collide ? RIG.pack() : (RIG.pack() && 0);
         if (this.state.pouring || this.state.pourKey) this.pourTick();
         SIM.step(dt, world);
+        RIG.remember();
         this.clock -= dt;
         took++;
       }

@@ -12,9 +12,13 @@ and open the address it prints. Chrome or Edge: WebGPU is what this needs, and
 Firefox and Safari do not have it yet.
 """
 import http.server
+import json
 import os
 import socketserver
+import subprocess
 import sys
+import tempfile
+import time
 import webbrowser
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8744
@@ -31,6 +35,57 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    # Where Maya is, for reading an FBX. The browser has no FBX reader and
+    # writing one is weeks of work for a format every exporter writes
+    # differently; Maya reads it for a living and is on the machine this is
+    # for. Override with MAYAPY if it lives somewhere else.
+    MAYAPY = os.environ.get('MAYAPY') or (
+        'C:/Program Files/Autodesk/Maya2027/bin/mayapy.exe')
+
+    def do_fbx(self):
+        """Take an FBX, hand it to Maya, answer with the rig the page wants."""
+        length = int(self.headers.get('Content-Length') or 0)
+        if length <= 0 or length > 400 * 1024 * 1024:
+            self.send_error(400, 'bad length')
+            return
+        blob = self.rfile.read(length)
+        name = os.path.basename(self.path.split('?', 1)[0][len('/fbx/'):]) or 'drop.fbx'
+        if not name.lower().endswith(('.fbx', '.ma', '.mb')):
+            self.send_error(400, 'fbx, ma or mb only')
+            return
+        work = os.path.join(tempfile.gettempdir(), 'skeldar_slime')
+        os.makedirs(work, exist_ok=True)
+        src = os.path.join(work, name)
+        out = os.path.join(work, name + '.rig.json')
+        with open(src, 'wb') as f:
+            f.write(blob)
+        reader = os.path.join(HERE, 'fbxread.py')
+        started = time.time()
+        try:
+            proc = subprocess.run([self.MAYAPY, reader, src, out],
+                                  capture_output=True, timeout=600,
+                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except Exception as e:
+            self.send_error(500, 'could not run Maya: %s' % e)
+            return
+        if not os.path.exists(out):
+            tail = (proc.stderr or proc.stdout or b'').decode('utf-8', 'replace')[-600:]
+            body = json.dumps({'error': 'Maya could not read it', 'detail': tail}).encode('utf-8')
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        with open(out, 'rb') as f:
+            body = f.read()
+        print('read %s in %.1f s -> %d KB' % (name, time.time() - started, len(body) // 1024))
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
         """Save a still the page sends to shots/<name>.
 
@@ -38,6 +93,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         looked at properly - and how the look is checked at all on a machine
         where a screenshot of the window is not available.
         """
+        if self.path.startswith("/fbx/"):
+            self.do_fbx()
+            return
         if not self.path.startswith("/save/"):
             self.send_error(404)
             return

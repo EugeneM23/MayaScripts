@@ -17698,6 +17698,66 @@ and after:
      own timestamps, and split them: knowing it was 2.9 ms of picture against 9.2 of solver is the
      difference between turning down the thing that costs and the thing that does not.
 
+**…and the emitter rides a bone of an FBX** (2026-11-03, the animator: «нужно добавить возможность
+настраивать эмитор. Вставлять fbx сцены и крепить эммитор например к костям в фбиксе»; asked, they
+chose **Maya** to read the FBX and **крепление + столкновения** — the bones hold the jet AND the
+fluid feels them).
+
+**The page never sees an FBX.** The browser has no reader and writing one is weeks of work for a
+format every exporter writes differently; Maya reads it for a living and is on this machine. So the
+page POSTs the file to `serve.py`, which runs `mayapy fbxread.py` and answers a small JSON: the
+bone names and parents, a capsule a bone, and every bone's world place and rotation on every frame
+(91 bones × 84 frames of a UE walk is 770 KB). **Measured end to end through the page's own
+loader: 5.4 s**, Maya's start being most of it.
+
+- **The character is a line of capsules**, up to 24 of them, carried to the solver and the
+  renderer in the uniform the params already use (three vec4 each): WebGPU promises only eight
+  storage buffers a stage and the solver uses every one. The solve projects a node out of the
+  nearest point of each segment, the way the obstacle ball already worked, and carries the bone's
+  own velocity, so a swing pushes the fluid instead of the fluid flowing through a limb that
+  teleports. **Measured: the capsules cost nothing** — 49.1 ms a frame with them on and 49.1 with
+  them off, 15k particles on a 96 grid, because the loop runs only on the nodes that carry mass.
+- **The emitter is any bone**, picked from a dropdown of all 91; the jet leaves the bone's FAR end,
+  points down the bone, and **carries the bone's own speed** (measured inside the fixed step: a
+  hand swinging at 8–30 cells a second, which the pour adds to its own). The fixed nozzle is still
+  there as the first row of the list.
+- **The character moves on the fluid's clock** (`RIG.advance(dt)` inside the fixed step, not once a
+  frame), so a swing lands in the same place however fast the machine is.
+- **It is fitted to the room on load**: a game character is 170 cm and the room is as many
+  centimetres as the grid has cells, so a Manny's head went through the ceiling. The clip's own
+  height sets a scale (0.458 for a UE walk in a 96 room) and its first frame sets a place; two
+  sliders move both afterwards.
+- **A clip carries no skin, so the thickness of a limb is a guess — and the guess has to come off
+  the skeleton.** `fbxread.py` measures a radius from the skin where there is one (the vertices
+  whose heaviest influence is that bone, at the 70th percentile of their distance from the bone's
+  axis — the plugin's ragdoll reading), and where there is not: a limb from its own length, a tip
+  bone (a toe, a head) from the bone it hangs off, and **a midline bone from how far out its own
+  limbs hang, sideways** — the pelvis to the hips, the chest to the clavicles, a spine joint
+  between them inheriting from below. Two readings were tried first and are wrong for one reason,
+  that they let a bone far from the body decide: the nearest left/right PAIR by height made the
+  pelvis 60 cm across (at frame 0 of a walk the hands hang at hip height), and the nearest sided
+  bone in 3D made the chest 35 cm across, for the same hands. After: pelvis and spine 12.8,
+  chest 11.8, thighs 9.5, arms 6.0, feet 3.7 — a believable figure, where the first reading made
+  the torso a 1.6 cm stick the slime poured straight through. A **Толщина костей** slider scales
+  every capsule, because it is a guess.
+- The colliders are the 24 biggest by `radius² · length`, with the export helpers left out by name
+  (`ik_`, `weapon`, `camera`, `twist`, `attach`, `socket`…): a 24 cm ball at the origin because a
+  helper has a distant child is worse than no collider at all.
+
+Proof, in the page: a blob dropped on the chest with the collisions on breaks over the body and
+lands off-centre, and with them off falls as a clean column into a round puddle; the hand pours a
+streak along the floor as the character walks; `shots/rig_hand_pour.png`. **Not built**: a mesh
+(the capsules are the character), more than 24 colliders, and the file picker's own dialog is the
+animator's to press.
+
+333. **A jet seeded inside a collider dies there.** The emitter on a hand poured from the bone's
+     ROOT, which sits inside the torso's capsule while the arm is down, and a thousand particles a
+     second went into the hip and came out as a handful. Out of the bone's far end — the fingers —
+     is both what «из руки» means and the one place that is outside the body. The tell was the live
+     count against the pour rate, not the picture: at 570 particles a second two seconds of
+     pouring must leave about 1 100, and the kill counters said nothing because nothing was being
+     killed.
+
 ## Animation Setup: Refresh reads, and asks before it reads thousands (2026-11-03)
 
 The animator, at 05:12: «Я нажал на обновление списка файлов в animation setup и теперь у меня

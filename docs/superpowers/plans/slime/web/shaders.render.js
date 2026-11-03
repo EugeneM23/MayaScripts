@@ -24,6 +24,8 @@ struct Cam {
   obstacle : vec4<f32>,   // xyz centre, w radius  (cells)
   tint     : vec4<f32>,   // slime colour, w absorption
   look     : vec4<f32>,   // roughness, refract strength, shadow strength, opacity
+  capN     : vec4<f32>,   // how many bone capsules are live
+  caps     : array<vec4<f32>, 72>,   // (a.xyz, radius), (b.xyz, -), (vel.xyz, -)
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -154,6 +156,43 @@ struct BgOut {
   @location(1) depth  : vec4<f32>,
 };
 
+// Where a ray meets a capsule, or -1. The usual quadratic against the infinite
+// cylinder, with the two end caps tried as spheres, because a bone drawn as a
+// cylinder with flat ends reads as a robot.
+fn capsuleHit(ro: vec3<f32>, rd: vec3<f32>, a: vec3<f32>, b: vec3<f32>,
+              r: f32, maxT: f32) -> f32 {
+  let ba = b - a;
+  let oa = ro - a;
+  let baba = dot(ba, ba);
+  var best = -1.0;
+  if (baba > 1.0e-8) {
+    let bard = dot(ba, rd);
+    let baoa = dot(ba, oa);
+    let k2 = baba - bard * bard;
+    let k1 = baba * dot(oa, rd) - baoa * bard;
+    let k0 = baba * dot(oa, oa) - baoa * baoa - r * r * baba;
+    let h = k1 * k1 - k2 * k0;
+    if (h >= 0.0 && abs(k2) > 1.0e-8) {
+      let t = (-k1 - sqrt(h)) / k2;
+      let y = baoa + t * bard;
+      if (t > 0.0 && t < maxT && y > 0.0 && y < baba) { best = t; }
+    }
+  }
+  // the caps
+  for (var e = 0; e < 2; e = e + 1) {
+    let c = select(a, b, e == 1);
+    let oc = ro - c;
+    let bq = dot(oc, rd);
+    let cq = dot(oc, oc) - r * r;
+    let hq = bq * bq - cq;
+    if (hq > 0.0) {
+      let t = -bq - sqrt(hq);
+      if (t > 0.0 && t < maxT && (best < 0.0 || t < best)) { best = t; }
+    }
+  }
+  return best;
+}
+
 @fragment
 fn bgFrag(i: FSOut) -> BgOut {
   let ro = C.eye.xyz;
@@ -178,6 +217,27 @@ fn bgFrag(i: FSOut) -> BgOut {
         let rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
         col = vec3<f32>(0.30, 0.31, 0.33) * (0.18 + 0.8 * dif) + vec3<f32>(0.1) * rim;
       }
+    }
+  }
+
+  // the character, a capsule a bone
+  let nc = u32(max(C.capN.x, 0.0));
+  for (var k = 0u; k < nc; k = k + 1u) {
+    let a = C.caps[k * 3u];
+    let b = C.caps[k * 3u + 1u];
+    if (a.w <= 0.0) { continue; }
+    let t = capsuleHit(ro, rd, a.xyz, b.xyz, a.w, dist);
+    if (t > 0.0) {
+      dist = t;
+      let p = ro + rd * t;
+      let ab = b.xyz - a.xyz;
+      let l2 = max(dot(ab, ab), 1.0e-8);
+      let h = clamp(dot(p - a.xyz, ab) / l2, 0.0, 1.0);
+      let n = normalize(p - (a.xyz + ab * h));
+      let l = normalize(vec3<f32>(0.4, 0.8, 0.35));
+      let dif = max(dot(n, l), 0.0);
+      let rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+      col = vec3<f32>(0.26, 0.28, 0.32) * (0.20 + 0.75 * dif) + vec3<f32>(0.12) * rim;
     }
   }
 

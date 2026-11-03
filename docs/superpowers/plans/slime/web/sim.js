@@ -35,7 +35,7 @@ const SIM = {
   buf: {},
   pipe: {},
   bind: null,
-  paramData: new Float32Array(48),
+  paramData: new Float32Array(48 + 4 + 24 * 12),   // + capN + the capsules
 
   // One particle per half-cell: 8 a cell, which is what pvol and pmass assume.
   LATTICE: 0.5,
@@ -191,6 +191,11 @@ const SIM = {
     const ov = e.obstacleVel || [0, 0, 0];
     p[44] = ov[0]; p[45] = ov[1]; p[46] = ov[2];
     p[47] = q.airDrag;
+    // The capsules a character's bones make, straight into the uniform.
+    const caps = e.caps, nc = Math.min(e.capCount || 0, 24);
+    p[48] = nc; p[49] = 0; p[50] = 0; p[51] = 0;
+    if (nc > 0 && caps) p.set(caps.subarray(0, nc * 12), 52);
+    else p.fill(0, 52, 52 + 12);
     this.device.queue.writeBuffer(this.buf.params, 0, p);
   },
 

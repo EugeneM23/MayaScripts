@@ -42,7 +42,7 @@ const RENDER = {
 
   cam: { yaw: 0.72, pitch: 0.42, dist: 190, target: [48, 20, 48] },
 
-  camData: new Float32Array(76),
+  camData: new Float32Array(76 + 4 + 24 * 12),   // + capN + the bone capsules
   tex: {},
   pipe: {},
 
@@ -341,6 +341,13 @@ const RENDER = {
     D[64] = obstacle[0]; D[65] = obstacle[1]; D[66] = obstacle[2]; D[67] = obstacle[3];
     D[68] = this.look.tint[0]; D[69] = this.look.tint[1]; D[70] = this.look.tint[2]; D[71] = this.look.absorb;
     D[72] = this.look.roughness; D[73] = this.look.refract; D[74] = this.look.shadow; D[75] = this.look.opacity;
+
+    // The character's bones, the same packing the solver reads, so what is
+    // drawn and what the fluid hits cannot drift apart.
+    const caps = (typeof RIG !== 'undefined' && RIG.capCount) ? RIG.caps : null;
+    const nc = caps ? Math.min(RIG.capCount, 24) : 0;
+    D[76] = nc; D[77] = 0; D[78] = 0; D[79] = 0;
+    if (nc) D.set(caps.subarray(0, nc * 12), 80);
 
     this.device.queue.writeBuffer(this.camBuf, 0, D);
     this.eye = eye;

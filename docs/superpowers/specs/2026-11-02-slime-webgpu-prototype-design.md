@@ -330,3 +330,95 @@ Four things the animator asked for after using it, and what each cost:
   128³ domain now costs what 64³ did. What is left of the domain's cost is one thread and one flag
   read per node; removing that wants an indirect dispatch over a compacted block list, which is
   the real sparse MPM and is not built.
+
+## Addendum 3: a character out of an FBX, holding the emitter (2026-11-03)
+
+The animator: «и нужно добавить возможность настраивать эмитор. Вставлять fbx сцены и крепить
+эммитор например к костям в фбиксе». Asked two questions before building:
+
+- **how to read the FBX** — through Maya (their answer), rather than a JS reader or a hand-made
+  format. The browser has no FBX reader; writing one is weeks for a format every exporter writes
+  differently; Maya is on the machine this prototype is for and reads FBX for a living.
+- **what a character is for** — «крепление + столкновения»: the bones both hold the emitter and
+  push the fluid.
+
+### The shape
+
+```
+the page  --POST /fbx/<name>-->  serve.py  --mayapy fbxread.py-->  Maya
+                                     |
+                                  <-- JSON: bones, capsules, a frame a frame
+```
+
+`fbxread.py` writes only what the sandbox can use, in centimetres (one cell):
+
+| field | what |
+|---|---|
+| `bones` | name, parent, the capsule's radius, the tip in the bone's own frame, its length |
+| `colliders` | which bones are worth colliding with: the 24 biggest by `radius² · length` |
+| `frames` | a bone a row: its world place and the three columns of its rotation |
+
+A UE walk is 91 bones × 84 frames = 770 KB of JSON, read in **5.4 s through the page's own
+loader** — Maya's start is most of it.
+
+`rig.js` plays it (two frames and a blend, the rotation columns left unnormalised: over a sixtieth
+of a second the drift is nothing, and they only point the emitter and place a capsule's far end),
+packs the capsules for the solver, and asks the server for a file.
+
+### The decisions, and what each cost
+
+- **Capsules in the uniform, not a storage buffer.** WebGPU promises eight storage buffers a stage
+  and the solver uses every one of them; 24 capsules are three vec4 each, which the params buffer
+  had room for. The solve projects a node out of the nearest point of the segment — the sphere
+  code with the centre moved — and carries the bone's velocity, so a swing pushes.
+  **Measured: 49.1 ms a frame with the capsules on and 49.1 with them off** (15k particles, grid
+  96): the loop runs only on nodes that carry mass.
+- **The character moves on the fluid's clock**, inside the fixed step, so a swing lands in the same
+  place whatever the frame rate.
+- **Fitted to the room on load.** A game character is 170 cm and the room is as many centimetres as
+  the grid has cells. The clip's own height sets the scale (0.458 in a 96 room) and its first frame
+  the place; the two sliders move both afterwards.
+- **The emitter leaves the bone's far end, not its root** (trap 333): the root of a hand is inside
+  the torso's capsule while the arm is down, and a jet seeded inside a collider dies there — a
+  thousand particles a second went into the hip and a handful came out.
+- **The capsules are drawn whether or not the fluid feels them**: «Столкновения» off means the
+  solver is handed none, not that the character disappears.
+
+### Measuring a limb with no skin
+
+An animation clip carries no skin, so `_capsule`'s measurement (the vertices whose heaviest
+influence is that bone, at the 70th percentile of their distance from the bone's axis) has nothing
+to work on and the radius is a guess. The guess has to come off the skeleton, and two readings were
+tried before the one that works — both wrong for the same reason, that they let a bone far from the
+body decide how wide the body is:
+
+| reading | pelvis | chest | why it is wrong |
+|---|---|---|---|
+| the bone's own length × 0.22 | 1.6 | 4.3 | a spine joint is 8 cm long and a chest is 30 across |
+| the nearest left/right PAIR by height | 30.4 | 30.9 | at frame 0 of a walk the hands hang at hip height |
+| the nearest sided bone in 3D | 11.3 | 18.0 | the same hands, nearer than the clavicles |
+| **its own limbs, sideways** | **12.8** | **11.8** | only a limb the bone carries can say |
+
+The last one: a midline bone is as wide as the horizontal gap to the limbs that grow out of it —
+the pelvis to the hips, the chest to the clavicles — measured against the limb's middle as well as
+its root, and a spine joint between them inherits from below. Sideways only, because a thigh's
+middle is 20 cm DOWN the leg and the three-dimensional distance said the hips were 43 cm across.
+
+A tip bone (a toe, a head) is as thick as the bone it hangs off; half its parent's LENGTH, which it
+was first, made a toe an 8 cm ball on a 4 cm foot.
+
+A **Толщина костей** slider scales every capsule, because all of this is a guess and the animator
+can see what it should have been.
+
+### Seen
+
+- A blob dropped on the chest with the collisions ON breaks over the body and lands off-centre;
+  with them OFF it falls as a clean column into a round puddle.
+- The hand pours a streak along the floor as the character walks (`shots/rig_hand_pour.png`).
+- The pour sees the hand moving **8–30 cells a second** and adds it to the jet.
+
+### Not built
+
+A mesh (the capsules are the character), more than 24 colliders, a character that the fluid can
+push back, and the file picker's own dialog — which is the animator's to press.
+

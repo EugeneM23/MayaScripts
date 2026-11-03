@@ -59,6 +59,13 @@ struct Params {
   // fluid instead of the fluid flowing through a ball that teleports.
   // w: air drag - see the end of G2P.
   aux       : vec4<f32>,
+  // How many of the capsules below are live. A character read out of an FBX
+  // arrives as one capsule a bone; they travel in this uniform rather than a
+  // storage buffer because WebGPU promises only eight storage bindings a stage
+  // and the solver uses every one of them.
+  capN      : vec4<f32>,
+  // Three a capsule: (a.xyz, radius), (b.xyz, -), (velocity.xyz, -).
+  caps      : array<vec4<f32>, 72>,
 };
 
 @group(0) @binding(0) var<uniform> P : Params;
@@ -388,6 +395,17 @@ fn collideSphere(p: vec3<f32>, v: vec3<f32>, centre: vec3<f32>, radius: f32,
   return colVel + mix(tangent, vec3<f32>(0.0), stick);
 }
 
+// The same projection as the sphere, against the nearest point of a segment:
+// a bone is a capsule, and a character is two dozen of them.
+fn collideCapsule(p: vec3<f32>, v: vec3<f32>, a: vec3<f32>, b: vec3<f32>,
+                  radius: f32, colVel: vec3<f32>, stick: f32) -> vec3<f32> {
+  let ab = b - a;
+  let len2 = dot(ab, ab);
+  var t = 0.0;
+  if (len2 > 1.0e-8) { t = clamp(dot(p - a, ab) / len2, 0.0, 1.0); }
+  return collideSphere(p, v, a + ab * t, radius, colVel, stick);
+}
+
 @compute @workgroup_size(256)
 fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
   let g = gdim();
@@ -442,6 +460,17 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (P.obstacle.w > 0.0) {
     v = collideSphere(p, v, P.obstacle.xyz, P.obstacle.w, P.aux.xyz, clamp(stickT, 0.0, 1.0));
   }
+  // --- the character, a capsule a bone.
+  let nc = u32(max(P.capN.x, 0.0));
+  for (var k = 0u; k < nc; k = k + 1u) {
+    let a = P.caps[k * 3u];
+    let b = P.caps[k * 3u + 1u];
+    let cv = P.caps[k * 3u + 2u];
+    if (a.w > 0.0) {
+      v = collideCapsule(p, v, a.xyz, b.xyz, a.w, cv.xyz, clamp(stickT, 0.0, 1.0));
+    }
+  }
+
   if (P.mouse.w > 0.0) {
     let d = p - P.mouse.xyz;
     let len = length(d);
