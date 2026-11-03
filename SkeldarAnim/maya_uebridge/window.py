@@ -881,9 +881,30 @@ def _location_changed():
         _status("press Refresh to scan {0}".format(value))
 
 
-def _refresh_files():
+def _ask_scan(text):
+    """Maya's own question before a scan of thousands of files. True where it
+    cannot be asked - a batch session has nobody to answer, and there the
+    press itself is the answer."""
+    try:
+        answer = cmds.confirmDialog(
+            title="Connect", message=text, messageAlign="left",
+            button=["Scan", "Cancel"], defaultButton="Scan",
+            cancelButton="Cancel", dismissString="Cancel")
+    except Exception:                                        # noqa: BLE001
+        return True
+    return answer == "Scan"
+
+
+def _refresh_files(asks=None):
     """Scan the picked folder or Unity project, under a cancellable
-    progress window, and cache what it holds."""
+    progress window, and cache what it holds.
+
+    It counts first and ASKS before reading a folder that holds thousands of
+    clips (2026-11-03: one press walked the animator's own Downloads - 14 206
+    files of an extracted Unity course - and the progress window counting
+    through them read as «14 thousand files are being created»). The walk is
+    cheap (1.1 s over 188 082 entries) and is handed to the scan, so the tree
+    is not walked twice. `asks(text)` is the question, injectable."""
     from maya_uebridge import formats, sources, unityfiles
     source = current_source()
     location = _STATE.get("location") or _menu_value()
@@ -901,10 +922,16 @@ def _refresh_files():
         _status("{0} is not a Unity project (no Assets and ProjectSettings in "
                 "it)".format(location))
         return
-    progress = _ScanProgress()
+    files = sources.scan_files(location, source)
+    question = sources.scan_question(location, files)
+    if question and not (asks or _ask_scan)(question):
+        _status("scan cancelled - {0} animation files in {1}, none read"
+                .format(sources.grouped(len(files)), location))
+        return
+    progress = _ScanProgress(len(files))
     try:
         found = sources.scan(location, source, formats.fbx_takes,
-                             progress=progress.step)
+                             progress=progress.step, files=files)
     finally:
         progress.close()
     _STATE["location"] = location
@@ -920,14 +947,22 @@ def _refresh_files():
 
 class _ScanProgress(object):
     """Maya's progress window over a scan, cancellable; nothing where it
-    cannot stand (a batch session)."""
+    cannot stand (a batch session).
 
-    def __init__(self):
+    Its title says what the count is and that nothing is written: the bare
+    «scanning...» over a number in the thousands is what the animator read
+    as files being created (2026-11-03)."""
+
+    def __init__(self, total=0):
         self.on = False
         self.cancelled = False
         try:
-            cmds.progressWindow(title="Connect", progress=0, maxValue=100,
-                                status="scanning...", isInterruptable=True)
+            from maya_uebridge import sources
+            cmds.progressWindow(
+                title="Connect - reading {0} files, writing nothing".format(
+                    sources.grouped(total)) if total else "Connect",
+                progress=0, maxValue=100,
+                status="scanning...", isInterruptable=True)
             self.on = True
         except Exception:                                    # noqa: BLE001
             pass

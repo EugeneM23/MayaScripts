@@ -510,17 +510,31 @@ class FileListing(Base):
         self.assertEqual(window._STATE["records"], self.found)
         self.assertNotIn("press Refresh", " ".join(self.said))
 
-    def scan(self, cancel_after=None):
+    def scan(self, cancel_after=None, holds=2):
+        """The scan and the walk it is handed, both recorded. `holds` is how
+        many clip files the place holds - over `sources.ASK_OVER` the press
+        asks before it reads them (2026-11-03)."""
         calls = []
+        self.walked = []
+        self.files = ["{0}/pack/clip{1}.fbx".format(self.clips, i)
+                      for i in range(holds)]
 
-        def scan(location, source, takes_of, progress=None):
+        def scan_files(top, source, walk=None):
+            self.walked.append((top, source))
+            return list(self.files)
+
+        self.handed = []
+
+        def scan(location, source, takes_of, progress=None, files=None):
             calls.append((location, source))
+            self.handed.append(files)
             for i in range(1, 31):
                 if progress(i, 30, location + "/clip%d.fbx" % i) is False:
                     return self.found[:1]
             return list(self.found)
         from maya_uebridge import sources as src
         self.patch(src, "scan", scan)
+        self.patch(src, "scan_files", scan_files)
         return calls
 
     def test_a_refresh_scans_the_folder_and_caches_it(self):
@@ -533,7 +547,8 @@ class FileListing(Base):
         self.assertEqual(self.card.controls[window._HEADER]["label"],
                          sources.header_line("folder", self.clips, 2, False))
         steps = [p for p in self.card.progress if p != "end"]
-        self.assertEqual(steps[0]["title"], "Connect")
+        self.assertEqual(steps[0]["title"],
+                         "Connect - reading 2 files, writing nothing")
         self.assertEqual([p.get("progress") for p in steps[1:]], [33, 66, 100])
         self.assertEqual(self.card.progress[-1], "end")
 
@@ -573,6 +588,65 @@ class FileListing(Base):
         window._STATE.update(source="folder", location=self.clips)
         window._refresh_files()
         self.assertEqual(window._STATE["records"], self.found)
+
+    #  --- the guard before a huge scan (2026-11-03). The animator pressed
+    #  Refresh on a folder holding 14 206 clip files (their own Downloads,
+    #  with an extracted Unity course in it) and read the progress window's
+    #  count as «14 thousand files are being created».
+
+    def test_the_walk_is_done_once_and_handed_to_the_scan(self):
+        calls = self.scan(holds=5)
+        window._STATE.update(source="folder", location=self.clips)
+        window._refresh_files()
+        self.assertEqual(self.walked, [(self.clips, "folder")])
+        self.assertEqual(calls, [(self.clips, "folder")])
+        self.assertEqual(self.handed, [self.files])
+
+    def test_a_folder_of_a_few_clips_is_scanned_with_no_question(self):
+        self.scan(holds=20)
+        window._STATE.update(source="folder", location=self.clips)
+        window._refresh_files()
+        self.assertEqual([c for c in self.card.calls if c[0] == "confirmDialog"],
+                         [])
+        self.assertEqual(window._STATE["records"], self.found)
+
+    def test_a_folder_of_thousands_is_asked_about_and_scanned_on_a_yes(self):
+        calls = self.scan(holds=sources.ASK_OVER + 1)
+        self.card.confirm = "Scan"
+        window._STATE.update(source="folder", location=self.clips)
+        window._refresh_files()
+        asked = [c for c in self.card.calls if c[0] == "confirmDialog"]
+        self.assertEqual(len(asked), 1)
+        message = asked[0][2]["message"]
+        self.assertIn(sources.grouped(sources.ASK_OVER + 1), message)
+        self.assertIn(self.clips, message)
+        self.assertIn("writes nothing", message)        # what the fear needs
+        self.assertIn("pack", message)                  # where the files are
+        self.assertEqual(calls, [(self.clips, "folder")])
+        self.assertEqual(window._STATE["records"], self.found)
+
+    def test_cancel_reads_nothing_and_leaves_the_list_as_it_was(self):
+        calls = self.scan(holds=sources.ASK_OVER + 1)
+        self.card.confirm = "Cancel"
+        window._save_file_cache(self.found[:1], "folder", self.clips)
+        window._show_location("folder", self.clips)
+        window._STATE.update(source="folder", location=self.clips)
+        window._refresh_files()
+        self.assertEqual(calls, [])
+        self.assertEqual(window._STATE["records"], self.found[:1])
+        self.assertIn("scan cancelled", self.said[-1])
+        self.assertIn(sources.grouped(sources.ASK_OVER + 1), self.said[-1])
+        self.assertEqual(self.card.progress, [])        # nothing was read
+
+    def test_where_the_question_cannot_be_asked_the_press_scans(self):
+        """A batch session has nobody to ask - the press is the answer."""
+        def refuse(**kw):
+            raise RuntimeError("no UI in batch")
+        self.patch(self.card, "confirmDialog", refuse)
+        calls = self.scan(holds=sources.ASK_OVER + 1)
+        window._STATE.update(source="folder", location=self.clips)
+        window._refresh_files()
+        self.assertEqual(calls, [(self.clips, "folder")])
 
 
 class ScanProgress(Base):

@@ -45,6 +45,17 @@ SKIP_DIRS = ("library", "temp", "logs", "obj", "build", "builds", ".git",
              "__pycache__", "packagecache")
 SEPARATOR = "|"
 
+#  Over this many clips in a folder, Refresh asks before it reads them: one
+#  click used to walk whatever was picked, and a folder picked by mistake
+#  (2026-11-03: the animator's own Downloads, 14 206 clips of an extracted
+#  Unity course) filled the list with thousands of rows while the progress
+#  window counted through them. Their own Unity project scans read 1 975, so
+#  a real scan is never asked about.
+ASK_OVER = 3000
+#  Milliseconds a file the read costs, measured on their press: 14 206 files
+#  in 46 s in mayapy; a GUI Maya is no faster.
+SCAN_MS = 3.3
+
 
 def fmt_of(path):
     """The format a file is read as, "" when we do not read it. Pure."""
@@ -175,6 +186,77 @@ def walk_files(top, extensions, walk=os.walk, skip=SKIP_DIRS):
     return sorted(out, key=lambda p: p.lower())
 
 
+def scan_files(top, source, walk=os.walk):
+    """What a scan of `top` will read: a Unity project's `Assets`, else the
+    whole folder. The walk Refresh counts with and then hands to `scan`."""
+    if source == "unity":
+        return walk_files(os.path.join(top, "Assets"), UNITY_FORMATS, walk)
+    return walk_files(top, tuple(FORMATS), walk)
+
+
+def biggest_folders(top, files, most=3):
+    """`(name, count)` for the folders of `top` holding the most of `files`,
+    biggest first - a folder's whole subtree counted under the child of `top`
+    it hangs from, a file lying in `top` itself under ".". Pure.
+
+    This is what shows a folder was picked by mistake: «7 812 in Модуль V.
+    Мультиплеер» names a course somebody unpacked, not an animation set."""
+    def flat(text):
+        #  normcase turns the separators into backslashes on Windows: one
+        #  spelling for the compare, forward slashes for the arithmetic
+        return os.path.normcase(os.path.normpath(text or "")).replace("\\", "/")
+
+    head = flat(top).rstrip("/")
+    counts = {}
+    for path in files:
+        full = os.path.normpath(path).replace("\\", "/")
+        if not flat(path).startswith(head + "/"):
+            continue
+        #  the child of `top` this file hangs from, in its own spelling
+        parts = full[len(head) + 1:].split("/")
+        name = parts[0] if len(parts) > 1 else "."
+        key = os.path.normcase(name)
+        shown, count = counts.get(key, (name, 0))
+        counts[key] = (shown, count + 1)
+    out = sorted(counts.values(), key=lambda pair: (-pair[1], pair[0].lower()))
+    return out[:most]
+
+
+def scan_question(top, files, over=ASK_OVER, most=3):
+    """What to ask before reading `files` under `top`, "" for a folder small
+    enough to scan without a word. Pure.
+
+    It answers the question the animator actually asked - «14 thousand files
+    are being created?» - so it says the count, how long the read takes,
+    that nothing is written, and where the files are."""
+    if len(files) <= over:
+        return ""
+    seconds = len(files) * SCAN_MS / 1000.0
+    how_long = ("{0:.0f} min".format(seconds / 60.0) if seconds >= 90
+                else "{0:.0f} s".format(seconds))
+    lines = ["{0} holds {1} animation files.".format(top, grouped(len(files))),
+             "Reading them takes about {0} and fills the list with as many "
+             "rows.".format(how_long),
+             "The scan only reads - it writes nothing beside your files.", ""]
+    biggest = biggest_folders(top, files, most)
+    if biggest:
+        width = max(len(grouped(count)) for _name, count in biggest)
+        lines.append("Most of them are in:")
+        lines += ["    {0:>{1}}  {2}".format(
+            grouped(count), width,
+            "this folder" if name == "." else name)
+            for name, count in biggest]
+        lines.append("")
+    lines.append("Scan it?")
+    return "\n".join(lines)
+
+
+def grouped(number):
+    """14206 -> «14 206»: the count the animator read as «14 тысяч файлов»,
+    written so it reads at a glance. Pure."""
+    return "{0:,}".format(number).replace(",", " ")
+
+
 def take_rows(path, takes, source="folder", note=""):
     """Rows for a file of FBX takes `takes` [(index, name, start, end)]:
     one row when it holds one moving take (named for the file), one row per
@@ -229,17 +311,20 @@ def anim_row(path, summary, source="unity"):
                        note=note)
 
 
-def scan(top, source, takes_of, read_text=None, progress=None, walk=os.walk):
+def scan(top, source, takes_of, read_text=None, progress=None, walk=os.walk,
+         files=None):
     """Every clip under `top` as records, sorted by name. `takes_of(path)`
     answers an FBX's takes [(index, name, start, end)] (Maya's FBXRead,
     cached by the caller); `read_text(path)` a text file; `progress(done,
-    total, path)` answers False to stop. Pure over its callbacks."""
+    total, path)` answers False to stop. Pure over its callbacks.
+
+    `files` is a walk the caller already did (`scan_files`) - Refresh counts
+    before it asks, and walking twice costs a second pass over the tree (1.1
+    s over the animator's Downloads) and could answer differently."""
     from maya_uebridge import bvh, gltf, unityfiles
     read_text = read_text or _read_text
-    if source == "unity":
-        files = walk_files(os.path.join(top, "Assets"), UNITY_FORMATS, walk)
-    else:
-        files = walk_files(top, tuple(FORMATS), walk)
+    if files is None:
+        files = scan_files(top, source, walk)
     out = []
     for done, path in enumerate(files):
         if progress is not None and progress(done, len(files), path) is False:

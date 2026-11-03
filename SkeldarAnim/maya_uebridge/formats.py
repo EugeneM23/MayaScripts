@@ -59,18 +59,27 @@ MODEL_MATCH = 0.9           # share of a clip's bones a model must carry
 
 def fbx_takes(path):
     """The takes of an FBX: [(index, name, start, end)], times in the
-    scene's frames. [] for a file the plugin cannot read."""
+    scene's frames. [] for a file the plugin cannot read.
+
+    Through `cmds`, not a MEL string: **MEL cannot carry a non-ASCII path**
+    (measured 2026-11-03 on the animator's own Downloads - every one of the
+    5 874 files under «Модуль V. Мультиплеер» was refused with «Use syntax:
+    FBXRead -f filename» and listed with no takes and no frames). The flag
+    goes positionally as its own string - `cmds.FBXRead(f=path)` and a bare
+    path are both refused - and the command then carries whatever Python
+    holds. Same answers and same cost as the MEL road for an ASCII file
+    (0.8 ms a file over 200 of them)."""
     animimport.ensure_fbx_plugin()
     try:
-        mel.eval('FBXRead -f "{0}"'.format(path.replace("\\", "/")))
-        count = int(mel.eval("FBXGetTakeCount") or 0)
+        cmds.FBXRead("-f", path.replace("\\", "/"))
+        count = int(cmds.FBXGetTakeCount() or 0)
     except Exception:                                        # noqa: BLE001
         return []
     out = []
     for index in range(1, count + 1):
         try:
-            name = mel.eval("FBXGetTakeName {0}".format(index)) or ""
-            span = mel.eval("FBXGetTakeLocalTimeSpan {0}".format(index)) or [0, 0]
+            name = cmds.FBXGetTakeName(index) or ""
+            span = cmds.FBXGetTakeLocalTimeSpan(index) or [0, 0]
             out.append((index, name, float(span[0]), float(span[1])))
         except Exception:                                    # noqa: BLE001
             out.append((index, "", None, None))

@@ -17579,3 +17579,70 @@ conserved and zero NaN resets through every measurement above.
      background pane tab), and anything that adapts to it adapts to being ignored. Use the GPU's
      own timestamps, and split them: knowing it was 2.9 ms of picture against 9.2 of solver is the
      difference between turning down the thing that costs and the thing that does not.
+
+## Animation Setup: Refresh reads, and asks before it reads thousands (2026-11-03)
+
+The animator, at 05:12: «Я нажал на обновление списка файлов в animation setup и теперь у меня
+создаюстся какие-то 14 тысяч файлов? Это какой-то очень страшный баг». **Nothing was created**, and
+the evidence is their own: the listing cache their press wrote at **05:11:53**
+(`%TEMP%\maya_uebridge\maya_uebridge_folder_2c6740e17084.json`) says `source: folder`, `location:
+C:/Users/MY PC/Downloads`, **14 037 rows** (13 777 fbx, 115 .anim, 56 mb, 53 ma, 36 usd), and their
+Downloads holds **14 206** files the plugin reads as clips. Their port was not open, so the press was
+reproduced in mayapy over the same folder: the tree held **188 082 entries before and 188 082
+after** (174 575 files + 13 507 folders), no `.fbm` and no copy; the whole scan took **46 s**. What
+they saw was the progress window counting through 14 206 files. The folder is full of clips because
+a Unity course was unpacked into it on 31 October - 7 812 clip files under «Модуль V. Мультиплеер»
+and 6 136 under «Extracted 2026-10-31», asset-pack props. Spec
+`docs/superpowers/specs/2026-11-03-folder-scan-guard-design.md`.
+
+Two defects came out of that press, both fixed:
+- **the take read could not carry a non-ASCII path** (trap 331): `fbx_takes` went through a MEL
+  string, so every clip in a folder with a Russian name was refused and listed with no takes and no
+  frames - **5 874 of their 11 580 Downloads fbx**, and any animation folder of theirs named in
+  Russian. It is `cmds.FBXRead("-f", path)` now (the flag positional - `f=path` and a bare path are
+  both refused), with `cmds.FBXGetTakeCount/Name/LocalTimeSpan`; same answers as MEL for an ASCII
+  file, same cost (0.8 ms a file over 200), and **no copy**: the staged ASCII copy
+  (`sources.staged`) stays the import's road, and staging 14 000 files to list them would have been
+  the very thing the animator feared.
+- **one press walked whatever was picked.** The walk is cheap (1.1 s over 188 082 entries), so
+  Refresh counts first (`sources.scan_files`) and over **`sources.ASK_OVER` (3 000)** clips asks
+  (`sources.scan_question`, pure; `window._ask_scan`, injectable as `_refresh_files(asks=)`),
+  naming the count, the time (`SCAN_MS` 3.3 ms a file, measured on their press), **that nothing is
+  written**, and the folders holding the most (`sources.biggest_folders`) - which is what shows the
+  folder was picked by mistake. Cancel reads nothing and leaves the list as it was; a batch session
+  has nobody to ask and scans, as before. Their own Unity project scans read 1 975 rows and
+  `C:/!!!Work/Animations` 740, so a real scan is never asked about. The walk is handed to the scan
+  (`sources.scan(..., files=)`): the tree is never walked twice.
+- The progress window's title says it too: «Connect - reading 14 206 files, writing nothing».
+
+Proof: `docs/superpowers/plans/verify_folder_scan.py` - **0 of 14 gates, mayapy standalone**: four of
+the animator's own clips copied into a folder named «Анимации Модуль V» read **0 with frames by the
+MEL road (the control) and 45 / 41 / 85 / 49 by the new one**, an ASCII path answering exactly what
+it answered before and such a row carrying an import reference with no refusal; a scan of a folder
+holding the Creep's embedded-media FBX leaving **4 entries before, 4 after** and no `.fbm`; and the
+guard asked about their real Downloads (14 206, «7 812 Модуль V. Мультиплеер») and silent on
+`C:/!!!Work/Animations`. Unit tests `tests/test_uebridge_fbx_takes.py` (7),
+`tests/test_uebridge_scan_guard.py` (12) and five more in
+`tests/test_uebridge_window_more.FileListing` (the walk done once, no question for a small folder,
+the question and a yes, a cancel reading nothing, a batch session); **13 691 in the suite**, the one
+failure the known `test_chat_deploy.Keys`. **Not seen in a GUI Maya**: the dialog itself is the
+animator's, after Check update. Their stale 14 037-row cache is left on disk - the card opens on
+that folder until they pick another with `...`. **Found and NOT fixed**: the EXPORT writes through
+`mel.eval(export_command(path))` and has the same hole - measured the same day, `FBXExport` into a
+folder named «Анимации» fails while `cmds.FBXExport("-f", path, "-s")` writes the file, so Export
+FBX... and Export to uasset would refuse a Russian-named destination. Of the 12 890 clip files under
+`C:!!!Work` only 8 carry a non-ASCII path (two «копия» duplicates and three holding a Cyrillic «С»
+for a Latin «C»: `Сover.fbx`, `Сontrol_panel.fbx`, `SM_WallSloped_С_01.fbx`), so it bites nothing
+today; the spec says what its fix wants.
+
+331. **MEL cannot carry a non-ASCII path, and the FBX plugin's commands take their flag
+     positionally through `cmds`.** `mel.eval('FBXRead -f "C:/.../Модуль V/x.fbx"')` answers «Use
+     syntax: FBXRead -f filename» - the command never sees the file - while
+     `cmds.FBXRead("-f", path)` reads it (measured 2026-11-03 on 5 874 of the animator's own files;
+     `cmds.FBXRead(f=path)` and `cmds.FBXRead(path)` are both refused with the same message, which
+     is why the plugin's own `staged` copy exists for the import road). It fails SILENTLY where the
+     answer is a list: `fbx_takes` returned [], `take_rows` made one row with no frames, and a
+     folder of Russian-named animations read as «no animation» on every row. Half the plugin's
+     measured 198-of-400 refusals in that folder were props, whose row looks the same either way -
+     which is why nothing had ever noticed. Anything handing a path to MEL wants either `cmds` with
+     the flag as its own string, or an ASCII copy.
