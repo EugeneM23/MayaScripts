@@ -17568,6 +17568,55 @@ Three things beside it, because the readout is what hid the growth for a day:
 After: **45 fps, 23 ms a frame, 9.2 ms of it the solver**, 13k particles on a 64 cell grid, mass
 conserved and zero NaN resets through every measurement above.
 
+**…and then four things from using it** (2026-11-03, the animator: «Перетягивание рукой не совсем
+корректно работает … Частицы слишком воздушные … препятствия типа шарика я хотел бы иметь
+возможность двигать … давай увеличим область в которой находится жидкость»). Each measured before
+and after:
+
+- **the hand could not grab.** It sat on a plane through the camera's TARGET, so a click on a
+  puddle on the floor grabbed the air above it and nothing happened unless Shift+wheel had dialled
+  the depth in by hand. It lands on the fluid now: on the press one texel of the filtered surface
+  depth is read back (the `fdA` texture the composite already reads, which holds view-space depth)
+  and the hand goes to that distance along the cursor's ray; off the fluid it falls back to where
+  the ray meets the floor. Measured: over a puddle whose centre is 168 cells away it reads **160**
+  — the surface, 8 cm nearer — and a real press-drag through the page's own pointer handlers lifts
+  the material **3.2 → 27.1 cm**. The grab profile was full strength only at the exact centre and
+  fell off linearly, so the fluid slid out of a moving hand; it is full through the middle and
+  falls off over the outer third;
+- **the spray was weightless.** Water dropped from 12 cm arrives at ~70 cm/s and threw particles to
+  **93 cm — the ceiling** — where they hung. A drop thrown off a splash is not in a fluid any more,
+  and nothing slowed it. G2P already gathers the node masses with the same weights it gathers
+  velocity, so a particle carries its own local density and the drag is applied in proportion to
+  how **exposed** it is — the body of the fluid never feels it. After: the splash peaks at
+  **27 cm** and nothing is left above 8 cm, where 5.8 % used to hang. A slider, and part of each
+  preset;
+- **the ball moves.** A place in the scene rather than a formula, dragged by clicking on it (a
+  ray-sphere test decides whether a press is the ball or the fluid), and its velocity reaches the
+  solver. Measured by walking it through a puddle: the fluid moves **15.77 cm** with the velocity
+  passed and **0.02** without it — without it the ball teleports and the fluid flows through;
+- **the room is 96 cm, and 128 is available**, where it was 64. Affordable only because **the grid
+  passes now skip what the fluid is nowhere near**: one flag per 4×4×4 block, set by P2G for the
+  blocks its support reaches, read by the node pass; a block stays active one substep after the
+  fluid leaves it, because a node must be solved once more to write its velocity back to zero (a
+  skipped node keeps what it had, and a stale velocity read by G2P is momentum out of nowhere).
+  The clear pass went with it — solveGrid zeroes each node it reads, the same work done once
+  instead of twice. There is no binding to spare for the flags (WebGPU promises eight storage
+  buffers a stage and the solver uses them all), so they live past the end of the accumulation
+  grid, which is already atomic. Same particles, same mass to the digit: **64³ 16.0 → 17.2 ms,
+  96³ 29.9 → 20.3, 112³ 43.8 → 21.8, 128³ 61.1 → 21.8**. The drop is a fixed amount of slime now
+  rather than a share of the domain: a bigger room is meant to be more room, not eight times the
+  fluid.
+
+331. **A cursor is two numbers and a grab is three.** The hand sat on a plane through the camera's
+     target because that is the one depth available without asking the GPU anything — and it is
+     almost never where the fluid is, so the tool felt broken at random. The depth is one texel of
+     a texture the renderer already produces; read it on the press and the hand lands where the
+     animator is pointing.
+332. **An early-out still costs a thread.** Flagging the empty blocks took a 128³ domain from 61 ms
+     to 22, but not to the 17 of a 64³ one: the node pass still launches a thread per node and
+     reads a flag before returning. Getting the rest wants an indirect dispatch over a compacted
+     list of active blocks, which is the real sparse MPM and a feature of its own.
+
 329. **Two chains that each re-queue the loop breed, and a pane that does not run
      requestAnimationFrame hides it.** The growth is one extra call a frame, so the page is fine
      for ten seconds, poor after thirty and dead after a minute — which reads as a slow GPU and

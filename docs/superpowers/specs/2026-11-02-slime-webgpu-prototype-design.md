@@ -306,3 +306,27 @@ time on every displayed frame (two `requestAnimationFrame` chains), so a minute 
 carried thousands of solver steps. It never showed in the pane it was built in, where rAF does not
 fire at all. The driver, the back pressure, the honest readout and the governor are written up in
 CLAUDE.md with the numbers; after them it is 45 fps, 23 ms a frame, 9.2 ms of it the solver.
+
+## Addendum: the sandbox after it was played with (2026-11-03)
+
+Four things the animator asked for after using it, and what each cost:
+
+- **the hand lands on the fluid.** It sat on a plane through the camera's target — almost never
+  where the slime is — so a grab usually caught the air above a puddle. One texel of the filtered
+  surface depth is read back on the press, and the hand goes to that distance along the cursor's
+  ray; off the fluid it falls to the floor under the cursor. The grab profile is full through the
+  middle of the hand and falls off over its outer third, instead of falling off from the very
+  centre, which let the fluid slide out of a hand that was moving;
+- **drag on exposed particles.** A splash threw spray to the ceiling and left it there, because
+  nothing here slows a drop flying through air. G2P gathers the node masses alongside the
+  velocities, so each particle knows how much material is around it, and the drag is scaled by how
+  exposed it is: the body of the fluid is untouched. Water's splash peaks at 27 cm where it peaked
+  at 93;
+- **the obstacle is draggable, and it pushes.** A press is tested against the sphere before the
+  fluid; the ball moves in the plane it was grabbed in, and its velocity goes to the solver, which
+  is the difference between shoving the fluid (15.77 cm) and teleporting through it (0.02);
+- **the domain is 96 cm by default, 128 available.** The grid passes skip the 4×4×4 blocks the
+  fluid is nowhere near, and the separate clear pass is gone — solveGrid zeroes what it reads. A
+  128³ domain now costs what 64³ did. What is left of the domain's cost is one thread and one flag
+  read per node; removing that wants an indirect dispatch over a compacted block list, which is
+  the real sparse MPM and is not built.
