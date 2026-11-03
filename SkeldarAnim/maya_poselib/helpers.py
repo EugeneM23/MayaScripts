@@ -48,6 +48,9 @@ HELPERS = ("weapon_r", "weapon_l", "camera_root", "camera_bone")
 CARRIERS = (("weapon_r", "hand_r"), ("weapon_l", "hand_l"))
 CAMERA = ("camera_root", "camera_bone")
 CAMERA_ROOT = "camera_root"
+#  what the camera comes with (`poses_the_body`): the body's own frame - the pelvis, or the chest
+#  (`upper.CHEST`, where 1P Setup hangs the camera control). A test pins both spellings
+BODY = ("pelvis", "spine_03")
 ROTATE = ("rotateX", "rotateY", "rotateZ")
 TRANSLATE = ("translateX", "translateY", "translateZ")
 
@@ -75,11 +78,33 @@ def is_helper(leaf):
 
 # ------------------------------------------------------------------- pure
 
-def members_with(members, bones, whole=None):
+def _own_name(bones, leaf):
+    """What a card's bone plays: its canonical name, else its own leaf (a namespace ignored)."""
+    bone = (bones or {}).get(leaf) or {}
+    return _bare(bone.get("canonical") or leaf)
+
+
+def poses_the_body(members, bones):
+    """Do the members pose the BODY's own frame - its pelvis, or its chest (pure)?
+
+    The camera rides the body as a whole (its control stands under the rig's Main, or under the
+    1P chest), so this is the camera's carrier the way `hand_r` is `weapon_r`'s. A limb card - a
+    hand, an arm, a leg, the fingers - poses neither and brings no camera."""
+    return any(_own_name(bones, m) in BODY for m in members or ())
+
+
+def members_with(members, bones, lower=False):
     """The card's members with the helpers its parts bring (pure): `weapon_r` with `hand_r`,
-    `weapon_l` with `hand_l`, `camera_root` / `camera_bone` when the members hold every bone of
-    `whole` (the whole body - `scene.whole_body(bones)` when not given). Only bones `bones` holds;
-    never twice; the members' own order first."""
+    `weapon_l` with `hand_l`, `camera_root` / `camera_bone` when the members pose the body's own
+    frame (`poses_the_body`) and the card is no 1P LOWER cut (`lower`: its upper body and the
+    camera with it are kept stable). Only bones `bones` holds; never twice; the members' own
+    order first.
+
+    It wanted every bone of `scene.whole_body` until 2026-11-03, and an animator's selection
+    misses a few: of the 62 cards in the animator's own library 13 held no camera at all - their
+    newest (Dagger/Idle_03) 61 of 79 body bones, the right hand unselected, and a 1P card 75 of
+    79 (spine_01..04 hidden in 1P Setup's lower display layer). The card HOLDS the camera's place
+    either way (every bone's world is saved); what was missing was its name in `members`."""
     members = list(members or ())
     have = set(members)
     out = list(members)
@@ -87,11 +112,7 @@ def members_with(members, bones, whole=None):
         if carrier in have and helper in bones and helper not in have:
             out.append(helper)
             have.add(helper)
-    if whole is None:
-        from maya_poselib import scene
-        whole = scene.whole_body(bones)
-    whole = list(whole or ())
-    if whole and set(whole) <= have:
+    if not lower and poses_the_body(members, bones):
         for helper in CAMERA:
             if helper in bones and helper not in have:
                 out.append(helper)

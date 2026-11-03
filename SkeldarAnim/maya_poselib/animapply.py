@@ -597,14 +597,15 @@ class _Target(object):
     keyed frame by frame (`key`)."""
 
     def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None,
-                 only=None, anchors=None, keep=None):
+                 only=None, anchors=None, keep=None, lower_cut=False):
         """`first` is the clip's first pasted frame UNMIRRORED (the transfer's alignment),
         `source` the same frame as the press hands it over (mirrored when asked), `members` the
         card's members as the press uses them (mirrored when asked); `travel` - the card would
         carry the travel (`_travels`); `first_root` the source's root frame at that frame when
         the press steadied it (`_clip_roots`), else None; `only` the long paths Selected only
         keeps (`apply.only_selected`), else None; `keep` the card's bones a lower-body card keeps
-        stable on the target (`lower`, 2026-10-22: its chest), else None."""
+        stable on the target (`lower`, 2026-10-22: its chest), else None; `lower_cut` - the card IS
+        that cut, so no camera comes with its pelvis (`helpers.members_with`)."""
         self.ref = ref
         self.only = only
         self.partial = False                   # Selected only cut some plugs: nothing measured
@@ -632,7 +633,7 @@ class _Target(object):
             anchors = upper.anchors_for(first, members)
         # the camera and the weapon bones the card's parts bring (2026-10-20): keyed by a
         # `helpers.Writer` - on the bone, or on the weapon / camera driving it - never by the body
-        members = helpers.members_with(members, source)
+        members = helpers.members_with(members, source, lower=lower_cut)
         # a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21): saved
         # off a rig in 1P, spine_01/02/04/05 were left out and the head and arms rode the target's
         # spine - filled AFTER the camera and the anchors were read off the card's own members
@@ -867,7 +868,8 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         travel = _travels(header, used, options)
         with _unrecorded():
             targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
-                               first_root, only, keep=header.get("keep")) for ref in refs]
+                               first_root, only, keep=header.get("keep"),
+                               lower_cut=bool(header.get("lower_1p"))) for ref in refs]
         # the card's objects, planned BEFORE anything is cut (Connect and Blend read the take)
         matched, onotes = _card_matched(header, loose, refs, only is not None)
         channels, missing, opaths = _object_channels(matched)

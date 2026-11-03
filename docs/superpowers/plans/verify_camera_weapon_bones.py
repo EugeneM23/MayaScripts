@@ -16,6 +16,9 @@ Phases (VERIFY_PHASES narrows them):
            weapon_r still following its spear (the spear moved, not the bone keyed); a Camera Setup
            standing on both after it; and onto Creep_Rig (another body, the camera bones new): the
            helpers' displacement from their rests the card's (turn, and place x the size).
+  partial  the animator's own shape (2026-11-03): the body a few bones short - the right hand
+           unselected - still carries the camera, with the OLD rule (every body bone a member)
+           as the control; and a 1P lower cut, which holds the pelvis and carries none.
   hand     the right-hand card onto a fresh skeleton: weapon_r keyed, camera_root not.
   mirror   the right-hand card mirrored: weapon_l keyed, weapon_r not.
   undo     the whole card, then ONE Ctrl+Z: no key on the helpers, no camera.
@@ -51,11 +54,11 @@ cmds.autoKeyframe(state=False)
 import maya_rigs  # noqa: E402
 from maya_scenesetup import bonedrive, camera, catalog, character, equip  # noqa: E402
 from maya_uebridge import skeletonimport  # noqa: E402
-from maya_poselib import animapply, animcapture, apply, capture, scene  # noqa: E402
+from maya_poselib import animapply, animcapture, apply, capture, helpers, lower, scene  # noqa: E402
 from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
-    "VERIFY_PHASES", "whole,hand,mirror,undo,anim,road").split(",") if p.strip()]
+    "VERIFY_PHASES", "whole,partial,hand,mirror,undo,anim,road").split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
 TOL_CM, TOL_DEG = 1e-3, 1e-3
@@ -223,6 +226,64 @@ def phase_hand(src):
     return data
 
 
+def phase_partial(src, truth):
+    """A card an animator's own selection makes: the body, a few bones short (2026-11-03).
+
+    Their newest card (Dagger/Idle_03) held 61 of 79 body bones - the right hand unselected -
+    and carried no camera at all, because the camera wanted EVERY body bone a member. The card
+    holds the camera's place either way; what was missing was its name in `members`."""
+    data, _note = capture.build_pose([src], frame=AT)
+    hand_bones = [b for b in data["bones"]
+                  if b == "hand_r" or b.endswith("_r") and ("finger" in b or "metacarpal" in b or
+                                                            b.split("_")[0] in ("index", "middle",
+                                                                                "pinky", "ring",
+                                                                                "thumb"))]
+    short = dict(data)
+    short["members"] = [m for m in data["members"] if m not in set(hand_bones)]
+    gate("partial: the card is the body, %d bones short" % len(hand_bones),
+         len(short["members"]) < len(data["members"]) and "camera_root" not in short["members"],
+         "%d of %d members" % (len(short["members"]), len(data["members"])))
+
+    root, _ = add("Manny")
+    go(AT)
+    ok, text = apply.apply_onto(short, root)
+    say("   partial :", text)
+    worst, _w, c, k = check_twin("partial", root, truth)
+    gate("partial: camera_root and camera_bone on the card's place",
+         ok and max(c + k) < TOL_CM, "camera %.2e/%.2e bone %.2e/%.2e" % (c + k))
+    gate("partial: a Camera Setup after it",
+         bool(camera.camera_for(bone(root, "camera_root"))))
+
+    #  the control: the old rule (every body bone a member) leaves the camera alone
+    was = helpers.poses_the_body
+
+    def strict(members, bones):
+        whole = scene.whole_body(bones)
+        return bool(whole) and set(whole) <= set(members or ())
+    helpers.poses_the_body = strict
+    try:
+        control_root, _ = add("Manny")
+        go(AT)
+        ok, text = apply.apply_onto(short, control_root)
+        say("   control:", text)
+        gate("partial, the OLD rule: camera_root not keyed (the gate can fail)",
+             ok and not has_keys(bone(control_root, "camera_root")) and
+             not camera.camera_for(bone(control_root, "camera_root")))
+    finally:
+        helpers.poses_the_body = was
+
+    #  a 1P lower cut holds the pelvis and keeps the camera out all the same
+    cut, note = lower.restrict(data)
+    say("   lower  :", note)
+    lower_root, _ = add("Manny")
+    go(AT)
+    ok, text = apply.apply_onto(cut, lower_root)
+    say("   lower  :", text)
+    gate("a 1P lower cut: the pelvis keyed, camera_root not",
+         ok and has_keys(bone(lower_root, "pelvis")) and
+         not has_keys(bone(lower_root, "camera_root")))
+
+
 def phase_mirror(hand):
     root, _ = add("Manny")
     go(AT)
@@ -301,6 +362,8 @@ def main():
     if "whole" in PHASES or "undo" in PHASES:
         whole = phase_whole(src, truth) if "whole" in PHASES else \
             capture.build_pose([src], frame=AT)[0]
+    if "partial" in PHASES:
+        phase_partial(src, truth)
     if "hand" in PHASES or "mirror" in PHASES:
         hand = phase_hand(src)
     if "mirror" in PHASES:

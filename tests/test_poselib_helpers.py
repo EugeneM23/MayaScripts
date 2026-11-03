@@ -27,25 +27,47 @@ def close(test, a, b, tol=1e-9, what=""):
 BONES = dict((leaf, {"parent": parent}) for leaf, parent in (
     ("root", None), ("pelvis", "root"), ("spine_01", "pelvis"), ("hand_r", "spine_01"),
     ("hand_l", "spine_01"), ("weapon_r", "hand_r"), ("weapon_l", "hand_l"),
-    ("camera_root", "root"), ("camera_bone", "camera_root"), ("ik_hand_gun", "root")))
+    ("camera_root", "root"), ("camera_bone", "camera_root"), ("ik_hand_gun", "root"),
+    ("thigh_l", "pelvis"), ("calf_l", "thigh_l")))
+BONES["spine_03"] = {"parent": "spine_01", "canonical": "spine_03"}
 WHOLE = ["pelvis", "spine_01", "hand_r", "hand_l"]
 
 
 class Members(unittest.TestCase):
 
     def test_weapon_bones_go_with_their_hands(self):
-        self.assertEqual(helpers.members_with(["hand_r"], BONES, WHOLE), ["hand_r", "weapon_r"])
-        self.assertEqual(helpers.members_with(["hand_l", "spine_01"], BONES, WHOLE),
+        self.assertEqual(helpers.members_with(["hand_r"], BONES), ["hand_r", "weapon_r"])
+        self.assertEqual(helpers.members_with(["hand_l", "spine_01"], BONES),
                          ["hand_l", "spine_01", "weapon_l"])
 
-    def test_the_camera_only_with_the_whole_body(self):
-        out = helpers.members_with(WHOLE, BONES, WHOLE)
+    def test_the_camera_comes_with_the_body_s_own_frame(self):
+        #  2026-11-03: it used to want EVERY body bone a member, and a real selection misses a
+        #  few - the animator's own Dagger/Idle_03 held 61 of 79 (the right hand unselected) and
+        #  carried no camera at all
+        out = helpers.members_with(WHOLE, BONES)
         self.assertEqual(out, WHOLE + ["weapon_r", "weapon_l", "camera_root", "camera_bone"])
-        self.assertNotIn("camera_root", helpers.members_with(WHOLE[:3], BONES, WHOLE))
+        self.assertIn("camera_root", helpers.members_with(["pelvis", "hand_l"], BONES))
+        self.assertIn("camera_root", helpers.members_with(["spine_03", "hand_l"], BONES))
+
+    def test_a_limb_card_carries_no_camera(self):
+        self.assertNotIn("camera_root", helpers.members_with(["hand_r"], BONES))
+        self.assertNotIn("camera_root", helpers.members_with(["thigh_l", "calf_l"], BONES))
+        self.assertNotIn("camera_root", helpers.members_with(["spine_01", "hand_l"], BONES))
+
+    def test_the_body_s_frame_is_the_pelvis_and_the_chest(self):
+        from maya_poselib import upper
+        self.assertEqual(helpers.BODY, ("pelvis", upper.CHEST))
+        self.assertEqual(upper.TORSO, ("pelvis",))
+        self.assertTrue(helpers.poses_the_body(["Manny_Rig:pelvis"], {}))
+        self.assertFalse(helpers.poses_the_body(["hand_r", "weapon_r"], BONES))
+
+    def test_a_lower_body_cut_keeps_the_camera_out(self):
+        self.assertNotIn("camera_root",
+                         helpers.members_with(["pelvis", "thigh_l"], BONES, lower=True))
 
     def test_only_bones_the_card_holds_and_never_twice(self):
         bones = dict((k, v) for k, v in BONES.items() if k not in ("weapon_r", "camera_bone"))
-        out = helpers.members_with(WHOLE + ["weapon_l"], bones, WHOLE)
+        out = helpers.members_with(WHOLE + ["weapon_l"], bones)
         self.assertEqual(out, WHOLE + ["weapon_l", "camera_root"])
 
     def test_ik_helpers_are_never_ours(self):

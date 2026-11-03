@@ -15307,8 +15307,10 @@ Pose Library sections above.**
 
 - **Which helpers an Apply writes** (`maya_poselib/helpers.py`, `members_with`, at APPLY on the card's
   members, so every card made before applies them): `weapon_r` with `hand_r`, `weapon_l` with
-  `hand_l`, `camera_root` / `camera_bone` with a whole-body card (`scene.whole_body`). `ik_*`,
-  `interaction`, `center_of_mass` unchanged. The body solvers never see them (`helpers.split`).
+  `hand_l`, `camera_root` / `camera_bone` with a card that poses the **body's own frame** - its
+  pelvis or its chest (`poses_the_body`; it wanted every bone of `scene.whole_body` until
+  2026-11-03, below). `ik_*`, `interaction`, `center_of_mass` unchanged. The body solvers never
+  see them (`helpers.split`).
 - **Their rest is their bind** (`scene.rests`): a helper the bind pose lists rests at its bind-pose
   local on its parent's rest; one it does not list (Manny's `camera_bone`, in no shipped bind pose)
   at its channels' zero (`_unlisted_helpers`: rotate 0, translate as it stands). Read as it stood
@@ -15361,6 +15363,36 @@ Pose Library sections above.**
   whole card sets the camera up), verify_rig_pipeline 30/30, verify_many_rigs 32/32,
   verify_creep_rig_asset 16/16, verify_creep_skeleton_asset 9/9 (93 joints). **Not seen in a GUI
   Maya** (the animator's live checks).
+
+**…and the camera comes with the body, not with every bone of it** (2026-11-03, the animator:
+«при сохранении позы в библеотеку поз не сохраняется позиция камеры»). The card SAVED the camera all
+along - every bone's world is in it, their own newest card holding `camera_root` at
+(-318.582, 152.44, 102.59) - and the Apply never wrote it: `members_with` added the camera bones only
+when the members held EVERY bone of `scene.whole_body`, and an animator's selection misses a few
+(trap 336). Measured on the 62 cards of their own library: **13 carried no camera**, their newest
+(Dagger/Idle_03, 15:57 that day) 61 of 79 body bones with the right hand unselected, and a 1P card 75
+of 79 - spine_01..04 hidden in 1P Setup's lower display layer. Now the camera comes with the **body's
+own frame**: the members hold the pelvis, or the chest where 1P Setup hangs the control
+(`helpers.BODY`, `poses_the_body`) - the camera's carrier the way `hand_r` is `weapon_r`'s - and never
+on a 1P LOWER cut, whose upper body and camera are kept stable (`members_with(..., lower=)`, the flag
+`lower_1p` passed by `apply._plan` and `animapply._Target`). A limb card (a hand, an arm, a leg) poses
+neither and brings no camera, as before. Proof: `verify_camera_weapon_bones.py` **0 of 29 gates**, its
+new `partial` phase - the body 20 bones short landing camera_root and camera_bone on the card's place
+(0.00e+00 cm) with a Camera Setup after it, **the OLD rule put back as the control leaving them
+untouched**, and a lower cut keying the pelvis and no camera; and their own `Dagger/Idle_03.pose` onto
+a fresh Manny_Rig: **0.0000 cm / 0.0000 deg** off the card's place where the old rule left the camera
+17.549 cm away, unmoved. verify_poselib_apply 117/117, _solve 122/122, _anim 113/113,
+_selected_only 13/13; 13760 unit tests (the known `test_chat_deploy.Keys`).
+
+336. **"The whole body" read as every bone is a test an animator's selection does not pass.** The
+     camera waited for every one of the 79 body bones to be a member; a real selection leaves a hand,
+     a couple of fingers or 1P's hidden spine out, so 13 of the animator's 62 cards silently carried
+     no camera - and the save panel showed all nine region chips lit, because a region counts as
+     touched by ONE of its bones. The card's DATA was never the problem (every bone's world is saved),
+     which is why it read as «the camera is not saved». A helper rides one thing: gate it on that thing
+     (the pelvis, as a weapon is gated on its hand), never on a coverage count. The same strict test
+     still stands in `curvecapture.character_nodes` (a card short of a bone keeps no curve for a
+     control that names none, Main's among them) - not changed here, not measured.
 
 284. **Opening a shipped textured asset stores its images ABSOLUTE.** The open resolves each file node's
      relative path against the .ma's own folder and the saved file then holds this machine's path

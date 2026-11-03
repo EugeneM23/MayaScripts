@@ -697,8 +697,9 @@ def _plan(data, ref, mirror=False, only=None):
     anchors = upper.anchors_for(source, members)
     if mirror:
         source, members = pm.mirror(source, members)
-    # the camera and the weapon bones the card's parts bring (2026-10-20, `helpers`)
-    members = helpers.members_with(members, source)
+    # the camera and the weapon bones the card's parts bring (2026-10-20, `helpers`) - never the
+    # camera on a lower-body cut, whose upper body and camera are kept stable (`lower`)
+    members = helpers.members_with(members, source, lower=bool(data.get("lower_1p")))
     # then a gap in the card's spine posed from the card (`posemath.torso_gaps`, 2026-10-21) -
     # after the camera: a card saved without the camera and with a gap is no whole body to bring
     # the camera along
