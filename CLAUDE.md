@@ -11559,14 +11559,15 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
 - **The pass** (`model._weapon_chest`, inside `_arm_overlap` after the arm cascade and **before**
   `_weapon_swing`, so the blade's aim reads the tip path as this pass left it - the two overlaps add). In the
   model a weapon is two points in the holding hand's frame, so every weapon motion is a right multiplication
-  on the hand matrices and `_arm_to_hand` rebuilds the arm: «the hands follow the weapon» costs nothing. With
-  `C` the chest's world and `Clate = shifted_cycle(kin[chest], lag)` - a CYCLIC read, not Connections' clamp
-  at a first frame, because the walk's loop must close - **`T(f) = inv(C(f)) @ Clate(f)`**: the weapon keeps
-  its own pose relative to the chest and the chest's own pose from `lag` frames earlier is put back, so
-  **1 / 1 / 0 is the identity matrix for matrix**. The turn is slerped from the identity by `rotation` and the
-  offset `c_late − c` scaled by `position`, both about the chest's own pivot (`moved_about`, `swung_about`'s
-  sibling). The chest is the TOP spine joint the chest knobs already use (`chest_share`), never a hardcoded
-  `spine_03`, with the arm chains' own parent as the fallback.
+  on the hand matrices and `_arm_to_hand` rebuilds the arm: «the hands follow the weapon» costs nothing. The
+  chest's own cycle is **scaled first** (`Walk.steady_chest`: the linear travel out, its turn slerped from the
+  cycle's MEAN heading by `rotation` and its place pulled toward the mean by `position`, the travel back at
+  any strength - without it the weapon is left behind within a cycle and the loop does not close), then read
+  `lag` frames earlier (`shifted_cycle` - a CYCLIC read, not Connections' clamp at a first frame, because the
+  walk's loop must close), and **`T(f) = inv(C(f)) @ want(f)`** puts the weapon on THAT chest. So
+  **1 / 1 / 0 is the identity matrix for matrix**, `0 / 0` hangs the weapon on a chest that only travels, and
+  a lag at full strength is the overlap. The chest is the TOP spine joint the chest knobs already use
+  (`chest_share`), never a hardcoded `spine_03`, with the arm chains' own parent as the fallback.
 - **2H**: a free hand is bound to the holder's by the offset it has at the cycle's **first frame**
   (`Off = other(0) @ inv(holder(0))`), before both weapon passes, after which it is a rider of both - the hold
   is kept to machine precision and both arms are rebuilt by IK. No new number: the hold is whatever the cycle
@@ -11580,16 +11581,26 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
 - Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_chest.py` - **0 of 19 gates, mayapy standalone**,
   on the animator's own cycle and their two-handed card: the defaults and `own_knobs()` matrix for matrix; the
   weapon on the chest of 4.5 frames ago to **3.98e-13** while the hand swings 25.29 cm against that chest (so
-  the gate is a real constraint); `rotation 0` keeping its heading to 9.6e-15 deg against 5.42 at full
-  strength; `position 0` a turn about the chest's pivot (0.0000 cm against 6.73); the bones 5.6e-06 cm, the
-  loop 2.8e-14; 2H holding the free hand at its frame-0 offset to 8.5e-14 where free it swings 42.19 cm; the
-  card's own two-handed hold kept to 7.5e-14; Balance carrying the hips 0.0820 cm differently; and **the whole
-  road through `scene.apply` onto a plain Manny UE5 skeleton with NO RIG**: the keys read back off the joints
-  keep the promise to **0.0057** with the arms swinging 25.8 cm against the chest, the body itself untouched
-  (1.8e-15), the line saying it. `tests/test_walk_weapon_chest.py` (30), and the two existing Weapon overlap
-  tests that asserted «one slider of its own tab» say «the first slider» now.
+  the gate is a real constraint); with NO lag, `rotation 0` leaving it on the cycle's mean heading to 8.1e-13
+  deg where the chest turns 5.35, and `position 0` a pure translation off the chest's bob to 4.1e-13 cm where
+  it bobs 4.35; **at `0 / 0` the weapon wanders 0.000 cm off its straight line while the body carries it
+  8.24 cm** - the animator's own words, gated; the bones 5.6e-06 cm, the loop 2.8e-14; 2H holding the free
+  hand at its frame-0 offset to 7.1e-14 where free it swings 42.19 cm; the card's own two-handed hold kept to
+  7.5e-14; Balance carrying the hips 0.0820 cm differently; and **the whole road through `scene.apply` onto a
+  plain Manny UE5 skeleton with NO RIG**: the keys read back off the joints keep the promise to **0.0057**
+  with the arms swinging 25.8 cm against the chest, the body itself untouched (1.8e-15), the line saying it.
+  `tests/test_walk_weapon_chest.py` (32; the first build's formula turns two of them red, the animator's own
+  case among them), and the two existing Weapon overlap tests that asserted «one slider of its own tab» say
+  «the first slider» now.
 - **Not built**: a strength above 1; the weapon lagging inside the grip; a second grip point for 2H; moving
   the tool out of Connections.
+- **The strengths were wrong on the first build, and the animator caught it in minutes** (the same day, at
+  `0 / 0 / 0`: «oружие ... наследует движение от тела ... они должны контролировать насколько у нас
+  передается анимация с туловища на руки»). The first formula was `T = inv(C) @ Clate`, whose strengths
+  scaled only the motion the LAG introduces - at `lag` 0 it is the identity whatever they say, so the knobs
+  did nothing at all without a lag. A strength over a DIFFERENCE is a strength over nothing when the
+  difference is zero: scale the quantity itself (here the chest's own cycle, `steady_chest`), then take the
+  difference. Spec addendum, same file.
 - **Two measuring lessons**, both found as gates that failed on correct code: **Balance's carry moves the
   BODY when the arms move late** (0.08 cm), so a promise read against the OTHER run's chest reads 1.1e-01 - the
   geometry gates run with `balance=0.0` and `physics=False`, and Balance has a gate of its own; and **the

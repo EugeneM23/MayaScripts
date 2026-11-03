@@ -178,27 +178,33 @@ def phase_model():
     gate(moved > 0.5 and said["chest"] == ["r"],
          "the grip really trails: %.2f cm, the info names the side %s" % (moved, said["chest"]))
 
-    #  5 - rotation 0, with the full strength as the control
-    flat = run(with_pose=False, arm_drag=0.0, weapon_chest_lag=lag, weapon_chest_rotation=0.0)
-    kept = max(turned(quiet.worlds[hand_r, f, :3, :3], flat.worlds[hand_r, f, :3, :3])
-               for f in range(n + 1))
-    full = max(turned(quiet.worlds[hand_r, f, :3, :3], late.worlds[hand_r, f, :3, :3])
-               for f in range(n + 1))
-    gate(kept < 1e-3 < full, "Chest rotation 0 keeps the weapon's heading: %.2e deg (full strength %.2f)"
-         % (kept, full))
-
-    #  6 - position 0: a turn about the chest's own pivot
-    still = run(with_pose=False, arm_drag=0.0, weapon_chest_lag=lag, weapon_chest_position=0.0)
-    stand = np.array([place(grip_p, m) for m in np.asarray(still.worlds[hand_r], float)])
-    worst_r, spread = 0.0, 0.0
+    #  5 - rotation 0, with NO LAG: the weapon is left on the cycle's mean heading (the animator's own
+    #  report, 2026-11-03 - the strengths must act whether or not a lag is dialled)
+    flat = run(with_pose=False, arm_drag=0.0, weapon_chest_rotation=0.0)
+    steady_r = walk.steady_chest(C, 0.0, 1.0)
+    worst_r = own_turn = 0.0
     for f in range(n + 1):
-        c = C[f, 3, :3]
-        worst_r = max(worst_r, abs(float(np.linalg.norm(stand[f] - c))
-                                   - float(np.linalg.norm(before[f] - c))))
-        spread = max(spread, abs(float(np.linalg.norm(after[f] - c))
-                                 - float(np.linalg.norm(before[f] - c))))
-    gate(worst_r < 0.05 < spread,
-         "Chest position 0 is a turn about the chest: %.4f cm (full strength %.2f)" % (worst_r, spread))
+        want = (np.asarray(quiet.worlds[hand_r, f, :3, :3], float)
+                @ C[f, :3, :3].T @ steady_r[f, :3, :3])
+        worst_r = max(worst_r, turned(want, flat.worlds[hand_r, f, :3, :3]))
+        own_turn = max(own_turn, turned(C[0, :3, :3], C[f, :3, :3]))
+    gate(worst_r < 1e-3 < own_turn,
+         "Chest rotation 0 leaves the weapon on the mean heading: %.2e deg (the chest turns %.2f)"
+         % (worst_r, own_turn))
+
+    #  6 - position 0, with NO LAG: a pure translation, minus the chest's own bob and sway
+    still = run(with_pose=False, arm_drag=0.0, weapon_chest_position=0.0)
+    steady_p = walk.steady_chest(C, 1.0, 0.0)
+    worst_p = off = 0.0
+    for f in range(n + 1):
+        want = (np.asarray(quiet.worlds[hand_r, f, 3, :3], float)
+                + steady_p[f, 3, :3] - C[f, 3, :3])
+        worst_p = max(worst_p, float(np.linalg.norm(np.asarray(still.worlds[hand_r, f, 3, :3], float)
+                                                    - want)))
+        off = max(off, float(np.linalg.norm(steady_p[f, 3, :3] - C[f, 3, :3])))
+    gate(worst_p < 1e-4 < off,
+         "Chest position 0 takes the chest's bob and sway off the weapon: %.2e cm (it bobs %.2f)"
+         % (worst_p, off))
 
     #  7 - and the promise is not trivially true: the hand swings against the chest in the quiet run
     rel = [np.asarray(quiet.worlds[hand_r, f], float) @ np.linalg.inv(C[f]) for f in range(n + 1)]
@@ -257,8 +263,21 @@ def phase_model():
                  @ np.linalg.inv(np.asarray(held_late.worlds[hand_r, f], float)))
             worst_hold = max(worst_hold, float(np.abs(a - b).max()))
         gate(worst_hold < 1e-3, "the card's two-handed hold is kept through the pass: %.2e" % worst_hold)
+        #  13 - and what the animator asked for in words: with the arms stilled by the card's own grip,
+        #  0 / 0 hangs the weapon in the air - it keeps nothing of the body but the walk's locomotion
+        hung = run(arm_drag=0.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        hung_p = np.array([place(grip_p, m) for m in np.asarray(hung.worlds[hand_r], float)])
+        held_p = np.array([place(grip_p, m) for m in np.asarray(held_quiet.worlds[hand_r], float)])
+        per_hung = (hung_p[n] - hung_p[0]) / float(n)
+        per_held = (held_p[n] - held_p[0]) / float(n)
+        wander = max(float(np.linalg.norm(hung_p[f] - hung_p[0] - per_hung * f)) for f in range(n + 1))
+        was = max(float(np.linalg.norm(held_p[f] - held_p[0] - per_held * f)) for f in range(n + 1))
+        gate(wander < 0.5 < was,
+             "0 / 0 hangs the weapon in the air: it wanders %.3f cm off its line (the body carries it %.2f)"
+             % (wander, was))
     else:
         gate(True, "no card in the library: the two-handed hold is not measured here")
+        gate(True, "no card in the library: the hung weapon is not measured here")
     return lag
 
 

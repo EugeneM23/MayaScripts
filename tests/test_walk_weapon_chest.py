@@ -20,24 +20,50 @@ from tests.test_walk_weapon_overlap import GRIP, TIP, WEAPON, points
 gait = load("gait")
 
 
-class MovedAbout(unittest.TestCase):
-    """The pass's one new helper: swung_about with a move."""
+class SteadyChest(unittest.TestCase):
+    """`steady_chest`: the chest's own animation scaled, its travel kept."""
 
-    def test_the_origin_itself_takes_the_offset_and_nothing_else(self):
-        o, d = np.array([3.0, 4.0, 5.0]), np.array([0.0, 2.0, 0.0])
-        m = wm.moved_about(o, wm.exp_rot(np.array([0.0, 0.7, 0.0])), d)
-        self.assertTrue(np.allclose(o @ m[:3, :3] + m[3, :3], o + d, atol=1e-12))
+    def chest(self, n=8, travel=80.0):
+        """A chest cycle that bobs, sways and turns while it travels."""
+        out = np.zeros((n + 1, 4, 4))
+        for f in range(n + 1):
+            a = 2.0 * math.pi * (f % n) / float(n)
+            out[f, :3, :3] = wm.exp_rot(np.array([0.04 * math.sin(a), 0.12 * math.cos(a), 0.0]))
+            out[f, 3, :3] = np.array([3.0 * math.sin(a), 100.0 + 2.0 * math.cos(2.0 * a),
+                                      travel * f / float(n)])
+            out[f, 3, 3] = 1.0
+        return out
 
-    def test_a_point_swings_about_the_origin_and_then_moves(self):
-        o, d = np.zeros(3), np.array([1.0, 0.0, 0.0])
-        rot = wm.exp_rot(np.array([0.0, math.pi / 2.0, 0.0]))
-        m = wm.moved_about(o, rot, d)
-        p = np.array([1.0, 0.0, 0.0])
-        self.assertTrue(np.allclose(p @ m[:3, :3] + m[3, :3], p @ rot + d, atol=1e-12))
+    def test_full_strength_gives_the_cycle_back(self):
+        w, mats = walk(), self.chest()
+        self.assertTrue(np.allclose(w.steady_chest(mats, 1.0, 1.0), mats, atol=1e-12))
 
-    def test_no_turn_and_no_offset_is_the_identity(self):
-        m = wm.moved_about(np.array([7.0, -2.0, 1.0]), np.eye(3), np.zeros(3))
-        self.assertTrue(np.allclose(m, np.eye(4), atol=1e-12))
+    def test_no_strength_leaves_one_heading_and_a_straight_line(self):
+        w, mats = walk(), self.chest()
+        got = w.steady_chest(mats, 0.0, 0.0)
+        n = mats.shape[0] - 1
+        for f in range(n + 1):
+            self.assertTrue(np.allclose(got[f, :3, :3], got[0, :3, :3], atol=1e-12), f)
+        per = (got[n, 3, :3] - got[0, 3, :3]) / float(n)
+        for f in range(n + 1):
+            self.assertTrue(np.allclose(got[f, 3, :3], got[0, 3, :3] + per * f, atol=1e-9), f)
+
+    def test_the_travel_is_kept_at_any_strength(self):
+        w, mats = walk(), self.chest()
+        n = mats.shape[0] - 1
+        was = mats[n, 3, :3] - mats[0, 3, :3]
+        for rot, pos in ((0.0, 0.0), (0.5, 0.25), (1.0, 0.0)):
+            got = w.steady_chest(mats, rot, pos)
+            self.assertTrue(np.allclose(got[n, 3, :3] - got[0, 3, :3], was, atol=1e-9), (rot, pos))
+            self.assertTrue(np.allclose(got[n, :3, :3], got[0, :3, :3], atol=1e-12), (rot, pos))
+
+    def test_half_strength_is_half_the_deviation(self):
+        w, mats = walk(), self.chest()
+        flat, half = w.steady_chest(mats, 0.0, 0.0), w.steady_chest(mats, 0.5, 0.5)
+        n = mats.shape[0] - 1
+        for f in range(n + 1):
+            want = flat[f, 3, :3] + 0.5 * (mats[f, 3, :3] - flat[f, 3, :3])
+            self.assertTrue(np.allclose(half[f, 3, :3], want, atol=1e-9), f)
 
 
 class EngineKnobs(unittest.TestCase):
@@ -134,30 +160,42 @@ class Pass(unittest.TestCase):
         self.assertAlmostEqual(self.over(got)["chest_cm"], moved, delta=0.5 * moved + 1e-6)
         self.assertEqual(self.over(got)["chest"], ["r"])
 
-    def test_rotation_zero_keeps_the_weapons_own_heading(self):
-        got = self.go(weapon_chest_lag=self.LAG, weapon_chest_rotation=0.0)
-        for f in range(self.n + 1):
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3],
-                                        self.base.worlds[self.hand_r, f, :3, :3], atol=1e-6), f)
-        full = self.go(weapon_chest_lag=self.LAG)
-        turned = max(float(np.linalg.norm(wm.log_rot(
-            np.asarray(full.worlds[self.hand_r, f, :3, :3], float).T
-            @ np.asarray(self.base.worlds[self.hand_r, f, :3, :3], float))))
-            for f in range(self.n + 1))
-        self.assertGreater(math.degrees(turned), 1.0)        # the control: at full strength it does turn
+    def test_the_strengths_work_with_no_lag_at_all(self):
+        """The animator's own report (2026-11-03): at 0 / 0 the weapon must stop inheriting the body,
+        lag or no lag. The first build scaled only the lag's own motion, so this moved nothing."""
+        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        moved = max(float(np.linalg.norm(got.worlds[self.hand_r, f, 3, :3]
+                                         - self.base.worlds[self.hand_r, f, 3, :3]))
+                    for f in range(self.n + 1))
+        self.assertGreater(moved, 0.5)
 
-    def test_position_zero_is_a_turn_about_the_chests_own_pivot(self):
-        got = self.go(weapon_chest_lag=self.LAG, weapon_chest_position=0.0)
+    def test_position_zero_takes_the_chests_bob_and_sway_off_the_weapon(self):
+        """With the turn at full strength the pass is a pure translation: minus the chest's own deviation
+        from the straight line it travels along."""
+        got = self.go(weapon_chest_position=0.0)
         C = np.asarray(self.base.worlds[self.chest], float)
-        before = points(GRIP, np.asarray(self.base.worlds[self.hand_r], float))
-        after = points(GRIP, np.asarray(got.worlds[self.hand_r], float))
+        steady = self.w.steady_chest(C, 1.0, 0.0)
         for f in range(self.n + 1):
-            self.assertAlmostEqual(float(np.linalg.norm(after[f] - C[f, 3, :3])),
-                                   float(np.linalg.norm(before[f] - C[f, 3, :3])), places=4, msg=f)
-        full = points(GRIP, np.asarray(self.go(weapon_chest_lag=self.LAG).worlds[self.hand_r], float))
-        spread = max(abs(float(np.linalg.norm(full[f] - C[f, 3, :3]))
-                         - float(np.linalg.norm(before[f] - C[f, 3, :3]))) for f in range(self.n + 1))
-        self.assertGreater(spread, 0.1)      # the control: at full strength the travel does come in
+            want = (self.base.worlds[self.hand_r, f, 3, :3] + steady[f, 3, :3] - C[f, 3, :3])
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, 3, :3], want, atol=1e-6), f)
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3],
+                                        self.base.worlds[self.hand_r, f, :3, :3], atol=1e-9), f)
+        off = max(float(np.linalg.norm(steady[f, 3, :3] - C[f, 3, :3])) for f in range(self.n + 1))
+        self.assertGreater(off, 0.5)         # the control: the chest really does bob and sway
+
+    def test_rotation_zero_leaves_the_weapon_on_the_cycles_mean_heading(self):
+        """With the place at full strength the pass turns the weapon by the chest's own turn, undone."""
+        got = self.go(weapon_chest_rotation=0.0)
+        C = np.asarray(self.base.worlds[self.chest], float)
+        steady = self.w.steady_chest(C, 0.0, 1.0)
+        worst = 0.0
+        for f in range(self.n + 1):
+            want = (np.asarray(self.base.worlds[self.hand_r, f, :3, :3], float)
+                    @ C[f, :3, :3].T @ steady[f, :3, :3])
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3], want, atol=1e-6), f)
+            worst = max(worst, math.degrees(float(np.linalg.norm(
+                wm.log_rot(C[0, :3, :3].T @ C[f, :3, :3])))))
+        self.assertGreater(worst, 1.0)       # the control: the chest really does turn over the cycle
 
     #  what must not break
 

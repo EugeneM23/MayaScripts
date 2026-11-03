@@ -127,13 +127,16 @@ KNOBS = (
     # a two-handed hold is kept. Per side; one weapon in two hands takes the sides' mean. It needs the weapon
     # the SCENE holds (evaluate's `weapons`): with none it does nothing
     ("weapon_overlap", 0.0, -120.0, 120.0),
-    # The weapon from the CHEST (2026-11-03): the weapon keeps its own pose relative to the chest and the
-    # chest's own pose from `weapon_chest_lag` frames earlier is put back, its turn slerped from the identity
-    # by `weapon_chest_rotation` and its travel scaled by `weapon_chest_position`, both about the chest's own
-    # pivot - so 1 / 1 / 0 is the identity. Every hand holding the weapon is moved with it (the hands follow
-    # the weapon; _arm_to_hand rebuilds the arm), so the grip holds. `weapon_hold` (2H) binds a free hand to
-    # the one holding the weapon by the offset it has at frame 0: a two-handed carry with no pose grip. Per
-    # side; the three above need the weapon the SCENE holds (evaluate's `weapons`)
+    # The weapon from the CHEST (2026-11-03): the weapon keeps its own pose relative to the chest and takes
+    # as much of the chest's OWN animation as the knobs ask, from `weapon_chest_lag` frames ago - the chest's
+    # turn slerped from the cycle's mean heading by `weapon_chest_rotation` and its bob and sway pulled toward
+    # the mean by `weapon_chest_position` (the walk's travel kept at any strength, or the weapon is left
+    # behind and the loop does not close). 1 / 1 / 0 is the identity; 0 / 0 hangs the weapon in the air,
+    # travelling with the walk and taking nothing of the body's own motion. Every hand holding the weapon is
+    # moved with it (the hands follow the weapon; _arm_to_hand rebuilds the arm), so the grip holds.
+    # `weapon_hold` (2H) binds a free hand to the one holding the weapon by the offset it has at frame 0: a
+    # two-handed carry with no pose grip. Per side; the three above need the weapon the SCENE holds
+    # (evaluate's `weapons`)
     ("weapon_hold", 0.0, 0.0, 1.0),
     ("weapon_chest_rotation", 1.0, 0.0, 1.0),
     ("weapon_chest_position", 1.0, 0.0, 1.0),
@@ -798,15 +801,6 @@ def swung_about(origin, rot):
     out = np.eye(4)
     out[:3, :3] = rot
     out[3, :3] = o - o @ rot
-    return out
-
-
-def moved_about(origin, rot, offset):
-    """The world turn `rot` (3x3) about the point `origin` followed by the move `offset`, as a 4x4: a point p
-    maps to (p - o) . rot + o + offset (row vectors). swung_about with a move, which is how the chest's own
-    motion is scaled for the weapon - its turn about its own pivot, its travel as an offset."""
-    out = swung_about(origin, rot)
-    out[3, :3] = out[3, :3] + np.asarray(offset, float)
     return out
 
 
@@ -4439,18 +4433,40 @@ class Walk(object):
         self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands, hints), only)
         return out
 
+    def steady_chest(self, mats, rotation, position):
+        """A chest's cycle (n+1, 4, 4) with its own animation scaled: its turn slerped from the cycle's MEAN
+        heading by `rotation` and its place pulled toward the mean by `position`, the linear travel kept.
+        1 / 1 is the cycle itself; 0 / 0 is a chest that glides down the travel line with no turn, no bob and
+        no sway - what a weapon hung on it inherits is nothing but the walk's own locomotion. The travel stays
+        at any strength: without it the weapon is left behind within a cycle and the loop does not close."""
+        mats = np.asarray(mats, float)
+        n = mats.shape[0] - 1
+        per = (mats[n, 3, :3] - mats[0, 3, :3]) / float(n)
+        dev = np.array([mats[f, 3, :3] - per * f for f in range(n + 1)])
+        mean_p = dev[:n].mean(axis=0)
+        anchor = mats[0, :3, :3]                      # the mean turn, read against frame 0 (a chest's own
+        logs = np.array([log_rot(anchor.T @ mats[f, :3, :3]) for f in range(n)])   # deviations are degrees)
+        mean_r = anchor @ exp_rot(logs.mean(axis=0))
+        out = np.array(mats)
+        for f in range(n + 1):
+            out[f, :3, :3] = mean_r @ exp_rot(log_rot(mean_r.T @ mats[f, :3, :3]) * rotation)
+            out[f, 3, :3] = mean_p + (dev[f] - mean_p) * position + per * f
+        return out
+
     def _weapon_chest(self, kin, n, chains, hands, settings, held, riders):
-        """The chest carries the weapon, late and scaled (in place on `hands`). With C the chest's world and
-        Clate the same cycle read `lag` frames earlier (shifted_cycle, so the loop closes):
+        """The chest carries the weapon, scaled and late (in place on `hands`). The chest's own cycle is first
+        scaled (`steady_chest`: `rotation` of its turn and `position` of its bob and sway, the travel kept),
+        then read `lag` frames earlier (shifted_cycle, so the loop closes), and the weapon is put on THAT
+        chest:
 
-            T(f) = inv(C(f)) . Clate(f)
+            T(f) = inv(C(f)) . want(f)
 
-        the weapon keeps its own pose RELATIVE TO THE CHEST and the chest's own pose from `lag` frames earlier
-        is put back; at lag 0 that is inv(C) . C = I. The turn is slerped from the identity by `rotation` and
-        the travel scaled by `position`, both about the chest's own pivot (moved_about), so 1 / 1 / 0 is the
-        identity matrix for matrix. Every hand holding that weapon and its riders take the same T, so the grip
-        is kept to machine precision and _arm_to_hand rebuilds the arm - the hands follow the weapon. Returns
-        the most a grip point moved, cm (the line's "the weapon trails the chest N cm")."""
+        So the weapon keeps its own pose relative to the chest and inherits only as much of the chest's own
+        animation as the knobs ask, from as long ago as the lag: 1 / 1 / 0 is the identity matrix for matrix,
+        0 / 0 / 0 hangs the weapon on a chest that only travels, and a lag at full strength is the overlap.
+        Every hand holding that weapon and its riders take the same T, so the grip is kept to machine
+        precision and _arm_to_hand rebuilds the arm - the hands follow the weapon. Returns the most a grip
+        point moved, cm (the line's "the weapon trails the chest N cm")."""
         chest = self._chest_joint()
         if chest is None:
             return 0.0
@@ -4458,17 +4474,13 @@ class Walk(object):
         place = lambda p, m: p @ m[:3, :3] + m[3, :3]
         for side, (rotation, position, lag) in sorted(settings.items()):
             C = np.asarray(kin[chest], float)
-            late = shifted_cycle(C, lag)
+            want = shifted_cycle(self.steady_chest(C, rotation, position), lag)
             for s in riders[side]:
                 if s not in hands:                 # a hand with no lag of its own joins at the frames' own
                     hands[s] = np.array(kin[chains[s][-1]])
             grip_p = np.asarray(held[side]["grip"], float)
             for f in range(n + 1):
-                r = (np.linalg.inv(C[f]) @ late[f])[:3, :3]
-                if rotation < 1.0:
-                    r = exp_rot(log_rot(r) * rotation)
-                c, c_late = C[f][3, :3], late[f][3, :3]
-                T = moved_about(c, r, (c_late - c) * position)
+                T = np.linalg.inv(C[f]) @ want[f]
                 before = place(grip_p, hands[side][f])
                 for s in riders[side]:
                     hands[s][f] = hands[s][f] @ T

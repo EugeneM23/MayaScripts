@@ -130,3 +130,39 @@ own cycle under the two-handed sword pose and on a cycle with one weapon in one 
 - Balance sees the pass (the carry differs with it on);
 - and the whole road through `scene.apply` onto a plain **Manny UE5 skeleton with no rig**: the keys
   read back off the joints show the same promise.
+
+
+## Addendum, the same day: the strengths are absolute, not the lag's share
+
+The animator, with the card in front of them at `2H` on, `Chest rotation` 0, `Chest position` 0 and
+`Chest lag` 0:
+
+> «При таких настройках оружия я ожидаю что оно просто будет статично висеть в воздухе а оно сейчас
+> наследует движение от тела. Выходит наши ручки Chest rotation и position работают не корректно. Они
+> должны контролировать насколько у нас передается анимация с туловища на руки»
+
+They are right, and the fault is in the formula above, not in the knobs. `T(f) = inv(C(f)) · Clate(f)` is
+the identity at `lag` 0 whatever the strengths - they scaled only the motion the LAG introduces, so with no
+lag there was nothing for them to scale. What the knobs must mean is how much of the chest's own animation
+reaches the weapon at all.
+
+**The chest's own cycle is scaled first, then read late** (`Walk.steady_chest`):
+
+- the linear travel is taken out, leaving the chest's periodic deviation;
+- its turn is slerped from the cycle's MEAN heading by `rotation`, its place pulled toward the mean by
+  `position`;
+- the travel is put back at every strength. Without it the weapon is left behind within a cycle and the
+  loop does not close - and the travel is the walk's locomotion, not the body's own animation;
+- then `want = shifted_cycle(steady, lag)` and `T(f) = inv(C(f)) · want(f)`.
+
+So `1 / 1 / 0` is still the identity matrix for matrix; `0 / 0` hangs the weapon on a chest that only
+glides down the travel line - with the arms stilled (a two-handed card) the weapon hangs in the air, which
+is what was asked for; a lag at full strength is the overlap as before; and the two compose - the lag
+follows the chest the strengths leave.
+
+`moved_about` is gone with the old formula: `T` is now `inv(C) · want`, a rigid transform built from the
+chest's own poses, and nothing has to be decomposed about a pivot.
+
+The gates for the strengths moved with the meaning: they are measured with NO lag, against the chest's own
+turn and bob as the control, and a thirteenth gate says in the animator's own terms that at `0 / 0` the
+weapon wanders 0.000 cm off its straight line while the body carries it 8.24 cm.
