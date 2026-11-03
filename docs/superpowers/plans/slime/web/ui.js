@@ -19,17 +19,17 @@ const UI = {
   // clamps F to. For a 6 cm mound at this gravity that puts mu in the
   // thousands, not the hundreds.
   presets: {
-    'Вода': { mu: 0, hold: 0, visc: 0, lam: 45000, stick: 0.05, grav: 150, air: 5,
+    'Вода': { mu: 0, hold: 0, visc: 0, lam: 45000, stick: 0.05, grav: 981, air: 5,
       tint: [0.46, 0.70, 0.86], absorb: 0.10, rough: 0.06, refract: 1.5, radius: 0.8 },
-    'Мёд': { mu: 2000, hold: 0.4, visc: 150, lam: 36000, stick: 0.50, grav: 150, air: 3,
+    'Мёд': { mu: 2000, hold: 0.4, visc: 150, lam: 36000, stick: 0.50, grav: 981, air: 3,
       tint: [0.95, 0.70, 0.24], absorb: 0.52, rough: 0.12, refract: 1.2, radius: 0.85 },
-    'Кисель': { mu: 6000, hold: 6, visc: 60, lam: 30000, stick: 0.60, grav: 150, air: 3,
+    'Кисель': { mu: 6000, hold: 6, visc: 60, lam: 30000, stick: 0.60, grav: 981, air: 3,
       tint: [0.80, 0.24, 0.34], absorb: 0.36, rough: 0.22, refract: 0.9, radius: 0.9 },
-    'Слизь': { mu: 9000, hold: 10, visc: 90, lam: 30000, stick: 0.78, grav: 150, air: 3,
+    'Слизь': { mu: 9000, hold: 10, visc: 90, lam: 30000, stick: 0.78, grav: 981, air: 3,
       tint: [0.44, 0.80, 0.28], absorb: 0.30, rough: 0.16, refract: 1.0, radius: 0.9 },
-    'Желе': { mu: 20000, hold: 40, visc: 0, lam: 36000, stick: 0.25, grav: 150, air: 2,
+    'Желе': { mu: 20000, hold: 40, visc: 0, lam: 36000, stick: 0.25, grav: 981, air: 2,
       tint: [0.86, 0.34, 0.54], absorb: 0.26, rough: 0.10, refract: 1.1, radius: 0.9 },
-    'Грязь': { mu: 5000, hold: 14, visc: 120, lam: 28000, stick: 0.85, grav: 150, air: 4,
+    'Грязь': { mu: 5000, hold: 14, visc: 120, lam: 28000, stick: 0.85, grav: 981, air: 4,
       tint: [0.34, 0.26, 0.19], absorb: 0.95, rough: 0.42, refract: 0.4, radius: 0.95 },
   },
 
@@ -81,7 +81,14 @@ const UI = {
     level: 0,             // index into AUTO_STEPS, 0 is the prettiest
     hot: 0, cool: 0,      // frames in a row over / under the target
     changed: 0,
+    lastLoop: 0,
+    entered: 0,           // when the loop was last entered, for the watchdog
+    timeScale: 1,         // sim seconds a wall second
   },
+
+  // At most this many 1/60 steps in one frame. Three is where catching up stops
+  // being worth it: past that the extra steps cost more than the time they buy.
+  MAX_STEPS: 3,
 
   // 33 ms is the target: the prototype is for judging how a material moves, and
   // a material cannot be judged below about 30 fps.
@@ -162,16 +169,23 @@ const UI = {
   // embedded pane, where requestAnimationFrame does not fire at all and only
   // the timer path ran. A driver owns the re-queue; nothing else may.
   startDriver() {
-    let ticked = false;
-    const raf = (now) => { ticked = true; this.loop(now); requestAnimationFrame(raf); };
+    const enter = (now) => { this.perf.entered = performance.now(); this.loop(now); };
+    const raf = (now) => { enter(now); requestAnimationFrame(raf); };
     requestAnimationFrame(raf);
-    setTimeout(() => {
-      if (ticked) return;
-      console.warn('requestAnimationFrame is not firing here - driving the loop on a timer');
-      this.timerDriven = true;
-      const tick = () => { this.loop(performance.now()); setTimeout(tick, 16); };
-      tick();
-    }, 500);
+
+    // A watchdog rather than a one-shot check at startup: requestAnimationFrame
+    // does not fire while a page is not being shown, and in an embedded pane a
+    // tab can stop being shown at any moment - a check 500 ms after boot sees
+    // rAF working, never arms the timer, and the page then freezes for good the
+    // first time it goes to the background. The timer only steps in when the
+    // loop has not been entered for a while, and goes quiet again as soon as
+    // rAF comes back, so there is never more than one chain driving it (which
+    // is the bug that made this page a frame a minute).
+    setInterval(() => {
+      const idle = performance.now() - (this.perf.entered || 0);
+      if (idle > 250) { this.timerDriven = true; enter(performance.now()); }
+      else { this.timerDriven = false; }
+    }, 100);
   },
 
   // ------------------------------------------------------- keeping up
@@ -373,7 +387,7 @@ const UI = {
       [name, () => this.applyPreset(name)]));
 
     slider('mu', 'Упругость', 0, 24000, 100,
-      () => SIM.params.mu, (v) => { SIM.params.mu = v; this.applyHold(); },
+      () => SIM.params.mu, (v) => { this.state.muWanted = v; SIM.params.mu = v; this.applyHold(); },
       (v) => (v / 1000).toFixed(1) + 'k');
     host.appendChild(this._hint('дрожь и пружинистость'));
     slider('hold', 'Держит форму', 0, 40, 0.5,
@@ -391,8 +405,9 @@ const UI = {
     slider('air', 'Сопротивление воздуха', 0, 12, 0.5,
       () => SIM.params.airDrag, (v) => { SIM.params.airDrag = v; }, (v) => v.toFixed(1));
     host.appendChild(this._hint('тормозит брызги, которые летят по воздуху'));
-    slider('grav', 'Гравитация', 0, 400, 5,
-      () => SIM.params.gravity, (v) => { SIM.params.gravity = v; this.applyHold(); });
+    slider('grav', 'Гравитация', 0, 2000, 10,
+      () => SIM.params.gravity, (v) => { SIM.params.gravity = v; this.applyHold(); },
+      (v) => (v / 981).toFixed(2) + ' g');
 
     head('Сцена');
     this.sceneBtns = buttons([
@@ -536,15 +551,34 @@ const UI = {
     // bounds the stored deformation at about 50%. Too soft and it simply never
     // yields and behaves as a solid, whatever the slider says. So the
     // elasticity is floored, and the slider shows where it was pushed to.
+    // The floor is applied to what the slider itself says, not to whatever the
+    // floor left last time: it used to be a max() against the current value, so
+    // the elasticity only ever went up - dragging "holds its shape" back down
+    // left the material as stiff as the highest setting it had ever seen, and
+    // nothing but a preset could soften it again.
+    if (this.state.muWanted == null) this.state.muWanted = SIM.params.mu;
     if (SIM.params.yieldS < 1e8) {
-      SIM.params.mu = Math.max(SIM.params.mu, SIM.params.yieldS * 3.2);
+      SIM.params.mu = Math.max(this.state.muWanted, SIM.params.yieldS * 3.2);
+    } else {
+      SIM.params.mu = this.state.muWanted;
     }
     if (this.state.autoSubsteps) {
-      // Explicit MPM is stable while dt * sound speed stays under about 0.4 of
-      // a cell, and the sound speed is sqrt(lam + 2mu) at unit density. Solving
+      // Explicit MPM is stable while dt * sound speed stays under about half a
+      // cell, and the sound speed is sqrt(lam + 2mu) at unit density. Solving
       // for the substeps a 60 Hz frame needs, with a little margin.
+      //
+      // The constant was 24 - a third of a cell - which is where the rule first
+      // landed, and under real gravity it costs: a kissel that holds a mound at
+      // one g needs an elasticity in the tens of thousands, and that asked for
+      // 21 substeps a frame. Measured on exactly that material, dropped and
+      // then shoved across the floor at 55 cm/s: 21, 14, 11, 9 and 7 substeps
+      // all held - no resets, mass to the digit, the settled mound within
+      // 0.2 cm - but the fastest particle in the settled puddle went 5, 7, 10,
+      // 17, 42 cells/s as they came down, which is the elastic ringing starting
+      // to show. 34 puts it at about half a cell a substep, which is 14 for
+      // that material and leaves the margin where it was measured to be.
       const c = Math.sqrt(SIM.params.lam + 2 * SIM.params.mu);
-      SIM.params.substeps = Math.max(4, Math.min(40, Math.ceil(c / 24 * 1.15)));
+      SIM.params.substeps = Math.max(4, Math.min(40, Math.ceil(c / 34 * 1.15)));
       if (this.rows.sub) this.rows.sub();
     }
   },
@@ -554,6 +588,7 @@ const UI = {
     if (!p) return;
     this.state.preset = name;
     SIM.params.mu = p.mu;
+    this.state.muWanted = p.mu;
     this.state.hold = Math.min(p.hold, 60);
     SIM.params.visc = p.visc;
     SIM.params.lam = p.lam;
@@ -772,8 +807,6 @@ const UI = {
       else return;
     }
 
-    if (this.state.pouring || this.state.pourKey) this.pourTick();
-
     // The hand's velocity is how fast the cursor is dragging it through the
     // world, which is what lets it pull a strand rather than only push.
     if (this.hand.on && this.hand.pos) {
@@ -791,12 +824,45 @@ const UI = {
       mouseVel: [this.hand.vel[0], this.hand.vel[1], this.hand.vel[2], this.state.handStrength],
     };
 
-    if (!this.state.paused || this.state.stepOnce) {
+    // --- the clock.
+    //
+    // A step is always 1/60 of a second, because the solver's stability is
+    // bought with a step size and because a fixed step is what makes a run
+    // reproducible. How many of them a frame takes is what keeps the fluid in
+    // real time: one a frame means the simulation advances at whatever rate the
+    // machine draws, and at 19 fps that is a third of real time - which is
+    // exactly what "the particles feel airy" is. Gravity reads as its own value
+    // times the square of the time scale, so a third of real time looks like a
+    // ninth of the gravity, and no slider can make up for it.
+    //
+    // The catching up is capped: a machine that cannot keep up runs in honest
+    // slow motion rather than spiralling into taking ever more steps per ever
+    // slower frame. The panel says when that is happening.
+    const wall = p.lastLoop ? Math.min((now - p.lastLoop) / 1000, 0.25) : dt;
+    p.lastLoop = now;
+    if (!this.state.paused) {
+      this.clock = Math.min((this.clock || 0) + wall, dt * this.MAX_STEPS);
+    }
+    let took = 0;
+    if (this.state.stepOnce) {
+      if (this.state.pouring || this.state.pourKey) this.pourTick();
       SIM.step(dt, world);
+      took = 1;
+      this.state.stepOnce = false;
+    } else if (!this.state.paused) {
+      while (this.clock >= dt && took < this.MAX_STEPS) {
+        if (this.state.pouring || this.state.pourKey) this.pourTick();
+        SIM.step(dt, world);
+        this.clock -= dt;
+        took++;
+      }
+    }
+    if (took) {
       // A ball that is not being dragged this frame is standing still.
       this.ballVel = [this.ballVel[0] * 0.5, this.ballVel[1] * 0.5, this.ballVel[2] * 0.5];
-      this.state.stepOnce = false;
     }
+    // How far from real time the fluid is running, for the panel.
+    p.timeScale = p.timeScale * 0.85 + (took * dt / Math.max(wall, 1e-4)) * 0.15;
     RENDER.draw(SIM.high, SIM.grid, world.obstacle);
 
     // The frame is measured where it ends, on the GPU, not where it was queued.
@@ -834,7 +900,7 @@ const UI = {
   showStats() {
     const s = SIM.stats;
     const gpu = SIM.gpuMs();
-    const needed = Math.ceil(Math.sqrt(SIM.params.lam + 2 * SIM.params.mu) / 24 * 1.15);
+    const needed = Math.ceil(Math.sqrt(SIM.params.lam + 2 * SIM.params.mu) / 34 * 1.15);
     const shaky = SIM.params.substeps < needed;
     const p = this.perf;
     const steps = this.AUTO_STEPS.length;
@@ -856,6 +922,10 @@ const UI = {
       `сбросов <span class="${s.nan ? 'bad' : ''}"><b>${s.nan}</b></span>` +
         (s.nan && s.why ? ` <span style="font-size:10px">(поз ${s.why.pos} · скор ${s.why.vel}` +
           ` · деформ ${s.why.defo} · предел ${s.why.fast})</span>` : ''),
+      p.timeScale < 0.8
+        ? `<span class="bad">замедление ×${(1 / Math.max(p.timeScale, 0.01)).toFixed(1)}</span>` +
+          ' <span style="font-size:10px">— машина не успевает считать в реальном времени</span>'
+        : '',
       p.solverBound && p.frameMs > this.TARGET_MS * 1.25
         ? '<span class="bad">не успевает решатель</span>' +
           ' <span style="font-size:10px">— убавьте частиц, подшаги или сетку</span>'

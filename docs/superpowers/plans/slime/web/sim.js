@@ -7,7 +7,7 @@
 const SIM = {
   // --- what the material is. These are the numbers the sliders move.
   params: {
-    gravity: 900.0,        // cells/s^2, so 9 m/s^2 at 1 cell = 1 cm
+    gravity: 981.0,        // cells/s^2 at 1 cell = 1 cm, which is one g
     mu: 220.0,             // elasticity: the jiggle
     lam: 12000.0,          // incompressibility
     yieldS: 85.0,          // how much shape it holds before it gives in
@@ -120,9 +120,9 @@ const SIM = {
       // The node accumulation, and past its end one flag a 4x4x4 block saying
       // whether the fluid is anywhere near - there is no binding to spare for a
       // buffer of its own (eight storage buffers a stage is all WebGPU promises).
-      gridA: mk(nodes * 16 + this.nblocks * 4, S, 'gridA'),
-      gridV: mk(nodes * 16, S, 'gridV'),
-      stats: mk(32, S | GPUBufferUsage.COPY_SRC, 'stats'),
+      gridA: mk(nodes * 16 + this.nblocks * 4, S | GPUBufferUsage.COPY_DST, 'gridA'),
+      gridV: mk(nodes * 16, S | GPUBufferUsage.COPY_DST, 'gridV'),
+      stats: mk(32, S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, 'stats'),
       statsRead: mk(32, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, 'statsRead'),
     };
 
