@@ -233,7 +233,13 @@ const UI = {
         p.hot = 0; p.changed = performance.now();
         this.applyAuto();
       }
-    } else if (cost < t * 0.62) {
+    } else if (cost < t * 0.85) {
+      // 0.85 rather than something tight, because the solver is most of the
+      // cost: at a 96 cm room it is 19 ms of the 33 the frame is allowed, so a
+      // climb-back gated near 20 ms could never fire and the picture stayed
+      // turned down for ever, however comfortable the frame rate was. The band
+      // between dropping (over 41 ms) and climbing (under 28) is what keeps it
+      // from oscillating.
       p.hot = 0; p.cool++;
       // Slow to climb back, so a quiet moment does not start it oscillating.
       if (p.cool >= 120 && p.level > 0 && performance.now() - p.changed > 3000) {
