@@ -11573,12 +11573,20 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
   is kept to machine precision and both arms are rebuilt by IK. No new number: the hold is whatever the cycle
   and the pose already have at frame 0. A hand holding its own weapon is left alone. `_weapon_swing` takes the
   `riders` table now in place of its `grip` flag, so 2H rides the aim too.
+- **An arm the pose's own chip leaves out is left alone by the Weapon tab too** (the same day: «фильтр
+  который исключает влияние позы ... на руку должен исключать и обработку руки вкладкой weapon»). The chip
+  already meant «this arm plays the cycle» (2026-11-02); `pose.filtered` now records the sides that are IN as
+  `arm_sides`, and `_arm_overlap` drops a side that is out of `held` (no weapon of its own is processed), out
+  of every `riders` list (it is never carried for another hand's weapon) and out of `hold_sides` (2H cannot
+  bind it). A pose that never went through `filtered` carries no such key, and that means every side is in,
+  so nothing else changed. The grip needed nothing - `filtered` already ends a two-handed grip when one arm
+  leaves the pose.
 - `moved_arms` counts the four knobs (Balance carries the late arms), and the line gains «the weapon trails
-  the chest N cm» and «2H: both hands on the weapon»; with no weapon in the hands it says the Weapon knobs do
-  nothing.
+  the chest N cm», «2H: both hands on the weapon» and «the left arm is out of the pose: the Weapon knobs
+  leave it alone»; with no weapon in the hands it says the Weapon knobs do nothing.
 - **The Gait Builder fork needed nothing**: it predates the whole weapon machinery (no `_arm_overlap` at all),
   and `tests/test_gait_model.ParityTests` runs at knobs it shares - 5 tests, OK.
-- Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_chest.py` - **0 of 19 gates, mayapy standalone**,
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_chest.py` - **0 of 21 gates, mayapy standalone**,
   on the animator's own cycle and their two-handed card: the defaults and `own_knobs()` matrix for matrix; the
   weapon on the chest of 4.5 frames ago to **3.98e-13** while the hand swings 25.29 cm against that chest (so
   the gate is a real constraint); with NO lag, `rotation 0` leaving it on the cycle's mean heading to 8.1e-13
@@ -11589,9 +11597,11 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
   7.5e-14; Balance carrying the hips 0.0820 cm differently; and **the whole road through `scene.apply` onto a
   plain Manny UE5 skeleton with NO RIG**: the keys read back off the joints keep the promise to **0.0057**
   with the arms swinging 25.8 cm against the chest, the body itself untouched (1.8e-15), the line saying it.
-  `tests/test_walk_weapon_chest.py` (32; the first build's formula turns two of them red, the animator's own
-  case among them), and the two existing Weapon overlap tests that asserted «one slider of its own tab» say
-  «the first slider» now.
+  `tests/test_walk_weapon_chest.py` (37; the first build's formula turns two of them red, the animator's own
+  case among them, and three more go red where the pose's arm chip does not reach the passes), and the two
+  existing Weapon overlap tests that asserted «one slider of its own tab» say «the first slider» now. The
+  fourteenth gate is the arm chip: with `Arm L` out of the pose the Weapon knobs move that hand 0.00e+00 cm
+  while the right one works 9.38 cm and 2H binds nobody.
 - **Not built**: a strength above 1; the weapon lagging inside the grip; a second grip point for 2H; moving
   the tool out of Connections.
 - **The strengths were wrong on the first build, and the animator caught it in minutes** (the same day, at

@@ -18,6 +18,7 @@ from tests.test_walkmodel import load, walk, wm
 from tests.test_walk_weapon_overlap import GRIP, TIP, WEAPON, points
 
 gait = load("gait")
+wp = load("pose")
 
 
 class SteadyChest(unittest.TestCase):
@@ -262,6 +263,75 @@ class TwoHands(unittest.TestCase):
         both = {"r": {"grip": GRIP, "tip": TIP}, "l": {"grip": GRIP, "tip": TIP}}
         got = self.go(weapons=both, weapon_hold_l=1.0)
         self.assertEqual(((got.info.get("arms") or {}).get("overlap") or {})["hold"], [])
+
+
+class OutOfPose(unittest.TestCase):
+    """An arm the pose's own chip leaves out is left alone by the Weapon tab too (2026-11-03, the animator:
+    «фильтр который исключает влияние позы ... на руку должен исключать и обработку руки вкладкой weapon»)."""
+
+    BENT = 70.0
+
+    def setUp(self):
+        from tests.test_walk_one_arm import prepared
+        self.w, self.whole = prepared()
+        self.whole = dict(self.whole, grip=True)
+        self.chains = self.w._arm_chains()
+        self.hand_r, self.hand_l = self.chains["r"][-1], self.chains["l"][-1]
+
+    def pose(self, *parts):
+        return wp.filtered(self.whole, parts or wp.ALL_PARTS)
+
+    def go(self, pose, weapons=WEAPON, **over):
+        ks = dict({"balance": 0.0, "arm_drag": 0.0, "elbow_add": self.BENT, "pose": 1.0}, **over)
+        for name, value in list(over.items()):
+            if name in wm.SIDED:
+                ks[name + "_l"] = ks[name + "_r"] = value
+        return self.w.evaluate(ks, pose, weapons=weapons)
+
+    def over(self, result):
+        return (result.info.get("arms") or {}).get("overlap") or {}
+
+    def test_filtered_records_which_arms_are_in(self):
+        self.assertEqual(wp.filtered(self.whole, wp.ALL_PARTS)["arm_sides"], ("l", "r"))
+        self.assertEqual(self.pose("torso", "arm_r")["arm_sides"], ("r",))
+        self.assertEqual(self.pose("torso")["arm_sides"], ())
+
+    def test_a_pose_that_was_never_filtered_leaves_every_arm_in(self):
+        self.assertNotIn("arm_sides", self.whole)
+        got = self.go(self.whole, weapon_chest_lag=3.0)
+        self.assertEqual(self.over(got)["chest"], ["r"])
+        self.assertEqual(self.over(got)["out_of_pose"], [])
+
+    def test_the_weapons_own_arm_out_of_the_pose_is_not_processed(self):
+        left = {"l": {"grip": GRIP, "tip": TIP}}
+        kept = self.go(self.pose(*[p for p in wp.ALL_PARTS if p != "arm_l"]), weapons=left,
+                       weapon_chest_lag=3.0, weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        plain = self.go(self.pose(*[p for p in wp.ALL_PARTS if p != "arm_l"]), weapons=left)
+        self.assertTrue(np.array_equal(kept.worlds, plain.worlds))
+        self.assertEqual(self.over(kept)["chest"], [])
+        self.assertEqual(self.over(kept)["out_of_pose"], ["l"])
+
+    def test_the_other_arm_out_of_the_pose_is_not_carried(self):
+        out = self.pose(*[p for p in wp.ALL_PARTS if p != "arm_l"])
+        got = self.go(out, weapon_chest_lag=3.0)
+        base = self.go(out)
+        n = got.frames
+        moved = max(float(np.linalg.norm(got.worlds[self.hand_l, f, 3, :3]
+                                         - base.worlds[self.hand_l, f, 3, :3])) for f in range(n + 1))
+        self.assertLess(moved, 1e-9)
+        carried = self.go(self.pose(), weapon_chest_lag=3.0)
+        with_both = self.go(self.pose())
+        moved_both = max(float(np.linalg.norm(carried.worlds[self.hand_l, f, 3, :3]
+                                              - with_both.worlds[self.hand_l, f, 3, :3]))
+                         for f in range(n + 1))
+        self.assertGreater(moved_both, 0.5)      # the control: with both arms in it IS carried
+
+    def test_2h_cannot_bind_an_arm_out_of_the_pose(self):
+        out = self.pose(*[p for p in wp.ALL_PARTS if p != "arm_l"])
+        got = self.go(out, weapon_hold=1.0, weapon_chest_lag=3.0)
+        self.assertEqual(self.over(got)["hold"], [])
+        both = self.go(self.pose(), weapon_hold=1.0, weapon_chest_lag=3.0)
+        self.assertEqual(self.over(both)["hold"], ["l"])
 
 
 class Parameters(unittest.TestCase):

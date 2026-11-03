@@ -4356,9 +4356,15 @@ class Walk(object):
         lags = dict((side, float(ks[side]["arm_overlap"])) for side in chains)
         elbows = dict((side, float(ks[side]["elbow_overlap"])) for side in chains)
         turns = dict((side, float(ks[side]["hand_overlap"])) for side in chains)
-        held = dict((side, w) for side, w in (ctx.get("weapons") or {}).items() if side in chains)
-        swings = dict((side, float(ks[side]["weapon_overlap"])) for side in held)
         pose = ctx["pose"]
+        #  an arm the pose's own chip leaves out plays the cycle, and the Weapon tab leaves it alone too
+        #  (2026-11-03): no weapon of its own is processed, it rides nobody, and 2H cannot bind it. A pose
+        #  that records no `arm_sides` was never filtered, so every side is in.
+        inside = None if pose is None or ctx["alpha"] <= 0.0 else pose.get("arm_sides")
+        out_of_pose = set() if inside is None else set(SIDES) - set(inside)
+        held = dict((side, w) for side, w in (ctx.get("weapons") or {}).items()
+                    if side in chains and side not in out_of_pose)
+        swings = dict((side, float(ks[side]["weapon_overlap"])) for side in held)
         grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
         if grip:                      # hands holding one thing move as one: the two sides' mean
             for table in (lags, turns):
@@ -4377,14 +4383,18 @@ class Walk(object):
             if abs(settings[2]) >= OVERLAP_QUIET or settings[0] < 1.0 or settings[1] < 1.0:
                 chest_set[side] = settings
         hold_sides = sorted(s for s in chains
-                            if float(ks[s]["weapon_hold"]) > 0.5 and s not in held and held)
+                            if float(ks[s]["weapon_hold"]) > 0.5 and s not in held and held
+                            and s not in out_of_pose)
         riders = dict((side, [side] + [s for s in sorted(chains)
-                                       if s != side and s not in held and (grip or s in hold_sides)])
+                                       if s != side and s not in held and s not in out_of_pose
+                                       and (grip or s in hold_sides)])
                       for side in held)
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
         out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
                "weapon": biggest(swings), "weapon_sides": sorted(swings), "weapon_cm": 0.0,
-               "chest": sorted(chest_set), "chest_cm": 0.0, "hold": list(hold_sides)}
+               "chest": sorted(chest_set), "chest_cm": 0.0, "hold": list(hold_sides),
+               "out_of_pose": sorted(s for s in out_of_pose
+                                     if s in chains and s in (ctx.get("weapons") or {}))}
         if not chains or (max(out["frames"], out["elbow"], out["hand"], out["weapon"]) < OVERLAP_QUIET
                           and not chest_set and not hold_sides):
             out["frames"] = out["elbow"] = out["hand"] = out["weapon"] = 0.0

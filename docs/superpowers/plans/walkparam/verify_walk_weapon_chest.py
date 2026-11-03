@@ -275,9 +275,34 @@ def phase_model():
         gate(wander < 0.5 < was,
              "0 / 0 hangs the weapon in the air: it wanders %.3f cm off its line (the body carries it %.2f)"
              % (wander, was))
+        #  14 - the pose's own arm chip reaches the Weapon tab (2026-11-03): with Arm L out of the pose,
+        #  2H cannot bind that hand and nothing of the weapon's passes moves it
+        bones = wcards.read_card(os.path.join(LIBRARY, CARD))[1]
+        whole = wp.prepare(walk, statics, bones, wm, wt)
+        without = wp.filtered(whole, [part for part in sw.ALL_PARTS if part != "arm_l"])
+
+        def one_armed(**over):
+            ks = dict(base, elbow_add=BENT, elbow_add_l=BENT, elbow_add_r=BENT, balance=0.0)
+            for name, value in over.items():
+                ks[name] = value
+                if name in wm.SIDED:
+                    ks[name + "_l"] = ks[name + "_r"] = value
+            return walk.evaluate(ks, without, weapons=held)
+
+        bare = one_armed(arm_drag=0.0)
+        worked = one_armed(arm_drag=0.0, weapon_chest_lag=lag, weapon_hold=1.0)
+        left_moved = max(float(np.linalg.norm(worked.worlds[hand_l, f, 3, :3]
+                                              - bare.worlds[hand_l, f, 3, :3])) for f in range(n + 1))
+        right_moved = max(float(np.linalg.norm(worked.worlds[hand_r, f, 3, :3]
+                                               - bare.worlds[hand_r, f, 3, :3])) for f in range(n + 1))
+        said_hold = ((worked.info.get("arms") or {}).get("overlap") or {})["hold"]
+        gate(left_moved < 1e-9 and not said_hold and right_moved > 0.5,
+             "Arm L out of the pose: the Weapon knobs leave it alone (%.2e cm) while the right one works "
+             "(%.2f cm), 2H binds nobody" % (left_moved, right_moved))
     else:
         gate(True, "no card in the library: the two-handed hold is not measured here")
         gate(True, "no card in the library: the hung weapon is not measured here")
+        gate(True, "no card in the library: the arm chip is not measured here")
     return lag
 
 

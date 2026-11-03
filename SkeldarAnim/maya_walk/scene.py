@@ -1461,7 +1461,11 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         text += " | the weapon trails the chest %.1f cm" % swung["chest_cm"]
     if swung.get("hold"):
         text += " | 2H: both hands on the weapon"
-    if not swung.get("weapon") and not swung.get("chest") and not swung.get("hold"):
+    if swung.get("out_of_pose"):
+        text += " | the %s arm is out of the pose: the Weapon knobs leave it alone" % " and ".join(
+            {"l": "left", "r": "right"}[s] for s in swung["out_of_pose"])
+    if (not swung.get("weapon") and not swung.get("chest") and not swung.get("hold")
+            and not swung.get("out_of_pose")):
         knobs = result.info.get("knobs") or {}
         asked = ("weapon_overlap", "weapon_chest_lag", "weapon_hold",
                  "weapon_chest_rotation", "weapon_chest_position")

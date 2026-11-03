@@ -269,11 +269,18 @@ def parts_read(parts):
 def filtered(pose, parts):
     """The prepared pose with only the parts named in `parts` (PARTS' names). An arm whose chip is off is not in
     the pose at all, so the model leaves that arm the cycle's own mean and swing (its upper arm hangs in the
-    world again): a weapon goes with the hand that holds it, and the two-handed grip needs both arms."""
+    world again): a weapon goes with the hand that holds it, and the two-handed grip needs both arms. The
+    sides that are IN are recorded as `arm_sides` - the Weapon tab's passes read it and leave an arm that is
+    out of the pose alone, chest override, 2H and the blade's aim alike."""
     parts = parts_read(parts)
     keep = set(key for part, keys in PARTS if part in parts for key in keys)
     out = dict((key, value) for key, value in pose.items() if key in keep or key in ALWAYS)
     sides = tuple(side for side in SIDES if ARM_PARTS[side] in parts)
+    #  which arm chips are on, for everything downstream that must leave an arm out of the pose ALONE - the
+    #  Weapon tab's own passes among them (2026-11-03: «фильтр ... должен исключать и обработку руки
+    #  вкладкой weapon»). A pose that never went through `filtered` carries no such key, and that means
+    #  every side is in.
+    out["arm_sides"] = tuple(sides)
     if not sides:
         return out
     arm_side = pose.get("arm_side") or {}

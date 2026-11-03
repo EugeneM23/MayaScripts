@@ -166,3 +166,25 @@ chest's own poses, and nothing has to be decomposed about a pivot.
 The gates for the strengths moved with the meaning: they are measured with NO lag, against the chest's own
 turn and bob as the control, and a thirteenth gate says in the animator's own terms that at `0 / 0` the
 weapon wanders 0.000 cm off its straight line while the body carries it 8.24 cm.
+
+
+## Addendum 2: an arm out of the pose is out of the Weapon tab too
+
+The animator, with the pose's `Arm L` chip off:
+
+> «Фильтр который исключает влияние позы на часть тела на руку должен исключать и обработку руки вкладкой
+> weapon»
+
+The chip already means «this arm plays the cycle, the pose does not reach it» (2026-11-02). It now means the
+Weapon tab does not reach it either:
+
+- `pose.filtered` records the sides whose chips are on as **`arm_sides`**. A pose that never went through
+  `filtered` carries no such key, and that means every side is in - so nothing else had to change.
+- `_arm_overlap` reads it (only while a pose is actually on, `alpha > 0`): a side that is out is dropped from
+  `held`, so no weapon of its own is processed by the chest override or by the blade's aim; it is never a
+  rider of another hand's weapon; and 2H cannot bind it.
+- `info["arms"]["overlap"]["out_of_pose"]` names the sides that hold a weapon and are out, and the Pick line
+  says «the left arm is out of the pose: the Weapon knobs leave it alone» in place of «no weapon in the
+  hands».
+
+The grip needed nothing: `filtered` already ends a two-handed grip when one arm leaves the pose.
