@@ -759,6 +759,7 @@ def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
     _register_pending_startup()
+    _shutdown_soon()
     _tabs_bar_soon()
     _time_bar_soon()
     _side_panel_soon()
@@ -936,6 +937,22 @@ def _main_bar_soon():
     cmds.evalDeferred(paint, lowestPriority=True)
 
 
+def _shutdown_soon():
+    """Our Qt taken down before Maya finalises Python (2026-11-02).
+
+    Armed from the hub's build, which is what Maya replays at every start, so it is
+    armed in every session the interface comes up in. Not deferred: a quit a second
+    after the build must already find the hook, and arming is one callback."""
+    if cmds.about(batch=True):
+        return
+    try:
+        import maya_shutdown
+        maya_shutdown.arm()
+    except Exception:                                        # noqa: BLE001
+        print("SkeldarAnim: the shutdown cleanup could not be armed")
+        print(traceback.format_exc())
+
+
 def _windowlight_soon():
     """The window under the mouse lit (2026-10-23) while the switch is on.
     Deferred and guarded."""
@@ -1020,6 +1037,24 @@ def _hotkeys_soon():
 def is_skinned():
     """A skin built by this module object stands."""
     return _SKIN is not None and _SKIN.alive()
+
+
+def drop_skin():
+    """The skin destroyed and forgotten, the control left standing (2026-11-02).
+
+    What `rebuild` does before it builds again, on its own: `maya_shutdown` calls it
+    when Maya is closing, so the skin's cards, its graphics effects and its
+    application-wide hover watcher go while Python can still run their teardown.
+    The workspaceControl is deliberately NOT deleted - Maya saves the workspace at
+    exit, and a deleted control would not come back at the next start."""
+    global _SKIN
+    if _SKIN is None:
+        return False
+    try:
+        _SKIN.destroy()
+    finally:
+        _SKIN = None
+    return True
 
 
 def rebuild():
@@ -1210,6 +1245,7 @@ def _ensure_edge():
         _SKIN.set_edge_mode(True, edge_side())
         _SKIN.set_rail_side(edge_side())
         current.place()
+        _shutdown_soon()
         #  the scene tabs bar and its hooks (2026-10-15): build() shows them, and
         #  with the hub at the edge build() is not what builds the hub - an
         #  update rebuilt it here and the bar never came

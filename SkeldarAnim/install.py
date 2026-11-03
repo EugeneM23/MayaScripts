@@ -105,6 +105,7 @@ _PAYLOAD = (
     "maya_mainbar.py",          # Maya's title and menu bar in our colours (2026-10-21)
     "maya_windowlight.py",      # only the window under the mouse is lit (2026-10-23)
     "maya_camview.py",          # a character's own camera puts it in 1P (2026-10-22)
+    "maya_shutdown.py",         # our Qt taken down before Maya finalises Python (2026-11-02)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
@@ -1099,6 +1100,31 @@ def _destroy_popups():
         return 0
 
 
+def _take_qt_down():
+    """The OLD modules' Qt taken down before they are purged (2026-11-02).
+
+    `purge_modules` drops our modules while the Qt objects they made live on, so a
+    timer of a dropped module still ticks into a slot that is gone -- measured as
+    `QTimer::timerEvent -> SignalManager::callPythonMetaMethod -> shiboken reads 0`,
+    the mid-session half of the shutdown crash. `maya_shutdown.teardown` is the same
+    cleanup the kMayaExiting hook runs; what it takes down, `rebuild_interface` and
+    `rebuild_open_hub` bring back once this call has returned. Never raises: an
+    install must finish. Returns the report, or {}."""
+    old = sys.modules.get("maya_shutdown")
+    if old is None:
+        return {}
+    try:
+        old.disarm()                       # the new module arms its own hook
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        return old.teardown("the update") or {}
+    except Exception:                                    # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
+        return {}
+
+
 def install(dropped=None, quiet=False):
     """Copy the payload, build the shelf, say so.
 
@@ -1131,6 +1157,10 @@ def install(dropped=None, quiet=False):
     #  callbacks: destroyed before the purge, remembered - the hub built
     #  from the new modules brings them back (maya_hubpop.adopt).
     _destroy_popups()
+    #  ...and everything else of ours that is attached to Maya's Qt or ticking
+    #  (2026-11-02): a purged module's timer firing into a slot that is gone is
+    #  the mid-session crash. Rebuilt below, deferred.
+    _take_qt_down()
     reloaded = purge_modules()
     _build_shelf(dest.replace("\\", "/"))
     buttons = len(button_specs(dest))

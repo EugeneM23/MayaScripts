@@ -17050,6 +17050,125 @@ re-add him and add his props again.**
      Manny's, bone by bone, and give each bone Manny's frame swung onto its own direction; a skin
      rewire re-expresses every bindPreMatrix, so the frames are free.
 
+## Maya's crashes: ours, and NOT cured by taking our Qt down first (2026-11-02)
+
+The animator: «мая начала очень часто вылетать. Не связано ли это с нашим плагином?» It was
+ours. Spec `docs/superpowers/specs/2026-11-02-shutdown-cleanup-design.md`.
+
+**What the dumps said** (451 in `%TEMP%`, parsed by hand — no debugger here; the recipe and
+its traps are in the `maya-minidumps-by-hand` memory). October, GUI Maya: **256 crashes, 244
+of them one signature** — ACCESS_VIOLATION in `shiboken6.abi3.dll`, always the **main
+thread**, a near-null read (`+0x5bb4c` 181×, `+0x64c60` 58×, `+0x516da` 22×). **The signature
+changed on 2026-09-29/30**: before it was `Qt6Gui`/`pyside6`, 1–5 a day and not daily; after,
+every day and climbing (10–11 early October, **32 on the 16th**, 20 on the 30th). **227 of the
+244 carry the C runtime's exit handlers on the faulting stack** —
+`_execute_onexit_table → ~QObject → ~QObjectPrivate → ~QMetaObject::Connection → PySide's
+signal machinery → shiboken reads 0` — so Maya crashed **as it closed**. The other **26 are
+mid-session** (the ones that lose work, 13 on 30 October):
+`QTimer::timerEvent → QMetaObject::activate → qt_static_metacall →
+SignalManager::callPythonMetaMethod → PyGILState_Ensure → the Python slot → shiboken reads 0`.
+
+**Why it was ours.** The plugin attaches Python to Maya's own Qt and detaches none of it:
+`.connect(` **13 → 20 → 103 → 261** at 2026-09-20 / 09-29 / 10-15 / 11-01 against **17**
+`.disconnect(`, QTimers **0 → 2 → 29 → 82**, event filters **0 → 2 → 21 → 38** — no timers and
+no filters at all before 29 September, the day the signature changed. Plus graphics effects
+left on Maya's controls, `destroyed.connect(<python callable>)` in five places, and Maya's own
+Channel Box and Attribute Editor held INSIDE our frameless window (the animator runs the side
+panel at the right edge). The hub, scene tabs, the Pose Library and the AT bar are saved in the
+active workspace, so all of it comes up at **every** start unpressed. And there was **no
+shutdown cleanup anywhere** — no `kMayaExiting`, no `aboutToQuit`, no `atexit` — while the
+teardown functions themselves already existed and nothing called them. Reproduced before a
+line was written: a throwaway Maya with the animator's switches → a dump on quit at the
+identical offset; the same Maya without the plugin → none.
+
+**What was built — and it does NOT cure the exit crash.** Read the next paragraph but one
+before trusting this: the cleanup is right, it fixes the mid-session trigger, and Maya still
+crashes on quit with all of it running. `SkeldarAnim/maya_shutdown.py` (stdlib at import, a payload row) and one
+`MSceneMessage.kMayaExiting` hook armed from `maya_hub.build()` (what Maya replays at every
+start, so every session has it). `PLAN` is ordered `Step(module, function, what, phase)`:
+**GIVE_BACK** Maya's widgets out of ours while both live (`maya_graphoverlay.mode.disable` —
+it disconnects `frameSwapped` from Maya's canvas too — `maya_sidepanel.drop_edge`,
+`maya_channelbox.unmount`, `maya_timebar.drop_edge`, `maya_viewportbar.remove_all`/`unwatch`,
+`maya_mainbar.remove`/`unwatch`); **STOP** everything that ticks (`maya_windowlight.stop`,
+`maya_camview.unwatch`, `maya_camflight._stop`, `maya_com.engine.stop`,
+`maya_chat.session.close`, `maya_hubsound.forget_players`); **DESTROY** ours by us
+(`maya_hubpop.destroy_all`, `maya_hubedge.destroy_all`, `maya_hub.drop_skin` — new, what
+`rebuild` already did — then every remaining top-level window of ours). Two rules, both
+pinned by tests: **only what is standing** (a step is read from `sys.modules` and **never
+imported** — importing `maya_chat` here would start the chat as Maya closes) and **GIVE_BACK
+before DESTROY** (the side panel's own docstring: «a host deleted with a form inside would
+delete Maya's editor»); every step is guarded, so one refusal cannot strand the rest.
+
+Decisions: **a widget is ours when its Python CLASS is** (`ours(type(w).__module__)`, root
+`maya_*`), never by name — Maya's own popup windows for our `cmds` controls are top-level and
+named after them (`skeldarWalkPreset`, `skeldarCamShakeDecay` are an `optionMenu`'s popup), and
+deleting those would be deleting Maya's. **Our workspaceControls are deliberately NOT
+deleted**: Maya saves the workspace at exit and a deleted control would not come back. Timers
+are **stopped, not hunted** (`stop_timers` walks our widgets and stops active QTimers,
+destroying nothing). **`install.install` runs the same teardown before `purge_modules`**
+(`_take_qt_down`) — that is the mid-session half, a dropped module's timer firing into a slot
+that is gone; what it takes down, `rebuild_interface` / `rebuild_open_hub` bring back as they
+already did for the Time Bar and side panel. The hook's id lives on `sys`
+(`_skeldar_shutdown`), never a module global (trap 111).
+
+**The exit crash is NOT cured, and cleanup is not the cure.** Four attempts, each measured in
+a throwaway Maya (`verify_shutdown.py`, phase `armed`), each still writing a dump at the same
+offset: (1) the hook with the named steps and the top-level windows swept; (2) plus
+`sweep_widgets` over every widget of ours anywhere and `drop_qt_state` over everything Qt our
+`sys._skeldar_*` state holds — measured afterwards, **0 of our widgets, 0 of our non-widget
+QObjects and 0 graphics effects left** in the whole application; (3) plus clearing all 37 state
+entries, **purging 221 of our modules and collecting 7124 objects** at `kMayaExiting`; (4) plus
+`forget_maya_wrappers` — `shiboken6.invalidate` on every wrapper we ever took of one of MAYA's
+widgets, 3 of 3 runs crashed. So it is not our objects being attached, not our Python holding
+wrappers, and not shiboken's map of them.
+
+**And the stack says why none of that could work.** Walked whole:
+`_execute_onexit_table → ~QObject → killTimer → ~QObjectPrivate → ~QMetaObject::Connection →
+PySide initQObjectSubType → shiboken reads 0x153a8`. `_execute_onexit_table` is the C runtime
+destroying **static-duration** objects, after Python is finalised; everything the four attempts
+destroyed is a heap object owned by a Qt parent, destroyed at a different moment in a different
+chain. **Nothing destroyed from Python can reach an object the C runtime destroys at `atexit`.**
+What does live there holding Python is PySide's own static signal machinery: a connection from a
+sender to a plain Python callable is held by a `GlobalReceiverV2` registered against **the
+sender**, so one whose sender is **Maya's** object survives everything of ours going down — and
+that is the 261 `.connect(` against 17 `.disconnect(`, the count that tracks the crash rate.
+The cleanup cannot even test it: it does not know which of Maya's objects we connected to.
+What the escalation DOES say (pid-exact attribution): a throwaway Maya quits clean `plain`,
+after a bare install, after wrapping one of Maya's own widgets, after `allWidgets()`, and after
+making, showing and destroying our own QWidget with a connected QTimer — and crashes with the
+interface up. So it takes the interface, not PySide as such.
+
+Proof of what IS done: `tests/test_shutdown.py` **36** (the order, nothing imported, a raising
+step not stopping the rest, `ours` against Maya's / Qt's / animBot's modules, the two sweeps,
+`takeable` leaving Maya's own widget in our state alone, `deep` only at exit, arming's
+idempotence, and **`NamesExist`**, which parses each module on disk so a rename cannot silently
+skip a step — it caught `maya_hub.drop_skin` before it existed); the install path measured in a
+throwaway Maya (install again with the interface up: the hub, the Time Bar, the side panel's
+borrowed editors and the hook all back afterwards); `verify_shutdown.py`'s **`disarmed`** and
+**`plain`** phases green (the control crashes in `shiboken6`, plain Maya does not), with
+**`armed` still failing** — it is the standing failing test for whoever takes this further.
+
+**Still open**: the exit crash itself. It costs the crash dialog and whatever prefs are written
+after it, not the scene (measured: `userPrefs.mel` at 21:47:35, the crash at 21:47:37), so it is
+noise rather than lost work — the 26 mid-session crashes are the ones that lose work, and only
+their commonest trigger (an install's purge) is addressed. Also unchanged: 261 `.connect(`
+against 17 `.disconnect(` as a habit, and the panels inside a workspaceControl keep their
+control at exit by design.
+
+322. **Maya's crash handler writes the dump and then exits 0.** A clean exit code, a clean
+     `Get-Process` and a clean quit over the command port all say nothing: the appearance of a
+     NEW `%TEMP%\MayaCrashLog*.dmp` is the only signal that a run crashed. The first exit probe
+     of the day reported "exit code 0, no dumps" for a Maya whose interface had never been
+     built — and the port's REPLY is not a payload's output either (a `print` comes back as
+     `None`), so a probe that reads the reply proves nothing. Snapshot the dumps before and
+     after, and have every payload write a JSON report to a file you then read.
+323. **A `%` inside a payload body collides with the `%`-substitution that writes it.** Twice
+     in one session: `"n/a %s" % err` and `"n/a: %r"` inside a body formatted with
+     `body % {"out": path}` raised «not enough arguments for format string» — and the second
+     time it killed the run after three throwaway Mayas were already up. Substitute with a
+     token and `.replace("@OUT@", path)`, never `%`. Trap 101's family (PowerShell's backticks
+     in a here-string), from the Python side.
+
 ## Walk Builder: the stance leg straightened at the passing (2026-11-02)
 
 The animator: «почти всегда персонажи после обработки нашими инструментами ходят на согнутых ногах. В фазе
