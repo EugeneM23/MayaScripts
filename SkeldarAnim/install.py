@@ -106,6 +106,7 @@ _PAYLOAD = (
     "maya_windowlight.py",      # only the window under the mouse is lit (2026-10-23)
     "maya_camview.py",          # a character's own camera puts it in 1P (2026-10-22)
     "maya_shutdown.py",         # our Qt taken down before Maya finalises Python (2026-11-02)
+    "maya_crashlog.py",         # the Python line of a hard crash, logged (2026-11-03)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)

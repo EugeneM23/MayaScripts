@@ -758,6 +758,7 @@ def _arrow(qt):
 def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
+    _crash_log()
     _register_pending_startup()
     _shutdown_soon()
     _tabs_bar_soon()
@@ -951,6 +952,20 @@ def _shutdown_soon():
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the shutdown cleanup could not be armed")
         print(traceback.format_exc())
+
+
+def _crash_log():
+    """faulthandler pointed at a file of ours, so a hard crash names its Python
+    line (2026-11-03). NOT deferred: a crash in the first seconds counts too,
+    and it is a mkdir, an open and one C call. It also says in the Script
+    Editor when the PREVIOUS session crashed, and where."""
+    try:
+        import maya_crashlog
+        line = maya_crashlog.report()
+        if maya_crashlog.previous():
+            print(line)
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _windowlight_soon():
