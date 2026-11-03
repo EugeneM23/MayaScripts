@@ -4444,11 +4444,13 @@ class Walk(object):
         return out
 
     def steady_chest(self, mats, rotation, position):
-        """A chest's cycle (n+1, 4, 4) with its own animation scaled: its turn slerped from the cycle's MEAN
-        heading by `rotation` and its place pulled toward the mean by `position`, the linear travel kept.
-        1 / 1 is the cycle itself; 0 / 0 is a chest that glides down the travel line with no turn, no bob and
-        no sway - what a weapon hung on it inherits is nothing but the walk's own locomotion. The travel stays
-        at any strength: without it the weapon is left behind within a cycle and the loop does not close."""
+        """A cycle (n+1, 4, 4) with its own animation scaled: its turn slerped from the cycle's MEAN heading
+        by `rotation` and its place pulled toward the mean by `position`, the linear travel kept. 1 / 1 is
+        the cycle itself; 0 / 0 is a cycle that glides down the travel line with no turn, no bob and no sway
+        - what a weapon hung on it inherits is nothing but the walk's own locomotion. The travel stays at any
+        strength: without it the weapon is left behind within a cycle and the loop does not close.
+        `_weapon_chest` scales two cycles with it: the chest's own, and the holding hand's pose in the chest's
+        frame (the arm's own share, whose "travel" is nothing - a closed loop)."""
         mats = np.asarray(mats, float)
         n = mats.shape[0] - 1
         per = (mats[n, 3, :3] - mats[0, 3, :3]) / float(n)
@@ -4464,19 +4466,26 @@ class Walk(object):
         return out
 
     def _weapon_chest(self, kin, n, chains, hands, settings, held, riders):
-        """The chest carries the weapon, scaled and late (in place on `hands`). The chest's own cycle is first
-        scaled (`steady_chest`: `rotation` of its turn and `position` of its bob and sway, the travel kept),
-        then read `lag` frames earlier (shifted_cycle, so the loop closes), and the weapon is put on THAT
-        chest:
+        """The body carries the weapon, scaled and late (in place on `hands`). Two cycles are scaled by the
+        same knobs (`steady_chest`: `rotation` of a turn and `position` of a deviation from the line it
+        travels along, the travel kept) - the CHEST's own, then read `lag` frames earlier (shifted_cycle, so
+        the loop closes), and the holding hand's own pose IN the chest's frame, which is what the arm gives
+        the weapon:
 
-            T(f) = inv(C(f)) . want(f)
+            A(f) = H(f) . inv(C(f)),  want(f) = shifted(steady(C))(f)
+            T(f) = inv(H(f)) . steady(A)(f) . want(f)
 
-        So the weapon keeps its own pose relative to the chest and inherits only as much of the chest's own
-        animation as the knobs ask, from as long ago as the lag: 1 / 1 / 0 is the identity matrix for matrix,
-        0 / 0 / 0 hangs the weapon on a chest that only travels, and a lag at full strength is the overlap.
-        Every hand holding that weapon and its riders take the same T, so the grip is kept to machine
-        precision and _arm_to_hand rebuilds the arm - the hands follow the weapon. Returns the most a grip
-        point moved, cm (the line's "the weapon trails the chest N cm")."""
+        So the knobs say how much of the body's animation reaches the weapon AT ALL: 1 / 1 / 0 is the
+        identity matrix for matrix, a lag at full strength is the overlap, and 0 / 0 hangs the weapon in the
+        air - it keeps nothing of the body but the walk's own locomotion. The arm's own share is in there
+        because it carries the weapon just as surely as the chest does (2026-11-03, «при нулевых настройках
+        оружие должно стоять статично»): the first build scaled the chest's share alone, which reads as
+        static only under a pose whose two-handed grip has already stilled the arms.
+        Every hand holding that weapon and its riders take the same T - one world transform, so the grip is
+        kept to machine precision - and _arm_to_hand rebuilds the arm: the hands follow the weapon. What is
+        left at 0 / 0 is the arm springs' own lag (Whip, `Arm drag`), the arm's weight passing the body's
+        motion on; a pose's grip has none because _grip_motion springs the held thing, whose target is then
+        constant. Returns the most a grip point moved, cm (the line's "the weapon trails the chest N cm")."""
         chest = self._chest_joint()
         if chest is None:
             return 0.0
@@ -4488,9 +4497,12 @@ class Walk(object):
             for s in riders[side]:
                 if s not in hands:                 # a hand with no lag of its own joins at the frames' own
                     hands[s] = np.array(kin[chains[s][-1]])
+            H = np.array(hands[side], float)
+            arm = self.steady_chest(H @ np.linalg.inv(C), rotation, position)
+            inv_h = np.linalg.inv(H)
             grip_p = np.asarray(held[side]["grip"], float)
             for f in range(n + 1):
-                T = np.linalg.inv(C[f]) @ want[f]
+                T = inv_h[f] @ arm[f] @ want[f]
                 before = place(grip_p, hands[side][f])
                 for s in riders[side]:
                     hands[s][f] = hands[s][f] @ T

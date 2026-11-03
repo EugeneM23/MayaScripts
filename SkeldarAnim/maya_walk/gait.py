@@ -250,14 +250,16 @@ PARAMS = (
               "alone. It needs a weapon in a hand"),
     Param("weapon_chest_rotation", WEAPON, "Chest rotation", "", "added", sided=True,
           rule=_fixed(0.0, 1.0), default=1.0,
-          tip="How much of the chest's own TURN reaches the weapon: 1 the body turns it as it does now (the "
-              "default changes nothing), 0 and the weapon keeps the cycle's mean heading while the body "
-              "turns under it. The holding hand is re-solved onto the weapon, so the grip holds"),
+          tip="How much of the body's own TURN reaches the weapon - the chest's, and the holding arm's "
+              "share of it: 1 the body turns it as it does now (the default changes nothing), 0 and the "
+              "weapon keeps one heading while the body turns under it. The holding hand is re-solved onto "
+              "the weapon, so the grip holds. What is left at 0 is the arm's own weight (Arm drag)"),
     Param("weapon_chest_position", WEAPON, "Chest position", "", "added", sided=True,
           rule=_fixed(0.0, 1.0), default=1.0,
-          tip="How much of the chest's own BOB AND SWAY reaches the weapon: 1 the body carries it as it "
-              "does now, 0 and it hangs in the air while the chest rises and swings under it. The walk's "
-              "travel is kept at any strength - without it the weapon is left behind within a cycle"),
+          tip="How much of the body's own BOB AND SWAY reaches the weapon - the chest's, and the swing the "
+              "holding arm carries it with: 1 the body carries it as it does now, 0 and it hangs in the air "
+              "while the body rises and swings under it. The walk's travel is kept at any strength - "
+              "without it the weapon is left behind within a cycle. What is left at 0 is Arm drag"),
     Param("weapon_chest_lag", WEAPON, "Chest lag", "ms", "added", sided=True,
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
           tip="The weapon takes the chest's pose from this many milliseconds ago - the body leads and the "

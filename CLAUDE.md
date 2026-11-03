@@ -11618,6 +11618,30 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
   `minTime` read 19.67 - the window is `sw.memo_of(root)["start"]` and `result.frames`, as the overlap verify
   already did. The arm's own reach is the third: unbent, the keys phase read 5.21 cm where the bent arm reads
   0.0057.
+- **…and the strengths take the ARM's share too** (2026-11-03, the same fault one layer out: «при нулевых
+  настройках оружие должно стоять статично но этого не происходит хотя с двуручным мечем так работает»;
+  asked what the knobs should scale, the animator chose **everything that comes from the body**). Measured
+  on their own cycle at `0 / 0 / 0`: `DG_Idle` with `Arm L` out (their case) **17.36 cm** off its straight
+  line and with both arms in and 2H on **17.47**, against `LongSword_Idle_3P` **0.000** — and the holding
+  hand moves **17.93 cm and turns 71.1°** in the chest's OWN frame, which `T = inv(C) · want` keeps by
+  construction. The two-handed card is static not because of 2H but because the CARD declares a grip, and a
+  grip at full share takes both arms' swing gain to zero (`gain *= 1 - alpha`); **2H stills nothing** — it
+  binds the free hand. So a second cycle is scaled by the same two strengths, the holding hand's own pose in
+  the chest's frame: `A = H · inv(C)`, `T = inv(H) · steady(A) · want` (`steady_chest` serves both — "scale
+  a cycle's own deviation about its mean, keep the linear drift"; `A`'s drift is nothing). `1 / 1 / 0` is
+  still the identity matrix for matrix, `1 / 1` + a lag is what it was to ~1e-12, a two-handed card is
+  unchanged (0.000 → 0.000), and `0 / 0` is static for ANY pose. **What is left at `0 / 0` is named, not
+  cured**: of the 17.36, **15.0 is the arm's swing** (this fix) and **2.4 is Whip** at `Arm drag` 1.5 (its
+  own lag 2.16, the pivot's acceleration 0.19, so scaling the acceleration buys nothing); `Arm drag` 0 gives
+  **0.000**. A grip reads 0.000 only because `_grip_motion` springs the held THING, whose target is then
+  constant; giving a weapon-carrying hand that road is not built — a binary road switch would jump the hand
+  ~2 cm for an infinitesimal lag and would change Whip for every take with a weapon in the hand. Proof:
+  `verify_walk_weapon_chest.py` **0 of 22** (gates 5 and 6 measured against the composed promise; a new
+  **gate 15** runs the animator's own scene — the card with `Arm L` out, no grip at all — and reads
+  **0.000 cm** off its line while the body carries it 8.10), `verify_walk_arm_overlap.py` 0 of 101,
+  `verify_walk_weapon_overlap.py` 0 of 30; `tests/test_walk_weapon_chest.py` 40, five of them red on the
+  build before. The two tooltips say «the body's own TURN / BOB AND SWAY … the chest's, and the holding
+  arm's share of it».
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
@@ -17767,6 +17791,16 @@ animator's to press.
      count against the pour rate, not the picture: at 570 particles a second two seconds of
      pouring must leave about 1 100, and the kill counters said nothing because nothing was being
      killed.
+334. **A gate that proves «this keeps nothing of the body» under a fixture where the body already
+     gives it nothing cannot fail.** The chest override's gate 13 read «0 / 0 hangs the weapon in the
+     air: it wanders 0.000 cm» and ran under a two-handed CARD, whose grip has already stilled both
+     arms — its own comment said so («with the arms stilled by the card's own grip») and nobody read
+     that as the hole it was. Under any one-handed pose the same knobs left the weapon riding a
+     swinging arm, 17 cm, and the animator found it in a day. Trap 321's family, from the other
+     side: there the fixture was more degenerate than the data, here the fixture had already
+     performed the very removal the feature was being gated on. A promise of the form «X gets none
+     of Y» is gated where Y is at its LARGEST, and the control that makes it a real constraint is Y
+     itself measured in the same run (here: the hand moves 17.93 cm in the chest's own frame).
 
 ## Animation Setup: Refresh reads, and asks before it reads thousands (2026-11-03)
 

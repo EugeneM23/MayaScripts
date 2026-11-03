@@ -188,3 +188,59 @@ Weapon tab does not reach it either:
   hands».
 
 The grip needed nothing: `filtered` already ends a two-handed grip when one arm leaves the pose.
+
+## Addendum 3: the strengths take the ARM's share too
+
+The animator, on their own cycle under `DG_Idle` with `2H` on, `Chest rotation` 0, `Chest position` 0 and
+`Chest lag` 0:
+
+> «при нулевых настройках оружие должно стоять статично но этого не происходит хотя с двуручным мечем так
+> работает»
+
+They are right again, and it is the same fault as Addendum 1 one layer out: the strengths scaled only the
+motion the **chest** introduces, so with a chest frozen there was still the arm to carry the weapon about.
+
+**Measured on their own cycle** (`own:8e4ef9f3703a44a3`, the model alone), at `0 / 0 / 0`:
+
+| pose | the weapon off its straight line | the chest off its own |
+|---|---|---|
+| `DG_Idle`, `Arm L` out of the pose (their case) | **17.36 cm** | 7.84 |
+| `DG_Idle`, both arms in, `2H` on | **17.47 cm** | 8.06 |
+| `LongSword_Idle_3P` (a two-handed card) | **0.000 cm** | 7.96 |
+
+The holding hand moves **17.93 cm and turns 71.1°** in the chest's own frame over that cycle - the arm's
+share, which `T(f) = inv(C(f)) · want(f)` keeps by construction («the weapon keeps its own pose relative to
+the chest»). The two-handed card reads 0.000 not because of 2H but because the card declares a **grip**, and
+a grip at full share takes both arms' swing gain to zero (`gain *= 1 - alpha`): the hand is already rigid in
+the chest's frame, so there is nothing left for the knobs to miss. **2H stills nothing** - it binds the FREE
+hand to the holder's, which is why both arms in the pose with 2H on still read 17.47 cm.
+
+Asked what the knobs should scale, the animator chose **everything that comes from the body**. So a second
+cycle is scaled by the same two strengths - the holding hand's own pose in the chest's frame:
+
+    A(f) = H(f) · inv(C(f)),  want(f) = shifted(steady(C, rotation, position), lag)
+    T(f) = inv(H(f)) · steady(A, rotation, position)(f) · want(f)
+
+- `1 / 1 / 0` is still the identity matrix for matrix (and the early-out means the pass does not run at all);
+- `1 / 1` with a lag is what it was to ~1e-12 (`steady(A, 1, 1)` is `A`), so the overlap is untouched;
+- `0 / 0` holds the weapon at its mean pose on a chest that only glides: **static for any pose**, not only
+  under a card whose grip happens to still the arms;
+- a two-handed card is unchanged (its `A` is already constant): 0.000 before and after.
+
+`steady_chest` serves both cycles - it is "scale a cycle's own deviation about its mean, keep the linear
+drift", and `A`'s drift is nothing (a closed loop).
+
+**What is left at `0 / 0`, named rather than cured:** the arm springs. On their cycle the 17.36 cm is
+**15.0 cm** of the arm's own swing (this fix) plus **2.4 cm** of Whip at `Arm drag` 1.5; `Arm drag` 0 gives
+exactly **0.000**. Split further: the spring's own lag is 2.16 cm of it and the pivot's acceleration 0.19, so
+scaling the acceleration term would buy almost nothing. The honest statement is that an arm with weight
+cannot hold a weapon perfectly still while the body walks - a pose's grip reads 0.000 only because
+`_grip_motion` springs the held THING, whose target is then constant. Giving a weapon-carrying hand that same
+road would cure the last 2.4 cm and is **not built**: it is a binary road switch, so an infinitesimal lag
+would jump the hand ~2 cm, and it would change what Whip does for every take that has a weapon in the hand.
+
+**The gates moved with the meaning.** Gate 13 («0 / 0 hangs the weapon in the air») could never see this: its
+own comment says it ran «with the arms stilled by the card's own grip». A **gate 15** now runs it with the
+card's `Arm L` out - no grip at all, the animator's own scene - and reads 0.000 cm off its line while the
+body carries it 8.10. Gates 5 and 6 are measured against the composed promise rather than the chest's own
+deviation alone.

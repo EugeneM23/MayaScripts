@@ -170,33 +170,78 @@ class Pass(unittest.TestCase):
                     for f in range(self.n + 1))
         self.assertGreater(moved, 0.5)
 
-    def test_position_zero_takes_the_chests_bob_and_sway_off_the_weapon(self):
-        """With the turn at full strength the pass is a pure translation: minus the chest's own deviation
-        from the straight line it travels along."""
-        got = self.go(weapon_chest_position=0.0)
+    def want(self, rotation, position, lag=0.0):
+        """What the knobs promise the holding hand: its own pose in the chest's frame and the chest's own
+        cycle, each scaled, the chest's then read `lag` frames back."""
         C = np.asarray(self.base.worlds[self.chest], float)
-        steady = self.w.steady_chest(C, 1.0, 0.0)
+        H = np.asarray(self.base.worlds[self.hand_r], float)
+        chest = wm.shifted_cycle(self.w.steady_chest(C, rotation, position), lag)
+        arm = self.w.steady_chest(np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)]),
+                                  rotation, position)
+        return np.array([arm[f] @ chest[f] for f in range(self.n + 1)])
+
+    def test_no_strength_hangs_the_weapon_in_the_air(self):
+        """The animator in their own words (2026-11-03): «при нулевых настройках оружие должно стоять
+        статично». At 0 / 0 the weapon keeps nothing of the body but the walk's own locomotion - not the
+        chest's bob, sway and turn, and not the arm's own swing, which carries the weapon just as surely.
+        The first build took the chest's share alone, so a one-handed pose (no grip to still the arms)
+        left the weapon riding a swinging arm."""
+        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        after = points(GRIP, np.asarray(got.worlds[self.hand_r], float))
+        before = points(GRIP, np.asarray(self.base.worlds[self.hand_r], float))
+        per = (after[self.n] - after[0]) / float(self.n)
+        was = (before[self.n] - before[0]) / float(self.n)
+        wander = max(float(np.linalg.norm(after[f] - after[0] - per * f)) for f in range(self.n + 1))
+        carried = max(float(np.linalg.norm(before[f] - before[0] - was * f)) for f in range(self.n + 1))
+        self.assertLess(wander, 1e-4)
+        self.assertGreater(carried, 0.5)     # the control: the body really does carry it about
+
+    def test_no_strength_leaves_the_arms_own_swing_off_the_weapon(self):
+        """What makes the difference: the hand's pose in the chest's frame (the arm's own doing) is held
+        at its mean, so a pose with no two-handed grip to still the arms is static all the same."""
+        got = self.go(weapon_chest_rotation=0.0, weapon_chest_position=0.0)
+        C = np.asarray(self.base.worlds[self.chest], float)
+        H = np.asarray(self.base.worlds[self.hand_r], float)
+        own = np.array([H[f] @ np.linalg.inv(C[f]) for f in range(self.n + 1)])
+        moved = max(float(np.linalg.norm(own[f, 3, :3] - own[0, 3, :3])) for f in range(self.n + 1))
+        self.assertGreater(moved, 0.5)       # the control: the hand really does move in the chest's frame
         for f in range(self.n + 1):
-            want = (self.base.worlds[self.hand_r, f, 3, :3] + steady[f, 3, :3] - C[f, 3, :3])
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, 3, :3], want, atol=1e-6), f)
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], self.want(0.0, 0.0)[f], atol=1e-6), f)
+
+    def test_position_zero_takes_the_bob_and_sway_off_the_weapon(self):
+        """With the turn at full strength the weapon keeps every heading it had and loses every
+        deviation from the line it travels along - the chest's own, and the arm's."""
+        got = self.go(weapon_chest_position=0.0)
+        want = self.want(1.0, 0.0)
+        for f in range(self.n + 1):
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
             self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3],
                                         self.base.worlds[self.hand_r, f, :3, :3], atol=1e-9), f)
-        off = max(float(np.linalg.norm(steady[f, 3, :3] - C[f, 3, :3])) for f in range(self.n + 1))
-        self.assertGreater(off, 0.5)         # the control: the chest really does bob and sway
+        off = max(float(np.linalg.norm(want[f, 3, :3] - self.base.worlds[self.hand_r, f, 3, :3]))
+                  for f in range(self.n + 1))
+        self.assertGreater(off, 0.5)         # the control: it really does move the weapon
 
-    def test_rotation_zero_leaves_the_weapon_on_the_cycles_mean_heading(self):
-        """With the place at full strength the pass turns the weapon by the chest's own turn, undone."""
+    def test_rotation_zero_leaves_the_weapon_on_one_heading(self):
+        """With the place at full strength the weapon travels where it travelled and stops turning."""
         got = self.go(weapon_chest_rotation=0.0)
-        C = np.asarray(self.base.worlds[self.chest], float)
-        steady = self.w.steady_chest(C, 0.0, 1.0)
+        want = self.want(0.0, 1.0)
         worst = 0.0
         for f in range(self.n + 1):
-            want = (np.asarray(self.base.worlds[self.hand_r, f, :3, :3], float)
-                    @ C[f, :3, :3].T @ steady[f, :3, :3])
-            self.assertTrue(np.allclose(got.worlds[self.hand_r, f, :3, :3], want, atol=1e-6), f)
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
             worst = max(worst, math.degrees(float(np.linalg.norm(
-                wm.log_rot(C[0, :3, :3].T @ C[f, :3, :3])))))
-        self.assertGreater(worst, 1.0)       # the control: the chest really does turn over the cycle
+                wm.log_rot(np.asarray(self.base.worlds[self.hand_r, 0, :3, :3], float).T
+                           @ self.base.worlds[self.hand_r, f, :3, :3])))))
+        turn = max(math.degrees(float(np.linalg.norm(wm.log_rot(
+            np.asarray(got.worlds[self.hand_r, 0, :3, :3], float).T
+            @ got.worlds[self.hand_r, f, :3, :3])))) for f in range(self.n + 1))
+        self.assertGreater(worst, 1.0)       # the control: the weapon really does turn without it
+        self.assertLess(turn, 1e-3)
+
+    def test_half_strength_is_half_of_each(self):
+        got = self.go(weapon_chest_rotation=0.5, weapon_chest_position=0.5)
+        want = self.want(0.5, 0.5)
+        for f in range(self.n + 1):
+            self.assertTrue(np.allclose(got.worlds[self.hand_r, f], want[f], atol=1e-6), f)
 
     #  what must not break
 
