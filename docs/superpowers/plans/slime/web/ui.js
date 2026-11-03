@@ -55,10 +55,45 @@ const UI = {
     handStrength: 0.85,
     preset: 'Кисель',
     quality: 'Среднее',
+    autoQuality: true,
   },
 
   hand: { on: false, pos: null, prev: null, vel: [0, 0, 0], depth: 0 },
   fps: { last: 0, acc: 0, n: 0, value: 0 },
+
+  // What a frame really costs, measured from the GPU rather than from how often
+  // the loop was entered. The two are not the same number: WebGPU submits
+  // without blocking, so a loop that runs at 60 Hz in front of a GPU doing 2
+  // can report 60 fps while the picture on the screen falls minutes behind.
+  perf: {
+    inFlight: false,      // a frame is still on the GPU - do not queue another
+    started: 0,
+    lastDone: 0,
+    frameMs: 0,           // smoothed, the period between finished frames
+    worstMs: 0,
+    level: 0,             // index into AUTO_STEPS, 0 is the prettiest
+    hot: 0, cool: 0,      // frames in a row over / under the target
+    changed: 0,
+  },
+
+  // 33 ms is the target: the prototype is for judging how a material moves, and
+  // a material cannot be judged below about 30 fps.
+  TARGET_MS: 33,
+
+  // How the picture gets cheaper, in the order that costs the look least. Every
+  // one of these is a render setting: the governor must never touch the grid or
+  // the particle count, because changing those reallocates and throws the
+  // simulation away - a sandbox that resets itself when it gets slow is worse
+  // than a slow one. The pixels are what the renderer spends its time on, so
+  // the first lever is the resolution and the last is the surface filter.
+  AUTO_STEPS: [
+    { scale: 1.00, smooth: 0, thick: 0, px: 2400000 },
+    { scale: 0.85, smooth: 0, thick: 0, px: 1700000 },
+    { scale: 0.72, smooth: -1, thick: 0, px: 1200000 },
+    { scale: 0.60, smooth: -1, thick: 1, px: 850000 },
+    { scale: 0.50, smooth: -1, thick: 2, px: 600000 },
+    { scale: 0.40, smooth: -2, thick: 2, px: 420000 },
+  ],
 
   async boot() {
     if (!navigator.gpu) throw new Error('В этом браузере нет WebGPU');
@@ -73,6 +108,14 @@ const UI = {
     this.device = device;
     this.filterable = have.includes('float32-filterable');
     const info = adapter.info || {};
+    // Kept and shown on the panel, not only logged: a browser that has fallen
+    // back to a software adapter runs this at seconds a frame, and the only way
+    // anybody finds that out is by being told which device they got.
+    this.gpu = {
+      name: [info.vendor, info.architecture, info.device].filter(Boolean).join(' ') ||
+        info.description || 'неизвестно',
+      fallback: !!adapter.isFallbackAdapter,
+    };
     console.log('adapter:', info.vendor, info.architecture, info.description || '');
     console.log('features:', have.join(', ') || 'none of the optional ones');
 
@@ -96,6 +139,13 @@ const UI = {
   // one). If no frame has arrived shortly after the start, fall back to a timer
   // so the prototype runs anywhere; in a normal Chrome window this never
   // triggers and rAF stays in charge.
+  // ONE chain drives the loop, and the loop does not queue itself. It did both
+  // for a while, and the two chains bred: the driver's callback queued the next
+  // driver callback AND a loop callback, so the number of loop calls in a frame
+  // went up by one every frame - a minute in, a single displayed frame carried
+  // thousands of solver steps and the page looked frozen. It never showed in an
+  // embedded pane, where requestAnimationFrame does not fire at all and only
+  // the timer path ran. A driver owns the re-queue; nothing else may.
   startDriver() {
     let ticked = false;
     const raf = (now) => { ticked = true; this.loop(now); requestAnimationFrame(raf); };
@@ -107,6 +157,57 @@ const UI = {
       const tick = () => { this.loop(performance.now()); setTimeout(tick, 16); };
       tick();
     }, 500);
+  },
+
+  // ------------------------------------------------------- keeping up
+
+  // What the governor does with a level, applied over whatever the quality
+  // buttons chose. The quality preset stays the ceiling; auto only ever makes
+  // the picture cheaper than the one that was asked for.
+  applyAuto() {
+    const base = this.quality[this.state.quality];
+    if (!base) return;
+    const step = this.AUTO_STEPS[Math.max(0, Math.min(this.AUTO_STEPS.length - 1, this.perf.level))];
+    const on = this.state.autoQuality;
+    RENDER.look.dpr = base.dpr * (on ? step.scale : 1);
+    // Switching auto off keeps the ceiling of the best level: it means "stop
+    // turning my picture down", not "ask for eight megapixels".
+    RENDER.look.maxPixels = (on ? step : this.AUTO_STEPS[0]).px;
+    RENDER.look.smooth = Math.max(0, base.smooth + (on ? step.smooth : 0));
+    RENDER.look.thickDiv = Math.max(1, base.thickDiv + (on ? step.thick : 0));
+    if (this.rows.smooth) this.rows.smooth();
+  },
+
+  // Called once a finished frame with what that frame really cost.
+  govern(ms) {
+    const p = this.perf;
+    p.frameMs = p.frameMs ? p.frameMs * 0.8 + ms * 0.2 : ms;
+    if (ms > p.worstMs) p.worstMs = ms;
+    if (!this.state.autoQuality) return;
+    const t = this.TARGET_MS;
+    const last = this.AUTO_STEPS.length - 1;
+
+    if (p.frameMs > t * 1.25) {
+      p.cool = 0; p.hot++;
+      // A frame that is catastrophically over does not get walked down one
+      // level at a time: four seconds of 2 s frames to reach a usable picture
+      // is four seconds in which the page looks broken.
+      const jump = p.frameMs > t * 6 ? 3 : (p.frameMs > t * 2.5 ? 2 : 1);
+      if (p.hot >= 3 && p.level < last) {
+        p.level = Math.min(last, p.level + jump);
+        p.hot = 0; p.changed = performance.now();
+        this.applyAuto();
+      }
+    } else if (p.frameMs < t * 0.62) {
+      p.hot = 0; p.cool++;
+      // Slow to climb back, so a quiet moment does not start it oscillating.
+      if (p.cool >= 120 && p.level > 0 && performance.now() - p.changed > 3000) {
+        p.level--; p.cool = 0; p.changed = performance.now();
+        this.applyAuto();
+      }
+    } else {
+      p.hot = 0; p.cool = 0;
+    }
   },
 
   // ------------------------------------------------------------ the world
@@ -233,6 +334,17 @@ const UI = {
     this.qualityBtns = buttons(Object.keys(this.quality).map((name) =>
       [name, () => this.applyQuality(name)]));
     host.appendChild(this._hint('выше — красивее и медленнее'));
+    this.autoBtns = buttons([
+      ['Авто качество', (b) => {
+        this.state.autoQuality = !this.state.autoQuality;
+        b.classList.toggle('on', this.state.autoQuality);
+        if (!this.state.autoQuality) this.perf.level = 0;
+        this.perf.hot = 0; this.perf.cool = 0;
+        this.applyAuto();
+      }],
+    ]);
+    this.autoBtns['Авто качество'].classList.toggle('on', this.state.autoQuality);
+    host.appendChild(this._hint('сам убавляет картинку, пока кадр не уложится в 30 к/с'));
 
     head('Решатель');
     slider('sub', 'Подшагов', 2, 40, 1,
@@ -377,9 +489,7 @@ const UI = {
     const q = this.quality[name];
     if (!q) return;
     this.state.quality = name;
-    RENDER.look.dpr = q.dpr;
-    RENDER.look.thickDiv = q.thickDiv;
-    RENDER.look.smooth = q.smooth;
+    this.applyAuto();
     for (const [n, b] of Object.entries(this.qualityBtns)) b.classList.toggle('on', n === name);
     this.realloc({ gridN: q.gridN, maxParticles: q.maxParticles });
   },
@@ -489,6 +599,19 @@ const UI = {
 
   loop(now) {
     const dt = 1 / 60;    // fixed, so the solver is stable and reproducible
+    const p = this.perf;
+
+    // One frame on the GPU at a time. Without this the loop submits whether or
+    // not the last frame finished, the queue grows without bound, and what is
+    // on the screen is a picture of where the simulation was some seconds ago -
+    // which reads as "it is frozen" rather than "it is slow", and gets worse
+    // the longer it runs. Skipping keeps the picture in step with the solver:
+    // a slow machine runs the fluid in slow motion, honestly, and the panel
+    // says so. The watchdog is for a device that never answers at all.
+    if (p.inFlight) {
+      if (now - p.started > 4000) p.inFlight = false;
+      else return;
+    }
 
     if (this.state.pouring || this.state.pourKey) this.pourTick();
 
@@ -514,19 +637,24 @@ const UI = {
     }
     RENDER.draw(SIM.high, SIM.grid, world.obstacle);
 
-    // fps over a second
-    if (this.fps.last) {
-      this.fps.acc += now - this.fps.last;
-      this.fps.n++;
-      if (this.fps.acc > 500) {
-        this.fps.value = 1000 / (this.fps.acc / this.fps.n);
-        this.fps.acc = 0; this.fps.n = 0;
-        this.showStats();
+    // The frame is measured where it ends, on the GPU, not where it was queued.
+    p.inFlight = true;
+    p.started = performance.now();
+    this.device.queue.onSubmittedWorkDone().then(() => {
+      p.inFlight = false;
+      const done = performance.now();
+      if (p.lastDone) {
+        const ms = done - p.lastDone;
+        this.govern(ms);
+        this.fps.acc += ms; this.fps.n++;
+        if (this.fps.acc > 500) {
+          this.fps.value = 1000 / (this.fps.acc / this.fps.n);
+          this.fps.acc = 0; this.fps.n = 0;
+          this.showStats();
+        }
       }
-    }
-    this.fps.last = now;
-
-    requestAnimationFrame(this.loop);
+      p.lastDone = done;
+    }).catch(() => { p.inFlight = false; });
   },
 
   // Save what is on the canvas to shots/<name> next to the page. Needs the
@@ -546,9 +674,19 @@ const UI = {
     const gpu = SIM.gpuMs();
     const needed = Math.ceil(Math.sqrt(SIM.params.lam + 2 * SIM.params.mu) / 24 * 1.15);
     const shaky = SIM.params.substeps < needed;
+    const p = this.perf;
+    const steps = this.AUTO_STEPS.length;
     const lines = [
-      `<b>${this.fps.value.toFixed(0)}</b> fps` +
+      `<b>${this.fps.value.toFixed(0)}</b> fps · кадр <b>${p.frameMs.toFixed(0)}</b> мс` +
         (gpu ? ` · решатель <b>${gpu.toFixed(1)}</b> мс` : ''),
+      `видеокарта <b>${this.gpu ? this.gpu.name : '?'}</b>` +
+        (this.gpu && this.gpu.fallback
+          ? ' <span class="bad">— программная, будет очень медленно</span>' : ''),
+      `картинка ${RENDER.w}×${RENDER.h}` +
+        (this.state.autoQuality
+          ? ` · авто <b>${p.level + 1}</b>/${steps}` +
+            (p.level ? ' <span style="font-size:10px">(убавлено, чтобы успевать)</span>' : '')
+          : ' · авто выкл.'),
       `частиц <b>${s.live.toLocaleString('ru')}</b> из ${SIM.max.toLocaleString('ru')}` +
         ` · ${(SIM.bytes() / 1048576).toFixed(0)} МБ`,
       `масса <b>${s.mass.toFixed(0)}</b> · макс. скорость <b>${(s.maxSpeed || 0).toFixed(0)}</b>`,

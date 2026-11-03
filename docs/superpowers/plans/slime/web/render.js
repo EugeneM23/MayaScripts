@@ -32,6 +32,7 @@ const RENDER = {
     // it is a low-frequency quantity, and the filter radius follows the
     // resolution so the cost of smoothing does not grow with the window size.
     dpr: 1.0,
+    maxPixels: 2400000,    // the ceiling the governor moves; 0 is no ceiling
     thickDiv: 2,
   },
 
@@ -221,9 +222,16 @@ const RENDER = {
 
   resize() {
     const d = this.device;
-    const dpr = Math.min(window.devicePixelRatio || 1, this.look.dpr);
-    const w = Math.max(16, Math.floor(this.canvas.clientWidth * dpr));
-    const h = Math.max(16, Math.floor(this.canvas.clientHeight * dpr));
+    let dpr = Math.min(window.devicePixelRatio || 1, this.look.dpr);
+    // A hard ceiling on the fragments, not only on the ratio: a maximized window
+    // on a 4K screen asks for eight megapixels, and every screen-space pass here
+    // is paid for per pixel. The surface is low frequency, so a canvas scaled up
+    // by a few percent costs nothing anybody can see, where the fragments do.
+    const cw = Math.max(1, this.canvas.clientWidth), ch = Math.max(1, this.canvas.clientHeight);
+    const cap = this.look.maxPixels || 0;
+    if (cap > 0 && cw * ch * dpr * dpr > cap) dpr = Math.sqrt(cap / (cw * ch));
+    const w = Math.max(16, Math.floor(cw * dpr));
+    const h = Math.max(16, Math.floor(ch * dpr));
     const td = Math.max(1, this.look.thickDiv | 0);
     if (w === this.w && h === this.h && td === this._td) return;
     this._td = td;
