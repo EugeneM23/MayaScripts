@@ -1457,9 +1457,18 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     swung = (result.info.get("arms") or {}).get("overlap") or {}
     if swung.get("weapon"):
         text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
-    elif any(abs(float((result.info.get("knobs") or {}).get("weapon_overlap" + s, 0.0) or 0.0))
-             >= wm.OVERLAP_QUIET for s in ("", "_l", "_r")):
-        text += " | no weapon in the hands: Weapon overlap does nothing"
+    if swung.get("chest"):
+        text += " | the weapon trails the chest %.1f cm" % swung["chest_cm"]
+    if swung.get("hold"):
+        text += " | 2H: both hands on the weapon"
+    if not swung.get("weapon") and not swung.get("chest") and not swung.get("hold"):
+        knobs = result.info.get("knobs") or {}
+        asked = ("weapon_overlap", "weapon_chest_lag", "weapon_hold",
+                 "weapon_chest_rotation", "weapon_chest_position")
+        quiet = {"weapon_chest_rotation": 1.0, "weapon_chest_position": 1.0}
+        if any(abs(float(knobs.get(name + s, quiet.get(name, 0.0)) or 0.0) - quiet.get(name, 0.0))
+               >= wm.OVERLAP_QUIET for name in asked for s in ("", "_l", "_r")):
+            text += " | no weapon in the hands: the Weapon knobs do nothing"
     matched = result.info.get("leg_match") or {}
     if anim.pose is not None and matched.get("on"):
         text += " | legs matched x%.2f" % matched["keep"]
