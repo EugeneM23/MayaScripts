@@ -53,6 +53,8 @@ const UI = {
     obstacle: true,
     handRadius: 7,
     handStrength: 0.85,
+    nozzleHeight: 0.30,   // of the domain
+    nozzleSpeed: 0.10,    // of the domain a second
     preset: 'Кисель',
     quality: 'Среднее',
     autoQuality: true,
@@ -120,7 +122,8 @@ const UI = {
     console.log('features:', have.join(', ') || 'none of the optional ones');
 
     await SIM.init(device, have.includes('timestamp-query'));
-    await RENDER.init(device, document.getElementById('gfx'), this.filterable);
+    await RENDER.init(device, document.getElementById('gfx'), this.filterable,
+      have.includes('timestamp-query'));
     RENDER.bindParticles(SIM.buf.pos, SIM.buf.vel);
 
     this.buildPanel();
@@ -130,6 +133,13 @@ const UI = {
     // applyQuality already reallocated and dropped the first blob; dropping a
     // second one here would put two overlapping blobs in the same place, at
     // twice the density the solver assumes, which blows up on contact.
+    // Coming back to the page starts the measurement again from nothing, so the
+    // frames spent in the background never count toward turning the picture down.
+    document.addEventListener('visibilitychange', () => {
+      const p = this.perf;
+      p.frameMs = 0; p.hot = 0; p.cool = 0; p.lastDone = 0; p.worstMs = 0;
+    });
+
     this.loop = this.loop.bind(this);
     this.startDriver();
   },
@@ -184,21 +194,41 @@ const UI = {
     p.frameMs = p.frameMs ? p.frameMs * 0.8 + ms * 0.2 : ms;
     if (ms > p.worstMs) p.worstMs = ms;
     if (!this.state.autoQuality) return;
+
+    // What the frame COST, from the GPU's own clocks, not how long it was
+    // between two finished frames: the wall clock also holds everything that is
+    // not work - a page the compositor is not showing reads hundreds of ms a
+    // frame for a few ms of GPU, and a governor fed that turns the picture down
+    // to its ugliest for nothing. Where the timestamps are missing, the wall
+    // clock is all there is and it is used, with document.hidden as the guard.
+    p.gpuMs = SIM.gpuMs() + RENDER.gpuMs();
+    const cost = p.gpuMs > 0 ? p.gpuMs : (document.hidden ? 0 : ms);
+    if (cost <= 0) { p.hot = 0; p.cool = 0; return; }
     const t = this.TARGET_MS;
     const last = this.AUTO_STEPS.length - 1;
 
-    if (p.frameMs > t * 1.25) {
+    // Which half of the frame is expensive. The governor's levers are all
+    // pixels, so if the picture is a small part of the cost there is nothing
+    // for it to win: on this machine a 1239x833 frame is 2.9 ms of picture
+    // against 9.2 ms of solver, and turning the picture down to its ugliest
+    // would buy two milliseconds of fifty. The solver's own levers - particles,
+    // substeps, the grid - are not the governor's to pull: they reallocate, or
+    // they make the solver unstable. So it says what the cost is and leaves it.
+    p.solverBound = p.gpuMs > 0 && RENDER.gpuMs() < 0.35 * p.gpuMs;
+
+    if (cost > t * 1.25) {
       p.cool = 0; p.hot++;
+      if (p.solverBound && p.level >= 2) { p.hot = 0; return; }
       // A frame that is catastrophically over does not get walked down one
       // level at a time: four seconds of 2 s frames to reach a usable picture
       // is four seconds in which the page looks broken.
-      const jump = p.frameMs > t * 6 ? 3 : (p.frameMs > t * 2.5 ? 2 : 1);
+      const jump = cost > t * 6 ? 3 : (cost > t * 2.5 ? 2 : 1);
       if (p.hot >= 3 && p.level < last) {
         p.level = Math.min(last, p.level + jump);
         p.hot = 0; p.changed = performance.now();
         this.applyAuto();
       }
-    } else if (p.frameMs < t * 0.62) {
+    } else if (cost < t * 0.62) {
       p.hot = 0; p.cool++;
       // Slow to climb back, so a quiet moment does not start it oscillating.
       if (p.cool >= 120 && p.level > 0 && performance.now() - p.changed > 3000) {
@@ -224,9 +254,22 @@ const UI = {
     return [g * 0.5, 2 + r, g * 0.5, r];
   },
 
+  // Low and slow, because the pour is the most diagnostic thing in the sandbox
+  // and it only says anything while the rope is still a rope when it lands.
+  // It poured from 0.82 of the domain at 0.75 of it a second to start with: a
+  // 70 cm fall arrives at the speed the solver caps it at, and a thick fluid
+  // that fast does not coil, it splats - measured, a flat torn puddle. From 30
+  // cm at a tenth of the domain a second the same material lays itself down in
+  // stacked folds. Both are sliders now, because "how far it falls" is a thing
+  // about the shot and not about the material.
   nozzle() {
     const g = this.gridN();
-    return { pos: [g * 0.5, g * 0.82, g * 0.5], dir: [0, -1, 0], radius: g * 0.038, speed: g * 0.75 };
+    return {
+      pos: [g * 0.5, g * this.state.nozzleHeight, g * 0.5],
+      dir: [0, -1, 0],
+      radius: g * 0.032,
+      speed: g * this.state.nozzleSpeed,
+    };
   },
 
   frameCamera() {
@@ -325,6 +368,13 @@ const UI = {
       ['Заново', () => { SIM.clear(); this.dropBlob(); }],
     ]);
     this.sceneBtns['Шар'].classList.toggle('on', this.state.obstacle);
+    slider('nozh', 'Высота струи', 0.12, 0.9, 0.01,
+      () => this.state.nozzleHeight, (v) => { this.state.nozzleHeight = v; },
+      (v) => (v * this.gridN()).toFixed(0) + ' см');
+    slider('nozv', 'Напор', 0.03, 0.8, 0.01,
+      () => this.state.nozzleSpeed, (v) => { this.state.nozzleSpeed = v; },
+      (v) => (v * this.gridN()).toFixed(0) + ' см/с');
+    host.appendChild(this._hint('ниже и медленнее — струя укладывается кольцами'));
     slider('hand', 'Радиус руки', 2, 20, 0.5,
       () => this.state.handRadius, (v) => { this.state.handRadius = v; });
     slider('grab', 'Сила руки', 0, 1, 0.05,
@@ -678,7 +728,8 @@ const UI = {
     const steps = this.AUTO_STEPS.length;
     const lines = [
       `<b>${this.fps.value.toFixed(0)}</b> fps · кадр <b>${p.frameMs.toFixed(0)}</b> мс` +
-        (gpu ? ` · решатель <b>${gpu.toFixed(1)}</b> мс` : ''),
+        (gpu ? ` · гпу <b>${(gpu + RENDER.gpuMs()).toFixed(0)}</b> мс` +
+          ` <span style="font-size:10px">(решатель ${gpu.toFixed(1)} + картинка ${RENDER.gpuMs().toFixed(1)})</span>` : ''),
       `видеокарта <b>${this.gpu ? this.gpu.name : '?'}</b>` +
         (this.gpu && this.gpu.fallback
           ? ' <span class="bad">— программная, будет очень медленно</span>' : ''),
@@ -693,6 +744,10 @@ const UI = {
       `сбросов <span class="${s.nan ? 'bad' : ''}"><b>${s.nan}</b></span>` +
         (s.nan && s.why ? ` <span style="font-size:10px">(поз ${s.why.pos} · скор ${s.why.vel}` +
           ` · деформ ${s.why.defo} · предел ${s.why.fast})</span>` : ''),
+      p.solverBound && p.frameMs > this.TARGET_MS * 1.25
+        ? '<span class="bad">не успевает решатель</span>' +
+          ' <span style="font-size:10px">— убавьте частиц, подшаги или сетку</span>'
+        : '',
       this.state.paused ? '<b>пауза</b>' : '',
       shaky ? `<span class="bad">подшагов мало: нужно ≥ ${needed}</span>` : '',
       this.note ? `<span class="bad">${this.note}</span>` : '',

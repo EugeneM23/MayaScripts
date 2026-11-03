@@ -46,9 +46,22 @@ const RENDER = {
   tex: {},
   pipe: {},
 
-  async init(device, canvas, filterable) {
+  async init(device, canvas, filterable, hasTimestamp) {
     this.device = device;
     this.canvas = canvas;
+    // The renderer times itself for the same reason the solver does: what the
+    // picture costs has to be a measured number, because the wall clock between
+    // two finished frames also contains everything that is not work - a page
+    // the compositor is not showing reads 700 ms a frame for 8 ms of GPU.
+    if (hasTimestamp) {
+      this._timing = {
+        set: device.createQuerySet({ type: 'timestamp', count: 2 }),
+        resolve: device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+        read: device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
+        busy: false,
+        ms: 0,
+      };
+    }
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.ctx = canvas.getContext('webgpu');
     this.ctx.configure({ device, format: this.format, alphaMode: 'opaque' });
@@ -344,10 +357,13 @@ const RENDER = {
     const view = (k) => this.tex[k].createView();
     const clear = (v) => ({ r: v, g: 0, b: 0, a: 0 });
 
+    const t = this._timing;
+
     // 1. the contact shadow, top down
     {
       const p = enc.beginRenderPass({
         colorAttachments: [{ view: view('shadow'), clearValue: clear(0), loadOp: 'clear', storeOp: 'store' }],
+        ...(t ? { timestampWrites: { querySet: t.set, beginningOfPassWriteIndex: 0 } } : {}),
       });
       p.setPipeline(this.pipe.shadow);
       p.setBindGroup(0, this.bindParts);
@@ -417,6 +433,7 @@ const RENDER = {
     {
       const p = enc.beginRenderPass({
         colorAttachments: [{ view: canvasView, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }],
+        ...(t ? { timestampWrites: { querySet: t.set, endOfPassWriteIndex: 1 } } : {}),
       });
       p.setPipeline(this.pipe.composite);
       p.setBindGroup(0, this.bindCam);
@@ -439,6 +456,25 @@ const RENDER = {
       p.end();
     }
 
+    if (t) {
+      enc.resolveQuerySet(t.set, 0, 2, t.resolve, 0);
+      if (!t.busy) enc.copyBufferToBuffer(t.resolve, 0, t.read, 0, 16);
+    }
     d.queue.submit([enc.finish()]);
+
+    // Not awaited, like the solver's: a map still in flight is skipped and the
+    // number on the panel lags a frame instead of stalling the pipeline.
+    if (t && !t.busy) {
+      t.busy = true;
+      t.read.mapAsync(GPUMapMode.READ).then(() => {
+        const a = new BigUint64Array(t.read.getMappedRange()).slice();
+        t.read.unmap();
+        const ns = Number(a[1] - a[0]);
+        if (ns > 0 && ns < 1e10) t.ms = t.ms * 0.8 + (ns / 1e6) * 0.2;
+        t.busy = false;
+      }).catch(() => { t.busy = false; });
+    }
   },
+
+  gpuMs() { return this._timing ? this._timing.ms : 0; },
 };
