@@ -11540,6 +11540,64 @@ with the sword, not the sword slipping in a fixed grip - and **milliseconds**, t
   grip (the question's other answer - nothing writes the weapon's own channels); a weapon out in the world,
   and the weapon's twist about its blade.
 
+**…and from the CHEST, with a two-handed hold** (2026-11-03, the animator hunting for «несколько режимов
+захлеста для оружия» in Walk Builder and finding one slider: «Но почему этот функционал в connection? он
+должен быть в walk builder во вкладке Weapon и работать без рига»). What they remembered is **2H Weapon** and
+**Override mode** - Connections' Weapon tab, 2026-11-02: they asked for it in the Walk Builder rig-pose
+session («во вкладке weapon давай сделаем галочку Override mode»), it was handed to a session of its own, and
+that session put it where a tab called `Weapon` already existed. Nothing of the mechanism needs a rig
+(`weaponoverride`'s own docstring says «it works beside a bare skeleton too»); only the CARD does, through
+`choose_rig`. Asked, three answers settled the shape: **a walk parameter**, not a scene tool reached from
+another card; **the hands follow the weapon**; **beside** today's `Weapon overlap`, not instead of it. Spec
+`docs/superpowers/specs/2026-11-03-walk-weapon-chest-override-design.md`, plan beside it. Connections keeps
+its own tool - it writes keys on any clip, not only on a cycle Walk Builder processes.
+- **Four parameters** in the `WEAPON` group, all sided like `weapon_overlap`: **2H** (toggle, off),
+  **Chest rotation** (×, 1), **Chest position** (×, 1), **Chest lag, ms** (0, reaching half the walk's own
+  cycle either way - the same `gait.overlap_cap`). Kind `added` with explicit defaults, so a cycle's own value
+  IS the default and `own_knobs()` gives the cycle back; the ms become frames at the output rate
+  (`engine_knobs(..., fps_out=)`), as the three arm overlaps do.
+- **The pass** (`model._weapon_chest`, inside `_arm_overlap` after the arm cascade and **before**
+  `_weapon_swing`, so the blade's aim reads the tip path as this pass left it - the two overlaps add). In the
+  model a weapon is two points in the holding hand's frame, so every weapon motion is a right multiplication
+  on the hand matrices and `_arm_to_hand` rebuilds the arm: «the hands follow the weapon» costs nothing. With
+  `C` the chest's world and `Clate = shifted_cycle(kin[chest], lag)` - a CYCLIC read, not Connections' clamp
+  at a first frame, because the walk's loop must close - **`T(f) = inv(C(f)) @ Clate(f)`**: the weapon keeps
+  its own pose relative to the chest and the chest's own pose from `lag` frames earlier is put back, so
+  **1 / 1 / 0 is the identity matrix for matrix**. The turn is slerped from the identity by `rotation` and the
+  offset `c_late − c` scaled by `position`, both about the chest's own pivot (`moved_about`, `swung_about`'s
+  sibling). The chest is the TOP spine joint the chest knobs already use (`chest_share`), never a hardcoded
+  `spine_03`, with the arm chains' own parent as the fallback.
+- **2H**: a free hand is bound to the holder's by the offset it has at the cycle's **first frame**
+  (`Off = other(0) @ inv(holder(0))`), before both weapon passes, after which it is a rider of both - the hold
+  is kept to machine precision and both arms are rebuilt by IK. No new number: the hold is whatever the cycle
+  and the pose already have at frame 0. A hand holding its own weapon is left alone. `_weapon_swing` takes the
+  `riders` table now in place of its `grip` flag, so 2H rides the aim too.
+- `moved_arms` counts the four knobs (Balance carries the late arms), and the line gains «the weapon trails
+  the chest N cm» and «2H: both hands on the weapon»; with no weapon in the hands it says the Weapon knobs do
+  nothing.
+- **The Gait Builder fork needed nothing**: it predates the whole weapon machinery (no `_arm_overlap` at all),
+  and `tests/test_gait_model.ParityTests` runs at knobs it shares - 5 tests, OK.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_chest.py` - **0 of 19 gates, mayapy standalone**,
+  on the animator's own cycle and their two-handed card: the defaults and `own_knobs()` matrix for matrix; the
+  weapon on the chest of 4.5 frames ago to **3.98e-13** while the hand swings 25.29 cm against that chest (so
+  the gate is a real constraint); `rotation 0` keeping its heading to 9.6e-15 deg against 5.42 at full
+  strength; `position 0` a turn about the chest's pivot (0.0000 cm against 6.73); the bones 5.6e-06 cm, the
+  loop 2.8e-14; 2H holding the free hand at its frame-0 offset to 8.5e-14 where free it swings 42.19 cm; the
+  card's own two-handed hold kept to 7.5e-14; Balance carrying the hips 0.0820 cm differently; and **the whole
+  road through `scene.apply` onto a plain Manny UE5 skeleton with NO RIG**: the keys read back off the joints
+  keep the promise to **0.0057** with the arms swinging 25.8 cm against the chest, the body itself untouched
+  (1.8e-15), the line saying it. `tests/test_walk_weapon_chest.py` (30), and the two existing Weapon overlap
+  tests that asserted «one slider of its own tab» say «the first slider» now.
+- **Not built**: a strength above 1; the weapon lagging inside the grip; a second grip point for 2H; moving
+  the tool out of Connections.
+- **Two measuring lessons**, both found as gates that failed on correct code: **Balance's carry moves the
+  BODY when the arms move late** (0.08 cm), so a promise read against the OTHER run's chest reads 1.1e-01 - the
+  geometry gates run with `balance=0.0` and `physics=False`, and Balance has a gate of its own; and **the
+  playback range is not the take's window** (the press leaves Maya's own 1.25..150 here), so sampling from
+  `minTime` read 19.67 - the window is `sw.memo_of(root)["start"]` and `result.frames`, as the overlap verify
+  already did. The arm's own reach is the third: unbent, the keys phase read 5.21 cm where the bent arm reads
+  0.0057.
+
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
      new take for ever: every knob of the card refused, and the refusal's own advice («Pick it to take them») would
