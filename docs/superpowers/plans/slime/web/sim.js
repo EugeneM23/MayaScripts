@@ -13,10 +13,11 @@ const SIM = {
     yieldS: 85.0,          // how much shape it holds before it gives in
     visc: 2.4,             // how slowly it gives in once it does
     wallStick: 0.55,       // 0 slips along a wall, 1 clings
+    airDrag: 3.0,          // how fast spray flying through air is slowed
     substeps: 9,
-    // 64 cells is 64 cm at 1 cell = 1 cm: a basin of slime, not a room. The
-    // grid is cleared and solved once per substep over every node, so its cost
-    // is the cube of this number and it is the first thing to turn down.
+    // Cells are 1 cm, so this is the domain in centimetres. Since the grid
+    // passes skip the blocks the fluid is nowhere near, the domain is close to
+    // free: 128 costs what 64 used to, and what is left is the particles.
     gridN: 64,
     maxParticles: 120000,
   },
@@ -34,7 +35,7 @@ const SIM = {
   buf: {},
   pipe: {},
   bind: null,
-  paramData: new Float32Array(44),
+  paramData: new Float32Array(48),
 
   // One particle per half-cell: 8 a cell, which is what pvol and pmass assume.
   LATTICE: 0.5,
@@ -75,7 +76,7 @@ const SIM = {
       ],
     });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
-    for (const name of ['clearGrid', 'clearStats', 'p2g', 'solveGrid', 'g2p', 'seed', 'killAll']) {
+    for (const name of ['ageBlocks', 'clearStats', 'p2g', 'solveGrid', 'g2p', 'seed', 'killAll']) {
       this.pipe[name] = device.createComputePipeline({
         layout: pl, compute: { module: mod, entryPoint: name }, label: name,
       });
@@ -90,6 +91,7 @@ const SIM = {
     const g = this.params.gridN;
     const n = this.params.maxParticles;
     const nodes = g * g * g;
+    this.nblocks = Math.ceil(g / 4) ** 3;
 
     const perBinding = this.limits.maxStorageBufferBindingSize;
     const need = Math.max(nodes * 16, n * 48);
@@ -115,7 +117,10 @@ const SIM = {
       defo: mk(n * 48, S | GPUBufferUsage.COPY_SRC, 'defo'),
       affine: mk(n * 48, S | GPUBufferUsage.COPY_SRC, 'affine'),
       extra: mk(n * 4, S | GPUBufferUsage.COPY_SRC, 'extra'),
-      gridA: mk(nodes * 16, S, 'gridA'),
+      // The node accumulation, and past its end one flag a 4x4x4 block saying
+      // whether the fluid is anywhere near - there is no binding to spare for a
+      // buffer of its own (eight storage buffers a stage is all WebGPU promises).
+      gridA: mk(nodes * 16 + this.nblocks * 4, S, 'gridA'),
       gridV: mk(nodes * 16, S, 'gridV'),
       stats: mk(32, S | GPUBufferUsage.COPY_SRC, 'stats'),
       statsRead: mk(32, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, 'statsRead'),
@@ -183,6 +188,9 @@ const SIM = {
     p[41] = e.latStep || this.LATTICE;
     p[42] = 0;
     p[43] = 0;
+    const ov = e.obstacleVel || [0, 0, 0];
+    p[44] = ov[0]; p[45] = ov[1]; p[46] = ov[2];
+    p[47] = q.airDrag;
     this.device.queue.writeBuffer(this.buf.params, 0, p);
   },
 
@@ -205,6 +213,12 @@ const SIM = {
     // The reset counters live on the GPU and are session totals, so a clear
     // zeroes them here too - otherwise "Заново" would not clear the warning.
     this.device.queue.writeBuffer(this.buf.stats, 0, new Int32Array(8));
+    // The grid used to be zeroed at the top of every substep. Now solveGrid
+    // zeroes what it reads, so a reset has to leave it empty itself - otherwise
+    // the first P2G after "Заново" adds onto whatever the last frame left.
+    const zeros = new Uint8Array(this.nodes * 16 + this.nblocks * 4);
+    this.device.queue.writeBuffer(this.buf.gridA, 0, zeros, 0, this.nodes * 16 + this.nblocks * 4);
+    this.device.queue.writeBuffer(this.buf.gridV, 0, zeros, 0, this.nodes * 16);
   },
 
   // --- emission. One ring of slots: a held pour recycles the oldest slime
@@ -288,8 +302,8 @@ const SIM = {
 
       pass.setPipeline(this.pipe.clearStats);
       pass.dispatchWorkgroups(1);
-      pass.setPipeline(this.pipe.clearGrid);
-      pass.dispatchWorkgroups(this.groups(this.nodes));
+      pass.setPipeline(this.pipe.ageBlocks);
+      pass.dispatchWorkgroups(this.groups(this.nblocks));
       pass.setPipeline(this.pipe.p2g);
       pass.dispatchWorkgroups(this.groups(this.high));
       pass.setPipeline(this.pipe.solveGrid);

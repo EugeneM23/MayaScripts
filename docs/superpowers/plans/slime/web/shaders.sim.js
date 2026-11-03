@@ -55,6 +55,10 @@ struct Params {
   latStep   : f32,         // the spacing, in cells
   pad1      : f32,
   pad2      : f32,
+  // xyz: how fast the obstacle is being dragged, so a moving ball pushes the
+  // fluid instead of the fluid flowing through a ball that teleports.
+  // w: air drag - see the end of G2P.
+  aux       : vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> P : Params;
@@ -70,6 +74,33 @@ struct Params {
 // Knowing which of those trips is the difference between fixing a blow-up and
 // guessing at it.
 @group(0) @binding(8) var<storage, read_write> stats  : array<atomic<i32>>;
+// One flag a 4x4x4 block of nodes, so the grid passes can skip everything the
+// fluid is nowhere near: at a 96 cell domain the fluid touches a few percent of
+// the nodes, and clearing and solving the other ninety-odd was the whole cost of
+// making the domain bigger. Bit 0 is "touched this substep", bit 1 "touched the
+// one before" - a node has to be solved one substep AFTER the fluid leaves it,
+// to write its velocity back to zero. A skipped node keeps what gridV held, and
+// a stale velocity read by G2P is momentum out of nowhere.
+// It has no binding of its own: WebGPU guarantees only eight storage buffers a
+// stage and the solver already uses them all, so the flags live past the end of
+// the accumulation grid, which is the one buffer that is already atomic.
+const BLOCK : i32 = 4;
+
+fn blockSlot(bi: i32) -> u32 {
+  let g = gdim();
+  return u32(g.x * g.y * g.z) * 4u + u32(bi);
+}
+
+fn bdim() -> vec3<i32> {
+  let g = gdim();
+  return (g + vec3<i32>(BLOCK - 1)) / vec3<i32>(BLOCK);
+}
+
+fn blockIndex(c: vec3<i32>) -> i32 {
+  let b = bdim();
+  let q = c / vec3<i32>(BLOCK);
+  return (q.z * b.y + q.y) * b.x + q.x;
+}
 
 fn gdim() -> vec3<i32> { return vec3<i32>(P.gn.xyz); }
 
@@ -237,16 +268,18 @@ fn hash3(n: u32) -> vec3<f32> {
 // ---------------------------------------------------------------- 1. clear
 
 @compute @workgroup_size(256)
-fn clearGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let g = gdim();
-  let n = u32(g.x * g.y * g.z);
+fn ageBlocks(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let b = bdim();
+  let n = u32(b.x * b.y * b.z);
   let i = gid.x;
   if (i >= n) { return; }
-  atomicStore(&gridA[i * 4u + 0u], 0);
-  atomicStore(&gridA[i * 4u + 1u], 0);
-  atomicStore(&gridA[i * 4u + 2u], 0);
-  atomicStore(&gridA[i * 4u + 3u], 0);
-  gridV[i] = vec4<f32>(0.0);
+  // What was touched this substep becomes what was touched last substep. The
+  // grid itself is not cleared here any more: solveGrid zeroes each node it
+  // reads, which is the same work done once instead of twice and over the
+  // touched blocks only.
+  let slot = blockSlot(i32(i));
+  let was = atomicLoad(&gridA[slot]);
+  atomicStore(&gridA[slot], (was << 1u) & 2);
 }
 
 @compute @workgroup_size(1)
@@ -268,6 +301,23 @@ fn p2g(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (pp.w < 0.0) { return; }
 
   let k = kernelAt(pp.xyz);
+
+  // Mark the blocks this particle's 3x3x3 support reaches. A support spans at
+  // most two blocks on an axis, so this is at most eight flags.
+  {
+    let g = gdim();
+    let lo = clamp(k.base, vec3<i32>(0), g - vec3<i32>(1)) / vec3<i32>(BLOCK);
+    let hi = clamp(k.base + vec3<i32>(2), vec3<i32>(0), g - vec3<i32>(1)) / vec3<i32>(BLOCK);
+    let bd = bdim();
+    for (var bz = lo.z; bz <= hi.z; bz = bz + 1) {
+      for (var by = lo.y; by <= hi.y; by = by + 1) {
+        for (var bx = lo.x; bx <= hi.x; bx = bx + 1) {
+          atomicOr(&gridA[blockSlot((bz * bd.y + by) * bd.x + bx)], 1);
+        }
+      }
+    }
+  }
+
   let F = getF(i);
   let C = getC(i);
 
@@ -345,8 +395,23 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= n) { return; }
 
+  // Where this node sits, in cells.
+  let c = vec3<i32>(i32(i) % g.x, (i32(i) / g.x) % g.y, i32(i) / (g.x * g.y));
+  let p = vec3<f32>(c);
+
+  // Nothing has been near this block for two substeps: its accumulation is
+  // already zero and so is its velocity, so there is nothing to do.
+  if (atomicLoad(&gridA[blockSlot(blockIndex(c))]) == 0) { return; }
+
   let m = f32(atomicLoad(&gridA[i * 4u + 0u])) * INV_FP;
-  if (m <= 1.0e-9) { gridV[i] = vec4<f32>(0.0); return; }
+  if (m <= 1.0e-9) {
+    gridV[i] = vec4<f32>(0.0);
+    atomicStore(&gridA[i * 4u + 0u], 0);
+    atomicStore(&gridA[i * 4u + 1u], 0);
+    atomicStore(&gridA[i * 4u + 2u], 0);
+    atomicStore(&gridA[i * 4u + 3u], 0);
+    return;
+  }
 
   let px = f32(atomicLoad(&gridA[i * 4u + 1u])) * INV_FP;
   let py = f32(atomicLoad(&gridA[i * 4u + 2u])) * INV_FP;
@@ -354,10 +419,6 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
   var v = vec3<f32>(px, py, pz) / m;
 
   v.y = v.y - P.dt * P.gravity;
-
-  // Where this node sits, in cells.
-  let c = vec3<i32>(i32(i) % g.x, (i32(i) / g.x) % g.y, i32(i) / (g.x * g.y));
-  let p = vec3<f32>(c);
 
   // --- walls. Two cells of margin, because the kernel reaches that far.
   let bw = 2;
@@ -379,7 +440,7 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // --- the obstacle and the mouse.
   if (P.obstacle.w > 0.0) {
-    v = collideSphere(p, v, P.obstacle.xyz, P.obstacle.w, vec3<f32>(0.0), clamp(stickT, 0.0, 1.0));
+    v = collideSphere(p, v, P.obstacle.xyz, P.obstacle.w, P.aux.xyz, clamp(stickT, 0.0, 1.0));
   }
   if (P.mouse.w > 0.0) {
     let d = p - P.mouse.xyz;
@@ -387,7 +448,13 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (len < P.mouse.w) {
       // Inside the hand: carry the fluid with it. This is what lets a strand be
       // pulled out of a pool, so it drags rather than only pushing.
-      let grab = P.mouseVel.w * (1.0 - len / P.mouse.w);
+      // Full strength through the middle of the hand and falling off over its
+      // outer third, instead of falling off linearly from the very centre: a
+      // linear falloff means only the few nodes at the exact centre are really
+      // carried, and the fluid slides out of the hand as it moves.
+      let t = clamp(len / P.mouse.w, 0.0, 1.0);
+      let hold = 1.0 - smoothstep(0.55, 1.0, t);
+      let grab = P.mouseVel.w * hold;
       v = mix(v, P.mouseVel.xyz, clamp(grab, 0.0, 1.0));
       if (len > 1.0e-6) {
         let nrm = d / len;
@@ -411,6 +478,13 @@ fn solveGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   gridV[i] = vec4<f32>(v, m);
   atomicAdd(&stats[0], i32(clamp(m * STAT_FP, -2.0e9, 2.0e9)));
+
+  // Zeroed here rather than by a pass of its own: this node has just been read,
+  // and the next substep's P2G wants it empty.
+  atomicStore(&gridA[i * 4u + 0u], 0);
+  atomicStore(&gridA[i * 4u + 1u], 0);
+  atomicStore(&gridA[i * 4u + 2u], 0);
+  atomicStore(&gridA[i * 4u + 3u], 0);
 }
 
 // ------------------------------------------------------------------ 4. G2P
@@ -425,6 +499,9 @@ fn g2p(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k = kernelAt(pp.xyz);
   var newV = vec3<f32>(0.0);
   var newC = mat3x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+  // How much material is around this particle, gathered from the same weights:
+  // a node's w is its mass, so this is the local density as the grid sees it.
+  var dens = 0.0;
 
   for (var a = 0; a < 3; a = a + 1) {
     for (var b = 0; b < 3; b = b + 1) {
@@ -434,13 +511,31 @@ fn g2p(@builtin(global_invocation_id) gid: vec3<u32>) {
         let weight = kw(k, a).x * kw(k, b).y * kw(k, c).z;
         if (weight <= 0.0) { continue; }
         let dpos = vec3<f32>(f32(a), f32(b), f32(c)) - k.fx;
-        let gv = gridV[u32(nodeIndex(node))].xyz;
+        let gn = gridV[u32(nodeIndex(node))];
+        let gv = gn.xyz;
         newV = newV + weight * gv;
+        dens = dens + weight * gn.w;
         // APIC: the affine velocity field, which is what stops a particle
         // losing the rotation of the flow it sits in.
         newC = newC + outer3(gv, dpos) * (4.0 * weight);
       }
     }
+  }
+
+  // --- air drag, on what is flying through nothing.
+  //
+  // A drop thrown off a splash is not in a fluid any more, it is a lump of
+  // water in air, and in air it is slowed - here nothing slowed it, so a splash
+  // threw spray at the ceiling and left it hanging there. The grid already
+  // knows which particles those are: a node carries about one unit of mass
+  // where the fluid is solid, and a tenth of that under a thin spray. So the
+  // drag is applied in proportion to how exposed a particle is, which leaves
+  // everything inside the body of the fluid untouched - measured, the interior
+  // sees less than a hundredth of it.
+  let fullCell = max(P.pmass * 8.0, 1.0e-6);
+  let exposure = clamp(1.0 - dens / (0.55 * fullCell), 0.0, 1.0);
+  if (P.aux.w > 0.0) {
+    newV = newV * exp(-P.aux.w * exposure * exposure * P.dt);
   }
 
   // --- advect

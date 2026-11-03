@@ -19,17 +19,17 @@ const UI = {
   // clamps F to. For a 6 cm mound at this gravity that puts mu in the
   // thousands, not the hundreds.
   presets: {
-    'Вода': { mu: 0, hold: 0, visc: 0, lam: 45000, stick: 0.05, grav: 150,
+    'Вода': { mu: 0, hold: 0, visc: 0, lam: 45000, stick: 0.05, grav: 150, air: 5,
       tint: [0.46, 0.70, 0.86], absorb: 0.10, rough: 0.06, refract: 1.5, radius: 0.8 },
-    'Мёд': { mu: 2000, hold: 0.4, visc: 150, lam: 36000, stick: 0.50, grav: 150,
+    'Мёд': { mu: 2000, hold: 0.4, visc: 150, lam: 36000, stick: 0.50, grav: 150, air: 3,
       tint: [0.95, 0.70, 0.24], absorb: 0.52, rough: 0.12, refract: 1.2, radius: 0.85 },
-    'Кисель': { mu: 6000, hold: 6, visc: 60, lam: 30000, stick: 0.60, grav: 150,
+    'Кисель': { mu: 6000, hold: 6, visc: 60, lam: 30000, stick: 0.60, grav: 150, air: 3,
       tint: [0.80, 0.24, 0.34], absorb: 0.36, rough: 0.22, refract: 0.9, radius: 0.9 },
-    'Слизь': { mu: 9000, hold: 10, visc: 90, lam: 30000, stick: 0.78, grav: 150,
+    'Слизь': { mu: 9000, hold: 10, visc: 90, lam: 30000, stick: 0.78, grav: 150, air: 3,
       tint: [0.44, 0.80, 0.28], absorb: 0.30, rough: 0.16, refract: 1.0, radius: 0.9 },
-    'Желе': { mu: 20000, hold: 40, visc: 0, lam: 36000, stick: 0.25, grav: 150,
+    'Желе': { mu: 20000, hold: 40, visc: 0, lam: 36000, stick: 0.25, grav: 150, air: 2,
       tint: [0.86, 0.34, 0.54], absorb: 0.26, rough: 0.10, refract: 1.1, radius: 0.9 },
-    'Грязь': { mu: 5000, hold: 14, visc: 120, lam: 28000, stick: 0.85, grav: 150,
+    'Грязь': { mu: 5000, hold: 14, visc: 120, lam: 28000, stick: 0.85, grav: 150, air: 4,
       tint: [0.34, 0.26, 0.19], absorb: 0.95, rough: 0.42, refract: 0.4, radius: 0.95 },
   },
 
@@ -37,11 +37,15 @@ const UI = {
   // integrated GPU on a laptop - Chrome on Windows ignores powerPreference
   // (crbug.com/369219127) - so the default is sized for one of those, and a
   // machine with a discrete card can afford to go up.
+  // The grid is the room, in centimetres, and it is nearly free since the grid
+  // passes started skipping the blocks the fluid is nowhere near: 128 costs
+  // what 64 did. So what the quality button buys is the picture and how much
+  // fluid fits, and the room stays big either way.
   quality: {
-    'Низкое': { gridN: 56, maxParticles: 90000, dpr: 1.0, thickDiv: 3, smooth: 1 },
-    'Среднее': { gridN: 64, maxParticles: 120000, dpr: 1.0, thickDiv: 2, smooth: 2 },
-    'Высокое': { gridN: 88, maxParticles: 240000, dpr: 1.25, thickDiv: 2, smooth: 2 },
-    'Макс': { gridN: 112, maxParticles: 400000, dpr: 1.5, thickDiv: 1, smooth: 3 },
+    'Низкое': { gridN: 72, maxParticles: 90000, dpr: 1.0, thickDiv: 3, smooth: 1 },
+    'Среднее': { gridN: 96, maxParticles: 120000, dpr: 1.0, thickDiv: 2, smooth: 2 },
+    'Высокое': { gridN: 128, maxParticles: 240000, dpr: 1.25, thickDiv: 2, smooth: 2 },
+    'Макс': { gridN: 128, maxParticles: 400000, dpr: 1.5, thickDiv: 1, smooth: 3 },
   },
 
   state: {
@@ -53,8 +57,9 @@ const UI = {
     obstacle: true,
     handRadius: 7,
     handStrength: 0.85,
-    nozzleHeight: 0.30,   // of the domain
-    nozzleSpeed: 0.10,    // of the domain a second
+    nozzleHeight: 19,     // cm above the floor
+    nozzleSpeed: 6.4,     // cm/s
+    blobRadius: 7.4,      // cells
     preset: 'Кисель',
     quality: 'Среднее',
     autoQuality: true,
@@ -247,12 +252,23 @@ const UI = {
   // Resting on the floor, not hovering over it: an obstacle with daylight under
   // it reads as a mistake, and slime draping off something that touches the
   // ground is the shot this is eventually for.
+  // The ball keeps its own place, because it can be dragged. The radius stays a
+  // share of the domain, and the place is put back inside whenever the domain
+  // changes under it.
   obstacleVec() {
     if (!this.state.obstacle) return [0, 0, 0, 0];
     const g = this.gridN();
-    const r = g * 0.13;
-    return [g * 0.5, 2 + r, g * 0.5, r];
+    const r = Math.max(5, Math.min(g * 0.13, 12));
+    if (!this.state.ballPos) this.state.ballPos = [g * 0.5, 2 + r, g * 0.5];
+    const b = this.state.ballPos;
+    const lo = r + 2, hi = g - r - 2;
+    return [Math.max(lo, Math.min(hi, b[0])), Math.max(lo, Math.min(hi, b[1])),
+            Math.max(lo, Math.min(hi, b[2])), r];
   },
+
+  // How fast it is being dragged, in cells a second, so the fluid is pushed by
+  // it rather than passed through by a ball that teleports.
+  ballVel: [0, 0, 0],
 
   // Low and slow, because the pour is the most diagnostic thing in the sandbox
   // and it only says anything while the rope is still a rope when it lands.
@@ -265,17 +281,21 @@ const UI = {
   nozzle() {
     const g = this.gridN();
     return {
-      pos: [g * 0.5, g * this.state.nozzleHeight, g * 0.5],
+      pos: [g * 0.5, 2 + this.state.nozzleHeight, g * 0.5],
       dir: [0, -1, 0],
-      radius: g * 0.032,
-      speed: g * this.state.nozzleSpeed,
+      radius: 2.1,
+      speed: this.state.nozzleSpeed,
     };
   },
 
   frameCamera() {
     const g = this.gridN();
-    RENDER.cam.target = [g * 0.5, g * 0.22, g * 0.5];
-    RENDER.cam.dist = g * 2.1;
+    // The domain can be a lot bigger than the fluid in it now, so the camera
+    // frames the middle of the floor at a distance the blob fills, rather than
+    // backing off far enough to hold the whole room.
+    const look = Math.min(g, 78);
+    RENDER.cam.target = [g * 0.5, Math.min(g * 0.22, 16), g * 0.5];
+    RENDER.cam.dist = look * 2.1;
     RENDER.cam.yaw = 0.7;
     RENDER.cam.pitch = 0.32;
   },
@@ -286,10 +306,15 @@ const UI = {
   // gravity still splatted from 14.5 cm across to 5.8 tall. That is the impact
   // talking, not the material, and a bench for judging a material must not
   // shout over it.
-  dropBlob() {
+  // A fixed amount of slime, wherever the domain's walls are: the particle count
+  // is what the solver costs, and a bigger room is meant to be more room, not
+  // eight times the fluid. 12 cm of fall, because more than that pancakes
+  // whatever it is made of.
+  dropBlob(at) {
     const g = this.gridN();
-    const r = g * 0.115;
-    SIM.dropBlob([g * 0.5, 2 + r + 12, g * 0.5], r);
+    const r = this.state.blobRadius;
+    const c = at || [g * 0.5, 2 + r + 12, g * 0.5];
+    SIM.dropBlob(c, r);
   },
 
   pourTick() {
@@ -357,6 +382,9 @@ const UI = {
       (v) => (v / 1000).toFixed(0) + 'k');
     slider('stick', 'Липкость', 0, 1, 0.01,
       () => SIM.params.wallStick, (v) => { SIM.params.wallStick = v; }, (v) => v.toFixed(2));
+    slider('air', 'Сопротивление воздуха', 0, 12, 0.5,
+      () => SIM.params.airDrag, (v) => { SIM.params.airDrag = v; }, (v) => v.toFixed(1));
+    host.appendChild(this._hint('тормозит брызги, которые летят по воздуху'));
     slider('grav', 'Гравитация', 0, 400, 5,
       () => SIM.params.gravity, (v) => { SIM.params.gravity = v; this.applyHold(); });
 
@@ -368,12 +396,12 @@ const UI = {
       ['Заново', () => { SIM.clear(); this.dropBlob(); }],
     ]);
     this.sceneBtns['Шар'].classList.toggle('on', this.state.obstacle);
-    slider('nozh', 'Высота струи', 0.12, 0.9, 0.01,
+    slider('nozh', 'Высота струи', 5, 90, 1,
       () => this.state.nozzleHeight, (v) => { this.state.nozzleHeight = v; },
-      (v) => (v * this.gridN()).toFixed(0) + ' см');
-    slider('nozv', 'Напор', 0.03, 0.8, 0.01,
+      (v) => v.toFixed(0) + ' см');
+    slider('nozv', 'Напор', 2, 60, 0.5,
       () => this.state.nozzleSpeed, (v) => { this.state.nozzleSpeed = v; },
-      (v) => (v * this.gridN()).toFixed(0) + ' см/с');
+      (v) => v.toFixed(0) + ' см/с');
     host.appendChild(this._hint('ниже и медленнее — струя укладывается кольцами'));
     slider('hand', 'Радиус руки', 2, 20, 0.5,
       () => this.state.handRadius, (v) => { this.state.handRadius = v; });
@@ -525,6 +553,7 @@ const UI = {
     SIM.params.lam = p.lam;
     SIM.params.wallStick = p.stick;
     SIM.params.gravity = p.grav;
+    SIM.params.airDrag = p.air != null ? p.air : 3;
     RENDER.look.tint = p.tint.slice();
     RENDER.look.absorb = p.absorb;
     RENDER.look.roughness = p.rough;
@@ -565,22 +594,56 @@ const UI = {
     const c = document.getElementById('gfx');
     let drag = null, lastX = 0, lastY = 0;
 
-    const handFromEvent = (ev) => {
-      // The hand lives on the plane through the camera target facing the
-      // camera, so it tracks the cursor predictably; Shift+wheel pushes that
-      // plane nearer or further.
+    // The ray through the cursor. Its forward component is exactly 1, because
+    // the basis is orthonormal and f is the view axis - so the parameter along
+    // it IS the view-space depth, which is what the depth texture stores.
+    const rayAt = (ev) => {
       const rect = c.getBoundingClientRect();
-      const uv = [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
-      const ndc = [uv[0] * 2 - 1, 1 - uv[1] * 2];
+      const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+      const ndc = [(px / rect.width) * 2 - 1, 1 - (py / rect.height) * 2];
       const b = RENDER.basis, L = RENDER.camData;
       const tanX = L[56], tanY = L[57];
-      const dir = [
-        b.f[0] + b.r[0] * ndc[0] * tanX + b.u[0] * ndc[1] * tanY,
-        b.f[1] + b.r[1] * ndc[0] * tanX + b.u[1] * ndc[1] * tanY,
-        b.f[2] + b.r[2] * ndc[0] * tanX + b.u[2] * ndc[1] * tanY,
-      ];
-      const t = RENDER.cam.dist + this.hand.depth;
-      return [RENDER.eye[0] + dir[0] * t, RENDER.eye[1] + dir[1] * t, RENDER.eye[2] + dir[2] * t];
+      return {
+        px, py,
+        dir: [
+          b.f[0] + b.r[0] * ndc[0] * tanX + b.u[0] * ndc[1] * tanY,
+          b.f[1] + b.r[1] * ndc[0] * tanX + b.u[1] * ndc[1] * tanY,
+          b.f[2] + b.r[2] * ndc[0] * tanX + b.u[2] * ndc[1] * tanY,
+        ],
+      };
+    };
+    const along = (ray, t) => [RENDER.eye[0] + ray.dir[0] * t,
+                               RENDER.eye[1] + ray.dir[1] * t,
+                               RENDER.eye[2] + ray.dir[2] * t];
+
+    // Where a ray first meets the floor, so a click on empty space still puts
+    // the hand on the ground rather than somewhere in mid air.
+    const floorHit = (ray) => {
+      const y0 = 2.5;
+      if (ray.dir[1] >= -1e-4) return null;
+      const t = (y0 - RENDER.eye[1]) / ray.dir[1];
+      return t > 0 ? t : null;
+    };
+
+    const ballHit = (ray) => {
+      const o = this.obstacleVec();
+      if (o[3] <= 0) return null;
+      const e = RENDER.eye;
+      const m = [e[0] - o[0], e[1] - o[1], e[2] - o[2]];
+      const a = ray.dir[0] ** 2 + ray.dir[1] ** 2 + ray.dir[2] ** 2;
+      const b = 2 * (m[0] * ray.dir[0] + m[1] * ray.dir[1] + m[2] * ray.dir[2]);
+      const cc = m[0] ** 2 + m[1] ** 2 + m[2] ** 2 - o[3] * o[3];
+      const disc = b * b - 4 * a * cc;
+      if (disc < 0) return null;
+      const t = (-b - Math.sqrt(disc)) / (2 * a);
+      return t > 0 ? t : null;
+    };
+
+    // The hand sits at the depth it was grabbed at, and Shift+wheel nudges it.
+    const handFromEvent = (ev) => {
+      const ray = rayAt(ev);
+      const t = (this.hand.plane || RENDER.cam.dist) + this.hand.depth;
+      return along(ray, t);
     };
 
     c.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -590,7 +653,33 @@ const UI = {
       lastX = ev.clientX; lastY = ev.clientY;
       if (ev.button === 1 || (ev.button === 0 && ev.ctrlKey)) drag = 'pan';
       else if (ev.button === 2 || ev.altKey) drag = 'orbit';
-      else { drag = 'hand'; this.hand.on = true; this.hand.pos = handFromEvent(ev); this.hand.prev = this.hand.pos; }
+      else {
+        const ray = rayAt(ev);
+        const onBall = ballHit(ray);
+        if (onBall !== null) {
+          // Grabbing the ball itself: it moves in the plane it was grabbed in.
+          drag = 'ball';
+          this.ballPlane = onBall;
+          this.ballGrab = along(ray, onBall);
+          this.ballFrom = this.obstacleVec().slice(0, 3);
+        } else {
+          drag = 'hand';
+          this.hand.on = true;
+          // Start on the floor under the cursor - a better guess than the plane
+          // through the camera target - and move onto the fluid itself as soon
+          // as the depth under the cursor comes back from the GPU.
+          this.hand.plane = floorHit(ray) || RENDER.cam.dist;
+          this.hand.pos = handFromEvent(ev);
+          this.hand.prev = this.hand.pos;
+          RENDER.depthAt(ray.px, ray.py).then((d) => {
+            if (drag === 'hand' && d) {
+              this.hand.plane = d;
+              this.hand.pos = handFromEvent(ev);
+              this.hand.prev = this.hand.pos;
+            }
+          });
+        }
+      }
     });
 
     c.addEventListener('pointermove', (ev) => {
@@ -604,11 +693,25 @@ const UI = {
         for (let i = 0; i < 3; i++) RENDER.cam.target[i] += (-b.r[i] * dx + b.u[i] * dy) * s;
       } else if (drag === 'hand') {
         this.hand.pos = handFromEvent(ev);
+      } else if (drag === 'ball') {
+        const p = along(rayAt(ev), this.ballPlane);
+        const was = this.obstacleVec();
+        this.state.ballPos = [
+          this.ballFrom[0] + (p[0] - this.ballGrab[0]),
+          this.ballFrom[1] + (p[1] - this.ballGrab[1]),
+          this.ballFrom[2] + (p[2] - this.ballGrab[2]),
+        ];
+        const now = this.obstacleVec();
+        // Its velocity is how fast it is actually moving, after the clamp, so a
+        // ball pushed into a wall stops pushing the fluid.
+        const dt = 1 / 60;
+        this.ballVel = [(now[0] - was[0]) / dt, (now[1] - was[1]) / dt, (now[2] - was[2]) / dt];
       }
     });
 
     const endDrag = (ev) => {
       if (drag === 'hand') { this.hand.on = false; this.hand.vel = [0, 0, 0]; }
+      if (drag === 'ball') { this.ballVel = [0, 0, 0]; }
       drag = null;
       if (ev && ev.pointerId != null && c.hasPointerCapture(ev.pointerId)) c.releasePointerCapture(ev.pointerId);
     };
@@ -675,6 +778,7 @@ const UI = {
 
     const world = {
       obstacle: this.obstacleVec(),
+      obstacleVel: this.ballVel,
       mouse: this.hand.on && this.hand.pos
         ? [this.hand.pos[0], this.hand.pos[1], this.hand.pos[2], this.state.handRadius]
         : [0, 0, 0, 0],
@@ -683,6 +787,8 @@ const UI = {
 
     if (!this.state.paused || this.state.stepOnce) {
       SIM.step(dt, world);
+      // A ball that is not being dragged this frame is standing still.
+      this.ballVel = [this.ballVel[0] * 0.5, this.ballVel[1] * 0.5, this.ballVel[2] * 0.5];
       this.state.stepOnce = false;
     }
     RENDER.draw(SIM.high, SIM.grid, world.obstacle);

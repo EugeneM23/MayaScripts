@@ -256,9 +256,12 @@ const RENDER = {
     }
     const RA = GPUTextureUsage.RENDER_ATTACHMENT;
     const TB = GPUTextureUsage.TEXTURE_BINDING;
+    const CS = GPUTextureUsage.COPY_SRC;
     this.tex.bgCol = d.createTexture({ size: [w, h], format: 'rgba16float', usage: RA | TB, label: 'bgCol' });
     this.tex.bgDep = d.createTexture({ size: [w, h], format: 'r32float', usage: RA | TB, label: 'bgDep' });
-    this.tex.fdA = d.createTexture({ size: [w, h], format: 'r32float', usage: RA | TB, label: 'fdA' });
+    // COPY_SRC, so one texel of it can be read back: that is how the hand
+    // finds out how far away the fluid under the cursor is.
+    this.tex.fdA = d.createTexture({ size: [w, h], format: 'r32float', usage: RA | TB | CS, label: 'fdA' });
     this.tex.fdB = d.createTexture({ size: [w, h], format: 'r32float', usage: RA | TB, label: 'fdB' });
     // Thickness is a low-frequency quantity, so it is rendered small: it is the
     // one pass that touches every particle without a depth test.
@@ -473,6 +476,34 @@ const RENDER = {
         if (ns > 0 && ns < 1e10) t.ms = t.ms * 0.8 + (ns / 1e6) * 0.2;
         t.busy = false;
       }).catch(() => { t.busy = false; });
+    }
+  },
+
+  // How far the fluid is from the camera at one pixel, in cells along the view
+  // axis - the filtered surface depth, which is what the composite reads. Null
+  // where there is no fluid under that pixel. This is what puts the hand ON the
+  // slime: before it, the hand sat on a plane through the camera's target, so
+  // clicking on a puddle grabbed the air above it.
+  async depthAt(px, py) {
+    if (!this.tex.fdA || this._depthBusy) return null;
+    const x = Math.max(0, Math.min(this.w - 1, Math.round(px * this.w / Math.max(1, this.canvas.clientWidth))));
+    const y = Math.max(0, Math.min(this.h - 1, Math.round(py * this.h / Math.max(1, this.canvas.clientHeight))));
+    const d = this.device;
+    this._depthBusy = true;
+    try {
+      const rb = d.createBuffer({ size: 256, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const enc = d.createCommandEncoder();
+      enc.copyTextureToBuffer({ texture: this.tex.fdA, origin: { x, y } },
+        { buffer: rb, bytesPerRow: 256 }, { width: 1, height: 1 });
+      d.queue.submit([enc.finish()]);
+      await rb.mapAsync(GPUMapMode.READ);
+      const v = new Float32Array(rb.getMappedRange())[0];
+      rb.unmap(); rb.destroy();
+      return (v > 0 && v < this.far * 0.98) ? v : null;
+    } catch (e) {
+      return null;
+    } finally {
+      this._depthBusy = false;
     }
   },
 
