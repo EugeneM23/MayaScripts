@@ -208,3 +208,31 @@ class ParamTests(unittest.TestCase):
         res = self.walk.evaluate(dict(e, in_place=0.0), None)
         self.assertLess(own_turn(res, self.walk, "index_01_l"), 1e-6)
         self.assertLess(own_turn(res, self.walk, "index_01_r"), 1e-6)
+
+
+class LineTests(unittest.TestCase):
+    """What the Pick line says."""
+
+    def setUp(self):
+        self.walk = T.walk()
+
+    def test_the_defaults_say_nothing_about_them(self):
+        text = wm.describe(run(self.walk))
+        self.assertNotIn("of the cycle", text)
+
+    def test_both_held_are_named(self):
+        text = wm.describe(run(self.walk, arms=0.0, arms_l=0.0, arms_r=0.0,
+                               hands=0.0, hands_l=0.0, hands_r=0.0))
+        self.assertIn("the arms keep 0 %", text)
+        self.assertIn("the hands keep 0 %", text)
+        self.assertIn("of the cycle", text)
+
+    def test_one_side_is_named_as_that_side_alone(self):
+        text = wm.describe(run(self.walk, hands_l=0.0))
+        self.assertIn("the left hand keeps 0 % of the cycle", text)
+        self.assertNotIn("the arms keep", text)
+
+    def test_two_different_sides_are_both_named(self):
+        text = wm.describe(run(self.walk, hands_l=0.0, hands_r=0.5))
+        self.assertIn("the left hand keeps 0 %", text)
+        self.assertIn("the right hand keeps 50 %", text)

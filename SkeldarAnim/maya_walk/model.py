@@ -4686,6 +4686,25 @@ class Result(object):
         self.worlds, self.frames, self.info = worlds, frames, info
 
 
+def share_line(info):
+    """What Arms % and Hands % hold back, for a status line ("" at their own 100 %). `info["knobs"]` is
+    the asked dict and engine_knobs writes a key only where the parameter was asked, so every read
+    falls back - the side's own value, then the knob's, then 1.0 (2026-11-04)."""
+    k = info.get("knobs") or {}
+    out = []
+    for knob, many, one in (("arms", "arms", "arm"), ("hands", "hands", "hand")):
+        both = float(k.get(knob, 1.0))
+        per = dict((s, float(k.get("%s_%s" % (knob, s), both))) for s in SIDES)
+        if abs(per["l"] - per["r"]) < 1e-9:
+            if abs(per["l"] - 1.0) > 1e-9:
+                out.append("the %s keep %.0f %%" % (many, 100.0 * per["l"]))
+        else:
+            for s, word in (("l", "left"), ("r", "right")):
+                if abs(per[s] - 1.0) > 1e-9:
+                    out.append("the %s %s keeps %.0f %%" % (word, one, 100.0 * per[s]))
+    return (" | " + ", ".join(out) + " of the cycle") if out else ""
+
+
 def describe(result):
     info = result.info
     text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
@@ -4731,7 +4750,7 @@ def describe(result):
     swung = (info.get("arms") or {}).get("overlap") or {}
     if swung.get("weapon"):
         text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
-    return text + placement_line(info) + balance_line(info)
+    return text + share_line(info) + placement_line(info) + balance_line(info)
 
 
 def placement_line(info):
