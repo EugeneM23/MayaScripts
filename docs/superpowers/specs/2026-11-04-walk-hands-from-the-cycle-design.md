@@ -1,4 +1,4 @@
-# Walk Builder: the hands' share of the cycle, and Arm swing below its floor
+# Walk Builder: the arms' and the hands' share of the cycle
 
 2026-11-04. The animator, with two skeletons walking in a Maya on port 7002:
 
@@ -8,62 +8,70 @@
 > В позе с ножиком не удается получить статические руки при нулевых значениях ручек в weapon с оружием
 > в позе с мечем они почти статические.
 
-Asked, they answered twice: the knob covers **the hand and its fingers** (not the fingers alone, not
-the whole arm), and `Arm swing` is to be **fixed** so 0 deg really means a still arm (rather than
-widening the new knob to the whole arm, which would overlap it).
+Asked, they answered three times: the knob covers **the hand and its fingers** (not the fingers alone,
+not the whole arm); then, once the measurement had corrected my first reading of `Arm swing`, **two
+knobs in one unit** - `Arms, %` and `Hands, %` - rather than a fix of `Arm swing` (which turned out
+not to be broken) or one knob over the whole arm.
 
 Their Maya could not be driven - the port accepted bytes and ran nothing, CPU flat at 0.08 s over 6 s
 with Maya responding, which is a modal dialog holding the idle queue (bridge note 6; both sends were
 disarmed by deleting their runner files). So every number below is measured headless in mayapy
 standalone on **their own cycle** (`own:7833074715b34c33`, 31 frames at 30 fps), their own two pose
-cards (`LongSword_Idle_3P.pose`, `DG_Idle.pose`) and their own card state read off
-`userPrefs.mel` (2026-11-03 20:48): Chest chip on, Rotation 0, Position 0, 2H on, every pose part in,
-share 1.
+cards (`LongSword_Idle_3P.pose`, `DG_Idle.pose`) and their own card state read off `userPrefs.mel`
+(2026-11-03 20:48): Chest chip on, Rotation 0, Position 0, 2H on, every pose part in, share 1.
 
 ## What is wrong, measured
 
-The two poses on one cycle with one set of knobs:
+Two quantities say what the eye reads as "static hands": how far the hand turns **in the pelvis's own
+frame** (a hand standing still in a walking body still shows the body's own turn - 6.84 deg on this
+cycle, the floor), and each finger's **own local turn** (0 is still).
 
-| card | the hand's turn against the pelvis | the fingers' own turn |
+| | hand in the pelvis's frame (R / L) | the fingers' own turn |
 |---|---|---|
-| `LongSword_Idle_3P.pose` | **6.84 deg** | **0.0 deg** |
-| `DG_Idle.pose` | **13.15 deg** | **20.7 deg** |
-
-6.84 deg is the floor - the body's own turn, which a hand standing still in the body still shows. The
-sword's hands are at it; the dagger's are not.
+| `LongSword_Idle_3P.pose`, their settings | **6.84 / 6.84 deg** | **0.0 deg** |
+| `DG_Idle.pose`, their settings | 16.25 / 14.01 deg | 11.1 / 12.8 deg |
+| the dagger + the engine's `arms` 0 | 13.16 / 11.15 deg | 11.1 / 12.8 deg |
+| the dagger + `arms` 0 + `Arm drag` 0 | **6.84 / 6.84 deg** | 11.1 / 12.8 deg |
+| the dagger + a forced grip | 13.16 / 11.15 deg | **0.0 deg** |
 
 The cause is the **grip**: `pose.prepare` calls a pose a grip when its two hands hold one thing (within
-`GRIP_DIST` 30 cm), and the frame walk then stills both arms and every finger
-(`gain *= 1.0 - alpha`, `model.py` ~3928, over `kind in ("arm", "finger")`). A sword pose has one; a
+`GRIP_DIST` 30 cm), and the frame walk then stills both arms and every finger with
+`gain *= 1.0 - alpha` (`model.py` ~3928, over `kind in ("arm", "finger")`). A sword pose has one; a
 dagger pose does not. Nothing else about the two cards differs: both name all 54 arm joints, all 38
 fingers, both sides.
 
-The dagger's 13.15 deg breaks down as:
+So the dagger needs exactly what the grip does, as two levers, and the table says which:
 
-| what | how much | reachable from the card |
-|---|---|---|
-| the body's own turn (the floor) | 6.84 deg | - |
-| the arm's swing amplitude (the engine's `arms`) | ~4.1 deg | **no** |
-| the arms' inertia (`Arm drag` 1.5) | ~2.2 deg | yes |
-| the fingers, their own turn | 20.7 deg | **no** |
+- **the arms' amplitude** - the engine's `arms`, which the last row shows reaching the floor. The card
+  cannot ask for it (below).
+- **`Arm drag` 0** - already a parameter, nothing to build.
+- **the fingers** - reached by the grip alone, by nothing else at all (below).
 
-### Why no knob reaches the hands
+### The fingers are multiplied by a hard 1.0
 
-- **The fingers are multiplied by a hard 1.0.** `gains = {"spine": ...}` and
-  `gain = ks[side]["arms"] * ex if kind == "arm" else gains.get(kind, 1.0)`, so a finger's gain is 1.0
-  under every knob there is - no `arms`, no `elbow`, not even `exaggeration`. Only the grip's
-  `1 - alpha` and the global `Detail` (through `_sample`'s residual) touch them at all.
-- **The hand bone is under `arms`** (`ARM_STEMS` holds "hand"), so `Arm swing` reaches it - but
-  `Arm swing` does not land its ask (below).
-- **`Detail` is the whole body**, one number for the spine, the legs, the head and the arms together,
-  so it is no answer for the hands.
+`gains = {"spine": k["spine"] * ex}` and
+`gain = ks[side]["arms"] * ex if kind == "arm" else gains.get(kind, 1.0)`, so a finger's gain is 1.0
+under every knob there is - no `arms`, no `elbow`, not even `exaggeration`. Only the grip's
+`1 - alpha` and the global `Detail` (through `_sample`'s residual) touch them, and `Detail` is one
+number for the spine, the legs, the head and the arms together. Measured: with the engine's `arms` at
+0 the fingers do not move at all (11.1 / 12.8 either way); with a forced grip they go to 0.0.
 
-### Why Arm swing does not land its ask
+### Arm swing is not broken - the card lost the amplitude
 
-`gait._solved_gain` bisects **`g_arm`** - the regular gain inside `_sample`, which mixes
-`mean + gain . (regular - mean) + detail . residual`. The gain scales only the regular part, so the
-clip's own residual handwriting survives at `g_arm` 0, and that residual is the floor the knob cannot
-go below. Measured on their cycle, the readback (`gait.of_result`) of an asked `arm_swing`:
+My first reading was that `Arm swing` fails to land its ask. It does not. `arm_swing` is defined as the
+peak to peak of the arm's forward angle's **stride-harmonic part** (`Cycle.p2p` is
+`ptp(regular(y))`, and `_swing_of` returns the same quantity), and `gait._solved_gain` bisects `g_arm`
+to land it: measured on this cycle, `_swing_of` at `g_arm` 0 reads **0.003 deg**. There is no floor in
+its own measure to continue below. What stays behind at `g_arm` 0 is the series' mean and its residual,
+which that measure does not see by design (the residual is `Detail`'s).
+
+The lever that removes mean, harmonics and residual together is the amplitude - `exp_rot(arms . ex .
+sample)`, which is what the grip scales. **The parameter layer has no way to write it**: `engine_knobs`
+never assigns `e["arms"]`, and the only mention of the name is `from_legacy`, which turns a
+pre-2026-10-26 memo's engine `arms` into an `arm_swing` ratio. Their own `userPrefs.mel` still holds
+`skeldarWalk_knob_arms 1` from the old build, where the card could set it.
+
+The readback, for the record (`gait.of_result` of an asked `arm_swing`, their cycle):
 
 | asked | no pose, no weapon | dagger pose, no weapon | dagger pose, their 2H + Chest |
 |---|---|---|---|
@@ -71,107 +79,129 @@ go below. Measured on their cycle, the readback (`gait.of_result`) of an asked `
 | 20.0 | L 16.87 / R 24.44 | L 16.74 / R 33.76 | L 8.28 / R 16.04 |
 | 48.4 (its own) | L 44.10 / R 51.66 | L 41.00 / R 60.63 | L 9.82 / R 16.78 |
 
-Two separate facts in that table. Bare, the knob works and has a floor of 3.6 / 6.9 deg - the
-residual's own peak to peak. Under their 2H and Chest it is **nearly dead** (0 to 48 deg of ask moves
-the measured swing 15.9 to 16.8): both arms are re-solved by IK onto the weapon, whose path the Chest
-mode fixes, so the arm cannot swing whatever the knob says. That is the animator's general complaint
-about the card («эти ручки часто не сильно влияют») in one measurement.
-
-And the lever that does reach it even under 2H is the amplitude: with the engine's `arms` set to 0
-and `Arm drag` 0, the dagger's hand reads **6.84 deg** - the sword's floor exactly. `arms` is never
-written by the parameter layer, so the card cannot ask for it.
+Bare, the knob works; the 3.6 / 6.9 deg left at an ask of 0 is the body carrying a still arm, which no
+arm knob can or should remove. Under their 2H and Chest it is **nearly dead** - 0 to 48 deg of ask
+moves the measured swing from 15.9 to 16.8 - because both arms are re-solved by IK onto the weapon,
+whose path the Chest mode fixes. That is the animator's general complaint about the card
+(«эти ручки часто не сильно влияют») in one measurement, and it is why the amplitude, not the degrees,
+is what reaches the floor under 2H.
 
 ## The design
 
+Two parameters in one unit, each **100 % by default**, each sided: how much of the cycle's own
+animation that part of the arm keeps. Both at 0 % is exactly what a pose's grip does.
+
 ### 1. The engine: a `hands` knob (`maya_walk/model.py`)
 
-A new sided knob `("hands", 1.0, 0.0, 3.0)` in `KNOBS` **after `exaggeration`** (everything before it
-is `LEGACY`, read from a pre-2026-10-26 memo), and `"hands"` added to `SIDED`.
+A new sided knob `("hands", 1.0, 0.0, 3.0)` in `KNOBS` **after `exaggeration`** - everything before it
+is `LEGACY`, read from a pre-2026-10-26 memo - and `"hands"` added to `SIDED`. `DEFAULTS`, `RANGES` and
+`SIDE_KNOBS` are all derived from those two, so nothing else is declared.
 
-In the frame walk's `else` branch:
+A set of the hand bones beside `self.forearms`:
+`self.hand_bones = set(j for j, n in enumerate(self.names) if _stem(n) == "hand")`.
 
-- the hand bone (`kind == "arm"` whose stem is `hand`): `gain = ks[side]["arms"] * ex * ks[side]["hands"]`;
-- a finger (`kind == "finger"`): `gain = ks[side]["hands"]` where it is 1.0 today;
-- the grip's `gain *= 1.0 - alpha` keeps multiplying on top, so a sword pose's hands stay still at
-  100 % and the knob scales what the grip leaves. A gripped hand cannot be given its cycle animation
-  back - that is today's behaviour and nobody asked to change it.
-
-At 1.0 every path is what it is today **bit for bit**: the factor is an exact float 1.0, so
-`_sample`'s fast path (`np.all(gain == 1.0)`) still fires and the Catmull-Rom series is returned
-untouched.
-
-0 % holds the hand and its fingers where their centre is: the pose's own hand pose at share 1, the
-cycle's own mean with no pose - the same meaning `Arm swing` 0 has for the arm.
-
-`Hand lag`, `Hand overlap` and the weapon's own passes are untouched: they shift a series in time and
-at 0 % there is no series left to shift.
-
-### 2. The engine knob behind Arm swing (`maya_walk/gait.py`)
-
-`_swing_of(walk, kind, side, gain, detail)` gains an amplitude factor that scales the whole sample the
-way the frame walk's `arms` does - `exp_rot(amp . (mean + gain . (regular - mean) + detail . residual))`,
-the mean included, so `amp` 0 stands the arm at its centre exactly as the grip's `1 - alpha` does.
-`_solved_gain` then continues below the branch's floor with it: where the asked swing is under what
-`g_arm` 0 can give, `g_arm` stays at its floor and `arms<side>` is bisected on the same measure to
-land the rest (clamped to 0..1 - the knob only ever takes swing away below the floor, it never adds).
-`engine_knobs` writes `e["arms" + sfx]` only then.
-
-On a walk's own value the guard `abs(guess - 1.0) < 1e-12 and detail == 1.0` returns 1.0 before any
-of this, so `g_arm` 1 and `arms` 1: **nothing changes for a walker already processed** unless its
-`Arm swing` is set away from the cycle's own, where today's answer is simply wrong.
-
-### 3. The parameter and the card (`maya_walk/gait.py`, `panel.py`)
+In the frame walk's `else` branch, right after the forearm's `elbow` factor:
 
 ```python
-Param("hands", ARMS, "Hands", "%", "added", sided=True, rule=_fixed(0.0, 100.0), default=100.0,
-      tip="How much of the cycle's own hand and finger animation the hands keep; 0 % holds them in "
-          "the pose. A pose whose two hands hold one thing stills them on its own")
+if j in self.hand_bones or kind == "finger":
+    gain *= ks[self._side(j)]["hands"]
 ```
 
-First in the **Arms** group - it is the strongest knob there. `engine_knobs` writes
-`e["hands" + sfx] = sv("hands") / 100.0`. Kind `"added"`, so its own value is the default and the
-Diagnosis has nothing to say about it; sided, like every arm parameter.
+So the hand bone carries `arms . ex . hands` (the shape the forearm already has with `arms . elbow`)
+and a finger carries `hands` where it carries a hard 1.0 today. `_side` answers "l" or "r" for every
+joint, so the lookup is always safe.
 
-The Pick line names it where it is set away from 100 %, per side, the way the arm knobs' notes read.
+The existing `arms` knob needs no engine change: it already multiplies the clavicle, the upper arm, the
+forearm and the hand bone.
+
+At 1.0 every path is what it is today **bit for bit**: the factor is an exact float 1.0, and
+`exp_rot(1.0 * turn)` is `exp_rot(turn)` for finite floats.
+
+0 % holds the part where its centre is: the pose's own at share 1, the cycle's own mean with no pose.
+
+`Hand lag`, `Hand overlap`, `Arm overlap` and the weapon's own passes are untouched - they shift a
+series in time, and at 0 % there is no series left to shift.
+
+### 2. The two parameters (`maya_walk/gait.py`)
+
+```python
+Param("arms", ARMS, "Arms", "%", "added", sided=True, rule=_fixed(0.0, 100.0), default=100.0,
+      tip="How much of the cycle's own arm swing the upper arm and the forearm keep; 0 % holds them "
+          "in the pose. A pose whose two hands hold one thing holds them on its own"),
+Param("hands", ARMS, "Hands", "%", "added", sided=True, rule=_fixed(0.0, 100.0), default=100.0,
+      tip="How much of the cycle's own hand and finger animation the hands keep; 0 % holds them in "
+          "the pose. Under 2H or a grip the hand itself rides the weapon, so this is its fingers"),
+```
+
+First in the **Arms** group, `Arms` then `Hands`. In `engine_knobs`' sided loop:
+
+```python
+e["arms" + sfx] = sv("arms") / 100.0
+e["hands" + sfx] = sv("hands") / 100.0
+```
+
+Kind `"added"`, so each own value is its default and the Diagnosis has nothing to say about them;
+sided, like every arm parameter. Neither name is in `ASPECT_KNOBS`, so `aspects_on` is untouched.
+
+The panel needs no change: it builds a group's sliders from `gait.PARAMS` by `p.group`.
+
+**`from_legacy` is left as it is.** A pre-2026-10-26 memo's engine `arms` still becomes an `arm_swing`
+ratio rather than the new `arms` parameter: that translation has stood since October, every walker it
+concerns was translated long ago, and changing it would move those walkers.
+
+### 3. The line (`maya_walk/model.py`)
+
+`describe` names each part held away from 100 %, per side, reading `info["knobs"]` (which is the
+`asked` dict, so a sided key may be absent - read `k.get("arms_" + s, k.get("arms", 1.0))`):
+
+> `| the arms keep 0 % of the cycle, the hands 0 %`
 
 ## What it costs, stated
 
-- **Under 2H or a grip the arm is the weapon's.** `Arm swing` under them means "how much of the
-  cycle's swing reaches the arm", not a landed degree figure: the measured swing still reads ~15.9 deg
-  at an ask of 0 on their right arm, because what is measured is the IK's arm. What the fix buys is
-  that the amplitude now reaches 0, and with it the floor.
-- **A gripped hand cannot be unstilled.** `Hands` multiplies the grip's own stilling; 100 % on a sword
-  pose is still still.
-- **The hand's world pose under 2H is the weapon's.** `Hands` 0 % stills the hand's own turn and its
-  fingers; what the hand then does in the world is the weapon's path. The ~4 deg of arm swing is
-  `Arm swing`'s to take away and the ~2.2 deg of whip is `Arm drag`'s.
+- **Under 2H or a grip the hand rides the weapon.** `Hands` then stills the fingers and nothing else:
+  the hand's world pose is the weapon's, and `Arms` is what moves it (to the floor) by moving the IK's
+  target. Measured: with the engine's `arms` 0 the hand's own turn still reads 19.7 deg, because
+  `_arm_to_hand` rebuilds it.
+- **A gripped hand cannot be unstilled.** Both knobs multiply the grip's own stilling, so 100 % on a
+  sword pose is still still. That is today's behaviour and nobody asked to change it.
+- **`Arms` and `Arm swing` are different quantities**, not two dials on one thing: `Arm swing` sets the
+  harmonic swing in degrees and leaves the clip's handwriting, `Arms %` scales the whole series
+  including its mean. Both are kept, and their tooltips say which is which.
+- **The whip stays `Arm drag`'s.** ~2.2 deg of the dagger's hand turn is the springs; the knobs do not
+  touch them.
 
 ## What this gives them
 
-On their own cycle and cards, the dagger pose with `Hands` 0 %, `Arm swing` 0 and `Arm drag` 0 comes
-to the sword's floor - 6.84 deg of hand against the pelvis and 0.0 deg of finger - with the sword
-pose unchanged at every default.
+On their own cycle and cards, the dagger pose with `Arms` 0 %, `Hands` 0 % and `Arm drag` 0 comes to
+the sword's floor - 6.84 deg of hand in the pelvis's frame and 0.0 deg of finger - with the sword pose
+unchanged at every default.
 
 ## Proof
 
-- `tests/test_walk_hands.py`: the knob's own value changing nothing matrix for matrix; 0 % stilling
-  the hand's own turn and every finger on each side alone; the grip's stilling multiplying; the
-  parameter's unit, range, default and group; `engine_knobs`' division by 100; `_solved_gain` landing
-  an ask below the floor and leaving `arms` at 1 above it.
+- `tests/test_walk_hands.py`: each knob's own value changing nothing matrix for matrix; `hands` 0 %
+  stilling the hand's own turn and every finger on one side with the other untouched; `arms` 0 %
+  stilling the upper arm and the forearm; the grip's stilling multiplying; each parameter's unit,
+  range, default, group and order; `engine_knobs`' division by 100 on both sides; the line.
 - `docs/superpowers/plans/walkparam/verify_walk_hands.py`, mayapy standalone on their own cycle and
-  both cards: the defaults bit for bit; `Hands` 0 % per side (the other side untouched); the dagger
-  reaching the sword's floor with the three knobs; the readback of an `Arm swing` ask below the floor;
-  the loop still closed and the bones still their own lengths. Every geometric gate carries the
-  pre-fix code as its control, as the walk verifies do.
+  both their cards: the defaults bit for bit; each knob 0 % per side; the dagger reaching the sword's
+  floor with the three knobs; the fingers at 0.0; the loop still closed and the bones still their own
+  lengths; and the control that the code before this cannot reach it.
 - The existing walk verifies re-run, each compared against a clean worktree of the commit before this
-  work (several of them fail there already and must fail identically).
+  work (several fail there already and must fail identically).
 
 ## Not built
 
 - A knob per finger, or the thumb apart from the fingers.
-- `Detail` per body part (the hands' residual is covered by `Hands`; the spine's, the legs' and the
-  head's are still one global number).
-- Making `Arm swing` land its ask under 2H or a grip - the arm there is the IK's, and a knob that
-  claims degrees it cannot hold would be worse than one that says so.
-- Anything about the Chest mode, 2H or the weapon's own overlap: they are measured here only to say
-  what they override.
+- `Detail` per body part: the arms' and the hands' residual is covered by the two knobs now, the
+  spine's, the legs' and the head's are still one global number.
+- Anything about `Arm swing`, the Chest mode, 2H or the weapon's own overlap: they are measured here
+  only to say what they override.
+
+## A measuring trap, for whoever reads the numbers again
+
+These matrices are **row-vector** (Maya's own order): a joint's own local rotation is
+`w[j] @ w[parent].T`, never `w[parent].T @ w[j]`. Written the other way round it is the local
+**conjugated** by the parent's world, so a perfectly constant local on a moving parent reads as 8-20
+deg of motion - which sent my first reading of this bug down a false trail (the grip "not reaching the
+fingers") and nearly bought a fix for a defect that does not exist. Trap 225, met from the measuring
+side.
