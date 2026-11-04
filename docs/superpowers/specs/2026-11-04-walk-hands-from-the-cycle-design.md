@@ -29,9 +29,9 @@ cycle, the floor), and each finger's **own local turn** (0 is still).
 | | hand in the pelvis's frame (R / L) | the fingers' own turn |
 |---|---|---|
 | `LongSword_Idle_3P.pose`, their settings | **6.84 / 6.84 deg** | **0.0 deg** |
-| `DG_Idle.pose`, their settings | 16.25 / 14.01 deg | 11.1 / 12.8 deg |
-| the dagger + the engine's `arms` 0 | 13.16 / 11.15 deg | 11.1 / 12.8 deg |
-| the dagger + `arms` 0 + `Arm drag` 0 | **6.84 / 6.84 deg** | 11.1 / 12.8 deg |
+| `DG_Idle.pose`, their settings | 16.25 / 14.01 deg | 11.07 / 12.80 deg |
+| the dagger + the engine's `arms` 0 | 13.16 / 11.15 deg | 11.07 / 12.80 deg |
+| the dagger + `arms` 0 + the springs off | **6.84 / 6.84 deg** | 11.07 / 12.80 deg |
 | the dagger + a forced grip | 13.16 / 11.15 deg | **0.0 deg** |
 
 The cause is the **grip**: `pose.prepare` calls a pose a grip when its two hands hold one thing (within
@@ -40,12 +40,28 @@ The cause is the **grip**: `pose.prepare` calls a pose a grip when its two hands
 dagger pose does not. Nothing else about the two cards differs: both name all 54 arm joints, all 38
 fingers, both sides.
 
-So the dagger needs exactly what the grip does, as two levers, and the table says which:
+Which lever is worth what, measured on the dagger card at their own settings (the hand in the pelvis's
+frame, R / L):
 
-- **the arms' amplitude** - the engine's `arms`, which the last row shows reaching the floor. The card
-  cannot ask for it (below).
-- **`Arm drag` 0** - already a parameter, nothing to build.
-- **the fingers** - reached by the grip alone, by nothing else at all (below).
+| | with their weapon, 2H and Chest | with no weapon and no 2H |
+|---|---|---|
+| as it is | 16.25 / 14.01 deg | 42.43 / 54.04 deg |
+| `Arms` 0 % alone | 13.16 / 11.15 deg | **15.81 / 19.45 deg** |
+| `Whip` 0 alone | **6.84 / 6.84 deg** | 36.78 / 49.31 deg |
+| both | 6.84 / 6.84 deg | 15.73 / 15.73 deg |
+
+So the two columns need different levers, and both are real:
+
+- **with a weapon in the hand** the hand is IK-solved onto it and the Chest mode holds the weapon
+  still, so what moves the hand is the **springs**: `Whip` 0 reaches the floor by itself. `Arms` is
+  worth 3.1 / 2.9 deg there.
+- **with a free hand** the hand's motion is the arm's own swing: `Arms` 0 % takes 26.6 / 34.6 deg off
+  it, `Whip` 5.6 / 4.7.
+- **the fingers**, either way, are reached by the grip alone and by nothing else at all (below).
+
+`Whip` is a parameter already (Physics, default 0.3) and nothing needs building for it - but it is
+**all three springs at once**, the trunk's and the head's with the arms'; there is no per-part drag
+knob on the card, and this work does not add one.
 
 ### The fingers are multiplied by a hard 1.0
 
@@ -167,14 +183,17 @@ concerns was translated long ago, and changing it would move those walkers.
 - **`Arms` and `Arm swing` are different quantities**, not two dials on one thing: `Arm swing` sets the
   harmonic swing in degrees and leaves the clip's handwriting, `Arms %` scales the whole series
   including its mean. Both are kept, and their tooltips say which is which.
-- **The whip stays `Arm drag`'s.** ~2.2 deg of the dagger's hand turn is the springs; the knobs do not
-  touch them.
+- **The springs stay `Whip`'s**, and `Whip` is all three of them. Under their own 2H and Chest the
+  springs are most of what moves the hand (9.4 deg of its 16.25), so the dagger wants `Whip` 0 as well
+  - and that switches the trunk's and the head's springs off with the arms'. A per-part drag knob is
+  not built.
 
 ## What this gives them
 
-On their own cycle and cards, the dagger pose with `Arms` 0 %, `Hands` 0 % and `Arm drag` 0 comes to
-the sword's floor - 6.84 deg of hand in the pelvis's frame and 0.0 deg of finger - with the sword pose
-unchanged at every default.
+On their own cycle and cards, the dagger pose with `Hands` 0 % and `Whip` 0 comes to the sword's floor
+- 6.84 deg of hand in the pelvis's frame and 0.0 deg of finger - with the sword pose unchanged at every
+default. `Arms` 0 % adds nothing measurable there (the hand is on the weapon); it is the lever for a
+free hand, where it takes 26.6 / 34.6 deg off the hand's turn.
 
 ## Proof
 
