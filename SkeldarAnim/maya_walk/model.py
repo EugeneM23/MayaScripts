@@ -58,6 +58,11 @@ KNOBS = (
     ("weight", 0.0, -1.0, 2.0),
     ("balance", 1.0, 0.0, 1.0),
     ("exaggeration", 1.0, 0.0, 2.0),
+    #  Arms % and Hands % (2026-11-04): how much of the cycle's own animation a part of the arm keeps - the lever
+    #  a pose's grip pulls (gain *= 1 - alpha), as a knob. `arms` is above and already multiplies the clavicle,
+    #  the upper arm, the forearm and the hand bone; `hands` is the hand bone and its fingers, which carried a
+    #  hard 1.0 under every knob there was (gains.get("finger", 1.0): no arms, no elbow, not even exaggeration)
+    ("hands", 1.0, 0.0, 3.0),
     # Operators (Gait Builder's, 2026-10-26): each adds its unit to the walk's own - 0 changes nothing. A swing is
     # added in phase with the walk's own (its gait harmonic)
     ("lean_add", 0.0, -60.0, 60.0),           # deg: the trunk forward over the hips, spread over the spine
@@ -193,7 +198,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 #  The knobs of a body part that has two sides (2026-10-13: «режим в котором левая и правая сторона станут
 #  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "foot_flat", "ground_time",
-         "arms", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
+         "arms", "hands", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
          "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_chest",
@@ -1394,6 +1399,7 @@ class Walk(object):
             queue.extend(kids[j])
         self.order = [j for j in bfs if self.kind[j] != "helper"] + [j for j in bfs if self.kind[j] == "helper"]
         self.forearms = set(j for j, n in enumerate(self.names) if _stem(n) == "lowerarm")
+        self.hand_bones = set(j for j, n in enumerate(self.names) if _stem(n) == "hand")
         self._lag_levels()
 
     def _lag_levels(self):
@@ -3927,6 +3933,8 @@ class Walk(object):
                             # (2026-11-02). A pose from before carries the bare flag for both arms.
                             if self._side(j) in pose.get("grip_sides", SIDES if pose.get("grip") else ()):
                                 gain *= 1.0 - a
+                    if j in self.hand_bones or kind == "finger":
+                        gain *= ks[self._side(j)]["hands"]
                     if j in self.forearms:
                         gain *= ks[self._side(j)]["elbow"]
                     if kind == "spine":
