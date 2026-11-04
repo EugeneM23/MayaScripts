@@ -10648,7 +10648,10 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      the queue.
 225. **Row vectors put the relative transform the other way round**: a joint in its pelvis's space is
      `W_joint · W_pelvis^-1`, not `W_pelvis^-1 · W_joint`. A verify gate written the second way read the
-     walk's seam as 247 cm on a seamless loop (trap 19's family, from the measuring side).
+     walk's seam as 247 cm on a seamless loop (trap 19's family, from the measuring side). Written backwards
+     it is the local **conjugated** by the parent's world, so a perfectly constant local on a moving parent
+     reads as 8-20 deg of motion that is not there: 2026-11-04 that sent a whole diagnosis down a false trail
+     (the grip "not reaching the fingers") and nearly bought a fix for a defect that does not exist.
 226. **A cache kept on `sys` outlives the code that filled it** (trap 111's other side). The walk tool's
      session cache - kept on `sys` so a re-dropped tool still knows its target - held a `Walk` analysed by
      the walkmodel loaded before the pose work; the re-dropped tool loaded the new walkmodel, its `apply`
@@ -11649,6 +11652,77 @@ its own tool - it writes keys on any clip, not only on a cycle Walk Builder proc
   rigid on it to 0.0057**; `verify_walk_arm_overlap.py` 0 of 101, `verify_walk_weapon_overlap.py` 0 of 30;
   `tests/test_walk_weapon_chest.py` 44. On their own case, off the keys: the cycle 26.98 cm off its line,
   their card (0.09 / 1.00 / 208 ms) **9.68**, `0 / 0 / 0` 4.71 and **0.000** with Whip off.
+
+**…and each part's share of the cycle: `Arms, %` and `Hands, %`** (2026-11-04, the animator with two
+skeletons walking: «настройки дают разные результат с позхой для двуручного меча и для жагера ножа. нужен
+парамметр который будет контролировать процент анимации кистей с оригинального цикла … В позе с ножиком не
+удается получить статические руки при нулевых значениях ручек в weapon»; asked: the knob covers **the hand
+and its fingers**, and then, once the measurement had overturned my first reading, **two knobs in one unit**
+rather than a fix of `Arm swing`). Spec
+`docs/superpowers/specs/2026-11-04-walk-hands-from-the-cycle-design.md`, plan beside it. **Their Maya could
+not be driven** — the port took every byte and ran nothing, CPU flat at 0.08 s over 6 s with Maya responding
+(a modal dialog holding the idle queue, bridge note 6; both sends disarmed by deleting their runner files) —
+so everything is measured headless on **their own cycle** (`own:7833074715b34c33`, 31 frames at 30 fps),
+their own two cards and their own card state read off `userPrefs.mel` (Chest chip on, Rotation 0, Position
+0, 2H on, share 1).
+- **The two quantities the eye reads**: the hand's turn **in the pelvis's frame** (a still hand in a walking
+  body still shows the body's own 6.84 deg on this cycle — the floor) and each finger's **own local turn**.
+  The sword card reads **6.84 / 6.84 and 0.00 / 0.00**, the dagger **16.25 / 14.01 and 11.07 / 12.80**. The
+  cause is the **grip** (two hands on one thing within `GRIP_DIST` 30 cm): the frame walk then stills both
+  arms and every finger with `gain *= 1 - alpha`. Nothing else about the two cards differs — both name all
+  54 arm joints and all 38 fingers.
+- **A finger carried a hard 1.0 under every knob there was** (`gains.get("finger", 1.0)`): no `arms`, no
+  `elbow`, not even `exaggeration` — only a grip and the global `Detail` ever touched it. The hand bone was
+  under `arms` alone.
+- **`Arm swing` is NOT broken**, which was my first reading and is wrong: `arm_swing` is the peak to peak of
+  the arm's forward angle's **stride-harmonic part** (`Cycle.p2p` is `ptp(regular(y))`, and `_swing_of`
+  returns the same quantity), and at `g_arm` 0 that measure reads **0.003 deg** — there is no floor to
+  continue below. What it leaves is the series' mean and its residual, invisible to it by design. The lever
+  that removes all three is the **amplitude**, which the grip scales — and **the parameter layer never wrote
+  it**: `engine_knobs` has never assigned `e["arms"]` since 2026-10-26, and the only mention of the name is
+  `from_legacy` turning an old memo's engine `arms` into an `arm_swing` ratio (their `userPrefs.mel` still
+  holds `skeldarWalk_knob_arms 1` from the old build). Under their 2H and Chest `Arm swing` is nearly dead
+  anyway — 0 to 48 deg of ask moves the measured swing from 15.9 to 16.8, the arms being re-solved by IK onto
+  the weapon.
+- **Two sided parameters, each 100 % by default, first in the Arms group**: `Arms, %` (the clavicle, the
+  upper arm, the forearm and the hand bone — the `arms` knob the card had lost) and `Hands, %` (the hand bone
+  and its fingers — a new sided engine knob `("hands", 1.0, 0.0, 3.0)` after `exaggeration`, `self.hand_bones`
+  beside `self.forearms`, `gain *= ks[side]["hands"]` before the forearm's `elbow` factor). Both multiply the
+  grip's own stilling, so a sword pose is still still at 100 %; `engine_knobs` writes a key only away from 100
+  (`sv(...)/100.0`), so at the defaults every cycle is what it was **bit for bit**. The panel needed nothing —
+  it builds a group's sliders from `gait.PARAMS`. `describe` gains `share_line`: «the arms keep 0 %, the hands
+  keep 0 % of the cycle», per side «the left hand keeps 0 %, the right hand keeps 50 %».
+- **Which lever is worth what** (the dagger card, the hand in the pelvis's frame, R / L): with their weapon,
+  2H and Chest — as it is 16.25 / 14.01, `Arms` 0 % alone 13.16 / 11.15, **`Whip` 0 alone 6.84 / 6.84**; with
+  no weapon and no 2H — as it is 42.43 / 54.04, **`Arms` 0 % alone 15.81 / 19.45**, `Whip` 0 alone 36.78 /
+  49.31. So with a weapon in the hand the hand is IK-solved onto it and the **springs** are what move it,
+  while with a free hand it is the arm's own swing; the fingers, either way, are `Hands`'s alone.
+- **There is no `arm_drag` parameter at all** (trap 319): the card's knob behind the springs is **`Whip`**
+  (Physics, default 0.3), and it is all three springs at once — the trunk's and the head's with the arms'. A
+  per-part drag knob is not built.
+- **Their answer**: the dagger with `Hands` 0 % and `Whip` 0 comes to the sword's floor — **6.84 / 6.84 deg
+  and 0.000 fingers** — with the sword pose unchanged at every default.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_hands.py` **0 of 11 gates** on their own cycle and
+  cards, the same script failing gates 4, 5, 6 and 11 on the code before this work with the fingers at 11.073
+  / 12.799 — the control; `tests/test_walk_hands.py` 24; **13784 unit tests**, the two failures the known
+  `test_chat_deploy.Keys` and `test_timebar_edge`'s documented flake under the suite's load (74/74 alone).
+  Re-run: `verify_walk_arm_overlap.py` 0 of 101, `verify_walk_weapon_overlap.py` 0 of 30,
+  `verify_walk_weapon_chest.py` 0 of 22, `verify_walk_one_arm.py` 0 of 13, `verify_walk_keys_changed.py` 0 of
+  23; `verify_walk_gait.py`'s 4, `verify_walk_straight_leg.py`'s 25, `verify_walk.py`'s [4, 24, 27, 30, 57],
+  `verify_walk_own.py`'s [10, 19] and `verify_walk_many.py`'s death on a walker named `asd` are all the
+  failures already recorded here, digit for digit. **Not seen in a GUI Maya**: the two sliders under a real
+  press are the animator's, after Check update.
+- **Not built**: a knob per finger or the thumb apart; `Detail` per body part (the arms' and the hands'
+  residual is covered now, the spine's, the legs' and the head's are still one global number); landing
+  `Arm swing`'s ask under 2H or a grip (the arm there is the IK's, and a knob claiming degrees it cannot hold
+  would be worse than one that says so).
+
+319. **A gait parameter that does not exist is a change that silently does nothing.** `normal_params` keeps
+     only keys in `gait.keys()`, so a verify asking `("arm_drag", ("offset", -1.5))` — a plausible name, and
+     the one the engine knob wears — was dropped without a word, and its gate failed reading the number for
+     the knob it never set. The card's knob behind the springs is `Whip`, which writes
+     `arm_drag = WHIP_DRAG * on`. Before trusting a change, assert the engine knob it was meant to move
+     actually moved.
 
 316. **A digest over a whole skeleton calls a bone somebody else took «new animation», and nothing can settle
      it.** The walk keyed `weapon_r`, Add Weapon cut its curves, and `keys_changed` read the skeleton as carrying a
