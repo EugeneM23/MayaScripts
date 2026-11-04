@@ -135,3 +135,76 @@ class ArmsTests(unittest.TestCase):
         self.assertLess(world_turn(res, self.walk, "upperarm_l"), 1e-6)
         self.assertAlmostEqual(world_turn(res, self.walk, "upperarm_r"),
                                world_turn(self.plain, self.walk, "upperarm_r"), places=6)
+
+
+class ParamTests(unittest.TestCase):
+    """The card's two parameters and their mapping onto the engine."""
+
+    def setUp(self):
+        self.walk = T.walk()
+        self.own = gait.own(self.walk)
+
+    def param(self, name):
+        return dict((p.name, p) for p in gait.PARAMS)[name]
+
+    def test_both_are_a_percent_added_sided_at_a_hundred(self):
+        for name, label in (("arms", "Arms"), ("hands", "Hands")):
+            p = self.param(name)
+            self.assertEqual(p.group, gait.ARMS, msg=name)
+            self.assertEqual(p.label, label)
+            self.assertEqual(p.unit, "%", msg=name)
+            self.assertEqual(p.kind, "added", msg=name)
+            self.assertTrue(p.sided, msg=name)
+            self.assertEqual(p.default, 100.0, msg=name)
+            self.assertEqual(p.rule(0.0, 80.0), (0.0, 100.0), msg=name)
+            self.assertTrue(p.tip, msg=name)
+
+    def test_they_come_first_in_the_arms_group(self):
+        names = [p.name for p in gait.PARAMS if p.group == gait.ARMS]
+        self.assertEqual(names[:2], ["arms", "hands"])
+
+    def test_their_own_value_is_a_hundred(self):
+        #  gait.own() carries no "added" parameter at all (detail, arm_drag and arm_overlap are all
+        #  absent from it); own_value falls back to the Param's default, which is what engine_knobs
+        #  reads. So ask own_value, never own[...] - that would KeyError.
+        for name in ("arms", "hands"):
+            self.assertEqual(gait.own_value(self.own, name), 100.0, msg=name)
+            for side in ("l", "r"):
+                self.assertEqual(gait.own_value(self.own, name + "_" + side), 100.0, msg=name + side)
+
+    def test_a_legacy_memo_s_engine_arms_still_becomes_an_arm_swing_ratio(self):
+        """from_legacy is deliberately unchanged: a pre-2026-10-26 memo's `arms` is an Arm swing ratio,
+        not the new Arms % parameter (the spec's reason - every walker it concerns was translated in
+        October, and changing it would move them)."""
+        changes, pins, macros = gait.from_legacy(self.walk, {"arms": 0.5})   # it returns a 3-tuple
+        self.assertEqual(changes.get("arm_swing"), ("ratio", 0.5))
+        self.assertNotIn("arms", changes)
+        self.assertIn("arm_swing", pins)
+
+    def test_the_own_values_write_no_engine_knob(self):
+        e = gait.engine_knobs(self.walk, self.own, self.own, pins=set(), physics=False)
+        for key in ("arms", "arms_l", "arms_r", "hands", "hands_l", "hands_r"):
+            self.assertNotIn(key, e, msg=key)
+
+    def test_a_percent_becomes_a_share_on_both_sides(self):
+        asked = dict(self.own, arms=25.0, arms_l=25.0, arms_r=25.0,
+                     hands=0.0, hands_l=0.0, hands_r=0.0)
+        e = gait.engine_knobs(self.walk, self.own, asked, pins={"arms", "hands"}, physics=False)
+        self.assertAlmostEqual(e["arms_l"], 0.25, places=9)
+        self.assertAlmostEqual(e["arms_r"], 0.25, places=9)
+        self.assertAlmostEqual(e["hands_l"], 0.0, places=9)
+        self.assertAlmostEqual(e["hands_r"], 0.0, places=9)
+
+    def test_one_side_asked_leaves_the_other_at_its_own(self):
+        asked = dict(self.own, hands_l=0.0)
+        e = gait.engine_knobs(self.walk, self.own, asked, pins={"hands_l"}, physics=False)
+        self.assertAlmostEqual(e["hands_l"], 0.0, places=9)
+        self.assertNotIn("hands_r", e)
+
+    def test_the_card_s_road_stills_the_fingers(self):
+        """The whole way through: a percent asked of the parameter layer reaches the frame walk."""
+        asked = dict(self.own, hands=0.0, hands_l=0.0, hands_r=0.0)
+        e = gait.engine_knobs(self.walk, self.own, asked, pins={"hands"}, physics=False)
+        res = self.walk.evaluate(dict(e, in_place=0.0), None)
+        self.assertLess(own_turn(res, self.walk, "index_01_l"), 1e-6)
+        self.assertLess(own_turn(res, self.walk, "index_01_r"), 1e-6)

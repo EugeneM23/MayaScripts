@@ -206,6 +206,16 @@ PARAMS = (
     Param("head_lag", HEAD, "Head lag", "fr", "added", rule=_fixed(-5.0, 8.0),
           tip="Frames the head's motion comes after the chest's"),
     # the arms
+    #  2026-11-04: how much of the cycle's own animation each part of the arm keeps - the lever a pose's grip
+    #  pulls, as two knobs. Both at 0 % is exactly what a grip does; the hands alone keep a quiet hand on a
+    #  swinging arm. Arm swing is a different quantity (the harmonic swing in degrees, which leaves the clip's
+    #  own handwriting behind), and the amplitude these two scale is what the parameter layer never wrote
+    Param("arms", ARMS, "Arms", "%", "added", sided=True, rule=_fixed(0.0, 100.0), default=100.0,
+          tip="How much of the cycle's own arm swing the upper arm and the forearm keep; 0 % holds them "
+              "in the pose. A pose whose two hands hold one thing holds them on its own"),
+    Param("hands", ARMS, "Hands", "%", "added", sided=True, rule=_fixed(0.0, 100.0), default=100.0,
+          tip="How much of the cycle's own hand and finger animation the hands keep; 0 % holds them in "
+              "the pose. Under 2H or a grip the hand itself rides the weapon, so this is its fingers"),
     Param("arms_forward", ARMS, "Arms forward", "deg", "offset", sided=True, rule=_about(40.0, 40.0),
           tip="The upper arms held forward (+) or back"),
     Param("elbow", ARMS, "Elbow", "deg", "offset", sided=True, rule=_about(30.0, 90.0, 0.0, 150.0),
@@ -885,6 +895,10 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         else:
             e["arm_swing_add" + sfx] = sv("arm_swing") - so("arm_swing")
         e["arm_lag" + sfx] = sv("arm_lag") - so("arm_lag")
+        if abs(sv("arms") - 100.0) > 1e-9:          # % -> the engine's share (own 100: nothing written)
+            e["arms" + sfx] = sv("arms") / 100.0
+        if abs(sv("hands") - 100.0) > 1e-9:
+            e["hands" + sfx] = sv("hands") / 100.0
         e["arm_overlap" + sfx] = sv("arm_overlap") * fps / 1000.0      # ms -> frames of the new cycle (own 0)
         e["elbow_overlap" + sfx] = sv("elbow_overlap") * fps / 1000.0  # the cascade, on top of that L (own 0)
         e["hand_overlap" + sfx] = sv("hand_overlap") * fps / 1000.0
