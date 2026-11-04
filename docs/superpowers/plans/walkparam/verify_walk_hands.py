@@ -6,10 +6,10 @@ The animator (2026-11-04): «нужен парамметр который буд
 оригинального цикла ... В позе с ножиком не удается получить статические руки при нулевых значениях
 ручек в weapon». The design: docs/superpowers/specs/2026-11-04-walk-hands-from-the-cycle-design.md.
 
-Their own cycle under their own two pose cards and their own card state (read off userPrefs.mel): the
-sword card's grip stills its hands by itself (6.84 deg of hand in the pelvis's frame, 0.0 deg of
-finger); the dagger card's do not (16.25 / 14.01 and 11.1 / 12.8). Every gate measures what the eye
-reads: the hand in the PELVIS's frame and each finger's own local turn.
+Their own cycle under their own two pose cards and their own card state (read off userPrefs.mel), with
+2H dropped (below): the sword card's grip stills its hands by itself (6.84 deg of hand in the pelvis's
+frame, 0.0 deg of finger); the dagger card's do not (16.21 / 54.02 and 11.1 / 12.8). Every gate
+measures what the eye reads: the hand in the PELVIS's frame and each finger's own local turn.
 
 Row vectors: a local is w[j] @ w[parent].T, never the other way round (trap 225).
 """
@@ -32,8 +32,13 @@ THEIRS = {"changes": {"weapon_chest": ["offset", 1.0], "weapon_chest_rotation": 
                       "weapon_chest_position": ["offset", -1.0], "weapon_hold": ["offset", 1.0]},
           "pins": ["weapon_chest", "weapon_chest_position", "weapon_chest_rotation", "weapon_hold"],
           "physics": True}
+#  2H is dropped here on purpose (2026-11-04): a two-handed hold stills the hands by itself, so with the
+#  chip on every gate below would be vacuous - the knobs would have nothing left to hold back. This script
+#  is the two knobs, measured where they are the lever; the hold itself is verify_walk_two_handed.py.
+THEIRS["changes"] = dict((n, v) for n, v in THEIRS["changes"].items() if n != "weapon_hold")
+THEIRS["pins"] = [n for n in THEIRS["pins"] if n != "weapon_hold"]
 HELD = {"r": {"grip": (2.0, -3.0, 1.0), "tip": (2.0, -3.0, 116.0)}}   # the Long Sword's own blade
-FLOOR = 6.84          # deg: a still hand in the pelvis's frame on this cycle - the body's own turn
+FLOOR = 6.84          # deg: the hand riding the weapon the chest override holds still - the eye's "still"
 STILL = 0.05          # deg: what counts as a still finger
 
 import maya.standalone                                        # noqa: E402
@@ -159,12 +164,20 @@ gate(one["l"][1] < STILL and abs(one["r"][1] - d["r"][1]) < 0.01,
      "Hands_l 0 %%: the left fingers still (%.3f), the right as they were (%.2f against %.2f)"
      % (one["l"][1], one["r"][1], d["r"][1]))
 
-# ---- 6: the whole ask together reaches the sword's floor
-held = read(run(dagger, ZERO))
-gate(abs(held["r"][0] - FLOOR) < 0.2 and abs(held["l"][0] - FLOOR) < 0.2
-     and max(held["r"][1], held["l"][1]) < STILL,
-     "Arms 0 %% + Hands 0 %% + Whip 0 bring the dagger to the sword's floor: %.2f / %.2f deg, "
-     "fingers %.3f / %.3f" % (held["r"][0], held["l"][0], held["r"][1], held["l"][1]))
+# ---- 6: the whole ask together: every arm joint stands still ON THE BODY. Not in the pelvis's frame -
+#  the chest turns 15.7 deg on this cycle and the arms hang off it, which is the body's doing and no knob's
+whole = run(dagger, ZERO)
+held = read(whole)
+#  the FREE arm: the one riding the weapon is re-solved by IK to hold what the chest override holds
+#  still, so its own joints turn by that much (17.8 deg here) whatever the knobs say
+free = [s for s in ("l", "r") if s not in HELD]
+joints = [j for side in free
+          for j in [walk.index["clavicle_" + side]] + chains[side] + fingers(side)]
+worst_own = max(own_turn(whole, j) for j in joints)
+gate(worst_own < 0.01 and max(held["r"][1], held["l"][1]) < STILL and abs(held["r"][0] - FLOOR) < 0.2,
+     "Arms 0 %% + Hands 0 %% + Whip 0 hold the free arm on the body (worst of its %d joints %.4f deg); "
+     "the hand on the weapon reads the floor %.2f deg, the fingers %.3f / %.3f"
+     % (len(joints), worst_own, held["r"][0], held["r"][1], held["l"][1]))
 
 # ---- 7: the control - nothing but Hands reaches the fingers
 drag_only = read(run(dagger, [("whip", ("offset", -0.3))]))

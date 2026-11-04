@@ -11665,8 +11665,9 @@ not be driven** — the port took every byte and ran nothing, CPU flat at 0.08 s
 so everything is measured headless on **their own cycle** (`own:7833074715b34c33`, 31 frames at 30 fps),
 their own two cards and their own card state read off `userPrefs.mel` (Chest chip on, Rotation 0, Position
 0, 2H on, share 1).
-- **The two quantities the eye reads**: the hand's turn **in the pelvis's frame** (a still hand in a walking
-  body still shows the body's own 6.84 deg on this cycle — the floor) and each finger's **own local turn**.
+- **The two quantities the eye reads**: the hand's turn **in the pelvis's frame** (a still hand reads 6.84 deg on this
+  cycle — the floor; it is the hand riding the weapon the chest override holds still, not the body's
+  own turn, which is 15.7 deg) and each finger's **own local turn**.
   The sword card reads **6.84 / 6.84 and 0.00 / 0.00**, the dagger **16.25 / 14.01 and 11.07 / 12.80**. The
   cause is the **grip** (two hands on one thing within `GRIP_DIST` 30 cm): the frame walk then stills both
   arms and every finger with `gain *= 1 - alpha`. Nothing else about the two cards differs — both name all
@@ -11716,6 +11717,80 @@ their own two cards and their own card state read off `userPrefs.mel` (Chest chi
   residual is covered now, the spine's, the legs' and the head's are still one global number); landing
   `Arm swing`'s ask under 2H or a grip (the arm there is the IK's, and a knob claiming degrees it cannot hold
   would be worse than one that says so).
+
+**…and the hold itself is a knob: 2H, not the pose** (2026-11-04, minutes after they installed the two
+knobs: «Я не понимаю почему сейчас работает по разному один и тот же функционал с разными позами у меча руки
+стоят на месте при ручках в 0 у ножа дагера сильно двигаются. **Наши ручки не должны зависит от позы**»;
+asked nothing — the instruction is unambiguous). Spec
+`docs/superpowers/specs/2026-11-04-walk-two-handed-not-the-pose-design.md`. **This replaces «a pose's grip»
+as the thing that decides the one-body spring and the fingers' stilling.**
+- **The knobs reach what they say.** What differed between the two cards is the **baseline**, which no knob
+  set: a pose whose two hands hold one thing (`GRIP_DIST` 30 cm) is a **grip**, and the model then does two
+  invisible things to it — `_arm_dynamics` runs `_grip_motion` (one spring for the held thing, both arms
+  reaching their hands by IK) in place of a spring per arm, and the frame walk multiplies the arms' and the
+  fingers' gain by `1 - alpha`. Neither looked at the card, where **2H (`weapon_hold`) already said the hold
+  was two-handed** — `_arm_overlap` honours it and binds the free hand, so a dagger pose with 2H on was a
+  two-handed carry the springs still treated as two loose arms.
+- **The two sources, measured apart** on their own cycle, cards and card state (2H on, share 1) — the hand in
+  the pelvis's frame and the fingers' own turn, R / L:
+
+  | | hand | fingers |
+  |---|---|---|
+  | sword, as it is | 6.84 / 6.84 | 0.00 / 0.00 |
+  | sword, the stilling off | 6.84 / 6.84 | 11.07 / 12.80 |
+  | sword, the stilling AND the one-body spring off | 12.05 / 15.58 | 11.07 / 12.80 |
+  | dagger, as it was | **16.25 / 14.01** | **11.07 / 12.80** |
+  | dagger, + the one-body spring | 6.84 / 6.84 | 11.07 / 12.80 |
+  | dagger, + both | **6.84 / 6.84** | **0.00 / 0.00** |
+
+  So the dagger with both becomes the sword **exactly**, and the two are independent.
+- **One rule in one helper**, `Walk.held_together(ctx)` → (the sides whose hands hold one thing, the side that
+  carries it): the pose's own `grip_sides` while its share is above 0, **plus** — with two arm chains — the
+  side holding a weapon and the free side 2H binds to it, the same condition `_arm_overlap` computes for
+  `hold_sides` (a weapon in each hand binds nobody; an arm the pose's chip leaves out holds nothing, the
+  2026-11-03 rule; 2H works with no pose at all, being a knob). Worked out once per evaluate into
+  `ctx["held_sides"]` / `ctx["held_by"]` and read by `_arm_dynamics` (`grip = len(chains) == 2 and all(s in
+  holding for s in chains)`) and by the frame walk (hoisted once per frame). `_arm_overlap` is unchanged: it
+  already reads 2H.
+- **`_grip_motion` takes the carrier** (`hold_side`, the right hand by default): the hand the weapon is in
+  carries the thing and the other keeps its hold on it. It used to be the right hand whatever the scene held,
+  so a pose grip with 2H on and the weapon in the LEFT hand changes too — in its favour.
+- **The stilling stays the pose's share.** It fades the swing toward the hold the POSE gives the hand, so with
+  no pose there is nothing to fade toward: 2H alone gets the one-body spring and not the stilling, and
+  `Hands %` is the lever there. Both of their cards are at share 1.
+- **A pose grip is untouched** at every knob value (with no weapon in the scene 2H binds nobody), and two
+  loose arms are untouched. **What changes is a take already keyed with 2H on**: its hands and fingers become
+  still — the direction they asked for.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_two_handed.py` **0 of 12 gates** on their own cycle and
+  card — the dagger reading the sword to **0.000 deg**, the control with 2H off (16.21 / 54.02, fingers 11.07
+  / 12.80), the sword unchanged, 2H with no weapon binding nobody (42.43 / 54.04), a left-hand weapon carried
+  by the left, an arm out of the pose playing the cycle, the loop closed 3.9e-14 — **5 of 12 failing on the
+  build before** (gates 2, 3, 6, 8, 12, at 16.25 / 14.01 and 11.073 / 12.799); `tests/test_walk_two_handed.py`
+  23 tests, **7 failures and 13 errors on the build before**; 1177 walk unit tests OK. Re-run:
+  `verify_walk_one_arm.py` 0 of 13, `verify_walk_arm_overlap.py` 0 of 101, `verify_walk_weapon_overlap.py` 0
+  of 30, `verify_walk_weapon_chest.py` 0 of 22, `verify_walk_keys_changed.py` 0 of 23, `verify_walk_sprint.py`
+  12 of 12, `verify_walk_rig_pose_layer.py` 0 of 22, `verify_walk_pose_card.py` 0 of 6;
+  `verify_walk_straight_leg.py` [25] and `verify_walk_own.py` [10, 19] fail what they already failed.
+  **Not seen in a GUI Maya**: their next press, after Check update.
+- **The morning's verify had to drop 2H**, and that is worth keeping: with the chip on the hold now stills the
+  hands by itself, so every knob gate would be **vacuous** (trap 334's family). `verify_walk_hands.py` runs
+  with `weapon_hold` dropped from their card and is **0 of 11** again — and two of its gates were wrong about
+  what they measured. **`FLOOR` 6.84 is not «the body's own turn»**: it is the hand riding the weapon the chest
+  override holds still (the chest itself turns 15.7 deg in the pelvis's frame on this cycle, and a free arm
+  hanging off it reads that). And «the whole ask brings the dagger to the floor» held only because 2H was
+  binding the left hand: it now reads «the free arm stands still on the body», 23 joints at 0.0000 deg — the
+  arm riding the weapon is re-solved by IK to hold it and turns 17.8 deg of its own whatever the knobs say.
+- **Not built**: a lag or a strength per hand under the hold; removing the grip's stilling (a hand holding a
+  thing should not flex its fingers, and it would change every take already made).
+
+337. **A behaviour declared by a pose in one place and by a knob in another reads as «the knobs depend on the
+     pose».** Two hands on one thing made the model run one spring for the held body and still the fingers,
+     and both halves asked the POSE — while the card's own 2H chip said the same thing and only
+     `_arm_overlap` honoured it. So the same knob values gave two answers on two poses and the feature read as
+     broken, with every gate green (each measured its own knob, and the sword fixture had the hold already).
+     When a quantity can be declared two ways, give it ONE reader that takes either, and gate the two
+     declarations against each other — here, the pose-less card at the same knobs must read the posed one to
+     the digit.
 
 319. **A gait parameter that does not exist is a change that silently does nothing.** `normal_params` keeps
      only keys in `gait.keys()`, so a verify asking `("arm_drag", ("offset", -1.5))` — a plausible name, and

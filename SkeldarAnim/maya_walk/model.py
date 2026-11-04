@@ -2986,6 +2986,7 @@ class Walk(object):
         else:
             ctx["spread"] = fix["width"]
         ctx["ks"] = ks = sided(k)
+        ctx["held_sides"], ctx["held_by"] = self.held_together(ctx)
         ctx["foot_lag"] = dict((side, ks[side]["foot_lag"] * P / float(n)) for side in SIDES)
         ctx["spine_map"] = self._spine_map(ctx["pose"], ctx["alpha"])
         ctx["turns"] = {}
@@ -3878,6 +3879,7 @@ class Walk(object):
         body = self._body(phi, tau, ctx, drop, carry)
         chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
         ks = ctx.get("ks") or {"l": k, "r": k}
+        holding = self._held_sides(ctx)            # the sides whose hands hold one thing (held_together)
         gains = {"spine": k["spine"] * ex}
         feet = dict((side, self._clock(side, tau, ctx)) for side in SIDES)
         aspects = ctx.get("aspects")
@@ -3928,10 +3930,10 @@ class Walk(object):
                             # thing together HOLD it - its swing fades, the thing sways (_arm_dynamics)
                             if j in pose["arms"]:
                                 centre = toward(centre, pose["arms"][j], a)
-                            # the stilling is per side ("grip_sides", walkpose.filtered): an arm left out of the
-                            # pose swings as the cycle does, and the one that holds the thing still holds it
-                            # (2026-11-02). A pose from before carries the bare flag for both arms.
-                            if self._side(j) in pose.get("grip_sides", SIDES if pose.get("grip") else ()):
+                            # the stilling is per side (held_together): an arm left out of the pose swings
+                            # as the cycle does, the one that holds the thing still holds it (2026-11-02),
+                            # and 2H declares a hold the pose does not have (2026-11-04)
+                            if self._side(j) in holding:
                                 gain *= 1.0 - a
                     if j in self.hand_bones or kind == "finger":
                         gain *= ks[self._side(j)]["hands"]
@@ -4124,6 +4126,35 @@ class Walk(object):
                 out[side] = [self.index[n] for n in names]
         return out
 
+    def held_together(self, ctx):
+        """The sides whose hands hold ONE thing, and the side that carries it: a pose's own grip, and 2H
+        (`weapon_hold`) binding a free hand to the hand that holds a weapon. 2H is a knob and a pose's grip
+        is not, and the two mean the same thing - so the model follows the knob too, and a pose whose hands
+        are apart reads exactly as a two-handed pose does once 2H is on (2026-11-04). An arm the pose's own
+        chip leaves out holds nothing (the 2026-11-03 rule)."""
+        pose, chains = ctx["pose"], self._arm_chains()
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        inside = None if pose is None or ctx["alpha"] <= 0.0 else pose.get("arm_sides")
+        out_of_pose = set() if inside is None else set(SIDES) - set(inside)
+        sides, carrier = set(), "r"
+        if pose is not None and ctx["alpha"] > 0.0:
+            # per side, as the frame walk has read it since 2026-11-02: one arm out of the pose leaves the
+            # other holding its thing, and a pose from before carries the bare flag for both arms
+            sides |= set(pose.get("grip_sides", SIDES if pose.get("grip") else ()))
+        held = sorted(s for s in (ctx.get("weapons") or {}) if s in chains and s not in out_of_pose)
+        if held and len(chains) == 2:            # the same condition _arm_overlap computes for `hold_sides`
+            bound = set(s for s in chains if s not in held and s not in out_of_pose
+                        and float(ks[s]["weapon_hold"]) > 0.5)
+            if bound:
+                sides |= set(held) | bound
+                carrier = held[0]                # the hand the weapon is in carries it, left or right
+        return sides - out_of_pose, carrier
+
+    def _held_sides(self, ctx):
+        """`ctx["held_sides"]`, which evaluate works out once; worked out here for a ctx made by hand."""
+        sides = ctx.get("held_sides")
+        return self.held_together(ctx)[0] if sides is None else sides
+
     def _chest_joint(self):
         """The joint a weapon inherits its motion from under the chest override: the TOP spine joint the chest
         knobs already use (`chest_share`), so no bone name is hardcoded here; with no spine of its own, the
@@ -4144,13 +4175,14 @@ class Walk(object):
         motion on the joint above as that joint actually moves - through a damped spring, and feels the
         acceleration of the point it hangs from: the arms trail the body's bob, sway and twist and whip through
         (Arm drag: the spring's delay in frames; Arm bounce: how far it overshoots). Hands that hold one thing
-        together (a pose's grip) keep holding it: the thing sways and trails as one body and the arms reach it
-        by IK. Integrated ARM_SUBSTEPS a frame, cycle after cycle until a cycle starts where the last did, the
-        seam closed. Returns what it did (info["arms"])."""
+        together (a pose's grip, or 2H: held_together) keep holding it: the thing sways and trails as one body
+        and the arms reach it by IK. Integrated ARM_SUBSTEPS a frame, cycle after cycle until a cycle starts
+        where the last did, the seam closed. Returns what it did (info["arms"])."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
-        pose = ctx["pose"]
-        grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
+        holding = self._held_sides(ctx)
+        carrier = ctx.get("held_by") or self.held_together(ctx)[1]
+        grip = bool(len(chains) == 2 and all(s in holding for s in chains))
         # each arm its own side's drag and bounce; hands holding one thing move as one: the two sides' mean
         own = dict((side, (ks[side]["arm_drag"], ks[side]["arm_bounce"])) for side in chains)
         if grip:
@@ -4168,7 +4200,7 @@ class Walk(object):
             return w0, zeta, max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0)))   # w0 dt <= 1/4: the integration stays true
         kin = worlds.copy()
         if grip:
-            new, cycles = self._grip_motion(kin, n, chains, *spring(*own["r"]))
+            new, cycles = self._grip_motion(kin, n, chains, *spring(*own[carrier]), hold_side=carrier)
         else:
             new, cycles = {}, 0
             for side, chain in chains.items():
@@ -4549,12 +4581,13 @@ class Walk(object):
                 moved = max(moved, float(np.linalg.norm(place(tip_p, hands[side][f]) - t[f])))
         return moved
 
-    def _grip_motion(self, kin, n, chains, w0, zeta, S):
-        """Two hands holding one thing: the right hand carries it - its world turn and place trail their
-        target through the same spring (the travel taken out); the left keeps its hold on the right; both arms
-        reach their hands by IK (the elbows bend the way the frames bend them, the bones keep their lengths)."""
+    def _grip_motion(self, kin, n, chains, w0, zeta, S, hold_side="r"):
+        """Two hands holding one thing: ONE hand carries it - its world turn and place trail their target
+        through the same spring (the travel taken out); the other keeps its hold on it; both arms reach their
+        hands by IK (the elbows bend the way the frames bend them, the bones keep their lengths). The carrier
+        is the hand the weapon is in under 2H, and the right hand for a pose's own grip (2026-11-04)."""
         dt = 1.0 / S
-        hold = chains["r"][-1]
+        hold = chains[hold_side][-1]
         R = np.array([orthonormal(kin[hold, f, :3, :3]) for f in range(n + 1)])
         travel = (kin[hold, n, 3, :3] - kin[hold, 0, 3, :3]) / float(n)
         path = np.array([kin[hold, f, 3, :3] - travel * f for f in range(n + 1)])
