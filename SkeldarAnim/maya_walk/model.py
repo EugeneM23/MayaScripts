@@ -126,29 +126,22 @@ KNOBS = (
     ("arm_overlap", 0.0, -120.0, 120.0),
     ("elbow_overlap", 0.0, -120.0, 120.0),
     ("hand_overlap", 0.0, -120.0, 120.0),
-    # The weapon's overlap (2026-10-30): a weapon held in a hand swung about its GRIP so its blade aims at its
-    # own tip read this many frames earlier - the animator's own recipe (the hands IK'd to the weapon, Tools'
-    # Aim target on the tip, the tip's baked animation shifted) - with every hand holding it turned along, so
-    # a two-handed hold is kept. Per side; one weapon in two hands takes the sides' mean. It needs the weapon
-    # the SCENE holds (evaluate's `weapons`): with none it does nothing
+    # The Weapon tab, rebuilt 2026-11-05 on the animator's own recipe, shown step by step in a scene: the IK
+    # arms parent-constrained to the torso with their animation DELETED - the hand static relative to the
+    # chest - and then the weapon's baked animation shifted a few frames on an additive layer, so the torso
+    # leads and the weapon follows. «Вот так должен работать наш weapon overlap для всех адитивных поз без
+    # исключения.» So:
+    #   `weapon_hold` (Hold, ON by default): the hand rides the CHEST rigidly, at its own MEAN offset over
+    #       the cycle - it stops playing the arm's swing and keeps its pose relative to the torso, which is
+    #       what an additive pose's hold means. Two hands holding one thing take the carrier's transform, so
+    #       the grip is kept to machine precision.
+    #   `weapon_overlap` (ms in the card, frames here): the chest pose the hand rides is this many frames
+    #       old - the overlap, and the one number the animator dials.
+    # Per side, and ONLY where the additive pose holds that arm: at Pose 0 there is no pose, the arms play
+    # the cycle and the tab does nothing (the share blends it in). It needs NO weapon in the scene - the hand
+    # is the lever, and anything it holds follows by its own constraint.
+    ("weapon_hold", 1.0, 0.0, 1.0),
     ("weapon_overlap", 0.0, -120.0, 120.0),
-    # The weapon PARENTED to the chest (`weapon_chest`, 2026-11-03: «что-то типа parent constrain к туловищу
-    # по позиции и вращению, а ползунками контролировали силу этого констрейна»). While it is on the weapon
-    # stops playing its own animation and hangs at its MEAN offset from the chest; what it inherits of the
-    # chest is the strengths' doing - the chest's turn slerped from the cycle's mean heading by
-    # `weapon_chest_rotation` and its bob and sway pulled toward the mean by `weapon_chest_position` (the
-    # walk's travel kept at any strength, or the weapon is left behind and the loop does not close), read
-    # from `weapon_chest_lag` frames ago. So 1 / 1 / 0 rides the torso rigidly and 0 / 0 stands still in the
-    # air, travelling with the walk; off, the three do nothing at all. Every hand holding the weapon is moved
-    # with it (the hands follow the weapon; _arm_to_hand rebuilds the arm), so the grip holds.
-    # `weapon_hold` (2H) binds a free hand to the one holding the weapon by the offset it has at frame 0: a
-    # two-handed carry with no pose grip. Per side; all of them need the weapon the SCENE holds
-    # (evaluate's `weapons`)
-    ("weapon_hold", 0.0, 0.0, 1.0),
-    ("weapon_chest", 0.0, 0.0, 1.0),
-    ("weapon_chest_rotation", 1.0, 0.0, 1.0),
-    ("weapon_chest_position", 1.0, 0.0, 1.0),
-    ("weapon_chest_lag", 0.0, -120.0, 120.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -201,8 +194,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "hands", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_chest",
-         "weapon_chest_rotation", "weapon_chest_position", "weapon_chest_lag", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -3048,10 +3040,7 @@ class Walk(object):
                              or abs(ks[s]["arm_overlap"]) >= OVERLAP_QUIET
                              or abs(ks[s]["elbow_overlap"]) >= OVERLAP_QUIET
                              or abs(ks[s]["hand_overlap"]) >= OVERLAP_QUIET
-                             or (s in (ctx.get("weapons") or {})
-                                 and (abs(ks[s]["weapon_overlap"]) >= OVERLAP_QUIET
-                                      or ks[s]["weapon_chest"] > 0.5))
-                             or (ks[s]["weapon_hold"] > 0.5 and (ctx.get("weapons") or {}))
+                             or s in self.rigid_sides(ctx)     # the Weapon tab's Hold moves the arms
                              for s in SIDES)
             swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
@@ -4127,11 +4116,9 @@ class Walk(object):
         return out
 
     def held_together(self, ctx):
-        """The sides whose hands hold ONE thing, and the side that carries it: a pose's own grip, and 2H
-        (`weapon_hold`) binding a free hand to the hand that holds a weapon. 2H is a knob and a pose's grip
-        is not, and the two mean the same thing - so the model follows the knob too, and a pose whose hands
-        are apart reads exactly as a two-handed pose does once 2H is on (2026-11-04). An arm the pose's own
-        chip leaves out holds nothing (the 2026-11-03 rule)."""
+        """The sides whose hands hold ONE thing, and the side that carries it: a pose's own grip. An arm the
+        pose's own chip leaves out holds nothing (the 2026-11-03 rule). The Weapon tab's Hold needs nothing
+        here: two hands rigid on the chest keep their hold by construction (_weapon_hold)."""
         pose, chains = ctx["pose"], self._arm_chains()
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         inside = None if pose is None or ctx["alpha"] <= 0.0 else pose.get("arm_sides")
@@ -4142,12 +4129,8 @@ class Walk(object):
             # other holding its thing, and a pose from before carries the bare flag for both arms
             sides |= set(pose.get("grip_sides", SIDES if pose.get("grip") else ()))
         held = sorted(s for s in (ctx.get("weapons") or {}) if s in chains and s not in out_of_pose)
-        if held and len(chains) == 2:            # the same condition _arm_overlap computes for `hold_sides`
-            bound = set(s for s in chains if s not in held and s not in out_of_pose
-                        and float(ks[s]["weapon_hold"]) > 0.5)
-            if bound:
-                sides |= set(held) | bound
-                carrier = held[0]                # the hand the weapon is in carries it, left or right
+        if held and sides:
+            carrier = held[0]                    # the hand the weapon is in carries it, left or right
         return sides - out_of_pose, carrier
 
     def _held_sides(self, ctx):
@@ -4185,6 +4168,12 @@ class Walk(object):
         grip = bool(len(chains) == 2 and all(s in holding for s in chains))
         # each arm its own side's drag and bounce; hands holding one thing move as one: the two sides' mean
         own = dict((side, (ks[side]["arm_drag"], ks[side]["arm_bounce"])) for side in chains)
+        #  a hand the Weapon tab holds rigid on the chest is a CHILD of the chest: no spring of its own
+        #  (2026-11-05 - the animator's step 1 is a static arm, and a spring would soften it back)
+        rigid = self.rigid_sides(ctx)
+        for side in rigid:
+            own[side] = (0.0, own[side][1])
+        grip = bool(grip and not (rigid & set(chains)))
         if grip:
             own = dict((side, (sum(d for d, _ in own.values()) / 2.0, sum(b for _, b in own.values()) / 2.0))
                        for side in own)
@@ -4378,6 +4367,20 @@ class Walk(object):
             out[up_j], out[low_j], out[hand_j] = mu, ml, mh
         return out
 
+    def rigid_sides(self, ctx):
+        """The sides the Weapon tab holds RIGID on the chest (`weapon_hold`, 2026-11-05): its chip on, and the
+        additive pose holding that arm - at Pose 0 there is no pose and the arms play the cycle, and an arm
+        the pose's own chip leaves out is left alone (the 2026-11-03 rule). Such a hand is a child of the
+        chest, so the arm springs (Whip) leave it alone too: the animator's step 1 is a static arm."""
+        pose = ctx.get("pose")
+        if pose is None or ctx.get("alpha", 0.0) <= 0.0:
+            return set()
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        inside = pose.get("arm_sides")
+        out_of_pose = set() if inside is None else set(SIDES) - set(inside)
+        return set(s for s in self._arm_chains()
+                   if s not in out_of_pose and float(ks[s]["weapon_hold"]) > 0.5)
+
     def _arm_overlap(self, worlds, n, ctx, only=None):
         """The arms late by Arm overlap (frames of the new cycle; in place on `worlds`, (J, n+1, 4, 4)): each
         hand's world motion - the linear travel taken out - read that many frames earlier, and the arm rebuilt
@@ -4389,8 +4392,8 @@ class Walk(object):
         own TURN at L + h while its place stays at L (under a grip it is the HELD thing's turn that lags its
         travel, so the hold is kept to machine precision and the other hand swings round it), and Elbow
         overlap reads the elbow's bend PLANE at L + e (per arm, and free under a grip - it moves no hand).
-        Weapon overlap (2026-10-30) then swings the weapon the scene holds (ctx["weapons"]) about its grip
-        onto its own tip read that much earlier, and turns every hand holding it along (_weapon_swing).
+        The Weapon tab (rebuilt 2026-11-05) then holds the hand RIGID on the chest and reads that chest
+        `weapon_overlap` frames late (_weapon_hold): the animator's own recipe, for every additive pose.
         Returns what it did (info["arms"]["overlap"])."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
@@ -4405,44 +4408,35 @@ class Walk(object):
         out_of_pose = set() if inside is None else set(SIDES) - set(inside)
         held = dict((side, w) for side, w in (ctx.get("weapons") or {}).items()
                     if side in chains and side not in out_of_pose)
-        swings = dict((side, float(ks[side]["weapon_overlap"])) for side in held)
         grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
         if grip:                      # hands holding one thing move as one: the two sides' mean
             for table in (lags, turns):
                 mean = sum(table.values()) / float(len(table))
                 table.update(dict((side, mean) for side in table))
-            if len(swings) == 1:      # one weapon in two hands: its lag is the two sides' mean too
-                side = list(swings)[0]
-                swings[side] = sum(float(ks[s]["weapon_overlap"]) for s in chains) / float(len(chains))
-        swings = dict((side, v) for side, v in swings.items() if abs(v) >= OVERLAP_QUIET)
-        #  the chest parent (2026-11-03) and 2H: a side is in `chest_set` where its own `weapon_chest` chip
-        #  is on - neither end of the strengths is the cycle's own animation, so the mode cannot be read off
-        #  them - and `hold_sides` are the free hands 2H binds to a hand holding a weapon
-        chest_set = {}
-        for side in held:
-            if float(ks[side]["weapon_chest"]) > 0.5:
-                chest_set[side] = (float(ks[side]["weapon_chest_rotation"]),
-                                   float(ks[side]["weapon_chest_position"]),
-                                   float(ks[side]["weapon_chest_lag"]))
-        hold_sides = sorted(s for s in chains
-                            if float(ks[s]["weapon_hold"]) > 0.5 and s not in held and held
-                            and s not in out_of_pose)
-        riders = dict((side, [side] + [s for s in sorted(chains)
-                                       if s != side and s not in held and s not in out_of_pose
-                                       and (grip or s in hold_sides)])
-                      for side in held)
+        #  The Weapon tab (2026-11-05): a side HOLDS - its hand rigid on the chest, read `weapon_overlap`
+        #  frames late - where its chip is on and the additive pose holds that arm. No weapon is needed in
+        #  the scene: the hand is the lever. Two hands holding one thing hold together, so the carrier alone
+        #  drives and the other follows (the grip kept to machine precision).
+        holds = dict((side, float(ks[side]["weapon_overlap"])) for side in self.rigid_sides(ctx))
+        followers = dict((side, [side]) for side in holds)
+        #  two hands on ONE thing (a pose's own grip) hold together: the carrier drives at the two sides'
+        #  mean lag and the other takes its delta, so the grip is kept to machine precision. A free hand -
+        #  a one-handed pose - takes its OWN hold instead (it has its own offset from the chest, and the
+        #  carrier's delta would leave it swinging: 32 cm on the dagger card, 2026-11-05)
+        if holds and len(holds) == 2 and grip:
+            carrier = list(held)[0] if len(held) == 1 else "r"
+            mean = sum(holds.values()) / float(len(holds))
+            others = [s for s in sorted(holds) if s != carrier]
+            holds = {carrier: mean}
+            followers = {carrier: [carrier] + others}
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
         out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
-               "weapon": biggest(swings), "weapon_sides": sorted(swings), "weapon_cm": 0.0,
-               "chest": sorted(chest_set), "chest_cm": 0.0, "hold": list(hold_sides),
-               "held": sorted(held),          # the sides the SCENE gives a weapon the knobs may act on
-               "out_of_pose": sorted(s for s in out_of_pose
-                                     if s in chains and s in (ctx.get("weapons") or {}))}
-        if not chains or (max(out["frames"], out["elbow"], out["hand"], out["weapon"]) < OVERLAP_QUIET
-                          and not chest_set and not hold_sides):
+               "hold": sorted(set(s for row in followers.values() for s in row)),
+               "weapon": biggest(holds), "hold_cm": 0.0,
+               "held": sorted(held),          # the sides the SCENE gives a weapon (the line's own wording)
+               "out_of_pose": sorted(s for s in out_of_pose if s in chains)}
+        if not chains or (max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET and not holds):
             out["frames"] = out["elbow"] = out["hand"] = out["weapon"] = 0.0
-            out["weapon_sides"] = []
-            out["chest"] = []
             out["hold"] = []
             return out
         kin = worlds.copy()
@@ -4466,18 +4460,8 @@ class Walk(object):
             for side, chain in chains.items():
                 if max(abs(lags[side]), abs(turns[side]), abs(elbows[side])) >= OVERLAP_QUIET:
                     hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
-        for s in hold_sides:                       # 2H: the free hand bound to the one holding the weapon
-            holder = sorted(w for w in riders if s in riders[w])[0]
-            for who in (holder, s):
-                if who not in hands:
-                    hands[who] = np.array(kin[chains[who][-1]])
-            off = hands[s][0] @ np.linalg.inv(hands[holder][0])
-            for f in range(n + 1):
-                hands[s][f] = off @ hands[holder][f]
-        if chest_set:
-            out["chest_cm"] = self._weapon_chest(kin, n, chains, hands, chest_set, held, riders)
-        if swings:
-            out["weapon_cm"] = self._weapon_swing(kin, n, chains, hands, swings, held, riders)
+        if holds:
+            out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, ctx["alpha"])
         hints = {}
         for side, chain in chains.items():
             if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
@@ -4492,10 +4476,9 @@ class Walk(object):
         the cycle itself; 0 / 0 is a cycle that glides down the travel line with no turn, no bob and no sway
         - what a weapon hung on it inherits is nothing but the walk's own locomotion. The travel stays at any
         strength: without it the weapon is left behind within a cycle and the loop does not close.
-        `_weapon_chest` reads two cycles through it: the chest's own at the strengths the animator asked, and
-        the holding hand's pose in the chest's frame at 0 / 0 - held at its mean, which is what makes the
-        weapon a child of the chest rather than a mix with its own animation (that cycle's "travel" is
-        nothing: a closed loop)."""
+        `_weapon_hold` reads the holding hand's pose in the chest's frame through it at 0 / 0 - held at its
+        mean, which is what makes the hand a CHILD of the chest rather than a mix with its own animation
+        (that cycle's "travel" is nothing: a closed loop)."""
         mats = np.asarray(mats, float)
         n = mats.shape[0] - 1
         per = (mats[n, 3, :3] - mats[0, 3, :3]) / float(n)
@@ -4510,75 +4493,43 @@ class Walk(object):
             out[f, 3, :3] = mean_p + (dev[f] - mean_p) * position + per * f
         return out
 
-    def _weapon_chest(self, kin, n, chains, hands, settings, held, riders):
-        """The weapon PARENT-CONSTRAINED to the chest, the strengths its weight (in place on `hands`). The
-        weapon stops playing its own animation and hangs at its MEAN offset from the chest; what it inherits
-        of the chest is `steady_chest(C, rotation, position)` - its turn slerped from the cycle's mean
-        heading, its bob and sway pulled toward the mean, the travel kept - read `lag` frames earlier
-        (shifted_cycle, so the loop closes):
+    def _weapon_hold(self, kin, n, chains, hands, holds, followers, alpha):
+        """The Weapon tab, rebuilt 2026-11-05 on the animator's own recipe (in place on `hands`): the hand is
+        held RIGID on the chest - its offset from the chest frozen at its own MEAN over the cycle, so it stops
+        playing the arm's swing and keeps the additive pose's hold on the torso - and the chest it rides is
+        read `holds[side]` frames earlier, so the torso leads and the hand with whatever it holds follows
+        late:
 
-            A = steady(H(f) . inv(C(f)), 0, 0)      the hand's offset from the chest, held at its mean
-            want(f) = shifted(steady(C, rotation, position), lag)(f)
-            T(f) = inv(H(f)) . A(f) . want(f)
+            A    = steady(H(f) . inv(C(f)), 0, 0)      the hand's offset from the chest, held at its mean
+            want = shifted(C, lag)                     the chest's own pose, that many frames old
+            H'(f) = blend(H(f), A . want(f), alpha)    the pose's share blends it in
 
-        So the strengths are the constraint's weight, as the animator asked (2026-11-03, «ползунками
-        контролировали силу этого констрейна. Если 0 то стоим на месте если 1 то двигаемся за туловищем, а
-        не так как в изначальной анимации»): 1 / 1 / 0 rides the torso rigidly, 0 / 0 stands still in the
-        air and travels with the walk, and a lag is how old a chest it rides. Neither end is the cycle's own
-        animation, which is why the mode is a chip of its own (`weapon_chest`) and not read off the
-        strengths. Every hand holding that weapon and its riders take the same T - one world transform, so
-        the grip is kept to machine precision - and _arm_to_hand rebuilds the arm: the hands follow the
-        weapon. What is left at 0 / 0 is the arm springs' own lag (Whip, `Arm drag`), the arm's weight
-        passing the body's motion on. Returns the most a grip point moved, cm (the line's "the weapon rides
-        the chest, moved N cm")."""
+        It needs NO weapon in the scene: the hand is the lever, and a weapon in it follows by its own
+        constraint (the plugin's weapon space is parent-constrained to the hand with no offset). Hands that
+        hold one thing are one `followers` row - the carrier drives and the others take its own delta, so the
+        grip is kept to machine precision - and _arm_to_hand rebuilds each arm, so the arm follows the hand.
+        At Pose 0 (alpha 0) nothing of this runs at all and the arms play the cycle. Returns the most a hand
+        moved, cm (the line's "the hand rides the chest")."""
         chest = self._chest_joint()
-        if chest is None:
+        if chest is None or alpha <= 0.0:
             return 0.0
         moved = 0.0
-        place = lambda p, m: p @ m[:3, :3] + m[3, :3]
-        for side, (rotation, position, lag) in sorted(settings.items()):
-            C = np.asarray(kin[chest], float)
-            want = shifted_cycle(self.steady_chest(C, rotation, position), lag)
-            for s in riders[side]:
-                if s not in hands:                 # a hand with no lag of its own joins at the frames' own
+        C = np.asarray(kin[chest], float)
+        inv_c = np.linalg.inv(C)
+        for side, lag in sorted(holds.items()):
+            for s in followers.get(side, [side]):
+                if s not in hands:             # a hand with no lag of its own joins at the frames' own
                     hands[s] = np.array(kin[chains[s][-1]])
             H = np.array(hands[side], float)
-            arm = self.steady_chest(H @ np.linalg.inv(C), 0.0, 0.0)     # held at its mean: a parent, not a mix
+            arm = self.steady_chest(H @ inv_c, 0.0, 0.0)       # the offset held at its mean: a parent, not a mix
+            want = shifted_cycle(C, lag)
             inv_h = np.linalg.inv(H)
-            grip_p = np.asarray(held[side]["grip"], float)
             for f in range(n + 1):
-                T = inv_h[f] @ arm[f] @ want[f]
-                before = place(grip_p, hands[side][f])
-                for s in riders[side]:
+                full = blend_matrix(H[f], arm[f] @ want[f], alpha)
+                T = inv_h[f] @ full
+                for s in followers.get(side, [side]):
                     hands[s][f] = hands[s][f] @ T
-                moved = max(moved, float(np.linalg.norm(place(grip_p, hands[side][f]) - before)))
-        return moved
-
-    def _weapon_swing(self, kin, n, chains, hands, swings, held, riders):
-        """Weapon overlap, in place on `hands`: each weapon held in a hand (`held` {side: {"grip", "tip"} in
-        that hand's own frame}) swung about its GRIP so its blade aims at its own tip read `swings[side]`
-        frames earlier. The tip path is read off the ASSEMBLY as the other knobs have left it, so a lag of 0
-        is a no-op whatever they did and the aim is always where the blade really points. Every hand in
-        `riders[side]` takes the same swing - its own, and the other one too under a two-handed grip or 2H
-        where that hand holds no weapon of its own - so a two-handed hold is kept to machine precision.
-        Returns the most a tip moved, cm (the status line's "its tip N cm behind")."""
-        moved = 0.0
-        for side, lag in sorted(swings.items()):
-            grip_p = np.asarray(held[side]["grip"], float)
-            tip_p = np.asarray(held[side]["tip"], float)
-            for s in riders[side]:
-                if s not in hands:                 # a hand with no lag of its own joins at the frames' own
-                    hands[s] = np.array(kin[chains[s][-1]])
-            mats = hands[side]
-            place = lambda p, m: p @ m[:3, :3] + m[3, :3]
-            o = np.array([place(grip_p, m) for m in mats])
-            t = np.array([place(tip_p, m) for m in mats])
-            want = shifted_points(t, lag)
-            for f in range(n + 1):
-                turn = swung_about(o[f], aim_swing(t[f] - o[f], want[f] - o[f]))
-                for s in riders[side]:
-                    hands[s][f] = hands[s][f] @ turn
-                moved = max(moved, float(np.linalg.norm(place(tip_p, hands[side][f]) - t[f])))
+                moved = max(moved, float(np.linalg.norm(full[3, :3] - H[f, 3, :3])))
         return moved
 
     def _grip_motion(self, kin, n, chains, w0, zeta, S, hold_side="r"):
@@ -4781,8 +4732,11 @@ def describe(result):
             "the held weapon trails" if a["grip"] else "the arms trail", a["drag"],
             ", bouncing" if a["bounce"] > 0.05 else "")
     swung = (info.get("arms") or {}).get("overlap") or {}
-    if swung.get("weapon"):
-        text += " | the weapon trails %.1f fr (its tip %.1f cm behind)" % (swung["weapon"], swung["weapon_cm"])
+    if swung.get("hold"):
+        text += " | %s the chest" % ("both hands ride" if len(swung["hold"]) > 1 else
+                                     "the %s hand rides" % {"l": "left", "r": "right"}[swung["hold"][0]])
+        if swung.get("weapon"):
+            text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
     return text + share_line(info) + placement_line(info) + balance_line(info)
 
 

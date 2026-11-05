@@ -1183,7 +1183,8 @@ class PosePartsTests(unittest.TestCase):
 
     def test_half_held_arms_swing_half(self):
         w = walk()
-        r = w.evaluate({"pose": 0.5, "exaggeration": 1.0, "arm_drag": 0.0}, a_grip(w))
+        r = w.evaluate({"pose": 0.5, "exaggeration": 1.0, "arm_drag": 0.0, "weapon_hold": 0.0},
+                       a_grip(w))
         j = w.index["hand_l"]
         mean = w.lmean[j]
         swing = max(angle(local_rot(r, "hand_l", w, f) @ mean.T) for f in range(24))
@@ -1958,8 +1959,11 @@ class ArmTests(unittest.TestCase):
         """Hands holding one thing together keep their hold through the drag: the thing trails the chest as one
         body and the arms reach it, their bones whole."""
         w = walk()
-        target = w.evaluate({"pose": 1.0, "arm_drag": 0.0, "balance": 0.0}, a_grip(w))
-        r = w.evaluate({"pose": 1.0, "arm_drag": 3.0, "arm_bounce": 0.5, "balance": 0.0}, a_grip(w))
+        #  the Weapon tab's Hold off (2026-11-05): with it on the held hands are a child of the chest
+        #  and the springs leave them alone, which is a rule of its own
+        target = w.evaluate({"pose": 1.0, "arm_drag": 0.0, "balance": 0.0, "weapon_hold": 0.0}, a_grip(w))
+        r = w.evaluate({"pose": 1.0, "arm_drag": 3.0, "arm_bounce": 0.5, "balance": 0.0,
+                        "weapon_hold": 0.0}, a_grip(w))
         self.assertTrue(r.info["arms"]["grip"])
         hands = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
         held = [target.worlds[w.index["hand_l"], f] @ np.linalg.inv(target.worlds[w.index["hand_r"], f]) for f in range(25)]

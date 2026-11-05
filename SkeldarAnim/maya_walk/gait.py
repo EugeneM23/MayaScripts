@@ -246,40 +246,21 @@ PARAMS = (
           tip="Frames the elbow's bend comes after the arm's forward swing"),
     Param("hand_lag", ARMS, "Hand lag", "fr", "added", sided=True, rule=_fixed(-5.0, 8.0),
           tip="Frames the hand comes after the forearm"),
-    # the weapon
-    Param("weapon_overlap", WEAPON, "Weapon overlap", "ms", "added", sided=True,
+    # the weapon: the Weapon tab, rebuilt 2026-11-05 on the animator's own recipe - the arms IK'd to the
+    # torso with their animation deleted (a hand static relative to the chest), then the weapon's baked
+    # animation shifted a few frames on an additive layer. Two knobs, for every additive pose
+    Param("weapon_hold", WEAPON, "Hold", "", "toggle", sided=True, default=1.0,
+          tip="The hand rides the CHEST rigidly: it stops playing the arm's own swing and keeps the pose's "
+              "hold on the torso, at its own mean offset over the cycle - the animator's step 1, the IK arm "
+              "parented to the chest with its animation deleted. Whatever the hand holds goes with it, so a "
+              "weapon needs no setting of its own, and two hands holding one thing keep their grip exactly. "
+              "It acts only where the additive pose holds that arm: at Pose 0 the arms play the cycle. Off, "
+              "the arm swings as the cycle swings it and Overlap does nothing"),
+    Param("weapon_overlap", WEAPON, "Overlap", "ms", "added", sided=True,
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
-          tip="The weapon in the hands swung about its grip so its blade points at its own tip this many "
-              "milliseconds ago - the sword's tip trails and the blade leads back to it, with the hands "
-              "holding it turning along (a two-handed hold is kept). It needs a weapon in a hand: the "
-              "Inventory's Equip puts one there. The slider reaches half the cycle either way"),
-    Param("weapon_hold", WEAPON, "2H", "", "toggle", sided=True, default=0.0,
-          tip="Binds the free hand to the one holding the weapon: it keeps the offset it has at the cycle's "
-              "first frame and rides the weapon from then on, so a two-handed carry holds without a pose's "
-              "own grip - that arm's own swing becomes a consequence. A hand holding its own weapon is left "
-              "alone. It needs a weapon in a hand"),
-    Param("weapon_chest", WEAPON, "Chest", "", "toggle", sided=True, default=0.0,
-          tip="Parents the weapon to the chest: it stops playing its own animation, hangs at its mean "
-              "offset from the chest and inherits as much of the chest as the three sliders below ask - "
-              "they are the constraint's strength. The holding hand is re-solved onto the weapon, so the "
-              "grip holds and the arm follows. Off, the three do nothing. It needs a weapon in a hand"),
-    Param("weapon_chest_rotation", WEAPON, "Chest rotation", "", "added", sided=True,
-          rule=_fixed(0.0, 1.0), default=1.0,
-          tip="With Chest on, how much of the chest's TURN the weapon inherits: 1 it turns with the torso "
-              "as a parent constraint does, 0 it keeps one heading while the torso turns under it. The "
-              "holding hand is re-solved onto the weapon, so the grip holds"),
-    Param("weapon_chest_position", WEAPON, "Chest position", "", "added", sided=True,
-          rule=_fixed(0.0, 1.0), default=1.0,
-          tip="With Chest on, how much of the chest's BOB AND SWAY the weapon inherits: 1 the torso carries "
-              "it as a parent constraint does, 0 it hangs in the air while the torso rises and swings under "
-              "it. The walk's travel is kept at any strength - without it the weapon is left behind within "
-              "a cycle. At 0 / 0 what is left is the arm's own weight (Arm drag)"),
-    Param("weapon_chest_lag", WEAPON, "Chest lag", "ms", "added", sided=True,
-          rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
-          tip="With Chest on, the weapon rides the chest's pose from this many milliseconds ago - the torso "
-              "leads and the weapon follows late. What it follows is the chest the two strengths above "
-              "leave. It adds to Weapon overlap, which lags the blade's own aim about the grip. The slider "
-              "reaches half the cycle either way"),
+          tip="With Hold on, the chest the hand rides is this many milliseconds old - the torso leads and "
+              "the hand with its weapon follows late, which is the overlap. Negative leads instead. The "
+              "slider reaches half the cycle either way"),
     # the physics
     Param("whip", PHYSICS, "Whip", "", "added", rule=_fixed(0.0, 1.0), default=0.3,
           tip="The arms, the trunk and the head overshoot as they catch up with the body (springs whose stride "
@@ -902,12 +883,9 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["arm_overlap" + sfx] = sv("arm_overlap") * fps / 1000.0      # ms -> frames of the new cycle (own 0)
         e["elbow_overlap" + sfx] = sv("elbow_overlap") * fps / 1000.0  # the cascade, on top of that L (own 0)
         e["hand_overlap" + sfx] = sv("hand_overlap") * fps / 1000.0
-        e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0   # the weapon's aim, ms -> frames
-        e["weapon_hold" + sfx] = 1.0 if sv("weapon_hold") >= 0.5 else 0.0          # 2H: the free hand bound
-        e["weapon_chest" + sfx] = 1.0 if sv("weapon_chest") >= 0.5 else 0.0        # parented to the chest
-        e["weapon_chest_rotation" + sfx] = sv("weapon_chest_rotation")             # ...its strengths
-        e["weapon_chest_position" + sfx] = sv("weapon_chest_position")
-        e["weapon_chest_lag" + sfx] = sv("weapon_chest_lag") * fps / 1000.0        # ms -> frames (own 0)
+        #  the Weapon tab: the hand rigid on the chest, the chest it rides that many frames old
+        e["weapon_hold" + sfx] = 1.0 if sv("weapon_hold") >= 0.5 else 0.0
+        e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0            # ms -> frames
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))
@@ -1270,8 +1248,7 @@ def ranges(own_values, leg, walk=None):
                 hi = min(hi, b) if b is not None else hi
                 out[key] = (min(lo, hi), hi)
         cap = overlap_cap(walk)       # Arm overlap, its cascade and the weapon's: half the cycle either way
-        for name in ("arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap",
-                     "weapon_chest_lag"):
+        for name in ("arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap"):
             for key in [name + "_" + s for s in SIDES] + [name]:
                 out[key] = (-cap, cap)
     top = step_top(own_values, leg)

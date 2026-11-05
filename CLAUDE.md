@@ -11783,6 +11783,61 @@ as the thing that decides the one-body spring and the fingers' stilling.**
 - **Not built**: a lag or a strength per hand under the hold; removing the grip's stilling (a hand holding a
   thing should not flex its fingers, and it would change every take already made).
 
+## Walk Builder: the Weapon tab rebuilt — the hand on the chest, late (2026-11-05)
+
+The animator, step by step in a scene on port 7002: «Manny_Rig_Character на этом шаге мы используем анимацию
+которую получили из нашего walk builder с использованием адетивной позы, дальше я перевел руки в IK режим
+привязал их к туловищу а анимацию удалил. Так я получил статические руки по отношению к туловищу. На шаге 2 я
+вынес анимацию оружия на адитивный слой и сдвинул ее на несколько кадров относительно тела. Вот так должен
+работать наш weapon overlap для всех адитивных поз без исключения. Весь функционал который есть сейчас в этой
+вкладке (Weapon) мы удаляем и делаем новый» — and «делай так как будет лучше чтобы не ломать наш плагин», so
+nothing of their locator-and-IK recipe is copied one for one. **This replaces every Weapon-tab knob of the
+2026-10-29 / 10-30 / 11-02 / 11-03 / 11-04 sections above.**
+- **Read in their scene first** (read only): both rigs' `IKArm_R/L` are parent-constrained with their own
+  curves gone — static arms on the torso — and `Manny_Rig1_Character|LongSwordMesh` (the sword OUT of the
+  hands, at the character group's level) carries an additive layer `Baked_LongSwordMesh` of its own t/r keyed
+  from frame 2: the weapon's whole world track, shifted two frames. The hands do not lag in their demo; in
+  the plugin they do, because a weapon in a hand is constrained to it and the animator had already chosen
+  «Рука следует за оружием» (2026-11-02).
+- **Two knobs, both sided, and nothing else**: **Hold** (a chip, **ON by default**) — the hand rides the
+  CHEST rigidly at its own MEAN offset over the cycle, so it stops playing the arm's swing and keeps the
+  additive pose's hold on the torso (their step 1) — and **Overlap, ms** — the chest it rides is that many
+  milliseconds old (their step 2), the slider reaching half the cycle either way (`gait.overlap_cap`).
+  Gone with their functionality: the aim-at-its-own-tip swing, the Chest chip, Chest rotation / position /
+  lag, and 2H (`_weapon_swing`, `_weapon_chest`, `weapon_chest*`). A card or walker from before carries its
+  `weapon_chest_lag` onto the new `Overlap` (`scene.normal_params`), and the rest of the old keys are
+  dropped as no parameters of this build.
+- **`model._weapon_hold`**, one pass inside `_arm_overlap`: `A = steady_chest(H · inv(C), 0, 0)` (the hand's
+  offset held at its mean — a parent, not a mix), `want = shifted_cycle(C, lag)`, `H' = blend(H, A · want,
+  alpha)`, then `_arm_to_hand` rebuilds the arm by IK. **It needs no weapon in the scene** — the hand is the
+  lever and anything in it follows by its own constraint, which is what «для всех адитивных поз без
+  исключения» asks; the scene's weapon is read only to pick which hand CARRIES a two-handed hold and to
+  name it on the line. Hands holding one thing are one `followers` row: the carrier's own delta is applied
+  to both, so the grip is kept to machine precision.
+- **Only where the additive pose holds that arm** (`Walk.rigid_sides`): at Pose 0 there is no pose, the arms
+  play the cycle and the tab does nothing; the share blends it in; an arm the pose's own chip leaves out is
+  left alone (the 2026-11-03 rule). And **a held hand gets no arm spring** — Whip would soften the rigidity
+  their step 1 is about — so `_arm_dynamics` sets that side's drag to 0 and a grip's one-body spring gives
+  way to it. `held_together` is the pose's own grip again (2H is gone).
+- Measured on their own cycle (`own:8e4ef9f3703a44a3`, 31 frames at 30 fps, mayapy, the weapon-chest
+  harness's elbows bent and the springs off), both of their own cards at share 1:
+  - **LongSword_Idle_3P** (a two-handed grip): with no lag the hand wanders **0.000 cm** in the chest's
+    frame — their card stills both arms by itself, so Hold at 0 is a no-op there (trap 334's family) — and
+    at 150 ms the hand is its own constant offset on **the chest of 4.50 frames ago to 0.0000 cm /
+    0.0000 deg**, moving 8.79 cm, the two hands' relation wandering **0.0000 cm**, every bone length
+    0.000000, the arm asked for 14-26 % of its reach (no clamp);
+  - **Dagger_Idle_01** (one-handed, the case the hold is really for): the cycle swings the hands **13.1 /
+    16.0 cm** in the chest's frame, Hold at 0 lag reads **0.000 cm / 0.000 deg on both** (their step 1),
+    and at 150 ms both wander 8.7 / 8.0 cm — the chest's own motion, that old (their step 2), the lagged
+    hand exactly its own offset on it (0.0000).
+  - **A free hand takes its OWN hold, never the carrier's delta** — the first build collapsed to one
+    carrier whenever a weapon was in one hand, and the dagger card's free left hand came out swinging
+    **32.3 cm**; only a pose's own two-handed grip collapses now.
+  The line: «both hands ride the chest, 4.5 fr late (moved 19.5 cm)».
+- **Not verified**: no gates were written (the animator: «не пишим тестов... к проверкам вернемся позже»),
+  the old `verify_walk_weapon_overlap.py` / `_weapon_chest.py` and `tests/test_walk_weapon_overlap.py` /
+  `_weapon_chest.py` / `_two_handed.py` drive the deleted knobs and are history; not seen in a GUI Maya.
+
 337. **A behaviour declared by a pose in one place and by a knob in another reads as «the knobs depend on the
      pose».** Two hands on one thing made the model run one spring for the held body and still the fingers,
      and both halves asked the POSE — while the card's own 2H chip said the same thing and only
