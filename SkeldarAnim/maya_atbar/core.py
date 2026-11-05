@@ -1301,26 +1301,117 @@ def _trail_group():
     return cmds.ls(grp, long=True)[0]
 
 
+def _mark_trail(handle, of, span):
+    from maya_atbar import trails
+    for attr, value in ((TRAIL_OF, of), (trails.SPAN_ATTR, trails.span_text(span))):
+        if not cmds.attributeQuery(attr, node=handle, exists=True):
+            cmds.addAttr(handle, longName=attr, dataType="string")
+        cmds.setAttr(handle + "." + attr, value, type="string")
+
+
 def _build_trails(nodes):
-    """A trail on each of `nodes` that has none yet. How many were made."""
+    """A trail on each of `nodes` that has none yet. How many were made.
+
+    2026-11-05: a motionTrailShape of our own whose points `trails` computes, not `snapshot -motionTrail`
+    (1.3 s a key edit on a rig - the module says why)."""
+    from maya_atbar import trails
     have = set(of for _, of in trail_handles() if of)
     nodes = [n for n in nodes if _uuid(n) not in have]
     if not nodes:
         return 0
     st, et = time_range()
+    span = (int(math.floor(st)), int(math.ceil(et)))
     grp = _trail_group()
+    if not trails.state()["running"]:
+        trails.start()
     for n in nodes:
-        res = cmds.snapshot(n, motionTrail=True, increment=1, startTime=st, endTime=et, name=TRAIL_PREFIX + strip_ns(n))
-        handle = res[0] if cmds.nodeType(res[0]) == "transform" else (cmds.listRelatives(res[0], parent=True) or [None])[0]
-        if not handle:
-            continue
-        cmds.addAttr(handle, longName=TRAIL_OF, dataType="string")
-        cmds.setAttr(handle + "." + TRAIL_OF, _uuid(n), type="string")
-        try:
-            cmds.parent(handle, grp)
-        except RuntimeError:
-            pass
+        handle = cmds.createNode("transform", name=TRAIL_PREFIX + strip_ns(n) + "Handle", parent=grp, skipSelect=True)
+        cmds.setAttr(handle + ".inheritsTransform", 0)
+        shape = cmds.createNode("motionTrailShape", name=handle.split("|")[-1] + "Shape", parent=handle, skipSelect=True)
+        cmds.setAttr(shape + ".increment", 1)
+        for attr in ("t", "r", "s"):
+            cmds.setAttr(handle + "." + attr, lock=True)
+        _mark_trail(handle, _uuid(n), span)
+        trails.track(_uuid(handle), _uuid(n), span)
     return len(nodes)
+
+
+def _upgrade_trail(handle):
+    """A trail Maya's `snapshot` made (before 2026-11-05) as one of ours: its object and frames kept, the
+    motionTrail node that re-evaluated the rig at every edit gone. One undo chunk of its own."""
+    from maya_atbar import trails
+    shapes = cmds.listRelatives(handle, shapes=True, type="motionTrailShape", fullPath=True) or []
+    olds = sorted(set(old for shape in shapes
+                      for old in cmds.listConnections(shape, source=True, destination=False, type="motionTrail") or []))
+    if not olds:
+        return _adopt_orphan(handle, shapes)
+    old = olds[0]
+    target = (cmds.listConnections(old + ".inputMatrix", source=True, destination=False) or [None])[0]
+    span = (int(round(cmds.getAttr(old + ".startTime"))), int(round(cmds.getAttr(old + ".endTime"))))
+    cmds.undoInfo(openChunk=True, chunkName="AT_trail_upgrade")
+    try:
+        cmds.delete(olds)
+        if target:
+            _mark_trail(handle, _uuid(target), span)
+        for shape in shapes:
+            cmds.setAttr(shape + ".increment", 1)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    trails.state()["upgraded"] = trails.state().get("upgraded", 0) + 1
+    return True
+
+
+def _adopt_orphan(handle, shapes):
+    """An old trail whose motionTrail node is gone (seen live 2026-11-05: the shape stood with frozen
+    points) but which says whose trail it is: its frames read from the shape's own start and points."""
+    from maya_atbar import trails
+    if not shapes or cmds.attributeQuery(trails.SPAN_ATTR, node=handle, exists=True):
+        return False
+    if not (cmds.attributeQuery(TRAIL_OF, node=handle, exists=True) and cmds.getAttr(handle + "." + TRAIL_OF)):
+        return False
+    start = int(round(cmds.getAttr(shapes[0] + ".startTime")))
+    count = len(cmds.getAttr(shapes[0] + ".points") or [])
+    if count < 1:
+        return False
+    _mark_trail(handle, cmds.getAttr(handle + "." + TRAIL_OF), (start, start + count - 1))
+    cmds.setAttr(shapes[0] + ".increment", 1)
+    return True
+
+
+def trail_specs():
+    """[(handle UUID, object UUID, (start, end))] of every trail in the scene, Maya's old ones upgraded."""
+    from maya_atbar import trails
+    out = []
+    for handle, _of in trail_handles():
+        _upgrade_trail(handle)
+        if not (cmds.attributeQuery(TRAIL_OF, node=handle, exists=True)
+                and cmds.attributeQuery(trails.SPAN_ATTR, node=handle, exists=True)):
+            continue
+        of = cmds.getAttr(handle + "." + TRAIL_OF)
+        span = trails.parse_span(cmds.getAttr(handle + "." + trails.SPAN_ATTR))
+        if of and span and cmds.ls(of):
+            out.append((_uuid(handle), of, span))
+    return out
+
+
+def keep_trails():
+    """The engine tracks exactly the trails standing (the bar's sync, every second): one made, deleted,
+    undone, a scene or a tab opened. Nothing while a mouse button is down."""
+    from maya_atbar import trails
+    sc = trails.scene()
+    if sc.mouse_down():
+        return
+    st = trails.state()
+    specs = trail_specs()
+    if specs and not st["running"]:
+        trails.start()
+    standing = set()
+    for handle, of, span in specs:
+        trails.track(handle, of, span)
+        standing.add(handle)
+    for handle in list(st["tracks"]):
+        if handle not in standing:
+            trails.untrack(handle)
 
 
 @undoable

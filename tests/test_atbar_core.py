@@ -19,7 +19,7 @@ from unittest import mock
 import maya.api.OpenMaya as om
 
 import maya_timebar
-from maya_atbar import core
+from maya_atbar import core, trails
 
 ANIM = core.ANIM_CURVE_TYPES
 
@@ -1232,14 +1232,67 @@ class Trails(CoreTest):
             self.assertEqual(core.trail_handles(), [("|G|h1", "uuid-a"), ("|G|h2", None)])
 
     def test_a_trail_is_built_only_for_objects_without_one(self):
+        """2026-11-05: our own motionTrailShape, its points the engine's - never `snapshot -motionTrail`,
+        which re-evaluated the rig at every trail frame after every key edit."""
         self.fake.range = (10.0, 41.0)
+        made = []
+        self.fake.createNode = mock.MagicMock(side_effect=lambda kind, name=None, **kw: made.append((kind, name, kw))
+                                              or name)
         with mock.patch.object(core, "trail_handles", return_value=[("|G|h", "uuid-a")]), \
-                mock.patch.object(core, "_trail_group", return_value="|AT_MOTION_TRAILS"):
+                mock.patch.object(core, "_trail_group", return_value="|AT_MOTION_TRAILS"), \
+                mock.patch.object(trails, "track") as track, mock.patch.object(trails, "start"), \
+                mock.patch.dict(trails.state(), running=True):
             self.assertEqual(core._build_trails(["a", "rig:b"]), 1)
-        self.fake.snapshot.assert_called_once_with("rig:b", motionTrail=True, increment=1, startTime=10.0,
-                                                   endTime=40.0, name="AT_trail_b")
+        self.fake.snapshot.assert_not_called()
+        self.assertEqual([(k, n, kw.get("parent")) for k, n, kw in made],
+                         [("transform", "AT_trail_bHandle", "|AT_MOTION_TRAILS"),
+                          ("motionTrailShape", "AT_trail_bHandleShape", "AT_trail_bHandle")])
         self.assertEqual(self.fake.values["AT_trail_bHandle." + core.TRAIL_OF], "uuid-rig:b")
-        self.fake.parent.assert_called_once_with("AT_trail_bHandle", "|AT_MOTION_TRAILS")
+        self.assertEqual(self.fake.values["AT_trail_bHandle." + trails.SPAN_ATTR], "10 40")
+        self.assertEqual(self.fake.values["AT_trail_bHandleShape.increment"], 1)
+        track.assert_called_once_with("uuid-AT_trail_bHandle", "uuid-rig:b", (10, 40))
+
+    def test_maya_s_old_trail_becomes_ours_in_one_undo_chunk(self):
+        self.fake.relatives[("|G|h", "shapes")] = ["|G|h|hShape"]
+        self.fake.connections["|G|h|hShape"] = ["motionTrail1"]
+        self.fake.connections["motionTrail1.inputMatrix"] = ["rig:Dagger"]
+        self.fake.values.update({"motionTrail1.startTime": 0.0, "motionTrail1.endTime": 62.0})
+        self.assertTrue(core._upgrade_trail("|G|h"))
+        self.assertEqual(self.fake.deleted[0][0][0], ["motionTrail1"])
+        self.assertEqual(self.fake.values["|G|h." + trails.SPAN_ATTR], "0 62")
+        self.assertEqual(self.fake.values["|G|h." + core.TRAIL_OF], "uuid-rig:Dagger")
+        self.assertEqual(self.fake.chunks, ["open", "close"])
+        self.fake.connections["|G|h|hShape"] = None
+        self.assertFalse(core._upgrade_trail("|G|h"))           # ours now: its span is marked
+
+    def test_an_old_trail_without_its_motion_trail_node_takes_its_frames_from_the_shape(self):
+        self.fake.relatives[("|G|h", "shapes")] = ["|G|h|hShape"]
+        self.fake.values.update({"|G|h." + core.TRAIL_OF: "uuid-x", "|G|h|hShape.startTime": 5.0,
+                                 "|G|h|hShape.points": [[0, 0, 0, 1]] * 11})
+        self.assertTrue(core._upgrade_trail("|G|h"))
+        self.assertEqual(self.fake.values["|G|h." + trails.SPAN_ATTR], "5 15")
+        self.assertFalse(core._upgrade_trail("|G|h"))
+        del self.fake.values["|G|h." + core.TRAIL_OF]
+        del self.fake.values["|G|h." + trails.SPAN_ATTR]
+        self.assertFalse(core._upgrade_trail("|G|h"))           # whose trail it was is not known
+
+    def test_the_engine_tracks_exactly_the_trails_standing(self):
+        st = {"tracks": {"gone": object()}, "running": False}
+        with mock.patch.object(core, "trail_specs", return_value=[("h1", "o1", (0, 10))]), \
+                mock.patch.object(trails, "state", return_value=st), \
+                mock.patch.object(trails, "scene", return_value=mock.Mock(mouse_down=lambda: False)), \
+                mock.patch.object(trails, "start") as start, mock.patch.object(trails, "track") as track, \
+                mock.patch.object(trails, "untrack") as untrack:
+            core.keep_trails()
+        start.assert_called_once_with()
+        track.assert_called_once_with("h1", "o1", (0, 10))
+        untrack.assert_called_once_with("gone")
+
+    def test_nothing_is_tracked_while_a_mouse_button_is_down(self):
+        with mock.patch.object(trails, "scene", return_value=mock.Mock(mouse_down=lambda: True)), \
+                mock.patch.object(core, "trail_specs") as specs:
+            core.keep_trails()
+        specs.assert_not_called()
 
     def test_the_trails_group_is_the_marked_one_else_a_new_one(self):
         self.fake.ls = mock.MagicMock(side_effect=lambda *a, **k: ["|AT_MOTION_TRAILS4"] if a[0].startswith("*.") else

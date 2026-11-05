@@ -31,7 +31,7 @@ TOOLS = ("nudge", "inbetween", "save_recovery", "install_recovery_check", "selec
          "paste_relationship", "paste_world_space", "copy_world_space", "enum_attrs", "selection", "space_switch",
          "add_bookmark", "go_to_bookmark", "delete_bookmark_here", "clear_bookmarks", "bookmarks",
          "select_rig_controls", "select_animated", "key_selection", "delete_static_channels", "bake_selection",
-         "reset_to_default_pose", "clear_default_pose", "save_pose_file", "load_pose_file")
+         "reset_to_default_pose", "clear_default_pose", "save_pose_file", "load_pose_file", "keep_trails")
 
 
 class BarCmds(object):

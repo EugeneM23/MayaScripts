@@ -18140,3 +18140,38 @@ tests; live on 7003 on throwaway cubes - the in-memory copy wiped, the pose (tx 
 animation (from frame 20) pasted back from the file; and two mayapy sessions with their own scenes and one
 `MAYA_APP_DIR`: copied from `Manny_Rig:`, pasted onto `tab_x:Manny_Rig1:` picked in reverse order - every
 control by name, the animation from frame 100.
+
+## AT bar: motion trails on our own engine (2026-11-05)
+
+«чому так сильно тормозить сцена?» -> moving controls: measured live, FKWrist_R with Auto Key cost
+**1.26-1.39 s a change** with the AT trail on DaggerMesh (63 frames) - **20 ms** with the trail hidden or
+Auto Key off. Every key changes a curve and `snapshot -motionTrail` re-evaluates the rig through a DG time
+context at all 63 frames (trap 143, the CoM's finding, now on the AT bar). The animator: «переписати цю
+функцію трейлів щоб таких проблем не виникало більше», «дугу потрібно постійно бачити».
+- **`maya_atbar/trails.py`**, maya_com's engine generalised to any object: a trail is a handle
+  `AT_trail_<leaf>Handle` (TRS locked, `inheritsTransform` off) with a `motionTrailShape` whose
+  `points` / `startTime` we write (no undo entry, the modified flag kept); the handle carries
+  `skeldarATTrailOf` (the object's UUID, as before) and `skeldarATTrailSpan` ("start end", the range at
+  build). The point is the object's world rotate pivot - Maya's trail point (0.0 cm on DaggerMesh).
+- **Dirty frames without tracing what drives what**: after any curve change (AnimCurveEdited, Undo, Redo)
+  EVERY time curve is sampled again over the trails' spans and the frames whose value moved are dirty
+  (1172 curves x 63 frames: 6 ms in the GUI, 21-26 ms in mayapy). Layers, constraints, IK and props need no
+  ownership walk; it over-counts a curve that does not move the object, never misses one. A value set on
+  an unkeyed channel of the object's top namespace (its controls, its parents, the anim layers) dirties
+  every frame; a set on a driven plug is a tweak - the current frame's point at once.
+- Slices of 40 ms nearest the current frame first through the EM (`MAnimControl.setCurrentTime` under
+  `refresh -suspend`), never with a mouse button down or playing; every animated plug of the watched nodes
+  (curve- or blend-driven, so layered ones too) read before a walk and put back after (unkeyed tweaks).
+  A trail whose handle is hidden (a scene tab not shown: `lodVisibility`) is not walked until it shows.
+- **The bar's 1 s sync calls `core.keep_trails()`**: the engine tracks exactly the trails standing (made,
+  deleted, undone, a scene or tab opened), and **upgrades Maya's old trails** in an undo chunk of their own:
+  the motionTrail node deleted, the object from its `inputMatrix`, the span from its start / end; an old
+  handle whose motionTrail node is already gone (seen live) takes its span from the shape's `startTime`
+  and point count. State on `sys._skeldar_attrail`.
+Proof: `test_atbar_trails` (the engine on a fake scene), `test_atbar_core.Trails`; mayapy on a copy of the
+animator's scene: Maya's trail **2.6 s** a key edit, ours 1 ms for the key and the trail caught up in
+slices of 32-39 ms (3 frames each), points equal to Maya's and to `worldMatrix` to **0.0 cm** before and
+after edits. **Live on 7003** (the engine loaded beside the installed build, the dagger trail adopted): a
+key on FKWrist_R plus a full redraw **81 ms** (was 1.3 s), the 62 changed frames in 22 slices <= 41 ms;
+Ctrl+Z recomputed in 23 slices <= 61 ms; the trail on the rig to 0.0 cm after the edit and after the undo.
+Not proven: a real mouse drag (the attribute callbacks and the mouse-down wait were driven by script).

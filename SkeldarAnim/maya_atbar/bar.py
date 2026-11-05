@@ -1202,6 +1202,10 @@ class ATBar(QtWidgets.QWidget):
     # ---- toggles
 
     def _sync_toggles(self):
+        try:
+            core.keep_trails()
+        except Exception:
+            pass
         for btn, query in self._toggles:
             try:
                 state = bool(query())
