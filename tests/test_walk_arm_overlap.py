@@ -186,6 +186,21 @@ class ArmToHandTests(unittest.TestCase):
             cos = float(np.dot(to_want, to_got) / (np.linalg.norm(to_want) * np.linalg.norm(to_got)))
             self.assertGreater(cos, 1.0 - 1e-9, f)      # clamped along the line to the wanted hand
 
+    def test_an_arm_straightened_past_its_reach_keeps_whole_rotations(self):
+        """A hand past the reach leaves the elbow ON the shoulder-wrist line; the new arm's plane read back
+        off it was a zero vector and zeroed the upper arm's and forearm's rotation (det 1e-35) - the Weapon
+        tab's hold did that on a real walker and Rig pose failed with «Singular matrix» (2026-11-05)."""
+        side = sorted(self.chains)[0]
+        up_j, low_j, hand_j = self.chains[side]
+        want = np.array(self.kin[hand_j])
+        want[:, 3, 0] += 500.0
+        got = self.w._arm_to_hand(self.kin, self.n, self.chains, {side: want})
+        for j in (up_j, low_j):
+            dets = np.linalg.det(got[j][:, :3, :3])
+            self.assertLess(float(np.abs(dets - 1.0).max()), 1e-6, self.w.names[j])
+            for f in range(self.n + 1):
+                np.linalg.inv(got[j][f])          # raises on a singular frame
+
     def test_a_hint_bends_the_elbow_its_way_and_keeps_the_hand_and_the_bones(self):
         """Elbow overlap's road: the bend plane is sent somewhere else and nothing else gives."""
         side = sorted(self.chains)[0]

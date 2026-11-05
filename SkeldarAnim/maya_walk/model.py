@@ -1449,6 +1449,9 @@ class Walk(object):
             h = p @ self.up
             low |= h <= h.min() + MERGE_HIGH
         slow = np.minimum(speeds[0], speeds[1]) < np.linalg.norm(self.travel) / P * CONTACT_SHARE
+        #  a gap where the foot moves faster than the walk travels is a swing, however low it stays: a foot
+        #  that shuffles (its toe never 4 cm up) had its four steps joined into one stance (2026-11-05)
+        swinging = np.minimum(speeds[0], speeds[1]) >= np.linalg.norm(self.travel) / P * HELD_SHARE
         if slow.all():
             raise Refusal("the %s foot never leaves the ground" % SIDE_WORD[side])
         if not slow.any():
@@ -1460,7 +1463,7 @@ class Walk(object):
             for i, (a, la) in enumerate(runs):
                 b, lb = runs[(i + 1) % len(runs)]
                 gap = (b - a - la) % P
-                if all(low[(a + la + g) % P] for g in range(gap)):
+                if all(low[(a + la + g) % P] and not swinging[(a + la + g) % P] for g in range(gap)):
                     runs = [r for m, r in enumerate(runs) if m not in (i, (i + 1) % len(runs))]
                     runs = sorted(runs + [(a, la + gap + lb)])
                     merged = True
@@ -4353,10 +4356,15 @@ class Walk(object):
                 e = _unit(wr - sh)
                 bend = (el - sh) - np.dot(el - sh, e) * e
                 bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
-                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2,
-                                            bend if hint is None else hint[f], 1.0)
+                toward = bend if hint is None else hint[f]
+                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, toward, 1.0)
                 e2 = _unit(reached - sh)
-                bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
+                #  the new arm's plane is the one two_bone bent toward, never read back off the elbow: a
+                #  hand past the arm's reach leaves the elbow ON the shoulder-wrist line, and its offset
+                #  is a zero vector that zeroed the upper arm's and forearm's rotation (trap 245; the
+                #  Weapon tab's hold pulling a hand out of reach, 2026-11-05)
+                bend2 = toward - np.dot(toward, e2) * e2
+                bend2 = _unit(bend2) if np.linalg.norm(bend2) > 1e-9 else _any_perpendicular(e2)
                 normal, normal2 = _unit(_cross3(e, bend)), _unit(_cross3(e2, bend2))
                 mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal,
                                                                           _unit(knee - sh), normal2)

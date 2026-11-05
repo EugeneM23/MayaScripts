@@ -1469,6 +1469,14 @@ class ManyStepsTests(unittest.TestCase):
         self.assertEqual(w.feet["l"].length, max(f.length for f in w.steps["l"]))     # the longest
         self.assertIn("2 steps of each foot a cycle", w.summary())
 
+    def test_a_shuffling_foot_still_takes_every_step(self):
+        """A foot that never lifts 4 cm is still swinging while it moves faster than the walk travels: its
+        steps were joined into one stance and the walk refused («the left foot steps 1 times a cycle and the
+        right 4», Manny_Skeleton1, 2026-11-05)."""
+        w = walk(**dict(TWO, lift=2.0))
+        for side in "lr":
+            self.assertEqual(len(w.steps[side]), 2, side)
+
     def test_its_own_knobs_give_it_back(self):
         w, c = walk(**TWO), clip(**TWO)
         r = w.evaluate(w.own_knobs())
