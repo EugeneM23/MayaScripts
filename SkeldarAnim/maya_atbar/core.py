@@ -583,6 +583,47 @@ class SliderSession(object):
 
 _clip = {"pose": None, "anim": None, "world": None, "rel": None}
 
+# 2026-11-05 «копіювання і вставляння цих поз між сценами і файлами»: a copied pose or animation is written
+# to CLIPBOARD_NAME in Maya's user folder as well, so it pastes in another file, after a restart, or in a
+# second Maya. The file is read first on a paste: it holds the latest copy made in any Maya.
+CLIPBOARD_NAME = "AT_clipboard.json"
+POSE_FILE_FILTER = "AT Pose (*.atpose);;JSON (*.json)"
+
+
+def clipboard_path():
+    return os.path.join(cmds.internalVar(userAppDir=True), CLIPBOARD_NAME)
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json(path, data):
+    tmp = path + ".partial"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def store_clip(kind, items, path=None):
+    _clip[kind] = items
+    path = path or clipboard_path()
+    data = _read_json(path)
+    data[kind] = items
+    try:
+        _write_json(path, data)
+    except OSError as e:
+        warn("the copy is not on disk (%s) - it pastes in this Maya only" % e)
+
+
+def clip_items(kind, path=None):
+    return _read_json(path or clipboard_path()).get(kind) or _clip[kind]
+
 
 def _match_clip(clip_items, nodes):
     """Pair target nodes with clipboard entries by namespace-less name, falling back to selection order."""
@@ -599,19 +640,22 @@ def _match_clip(clip_items, nodes):
     return pairs
 
 
+def _pose_of(nodes):
+    return [[strip_ns(n), {a: cmds.getAttr("%s.%s" % (n, a)) for a in keyable_attrs(n)}] for n in nodes]
+
+
 def copy_pose():
     sel = selection()
     if not sel:
         return warn("select controls to copy the pose from")
-    _clip["pose"] = [(strip_ns(n), {a: cmds.getAttr("%s.%s" % (n, a)) for a in keyable_attrs(n)}) for n in sel]
+    store_clip("pose", _pose_of(sel))
     message("pose copied: %d controls" % len(sel))
 
 
-@undoable
-def paste_pose():
-    if not _clip["pose"]:
-        return warn("copy a pose first")
-    for node, data in _match_clip(_clip["pose"], selection()):
+def _apply_pose(items):
+    """How many selected controls took the pose."""
+    pasted = 0
+    for node, data in _match_clip(items, selection()):
         attrs = [a for a in data if cmds.attributeQuery(a, node=node, exists=True)]
         for a in attrs:
             try:
@@ -620,6 +664,43 @@ def paste_pose():
                 pass
         if attrs and (is_animated(node) or cmds.autoKeyframe(q=True, state=True)):
             cmds.setKeyframe(node, attribute=attrs)
+        pasted += bool(attrs)
+    return pasted
+
+
+@undoable
+def paste_pose():
+    items = clip_items("pose")
+    if not items:
+        return warn("copy a pose first")
+    if not _apply_pose(items):
+        warn("no selected control matches the copied ones (by name, or by selection order)")
+
+
+def save_pose_file():
+    sel = selection()
+    if not sel:
+        return warn("select controls to save the pose from")
+    path = cmds.fileDialog2(fileFilter=POSE_FILE_FILTER, dialogStyle=2, fileMode=0, caption="AT: Save Pose")
+    if not path:
+        return
+    _write_json(path[0], {"pose": _pose_of(sel)})
+    message("pose saved: %s" % os.path.basename(path[0]))
+
+
+@undoable
+def load_pose_file():
+    """The pose goes onto the clipboard, and onto the selection when one is picked."""
+    path = cmds.fileDialog2(fileFilter=POSE_FILE_FILTER, dialogStyle=2, fileMode=1, caption="AT: Load Pose")
+    if not path:
+        return
+    items = _read_json(path[0]).get("pose")
+    if not items:
+        return warn("%s holds no AT pose" % os.path.basename(path[0]))
+    store_clip("pose", items)
+    if selection() and _apply_pose(items):
+        return message("pose pasted from %s" % os.path.basename(path[0]))
+    message("pose loaded - select controls and Paste Pose")
 
 
 def _curve_data(curve):
@@ -647,8 +728,8 @@ def copy_animation():
             plug = driven_plug(c)
             if plug:
                 attrs[plug.split(".", 1)[1]] = _curve_data(c)
-        items.append((strip_ns(n), attrs))
-    _clip["anim"] = items
+        items.append([strip_ns(n), attrs])
+    store_clip("anim", items)
     message("animation copied: %d controls" % len(sel))
 
 
@@ -688,12 +769,13 @@ def paste_animation(mode="current"):
     """current: from the current frame, keys inside the pasted span replaced, the rest kept (animBot's
     paste); insert: from the current frame, later keys pushed after the pasted span; original: each
     curve replaced whole, at the frames it was copied from."""
-    if not _clip["anim"]:
+    clip = clip_items("anim")
+    if not clip:
         return warn("copy animation first")
-    pairs = _match_clip(_clip["anim"], selection())
+    pairs = _match_clip(clip, selection())
     if not pairs:
         return warn("no selected control matches the copied ones (by name, or by selection order)")
-    times = [t for _n, attrs in _clip["anim"] for d in attrs.values() for t in d["times"]]
+    times = [t for _n, attrs in clip for d in attrs.values() for t in d["times"]]
     if not times:
         return warn("the copied controls had no keys")
     first, last = min(times), max(times)

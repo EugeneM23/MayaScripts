@@ -18122,3 +18122,17 @@ today; the spec says what its fix wants.
      measured 198-of-400 refusals in that folder were props, whose row looks the same either way -
      which is why nothing had ever noticed. Anything handing a path to MEL wants either `cmds` with
      the flag as its own string, or an ASCII copy.
+
+## AT bar: the pose / animation clipboard on disk (2026-11-05)
+
+«Додай ... можливість копіювання і вставляння цих поз між сценами і файлами, щоб це було можливо по
+замовчуванню», then «між різними файлами не працює»: Copy Pose / Copy Animation lived in `core._clip`
+only, so a copy pasted between scene tabs of one Maya but never into a file open in a second Maya, or
+after a restart. Now `store_clip` writes it to `AT_clipboard.json` in Maya's user folder as well (through a
+`.partial`, as the selection-set library does) and `clip_items` reads the file first - it holds the latest
+copy made in any Maya; memory only when the file is missing or broken. World Space and Relationship stay
+in memory (they hold full DAG paths of this scene). Right click on Copy / Paste Pose: Save pose to file /
+Load pose from file (`.atpose`, the same `{"pose": [[name, {attr: value}]]}`). Trap: `CoreTest` patches
+`core.clipboard_path` to a temp file - without it every clipboard test read the animator's real file.
+Proof: `test_atbar.ClipboardOnDisk`, 266 AT tests; live on 7003 on throwaway cubes - the in-memory copy
+wiped, the pose (tx 3.5, ry 42) and the animation (from frame 20) pasted back from the file.

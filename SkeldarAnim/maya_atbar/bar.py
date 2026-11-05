@@ -1158,8 +1158,10 @@ class ATBar(QtWidgets.QWidget):
                 b("paste_anim", POSE, "Paste Animation at the current frame (matched by name, else by selection order)\n"
                                       "Right click: insert at the current frame, or replace at the copied frames",
                   core.paste_animation, menu=self._paste_anim_menu),
-                b("copy_pose", POSE, "Copy Pose", core.copy_pose),
-                b("paste_pose", POSE, "Paste Pose (matched by name, else by selection order)", core.paste_pose),
+                b("copy_pose", POSE, "Copy Pose (kept on disk: pastes in any scene, file or Maya)\n"
+                                     "Right click: save the pose to a file", core.copy_pose, menu=self._pose_menu),
+                b("paste_pose", POSE, "Paste Pose (matched by name, else by selection order)\n"
+                                      "Right click: load a pose file", core.paste_pose, menu=self._pose_menu),
             ], ui),
             self._row("SPACE", SPACE, [
                 b("mirror", SPACE, "Mirror Pose: flip L/R pairs, mirror center controls\nRight click: select opposite",
@@ -1269,6 +1271,11 @@ class ATBar(QtWidgets.QWidget):
         return [("Paste at current frame", core.paste_animation),
                 ("Paste insert at current frame (push later keys)", lambda: core.paste_animation("insert")),
                 ("Paste replacing at the copied frames", lambda: core.paste_animation("original"))]
+
+    def _pose_menu(self):
+        return [("Copy pose", core.copy_pose), ("Paste pose", core.paste_pose), None,
+                ("Save pose to file...", core.save_pose_file),
+                ("Load pose from file...", core.load_pose_file)]
 
     def _mirror_menu(self):
         return [("Mirror pose", core.mirror_pose), None,

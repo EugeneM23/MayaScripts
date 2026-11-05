@@ -494,6 +494,45 @@ class SetLibrary(unittest.TestCase):
         self.assertEqual(core.load_library(path), {"sets": {}, "seen": []})
 
 
+class ClipboardOnDisk(unittest.TestCase):
+    """2026-11-05, «копіювання і вставляння цих поз між сценами і файлами»: a copy pastes in another file,
+    after a restart, or in a second Maya - the file holds it, not only this Maya's memory."""
+
+    def setUp(self):
+        import tempfile
+        self.path = os.path.join(tempfile.mkdtemp(), core.CLIPBOARD_NAME)
+        self.saved = dict(core._clip)
+        self.addCleanup(core._clip.update, self.saved)
+
+    def test_a_copy_survives_this_maya_s_memory(self):
+        pose = [["FKWrist_L", {"rotateX": 12.5, "visibility": True}]]
+        core.store_clip("pose", pose, self.path)
+        core._clip["pose"] = None
+        self.assertEqual(core.clip_items("pose", self.path), pose)
+        self.assertFalse(os.path.exists(self.path + ".partial"))
+
+    def test_another_maya_s_copy_wins_over_memory(self):
+        core.store_clip("pose", [["A", {"tx": 1.0}]], self.path)
+        core._clip["pose"] = [["B", {"tx": 2.0}]]
+        self.assertEqual(core.clip_items("pose", self.path), [["A", {"tx": 1.0}]])
+
+    def test_pose_and_animation_keep_each_other(self):
+        core.store_clip("pose", [["A", {"tx": 1.0}]], self.path)
+        core.store_clip("anim", [["A", {"tx": {"times": [1.0]}}]], self.path)
+        self.assertEqual(core.clip_items("pose", self.path), [["A", {"tx": 1.0}]])
+
+    def test_a_broken_file_falls_back_to_memory(self):
+        with open(self.path, "w") as f:
+            f.write("{broken")
+        core._clip["pose"] = [["A", {"tx": 3.0}]]
+        self.assertEqual(core.clip_items("pose", self.path), [["A", {"tx": 3.0}]])
+
+    def test_the_stored_pairs_match_by_name(self):
+        core.store_clip("pose", [["FKWrist_L", {"tx": 1.0}], ["FKElbow_L", {"tx": 2.0}]], self.path)
+        pairs = core._match_clip(core.clip_items("pose", self.path), ["tab_b:Manny_Rig1:FKElbow_L"])
+        self.assertEqual(pairs, [("tab_b:Manny_Rig1:FKElbow_L", {"tx": 2.0})])
+
+
 class Smoothing(unittest.TestCase):
     """The SM slider (2026-10-21): left smooths - gradually, pass by pass - right roughens."""
 

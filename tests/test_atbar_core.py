@@ -344,8 +344,10 @@ class CoreTest(unittest.TestCase):
     def setUp(self):
         self.fake = FakeCmds()
         self.mel = FakeMel()
+        clipboard = os.path.join(tempfile.mkdtemp(), core.CLIPBOARD_NAME)
         for patch in (mock.patch.object(core, "cmds", self.fake), mock.patch.object(core, "mel", self.mel),
-                      mock.patch.dict(core._state), mock.patch.dict(core._clip)):
+                      mock.patch.dict(core._state), mock.patch.dict(core._clip),
+                      mock.patch.object(core, "clipboard_path", lambda: clipboard)):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -906,13 +908,13 @@ class AnimationClipboard(CoreTest):
         self.assertIn("onto 0 controls", self.fake.messages[-1])
 
     def test_nothing_copied_nothing_matching_or_no_keys_is_said(self):
-        core._clip["anim"] = None
+        core.store_clip("anim", None)
         core.paste_animation()
         self.assertIn("copy animation first", self.fake.warnings[-1])
-        core._clip["anim"] = [("a", {}), ("b", {})]
+        core.store_clip("anim", [("a", {}), ("b", {})])
         core.paste_animation()
         self.assertIn("no selected control matches", self.fake.warnings[-1])
-        core._clip["anim"] = [("dst", {})]
+        core.store_clip("anim", [("dst", {})])
         core.paste_animation()
         self.assertIn("no keys", self.fake.warnings[-1])
 
